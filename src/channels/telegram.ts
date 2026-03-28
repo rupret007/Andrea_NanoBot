@@ -59,6 +59,31 @@ export function extractTelegramLeadingCommand(
   return commandName.toLowerCase();
 }
 
+export function buildTelegramHelpText(assistantName = ASSISTANT_NAME): string {
+  return [
+    `Hi, I'm ${assistantName}. Here's how to use me in this chat:`,
+    '',
+    '- In groups: mention me (for example `@Andrea`) or use bot commands.',
+    '- In direct chat: send normal messages and commands directly.',
+    '',
+    '*Quick Commands*',
+    '- `/help` - show this guide',
+    '- `/ping` - check bot health',
+    '- `/chatid` - show chat ID and chat type',
+    '- `/registermain` - bootstrap main control chat (DM only)',
+    '',
+    '*What I can do*',
+    '- To-do lists, reminders, and recurring tasks',
+    '- Research and summaries',
+    '- Project and coding help',
+    '- Enable/disable vetted community skills per chat',
+    '',
+    '*Try this*',
+    '- `@Andrea add "renew passport" to my to-do list`',
+    '- `@Andrea remind me every Monday at 9am to send updates`',
+  ].join('\n');
+}
+
 async function sendTelegramMessage(
   api: { sendMessage: Api['sendMessage'] },
   chatId: string | number,
@@ -108,6 +133,14 @@ export class TelegramChannel implements Channel {
       );
     });
 
+    this.bot.command('help', (ctx) => {
+      ctx.reply(buildTelegramHelpText(), { parse_mode: 'Markdown' });
+    });
+
+    this.bot.command('start', (ctx) => {
+      ctx.reply(buildTelegramHelpText(), { parse_mode: 'Markdown' });
+    });
+
     this.bot.command('registermain', async (ctx) => {
       const chatType = ctx.chat.type;
       if (chatType !== 'private') {
@@ -140,7 +173,13 @@ export class TelegramChannel implements Channel {
       ctx.reply(`${ASSISTANT_NAME} is online.`);
     });
 
-    const TELEGRAM_BOT_COMMANDS = new Set(['chatid', 'ping', 'registermain']);
+    const TELEGRAM_BOT_COMMANDS = new Set([
+      'chatid',
+      'help',
+      'ping',
+      'registermain',
+      'start',
+    ]);
 
     this.bot.on('message:text', async (ctx) => {
       const botUsername = ctx.me?.username?.toLowerCase();
@@ -287,13 +326,25 @@ export class TelegramChannel implements Channel {
     return new Promise<void>((resolve) => {
       this.bot!.start({
         onStart: (botInfo) => {
+          this.bot!.api.setMyCommands([
+            { command: 'help', description: 'How Andrea works in this chat' },
+            { command: 'ping', description: 'Check if the bot is online' },
+            { command: 'chatid', description: 'Show current chat ID/type' },
+            {
+              command: 'registermain',
+              description: 'Register this DM as main control chat',
+            },
+          ]).catch((err) => {
+            logger.warn({ err }, 'Failed to register Telegram command menu');
+          });
+
           logger.info(
             { username: botInfo.username, id: botInfo.id },
             'Telegram bot connected',
           );
           console.log(`\n  Telegram bot: @${botInfo.username}`);
           console.log(
-            '  Send /chatid to see the chat ID, or /registermain in DM to bootstrap main chat\n',
+            '  Send /help for usage, /chatid for chat ID, or /registermain in DM to bootstrap main chat\n',
           );
           resolve();
         },

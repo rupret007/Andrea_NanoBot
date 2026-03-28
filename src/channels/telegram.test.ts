@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { extractTelegramLeadingCommand } from './telegram.js';
+import {
+  buildTelegramHelpText,
+  extractTelegramLeadingCommand,
+} from './telegram.js';
 
 describe('extractTelegramLeadingCommand', () => {
   it('extracts plain slash commands', () => {
@@ -41,5 +44,18 @@ describe('extractTelegramLeadingCommand', () => {
         'andrea_nanobot',
       ),
     ).toBeNull();
+  });
+});
+
+describe('buildTelegramHelpText', () => {
+  it('includes key commands and capability guidance', () => {
+    const help = buildTelegramHelpText('Andrea');
+
+    expect(help).toContain("Hi, I'm Andrea.");
+    expect(help).toContain('/help');
+    expect(help).toContain('/ping');
+    expect(help).toContain('/chatid');
+    expect(help).toContain('/registermain');
+    expect(help).toContain('To-do lists, reminders, and recurring tasks');
   });
 });
