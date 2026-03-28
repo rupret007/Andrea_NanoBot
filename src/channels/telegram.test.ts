@@ -56,6 +56,8 @@ describe('buildTelegramHelpText', () => {
     expect(help).toContain('/ping');
     expect(help).toContain('/chatid');
     expect(help).toContain('/registermain');
+    expect(help).toContain('/cursor_status');
+    expect(help).toContain('/cursor_test');
     expect(help).toContain('To-do lists, reminders, and recurring tasks');
   });
 });

@@ -71,6 +71,8 @@ export function buildTelegramHelpText(assistantName = ASSISTANT_NAME): string {
     '- `/ping` - check bot health',
     '- `/chatid` - show chat ID and chat type',
     '- `/registermain` - bootstrap main control chat (DM only)',
+    '- `/cursor_status` - show Cursor/9router integration readiness',
+    '- `/cursor_test` - run live Cursor/9router smoke test',
     '',
     '*What I can do*',
     '- To-do lists, reminders, and recurring tasks',
@@ -330,6 +332,14 @@ export class TelegramChannel implements Channel {
             { command: 'help', description: 'How Andrea works in this chat' },
             { command: 'ping', description: 'Check if the bot is online' },
             { command: 'chatid', description: 'Show current chat ID/type' },
+            {
+              command: 'cursor_status',
+              description: 'Show Cursor integration status',
+            },
+            {
+              command: 'cursor_test',
+              description: 'Run Cursor integration smoke test',
+            },
             {
               command: 'registermain',
               description: 'Register this DM as main control chat',

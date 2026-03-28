@@ -102,6 +102,15 @@ From the main channel (your self-chat), you can manage groups and tasks:
 @Andy join the Family Chat group
 ```
 
+Cursor-focused runtime checks are also available as control commands:
+
+```
+/cursor_status
+/cursor_test
+/cursor_remote
+/cursor_remote_end
+```
+
 You can also install community OpenClaw skills without giving them access to every chat:
 
 ```

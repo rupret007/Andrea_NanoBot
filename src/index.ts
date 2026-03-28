@@ -58,6 +58,12 @@ import {
   stopRemoteControl,
 } from './remote-control.js';
 import {
+  formatCursorGatewaySmokeTestMessage,
+  formatCursorGatewayStatusMessage,
+  getCursorGatewayStatus,
+  runCursorGatewaySmokeTest,
+} from './cursor-gateway.js';
+import {
   isSenderAllowed,
   isTriggerAllowed,
   loadSenderAllowlist,
@@ -746,9 +752,33 @@ async function main(): Promise<void> {
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
 
-  // Handle /remote-control and /remote-control-end commands
+  const REMOTE_CONTROL_START_COMMANDS = new Set([
+    '/remote-control',
+    '/remote_control',
+    '/cursor-remote',
+    '/cursor_remote',
+  ]);
+  const REMOTE_CONTROL_STOP_COMMANDS = new Set([
+    '/remote-control-end',
+    '/remote_control_end',
+    '/cursor-remote-end',
+    '/cursor_remote_end',
+  ]);
+  const CURSOR_STATUS_COMMANDS = new Set([
+    '/cursor',
+    '/cursor-status',
+    '/cursor_status',
+  ]);
+  const CURSOR_TEST_COMMANDS = new Set([
+    '/cursor-test',
+    '/cursor_test',
+    '/cursor-smoke',
+    '/cursor_smoke',
+  ]);
+
+  // Handle remote-control (and cursor-remote alias) commands
   async function handleRemoteControl(
-    command: string,
+    action: 'start' | 'stop',
     chatJid: string,
     msg: NewMessage,
   ): Promise<void> {
@@ -764,7 +794,7 @@ async function main(): Promise<void> {
     const channel = findChannel(channels, chatJid);
     if (!channel) return;
 
-    if (command === '/remote-control') {
+    if (action === 'start') {
       const result = await startRemoteControl(
         msg.sender,
         chatJid,
@@ -788,13 +818,57 @@ async function main(): Promise<void> {
     }
   }
 
+  async function handleCursorStatus(chatJid: string): Promise<void> {
+    const channel = findChannel(channels, chatJid);
+    if (!channel) return;
+
+    const status = await getCursorGatewayStatus({ probe: true });
+    await channel.sendMessage(
+      chatJid,
+      formatCursorGatewayStatusMessage(status),
+    );
+  }
+
+  async function handleCursorSmokeTest(chatJid: string): Promise<void> {
+    const channel = findChannel(channels, chatJid);
+    if (!channel) return;
+
+    const status = await getCursorGatewayStatus({ probe: true });
+    const smoke = await runCursorGatewaySmokeTest({ status });
+    await channel.sendMessage(
+      chatJid,
+      formatCursorGatewaySmokeTestMessage(status, smoke),
+    );
+  }
+
   // Channel callbacks (shared by all channels)
   const channelOpts = {
     onMessage: (chatJid: string, msg: NewMessage) => {
       // Remote control commands — intercept before storage
-      const trimmed = msg.content.trim();
-      if (trimmed === '/remote-control' || trimmed === '/remote-control-end') {
-        handleRemoteControl(trimmed, chatJid, msg).catch((err) =>
+      const trimmed = msg.content.trim().toLowerCase();
+      if (CURSOR_STATUS_COMMANDS.has(trimmed)) {
+        handleCursorStatus(chatJid).catch((err) =>
+          logger.error({ err, chatJid }, 'Cursor status command error'),
+        );
+        return;
+      }
+
+      if (CURSOR_TEST_COMMANDS.has(trimmed)) {
+        handleCursorSmokeTest(chatJid).catch((err) =>
+          logger.error({ err, chatJid }, 'Cursor smoke command error'),
+        );
+        return;
+      }
+
+      if (REMOTE_CONTROL_START_COMMANDS.has(trimmed)) {
+        handleRemoteControl('start', chatJid, msg).catch((err) =>
+          logger.error({ err, chatJid }, 'Remote control command error'),
+        );
+        return;
+      }
+
+      if (REMOTE_CONTROL_STOP_COMMANDS.has(trimmed)) {
+        handleRemoteControl('stop', chatJid, msg).catch((err) =>
           logger.error({ err, chatJid }, 'Remote control command error'),
         );
         return;

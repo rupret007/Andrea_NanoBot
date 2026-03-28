@@ -198,6 +198,11 @@ Typical commands:
 - manage marketplace skills:
   - `@Andy search OpenClaw skills for GitHub Actions debugging`
   - `@Andy enable that skill in this chat`
+- Cursor-focused control commands:
+  - `/cursor_status` (show 9router/Cursor endpoint readiness)
+  - `/cursor_test` (run live 9router/Cursor smoke request)
+  - `/cursor_remote` (start remote control bridge; main chat only)
+  - `/cursor_remote_end` (end remote control bridge)
 
 ## 8) OpenClaw Marketplace Behavior And Security
 
