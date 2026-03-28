@@ -116,6 +116,18 @@ ANTHROPIC_BASE_URL=https://your-anthropic-compatible-endpoint
 OPENAI_API_KEY=...
 ```
 
+9Router (Cursor-backed routing path):
+
+```bash
+ANTHROPIC_BASE_URL=http://127.0.0.1:20128/v1
+ANTHROPIC_AUTH_TOKEN=your-9router-api-key
+NANOCLAW_AGENT_MODEL=cu/default
+```
+
+This lets NanoClaw use 9Router as the Anthropic-compatible runtime endpoint while 9Router handles provider routing (including Cursor-connected models).
+When this endpoint is set to `localhost`/`127.0.0.1`, NanoClaw rewrites it to
+the active runtime host alias inside containers.
+
 Windows + Podman local gateway (auto-managed by service wrapper):
 
 ```bash

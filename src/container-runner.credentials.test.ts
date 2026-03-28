@@ -83,6 +83,7 @@ vi.mock('./mount-security.js', () => ({
 vi.mock('./container-runtime.js', () => ({
   CONTAINER_RUNTIME_BIN: 'docker',
   CONTAINER_RUNTIME_NAME: 'docker',
+  getContainerRuntimeHostAlias: () => 'host.docker.internal',
   hostGatewayArgs: () => [],
   normalizeRuntimeArgs: (args: string[]) => args,
   readonlyMountArgs: (h: string, c: string) => ['-v', `${h}:${c}:ro`],
@@ -200,6 +201,47 @@ describe('container-runner credential env wiring', () => {
         'ANTHROPIC_AUTH_TOKEN=onecli-placeholder',
       ]),
     );
+  });
+
+  it('rewrites localhost Anthropic endpoint to runtime host alias when OneCLI is active', async () => {
+    mockEnvValues = {
+      ANTHROPIC_BASE_URL: 'http://127.0.0.1:20128/v1',
+    };
+
+    const resultPromise = runContainerAgent(testGroup, testInput, () => {});
+    await waitForSpawnCall();
+    emitSuccessfulExit(fakeProc);
+    await resultPromise;
+
+    const args = spawnMock.mock.calls[0]?.[1] as string[];
+    expect(args).toEqual(
+      expect.arrayContaining([
+        '-e',
+        'ANTHROPIC_BASE_URL=http://host.docker.internal:20128/v1',
+        '-e',
+        'NANOCLAW_AGENT_MODEL=cu/default',
+        '-e',
+        'ANTHROPIC_AUTH_TOKEN=onecli-placeholder',
+      ]),
+    );
+  });
+
+  it('keeps explicit model override even when endpoint matches 9router', async () => {
+    mockEnvValues = {
+      ANTHROPIC_BASE_URL: 'http://127.0.0.1:20128/v1',
+      NANOCLAW_AGENT_MODEL: 'cu/gpt-5',
+    };
+
+    const resultPromise = runContainerAgent(testGroup, testInput, () => {});
+    await waitForSpawnCall();
+    emitSuccessfulExit(fakeProc);
+    await resultPromise;
+
+    const args = spawnMock.mock.calls[0]?.[1] as string[];
+    expect(args).toEqual(
+      expect.arrayContaining(['-e', 'NANOCLAW_AGENT_MODEL=cu/gpt-5']),
+    );
+    expect(args).not.toContain('NANOCLAW_AGENT_MODEL=cu/default');
   });
 
   it('maps OPENAI_BASE_URL to ANTHROPIC_BASE_URL when OneCLI is active', async () => {
@@ -357,6 +399,42 @@ describe('container-runner credential env wiring', () => {
         'nanoclaw-openai',
         '-e',
         'ANTHROPIC_BASE_URL=http://litellm-gateway:4000',
+      ]),
+    );
+  });
+
+  it('preserves explicit local custom endpoint port instead of forcing local gateway binding', async () => {
+    applyContainerConfigMock.mockResolvedValue(false);
+    mockEnvValues = {
+      ANTHROPIC_BASE_URL: 'http://127.0.0.1:20128/v1',
+      OPENAI_API_KEY: 'sk-openai-123',
+    };
+    vi.mocked(fs.existsSync).mockImplementation((candidatePath) =>
+      isLocalGatewayStatePath(candidatePath),
+    );
+    vi.mocked(fs.readFileSync).mockImplementation((candidatePath) => {
+      if (isLocalGatewayStatePath(candidatePath)) {
+        return JSON.stringify({
+          runtime: 'docker',
+          network: 'nanoclaw-openai',
+          endpoint: 'http://litellm-gateway:4000',
+        });
+      }
+      return '';
+    });
+
+    const resultPromise = runContainerAgent(testGroup, testInput, () => {});
+    await waitForSpawnCall();
+    emitSuccessfulExit(fakeProc);
+    await resultPromise;
+
+    const args = spawnMock.mock.calls[0]?.[1] as string[];
+    expect(args).not.toContain('--network');
+    expect(args).not.toContain('nanoclaw-openai');
+    expect(args).toEqual(
+      expect.arrayContaining([
+        '-e',
+        'ANTHROPIC_BASE_URL=http://host.docker.internal:20128/v1',
       ]),
     );
   });

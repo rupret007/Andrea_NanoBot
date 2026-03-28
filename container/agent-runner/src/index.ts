@@ -493,17 +493,22 @@ async function runQuery(
       const fallbackErrorText = isErrorSubtype
         ? combinedErrorText ||
           textResult ||
+          'I hit an internal execution issue while processing that request. Please try again. If it keeps happening, I can switch to a different integration path.'
+        : null;
+      const debugErrorText = isErrorSubtype
+        ? combinedErrorText ||
+          textResult ||
           `Agent execution failed (${message.subtype})`
         : null;
       log(
-        `Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`,
+        `Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}${combinedErrorText ? ` errors=${combinedErrorText.slice(0, 200)}` : ''}`,
       );
       writeOutput({
         status: isErrorSubtype ? 'error' : 'success',
-        result: textResult || fallbackErrorText,
+        result: isErrorSubtype ? fallbackErrorText : textResult,
         newSessionId,
         ...(isErrorSubtype
-          ? { error: fallbackErrorText || 'Agent execution failed' }
+          ? { error: debugErrorText || 'Agent execution failed' }
           : {}),
       });
     }

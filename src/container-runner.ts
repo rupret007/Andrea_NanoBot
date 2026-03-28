@@ -25,6 +25,7 @@ import { logger } from './logger.js';
 import {
   CONTAINER_RUNTIME_BIN,
   CONTAINER_RUNTIME_NAME,
+  getContainerRuntimeHostAlias,
   hostGatewayArgs,
   normalizeRuntimeArgs,
   readonlyMountArgs,
@@ -98,10 +99,17 @@ const LOCAL_OPENAI_GATEWAY_STATE_PATH = path.join(
 const LOCAL_ENDPOINT_REWRITE_HOSTS = new Set([
   'localhost',
   '127.0.0.1',
+  '::1',
   'host.containers.internal',
   'host.docker.internal',
   'api.openai.com',
 ]);
+const LOOPBACK_ENDPOINT_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
+const CONTAINER_HOST_ALIAS_HOSTS = new Set([
+  'host.containers.internal',
+  'host.docker.internal',
+]);
+const NINE_ROUTER_DEFAULT_PORT = '20128';
 const LOG_SAFE_ENV_KEYS = new Set([
   'TZ',
   'HOME',
@@ -239,6 +247,80 @@ function parseEndpointHostname(value: string): string | null {
   }
 }
 
+function parseEndpoint(value: string): URL | null {
+  const candidate = value.trim();
+  if (!candidate) return null;
+  try {
+    return new URL(candidate);
+  } catch {
+    return null;
+  }
+}
+
+function parseExplicitEndpointPort(value: string): string | null {
+  const endpoint = parseEndpoint(value);
+  if (!endpoint) return null;
+  return endpoint.port || null;
+}
+
+function rewriteEndpointForContainer(endpointValue: string): string {
+  const endpoint = parseEndpoint(endpointValue);
+  if (!endpoint) return endpointValue;
+
+  const host = endpoint.hostname.toLowerCase();
+  if (
+    !LOOPBACK_ENDPOINT_HOSTS.has(host) &&
+    !CONTAINER_HOST_ALIAS_HOSTS.has(host)
+  ) {
+    return endpointValue;
+  }
+
+  const runtimeHostAlias = getContainerRuntimeHostAlias();
+  endpoint.hostname = runtimeHostAlias;
+  return endpoint.toString();
+}
+
+function rewriteRuntimeEndpointEnvForContainer(
+  runtimeEndpointEnv: Record<string, string>,
+): Record<string, string> {
+  const rewritten: Record<string, string> = {};
+  for (const [key, value] of Object.entries(runtimeEndpointEnv)) {
+    rewritten[key] = rewriteEndpointForContainer(value);
+  }
+  return rewritten;
+}
+
+function endpointLooksLike9Router(endpointValue: string): boolean {
+  const endpoint = parseEndpoint(endpointValue);
+  if (!endpoint) return false;
+  if (endpoint.port === NINE_ROUTER_DEFAULT_PORT) return true;
+  return endpoint.hostname.toLowerCase().includes('9router');
+}
+
+function resolveModelOverridesForRuntime(
+  runtimeEndpointEnv: Record<string, string>,
+): Record<string, string> {
+  const configured = collectModelOverrideEnv();
+  if (
+    configured.NANOCLAW_AGENT_MODEL ||
+    configured.CLAUDE_CODE_MODEL ||
+    configured.CLAUDE_MODEL
+  ) {
+    return configured;
+  }
+
+  const endpoint =
+    runtimeEndpointEnv.ANTHROPIC_BASE_URL || runtimeEndpointEnv.OPENAI_BASE_URL;
+  if (!endpoint || !endpointLooksLike9Router(endpoint)) {
+    return configured;
+  }
+
+  return {
+    ...configured,
+    NANOCLAW_AGENT_MODEL: 'cu/default',
+  };
+}
+
 function readLocalOpenAiGatewayState(): LocalOpenAiGatewayState | null {
   if (!fs.existsSync(LOCAL_OPENAI_GATEWAY_STATE_PATH)) {
     return null;
@@ -292,6 +374,20 @@ function resolveLocalOpenAiGatewayBinding(
     const host = parseEndpointHostname(configuredEndpoint);
     if (!host || !LOCAL_ENDPOINT_REWRITE_HOSTS.has(host)) {
       return null;
+    }
+
+    // If users explicitly point to a local endpoint on a different port
+    // (for example 9router on :20128), preserve that endpoint instead of
+    // rewriting to the local OpenAI gateway container binding.
+    if (
+      LOOPBACK_ENDPOINT_HOSTS.has(host) ||
+      CONTAINER_HOST_ALIAS_HOSTS.has(host)
+    ) {
+      const configuredPort = parseExplicitEndpointPort(configuredEndpoint);
+      const statePort = parseExplicitEndpointPort(state.endpoint ?? '');
+      if (configuredPort && statePort && configuredPort !== statePort) {
+        return null;
+      }
     }
   } else if (hasAnthropicDirectCreds) {
     return null;
@@ -576,6 +672,12 @@ async function buildContainerArgs(
     );
   }
 
+  const runtimeEndpointEnvForContainer =
+    rewriteRuntimeEndpointEnvForContainer(runtimeEndpointEnv);
+  const modelOverrides = resolveModelOverridesForRuntime(
+    runtimeEndpointEnvForContainer,
+  );
+
   // Pass host timezone so container's local time matches the user's
   args.push('-e', `TZ=${TIMEZONE}`);
   args.push('-e', `NANOCLAW_CONTAINER_RUNTIME=${CONTAINER_RUNTIME_NAME}`);
@@ -587,15 +689,14 @@ async function buildContainerArgs(
     agent: agentIdentifier,
   });
   if (onecliApplied) {
-    const modelOverrides = collectModelOverrideEnv();
-    for (const [key, value] of Object.entries(runtimeEndpointEnv)) {
+    for (const [key, value] of Object.entries(runtimeEndpointEnvForContainer)) {
       args.push('-e', `${key}=${value}`);
     }
     for (const [key, value] of Object.entries(modelOverrides)) {
       args.push('-e', `${key}=${value}`);
     }
     if (
-      runtimeEndpointEnv.ANTHROPIC_BASE_URL &&
+      runtimeEndpointEnvForContainer.ANTHROPIC_BASE_URL &&
       !hasAnthropicAuthEnvArg(args)
     ) {
       // Claude SDK expects an auth token env var to be present. When OneCLI
@@ -603,13 +704,19 @@ async function buildContainerArgs(
       // gateway layer and the real secret never enters the container.
       args.push('-e', `ANTHROPIC_AUTH_TOKEN=${ONECLI_AUTH_PLACEHOLDER}`);
     }
+    if (modelOverrides.NANOCLAW_AGENT_MODEL === 'cu/default') {
+      logger.info(
+        { containerName },
+        'Detected 9router endpoint; defaulting model override to cu/default',
+      );
+    }
     logger.info({ containerName }, 'OneCLI gateway config applied');
   } else {
-    const fallbackCredentials =
-      collectFallbackCredentialEnv(runtimeEndpointEnv);
-    const modelOverrides = collectModelOverrideEnv();
+    const fallbackCredentials = collectFallbackCredentialEnv(
+      runtimeEndpointEnvForContainer,
+    );
     const passthroughEnv = {
-      ...runtimeEndpointEnv,
+      ...runtimeEndpointEnvForContainer,
       ...fallbackCredentials,
       ...modelOverrides,
     };

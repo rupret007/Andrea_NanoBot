@@ -209,6 +209,18 @@ ANTHROPIC_BASE_URL=https://your-anthropic-compatible-endpoint.com
 OPENAI_API_KEY=your-openai-key
 ```
 
+9Router (including Cursor-backed model routing):
+
+```bash
+ANTHROPIC_BASE_URL=http://127.0.0.1:20128/v1
+ANTHROPIC_AUTH_TOKEN=your-9router-api-key
+NANOCLAW_AGENT_MODEL=cu/default
+```
+
+`localhost` / `127.0.0.1` endpoints are automatically rewritten to the active
+container runtime host alias inside containers (`host.docker.internal` or
+`host.containers.internal`).
+
 This allows you to use:
 
 - Local models via [Ollama](https://ollama.ai) with an API proxy
