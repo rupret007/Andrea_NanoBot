@@ -48,6 +48,7 @@ For Telegram-first installs, you can bootstrap the main control chat by DMing th
 
 Need the full local operator guide (setup + usage + add-ons)?
 See [docs/SETUP_AND_FEATURES_GUIDE.md](docs/SETUP_AND_FEATURES_GUIDE.md).
+For the in-chat command reference and onboarding flow, see [docs/CHANNEL_COMMANDS_AND_ONBOARDING.md](docs/CHANNEL_COMMANDS_AND_ONBOARDING.md).
 For a feature-by-feature add-on index, see [docs/ADDONS_AND_FEATURE_MATRIX.md](docs/ADDONS_AND_FEATURE_MATRIX.md).
 For the full test/release checklist used each major iteration, see [docs/TESTING_AND_RELEASE_RUNBOOK.md](docs/TESTING_AND_RELEASE_RUNBOOK.md).
 
@@ -86,20 +87,20 @@ For the full test/release checklist used each major iteration, see [docs/TESTING
 
 ## Usage
 
-Talk to your assistant with the trigger word (default: `@Andy`):
+Talk to your assistant with your trigger word (for example `@Andrea`):
 
 ```
-@Andy send an overview of the sales pipeline every weekday morning at 9am (has access to my Obsidian vault folder)
-@Andy review the git history for the past week each Friday and update the README if there's drift
-@Andy every Monday at 8am, compile news on AI developments from Hacker News and TechCrunch and message me a briefing
+@Andrea send an overview of the sales pipeline every weekday morning at 9am (has access to my Obsidian vault folder)
+@Andrea review the git history for the past week each Friday and update the README if there's drift
+@Andrea every Monday at 8am, compile news on AI developments from Hacker News and TechCrunch and message me a briefing
 ```
 
 From the main channel (your self-chat), you can manage groups and tasks:
 
 ```
-@Andy list all scheduled tasks across groups
-@Andy pause the Monday briefing task
-@Andy join the Family Chat group
+@Andrea list all scheduled tasks across groups
+@Andrea pause the Monday briefing task
+@Andrea join the Family Chat group
 ```
 
 Cursor-focused runtime checks are also available as control commands:
@@ -111,11 +112,20 @@ Cursor-focused runtime checks are also available as control commands:
 /cursor_remote_end
 ```
 
+Telegram also exposes a friendlier discovery flow for new users:
+
+```
+/start
+/help
+/commands
+/features
+```
+
 You can also install community OpenClaw skills without giving them access to every chat:
 
 ```
-@Andy search for a community skill that can review GitHub Actions failures
-@Andy enable the martok9803-ci-whisperer skill in this chat
+@Andrea search for a community skill that can review GitHub Actions failures
+@Andrea enable the martok9803-ci-whisperer skill in this chat
 ```
 
 NanoClaw caches community skills under `data/marketplace/skills/<owner>/<slug>/` and only copies them into a chat's isolated `.claude/skills` directory when that chat explicitly enables them. A skill enabled in one chat does not automatically appear in the others, and disabling it removes only that chat's copy.

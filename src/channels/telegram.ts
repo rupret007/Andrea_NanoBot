@@ -61,29 +61,75 @@ export function extractTelegramLeadingCommand(
 
 export function buildTelegramHelpText(assistantName = ASSISTANT_NAME): string {
   return [
-    `Hi, I'm ${assistantName}. Here's how to use me in this chat:`,
+    buildTelegramWelcomeText(assistantName),
     '',
-    '- In groups: mention me (for example `@Andrea`) or use bot commands.',
-    '- In direct chat: send normal messages and commands directly.',
+    buildTelegramCommandsText(),
     '',
-    '*Quick Commands*',
-    '- `/help` - show this guide',
+    buildTelegramFeaturesText(assistantName),
+  ].join('\n');
+}
+
+export function buildTelegramWelcomeText(
+  assistantName = ASSISTANT_NAME,
+): string {
+  const mentionExample = `@${assistantName}`;
+
+  return [
+    `*Welcome to ${assistantName}*`,
+    '',
+    '- In a direct chat: send normal messages or slash commands.',
+    `- In a group: mention me (for example \`${mentionExample}\`) when you want me to act.`,
+    '- First-time Telegram setup: DM me and run `/registermain`.',
+    '- Use `/commands` for a command reference and `/features` for capability details.',
+    '',
+    '*Quick Start*',
+    `- \`${mentionExample} add "renew passport" to my to-do list\``,
+    `- \`${mentionExample} remind me tomorrow at 3pm to call Sam\``,
+    `- \`${mentionExample} research the best family calendar apps and summarize them\``,
+  ].join('\n');
+}
+
+export function buildTelegramCommandsText(): string {
+  return [
+    '*Commands*',
+    '',
+    '- `/start` - show the quick-start welcome message',
+    '- `/help` - show the full guide',
+    '- `/commands` - show the command reference',
+    '- `/features` - show capability overview',
     '- `/ping` - check bot health',
     '- `/chatid` - show chat ID and chat type',
     '- `/registermain` - bootstrap main control chat (DM only)',
     '- `/cursor_status` - show Cursor/9router integration readiness',
     '- `/cursor_test` - run live Cursor/9router smoke test',
+    '- `/cursor_remote` - start remote control bridge (main chat only)',
+    '- `/cursor_remote_end` - end remote control bridge',
+  ].join('\n');
+}
+
+export function buildTelegramFeaturesText(
+  assistantName = ASSISTANT_NAME,
+): string {
+  return [
+    `*What ${assistantName} Can Do*`,
     '',
-    '*What I can do*',
     '- To-do lists, reminders, and recurring tasks',
     '- Research and summaries',
     '- Project and coding help',
     '- Enable/disable vetted community skills per chat',
-    '',
-    '*Try this*',
-    '- `@Andrea add "renew passport" to my to-do list`',
-    '- `@Andrea remind me every Monday at 9am to send updates`',
+    '- Calendar integrations through approved skills, including Apple Calendar, Google Calendar, Outlook/M365, and CalDAV options',
+    "- Secure per-chat isolation so one chat does not automatically get another chat's skills or files",
   ].join('\n');
+}
+
+function buildTelegramDescriptionText(assistantName = ASSISTANT_NAME): string {
+  return `${assistantName} helps with tasks, reminders, research, coding, and approved per-chat skills. In DM, use /registermain to set up your main control chat.`;
+}
+
+function buildTelegramShortDescriptionText(
+  assistantName = ASSISTANT_NAME,
+): string {
+  return `${assistantName}: tasks, reminders, research, coding, and chat-specific skills.`;
 }
 
 async function sendTelegramMessage(
@@ -139,8 +185,16 @@ export class TelegramChannel implements Channel {
       ctx.reply(buildTelegramHelpText(), { parse_mode: 'Markdown' });
     });
 
+    this.bot.command('commands', (ctx) => {
+      ctx.reply(buildTelegramCommandsText(), { parse_mode: 'Markdown' });
+    });
+
+    this.bot.command('features', (ctx) => {
+      ctx.reply(buildTelegramFeaturesText(), { parse_mode: 'Markdown' });
+    });
+
     this.bot.command('start', (ctx) => {
-      ctx.reply(buildTelegramHelpText(), { parse_mode: 'Markdown' });
+      ctx.reply(buildTelegramWelcomeText(), { parse_mode: 'Markdown' });
     });
 
     this.bot.command('registermain', async (ctx) => {
@@ -177,6 +231,8 @@ export class TelegramChannel implements Channel {
 
     const TELEGRAM_BOT_COMMANDS = new Set([
       'chatid',
+      'commands',
+      'features',
       'help',
       'ping',
       'registermain',
@@ -328,8 +384,28 @@ export class TelegramChannel implements Channel {
     return new Promise<void>((resolve) => {
       this.bot!.start({
         onStart: (botInfo) => {
+          this.bot!.api.setMyDescription(buildTelegramDescriptionText()).catch(
+            (err) => {
+              logger.warn({ err }, 'Failed to set Telegram bot description');
+            },
+          );
+          this.bot!.api.setMyShortDescription(
+            buildTelegramShortDescriptionText(),
+          ).catch((err) => {
+            logger.warn(
+              { err },
+              'Failed to set Telegram bot short description',
+            );
+          });
+
           this.bot!.api.setMyCommands([
+            { command: 'start', description: 'Quick start for new users' },
             { command: 'help', description: 'How Andrea works in this chat' },
+            {
+              command: 'commands',
+              description: 'List commands and control tools',
+            },
+            { command: 'features', description: 'Show what Andrea can do' },
             { command: 'ping', description: 'Check if the bot is online' },
             { command: 'chatid', description: 'Show current chat ID/type' },
             {

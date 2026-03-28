@@ -3,6 +3,10 @@
 This is the practical operator guide for this combined package.
 It focuses on real local setup, runtime behavior, and how to use the major add-ons.
 
+For the in-chat user journey and command reference, also see:
+
+- [CHANNEL_COMMANDS_AND_ONBOARDING.md](CHANNEL_COMMANDS_AND_ONBOARDING.md)
+
 ## What This Package Includes
 
 - `nanoclaw` runtime and isolation model as the base.
@@ -186,18 +190,24 @@ npm run setup -- --step verify
 
 ## 7) Daily Usage
 
-Default trigger is `@Andy` unless you changed `ASSISTANT_NAME`.
+Use your configured trigger in chats.
+In many forks this is customized to `@Andrea`, but it is controlled by `ASSISTANT_NAME`.
 
 Typical commands:
 
 - ask for regular assistance in any registered chat
 - ask for recurring tasks:
-  - `@Andy every weekday at 9am send me a sales summary`
+  - `@Andrea every weekday at 9am send me a sales summary`
 - manage groups from main chat:
-  - `@Andy join the Family group`
+  - `@Andrea join the Family group`
 - manage marketplace skills:
-  - `@Andy search OpenClaw skills for GitHub Actions debugging`
-  - `@Andy enable that skill in this chat`
+  - `@Andrea search OpenClaw skills for GitHub Actions debugging`
+  - `@Andrea enable that skill in this chat`
+- use the in-chat discovery layer:
+  - `/start`
+  - `/help`
+  - `/commands`
+  - `/features`
 - Cursor-focused control commands:
   - `/cursor_status` (show 9router/Cursor endpoint readiness)
   - `/cursor_test` (run live 9router/Cursor smoke request)
