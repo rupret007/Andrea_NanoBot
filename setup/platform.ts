@@ -1,17 +1,18 @@
 /**
  * Cross-platform detection utilities for NanoClaw setup.
  */
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 
-export type Platform = 'macos' | 'linux' | 'unknown';
+export type Platform = 'macos' | 'linux' | 'windows' | 'unknown';
 export type ServiceManager = 'launchd' | 'systemd' | 'none';
 
 export function getPlatform(): Platform {
   const platform = os.platform();
   if (platform === 'darwin') return 'macos';
   if (platform === 'linux') return 'linux';
+  if (platform === 'win32') return 'windows';
   return 'unknown';
 }
 
@@ -57,23 +58,23 @@ export function openBrowser(url: string): boolean {
   try {
     const platform = getPlatform();
     if (platform === 'macos') {
-      execSync(`open ${JSON.stringify(url)}`, { stdio: 'ignore' });
+      execFileSync('open', [url], { stdio: 'ignore' });
       return true;
     }
     if (platform === 'linux') {
       // Try xdg-open first, then wslview for WSL
       if (commandExists('xdg-open')) {
-        execSync(`xdg-open ${JSON.stringify(url)}`, { stdio: 'ignore' });
+        execFileSync('xdg-open', [url], { stdio: 'ignore' });
         return true;
       }
       if (isWSL() && commandExists('wslview')) {
-        execSync(`wslview ${JSON.stringify(url)}`, { stdio: 'ignore' });
+        execFileSync('wslview', [url], { stdio: 'ignore' });
         return true;
       }
       // WSL without wslview: try cmd.exe
       if (isWSL()) {
         try {
-          execSync(`cmd.exe /c start "" ${JSON.stringify(url)}`, {
+          execFileSync('cmd.exe', ['/c', 'start', '', url], {
             stdio: 'ignore',
           });
           return true;
@@ -81,6 +82,10 @@ export function openBrowser(url: string): boolean {
           // cmd.exe not available
         }
       }
+    }
+    if (platform === 'windows') {
+      execFileSync('cmd.exe', ['/c', 'start', '', url], { stdio: 'ignore' });
+      return true;
     }
   } catch {
     // Command failed
@@ -100,7 +105,22 @@ export function getServiceManager(): ServiceManager {
 
 export function getNodePath(): string {
   try {
-    return execSync('command -v node', { encoding: 'utf-8' }).trim();
+    if (process.platform === 'win32') {
+      const output = execFileSync('where.exe', ['node'], {
+        encoding: 'utf-8',
+      }).trim();
+      const candidates = output.split(/\r?\n/).map((v) => v.trim()).filter(Boolean);
+      const preferred = candidates.find((candidate) => {
+        const normalized = candidate.replace(/\\/g, '/').toLowerCase();
+        return (
+          !normalized.includes('/.npm/_npx/') &&
+          !normalized.includes('/npm-cache/_npx/') &&
+          !normalized.includes('/appdata/local/npm-cache/_npx/')
+        );
+      });
+      return preferred || candidates[0] || process.execPath;
+    }
+    return execFileSync('which', ['node'], { encoding: 'utf-8' }).trim();
   } catch {
     return process.execPath;
   }
@@ -108,7 +128,11 @@ export function getNodePath(): string {
 
 export function commandExists(name: string): boolean {
   try {
-    execSync(`command -v ${name}`, { stdio: 'ignore' });
+    if (process.platform === 'win32') {
+      execFileSync('where.exe', [name], { stdio: 'ignore' });
+    } else {
+      execFileSync('which', [name], { stdio: 'ignore' });
+    }
     return true;
   } catch {
     return false;
@@ -117,8 +141,13 @@ export function commandExists(name: string): boolean {
 
 export function getNodeVersion(): string | null {
   try {
-    const version = execSync('node --version', { encoding: 'utf-8' }).trim();
-    return version.replace(/^v/, '');
+    const runtimeVersion = process.versions.node?.trim();
+    if (runtimeVersion) return runtimeVersion.replace(/^v/, '');
+
+    const shellVersion = execFileSync('node', ['--version'], {
+      encoding: 'utf-8',
+    }).trim();
+    return shellVersion.replace(/^v/, '');
   } catch {
     return null;
   }

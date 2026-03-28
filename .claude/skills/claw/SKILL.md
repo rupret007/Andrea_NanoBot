@@ -14,7 +14,7 @@ description: Install the claw CLI tool — run NanoClaw agent containers from th
 - Resume a previous session with `-s <session-id>`
 - Read prompts from stdin (`--pipe`) for scripting and piping
 - List all registered groups with `--list-groups`
-- Auto-detects `container` or `docker` runtime (or override with `--runtime`)
+- Auto-detects `docker`, `podman`, or `container` runtime (or override with `--runtime`)
 - Prints the agent's response to stdout; session ID to stderr
 - Verbose mode (`-v`) shows the command, redacted payload, and exit code
 
@@ -22,7 +22,7 @@ description: Install the claw CLI tool — run NanoClaw agent containers from th
 
 - Python 3.8 or later
 - NanoClaw installed with a built and tagged container image (`nanoclaw-agent:latest`)
-- Either `container` (Apple Container, macOS 15+) or `docker` available in `PATH`
+- One of `podman`, `docker`, or `container` (Apple Container, macOS 15+) available in `PATH`
 
 ## Install
 
@@ -102,13 +102,15 @@ claw --timeout 600 "Run the full analysis"
 
 ## Troubleshooting
 
-### "neither 'container' nor 'docker' found"
+### "none of 'podman', 'docker', or 'container' were found"
 
 Install Docker Desktop or Apple Container (macOS 15+), or pass `--runtime` explicitly.
 
-### "no secrets found in .env"
+### "no local secrets found and OneCLI is unreachable"
 
-The script auto-detects your NanoClaw directory and reads `.env` from it. Check that the file exists and contains at least one of: `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`.
+The script checks `.env` first, then falls back to OneCLI availability. Ensure either:
+- `.env` contains one of `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY`
+- or OneCLI is reachable and configured (`ONECLI_URL`, `onecli secrets list`)
 
 ### Container times out
 

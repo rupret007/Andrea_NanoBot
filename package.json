@@ -5,6 +5,16 @@
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
+    "check:node": "node scripts/check-node-version.js",
+    "prebuild": "npm run check:node",
+    "prestart": "npm run check:node",
+    "predev": "npm run check:node",
+    "pretypecheck": "npm run check:node",
+    "presetup": "npm run check:node",
+    "preauth": "npm run check:node",
+    "prebuild:openclaw-market": "npm run check:node",
+    "prelint": "npm run check:node",
+    "pretest": "npm run check:node",
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
@@ -15,15 +25,19 @@
     "prepare": "husky",
     "setup": "tsx setup/index.ts",
     "auth": "tsx src/whatsapp-auth.ts",
+    "build:openclaw-market": "tsx scripts/build-openclaw-market.ts",
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:major": "tsx scripts/test-major-iteration.ts",
+    "test:major:ci": "tsx scripts/test-major-iteration.ts --skip-live-verify"
   },
   "dependencies": {
     "@onecli-sh/sdk": "^0.2.0",
     "better-sqlite3": "11.10.0",
-    "cron-parser": "5.5.0"
+    "cron-parser": "5.5.0",
+    "grammy": "^1.39.3"
   },
   "devDependencies": {
     "@eslint/js": "^9.35.0",
@@ -40,6 +54,6 @@
     "vitest": "^4.0.18"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22 <23"
   }
 }

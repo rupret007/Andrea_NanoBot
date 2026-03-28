@@ -6,6 +6,9 @@ The files in this directory are original design documents and developer referenc
 
 | This directory | Documentation site |
 |---|---|
+| [SETUP_AND_FEATURES_GUIDE.md](SETUP_AND_FEATURES_GUIDE.md) | [Introduction](https://docs.nanoclaw.dev/introduction) |
+| [TESTING_AND_RELEASE_RUNBOOK.md](TESTING_AND_RELEASE_RUNBOOK.md) | [Troubleshooting](https://docs.nanoclaw.dev/advanced/troubleshooting) |
+| [ADDONS_AND_FEATURE_MATRIX.md](ADDONS_AND_FEATURE_MATRIX.md) | [Skills system](https://docs.nanoclaw.dev/integrations/skills-system) |
 | [SPEC.md](SPEC.md) | [Architecture](https://docs.nanoclaw.dev/concepts/architecture) |
 | [SECURITY.md](SECURITY.md) | [Security model](https://docs.nanoclaw.dev/concepts/security) |
 | [REQUIREMENTS.md](REQUIREMENTS.md) | [Introduction](https://docs.nanoclaw.dev/introduction) |

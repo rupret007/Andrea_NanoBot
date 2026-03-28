@@ -8,6 +8,16 @@ import { AvailableGroup } from './container-runner.js';
 import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
+import {
+  disableOpenClawSkill,
+  DisableOpenClawSkillParams,
+  DisabledOpenClawSkill,
+  enableOpenClawSkill,
+  EnableOpenClawSkillParams,
+  EnabledOpenClawSkill,
+  InstallOpenClawSkillParams,
+  InstalledOpenClawSkill,
+} from './openclaw-market.js';
 import { RegisteredGroup } from './types.js';
 
 export interface IpcDeps {
@@ -23,6 +33,16 @@ export interface IpcDeps {
     registeredJids: Set<string>,
   ) => void;
   onTasksChanged: () => void;
+  onMarketplaceChanged: () => void;
+  enableOpenClawSkill?: (
+    params: EnableOpenClawSkillParams,
+  ) => Promise<EnabledOpenClawSkill>;
+  disableOpenClawSkill?: (
+    params: DisableOpenClawSkillParams,
+  ) => Promise<DisabledOpenClawSkill>;
+  installOpenClawSkill?: (
+    params: InstallOpenClawSkillParams,
+  ) => Promise<InstalledOpenClawSkill>;
 }
 
 let ipcWatcherRunning = false;
@@ -166,6 +186,8 @@ export async function processTaskIpc(
     groupFolder?: string;
     chatJid?: string;
     targetJid?: string;
+    skill_url?: string;
+    skill_id_or_url?: string;
     // For register_group
     jid?: string;
     name?: string;
@@ -179,6 +201,11 @@ export async function processTaskIpc(
   deps: IpcDeps,
 ): Promise<void> {
   const registeredGroups = deps.registeredGroups();
+  const runSkillEnable =
+    deps.enableOpenClawSkill ||
+    deps.installOpenClawSkill ||
+    enableOpenClawSkill;
+  const runSkillDisable = deps.disableOpenClawSkill || disableOpenClawSkill;
 
   switch (data.type) {
     case 'schedule_task':
@@ -400,6 +427,156 @@ export async function processTaskIpc(
       }
       break;
 
+    case 'enable_openclaw_skill':
+    case 'install_openclaw_skill':
+      if (data.skill_url && data.targetJid) {
+        const targetJid = data.targetJid;
+        const targetGroupEntry = registeredGroups[targetJid];
+
+        if (!targetGroupEntry) {
+          logger.warn(
+            { targetJid, skillUrl: data.skill_url },
+            'Cannot install skill: target group not registered',
+          );
+          break;
+        }
+
+        const targetFolder = targetGroupEntry.folder;
+        if (!isMain && targetFolder !== sourceGroup) {
+          logger.warn(
+            { sourceGroup, targetFolder, skillUrl: data.skill_url },
+            'Unauthorized install_openclaw_skill attempt blocked',
+          );
+          break;
+        }
+
+        try {
+          const enabled = await runSkillEnable({
+            groupFolder: targetFolder,
+            skillUrl: data.skill_url,
+          });
+          logger.info(
+            {
+              sourceGroup,
+              targetFolder,
+              skillId: enabled.skillId,
+              skillUrl: data.skill_url,
+              enabledPath: enabled.enabledPath,
+            },
+            'OpenClaw skill enabled via IPC',
+          );
+          deps.onMarketplaceChanged();
+
+          const securityBits = [
+            enabled.security.openClawStatus
+              ? `OpenClaw ${enabled.security.openClawStatus}`
+              : null,
+            enabled.security.virusTotalStatus
+              ? `VirusTotal ${enabled.security.virusTotalStatus}`
+              : null,
+          ].filter(Boolean);
+
+          const message = [
+            `Enabled community skill "${enabled.displayName}" in this chat.`,
+            securityBits.length > 0
+              ? `Security signals: ${securityBits.join(', ')}.`
+              : 'Security signals were unavailable from the registry page.',
+            'It will be available on your next message.',
+          ].join(' ');
+
+          await deps.sendMessage(targetJid, message);
+        } catch (err) {
+          logger.error(
+            {
+              err,
+              sourceGroup,
+              targetJid,
+              skillUrl: data.skill_url,
+            },
+            'OpenClaw skill enable failed',
+          );
+          await deps.sendMessage(
+            targetJid,
+            `I couldn't enable that community skill: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      } else {
+        logger.warn(
+          { data },
+          'Invalid enable_openclaw_skill request - missing required fields',
+        );
+      }
+      break;
+
+    case 'disable_openclaw_skill':
+      if (data.skill_id_or_url && data.targetJid) {
+        const targetJid = data.targetJid;
+        const targetGroupEntry = registeredGroups[targetJid];
+
+        if (!targetGroupEntry) {
+          logger.warn(
+            { targetJid, skillIdOrUrl: data.skill_id_or_url },
+            'Cannot disable skill: target group not registered',
+          );
+          break;
+        }
+
+        const targetFolder = targetGroupEntry.folder;
+        if (!isMain && targetFolder !== sourceGroup) {
+          logger.warn(
+            {
+              sourceGroup,
+              targetFolder,
+              skillIdOrUrl: data.skill_id_or_url,
+            },
+            'Unauthorized disable_openclaw_skill attempt blocked',
+          );
+          break;
+        }
+
+        try {
+          const disabled = await runSkillDisable({
+            groupFolder: targetFolder,
+            skillIdOrUrl: data.skill_id_or_url,
+          });
+          logger.info(
+            {
+              sourceGroup,
+              targetFolder,
+              skillId: disabled.skillId,
+              removedPath: disabled.removedPath,
+            },
+            'OpenClaw skill disabled via IPC',
+          );
+          deps.onMarketplaceChanged();
+
+          await deps.sendMessage(
+            targetJid,
+            `Disabled community skill "${disabled.displayName}" for this chat. It will no longer be available on the next message.`,
+          );
+        } catch (err) {
+          logger.error(
+            {
+              err,
+              sourceGroup,
+              targetJid,
+              skillIdOrUrl: data.skill_id_or_url,
+            },
+            'OpenClaw skill disable failed',
+          );
+          await deps.sendMessage(
+            targetJid,
+            `I couldn't disable that community skill: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      } else {
+        logger.warn(
+          { data },
+          'Invalid disable_openclaw_skill request - missing required fields',
+        );
+      }
+      break;
+
     case 'refresh_groups':
       // Only main group can request a refresh
       if (isMain) {
@@ -441,9 +618,9 @@ export async function processTaskIpc(
           );
           break;
         }
-        // Defense in depth: agent cannot set isMain via IPC.                                                                                                                                    
-        // Preserve isMain from the existing registration so IPC config                                                                                                                          
-        // updates (e.g. adding additionalMounts) don't strip the flag.                                                                                                                          
+        // Defense in depth: agent cannot set isMain via IPC.
+        // Preserve isMain from the existing registration so IPC config
+        // updates (e.g. adding additionalMounts) don't strip the flag.
         const existingGroup = registeredGroups[data.jid];
         deps.registerGroup(data.jid, {
           name: data.name,

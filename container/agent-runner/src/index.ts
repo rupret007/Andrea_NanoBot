@@ -325,6 +325,26 @@ function waitForIpcMessage(): Promise<string | null> {
   });
 }
 
+function resolveSdkModel(): string | undefined {
+  const explicitModel =
+    process.env.NANOCLAW_AGENT_MODEL ||
+    process.env.CLAUDE_CODE_MODEL ||
+    process.env.CLAUDE_MODEL;
+  if (explicitModel) return explicitModel;
+
+  // OpenAI-compatible Anthropic gateway mode:
+  // Claude SDK defaults can move faster than gateway model validators.
+  // Pin a broadly-supported Claude alias unless explicitly overridden.
+  const usingOpenAiCompatGateway = Boolean(
+    process.env.ANTHROPIC_BASE_URL && process.env.OPENAI_API_KEY,
+  );
+  if (usingOpenAiCompatGateway) {
+    return 'claude-3-5-sonnet-latest';
+  }
+
+  return undefined;
+}
+
 /**
  * Run a single query and stream results via writeOutput.
  * Uses MessageStream (AsyncIterable) to keep isSingleUserTurn=false,
@@ -390,6 +410,10 @@ async function runQuery(
   if (extraDirs.length > 0) {
     log(`Additional directories: ${extraDirs.join(', ')}`);
   }
+  const selectedModel = resolveSdkModel();
+  if (selectedModel) {
+    log(`Using SDK model override: ${selectedModel}`);
+  }
 
   for await (const message of query({
     prompt: stream,
@@ -415,6 +439,7 @@ async function runQuery(
       permissionMode: 'bypassPermissions',
       allowDangerouslySkipPermissions: true,
       settingSources: ['project', 'user'],
+      model: selectedModel,
       mcpServers: {
         nanoclaw: {
           command: 'node',
@@ -451,12 +476,35 @@ async function runQuery(
 
     if (message.type === 'result') {
       resultCount++;
-      const textResult = 'result' in message ? (message as { result?: string }).result : null;
-      log(`Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`);
+      const textResult =
+        'result' in message ? (message as { result?: string }).result : null;
+      const isErrorSubtype =
+        typeof message.subtype === 'string' &&
+        message.subtype.startsWith('error');
+      const resultErrors =
+        'errors' in message &&
+        Array.isArray((message as { errors?: unknown }).errors)
+          ? ((message as { errors?: string[] }).errors || [])
+              .filter((entry): entry is string => Boolean(entry))
+              .map((entry) => entry.trim())
+          : [];
+      const combinedErrorText =
+        resultErrors.length > 0 ? resultErrors.join(' | ') : null;
+      const fallbackErrorText = isErrorSubtype
+        ? combinedErrorText ||
+          textResult ||
+          `Agent execution failed (${message.subtype})`
+        : null;
+      log(
+        `Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`,
+      );
       writeOutput({
-        status: 'success',
-        result: textResult || null,
-        newSessionId
+        status: isErrorSubtype ? 'error' : 'success',
+        result: textResult || fallbackErrorText,
+        newSessionId,
+        ...(isErrorSubtype
+          ? { error: fallbackErrorText || 'Agent execution failed' }
+          : {}),
       });
     }
   }

@@ -124,6 +124,10 @@ Read the `.env` file and look for these credential variables:
 | `CLAUDE_CODE_OAUTH_TOKEN` | `anthropic` | `api.anthropic.com` |
 | `ANTHROPIC_AUTH_TOKEN` | `anthropic` | `api.anthropic.com` |
 
+For OpenAI-compatible core runtime routing, also detect:
+- `ANTHROPIC_BASE_URL` (endpoint URL)
+- `OPENAI_API_KEY` (credential value)
+
 Read `.env`:
 
 ```bash
@@ -168,6 +172,8 @@ Known container-facing credentials:
 | `OPENAI_API_KEY` | `OpenAI` | `api.openai.com` |
 | `PARALLEL_API_KEY` | `Parallel` | `api.parallel.ai` |
 
+If `ANTHROPIC_BASE_URL` is set in `.env`, treat `OPENAI_API_KEY` as a core runtime credential and use the Anthropic-compatible endpoint host (from `ANTHROPIC_BASE_URL`) as the host pattern instead of `api.openai.com`.
+
 If any of these are found with non-empty values, present them to the user:
 
 AskUserQuestion (multiSelect): "These credentials are used by container agents for outbound API calls. Moving them to the vault means agents never see the raw keys, and you can apply rate limits and policies."
@@ -203,7 +209,7 @@ If an Anthropic secret already exists, skip to Phase 4.
 
 Otherwise, register credentials using the same flow as `/setup`:
 
-AskUserQuestion: Do you want to use your **Claude subscription** (Pro/Max) or an **Anthropic API key**?
+AskUserQuestion: Which credential path do you want (Claude subscription, Anthropic API key, or OpenAI key via Anthropic-compatible gateway)?
 
 1. **Claude subscription (Pro/Max)** — description: "Uses your existing Claude Pro or Max subscription. You'll run `claude setup-token` in another terminal to get your token."
 2. **Anthropic API key** — description: "Pay-per-use API key from console.anthropic.com."
@@ -226,13 +232,22 @@ AskUserQuestion with two options:
 1. **Dashboard** — description: "Best if you have a browser on this machine. Open http://127.0.0.1:10254 and add the secret in the UI."
 2. **CLI** — description: "Best for remote/headless servers. Run: `onecli secrets create --name Anthropic --type anthropic --value YOUR_KEY --host-pattern api.anthropic.com`"
 
+#### OpenAI-compatible gateway path
+
+1. Ensure `.env` includes `ANTHROPIC_BASE_URL=https://your-anthropic-compatible-endpoint`.
+2. Register `OPENAI_API_KEY` in OneCLI with host pattern set to the endpoint host from `ANTHROPIC_BASE_URL`.
+3. CLI example:
+```bash
+onecli secrets create --name OpenAI-Compatible --type api_key --value YOUR_OPENAI_KEY --host-pattern your-anthropic-compatible-endpoint
+```
+
 #### After either path
 
 Ask them to let you know when done.
 
 **If the user's response happens to contain a token or key** (starts with `sk-ant-` or looks like a token): handle it gracefully — run the `onecli secrets create` command with that value on their behalf.
 
-**After user confirms:** verify with `onecli secrets list` that an Anthropic secret exists. If not, ask again.
+**After user confirms:** verify with `onecli secrets list` that required secret(s) exist (Anthropic direct or OpenAI-compatible endpoint). If not, ask again.
 
 ## Phase 4: Build and restart
 
@@ -269,7 +284,7 @@ Tell the user:
 
 **"OneCLI gateway not reachable" in logs:** The gateway isn't running. Check with `curl -sf http://127.0.0.1:10254/health`. Start it with `onecli start` if needed.
 
-**Container gets no credentials:** Verify `ONECLI_URL` is set in `.env` and the gateway has an Anthropic secret (`onecli secrets list`).
+**Container gets no credentials:** Verify `ONECLI_URL` is set in `.env` and the gateway has required secrets (`onecli secrets list`) — Anthropic direct secret or OpenAI-compatible endpoint secret.
 
 **Old .env credentials still present:** This skill should have removed them. Double-check `.env` for `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, or `ANTHROPIC_AUTH_TOKEN` and remove them manually if still present.
 

@@ -8,24 +8,32 @@ import path from 'path';
 
 import {
   CONTAINER_IMAGE,
+  CONTAINER_INITIAL_OUTPUT_TIMEOUT,
   CONTAINER_MAX_OUTPUT_SIZE,
   CONTAINER_TIMEOUT,
   DATA_DIR,
   GROUPS_DIR,
   IDLE_TIMEOUT,
   ONECLI_URL,
+  RUNTIME_STATE_DIR,
   TIMEZONE,
 } from './config.js';
+import { listEnabledCommunitySkillsForGroup } from './db.js';
+import { readEnvFile } from './env.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
 import {
   CONTAINER_RUNTIME_BIN,
+  CONTAINER_RUNTIME_NAME,
   hostGatewayArgs,
+  normalizeRuntimeArgs,
   readonlyMountArgs,
   stopContainer,
+  writableMountArgs,
 } from './container-runtime.js';
 import { OneCLI } from '@onecli-sh/sdk';
 import { validateAdditionalMounts } from './mount-security.js';
+import { OPENCLAW_MARKET_MANIFEST_FILENAME } from './openclaw-market.js';
 import { RegisteredGroup } from './types.js';
 
 const onecli = new OneCLI({ url: ONECLI_URL });
@@ -58,6 +66,329 @@ interface VolumeMount {
   readonly: boolean;
 }
 
+const FALLBACK_CREDENTIAL_KEYS = [
+  'CLAUDE_CODE_OAUTH_TOKEN',
+  'ANTHROPIC_API_KEY',
+  'ANTHROPIC_AUTH_TOKEN',
+  'OPENAI_API_KEY',
+] as const;
+
+const RUNTIME_ENDPOINT_ENV_KEYS = [
+  'ANTHROPIC_BASE_URL',
+  'OPENAI_BASE_URL',
+] as const;
+const MODEL_OVERRIDE_ENV_KEYS = [
+  'NANOCLAW_AGENT_MODEL',
+  'CLAUDE_CODE_MODEL',
+  'CLAUDE_MODEL',
+] as const;
+
+interface LocalOpenAiGatewayState {
+  runtime?: string;
+  network?: string;
+  endpoint?: string;
+  container_name?: string;
+}
+
+const ONECLI_AUTH_PLACEHOLDER = 'onecli-placeholder';
+const LOCAL_OPENAI_GATEWAY_STATE_PATH = path.join(
+  RUNTIME_STATE_DIR,
+  'openai-gateway-state.json',
+);
+const LOCAL_ENDPOINT_REWRITE_HOSTS = new Set([
+  'localhost',
+  '127.0.0.1',
+  'host.containers.internal',
+  'host.docker.internal',
+  'api.openai.com',
+]);
+const LOG_SAFE_ENV_KEYS = new Set([
+  'TZ',
+  'HOME',
+  'NANOCLAW_CONTAINER_RUNTIME',
+  'ANTHROPIC_BASE_URL',
+  'OPENAI_BASE_URL',
+  'ONECLI_URL',
+]);
+
+function shouldRedactEnvKey(key: string): boolean {
+  if (LOG_SAFE_ENV_KEYS.has(key)) return false;
+  return (
+    /TOKEN/i.test(key) ||
+    /API_KEY/i.test(key) ||
+    /SECRET/i.test(key) ||
+    /PASSWORD/i.test(key) ||
+    /AUTH/i.test(key)
+  );
+}
+
+export function sanitizeContainerArgsForLogs(args: string[]): string[] {
+  const sanitized = [...args];
+  for (let i = 0; i < sanitized.length - 1; i++) {
+    if (sanitized[i] !== '-e') continue;
+    const envArg = sanitized[i + 1];
+    const separator = envArg.indexOf('=');
+    if (separator <= 0) continue;
+    const key = envArg.slice(0, separator);
+    if (shouldRedactEnvKey(key)) {
+      sanitized[i + 1] = `${key}=***`;
+    }
+  }
+  return sanitized;
+}
+
+function hasContainerEnvArg(args: string[], key: string): boolean {
+  for (let i = 0; i < args.length - 1; i++) {
+    if (args[i] !== '-e') continue;
+    if (args[i + 1]?.startsWith(`${key}=`)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function hasAnthropicAuthEnvArg(args: string[]): boolean {
+  return (
+    hasContainerEnvArg(args, 'CLAUDE_CODE_OAUTH_TOKEN') ||
+    hasContainerEnvArg(args, 'ANTHROPIC_API_KEY') ||
+    hasContainerEnvArg(args, 'ANTHROPIC_AUTH_TOKEN')
+  );
+}
+
+function collectRuntimeEndpointEnv(): Record<string, string> {
+  const fromEnvFile = readEnvFile([...RUNTIME_ENDPOINT_ENV_KEYS]);
+  const env: Record<string, string> = {};
+
+  for (const key of RUNTIME_ENDPOINT_ENV_KEYS) {
+    const value = process.env[key] || fromEnvFile[key];
+    if (value) env[key] = value;
+  }
+
+  // Claude SDK expects ANTHROPIC_BASE_URL for endpoint overrides. If users
+  // provide OPENAI_BASE_URL only, mirror it so OpenAI-compatible gateways work
+  // without requiring duplicate environment keys.
+  if (!env.ANTHROPIC_BASE_URL && env.OPENAI_BASE_URL) {
+    env.ANTHROPIC_BASE_URL = env.OPENAI_BASE_URL;
+  }
+
+  return env;
+}
+
+function collectFallbackCredentialEnv(
+  endpointEnv: Record<string, string>,
+): Record<string, string> {
+  const fromEnvFile = readEnvFile([...FALLBACK_CREDENTIAL_KEYS]);
+  const env: Record<string, string> = {};
+
+  for (const key of FALLBACK_CREDENTIAL_KEYS) {
+    const value = process.env[key] || fromEnvFile[key];
+    if (value) env[key] = value;
+  }
+
+  // OpenAI-compatible bridge:
+  // If the user configured an Anthropic-compatible base URL and only has an
+  // OpenAI key, use that key as the auth token expected by the Claude SDK.
+  const hasAnthropicAuth =
+    !!env.CLAUDE_CODE_OAUTH_TOKEN ||
+    !!env.ANTHROPIC_API_KEY ||
+    !!env.ANTHROPIC_AUTH_TOKEN;
+  if (
+    !hasAnthropicAuth &&
+    endpointEnv.ANTHROPIC_BASE_URL &&
+    env.OPENAI_API_KEY
+  ) {
+    env.ANTHROPIC_AUTH_TOKEN = env.OPENAI_API_KEY;
+  }
+
+  return env;
+}
+
+function collectModelOverrideEnv(): Record<string, string> {
+  const fromEnvFile = readEnvFile([...MODEL_OVERRIDE_ENV_KEYS]);
+  const env: Record<string, string> = {};
+  for (const key of MODEL_OVERRIDE_ENV_KEYS) {
+    const value = process.env[key] || fromEnvFile[key];
+    if (value) env[key] = value;
+  }
+  return env;
+}
+
+function hasContainerFlagValue(
+  args: string[],
+  flag: string,
+  value: string,
+): boolean {
+  for (let i = 0; i < args.length - 1; i++) {
+    if (args[i] === flag && args[i + 1] === value) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function parseEndpointHostname(value: string): string | null {
+  const candidate = value.trim();
+  if (!candidate) return null;
+  try {
+    const parsed = new URL(
+      /^https?:\/\//i.test(candidate) ? candidate : `https://${candidate}`,
+    );
+    return parsed.hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+function readLocalOpenAiGatewayState(): LocalOpenAiGatewayState | null {
+  if (!fs.existsSync(LOCAL_OPENAI_GATEWAY_STATE_PATH)) {
+    return null;
+  }
+  try {
+    const raw = fs
+      .readFileSync(LOCAL_OPENAI_GATEWAY_STATE_PATH, 'utf-8')
+      .replace(/^\uFEFF/, '');
+    const parsed = JSON.parse(raw) as LocalOpenAiGatewayState;
+    if (
+      !parsed ||
+      typeof parsed.network !== 'string' ||
+      !parsed.network ||
+      typeof parsed.endpoint !== 'string' ||
+      !parsed.endpoint
+    ) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function resolveLocalOpenAiGatewayBinding(
+  runtimeEndpointEnv: Record<string, string>,
+): { endpoint: string; network: string } | null {
+  const state = readLocalOpenAiGatewayState();
+  if (!state) return null;
+  if (state.runtime && state.runtime !== CONTAINER_RUNTIME_NAME) return null;
+
+  const envFileCreds = readEnvFile([...FALLBACK_CREDENTIAL_KEYS]);
+  const hasOpenAiApiKey = Boolean(
+    process.env.OPENAI_API_KEY || envFileCreds.OPENAI_API_KEY,
+  );
+  if (!hasOpenAiApiKey) return null;
+
+  const hasAnthropicDirectCreds = Boolean(
+    process.env.CLAUDE_CODE_OAUTH_TOKEN ||
+    envFileCreds.CLAUDE_CODE_OAUTH_TOKEN ||
+    process.env.ANTHROPIC_API_KEY ||
+    envFileCreds.ANTHROPIC_API_KEY ||
+    process.env.ANTHROPIC_AUTH_TOKEN ||
+    envFileCreds.ANTHROPIC_AUTH_TOKEN,
+  );
+
+  const configuredEndpoint =
+    runtimeEndpointEnv.ANTHROPIC_BASE_URL || runtimeEndpointEnv.OPENAI_BASE_URL;
+
+  if (configuredEndpoint) {
+    const host = parseEndpointHostname(configuredEndpoint);
+    if (!host || !LOCAL_ENDPOINT_REWRITE_HOSTS.has(host)) {
+      return null;
+    }
+  } else if (hasAnthropicDirectCreds) {
+    return null;
+  }
+
+  return {
+    endpoint: state.endpoint!,
+    network: state.network!,
+  };
+}
+
+function ensureSecretShadowFile(): string {
+  const shadowFile = path.join(RUNTIME_STATE_DIR, 'secret-shadow-empty');
+  fs.mkdirSync(path.dirname(shadowFile), { recursive: true });
+  if (!fs.existsSync(shadowFile)) {
+    fs.writeFileSync(shadowFile, '');
+  }
+  return shadowFile;
+}
+
+function syncSkillsForGroup(
+  groupFolder: string,
+  groupSessionsDir: string,
+): void {
+  const skillsSrc = path.join(process.cwd(), 'container', 'skills');
+  const skillsDst = path.join(groupSessionsDir, 'skills');
+  fs.mkdirSync(skillsDst, { recursive: true });
+
+  if (fs.existsSync(skillsSrc)) {
+    for (const skillDir of fs.readdirSync(skillsSrc)) {
+      const srcDir = path.join(skillsSrc, skillDir);
+      if (!fs.statSync(srcDir).isDirectory()) continue;
+      const dstDir = path.join(skillsDst, skillDir);
+      fs.cpSync(srcDir, dstDir, { recursive: true, force: true });
+    }
+  }
+
+  let enabledCommunitySkills: ReturnType<
+    typeof listEnabledCommunitySkillsForGroup
+  > = [];
+  try {
+    enabledCommunitySkills = listEnabledCommunitySkillsForGroup(groupFolder);
+  } catch (err) {
+    logger.debug(
+      { groupFolder, err },
+      'Skipping community skill sync because the marketplace DB is unavailable',
+    );
+  }
+  const enabledCommunityDirs = new Set<string>();
+  for (const skill of enabledCommunitySkills) {
+    if (!fs.existsSync(skill.cache_path)) {
+      logger.warn(
+        {
+          groupFolder,
+          skillId: skill.skill_id,
+          cachePath: skill.cache_path,
+        },
+        'Enabled community skill cache missing; skipping sync',
+      );
+      continue;
+    }
+    enabledCommunityDirs.add(skill.cache_dir_name);
+  }
+
+  for (const entry of fs.readdirSync(skillsDst)) {
+    const candidateDir = path.join(skillsDst, entry);
+    if (
+      !fs.existsSync(candidateDir) ||
+      !fs.statSync(candidateDir).isDirectory()
+    ) {
+      continue;
+    }
+
+    const manifestPath = path.join(
+      candidateDir,
+      OPENCLAW_MARKET_MANIFEST_FILENAME,
+    );
+    if (
+      fs.existsSync(manifestPath) &&
+      !enabledCommunityDirs.has(path.basename(candidateDir))
+    ) {
+      fs.rmSync(candidateDir, { recursive: true, force: true });
+    }
+  }
+
+  for (const skill of enabledCommunitySkills) {
+    if (!enabledCommunityDirs.has(skill.cache_dir_name)) continue;
+
+    const destinationDir = path.join(skillsDst, skill.cache_dir_name);
+    fs.rmSync(destinationDir, { recursive: true, force: true });
+    fs.cpSync(skill.cache_path, destinationDir, {
+      recursive: true,
+      force: true,
+    });
+  }
+}
+
 function buildVolumeMounts(
   group: RegisteredGroup,
   isMain: boolean,
@@ -83,7 +414,7 @@ function buildVolumeMounts(
     const envFile = path.join(projectRoot, '.env');
     if (fs.existsSync(envFile)) {
       mounts.push({
-        hostPath: '/dev/null',
+        hostPath: ensureSecretShadowFile(),
         containerPath: '/workspace/project/.env',
         readonly: true,
       });
@@ -148,17 +479,7 @@ function buildVolumeMounts(
     );
   }
 
-  // Sync skills from container/skills/ into each group's .claude/skills/
-  const skillsSrc = path.join(process.cwd(), 'container', 'skills');
-  const skillsDst = path.join(groupSessionsDir, 'skills');
-  if (fs.existsSync(skillsSrc)) {
-    for (const skillDir of fs.readdirSync(skillsSrc)) {
-      const srcDir = path.join(skillsSrc, skillDir);
-      if (!fs.statSync(srcDir).isDirectory()) continue;
-      const dstDir = path.join(skillsDst, skillDir);
-      fs.cpSync(srcDir, dstDir, { recursive: true });
-    }
-  }
+  syncSkillsForGroup(group.folder, groupSessionsDir);
   mounts.push({
     hostPath: groupSessionsDir,
     containerPath: '/home/node/.claude',
@@ -229,9 +550,35 @@ async function buildContainerArgs(
   agentIdentifier?: string,
 ): Promise<string[]> {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
+  const runtimeEndpointEnv = collectRuntimeEndpointEnv();
+  const localOpenAiGatewayBinding =
+    resolveLocalOpenAiGatewayBinding(runtimeEndpointEnv);
+
+  if (localOpenAiGatewayBinding) {
+    runtimeEndpointEnv.ANTHROPIC_BASE_URL = localOpenAiGatewayBinding.endpoint;
+    runtimeEndpointEnv.OPENAI_BASE_URL = localOpenAiGatewayBinding.endpoint;
+    if (
+      !hasContainerFlagValue(
+        args,
+        '--network',
+        localOpenAiGatewayBinding.network,
+      )
+    ) {
+      args.push('--network', localOpenAiGatewayBinding.network);
+    }
+    logger.info(
+      {
+        containerName,
+        network: localOpenAiGatewayBinding.network,
+        endpoint: localOpenAiGatewayBinding.endpoint,
+      },
+      'Using local OpenAI gateway container binding',
+    );
+  }
 
   // Pass host timezone so container's local time matches the user's
   args.push('-e', `TZ=${TIMEZONE}`);
+  args.push('-e', `NANOCLAW_CONTAINER_RUNTIME=${CONTAINER_RUNTIME_NAME}`);
 
   // OneCLI gateway handles credential injection — containers never see real secrets.
   // The gateway intercepts HTTPS traffic and injects API keys or OAuth tokens.
@@ -240,12 +587,51 @@ async function buildContainerArgs(
     agent: agentIdentifier,
   });
   if (onecliApplied) {
+    const modelOverrides = collectModelOverrideEnv();
+    for (const [key, value] of Object.entries(runtimeEndpointEnv)) {
+      args.push('-e', `${key}=${value}`);
+    }
+    for (const [key, value] of Object.entries(modelOverrides)) {
+      args.push('-e', `${key}=${value}`);
+    }
+    if (
+      runtimeEndpointEnv.ANTHROPIC_BASE_URL &&
+      !hasAnthropicAuthEnvArg(args)
+    ) {
+      // Claude SDK expects an auth token env var to be present. When OneCLI
+      // handles real credential injection, this placeholder is replaced at the
+      // gateway layer and the real secret never enters the container.
+      args.push('-e', `ANTHROPIC_AUTH_TOKEN=${ONECLI_AUTH_PLACEHOLDER}`);
+    }
     logger.info({ containerName }, 'OneCLI gateway config applied');
   } else {
-    logger.warn(
-      { containerName },
-      'OneCLI gateway not reachable — container will have no credentials',
-    );
+    const fallbackCredentials =
+      collectFallbackCredentialEnv(runtimeEndpointEnv);
+    const modelOverrides = collectModelOverrideEnv();
+    const passthroughEnv = {
+      ...runtimeEndpointEnv,
+      ...fallbackCredentials,
+      ...modelOverrides,
+    };
+
+    for (const [key, value] of Object.entries(passthroughEnv)) {
+      args.push('-e', `${key}=${value}`);
+    }
+
+    if (Object.keys(passthroughEnv).length > 0) {
+      logger.warn(
+        {
+          containerName,
+          fallbackKeys: Object.keys(passthroughEnv),
+        },
+        'OneCLI gateway not reachable — using .env credential passthrough fallback',
+      );
+    } else {
+      logger.warn(
+        { containerName },
+        'OneCLI gateway not reachable and no fallback credentials found',
+      );
+    }
   }
 
   // Runtime-specific args for host gateway resolution
@@ -265,13 +651,13 @@ async function buildContainerArgs(
     if (mount.readonly) {
       args.push(...readonlyMountArgs(mount.hostPath, mount.containerPath));
     } else {
-      args.push('-v', `${mount.hostPath}:${mount.containerPath}`);
+      args.push(...writableMountArgs(mount.hostPath, mount.containerPath));
     }
   }
 
   args.push(CONTAINER_IMAGE);
 
-  return args;
+  return normalizeRuntimeArgs(args);
 }
 
 export async function runContainerAgent(
@@ -297,6 +683,7 @@ export async function runContainerAgent(
     containerName,
     agentIdentifier,
   );
+  const containerArgsForLogs = sanitizeContainerArgsForLogs(containerArgs);
 
   logger.debug(
     {
@@ -306,7 +693,7 @@ export async function runContainerAgent(
         (m) =>
           `${m.hostPath} -> ${m.containerPath}${m.readonly ? ' (ro)' : ''}`,
       ),
-      containerArgs: containerArgs.join(' '),
+      containerArgs: containerArgsForLogs.join(' '),
     },
     'Container mount configuration',
   );
@@ -343,6 +730,69 @@ export async function runContainerAgent(
     let parseBuffer = '';
     let newSessionId: string | undefined;
     let outputChain = Promise.resolve();
+    let timedOut = false;
+    let timeoutReason: 'hard' | 'no_output' | null = null;
+    let hadStreamingOutput = false;
+    let hadStructuredOutput = false;
+
+    const configTimeout = group.containerConfig?.timeout || CONTAINER_TIMEOUT;
+    // Grace period: hard timeout must be at least IDLE_TIMEOUT + 30s so the
+    // graceful _close sentinel has time to trigger before the hard kill fires.
+    const timeoutMs = Math.max(configTimeout, IDLE_TIMEOUT + 30_000);
+    const initialOutputTimeoutMs = Math.max(
+      1_000,
+      Math.min(timeoutMs, CONTAINER_INITIAL_OUTPUT_TIMEOUT),
+    );
+
+    const stopContainerGracefully = (reason: string) => {
+      try {
+        stopContainer(containerName);
+      } catch (err) {
+        logger.warn(
+          { group: group.name, containerName, err, reason },
+          'Graceful stop failed, force killing',
+        );
+        container.kill('SIGKILL');
+      }
+    };
+
+    const killOnTimeout = () => {
+      timedOut = true;
+      timeoutReason = 'hard';
+      logger.error(
+        { group: group.name, containerName, timeoutMs },
+        'Container timeout, stopping gracefully',
+      );
+      stopContainerGracefully('hard_timeout');
+    };
+
+    let timeout = setTimeout(killOnTimeout, timeoutMs);
+
+    // Reset the hard timeout whenever there's structured output activity
+    const resetTimeout = () => {
+      clearTimeout(timeout);
+      timeout = setTimeout(killOnTimeout, timeoutMs);
+    };
+
+    const killOnInitialOutputTimeout = () => {
+      if (hadStructuredOutput) return;
+      timedOut = true;
+      timeoutReason = 'no_output';
+      logger.error(
+        { group: group.name, containerName, initialOutputTimeoutMs },
+        'Container produced no structured output before initial timeout',
+      );
+      stopContainerGracefully('initial_output_timeout');
+    };
+
+    const initialOutputTimeout = setTimeout(
+      killOnInitialOutputTimeout,
+      initialOutputTimeoutMs,
+    );
+
+    const clearInitialOutputTimeout = () => {
+      clearTimeout(initialOutputTimeout);
+    };
 
     container.stdout.on('data', (data) => {
       const chunk = data.toString();
@@ -360,6 +810,14 @@ export async function runContainerAgent(
         } else {
           stdout += chunk;
         }
+      }
+
+      if (
+        chunk.includes(OUTPUT_START_MARKER) ||
+        chunk.includes(OUTPUT_END_MARKER)
+      ) {
+        hadStructuredOutput = true;
+        clearInitialOutputTimeout();
       }
 
       // Stream-parse for output markers
@@ -418,40 +876,9 @@ export async function runContainerAgent(
       }
     });
 
-    let timedOut = false;
-    let hadStreamingOutput = false;
-    const configTimeout = group.containerConfig?.timeout || CONTAINER_TIMEOUT;
-    // Grace period: hard timeout must be at least IDLE_TIMEOUT + 30s so the
-    // graceful _close sentinel has time to trigger before the hard kill fires.
-    const timeoutMs = Math.max(configTimeout, IDLE_TIMEOUT + 30_000);
-
-    const killOnTimeout = () => {
-      timedOut = true;
-      logger.error(
-        { group: group.name, containerName },
-        'Container timeout, stopping gracefully',
-      );
-      try {
-        stopContainer(containerName);
-      } catch (err) {
-        logger.warn(
-          { group: group.name, containerName, err },
-          'Graceful stop failed, force killing',
-        );
-        container.kill('SIGKILL');
-      }
-    };
-
-    let timeout = setTimeout(killOnTimeout, timeoutMs);
-
-    // Reset the timeout whenever there's activity (streaming output)
-    const resetTimeout = () => {
-      clearTimeout(timeout);
-      timeout = setTimeout(killOnTimeout, timeoutMs);
-    };
-
     container.on('close', (code) => {
       clearTimeout(timeout);
+      clearInitialOutputTimeout();
       const duration = Date.now() - startTime;
 
       if (timedOut) {
@@ -466,6 +893,7 @@ export async function runContainerAgent(
             `Container: ${containerName}`,
             `Duration: ${duration}ms`,
             `Exit Code: ${code}`,
+            `Timeout Reason: ${timeoutReason || 'unknown'}`,
             `Had Streaming Output: ${hadStreamingOutput}`,
           ].join('\n'),
         );
@@ -488,11 +916,29 @@ export async function runContainerAgent(
           return;
         }
 
+        if (timeoutReason === 'no_output') {
+          logger.error(
+            {
+              group: group.name,
+              containerName,
+              duration,
+              code,
+              initialOutputTimeoutMs,
+            },
+            'Container timed out waiting for initial structured output',
+          );
+          resolve({
+            status: 'error',
+            result: null,
+            error: `Container produced no output within ${initialOutputTimeoutMs}ms. Check credentials/channel setup.`,
+          });
+          return;
+        }
+
         logger.error(
-          { group: group.name, containerName, duration, code },
+          { group: group.name, containerName, duration, code, configTimeout },
           'Container timed out with no output',
         );
-
         resolve({
           status: 'error',
           result: null,
@@ -536,7 +982,7 @@ export async function runContainerAgent(
         }
         logLines.push(
           `=== Container Args ===`,
-          containerArgs.join(' '),
+          containerArgsForLogs.join(' '),
           ``,
           `=== Mounts ===`,
           mounts
@@ -657,6 +1103,7 @@ export async function runContainerAgent(
 
     container.on('error', (err) => {
       clearTimeout(timeout);
+      clearInitialOutputTimeout();
       logger.error(
         { group: group.name, containerName, error: err },
         'Container spawn error',
@@ -695,6 +1142,50 @@ export function writeTasksSnapshot(
 
   const tasksFile = path.join(groupIpcDir, 'current_tasks.json');
   fs.writeFileSync(tasksFile, JSON.stringify(filteredTasks, null, 2));
+}
+
+export interface AvailableOpenClawSkill {
+  chatJid: string;
+  groupFolder: string;
+  groupName: string;
+  skillId: string;
+  displayName: string;
+  sourceUrl: string;
+  canonicalClawHubUrl: string | null;
+  githubTreeUrl: string;
+  installDirName: string;
+  enabledAt: string;
+  security: {
+    virusTotalStatus: string | null;
+    openClawStatus: string | null;
+    openClawSummary: string | null;
+  };
+}
+
+export function writeOpenClawSkillsSnapshot(
+  groupFolder: string,
+  isMain: boolean,
+  skills: AvailableOpenClawSkill[],
+): void {
+  const groupIpcDir = resolveGroupIpcPath(groupFolder);
+  fs.mkdirSync(groupIpcDir, { recursive: true });
+
+  const visibleSkills = isMain
+    ? skills
+    : skills.filter((skill) => skill.groupFolder === groupFolder);
+
+  const skillsFile = path.join(groupIpcDir, 'current_openclaw_skills.json');
+  fs.writeFileSync(
+    skillsFile,
+    JSON.stringify(
+      {
+        skills: visibleSkills,
+        lastSync: new Date().toISOString(),
+      },
+      null,
+      2,
+    ),
+  );
 }
 
 export interface AvailableGroup {

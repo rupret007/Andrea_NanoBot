@@ -185,3 +185,39 @@ echo $! > ${JSON.stringify(pidFile)}`;
     expect(wrapper).toContain('nanoclaw.pid');
   });
 });
+
+describe('Windows scheduled task wrapper', () => {
+  it('generates a PowerShell wrapper that starts dist/index.js and writes pid', () => {
+    const projectRoot = 'C:\\NanoClaw';
+    const nodePath = 'C:\\Program Files\\nodejs\\node.exe';
+
+    const wrapper = [
+      "$ErrorActionPreference = 'Stop'",
+      `$projectRoot = '${projectRoot}'`,
+      `$nodePath = '${nodePath}'`,
+      `$entryPath = '${projectRoot}\\dist\\index.js'`,
+      "$proc = Start-Process -FilePath $nodePath -ArgumentList @($entryPath) -WorkingDirectory $projectRoot -RedirectStandardOutput 'C:\\NanoClaw\\logs\\nanoclaw.log' -RedirectStandardError 'C:\\NanoClaw\\logs\\nanoclaw.error.log' -PassThru",
+      "Set-Content -LiteralPath 'C:\\NanoClaw\\nanoclaw.pid' -Value $proc.Id -NoNewline",
+    ].join('\n');
+
+    expect(wrapper).toContain('Start-Process -FilePath $nodePath');
+    expect(wrapper).toContain('dist\\index.js');
+    expect(wrapper).toContain('nanoclaw.pid');
+  });
+
+  it('creates a startup-folder fallback command script', () => {
+    const wrapperPath = 'C:\\NanoClaw\\start-nanoclaw.ps1';
+    const startupCmd = `@echo off\r\npowershell.exe -NoProfile -ExecutionPolicy Bypass -File "${wrapperPath}"\r\n`;
+
+    expect(startupCmd).toContain('powershell.exe -NoProfile -ExecutionPolicy Bypass -File');
+    expect(startupCmd).toContain('start-nanoclaw.ps1');
+  });
+
+  it('can launch Node 22 via npx fallback arguments', () => {
+    const line =
+      "$proc = Start-Process -FilePath $npxPath -ArgumentList @('-y', '-p', 'node@22', 'node', $entryPath)";
+
+    expect(line).toContain("'node@22'");
+    expect(line).toContain('Start-Process -FilePath $npxPath');
+  });
+});

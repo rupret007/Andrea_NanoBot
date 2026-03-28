@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-claw — NanoClaw CLI
+claw - NanoClaw CLI
 Run a NanoClaw agent container from the command line.
 
 Usage:
@@ -20,70 +20,85 @@ import argparse
 import json
 import os
 import re
+import shutil
 import sqlite3
 import subprocess
 import sys
 import threading
+import urllib.request
 from pathlib import Path
-
-# ── Globals ─────────────────────────────────────────────────────────────────
 
 VERBOSE = False
 
+
 def dbg(*args):
     if VERBOSE:
-        print("»", *args, file=sys.stderr)
+        print(">>", *args, file=sys.stderr)
 
-# ── Config ──────────────────────────────────────────────────────────────────
 
 def _find_nanoclaw_dir() -> Path:
-    """Locate the NanoClaw installation directory.
-
-    Resolution order:
-    1. NANOCLAW_DIR env var
-    2. The directory containing this script (if it looks like a NanoClaw install)
-    3. ~/src/nanoclaw (legacy default)
-    """
+    """Locate the NanoClaw installation directory."""
     if env := os.environ.get("NANOCLAW_DIR"):
         return Path(env).expanduser()
-    # If this script lives inside the NanoClaw tree (e.g. scripts/claw), walk up
+
     here = Path(__file__).resolve()
     for parent in [here.parent, here.parent.parent]:
         if (parent / "store" / "messages.db").exists() or (parent / ".env").exists():
             return parent
+
     return Path.home() / "src" / "nanoclaw"
 
+
 NANOCLAW_DIR = _find_nanoclaw_dir()
-DB_PATH      = NANOCLAW_DIR / "store" / "messages.db"
-ENV_FILE     = NANOCLAW_DIR / ".env"
-IMAGE        = "nanoclaw-agent:latest"
+DB_PATH = NANOCLAW_DIR / "store" / "messages.db"
+ENV_FILE = NANOCLAW_DIR / ".env"
+IMAGE = "nanoclaw-agent:latest"
 
 SECRET_KEYS = [
     "CLAUDE_CODE_OAUTH_TOKEN",
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_BASE_URL",
     "ANTHROPIC_AUTH_TOKEN",
+    "OPENAI_API_KEY",
+    "OPENAI_BASE_URL",
     "OLLAMA_HOST",
 ]
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
+
+def _windows_runtime_candidates(runtime: str) -> list[str]:
+    if os.name != "nt":
+        return [runtime]
+    return [f"{runtime}.cmd", f"{runtime}.bat", f"{runtime}.exe", runtime]
+
 
 def detect_runtime(preference: str | None) -> str:
     if preference:
+        candidates = _windows_runtime_candidates(preference)
+        for candidate in candidates:
+            runtime_path = shutil.which(candidate)
+            if runtime_path:
+                dbg(f"runtime: forced to {runtime_path}")
+                return runtime_path
         dbg(f"runtime: forced to {preference}")
         return preference
-    for rt in ("container", "docker"):
-        result = subprocess.run(["which", rt], capture_output=True)
-        if result.returncode == 0:
-            dbg(f"runtime: auto-detected {rt} at {result.stdout.decode().strip()}")
-            return rt
-    sys.exit("error: neither 'container' nor 'docker' found. Install one or pass --runtime.")
+
+    for runtime in ("docker", "podman", "container"):
+        for candidate in _windows_runtime_candidates(runtime):
+            runtime_path = shutil.which(candidate)
+            if runtime_path:
+                dbg(f"runtime: auto-detected {runtime} at {runtime_path}")
+                return runtime_path
+
+    sys.exit(
+        "error: none of 'podman', 'docker', or 'container' were found. Install one or pass --runtime."
+    )
 
 
-def read_secrets(env_file: Path) -> dict:
-    secrets = {}
+def read_secrets(env_file: Path) -> dict[str, str]:
+    secrets: dict[str, str] = {}
     if not env_file.exists():
         return secrets
+
     for line in env_file.read_text().splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
@@ -94,6 +109,29 @@ def read_secrets(env_file: Path) -> dict:
             if key in SECRET_KEYS:
                 secrets[key] = val.strip()
     return secrets
+
+
+def onecli_reachable() -> bool:
+    base = os.environ.get("ONECLI_URL", "").strip()
+    candidates: list[str] = []
+    if base:
+        candidates.append(base)
+    candidates.extend(["http://127.0.0.1:10254", "http://localhost:10254"])
+
+    seen: set[str] = set()
+    for root in candidates:
+        normalized = root.rstrip("/")
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        try:
+            with urllib.request.urlopen(f"{normalized}/health", timeout=1.0) as resp:
+                if 200 <= resp.status < 300:
+                    return True
+        except Exception:
+            continue
+
+    return False
 
 
 def get_groups(db: Path) -> list[dict]:
@@ -107,11 +145,10 @@ def get_groups(db: Path) -> list[dict]:
 
 def find_group(groups: list[dict], query: str) -> dict | None:
     q = query.lower()
-    # Exact name match
-    for g in groups:
-        if g["name"].lower() == q or g["folder"].lower() == q:
-            return g
-    # Partial match
+    for group in groups:
+        if group["name"].lower() == q or group["folder"].lower() == q:
+            return group
+
     matches = [g for g in groups if q in g["name"].lower() or q in g["folder"].lower()]
     if len(matches) == 1:
         return matches[0]
@@ -121,14 +158,32 @@ def find_group(groups: list[dict], query: str) -> dict | None:
     return None
 
 
+def _bind_mount_arg(runtime: str, host: str, target: str, readonly: bool) -> list[str]:
+    if runtime == "container":
+        suffix = ":ro" if readonly else ""
+        return ["-v", f"{host}:{target}{suffix}"]
+
+    mount = f"type=bind,source={host},target={target}"
+    if readonly:
+        mount += ",readonly"
+    return ["--mount", mount]
+
+
+def _ensure_shadow_env_file() -> Path:
+    shadow_file = NANOCLAW_DIR / "data" / "runtime" / "secret-shadow-empty"
+    shadow_file.parent.mkdir(parents=True, exist_ok=True)
+    if not shadow_file.exists():
+        shadow_file.write_text("")
+    return shadow_file
+
+
 def build_mounts(folder: str, is_main: bool) -> list[tuple[str, str, bool]]:
     """Return list of (host_path, container_path, readonly) tuples."""
-    groups_dir  = NANOCLAW_DIR / "groups"
-    data_dir    = NANOCLAW_DIR / "data"
+    groups_dir = NANOCLAW_DIR / "groups"
+    data_dir = NANOCLAW_DIR / "data"
     sessions_dir = data_dir / "sessions" / folder
-    ipc_dir     = data_dir / "ipc" / folder
+    ipc_dir = data_dir / "ipc" / folder
 
-    # Ensure required dirs exist
     group_dir = groups_dir / folder
     group_dir.mkdir(parents=True, exist_ok=True)
     (sessions_dir / ".claude").mkdir(parents=True, exist_ok=True)
@@ -138,34 +193,38 @@ def build_mounts(folder: str, is_main: bool) -> list[tuple[str, str, bool]]:
     agent_runner_src = sessions_dir / "agent-runner-src"
     project_agent_runner = NANOCLAW_DIR / "container" / "agent-runner" / "src"
     if not agent_runner_src.exists() and project_agent_runner.exists():
-        import shutil
         shutil.copytree(project_agent_runner, agent_runner_src)
 
     mounts: list[tuple[str, str, bool]] = []
     if is_main:
         mounts.append((str(NANOCLAW_DIR), "/workspace/project", True))
-    mounts.append((str(group_dir),           "/workspace/group",    False))
+        if ENV_FILE.exists():
+            mounts.append((str(_ensure_shadow_env_file()), "/workspace/project/.env", True))
+
+    mounts.append((str(group_dir), "/workspace/group", False))
     mounts.append((str(sessions_dir / ".claude"), "/home/node/.claude", False))
-    mounts.append((str(ipc_dir),             "/workspace/ipc",      False))
+    mounts.append((str(ipc_dir), "/workspace/ipc", False))
     if agent_runner_src.exists():
-        mounts.append((str(agent_runner_src), "/app/src",           False))
+        mounts.append((str(agent_runner_src), "/app/src", False))
+
     return mounts
 
 
-def run_container(runtime: str, image: str, payload: dict,
-                  folder: str | None = None, is_main: bool = False,
-                  timeout: int = 300) -> None:
+def run_container(
+    runtime: str,
+    image: str,
+    payload: dict,
+    folder: str | None = None,
+    is_main: bool = False,
+    timeout: int = 300,
+) -> None:
     cmd = [runtime, "run", "-i", "--rm"]
     if folder:
         for host, container, readonly in build_mounts(folder, is_main):
-            if readonly:
-                cmd += ["--mount", f"type=bind,source={host},target={container},readonly"]
-            else:
-                cmd += ["-v", f"{host}:{container}"]
+            cmd += _bind_mount_arg(runtime, host, container, readonly)
     cmd.append(image)
     dbg(f"cmd: {' '.join(cmd)}")
 
-    # Show payload sans secrets
     if VERBOSE:
         safe = {k: v for k, v in payload.items() if k != "secrets"}
         safe["secrets"] = {k: "***" for k in payload.get("secrets", {})}
@@ -179,7 +238,7 @@ def run_container(runtime: str, image: str, payload: dict,
     )
     dbg(f"container pid: {proc.pid}")
 
-    # Write JSON payload and close stdin
+    assert proc.stdin is not None
     proc.stdin.write(json.dumps(payload).encode())
     proc.stdin.close()
     dbg("stdin closed, waiting for response...")
@@ -189,6 +248,7 @@ def run_container(runtime: str, image: str, payload: dict,
     done = threading.Event()
 
     def stream_stderr():
+        assert proc.stderr is not None
         for raw in proc.stderr:
             line = raw.decode(errors="replace").rstrip()
             if line.startswith("npm notice"):
@@ -197,17 +257,24 @@ def run_container(runtime: str, image: str, payload: dict,
             print(line, file=sys.stderr)
 
     def stream_stdout():
+        assert proc.stdout is not None
         for raw in proc.stdout:
             line = raw.decode(errors="replace").rstrip()
             stdout_lines.append(line)
             dbg(f"stdout: {line}")
-            # Kill the container as soon as we see the closing sentinel —
-            # the Node.js event loop often keeps the process alive indefinitely.
             if line.strip() == "---NANOCLAW_OUTPUT_END---":
                 dbg("output sentinel found, terminating container")
                 done.set()
                 try:
-                    proc.terminate()
+                    if os.name == "nt":
+                        subprocess.run(
+                            ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                            check=False,
+                        )
+                    else:
+                        proc.terminate()
                     try:
                         proc.wait(timeout=5)
                     except subprocess.TimeoutExpired:
@@ -222,9 +289,7 @@ def run_container(runtime: str, image: str, payload: dict,
     t_err.start()
     t_out.start()
 
-    # Wait for sentinel or timeout
     if not done.wait(timeout=timeout):
-        # Also check if process exited naturally
         t_out.join(timeout=2)
         if not done.is_set():
             proc.kill()
@@ -236,7 +301,6 @@ def run_container(runtime: str, image: str, payload: dict,
     dbg(f"container done (rc={proc.returncode}), {len(stdout_lines)} stdout lines")
     stdout = "\n".join(stdout_lines)
 
-    # Parse output block
     match = re.search(
         r"---NANOCLAW_OUTPUT_START---\n(.*?)\n---NANOCLAW_OUTPUT_END---",
         stdout,
@@ -260,7 +324,6 @@ def run_container(runtime: str, image: str, payload: dict,
         except json.JSONDecodeError:
             print(match.group(1))
     else:
-        # No structured output — print raw stdout
         print(stdout)
 
     if success:
@@ -269,8 +332,6 @@ def run_container(runtime: str, image: str, payload: dict,
     if proc.returncode not in (0, None):
         sys.exit(proc.returncode)
 
-
-# ── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
     parser = argparse.ArgumentParser(
@@ -281,17 +342,33 @@ def main():
     parser.add_argument("-g", "--group", help="Group name or folder (fuzzy match)")
     parser.add_argument("-j", "--jid", help="Chat JID (exact)")
     parser.add_argument("-s", "--session", help="Session ID to resume")
-    parser.add_argument("-p", "--pipe", action="store_true",
-                        help="Read prompt from stdin (can be combined with a prompt arg as prefix)")
-    parser.add_argument("--runtime", choices=["docker", "container"],
-                        help="Container runtime (default: auto-detect)")
+    parser.add_argument(
+        "-p",
+        "--pipe",
+        action="store_true",
+        help="Read prompt from stdin (can be combined with a prompt arg as prefix)",
+    )
+    parser.add_argument(
+        "--runtime",
+        choices=["podman", "docker", "container"],
+        help="Container runtime (default: auto-detect)",
+    )
     parser.add_argument("--image", default=IMAGE, help=f"Container image (default: {IMAGE})")
     parser.add_argument("--list-groups", action="store_true", help="List registered groups and exit")
     parser.add_argument("--raw", action="store_true", help="Print raw JSON output")
-    parser.add_argument("--timeout", type=int, default=300, metavar="SECS",
-                        help="Max seconds to wait for a response (default: 300)")
-    parser.add_argument("-v", "--verbose", action="store_true",
-                        help="Show debug info: cmd, payload (secrets redacted), stdout lines, exit code")
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=300,
+        metavar="SECS",
+        help="Max seconds to wait for a response (default: 300)",
+    )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Show debug info: cmd, payload (secrets redacted), stdout lines, exit code",
+    )
     args = parser.parse_args()
 
     global VERBOSE
@@ -302,12 +379,11 @@ def main():
     if args.list_groups:
         print(f"{'NAME':<35} {'FOLDER':<30} {'JID'}")
         print("-" * 100)
-        for g in groups:
-            main_tag = " [main]" if g["is_main"] else ""
-            print(f"{g['name']:<35} {g['folder']:<30} {g['jid']}{main_tag}")
+        for group in groups:
+            main_tag = " [main]" if group["is_main"] else ""
+            print(f"{group['name']:<35} {group['folder']:<30} {group['jid']}{main_tag}")
         return
 
-    # Resolve prompt: --pipe reads stdin, optionally prepended with positional arg
     if args.pipe or (not sys.stdin.isatty() and not args.prompt):
         stdin_text = sys.stdin.read().strip()
         if args.prompt:
@@ -321,23 +397,21 @@ def main():
         parser.print_help()
         sys.exit(1)
 
-    # Resolve group → jid
     jid = args.jid
     group_name = None
     group_folder = None
     is_main = False
 
     if args.group:
-        g = find_group(groups, args.group)
-        if g is None:
+        group = find_group(groups, args.group)
+        if group is None:
             sys.exit(f"error: group '{args.group}' not found. Run --list-groups to see options.")
-        jid = g["jid"]
-        group_name = g["name"]
-        group_folder = g["folder"]
-        is_main = g["is_main"]
+        jid = group["jid"]
+        group_name = group["name"]
+        group_folder = group["folder"]
+        is_main = group["is_main"]
     elif not jid:
-        # Default: main group
-        mains = [g for g in groups if g["is_main"]]
+        mains = [group for group in groups if group["is_main"]]
         if mains:
             jid = mains[0]["jid"]
             group_name = mains[0]["name"]
@@ -349,8 +423,11 @@ def main():
     runtime = detect_runtime(args.runtime)
     secrets = read_secrets(ENV_FILE)
 
-    if not secrets:
-        print("warning: no secrets found in .env — agent may not be authenticated", file=sys.stderr)
+    if not secrets and not onecli_reachable():
+        print(
+            "warning: no local secrets found and OneCLI is unreachable - agent may not be authenticated",
+            file=sys.stderr,
+        )
 
     payload: dict = {
         "prompt": prompt,
@@ -358,16 +435,21 @@ def main():
         "isMain": is_main,
         "secrets": secrets,
     }
-    if group_name:
-        payload["groupFolder"] = group_name
+    if group_folder:
+        payload["groupFolder"] = group_folder
     if args.session:
         payload["sessionId"] = args.session
         payload["resumeAt"] = "latest"
 
     print(f"[{group_name or jid}] running via {runtime}...", file=sys.stderr)
-    run_container(runtime, args.image, payload,
-                  folder=group_folder, is_main=is_main,
-                  timeout=args.timeout)
+    run_container(
+        runtime,
+        args.image,
+        payload,
+        folder=group_folder,
+        is_main=is_main,
+        timeout=args.timeout,
+    )
 
 
 if __name__ == "__main__":

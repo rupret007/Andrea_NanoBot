@@ -9,6 +9,10 @@ import {
   setRegisteredGroup,
 } from './db.js';
 import { processTaskIpc, IpcDeps } from './ipc.js';
+import {
+  DisabledOpenClawSkill,
+  EnabledOpenClawSkill,
+} from './openclaw-market.js';
 import { RegisteredGroup } from './types.js';
 
 // Set up registered groups used across tests
@@ -36,6 +40,9 @@ const THIRD_GROUP: RegisteredGroup = {
 
 let groups: Record<string, RegisteredGroup>;
 let deps: IpcDeps;
+let enabledSkills: Array<{ groupFolder: string; skillUrl: string }>;
+let disabledSkills: Array<{ groupFolder: string; skillIdOrUrl: string }>;
+let marketplaceChangedCount: number;
 
 beforeEach(() => {
   _initTestDatabase();
@@ -45,6 +52,9 @@ beforeEach(() => {
     'other@g.us': OTHER_GROUP,
     'third@g.us': THIRD_GROUP,
   };
+  enabledSkills = [];
+  disabledSkills = [];
+  marketplaceChangedCount = 0;
 
   // Populate DB as well
   setRegisteredGroup('main@g.us', MAIN_GROUP);
@@ -63,6 +73,49 @@ beforeEach(() => {
     getAvailableGroups: () => [],
     writeGroupsSnapshot: () => {},
     onTasksChanged: () => {},
+    onMarketplaceChanged: () => {
+      marketplaceChangedCount += 1;
+    },
+    enableOpenClawSkill: async ({ groupFolder, skillUrl }) => {
+      enabledSkills.push({ groupFolder, skillUrl });
+      return {
+        skillId: 'demo/sample',
+        owner: 'demo',
+        slug: 'sample',
+        displayName: 'Sample Skill',
+        sourceUrl: skillUrl,
+        canonicalClawHubUrl: null,
+        githubTreeUrl:
+          'https://github.com/openclaw/skills/tree/main/skills/demo/sample',
+        cacheDirName: 'openclaw-demo-sample',
+        cachePath: `/tmp/cache/demo/sample`,
+        manifestPath: `/tmp/cache/demo/sample/.nanoclaw-openclaw-market.json`,
+        cachedAt: '2024-01-01T00:00:00.000Z',
+        fileCount: 1,
+        groupFolder,
+        enabledAt: '2024-01-01T00:00:00.000Z',
+        enabledPath: `/tmp/${groupFolder}/openclaw-demo-sample`,
+        installDirName: 'openclaw-demo-sample',
+        security: {
+          openClawStatus: 'Benign',
+          virusTotalStatus: 'Benign',
+          openClawSummary: null,
+        },
+      } satisfies EnabledOpenClawSkill;
+    },
+    disableOpenClawSkill: async ({ groupFolder, skillIdOrUrl }) => {
+      disabledSkills.push({ groupFolder, skillIdOrUrl });
+      return {
+        skillId: 'demo/sample',
+        owner: 'demo',
+        slug: 'sample',
+        displayName: 'Sample Skill',
+        groupFolder,
+        removedPath: `/tmp/${groupFolder}/openclaw-demo-sample`,
+        disabledAt: '2024-01-01T00:00:00.000Z',
+        installDirName: 'openclaw-demo-sample',
+      } satisfies DisabledOpenClawSkill;
+    },
   };
 });
 
@@ -325,6 +378,126 @@ describe('cancel_task authorization', () => {
       deps,
     );
     expect(getTaskById('task-foreign')).toBeDefined();
+  });
+});
+
+describe('enable_openclaw_skill authorization', () => {
+  it('main group can enable a skill for another group', async () => {
+    await processTaskIpc(
+      {
+        type: 'enable_openclaw_skill',
+        skill_url: 'https://clawskills.sh/skills/demo-sample',
+        targetJid: 'other@g.us',
+      },
+      'whatsapp_main',
+      true,
+      deps,
+    );
+
+    expect(enabledSkills).toEqual([
+      {
+        groupFolder: 'other-group',
+        skillUrl: 'https://clawskills.sh/skills/demo-sample',
+      },
+    ]);
+    expect(marketplaceChangedCount).toBe(1);
+  });
+
+  it('non-main group can enable a skill for itself', async () => {
+    await processTaskIpc(
+      {
+        type: 'enable_openclaw_skill',
+        skill_url: 'https://clawskills.sh/skills/demo-sample',
+        targetJid: 'other@g.us',
+      },
+      'other-group',
+      false,
+      deps,
+    );
+
+    expect(enabledSkills).toEqual([
+      {
+        groupFolder: 'other-group',
+        skillUrl: 'https://clawskills.sh/skills/demo-sample',
+      },
+    ]);
+    expect(marketplaceChangedCount).toBe(1);
+  });
+
+  it('non-main group cannot enable a skill for another group', async () => {
+    await processTaskIpc(
+      {
+        type: 'enable_openclaw_skill',
+        skill_url: 'https://clawskills.sh/skills/demo-sample',
+        targetJid: 'main@g.us',
+      },
+      'other-group',
+      false,
+      deps,
+    );
+
+    expect(enabledSkills).toEqual([]);
+    expect(marketplaceChangedCount).toBe(0);
+  });
+
+  it('keeps install_openclaw_skill as a compatibility alias', async () => {
+    await processTaskIpc(
+      {
+        type: 'install_openclaw_skill',
+        skill_url: 'https://clawskills.sh/skills/demo-sample',
+        targetJid: 'other@g.us',
+      },
+      'whatsapp_main',
+      true,
+      deps,
+    );
+
+    expect(enabledSkills).toEqual([
+      {
+        groupFolder: 'other-group',
+        skillUrl: 'https://clawskills.sh/skills/demo-sample',
+      },
+    ]);
+    expect(marketplaceChangedCount).toBe(1);
+  });
+});
+
+describe('disable_openclaw_skill authorization', () => {
+  it('main group can disable a skill for another group', async () => {
+    await processTaskIpc(
+      {
+        type: 'disable_openclaw_skill',
+        skill_id_or_url: 'demo/sample',
+        targetJid: 'other@g.us',
+      },
+      'whatsapp_main',
+      true,
+      deps,
+    );
+
+    expect(disabledSkills).toEqual([
+      {
+        groupFolder: 'other-group',
+        skillIdOrUrl: 'demo/sample',
+      },
+    ]);
+    expect(marketplaceChangedCount).toBe(1);
+  });
+
+  it('non-main group cannot disable a skill for another group', async () => {
+    await processTaskIpc(
+      {
+        type: 'disable_openclaw_skill',
+        skill_id_or_url: 'demo/sample',
+        targetJid: 'main@g.us',
+      },
+      'other-group',
+      false,
+      deps,
+    );
+
+    expect(disabledSkills).toEqual([]);
+    expect(marketplaceChangedCount).toBe(0);
   });
 });
 

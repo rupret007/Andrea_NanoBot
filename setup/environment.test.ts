@@ -13,7 +13,7 @@ describe('environment detection', () => {
   it('detects platform correctly', async () => {
     const { getPlatform } = await import('./platform.js');
     const platform = getPlatform();
-    expect(['macos', 'linux', 'unknown']).toContain(platform);
+    expect(['macos', 'linux', 'windows', 'unknown']).toContain(platform);
   });
 });
 
@@ -73,25 +73,51 @@ describe('registered groups DB query', () => {
 });
 
 describe('credentials detection', () => {
+  const hasCoreCredentials = (content: string) =>
+    /^(CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN)=/m.test(
+      content,
+    ) ||
+    (
+      (/^ANTHROPIC_BASE_URL=/m.test(content) ||
+        /^OPENAI_BASE_URL=/m.test(content)) &&
+      /^OPENAI_API_KEY=/m.test(content)
+    );
+
   it('detects ANTHROPIC_API_KEY in env content', () => {
     const content =
       'SOME_KEY=value\nANTHROPIC_API_KEY=sk-ant-test123\nOTHER=foo';
-    const hasCredentials =
-      /^(CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY)=/m.test(content);
+    const hasCredentials = hasCoreCredentials(content);
     expect(hasCredentials).toBe(true);
   });
 
   it('detects CLAUDE_CODE_OAUTH_TOKEN in env content', () => {
     const content = 'CLAUDE_CODE_OAUTH_TOKEN=token123';
-    const hasCredentials =
-      /^(CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY)=/m.test(content);
+    const hasCredentials = hasCoreCredentials(content);
+    expect(hasCredentials).toBe(true);
+  });
+
+  it('detects ANTHROPIC_AUTH_TOKEN in env content', () => {
+    const content = 'ANTHROPIC_AUTH_TOKEN=token123';
+    const hasCredentials = hasCoreCredentials(content);
+    expect(hasCredentials).toBe(true);
+  });
+
+  it('detects OpenAI-compatible mode when base URL and OPENAI_API_KEY are set', () => {
+    const content = 'ANTHROPIC_BASE_URL=https://gateway.example.com\nOPENAI_API_KEY=sk-openai-123';
+    const hasCredentials = hasCoreCredentials(content);
+    expect(hasCredentials).toBe(true);
+  });
+
+  it('detects OpenAI-compatible mode when OPENAI_BASE_URL and OPENAI_API_KEY are set', () => {
+    const content =
+      'OPENAI_BASE_URL=https://gateway.example.com\nOPENAI_API_KEY=sk-openai-123';
+    const hasCredentials = hasCoreCredentials(content);
     expect(hasCredentials).toBe(true);
   });
 
   it('returns false when no credentials', () => {
     const content = 'ASSISTANT_NAME="Andy"\nOTHER=foo';
-    const hasCredentials =
-      /^(CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY)=/m.test(content);
+    const hasCredentials = hasCoreCredentials(content);
     expect(hasCredentials).toBe(false);
   });
 });

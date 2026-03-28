@@ -20,9 +20,11 @@ import {
   getRegisteredChannelNames,
 } from './channels/registry.js';
 import {
+  AvailableOpenClawSkill,
   ContainerOutput,
   runContainerAgent,
   writeGroupsSnapshot,
+  writeOpenClawSkillsSnapshot,
   writeTasksSnapshot,
 } from './container-runner.js';
 import {
@@ -39,6 +41,7 @@ import {
   getNewMessages,
   getRouterState,
   initDatabase,
+  listAllEnabledCommunitySkills,
   setRegisteredGroup,
   setRouterState,
   setSession,
@@ -63,6 +66,12 @@ import {
 import { startSchedulerLoop } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
+import {
+  disableOpenClawSkill,
+  enableOpenClawSkill,
+  installOpenClawSkill,
+} from './openclaw-market.js';
+import { analyzeAgentError } from './agent-error.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -72,6 +81,11 @@ let sessions: Record<string, string> = {};
 let registeredGroups: Record<string, RegisteredGroup> = {};
 let lastAgentTimestamp: Record<string, string> = {};
 let messageLoopRunning = false;
+const NON_RETRIABLE_ERROR_NOTIFY_COOLDOWN_MS = 15 * 60 * 1000;
+const lastNonRetriableErrorNotice: Record<
+  string,
+  { code: string; at: number }
+> = {};
 
 const channels: Channel[] = [];
 const queue = new GroupQueue();
@@ -187,6 +201,67 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
   );
 }
 
+async function bootstrapMainChatRegistration(
+  chatJid: string,
+  chatName: string,
+  channel: string,
+): Promise<{ ok: boolean; message: string }> {
+  const existing = registeredGroups[chatJid];
+  if (existing) {
+    if (existing.isMain) {
+      return {
+        ok: true,
+        message: 'This chat is already registered as the main control chat.',
+      };
+    }
+    return {
+      ok: false,
+      message:
+        'This chat is already registered as a non-main chat. Use your existing main chat for administration.',
+    };
+  }
+
+  const existingMain = Object.entries(registeredGroups).find(
+    ([, group]) => group.isMain,
+  );
+  if (existingMain) {
+    return {
+      ok: false,
+      message: `Main chat is already registered as ${existingMain[0]}.`,
+    };
+  }
+
+  const mainFolderConflict = Object.entries(registeredGroups).find(
+    ([jid, group]) => group.folder === 'main' && jid !== chatJid,
+  );
+  if (mainFolderConflict) {
+    return {
+      ok: false,
+      message:
+        'Cannot bootstrap main chat because folder "main" is already used by another registration.',
+    };
+  }
+
+  registerGroup(chatJid, {
+    name: chatName || 'Main',
+    folder: 'main',
+    trigger: DEFAULT_TRIGGER,
+    added_at: new Date().toISOString(),
+    requiresTrigger: false,
+    isMain: true,
+  });
+
+  logger.info(
+    { chatJid, chatName, channel },
+    'Bootstrapped main chat registration via channel command',
+  );
+
+  return {
+    ok: true,
+    message: `Main chat registered successfully (${chatJid}). You can now send commands to ${ASSISTANT_NAME} here.`,
+  };
+}
+
 /**
  * Get available groups list for the agent.
  * Returns groups ordered by most recent activity.
@@ -203,6 +278,40 @@ export function getAvailableGroups(): import('./container-runner.js').AvailableG
       lastActivity: c.last_message_time,
       isRegistered: registeredJids.has(c.jid),
     }));
+}
+
+function getEnabledOpenClawSkillsSnapshot(): AvailableOpenClawSkill[] {
+  const foldersToChats = new Map(
+    Object.entries(registeredGroups).map(([jid, group]) => [
+      group.folder,
+      { jid, name: group.name },
+    ]),
+  );
+
+  return listAllEnabledCommunitySkills()
+    .map((skill) => {
+      const targetGroup = foldersToChats.get(skill.group_folder);
+      if (!targetGroup) return null;
+
+      return {
+        chatJid: targetGroup.jid,
+        groupFolder: skill.group_folder,
+        groupName: targetGroup.name,
+        skillId: skill.skill_id,
+        displayName: skill.display_name,
+        sourceUrl: skill.source_url,
+        canonicalClawHubUrl: skill.canonical_clawhub_url,
+        githubTreeUrl: skill.github_tree_url,
+        installDirName: skill.cache_dir_name,
+        enabledAt: skill.enabled_at,
+        security: {
+          virusTotalStatus: skill.virus_total_status,
+          openClawStatus: skill.openclaw_status,
+          openClawSummary: skill.openclaw_summary,
+        },
+      };
+    })
+    .filter((skill): skill is AvailableOpenClawSkill => skill !== null);
 }
 
 /** @internal - exported for testing */
@@ -311,7 +420,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   await channel.setTyping?.(chatJid, false);
   if (idleTimer) clearTimeout(idleTimer);
 
-  if (output === 'error' || hadError) {
+  if (output.status === 'error' || hadError) {
     // If we already sent output to the user, don't roll back the cursor —
     // the user got their response and re-processing would send duplicates.
     if (outputSentToUser) {
@@ -321,6 +430,36 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       );
       return true;
     }
+
+    if (output.status === 'error' && output.nonRetriable) {
+      const now = Date.now();
+      const previousNotice = lastNonRetriableErrorNotice[chatJid];
+      const shouldNotify =
+        !previousNotice ||
+        previousNotice.code !== output.code ||
+        now - previousNotice.at >= NON_RETRIABLE_ERROR_NOTIFY_COOLDOWN_MS;
+
+      if (shouldNotify && output.userMessage) {
+        await channel.sendMessage(chatJid, output.userMessage);
+      }
+
+      lastNonRetriableErrorNotice[chatJid] = {
+        code: output.code,
+        at: now,
+      };
+
+      logger.warn(
+        {
+          group: group.name,
+          code: output.code,
+          notified: shouldNotify,
+        },
+        'Non-retriable agent error detected, skipping retry loop',
+      );
+
+      return true;
+    }
+
     // Roll back cursor so retries can re-process these messages
     lastAgentTimestamp[chatJid] = previousCursor;
     saveState();
@@ -339,7 +478,18 @@ async function runAgent(
   prompt: string,
   chatJid: string,
   onOutput?: (output: ContainerOutput) => Promise<void>,
-): Promise<'success' | 'error'> {
+): Promise<{
+  status: 'success' | 'error';
+  code:
+    | 'insufficient_quota'
+    | 'auth_failed'
+    | 'invalid_model_alias'
+    | 'unsupported_endpoint'
+    | 'credentials_missing_or_unusable'
+    | 'transient_or_unknown';
+  nonRetriable: boolean;
+  userMessage: string | null;
+}> {
   const isMain = group.isMain === true;
   const sessionId = sessions[group.folder];
 
@@ -358,6 +508,11 @@ async function runAgent(
       status: t.status,
       next_run: t.next_run,
     })),
+  );
+  writeOpenClawSkillsSnapshot(
+    group.folder,
+    isMain,
+    getEnabledOpenClawSkillsSnapshot(),
   );
 
   // Update available groups snapshot (main group only can see all groups)
@@ -402,17 +557,38 @@ async function runAgent(
     }
 
     if (output.status === 'error') {
+      const analysis = analyzeAgentError(output.error);
       logger.error(
-        { group: group.name, error: output.error },
+        {
+          group: group.name,
+          error: output.error,
+          code: analysis.code,
+          nonRetriable: analysis.nonRetriable,
+        },
         'Container agent error',
       );
-      return 'error';
+      return {
+        status: 'error',
+        code: analysis.code,
+        nonRetriable: analysis.nonRetriable,
+        userMessage: analysis.userMessage,
+      };
     }
 
-    return 'success';
+    return {
+      status: 'success',
+      code: 'transient_or_unknown',
+      nonRetriable: false,
+      userMessage: null,
+    };
   } catch (err) {
     logger.error({ group: group.name, err }, 'Agent error');
-    return 'error';
+    return {
+      status: 'error',
+      code: 'transient_or_unknown',
+      nonRetriable: false,
+      userMessage: null,
+    };
   }
 }
 
@@ -650,6 +826,7 @@ async function main(): Promise<void> {
       isGroup?: boolean,
     ) => storeChatMetadata(chatJid, timestamp, name, channel, isGroup),
     registeredGroups: () => registeredGroups,
+    onRegisterMainChat: bootstrapMainChatRegistration,
   };
 
   // Create and connect all registered channels.
@@ -724,6 +901,19 @@ async function main(): Promise<void> {
         writeTasksSnapshot(group.folder, group.isMain === true, taskRows);
       }
     },
+    onMarketplaceChanged: () => {
+      const skillRows = getEnabledOpenClawSkillsSnapshot();
+      for (const group of Object.values(registeredGroups)) {
+        writeOpenClawSkillsSnapshot(
+          group.folder,
+          group.isMain === true,
+          skillRows,
+        );
+      }
+    },
+    enableOpenClawSkill,
+    disableOpenClawSkill,
+    installOpenClawSkill,
   });
   queue.setProcessMessagesFn(processGroupMessages);
   recoverPendingMessages();

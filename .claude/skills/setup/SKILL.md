@@ -109,45 +109,46 @@ Run `npx tsx setup/index.ts --step timezone` and parse the status block.
 
 ### 3a. Choose runtime
 
-Check the preflight results for `APPLE_CONTAINER` and `DOCKER`, and the PLATFORM from step 1.
+Check `PLATFORM`, `DOCKER`, `PODMAN`, and `APPLE_CONTAINER` from step 2.
 
-- PLATFORM=linux → Docker (only option)
-- PLATFORM=macos + APPLE_CONTAINER=installed → Use `AskUserQuestion: Docker (cross-platform) or Apple Container (native macOS)?` If Apple Container, run `/convert-to-apple-container` now, then skip to 3c.
-- PLATFORM=macos + APPLE_CONTAINER=not_found → Docker
+Runtime policy:
+- Respect explicit `CONTAINER_RUNTIME` in `.env` if set.
+- Windows: prefer Docker if available; otherwise Podman.
+- macOS: prefer Apple Container if available; otherwise Docker.
+- Linux: prefer Docker if available; otherwise Podman.
 
-### 3a-docker. Install Docker
+If multiple runtimes are available, AskUserQuestion and let the user choose. If the user says Docker is fine, choose Docker.
 
-- DOCKER=running → continue to 4b
-- DOCKER=installed_not_running → start Docker: `open -a Docker` (macOS) or `sudo systemctl start docker` (Linux). Wait 15s, re-check with `docker info`.
-- DOCKER=not_found → Use `AskUserQuestion: Docker is required for running agents. Would you like me to install it?` If confirmed:
-  - macOS: install via `brew install --cask docker`, then `open -a Docker` and wait for it to start. If brew not available, direct to Docker Desktop download at https://docker.com/products/docker-desktop
-  - Linux: install with `curl -fsSL https://get.docker.com | sh && sudo usermod -aG docker $USER`. Note: user may need to log out/in for group membership.
+### 3b. Ensure selected runtime is running
 
-### 3b. Apple Container conversion gate (if needed)
+If chosen runtime is Docker:
+- `DOCKER=running` -> continue
+- `DOCKER=installed_not_running` -> start Docker and re-check `docker info`
+- `DOCKER=not_found` -> offer install:
+  - macOS: `brew install --cask docker`, then `open -a Docker`
+  - Linux: `curl -fsSL https://get.docker.com | sh && sudo usermod -aG docker $USER`
 
-**If the chosen runtime is Apple Container**, you MUST check whether the source code has already been converted from Docker to Apple Container. Do NOT skip this step. Run:
+If chosen runtime is Podman:
+- `PODMAN=running` -> continue
+- `PODMAN=installed_not_running` -> start Podman machine and re-check `podman info`
+- `PODMAN=not_found` -> install Podman and verify `podman info`
 
-```bash
-grep -q "CONTAINER_RUNTIME_BIN = 'container'" src/container-runtime.ts && echo "ALREADY_CONVERTED" || echo "NEEDS_CONVERSION"
-```
+If chosen runtime is Apple Container:
+- ensure `container` CLI is available and working
 
-**If NEEDS_CONVERSION**, the source code still uses Docker as the runtime. You MUST run the `/convert-to-apple-container` skill NOW, before proceeding to the build step.
-
-**If ALREADY_CONVERTED**, the code already uses Apple Container. Continue to 3c.
-
-**If the chosen runtime is Docker**, no conversion is needed. Continue to 3c.
+No source conversion step is needed; NanoClaw runtime abstraction already supports Docker, Podman, and Apple Container.
 
 ### 3c. Build and test
 
 Run `npx tsx setup/index.ts --step container -- --runtime <chosen>` and parse the status block.
 
 **If BUILD_OK=false:** Read `logs/setup.log` tail for the build error.
-- Cache issue (stale layers): `docker builder prune -f` (Docker) or `container builder stop && container builder rm && container builder start` (Apple Container). Retry.
+- Cache issue (stale layers): `docker builder prune -f` (Docker), `podman system prune -f` (Podman), or `container builder stop && container builder rm && container builder start` (Apple Container). Retry.
 - Dockerfile syntax or missing files: diagnose from the log and fix, then retry.
 
 **If TEST_OK=false but BUILD_OK=true:** The image built but won't run. Check logs — common cause is runtime not fully started. Wait a moment and retry the test.
 
-## 4. Anthropic Credentials via OneCLI
+## 4. Model Credentials via OneCLI
 
 NanoClaw uses OneCLI to manage credentials — API keys are never stored in `.env` or exposed to containers. The OneCLI gateway injects them at request time.
 
@@ -156,9 +157,9 @@ Check if a secret already exists:
 onecli secrets list
 ```
 
-If an Anthropic secret is listed, confirm with user: keep or reconfigure? If keeping, skip to step 5.
+If a suitable model secret is listed, confirm with user: keep or reconfigure? If keeping, skip to step 5.
 
-AskUserQuestion: Do you want to use your **Claude subscription** (Pro/Max) or an **Anthropic API key**?
+AskUserQuestion: Do you want to use **Claude subscription**, **Anthropic API key**, or **OpenAI key via Anthropic-compatible gateway**?
 
 1. **Claude subscription (Pro/Max)** — description: "Uses your existing Claude Pro or Max subscription. You'll run `claude setup-token` in another terminal to get your token."
 2. **Anthropic API key** — description: "Pay-per-use API key from console.anthropic.com."
@@ -187,7 +188,17 @@ Ask them to let you know when done.
 
 **If the user's response happens to contain a token or key** (starts with `sk-ant-`): handle it gracefully — run the `onecli secrets create` command with that value on their behalf.
 
-**After user confirms:** verify with `onecli secrets list` that an Anthropic secret exists. If not, ask again.
+**After user confirms:** verify with `onecli secrets list` that required model secrets exist (Anthropic direct or OpenAI-compatible endpoint). If not, ask again.
+
+OpenAI-compatible path:
+- Ensure `.env` includes `ANTHROPIC_BASE_URL` set to an Anthropic-compatible endpoint.
+- Register the OpenAI key in OneCLI with the endpoint host as `--host-pattern`.
+- Re-run `npx tsx setup/index.ts --step verify` and confirm `CREDENTIALS=configured`.
+
+CLI example:
+```bash
+onecli secrets create --name OpenAI-Compatible --type api_key --value YOUR_OPENAI_KEY --host-pattern your-anthropic-compatible-endpoint
+```
 
 ## 5. Set Up Channels
 
@@ -265,7 +276,7 @@ Run `npx tsx setup/index.ts --step verify` and parse the status block.
 **If STATUS=failed, fix each:**
 - SERVICE=stopped → `npm run build`, then restart: `launchctl kickstart -k gui/$(id -u)/com.nanoclaw` (macOS) or `systemctl --user restart nanoclaw` (Linux) or `bash start-nanoclaw.sh` (WSL nohup)
 - SERVICE=not_found → re-run step 7
-- CREDENTIALS=missing → re-run step 4 (check `onecli secrets list` for Anthropic secret)
+- CREDENTIALS=missing → re-run step 4 (check `onecli secrets list`; for OpenAI-compatible mode also confirm `ANTHROPIC_BASE_URL` and endpoint host pattern)
 - CHANNEL_AUTH shows `not_found` for any channel → re-invoke that channel's skill (e.g. `/add-telegram`)
 - REGISTERED_GROUPS=0 → re-invoke the channel skills from step 5
 - MOUNT_ALLOWLIST=missing → `npx tsx setup/index.ts --step mounts -- --empty`

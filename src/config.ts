@@ -8,6 +8,7 @@ import { isValidTimezone } from './timezone.js';
 const envConfig = readEnvFile([
   'ASSISTANT_NAME',
   'ASSISTANT_HAS_OWN_NUMBER',
+  'CONTAINER_RUNTIME',
   'ONECLI_URL',
   'TZ',
 ]);
@@ -40,11 +41,31 @@ export const SENDER_ALLOWLIST_PATH = path.join(
 export const STORE_DIR = path.resolve(PROJECT_ROOT, 'store');
 export const GROUPS_DIR = path.resolve(PROJECT_ROOT, 'groups');
 export const DATA_DIR = path.resolve(PROJECT_ROOT, 'data');
+export const RUNTIME_STATE_DIR = path.resolve(DATA_DIR, 'runtime');
+
+function normalizeConfiguredContainerRuntime(
+  value: string | undefined,
+): 'podman' | 'docker' | 'apple-container' | undefined {
+  if (!value) return undefined;
+  if (value === 'podman' || value === 'docker' || value === 'apple-container') {
+    return value;
+  }
+  throw new Error(
+    `Unsupported CONTAINER_RUNTIME "${value}". Expected podman, docker, or apple-container.`,
+  );
+}
 
 export const CONTAINER_IMAGE =
   process.env.CONTAINER_IMAGE || 'nanoclaw-agent:latest';
+export const CONTAINER_RUNTIME = normalizeConfiguredContainerRuntime(
+  process.env.CONTAINER_RUNTIME || envConfig.CONTAINER_RUNTIME,
+);
 export const CONTAINER_TIMEOUT = parseInt(
   process.env.CONTAINER_TIMEOUT || '1800000',
+  10,
+);
+export const CONTAINER_INITIAL_OUTPUT_TIMEOUT = parseInt(
+  process.env.CONTAINER_INITIAL_OUTPUT_TIMEOUT || '300000',
   10,
 );
 export const CONTAINER_MAX_OUTPUT_SIZE = parseInt(

@@ -1,9 +1,9 @@
 ---
 name: status
-description: Quick read-only health check — session context, workspace mounts, tool availability, and task snapshot. Use when the user asks for system status or runs /status.
+description: Quick read-only health check - session context, runtime, workspace mounts, tool availability, enabled community skills, and task snapshot. Use when the user asks for system status or runs /status.
 ---
 
-# /status — System Status Check
+# /status - System Status Check
 
 Generate a quick read-only status report of the current agent environment.
 
@@ -14,9 +14,10 @@ test -d /workspace/project && echo "MAIN" || echo "NOT_MAIN"
 ```
 
 If `NOT_MAIN`, respond with:
+
 > This command is available in your main chat only. Send `/status` there to check system status.
 
-Then stop — do not generate the report.
+Then stop - do not generate the report.
 
 ## How to gather the information
 
@@ -28,6 +29,7 @@ Run the checks below and compile results into the report format.
 echo "Timestamp: $(date)"
 echo "Working dir: $(pwd)"
 echo "Channel: main"
+echo "Runtime: ${NANOCLAW_CONTAINER_RUNTIME:-unknown}"
 ```
 
 ### 2. Workspace and mount visibility
@@ -50,7 +52,7 @@ Confirm which tool families are available to you:
 - **Core:** Bash, Read, Write, Edit, Glob, Grep
 - **Web:** WebSearch, WebFetch
 - **Orchestration:** Task, TaskOutput, TaskStop, TeamCreate, TeamDelete, SendMessage
-- **MCP:** mcp__nanoclaw__* (send_message, schedule_task, list_tasks, pause_task, resume_task, cancel_task, update_task, register_group)
+- **MCP:** `mcp__nanoclaw__*` (`send_message`, `schedule_task`, `list_tasks`, `pause_task`, `resume_task`, `cancel_task`, `update_task`, `register_group`, `search_openclaw_skills`, `enable_openclaw_skill`, `disable_openclaw_skill`, `list_enabled_openclaw_skills`, `install_openclaw_skill`)
 
 ### 4. Container utilities
 
@@ -60,11 +62,21 @@ node --version 2>/dev/null
 claude --version 2>/dev/null
 ```
 
-### 5. Task snapshot
+### 5. Community skill snapshot
+
+Use the MCP tool to list enabled community skills:
+
+```text
+Call mcp__nanoclaw__list_enabled_openclaw_skills to get enabled community skills.
+```
+
+If no community skills are enabled, report "No community skills enabled."
+
+### 6. Task snapshot
 
 Use the MCP tool to list tasks:
 
-```
+```text
 Call mcp__nanoclaw__list_tasks to get scheduled tasks.
 ```
 
@@ -74,31 +86,38 @@ If no tasks exist, report "No scheduled tasks."
 
 Present as a clean, readable message:
 
+```text
+NanoClaw Status
+
+Session:
+- Channel: main
+- Time: 2026-03-14 09:30 local
+- Working dir: /workspace/group
+- Runtime: podman
+
+Workspace:
+- Group folder: yes
+- Extra mounts: none
+- IPC: yes
+
+Tools:
+- Core: yes
+- Web: yes
+- Orchestration: yes
+- MCP: yes
+
+Container:
+- agent-browser: available
+- Node: v22.x
+- Claude Code: vX.X.X
+
+Community Skills:
+- 1 enabled / No community skills enabled
+
+Scheduled Tasks:
+- 2 active tasks / No scheduled tasks
 ```
-🔍 *NanoClaw Status*
 
-*Session:*
-• Channel: main
-• Time: 2026-03-14 09:30 UTC
-• Working dir: /workspace/group
-
-*Workspace:*
-• Group folder: ✓ (N files)
-• Extra mounts: none / N directories
-• IPC: ✓ (messages, tasks, input)
-
-*Tools:*
-• Core: ✓  Web: ✓  Orchestration: ✓  MCP: ✓
-
-*Container:*
-• agent-browser: ✓ / not installed
-• Node: vXX.X.X
-• Claude Code: vX.X.X
-
-*Scheduled Tasks:*
-• N active tasks / No scheduled tasks
-```
-
-Adapt based on what you actually find. Keep it concise — this is a quick health check, not a deep diagnostic.
+Adapt based on what you actually find. Keep it concise - this is a quick health check, not a deep diagnostic.
 
 **See also:** `/capabilities` for a full list of installed skills and tools.

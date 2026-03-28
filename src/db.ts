@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 
 import { ASSISTANT_NAME, DATA_DIR, STORE_DIR } from './config.js';
-import { isValidGroupFolder } from './group-folder.js';
+import { assertValidGroupFolder, isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
 import {
   NewMessage,
@@ -82,6 +82,34 @@ function createSchema(database: Database.Database): void {
       container_config TEXT,
       requires_trigger INTEGER DEFAULT 1
     );
+    CREATE TABLE IF NOT EXISTS community_skills (
+      skill_id TEXT PRIMARY KEY,
+      owner TEXT NOT NULL,
+      slug TEXT NOT NULL,
+      display_name TEXT NOT NULL,
+      source_url TEXT NOT NULL,
+      canonical_clawhub_url TEXT,
+      github_tree_url TEXT NOT NULL,
+      cache_dir_name TEXT NOT NULL UNIQUE,
+      cache_path TEXT NOT NULL,
+      manifest_path TEXT NOT NULL,
+      cached_at TEXT NOT NULL,
+      file_count INTEGER NOT NULL,
+      virus_total_status TEXT,
+      openclaw_status TEXT,
+      openclaw_summary TEXT
+    );
+    CREATE TABLE IF NOT EXISTS group_enabled_skills (
+      group_folder TEXT NOT NULL,
+      skill_id TEXT NOT NULL,
+      enabled_at TEXT NOT NULL,
+      PRIMARY KEY (group_folder, skill_id),
+      FOREIGN KEY (skill_id) REFERENCES community_skills(skill_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_group_enabled_skills_group
+      ON group_enabled_skills(group_folder, enabled_at);
+    CREATE INDEX IF NOT EXISTS idx_group_enabled_skills_skill
+      ON group_enabled_skills(skill_id);
   `);
 
   // Add context_mode column if it doesn't exist (migration for existing DBs)
@@ -570,6 +598,183 @@ export function getAllSessions(): Record<string, string> {
     result[row.group_folder] = row.session_id;
   }
   return result;
+}
+
+export interface CommunitySkillRecord {
+  skill_id: string;
+  owner: string;
+  slug: string;
+  display_name: string;
+  source_url: string;
+  canonical_clawhub_url: string | null;
+  github_tree_url: string;
+  cache_dir_name: string;
+  cache_path: string;
+  manifest_path: string;
+  cached_at: string;
+  file_count: number;
+  virus_total_status: string | null;
+  openclaw_status: string | null;
+  openclaw_summary: string | null;
+}
+
+export interface EnabledCommunitySkillRecord extends CommunitySkillRecord {
+  group_folder: string;
+  enabled_at: string;
+}
+
+function mapCommunitySkillRow(
+  row: CommunitySkillRecord | undefined,
+): CommunitySkillRecord | undefined {
+  return row;
+}
+
+export function upsertCommunitySkill(record: CommunitySkillRecord): void {
+  db.prepare(
+    `
+      INSERT INTO community_skills (
+        skill_id,
+        owner,
+        slug,
+        display_name,
+        source_url,
+        canonical_clawhub_url,
+        github_tree_url,
+        cache_dir_name,
+        cache_path,
+        manifest_path,
+        cached_at,
+        file_count,
+        virus_total_status,
+        openclaw_status,
+        openclaw_summary
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(skill_id) DO UPDATE SET
+        owner = excluded.owner,
+        slug = excluded.slug,
+        display_name = excluded.display_name,
+        source_url = excluded.source_url,
+        canonical_clawhub_url = excluded.canonical_clawhub_url,
+        github_tree_url = excluded.github_tree_url,
+        cache_dir_name = excluded.cache_dir_name,
+        cache_path = excluded.cache_path,
+        manifest_path = excluded.manifest_path,
+        cached_at = excluded.cached_at,
+        file_count = excluded.file_count,
+        virus_total_status = excluded.virus_total_status,
+        openclaw_status = excluded.openclaw_status,
+        openclaw_summary = excluded.openclaw_summary
+    `,
+  ).run(
+    record.skill_id,
+    record.owner,
+    record.slug,
+    record.display_name,
+    record.source_url,
+    record.canonical_clawhub_url,
+    record.github_tree_url,
+    record.cache_dir_name,
+    record.cache_path,
+    record.manifest_path,
+    record.cached_at,
+    record.file_count,
+    record.virus_total_status,
+    record.openclaw_status,
+    record.openclaw_summary,
+  );
+}
+
+export function getCommunitySkillById(
+  skillId: string,
+): CommunitySkillRecord | undefined {
+  return mapCommunitySkillRow(
+    db
+      .prepare('SELECT * FROM community_skills WHERE skill_id = ?')
+      .get(skillId) as CommunitySkillRecord | undefined,
+  );
+}
+
+export function getCommunitySkillByUrl(
+  url: string,
+): CommunitySkillRecord | undefined {
+  return mapCommunitySkillRow(
+    db
+      .prepare(
+        `
+          SELECT *
+          FROM community_skills
+          WHERE source_url = ?
+             OR canonical_clawhub_url = ?
+             OR github_tree_url = ?
+        `,
+      )
+      .get(url, url, url) as CommunitySkillRecord | undefined,
+  );
+}
+
+export function getCommunitySkillByCacheDirName(
+  cacheDirName: string,
+): CommunitySkillRecord | undefined {
+  return mapCommunitySkillRow(
+    db
+      .prepare('SELECT * FROM community_skills WHERE cache_dir_name = ?')
+      .get(cacheDirName) as CommunitySkillRecord | undefined,
+  );
+}
+
+export function enableCommunitySkillForGroup(
+  groupFolder: string,
+  skillId: string,
+  enabledAt = new Date().toISOString(),
+): void {
+  assertValidGroupFolder(groupFolder);
+  db.prepare(
+    `
+      INSERT INTO group_enabled_skills (group_folder, skill_id, enabled_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(group_folder, skill_id) DO UPDATE SET enabled_at = excluded.enabled_at
+    `,
+  ).run(groupFolder, skillId, enabledAt);
+}
+
+export function disableCommunitySkillForGroup(
+  groupFolder: string,
+  skillId: string,
+): void {
+  assertValidGroupFolder(groupFolder);
+  db.prepare(
+    'DELETE FROM group_enabled_skills WHERE group_folder = ? AND skill_id = ?',
+  ).run(groupFolder, skillId);
+}
+
+export function listEnabledCommunitySkillsForGroup(
+  groupFolder: string,
+): EnabledCommunitySkillRecord[] {
+  assertValidGroupFolder(groupFolder);
+  return db
+    .prepare(
+      `
+        SELECT c.*, g.group_folder, g.enabled_at
+        FROM group_enabled_skills g
+        INNER JOIN community_skills c ON c.skill_id = g.skill_id
+        WHERE g.group_folder = ?
+        ORDER BY c.display_name COLLATE NOCASE
+      `,
+    )
+    .all(groupFolder) as EnabledCommunitySkillRecord[];
+}
+
+export function listAllEnabledCommunitySkills(): EnabledCommunitySkillRecord[] {
+  return db
+    .prepare(
+      `
+        SELECT c.*, g.group_folder, g.enabled_at
+        FROM group_enabled_skills g
+        INNER JOIN community_skills c ON c.skill_id = g.skill_id
+        ORDER BY g.group_folder, c.display_name COLLATE NOCASE
+      `,
+    )
+    .all() as EnabledCommunitySkillRecord[];
 }
 
 // --- Registered group accessors ---

@@ -9,12 +9,14 @@ const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
 // Mock config
 vi.mock('./config.js', () => ({
   CONTAINER_IMAGE: 'nanoclaw-agent:latest',
+  CONTAINER_INITIAL_OUTPUT_TIMEOUT: 300000, // 5min
   CONTAINER_MAX_OUTPUT_SIZE: 10485760,
   CONTAINER_TIMEOUT: 1800000, // 30min
   DATA_DIR: '/tmp/nanoclaw-test-data',
   GROUPS_DIR: '/tmp/nanoclaw-test-groups',
   IDLE_TIMEOUT: 1800000, // 30min
   ONECLI_URL: 'http://localhost:10254',
+  RUNTIME_STATE_DIR: '/tmp/nanoclaw-test-runtime',
   TIMEZONE: 'America/Los_Angeles',
 }));
 
@@ -41,7 +43,9 @@ vi.mock('fs', async () => {
       readFileSync: vi.fn(() => ''),
       readdirSync: vi.fn(() => []),
       statSync: vi.fn(() => ({ isDirectory: () => false })),
-      copyFileSync: vi.fn(),
+      cpSync: vi.fn(),
+      rmSync: vi.fn(),
+      renameSync: vi.fn(),
     },
   };
 });
@@ -54,8 +58,11 @@ vi.mock('./mount-security.js', () => ({
 // Mock container-runtime
 vi.mock('./container-runtime.js', () => ({
   CONTAINER_RUNTIME_BIN: 'docker',
+  CONTAINER_RUNTIME_NAME: 'docker',
   hostGatewayArgs: () => [],
+  normalizeRuntimeArgs: (args: string[]) => args,
   readonlyMountArgs: (h: string, c: string) => ['-v', `${h}:${c}:ro`],
+  writableMountArgs: (h: string, c: string) => ['-v', `${h}:${c}`],
   stopContainer: vi.fn(),
 }));
 
@@ -105,7 +112,11 @@ vi.mock('child_process', async () => {
   };
 });
 
-import { runContainerAgent, ContainerOutput } from './container-runner.js';
+import {
+  runContainerAgent,
+  ContainerOutput,
+  sanitizeContainerArgsForLogs,
+} from './container-runner.js';
 import type { RegisteredGroup } from './types.js';
 
 const testGroup: RegisteredGroup = {
@@ -186,7 +197,7 @@ describe('container-runner timeout behavior', () => {
     );
 
     // No output emitted — fire the hard timeout
-    await vi.advanceTimersByTimeAsync(1830000);
+    await vi.advanceTimersByTimeAsync(300000);
 
     // Emit close event
     fakeProc.emit('close', 137);
@@ -195,7 +206,7 @@ describe('container-runner timeout behavior', () => {
 
     const result = await resultPromise;
     expect(result.status).toBe('error');
-    expect(result.error).toContain('timed out');
+    expect(result.error).toContain('produced no output');
     expect(onOutput).not.toHaveBeenCalled();
   });
 
@@ -225,5 +236,31 @@ describe('container-runner timeout behavior', () => {
     const result = await resultPromise;
     expect(result.status).toBe('success');
     expect(result.newSessionId).toBe('session-456');
+  });
+
+  it('redacts sensitive env vars in logged container args', () => {
+    const args = [
+      'run',
+      '-e',
+      'OPENAI_API_KEY=sk-openai-secret',
+      '-e',
+      'ANTHROPIC_AUTH_TOKEN=secret-token',
+      '-e',
+      'ANTHROPIC_BASE_URL=https://gateway.example.com',
+      '-e',
+      'TZ=America/Chicago',
+    ];
+
+    expect(sanitizeContainerArgsForLogs(args)).toEqual([
+      'run',
+      '-e',
+      'OPENAI_API_KEY=***',
+      '-e',
+      'ANTHROPIC_AUTH_TOKEN=***',
+      '-e',
+      'ANTHROPIC_BASE_URL=https://gateway.example.com',
+      '-e',
+      'TZ=America/Chicago',
+    ]);
   });
 });
