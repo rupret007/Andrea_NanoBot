@@ -242,6 +242,7 @@ function buildGuidance(route: AssistantRequestRoute): string {
   const routeSpecific: Record<AssistantRequestRoute, string[]> = {
     direct_assistant: [
       'Treat this as a direct assistant request. Answer clearly and directly.',
+      'Use a concise, confident, and lightly witty tone when appropriate. For classic jokes or pop-culture prompts (like meaning of life), prefer the expected punchline first.',
       'Do not escalate into heavy orchestration, background jobs, or community skill management unless the user explicitly asks for that kind of workflow.',
     ],
     protected_assistant: [

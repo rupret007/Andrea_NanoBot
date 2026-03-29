@@ -130,6 +130,7 @@ import {
   getUserFacingErrorDetail,
 } from './user-facing-error.js';
 import { resolveEffectiveIdleTimeout } from './runtime-timeout.js';
+import { maybeBuildDirectQuickReply } from './direct-quick-reply.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -479,6 +480,28 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     },
     'Processing messages',
   );
+
+  if (requestPolicy.route === 'direct_assistant') {
+    const quickReply = maybeBuildDirectQuickReply(missedMessages);
+    if (quickReply) {
+      try {
+        await channel.sendMessage(chatJid, quickReply);
+        logger.info(
+          { group: group.name },
+          'Handled message via direct quick reply path',
+        );
+        return true;
+      } catch (err) {
+        lastAgentTimestamp[chatJid] = previousCursor;
+        saveState();
+        logger.warn(
+          { group: group.name, err },
+          'Direct quick reply send failed, rolled back cursor for retry',
+        );
+        return false;
+      }
+    }
+  }
 
   // Track idle timer for closing stdin when agent is idle
   let idleTimer: ReturnType<typeof setTimeout> | null = null;

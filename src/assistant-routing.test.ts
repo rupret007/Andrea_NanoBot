@@ -14,6 +14,7 @@ describe('assistant request routing', () => {
     expect(policy.route).toBe('direct_assistant');
     expect(policy.mcpTools).toEqual([]);
     expect(policy.builtinTools).not.toContain('Bash');
+    expect(policy.guidance).toContain('lightly witty tone');
   });
 
   it('routes reminder and calendar asks to protected assistant handling', () => {

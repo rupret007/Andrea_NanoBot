@@ -5,7 +5,6 @@ $entryPath = Join-Path $projectRoot 'dist\index.js'
 $pidFile = Join-Path $projectRoot 'nanoclaw.pid'
 $logDir = Join-Path $projectRoot 'logs'
 $logPath = Join-Path $logDir 'nanoclaw.log'
-$errLogPath = Join-Path $logDir 'nanoclaw.error.log'
 $gatewayStartScript = Join-Path $projectRoot 'scripts\start-openai-gateway.ps1'
 
 function Write-Step {
@@ -141,15 +140,16 @@ function Start-NanoClawFallback {
   $nodeExe = Resolve-NodeExecutable
   $escapedEntry = Escape-SingleQuoted -Value $entryPath
   $escapedLog = Escape-SingleQuoted -Value $logPath
-  $escapedErrLog = Escape-SingleQuoted -Value $errLogPath
 
   if ($nodeExe) {
     $escapedNodeExe = Escape-SingleQuoted -Value $nodeExe
-    $runtimeCommand = "& '$escapedNodeExe' '$escapedEntry' 1>> '$escapedLog' 2>> '$escapedErrLog'"
+    # Use Out-File -Encoding utf8 so logs stay readable (PowerShell native
+    # redirection writes UTF-16 with NUL separators on Windows).
+    $runtimeCommand = "& '$escapedNodeExe' '$escapedEntry' 2>&1 | Out-File -FilePath '$escapedLog' -Encoding utf8 -Append"
     $proc = Start-HiddenRuntimeProcess -RuntimeCommand $runtimeCommand
   } else {
     # Last-resort fallback: long-running npx launcher.
-    $runtimeCommand = "& 'npx.cmd' -y -p node@22 node '$escapedEntry' 1>> '$escapedLog' 2>> '$escapedErrLog'"
+    $runtimeCommand = "& 'npx.cmd' -y -p node@22 node '$escapedEntry' 2>&1 | Out-File -FilePath '$escapedLog' -Encoding utf8 -Append"
     $proc = Start-HiddenRuntimeProcess -RuntimeCommand $runtimeCommand
   }
 
