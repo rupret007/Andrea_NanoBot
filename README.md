@@ -15,8 +15,7 @@
   <a href="docs/ADMIN_GUIDE.md">Admin Guide</a>&nbsp; | &nbsp;
   <a href="docs/SETUP_AND_FEATURES_GUIDE.md">Setup Guide</a>&nbsp; | &nbsp;
   <a href="docs/CHANNEL_COMMANDS_AND_ONBOARDING.md">Chat Commands</a>&nbsp; | &nbsp;
-  <a href="docs/ALEXA_VOICE_INTEGRATION.md">Alexa Voice</a>&nbsp; | &nbsp;
-  <a href="docs/AMAZON_SHOPPING_AND_APPROVALS.md">Amazon Shopping</a>&nbsp; | &nbsp;
+  <a href="docs/DEMO_CHECKLIST.md">Demo Checklist</a>&nbsp; | &nbsp;
   <a href="docs/ADDONS_AND_FEATURE_MATRIX.md">Add-On Matrix</a>&nbsp; | &nbsp;
   <a href="docs/TESTING_AND_RELEASE_RUNBOOK.md">Testing Runbook</a>&nbsp; | &nbsp;
   <a href="PRIVACY.md">Privacy Policy</a>
@@ -33,9 +32,8 @@ This repo turns a secure containerized agent runtime into a personal assistant t
 - run recurring automations and check-ins
 - research and summarize information
 - answer simple questions, playful prompts, and basic math through a fast direct reply path
-- search Amazon Business products and require explicit approval before purchase flow
 - help with code, repos, and technical tasks
-- expose optional admin-enabled integrations without breaking the one-assistant experience
+- expose operator-validated extras without breaking the one-assistant experience
 
 The runtime is still based on NanoClaw, which means the security model matters:
 
@@ -48,7 +46,7 @@ The runtime is still based on NanoClaw, which means the security model matters:
 ## Why This Repo Exists
 
 The upstream NanoClaw project provides a strong secure runtime.
-This fork turns that foundation into Andrea: a more opinionated, more polished personal assistant with stronger Telegram UX, Cursor/9router awareness, guarded Amazon shopping, better operator docs, and a more intentional day-to-day assistant experience.
+This fork turns that foundation into Andrea: a more opinionated, more polished personal assistant with stronger Telegram UX, better operator docs, reliable direct replies, and a more intentional day-to-day assistant experience.
 
 In short:
 
@@ -82,7 +80,6 @@ Then use this setup flow:
 5. In Telegram, run `/start`
 6. In Telegram, run `/registermain`
 7. In Telegram, run `/help`
-8. Optionally add Alexa voice with [docs/ALEXA_VOICE_INTEGRATION.md](docs/ALEXA_VOICE_INTEGRATION.md)
 
 ## Pick Your Guide
 
@@ -121,23 +118,8 @@ These run inside Telegram after the bot is live:
 - `/chatid`
 - `/registermain`
 - `/cursor_status`
-- `/cursor_models [filter]`
-- `/cursor_test`
-- `/cursor_jobs`
-- `/cursor_create [options] <prompt>`
-- `/cursor_sync <agent_id>`
-- `/cursor_stop <agent_id>`
-- `/cursor_followup <agent_id> <text>`
-- `/cursor_conversation <agent_id> [limit]`
-- `/cursor_artifacts <agent_id>`
-- `/cursor_artifact_link <agent_id> <absolute_path>`
-- `/alexa_status`
-- `/amazon_status`
-- `/amazon_search <keywords>`
-- `/purchase_request <asin> <offer_id> [quantity]`
-- `/purchase_requests`
-- `/purchase_approve <request_id> <approval_code>`
-- `/purchase_cancel <request_id>`
+
+Advanced operator workflows still exist, but they live in the admin guide and should stay out of the default demo unless they were validated the same day.
 
 ## Demo-Ready Surface
 
@@ -145,11 +127,10 @@ For a reliable demo, keep the story tight:
 
 - Telegram onboarding and `/registermain`
 - direct questions, fast quick replies for simple asks, reminders, and light research
-- stable Cursor readiness and job-control commands
-- Amazon status, search, and approval-gated purchase requests
+- stable health checks and `/cursor_status`
 - secure per-chat isolation and clean user-facing replies
 
-Optional integrations such as Alexa, marketplace skills, and calendar-oriented skills exist, but they should be treated as operator-enabled extras unless they were validated the same day.
+Optional integrations such as Alexa, shopping flows, marketplace skills, and calendar-oriented skills exist, but they should be treated as operator-enabled extras unless they were validated the same day.
 
 ## What Andrea Can Do
 
@@ -157,7 +138,6 @@ Optional integrations such as Alexa, marketplace skills, and calendar-oriented s
 
 - track tasks and simple to-do lists
 - set reminders and recurring follow-ups
-- search Amazon Business and prepare approval-gated purchase requests
 - summarize conversations and notes
 - run lightweight personal workflow automation
 
@@ -170,7 +150,7 @@ Optional integrations such as Alexa, marketplace skills, and calendar-oriented s
 ### Coding And Operator Work
 
 - help with repos, debugging, and code tasks
-- use Cursor/9router-aware routing checks with `/cursor_status` and `/cursor_test`
+- use Cursor/9router-aware routing checks with `/cursor_status`
 - create, follow up, sync, and inspect Cursor cloud coding jobs directly from Telegram
 - keep optional integrations behind explicit operator setup instead of treating them as default demo features
 
@@ -190,10 +170,10 @@ In a group:
 Examples:
 
 ```text
-@Andrea add "renew passport" to my to-do list
-@Andrea remind me every Monday at 9am to send updates
-@Andrea research the best standing desks for small apartments
-@Andrea find a good ergonomic keyboard on Amazon and prepare an approval request
+@your_bot_username add "renew passport" to my to-do list
+@your_bot_username remind me every Monday at 9am to send updates
+@your_bot_username research the best standing desks for small apartments
+@your_bot_username what's the meaning of life?
 ```
 
 ## Model And Runtime Support
@@ -206,19 +186,13 @@ Andrea currently supports:
 - OpenAI-key-backed gateways exposed through Anthropic-compatible APIs
 - 9router / Cursor-backed routing paths
 - optional Cursor Cloud Agents API control via `CURSOR_API_KEY`
-- optional Amazon Business search and guarded order submission
+- optional integrations only after operator validation
 
 Useful runtime validation commands:
 
 ```text
+/ping
 /cursor_status
-/cursor_models cu/
-/cursor_test
-/cursor_jobs
-/cursor_create --model cu/default --repo https://github.com/owner/repo --ref main Fix flaky tests in this repo and open a PR
-/cursor_artifact_link bc_123 "/opt/cursor/out/summary.md"
-/amazon_status
-/amazon_search ergonomic keyboard
 ```
 
 Useful local validation commands:

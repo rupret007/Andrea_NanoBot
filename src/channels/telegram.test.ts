@@ -62,12 +62,11 @@ describe('buildTelegramHelpText', () => {
     expect(help).toContain('/chatid');
     expect(help).toContain('/registermain');
     expect(help).toContain('/cursor_status');
-    expect(help).toContain('/cursor_models');
-    expect(help).toContain('/cursor_test');
-    expect(help).toContain('/alexa_status');
-    expect(help).toContain('/amazon_status');
-    expect(help).toContain('/amazon_search');
     expect(help).toContain('To-do lists, reminders, and recurring tasks');
+    expect(help).toContain('Fast replies for simple questions');
+    expect(help).not.toContain('/alexa_status');
+    expect(help).not.toContain('/amazon_status');
+    expect(help).not.toContain('/amazon_search');
   });
 });
 
@@ -79,31 +78,29 @@ describe('buildTelegramWelcomeText', () => {
     expect(welcome).toContain('/registermain');
     expect(welcome).toContain('/commands');
     expect(welcome).toContain('/features');
+    expect(welcome).toContain('mention my Telegram username');
+    expect(welcome).not.toContain('@Andrea');
   });
 });
 
 describe('buildTelegramCommandsText', () => {
-  it('lists both chat and cursor control commands', () => {
+  it('keeps the public command list focused on the demo-safe surface', () => {
     const commands = buildTelegramCommandsText();
 
     expect(commands).toContain('/start');
     expect(commands).toContain('/help');
     expect(commands).toContain('/commands');
     expect(commands).toContain('/features');
-    expect(commands).toContain('/cursor_models [filter]');
-    expect(commands).toContain('/cursor_create [options] <prompt>');
-    expect(commands).toContain('/cursor_conversation <agent_id> [limit]');
-    expect(commands).toContain('/cursor_artifacts <agent_id>');
+    expect(commands).toContain('/cursor_status');
     expect(commands).toContain(
-      '/cursor_artifact_link <agent_id> <absolute_path>',
+      'Advanced operator workflows stay in the admin guide',
     );
-    expect(commands).toContain('/alexa_status');
-    expect(commands).toContain('/amazon_search <keywords>');
-    expect(commands).toContain(
+    expect(commands).not.toContain('/cursor_models [filter]');
+    expect(commands).not.toContain('/cursor_create [options] <prompt>');
+    expect(commands).not.toContain('/alexa_status');
+    expect(commands).not.toContain('/amazon_search <keywords>');
+    expect(commands).not.toContain(
       '/purchase_request <asin> <offer_id> [quantity]',
-    );
-    expect(commands).toContain(
-      '/purchase_approve <request_id> <approval_code>',
     );
     expect(commands).not.toContain('/cursor_remote');
     expect(commands).not.toContain('/cursor_remote_end');
@@ -115,8 +112,9 @@ describe('buildTelegramFeaturesText', () => {
     const features = buildTelegramFeaturesText('Andrea');
 
     expect(features).toContain('Secure per-chat isolation');
-    expect(features).toContain('Amazon shopping search');
-    expect(features).toContain('Optional admin-enabled integrations');
+    expect(features).toContain('Fast replies for simple questions');
+    expect(features).toContain('operator-safe status checks');
+    expect(features).not.toContain('Amazon shopping search');
     expect(features).not.toContain('Apple Calendar');
   });
 });

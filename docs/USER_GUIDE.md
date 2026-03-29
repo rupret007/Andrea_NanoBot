@@ -12,8 +12,7 @@ You can use Andrea for:
 - fast answers to simple questions, playful prompts, and basic math
 - reminders and to-do help
 - summaries and research
-- coding help and Cursor-linked job control
-- shopping research and approval-gated purchase requests
+- coding help and operator-safe status checks
 - optional admin-enabled extras when your operator has validated them
 
 ## 2) First 5 Minutes (Telegram)
@@ -39,35 +38,17 @@ Core:
 - `/commands`
 - `/features`
 - `/ping`
+- `/chatid`
+- `/registermain`
 
-Cursor/coding:
+Operator-safe status:
 
 - `/cursor_status`
-- `/cursor_models [filter]`
-- `/cursor_jobs`
-- `/cursor_create [options] <prompt>`
-- `/cursor_sync <agent_id>`
-- `/cursor_followup <agent_id> <text>`
-- `/cursor_conversation <agent_id> [limit]`
-- `/cursor_artifacts <agent_id>`
-- `/cursor_artifact_link <agent_id> <absolute_path>`
-
-Amazon shopping:
-
-- `/amazon_status`
-- `/amazon_search <keywords>`
-- `/purchase_request <asin> <offer_id> [quantity]`
-- `/purchase_requests`
-- `/purchase_approve <request_id> <approval_code>`
-- `/purchase_cancel <request_id>`
-
-Voice:
-
-- `/alexa_status`
 
 Optional note:
 
-- Alexa, marketplace skills, and calendar-oriented skills are operator-enabled extras rather than the default demo path
+- Alexa, shopping, marketplace skills, and calendar-oriented skills are operator-enabled extras rather than the default demo path
+- advanced Cursor job workflows live in the admin guide and should be demoed only after same-day validation
 
 ## 4) Best Request Patterns
 
@@ -79,8 +60,8 @@ Examples:
 
 - `Summarize my pending tasks and suggest top 3 for today.`
 - `Remind me every weekday at 8:30am to review my priorities.`
-- `Find an ergonomic keyboard on Amazon and prepare an approval request.`
-- `Create a Cursor job to fix flaky auth tests and open a PR.`
+- `What's the meaning of life?`
+- `What is 56 + 778?`
 
 ## 5) Group Chat Use
 
@@ -88,40 +69,18 @@ In groups, mention Andrea when you want action.
 
 Examples:
 
-- `@Andrea summarize this thread and list action items`
-- `@Andrea remind this group every Monday at 9am to post weekly updates`
+- `@your_bot_username summarize this thread and list action items`
+- `@your_bot_username remind this group every Monday at 9am to post weekly updates`
 
 For sensitive admin actions, use the main control chat.
 
-## 6) Alexa Voice Use
+## 6) Optional Extras
 
-If Alexa is configured by your admin:
+Alexa, shopping, and deeper coding workflows may exist in some environments, but they are not part of the default demo path.
 
-1. Open the Alexa skill by invocation name.
-2. Ask for the same kinds of tasks you use in Telegram.
-3. Use `/alexa_status` in Telegram if voice behavior seems wrong.
+If your admin tells you one of those is enabled, treat it as an opt-in extra rather than the baseline experience.
 
-Common voice requests:
-
-- `Ask Andrea assistant to remind me tomorrow at 8am to stretch.`
-- `Ask Andrea assistant to research standing desks for small apartments.`
-
-If Alexa is not already validated for the demo environment, treat it as optional and keep the live demo on Telegram.
-
-## 7) Shopping Safety (Important)
-
-Andrea does not silently buy things.
-
-Expected flow:
-
-1. You search products.
-2. You create a purchase request.
-3. You review request details and approval code.
-4. You explicitly approve or cancel.
-
-If a request feels wrong, run `/purchase_cancel <request_id>`.
-
-## 8) What Andrea Should Not Do
+## 7) What Andrea Should Not Do
 
 Tell your admin if you see any of these:
 
@@ -130,16 +89,16 @@ Tell your admin if you see any of these:
 - cross-chat data that should not be visible in your current chat
 - obvious secret/token leakage in responses
 
-## 9) Quick Troubleshooting
+## 8) Quick Troubleshooting
 
 If something is off:
 
 1. Run `/ping`.
 2. Run `/help`.
-3. Run `/cursor_status`, `/amazon_status`, or `/alexa_status` for the feature you are using.
+3. Run `/cursor_status` if the coding/status path seems off.
 4. If the issue persists, send the exact command and timestamp to your admin.
 
-## 10) One-Line Mental Model
+## 9) One-Line Mental Model
 
 Andrea is your front door.
 Ask in plain language first, then use commands only when you need control.

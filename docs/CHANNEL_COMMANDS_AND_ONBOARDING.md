@@ -46,9 +46,9 @@ In groups:
 
 Examples:
 
-- `@Andrea remind the team every Monday at 9am to post weekly updates`
-- `@Andrea summarize the last week of discussion and turn it into action items`
-- `@Andrea research the best ergonomic keyboards under $150`
+- `@your_bot_username remind the team every Monday at 9am to post weekly updates`
+- `@your_bot_username summarize the last week of discussion and turn it into action items`
+- `@your_bot_username research the best ergonomic keyboards under $150`
 
 ## 4) Command Reference
 
@@ -62,33 +62,11 @@ Core chat commands:
 - `/chatid` - show current Telegram chat ID and type
 - `/registermain` - register this DM as the main control chat
 
-Cursor commands:
+Operator-safe status:
 
 - `/cursor_status` - show whether the Cursor/9router path is configured correctly
-- `/cursor_models [filter]` - list available Cursor Cloud models (optionally filtered)
-- `/cursor_test` - run a live end-to-end smoke test against the configured Cursor/9router gateway
-- `/cursor_jobs` - list tracked Cursor cloud jobs for this chat
-- `/cursor_create [options] <prompt>` - create a new Cursor cloud coding job
-- `/cursor_create --repo <url> --ref <branch> --model <id> <prompt>` - create a job with explicit repo/model targeting
-- `/cursor_sync <agent_id>` - refresh one Cursor job status and artifact list
-- `/cursor_stop <agent_id>` - request stop for a Cursor job
-- `/cursor_followup <agent_id> <text>` - send follow-up instructions to a Cursor job
-- `/cursor_conversation <agent_id> [limit]` - fetch recent Cursor conversation messages
-- `/cursor_artifacts <agent_id>` - list tracked artifacts for a Cursor job
-- `/cursor_artifact_link <agent_id> <absolute_path>` - generate a temporary download link for one tracked Cursor artifact
 
-Voice and Alexa commands:
-
-- `/alexa_status` - show whether Alexa voice ingress is configured, listening, and locked down the way you expect
-
-Amazon shopping commands:
-
-- `/amazon_status` - show whether Amazon Business search and purchase flow are configured
-- `/amazon_search <keywords>` - search Amazon Business products
-- `/purchase_request <asin> <offer_id> [quantity]` - prepare an approval-gated purchase request
-- `/purchase_requests` - list tracked purchase requests for this chat
-- `/purchase_approve <request_id> <approval_code>` - approve one prepared request
-- `/purchase_cancel <request_id>` - cancel a pending request
+Advanced operator workflows still exist, but they should stay in the admin guide and out of the default demo unless they were validated the same day.
 
 ## 5) Capability Overview
 
@@ -99,7 +77,6 @@ Typical jobs:
 - to-do lists and reminders
 - recurring scheduled tasks
 - research and summaries
-- Amazon shopping with explicit approval before any order submission
 - coding help and repo work
 - optional admin-enabled extras only after they are validated in that environment
 
@@ -109,10 +86,10 @@ Requests work best when they are specific about outcome, timing, and scope.
 
 Good examples:
 
-- `@Andrea remind me every weekday at 8:30am to review my priorities`
-- `@Andrea research the best Outlook alternatives for a small team and give me a short comparison`
-- `@Andrea summarize my tasks for today and suggest the top three priorities`
-- `@Andrea find a standing desk on Amazon and prepare an approval request for the best one`
+- `@your_bot_username remind me every weekday at 8:30am to review my priorities`
+- `@your_bot_username research the best Outlook alternatives for a small team and give me a short comparison`
+- `@your_bot_username summarize my tasks for today and suggest the top three priorities`
+- `@your_bot_username what's the meaning of life?`
 
 ## 7) UX Principles In This Repo
 
@@ -133,11 +110,7 @@ If people are confused in the channel, start here:
 - run `/commands`
 - verify the bot is in a direct chat if `/registermain` is needed
 - use `/chatid` to confirm the current chat identity
-- use `/cursor_status` or `/cursor_test` when testing Cursor-backed routing
-- use `/cursor_jobs` and `/cursor_sync <agent_id>` when debugging Cursor cloud job lifecycle
-- use `/alexa_status` before testing the Alexa skill endpoint
-- use `/amazon_status` before testing shopping
-- use `/purchase_requests` if someone forgot which request id Andrea already prepared
+- use `/cursor_status` when checking the coding/status path
 
 Runtime behavior note:
 
@@ -147,7 +120,6 @@ Runtime behavior note:
 For operator-side troubleshooting, also see:
 
 - [SETUP_AND_FEATURES_GUIDE.md](SETUP_AND_FEATURES_GUIDE.md)
-- [ALEXA_VOICE_INTEGRATION.md](ALEXA_VOICE_INTEGRATION.md)
-- [AMAZON_SHOPPING_AND_APPROVALS.md](AMAZON_SHOPPING_AND_APPROVALS.md)
+- [ADMIN_GUIDE.md](ADMIN_GUIDE.md)
 - [DEBUG_CHECKLIST.md](DEBUG_CHECKLIST.md)
 - [TESTING_AND_RELEASE_RUNBOOK.md](TESTING_AND_RELEASE_RUNBOOK.md)

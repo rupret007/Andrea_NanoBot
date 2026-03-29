@@ -72,20 +72,18 @@ export function buildTelegramHelpText(assistantName = ASSISTANT_NAME): string {
 export function buildTelegramWelcomeText(
   assistantName = ASSISTANT_NAME,
 ): string {
-  const mentionExample = `@${assistantName}`;
-
   return [
     `*Welcome to ${assistantName}*`,
     '',
     '- In a direct chat: send normal messages or slash commands.',
-    `- In a group: mention me (for example \`${mentionExample}\`) when you want me to act.`,
+    '- In a group: mention my Telegram username when you want me to act.',
     '- First-time Telegram setup: DM me and run `/registermain`.',
     '- Use `/commands` for a command reference and `/features` for capability details.',
     '',
     '*Quick Start*',
-    `- \`${mentionExample} add "renew passport" to my to-do list\``,
-    `- \`${mentionExample} remind me tomorrow at 3pm to call Sam\``,
-    `- \`${mentionExample} research the best standing desks and summarize them\``,
+    '- `Add "renew passport" to my to-do list`',
+    '- `Remind me tomorrow at 3pm to call Sam`',
+    '- `Research the best standing desks and summarize them`',
   ].join('\n');
 }
 
@@ -101,23 +99,7 @@ export function buildTelegramCommandsText(): string {
     '- `/chatid` - show chat ID and chat type',
     '- `/registermain` - bootstrap main control chat (DM only)',
     '- `/cursor_status` - show Cursor/9router integration readiness',
-    '- `/cursor_models [filter]` - list available Cursor Cloud models',
-    '- `/cursor_test` - run live Cursor/9router smoke test',
-    '- `/cursor_jobs` - list tracked Cursor cloud jobs for this chat',
-    '- `/cursor_create [options] <prompt>` - create a Cursor cloud job with optional repo/model flags',
-    '- `/cursor_sync <agent_id>` - refresh one Cursor job status/artifacts',
-    '- `/cursor_stop <agent_id>` - request stop for a Cursor job',
-    '- `/cursor_followup <agent_id> <text>` - send follow-up to a Cursor job',
-    '- `/cursor_conversation <agent_id> [limit]` - fetch recent conversation messages from a Cursor job',
-    '- `/cursor_artifacts <agent_id>` - list tracked artifacts for a Cursor job',
-    '- `/cursor_artifact_link <agent_id> <absolute_path>` - generate a temporary download link for one tracked Cursor artifact',
-    '- `/alexa_status` - show Alexa voice ingress status if it is enabled',
-    '- `/amazon_status` - show Amazon shopping readiness and safety mode',
-    '- `/amazon_search <keywords>` - search Amazon Business products',
-    '- `/purchase_request <asin> <offer_id> [quantity]` - prepare an approval-gated purchase request',
-    '- `/purchase_requests` - list tracked purchase requests for this chat',
-    '- `/purchase_approve <request_id> <approval_code>` - approve one prepared purchase request',
-    '- `/purchase_cancel <request_id>` - cancel a pending purchase request',
+    '- Advanced operator workflows stay in the admin guide and should be demoed only after same-day validation.',
   ].join('\n');
 }
 
@@ -129,21 +111,20 @@ export function buildTelegramFeaturesText(
     '',
     '- To-do lists, reminders, and recurring tasks',
     '- Research and summaries',
-    '- Project and coding help',
-    '- Amazon shopping search with explicit approval before any order submission',
-    '- Optional admin-enabled integrations like Alexa status checks and approved per-chat skills',
+    '- Fast replies for simple questions, playful prompts, and basic math',
+    '- Project and coding help with operator-safe status checks',
     "- Secure per-chat isolation so one chat does not automatically get another chat's skills or files",
   ].join('\n');
 }
 
 function buildTelegramDescriptionText(assistantName = ASSISTANT_NAME): string {
-  return `${assistantName} helps with tasks, reminders, research, coding, and guarded shopping approvals. In DM, use /registermain to set up your main control chat.`;
+  return `${assistantName} helps with tasks, reminders, research, coding, and clear everyday assistance. In DM, use /registermain to set up your main control chat.`;
 }
 
 function buildTelegramShortDescriptionText(
   assistantName = ASSISTANT_NAME,
 ): string {
-  return `${assistantName}: tasks, reminders, research, coding, and guarded shopping approvals.`;
+  return `${assistantName}: tasks, reminders, research, coding, and quick everyday help.`;
 }
 
 async function sendTelegramMessage(
@@ -417,7 +398,7 @@ export class TelegramChannel implements Channel {
             { command: 'help', description: 'How Andrea works in this chat' },
             {
               command: 'commands',
-              description: 'List commands and control tools',
+              description: 'List the demo-safe command set',
             },
             { command: 'features', description: 'Show what Andrea can do' },
             { command: 'ping', description: 'Check if the bot is online' },
@@ -425,70 +406,6 @@ export class TelegramChannel implements Channel {
             {
               command: 'cursor_status',
               description: 'Show Cursor integration status',
-            },
-            {
-              command: 'cursor_models',
-              description: 'List available Cursor Cloud models',
-            },
-            {
-              command: 'cursor_test',
-              description: 'Run Cursor integration smoke test',
-            },
-            {
-              command: 'cursor_jobs',
-              description: 'List Cursor jobs for this chat',
-            },
-            {
-              command: 'cursor_create',
-              description: 'Create a Cursor job from prompt text',
-            },
-            {
-              command: 'cursor_sync',
-              description: 'Refresh one Cursor job by id',
-            },
-            {
-              command: 'cursor_stop',
-              description: 'Stop one Cursor job by id',
-            },
-            {
-              command: 'cursor_followup',
-              description: 'Follow up one Cursor job by id',
-            },
-            {
-              command: 'cursor_conversation',
-              description: 'Show recent messages for one Cursor job',
-            },
-            {
-              command: 'cursor_artifacts',
-              description: 'List artifacts for one Cursor job',
-            },
-            {
-              command: 'cursor_artifact_link',
-              description: 'Get a download link for one Cursor artifact',
-            },
-            {
-              command: 'amazon_status',
-              description: 'Show Amazon shopping readiness',
-            },
-            {
-              command: 'amazon_search',
-              description: 'Search Amazon Business products',
-            },
-            {
-              command: 'purchase_request',
-              description: 'Prepare a guarded purchase approval',
-            },
-            {
-              command: 'purchase_requests',
-              description: 'List tracked purchase approvals',
-            },
-            {
-              command: 'purchase_approve',
-              description: 'Approve one purchase request',
-            },
-            {
-              command: 'purchase_cancel',
-              description: 'Cancel one purchase request',
             },
             {
               command: 'registermain',

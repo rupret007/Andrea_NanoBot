@@ -19,10 +19,10 @@ For the in-chat user journey and command reference, also see:
   - global cache
   - explicit per-chat enable/disable
 - Anthropic-compatible model routing with OpenAI-key-backed gateway support.
-- Amazon Business product search and approval-gated purchasing.
+- Optional operator-enabled integrations such as Amazon Business shopping and Alexa voice.
 
 For demo use, keep the default public surface smaller than the full operator feature set.
-The safest baseline is Telegram + direct assistance + fast quick replies for simple asks + Cursor status/job controls + Amazon status/search/approval flow.
+The safest baseline is Telegram + direct assistance + fast quick replies for simple asks + reminders/tasks + `/cursor_status` + clean startup/health checks.
 
 ## 1) Quick Start (Recommended Path)
 
@@ -282,18 +282,18 @@ npm run setup -- --step verify
 ## 7) Daily Usage
 
 Use your configured trigger in chats.
-In many forks this is customized to `@Andrea`, but it is controlled by `ASSISTANT_NAME`.
+Use your real Telegram bot username when demonstrating mention-based group prompts.
 
 Typical commands:
 
 - ask for regular assistance in any registered chat
 - ask for recurring tasks:
-  - `@Andrea every weekday at 9am send me a sales summary`
+  - `@your_bot_username every weekday at 9am send me a sales summary`
 - manage groups from main chat:
-  - `@Andrea join the Family group`
+  - `@your_bot_username join the Family group`
 - manage marketplace skills:
-  - `@Andrea search OpenClaw skills for GitHub Actions debugging`
-  - `@Andrea enable that skill in this chat`
+  - `@your_bot_username search OpenClaw skills for GitHub Actions debugging`
+  - `@your_bot_username enable that skill in this chat`
 - use the in-chat discovery layer:
   - `/start`
   - `/help`
