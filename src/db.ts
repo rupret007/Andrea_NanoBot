@@ -110,6 +110,64 @@ function createSchema(database: Database.Database): void {
       ON group_enabled_skills(group_folder, enabled_at);
     CREATE INDEX IF NOT EXISTS idx_group_enabled_skills_skill
       ON group_enabled_skills(skill_id);
+    CREATE TABLE IF NOT EXISTS cursor_agents (
+      id TEXT PRIMARY KEY,
+      group_folder TEXT NOT NULL,
+      chat_jid TEXT NOT NULL,
+      status TEXT NOT NULL,
+      model TEXT,
+      prompt_text TEXT NOT NULL,
+      source_repository TEXT,
+      source_ref TEXT,
+      source_pr_url TEXT,
+      target_url TEXT,
+      target_pr_url TEXT,
+      target_branch_name TEXT,
+      auto_create_pr INTEGER DEFAULT 0,
+      open_as_cursor_github_app INTEGER DEFAULT 0,
+      skip_reviewer_request INTEGER DEFAULT 0,
+      summary TEXT,
+      raw_json TEXT,
+      created_by TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      last_synced_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_cursor_agents_group_created
+      ON cursor_agents(group_folder, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_cursor_agents_chat_created
+      ON cursor_agents(chat_jid, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_cursor_agents_status
+      ON cursor_agents(status, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS cursor_agent_artifacts (
+      agent_id TEXT NOT NULL,
+      absolute_path TEXT NOT NULL,
+      size_bytes INTEGER,
+      updated_at TEXT,
+      download_url TEXT,
+      download_url_expires_at TEXT,
+      synced_at TEXT NOT NULL,
+      PRIMARY KEY (agent_id, absolute_path),
+      FOREIGN KEY (agent_id) REFERENCES cursor_agents(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_cursor_agent_artifacts_agent
+      ON cursor_agent_artifacts(agent_id, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS cursor_agent_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      agent_id TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      status TEXT,
+      summary TEXT,
+      webhook_id TEXT,
+      payload_json TEXT NOT NULL,
+      received_at TEXT NOT NULL,
+      FOREIGN KEY (agent_id) REFERENCES cursor_agents(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_cursor_agent_events_agent
+      ON cursor_agent_events(agent_id, received_at DESC);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_cursor_agent_events_webhook
+      ON cursor_agent_events(webhook_id)
+      WHERE webhook_id IS NOT NULL;
   `);
 
   // Add context_mode column if it doesn't exist (migration for existing DBs)
@@ -775,6 +833,287 @@ export function listAllEnabledCommunitySkills(): EnabledCommunitySkillRecord[] {
       `,
     )
     .all() as EnabledCommunitySkillRecord[];
+}
+
+export interface CursorAgentRecord {
+  id: string;
+  group_folder: string;
+  chat_jid: string;
+  status: string;
+  model: string | null;
+  prompt_text: string;
+  source_repository: string | null;
+  source_ref: string | null;
+  source_pr_url: string | null;
+  target_url: string | null;
+  target_pr_url: string | null;
+  target_branch_name: string | null;
+  auto_create_pr: number;
+  open_as_cursor_github_app: number;
+  skip_reviewer_request: number;
+  summary: string | null;
+  raw_json: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  last_synced_at: string | null;
+}
+
+export interface CursorAgentArtifactRecord {
+  agent_id: string;
+  absolute_path: string;
+  size_bytes: number | null;
+  updated_at: string | null;
+  download_url: string | null;
+  download_url_expires_at: string | null;
+  synced_at: string;
+}
+
+export interface CursorAgentEventRecord {
+  id: number;
+  agent_id: string;
+  event_type: string;
+  status: string | null;
+  summary: string | null;
+  webhook_id: string | null;
+  payload_json: string;
+  received_at: string;
+}
+
+export function upsertCursorAgent(record: CursorAgentRecord): void {
+  assertValidGroupFolder(record.group_folder);
+  db.prepare(
+    `
+      INSERT INTO cursor_agents (
+        id,
+        group_folder,
+        chat_jid,
+        status,
+        model,
+        prompt_text,
+        source_repository,
+        source_ref,
+        source_pr_url,
+        target_url,
+        target_pr_url,
+        target_branch_name,
+        auto_create_pr,
+        open_as_cursor_github_app,
+        skip_reviewer_request,
+        summary,
+        raw_json,
+        created_by,
+        created_at,
+        updated_at,
+        last_synced_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        group_folder = excluded.group_folder,
+        chat_jid = excluded.chat_jid,
+        status = excluded.status,
+        model = excluded.model,
+        prompt_text = excluded.prompt_text,
+        source_repository = excluded.source_repository,
+        source_ref = excluded.source_ref,
+        source_pr_url = excluded.source_pr_url,
+        target_url = excluded.target_url,
+        target_pr_url = excluded.target_pr_url,
+        target_branch_name = excluded.target_branch_name,
+        auto_create_pr = excluded.auto_create_pr,
+        open_as_cursor_github_app = excluded.open_as_cursor_github_app,
+        skip_reviewer_request = excluded.skip_reviewer_request,
+        summary = excluded.summary,
+        raw_json = excluded.raw_json,
+        created_by = excluded.created_by,
+        created_at = excluded.created_at,
+        updated_at = excluded.updated_at,
+        last_synced_at = excluded.last_synced_at
+    `,
+  ).run(
+    record.id,
+    record.group_folder,
+    record.chat_jid,
+    record.status,
+    record.model,
+    record.prompt_text,
+    record.source_repository,
+    record.source_ref,
+    record.source_pr_url,
+    record.target_url,
+    record.target_pr_url,
+    record.target_branch_name,
+    record.auto_create_pr,
+    record.open_as_cursor_github_app,
+    record.skip_reviewer_request,
+    record.summary,
+    record.raw_json,
+    record.created_by,
+    record.created_at,
+    record.updated_at,
+    record.last_synced_at,
+  );
+}
+
+export function getCursorAgentById(id: string): CursorAgentRecord | undefined {
+  return db
+    .prepare('SELECT * FROM cursor_agents WHERE id = ?')
+    .get(id) as CursorAgentRecord | undefined;
+}
+
+export function listCursorAgentsForGroup(
+  groupFolder: string,
+  limit = 50,
+): CursorAgentRecord[] {
+  assertValidGroupFolder(groupFolder);
+  return db
+    .prepare(
+      `
+        SELECT *
+        FROM cursor_agents
+        WHERE group_folder = ?
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(groupFolder, Math.max(1, limit)) as CursorAgentRecord[];
+}
+
+export function listCursorAgentsForChat(
+  chatJid: string,
+  limit = 50,
+): CursorAgentRecord[] {
+  return db
+    .prepare(
+      `
+        SELECT *
+        FROM cursor_agents
+        WHERE chat_jid = ?
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(chatJid, Math.max(1, limit)) as CursorAgentRecord[];
+}
+
+export function listAllCursorAgents(limit = 200): CursorAgentRecord[] {
+  return db
+    .prepare(
+      `
+        SELECT *
+        FROM cursor_agents
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(Math.max(1, limit)) as CursorAgentRecord[];
+}
+
+export function replaceCursorAgentArtifacts(
+  agentId: string,
+  artifacts: CursorAgentArtifactRecord[],
+): void {
+  const tx = db.transaction((records: CursorAgentArtifactRecord[]) => {
+    db.prepare('DELETE FROM cursor_agent_artifacts WHERE agent_id = ?').run(
+      agentId,
+    );
+
+    const insert = db.prepare(
+      `
+        INSERT INTO cursor_agent_artifacts (
+          agent_id,
+          absolute_path,
+          size_bytes,
+          updated_at,
+          download_url,
+          download_url_expires_at,
+          synced_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `,
+    );
+
+    for (const record of records) {
+      insert.run(
+        record.agent_id,
+        record.absolute_path,
+        record.size_bytes,
+        record.updated_at,
+        record.download_url,
+        record.download_url_expires_at,
+        record.synced_at,
+      );
+    }
+  });
+
+  tx(artifacts);
+}
+
+export function listCursorAgentArtifacts(
+  agentId: string,
+): CursorAgentArtifactRecord[] {
+  return db
+    .prepare(
+      `
+        SELECT *
+        FROM cursor_agent_artifacts
+        WHERE agent_id = ?
+        ORDER BY updated_at DESC, absolute_path COLLATE NOCASE ASC
+      `,
+    )
+    .all(agentId) as CursorAgentArtifactRecord[];
+}
+
+export function recordCursorAgentEvent(
+  record: Omit<CursorAgentEventRecord, 'id'>,
+): { inserted: boolean } {
+  if (record.webhook_id) {
+    const existing = db
+      .prepare(
+        'SELECT id FROM cursor_agent_events WHERE webhook_id = ? LIMIT 1',
+      )
+      .get(record.webhook_id) as { id: number } | undefined;
+    if (existing) return { inserted: false };
+  }
+
+  db.prepare(
+    `
+      INSERT INTO cursor_agent_events (
+        agent_id,
+        event_type,
+        status,
+        summary,
+        webhook_id,
+        payload_json,
+        received_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `,
+  ).run(
+    record.agent_id,
+    record.event_type,
+    record.status,
+    record.summary,
+    record.webhook_id,
+    record.payload_json,
+    record.received_at,
+  );
+
+  return { inserted: true };
+}
+
+export function listCursorAgentEvents(
+  agentId: string,
+  limit = 100,
+): CursorAgentEventRecord[] {
+  return db
+    .prepare(
+      `
+        SELECT *
+        FROM cursor_agent_events
+        WHERE agent_id = ?
+        ORDER BY received_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(agentId, Math.max(1, limit)) as CursorAgentEventRecord[];
 }
 
 // --- Registered group accessors ---

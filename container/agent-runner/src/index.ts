@@ -505,7 +505,7 @@ async function runQuery(
       );
       writeOutput({
         status: isErrorSubtype ? 'error' : 'success',
-        result: isErrorSubtype ? fallbackErrorText : textResult,
+        result: isErrorSubtype ? fallbackErrorText : (textResult ?? null),
         newSessionId,
         ...(isErrorSubtype
           ? { error: debugErrorText || 'Agent execution failed' }

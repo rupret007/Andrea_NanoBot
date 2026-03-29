@@ -88,6 +88,9 @@ describe('buildTelegramCommandsText', () => {
     expect(commands).toContain('/features');
     expect(commands).toContain('/cursor_remote');
     expect(commands).toContain('/cursor_remote_end');
+    expect(commands).toContain('/cursor_create <prompt>');
+    expect(commands).toContain('/cursor_conversation <agent_id> [limit]');
+    expect(commands).toContain('/cursor_artifacts <agent_id>');
   });
 });
 

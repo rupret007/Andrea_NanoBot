@@ -43,6 +43,11 @@ let deps: IpcDeps;
 let enabledSkills: Array<{ groupFolder: string; skillUrl: string }>;
 let disabledSkills: Array<{ groupFolder: string; skillIdOrUrl: string }>;
 let marketplaceChangedCount: number;
+let createdCursorAgents: Array<{ groupFolder: string; chatJid: string }>;
+let followedCursorAgents: Array<{ groupFolder: string; agentId: string }>;
+let stoppedCursorAgents: Array<{ groupFolder: string; agentId: string }>;
+let syncedCursorAgents: Array<{ groupFolder: string; agentId: string }>;
+let cursorChangedCount: number;
 
 beforeEach(() => {
   _initTestDatabase();
@@ -55,6 +60,11 @@ beforeEach(() => {
   enabledSkills = [];
   disabledSkills = [];
   marketplaceChangedCount = 0;
+  createdCursorAgents = [];
+  followedCursorAgents = [];
+  stoppedCursorAgents = [];
+  syncedCursorAgents = [];
+  cursorChangedCount = 0;
 
   // Populate DB as well
   setRegisteredGroup('main@g.us', MAIN_GROUP);
@@ -115,6 +125,112 @@ beforeEach(() => {
         disabledAt: '2024-01-01T00:00:00.000Z',
         installDirName: 'openclaw-demo-sample',
       } satisfies DisabledOpenClawSkill;
+    },
+    createCursorAgent: async ({ groupFolder, chatJid }) => {
+      createdCursorAgents.push({ groupFolder, chatJid });
+      return {
+        id: 'bc_123',
+        groupFolder,
+        chatJid,
+        status: 'CREATING',
+        model: 'default',
+        promptText: 'prompt',
+        sourceRepository: null,
+        sourceRef: null,
+        sourcePrUrl: null,
+        targetUrl: 'https://cursor.com/agents?id=bc_123',
+        targetPrUrl: null,
+        targetBranchName: null,
+        autoCreatePr: false,
+        openAsCursorGithubApp: false,
+        skipReviewerRequest: false,
+        summary: null,
+        createdBy: 'test',
+        createdAt: '2026-03-28T00:00:00.000Z',
+        updatedAt: '2026-03-28T00:00:00.000Z',
+        lastSyncedAt: '2026-03-28T00:00:00.000Z',
+      };
+    },
+    followupCursorAgent: async ({ groupFolder, agentId }) => {
+      followedCursorAgents.push({ groupFolder, agentId });
+      return {
+        id: agentId,
+        groupFolder,
+        chatJid: 'other@g.us',
+        status: 'RUNNING',
+        model: 'default',
+        promptText: 'prompt',
+        sourceRepository: null,
+        sourceRef: null,
+        sourcePrUrl: null,
+        targetUrl: null,
+        targetPrUrl: null,
+        targetBranchName: null,
+        autoCreatePr: false,
+        openAsCursorGithubApp: false,
+        skipReviewerRequest: false,
+        summary: null,
+        createdBy: 'test',
+        createdAt: '2026-03-28T00:00:00.000Z',
+        updatedAt: '2026-03-28T00:00:00.000Z',
+        lastSyncedAt: '2026-03-28T00:00:00.000Z',
+      };
+    },
+    stopCursorAgent: async ({ groupFolder, agentId }) => {
+      stoppedCursorAgents.push({ groupFolder, agentId });
+      return {
+        id: agentId,
+        groupFolder,
+        chatJid: 'other@g.us',
+        status: 'STOPPED',
+        model: 'default',
+        promptText: 'prompt',
+        sourceRepository: null,
+        sourceRef: null,
+        sourcePrUrl: null,
+        targetUrl: null,
+        targetPrUrl: null,
+        targetBranchName: null,
+        autoCreatePr: false,
+        openAsCursorGithubApp: false,
+        skipReviewerRequest: false,
+        summary: null,
+        createdBy: 'test',
+        createdAt: '2026-03-28T00:00:00.000Z',
+        updatedAt: '2026-03-28T00:00:00.000Z',
+        lastSyncedAt: '2026-03-28T00:00:00.000Z',
+      };
+    },
+    syncCursorAgent: async ({ groupFolder, agentId }) => {
+      syncedCursorAgents.push({ groupFolder, agentId });
+      return {
+        agent: {
+          id: agentId,
+          groupFolder,
+          chatJid: 'other@g.us',
+          status: 'FINISHED',
+          model: 'default',
+          promptText: 'prompt',
+          sourceRepository: null,
+          sourceRef: null,
+          sourcePrUrl: null,
+          targetUrl: null,
+          targetPrUrl: null,
+          targetBranchName: null,
+          autoCreatePr: false,
+          openAsCursorGithubApp: false,
+          skipReviewerRequest: false,
+          summary: null,
+          createdBy: 'test',
+          createdAt: '2026-03-28T00:00:00.000Z',
+          updatedAt: '2026-03-28T00:00:00.000Z',
+          lastSyncedAt: '2026-03-28T00:00:00.000Z',
+        },
+        artifacts: [],
+      };
+    },
+    onCursorChanged: () => {
+      cursorChangedCount += 1;
     },
   };
 });
@@ -498,6 +614,87 @@ describe('disable_openclaw_skill authorization', () => {
 
     expect(disabledSkills).toEqual([]);
     expect(marketplaceChangedCount).toBe(0);
+  });
+});
+
+describe('cursor agent authorization', () => {
+  it('main group can create cursor agent for another group', async () => {
+    await processTaskIpc(
+      {
+        type: 'create_cursor_agent',
+        prompt: 'do work',
+        targetJid: 'other@g.us',
+      },
+      'whatsapp_main',
+      true,
+      deps,
+    );
+
+    expect(createdCursorAgents).toEqual([
+      { groupFolder: 'other-group', chatJid: 'other@g.us' },
+    ]);
+    expect(cursorChangedCount).toBe(1);
+  });
+
+  it('non-main group cannot create cursor agent for another group', async () => {
+    await processTaskIpc(
+      {
+        type: 'create_cursor_agent',
+        prompt: 'do work',
+        targetJid: 'main@g.us',
+      },
+      'other-group',
+      false,
+      deps,
+    );
+
+    expect(createdCursorAgents).toEqual([]);
+    expect(cursorChangedCount).toBe(0);
+  });
+
+  it('non-main group can followup/stop/sync own cursor agent', async () => {
+    await processTaskIpc(
+      {
+        type: 'followup_cursor_agent',
+        cursor_agent_id: 'bc_123',
+        prompt: 'continue',
+        targetJid: 'other@g.us',
+      },
+      'other-group',
+      false,
+      deps,
+    );
+    await processTaskIpc(
+      {
+        type: 'stop_cursor_agent',
+        cursor_agent_id: 'bc_123',
+        targetJid: 'other@g.us',
+      },
+      'other-group',
+      false,
+      deps,
+    );
+    await processTaskIpc(
+      {
+        type: 'sync_cursor_agent',
+        cursor_agent_id: 'bc_123',
+        targetJid: 'other@g.us',
+      },
+      'other-group',
+      false,
+      deps,
+    );
+
+    expect(followedCursorAgents).toEqual([
+      { groupFolder: 'other-group', agentId: 'bc_123' },
+    ]);
+    expect(stoppedCursorAgents).toEqual([
+      { groupFolder: 'other-group', agentId: 'bc_123' },
+    ]);
+    expect(syncedCursorAgents).toEqual([
+      { groupFolder: 'other-group', agentId: 'bc_123' },
+    ]);
+    expect(cursorChangedCount).toBe(3);
   });
 });
 

@@ -106,6 +106,13 @@ These run inside Telegram after the bot is live:
 - `/registermain`
 - `/cursor_status`
 - `/cursor_test`
+- `/cursor_jobs`
+- `/cursor_create <prompt>`
+- `/cursor_sync <agent_id>`
+- `/cursor_stop <agent_id>`
+- `/cursor_followup <agent_id> <text>`
+- `/cursor_conversation <agent_id> [limit]`
+- `/cursor_artifacts <agent_id>`
 - `/cursor_remote`
 - `/cursor_remote_end`
 
@@ -128,6 +135,7 @@ These run inside Telegram after the bot is live:
 
 - help with repos, debugging, and code tasks
 - use Cursor/9router-aware routing checks with `/cursor_status` and `/cursor_test`
+- create, follow up, sync, and inspect Cursor cloud coding jobs directly from Telegram
 - expose approved community skills per chat without making them global by default
 
 ### Calendar Support
@@ -174,12 +182,15 @@ Andrea currently supports:
 - Anthropic-compatible model endpoints
 - OpenAI-key-backed gateways exposed through Anthropic-compatible APIs
 - 9router / Cursor-backed routing paths
+- optional Cursor Cloud Agents API control via `CURSOR_API_KEY`
 
 Useful runtime validation commands:
 
 ```text
 /cursor_status
 /cursor_test
+/cursor_jobs
+/cursor_create Fix flaky tests in this repo and open a PR
 ```
 
 Useful local validation commands:

@@ -22,6 +22,7 @@ const OPENCLAW_MARKET_SNAPSHOT = path.join(
   IPC_DIR,
   'current_openclaw_skills.json',
 );
+const CURSOR_AGENTS_SNAPSHOT = path.join(IPC_DIR, 'current_cursor_agents.json');
 
 // Context from environment variables (set by the agent runner)
 const chatJid = process.env.NANOCLAW_CHAT_JID!;
@@ -77,6 +78,41 @@ interface OpenClawSkillSnapshotFile {
   lastSync: string;
 }
 
+interface CursorArtifactSnapshot {
+  absolutePath: string;
+  sizeBytes: number | null;
+  updatedAt: string | null;
+  downloadUrl: string | null;
+  downloadUrlExpiresAt: string | null;
+  syncedAt: string;
+}
+
+interface CursorAgentSnapshot {
+  id: string;
+  chatJid: string;
+  groupFolder: string;
+  groupName: string;
+  status: string;
+  model: string | null;
+  promptText: string;
+  sourceRepository: string | null;
+  sourceRef: string | null;
+  sourcePrUrl: string | null;
+  targetUrl: string | null;
+  targetPrUrl: string | null;
+  targetBranchName: string | null;
+  summary: string | null;
+  createdAt: string;
+  updatedAt: string;
+  lastSyncedAt: string | null;
+  artifacts: CursorArtifactSnapshot[];
+}
+
+interface CursorAgentSnapshotFile {
+  agents: CursorAgentSnapshot[];
+  lastSync: string;
+}
+
 function loadOpenClawCatalog(): OpenClawCatalog {
   if (!fs.existsSync(OPENCLAW_MARKET_CATALOG)) {
     throw new Error('OpenClaw skill catalog is not installed in this session');
@@ -97,6 +133,19 @@ function loadOpenClawSkillSnapshot(): OpenClawSkillSnapshotFile {
   return JSON.parse(
     fs.readFileSync(OPENCLAW_MARKET_SNAPSHOT, 'utf-8'),
   ) as OpenClawSkillSnapshotFile;
+}
+
+function loadCursorAgentSnapshot(): CursorAgentSnapshotFile {
+  if (!fs.existsSync(CURSOR_AGENTS_SNAPSHOT)) {
+    return {
+      agents: [],
+      lastSync: new Date(0).toISOString(),
+    };
+  }
+
+  return JSON.parse(
+    fs.readFileSync(CURSOR_AGENTS_SNAPSHOT, 'utf-8'),
+  ) as CursorAgentSnapshotFile;
 }
 
 function tokenizeSearchQuery(input: string): string[] {
@@ -153,6 +202,10 @@ function scoreCatalogSkill(
   }
 
   return score;
+}
+
+function resolveTargetJid(targetGroupJid?: string): string {
+  return isMain && targetGroupJid ? targetGroupJid : chatJid;
 }
 
 const server = new McpServer({
@@ -414,6 +467,312 @@ server.tool(
         {
           type: 'text' as const,
           text: `Enabled community skills:\n\n${formatted}`,
+        },
+      ],
+    };
+  },
+);
+
+server.tool(
+  'list_cursor_agents',
+  `List Cursor Cloud agent jobs tracked by NanoClaw.
+
+Use this before followup/stop/sync so you can reference the exact agent id.`,
+  {
+    target_group_jid: z
+      .string()
+      .optional()
+      .describe(
+        '(Main group only) JID of the group to inspect. Defaults to the current group.',
+      ),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(100)
+      .default(20)
+      .describe('Maximum number of agents to return'),
+  },
+  async (args) => {
+    const snapshot = loadCursorAgentSnapshot();
+    const targetJid = resolveTargetJid(args.target_group_jid);
+    const matches = snapshot.agents
+      .filter((agent) => agent.chatJid === targetJid)
+      .slice(0, args.limit);
+
+    if (matches.length === 0) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: 'No Cursor agents are tracked for that chat yet.',
+          },
+        ],
+      };
+    }
+
+    const formatted = matches
+      .map((agent, index) => {
+        const targetBits = [
+          agent.targetUrl ? `URL: ${agent.targetUrl}` : null,
+          agent.targetPrUrl ? `PR: ${agent.targetPrUrl}` : null,
+        ]
+          .filter(Boolean)
+          .join('\n');
+
+        return `${index + 1}. ${agent.id} [${agent.status}]
+Model: ${agent.model || 'default'}
+Prompt: ${agent.promptText.slice(0, 120)}
+Updated: ${agent.updatedAt}
+Artifacts: ${agent.artifacts.length}${targetBits ? `\n${targetBits}` : ''}`;
+      })
+      .join('\n\n');
+
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: `Tracked Cursor agents:\n\n${formatted}`,
+        },
+      ],
+    };
+  },
+);
+
+server.tool(
+  'create_cursor_agent',
+  `Create a new Cursor Cloud agent job for this chat.
+
+Use this when the user explicitly wants Cursor to work on a coding/repo task asynchronously.`,
+  {
+    prompt: z.string().describe('The task for the Cursor agent to execute'),
+    model: z
+      .string()
+      .optional()
+      .describe('Optional Cursor model id. Defaults to Cursor API default model.'),
+    source_repository: z
+      .string()
+      .optional()
+      .describe('Optional Git repository URL'),
+    source_ref: z
+      .string()
+      .optional()
+      .describe('Optional Git ref (branch/tag/commit)'),
+    source_pr_url: z
+      .string()
+      .optional()
+      .describe('Optional PR URL. Overrides repository/ref when supported by Cursor.'),
+    auto_create_pr: z
+      .boolean()
+      .optional()
+      .describe('Whether Cursor should auto-create a pull request'),
+    open_as_cursor_github_app: z
+      .boolean()
+      .optional()
+      .describe(
+        'If auto_create_pr is true, whether to open PR as the Cursor GitHub app',
+      ),
+    skip_reviewer_request: z
+      .boolean()
+      .optional()
+      .describe(
+        'If auto_create_pr/open_as_cursor_github_app are enabled, skip reviewer request',
+      ),
+    branch_name: z
+      .string()
+      .optional()
+      .describe('Optional custom branch name for Cursor to use'),
+    target_group_jid: z
+      .string()
+      .optional()
+      .describe(
+        '(Main group only) Create the agent for another registered group instead of the current one',
+      ),
+  },
+  async (args) => {
+    const data = {
+      type: 'create_cursor_agent',
+      prompt: args.prompt,
+      model: args.model,
+      source_repository: args.source_repository,
+      source_ref: args.source_ref,
+      source_pr_url: args.source_pr_url,
+      auto_create_pr: args.auto_create_pr,
+      open_as_cursor_github_app: args.open_as_cursor_github_app,
+      skip_reviewer_request: args.skip_reviewer_request,
+      branch_name: args.branch_name,
+      targetJid: resolveTargetJid(args.target_group_jid),
+      createdBy: groupFolder,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: 'Cursor agent creation requested. NanoClaw will post the created job id and status into the chat.',
+        },
+      ],
+    };
+  },
+);
+
+server.tool(
+  'followup_cursor_agent',
+  'Send a follow-up instruction to an existing Cursor agent job.',
+  {
+    agent_id: z.string().describe('Cursor agent id (e.g., bc_abc123)'),
+    prompt: z.string().describe('Follow-up instruction text'),
+    target_group_jid: z
+      .string()
+      .optional()
+      .describe(
+        '(Main group only) Target another registered group instead of the current one',
+      ),
+  },
+  async (args) => {
+    const data = {
+      type: 'followup_cursor_agent',
+      cursor_agent_id: args.agent_id,
+      prompt: args.prompt,
+      targetJid: resolveTargetJid(args.target_group_jid),
+      createdBy: groupFolder,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: `Follow-up requested for Cursor agent ${args.agent_id}.`,
+        },
+      ],
+    };
+  },
+);
+
+server.tool(
+  'stop_cursor_agent',
+  'Request a graceful stop for a running Cursor agent job.',
+  {
+    agent_id: z.string().describe('Cursor agent id (e.g., bc_abc123)'),
+    target_group_jid: z
+      .string()
+      .optional()
+      .describe(
+        '(Main group only) Target another registered group instead of the current one',
+      ),
+  },
+  async (args) => {
+    const data = {
+      type: 'stop_cursor_agent',
+      cursor_agent_id: args.agent_id,
+      targetJid: resolveTargetJid(args.target_group_jid),
+      createdBy: groupFolder,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: `Stop requested for Cursor agent ${args.agent_id}.`,
+        },
+      ],
+    };
+  },
+);
+
+server.tool(
+  'sync_cursor_agent',
+  'Refresh Cursor agent status and artifacts from the Cursor Cloud API.',
+  {
+    agent_id: z.string().describe('Cursor agent id (e.g., bc_abc123)'),
+    target_group_jid: z
+      .string()
+      .optional()
+      .describe(
+        '(Main group only) Target another registered group instead of the current one',
+      ),
+  },
+  async (args) => {
+    const data = {
+      type: 'sync_cursor_agent',
+      cursor_agent_id: args.agent_id,
+      targetJid: resolveTargetJid(args.target_group_jid),
+      createdBy: groupFolder,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: `Sync requested for Cursor agent ${args.agent_id}.`,
+        },
+      ],
+    };
+  },
+);
+
+server.tool(
+  'list_cursor_agent_artifacts',
+  'List artifacts currently tracked for a Cursor agent.',
+  {
+    agent_id: z.string().describe('Cursor agent id (e.g., bc_abc123)'),
+    target_group_jid: z
+      .string()
+      .optional()
+      .describe(
+        '(Main group only) Inspect artifacts for an agent in another registered group',
+      ),
+  },
+  async (args) => {
+    const snapshot = loadCursorAgentSnapshot();
+    const targetJid = resolveTargetJid(args.target_group_jid);
+    const agent = snapshot.agents.find(
+      (row) => row.id === args.agent_id && row.chatJid === targetJid,
+    );
+
+    if (!agent) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `No tracked Cursor agent with id "${args.agent_id}" was found for that chat.`,
+          },
+        ],
+      };
+    }
+
+    if (agent.artifacts.length === 0) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Cursor agent ${agent.id} has no tracked artifacts yet.`,
+          },
+        ],
+      };
+    }
+
+    const formatted = agent.artifacts
+      .map(
+        (artifact, index) =>
+          `${index + 1}. ${artifact.absolutePath}\nSize: ${artifact.sizeBytes ?? 'unknown'} bytes\nUpdated: ${artifact.updatedAt || artifact.syncedAt}`,
+      )
+      .join('\n\n');
+
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: `Tracked artifacts for ${agent.id}:\n\n${formatted}`,
         },
       ],
     };

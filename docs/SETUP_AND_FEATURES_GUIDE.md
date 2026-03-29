@@ -139,6 +139,16 @@ ANTHROPIC_BASE_URL=http://host.containers.internal:4000
 OPENAI_API_KEY=...
 ```
 
+Cursor Cloud Agents API (for direct Cursor job lifecycle control):
+
+```bash
+CURSOR_API_KEY=cursor_api_...
+# Optional:
+# CURSOR_API_BASE_URL=https://api.cursor.com
+# CURSOR_API_TIMEOUT_MS=20000
+# CURSOR_MAX_ACTIVE_JOBS_PER_CHAT=4
+```
+
 When this mode is active:
 
 - `scripts/start-openai-gateway.ps1` runs LiteLLM as container `litellm-gateway`
@@ -211,6 +221,13 @@ Typical commands:
 - Cursor-focused control commands:
   - `/cursor_status` (show 9router/Cursor endpoint readiness)
   - `/cursor_test` (run live 9router/Cursor smoke request)
+  - `/cursor_jobs` (list tracked Cursor cloud jobs for this chat)
+  - `/cursor_create <prompt>` (start a Cursor cloud coding job)
+  - `/cursor_sync <agent_id>` (refresh Cursor job status/artifacts)
+  - `/cursor_stop <agent_id>` (request stop for a Cursor job)
+  - `/cursor_followup <agent_id> <text>` (send follow-up instructions)
+  - `/cursor_conversation <agent_id> [limit]` (show recent Cursor job conversation)
+  - `/cursor_artifacts <agent_id>` (list tracked Cursor job artifacts)
   - `/cursor_remote` (start remote control bridge; main chat only)
   - `/cursor_remote_end` (end remote control bridge)
 

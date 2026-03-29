@@ -102,6 +102,13 @@ export function buildTelegramCommandsText(): string {
     '- `/registermain` - bootstrap main control chat (DM only)',
     '- `/cursor_status` - show Cursor/9router integration readiness',
     '- `/cursor_test` - run live Cursor/9router smoke test',
+    '- `/cursor_jobs` - list tracked Cursor cloud jobs for this chat',
+    '- `/cursor_create <prompt>` - create a new Cursor cloud job',
+    '- `/cursor_sync <agent_id>` - refresh one Cursor job status/artifacts',
+    '- `/cursor_stop <agent_id>` - request stop for a Cursor job',
+    '- `/cursor_followup <agent_id> <text>` - send follow-up to a Cursor job',
+    '- `/cursor_conversation <agent_id> [limit]` - fetch recent conversation messages from a Cursor job',
+    '- `/cursor_artifacts <agent_id>` - list tracked artifacts for a Cursor job',
     '- `/cursor_remote` - start remote control bridge (main chat only)',
     '- `/cursor_remote_end` - end remote control bridge',
   ].join('\n');
@@ -415,6 +422,34 @@ export class TelegramChannel implements Channel {
             {
               command: 'cursor_test',
               description: 'Run Cursor integration smoke test',
+            },
+            {
+              command: 'cursor_jobs',
+              description: 'List Cursor jobs for this chat',
+            },
+            {
+              command: 'cursor_create',
+              description: 'Create a Cursor job from prompt text',
+            },
+            {
+              command: 'cursor_sync',
+              description: 'Refresh one Cursor job by id',
+            },
+            {
+              command: 'cursor_stop',
+              description: 'Stop one Cursor job by id',
+            },
+            {
+              command: 'cursor_followup',
+              description: 'Follow up one Cursor job by id',
+            },
+            {
+              command: 'cursor_conversation',
+              description: 'Show recent messages for one Cursor job',
+            },
+            {
+              command: 'cursor_artifacts',
+              description: 'List artifacts for one Cursor job',
             },
             {
               command: 'registermain',

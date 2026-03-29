@@ -18,6 +18,12 @@ import {
   InstallOpenClawSkillParams,
   InstalledOpenClawSkill,
 } from './openclaw-market.js';
+import {
+  createCursorAgent,
+  followupCursorAgent,
+  stopCursorAgent,
+  syncCursorAgent,
+} from './cursor-jobs.js';
 import { RegisteredGroup } from './types.js';
 
 export interface IpcDeps {
@@ -43,6 +49,11 @@ export interface IpcDeps {
   installOpenClawSkill?: (
     params: InstallOpenClawSkillParams,
   ) => Promise<InstalledOpenClawSkill>;
+  createCursorAgent?: typeof createCursorAgent;
+  followupCursorAgent?: typeof followupCursorAgent;
+  stopCursorAgent?: typeof stopCursorAgent;
+  syncCursorAgent?: typeof syncCursorAgent;
+  onCursorChanged?: () => void;
 }
 
 let ipcWatcherRunning = false;
@@ -188,6 +199,15 @@ export async function processTaskIpc(
     targetJid?: string;
     skill_url?: string;
     skill_id_or_url?: string;
+    cursor_agent_id?: string;
+    model?: string;
+    source_repository?: string;
+    source_ref?: string;
+    source_pr_url?: string;
+    auto_create_pr?: boolean;
+    open_as_cursor_github_app?: boolean;
+    skip_reviewer_request?: boolean;
+    branch_name?: string;
     // For register_group
     jid?: string;
     name?: string;
@@ -206,6 +226,10 @@ export async function processTaskIpc(
     deps.installOpenClawSkill ||
     enableOpenClawSkill;
   const runSkillDisable = deps.disableOpenClawSkill || disableOpenClawSkill;
+  const runCreateCursorAgent = deps.createCursorAgent || createCursorAgent;
+  const runFollowupCursorAgent = deps.followupCursorAgent || followupCursorAgent;
+  const runStopCursorAgent = deps.stopCursorAgent || stopCursorAgent;
+  const runSyncCursorAgent = deps.syncCursorAgent || syncCursorAgent;
 
   switch (data.type) {
     case 'schedule_task':
@@ -573,6 +597,250 @@ export async function processTaskIpc(
         logger.warn(
           { data },
           'Invalid disable_openclaw_skill request - missing required fields',
+        );
+      }
+      break;
+
+    case 'create_cursor_agent':
+      if (data.prompt && data.targetJid) {
+        const targetJid = data.targetJid;
+        const targetGroupEntry = registeredGroups[targetJid];
+
+        if (!targetGroupEntry) {
+          logger.warn(
+            { targetJid, prompt: data.prompt.slice(0, 80) },
+            'Cannot create Cursor agent: target group not registered',
+          );
+          break;
+        }
+
+        const targetFolder = targetGroupEntry.folder;
+        if (!isMain && targetFolder !== sourceGroup) {
+          logger.warn(
+            { sourceGroup, targetFolder },
+            'Unauthorized create_cursor_agent attempt blocked',
+          );
+          break;
+        }
+
+        try {
+          const created = await runCreateCursorAgent({
+            groupFolder: targetFolder,
+            chatJid: targetJid,
+            promptText: data.prompt,
+            requestedBy: sourceGroup,
+            model: data.model,
+            sourceRepository: data.source_repository,
+            sourceRef: data.source_ref,
+            sourcePrUrl: data.source_pr_url,
+            autoCreatePr: data.auto_create_pr,
+            openAsCursorGithubApp: data.open_as_cursor_github_app,
+            skipReviewerRequest: data.skip_reviewer_request,
+            branchName: data.branch_name,
+          });
+          deps.onCursorChanged?.();
+
+          const targetBits = [
+            created.targetUrl ? `URL: ${created.targetUrl}.` : null,
+            created.targetPrUrl ? `PR: ${created.targetPrUrl}.` : null,
+          ]
+            .filter(Boolean)
+            .join(' ');
+
+          await deps.sendMessage(
+            targetJid,
+            `Started Cursor agent ${created.id} (status: ${created.status}). ${targetBits}`.trim(),
+          );
+        } catch (err) {
+          logger.error(
+            {
+              err,
+              sourceGroup,
+              targetJid,
+            },
+            'Cursor agent create failed',
+          );
+          await deps.sendMessage(
+            targetJid,
+            `I couldn't start that Cursor agent job: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      } else {
+        logger.warn(
+          { data },
+          'Invalid create_cursor_agent request - missing required fields',
+        );
+      }
+      break;
+
+    case 'followup_cursor_agent':
+      if (data.cursor_agent_id && data.prompt && data.targetJid) {
+        const targetJid = data.targetJid;
+        const targetGroupEntry = registeredGroups[targetJid];
+
+        if (!targetGroupEntry) {
+          logger.warn(
+            { targetJid, agentId: data.cursor_agent_id },
+            'Cannot follow up Cursor agent: target group not registered',
+          );
+          break;
+        }
+
+        const targetFolder = targetGroupEntry.folder;
+        if (!isMain && targetFolder !== sourceGroup) {
+          logger.warn(
+            { sourceGroup, targetFolder, agentId: data.cursor_agent_id },
+            'Unauthorized followup_cursor_agent attempt blocked',
+          );
+          break;
+        }
+
+        try {
+          const followed = await runFollowupCursorAgent({
+            groupFolder: targetFolder,
+            chatJid: targetJid,
+            agentId: data.cursor_agent_id,
+            promptText: data.prompt,
+          });
+          deps.onCursorChanged?.();
+
+          await deps.sendMessage(
+            targetJid,
+            `Sent follow-up to Cursor agent ${followed.id}. Current status: ${followed.status}.`,
+          );
+        } catch (err) {
+          logger.error(
+            {
+              err,
+              sourceGroup,
+              targetJid,
+              agentId: data.cursor_agent_id,
+            },
+            'Cursor follow-up failed',
+          );
+          await deps.sendMessage(
+            targetJid,
+            `I couldn't send that follow-up to Cursor agent ${data.cursor_agent_id}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      } else {
+        logger.warn(
+          { data },
+          'Invalid followup_cursor_agent request - missing required fields',
+        );
+      }
+      break;
+
+    case 'stop_cursor_agent':
+      if (data.cursor_agent_id && data.targetJid) {
+        const targetJid = data.targetJid;
+        const targetGroupEntry = registeredGroups[targetJid];
+
+        if (!targetGroupEntry) {
+          logger.warn(
+            { targetJid, agentId: data.cursor_agent_id },
+            'Cannot stop Cursor agent: target group not registered',
+          );
+          break;
+        }
+
+        const targetFolder = targetGroupEntry.folder;
+        if (!isMain && targetFolder !== sourceGroup) {
+          logger.warn(
+            { sourceGroup, targetFolder, agentId: data.cursor_agent_id },
+            'Unauthorized stop_cursor_agent attempt blocked',
+          );
+          break;
+        }
+
+        try {
+          const stopped = await runStopCursorAgent({
+            groupFolder: targetFolder,
+            chatJid: targetJid,
+            agentId: data.cursor_agent_id,
+          });
+          deps.onCursorChanged?.();
+
+          await deps.sendMessage(
+            targetJid,
+            `Stop requested for Cursor agent ${stopped.id}. Current status: ${stopped.status}.`,
+          );
+        } catch (err) {
+          logger.error(
+            {
+              err,
+              sourceGroup,
+              targetJid,
+              agentId: data.cursor_agent_id,
+            },
+            'Cursor stop failed',
+          );
+          await deps.sendMessage(
+            targetJid,
+            `I couldn't stop Cursor agent ${data.cursor_agent_id}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      } else {
+        logger.warn(
+          { data },
+          'Invalid stop_cursor_agent request - missing required fields',
+        );
+      }
+      break;
+
+    case 'sync_cursor_agent':
+      if (data.cursor_agent_id && data.targetJid) {
+        const targetJid = data.targetJid;
+        const targetGroupEntry = registeredGroups[targetJid];
+
+        if (!targetGroupEntry) {
+          logger.warn(
+            { targetJid, agentId: data.cursor_agent_id },
+            'Cannot sync Cursor agent: target group not registered',
+          );
+          break;
+        }
+
+        const targetFolder = targetGroupEntry.folder;
+        if (!isMain && targetFolder !== sourceGroup) {
+          logger.warn(
+            { sourceGroup, targetFolder, agentId: data.cursor_agent_id },
+            'Unauthorized sync_cursor_agent attempt blocked',
+          );
+          break;
+        }
+
+        try {
+          const synced = await runSyncCursorAgent({
+            groupFolder: targetFolder,
+            chatJid: targetJid,
+            agentId: data.cursor_agent_id,
+          });
+          deps.onCursorChanged?.();
+
+          await deps.sendMessage(
+            targetJid,
+            `Synced Cursor agent ${synced.agent.id}. Status: ${synced.agent.status}. Artifacts indexed: ${synced.artifacts.length}.`,
+          );
+        } catch (err) {
+          logger.error(
+            {
+              err,
+              sourceGroup,
+              targetJid,
+              agentId: data.cursor_agent_id,
+            },
+            'Cursor sync failed',
+          );
+          await deps.sendMessage(
+            targetJid,
+            `I couldn't sync Cursor agent ${data.cursor_agent_id}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      } else {
+        logger.warn(
+          { data },
+          'Invalid sync_cursor_agent request - missing required fields',
         );
       }
       break;

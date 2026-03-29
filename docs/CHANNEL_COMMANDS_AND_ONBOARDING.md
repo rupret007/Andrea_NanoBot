@@ -62,6 +62,13 @@ Cursor and remote-control commands:
 
 - `/cursor_status` - show whether the Cursor/9router path is configured correctly
 - `/cursor_test` - run a live end-to-end smoke test against the configured Cursor/9router gateway
+- `/cursor_jobs` - list tracked Cursor cloud jobs for this chat
+- `/cursor_create <prompt>` - create a new Cursor cloud coding job
+- `/cursor_sync <agent_id>` - refresh one Cursor job status and artifact list
+- `/cursor_stop <agent_id>` - request stop for a Cursor job
+- `/cursor_followup <agent_id> <text>` - send follow-up instructions to a Cursor job
+- `/cursor_conversation <agent_id> [limit]` - fetch recent Cursor conversation messages
+- `/cursor_artifacts <agent_id>` - list tracked artifacts for a Cursor job
 - `/cursor_remote` - start the remote control bridge from the main control chat
 - `/cursor_remote_end` - end the remote control bridge
 
@@ -115,6 +122,7 @@ If people are confused in the channel, start here:
 - verify the bot is in a direct chat if `/registermain` is needed
 - use `/chatid` to confirm the current chat identity
 - use `/cursor_status` or `/cursor_test` when testing Cursor-backed routing
+- use `/cursor_jobs` and `/cursor_sync <agent_id>` when debugging Cursor cloud job lifecycle
 
 For operator-side troubleshooting, also see:
 

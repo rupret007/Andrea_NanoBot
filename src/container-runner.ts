@@ -1295,6 +1295,62 @@ export function writeOpenClawSkillsSnapshot(
   );
 }
 
+export interface AvailableCursorArtifact {
+  absolutePath: string;
+  sizeBytes: number | null;
+  updatedAt: string | null;
+  downloadUrl: string | null;
+  downloadUrlExpiresAt: string | null;
+  syncedAt: string;
+}
+
+export interface AvailableCursorAgent {
+  id: string;
+  chatJid: string;
+  groupFolder: string;
+  groupName: string;
+  status: string;
+  model: string | null;
+  promptText: string;
+  sourceRepository: string | null;
+  sourceRef: string | null;
+  sourcePrUrl: string | null;
+  targetUrl: string | null;
+  targetPrUrl: string | null;
+  targetBranchName: string | null;
+  summary: string | null;
+  createdAt: string;
+  updatedAt: string;
+  lastSyncedAt: string | null;
+  artifacts: AvailableCursorArtifact[];
+}
+
+export function writeCursorAgentsSnapshot(
+  groupFolder: string,
+  isMain: boolean,
+  agents: AvailableCursorAgent[],
+): void {
+  const groupIpcDir = resolveGroupIpcPath(groupFolder);
+  fs.mkdirSync(groupIpcDir, { recursive: true });
+
+  const visibleAgents = isMain
+    ? agents
+    : agents.filter((agent) => agent.groupFolder === groupFolder);
+
+  const cursorFile = path.join(groupIpcDir, 'current_cursor_agents.json');
+  fs.writeFileSync(
+    cursorFile,
+    JSON.stringify(
+      {
+        agents: visibleAgents,
+        lastSync: new Date().toISOString(),
+      },
+      null,
+      2,
+    ),
+  );
+}
+
 export interface AvailableGroup {
   jid: string;
   name: string;

@@ -20,9 +20,11 @@ import {
   getRegisteredChannelNames,
 } from './channels/registry.js';
 import {
+  AvailableCursorAgent,
   AvailableOpenClawSkill,
   ContainerOutput,
   runContainerAgent,
+  writeCursorAgentsSnapshot,
   writeGroupsSnapshot,
   writeOpenClawSkillsSnapshot,
   writeTasksSnapshot,
@@ -33,10 +35,14 @@ import {
 } from './container-runtime.js';
 import {
   getAllChats,
+  getCursorAgentById,
+  listAllCursorAgents,
   getAllRegisteredGroups,
   getAllSessions,
   getAllTasks,
   getLastBotMessageTimestamp,
+  listCursorAgentsForGroup,
+  listCursorAgentArtifacts,
   getMessagesSince,
   getNewMessages,
   getRouterState,
@@ -64,6 +70,12 @@ import {
   runCursorGatewaySmokeTest,
 } from './cursor-gateway.js';
 import {
+  CursorCloudClient,
+  formatCursorCloudStatusMessage,
+  getCursorCloudStatus,
+  resolveCursorCloudConfig,
+} from './cursor-cloud.js';
+import {
   isSenderAllowed,
   isTriggerAllowed,
   loadSenderAllowlist,
@@ -78,6 +90,13 @@ import {
   installOpenClawSkill,
 } from './openclaw-market.js';
 import { analyzeAgentError } from './agent-error.js';
+import {
+  createCursorAgent,
+  followupCursorAgent,
+  getCursorAgentConversation,
+  stopCursorAgent,
+  syncCursorAgent,
+} from './cursor-jobs.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -320,6 +339,50 @@ function getEnabledOpenClawSkillsSnapshot(): AvailableOpenClawSkill[] {
     .filter((skill): skill is AvailableOpenClawSkill => skill !== null);
 }
 
+function getCursorAgentsSnapshot(): AvailableCursorAgent[] {
+  const foldersToChats = new Map(
+    Object.entries(registeredGroups).map(([jid, group]) => [
+      group.folder,
+      { jid, name: group.name },
+    ]),
+  );
+
+  return listAllCursorAgents()
+    .map((agent) => {
+      const targetGroup = foldersToChats.get(agent.group_folder);
+      if (!targetGroup) return null;
+
+      return {
+        id: agent.id,
+        chatJid: targetGroup.jid,
+        groupFolder: agent.group_folder,
+        groupName: targetGroup.name,
+        status: agent.status,
+        model: agent.model,
+        promptText: agent.prompt_text,
+        sourceRepository: agent.source_repository,
+        sourceRef: agent.source_ref,
+        sourcePrUrl: agent.source_pr_url,
+        targetUrl: agent.target_url,
+        targetPrUrl: agent.target_pr_url,
+        targetBranchName: agent.target_branch_name,
+        summary: agent.summary,
+        createdAt: agent.created_at,
+        updatedAt: agent.updated_at,
+        lastSyncedAt: agent.last_synced_at,
+        artifacts: listCursorAgentArtifacts(agent.id).map((artifact) => ({
+          absolutePath: artifact.absolute_path,
+          sizeBytes: artifact.size_bytes,
+          updatedAt: artifact.updated_at,
+          downloadUrl: artifact.download_url,
+          downloadUrlExpiresAt: artifact.download_url_expires_at,
+          syncedAt: artifact.synced_at,
+        })),
+      };
+    })
+    .filter((agent): agent is AvailableCursorAgent => agent !== null);
+}
+
 /** @internal - exported for testing */
 export function _setRegisteredGroups(
   groups: Record<string, RegisteredGroup>,
@@ -520,6 +583,7 @@ async function runAgent(
     isMain,
     getEnabledOpenClawSkillsSnapshot(),
   );
+  writeCursorAgentsSnapshot(group.folder, isMain, getCursorAgentsSnapshot());
 
   // Update available groups snapshot (main group only can see all groups)
   const availableGroups = getAvailableGroups();
@@ -775,6 +839,24 @@ async function main(): Promise<void> {
     '/cursor-smoke',
     '/cursor_smoke',
   ]);
+  const CURSOR_JOBS_COMMANDS = new Set(['/cursor-jobs', '/cursor_jobs']);
+  const CURSOR_CREATE_COMMANDS = new Set(['/cursor-create', '/cursor_create']);
+  const CURSOR_SYNC_COMMANDS = new Set(['/cursor-sync', '/cursor_sync']);
+  const CURSOR_STOP_COMMANDS = new Set(['/cursor-stop', '/cursor_stop']);
+  const CURSOR_FOLLOWUP_COMMANDS = new Set([
+    '/cursor-followup',
+    '/cursor_followup',
+  ]);
+  const CURSOR_CONVERSATION_COMMANDS = new Set([
+    '/cursor-conversation',
+    '/cursor_conversation',
+    '/cursor-log',
+    '/cursor_log',
+  ]);
+  const CURSOR_ARTIFACTS_COMMANDS = new Set([
+    '/cursor-artifacts',
+    '/cursor_artifacts',
+  ]);
 
   // Handle remote-control (and cursor-remote alias) commands
   async function handleRemoteControl(
@@ -822,11 +904,59 @@ async function main(): Promise<void> {
     const channel = findChannel(channels, chatJid);
     if (!channel) return;
 
-    const status = await getCursorGatewayStatus({ probe: true });
+    const gatewayStatus = await getCursorGatewayStatus({ probe: true });
+    const cloudStatus = getCursorCloudStatus();
     await channel.sendMessage(
       chatJid,
-      formatCursorGatewayStatusMessage(status),
+      [
+        formatCursorGatewayStatusMessage(gatewayStatus),
+        formatCursorCloudStatusMessage(cloudStatus),
+      ].join('\n\n'),
     );
+  }
+
+  async function runCursorCloudProbeMessage(): Promise<string> {
+    const status = getCursorCloudStatus();
+    if (!status.enabled) {
+      return [
+        '*Cursor Cloud Agents Probe*',
+        '- Status: skipped',
+        '- Detail: set `CURSOR_API_KEY` to enable Cursor Cloud Agent probes.',
+      ].join('\n');
+    }
+
+    const config = resolveCursorCloudConfig();
+    if (!config) {
+      return [
+        '*Cursor Cloud Agents Probe*',
+        '- Status: failed',
+        '- Detail: Cursor Cloud config could not be resolved from environment.',
+      ].join('\n');
+    }
+
+    try {
+      const client = new CursorCloudClient(config);
+      const models = await client.listModels();
+      const modelPreview = models.models
+        .slice(0, 5)
+        .map((model) => model.id)
+        .join(', ');
+      return [
+        '*Cursor Cloud Agents Probe*',
+        '- Status: ok',
+        `- Base URL: ${status.baseUrl}`,
+        `- Models visible: ${models.models.length}`,
+        modelPreview ? `- Sample models: ${modelPreview}` : null,
+      ]
+        .filter((line): line is string => Boolean(line))
+        .join('\n');
+    } catch (err) {
+      return [
+        '*Cursor Cloud Agents Probe*',
+        '- Status: failed',
+        `- Detail: ${err instanceof Error ? err.message : String(err)}`,
+      ].join('\n');
+    }
   }
 
   async function handleCursorSmokeTest(chatJid: string): Promise<void> {
@@ -835,39 +965,487 @@ async function main(): Promise<void> {
 
     const status = await getCursorGatewayStatus({ probe: true });
     const smoke = await runCursorGatewaySmokeTest({ status });
+    const cloudProbe = await runCursorCloudProbeMessage();
     await channel.sendMessage(
       chatJid,
-      formatCursorGatewaySmokeTestMessage(status, smoke),
+      [formatCursorGatewaySmokeTestMessage(status, smoke), cloudProbe].join(
+        '\n\n',
+      ),
     );
+  }
+
+  async function handleCursorJobs(chatJid: string): Promise<void> {
+    const channel = findChannel(channels, chatJid);
+    if (!channel) return;
+
+    const group = registeredGroups[chatJid];
+    if (!group) {
+      await channel.sendMessage(
+        chatJid,
+        'This chat is not registered yet. Run /registermain in a DM first.',
+      );
+      return;
+    }
+
+    const agents = listCursorAgentsForGroup(group.folder, 20);
+    if (agents.length === 0) {
+      await channel.sendMessage(
+        chatJid,
+        'No Cursor agent jobs are tracked for this chat yet.',
+      );
+      return;
+    }
+
+    const lines = agents.map(
+      (agent, index) =>
+        `${index + 1}. ${agent.id} [${agent.status}] model=${agent.model || 'default'} updated=${agent.updated_at}${agent.target_url ? `\nURL: ${agent.target_url}` : ''}${agent.target_pr_url ? `\nPR: ${agent.target_pr_url}` : ''}`,
+    );
+
+    await channel.sendMessage(chatJid, `Cursor jobs:\n\n${lines.join('\n\n')}`);
+  }
+
+  async function handleCursorCreate(
+    chatJid: string,
+    promptText: string,
+    requestedBy?: string,
+  ): Promise<void> {
+    const channel = findChannel(channels, chatJid);
+    if (!channel) return;
+
+    const group = registeredGroups[chatJid];
+    if (!group) {
+      await channel.sendMessage(
+        chatJid,
+        'This chat is not registered yet. Run /registermain in a DM first.',
+      );
+      return;
+    }
+
+    try {
+      const created = await createCursorAgent({
+        groupFolder: group.folder,
+        chatJid,
+        promptText,
+        requestedBy,
+      });
+      refreshCursorSnapshotsForAllGroups();
+      const targetBits = [
+        created.targetUrl ? `URL: ${created.targetUrl}` : null,
+        created.targetPrUrl ? `PR: ${created.targetPrUrl}` : null,
+      ]
+        .filter(Boolean)
+        .join('\n');
+      await channel.sendMessage(
+        chatJid,
+        [
+          `Created Cursor agent ${created.id} (status: ${created.status}).`,
+          targetBits || null,
+        ]
+          .filter(Boolean)
+          .join('\n'),
+      );
+    } catch (err) {
+      await channel.sendMessage(
+        chatJid,
+        `Cursor create failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  async function handleCursorConversation(
+    chatJid: string,
+    agentId: string,
+    limit: number,
+  ): Promise<void> {
+    const channel = findChannel(channels, chatJid);
+    if (!channel) return;
+
+    const group = registeredGroups[chatJid];
+    if (!group) {
+      await channel.sendMessage(
+        chatJid,
+        'This chat is not registered yet. Run /registermain in a DM first.',
+      );
+      return;
+    }
+
+    try {
+      const messages = await getCursorAgentConversation({
+        groupFolder: group.folder,
+        chatJid,
+        agentId,
+        limit,
+      });
+      if (messages.length === 0) {
+        await channel.sendMessage(
+          chatJid,
+          `No conversation messages are available yet for ${agentId}.`,
+        );
+        return;
+      }
+
+      const formatted = messages
+        .map((message, index) => {
+          const compact = message.content.replace(/\s+/g, ' ').trim();
+          const preview =
+            compact.length > 500 ? `${compact.slice(0, 500)}...` : compact;
+          const createdAt = message.createdAt ? ` @ ${message.createdAt}` : '';
+          return `${index + 1}. [${message.role}]${createdAt}\n${preview}`;
+        })
+        .join('\n\n');
+      await channel.sendMessage(
+        chatJid,
+        `Cursor conversation for ${agentId} (latest ${messages.length}):\n\n${formatted}`,
+      );
+    } catch (err) {
+      await channel.sendMessage(
+        chatJid,
+        `Cursor conversation fetch failed for ${agentId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  async function handleCursorArtifacts(
+    chatJid: string,
+    agentId: string,
+  ): Promise<void> {
+    const channel = findChannel(channels, chatJid);
+    if (!channel) return;
+
+    const group = registeredGroups[chatJid];
+    if (!group) {
+      await channel.sendMessage(
+        chatJid,
+        'This chat is not registered yet. Run /registermain in a DM first.',
+      );
+      return;
+    }
+
+    const stored = getCursorAgentById(agentId);
+    if (
+      !stored ||
+      stored.group_folder !== group.folder ||
+      stored.chat_jid !== chatJid
+    ) {
+      await channel.sendMessage(
+        chatJid,
+        `No tracked Cursor agent with id "${agentId}" exists for this chat.`,
+      );
+      return;
+    }
+
+    const artifacts = listCursorAgentArtifacts(agentId);
+    if (artifacts.length === 0) {
+      await channel.sendMessage(
+        chatJid,
+        `Cursor agent ${agentId} has no tracked artifacts yet. Run /cursor_sync ${agentId} first.`,
+      );
+      return;
+    }
+
+    const lines = artifacts.map(
+      (artifact, index) =>
+        `${index + 1}. ${artifact.absolute_path} (${artifact.size_bytes ?? 'unknown'} bytes)${artifact.updated_at ? ` updated=${artifact.updated_at}` : ''}`,
+    );
+
+    await channel.sendMessage(
+      chatJid,
+      `Cursor artifacts for ${agentId}:\n\n${lines.join('\n')}`,
+    );
+  }
+
+  function refreshCursorSnapshotsForAllGroups(): void {
+    const cursorRows = getCursorAgentsSnapshot();
+    for (const group of Object.values(registeredGroups)) {
+      writeCursorAgentsSnapshot(group.folder, group.isMain === true, cursorRows);
+    }
+  }
+
+  async function handleCursorSync(
+    chatJid: string,
+    agentId: string,
+  ): Promise<void> {
+    const channel = findChannel(channels, chatJid);
+    if (!channel) return;
+
+    const group = registeredGroups[chatJid];
+    if (!group) {
+      await channel.sendMessage(
+        chatJid,
+        'This chat is not registered yet. Run /registermain in a DM first.',
+      );
+      return;
+    }
+
+    try {
+      const synced = await syncCursorAgent({
+        groupFolder: group.folder,
+        chatJid,
+        agentId,
+      });
+      refreshCursorSnapshotsForAllGroups();
+      await channel.sendMessage(
+        chatJid,
+        `Synced ${synced.agent.id}. Status: ${synced.agent.status}. Artifacts: ${synced.artifacts.length}.`,
+      );
+    } catch (err) {
+      await channel.sendMessage(
+        chatJid,
+        `Cursor sync failed for ${agentId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  async function handleCursorStop(
+    chatJid: string,
+    agentId: string,
+  ): Promise<void> {
+    const channel = findChannel(channels, chatJid);
+    if (!channel) return;
+
+    const group = registeredGroups[chatJid];
+    if (!group) {
+      await channel.sendMessage(
+        chatJid,
+        'This chat is not registered yet. Run /registermain in a DM first.',
+      );
+      return;
+    }
+
+    try {
+      const stopped = await stopCursorAgent({
+        groupFolder: group.folder,
+        chatJid,
+        agentId,
+      });
+      refreshCursorSnapshotsForAllGroups();
+      await channel.sendMessage(
+        chatJid,
+        `Stop requested for ${stopped.id}. Current status: ${stopped.status}.`,
+      );
+    } catch (err) {
+      await channel.sendMessage(
+        chatJid,
+        `Cursor stop failed for ${agentId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  async function handleCursorFollowup(
+    chatJid: string,
+    agentId: string,
+    promptText: string,
+  ): Promise<void> {
+    const channel = findChannel(channels, chatJid);
+    if (!channel) return;
+
+    const group = registeredGroups[chatJid];
+    if (!group) {
+      await channel.sendMessage(
+        chatJid,
+        'This chat is not registered yet. Run /registermain in a DM first.',
+      );
+      return;
+    }
+
+    try {
+      const followed = await followupCursorAgent({
+        groupFolder: group.folder,
+        chatJid,
+        agentId,
+        promptText,
+      });
+      refreshCursorSnapshotsForAllGroups();
+      await channel.sendMessage(
+        chatJid,
+        `Follow-up sent to ${followed.id}. Status: ${followed.status}.`,
+      );
+    } catch (err) {
+      await channel.sendMessage(
+        chatJid,
+        `Cursor follow-up failed for ${agentId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
   // Channel callbacks (shared by all channels)
   const channelOpts = {
     onMessage: (chatJid: string, msg: NewMessage) => {
       // Remote control commands — intercept before storage
-      const trimmed = msg.content.trim().toLowerCase();
-      if (CURSOR_STATUS_COMMANDS.has(trimmed)) {
+      const rawTrimmed = msg.content.trim();
+      const trimmed = rawTrimmed.toLowerCase();
+      const rawCommandToken = trimmed.split(/\s+/)[0] || '';
+      const commandToken = rawCommandToken.split('@')[0] || '';
+      if (CURSOR_STATUS_COMMANDS.has(commandToken)) {
         handleCursorStatus(chatJid).catch((err) =>
           logger.error({ err, chatJid }, 'Cursor status command error'),
         );
         return;
       }
 
-      if (CURSOR_TEST_COMMANDS.has(trimmed)) {
+      if (CURSOR_TEST_COMMANDS.has(commandToken)) {
         handleCursorSmokeTest(chatJid).catch((err) =>
           logger.error({ err, chatJid }, 'Cursor smoke command error'),
         );
         return;
       }
 
-      if (REMOTE_CONTROL_START_COMMANDS.has(trimmed)) {
+      if (CURSOR_JOBS_COMMANDS.has(commandToken)) {
+        handleCursorJobs(chatJid).catch((err) =>
+          logger.error({ err, chatJid }, 'Cursor jobs command error'),
+        );
+        return;
+      }
+
+      if (CURSOR_CREATE_COMMANDS.has(commandToken)) {
+        const promptText = rawTrimmed.split(/\s+/).slice(1).join(' ').trim();
+        if (!promptText) {
+          const channel = findChannel(channels, chatJid);
+          channel
+            ?.sendMessage(chatJid, 'Usage: /cursor_create <prompt>')
+            .catch((err) =>
+              logger.error({ err, chatJid }, 'Cursor create usage send failed'),
+            );
+          return;
+        }
+
+        handleCursorCreate(chatJid, promptText, msg.sender).catch((err) =>
+          logger.error({ err, chatJid }, 'Cursor create command error'),
+        );
+        return;
+      }
+
+      if (CURSOR_SYNC_COMMANDS.has(commandToken)) {
+        const parts = rawTrimmed.split(/\s+/);
+        const agentId = parts[1];
+        if (!agentId) {
+          const channel = findChannel(channels, chatJid);
+          channel
+            ?.sendMessage(chatJid, 'Usage: /cursor_sync <agent_id>')
+            .catch((err) =>
+              logger.error({ err, chatJid }, 'Cursor sync usage send failed'),
+            );
+          return;
+        }
+
+        handleCursorSync(chatJid, agentId).catch((err) =>
+          logger.error({ err, chatJid }, 'Cursor sync command error'),
+        );
+        return;
+      }
+
+      if (CURSOR_STOP_COMMANDS.has(commandToken)) {
+        const parts = rawTrimmed.split(/\s+/);
+        const agentId = parts[1];
+        if (!agentId) {
+          const channel = findChannel(channels, chatJid);
+          channel
+            ?.sendMessage(chatJid, 'Usage: /cursor_stop <agent_id>')
+            .catch((err) =>
+              logger.error({ err, chatJid }, 'Cursor stop usage send failed'),
+            );
+          return;
+        }
+
+        handleCursorStop(chatJid, agentId).catch((err) =>
+          logger.error({ err, chatJid }, 'Cursor stop command error'),
+        );
+        return;
+      }
+
+      if (CURSOR_CONVERSATION_COMMANDS.has(commandToken)) {
+        const parts = rawTrimmed.split(/\s+/);
+        const agentId = parts[1];
+        if (!agentId) {
+          const channel = findChannel(channels, chatJid);
+          channel
+            ?.sendMessage(chatJid, 'Usage: /cursor_conversation <agent_id> [limit]')
+            .catch((err) =>
+              logger.error(
+                { err, chatJid },
+                'Cursor conversation usage send failed',
+              ),
+            );
+          return;
+        }
+
+        const parsedLimit = Number.parseInt(parts[2] || '', 10);
+        const limit =
+          Number.isFinite(parsedLimit) && parsedLimit > 0
+            ? Math.min(100, parsedLimit)
+            : 20;
+        handleCursorConversation(chatJid, agentId, limit).catch((err) =>
+          logger.error({ err, chatJid }, 'Cursor conversation command error'),
+        );
+        return;
+      }
+
+      if (CURSOR_ARTIFACTS_COMMANDS.has(commandToken)) {
+        const parts = rawTrimmed.split(/\s+/);
+        const agentId = parts[1];
+        if (!agentId) {
+          const channel = findChannel(channels, chatJid);
+          channel
+            ?.sendMessage(chatJid, 'Usage: /cursor_artifacts <agent_id>')
+            .catch((err) =>
+              logger.error(
+                { err, chatJid },
+                'Cursor artifacts usage send failed',
+              ),
+            );
+          return;
+        }
+
+        handleCursorArtifacts(chatJid, agentId).catch((err) =>
+          logger.error({ err, chatJid }, 'Cursor artifacts command error'),
+        );
+        return;
+      }
+
+      if (CURSOR_FOLLOWUP_COMMANDS.has(commandToken)) {
+        const parts = rawTrimmed.split(/\s+/);
+        const agentId = parts[1];
+        if (!agentId) {
+          const channel = findChannel(channels, chatJid);
+          channel
+            ?.sendMessage(chatJid, 'Usage: /cursor_followup <agent_id> <text>')
+            .catch((err) =>
+              logger.error(
+                { err, chatJid },
+                'Cursor followup usage send failed',
+              ),
+            );
+          return;
+        }
+
+        const promptText = rawTrimmed.split(/\s+/).slice(2).join(' ').trim();
+        if (!promptText) {
+          const channel = findChannel(channels, chatJid);
+          channel
+            ?.sendMessage(chatJid, 'Usage: /cursor_followup <agent_id> <text>')
+            .catch((err) =>
+              logger.error(
+                { err, chatJid },
+                'Cursor followup usage send failed',
+              ),
+            );
+          return;
+        }
+
+        handleCursorFollowup(chatJid, agentId, promptText).catch((err) =>
+          logger.error({ err, chatJid }, 'Cursor followup command error'),
+        );
+        return;
+      }
+
+      if (REMOTE_CONTROL_START_COMMANDS.has(commandToken)) {
         handleRemoteControl('start', chatJid, msg).catch((err) =>
           logger.error({ err, chatJid }, 'Remote control command error'),
         );
         return;
       }
 
-      if (REMOTE_CONTROL_STOP_COMMANDS.has(trimmed)) {
+      if (REMOTE_CONTROL_STOP_COMMANDS.has(commandToken)) {
         handleRemoteControl('stop', chatJid, msg).catch((err) =>
           logger.error({ err, chatJid }, 'Remote control command error'),
         );
@@ -985,10 +1563,24 @@ async function main(): Promise<void> {
         );
       }
     },
+    onCursorChanged: () => {
+      const cursorRows = getCursorAgentsSnapshot();
+      for (const group of Object.values(registeredGroups)) {
+        writeCursorAgentsSnapshot(
+          group.folder,
+          group.isMain === true,
+          cursorRows,
+        );
+      }
+    },
     enableOpenClawSkill,
     disableOpenClawSkill,
     installOpenClawSkill,
   });
+  const cursorRows = getCursorAgentsSnapshot();
+  for (const group of Object.values(registeredGroups)) {
+    writeCursorAgentsSnapshot(group.folder, group.isMain === true, cursorRows);
+  }
   queue.setProcessMessagesFn(processGroupMessages);
   recoverPendingMessages();
   startMessageLoop().catch((err) => {
