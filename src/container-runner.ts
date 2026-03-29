@@ -38,6 +38,10 @@ import { validateAdditionalMounts } from './mount-security.js';
 import { OPENCLAW_MARKET_MANIFEST_FILENAME } from './openclaw-market.js';
 import { RegisteredGroup } from './types.js';
 import type { AssistantRequestPolicy } from './assistant-routing.js';
+import {
+  CONTAINER_CLOSE_GRACE_PERIOD_MS,
+  resolveEffectiveIdleTimeout,
+} from './runtime-timeout.js';
 
 const onecli = new OneCLI({ url: ONECLI_URL });
 
@@ -55,6 +59,7 @@ export interface ContainerInput {
   assistantName?: string;
   script?: string;
   requestPolicy?: AssistantRequestPolicy;
+  idleTimeoutMs?: number;
 }
 
 export interface ContainerOutput {
@@ -944,9 +949,16 @@ export async function runContainerAgent(
     let hadStructuredOutput = false;
 
     const configTimeout = group.containerConfig?.timeout || CONTAINER_TIMEOUT;
-    // Grace period: hard timeout must be at least IDLE_TIMEOUT + 30s so the
+    const effectiveIdleTimeout = resolveEffectiveIdleTimeout(
+      input.idleTimeoutMs ?? IDLE_TIMEOUT,
+      configTimeout,
+    );
+    // Grace period: hard timeout must be at least idle timeout + 30s so the
     // graceful _close sentinel has time to trigger before the hard kill fires.
-    const timeoutMs = Math.max(configTimeout, IDLE_TIMEOUT + 30_000);
+    const timeoutMs = Math.max(
+      configTimeout,
+      effectiveIdleTimeout + CONTAINER_CLOSE_GRACE_PERIOD_MS,
+    );
     const initialOutputTimeoutMs = Math.max(
       1_000,
       Math.min(timeoutMs, CONTAINER_INITIAL_OUTPUT_TIMEOUT),

@@ -177,8 +177,8 @@ describe('container-runner timeout behavior', () => {
     // Let output processing settle
     await vi.advanceTimersByTimeAsync(10);
 
-    // Fire the hard timeout (IDLE_TIMEOUT + 30s = 1830000ms)
-    await vi.advanceTimersByTimeAsync(1830000);
+    // Fire the hard timeout (clamped to container timeout = 1800000ms)
+    await vi.advanceTimersByTimeAsync(1800000);
 
     // Emit close event (as if container was stopped by the timeout)
     fakeProc.emit('close', 137);
@@ -214,6 +214,33 @@ describe('container-runner timeout behavior', () => {
     const result = await resultPromise;
     expect(result.status).toBe('error');
     expect(result.error).toContain('produced no output');
+    expect(onOutput).not.toHaveBeenCalled();
+  });
+
+  it('uses per-request idle timeout without inflating timeout windows beyond group config', async () => {
+    const onOutput = vi.fn(async () => {});
+    const resultPromise = runContainerAgent(
+      {
+        ...testGroup,
+        containerConfig: { timeout: 40_000 },
+      },
+      {
+        ...testInput,
+        idleTimeoutMs: 5_000,
+      },
+      () => {},
+      onOutput,
+    );
+
+    await vi.advanceTimersByTimeAsync(40_000);
+    fakeProc.emit('close', 137);
+    await vi.advanceTimersByTimeAsync(10);
+
+    const result = await resultPromise;
+    expect(result.status).toBe('error');
+    expect(result.error).toContain(
+      'Container produced no output within 40000ms',
+    );
     expect(onOutput).not.toHaveBeenCalled();
   });
 

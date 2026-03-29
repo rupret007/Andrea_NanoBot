@@ -5,6 +5,7 @@ import { OneCLI } from '@onecli-sh/sdk';
 
 import {
   ASSISTANT_NAME,
+  CONTAINER_TIMEOUT,
   DEFAULT_TRIGGER,
   getTriggerPattern,
   GROUPS_DIR,
@@ -128,6 +129,7 @@ import {
   formatUserFacingOperationFailure,
   getUserFacingErrorDetail,
 } from './user-facing-error.js';
+import { resolveEffectiveIdleTimeout } from './runtime-timeout.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -480,6 +482,23 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   // Track idle timer for closing stdin when agent is idle
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
+  const configuredTimeout = group.containerConfig?.timeout || CONTAINER_TIMEOUT;
+  const effectiveIdleTimeout = resolveEffectiveIdleTimeout(
+    IDLE_TIMEOUT,
+    configuredTimeout,
+  );
+
+  if (effectiveIdleTimeout !== IDLE_TIMEOUT) {
+    logger.debug(
+      {
+        group: group.name,
+        configuredTimeout,
+        requestedIdleTimeout: IDLE_TIMEOUT,
+        effectiveIdleTimeout,
+      },
+      'Clamped idle timeout to preserve graceful container shutdown window',
+    );
+  }
 
   const resetIdleTimer = () => {
     if (idleTimer) clearTimeout(idleTimer);
@@ -489,7 +508,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         'Idle timeout, closing container stdin',
       );
       queue.closeStdin(chatJid);
-    }, IDLE_TIMEOUT);
+    }, effectiveIdleTimeout);
   };
 
   await channel.setTyping?.(chatJid, true);
@@ -501,6 +520,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     prompt,
     chatJid,
     requestPolicy,
+    effectiveIdleTimeout,
     async (result) => {
       // Streaming output callback — called for each agent result
       if (result.result) {
@@ -590,6 +610,7 @@ async function runAgent(
   prompt: string,
   chatJid: string,
   requestPolicy: ReturnType<typeof classifyAssistantRequest>,
+  idleTimeoutMs: number,
   onOutput?: (output: ContainerOutput) => Promise<void>,
 ): Promise<{
   status: 'success' | 'error';
@@ -660,6 +681,7 @@ async function runAgent(
         isMain,
         assistantName: ASSISTANT_NAME,
         requestPolicy,
+        idleTimeoutMs,
       },
       (proc, containerName) =>
         queue.registerProcess(chatJid, proc, containerName, group.folder),

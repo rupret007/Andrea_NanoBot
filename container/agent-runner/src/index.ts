@@ -33,6 +33,7 @@ interface ContainerInput {
   isScheduledTask?: boolean;
   assistantName?: string;
   script?: string;
+  idleTimeoutMs?: number;
   requestPolicy?: {
     route: string;
     reason: string;
