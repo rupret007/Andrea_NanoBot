@@ -99,6 +99,8 @@ Cursor:
 - `/cursor_models`
 - [CURSOR_DESKTOP_BRIDGE.md](CURSOR_DESKTOP_BRIDGE.md) when Andrea should drive your normal Cursor machine instead of only cloud jobs
 
+Run advanced Cursor, Amazon, and Alexa slash commands from the registered main control chat only. `/cursor_status` is the safe exception that can stay visible in the narrower public surface.
+
 Alexa:
 
 - `/alexa_status`

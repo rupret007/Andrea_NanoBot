@@ -66,7 +66,7 @@ Operator-safe status:
 
 - `/cursor_status` - show whether the Cursor/9router path is configured correctly
 
-Advanced operator workflows still exist, but they should stay in the admin guide and out of the default demo unless they were validated the same day.
+Advanced operator workflows still exist, but they are restricted to Andrea's main control chat and should stay in the admin guide and out of the default demo unless they were validated the same day.
 
 ## 5) Capability Overview
 

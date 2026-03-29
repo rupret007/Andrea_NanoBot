@@ -151,7 +151,7 @@ Optional integrations such as Alexa, shopping flows, marketplace skills, and cal
 
 - help with repos, debugging, and code tasks
 - use Cursor/9router-aware routing checks with `/cursor_status`
-- create, follow up, sync, and inspect Cursor coding jobs directly from Telegram through Cursor Cloud or your own desktop bridge
+- operators can create, follow up, sync, and inspect Cursor coding jobs from the main control chat through Cursor Cloud or the desktop bridge
 - keep optional integrations behind explicit operator setup instead of treating them as default demo features
 
 ## Using Andrea In Chat

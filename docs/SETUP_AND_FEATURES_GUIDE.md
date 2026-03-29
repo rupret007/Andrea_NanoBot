@@ -341,6 +341,11 @@ Typical commands:
 - `/cursor_artifacts <agent_id>` (list tracked Cursor job artifacts)
 - `/cursor_artifact_link <agent_id> <absolute_path>` (generate a temporary artifact download link)
 
+Important scope rule:
+
+- `/cursor_status` is safe to keep visible in the narrower public product surface
+- the deeper Cursor, Amazon, and Alexa slash commands are operator-facing controls and should be run from Andrea's registered main control chat only
+
 ## 8) OpenClaw Marketplace Behavior And Security
 
 Discovery catalog:

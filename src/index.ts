@@ -136,6 +136,28 @@ import {
   maybeBuildDirectRescueReply,
 } from './direct-quick-reply.js';
 import { buildSilentSuccessFallback } from './user-facing-fallback.js';
+import {
+  ALEXA_STATUS_COMMANDS,
+  AMAZON_SEARCH_COMMANDS,
+  AMAZON_STATUS_COMMANDS,
+  CURSOR_ARTIFACTS_COMMANDS,
+  CURSOR_ARTIFACT_LINK_COMMANDS,
+  CURSOR_CONVERSATION_COMMANDS,
+  CURSOR_CREATE_COMMANDS,
+  CURSOR_FOLLOWUP_COMMANDS,
+  CURSOR_JOBS_COMMANDS,
+  CURSOR_MODELS_COMMANDS,
+  CURSOR_STOP_COMMANDS,
+  CURSOR_SYNC_COMMANDS,
+  CURSOR_TEST_COMMANDS,
+  getCommandAccessDecision,
+  PURCHASE_APPROVE_COMMANDS,
+  PURCHASE_CANCEL_COMMANDS,
+  PURCHASE_REQUEST_COMMANDS,
+  PURCHASE_REQUESTS_COMMANDS,
+  REMOTE_CONTROL_START_COMMANDS,
+  REMOTE_CONTROL_STOP_COMMANDS,
+} from './operator-command-gate.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -988,81 +1010,10 @@ async function main(): Promise<void> {
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
 
-  const REMOTE_CONTROL_START_COMMANDS = new Set([
-    '/remote-control',
-    '/remote_control',
-    '/cursor-remote',
-    '/cursor_remote',
-  ]);
-  const REMOTE_CONTROL_STOP_COMMANDS = new Set([
-    '/remote-control-end',
-    '/remote_control_end',
-    '/cursor-remote-end',
-    '/cursor_remote_end',
-  ]);
   const CURSOR_STATUS_COMMANDS = new Set([
     '/cursor',
     '/cursor-status',
     '/cursor_status',
-  ]);
-  const CURSOR_MODELS_COMMANDS = new Set([
-    '/cursor-models',
-    '/cursor_models',
-    '/cursor-model',
-    '/cursor_model',
-  ]);
-  const CURSOR_TEST_COMMANDS = new Set([
-    '/cursor-test',
-    '/cursor_test',
-    '/cursor-smoke',
-    '/cursor_smoke',
-  ]);
-  const CURSOR_JOBS_COMMANDS = new Set(['/cursor-jobs', '/cursor_jobs']);
-  const CURSOR_CREATE_COMMANDS = new Set(['/cursor-create', '/cursor_create']);
-  const CURSOR_SYNC_COMMANDS = new Set(['/cursor-sync', '/cursor_sync']);
-  const CURSOR_STOP_COMMANDS = new Set(['/cursor-stop', '/cursor_stop']);
-  const CURSOR_FOLLOWUP_COMMANDS = new Set([
-    '/cursor-followup',
-    '/cursor_followup',
-  ]);
-  const CURSOR_CONVERSATION_COMMANDS = new Set([
-    '/cursor-conversation',
-    '/cursor_conversation',
-    '/cursor-log',
-    '/cursor_log',
-  ]);
-  const CURSOR_ARTIFACTS_COMMANDS = new Set([
-    '/cursor-artifacts',
-    '/cursor_artifacts',
-  ]);
-  const CURSOR_ARTIFACT_LINK_COMMANDS = new Set([
-    '/cursor-artifact-link',
-    '/cursor_artifact_link',
-    '/cursor-download',
-    '/cursor_download',
-  ]);
-  const ALEXA_STATUS_COMMANDS = new Set([
-    '/alexa',
-    '/alexa-status',
-    '/alexa_status',
-  ]);
-  const AMAZON_STATUS_COMMANDS = new Set(['/amazon-status', '/amazon_status']);
-  const AMAZON_SEARCH_COMMANDS = new Set(['/amazon-search', '/amazon_search']);
-  const PURCHASE_REQUEST_COMMANDS = new Set([
-    '/purchase-request',
-    '/purchase_request',
-  ]);
-  const PURCHASE_REQUESTS_COMMANDS = new Set([
-    '/purchase-requests',
-    '/purchase_requests',
-  ]);
-  const PURCHASE_APPROVE_COMMANDS = new Set([
-    '/purchase-approve',
-    '/purchase_approve',
-  ]);
-  const PURCHASE_CANCEL_COMMANDS = new Set([
-    '/purchase-cancel',
-    '/purchase_cancel',
   ]);
   const CURSOR_CREATE_USAGE =
     'Usage: /cursor_create [--model <id>] [--repo <url>] [--ref <git_ref>] [--pr <pr_url>] [--branch <name>] [--auto-pr] [--cursor-github-app] [--skip-reviewer] <prompt>';
@@ -1817,6 +1768,34 @@ async function main(): Promise<void> {
       if (CURSOR_STATUS_COMMANDS.has(commandToken)) {
         handleCursorStatus(chatJid).catch((err) =>
           logger.error({ err, chatJid }, 'Cursor status command error'),
+        );
+        return;
+      }
+
+      const commandAccess = getCommandAccessDecision(
+        commandToken,
+        registeredGroups[chatJid],
+      );
+      if (!commandAccess.allowed) {
+        const channel = findChannel(channels, chatJid);
+        if (channel && commandAccess.message) {
+          channel
+            .sendMessage(chatJid, commandAccess.message)
+            .catch((err) =>
+              logger.error(
+                { err, chatJid, commandToken },
+                'Operator command gate reply failed',
+              ),
+            );
+        }
+        logger.info(
+          {
+            chatJid,
+            commandToken,
+            reason: commandAccess.reason,
+            isMain: registeredGroups[chatJid]?.isMain === true,
+          },
+          'Blocked command outside allowed surface',
         );
         return;
       }

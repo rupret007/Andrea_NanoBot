@@ -48,7 +48,7 @@ Operator-safe status:
 Optional note:
 
 - Alexa, shopping, marketplace skills, and calendar-oriented skills are operator-enabled extras rather than the default demo path
-- advanced Cursor job workflows live in the admin guide and should be demoed only after same-day validation
+- advanced Cursor, shopping, and voice control workflows live in the admin guide, are restricted to the main control chat, and should be used only after same-day validation
 
 ## 4) Best Request Patterns
 
