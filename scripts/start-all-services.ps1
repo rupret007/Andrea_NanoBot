@@ -1,7 +1,6 @@
 $ErrorActionPreference = 'Stop'
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
-$wrapperPath = Join-Path $projectRoot 'start-nanoclaw.ps1'
 $entryPath = Join-Path $projectRoot 'dist\index.js'
 $pidFile = Join-Path $projectRoot 'nanoclaw.pid'
 $logDir = Join-Path $projectRoot 'logs'
@@ -101,20 +100,39 @@ function Start-NanoClawFallback {
   New-Item -ItemType Directory -Path $logDir -Force | Out-Null
   Set-Location -LiteralPath $Root
 
-  $useNodeDirect = $true
-  try {
-    $version = (& node --version 2>$null).Trim()
-    if ($version -notmatch '^v22\.') {
-      $useNodeDirect = $false
+  function Resolve-NodeExecutable {
+    # Prefer an already-installed Node 22 on PATH
+    try {
+      $pathNode = Get-Command node -ErrorAction SilentlyContinue
+      if ($pathNode) {
+        $version = (& $pathNode.Source --version 2>$null).Trim()
+        if ($version -match '^v22\.') {
+          return $pathNode.Source
+        }
+      }
+    } catch {
+      # continue to fallback resolution
     }
-  } catch {
-    $useNodeDirect = $false
+
+    # Resolve a temporary Node 22 runtime path without keeping npx as the parent process.
+    try {
+      $resolved = (& 'npx.cmd' -y -p node@22 node -p "process.execPath" 2>$null | Select-Object -Last 1).Trim()
+      if ($resolved -and (Test-Path -LiteralPath $resolved)) {
+        return $resolved
+      }
+    } catch {
+      # continue to final fallback
+    }
+
+    return $null
   }
 
-  if ($useNodeDirect) {
-    $proc = Start-Process -FilePath 'node' -ArgumentList @($entryPath) -WorkingDirectory $Root -RedirectStandardOutput $logPath -RedirectStandardError $errLogPath -PassThru
+  $nodeExe = Resolve-NodeExecutable
+  if ($nodeExe) {
+    $proc = Start-Process -FilePath $nodeExe -ArgumentList @($entryPath) -WorkingDirectory $Root -WindowStyle Hidden -RedirectStandardOutput $logPath -RedirectStandardError $errLogPath -PassThru
   } else {
-    $proc = Start-Process -FilePath 'npx.cmd' -ArgumentList @('-y', '-p', 'node@22', 'node', $entryPath) -WorkingDirectory $Root -RedirectStandardOutput $logPath -RedirectStandardError $errLogPath -PassThru
+    # Last-resort fallback: long-running npx launcher.
+    $proc = Start-Process -FilePath 'npx.cmd' -ArgumentList @('-y', '-p', 'node@22', 'node', $entryPath) -WorkingDirectory $Root -WindowStyle Hidden -RedirectStandardOutput $logPath -RedirectStandardError $errLogPath -PassThru
   }
 
   Set-Content -LiteralPath $pidFile -Value $proc.Id -NoNewline
@@ -131,17 +149,9 @@ if ($existingPid -and (Is-NanoClawProcessRunning -ProcessId $existingPid -Root $
   exit 0
 }
 
-if (Test-Path -LiteralPath $wrapperPath) {
-  Write-Step 'launching NanoClaw via start-nanoclaw.ps1 wrapper'
-  & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $wrapperPath
-  if ($LASTEXITCODE -ne 0) {
-    throw "wrapper launch failed with code $LASTEXITCODE"
-  }
-} else {
-  Write-Step 'start-nanoclaw.ps1 not found, using direct fallback launcher'
-  $startedPid = Start-NanoClawFallback -Root $projectRoot
-  Write-Step "fallback launch pid=$startedPid"
-}
+Write-Step 'launching NanoClaw via direct startup launcher'
+$startedPid = Start-NanoClawFallback -Root $projectRoot
+Write-Step "launcher pid=$startedPid"
 
 Start-Sleep -Milliseconds 600
 $newPid = Read-Pid -Path $pidFile

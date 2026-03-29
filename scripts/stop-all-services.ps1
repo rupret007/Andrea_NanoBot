@@ -56,6 +56,31 @@ function Stop-OrphanedNanoclawProcesses {
   return $stopped
 }
 
+function Stop-OrphanedLauncherProcesses {
+  param([string] $Root)
+  $stopped = 0
+  $projectPattern = [Regex]::Escape($Root)
+  $launchers = @()
+  try {
+    $launchers = Get-CimInstance Win32_Process -Filter "Name='cmd.exe'" | Where-Object {
+      $cmd = [string]$_.CommandLine
+      $cmd -match $projectPattern -and $cmd -match 'npx\.cmd' -and $cmd -match 'dist[\\/]index\.js'
+    }
+  } catch {
+    return 0
+  }
+
+  foreach ($proc in $launchers) {
+    try {
+      Stop-Process -Id $proc.ProcessId -Force -ErrorAction SilentlyContinue
+      $stopped++
+    } catch {
+      # continue stopping others
+    }
+  }
+  return $stopped
+}
+
 Write-Step "projectRoot=$projectRoot"
 
 if (Get-Command schtasks.exe -ErrorAction SilentlyContinue) {
@@ -78,6 +103,9 @@ if ($runtimePid) {
 
 $orphanedStopped = Stop-OrphanedNanoclawProcesses -Root $projectRoot
 Write-Step "orphaned process cleanup stopped=$orphanedStopped"
+
+$launcherStopped = Stop-OrphanedLauncherProcesses -Root $projectRoot
+Write-Step "launcher cleanup stopped=$launcherStopped"
 
 if (Test-Path -LiteralPath $pidFile) {
   Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue

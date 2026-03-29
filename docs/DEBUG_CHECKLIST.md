@@ -39,6 +39,10 @@ grep -E "image found|image NOT found|image missing" logs/nanoclaw.log
 
 If you need Kubernetes enabled, set `CONTAINER_IMAGE` to an image stored in a registry that the kubelet won't GC, or raise the GC thresholds.
 
+### 5. [HARDENED] Blank `npm exec node ... dist/index.js` launcher window on Windows
+
+If you previously saw a blank `cmd`/Windows Terminal tab with title like `npm exec node ... dist/index.js`, that was the `npx` launcher process. Runtime launch now prefers `node.exe` directly on Node 22, and service stop now explicitly cleans orphaned launcher `cmd.exe` processes.
+
 ## Quick Status Check
 
 ```bash
