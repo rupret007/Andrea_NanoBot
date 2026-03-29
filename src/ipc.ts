@@ -24,6 +24,7 @@ import {
   stopCursorAgent,
   syncCursorAgent,
 } from './cursor-jobs.js';
+import { formatOutbound } from './router.js';
 import { RegisteredGroup } from './types.js';
 
 export interface IpcDeps {
@@ -106,13 +107,21 @@ export function startIpcWatcher(deps: IpcDeps): void {
             try {
               const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
               if (data.type === 'message' && data.chatJid && data.text) {
+                const text =
+                  typeof data.text === 'string'
+                    ? formatOutbound(data.text)
+                    : '';
+                if (!text) {
+                  fs.unlinkSync(filePath);
+                  continue;
+                }
                 // Authorization: verify this group can send to this chatJid
                 const targetGroup = registeredGroups[data.chatJid];
                 if (
                   isMain ||
                   (targetGroup && targetGroup.folder === sourceGroup)
                 ) {
-                  await deps.sendMessage(data.chatJid, data.text);
+                  await deps.sendMessage(data.chatJid, text);
                   logger.info(
                     { chatJid: data.chatJid, sourceGroup },
                     'IPC message sent',

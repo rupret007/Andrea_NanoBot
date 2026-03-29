@@ -19,6 +19,8 @@ import {
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './logger.js';
+import { classifyScheduledTaskRequest } from './assistant-routing.js';
+import { formatOutbound } from './router.js';
 import { RegisteredGroup, ScheduledTask } from './types.js';
 
 /**
@@ -181,14 +183,17 @@ async function runTask(
         isScheduledTask: true,
         assistantName: ASSISTANT_NAME,
         script: task.script || undefined,
+        requestPolicy: classifyScheduledTaskRequest(task.prompt),
       },
       (proc, containerName) =>
         deps.onProcess(task.chat_jid, proc, containerName, task.group_folder),
       async (streamedOutput: ContainerOutput) => {
         if (streamedOutput.result) {
-          result = streamedOutput.result;
-          // Forward result to user (sendMessage handles formatting)
-          await deps.sendMessage(task.chat_jid, streamedOutput.result);
+          const outbound = formatOutbound(streamedOutput.result);
+          result = outbound || null;
+          if (outbound) {
+            await deps.sendMessage(task.chat_jid, outbound);
+          }
           scheduleClose();
         }
         if (streamedOutput.status === 'success') {

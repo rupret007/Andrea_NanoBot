@@ -36,6 +36,7 @@ import { OneCLI } from '@onecli-sh/sdk';
 import { validateAdditionalMounts } from './mount-security.js';
 import { OPENCLAW_MARKET_MANIFEST_FILENAME } from './openclaw-market.js';
 import { RegisteredGroup } from './types.js';
+import type { AssistantRequestPolicy } from './assistant-routing.js';
 
 const onecli = new OneCLI({ url: ONECLI_URL });
 
@@ -52,6 +53,7 @@ export interface ContainerInput {
   isScheduledTask?: boolean;
   assistantName?: string;
   script?: string;
+  requestPolicy?: AssistantRequestPolicy;
 }
 
 export interface ContainerOutput {

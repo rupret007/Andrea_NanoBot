@@ -28,6 +28,22 @@ const CURSOR_AGENTS_SNAPSHOT = path.join(IPC_DIR, 'current_cursor_agents.json');
 const chatJid = process.env.NANOCLAW_CHAT_JID!;
 const groupFolder = process.env.NANOCLAW_GROUP_FOLDER!;
 const isMain = process.env.NANOCLAW_IS_MAIN === '1';
+const requestRoute = process.env.NANOCLAW_REQUEST_ROUTE || 'code_plane';
+const requestReason =
+  process.env.NANOCLAW_REQUEST_REASON || 'compatibility fallback';
+const allowedMcpTools = (() => {
+  const raw = process.env.NANOCLAW_ALLOWED_MCP_TOOLS;
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return null;
+    return new Set(
+      parsed.filter((entry): entry is string => typeof entry === 'string'),
+    );
+  } catch {
+    return null;
+  }
+})();
 
 function writeIpcFile(dir: string, data: object): string {
   fs.mkdirSync(dir, { recursive: true });
@@ -208,6 +224,34 @@ function resolveTargetJid(targetGroupJid?: string): string {
   return isMain && targetGroupJid ? targetGroupJid : chatJid;
 }
 
+function createRouteDeniedResult(toolName: string) {
+  const routeLabel = requestRoute.replace(/_/g, ' ');
+  return {
+    content: [
+      {
+        type: 'text' as const,
+        text: `${toolName} is blocked while handling this ${routeLabel} request. Reason: ${requestReason}. Answer as Andrea directly unless the user explicitly asks for the heavier workflow that needs this tool.`,
+      },
+    ],
+    isError: true,
+  };
+}
+
+function guardMcpTool(toolName: string) {
+  if (!allowedMcpTools) return null;
+
+  const qualifiedName = `mcp__nanoclaw__${toolName}`;
+  if (
+    allowedMcpTools.has(toolName) ||
+    allowedMcpTools.has(qualifiedName) ||
+    allowedMcpTools.has('mcp__nanoclaw__*')
+  ) {
+    return null;
+  }
+
+  return createRouteDeniedResult(toolName);
+}
+
 const server = new McpServer({
   name: 'nanoclaw',
   version: '1.0.0',
@@ -235,6 +279,8 @@ Return a short shortlist first. Only enable a skill after the user clearly choos
       .describe('Maximum number of results to return'),
   },
   async (args) => {
+    const denied = guardMcpTool('search_openclaw_skills');
+    if (denied) return denied;
     try {
       const catalog = loadOpenClawCatalog();
       const tokens = tokenizeSearchQuery(args.query);
@@ -310,6 +356,8 @@ Only enable a skill after the user explicitly approves a specific result. Commun
       ),
   },
   async (args) => {
+    const denied = guardMcpTool('enable_openclaw_skill');
+    if (denied) return denied;
     const targetJid =
       isMain && args.target_group_jid ? args.target_group_jid : chatJid;
     const data = {
@@ -352,6 +400,8 @@ Use this only when an older prompt or skill still asks to "install" a community 
       ),
   },
   async (args) => {
+    const denied = guardMcpTool('install_openclaw_skill');
+    if (denied) return denied;
     const targetJid =
       isMain && args.target_group_jid ? args.target_group_jid : chatJid;
     const data = {
@@ -394,6 +444,8 @@ Use list_enabled_openclaw_skills first if you need to see the currently enabled 
       ),
   },
   async (args) => {
+    const denied = guardMcpTool('disable_openclaw_skill');
+    if (denied) return denied;
     const targetJid =
       isMain && args.target_group_jid ? args.target_group_jid : chatJid;
     const data = {
@@ -429,10 +481,14 @@ server.tool(
       ),
   },
   async (args) => {
+    const denied = guardMcpTool('list_enabled_openclaw_skills');
+    if (denied) return denied;
     const snapshot = loadOpenClawSkillSnapshot();
     const targetJid =
       isMain && args.target_group_jid ? args.target_group_jid : chatJid;
-    const matches = snapshot.skills.filter((skill) => skill.chatJid === targetJid);
+    const matches = snapshot.skills.filter(
+      (skill) => skill.chatJid === targetJid,
+    );
 
     if (matches.length === 0) {
       return {
@@ -494,6 +550,8 @@ Use this before followup/stop/sync so you can reference the exact agent id.`,
       .describe('Maximum number of agents to return'),
   },
   async (args) => {
+    const denied = guardMcpTool('list_cursor_agents');
+    if (denied) return denied;
     const snapshot = loadCursorAgentSnapshot();
     const targetJid = resolveTargetJid(args.target_group_jid);
     const matches = snapshot.agents
@@ -549,7 +607,9 @@ Use this when the user explicitly wants Cursor to work on a coding/repo task asy
     model: z
       .string()
       .optional()
-      .describe('Optional Cursor model id. Defaults to Cursor API default model.'),
+      .describe(
+        'Optional Cursor model id. Defaults to Cursor API default model.',
+      ),
     source_repository: z
       .string()
       .optional()
@@ -561,7 +621,9 @@ Use this when the user explicitly wants Cursor to work on a coding/repo task asy
     source_pr_url: z
       .string()
       .optional()
-      .describe('Optional PR URL. Overrides repository/ref when supported by Cursor.'),
+      .describe(
+        'Optional PR URL. Overrides repository/ref when supported by Cursor.',
+      ),
     auto_create_pr: z
       .boolean()
       .optional()
@@ -590,6 +652,8 @@ Use this when the user explicitly wants Cursor to work on a coding/repo task asy
       ),
   },
   async (args) => {
+    const denied = guardMcpTool('create_cursor_agent');
+    if (denied) return denied;
     const data = {
       type: 'create_cursor_agent',
       prompt: args.prompt,
@@ -633,6 +697,8 @@ server.tool(
       ),
   },
   async (args) => {
+    const denied = guardMcpTool('followup_cursor_agent');
+    if (denied) return denied;
     const data = {
       type: 'followup_cursor_agent',
       cursor_agent_id: args.agent_id,
@@ -667,6 +733,8 @@ server.tool(
       ),
   },
   async (args) => {
+    const denied = guardMcpTool('stop_cursor_agent');
+    if (denied) return denied;
     const data = {
       type: 'stop_cursor_agent',
       cursor_agent_id: args.agent_id,
@@ -700,6 +768,8 @@ server.tool(
       ),
   },
   async (args) => {
+    const denied = guardMcpTool('sync_cursor_agent');
+    if (denied) return denied;
     const data = {
       type: 'sync_cursor_agent',
       cursor_agent_id: args.agent_id,
@@ -733,6 +803,8 @@ server.tool(
       ),
   },
   async (args) => {
+    const denied = guardMcpTool('list_cursor_agent_artifacts');
+    if (denied) return denied;
     const snapshot = loadCursorAgentSnapshot();
     const targetJid = resolveTargetJid(args.target_group_jid);
     const agent = snapshot.agents.find(
@@ -788,15 +860,17 @@ server.tool(
       .string()
       .optional()
       .describe(
-        'Your role/identity name (e.g. "Researcher"). When set, messages appear from a dedicated bot in Telegram.',
+        'Legacy no-op field. Public messages still appear as Andrea; this value is ignored.',
       ),
   },
   async (args) => {
+    const denied = guardMcpTool('send_message');
+    if (denied) return denied;
+
     const data: Record<string, string | undefined> = {
       type: 'message',
       chatJid,
       text: args.text,
-      sender: args.sender || undefined,
       groupFolder,
       timestamp: new Date().toISOString(),
     };
@@ -866,6 +940,8 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
       ),
   },
   async (args) => {
+    const denied = guardMcpTool('schedule_task');
+    if (denied) return denied;
     // Validate schedule_value before writing IPC
     if (args.schedule_type === 'cron') {
       try {
@@ -960,6 +1036,8 @@ server.tool(
   "List all scheduled tasks. From main: shows all tasks. From other groups: shows only that group's tasks.",
   {},
   async () => {
+    const denied = guardMcpTool('list_tasks');
+    if (denied) return denied;
     const tasksFile = path.join(IPC_DIR, 'current_tasks.json');
 
     try {
@@ -1024,6 +1102,8 @@ server.tool(
   'Pause a scheduled task. It will not run until resumed.',
   { task_id: z.string().describe('The task ID to pause') },
   async (args) => {
+    const denied = guardMcpTool('pause_task');
+    if (denied) return denied;
     const data = {
       type: 'pause_task',
       taskId: args.task_id,
@@ -1050,6 +1130,8 @@ server.tool(
   'Resume a paused task.',
   { task_id: z.string().describe('The task ID to resume') },
   async (args) => {
+    const denied = guardMcpTool('resume_task');
+    if (denied) return denied;
     const data = {
       type: 'resume_task',
       taskId: args.task_id,
@@ -1076,6 +1158,8 @@ server.tool(
   'Cancel and delete a scheduled task.',
   { task_id: z.string().describe('The task ID to cancel') },
   async (args) => {
+    const denied = guardMcpTool('cancel_task');
+    if (denied) return denied;
     const data = {
       type: 'cancel_task',
       taskId: args.task_id,
@@ -1119,6 +1203,8 @@ server.tool(
       ),
   },
   async (args) => {
+    const denied = guardMcpTool('update_task');
+    if (denied) return denied;
     // Validate schedule_value if provided
     if (args.schedule_type === 'cron' && args.schedule_value) {
       try {
@@ -1231,6 +1317,8 @@ Use available_groups.json to find the JID for a group. The folder name must be c
     trigger: z.string().describe('Trigger word (e.g., "@Andy")'),
   },
   async (args) => {
+    const denied = guardMcpTool('register_group');
+    if (denied) return denied;
     if (!isMain) {
       return {
         content: [
