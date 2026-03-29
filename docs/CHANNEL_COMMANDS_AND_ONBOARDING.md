@@ -72,6 +72,15 @@ Cursor and remote-control commands:
 - `/cursor_remote` - start the remote control bridge from the main control chat
 - `/cursor_remote_end` - end the remote control bridge
 
+Amazon shopping commands:
+
+- `/amazon_status` - show whether Amazon Business search and purchase flow are configured
+- `/amazon_search <keywords>` - search Amazon Business products
+- `/purchase_request <asin> <offer_id> [quantity]` - prepare an approval-gated purchase request
+- `/purchase_requests` - list tracked purchase requests for this chat
+- `/purchase_approve <request_id> <approval_code>` - approve one prepared request
+- `/purchase_cancel <request_id>` - cancel a pending request
+
 ## 5) Capability Overview
 
 Andrea is strongest when used as a practical assistant, not just a chatbot.
@@ -81,6 +90,7 @@ Typical jobs:
 - to-do lists and reminders
 - recurring scheduled tasks
 - research and summaries
+- Amazon shopping with explicit approval before any order submission
 - coding help and repo work
 - community skill discovery and enablement per chat
 
@@ -102,6 +112,7 @@ Good examples:
 - `@Andrea research the best Outlook and Apple Calendar sync tools and give me a short comparison`
 - `@Andrea enable a vetted calendar skill for this chat if one supports Apple Calendar`
 - `@Andrea summarize my tasks for today and suggest the top three priorities`
+- `@Andrea find a standing desk on Amazon and prepare an approval request for the best one`
 
 ## 7) UX Principles In This Repo
 
@@ -123,9 +134,12 @@ If people are confused in the channel, start here:
 - use `/chatid` to confirm the current chat identity
 - use `/cursor_status` or `/cursor_test` when testing Cursor-backed routing
 - use `/cursor_jobs` and `/cursor_sync <agent_id>` when debugging Cursor cloud job lifecycle
+- use `/amazon_status` before testing shopping
+- use `/purchase_requests` if someone forgot which request id Andrea already prepared
 
 For operator-side troubleshooting, also see:
 
 - [SETUP_AND_FEATURES_GUIDE.md](SETUP_AND_FEATURES_GUIDE.md)
+- [AMAZON_SHOPPING_AND_APPROVALS.md](AMAZON_SHOPPING_AND_APPROVALS.md)
 - [DEBUG_CHECKLIST.md](DEBUG_CHECKLIST.md)
 - [TESTING_AND_RELEASE_RUNBOOK.md](TESTING_AND_RELEASE_RUNBOOK.md)

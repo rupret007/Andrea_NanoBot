@@ -63,6 +63,8 @@ describe('buildTelegramHelpText', () => {
     expect(help).toContain('/registermain');
     expect(help).toContain('/cursor_status');
     expect(help).toContain('/cursor_test');
+    expect(help).toContain('/amazon_status');
+    expect(help).toContain('/amazon_search');
     expect(help).toContain('To-do lists, reminders, and recurring tasks');
   });
 });
@@ -91,6 +93,13 @@ describe('buildTelegramCommandsText', () => {
     expect(commands).toContain('/cursor_create <prompt>');
     expect(commands).toContain('/cursor_conversation <agent_id> [limit]');
     expect(commands).toContain('/cursor_artifacts <agent_id>');
+    expect(commands).toContain('/amazon_search <keywords>');
+    expect(commands).toContain(
+      '/purchase_request <asin> <offer_id> [quantity]',
+    );
+    expect(commands).toContain(
+      '/purchase_approve <request_id> <approval_code>',
+    );
   });
 });
 
@@ -101,5 +110,6 @@ describe('buildTelegramFeaturesText', () => {
     expect(features).toContain('Apple Calendar');
     expect(features).toContain('Outlook/M365');
     expect(features).toContain('Secure per-chat isolation');
+    expect(features).toContain('Amazon shopping search');
   });
 });

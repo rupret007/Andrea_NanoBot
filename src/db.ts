@@ -168,6 +168,45 @@ function createSchema(database: Database.Database): void {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_cursor_agent_events_webhook
       ON cursor_agent_events(webhook_id)
       WHERE webhook_id IS NOT NULL;
+    CREATE TABLE IF NOT EXISTS purchase_requests (
+      id TEXT PRIMARY KEY,
+      group_folder TEXT NOT NULL,
+      chat_jid TEXT NOT NULL,
+      requested_by TEXT,
+      provider TEXT NOT NULL,
+      status TEXT NOT NULL,
+      product_title TEXT NOT NULL,
+      product_url TEXT,
+      asin TEXT NOT NULL,
+      offer_id TEXT NOT NULL,
+      quantity INTEGER NOT NULL,
+      merchant_name TEXT,
+      availability TEXT,
+      buying_guidance TEXT,
+      currency_code TEXT,
+      expected_unit_price REAL,
+      expected_total_price REAL,
+      approval_code_hash TEXT NOT NULL,
+      approval_expires_at TEXT NOT NULL,
+      approved_by TEXT,
+      approved_at TEXT,
+      order_mode TEXT NOT NULL,
+      external_order_id TEXT,
+      submitted_order_id TEXT,
+      submitted_at TEXT,
+      completed_at TEXT,
+      cancelled_at TEXT,
+      failure_reason TEXT,
+      raw_json TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_purchase_requests_group_created
+      ON purchase_requests(group_folder, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_purchase_requests_chat_created
+      ON purchase_requests(chat_jid, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_purchase_requests_status
+      ON purchase_requests(status, updated_at DESC);
   `);
 
   // Add context_mode column if it doesn't exist (migration for existing DBs)
@@ -880,6 +919,40 @@ export interface CursorAgentEventRecord {
   received_at: string;
 }
 
+export interface PurchaseRequestRecord {
+  id: string;
+  group_folder: string;
+  chat_jid: string;
+  requested_by: string | null;
+  provider: string;
+  status: string;
+  product_title: string;
+  product_url: string | null;
+  asin: string;
+  offer_id: string;
+  quantity: number;
+  merchant_name: string | null;
+  availability: string | null;
+  buying_guidance: string | null;
+  currency_code: string | null;
+  expected_unit_price: number | null;
+  expected_total_price: number | null;
+  approval_code_hash: string;
+  approval_expires_at: string;
+  approved_by: string | null;
+  approved_at: string | null;
+  order_mode: string;
+  external_order_id: string | null;
+  submitted_order_id: string | null;
+  submitted_at: string | null;
+  completed_at: string | null;
+  cancelled_at: string | null;
+  failure_reason: string | null;
+  raw_json: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export function upsertCursorAgent(record: CursorAgentRecord): void {
   assertValidGroupFolder(record.group_folder);
   db.prepare(
@@ -1114,6 +1187,240 @@ export function listCursorAgentEvents(
       `,
     )
     .all(agentId, Math.max(1, limit)) as CursorAgentEventRecord[];
+}
+
+export function createPurchaseRequest(record: PurchaseRequestRecord): void {
+  assertValidGroupFolder(record.group_folder);
+  db.prepare(
+    `
+      INSERT INTO purchase_requests (
+        id,
+        group_folder,
+        chat_jid,
+        requested_by,
+        provider,
+        status,
+        product_title,
+        product_url,
+        asin,
+        offer_id,
+        quantity,
+        merchant_name,
+        availability,
+        buying_guidance,
+        currency_code,
+        expected_unit_price,
+        expected_total_price,
+        approval_code_hash,
+        approval_expires_at,
+        approved_by,
+        approved_at,
+        order_mode,
+        external_order_id,
+        submitted_order_id,
+        submitted_at,
+        completed_at,
+        cancelled_at,
+        failure_reason,
+        raw_json,
+        created_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+  ).run(
+    record.id,
+    record.group_folder,
+    record.chat_jid,
+    record.requested_by,
+    record.provider,
+    record.status,
+    record.product_title,
+    record.product_url,
+    record.asin,
+    record.offer_id,
+    record.quantity,
+    record.merchant_name,
+    record.availability,
+    record.buying_guidance,
+    record.currency_code,
+    record.expected_unit_price,
+    record.expected_total_price,
+    record.approval_code_hash,
+    record.approval_expires_at,
+    record.approved_by,
+    record.approved_at,
+    record.order_mode,
+    record.external_order_id,
+    record.submitted_order_id,
+    record.submitted_at,
+    record.completed_at,
+    record.cancelled_at,
+    record.failure_reason,
+    record.raw_json,
+    record.created_at,
+    record.updated_at,
+  );
+}
+
+export function getPurchaseRequestById(
+  id: string,
+): PurchaseRequestRecord | undefined {
+  return db.prepare('SELECT * FROM purchase_requests WHERE id = ?').get(id) as
+    | PurchaseRequestRecord
+    | undefined;
+}
+
+export function listPurchaseRequestsForGroup(
+  groupFolder: string,
+  limit = 50,
+): PurchaseRequestRecord[] {
+  assertValidGroupFolder(groupFolder);
+  return db
+    .prepare(
+      `
+        SELECT *
+        FROM purchase_requests
+        WHERE group_folder = ?
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(groupFolder, Math.max(1, limit)) as PurchaseRequestRecord[];
+}
+
+export function listPurchaseRequestsForChat(
+  chatJid: string,
+  limit = 50,
+): PurchaseRequestRecord[] {
+  return db
+    .prepare(
+      `
+        SELECT *
+        FROM purchase_requests
+        WHERE chat_jid = ?
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(chatJid, Math.max(1, limit)) as PurchaseRequestRecord[];
+}
+
+export function listAllPurchaseRequests(limit = 200): PurchaseRequestRecord[] {
+  return db
+    .prepare(
+      `
+        SELECT *
+        FROM purchase_requests
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(Math.max(1, limit)) as PurchaseRequestRecord[];
+}
+
+export function updatePurchaseRequest(
+  id: string,
+  updates: Partial<
+    Pick<
+      PurchaseRequestRecord,
+      | 'status'
+      | 'merchant_name'
+      | 'availability'
+      | 'buying_guidance'
+      | 'currency_code'
+      | 'expected_unit_price'
+      | 'expected_total_price'
+      | 'approved_by'
+      | 'approved_at'
+      | 'external_order_id'
+      | 'submitted_order_id'
+      | 'submitted_at'
+      | 'completed_at'
+      | 'cancelled_at'
+      | 'failure_reason'
+      | 'raw_json'
+      | 'updated_at'
+    >
+  >,
+): void {
+  const fields: string[] = [];
+  const values: unknown[] = [];
+
+  if (updates.status !== undefined) {
+    fields.push('status = ?');
+    values.push(updates.status);
+  }
+  if (updates.merchant_name !== undefined) {
+    fields.push('merchant_name = ?');
+    values.push(updates.merchant_name);
+  }
+  if (updates.availability !== undefined) {
+    fields.push('availability = ?');
+    values.push(updates.availability);
+  }
+  if (updates.buying_guidance !== undefined) {
+    fields.push('buying_guidance = ?');
+    values.push(updates.buying_guidance);
+  }
+  if (updates.currency_code !== undefined) {
+    fields.push('currency_code = ?');
+    values.push(updates.currency_code);
+  }
+  if (updates.expected_unit_price !== undefined) {
+    fields.push('expected_unit_price = ?');
+    values.push(updates.expected_unit_price);
+  }
+  if (updates.expected_total_price !== undefined) {
+    fields.push('expected_total_price = ?');
+    values.push(updates.expected_total_price);
+  }
+  if (updates.approved_by !== undefined) {
+    fields.push('approved_by = ?');
+    values.push(updates.approved_by);
+  }
+  if (updates.approved_at !== undefined) {
+    fields.push('approved_at = ?');
+    values.push(updates.approved_at);
+  }
+  if (updates.external_order_id !== undefined) {
+    fields.push('external_order_id = ?');
+    values.push(updates.external_order_id);
+  }
+  if (updates.submitted_order_id !== undefined) {
+    fields.push('submitted_order_id = ?');
+    values.push(updates.submitted_order_id);
+  }
+  if (updates.submitted_at !== undefined) {
+    fields.push('submitted_at = ?');
+    values.push(updates.submitted_at);
+  }
+  if (updates.completed_at !== undefined) {
+    fields.push('completed_at = ?');
+    values.push(updates.completed_at);
+  }
+  if (updates.cancelled_at !== undefined) {
+    fields.push('cancelled_at = ?');
+    values.push(updates.cancelled_at);
+  }
+  if (updates.failure_reason !== undefined) {
+    fields.push('failure_reason = ?');
+    values.push(updates.failure_reason);
+  }
+  if (updates.raw_json !== undefined) {
+    fields.push('raw_json = ?');
+    values.push(updates.raw_json);
+  }
+  if (updates.updated_at !== undefined) {
+    fields.push('updated_at = ?');
+    values.push(updates.updated_at);
+  }
+
+  if (fields.length === 0) return;
+
+  values.push(id);
+  db.prepare(
+    `UPDATE purchase_requests SET ${fields.join(', ')} WHERE id = ?`,
+  ).run(...values);
 }
 
 // --- Registered group accessors ---

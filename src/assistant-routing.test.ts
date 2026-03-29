@@ -81,6 +81,26 @@ describe('assistant request routing', () => {
     expect(policy.route).toBe('control_plane');
   });
 
+  it('treats shopping slash commands as protected assistant work', () => {
+    const policy = classifyAssistantRequest([
+      { content: '/purchase_request B012345678 OFFER123 2' },
+    ]);
+
+    expect(policy.route).toBe('protected_assistant');
+    expect(policy.mcpTools).toContain('mcp__nanoclaw__request_amazon_purchase');
+  });
+
+  it('treats purchase approval slash commands as control plane work', () => {
+    const policy = classifyAssistantRequest([
+      { content: '/purchase_approve purchase-abc CODE1234' },
+    ]);
+
+    expect(policy.route).toBe('control_plane');
+    expect(policy.mcpTools).toContain(
+      'mcp__nanoclaw__approve_amazon_purchase_request',
+    );
+  });
+
   it('does not let an older heavy request override a later direct user question', () => {
     const policy = classifyAssistantRequest([
       { content: 'Search the OpenClaw catalog and enable a calendar skill.' },
@@ -105,5 +125,17 @@ describe('assistant request routing', () => {
     );
 
     expect(policy.route).toBe('protected_assistant');
+  });
+
+  it('routes shopping asks to protected assistant handling', () => {
+    const policy = classifyAssistantRequest([
+      {
+        content:
+          'Find me a good ergonomic keyboard on Amazon and prepare an approval request if one looks right.',
+      },
+    ]);
+
+    expect(policy.route).toBe('protected_assistant');
+    expect(policy.mcpTools).toContain('mcp__nanoclaw__search_amazon_products');
   });
 });

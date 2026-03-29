@@ -50,6 +50,11 @@ const ALL_INTERNAL_MCP_TOOLS = [
   'mcp__nanoclaw__stop_cursor_agent',
   'mcp__nanoclaw__sync_cursor_agent',
   'mcp__nanoclaw__list_cursor_agent_artifacts',
+  'mcp__nanoclaw__search_amazon_products',
+  'mcp__nanoclaw__request_amazon_purchase',
+  'mcp__nanoclaw__list_amazon_purchase_requests',
+  'mcp__nanoclaw__approve_amazon_purchase_request',
+  'mcp__nanoclaw__cancel_amazon_purchase_request',
   'mcp__nanoclaw__send_message',
   'mcp__nanoclaw__schedule_task',
   'mcp__nanoclaw__list_tasks',
@@ -67,6 +72,9 @@ const PROTECTED_TASK_MCP_TOOLS = [
   'mcp__nanoclaw__resume_task',
   'mcp__nanoclaw__cancel_task',
   'mcp__nanoclaw__update_task',
+  'mcp__nanoclaw__search_amazon_products',
+  'mcp__nanoclaw__request_amazon_purchase',
+  'mcp__nanoclaw__list_amazon_purchase_requests',
 ] as const;
 
 const CONTROL_PLANE_MCP_TOOLS = [
@@ -80,6 +88,9 @@ const CONTROL_PLANE_MCP_TOOLS = [
   'mcp__nanoclaw__stop_cursor_agent',
   'mcp__nanoclaw__sync_cursor_agent',
   'mcp__nanoclaw__list_cursor_agent_artifacts',
+  'mcp__nanoclaw__list_amazon_purchase_requests',
+  'mcp__nanoclaw__approve_amazon_purchase_request',
+  'mcp__nanoclaw__cancel_amazon_purchase_request',
   'mcp__nanoclaw__register_group',
 ] as const;
 
@@ -95,6 +106,11 @@ const ADVANCED_HELPER_MCP_TOOLS = [
   'mcp__nanoclaw__stop_cursor_agent',
   'mcp__nanoclaw__sync_cursor_agent',
   'mcp__nanoclaw__list_cursor_agent_artifacts',
+  'mcp__nanoclaw__search_amazon_products',
+  'mcp__nanoclaw__request_amazon_purchase',
+  'mcp__nanoclaw__list_amazon_purchase_requests',
+  'mcp__nanoclaw__approve_amazon_purchase_request',
+  'mcp__nanoclaw__cancel_amazon_purchase_request',
   'mcp__nanoclaw__send_message',
 ] as const;
 
@@ -121,6 +137,23 @@ const EXPLICIT_CONTROL_PLANE_SIGNALS: RouteSignal[] = [
       /^\/(?:cursor|cursor_|cursor-|jobs?|status|pause|resume|cancel|sync|stop)/i,
     reason: 'matched explicit control command',
   },
+  {
+    pattern: /^\/(?:amazon-status|amazon_status)/i,
+    reason: 'matched explicit purchase control command',
+  },
+  {
+    pattern:
+      /^\/(?:purchase-requests|purchase_requests|purchase-approve|purchase_approve|purchase-cancel|purchase_cancel)/i,
+    reason: 'matched explicit purchase control command',
+  },
+];
+
+const EXPLICIT_PROTECTED_ASSISTANT_SIGNALS: RouteSignal[] = [
+  {
+    pattern:
+      /^\/(?:amazon-search|amazon_search|purchase-request|purchase_request)/i,
+    reason: 'matched explicit shopping assistant command',
+  },
 ];
 
 const CONTROL_PLANE_SIGNALS: RouteSignal[] = [
@@ -133,6 +166,16 @@ const CONTROL_PLANE_SIGNALS: RouteSignal[] = [
     pattern:
       /\b(cursor|job|jobs|agent|agents|task|tasks|run|runs|queue|artifact|artifacts|work)\b[\s\S]{0,60}\b(status|list|show|inspect|sync|refresh|pause|resume|cancel|stop|retry|follow[- ]?up|continue)\b/i,
     reason: 'matched operational control target',
+  },
+  {
+    pattern:
+      /\b(approve|cancel|list|show|inspect)\b[\s\S]{0,60}\b(purchase request|purchase approval|approval code|amazon purchase|order approval)\b/i,
+    reason: 'matched purchase control intent',
+  },
+  {
+    pattern:
+      /\b(purchase request|purchase approval|approval code|amazon purchase|order approval)\b[\s\S]{0,60}\b(approve|cancel|list|show|inspect)\b/i,
+    reason: 'matched purchase control target',
   },
 ];
 
@@ -176,6 +219,11 @@ const PROTECTED_ASSISTANT_SIGNALS: RouteSignal[] = [
   {
     pattern: /\b(todo|to-do|task list|checklist|agenda)\b/i,
     reason: 'matched personal organization intent',
+  },
+  {
+    pattern:
+      /\b(amazon|shop for|shopping|buy|purchase|order this|find .* on amazon)\b/i,
+    reason: 'matched shopping or purchase intent',
   },
 ];
 
@@ -341,6 +389,14 @@ export function classifyAssistantRequest(
   );
   if (explicitControlReason) {
     return createPolicy('control_plane', explicitControlReason);
+  }
+
+  const explicitProtectedReason = evaluateSignals(
+    lastOnly,
+    EXPLICIT_PROTECTED_ASSISTANT_SIGNALS,
+  );
+  if (explicitProtectedReason) {
+    return createPolicy('protected_assistant', explicitProtectedReason);
   }
 
   const codeReason = evaluateSignals(candidates, CODE_PLANE_SIGNALS);

@@ -109,6 +109,12 @@ export function buildTelegramCommandsText(): string {
     '- `/cursor_followup <agent_id> <text>` - send follow-up to a Cursor job',
     '- `/cursor_conversation <agent_id> [limit]` - fetch recent conversation messages from a Cursor job',
     '- `/cursor_artifacts <agent_id>` - list tracked artifacts for a Cursor job',
+    '- `/amazon_status` - show Amazon shopping readiness and safety mode',
+    '- `/amazon_search <keywords>` - search Amazon Business products',
+    '- `/purchase_request <asin> <offer_id> [quantity]` - prepare an approval-gated purchase request',
+    '- `/purchase_requests` - list tracked purchase requests for this chat',
+    '- `/purchase_approve <request_id> <approval_code>` - approve one prepared purchase request',
+    '- `/purchase_cancel <request_id>` - cancel a pending purchase request',
     '- `/cursor_remote` - start remote control bridge (main chat only)',
     '- `/cursor_remote_end` - end remote control bridge',
   ].join('\n');
@@ -123,6 +129,7 @@ export function buildTelegramFeaturesText(
     '- To-do lists, reminders, and recurring tasks',
     '- Research and summaries',
     '- Project and coding help',
+    '- Amazon shopping search with explicit approval before any order submission',
     '- Enable/disable vetted community skills per chat',
     '- Calendar integrations through approved skills, including Apple Calendar, Google Calendar, Outlook/M365, and CalDAV options',
     "- Secure per-chat isolation so one chat does not automatically get another chat's skills or files",
@@ -130,13 +137,13 @@ export function buildTelegramFeaturesText(
 }
 
 function buildTelegramDescriptionText(assistantName = ASSISTANT_NAME): string {
-  return `${assistantName} helps with tasks, reminders, research, coding, and approved per-chat skills. In DM, use /registermain to set up your main control chat.`;
+  return `${assistantName} helps with tasks, reminders, research, coding, Amazon shopping approvals, and approved per-chat skills. In DM, use /registermain to set up your main control chat.`;
 }
 
 function buildTelegramShortDescriptionText(
   assistantName = ASSISTANT_NAME,
 ): string {
-  return `${assistantName}: tasks, reminders, research, coding, and chat-specific skills.`;
+  return `${assistantName}: tasks, reminders, research, coding, shopping approvals, and chat-specific skills.`;
 }
 
 async function sendTelegramMessage(
@@ -450,6 +457,30 @@ export class TelegramChannel implements Channel {
             {
               command: 'cursor_artifacts',
               description: 'List artifacts for one Cursor job',
+            },
+            {
+              command: 'amazon_status',
+              description: 'Show Amazon shopping readiness',
+            },
+            {
+              command: 'amazon_search',
+              description: 'Search Amazon Business products',
+            },
+            {
+              command: 'purchase_request',
+              description: 'Prepare a guarded purchase approval',
+            },
+            {
+              command: 'purchase_requests',
+              description: 'List tracked purchase approvals',
+            },
+            {
+              command: 'purchase_approve',
+              description: 'Approve one purchase request',
+            },
+            {
+              command: 'purchase_cancel',
+              description: 'Cancel one purchase request',
             },
             {
               command: 'registermain',

@@ -14,6 +14,8 @@ import { CronExpressionParser } from 'cron-parser';
 const IPC_DIR = '/workspace/ipc';
 const MESSAGES_DIR = path.join(IPC_DIR, 'messages');
 const TASKS_DIR = path.join(IPC_DIR, 'tasks');
+const RPC_REQUESTS_DIR = path.join(IPC_DIR, 'rpc_requests');
+const RPC_RESPONSES_DIR = path.join(IPC_DIR, 'rpc_responses');
 const OPENCLAW_MARKET_CATALOG = path.join(
   '/home/node/.claude/skills/openclaw-market',
   'catalog.json',
@@ -23,6 +25,8 @@ const OPENCLAW_MARKET_SNAPSHOT = path.join(
   'current_openclaw_skills.json',
 );
 const CURSOR_AGENTS_SNAPSHOT = path.join(IPC_DIR, 'current_cursor_agents.json');
+const SHOPPING_RPC_TIMEOUT_MS = 35_000;
+const SHOPPING_RPC_POLL_MS = 200;
 
 // Context from environment variables (set by the agent runner)
 const chatJid = process.env.NANOCLAW_CHAT_JID!;
@@ -57,6 +61,67 @@ function writeIpcFile(dir: string, data: object): string {
   fs.renameSync(tempPath, filepath);
 
   return filename;
+}
+
+interface ShoppingRpcResponse {
+  ok: boolean;
+  text: string;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function generateRpcRequestId(prefix: string): string {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+async function invokeShoppingRpc(
+  type: string,
+  payload: Record<string, unknown>,
+): Promise<ShoppingRpcResponse> {
+  fs.mkdirSync(RPC_REQUESTS_DIR, { recursive: true });
+  fs.mkdirSync(RPC_RESPONSES_DIR, { recursive: true });
+
+  const requestId = generateRpcRequestId(type);
+  const responsePath = path.join(RPC_RESPONSES_DIR, `${requestId}.json`);
+
+  writeIpcFile(RPC_REQUESTS_DIR, {
+    requestId,
+    type,
+    ...payload,
+    groupFolder,
+    chatJid,
+    timestamp: new Date().toISOString(),
+  });
+
+  const deadline = Date.now() + SHOPPING_RPC_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    if (fs.existsSync(responsePath)) {
+      try {
+        const response = JSON.parse(
+          fs.readFileSync(responsePath, 'utf-8'),
+        ) as ShoppingRpcResponse;
+        fs.unlinkSync(responsePath);
+        return response;
+      } catch (err) {
+        try {
+          fs.unlinkSync(responsePath);
+        } catch {
+          /* ignore */
+        }
+        throw new Error(
+          `Andrea received an invalid Amazon RPC response: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+
+    await sleep(SHOPPING_RPC_POLL_MS);
+  }
+
+  throw new Error(
+    `Amazon RPC request "${type}" timed out after ${SHOPPING_RPC_TIMEOUT_MS}ms`,
+  );
 }
 
 interface OpenClawCatalogSkill {
@@ -848,6 +913,212 @@ server.tool(
         },
       ],
     };
+  },
+);
+
+server.tool(
+  'search_amazon_products',
+  `Search Amazon Business products for this chat.
+
+Use this to help the user find items. Do not imply that a purchase has happened. If they want to move forward, create a purchase request so Andrea can require explicit approval before any order submission.`,
+  {
+    query: z.string().describe('Product keywords to search for'),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(10)
+      .default(5)
+      .describe('Maximum number of products to return'),
+  },
+  async (args) => {
+    const denied = guardMcpTool('search_amazon_products');
+    if (denied) return denied;
+
+    try {
+      const response = await invokeShoppingRpc('search_amazon_products', {
+        query: args.query,
+        limit: args.limit,
+      });
+
+      return {
+        content: [{ type: 'text' as const, text: response.text }],
+        ...(response.ok ? {} : { isError: true }),
+      };
+    } catch (err) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Amazon search failed: ${err instanceof Error ? err.message : String(err)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
+  'request_amazon_purchase',
+  `Prepare an approval-gated Amazon Business purchase request for this chat.
+
+This does not place an order by itself. It creates a tracked approval request so Andrea can ask the user to approve the exact item and amount.`,
+  {
+    asin: z.string().describe('Amazon ASIN for the product'),
+    offer_id: z.string().describe('Offer id chosen from the search results'),
+    quantity: z
+      .number()
+      .int()
+      .min(1)
+      .max(999)
+      .default(1)
+      .describe('Quantity to request'),
+    title: z
+      .string()
+      .optional()
+      .describe('Optional product title to keep the approval message readable'),
+    product_url: z
+      .string()
+      .optional()
+      .describe('Optional product URL to save with the request'),
+  },
+  async (args) => {
+    const denied = guardMcpTool('request_amazon_purchase');
+    if (denied) return denied;
+
+    try {
+      const response = await invokeShoppingRpc('request_amazon_purchase', {
+        asin: args.asin,
+        offerId: args.offer_id,
+        quantity: args.quantity,
+        title: args.title,
+        productUrl: args.product_url,
+      });
+
+      return {
+        content: [{ type: 'text' as const, text: response.text }],
+        ...(response.ok ? {} : { isError: true }),
+      };
+    } catch (err) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Amazon purchase request failed: ${err instanceof Error ? err.message : String(err)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
+  'list_amazon_purchase_requests',
+  'List tracked Amazon purchase requests for this chat, including status and approval expiry.',
+  {},
+  async () => {
+    const denied = guardMcpTool('list_amazon_purchase_requests');
+    if (denied) return denied;
+
+    try {
+      const response = await invokeShoppingRpc(
+        'list_amazon_purchase_requests',
+        {},
+      );
+
+      return {
+        content: [{ type: 'text' as const, text: response.text }],
+        ...(response.ok ? {} : { isError: true }),
+      };
+    } catch (err) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Amazon purchase request lookup failed: ${err instanceof Error ? err.message : String(err)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
+  'approve_amazon_purchase_request',
+  `Approve a previously prepared Amazon purchase request.
+
+Only use this after the user explicitly confirms the exact request and approval code.`,
+  {
+    request_id: z.string().describe('Tracked purchase request id'),
+    approval_code: z.string().describe('Approval code given to the user'),
+  },
+  async (args) => {
+    const denied = guardMcpTool('approve_amazon_purchase_request');
+    if (denied) return denied;
+
+    try {
+      const response = await invokeShoppingRpc(
+        'approve_amazon_purchase_request',
+        {
+          requestIdToApprove: args.request_id,
+          approvalCode: args.approval_code,
+        },
+      );
+
+      return {
+        content: [{ type: 'text' as const, text: response.text }],
+        ...(response.ok ? {} : { isError: true }),
+      };
+    } catch (err) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Amazon purchase approval failed: ${err instanceof Error ? err.message : String(err)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
+  'cancel_amazon_purchase_request',
+  'Cancel a pending Amazon purchase request so it cannot be approved later.',
+  {
+    request_id: z.string().describe('Tracked purchase request id'),
+  },
+  async (args) => {
+    const denied = guardMcpTool('cancel_amazon_purchase_request');
+    if (denied) return denied;
+
+    try {
+      const response = await invokeShoppingRpc(
+        'cancel_amazon_purchase_request',
+        {
+          requestIdToApprove: args.request_id,
+        },
+      );
+
+      return {
+        content: [{ type: 'text' as const, text: response.text }],
+        ...(response.ok ? {} : { isError: true }),
+      };
+    } catch (err) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Amazon purchase cancellation failed: ${err instanceof Error ? err.message : String(err)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
   },
 );
 

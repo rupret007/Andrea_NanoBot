@@ -19,6 +19,18 @@ import {
   InstalledOpenClawSkill,
 } from './openclaw-market.js';
 import {
+  approveAmazonPurchaseRequest,
+  ApproveAmazonPurchaseRequestInput,
+  cancelAmazonPurchaseRequest,
+  CancelAmazonPurchaseRequestInput,
+  createAmazonPurchaseRequest,
+  CreateAmazonPurchaseRequestInput,
+  formatAmazonPurchaseRequestsMessage,
+  formatAmazonSearchResultsMessage,
+  listAmazonPurchaseRequests,
+  searchAmazonProducts,
+} from './amazon-shopping.js';
+import {
   createCursorAgent,
   followupCursorAgent,
   stopCursorAgent,
@@ -56,9 +68,66 @@ export interface IpcDeps {
   stopCursorAgent?: typeof stopCursorAgent;
   syncCursorAgent?: typeof syncCursorAgent;
   onCursorChanged?: () => void;
+  searchAmazonProducts?: typeof searchAmazonProducts;
+  createAmazonPurchaseRequest?: (
+    input: CreateAmazonPurchaseRequestInput,
+  ) => Promise<{ message: string }>;
+  approveAmazonPurchaseRequest?: (
+    input: ApproveAmazonPurchaseRequestInput,
+  ) => Promise<{ message: string }>;
+  cancelAmazonPurchaseRequest?: (input: CancelAmazonPurchaseRequestInput) => {
+    message: string;
+  };
+}
+
+interface RpcResponsePayload {
+  ok: boolean;
+  text: string;
+}
+
+interface ShoppingRpcRequest {
+  requestId: string;
+  type:
+    | 'search_amazon_products'
+    | 'request_amazon_purchase'
+    | 'list_amazon_purchase_requests'
+    | 'approve_amazon_purchase_request'
+    | 'cancel_amazon_purchase_request';
+  query?: string;
+  limit?: number;
+  asin?: string;
+  offerId?: string;
+  quantity?: number;
+  title?: string;
+  productUrl?: string;
+  requestIdToApprove?: string;
+  approvalCode?: string;
+}
+
+function resolveSourceChatJid(
+  sourceGroup: string,
+  deps: Pick<IpcDeps, 'registeredGroups'>,
+): string | null {
+  return (
+    Object.entries(deps.registeredGroups()).find(
+      ([, group]) => group.folder === sourceGroup,
+    )?.[0] || null
+  );
 }
 
 let ipcWatcherRunning = false;
+
+function writeRpcResponseFile(
+  responseDir: string,
+  requestId: string,
+  payload: RpcResponsePayload,
+): void {
+  fs.mkdirSync(responseDir, { recursive: true });
+  const responsePath = path.join(responseDir, `${requestId}.json`);
+  const tempPath = `${responsePath}.tmp`;
+  fs.writeFileSync(tempPath, JSON.stringify(payload, null, 2));
+  fs.renameSync(tempPath, responsePath);
+}
 
 export function startIpcWatcher(deps: IpcDeps): void {
   if (ipcWatcherRunning) {
@@ -96,6 +165,12 @@ export function startIpcWatcher(deps: IpcDeps): void {
       const isMain = folderIsMain.get(sourceGroup) === true;
       const messagesDir = path.join(ipcBaseDir, sourceGroup, 'messages');
       const tasksDir = path.join(ipcBaseDir, sourceGroup, 'tasks');
+      const rpcRequestsDir = path.join(ipcBaseDir, sourceGroup, 'rpc_requests');
+      const rpcResponsesDir = path.join(
+        ipcBaseDir,
+        sourceGroup,
+        'rpc_responses',
+      );
 
       // Process messages from this group's IPC directory
       try {
@@ -185,6 +260,59 @@ export function startIpcWatcher(deps: IpcDeps): void {
         }
       } catch (err) {
         logger.error({ err, sourceGroup }, 'Error reading IPC tasks directory');
+      }
+
+      try {
+        if (fs.existsSync(rpcRequestsDir)) {
+          const rpcFiles = fs
+            .readdirSync(rpcRequestsDir)
+            .filter((f) => f.endsWith('.json'));
+          for (const file of rpcFiles) {
+            const filePath = path.join(rpcRequestsDir, file);
+            let requestId: string | null = null;
+            try {
+              const data = JSON.parse(
+                fs.readFileSync(filePath, 'utf-8'),
+              ) as ShoppingRpcRequest;
+              requestId = data.requestId || null;
+              const payload = await processShoppingRpcIpc(
+                data,
+                sourceGroup,
+                isMain,
+                deps,
+              );
+              if (requestId) {
+                writeRpcResponseFile(rpcResponsesDir, requestId, payload);
+              }
+              fs.unlinkSync(filePath);
+            } catch (err) {
+              if (requestId) {
+                writeRpcResponseFile(rpcResponsesDir, requestId, {
+                  ok: false,
+                  text: formatUserFacingOperationFailure(
+                    'Amazon shopping action failed',
+                    err,
+                  ),
+                });
+              }
+              logger.error(
+                { file, sourceGroup, err },
+                'Error processing IPC RPC request',
+              );
+              const errorDir = path.join(ipcBaseDir, 'errors');
+              fs.mkdirSync(errorDir, { recursive: true });
+              fs.renameSync(
+                filePath,
+                path.join(errorDir, `${sourceGroup}-${file}`),
+              );
+            }
+          }
+        }
+      } catch (err) {
+        logger.error(
+          { err, sourceGroup },
+          'Error reading IPC RPC requests directory',
+        );
       }
     }
 
@@ -939,4 +1067,121 @@ export async function processTaskIpc(
     default:
       logger.warn({ type: data.type }, 'Unknown IPC task type');
   }
+}
+
+export async function processShoppingRpcIpc(
+  data: ShoppingRpcRequest,
+  sourceGroup: string,
+  _isMain: boolean,
+  deps: IpcDeps,
+): Promise<RpcResponsePayload> {
+  const runSearchAmazonProducts =
+    deps.searchAmazonProducts || searchAmazonProducts;
+  const runCreateAmazonPurchaseRequest =
+    deps.createAmazonPurchaseRequest || createAmazonPurchaseRequest;
+  const runApproveAmazonPurchaseRequest =
+    deps.approveAmazonPurchaseRequest || approveAmazonPurchaseRequest;
+  const runCancelAmazonPurchaseRequest =
+    deps.cancelAmazonPurchaseRequest || cancelAmazonPurchaseRequest;
+  const sourceChatJid = resolveSourceChatJid(sourceGroup, deps);
+
+  try {
+    switch (data.type) {
+      case 'search_amazon_products': {
+        const query = data.query?.trim();
+        if (!query) {
+          return { ok: false, text: 'Amazon search query is required.' };
+        }
+
+        const results = await runSearchAmazonProducts(
+          query,
+          Math.max(1, Math.min(10, Math.floor(data.limit || 5))),
+        );
+        return {
+          ok: true,
+          text: formatAmazonSearchResultsMessage(query, results),
+        };
+      }
+
+      case 'request_amazon_purchase': {
+        if (!data.asin || !data.offerId) {
+          return {
+            ok: false,
+            text: 'Amazon purchase requests need both an ASIN and an offer id.',
+          };
+        }
+        if (!sourceChatJid) {
+          return {
+            ok: false,
+            text: 'This chat is not registered yet, so Andrea cannot track purchase approvals here.',
+          };
+        }
+
+        const created = await runCreateAmazonPurchaseRequest({
+          groupFolder: sourceGroup,
+          chatJid: sourceChatJid,
+          asin: data.asin,
+          offerId: data.offerId,
+          quantity: data.quantity,
+          requestedBy: sourceGroup,
+          title: data.title,
+          productUrl: data.productUrl,
+        });
+        return { ok: true, text: created.message };
+      }
+
+      case 'list_amazon_purchase_requests': {
+        const records = listAmazonPurchaseRequests(sourceGroup, 20);
+        return {
+          ok: true,
+          text: formatAmazonPurchaseRequestsMessage(records),
+        };
+      }
+
+      case 'approve_amazon_purchase_request': {
+        if (!data.requestIdToApprove || !data.approvalCode) {
+          return {
+            ok: false,
+            text: 'Approving a purchase request needs the request id and approval code.',
+          };
+        }
+
+        const approved = await runApproveAmazonPurchaseRequest({
+          groupFolder: sourceGroup,
+          requestId: data.requestIdToApprove,
+          approvalCode: data.approvalCode,
+          approvedBy: sourceGroup,
+        });
+        return { ok: true, text: approved.message };
+      }
+
+      case 'cancel_amazon_purchase_request': {
+        if (!data.requestIdToApprove) {
+          return {
+            ok: false,
+            text: 'Cancelling a purchase request needs the request id.',
+          };
+        }
+
+        const cancelled = runCancelAmazonPurchaseRequest({
+          groupFolder: sourceGroup,
+          requestId: data.requestIdToApprove,
+        });
+        return { ok: true, text: cancelled.message };
+      }
+    }
+  } catch (err) {
+    return {
+      ok: false,
+      text: formatUserFacingOperationFailure(
+        'Amazon shopping action failed',
+        err,
+      ),
+    };
+  }
+
+  return {
+    ok: false,
+    text: `Unknown shopping RPC request type "${data.type}".`,
+  };
 }

@@ -7,14 +7,15 @@
 </p>
 
 <p align="center">
-  Andrea is designed to be practically useful every day: tasks, reminders, research, coding help, calendar workflows, and secure chat-based automation.
+  Andrea is designed to be practically useful every day: tasks, reminders, research, coding help, shopping approvals, calendar workflows, and secure chat-based automation.
 </p>
 
 <p align="center">
-  <a href="docs/SETUP_AND_FEATURES_GUIDE.md">Setup Guide</a>&nbsp; • &nbsp;
-  <a href="docs/CHANNEL_COMMANDS_AND_ONBOARDING.md">Chat Commands</a>&nbsp; • &nbsp;
-  <a href="docs/ADDONS_AND_FEATURE_MATRIX.md">Add-On Matrix</a>&nbsp; • &nbsp;
-  <a href="docs/TESTING_AND_RELEASE_RUNBOOK.md">Testing Runbook</a>&nbsp; • &nbsp;
+  <a href="docs/SETUP_AND_FEATURES_GUIDE.md">Setup Guide</a>&nbsp; | &nbsp;
+  <a href="docs/CHANNEL_COMMANDS_AND_ONBOARDING.md">Chat Commands</a>&nbsp; | &nbsp;
+  <a href="docs/AMAZON_SHOPPING_AND_APPROVALS.md">Amazon Shopping</a>&nbsp; | &nbsp;
+  <a href="docs/ADDONS_AND_FEATURE_MATRIX.md">Add-On Matrix</a>&nbsp; | &nbsp;
+  <a href="docs/TESTING_AND_RELEASE_RUNBOOK.md">Testing Runbook</a>&nbsp; | &nbsp;
   <a href="PRIVACY.md">Privacy Policy</a>
 </p>
 
@@ -28,6 +29,7 @@ This repo turns a secure containerized agent runtime into a personal assistant t
 - manage to-do lists and reminders
 - run recurring automations and check-ins
 - research and summarize information
+- search Amazon Business products and require explicit approval before purchase flow
 - help with code, repos, and technical tasks
 - use approved community skills without exposing every chat to every capability
 
@@ -37,11 +39,12 @@ The runtime is still based on NanoClaw, which means the security model matters:
 - each registered chat keeps its own context and files
 - community skills are cached globally but enabled explicitly per chat
 - model access can run through OneCLI or an Anthropic-compatible gateway
+- shopping credentials stay on the host behind a narrow approval-aware boundary
 
 ## Why This Repo Exists
 
 The upstream NanoClaw project provides a strong secure runtime.
-This fork turns that foundation into Andrea: a more opinionated, more polished personal assistant with stronger Telegram UX, Cursor/9router awareness, better operator docs, and a more intentional day-to-day assistant experience.
+This fork turns that foundation into Andrea: a more opinionated, more polished personal assistant with stronger Telegram UX, Cursor/9router awareness, guarded Amazon shopping, better operator docs, and a more intentional day-to-day assistant experience.
 
 In short:
 
@@ -113,6 +116,12 @@ These run inside Telegram after the bot is live:
 - `/cursor_followup <agent_id> <text>`
 - `/cursor_conversation <agent_id> [limit]`
 - `/cursor_artifacts <agent_id>`
+- `/amazon_status`
+- `/amazon_search <keywords>`
+- `/purchase_request <asin> <offer_id> [quantity]`
+- `/purchase_requests`
+- `/purchase_approve <request_id> <approval_code>`
+- `/purchase_cancel <request_id>`
 - `/cursor_remote`
 - `/cursor_remote_end`
 
@@ -122,6 +131,7 @@ These run inside Telegram after the bot is live:
 
 - track tasks and simple to-do lists
 - set reminders and recurring follow-ups
+- search Amazon Business and prepare approval-gated purchase requests
 - summarize conversations and notes
 - run lightweight personal workflow automation
 
@@ -171,6 +181,7 @@ Examples:
 @Andrea remind me every Monday at 9am to send updates
 @Andrea research the best Apple Calendar and Outlook sync options for families
 @Andrea search for a community skill that can help with GitHub Actions debugging
+@Andrea find a good ergonomic keyboard on Amazon and prepare an approval request
 ```
 
 ## Model And Runtime Support
@@ -183,6 +194,7 @@ Andrea currently supports:
 - OpenAI-key-backed gateways exposed through Anthropic-compatible APIs
 - 9router / Cursor-backed routing paths
 - optional Cursor Cloud Agents API control via `CURSOR_API_KEY`
+- optional Amazon Business search and guarded order submission
 
 Useful runtime validation commands:
 
@@ -191,6 +203,8 @@ Useful runtime validation commands:
 /cursor_test
 /cursor_jobs
 /cursor_create Fix flaky tests in this repo and open a PR
+/amazon_status
+/amazon_search ergonomic keyboard
 ```
 
 Useful local validation commands:
@@ -209,6 +223,8 @@ Use the docs based on what you are trying to do:
   for operator setup, runtime config, and day-to-day operations
 - [docs/CHANNEL_COMMANDS_AND_ONBOARDING.md](docs/CHANNEL_COMMANDS_AND_ONBOARDING.md)
   for Telegram onboarding, chat UX, and command reference
+- [docs/AMAZON_SHOPPING_AND_APPROVALS.md](docs/AMAZON_SHOPPING_AND_APPROVALS.md)
+  for Amazon Business setup, safety rails, and shopping commands
 - [docs/ADDONS_AND_FEATURE_MATRIX.md](docs/ADDONS_AND_FEATURE_MATRIX.md)
   for deciding which skills and add-ons to enable
 - [docs/TESTING_AND_RELEASE_RUNBOOK.md](docs/TESTING_AND_RELEASE_RUNBOOK.md)

@@ -13,6 +13,7 @@ If you are setting up or running Andrea, read these first:
 |---|---|---|
 | Get Andrea running on your machine | [SETUP_AND_FEATURES_GUIDE.md](SETUP_AND_FEATURES_GUIDE.md) | End-to-end operator setup, runtime choices, model config, and go-live flow |
 | Understand what users do in chat | [CHANNEL_COMMANDS_AND_ONBOARDING.md](CHANNEL_COMMANDS_AND_ONBOARDING.md) | Telegram onboarding, commands, DM vs group usage, and user-facing examples |
+| Configure shopping with approval safety | [AMAZON_SHOPPING_AND_APPROVALS.md](AMAZON_SHOPPING_AND_APPROVALS.md) | Amazon Business setup, guarded purchase flow, and why Andrea refuses to freestyle with money |
 | Decide which optional features to add | [ADDONS_AND_FEATURE_MATRIX.md](ADDONS_AND_FEATURE_MATRIX.md) | Practical map of skills, channels, tooling add-ons, and platform scope |
 | Validate a release before shipping | [TESTING_AND_RELEASE_RUNBOOK.md](TESTING_AND_RELEASE_RUNBOOK.md) | Repeatable testing and release process |
 

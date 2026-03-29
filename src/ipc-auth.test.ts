@@ -8,7 +8,7 @@ import {
   getTaskById,
   setRegisteredGroup,
 } from './db.js';
-import { processTaskIpc, IpcDeps } from './ipc.js';
+import { processShoppingRpcIpc, processTaskIpc, IpcDeps } from './ipc.js';
 import {
   DisabledOpenClawSkill,
   EnabledOpenClawSkill,
@@ -49,6 +49,13 @@ let stoppedCursorAgents: Array<{ groupFolder: string; agentId: string }>;
 let syncedCursorAgents: Array<{ groupFolder: string; agentId: string }>;
 let cursorChangedCount: number;
 let sentMessages: Array<{ jid: string; text: string }>;
+let searchedAmazonQueries: Array<{ query: string; limit: number }>;
+let createdPurchaseRequests: Array<{ groupFolder: string; chatJid: string }>;
+let approvedPurchaseRequests: Array<{ groupFolder: string; requestId: string }>;
+let cancelledPurchaseRequests: Array<{
+  groupFolder: string;
+  requestId: string;
+}>;
 
 beforeEach(() => {
   _initTestDatabase();
@@ -67,6 +74,10 @@ beforeEach(() => {
   syncedCursorAgents = [];
   cursorChangedCount = 0;
   sentMessages = [];
+  searchedAmazonQueries = [];
+  createdPurchaseRequests = [];
+  approvedPurchaseRequests = [];
+  cancelledPurchaseRequests = [];
 
   // Populate DB as well
   setRegisteredGroup('main@g.us', MAIN_GROUP);
@@ -235,6 +246,51 @@ beforeEach(() => {
     },
     onCursorChanged: () => {
       cursorChangedCount += 1;
+    },
+    searchAmazonProducts: async (query, limit) => {
+      searchedAmazonQueries.push({ query, limit: limit ?? 5 });
+      return [
+        {
+          asin: 'B012345678',
+          title: 'Ergonomic Keyboard',
+          productUrl: 'https://amazon.example/items/B012345678',
+          imageUrl: null,
+          features: [],
+          offer: {
+            offerId: 'offer-123',
+            availability: 'IN_STOCK',
+            buyingGuidance: null,
+            merchantName: 'Acme Seller',
+            deliveryInformation: null,
+            quantityLimit: null,
+            price: {
+              amount: 129.99,
+              currencyCode: 'USD',
+              formattedPrice: 'USD 129.99',
+            },
+            raw: {},
+          },
+          raw: {},
+        },
+      ];
+    },
+    createAmazonPurchaseRequest: async ({ groupFolder, chatJid }) => {
+      createdPurchaseRequests.push({ groupFolder, chatJid });
+      return {
+        message: 'Purchase request purchase-123 is ready for approval.',
+      };
+    },
+    approveAmazonPurchaseRequest: async ({ groupFolder, requestId }) => {
+      approvedPurchaseRequests.push({ groupFolder, requestId });
+      return {
+        message: `Approved ${requestId}.`,
+      };
+    },
+    cancelAmazonPurchaseRequest: ({ groupFolder, requestId }) => {
+      cancelledPurchaseRequests.push({ groupFolder, requestId });
+      return {
+        message: `Cancelled ${requestId}.`,
+      };
     },
   };
 });
@@ -728,6 +784,77 @@ describe('user-facing IPC failures', () => {
     );
     expect(sentMessages[0].text).not.toContain('https://cursor.example/v1');
     expect(sentMessages[0].text).not.toContain('sk-proj-secret');
+  });
+});
+
+describe('shopping RPC boundary', () => {
+  it('searches Amazon products through the host-side RPC dependency', async () => {
+    const result = await processShoppingRpcIpc(
+      {
+        requestId: 'rpc-1',
+        type: 'search_amazon_products',
+        query: 'ergonomic keyboard',
+        limit: 3,
+      },
+      'other-group',
+      false,
+      deps,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.text).toContain('Amazon Business results');
+    expect(searchedAmazonQueries).toEqual([
+      { query: 'ergonomic keyboard', limit: 3 },
+    ]);
+  });
+
+  it('creates, approves, and cancels purchase requests inside the current group boundary', async () => {
+    const created = await processShoppingRpcIpc(
+      {
+        requestId: 'rpc-2',
+        type: 'request_amazon_purchase',
+        asin: 'B012345678',
+        offerId: 'offer-123',
+        quantity: 2,
+      },
+      'other-group',
+      false,
+      deps,
+    );
+    const approved = await processShoppingRpcIpc(
+      {
+        requestId: 'rpc-3',
+        type: 'approve_amazon_purchase_request',
+        requestIdToApprove: 'purchase-123',
+        approvalCode: 'CODE1234',
+      },
+      'other-group',
+      false,
+      deps,
+    );
+    const cancelled = await processShoppingRpcIpc(
+      {
+        requestId: 'rpc-4',
+        type: 'cancel_amazon_purchase_request',
+        requestIdToApprove: 'purchase-456',
+      },
+      'other-group',
+      false,
+      deps,
+    );
+
+    expect(created.ok).toBe(true);
+    expect(approved.ok).toBe(true);
+    expect(cancelled.ok).toBe(true);
+    expect(createdPurchaseRequests).toEqual([
+      { groupFolder: 'other-group', chatJid: 'other@g.us' },
+    ]);
+    expect(approvedPurchaseRequests).toEqual([
+      { groupFolder: 'other-group', requestId: 'purchase-123' },
+    ]);
+    expect(cancelledPurchaseRequests).toEqual([
+      { groupFolder: 'other-group', requestId: 'purchase-456' },
+    ]);
   });
 });
 

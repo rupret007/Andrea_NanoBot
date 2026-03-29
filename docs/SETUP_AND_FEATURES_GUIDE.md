@@ -17,6 +17,7 @@ For the in-chat user journey and command reference, also see:
   - global cache
   - explicit per-chat enable/disable
 - Anthropic-compatible model routing with OpenAI-key-backed gateway support.
+- Amazon Business product search and approval-gated purchasing.
 
 ## 1) Quick Start (Recommended Path)
 
@@ -162,6 +163,46 @@ Important compatibility note:
 - If your gateway does not yet accept the newest Claude default alias, set:
   - `NANOCLAW_AGENT_MODEL=claude-3-5-sonnet-latest`
 
+### Option C: Amazon Business Shopping
+
+Andrea can search Amazon Business and prepare approval-gated purchase requests.
+
+Recommended first rollout:
+
+```bash
+AMAZON_BUSINESS_ORDER_MODE=trial
+AMAZON_PURCHASE_APPROVAL_TTL_MINUTES=30
+```
+
+Required for search:
+
+```bash
+AMAZON_BUSINESS_API_BASE_URL=https://na.business-api.amazon.com
+AMAZON_BUSINESS_AWS_REGION=us-east-1
+AMAZON_BUSINESS_LWA_CLIENT_ID=...
+AMAZON_BUSINESS_LWA_CLIENT_SECRET=...
+AMAZON_BUSINESS_LWA_REFRESH_TOKEN=...
+AMAZON_BUSINESS_AWS_ACCESS_KEY_ID=...
+AMAZON_BUSINESS_AWS_SECRET_ACCESS_KEY=...
+AMAZON_BUSINESS_USER_EMAIL=buyer@example.com
+```
+
+Required for purchase submission or trial validation:
+
+```bash
+AMAZON_BUSINESS_SHIPPING_FULL_NAME=Andrea Buyer
+AMAZON_BUSINESS_SHIPPING_PHONE_NUMBER=555-123-4567
+AMAZON_BUSINESS_SHIPPING_ADDRESS_LINE1=123 Main St
+AMAZON_BUSINESS_SHIPPING_CITY=Chicago
+AMAZON_BUSINESS_SHIPPING_STATE_OR_REGION=IL
+AMAZON_BUSINESS_SHIPPING_POSTAL_CODE=60601
+AMAZON_BUSINESS_SHIPPING_COUNTRY_CODE=US
+```
+
+Full details:
+
+- [AMAZON_SHOPPING_AND_APPROVALS.md](AMAZON_SHOPPING_AND_APPROVALS.md)
+
 ## 5) Channel Setup And Main-Chat Responsibilities
 
 Install one or more channels with skills:
@@ -218,6 +259,13 @@ Typical commands:
   - `/help`
   - `/commands`
   - `/features`
+- Amazon shopping commands:
+  - `/amazon_status`
+  - `/amazon_search <keywords>`
+  - `/purchase_request <asin> <offer_id> [quantity]`
+  - `/purchase_requests`
+  - `/purchase_approve <request_id> <approval_code>`
+  - `/purchase_cancel <request_id>`
 - Cursor-focused control commands:
   - `/cursor_status` (show 9router/Cursor endpoint readiness)
   - `/cursor_test` (run live 9router/Cursor smoke request)
@@ -272,6 +320,7 @@ Runtime-exposed marketplace tool surface:
 For a detailed matrix of major add-ons, prerequisites, and platform scope, see:
 
 - [ADDONS_AND_FEATURE_MATRIX.md](ADDONS_AND_FEATURE_MATRIX.md)
+- [AMAZON_SHOPPING_AND_APPROVALS.md](AMAZON_SHOPPING_AND_APPROVALS.md)
 
 ## 10) Operations And Maintenance
 

@@ -31,6 +31,9 @@ describe('helper boundary wiring', () => {
     expect(source).toContain('requestPolicy.guidance');
     expect(source).toContain('NANOCLAW_ALLOWED_MCP_TOOLS');
     expect(source).toContain('...requestPolicy.mcpTools');
+    expect(source).toContain('mcp__nanoclaw__search_amazon_products');
+    expect(source).toContain('mcp__nanoclaw__request_amazon_purchase');
+    expect(source).toContain('mcp__nanoclaw__approve_amazon_purchase_request');
   });
 
   it('keeps send_message as Andrea-only instead of advertising a second bot identity', () => {

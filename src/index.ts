@@ -76,6 +76,19 @@ import {
   resolveCursorCloudConfig,
 } from './cursor-cloud.js';
 import {
+  formatAmazonBusinessStatusMessage,
+  getAmazonBusinessStatus,
+} from './amazon-business.js';
+import {
+  approveAmazonPurchaseRequest,
+  cancelAmazonPurchaseRequest,
+  createAmazonPurchaseRequest,
+  formatAmazonPurchaseRequestsMessage,
+  formatAmazonSearchResultsMessage,
+  listAmazonPurchaseRequests,
+  searchAmazonProducts,
+} from './amazon-shopping.js';
+import {
   isSenderAllowed,
   isTriggerAllowed,
   loadSenderAllowlist,
@@ -876,6 +889,24 @@ async function main(): Promise<void> {
     '/cursor-artifacts',
     '/cursor_artifacts',
   ]);
+  const AMAZON_STATUS_COMMANDS = new Set(['/amazon-status', '/amazon_status']);
+  const AMAZON_SEARCH_COMMANDS = new Set(['/amazon-search', '/amazon_search']);
+  const PURCHASE_REQUEST_COMMANDS = new Set([
+    '/purchase-request',
+    '/purchase_request',
+  ]);
+  const PURCHASE_REQUESTS_COMMANDS = new Set([
+    '/purchase-requests',
+    '/purchase_requests',
+  ]);
+  const PURCHASE_APPROVE_COMMANDS = new Set([
+    '/purchase-approve',
+    '/purchase_approve',
+  ]);
+  const PURCHASE_CANCEL_COMMANDS = new Set([
+    '/purchase-cancel',
+    '/purchase_cancel',
+  ]);
 
   // Handle remote-control (and cursor-remote alias) commands
   async function handleRemoteControl(
@@ -991,6 +1022,192 @@ async function main(): Promise<void> {
         '\n\n',
       ),
     );
+  }
+
+  async function handleAmazonStatus(chatJid: string): Promise<void> {
+    const channel = findChannel(channels, chatJid);
+    if (!channel) return;
+
+    const status = getAmazonBusinessStatus();
+    await channel.sendMessage(
+      chatJid,
+      [
+        formatAmazonBusinessStatusMessage(status),
+        status.searchReady
+          ? 'Try `/amazon_search <keywords>` to look for a product, then Andrea can prepare a guarded purchase approval.'
+          : null,
+      ]
+        .filter((line): line is string => Boolean(line))
+        .join('\n\n'),
+    );
+  }
+
+  async function handleAmazonSearch(
+    chatJid: string,
+    query: string,
+  ): Promise<void> {
+    const channel = findChannel(channels, chatJid);
+    if (!channel) return;
+
+    const group = registeredGroups[chatJid];
+    if (!group) {
+      await channel.sendMessage(
+        chatJid,
+        'This chat is not registered yet. Run /registermain in a DM first.',
+      );
+      return;
+    }
+
+    try {
+      const results = await searchAmazonProducts(query, 5);
+      await channel.sendMessage(
+        chatJid,
+        formatAmazonSearchResultsMessage(query, results),
+      );
+    } catch (err) {
+      await channel.sendMessage(
+        chatJid,
+        formatUserFacingOperationFailure('Amazon search failed', err),
+      );
+    }
+  }
+
+  async function handleAmazonPurchaseRequest(
+    chatJid: string,
+    asin: string,
+    offerId: string,
+    quantity: number,
+    requestedBy?: string,
+  ): Promise<void> {
+    const channel = findChannel(channels, chatJid);
+    if (!channel) return;
+
+    const group = registeredGroups[chatJid];
+    if (!group) {
+      await channel.sendMessage(
+        chatJid,
+        'This chat is not registered yet. Run /registermain in a DM first.',
+      );
+      return;
+    }
+
+    try {
+      const created = await createAmazonPurchaseRequest({
+        groupFolder: group.folder,
+        chatJid,
+        asin,
+        offerId,
+        quantity,
+        requestedBy,
+      });
+      await channel.sendMessage(chatJid, created.message);
+    } catch (err) {
+      await channel.sendMessage(
+        chatJid,
+        formatUserFacingOperationFailure('Amazon purchase request failed', err),
+      );
+    }
+  }
+
+  async function handleAmazonPurchaseRequests(chatJid: string): Promise<void> {
+    const channel = findChannel(channels, chatJid);
+    if (!channel) return;
+
+    const group = registeredGroups[chatJid];
+    if (!group) {
+      await channel.sendMessage(
+        chatJid,
+        'This chat is not registered yet. Run /registermain in a DM first.',
+      );
+      return;
+    }
+
+    try {
+      await channel.sendMessage(
+        chatJid,
+        formatAmazonPurchaseRequestsMessage(
+          listAmazonPurchaseRequests(group.folder, 20),
+        ),
+      );
+    } catch (err) {
+      await channel.sendMessage(
+        chatJid,
+        formatUserFacingOperationFailure(
+          'Amazon purchase request lookup failed',
+          err,
+        ),
+      );
+    }
+  }
+
+  async function handleAmazonPurchaseApprove(
+    chatJid: string,
+    requestId: string,
+    approvalCode: string,
+    approvedBy?: string,
+  ): Promise<void> {
+    const channel = findChannel(channels, chatJid);
+    if (!channel) return;
+
+    const group = registeredGroups[chatJid];
+    if (!group) {
+      await channel.sendMessage(
+        chatJid,
+        'This chat is not registered yet. Run /registermain in a DM first.',
+      );
+      return;
+    }
+
+    try {
+      const approved = await approveAmazonPurchaseRequest({
+        groupFolder: group.folder,
+        requestId,
+        approvalCode,
+        approvedBy,
+      });
+      await channel.sendMessage(chatJid, approved.message);
+    } catch (err) {
+      await channel.sendMessage(
+        chatJid,
+        formatUserFacingOperationFailure(
+          'Amazon purchase approval failed',
+          err,
+        ),
+      );
+    }
+  }
+
+  async function handleAmazonPurchaseCancel(
+    chatJid: string,
+    requestId: string,
+  ): Promise<void> {
+    const channel = findChannel(channels, chatJid);
+    if (!channel) return;
+
+    const group = registeredGroups[chatJid];
+    if (!group) {
+      await channel.sendMessage(
+        chatJid,
+        'This chat is not registered yet. Run /registermain in a DM first.',
+      );
+      return;
+    }
+
+    try {
+      const cancelled = cancelAmazonPurchaseRequest({
+        groupFolder: group.folder,
+        requestId,
+      });
+      await channel.sendMessage(chatJid, cancelled.message);
+    } catch (err) {
+      await channel.sendMessage(
+        chatJid,
+        formatUserFacingOperationFailure(
+          'Amazon purchase cancellation failed',
+          err,
+        ),
+      );
+    }
   }
 
   async function handleCursorJobs(chatJid: string): Promise<void> {
@@ -1476,6 +1693,129 @@ async function main(): Promise<void> {
         return;
       }
 
+      if (AMAZON_STATUS_COMMANDS.has(commandToken)) {
+        handleAmazonStatus(chatJid).catch((err) =>
+          logger.error({ err, chatJid }, 'Amazon status command error'),
+        );
+        return;
+      }
+
+      if (AMAZON_SEARCH_COMMANDS.has(commandToken)) {
+        const query = rawTrimmed.split(/\s+/).slice(1).join(' ').trim();
+        if (!query) {
+          const channel = findChannel(channels, chatJid);
+          channel
+            ?.sendMessage(chatJid, 'Usage: /amazon_search <keywords>')
+            .catch((err) =>
+              logger.error({ err, chatJid }, 'Amazon search usage send failed'),
+            );
+          return;
+        }
+
+        handleAmazonSearch(chatJid, query).catch((err) =>
+          logger.error({ err, chatJid }, 'Amazon search command error'),
+        );
+        return;
+      }
+
+      if (PURCHASE_REQUEST_COMMANDS.has(commandToken)) {
+        const parts = rawTrimmed.split(/\s+/);
+        const asin = parts[1];
+        const offerId = parts[2];
+        const parsedQuantity = Number.parseInt(parts[3] || '', 10);
+        const quantity =
+          Number.isFinite(parsedQuantity) && parsedQuantity > 0
+            ? Math.min(999, parsedQuantity)
+            : 1;
+
+        if (!asin || !offerId) {
+          const channel = findChannel(channels, chatJid);
+          channel
+            ?.sendMessage(
+              chatJid,
+              'Usage: /purchase_request <asin> <offer_id> [quantity]',
+            )
+            .catch((err) =>
+              logger.error(
+                { err, chatJid },
+                'Amazon purchase request usage send failed',
+              ),
+            );
+          return;
+        }
+
+        handleAmazonPurchaseRequest(
+          chatJid,
+          asin,
+          offerId,
+          quantity,
+          msg.sender,
+        ).catch((err) =>
+          logger.error({ err, chatJid }, 'Amazon purchase request error'),
+        );
+        return;
+      }
+
+      if (PURCHASE_REQUESTS_COMMANDS.has(commandToken)) {
+        handleAmazonPurchaseRequests(chatJid).catch((err) =>
+          logger.error({ err, chatJid }, 'Amazon purchase list command error'),
+        );
+        return;
+      }
+
+      if (PURCHASE_APPROVE_COMMANDS.has(commandToken)) {
+        const parts = rawTrimmed.split(/\s+/);
+        const requestId = parts[1];
+        const approvalCode = parts[2];
+        if (!requestId || !approvalCode) {
+          const channel = findChannel(channels, chatJid);
+          channel
+            ?.sendMessage(
+              chatJid,
+              'Usage: /purchase_approve <request_id> <approval_code>',
+            )
+            .catch((err) =>
+              logger.error(
+                { err, chatJid },
+                'Amazon purchase approve usage send failed',
+              ),
+            );
+          return;
+        }
+
+        handleAmazonPurchaseApprove(
+          chatJid,
+          requestId,
+          approvalCode,
+          msg.sender,
+        ).catch((err) =>
+          logger.error({ err, chatJid }, 'Amazon purchase approve error'),
+        );
+        return;
+      }
+
+      if (PURCHASE_CANCEL_COMMANDS.has(commandToken)) {
+        const parts = rawTrimmed.split(/\s+/);
+        const requestId = parts[1];
+        if (!requestId) {
+          const channel = findChannel(channels, chatJid);
+          channel
+            ?.sendMessage(chatJid, 'Usage: /purchase_cancel <request_id>')
+            .catch((err) =>
+              logger.error(
+                { err, chatJid },
+                'Amazon purchase cancel usage send failed',
+              ),
+            );
+          return;
+        }
+
+        handleAmazonPurchaseCancel(chatJid, requestId).catch((err) =>
+          logger.error({ err, chatJid }, 'Amazon purchase cancel error'),
+        );
+        return;
+      }
+
       if (REMOTE_CONTROL_START_COMMANDS.has(commandToken)) {
         handleRemoteControl('start', chatJid, msg).catch((err) =>
           logger.error({ err, chatJid }, 'Remote control command error'),
@@ -1614,6 +1954,10 @@ async function main(): Promise<void> {
     enableOpenClawSkill,
     disableOpenClawSkill,
     installOpenClawSkill,
+    searchAmazonProducts,
+    createAmazonPurchaseRequest,
+    approveAmazonPurchaseRequest,
+    cancelAmazonPurchaseRequest,
   });
   const cursorRows = getCursorAgentsSnapshot();
   for (const group of Object.values(registeredGroups)) {
