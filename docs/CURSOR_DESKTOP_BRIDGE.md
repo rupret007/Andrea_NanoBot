@@ -21,6 +21,11 @@ With the desktop bridge enabled, Andrea can use the existing Cursor job controls
 
 The experience is still asynchronous. This is not a live remote desktop. The goal is to let Andrea queue and manage real Cursor agent work on the machine you already trust and use.
 
+Important scope rule:
+
+- `/cursor_status` is the safe status command that can stay visible more broadly
+- the deeper Cursor job commands are operator controls and should be run from Andrea's registered main control chat
+
 ## 1) On The Machine That Normally Runs Cursor
 
 This is usually your Mac.
@@ -108,7 +113,7 @@ You should see a `Cursor Desktop Bridge Status` section with:
 - `Auth configured: yes`
 - `Probe: ok`
 
-Then run a small non-destructive job:
+Then run a small non-destructive job from the main control chat:
 
 ```text
 /cursor_create Review the current README and suggest 3 improvements.

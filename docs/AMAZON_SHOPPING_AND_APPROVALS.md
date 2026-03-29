@@ -7,6 +7,8 @@ Andrea is helpful.
 Andrea is quirky.
 Andrea is not allowed to improvise with your credit card.
 
+Treat this as an operator-enabled surface for the registered main control chat, not a default public capability.
+
 ## What This Feature Actually Does
 
 Current v1 behavior:
@@ -97,7 +99,7 @@ AMAZON_BUSINESS_TIMEOUT_MS=20000
 
 ## Telegram Commands
 
-Andrea exposes these shopping commands in Telegram:
+Andrea exposes these shopping commands in Telegram for operators in the main control chat:
 
 - `/amazon_status`
 - `/amazon_search <keywords>`
@@ -158,6 +160,7 @@ Important behavior:
 - search and request creation are treated as protected assistant tasks
 - approval and cancellation are treated as control-plane actions
 - code-generation or repo work does not get shopping tools by default
+- the explicit slash-command surface is main-control-chat only
 
 That keeps shopping out of engineering workflows and keeps engineering workflows out of shopping.
 

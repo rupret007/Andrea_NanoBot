@@ -1,131 +1,146 @@
-# NanoClaw Security Model
+# Andrea_NanoBot Security Model
+
+This document describes the security posture Andrea actually relies on today.
+It is intentionally practical: trust boundaries first, product claims second.
 
 ## Trust Model
 
-| Entity            | Trust Level | Rationale                        |
-| ----------------- | ----------- | -------------------------------- |
-| Main group        | Trusted     | Private self-chat, admin control |
-| Non-main groups   | Untrusted   | Other users may be malicious     |
-| Container agents  | Sandboxed   | Isolated execution environment   |
-| Incoming messages | User input  | Potential prompt injection       |
+| Entity                | Trust Level | Why                                                  |
+| --------------------- | ----------- | ---------------------------------------------------- |
+| Main control chat     | Trusted     | Private operator/admin surface                       |
+| Non-main chats        | Untrusted   | Messages may be malicious or prompt-injecting        |
+| Host process          | Trusted     | Owns routing, authorization, mounts, and credentials |
+| Container agents      | Sandboxed   | Isolated execution environment                       |
+| External integrations | Conditional | Safe only when explicitly configured and validated   |
 
-## Security Boundaries
+## Primary Security Boundaries
 
-### 1. Container Isolation (Primary Boundary)
+### 1. Container Isolation
 
-Agents execute in containers (lightweight Linux VMs), providing:
+Andrea runs agent work inside containers instead of directly on the host.
+That gives the system:
 
-- **Process isolation** - Container processes cannot affect the host
-- **Filesystem isolation** - Only explicitly mounted directories are visible
-- **Non-root execution** - Runs as unprivileged `node` user (uid 1000)
-- **Ephemeral containers** - Fresh environment per invocation (`--rm`)
+- process isolation
+- filesystem isolation through explicit mounts only
+- non-root execution in the container
+- fresh per-run execution with bounded mounted state
 
-This is the primary security boundary. Rather than relying on application-level permission checks, the attack surface is limited by what's mounted.
+This is the main sandbox boundary. The system does not assume prompt-level obedience is enough.
 
 ### 2. Mount Security
 
-**External Allowlist** - Mount permissions stored at `~/.config/nanoclaw/mount-allowlist.json`, which is:
+Mount permissions are validated on the host before container startup.
 
-- Outside project root
-- Never mounted into containers
-- Cannot be modified by agents
+Important rules:
 
-**Default Blocked Patterns:**
+- the external allowlist lives outside the repo
+- blocked secret-like paths are denied by default
+- symlinks are resolved before validation
+- unsafe relative paths and traversal are rejected
+- non-main additional mounts are read-only unless explicitly allowed
 
-```
-.ssh, .gnupg, .aws, .azure, .gcloud, .kube, .docker,
-credentials, .env, .netrc, .npmrc, id_rsa, id_ed25519,
-private_key, .secret
-```
+The main project root is mounted read-only. Writable state lives in narrower paths such as the group folder, IPC, and `.claude` state.
 
-**Protections:**
+### 3. Session And Chat Isolation
 
-- Symlink resolution before validation (prevents traversal attacks)
-- Container path validation (rejects `..` and absolute paths)
-- `nonMainReadOnly` option forces read-only for non-main groups
+Each registered chat keeps its own group folder and session state.
 
-**Read-Only Project Root:**
+That means:
 
-The main group's project root is mounted read-only. Writable paths the agent needs (group folder, IPC, `.claude/`) are mounted separately. This prevents the agent from modifying host application code (`src/`, `dist/`, `package.json`, etc.) which would bypass the sandbox entirely on next restart.
-
-### 3. Session Isolation
-
-Each group has isolated Claude sessions at `data/sessions/{group}/.claude/`:
-
-- Groups cannot see other groups' conversation history
-- Session data includes full message history and file contents read
-- Prevents cross-group information disclosure
+- one chat does not automatically inherit another chat's files
+- one chat does not automatically inherit another chat's enabled community skills
+- per-chat state is explicit instead of ambient
 
 ### 4. IPC Authorization
 
-Messages and task operations are verified against group identity:
+IPC messages and task operations are authorized against the group identity that owns the IPC namespace.
 
 | Operation                   | Main Group | Non-Main Group |
 | --------------------------- | ---------- | -------------- |
-| Send message to own chat    | ✓          | ✓              |
-| Send message to other chats | ✓          | ✗              |
-| Schedule task for self      | ✓          | ✓              |
-| Schedule task for others    | ✓          | ✗              |
-| View all tasks              | ✓          | Own only       |
-| Manage other groups         | ✓          | ✗              |
+| Send message to own chat    | Yes        | Yes            |
+| Send message to other chats | Yes        | No             |
+| Schedule task for self      | Yes        | Yes            |
+| Schedule task for others    | Yes        | No             |
+| View all tasks              | Yes        | Own only       |
+| Manage other groups         | Yes        | No             |
 
-### 5. Credential Isolation (OneCLI Agent Vault)
+### 5. Credential Isolation
 
-Real API credentials **never enter containers**. NanoClaw uses [OneCLI's Agent Vault](https://github.com/onecli/onecli) to proxy outbound requests and inject credentials at the gateway level.
+Real API credentials are supposed to stay on the host side, not in normal agent prompts or mounted container files.
 
-**How it works:**
+The repo supports:
 
-1. Credentials are registered once with `onecli secrets create`, stored and managed by OneCLI
-2. When NanoClaw spawns a container, it calls `applyContainerConfig()` to route outbound HTTPS through the OneCLI gateway
-3. The gateway matches requests by host and path, injects the real credential, and forwards
-4. Agents cannot discover real credentials — not in environment, stdin, files, or `/proc`
+- OneCLI Agent Vault for host-side credential injection
+- Anthropic-compatible gateway flows
+- host-side shopping credentials for Amazon Business
+- host-side bridge/auth tokens for optional integrations like Cursor desktop bridge and Alexa
 
-**Per-agent policies:**
-Each NanoClaw group gets its own OneCLI agent identity. This allows different credential policies per group (e.g. your sales agent vs. support agent). OneCLI supports rate limits, and time-bound access and approval flows are on the roadmap.
+Important rule:
 
-**NOT Mounted:**
+- secrets should not be echoed back to users, stored in normal chat history, or mounted into general agent workspaces
 
-- Channel auth sessions (`store/auth/`) — host only
-- Mount allowlist — external, never mounted
-- Any credentials matching blocked patterns
-- `.env` is shadowed with a managed empty host file in runtime state (`secret-shadow-empty`) so this works consistently on Windows, Linux, macOS, Docker, and Podman
+### 6. Route-Aware Tool Narrowing
+
+Andrea now uses route-aware request policy so simple assistant turns do not automatically receive the same tool surface as heavier workflows.
+
+Current route families:
+
+- `direct_assistant`
+- `protected_assistant`
+- `control_plane`
+- `advanced_helper`
+- `code_plane`
+
+This is a meaningful security improvement because it reduces accidental tool reach for ordinary chat turns.
+
+### 7. Command Surface Gating
+
+The public Telegram command menu is intentionally smaller than the total codebase surface.
+
+Current policy:
+
+- core public commands stay available for normal users
+- `/cursor_status` is the safe public Cursor status exception
+- advanced Cursor, Amazon, and Alexa operator commands are gated to Andrea's registered main control chat
+- remote-control remains disabled in the runtime path
 
 ## Privilege Comparison
 
-| Capability          | Main Group                | Non-Main Group           |
-| ------------------- | ------------------------- | ------------------------ |
-| Project root access | `/workspace/project` (ro) | None                     |
-| Group folder        | `/workspace/group` (rw)   | `/workspace/group` (rw)  |
-| Global memory       | Implicit via project      | `/workspace/global` (ro) |
-| Additional mounts   | Configurable              | Read-only unless allowed |
-| Network access      | Unrestricted              | Unrestricted             |
-| MCP tools           | All                       | All                      |
+| Capability          | Main Group                                     | Non-Main Group                                    |
+| ------------------- | ---------------------------------------------- | ------------------------------------------------- |
+| Project root access | `/workspace/project` (read-only)               | None                                              |
+| Group folder        | `/workspace/group` (read/write)                | `/workspace/group` (read/write)                   |
+| Global memory       | Implicit via project                           | `/workspace/global` (read-only)                   |
+| Additional mounts   | Configurable                                   | Read-only unless explicitly allowed               |
+| Network access      | Unrestricted                                   | Unrestricted                                      |
+| MCP tools           | Route-aware subset with broader operator reach | Route-aware subset scoped to the request and chat |
 
-## Security Architecture Diagram
+## What This Model Does Well
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                        UNTRUSTED ZONE                             │
-│  Incoming Messages (potentially malicious)                         │
-└────────────────────────────────┬─────────────────────────────────┘
-                                 │
-                                 ▼ Trigger check, input escaping
-┌──────────────────────────────────────────────────────────────────┐
-│                     HOST PROCESS (TRUSTED)                        │
-│  • Message routing                                                │
-│  • IPC authorization                                              │
-│  • Mount validation (external allowlist)                          │
-│  • Container lifecycle                                            │
-│  • OneCLI Agent Vault (injects credentials, enforces policies)   │
-└────────────────────────────────┬─────────────────────────────────┘
-                                 │
-                                 ▼ Explicit mounts only, no secrets
-┌──────────────────────────────────────────────────────────────────┐
-│                CONTAINER (ISOLATED/SANDBOXED)                     │
-│  • Agent execution                                                │
-│  • Bash commands (sandboxed)                                      │
-│  • File operations (limited to mounts)                            │
-│  • API calls routed through OneCLI Agent Vault                   │
-│  • No real credentials in environment or filesystem              │
-└──────────────────────────────────────────────────────────────────┘
-```
+- keeps Andrea as one public assistant while internal helpers stay hidden
+- isolates chats from each other by default
+- blocks many high-trust actions outside the main control chat
+- keeps container execution narrower than host execution
+- preserves explicit approvals for shopping flows
+
+## What Is Still Conditional
+
+These are only as safe as their real deployment:
+
+- Alexa voice ingress
+- Amazon Business ordering
+- Cursor Cloud
+- Cursor desktop bridge
+- community skill enablement from external catalogs
+
+They should be treated as operator-enabled extras, not baseline assumptions.
+
+## Security Hygiene Rules
+
+When changing behavior, keep these rules intact:
+
+- do not broaden the public command surface casually
+- do not let helper chatter leak into user-facing replies
+- do not assume optional integrations are safe just because tests pass
+- do not turn route-policy misses into silently broad tool access without a conscious decision
+- do not document a feature as baseline if it still depends on same-day validation

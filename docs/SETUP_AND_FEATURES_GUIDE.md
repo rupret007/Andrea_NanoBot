@@ -233,7 +233,7 @@ Full details:
 ### Option D: Alexa Voice
 
 Andrea can expose a custom Alexa skill endpoint so you can talk to the same assistant out loud.
-Treat this as an optional operator-enabled extra, not part of the default demo path, unless it has been validated end to end in the current environment.
+Treat this as an optional operator-enabled extra, not part of the default baseline or default demo path, unless it has been validated end to end in the current environment.
 
 Minimum:
 
@@ -319,7 +319,7 @@ Typical commands:
   - `/help`
   - `/commands`
   - `/features`
-- Amazon shopping commands:
+- Amazon shopping commands for operators in the main control chat:
   - `/amazon_status`
   - `/amazon_search <keywords>`
   - `/purchase_request <asin> <offer_id> [quantity]`
@@ -327,19 +327,18 @@ Typical commands:
   - `/purchase_approve <request_id> <approval_code>`
   - `/purchase_cancel <request_id>`
 - Cursor-focused control commands:
-  - `/cursor_status` (show 9router/Cursor endpoint readiness)
-  - `/cursor_models [filter]` (list available Cursor Cloud models)
-- `/cursor_test` (run live 9router/Cursor smoke request)
-- `/cursor_jobs` (list tracked Cursor cloud jobs for this chat)
-- `/cursor_create [options] <prompt>` (start a Cursor cloud coding job)
-- `/cursor_create [options] <prompt>` also uses the desktop bridge when `CURSOR_DESKTOP_BRIDGE_URL` and `CURSOR_DESKTOP_BRIDGE_TOKEN` are configured
-- `/cursor_create --repo <url> --ref <branch> --model <id> <prompt>` (target a specific repo/ref/model)
-- `/cursor_sync <agent_id>` (refresh Cursor job status/artifacts)
-- `/cursor_stop <agent_id>` (request stop for a Cursor job)
-- `/cursor_followup <agent_id> <text>` (send follow-up instructions)
-- `/cursor_conversation <agent_id> [limit]` (show recent Cursor job conversation)
-- `/cursor_artifacts <agent_id>` (list tracked Cursor job artifacts)
-- `/cursor_artifact_link <agent_id> <absolute_path>` (generate a temporary artifact download link)
+  - `/cursor_status` (safe public status check)
+  - `/cursor_models [filter]` (main control chat only; Cursor Cloud only)
+  - `/cursor_test` (main control chat only; live 9router/Cursor smoke request)
+  - `/cursor_jobs` (main control chat only; list tracked Cursor jobs for this chat)
+  - `/cursor_create [options] <prompt>` (main control chat only; starts a Cursor job through Cloud or the desktop bridge)
+  - `/cursor_create --repo <url> --ref <branch> --model <id> <prompt>` (target a specific repo/ref/model)
+  - `/cursor_sync <agent_id>` (main control chat only; refresh Cursor job status/artifacts)
+  - `/cursor_stop <agent_id>` (main control chat only; request stop for a Cursor job)
+  - `/cursor_followup <agent_id> <text>` (main control chat only; send follow-up instructions)
+  - `/cursor_conversation <agent_id> [limit]` (main control chat only; show recent Cursor job conversation)
+  - `/cursor_artifacts <agent_id>` (main control chat only; list tracked Cursor job artifacts)
+  - `/cursor_artifact_link <agent_id> <absolute_path>` (main control chat only; generate a temporary artifact download link)
 
 Important scope rule:
 
@@ -470,8 +469,7 @@ Use this exact order:
 6. Start service:
    - `npm run setup -- --step service`
    - optional immediate restart check: `npm run services:restart`
-7. Run marketplace smoke in chat:
-   - search a skill
-   - explicitly enable one skill
-   - confirm it appears in the next chat response
-   - disable it and confirm removal
+7. Optional same-day operator validation only:
+   - if you plan to use marketplace skills, search one skill, enable it in one chat, confirm it appears on the next response, then disable it again
+   - if you plan to use Alexa, validate the live HTTPS endpoint and one real voice request
+   - if you plan to use Amazon, keep `AMAZON_BUSINESS_ORDER_MODE=trial` and validate one full approval flow before treating it as real

@@ -3,6 +3,8 @@
 This guide shows how to add Alexa as a voice front door to Andrea.
 Andrea stays the assistant identity. Alexa is only the transport.
 
+Treat Alexa as an optional operator-enabled ingress, not part of Andrea's default public surface, until it has been validated end to end in the current environment.
+
 ## 1) What You Get
 
 With Alexa enabled:
@@ -90,7 +92,7 @@ Run verification:
 npm run setup -- --step verify
 ```
 
-In Telegram:
+In Telegram main control chat:
 
 ```text
 /alexa_status
@@ -111,7 +113,7 @@ In Alexa test console (or real device), try:
 - `Ask Andrea assistant to remind me tomorrow at 8am to call Sam`
 - `Ask Andrea assistant to research the best standing desks for small apartments`
 
-If this works, voice ingress is live.
+If this works, voice ingress is live for that environment.
 
 ## 8) Security Hardening Checklist
 
@@ -154,7 +156,7 @@ If requests are denied:
 
 ## 10) Operational Notes
 
-- Alexa is additive. Telegram remains the primary operator control surface.
+- Alexa is additive. Telegram remains the primary operator control surface and the safer default front door.
 - For incidents, use:
   - `/alexa_status`
   - `npm run setup -- --step verify`
