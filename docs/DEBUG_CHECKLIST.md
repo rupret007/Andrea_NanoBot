@@ -43,6 +43,13 @@ If you need Kubernetes enabled, set `CONTAINER_IMAGE` to an image stored in a re
 
 If you previously saw a blank `cmd`/Windows Terminal tab with title like `npm exec node ... dist/index.js`, that was the `npx` launcher process. Runtime launch now prefers `node.exe` directly on Node 22, and service stop now explicitly cleans orphaned launcher `cmd.exe` processes.
 
+On the current Windows launcher path, host logs are split:
+
+- `logs/nanoclaw.log` for stdout
+- `logs/nanoclaw.stderr.log` for stderr
+
+Check both when investigating runtime issues.
+
 ## Quick Status Check
 
 ```bash
