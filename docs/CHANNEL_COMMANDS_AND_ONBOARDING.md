@@ -19,6 +19,8 @@ There are three common chat modes:
   - one chat is registered as the main control chat
   - use it for administration, cross-group work, and higher-trust control actions
 
+For short questions like greetings, playful prompts, and simple math, Andrea may answer immediately through a direct quick-reply path. That fast path is intentional and exists to keep simple interactions stable and natural.
+
 ## 2) First-Time Telegram Onboarding
 
 Recommended flow:
@@ -117,6 +119,7 @@ Good examples:
 The intended UX direction is:
 
 - plain-language interaction first
+- quick direct answers for simple asks before heavier orchestration
 - minimal command memorization
 - helpful slash commands for discovery and setup
 - isolated, low-surprise behavior per chat

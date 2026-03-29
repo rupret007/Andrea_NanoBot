@@ -32,6 +32,7 @@ This repo turns a secure containerized agent runtime into a personal assistant t
 - manage to-do lists and reminders
 - run recurring automations and check-ins
 - research and summarize information
+- answer simple questions, playful prompts, and basic math through a fast direct reply path
 - search Amazon Business products and require explicit approval before purchase flow
 - help with code, repos, and technical tasks
 - expose optional admin-enabled integrations without breaking the one-assistant experience
@@ -143,7 +144,7 @@ These run inside Telegram after the bot is live:
 For a reliable demo, keep the story tight:
 
 - Telegram onboarding and `/registermain`
-- direct questions, quick replies, reminders, and light research
+- direct questions, fast quick replies for simple asks, reminders, and light research
 - stable Cursor readiness and job-control commands
 - Amazon status, search, and approval-gated purchase requests
 - secure per-chat isolation and clean user-facing replies

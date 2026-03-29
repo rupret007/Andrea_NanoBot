@@ -22,7 +22,7 @@ For the in-chat user journey and command reference, also see:
 - Amazon Business product search and approval-gated purchasing.
 
 For demo use, keep the default public surface smaller than the full operator feature set.
-The safest baseline is Telegram + direct assistance + Cursor status/job controls + Amazon status/search/approval flow.
+The safest baseline is Telegram + direct assistance + fast quick replies for simple asks + Cursor status/job controls + Amazon status/search/approval flow.
 
 ## 1) Quick Start (Recommended Path)
 

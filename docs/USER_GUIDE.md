@@ -9,6 +9,7 @@ Andrea is one assistant identity across chat surfaces.
 
 You can use Andrea for:
 
+- fast answers to simple questions, playful prompts, and basic math
 - reminders and to-do help
 - summaries and research
 - coding help and Cursor-linked job control
@@ -28,6 +29,7 @@ Try:
 - `Add "renew passport" to my to-do list`
 - `Remind me tomorrow at 3pm to call Sam`
 - `Research the best standing desks for a small office`
+- `What's the meaning of life?`
 
 ## 3) Daily Commands You Actually Need
 
@@ -70,6 +72,8 @@ Optional note:
 ## 4) Best Request Patterns
 
 Andrea performs best when your request includes outcome + timing + scope.
+
+For short conversational asks like greetings, playful questions, or simple math, Andrea may answer immediately through a direct reply path instead of routing the request through the heavier helper flow. That is intentional and is part of the reliability design.
 
 Examples:
 
