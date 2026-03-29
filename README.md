@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  Andrea is designed to be practically useful every day: tasks, reminders, research, coding help, shopping approvals, calendar workflows, and secure chat-based automation.
+  Andrea is designed to be practically useful every day: tasks, reminders, research, coding help, guarded shopping approvals, and secure chat-based automation.
 </p>
 
 <p align="center">
@@ -32,10 +32,9 @@ This repo turns a secure containerized agent runtime into a personal assistant t
 - manage to-do lists and reminders
 - run recurring automations and check-ins
 - research and summarize information
-- talk to Andrea through Alexa without creating a second assistant identity
 - search Amazon Business products and require explicit approval before purchase flow
 - help with code, repos, and technical tasks
-- use approved community skills without exposing every chat to every capability
+- expose optional admin-enabled integrations without breaking the one-assistant experience
 
 The runtime is still based on NanoClaw, which means the security model matters:
 
@@ -138,8 +137,18 @@ These run inside Telegram after the bot is live:
 - `/purchase_requests`
 - `/purchase_approve <request_id> <approval_code>`
 - `/purchase_cancel <request_id>`
-- `/cursor_remote`
-- `/cursor_remote_end`
+
+## Demo-Ready Surface
+
+For a reliable demo, keep the story tight:
+
+- Telegram onboarding and `/registermain`
+- direct questions, quick replies, reminders, and light research
+- stable Cursor readiness and job-control commands
+- Amazon status, search, and approval-gated purchase requests
+- secure per-chat isolation and clean user-facing replies
+
+Optional integrations such as Alexa, marketplace skills, and calendar-oriented skills exist, but they should be treated as operator-enabled extras unless they were validated the same day.
 
 ## What Andrea Can Do
 
@@ -147,7 +156,6 @@ These run inside Telegram after the bot is live:
 
 - track tasks and simple to-do lists
 - set reminders and recurring follow-ups
-- use Alexa voice while keeping Andrea as the one public assistant personality
 - search Amazon Business and prepare approval-gated purchase requests
 - summarize conversations and notes
 - run lightweight personal workflow automation
@@ -163,20 +171,7 @@ These run inside Telegram after the bot is live:
 - help with repos, debugging, and code tasks
 - use Cursor/9router-aware routing checks with `/cursor_status` and `/cursor_test`
 - create, follow up, sync, and inspect Cursor cloud coding jobs directly from Telegram
-- expose approved community skills per chat without making them global by default
-
-### Calendar Support
-
-Calendar support is possible today, but it is currently skill-driven rather than a built-in first-party core subsystem.
-
-The curated marketplace already includes calendar-oriented skills for:
-
-- Apple Calendar
-- Google Calendar
-- Outlook / Microsoft 365
-- CalDAV-based setups
-
-That means Andrea can support calendar workflows now, while the runtime remains conservative about what becomes a built-in core feature.
+- keep optional integrations behind explicit operator setup instead of treating them as default demo features
 
 ## Using Andrea In Chat
 
@@ -196,8 +191,7 @@ Examples:
 ```text
 @Andrea add "renew passport" to my to-do list
 @Andrea remind me every Monday at 9am to send updates
-@Andrea research the best Apple Calendar and Outlook sync options for families
-@Andrea search for a community skill that can help with GitHub Actions debugging
+@Andrea research the best standing desks for small apartments
 @Andrea find a good ergonomic keyboard on Amazon and prepare an approval request
 ```
 
@@ -207,7 +201,6 @@ Andrea currently supports:
 
 - Node.js 22.x
 - Docker, Podman, and Apple Container
-- Alexa custom-skill voice ingress through a secure HTTPS endpoint
 - Anthropic-compatible model endpoints
 - OpenAI-key-backed gateways exposed through Anthropic-compatible APIs
 - 9router / Cursor-backed routing paths
@@ -223,7 +216,6 @@ Useful runtime validation commands:
 /cursor_jobs
 /cursor_create --model cu/default --repo https://github.com/owner/repo --ref main Fix flaky tests in this repo and open a PR
 /cursor_artifact_link bc_123 "/opt/cursor/out/summary.md"
-/alexa_status
 /amazon_status
 /amazon_search ergonomic keyboard
 ```

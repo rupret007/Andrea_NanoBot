@@ -51,6 +51,10 @@ function trySolveMath(message: string): string | null {
   }
 }
 
+function countWords(input: string): number {
+  return input.trim().split(/\s+/).filter(Boolean).length;
+}
+
 export function maybeBuildDirectQuickReply(
   messages: Pick<NewMessage, 'content'>[],
 ): string | null {
@@ -73,6 +77,43 @@ export function maybeBuildDirectQuickReply(
   }
 
   if (
+    /^(hi|hello|hey|good morning|good afternoon|good evening)\b/.test(
+      normalized,
+    )
+  ) {
+    return "Hi. I'm Andrea. Give me one thing to tackle and I'll keep it crisp.";
+  }
+
+  if (/\b(how are you|how're you)\b/.test(normalized)) {
+    return 'Doing well and fully caffeinated in spirit. What do you want to tackle?';
+  }
+
+  if (
+    /\b(you there|are you there|still there)\b/.test(normalized) ||
+    /^you\?$/.test(normalized)
+  ) {
+    return "I'm here and ready.";
+  }
+
+  if (/^(thanks|thank you|thx)\b/.test(normalized)) {
+    return "Anytime. What's next?";
+  }
+
+  if (
+    /\b(that'?s funny|thats funny|haha|lol|lmao)\b/.test(normalized) ||
+    /\bahh+\b/.test(normalized)
+  ) {
+    return "I'll take that as a win.";
+  }
+
+  if (
+    /\bwho are you\b/.test(normalized) ||
+    /\bwhat can you do\b/.test(normalized)
+  ) {
+    return "I'm Andrea. I'm strongest on tasks, reminders, research, status checks, and careful approvals without turning the chat into a control panel.";
+  }
+
+  if (
     /\bdo you know what('?s| is) what\b/.test(normalized) ||
     /\bwhat('?s| is) what\b/.test(normalized)
   ) {
@@ -80,4 +121,26 @@ export function maybeBuildDirectQuickReply(
   }
 
   return trySolveMath(lastContent);
+}
+
+export function maybeBuildDirectRescueReply(
+  messages: Pick<NewMessage, 'content'>[],
+): string | null {
+  const lastContent = messages.at(-1)?.content?.trim();
+  if (!lastContent) return null;
+
+  const normalized = normalizeText(lastContent);
+  const quickReply = maybeBuildDirectQuickReply(messages);
+  if (quickReply) return quickReply;
+
+  const shortTurn =
+    normalized.length <= 120 &&
+    countWords(normalized) <= 12 &&
+    !normalized.startsWith('/') &&
+    !normalized.includes('http://') &&
+    !normalized.includes('https://');
+
+  if (!shortTurn) return null;
+
+  return "I'm here. That one went sideways on my end. Ask it again in one short sentence and I'll keep it simple.";
 }

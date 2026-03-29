@@ -13,7 +13,7 @@ You can use Andrea for:
 - summaries and research
 - coding help and Cursor-linked job control
 - shopping research and approval-gated purchase requests
-- optional voice access through Alexa
+- optional admin-enabled extras when your operator has validated them
 
 ## 2) First 5 Minutes (Telegram)
 
@@ -27,7 +27,7 @@ Try:
 
 - `Add "renew passport" to my to-do list`
 - `Remind me tomorrow at 3pm to call Sam`
-- `Research the best calendar setup for Apple + Outlook households`
+- `Research the best standing desks for a small office`
 
 ## 3) Daily Commands You Actually Need
 
@@ -63,6 +63,10 @@ Voice:
 
 - `/alexa_status`
 
+Optional note:
+
+- Alexa, marketplace skills, and calendar-oriented skills are operator-enabled extras rather than the default demo path
+
 ## 4) Best Request Patterns
 
 Andrea performs best when your request includes outcome + timing + scope.
@@ -70,7 +74,7 @@ Andrea performs best when your request includes outcome + timing + scope.
 Examples:
 
 - `Summarize my pending tasks and suggest top 3 for today.`
-- `Remind me every weekday at 8:30am to review my calendar.`
+- `Remind me every weekday at 8:30am to review my priorities.`
 - `Find an ergonomic keyboard on Amazon and prepare an approval request.`
 - `Create a Cursor job to fix flaky auth tests and open a PR.`
 
@@ -97,6 +101,8 @@ Common voice requests:
 
 - `Ask Andrea assistant to remind me tomorrow at 8am to stretch.`
 - `Ask Andrea assistant to research standing desks for small apartments.`
+
+If Alexa is not already validated for the demo environment, treat it as optional and keep the live demo on Telegram.
 
 ## 7) Shopping Safety (Important)
 

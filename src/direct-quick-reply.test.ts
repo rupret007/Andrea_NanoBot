@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { maybeBuildDirectQuickReply } from './direct-quick-reply.js';
+import {
+  maybeBuildDirectQuickReply,
+  maybeBuildDirectRescueReply,
+} from './direct-quick-reply.js';
 
 describe('direct quick reply', () => {
   it('returns 42 for meaning-of-life asks', () => {
@@ -17,6 +20,31 @@ describe('direct quick reply', () => {
     ]);
 
     expect(reply).toContain('Andrea');
+  });
+
+  it('returns a greeting response', () => {
+    const reply = maybeBuildDirectQuickReply([{ content: 'hello there' }]);
+
+    expect(reply).toContain("I'm Andrea");
+  });
+
+  it('returns a presence response', () => {
+    const reply = maybeBuildDirectQuickReply([{ content: 'you there?' }]);
+
+    expect(reply).toContain("I'm here");
+  });
+
+  it('returns a brief capability response', () => {
+    const reply = maybeBuildDirectQuickReply([{ content: 'what can you do?' }]);
+
+    expect(reply).toContain("I'm Andrea");
+    expect(reply).toContain('tasks');
+  });
+
+  it('returns a light acknowledgment for funny remarks', () => {
+    const reply = maybeBuildDirectQuickReply([{ content: "ahh that's funny" }]);
+
+    expect(reply).toContain("I'll take that as a win");
   });
 
   it("returns a witty what's-what response", () => {
@@ -62,5 +90,25 @@ describe('direct quick reply', () => {
     ]);
 
     expect(reply).toContain('1 + 1 = 2');
+  });
+});
+
+describe('direct rescue reply', () => {
+  it('offers a calm fallback for short direct turns', () => {
+    const reply = maybeBuildDirectRescueReply([{ content: 'can you help?' }]);
+
+    expect(reply).toContain("I'm here");
+    expect(reply).toContain('one short sentence');
+  });
+
+  it('does not rescue long complex asks', () => {
+    const reply = maybeBuildDirectRescueReply([
+      {
+        content:
+          'Please compare three backup vendors, summarize tradeoffs, and draft a rollout plan for the team.',
+      },
+    ]);
+
+    expect(reply).toBeNull();
   });
 });

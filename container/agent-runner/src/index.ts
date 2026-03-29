@@ -648,10 +648,14 @@ async function runQuery(
           : [];
       const combinedErrorText =
         resultErrors.length > 0 ? resultErrors.join(' | ') : null;
+      const suppressUserVisibleErrorResult =
+        isErrorSubtype && requestPolicy.route === 'direct_assistant';
       const fallbackErrorText = isErrorSubtype
-        ? combinedErrorText ||
-          textResult ||
-          'I hit a temporary execution issue while processing that request. Please try again.'
+        ? suppressUserVisibleErrorResult
+          ? null
+          : combinedErrorText ||
+            textResult ||
+            'I hit a temporary execution issue while processing that request. Please try again.'
         : null;
       const debugErrorText = isErrorSubtype
         ? combinedErrorText ||

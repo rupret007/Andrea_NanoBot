@@ -90,8 +90,6 @@ describe('buildTelegramCommandsText', () => {
     expect(commands).toContain('/help');
     expect(commands).toContain('/commands');
     expect(commands).toContain('/features');
-    expect(commands).toContain('/cursor_remote');
-    expect(commands).toContain('/cursor_remote_end');
     expect(commands).toContain('/cursor_models [filter]');
     expect(commands).toContain('/cursor_create [options] <prompt>');
     expect(commands).toContain('/cursor_conversation <agent_id> [limit]');
@@ -107,17 +105,18 @@ describe('buildTelegramCommandsText', () => {
     expect(commands).toContain(
       '/purchase_approve <request_id> <approval_code>',
     );
+    expect(commands).not.toContain('/cursor_remote');
+    expect(commands).not.toContain('/cursor_remote_end');
   });
 });
 
 describe('buildTelegramFeaturesText', () => {
-  it('includes calendar integrations and secure isolation guidance', () => {
+  it('keeps the feature list focused on the stable demo surface', () => {
     const features = buildTelegramFeaturesText('Andrea');
 
-    expect(features).toContain('Apple Calendar');
-    expect(features).toContain('Outlook/M365');
     expect(features).toContain('Secure per-chat isolation');
     expect(features).toContain('Amazon shopping search');
-    expect(features).toContain('Alexa voice ingress');
+    expect(features).toContain('Optional admin-enabled integrations');
+    expect(features).not.toContain('Apple Calendar');
   });
 });

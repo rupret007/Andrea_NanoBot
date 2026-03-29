@@ -60,11 +60,6 @@ import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
 import { findChannel, formatMessages, formatOutbound } from './router.js';
 import {
-  restoreRemoteControl,
-  startRemoteControl,
-  stopRemoteControl,
-} from './remote-control.js';
-import {
   formatCursorGatewaySmokeTestMessage,
   formatCursorGatewayStatusMessage,
   getCursorGatewayStatus,
@@ -130,7 +125,10 @@ import {
   getUserFacingErrorDetail,
 } from './user-facing-error.js';
 import { resolveEffectiveIdleTimeout } from './runtime-timeout.js';
-import { maybeBuildDirectQuickReply } from './direct-quick-reply.js';
+import {
+  maybeBuildDirectQuickReply,
+  maybeBuildDirectRescueReply,
+} from './direct-quick-reply.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -615,6 +613,18 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       return true;
     }
 
+    if (requestPolicy.route === 'direct_assistant') {
+      const rescueReply = maybeBuildDirectRescueReply(missedMessages);
+      if (rescueReply) {
+        await channel.sendMessage(chatJid, rescueReply);
+        logger.warn(
+          { group: group.name },
+          'Recovered direct assistant error with local rescue reply',
+        );
+        return true;
+      }
+    }
+
     // Roll back cursor so retries can re-process these messages
     lastAgentTimestamp[chatJid] = previousCursor;
     saveState();
@@ -894,7 +904,6 @@ async function main(): Promise<void> {
     ensureOneCLIAgent(jid, group);
   }
 
-  restoreRemoteControl();
   let alexaRuntime: AlexaRuntime | null = null;
 
   // Graceful shutdown handlers
@@ -995,46 +1004,21 @@ async function main(): Promise<void> {
   const CURSOR_ARTIFACT_LINK_USAGE =
     'Usage: /cursor_artifact_link <agent_id> <absolute_path>';
 
-  // Handle remote-control (and cursor-remote alias) commands
   async function handleRemoteControl(
     action: 'start' | 'stop',
     chatJid: string,
     msg: NewMessage,
   ): Promise<void> {
-    const group = registeredGroups[chatJid];
-    if (!group?.isMain) {
-      logger.warn(
-        { chatJid, sender: msg.sender },
-        'Remote control rejected: not main group',
-      );
-      return;
-    }
-
     const channel = findChannel(channels, chatJid);
     if (!channel) return;
-
-    if (action === 'start') {
-      const result = await startRemoteControl(
-        msg.sender,
-        chatJid,
-        process.cwd(),
-      );
-      if (result.ok) {
-        await channel.sendMessage(chatJid, result.url);
-      } else {
-        await channel.sendMessage(
-          chatJid,
-          `Remote Control failed: ${result.error}`,
-        );
-      }
-    } else {
-      const result = stopRemoteControl();
-      if (result.ok) {
-        await channel.sendMessage(chatJid, 'Remote Control session ended.');
-      } else {
-        await channel.sendMessage(chatJid, result.error);
-      }
-    }
+    logger.info(
+      { action, chatJid, sender: msg.sender },
+      'Remote control command blocked in demo mode',
+    );
+    await channel.sendMessage(
+      chatJid,
+      'This experimental remote-control bridge is disabled in the demo runtime.',
+    );
   }
 
   async function handleCursorStatus(chatJid: string): Promise<void> {

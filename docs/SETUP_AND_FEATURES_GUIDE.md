@@ -19,8 +19,10 @@ For the in-chat user journey and command reference, also see:
   - global cache
   - explicit per-chat enable/disable
 - Anthropic-compatible model routing with OpenAI-key-backed gateway support.
-- Alexa custom-skill voice ingress with signed-request verification.
 - Amazon Business product search and approval-gated purchasing.
+
+For demo use, keep the default public surface smaller than the full operator feature set.
+The safest baseline is Telegram + direct assistance + Cursor status/job controls + Amazon status/search/approval flow.
 
 ## 1) Quick Start (Recommended Path)
 
@@ -211,6 +213,7 @@ Full details:
 ### Option D: Alexa Voice
 
 Andrea can expose a custom Alexa skill endpoint so you can talk to the same assistant out loud.
+Treat this as an optional operator-enabled extra, not part of the default demo path, unless it has been validated end to end in the current environment.
 
 Minimum:
 
@@ -316,8 +319,6 @@ Typical commands:
 - `/cursor_conversation <agent_id> [limit]` (show recent Cursor job conversation)
 - `/cursor_artifacts <agent_id>` (list tracked Cursor job artifacts)
 - `/cursor_artifact_link <agent_id> <absolute_path>` (generate a temporary artifact download link)
-- `/cursor_remote` (start remote control bridge; main chat only)
-- `/cursor_remote_end` (end remote control bridge)
 
 ## 8) OpenClaw Marketplace Behavior And Security
 

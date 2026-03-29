@@ -30,7 +30,7 @@ Recommended flow:
 5. Send a plain-language request such as:
    - `Add "renew passport" to my to-do list`
    - `Remind me tomorrow at 3pm to call Sam`
-   - `Research the best Apple Calendar and Outlook sync options for families`
+   - `Research the best standing desks for small apartments`
 
 If the bot is already configured, `/registermain` confirms whether this DM is already the main chat.
 
@@ -46,7 +46,7 @@ Examples:
 
 - `@Andrea remind the team every Monday at 9am to post weekly updates`
 - `@Andrea summarize the last week of discussion and turn it into action items`
-- `@Andrea search for a community skill that helps with GitHub Actions debugging`
+- `@Andrea research the best ergonomic keyboards under $150`
 
 ## 4) Command Reference
 
@@ -60,7 +60,7 @@ Core chat commands:
 - `/chatid` - show current Telegram chat ID and type
 - `/registermain` - register this DM as the main control chat
 
-Cursor and remote-control commands:
+Cursor commands:
 
 - `/cursor_status` - show whether the Cursor/9router path is configured correctly
 - `/cursor_models [filter]` - list available Cursor Cloud models (optionally filtered)
@@ -74,8 +74,6 @@ Cursor and remote-control commands:
 - `/cursor_conversation <agent_id> [limit]` - fetch recent Cursor conversation messages
 - `/cursor_artifacts <agent_id>` - list tracked artifacts for a Cursor job
 - `/cursor_artifact_link <agent_id> <absolute_path>` - generate a temporary download link for one tracked Cursor artifact
-- `/cursor_remote` - start the remote control bridge from the main control chat
-- `/cursor_remote_end` - end the remote control bridge
 
 Voice and Alexa commands:
 
@@ -99,18 +97,9 @@ Typical jobs:
 - to-do lists and reminders
 - recurring scheduled tasks
 - research and summaries
-- voice access through Alexa while keeping Andrea as the same assistant
 - Amazon shopping with explicit approval before any order submission
 - coding help and repo work
-- community skill discovery and enablement per chat
-
-Calendar support today:
-
-- first-party core calendar connectors are not built into the base runtime yet
-- calendar support is available through approved marketplace/community skills
-- current skill ecosystem includes Apple Calendar, Google Calendar, Outlook/Microsoft 365, and CalDAV-oriented options
-
-That means calendar features are possible now, but they are still skill-driven rather than a single built-in core subsystem.
+- optional admin-enabled extras only after they are validated in that environment
 
 ## 6) Good Prompting Patterns
 
@@ -118,9 +107,8 @@ Requests work best when they are specific about outcome, timing, and scope.
 
 Good examples:
 
-- `@Andrea remind me every weekday at 8:30am to review my calendar`
-- `@Andrea research the best Outlook and Apple Calendar sync tools and give me a short comparison`
-- `@Andrea enable a vetted calendar skill for this chat if one supports Apple Calendar`
+- `@Andrea remind me every weekday at 8:30am to review my priorities`
+- `@Andrea research the best Outlook alternatives for a small team and give me a short comparison`
 - `@Andrea summarize my tasks for today and suggest the top three priorities`
 - `@Andrea find a standing desk on Amazon and prepare an approval request for the best one`
 
@@ -150,8 +138,8 @@ If people are confused in the channel, start here:
 
 Runtime behavior note:
 
-- for direct conversational asks, Andrea now auto-retries one transient execution failure before surfacing an error message
-- per-group `agent-runner-src` caches now auto-sync source hotfixes during container startup (without clobbering intentional cache edits after sync metadata is established)
+- for direct conversational asks, Andrea now prefers a fast local reply path for simple questions before escalating to heavier runtime work
+- experimental surfaces should stay out of the demo until they have been validated in that exact environment
 
 For operator-side troubleshooting, also see:
 

@@ -85,7 +85,7 @@ export function buildTelegramWelcomeText(
     '*Quick Start*',
     `- \`${mentionExample} add "renew passport" to my to-do list\``,
     `- \`${mentionExample} remind me tomorrow at 3pm to call Sam\``,
-    `- \`${mentionExample} research the best family calendar apps and summarize them\``,
+    `- \`${mentionExample} research the best standing desks and summarize them\``,
   ].join('\n');
 }
 
@@ -111,15 +111,13 @@ export function buildTelegramCommandsText(): string {
     '- `/cursor_conversation <agent_id> [limit]` - fetch recent conversation messages from a Cursor job',
     '- `/cursor_artifacts <agent_id>` - list tracked artifacts for a Cursor job',
     '- `/cursor_artifact_link <agent_id> <absolute_path>` - generate a temporary download link for one tracked Cursor artifact',
-    '- `/alexa_status` - show Alexa voice ingress readiness and security mode',
+    '- `/alexa_status` - show Alexa voice ingress status if it is enabled',
     '- `/amazon_status` - show Amazon shopping readiness and safety mode',
     '- `/amazon_search <keywords>` - search Amazon Business products',
     '- `/purchase_request <asin> <offer_id> [quantity]` - prepare an approval-gated purchase request',
     '- `/purchase_requests` - list tracked purchase requests for this chat',
     '- `/purchase_approve <request_id> <approval_code>` - approve one prepared purchase request',
     '- `/purchase_cancel <request_id>` - cancel a pending purchase request',
-    '- `/cursor_remote` - start remote control bridge (main chat only)',
-    '- `/cursor_remote_end` - end remote control bridge',
   ].join('\n');
 }
 
@@ -131,23 +129,21 @@ export function buildTelegramFeaturesText(
     '',
     '- To-do lists, reminders, and recurring tasks',
     '- Research and summaries',
-    '- Alexa voice ingress so you can talk to Andrea out loud',
     '- Project and coding help',
     '- Amazon shopping search with explicit approval before any order submission',
-    '- Enable/disable vetted community skills per chat',
-    '- Calendar integrations through approved skills, including Apple Calendar, Google Calendar, Outlook/M365, and CalDAV options',
+    '- Optional admin-enabled integrations like Alexa status checks and approved per-chat skills',
     "- Secure per-chat isolation so one chat does not automatically get another chat's skills or files",
   ].join('\n');
 }
 
 function buildTelegramDescriptionText(assistantName = ASSISTANT_NAME): string {
-  return `${assistantName} helps with tasks, reminders, research, coding, Alexa voice access, Amazon shopping approvals, and approved per-chat skills. In DM, use /registermain to set up your main control chat.`;
+  return `${assistantName} helps with tasks, reminders, research, coding, and guarded shopping approvals. In DM, use /registermain to set up your main control chat.`;
 }
 
 function buildTelegramShortDescriptionText(
   assistantName = ASSISTANT_NAME,
 ): string {
-  return `${assistantName}: tasks, reminders, research, Alexa voice, coding, shopping approvals, and chat-specific skills.`;
+  return `${assistantName}: tasks, reminders, research, coding, and guarded shopping approvals.`;
 }
 
 async function sendTelegramMessage(
