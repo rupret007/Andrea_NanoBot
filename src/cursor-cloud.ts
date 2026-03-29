@@ -7,16 +7,22 @@ const CURSOR_ENV_KEYS = [
   'CURSOR_API_KEY',
   'CURSOR_WEBHOOK_SECRET',
   'CURSOR_API_TIMEOUT_MS',
+  'CURSOR_API_MAX_RETRIES',
+  'CURSOR_API_RETRY_BASE_MS',
 ] as const;
 
 const DEFAULT_CURSOR_API_BASE_URL = 'https://api.cursor.com';
 const DEFAULT_CURSOR_API_TIMEOUT_MS = 20_000;
+const DEFAULT_CURSOR_API_MAX_RETRIES = 2;
+const DEFAULT_CURSOR_API_RETRY_BASE_MS = 800;
 
 export interface CursorCloudConfig {
   baseUrl: string;
   apiKey: string;
   webhookSecret: string | null;
   timeoutMs: number;
+  maxRetries: number;
+  retryBaseMs: number;
 }
 
 export interface CursorCloudStatus {
@@ -25,6 +31,8 @@ export interface CursorCloudStatus {
   hasApiKey: boolean;
   hasWebhookSecret: boolean;
   timeoutMs: number;
+  maxRetries: number;
+  retryBaseMs: number;
 }
 
 export interface CursorCloudStatusOptions {
@@ -167,6 +175,22 @@ function normalizeTimeoutMs(raw: string | undefined): number {
   return parsed;
 }
 
+function normalizeMaxRetries(raw: string | undefined): number {
+  const parsed = Number.parseInt(raw || '', 10);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return DEFAULT_CURSOR_API_MAX_RETRIES;
+  }
+  return Math.min(5, Math.floor(parsed));
+}
+
+function normalizeRetryBaseMs(raw: string | undefined): number {
+  const parsed = Number.parseInt(raw || '', 10);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return DEFAULT_CURSOR_API_RETRY_BASE_MS;
+  }
+  return Math.min(60_000, Math.floor(parsed));
+}
+
 function resolveCursorEnv(
   options: CursorCloudStatusOptions = {},
 ): Record<string, string | undefined> {
@@ -182,6 +206,10 @@ function resolveCursorEnv(
       env.CURSOR_WEBHOOK_SECRET || envFileValues.CURSOR_WEBHOOK_SECRET,
     CURSOR_API_TIMEOUT_MS:
       env.CURSOR_API_TIMEOUT_MS || envFileValues.CURSOR_API_TIMEOUT_MS,
+    CURSOR_API_MAX_RETRIES:
+      env.CURSOR_API_MAX_RETRIES || envFileValues.CURSOR_API_MAX_RETRIES,
+    CURSOR_API_RETRY_BASE_MS:
+      env.CURSOR_API_RETRY_BASE_MS || envFileValues.CURSOR_API_RETRY_BASE_MS,
   };
 }
 
@@ -193,6 +221,8 @@ export function getCursorCloudStatus(
   const apiKey = resolved.CURSOR_API_KEY?.trim() || '';
   const webhookSecret = resolved.CURSOR_WEBHOOK_SECRET?.trim() || '';
   const timeoutMs = normalizeTimeoutMs(resolved.CURSOR_API_TIMEOUT_MS);
+  const maxRetries = normalizeMaxRetries(resolved.CURSOR_API_MAX_RETRIES);
+  const retryBaseMs = normalizeRetryBaseMs(resolved.CURSOR_API_RETRY_BASE_MS);
 
   return {
     enabled: apiKey.length > 0,
@@ -200,6 +230,8 @@ export function getCursorCloudStatus(
     hasApiKey: apiKey.length > 0,
     hasWebhookSecret: webhookSecret.length > 0,
     timeoutMs,
+    maxRetries,
+    retryBaseMs,
   };
 }
 
@@ -215,6 +247,8 @@ export function resolveCursorCloudConfig(
     apiKey,
     webhookSecret: resolved.CURSOR_WEBHOOK_SECRET?.trim() || null,
     timeoutMs: normalizeTimeoutMs(resolved.CURSOR_API_TIMEOUT_MS),
+    maxRetries: normalizeMaxRetries(resolved.CURSOR_API_MAX_RETRIES),
+    retryBaseMs: normalizeRetryBaseMs(resolved.CURSOR_API_RETRY_BASE_MS),
   };
 }
 
@@ -228,6 +262,8 @@ export function formatCursorCloudStatusMessage(
     `- API key configured: ${status.hasApiKey ? 'yes' : 'no'}`,
     `- Webhook secret configured: ${status.hasWebhookSecret ? 'yes' : 'no'}`,
     `- Request timeout: ${status.timeoutMs}ms`,
+    `- API retries: ${status.maxRetries}`,
+    `- Retry base delay: ${status.retryBaseMs}ms`,
   ];
 
   if (!status.hasApiKey) {
@@ -271,6 +307,66 @@ function buildUrl(
     }
   }
   return url.toString();
+}
+
+function sleep(ms: number): Promise<void> {
+  if (ms <= 0) return Promise.resolve();
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function parseRetryAfterMs(retryAfterHeader: string | null): number | null {
+  if (!retryAfterHeader) return null;
+  const raw = retryAfterHeader.trim();
+  if (!raw) return null;
+
+  const asSeconds = Number.parseFloat(raw);
+  if (Number.isFinite(asSeconds) && asSeconds >= 0) {
+    return Math.round(asSeconds * 1000);
+  }
+
+  const retryAt = Date.parse(raw);
+  if (!Number.isFinite(retryAt)) return null;
+  const deltaMs = retryAt - Date.now();
+  if (deltaMs <= 0) return 0;
+  return deltaMs;
+}
+
+function isRetryableStatus(status: number): boolean {
+  return (
+    status === 408 ||
+    status === 429 ||
+    status === 500 ||
+    status === 502 ||
+    status === 503 ||
+    status === 504
+  );
+}
+
+function isRetryableFetchError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const message = err.message.toLowerCase();
+  return (
+    err.name === 'AbortError' ||
+    message.includes('timed out') ||
+    message.includes('timeout') ||
+    message.includes('network') ||
+    message.includes('econnreset') ||
+    message.includes('econnrefused') ||
+    message.includes('enotfound')
+  );
+}
+
+function computeBackoffDelayMs(
+  retryAfterHeader: string | null,
+  attempt: number,
+  baseDelayMs: number,
+): number {
+  const retryAfterMs = parseRetryAfterMs(retryAfterHeader);
+  if (retryAfterMs !== null) return Math.max(0, retryAfterMs);
+
+  if (baseDelayMs <= 0) return 0;
+  const exponential = baseDelayMs * Math.pow(2, Math.max(0, attempt));
+  return Math.min(30_000, Math.floor(exponential));
 }
 
 export interface CursorCloudClientOptions {
@@ -460,50 +556,104 @@ export class CursorCloudClient {
     body?: unknown,
     query?: Record<string, string>,
   ): Promise<T> {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.config.timeoutMs);
-
     const url = buildUrl(this.config.baseUrl, path, query);
-    try {
-      const response = await this.fetchImpl(url, {
-        method,
-        headers: {
-          Authorization: buildBasicAuthHeader(this.config.apiKey),
-          'Content-Type': 'application/json',
-        },
-        body: body === undefined ? undefined : JSON.stringify(body),
-        signal: controller.signal,
-      });
+    let attempt = 0;
+    const maxAttempts = Math.max(1, this.config.maxRetries + 1);
+    let lastError: unknown;
 
-      const rawText = await response.text();
-      const parsed = rawText ? parseJsonSafely(rawText) : null;
+    while (attempt < maxAttempts) {
+      const controller = new AbortController();
+      const timeout = setTimeout(
+        () => controller.abort(),
+        this.config.timeoutMs,
+      );
+      try {
+        const response = await this.fetchImpl(url, {
+          method,
+          headers: {
+            Authorization: buildBasicAuthHeader(this.config.apiKey),
+            'Content-Type': 'application/json',
+          },
+          body: body === undefined ? undefined : JSON.stringify(body),
+          signal: controller.signal,
+        });
 
-      if (!response.ok) {
-        const record = asRecord(parsed);
-        const detail =
-          (record?.error as string | undefined) ||
-          (record?.message as string | undefined) ||
-          (typeof parsed === 'string' ? parsed : null);
-        throw new CursorCloudApiError(
-          `Cursor API ${method} ${path} failed with HTTP ${response.status}${detail ? `: ${detail}` : ''}`,
-          response.status,
-          parsed,
-        );
+        const rawText = await response.text();
+        const parsed = rawText ? parseJsonSafely(rawText) : null;
+
+        if (!response.ok) {
+          const record = asRecord(parsed);
+          const detail =
+            (record?.error as string | undefined) ||
+            (record?.message as string | undefined) ||
+            (typeof parsed === 'string' ? parsed : null);
+          const apiError = new CursorCloudApiError(
+            `Cursor API ${method} ${path} failed with HTTP ${response.status}${detail ? `: ${detail}` : ''}`,
+            response.status,
+            parsed,
+          );
+          lastError = apiError;
+
+          if (isRetryableStatus(response.status) && attempt < maxAttempts - 1) {
+            const delayMs = computeBackoffDelayMs(
+              response.headers.get('retry-after'),
+              attempt,
+              this.config.retryBaseMs,
+            );
+            await sleep(delayMs);
+            attempt += 1;
+            continue;
+          }
+
+          throw apiError;
+        }
+
+        return parsed as T;
+      } catch (err) {
+        if (err instanceof CursorCloudApiError) throw err;
+
+        if (err instanceof Error && err.name === 'AbortError') {
+          const timeoutError = new Error(
+            `Cursor API ${method} ${path} timed out after ${this.config.timeoutMs}ms`,
+            { cause: err },
+          );
+          lastError = timeoutError;
+          if (attempt < maxAttempts - 1) {
+            const delayMs = computeBackoffDelayMs(
+              null,
+              attempt,
+              this.config.retryBaseMs,
+            );
+            await sleep(delayMs);
+            attempt += 1;
+            continue;
+          }
+          throw timeoutError;
+        }
+
+        lastError = err;
+        if (isRetryableFetchError(err) && attempt < maxAttempts - 1) {
+          const delayMs = computeBackoffDelayMs(
+            null,
+            attempt,
+            this.config.retryBaseMs,
+          );
+          await sleep(delayMs);
+          attempt += 1;
+          continue;
+        }
+
+        throw err;
+      } finally {
+        clearTimeout(timeout);
       }
-
-      return parsed as T;
-    } catch (err) {
-      if (err instanceof CursorCloudApiError) throw err;
-      if (err instanceof Error && err.name === 'AbortError') {
-        throw new Error(
-          `Cursor API ${method} ${path} timed out after ${this.config.timeoutMs}ms`,
-          { cause: err },
-        );
-      }
-      throw err;
-    } finally {
-      clearTimeout(timeout);
     }
+
+    throw lastError instanceof Error
+      ? lastError
+      : new Error(
+          `Cursor API ${method} ${path} failed after ${maxAttempts} attempts`,
+        );
   }
 }
 

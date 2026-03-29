@@ -1,10 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { _initTestDatabase, upsertCursorAgent } from './db.js';
+import {
+  _initTestDatabase,
+  replaceCursorAgentArtifacts,
+  upsertCursorAgent,
+} from './db.js';
 import {
   createCursorAgent,
   followupCursorAgent,
+  getCursorArtifactDownloadLink,
   getCursorAgentConversation,
+  listCursorModels,
+  listStoredCursorArtifacts,
   listStoredCursorAgentsForGroup,
   stopCursorAgent,
   syncCursorAgent,
@@ -301,5 +308,182 @@ describe('cursor-jobs', () => {
     expect(messages).toHaveLength(2);
     expect(messages[0].content).toBe('Second');
     expect(messages[1].content).toBe('Third');
+  });
+
+  it('accepts cursor URL input when syncing tracked agents', async () => {
+    upsertCursorAgent({
+      id: 'bc_url',
+      group_folder: 'whatsapp_main',
+      chat_jid: 'tg:42',
+      status: 'RUNNING',
+      model: 'default',
+      prompt_text: 'Do work',
+      source_repository: null,
+      source_ref: null,
+      source_pr_url: null,
+      target_url: 'https://cursor.com/agents?id=bc_url',
+      target_pr_url: null,
+      target_branch_name: null,
+      auto_create_pr: 0,
+      open_as_cursor_github_app: 0,
+      skip_reviewer_request: 0,
+      summary: null,
+      raw_json: null,
+      created_by: 'tg:user',
+      created_at: '2026-03-28T18:00:00.000Z',
+      updated_at: '2026-03-28T18:00:00.000Z',
+      last_synced_at: null,
+    });
+
+    let callIndex = 0;
+    globalThis.fetch = (async () => {
+      callIndex += 1;
+      if (callIndex === 1) {
+        return new Response(
+          JSON.stringify({
+            id: 'bc_url',
+            status: 'FINISHED',
+            target: { url: 'https://cursor.com/agents?id=bc_url' },
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response(JSON.stringify({ artifacts: [] }), { status: 200 });
+    }) as typeof fetch;
+
+    const synced = await syncCursorAgent({
+      groupFolder: 'whatsapp_main',
+      chatJid: 'tg:42',
+      agentId: 'https://cursor.com/agents?id=bc_url',
+    });
+    expect(synced.agent.id).toBe('bc_url');
+  });
+
+  it('lists Cursor models through the cloud client and dedupes ids', async () => {
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          models: [
+            { id: 'cu/default', name: 'Cursor Default' },
+            { id: 'cu/default', name: 'Duplicate' },
+            { id: 'cu/fast' },
+          ],
+        }),
+        { status: 200 },
+      )) as typeof fetch;
+
+    const models = await listCursorModels(10);
+    expect(models).toHaveLength(2);
+    expect(models[0].id).toBe('cu/default');
+    expect(models[1].id).toBe('cu/fast');
+  });
+
+  it('normalizes stored artifact lookups from cursor URLs', () => {
+    expect(() =>
+      listStoredCursorArtifacts('https://cursor.com/agents?id=bad id'),
+    ).toThrow('Invalid Cursor agent id');
+  });
+
+  it('gets a cursor artifact download link for a tracked artifact', async () => {
+    upsertCursorAgent({
+      id: 'bc_artifact',
+      group_folder: 'whatsapp_main',
+      chat_jid: 'tg:42',
+      status: 'FINISHED',
+      model: 'default',
+      prompt_text: 'Create release notes',
+      source_repository: null,
+      source_ref: null,
+      source_pr_url: null,
+      target_url: 'https://cursor.com/agents?id=bc_artifact',
+      target_pr_url: null,
+      target_branch_name: null,
+      auto_create_pr: 0,
+      open_as_cursor_github_app: 0,
+      skip_reviewer_request: 0,
+      summary: null,
+      raw_json: null,
+      created_by: 'tg:user',
+      created_at: '2026-03-28T18:00:00.000Z',
+      updated_at: '2026-03-28T18:00:00.000Z',
+      last_synced_at: '2026-03-28T18:00:00.000Z',
+    });
+    replaceCursorAgentArtifacts('bc_artifact', [
+      {
+        agent_id: 'bc_artifact',
+        absolute_path: '/opt/cursor/out/release-notes.md',
+        size_bytes: 200,
+        updated_at: '2026-03-28T18:20:00.000Z',
+        download_url: null,
+        download_url_expires_at: null,
+        synced_at: '2026-03-28T18:20:00.000Z',
+      },
+    ]);
+
+    let requestUrl = '';
+    globalThis.fetch = (async (input) => {
+      requestUrl = String(input);
+      return new Response(
+        JSON.stringify({
+          url: 'https://download.cursor.com/file?id=abc',
+          expiresAt: '2026-03-28T19:20:00.000Z',
+        }),
+        { status: 200 },
+      );
+    }) as typeof fetch;
+
+    const link = await getCursorArtifactDownloadLink({
+      groupFolder: 'whatsapp_main',
+      chatJid: 'tg:42',
+      agentId: 'https://cursor.com/agents?id=bc_artifact',
+      absolutePath: '/opt/cursor/out/release-notes.md',
+    });
+
+    expect(link.agentId).toBe('bc_artifact');
+    expect(link.url).toBe('https://download.cursor.com/file?id=abc');
+    expect(link.expiresAt).toBe('2026-03-28T19:20:00.000Z');
+    expect(requestUrl).toContain('/v0/agents/bc_artifact/artifacts/download');
+    expect(requestUrl).toContain(
+      'path=%2Fopt%2Fcursor%2Fout%2Frelease-notes.md',
+    );
+  });
+
+  it('rejects artifact download links for untracked artifact paths', async () => {
+    upsertCursorAgent({
+      id: 'bc_missing_artifact',
+      group_folder: 'whatsapp_main',
+      chat_jid: 'tg:42',
+      status: 'FINISHED',
+      model: 'default',
+      prompt_text: 'Build summary',
+      source_repository: null,
+      source_ref: null,
+      source_pr_url: null,
+      target_url: null,
+      target_pr_url: null,
+      target_branch_name: null,
+      auto_create_pr: 0,
+      open_as_cursor_github_app: 0,
+      skip_reviewer_request: 0,
+      summary: null,
+      raw_json: null,
+      created_by: 'tg:user',
+      created_at: '2026-03-28T18:00:00.000Z',
+      updated_at: '2026-03-28T18:00:00.000Z',
+      last_synced_at: null,
+    });
+
+    globalThis.fetch = (async () => {
+      throw new Error('fetch should not be called for untracked artifact');
+    }) as typeof fetch;
+
+    await expect(
+      getCursorArtifactDownloadLink({
+        groupFolder: 'whatsapp_main',
+        chatJid: 'tg:42',
+        agentId: 'bc_missing_artifact',
+        absolutePath: '/opt/cursor/out/not-present.md',
+      }),
+    ).rejects.toThrow('is not tracked for Cursor agent');
   });
 });

@@ -61,14 +61,17 @@ Core chat commands:
 Cursor and remote-control commands:
 
 - `/cursor_status` - show whether the Cursor/9router path is configured correctly
+- `/cursor_models [filter]` - list available Cursor Cloud models (optionally filtered)
 - `/cursor_test` - run a live end-to-end smoke test against the configured Cursor/9router gateway
 - `/cursor_jobs` - list tracked Cursor cloud jobs for this chat
-- `/cursor_create <prompt>` - create a new Cursor cloud coding job
+- `/cursor_create [options] <prompt>` - create a new Cursor cloud coding job
+- `/cursor_create --repo <url> --ref <branch> --model <id> <prompt>` - create a job with explicit repo/model targeting
 - `/cursor_sync <agent_id>` - refresh one Cursor job status and artifact list
 - `/cursor_stop <agent_id>` - request stop for a Cursor job
 - `/cursor_followup <agent_id> <text>` - send follow-up instructions to a Cursor job
 - `/cursor_conversation <agent_id> [limit]` - fetch recent Cursor conversation messages
 - `/cursor_artifacts <agent_id>` - list tracked artifacts for a Cursor job
+- `/cursor_artifact_link <agent_id> <absolute_path>` - generate a temporary download link for one tracked Cursor artifact
 - `/cursor_remote` - start the remote control bridge from the main control chat
 - `/cursor_remote_end` - end the remote control bridge
 

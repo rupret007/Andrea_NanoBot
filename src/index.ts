@@ -113,10 +113,17 @@ import { analyzeAgentError } from './agent-error.js';
 import {
   createCursorAgent,
   followupCursorAgent,
+  getCursorArtifactDownloadLink,
   getCursorAgentConversation,
+  listCursorModels,
   stopCursorAgent,
   syncCursorAgent,
 } from './cursor-jobs.js';
+import {
+  parseCursorCreateCommand,
+  tokenizeCommandArguments,
+} from './cursor-command-parser.js';
+import { normalizeCursorAgentId } from './cursor-agent-id.js';
 import {
   formatUserFacingOperationFailure,
   getUserFacingErrorDetail,
@@ -879,6 +886,12 @@ async function main(): Promise<void> {
     '/cursor-status',
     '/cursor_status',
   ]);
+  const CURSOR_MODELS_COMMANDS = new Set([
+    '/cursor-models',
+    '/cursor_models',
+    '/cursor-model',
+    '/cursor_model',
+  ]);
   const CURSOR_TEST_COMMANDS = new Set([
     '/cursor-test',
     '/cursor_test',
@@ -903,6 +916,12 @@ async function main(): Promise<void> {
     '/cursor-artifacts',
     '/cursor_artifacts',
   ]);
+  const CURSOR_ARTIFACT_LINK_COMMANDS = new Set([
+    '/cursor-artifact-link',
+    '/cursor_artifact_link',
+    '/cursor-download',
+    '/cursor_download',
+  ]);
   const ALEXA_STATUS_COMMANDS = new Set([
     '/alexa',
     '/alexa-status',
@@ -926,6 +945,10 @@ async function main(): Promise<void> {
     '/purchase-cancel',
     '/purchase_cancel',
   ]);
+  const CURSOR_CREATE_USAGE =
+    'Usage: /cursor_create [--model <id>] [--repo <url>] [--ref <git_ref>] [--pr <pr_url>] [--branch <name>] [--auto-pr] [--cursor-github-app] [--skip-reviewer] <prompt>';
+  const CURSOR_ARTIFACT_LINK_USAGE =
+    'Usage: /cursor_artifact_link <agent_id> <absolute_path>';
 
   // Handle remote-control (and cursor-remote alias) commands
   async function handleRemoteControl(
@@ -1267,10 +1290,69 @@ async function main(): Promise<void> {
     await channel.sendMessage(chatJid, `Cursor jobs:\n\n${lines.join('\n\n')}`);
   }
 
+  async function handleCursorModels(
+    chatJid: string,
+    filterText: string,
+  ): Promise<void> {
+    const channel = findChannel(channels, chatJid);
+    if (!channel) return;
+
+    try {
+      const models = await listCursorModels(200);
+      const normalizedFilter = filterText.trim().toLowerCase();
+      const matches = normalizedFilter
+        ? models.filter((model) => {
+            const haystack = `${model.id} ${model.name || ''}`.toLowerCase();
+            return haystack.includes(normalizedFilter);
+          })
+        : models;
+
+      if (matches.length === 0) {
+        await channel.sendMessage(
+          chatJid,
+          normalizedFilter
+            ? `No Cursor models matched "${filterText.trim()}".`
+            : 'No Cursor models were returned by the Cursor Cloud API.',
+        );
+        return;
+      }
+
+      const capped = matches.slice(0, 30);
+      const lines = capped.map((model, index) => {
+        const label = model.name && model.name !== model.id ? model.name : null;
+        return `${index + 1}. ${model.id}${label ? ` (${label})` : ''}`;
+      });
+      const truncated =
+        matches.length > capped.length
+          ? `\n\nShowing ${capped.length} of ${matches.length} models. Narrow with /cursor_models <filter>.`
+          : '';
+
+      await channel.sendMessage(
+        chatJid,
+        `Cursor models:\n\n${lines.join('\n')}${truncated}`,
+      );
+    } catch (err) {
+      await channel.sendMessage(
+        chatJid,
+        formatUserFacingOperationFailure('Cursor model list failed', err),
+      );
+    }
+  }
+
   async function handleCursorCreate(
     chatJid: string,
     promptText: string,
     requestedBy?: string,
+    options: {
+      model?: string;
+      sourceRepository?: string;
+      sourceRef?: string;
+      sourcePrUrl?: string;
+      branchName?: string;
+      autoCreatePr?: boolean;
+      openAsCursorGithubApp?: boolean;
+      skipReviewerRequest?: boolean;
+    } = {},
   ): Promise<void> {
     const channel = findChannel(channels, chatJid);
     if (!channel) return;
@@ -1290,6 +1372,14 @@ async function main(): Promise<void> {
         chatJid,
         promptText,
         requestedBy,
+        model: options.model,
+        sourceRepository: options.sourceRepository,
+        sourceRef: options.sourceRef,
+        sourcePrUrl: options.sourcePrUrl,
+        branchName: options.branchName,
+        autoCreatePr: options.autoCreatePr,
+        openAsCursorGithubApp: options.openAsCursorGithubApp,
+        skipReviewerRequest: options.skipReviewerRequest,
       });
       refreshCursorSnapshotsForAllGroups();
       const targetBits = [
@@ -1332,17 +1422,31 @@ async function main(): Promise<void> {
       return;
     }
 
+    let normalizedAgentId: string;
+    try {
+      normalizedAgentId = normalizeCursorAgentId(agentId);
+    } catch (err) {
+      await channel.sendMessage(
+        chatJid,
+        formatUserFacingOperationFailure(
+          'Cursor conversation fetch failed',
+          err,
+        ),
+      );
+      return;
+    }
+
     try {
       const messages = await getCursorAgentConversation({
         groupFolder: group.folder,
         chatJid,
-        agentId,
+        agentId: normalizedAgentId,
         limit,
       });
       if (messages.length === 0) {
         await channel.sendMessage(
           chatJid,
-          `No conversation messages are available yet for ${agentId}.`,
+          `No conversation messages are available yet for ${normalizedAgentId}.`,
         );
         return;
       }
@@ -1358,13 +1462,13 @@ async function main(): Promise<void> {
         .join('\n\n');
       await channel.sendMessage(
         chatJid,
-        `Cursor conversation for ${agentId} (latest ${messages.length}):\n\n${formatted}`,
+        `Cursor conversation for ${normalizedAgentId} (latest ${messages.length}):\n\n${formatted}`,
       );
     } catch (err) {
       await channel.sendMessage(
         chatJid,
         formatUserFacingOperationFailure(
-          `Cursor conversation fetch failed for ${agentId}`,
+          `Cursor conversation fetch failed for ${normalizedAgentId}`,
           err,
         ),
       );
@@ -1387,7 +1491,18 @@ async function main(): Promise<void> {
       return;
     }
 
-    const stored = getCursorAgentById(agentId);
+    let normalizedAgentId: string;
+    try {
+      normalizedAgentId = normalizeCursorAgentId(agentId);
+    } catch (err) {
+      await channel.sendMessage(
+        chatJid,
+        formatUserFacingOperationFailure('Cursor artifacts lookup failed', err),
+      );
+      return;
+    }
+
+    const stored = getCursorAgentById(normalizedAgentId);
     if (
       !stored ||
       stored.group_folder !== group.folder ||
@@ -1395,16 +1510,16 @@ async function main(): Promise<void> {
     ) {
       await channel.sendMessage(
         chatJid,
-        `No tracked Cursor agent with id "${agentId}" exists for this chat.`,
+        `No tracked Cursor agent with id "${normalizedAgentId}" exists for this chat.`,
       );
       return;
     }
 
-    const artifacts = listCursorAgentArtifacts(agentId);
+    const artifacts = listCursorAgentArtifacts(normalizedAgentId);
     if (artifacts.length === 0) {
       await channel.sendMessage(
         chatJid,
-        `Cursor agent ${agentId} has no tracked artifacts yet. Run /cursor_sync ${agentId} first.`,
+        `Cursor agent ${normalizedAgentId} has no tracked artifacts yet. Run /cursor_sync ${normalizedAgentId} first.`,
       );
       return;
     }
@@ -1416,8 +1531,48 @@ async function main(): Promise<void> {
 
     await channel.sendMessage(
       chatJid,
-      `Cursor artifacts for ${agentId}:\n\n${lines.join('\n')}`,
+      `Cursor artifacts for ${normalizedAgentId}:\n\n${lines.join('\n')}`,
     );
+  }
+
+  async function handleCursorArtifactLink(
+    chatJid: string,
+    agentId: string,
+    absolutePath: string,
+  ): Promise<void> {
+    const channel = findChannel(channels, chatJid);
+    if (!channel) return;
+
+    const group = registeredGroups[chatJid];
+    if (!group) {
+      await channel.sendMessage(
+        chatJid,
+        'This chat is not registered yet. Run /registermain in a DM first.',
+      );
+      return;
+    }
+
+    try {
+      const link = await getCursorArtifactDownloadLink({
+        groupFolder: group.folder,
+        chatJid,
+        agentId,
+        absolutePath,
+      });
+      const expiry = link.expiresAt ? `\nExpires: ${link.expiresAt}` : '';
+      await channel.sendMessage(
+        chatJid,
+        `Artifact link for ${link.agentId}\nPath: ${link.absolutePath}\nURL: ${link.url}${expiry}`,
+      );
+    } catch (err) {
+      await channel.sendMessage(
+        chatJid,
+        formatUserFacingOperationFailure(
+          `Cursor artifact link failed for ${agentId}`,
+          err,
+        ),
+      );
+    }
   }
 
   function refreshCursorSnapshotsForAllGroups(): void {
@@ -1562,6 +1717,15 @@ async function main(): Promise<void> {
         return;
       }
 
+      if (CURSOR_MODELS_COMMANDS.has(commandToken)) {
+        const args = tokenizeCommandArguments(rawTrimmed);
+        const filterText = args.slice(1).join(' ').trim();
+        handleCursorModels(chatJid, filterText).catch((err) =>
+          logger.error({ err, chatJid }, 'Cursor models command error'),
+        );
+        return;
+      }
+
       if (CURSOR_TEST_COMMANDS.has(commandToken)) {
         handleCursorSmokeTest(chatJid).catch((err) =>
           logger.error({ err, chatJid }, 'Cursor smoke command error'),
@@ -1577,25 +1741,35 @@ async function main(): Promise<void> {
       }
 
       if (CURSOR_CREATE_COMMANDS.has(commandToken)) {
-        const promptText = rawTrimmed.split(/\s+/).slice(1).join(' ').trim();
-        if (!promptText) {
+        const parsed = parseCursorCreateCommand(rawTrimmed);
+        if (parsed.errors.length > 0) {
           const channel = findChannel(channels, chatJid);
+          const detail = parsed.errors.map((err) => `- ${err}`).join('\n');
           channel
-            ?.sendMessage(chatJid, 'Usage: /cursor_create <prompt>')
+            ?.sendMessage(chatJid, `${CURSOR_CREATE_USAGE}\n\n${detail}`)
             .catch((err) =>
               logger.error({ err, chatJid }, 'Cursor create usage send failed'),
             );
           return;
         }
 
-        handleCursorCreate(chatJid, promptText, msg.sender).catch((err) =>
+        handleCursorCreate(chatJid, parsed.promptText, msg.sender, {
+          model: parsed.model,
+          sourceRepository: parsed.sourceRepository,
+          sourceRef: parsed.sourceRef,
+          sourcePrUrl: parsed.sourcePrUrl,
+          branchName: parsed.branchName,
+          autoCreatePr: parsed.autoCreatePr,
+          openAsCursorGithubApp: parsed.openAsCursorGithubApp,
+          skipReviewerRequest: parsed.skipReviewerRequest,
+        }).catch((err) =>
           logger.error({ err, chatJid }, 'Cursor create command error'),
         );
         return;
       }
 
       if (CURSOR_SYNC_COMMANDS.has(commandToken)) {
-        const parts = rawTrimmed.split(/\s+/);
+        const parts = tokenizeCommandArguments(rawTrimmed);
         const agentId = parts[1];
         if (!agentId) {
           const channel = findChannel(channels, chatJid);
@@ -1614,7 +1788,7 @@ async function main(): Promise<void> {
       }
 
       if (CURSOR_STOP_COMMANDS.has(commandToken)) {
-        const parts = rawTrimmed.split(/\s+/);
+        const parts = tokenizeCommandArguments(rawTrimmed);
         const agentId = parts[1];
         if (!agentId) {
           const channel = findChannel(channels, chatJid);
@@ -1633,7 +1807,7 @@ async function main(): Promise<void> {
       }
 
       if (CURSOR_CONVERSATION_COMMANDS.has(commandToken)) {
-        const parts = rawTrimmed.split(/\s+/);
+        const parts = tokenizeCommandArguments(rawTrimmed);
         const agentId = parts[1];
         if (!agentId) {
           const channel = findChannel(channels, chatJid);
@@ -1663,7 +1837,7 @@ async function main(): Promise<void> {
       }
 
       if (CURSOR_ARTIFACTS_COMMANDS.has(commandToken)) {
-        const parts = rawTrimmed.split(/\s+/);
+        const parts = tokenizeCommandArguments(rawTrimmed);
         const agentId = parts[1];
         if (!agentId) {
           const channel = findChannel(channels, chatJid);
@@ -1684,8 +1858,31 @@ async function main(): Promise<void> {
         return;
       }
 
+      if (CURSOR_ARTIFACT_LINK_COMMANDS.has(commandToken)) {
+        const parts = tokenizeCommandArguments(rawTrimmed);
+        const agentId = parts[1];
+        const absolutePath = parts.slice(2).join(' ').trim();
+        if (!agentId || !absolutePath) {
+          const channel = findChannel(channels, chatJid);
+          channel
+            ?.sendMessage(chatJid, CURSOR_ARTIFACT_LINK_USAGE)
+            .catch((err) =>
+              logger.error(
+                { err, chatJid },
+                'Cursor artifact link usage send failed',
+              ),
+            );
+          return;
+        }
+
+        handleCursorArtifactLink(chatJid, agentId, absolutePath).catch((err) =>
+          logger.error({ err, chatJid }, 'Cursor artifact link command error'),
+        );
+        return;
+      }
+
       if (CURSOR_FOLLOWUP_COMMANDS.has(commandToken)) {
-        const parts = rawTrimmed.split(/\s+/);
+        const parts = tokenizeCommandArguments(rawTrimmed);
         const agentId = parts[1];
         if (!agentId) {
           const channel = findChannel(channels, chatJid);
@@ -1700,7 +1897,7 @@ async function main(): Promise<void> {
           return;
         }
 
-        const promptText = rawTrimmed.split(/\s+/).slice(2).join(' ').trim();
+        const promptText = parts.slice(2).join(' ').trim();
         if (!promptText) {
           const channel = findChannel(channels, chatJid);
           channel

@@ -62,6 +62,7 @@ describe('buildTelegramHelpText', () => {
     expect(help).toContain('/chatid');
     expect(help).toContain('/registermain');
     expect(help).toContain('/cursor_status');
+    expect(help).toContain('/cursor_models');
     expect(help).toContain('/cursor_test');
     expect(help).toContain('/alexa_status');
     expect(help).toContain('/amazon_status');
@@ -91,9 +92,13 @@ describe('buildTelegramCommandsText', () => {
     expect(commands).toContain('/features');
     expect(commands).toContain('/cursor_remote');
     expect(commands).toContain('/cursor_remote_end');
-    expect(commands).toContain('/cursor_create <prompt>');
+    expect(commands).toContain('/cursor_models [filter]');
+    expect(commands).toContain('/cursor_create [options] <prompt>');
     expect(commands).toContain('/cursor_conversation <agent_id> [limit]');
     expect(commands).toContain('/cursor_artifacts <agent_id>');
+    expect(commands).toContain(
+      '/cursor_artifact_link <agent_id> <absolute_path>',
+    );
     expect(commands).toContain('/alexa_status');
     expect(commands).toContain('/amazon_search <keywords>');
     expect(commands).toContain(

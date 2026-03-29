@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   computeCursorWebhookSignature,
@@ -18,6 +18,8 @@ describe('cursor-cloud status', () => {
     expect(status.baseUrl).toBe('https://api.cursor.com');
     expect(status.hasApiKey).toBe(false);
     expect(status.timeoutMs).toBe(20_000);
+    expect(status.maxRetries).toBe(2);
+    expect(status.retryBaseMs).toBe(800);
     expect(formatCursorCloudStatusMessage(status)).toContain('Next step:');
   });
 
@@ -28,6 +30,8 @@ describe('cursor-cloud status', () => {
         CURSOR_API_KEY: 'cursor-key',
         CURSOR_WEBHOOK_SECRET: 'secret',
         CURSOR_API_TIMEOUT_MS: '12000',
+        CURSOR_API_MAX_RETRIES: '3',
+        CURSOR_API_RETRY_BASE_MS: '250',
       },
       envFileValues: {},
     });
@@ -37,6 +41,8 @@ describe('cursor-cloud status', () => {
       apiKey: 'cursor-key',
       webhookSecret: 'secret',
       timeoutMs: 12_000,
+      maxRetries: 3,
+      retryBaseMs: 250,
     });
   });
 });
@@ -62,6 +68,8 @@ describe('cursor-cloud client', () => {
         apiKey: 'test-key',
         webhookSecret: null,
         timeoutMs: 10_000,
+        maxRetries: 0,
+        retryBaseMs: 0,
       },
       { fetchImpl },
     );
@@ -92,6 +100,8 @@ describe('cursor-cloud client', () => {
         apiKey: 'test-key',
         webhookSecret: null,
         timeoutMs: 10_000,
+        maxRetries: 0,
+        retryBaseMs: 0,
       },
       { fetchImpl },
     );
@@ -119,6 +129,8 @@ describe('cursor-cloud client', () => {
         apiKey: 'bad-key',
         webhookSecret: null,
         timeoutMs: 10_000,
+        maxRetries: 0,
+        retryBaseMs: 0,
       },
       { fetchImpl },
     );
@@ -129,6 +141,71 @@ describe('cursor-cloud client', () => {
     await expect(client.listModels()).rejects.toMatchObject({
       status: 401,
     });
+  });
+
+  it('retries transient HTTP failures before succeeding', async () => {
+    let callCount = 0;
+    const fetchImpl = (async () => {
+      callCount += 1;
+      if (callCount < 3) {
+        return new Response(JSON.stringify({ error: 'try again' }), {
+          status: 503,
+        });
+      }
+      return new Response(
+        JSON.stringify({
+          models: [{ id: 'cu/default' }],
+        }),
+        { status: 200 },
+      );
+    }) as unknown as typeof fetch;
+
+    const client = new CursorCloudClient(
+      {
+        baseUrl: 'https://api.cursor.com',
+        apiKey: 'test-key',
+        webhookSecret: null,
+        timeoutMs: 10_000,
+        maxRetries: 2,
+        retryBaseMs: 0,
+      },
+      { fetchImpl },
+    );
+
+    const response = await client.listModels();
+    expect(response.models).toHaveLength(1);
+    expect(callCount).toBe(3);
+  });
+
+  it('honors retry-after and exhausts retries on repeated 429 responses', async () => {
+    let callCount = 0;
+    const sleepSpy = vi.spyOn(globalThis, 'setTimeout');
+    const fetchImpl = (async () => {
+      callCount += 1;
+      return new Response(JSON.stringify({ error: 'rate-limited' }), {
+        status: 429,
+        headers: { 'Retry-After': '0' },
+      });
+    }) as unknown as typeof fetch;
+
+    const client = new CursorCloudClient(
+      {
+        baseUrl: 'https://api.cursor.com',
+        apiKey: 'test-key',
+        webhookSecret: null,
+        timeoutMs: 10_000,
+        maxRetries: 1,
+        retryBaseMs: 0,
+      },
+      { fetchImpl },
+    );
+
+    await expect(client.listModels()).rejects.toBeInstanceOf(
+      CursorCloudApiError,
+    );
+    expect(callCount).toBe(2);
+    expect(sleepSpy).toHaveBeenCalled();
+    sleepSpy.mockRestore();
   });
 });
 

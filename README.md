@@ -111,14 +111,16 @@ These run inside Telegram after the bot is live:
 - `/chatid`
 - `/registermain`
 - `/cursor_status`
+- `/cursor_models [filter]`
 - `/cursor_test`
 - `/cursor_jobs`
-- `/cursor_create <prompt>`
+- `/cursor_create [options] <prompt>`
 - `/cursor_sync <agent_id>`
 - `/cursor_stop <agent_id>`
 - `/cursor_followup <agent_id> <text>`
 - `/cursor_conversation <agent_id> [limit]`
 - `/cursor_artifacts <agent_id>`
+- `/cursor_artifact_link <agent_id> <absolute_path>`
 - `/alexa_status`
 - `/amazon_status`
 - `/amazon_search <keywords>`
@@ -206,9 +208,11 @@ Useful runtime validation commands:
 
 ```text
 /cursor_status
+/cursor_models cu/
 /cursor_test
 /cursor_jobs
-/cursor_create Fix flaky tests in this repo and open a PR
+/cursor_create --model cu/default --repo https://github.com/owner/repo --ref main Fix flaky tests in this repo and open a PR
+/cursor_artifact_link bc_123 "/opt/cursor/out/summary.md"
 /alexa_status
 /amazon_status
 /amazon_search ergonomic keyboard

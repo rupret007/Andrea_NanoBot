@@ -101,14 +101,16 @@ export function buildTelegramCommandsText(): string {
     '- `/chatid` - show chat ID and chat type',
     '- `/registermain` - bootstrap main control chat (DM only)',
     '- `/cursor_status` - show Cursor/9router integration readiness',
+    '- `/cursor_models [filter]` - list available Cursor Cloud models',
     '- `/cursor_test` - run live Cursor/9router smoke test',
     '- `/cursor_jobs` - list tracked Cursor cloud jobs for this chat',
-    '- `/cursor_create <prompt>` - create a new Cursor cloud job',
+    '- `/cursor_create [options] <prompt>` - create a Cursor cloud job with optional repo/model flags',
     '- `/cursor_sync <agent_id>` - refresh one Cursor job status/artifacts',
     '- `/cursor_stop <agent_id>` - request stop for a Cursor job',
     '- `/cursor_followup <agent_id> <text>` - send follow-up to a Cursor job',
     '- `/cursor_conversation <agent_id> [limit]` - fetch recent conversation messages from a Cursor job',
     '- `/cursor_artifacts <agent_id>` - list tracked artifacts for a Cursor job',
+    '- `/cursor_artifact_link <agent_id> <absolute_path>` - generate a temporary download link for one tracked Cursor artifact',
     '- `/alexa_status` - show Alexa voice ingress readiness and security mode',
     '- `/amazon_status` - show Amazon shopping readiness and safety mode',
     '- `/amazon_search <keywords>` - search Amazon Business products',
@@ -429,6 +431,10 @@ export class TelegramChannel implements Channel {
               description: 'Show Cursor integration status',
             },
             {
+              command: 'cursor_models',
+              description: 'List available Cursor Cloud models',
+            },
+            {
               command: 'cursor_test',
               description: 'Run Cursor integration smoke test',
             },
@@ -459,6 +465,10 @@ export class TelegramChannel implements Channel {
             {
               command: 'cursor_artifacts',
               description: 'List artifacts for one Cursor job',
+            },
+            {
+              command: 'cursor_artifact_link',
+              description: 'Get a download link for one Cursor artifact',
             },
             {
               command: 'amazon_status',

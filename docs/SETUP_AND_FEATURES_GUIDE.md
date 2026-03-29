@@ -148,6 +148,8 @@ CURSOR_API_KEY=cursor_api_...
 # Optional:
 # CURSOR_API_BASE_URL=https://api.cursor.com
 # CURSOR_API_TIMEOUT_MS=20000
+# CURSOR_API_MAX_RETRIES=2
+# CURSOR_API_RETRY_BASE_MS=800
 # CURSOR_MAX_ACTIVE_JOBS_PER_CHAT=4
 ```
 
@@ -301,16 +303,19 @@ Typical commands:
   - `/purchase_cancel <request_id>`
 - Cursor-focused control commands:
   - `/cursor_status` (show 9router/Cursor endpoint readiness)
+  - `/cursor_models [filter]` (list available Cursor Cloud models)
   - `/cursor_test` (run live 9router/Cursor smoke request)
   - `/cursor_jobs` (list tracked Cursor cloud jobs for this chat)
-  - `/cursor_create <prompt>` (start a Cursor cloud coding job)
-  - `/cursor_sync <agent_id>` (refresh Cursor job status/artifacts)
-  - `/cursor_stop <agent_id>` (request stop for a Cursor job)
-  - `/cursor_followup <agent_id> <text>` (send follow-up instructions)
-  - `/cursor_conversation <agent_id> [limit]` (show recent Cursor job conversation)
-  - `/cursor_artifacts <agent_id>` (list tracked Cursor job artifacts)
-  - `/cursor_remote` (start remote control bridge; main chat only)
-  - `/cursor_remote_end` (end remote control bridge)
+  - `/cursor_create [options] <prompt>` (start a Cursor cloud coding job)
+  - `/cursor_create --repo <url> --ref <branch> --model <id> <prompt>` (target a specific repo/ref/model)
+- `/cursor_sync <agent_id>` (refresh Cursor job status/artifacts)
+- `/cursor_stop <agent_id>` (request stop for a Cursor job)
+- `/cursor_followup <agent_id> <text>` (send follow-up instructions)
+- `/cursor_conversation <agent_id> [limit]` (show recent Cursor job conversation)
+- `/cursor_artifacts <agent_id>` (list tracked Cursor job artifacts)
+- `/cursor_artifact_link <agent_id> <absolute_path>` (generate a temporary artifact download link)
+- `/cursor_remote` (start remote control bridge; main chat only)
+- `/cursor_remote_end` (end remote control bridge)
 
 ## 8) OpenClaw Marketplace Behavior And Security
 

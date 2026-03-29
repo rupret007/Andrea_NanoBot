@@ -12,11 +12,13 @@ import {
 import {
   CursorAgentRecord as CursorApiAgentRecord,
   CursorArtifactRecord as CursorApiArtifactRecord,
+  CursorModelRecord,
   CursorCloudApiError,
   CursorCloudClient,
   CursorCreateAgentRequest,
   resolveCursorCloudConfig,
 } from './cursor-cloud.js';
+import { normalizeCursorAgentId } from './cursor-agent-id.js';
 import { readEnvFile } from './env.js';
 import { assertValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
@@ -182,6 +184,13 @@ export interface CursorArtifactView {
   syncedAt: string;
 }
 
+export interface CursorArtifactDownloadLinkView {
+  agentId: string;
+  absolutePath: string;
+  url: string;
+  expiresAt: string | null;
+}
+
 function mapDbAgentToView(record: CursorDbAgentRecord): CursorAgentView {
   return {
     id: record.id,
@@ -316,13 +325,14 @@ export async function syncCursorAgent(
   params: SyncCursorAgentParams,
 ): Promise<{ agent: CursorAgentView; artifacts: CursorArtifactView[] }> {
   assertValidGroupFolder(params.groupFolder);
-  const existing = getCursorAgentById(params.agentId);
+  const agentId = normalizeCursorAgentId(params.agentId);
+  const existing = getCursorAgentById(agentId);
   if (existing && existing.group_folder !== params.groupFolder) {
     throw new Error('Cursor agent belongs to another group');
   }
 
   const client = resolveCursorClient();
-  const apiAgent = await client.getAgent(params.agentId);
+  const apiAgent = await client.getAgent(agentId);
 
   const row = mapApiAgentToDbRecord(apiAgent, {
     groupFolder: existing?.group_folder || params.groupFolder,
@@ -335,21 +345,19 @@ export async function syncCursorAgent(
   let artifactViews: CursorArtifactView[] = [];
   try {
     const syncedAt = new Date().toISOString();
-    const listed = await client.listArtifacts(params.agentId);
+    const listed = await client.listArtifacts(agentId);
     const artifacts = listed.artifacts
-      .map((artifact) =>
-        mapApiArtifactToDbRecord(params.agentId, artifact, syncedAt),
-      )
+      .map((artifact) => mapApiArtifactToDbRecord(agentId, artifact, syncedAt))
       .filter(
         (artifact): artifact is CursorAgentArtifactRecord => artifact !== null,
       );
-    replaceCursorAgentArtifacts(params.agentId, artifacts);
+    replaceCursorAgentArtifacts(agentId, artifacts);
     artifactViews = artifacts.map(mapDbArtifactToView);
   } catch (err) {
     logger.debug(
       {
         err: String(err),
-        agentId: params.agentId,
+        agentId,
       },
       'Cursor artifact sync skipped',
     );
@@ -372,18 +380,17 @@ export async function followupCursorAgent(
   params: FollowupCursorAgentParams,
 ): Promise<CursorAgentView> {
   assertValidGroupFolder(params.groupFolder);
-  const existing = getCursorAgentById(params.agentId);
+  const agentId = normalizeCursorAgentId(params.agentId);
+  const existing = getCursorAgentById(agentId);
   if (!existing) {
-    throw new Error(
-      `Cursor agent ${params.agentId} is not tracked in this workspace`,
-    );
+    throw new Error(`Cursor agent ${agentId} is not tracked in this workspace`);
   }
   if (existing.group_folder !== params.groupFolder) {
     throw new Error('Cursor agent belongs to another group');
   }
 
   const client = resolveCursorClient();
-  const followed = await client.followupAgent(params.agentId, {
+  const followed = await client.followupAgent(agentId, {
     prompt: { text: params.promptText },
   });
 
@@ -407,18 +414,17 @@ export async function stopCursorAgent(
   params: StopCursorAgentParams,
 ): Promise<CursorAgentView> {
   assertValidGroupFolder(params.groupFolder);
-  const existing = getCursorAgentById(params.agentId);
+  const agentId = normalizeCursorAgentId(params.agentId);
+  const existing = getCursorAgentById(agentId);
   if (!existing) {
-    throw new Error(
-      `Cursor agent ${params.agentId} is not tracked in this workspace`,
-    );
+    throw new Error(`Cursor agent ${agentId} is not tracked in this workspace`);
   }
   if (existing.group_folder !== params.groupFolder) {
     throw new Error('Cursor agent belongs to another group');
   }
 
   const client = resolveCursorClient();
-  const stopped = await client.stopAgent(params.agentId);
+  const stopped = await client.stopAgent(agentId);
 
   const row = mapApiAgentToDbRecord(stopped, {
     groupFolder: existing.group_folder,
@@ -445,7 +451,85 @@ export function listAllStoredCursorAgents(limit = 200): CursorAgentView[] {
 export function listStoredCursorArtifacts(
   agentId: string,
 ): CursorArtifactView[] {
-  return listCursorAgentArtifacts(agentId).map(mapDbArtifactToView);
+  const normalizedId = normalizeCursorAgentId(agentId);
+  return listCursorAgentArtifacts(normalizedId).map(mapDbArtifactToView);
+}
+
+export interface GetCursorArtifactDownloadLinkParams {
+  groupFolder: string;
+  chatJid: string;
+  agentId: string;
+  absolutePath: string;
+}
+
+function normalizeArtifactAbsolutePath(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    throw new Error('Artifact path is required');
+  }
+  if (trimmed.length > 4096) {
+    throw new Error('Artifact path is too long');
+  }
+  return trimmed;
+}
+
+function normalizeArtifactDownloadUrl(rawUrl: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch (err) {
+    throw new Error('Cursor returned an invalid artifact download URL', {
+      cause: err,
+    });
+  }
+
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    throw new Error('Cursor returned an unsupported artifact download URL');
+  }
+
+  return parsed.toString();
+}
+
+export async function getCursorArtifactDownloadLink(
+  params: GetCursorArtifactDownloadLinkParams,
+): Promise<CursorArtifactDownloadLinkView> {
+  assertValidGroupFolder(params.groupFolder);
+  const agentId = normalizeCursorAgentId(params.agentId);
+  const absolutePath = normalizeArtifactAbsolutePath(params.absolutePath);
+  const existing = getCursorAgentById(agentId);
+  if (!existing) {
+    throw new Error(`Cursor agent ${agentId} is not tracked in this workspace`);
+  }
+  if (
+    existing.group_folder !== params.groupFolder ||
+    existing.chat_jid !== params.chatJid
+  ) {
+    throw new Error('Cursor agent belongs to another group');
+  }
+
+  const artifacts = listCursorAgentArtifacts(agentId);
+  const tracked = artifacts.some(
+    (artifact) => artifact.absolute_path === absolutePath,
+  );
+  if (!tracked) {
+    throw new Error(
+      `Artifact path "${absolutePath}" is not tracked for Cursor agent ${agentId}. Run /cursor_sync ${agentId} first.`,
+    );
+  }
+
+  const client = resolveCursorClient();
+  const response = await client.getArtifactDownloadLink(agentId, absolutePath);
+  const url = toNullableString(response.url);
+  if (!url) {
+    throw new Error('Cursor did not return an artifact download URL');
+  }
+
+  return {
+    agentId,
+    absolutePath,
+    url: normalizeArtifactDownloadUrl(url),
+    expiresAt: toNullableString(response.expiresAt),
+  };
 }
 
 export interface CursorConversationMessageView {
@@ -465,11 +549,10 @@ export async function getCursorAgentConversation(
   params: GetCursorAgentConversationParams,
 ): Promise<CursorConversationMessageView[]> {
   assertValidGroupFolder(params.groupFolder);
-  const existing = getCursorAgentById(params.agentId);
+  const agentId = normalizeCursorAgentId(params.agentId);
+  const existing = getCursorAgentById(agentId);
   if (!existing) {
-    throw new Error(
-      `Cursor agent ${params.agentId} is not tracked in this workspace`,
-    );
+    throw new Error(`Cursor agent ${agentId} is not tracked in this workspace`);
   }
   if (
     existing.group_folder !== params.groupFolder ||
@@ -479,7 +562,7 @@ export async function getCursorAgentConversation(
   }
 
   const client = resolveCursorClient();
-  const conversation = await client.getConversation(params.agentId);
+  const conversation = await client.getConversation(agentId);
   const limit =
     params.limit && Number.isFinite(params.limit)
       ? Math.max(1, Math.min(100, Math.floor(params.limit)))
@@ -498,4 +581,36 @@ export async function getCursorAgentConversation(
     : [];
 
   return messages;
+}
+
+function toCursorModelView(record: CursorModelRecord): CursorModelView {
+  return {
+    id: toNullableString(record.id) || 'unknown',
+    name: toNullableString(record.name),
+  };
+}
+
+export interface CursorModelView {
+  id: string;
+  name: string | null;
+}
+
+export async function listCursorModels(limit = 50): Promise<CursorModelView[]> {
+  const safeLimit = Number.isFinite(limit)
+    ? Math.max(1, Math.min(200, Math.floor(limit)))
+    : 50;
+  const client = resolveCursorClient();
+  const listed = await client.listModels();
+  const seen = new Set<string>();
+  const models = (listed.models || [])
+    .map(toCursorModelView)
+    .filter((model) => {
+      const dedupeKey = model.id.toLowerCase();
+      if (!dedupeKey || seen.has(dedupeKey)) return false;
+      seen.add(dedupeKey);
+      return true;
+    })
+    .slice(0, safeLimit);
+
+  return models;
 }
