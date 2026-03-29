@@ -109,6 +109,14 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+function parseJsonSafely(payload: string): unknown {
+  try {
+    return JSON.parse(payload);
+  } catch {
+    return payload;
+  }
+}
+
 function toNullableString(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
@@ -443,14 +451,22 @@ export class CursorDesktopClient {
       );
 
       const rawText = await response.text();
-      const payload = rawText ? JSON.parse(rawText) : {};
+      const payload = rawText ? parseJsonSafely(rawText) : {};
       if (!response.ok) {
         const row = asRecord(payload);
         const detail =
           toNullableString(row?.error) ||
           toNullableString(row?.message) ||
+          (typeof payload === 'string' && payload.trim()
+            ? payload.trim()
+            : null) ||
           `HTTP ${response.status}`;
         throw new Error(detail);
+      }
+      if (typeof payload === 'string') {
+        throw new Error(
+          'Cursor desktop bridge returned an invalid JSON response.',
+        );
       }
       return payload;
     } catch (err) {

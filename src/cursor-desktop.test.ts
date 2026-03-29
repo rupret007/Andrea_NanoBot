@@ -192,4 +192,47 @@ describe('CursorDesktopClient', () => {
       'POST https://cursor-bridge.example.com/v1/sessions/desk_123/followup',
     ]);
   });
+
+  it('surfaces plain-text bridge errors without a JSON parse failure', async () => {
+    const client = new CursorDesktopClient(
+      {
+        baseUrl: 'https://cursor-bridge.example.com',
+        token: 'bridge-token',
+        timeoutMs: 5000,
+        label: null,
+      },
+      {
+        fetchImpl: (async () =>
+          new Response('bridge temporarily unavailable', {
+            status: 502,
+            statusText: 'Bad Gateway',
+          })) as unknown as typeof fetch,
+      },
+    );
+
+    await expect(client.health()).rejects.toThrow(
+      'bridge temporarily unavailable',
+    );
+  });
+
+  it('rejects successful bridge responses that are not valid JSON', async () => {
+    const client = new CursorDesktopClient(
+      {
+        baseUrl: 'https://cursor-bridge.example.com',
+        token: 'bridge-token',
+        timeoutMs: 5000,
+        label: null,
+      },
+      {
+        fetchImpl: (async () =>
+          new Response('OK', {
+            status: 200,
+          })) as unknown as typeof fetch,
+      },
+    );
+
+    await expect(client.health()).rejects.toThrow(
+      'Cursor desktop bridge returned an invalid JSON response.',
+    );
+  });
 });
