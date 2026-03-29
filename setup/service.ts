@@ -57,7 +57,7 @@ export async function run(_args: string[]): Promise<void> {
       PROJECT_PATH: projectRoot,
       STATUS: 'failed',
       ERROR: 'ephemeral_node_path',
-      LOG: 'logs/setup.log',
+      LOG: 'stdout/stderr (no dedicated setup.log file)',
     });
     process.exit(1);
   }
@@ -90,7 +90,7 @@ export async function run(_args: string[]): Promise<void> {
       PROJECT_PATH: projectRoot,
       STATUS: 'failed',
       ERROR: 'build_failed',
-      LOG: 'logs/setup.log',
+      LOG: 'stdout/stderr (no dedicated setup.log file)',
     });
     process.exit(1);
   }
@@ -115,7 +115,7 @@ export async function run(_args: string[]): Promise<void> {
       PROJECT_PATH: projectRoot,
       STATUS: 'failed',
       ERROR: 'unsupported_platform',
-      LOG: 'logs/setup.log',
+      LOG: 'stdout/stderr (no dedicated setup.log file)',
     });
     process.exit(1);
   }
@@ -155,7 +155,9 @@ function hasConfiguredChannelAuth(projectRoot: string): boolean {
   const slackBot = process.env.SLACK_BOT_TOKEN || envVars.SLACK_BOT_TOKEN;
   const slackApp = process.env.SLACK_APP_TOKEN || envVars.SLACK_APP_TOKEN;
   const discord = process.env.DISCORD_BOT_TOKEN || envVars.DISCORD_BOT_TOKEN;
-  const hasTokenChannel = Boolean(telegram || discord || (slackBot && slackApp));
+  const hasTokenChannel = Boolean(
+    telegram || discord || (slackBot && slackApp),
+  );
 
   const authDir = path.join(projectRoot, 'store', 'auth');
   const hasWhatsAppAuth =
@@ -192,7 +194,7 @@ function isWindowsNanoclawProcessRunning(
     `$p = Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}" -ErrorAction SilentlyContinue`,
     'if ($null -eq $p) { exit 1 }',
     '$cmd = [string]$p.CommandLine',
-    "if ($cmd -like \"*$root*\" -and $cmd -match 'dist[\\\\/]index\\.js') { exit 0 }",
+    'if ($cmd -like "*$root*" -and $cmd -match \'dist[\\\\/]index\\.js\') { exit 0 }',
     'exit 2',
   ].join('; ');
   try {
@@ -301,7 +303,7 @@ function setupLaunchd(
     PLIST_PATH: plistPath,
     SERVICE_LOADED: serviceLoaded,
     STATUS: 'success',
-    LOG: 'logs/setup.log',
+    LOG: 'stdout/stderr (no dedicated setup.log file)',
   });
 }
 
@@ -357,7 +359,7 @@ function setupWindowsTask(
       PROJECT_PATH: projectRoot,
       STATUS: 'failed',
       ERROR: 'npx_not_found',
-      LOG: 'logs/setup.log',
+      LOG: 'stdout/stderr (no dedicated setup.log file)',
     });
     process.exit(1);
   }
@@ -377,7 +379,7 @@ function setupWindowsTask(
     "$gatewayScript = Join-Path $projectRoot 'scripts\\start-openai-gateway.ps1'",
     'if (Test-Path -LiteralPath $gatewayScript) {',
     '  try {',
-    "    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $gatewayScript | Out-Null",
+    '    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $gatewayScript | Out-Null',
     '  } catch {',
     '    $gatewayErr = "OpenAI gateway start warning: $($_.Exception.Message)"',
     '    Add-Content -LiteralPath $errLogPath -Value $gatewayErr',
@@ -398,7 +400,7 @@ function setupWindowsTask(
     '# Kill any orphaned NanoClaw node processes for this project root.',
     '# This prevents duplicate channel consumers after repeated setup runs.',
     '$projectPattern = [Regex]::Escape($projectRoot)',
-    "$orphaned = Get-CimInstance Win32_Process -Filter \"Name='node.exe'\" | Where-Object {",
+    '$orphaned = Get-CimInstance Win32_Process -Filter "Name=\'node.exe\'" | Where-Object {',
     '  $cmd = [string]$_.CommandLine',
     "  $cmd -match $projectPattern -and $cmd -match 'dist[\\\\/]index\\.js'",
     '}',
@@ -422,16 +424,7 @@ function setupWindowsTask(
   try {
     execFileSync(
       'schtasks.exe',
-      [
-        '/Create',
-        '/F',
-        '/SC',
-        'ONLOGON',
-        '/TN',
-        taskName,
-        '/TR',
-        taskCommand,
-      ],
+      ['/Create', '/F', '/SC', 'ONLOGON', '/TN', taskName, '/TR', taskCommand],
       { stdio: ['ignore', 'pipe', 'pipe'], timeout: 15000 },
     );
     logger.info({ taskName }, 'Scheduled task created');
@@ -464,7 +457,7 @@ function setupWindowsTask(
         SERVICE_LOADED: false,
         STATUS: 'failed',
         ERROR: 'task_create_failed',
-        LOG: 'logs/setup.log',
+        LOG: 'stdout/stderr (no dedicated setup.log file)',
       });
       process.exit(1);
     }
@@ -481,7 +474,7 @@ function setupWindowsTask(
       FALLBACK: 'startup_folder',
       NODE_LAUNCHER: useNpxLauncher ? 'npx-node22' : 'node-binary',
       STATUS: 'success',
-      LOG: 'logs/setup.log',
+      LOG: 'stdout/stderr (no dedicated setup.log file)',
     });
     return;
   }
@@ -530,7 +523,7 @@ function setupWindowsTask(
     INITIAL_RUN_SKIPPED: initialRunSkipped,
     NODE_LAUNCHER: useNpxLauncher ? 'npx-node22' : 'node-binary',
     STATUS: 'success',
-    LOG: 'logs/setup.log',
+    LOG: 'stdout/stderr (no dedicated setup.log file)',
   });
 }
 
@@ -584,25 +577,29 @@ function setupWindowsStartupFallback(
       const pidFile = path.join(projectRoot, 'nanoclaw.pid');
       initialRunOk = waitForWindowsNanoclawStart(pidFile, projectRoot);
     } catch (err) {
-      logger.warn({ err }, 'Startup fallback configured, but initial run failed');
+      logger.warn(
+        { err },
+        'Startup fallback configured, but initial run failed',
+      );
       try {
         const launchScript = [
           '$ErrorActionPreference = "Stop"',
           `$wrapperPath = ${psQuote(wrapperPath)}`,
           "Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',$wrapperPath) -WindowStyle Hidden | Out-Null",
         ].join('; ');
-        execFileSync('powershell.exe', ['-NoProfile', '-Command', launchScript], {
-          stdio: 'ignore',
-          timeout: 5000,
-        });
+        execFileSync(
+          'powershell.exe',
+          ['-NoProfile', '-Command', launchScript],
+          {
+            stdio: 'ignore',
+            timeout: 5000,
+          },
+        );
         const pidFile = path.join(projectRoot, 'nanoclaw.pid');
         initialRunOk = waitForWindowsNanoclawStart(pidFile, projectRoot);
         logger.info('Retried startup fallback launch asynchronously');
       } catch (retryErr) {
-        logger.warn(
-          { err: retryErr },
-          'Startup fallback async retry failed',
-        );
+        logger.warn({ err: retryErr }, 'Startup fallback async retry failed');
       }
     }
   } else {
@@ -772,7 +769,7 @@ WantedBy=${runningAsRoot ? 'multi-user.target' : 'default.target'}`;
     ...(dockerGroupStale ? { DOCKER_GROUP_STALE: true } : {}),
     LINGER_ENABLED: !runningAsRoot,
     STATUS: 'success',
-    LOG: 'logs/setup.log',
+    LOG: 'stdout/stderr (no dedicated setup.log file)',
   });
 }
 
@@ -827,6 +824,6 @@ function setupNohupFallback(
     SERVICE_LOADED: false,
     FALLBACK: 'wsl_no_systemd',
     STATUS: 'success',
-    LOG: 'logs/setup.log',
+    LOG: 'stdout/stderr (no dedicated setup.log file)',
   });
 }

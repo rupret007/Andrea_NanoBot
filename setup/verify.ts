@@ -167,7 +167,9 @@ export function resolveCredentialProbeEndpoints(input: {
   return candidates;
 }
 
-export function buildCredentialProbeMessagesUrl(endpoint: string): string | null {
+export function buildCredentialProbeMessagesUrl(
+  endpoint: string,
+): string | null {
   const normalized = normalizeProbeEndpoint(endpoint);
   if (!normalized) return null;
 
@@ -211,6 +213,20 @@ function hasLocalGatewayCandidate(endpoints: string[]): boolean {
     }
   }
   return false;
+}
+
+function isHostLocalRetryCandidate(endpoint: string): boolean {
+  try {
+    const parsed = new URL(endpoint);
+    const host = parsed.hostname.toLowerCase();
+    return host === '127.0.0.1' || host === 'localhost';
+  } catch {
+    return false;
+  }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export function classifyCredentialProbeFailure(input: {
@@ -293,10 +309,13 @@ export function classifyCredentialProbeFailure(input: {
   };
 }
 
-async function probeCredentialRuntime(input: {
+export async function probeCredentialRuntime(input: {
   endpoints: string[];
   authToken: string | undefined;
   model: string;
+  maxHostLocalAttempts?: number;
+  requestTimeoutMs?: number;
+  retryDelayMs?: number;
 }): Promise<CredentialRuntimeProbeResult> {
   if (input.endpoints.length === 0) {
     return {
@@ -312,8 +331,6 @@ async function probeCredentialRuntime(input: {
     };
   }
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15_000);
   let firstNonNetworkFailure: CredentialRuntimeProbeResult | null = null;
   let lastFailure: CredentialRuntimeProbeResult | null = null;
 
@@ -322,57 +339,98 @@ async function probeCredentialRuntime(input: {
       const probeUrl = buildCredentialProbeMessagesUrl(endpoint);
       if (!probeUrl) continue;
 
-      try {
-        const response = await fetch(probeUrl, {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            'anthropic-version': '2023-06-01',
-            'x-api-key': input.authToken,
-          },
-          body: JSON.stringify({
-            model: input.model,
-            max_tokens: 16,
-            messages: [{ role: 'user', content: 'ping' }],
-          }),
-          signal: controller.signal,
-        });
+      const maxAttempts = isHostLocalRetryCandidate(endpoint)
+        ? (input.maxHostLocalAttempts ?? 10)
+        : 1;
+      const requestTimeoutMs = input.requestTimeoutMs ?? 4_000;
+      const retryDelayMs = input.retryDelayMs ?? 1_000;
 
-        if (response.ok) {
-          return {
-            status: 'ok',
-            reason: 'ok',
+      for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+        try {
+          const controller = new AbortController();
+          const timeout = setTimeout(
+            () => controller.abort(),
+            requestTimeoutMs,
+          );
+          const response = await fetch(probeUrl, {
+            method: 'POST',
+            headers: {
+              'content-type': 'application/json',
+              'anthropic-version': '2023-06-01',
+              'x-api-key': input.authToken,
+            },
+            body: JSON.stringify({
+              model: input.model,
+              max_tokens: 16,
+              messages: [{ role: 'user', content: 'ping' }],
+            }),
+            signal: controller.signal,
+          });
+          clearTimeout(timeout);
+
+          if (response.ok) {
+            return {
+              status: 'ok',
+              reason: 'ok',
+            };
+          }
+
+          const body = await response.text();
+          const classified = classifyCredentialProbeFailure({
+            statusCode: response.status,
+            body,
+          });
+          const failedResult: CredentialRuntimeProbeResult = {
+            status: 'failed',
+            reason: classified.reason,
+            detail: classified.detail,
           };
-        }
 
-        const body = await response.text();
-        const classified = classifyCredentialProbeFailure({
-          statusCode: response.status,
-          body,
-        });
-        const failedResult: CredentialRuntimeProbeResult = {
-          status: 'failed',
-          reason: classified.reason,
-          detail: classified.detail,
-        };
+          if (
+            classified.reason === 'network_error' &&
+            attempt + 1 < maxAttempts
+          ) {
+            lastFailure = failedResult;
+            await delay(retryDelayMs);
+            continue;
+          }
 
-        if (classified.reason !== 'network_error' && !firstNonNetworkFailure) {
-          firstNonNetworkFailure = failedResult;
+          if (
+            classified.reason !== 'network_error' &&
+            !firstNonNetworkFailure
+          ) {
+            firstNonNetworkFailure = failedResult;
+          }
+          lastFailure = failedResult;
+          break;
+        } catch (err) {
+          const classified = classifyCredentialProbeFailure({
+            errorMessage: err instanceof Error ? err.message : String(err),
+          });
+          const failedResult: CredentialRuntimeProbeResult = {
+            status: 'failed',
+            reason: classified.reason,
+            detail: classified.detail,
+          };
+
+          if (
+            classified.reason === 'network_error' &&
+            attempt + 1 < maxAttempts
+          ) {
+            lastFailure = failedResult;
+            await delay(retryDelayMs);
+            continue;
+          }
+
+          if (
+            classified.reason !== 'network_error' &&
+            !firstNonNetworkFailure
+          ) {
+            firstNonNetworkFailure = failedResult;
+          }
+          lastFailure = failedResult;
+          break;
         }
-        lastFailure = failedResult;
-      } catch (err) {
-        const classified = classifyCredentialProbeFailure({
-          errorMessage: err instanceof Error ? err.message : String(err),
-        });
-        const failedResult: CredentialRuntimeProbeResult = {
-          status: 'failed',
-          reason: classified.reason,
-          detail: classified.detail,
-        };
-        if (classified.reason !== 'network_error' && !firstNonNetworkFailure) {
-          firstNonNetworkFailure = failedResult;
-        }
-        lastFailure = failedResult;
       }
     }
 
@@ -397,8 +455,6 @@ async function probeCredentialRuntime(input: {
       reason: classified.reason,
       detail: classified.detail,
     };
-  } finally {
-    clearTimeout(timeout);
   }
 }
 
@@ -406,7 +462,11 @@ async function tryStartLocalGatewayForVerify(projectRoot: string): Promise<{
   ok: boolean;
   detail?: string;
 }> {
-  const scriptPath = path.join(projectRoot, 'scripts', 'start-openai-gateway.ps1');
+  const scriptPath = path.join(
+    projectRoot,
+    'scripts',
+    'start-openai-gateway.ps1',
+  );
   if (!fs.existsSync(scriptPath)) {
     return {
       ok: false,
@@ -496,7 +556,9 @@ function buildVerifyNextSteps(input: {
   }
 
   if (input.missingRequirements.includes('service_running')) {
-    steps.push('Start or repair the service with: npm run setup -- --step service');
+    steps.push(
+      'Start or repair the service with: npm run setup -- --step service',
+    );
   }
   if (input.missingRequirements.includes('credential_runtime_unusable')) {
     if (input.credentialRuntimeProbeReason === 'insufficient_quota') {
@@ -565,7 +627,8 @@ export function determineCredentialStatus(
         : 'missing';
 
   const credentialSources = [
-    ...(input.hasAnthropicDirectCredential || input.hasOpenAiCompatibleCredential
+    ...(input.hasAnthropicDirectCredential ||
+    input.hasOpenAiCompatibleCredential
       ? ['env']
       : []),
     ...(hasOneCliCredential ? ['onecli'] : []),
@@ -596,8 +659,8 @@ async function detectOneCliCredentialKeys(): Promise<{
     });
     const config = await onecli.getContainerConfig();
     const env = config.env || {};
-    const credentialKeys = ONECLI_CREDENTIAL_ENV_KEYS.filter(
-      (key) => Boolean(env[key]),
+    const credentialKeys = ONECLI_CREDENTIAL_ENV_KEYS.filter((key) =>
+      Boolean(env[key]),
     );
     return {
       reachable: true,
@@ -621,7 +684,7 @@ async function isWindowsNanoclawPidRunning(
     `$p = Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}" -ErrorAction SilentlyContinue`,
     'if ($null -eq $p) { exit 1 }',
     '$cmd = [string]$p.CommandLine',
-    "if ($cmd -like \"*$root*\" -and $cmd -match 'dist[\\\\/]index\\.js') { exit 0 }",
+    'if ($cmd -like "*$root*" -and $cmd -match \'dist[\\\\/]index\\.js\') { exit 0 }',
     'exit 2',
   ].join('; ');
 
@@ -841,7 +904,9 @@ export async function run(_args: string[]): Promise<void> {
         `Gateway bootstrap failed: ${bootstrap.detail || 'unknown error'}`,
       );
     } else {
-      logger.info('Credential probe network failure detected, retried after gateway bootstrap');
+      logger.info(
+        'Credential probe network failure detected, retried after gateway bootstrap',
+      );
       const retryProbe = await probeCredentialRuntime({
         endpoints: probeEndpoints,
         authToken: anthropicAuthToken || openAiApiKey || anthropicApiKey,
@@ -990,7 +1055,7 @@ export async function run(_args: string[]): Promise<void> {
     MISSING_REQUIREMENTS: missingRequirements.join(','),
     NEXT_STEPS: nextSteps,
     STATUS: status,
-    LOG: 'logs/setup.log',
+    LOG: 'stdout/stderr (no dedicated setup.log file)',
   });
 
   if (status === 'failed') process.exit(1);

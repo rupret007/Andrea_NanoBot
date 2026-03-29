@@ -10,7 +10,11 @@ import { logger } from '../src/logger.js';
 import { isRoot } from './platform.js';
 import { emitStatus } from './status.js';
 
-function parseArgs(args: string[]): { empty: boolean; json: string; force: boolean } {
+function parseArgs(args: string[]): {
+  empty: boolean;
+  json: string;
+  force: boolean;
+} {
   let empty = false;
   let json = '';
   let force = false;
@@ -49,7 +53,7 @@ export async function run(args: string[]): Promise<void> {
       ALLOWED_ROOTS: 0,
       NON_MAIN_READ_ONLY: 'unknown',
       STATUS: 'skipped',
-      LOG: 'logs/setup.log',
+      LOG: 'stdout/stderr (no dedicated setup.log file)',
     });
     return;
   }
@@ -78,7 +82,7 @@ export async function run(args: string[]): Promise<void> {
         NON_MAIN_READ_ONLY: 'unknown',
         STATUS: 'failed',
         ERROR: 'invalid_json',
-        LOG: 'logs/setup.log',
+        LOG: 'stdout/stderr (no dedicated setup.log file)',
       });
       process.exit(4);
       return; // unreachable but satisfies TS
@@ -104,7 +108,7 @@ export async function run(args: string[]): Promise<void> {
         NON_MAIN_READ_ONLY: 'unknown',
         STATUS: 'failed',
         ERROR: 'invalid_json',
-        LOG: 'logs/setup.log',
+        LOG: 'stdout/stderr (no dedicated setup.log file)',
       });
       process.exit(4);
       return;
@@ -127,6 +131,6 @@ export async function run(args: string[]): Promise<void> {
     ALLOWED_ROOTS: allowedRoots,
     NON_MAIN_READ_ONLY: nonMainReadOnly,
     STATUS: 'success',
-    LOG: 'logs/setup.log',
+    LOG: 'stdout/stderr (no dedicated setup.log file)',
   });
 }

@@ -78,7 +78,7 @@ async function syncGroups(projectRoot: string): Promise<void> {
       GROUPS_IN_DB: 0,
       REASON: 'whatsapp_not_configured',
       STATUS: 'success',
-      LOG: 'logs/setup.log',
+      LOG: 'stdout/stderr (no dedicated setup.log file)',
     });
     return;
   }
@@ -101,7 +101,7 @@ async function syncGroups(projectRoot: string): Promise<void> {
       GROUPS_IN_DB: 0,
       STATUS: 'failed',
       ERROR: 'build_failed',
-      LOG: 'logs/setup.log',
+      LOG: 'stdout/stderr (no dedicated setup.log file)',
     });
     process.exit(1);
   }
@@ -191,7 +191,11 @@ sock.ev.on('connection.update', async (update) => {
       syncOk = output.includes('SYNCED:');
       logger.info({ output: output.trim() }, 'Sync output');
     } finally {
-      try { fs.unlinkSync(tmpScript); } catch { /* ignore cleanup errors */ }
+      try {
+        fs.unlinkSync(tmpScript);
+      } catch {
+        /* ignore cleanup errors */
+      }
     }
   } catch (err) {
     logger.error({ err }, 'Sync failed');
@@ -222,7 +226,7 @@ sock.ev.on('connection.update', async (update) => {
     SYNC: syncOk ? 'success' : 'failed',
     GROUPS_IN_DB: groupsInDb,
     STATUS: status,
-    LOG: 'logs/setup.log',
+    LOG: 'stdout/stderr (no dedicated setup.log file)',
   });
 
   if (status === 'failed') process.exit(1);

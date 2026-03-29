@@ -99,6 +99,6 @@ export async function run(_args: string[]): Promise<void> {
     HAS_AUTH: hasAuth,
     HAS_REGISTERED_GROUPS: hasRegisteredGroups,
     STATUS: 'success',
-    LOG: 'logs/setup.log',
+    LOG: 'stdout/stderr (no dedicated setup.log file)',
   });
 }

@@ -76,7 +76,7 @@ export async function run(args: string[]): Promise<void> {
     emitStatus('REGISTER_CHANNEL', {
       STATUS: 'failed',
       ERROR: 'missing_required_args',
-      LOG: 'logs/setup.log',
+      LOG: 'stdout/stderr (no dedicated setup.log file)',
     });
     process.exit(4);
   }
@@ -85,7 +85,7 @@ export async function run(args: string[]): Promise<void> {
     emitStatus('REGISTER_CHANNEL', {
       STATUS: 'failed',
       ERROR: 'invalid_folder',
-      LOG: 'logs/setup.log',
+      LOG: 'stdout/stderr (no dedicated setup.log file)',
     });
     process.exit(4);
   }
@@ -197,6 +197,6 @@ export async function run(args: string[]): Promise<void> {
     ASSISTANT_NAME: parsed.assistantName,
     NAME_UPDATED: nameUpdated,
     STATUS: 'success',
-    LOG: 'logs/setup.log',
+    LOG: 'stdout/stderr (no dedicated setup.log file)',
   });
 }

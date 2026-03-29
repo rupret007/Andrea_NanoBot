@@ -52,7 +52,7 @@ export async function run(args: string[]): Promise<void> {
       STATUS: 'failed',
       ERROR: 'runtime_not_available',
       RUNTIME_STATUS: runtimeStatus,
-      LOG: 'logs/setup.log',
+      LOG: 'stdout/stderr (no dedicated setup.log file)',
     });
     process.exit(2);
   }
@@ -99,7 +99,7 @@ export async function run(args: string[]): Promise<void> {
     BUILD_OK: buildOk,
     TEST_OK: testOk,
     STATUS: status,
-    LOG: 'logs/setup.log',
+    LOG: 'stdout/stderr (no dedicated setup.log file)',
   });
 
   if (status === 'failed') process.exit(1);
