@@ -117,6 +117,8 @@ Runtime policy:
 - macOS: prefer Apple Container if available; otherwise Docker.
 - Linux: prefer Docker if available; otherwise Podman.
 
+If Apple Container is available on macOS, present it as experimental and prefer Docker unless the user explicitly wants the native macOS runtime.
+
 If multiple runtimes are available, AskUserQuestion and let the user choose. If the user says Docker is fine, choose Docker.
 
 ### 3b. Ensure selected runtime is running
@@ -148,7 +150,7 @@ Run `npx tsx setup/index.ts --step container -- --runtime <chosen>` and parse th
 
 **If TEST_OK=false but BUILD_OK=true:** The image built but won't run. Check logs — common cause is runtime not fully started. Wait a moment and retry the test.
 
-## 4. Model Credentials via OneCLI
+## 4. Credential System
 
 NanoClaw uses OneCLI to manage credentials — API keys are never stored in `.env` or exposed to containers. The OneCLI gateway injects them at request time.
 
