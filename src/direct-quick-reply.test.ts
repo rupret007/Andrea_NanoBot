@@ -111,4 +111,18 @@ describe('direct rescue reply', () => {
 
     expect(reply).toBeNull();
   });
+
+  it('does not rescue slash commands', () => {
+    const reply = maybeBuildDirectRescueReply([{ content: '/cursor_status' }]);
+
+    expect(reply).toBeNull();
+  });
+
+  it('does not rescue URL-heavy messages', () => {
+    const reply = maybeBuildDirectRescueReply([
+      { content: 'can you check https://example.com for me?' },
+    ]);
+
+    expect(reply).toBeNull();
+  });
 });

@@ -145,11 +145,11 @@ function Start-NanoClawFallback {
     $escapedNodeExe = Escape-SingleQuoted -Value $nodeExe
     # Use Out-File -Encoding utf8 so logs stay readable (PowerShell native
     # redirection writes UTF-16 with NUL separators on Windows).
-    $runtimeCommand = "& '$escapedNodeExe' '$escapedEntry' 2>&1 | Out-File -FilePath '$escapedLog' -Encoding utf8 -Append"
+    $runtimeCommand = "`$env:NODE_NO_WARNINGS='1'; & '$escapedNodeExe' '$escapedEntry' 2>&1 | Out-File -FilePath '$escapedLog' -Encoding utf8 -Append"
     $proc = Start-HiddenRuntimeProcess -RuntimeCommand $runtimeCommand
   } else {
     # Last-resort fallback: long-running npx launcher.
-    $runtimeCommand = "& 'npx.cmd' -y -p node@22 node '$escapedEntry' 2>&1 | Out-File -FilePath '$escapedLog' -Encoding utf8 -Append"
+    $runtimeCommand = "`$env:NODE_NO_WARNINGS='1'; & 'npx.cmd' -y -p node@22 node '$escapedEntry' 2>&1 | Out-File -FilePath '$escapedLog' -Encoding utf8 -Append"
     $proc = Start-HiddenRuntimeProcess -RuntimeCommand $runtimeCommand
   }
 

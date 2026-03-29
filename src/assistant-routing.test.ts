@@ -17,6 +17,22 @@ describe('assistant request routing', () => {
     expect(policy.guidance).toContain('lightly witty tone');
   });
 
+  it('keeps playful meaning-of-life asks on the direct assistant route', () => {
+    const policy = classifyAssistantRequest([
+      { content: "what's the meaning of life?" },
+    ]);
+
+    expect(policy.route).toBe('direct_assistant');
+    expect(policy.mcpTools).toEqual([]);
+  });
+
+  it('keeps simple math asks on the direct assistant route', () => {
+    const policy = classifyAssistantRequest([{ content: 'what is 46 / 6' }]);
+
+    expect(policy.route).toBe('direct_assistant');
+    expect(policy.mcpTools).toEqual([]);
+  });
+
   it('routes reminder and calendar asks to protected assistant handling', () => {
     const policy = classifyAssistantRequest([
       { content: 'Remind me tomorrow at 3pm to call Sam about the calendar.' },
