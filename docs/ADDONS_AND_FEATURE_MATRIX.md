@@ -1,7 +1,7 @@
-# NanoClaw Add-Ons And Feature Matrix
+# Andrea Add-Ons And Feature Matrix
 
-This file is the practical index of major add-ons in this package.
-Use it with [SETUP_AND_FEATURES_GUIDE.md](SETUP_AND_FEATURES_GUIDE.md) during onboarding and operations.
+This file is the practical index of major add-ons in Andrea_NanoBot.
+Use it when deciding what to enable, what to leave out, and which skills are worth the added operational complexity.
 
 ## Core Runtime Features
 

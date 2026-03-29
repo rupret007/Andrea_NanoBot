@@ -1,7 +1,7 @@
-# NanoClaw Setup And Features Guide
+# Andrea Setup And Features Guide
 
-This is the practical operator guide for this combined package.
-It focuses on real local setup, runtime behavior, and how to use the major add-ons.
+This is the practical operator guide for Andrea_NanoBot.
+Use it when you need to install, configure, verify, or operate Andrea on a real machine.
 
 For the in-chat user journey and command reference, also see:
 

@@ -1,0 +1,91 @@
+<svg width="1400" height="520" viewBox="0 0 1400 520" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="88" y1="54" x2="1312" y2="466" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFF7EF"/>
+      <stop offset="0.45" stop-color="#FFF2EA"/>
+      <stop offset="1" stop-color="#FDE5E5"/>
+    </linearGradient>
+    <linearGradient id="halo" x1="168" y1="94" x2="584" y2="430" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F7C9C3"/>
+      <stop offset="1" stop-color="#D6E8F4"/>
+    </linearGradient>
+    <linearGradient id="hair" x1="226" y1="112" x2="538" y2="418" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#4F342E"/>
+      <stop offset="0.45" stop-color="#6E4A42"/>
+      <stop offset="1" stop-color="#8A6154"/>
+    </linearGradient>
+    <linearGradient id="highlight" x1="210" y1="160" x2="404" y2="404" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#C99878"/>
+      <stop offset="1" stop-color="#E8B794"/>
+    </linearGradient>
+    <linearGradient id="shirt" x1="282" y1="332" x2="512" y2="470" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#18263A"/>
+      <stop offset="1" stop-color="#203752"/>
+    </linearGradient>
+    <linearGradient id="wordmark" x1="702" y1="160" x2="1082" y2="314" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1B2435"/>
+      <stop offset="1" stop-color="#355C88"/>
+    </linearGradient>
+    <filter id="shadow" x="0" y="0" width="1400" height="520" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="18" stdDeviation="24" flood-color="#B67973" flood-opacity="0.12"/>
+    </filter>
+  </defs>
+
+  <g filter="url(#shadow)">
+    <rect x="36" y="34" width="1328" height="452" rx="40" fill="url(#bg)"/>
+  </g>
+
+  <circle cx="316" cy="254" r="180" fill="url(#halo)" opacity="0.9"/>
+  <circle cx="1188" cy="106" r="54" fill="#FFD8D1" opacity="0.8"/>
+  <circle cx="1112" cy="408" r="34" fill="#D5E4F3" opacity="0.9"/>
+  <circle cx="1246" cy="356" r="16" fill="#F2B6AF" opacity="0.8"/>
+
+  <path d="M184 414C212 368 214 299 224 238C235 170 275 110 352 108C430 107 480 164 488 238C495 302 482 369 536 414C497 451 433 474 360 474C287 474 224 452 184 414Z" fill="url(#hair)"/>
+  <path d="M248 388C250 333 260 297 276 278H444C464 304 473 343 476 388C442 430 405 454 362 454C320 454 282 431 248 388Z" fill="url(#shirt)"/>
+  <path d="M306 294C319 334 331 361 362 361C393 361 406 334 419 294H306Z" fill="#E7B197"/>
+  <path d="M266 245C266 177 307 127 365 127C424 127 463 178 463 245C463 314 423 366 365 366C308 366 266 314 266 245Z" fill="#F6CCB6"/>
+  <path d="M448 250C447 191 424 140 372 130C404 148 421 177 427 220C432 260 429 300 408 330C439 316 448 286 448 250Z" fill="#E2B39A" opacity="0.85"/>
+  <path d="M280 236C272 199 278 159 303 138C321 122 344 116 370 117C323 135 304 173 298 218C294 247 292 280 277 304C268 286 268 264 280 236Z" fill="#523831"/>
+  <path d="M278 212C286 159 333 118 388 127C437 135 465 175 466 222C449 204 441 173 419 157C393 138 353 139 326 155C305 167 292 188 278 212Z" fill="url(#hair)"/>
+  <path d="M291 196C297 147 338 119 381 124C416 128 447 153 452 194C434 173 418 159 391 151C360 142 324 154 291 196Z" fill="url(#highlight)" opacity="0.35"/>
+  <path d="M352 194C346 188 337 186 329 188C320 190 314 197 312 205" stroke="#51342E" stroke-width="6" stroke-linecap="round"/>
+  <path d="M419 194C413 188 404 186 396 188C387 190 381 197 379 205" stroke="#51342E" stroke-width="6" stroke-linecap="round"/>
+  <ellipse cx="335" cy="224" rx="9" ry="11" fill="#2F231F"/>
+  <ellipse cx="401" cy="224" rx="9" ry="11" fill="#2F231F"/>
+  <ellipse cx="332" cy="221" rx="3" ry="3" fill="#FFF8F2"/>
+  <ellipse cx="398" cy="221" rx="3" ry="3" fill="#FFF8F2"/>
+  <path d="M364 227C360 243 358 258 362 271" stroke="#D2987B" stroke-width="5" stroke-linecap="round"/>
+  <path d="M334 289C354 308 386 309 406 289" stroke="#B35A67" stroke-width="8" stroke-linecap="round"/>
+  <path d="M338 292C352 300 387 301 401 292C392 314 349 314 338 292Z" fill="#FFF9F7"/>
+  <path d="M326 273C339 278 352 281 365 281C378 281 391 278 405 273" stroke="#D88F86" stroke-width="4" stroke-linecap="round" opacity="0.7"/>
+  <path d="M277 251C270 237 256 234 246 239C236 244 231 259 236 272C242 286 256 294 268 290" fill="#F4C8B1"/>
+  <path d="M454 251C461 237 475 234 485 239C495 244 500 259 495 272C489 286 475 294 463 290" fill="#F4C8B1"/>
+  <path d="M275 295C286 337 311 373 353 390" stroke="#8F6459" stroke-width="18" stroke-linecap="round" opacity="0.32"/>
+  <path d="M449 294C438 339 415 374 373 393" stroke="#8F6459" stroke-width="18" stroke-linecap="round" opacity="0.24"/>
+
+  <g transform="translate(658 118)">
+    <rect x="0" y="172" width="470" height="52" rx="26" fill="#FFFFFF" opacity="0.72"/>
+    <text x="0" y="116" fill="url(#wordmark)" font-family="'Segoe UI', Arial, sans-serif" font-size="112" font-weight="700">Andrea</text>
+    <text x="4" y="170" fill="#3E4F67" font-family="'Segoe UI', Arial, sans-serif" font-size="30" font-weight="500">
+      Personal AI assistant for tasks, reminders, research, coding,
+    </text>
+    <text x="4" y="210" fill="#3E4F67" font-family="'Segoe UI', Arial, sans-serif" font-size="30" font-weight="500">
+      calendar workflows, and secure chat-based automation.
+    </text>
+
+    <g transform="translate(0 272)">
+      <rect x="0" y="0" width="150" height="42" rx="21" fill="#243756"/>
+      <text x="75" y="28" text-anchor="middle" fill="#FFFFFF" font-family="'Segoe UI', Arial, sans-serif" font-size="18" font-weight="600">Telegram-first</text>
+
+      <rect x="166" y="0" width="134" height="42" rx="21" fill="#F1B6AE"/>
+      <text x="233" y="28" text-anchor="middle" fill="#40202B" font-family="'Segoe UI', Arial, sans-serif" font-size="18" font-weight="700">Cursor-ready</text>
+
+      <rect x="316" y="0" width="154" height="42" rx="21" fill="#D5E4F3"/>
+      <text x="393" y="28" text-anchor="middle" fill="#28435E" font-family="'Segoe UI', Arial, sans-serif" font-size="18" font-weight="700">Per-chat skills</text>
+    </g>
+
+    <text x="3" y="372" fill="#6C5B5C" font-family="'Segoe UI', Arial, sans-serif" font-size="22" font-weight="500">
+      Built on NanoClaw isolation, expanded with curated OpenClaw skills.
+    </text>
+  </g>
+</svg>

@@ -1,7 +1,7 @@
-# Channel Commands And Onboarding
+# Andrea Channel Commands And Onboarding
 
-This guide covers the user-facing chat experience for Andrea/NanoClaw, especially on Telegram.
-Use it when you want a simple explanation of how people should interact with the bot once setup is complete.
+This guide covers the user-facing chat experience for Andrea, especially on Telegram.
+Use it when you want a simple but complete explanation of how people should interact with the bot once setup is complete.
 
 ## 1) How Chat UX Works
 

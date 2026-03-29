@@ -1,6 +1,7 @@
-# Testing And Release Runbook
+# Andrea Testing And Release Runbook
 
-This runbook defines how to validate NanoClaw end-to-end for every major iteration.
+This runbook defines how to validate Andrea_NanoBot end-to-end for every major iteration.
+Use it before major merges, main-branch pushes, or live deployment changes.
 
 ## Goals
 
