@@ -80,6 +80,12 @@ import {
   getAmazonBusinessStatus,
 } from './amazon-business.js';
 import {
+  type AlexaRuntime,
+  formatAlexaStatusMessage,
+  getAlexaStatus,
+  startAlexaServer,
+} from './alexa.js';
+import {
   approveAmazonPurchaseRequest,
   cancelAmazonPurchaseRequest,
   createAmazonPurchaseRequest,
@@ -837,11 +843,19 @@ async function main(): Promise<void> {
   }
 
   restoreRemoteControl();
+  let alexaRuntime: AlexaRuntime | null = null;
 
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
     await queue.shutdown(10000);
+    if (alexaRuntime) {
+      await alexaRuntime
+        .close()
+        .catch((err) =>
+          logger.warn({ err }, 'Alexa voice ingress shutdown failed'),
+        );
+    }
     for (const ch of channels) await ch.disconnect();
     process.exit(0);
   };
@@ -888,6 +902,11 @@ async function main(): Promise<void> {
   const CURSOR_ARTIFACTS_COMMANDS = new Set([
     '/cursor-artifacts',
     '/cursor_artifacts',
+  ]);
+  const ALEXA_STATUS_COMMANDS = new Set([
+    '/alexa',
+    '/alexa-status',
+    '/alexa_status',
   ]);
   const AMAZON_STATUS_COMMANDS = new Set(['/amazon-status', '/amazon_status']);
   const AMAZON_SEARCH_COMMANDS = new Set(['/amazon-search', '/amazon_search']);
@@ -1040,6 +1059,14 @@ async function main(): Promise<void> {
         .filter((line): line is string => Boolean(line))
         .join('\n\n'),
     );
+  }
+
+  async function handleAlexaStatus(chatJid: string): Promise<void> {
+    const channel = findChannel(channels, chatJid);
+    if (!channel) return;
+
+    const status = alexaRuntime?.getStatus() || getAlexaStatus();
+    await channel.sendMessage(chatJid, formatAlexaStatusMessage(status));
   }
 
   async function handleAmazonSearch(
@@ -1700,6 +1727,13 @@ async function main(): Promise<void> {
         return;
       }
 
+      if (ALEXA_STATUS_COMMANDS.has(commandToken)) {
+        handleAlexaStatus(chatJid).catch((err) =>
+          logger.error({ err, chatJid }, 'Alexa status command error'),
+        );
+        return;
+      }
+
       if (AMAZON_SEARCH_COMMANDS.has(commandToken)) {
         const query = rawTrimmed.split(/\s+/).slice(1).join(' ').trim();
         if (!query) {
@@ -1878,6 +1912,12 @@ async function main(): Promise<void> {
   if (channels.length === 0) {
     logger.fatal('No channels connected');
     process.exit(1);
+  }
+
+  try {
+    alexaRuntime = await startAlexaServer();
+  } catch (err) {
+    logger.error({ err }, 'Alexa voice ingress failed to start');
   }
 
   // Start subsystems (independently of connection handler)

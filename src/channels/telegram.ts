@@ -109,6 +109,7 @@ export function buildTelegramCommandsText(): string {
     '- `/cursor_followup <agent_id> <text>` - send follow-up to a Cursor job',
     '- `/cursor_conversation <agent_id> [limit]` - fetch recent conversation messages from a Cursor job',
     '- `/cursor_artifacts <agent_id>` - list tracked artifacts for a Cursor job',
+    '- `/alexa_status` - show Alexa voice ingress readiness and security mode',
     '- `/amazon_status` - show Amazon shopping readiness and safety mode',
     '- `/amazon_search <keywords>` - search Amazon Business products',
     '- `/purchase_request <asin> <offer_id> [quantity]` - prepare an approval-gated purchase request',
@@ -128,6 +129,7 @@ export function buildTelegramFeaturesText(
     '',
     '- To-do lists, reminders, and recurring tasks',
     '- Research and summaries',
+    '- Alexa voice ingress so you can talk to Andrea out loud',
     '- Project and coding help',
     '- Amazon shopping search with explicit approval before any order submission',
     '- Enable/disable vetted community skills per chat',
@@ -137,13 +139,13 @@ export function buildTelegramFeaturesText(
 }
 
 function buildTelegramDescriptionText(assistantName = ASSISTANT_NAME): string {
-  return `${assistantName} helps with tasks, reminders, research, coding, Amazon shopping approvals, and approved per-chat skills. In DM, use /registermain to set up your main control chat.`;
+  return `${assistantName} helps with tasks, reminders, research, coding, Alexa voice access, Amazon shopping approvals, and approved per-chat skills. In DM, use /registermain to set up your main control chat.`;
 }
 
 function buildTelegramShortDescriptionText(
   assistantName = ASSISTANT_NAME,
 ): string {
-  return `${assistantName}: tasks, reminders, research, coding, shopping approvals, and chat-specific skills.`;
+  return `${assistantName}: tasks, reminders, research, Alexa voice, coding, shopping approvals, and chat-specific skills.`;
 }
 
 async function sendTelegramMessage(

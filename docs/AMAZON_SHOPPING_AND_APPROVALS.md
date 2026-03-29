@@ -204,6 +204,12 @@ Official references used:
 - Amazon trial-mode order validation docs
 - Product Advertising API docs for broader Amazon ecosystem context
 
+Practical product note:
+
+- Andrea can use OpenAI-backed models for product research, comparison, and recommendation
+- this repo does not rely on an OpenAI-native checkout API
+- actual order execution in this codebase stays on the guarded Amazon Business approval path
+
 Open-source repos reviewed while shaping this:
 
 - `aws/nova-act`

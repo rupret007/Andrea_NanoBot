@@ -17,6 +17,7 @@ For the in-chat user journey and command reference, also see:
   - global cache
   - explicit per-chat enable/disable
 - Anthropic-compatible model routing with OpenAI-key-backed gateway support.
+- Alexa custom-skill voice ingress with signed-request verification.
 - Amazon Business product search and approval-gated purchasing.
 
 ## 1) Quick Start (Recommended Path)
@@ -202,6 +203,38 @@ AMAZON_BUSINESS_SHIPPING_COUNTRY_CODE=US
 Full details:
 
 - [AMAZON_SHOPPING_AND_APPROVALS.md](AMAZON_SHOPPING_AND_APPROVALS.md)
+
+### Option D: Alexa Voice
+
+Andrea can expose a custom Alexa skill endpoint so you can talk to the same assistant out loud.
+
+Minimum:
+
+```bash
+ALEXA_SKILL_ID=amzn1.ask.skill.xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+```
+
+Recommended first rollout:
+
+```bash
+ALEXA_HOST=127.0.0.1
+ALEXA_PORT=4300
+ALEXA_PATH=/alexa
+ALEXA_VERIFY_SIGNATURE=true
+ALEXA_ALLOWED_USER_IDS=amzn1.ask.account.your-user-id
+ALEXA_TARGET_GROUP_FOLDER=main
+```
+
+Practical notes:
+
+- Alexa requires an HTTPS endpoint, so local dev usually sits behind a tunnel or reverse proxy.
+- `ALEXA_ALLOWED_USER_IDS` is the easiest security rail for a private skill rollout.
+- `ALEXA_TARGET_GROUP_FOLDER=main` lets Alexa share the same core Andrea context as your Telegram main chat.
+- Use `/alexa_status` in Telegram to confirm that the listener actually started.
+
+Full details:
+
+- [ALEXA_VOICE_INTEGRATION.md](ALEXA_VOICE_INTEGRATION.md)
 
 ## 5) Channel Setup And Main-Chat Responsibilities
 

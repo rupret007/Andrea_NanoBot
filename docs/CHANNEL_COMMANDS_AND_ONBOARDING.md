@@ -72,6 +72,10 @@ Cursor and remote-control commands:
 - `/cursor_remote` - start the remote control bridge from the main control chat
 - `/cursor_remote_end` - end the remote control bridge
 
+Voice and Alexa commands:
+
+- `/alexa_status` - show whether Alexa voice ingress is configured, listening, and locked down the way you expect
+
 Amazon shopping commands:
 
 - `/amazon_status` - show whether Amazon Business search and purchase flow are configured
@@ -90,6 +94,7 @@ Typical jobs:
 - to-do lists and reminders
 - recurring scheduled tasks
 - research and summaries
+- voice access through Alexa while keeping Andrea as the same assistant
 - Amazon shopping with explicit approval before any order submission
 - coding help and repo work
 - community skill discovery and enablement per chat
@@ -134,12 +139,14 @@ If people are confused in the channel, start here:
 - use `/chatid` to confirm the current chat identity
 - use `/cursor_status` or `/cursor_test` when testing Cursor-backed routing
 - use `/cursor_jobs` and `/cursor_sync <agent_id>` when debugging Cursor cloud job lifecycle
+- use `/alexa_status` before testing the Alexa skill endpoint
 - use `/amazon_status` before testing shopping
 - use `/purchase_requests` if someone forgot which request id Andrea already prepared
 
 For operator-side troubleshooting, also see:
 
 - [SETUP_AND_FEATURES_GUIDE.md](SETUP_AND_FEATURES_GUIDE.md)
+- [ALEXA_VOICE_INTEGRATION.md](ALEXA_VOICE_INTEGRATION.md)
 - [AMAZON_SHOPPING_AND_APPROVALS.md](AMAZON_SHOPPING_AND_APPROVALS.md)
 - [DEBUG_CHECKLIST.md](DEBUG_CHECKLIST.md)
 - [TESTING_AND_RELEASE_RUNBOOK.md](TESTING_AND_RELEASE_RUNBOOK.md)

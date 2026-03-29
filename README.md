@@ -13,6 +13,7 @@
 <p align="center">
   <a href="docs/SETUP_AND_FEATURES_GUIDE.md">Setup Guide</a>&nbsp; | &nbsp;
   <a href="docs/CHANNEL_COMMANDS_AND_ONBOARDING.md">Chat Commands</a>&nbsp; | &nbsp;
+  <a href="docs/ALEXA_VOICE_INTEGRATION.md">Alexa Voice</a>&nbsp; | &nbsp;
   <a href="docs/AMAZON_SHOPPING_AND_APPROVALS.md">Amazon Shopping</a>&nbsp; | &nbsp;
   <a href="docs/ADDONS_AND_FEATURE_MATRIX.md">Add-On Matrix</a>&nbsp; | &nbsp;
   <a href="docs/TESTING_AND_RELEASE_RUNBOOK.md">Testing Runbook</a>&nbsp; | &nbsp;
@@ -29,6 +30,7 @@ This repo turns a secure containerized agent runtime into a personal assistant t
 - manage to-do lists and reminders
 - run recurring automations and check-ins
 - research and summarize information
+- talk to Andrea through Alexa without creating a second assistant identity
 - search Amazon Business products and require explicit approval before purchase flow
 - help with code, repos, and technical tasks
 - use approved community skills without exposing every chat to every capability
@@ -78,6 +80,7 @@ Then use this setup flow:
 5. In Telegram, run `/start`
 6. In Telegram, run `/registermain`
 7. In Telegram, run `/help`
+8. Optionally add Alexa voice with [docs/ALEXA_VOICE_INTEGRATION.md](docs/ALEXA_VOICE_INTEGRATION.md)
 
 ## Two Command Surfaces
 
@@ -116,6 +119,7 @@ These run inside Telegram after the bot is live:
 - `/cursor_followup <agent_id> <text>`
 - `/cursor_conversation <agent_id> [limit]`
 - `/cursor_artifacts <agent_id>`
+- `/alexa_status`
 - `/amazon_status`
 - `/amazon_search <keywords>`
 - `/purchase_request <asin> <offer_id> [quantity]`
@@ -131,6 +135,7 @@ These run inside Telegram after the bot is live:
 
 - track tasks and simple to-do lists
 - set reminders and recurring follow-ups
+- use Alexa voice while keeping Andrea as the one public assistant personality
 - search Amazon Business and prepare approval-gated purchase requests
 - summarize conversations and notes
 - run lightweight personal workflow automation
@@ -190,6 +195,7 @@ Andrea currently supports:
 
 - Node.js 22.x
 - Docker, Podman, and Apple Container
+- Alexa custom-skill voice ingress through a secure HTTPS endpoint
 - Anthropic-compatible model endpoints
 - OpenAI-key-backed gateways exposed through Anthropic-compatible APIs
 - 9router / Cursor-backed routing paths
@@ -203,6 +209,7 @@ Useful runtime validation commands:
 /cursor_test
 /cursor_jobs
 /cursor_create Fix flaky tests in this repo and open a PR
+/alexa_status
 /amazon_status
 /amazon_search ergonomic keyboard
 ```
@@ -225,6 +232,8 @@ Use the docs based on what you are trying to do:
   for Telegram onboarding, chat UX, and command reference
 - [docs/AMAZON_SHOPPING_AND_APPROVALS.md](docs/AMAZON_SHOPPING_AND_APPROVALS.md)
   for Amazon Business setup, safety rails, and shopping commands
+- [docs/ALEXA_VOICE_INTEGRATION.md](docs/ALEXA_VOICE_INTEGRATION.md)
+  for Alexa setup, signed endpoint behavior, and the ready-to-import interaction model
 - [docs/ADDONS_AND_FEATURE_MATRIX.md](docs/ADDONS_AND_FEATURE_MATRIX.md)
   for deciding which skills and add-ons to enable
 - [docs/TESTING_AND_RELEASE_RUNBOOK.md](docs/TESTING_AND_RELEASE_RUNBOOK.md)
