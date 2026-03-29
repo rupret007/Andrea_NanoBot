@@ -115,6 +115,14 @@ interface RouteSignal {
   reason: string;
 }
 
+const EXPLICIT_CONTROL_PLANE_SIGNALS: RouteSignal[] = [
+  {
+    pattern:
+      /^\/(?:cursor|cursor_|cursor-|jobs?|status|pause|resume|cancel|sync|stop)/i,
+    reason: 'matched explicit control command',
+  },
+];
+
 const CONTROL_PLANE_SIGNALS: RouteSignal[] = [
   {
     pattern:
@@ -126,22 +134,17 @@ const CONTROL_PLANE_SIGNALS: RouteSignal[] = [
       /\b(cursor|job|jobs|agent|agents|task|tasks|run|runs|queue|artifact|artifacts|work)\b[\s\S]{0,60}\b(status|list|show|inspect|sync|refresh|pause|resume|cancel|stop|retry|follow[- ]?up|continue)\b/i,
     reason: 'matched operational control target',
   },
-  {
-    pattern:
-      /^\/(?:cursor|cursor_|cursor-|jobs?|status|pause|resume|cancel|sync|stop)/i,
-    reason: 'matched explicit control command',
-  },
 ];
 
 const CODE_PLANE_SIGNALS: RouteSignal[] = [
   {
     pattern:
-      /\b(implement|fix|debug|refactor|patch|write|add|update|rename|build|compile|test|review|commit|ship)\b[\s\S]{0,80}\b(code|repo|repository|bug|feature|test|tests|pr\b|pull request|branch|function|file|cursor|integration|api)\b/i,
+      /\b(implement|fix|debug|refactor|patch|write|add|update|rename|build|compile|test|review|commit|ship)\b[\s\S]{0,80}\b(code|repo|repository|bug|feature|test|tests|pr\b|pull request|branch|function|file|command|handler|route|routing|logic|module|integration|api)\b/i,
     reason: 'matched coding intent and engineering target',
   },
   {
     pattern:
-      /\b(code|repo|repository|bug|feature|tests?|pr\b|pull request|branch|function|file|integration|api)\b[\s\S]{0,80}\b(implement|fix|debug|refactor|patch|write|add|update|rename|build|compile|test|review|commit|ship)\b/i,
+      /\b(code|repo|repository|bug|feature|tests?|pr\b|pull request|branch|function|file|command|handler|route|routing|logic|module|integration|api)\b[\s\S]{0,80}\b(implement|fix|debug|refactor|patch|write|add|update|rename|build|compile|test|review|commit|ship)\b/i,
     reason: 'matched engineering target and coding action',
   },
 ];
@@ -228,6 +231,20 @@ function evaluateSignals(
   return null;
 }
 
+function shouldUseCombinedContext(lastContent: string): boolean {
+  if (!lastContent) return true;
+
+  const normalized = lastContent.trim().toLowerCase();
+  if (!normalized) return true;
+
+  // Follow-up approvals and terse references should inherit the immediate
+  // conversation context. Rich new asks should stand on their own so an older
+  // control/helper message does not force the wrong route.
+  return /^(?:yes|yeah|yep|ok|okay|sure|sounds good|please do|do it|go ahead|continue|retry|enable it|disable it|install it|stop it|pause it|resume it|sync it|that one|this one|the first one|the second one|use that|use this)\b/.test(
+    normalized,
+  );
+}
+
 function createPolicy(
   route: AssistantRequestRoute,
   reason: string,
@@ -312,16 +329,28 @@ export function classifyAssistantRequest(
     .filter(Boolean);
   const lastContent = contents.at(-1) || '';
   const combinedContent = contents.join('\n');
-  const candidates = dedupe([lastContent, combinedContent]).filter(Boolean);
+  const lastOnly = dedupe([lastContent]).filter(Boolean);
+  const candidates = dedupe([
+    ...lastOnly,
+    ...(shouldUseCombinedContext(lastContent) ? [combinedContent] : []),
+  ]).filter(Boolean);
 
-  const controlReason = evaluateSignals(candidates, CONTROL_PLANE_SIGNALS);
-  if (controlReason) {
-    return createPolicy('control_plane', controlReason);
+  const explicitControlReason = evaluateSignals(
+    lastOnly,
+    EXPLICIT_CONTROL_PLANE_SIGNALS,
+  );
+  if (explicitControlReason) {
+    return createPolicy('control_plane', explicitControlReason);
   }
 
   const codeReason = evaluateSignals(candidates, CODE_PLANE_SIGNALS);
   if (codeReason) {
     return createPolicy('code_plane', codeReason);
+  }
+
+  const controlReason = evaluateSignals(candidates, CONTROL_PLANE_SIGNALS);
+  if (controlReason) {
+    return createPolicy('control_plane', controlReason);
   }
 
   const helperReason = evaluateSignals(candidates, ADVANCED_HELPER_SIGNALS);

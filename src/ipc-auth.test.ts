@@ -48,6 +48,7 @@ let followedCursorAgents: Array<{ groupFolder: string; agentId: string }>;
 let stoppedCursorAgents: Array<{ groupFolder: string; agentId: string }>;
 let syncedCursorAgents: Array<{ groupFolder: string; agentId: string }>;
 let cursorChangedCount: number;
+let sentMessages: Array<{ jid: string; text: string }>;
 
 beforeEach(() => {
   _initTestDatabase();
@@ -65,6 +66,7 @@ beforeEach(() => {
   stoppedCursorAgents = [];
   syncedCursorAgents = [];
   cursorChangedCount = 0;
+  sentMessages = [];
 
   // Populate DB as well
   setRegisteredGroup('main@g.us', MAIN_GROUP);
@@ -72,7 +74,9 @@ beforeEach(() => {
   setRegisteredGroup('third@g.us', THIRD_GROUP);
 
   deps = {
-    sendMessage: async () => {},
+    sendMessage: async (jid, text) => {
+      sentMessages.push({ jid, text });
+    },
     registeredGroups: () => groups,
     registerGroup: (jid, group) => {
       groups[jid] = group;
@@ -695,6 +699,35 @@ describe('cursor agent authorization', () => {
       { groupFolder: 'other-group', agentId: 'bc_123' },
     ]);
     expect(cursorChangedCount).toBe(3);
+  });
+});
+
+describe('user-facing IPC failures', () => {
+  it('sanitizes raw helper errors before sending them back to the chat', async () => {
+    deps.enableOpenClawSkill = async () => {
+      throw new Error(
+        '401 unauthorized for https://cursor.example/v1 using token sk-proj-secret',
+      );
+    };
+
+    await processTaskIpc(
+      {
+        type: 'enable_openclaw_skill',
+        skill_url: 'https://clawskills.sh/skills/demo-sample',
+        targetJid: 'other@g.us',
+      },
+      'whatsapp_main',
+      true,
+      deps,
+    );
+
+    expect(sentMessages).toHaveLength(1);
+    expect(sentMessages[0].jid).toBe('other@g.us');
+    expect(sentMessages[0].text).toBe(
+      "I couldn't enable that community skill. The external integration credentials were rejected.",
+    );
+    expect(sentMessages[0].text).not.toContain('https://cursor.example/v1');
+    expect(sentMessages[0].text).not.toContain('sk-proj-secret');
   });
 });
 

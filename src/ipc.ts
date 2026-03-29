@@ -26,6 +26,7 @@ import {
 } from './cursor-jobs.js';
 import { formatOutbound } from './router.js';
 import { RegisteredGroup } from './types.js';
+import { formatUserFacingOperationFailure } from './user-facing-error.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
@@ -531,7 +532,10 @@ export async function processTaskIpc(
           );
           await deps.sendMessage(
             targetJid,
-            `I couldn't enable that community skill: ${err instanceof Error ? err.message : String(err)}`,
+            formatUserFacingOperationFailure(
+              "I couldn't enable that community skill",
+              err,
+            ),
           );
         }
       } else {
@@ -600,7 +604,10 @@ export async function processTaskIpc(
           );
           await deps.sendMessage(
             targetJid,
-            `I couldn't disable that community skill: ${err instanceof Error ? err.message : String(err)}`,
+            formatUserFacingOperationFailure(
+              "I couldn't disable that community skill",
+              err,
+            ),
           );
         }
       } else {
@@ -672,7 +679,10 @@ export async function processTaskIpc(
           );
           await deps.sendMessage(
             targetJid,
-            `I couldn't start that Cursor agent job: ${err instanceof Error ? err.message : String(err)}`,
+            formatUserFacingOperationFailure(
+              "I couldn't start that Cursor agent job",
+              err,
+            ),
           );
         }
       } else {
@@ -730,7 +740,10 @@ export async function processTaskIpc(
           );
           await deps.sendMessage(
             targetJid,
-            `I couldn't send that follow-up to Cursor agent ${data.cursor_agent_id}: ${err instanceof Error ? err.message : String(err)}`,
+            formatUserFacingOperationFailure(
+              `I couldn't send that follow-up to Cursor agent ${data.cursor_agent_id}`,
+              err,
+            ),
           );
         }
       } else {
@@ -787,7 +800,10 @@ export async function processTaskIpc(
           );
           await deps.sendMessage(
             targetJid,
-            `I couldn't stop Cursor agent ${data.cursor_agent_id}: ${err instanceof Error ? err.message : String(err)}`,
+            formatUserFacingOperationFailure(
+              `I couldn't stop Cursor agent ${data.cursor_agent_id}`,
+              err,
+            ),
           );
         }
       } else {
@@ -844,7 +860,10 @@ export async function processTaskIpc(
           );
           await deps.sendMessage(
             targetJid,
-            `I couldn't sync Cursor agent ${data.cursor_agent_id}: ${err instanceof Error ? err.message : String(err)}`,
+            formatUserFacingOperationFailure(
+              `I couldn't sync Cursor agent ${data.cursor_agent_id}`,
+              err,
+            ),
           );
         }
       } else {

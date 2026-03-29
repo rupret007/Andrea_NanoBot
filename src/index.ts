@@ -98,6 +98,10 @@ import {
   stopCursorAgent,
   syncCursorAgent,
 } from './cursor-jobs.js';
+import {
+  formatUserFacingOperationFailure,
+  getUserFacingErrorDetail,
+} from './user-facing-error.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -969,7 +973,7 @@ async function main(): Promise<void> {
       return [
         '*Cursor Cloud Agents Probe*',
         '- Status: failed',
-        `- Detail: ${err instanceof Error ? err.message : String(err)}`,
+        `- Detail: ${getUserFacingErrorDetail(err)}`,
       ].join('\n');
     }
   }
@@ -1062,7 +1066,7 @@ async function main(): Promise<void> {
     } catch (err) {
       await channel.sendMessage(
         chatJid,
-        `Cursor create failed: ${err instanceof Error ? err.message : String(err)}`,
+        formatUserFacingOperationFailure('Cursor create failed', err),
       );
     }
   }
@@ -1115,7 +1119,10 @@ async function main(): Promise<void> {
     } catch (err) {
       await channel.sendMessage(
         chatJid,
-        `Cursor conversation fetch failed for ${agentId}: ${err instanceof Error ? err.message : String(err)}`,
+        formatUserFacingOperationFailure(
+          `Cursor conversation fetch failed for ${agentId}`,
+          err,
+        ),
       );
     }
   }
@@ -1210,7 +1217,10 @@ async function main(): Promise<void> {
     } catch (err) {
       await channel.sendMessage(
         chatJid,
-        `Cursor sync failed for ${agentId}: ${err instanceof Error ? err.message : String(err)}`,
+        formatUserFacingOperationFailure(
+          `Cursor sync failed for ${agentId}`,
+          err,
+        ),
       );
     }
   }
@@ -1245,7 +1255,10 @@ async function main(): Promise<void> {
     } catch (err) {
       await channel.sendMessage(
         chatJid,
-        `Cursor stop failed for ${agentId}: ${err instanceof Error ? err.message : String(err)}`,
+        formatUserFacingOperationFailure(
+          `Cursor stop failed for ${agentId}`,
+          err,
+        ),
       );
     }
   }
@@ -1282,7 +1295,10 @@ async function main(): Promise<void> {
     } catch (err) {
       await channel.sendMessage(
         chatJid,
-        `Cursor follow-up failed for ${agentId}: ${err instanceof Error ? err.message : String(err)}`,
+        formatUserFacingOperationFailure(
+          `Cursor follow-up failed for ${agentId}`,
+          err,
+        ),
       );
     }
   }

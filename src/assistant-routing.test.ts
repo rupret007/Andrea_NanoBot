@@ -13,6 +13,7 @@ describe('assistant request routing', () => {
 
     expect(policy.route).toBe('direct_assistant');
     expect(policy.mcpTools).toEqual([]);
+    expect(policy.builtinTools).not.toContain('Bash');
   });
 
   it('routes reminder and calendar asks to protected assistant handling', () => {
@@ -23,6 +24,7 @@ describe('assistant request routing', () => {
     expect(policy.route).toBe('protected_assistant');
     expect(policy.mcpTools).toContain('mcp__nanoclaw__schedule_task');
     expect(policy.mcpTools).not.toContain('mcp__nanoclaw__create_cursor_agent');
+    expect(policy.builtinTools).not.toContain('Bash');
   });
 
   it('routes operational status and stop asks to control plane handling', () => {
@@ -33,6 +35,7 @@ describe('assistant request routing', () => {
     expect(policy.route).toBe('control_plane');
     expect(policy.mcpTools).toContain('mcp__nanoclaw__list_cursor_agents');
     expect(policy.mcpTools).not.toContain('mcp__nanoclaw__create_cursor_agent');
+    expect(policy.builtinTools).not.toContain('Bash');
   });
 
   it('routes community skill asks to advanced helper handling', () => {
@@ -61,9 +64,44 @@ describe('assistant request routing', () => {
     expect(policy.mcpTools).toContain('mcp__nanoclaw__create_cursor_agent');
   });
 
+  it('routes engineering work about stop commands to code plane instead of control plane', () => {
+    const policy = classifyAssistantRequest([
+      {
+        content:
+          'Implement the stop command handler for cursor jobs and add tests.',
+      },
+    ]);
+
+    expect(policy.route).toBe('code_plane');
+  });
+
+  it('treats slash control commands as control plane work', () => {
+    const policy = classifyAssistantRequest([{ content: '/cursor_jobs' }]);
+
+    expect(policy.route).toBe('control_plane');
+  });
+
+  it('does not let an older heavy request override a later direct user question', () => {
+    const policy = classifyAssistantRequest([
+      { content: 'Search the OpenClaw catalog and enable a calendar skill.' },
+      { content: 'Actually, what is the weather tomorrow in Chicago?' },
+    ]);
+
+    expect(policy.route).toBe('protected_assistant');
+  });
+
+  it('uses combined context for terse follow-up approvals', () => {
+    const policy = classifyAssistantRequest([
+      { content: 'Search the OpenClaw catalog and enable a calendar skill.' },
+      { content: 'Yes, do it.' },
+    ]);
+
+    expect(policy.route).toBe('advanced_helper');
+  });
+
   it('defaults scheduled tasks to protected assistant handling when the prompt is otherwise plain', () => {
     const policy = classifyScheduledTaskRequest(
-      'Send me a short daily reminder to review tomorrow’s plan.',
+      "Send me a short daily reminder to review tomorrow's plan.",
     );
 
     expect(policy.route).toBe('protected_assistant');

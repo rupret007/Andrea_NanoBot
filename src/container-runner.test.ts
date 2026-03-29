@@ -95,6 +95,7 @@ function createFakeProcess() {
 }
 
 let fakeProc: ReturnType<typeof createFakeProcess>;
+let stdinBuffer = '';
 
 // Mock child_process.spawn
 vi.mock('child_process', async () => {
@@ -145,6 +146,10 @@ describe('container-runner timeout behavior', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     fakeProc = createFakeProcess();
+    stdinBuffer = '';
+    fakeProc.stdin.on('data', (chunk) => {
+      stdinBuffer += chunk.toString();
+    });
   });
 
   afterEach(() => {
@@ -262,5 +267,45 @@ describe('container-runner timeout behavior', () => {
       '-e',
       'TZ=America/Chicago',
     ]);
+  });
+
+  it('serializes request policy into container stdin for helper boundary enforcement', async () => {
+    const onOutput = vi.fn(async () => {});
+    const resultPromise = runContainerAgent(
+      testGroup,
+      {
+        ...testInput,
+        requestPolicy: {
+          route: 'protected_assistant',
+          reason: 'matched assistant scheduling or lookup intent',
+          builtinTools: ['Read', 'WebSearch'],
+          mcpTools: ['mcp__nanoclaw__schedule_task'],
+          guidance: 'Keep Andrea as the only public identity.',
+        },
+      },
+      () => {},
+      onOutput,
+    );
+
+    await vi.advanceTimersByTimeAsync(10);
+
+    const serializedInput = JSON.parse(stdinBuffer);
+    expect(serializedInput.requestPolicy).toMatchObject({
+      route: 'protected_assistant',
+      mcpTools: ['mcp__nanoclaw__schedule_task'],
+      guidance: 'Keep Andrea as the only public identity.',
+    });
+
+    emitOutputMarker(fakeProc, {
+      status: 'success',
+      result: 'Done',
+      newSessionId: 'session-policy',
+    });
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+
+    const result = await resultPromise;
+    expect(result.status).toBe('success');
   });
 });
