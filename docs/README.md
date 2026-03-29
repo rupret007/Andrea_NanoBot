@@ -16,7 +16,7 @@ If you are setting up or running Andrea, read these first:
 | Add voice without adding a second assistant | [ALEXA_VOICE_INTEGRATION.md](ALEXA_VOICE_INTEGRATION.md)                 | Alexa setup, signed endpoint flow, allowlists, and the importable interaction model          |
 | Configure shopping with approval safety     | [AMAZON_SHOPPING_AND_APPROVALS.md](AMAZON_SHOPPING_AND_APPROVALS.md)     | Amazon Business setup, guarded purchase flow, and why Andrea refuses to freestyle with money |
 | Decide which optional features to add       | [ADDONS_AND_FEATURE_MATRIX.md](ADDONS_AND_FEATURE_MATRIX.md)             | Practical map of skills, channels, tooling add-ons, and platform scope                       |
-| Validate a release before shipping          | [TESTING_AND_RELEASE_RUNBOOK.md](TESTING_AND_RELEASE_RUNBOOK.md)         | Repeatable testing and release process                                                       |
+| Validate a release before shipping          | [TESTING_AND_RELEASE_RUNBOOK.md](TESTING_AND_RELEASE_RUNBOOK.md)         | Repeatable testing process, including the three-round stability gate                         |
 
 ## Operator And Debugging Docs
 

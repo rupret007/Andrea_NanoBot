@@ -219,7 +219,9 @@ Useful local validation commands:
 ```bash
 npm run test:major:ci
 npm run test:major
+npm run test:stability
 npm run setup -- --step verify
+npm run services:restart
 ```
 
 ## Documentation Map

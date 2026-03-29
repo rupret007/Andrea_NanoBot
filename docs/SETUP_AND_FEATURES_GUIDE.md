@@ -364,8 +364,30 @@ npm run build
 npm run test
 npm run test:major
 npm run test:major:ci
+npm run test:stability
 npm run setup -- --step verify
+npm run services:start
+npm run services:stop
+npm run services:restart
 ```
+
+Validation runner note:
+
+- `npm run test:major`, `npm run test:major:ci`, and `npm run test:stability` run their internal checks on Node 22 via `npx -p node@22`, which keeps results consistent on hosts where the default Node version is newer.
+
+Windows service lifecycle helpers:
+
+- `npm run services:start` starts the OpenAI gateway (when configured) and NanoClaw runtime.
+- `npm run services:stop` stops NanoClaw runtime processes and the gateway container.
+- `npm run services:restart` runs stop then start in one command.
+
+Startup behavior:
+
+- `npm run setup -- --step service` configures platform-native startup.
+- On Windows this creates a scheduled task (`NanoClaw`) or Startup-folder fallback.
+- On macOS this uses launchd.
+- On Linux this uses systemd (or nohup fallback).
+- So startup is not only a container setting; it is handled by host service manager policy plus runtime startup wrapper logic.
 
 Rebuild bundled marketplace catalog (if `awesome-openclaw-skills` is cloned beside this repo):
 
@@ -413,6 +435,7 @@ Use this exact order:
    - expected: `STATUS: success`
 6. Start service:
    - `npm run setup -- --step service`
+   - optional immediate restart check: `npm run services:restart`
 7. Run marketplace smoke in chat:
    - search a skill
    - explicitly enable one skill

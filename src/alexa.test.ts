@@ -78,6 +78,23 @@ function buildIntentEnvelope(utterance: string) {
   } as unknown as RequestEnvelope;
 }
 
+function buildUnsupportedIntentEnvelope() {
+  return {
+    ...buildBaseEnvelope(),
+    request: {
+      requestId: 'EdwRequestId.999',
+      locale: 'en-US',
+      timestamp: '2026-03-29T08:00:00Z',
+      type: 'IntentRequest',
+      intent: {
+        name: 'UnsupportedIntent',
+        confirmationStatus: 'NONE',
+        slots: {},
+      },
+    },
+  } as unknown as RequestEnvelope;
+}
+
 function extractSpeechText(responseEnvelope: ResponseEnvelope): string {
   const outputSpeech = responseEnvelope.response?.outputSpeech;
   const ssml =
@@ -217,6 +234,14 @@ describe('createAlexaSkill', () => {
 
     expect(extractSpeechText(response)).toContain('voice-service snag');
     expect(extractSpeechText(response)).not.toContain('sk-test-secret');
+  });
+
+  it('responds gracefully to unsupported intents without invoking the bridge', async () => {
+    const skill = createAlexaSkill(buildConfig());
+    const response = await skill.invoke(buildUnsupportedIntentEnvelope());
+
+    expect(extractSpeechText(response)).toContain('can help with research');
+    expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
   });
 });
 

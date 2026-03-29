@@ -427,6 +427,29 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
     },
   };
 
+  const UnknownIntentHandler = {
+    canHandle(handlerInput: HandlerInput) {
+      return getRequestType(handlerInput.requestEnvelope) === 'IntentRequest';
+    },
+    handle(handlerInput: HandlerInput) {
+      const authorization = authorizeAlexaRequest(
+        handlerInput.requestEnvelope,
+        config,
+        assistantName,
+      );
+      if (!authorization.ok) {
+        return buildAuthorizationResponse(handlerInput, authorization);
+      }
+
+      return handlerInput.responseBuilder
+        .speak(
+          `${assistantName} can help with research, reminders, shopping prep, and coding support. Try saying: ask Andrea to summarize my priorities for today.`,
+        )
+        .reprompt(DEFAULT_ALEXA_REPROMPT)
+        .getResponse();
+    },
+  };
+
   const SessionEndedRequestHandler = {
     canHandle(handlerInput: HandlerInput) {
       return (
@@ -461,6 +484,7 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
       HelpHandler,
       ExitHandler,
       FallbackHandler,
+      UnknownIntentHandler,
       SessionEndedRequestHandler,
     )
     .addErrorHandlers(ErrorHandler)

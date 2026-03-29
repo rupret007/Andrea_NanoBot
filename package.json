@@ -31,7 +31,12 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:major": "tsx scripts/test-major-iteration.ts",
-    "test:major:ci": "tsx scripts/test-major-iteration.ts --skip-live-verify"
+    "test:major:ci": "tsx scripts/test-major-iteration.ts --skip-live-verify",
+    "test:stability": "tsx scripts/test-stability-gate.ts",
+    "test:stability:live": "tsx scripts/test-stability-gate.ts --with-live-verify",
+    "services:start": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/start-all-services.ps1",
+    "services:stop": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/stop-all-services.ps1",
+    "services:restart": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/restart-all-services.ps1"
   },
   "dependencies": {
     "@onecli-sh/sdk": "^0.2.0",

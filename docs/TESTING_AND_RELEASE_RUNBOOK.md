@@ -9,6 +9,7 @@ Use it before major merges, main-branch pushes, or live deployment changes.
 - keep Windows + Node 22 + container runtime paths reliable
 - validate runtime credentials, channel routing, and registration behavior
 - produce a repeatable process the team can run every time
+- enforce a stability gate of three consecutive full passes before sign-off
 
 ## Test Layers
 
@@ -28,6 +29,10 @@ npm run build
 npm run test:major
 ```
 
+Implementation note:
+
+- `test:major` and `test:major:ci` execute checks with Node 22 through `npx -p node@22` so validation remains deterministic even if your host default Node is newer.
+
 What it runs in order:
 
 1. `format:check`
@@ -39,7 +44,24 @@ What it runs in order:
 
 Use this before each major merge/deploy.
 
-### 3) CI-safe major suite
+### 3) Stability gate (three full successful rounds)
+
+```bash
+npm run test:stability
+```
+
+This runs the full CI-safe major stack three times in a row and fails immediately if any round fails.
+Use this when you want high confidence before a restart, deploy, or branch cut.
+
+For live environments where credential/runtime probes are expected:
+
+```bash
+npm run test:stability:live
+```
+
+That adds `setup -- --step verify` to each round.
+
+### 4) CI-safe major suite
 
 ```bash
 npm run test:major:ci
@@ -64,15 +86,17 @@ Run this on the real host where the bot is deployed.
 
 1. Run:
    - `npm run test:major`
-2. Confirm verify output includes:
+2. Run stability gate:
+   - `npm run test:stability`
+3. Confirm verify output includes:
    - `STATUS: success`
    - `CREDENTIAL_RUNTIME_PROBE: ok`
    - `REGISTERED_GROUPS: >= 1`
    - `SERVICE: running`
-3. Send a real message from a registered chat and confirm:
+4. Send a real message from a registered chat and confirm:
    - message is stored in logs/DB
    - assistant returns a response
-4. If using marketplace features:
+5. If using marketplace features:
    - search a skill
    - enable it in one target chat
    - confirm it is available next message
@@ -89,6 +113,7 @@ Run this on the real host where the bot is deployed.
 ### Service not running
 
 ```bash
+npm run services:restart
 npm run setup -- --step service
 npm run setup -- --step verify
 ```
@@ -119,6 +144,7 @@ npm run test:major:ci
 Before pushing a release branch:
 
 1. `npm run test:major` must pass.
-2. live verify must be green (`STATUS: success`).
-3. update docs if behavior changed (setup/runtime/channels/marketplace/testing).
-4. capture final command outputs in release notes/PR summary.
+2. `npm run test:stability` must pass with `3/3` successful rounds.
+3. live verify must be green (`STATUS: success`) on the operator host.
+4. update docs if behavior changed (setup/runtime/channels/marketplace/testing/services).
+5. capture final command outputs in release notes/PR summary.

@@ -13,6 +13,8 @@ Depending on which channels and features are enabled, Andrea may store:
 - local runtime logs and operational state
 - per-chat working files inside isolated group folders
 
+Andrea runtime logs are designed to redact token-like secrets from emitted error text, but operators should still treat logs as sensitive operational data.
+
 ## Why Andrea Stores It
 
 Andrea stores this information so the bot can:

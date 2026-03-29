@@ -16,11 +16,82 @@ const FULL_RESET = '\x1b[0m';
 const threshold =
   LEVELS[(process.env.LOG_LEVEL as Level) || 'info'] ?? LEVELS.info;
 
+const SENSITIVE_ASSIGNMENT_PATTERN =
+  /\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY|AUTH_KEY|AUTH_TOKEN)[A-Z0-9_]*)=([^\s,;'"`]+)/gi;
+const SENSITIVE_BEARER_PATTERN = /\b(authorization:\s*bearer)\s+[^\s,;'"`]+/gi;
+const GENERIC_BEARER_PATTERN = /\bbearer\s+[a-z0-9._-]{12,}\b/gi;
+const OPENAI_KEY_PATTERN = /\bsk-[a-z0-9][a-z0-9_-]{8,}\b/gi;
+const CURSOR_KEY_PATTERN = /\bcursor_api_[a-z0-9_-]{8,}\b/gi;
+
+export function sanitizeLogString(value: string): string {
+  if (!value) return value;
+  return value
+    .replace(SENSITIVE_ASSIGNMENT_PATTERN, '$1=***')
+    .replace(SENSITIVE_BEARER_PATTERN, '$1 ***')
+    .replace(GENERIC_BEARER_PATTERN, 'Bearer ***')
+    .replace(OPENAI_KEY_PATTERN, 'sk-***')
+    .replace(CURSOR_KEY_PATTERN, 'cursor_api_***');
+}
+
+function sanitizeUnknown(
+  value: unknown,
+  seen = new WeakSet<object>(),
+): unknown {
+  if (typeof value === 'string') return sanitizeLogString(value);
+  if (
+    value == null ||
+    typeof value === 'boolean' ||
+    typeof value === 'number'
+  ) {
+    return value;
+  }
+  if (typeof value === 'bigint') return value.toString();
+
+  if (value instanceof Error) {
+    return {
+      type: value.constructor.name,
+      message: sanitizeLogString(value.message || ''),
+      stack: sanitizeLogString(value.stack || ''),
+    };
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeUnknown(item, seen));
+  }
+
+  if (typeof value === 'object') {
+    if (seen.has(value)) return '[Circular]';
+    seen.add(value);
+
+    const sanitized: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value)) {
+      sanitized[key] = sanitizeUnknown(item, seen);
+    }
+    return sanitized;
+  }
+
+  return sanitizeLogString(String(value));
+}
+
+export function sanitizeLogData(value: unknown): unknown {
+  return sanitizeUnknown(value);
+}
+
+function stringifyLogData(value: unknown): string {
+  try {
+    return JSON.stringify(sanitizeLogData(value));
+  } catch {
+    return JSON.stringify('[Unserializable log data]');
+  }
+}
+
 function formatErr(err: unknown): string {
   if (err instanceof Error) {
-    return `{\n      "type": "${err.constructor.name}",\n      "message": "${err.message}",\n      "stack":\n          ${err.stack}\n    }`;
+    const message = sanitizeLogString(err.message || '');
+    const stack = sanitizeLogString(err.stack || '');
+    return `{\n      "type": "${err.constructor.name}",\n      "message": "${message}",\n      "stack":\n          ${stack}\n    }`;
   }
-  return JSON.stringify(err);
+  return stringifyLogData(err);
 }
 
 function formatData(data: Record<string, unknown>): string {
@@ -29,7 +100,7 @@ function formatData(data: Record<string, unknown>): string {
     if (k === 'err') {
       out += `\n    ${KEY_COLOR}err${RESET}: ${formatErr(v)}`;
     } else {
-      out += `\n    ${KEY_COLOR}${k}${RESET}: ${JSON.stringify(v)}`;
+      out += `\n    ${KEY_COLOR}${k}${RESET}: ${stringifyLogData(v)}`;
     }
   }
   return out;
