@@ -170,7 +170,8 @@ function normalizeTimeoutMs(raw: string | undefined): number {
 function resolveCursorEnv(
   options: CursorCloudStatusOptions = {},
 ): Record<string, string | undefined> {
-  const envFileValues = options.envFileValues ?? readEnvFile([...CURSOR_ENV_KEYS]);
+  const envFileValues =
+    options.envFileValues ?? readEnvFile([...CURSOR_ENV_KEYS]);
   const env = options.env ?? process.env;
 
   return {
@@ -217,7 +218,9 @@ export function resolveCursorCloudConfig(
   };
 }
 
-export function formatCursorCloudStatusMessage(status: CursorCloudStatus): string {
+export function formatCursorCloudStatusMessage(
+  status: CursorCloudStatus,
+): string {
   const lines = [
     '*Cursor Cloud Agents Status*',
     `- Enabled: ${status.enabled ? 'yes' : 'no'}`,
@@ -228,7 +231,9 @@ export function formatCursorCloudStatusMessage(status: CursorCloudStatus): strin
   ];
 
   if (!status.hasApiKey) {
-    lines.push('- Next step: set `CURSOR_API_KEY` to enable Cloud Agents mode.');
+    lines.push(
+      '- Next step: set `CURSOR_API_KEY` to enable Cloud Agents mode.',
+    );
   }
 
   return lines.join('\n');
@@ -243,7 +248,9 @@ function parseJsonSafely(payload: string): unknown {
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === 'object' ? (value as Record<string, unknown>) : null;
+  return value && typeof value === 'object'
+    ? (value as Record<string, unknown>)
+    : null;
 }
 
 function buildBasicAuthHeader(apiKey: string): string {
@@ -251,7 +258,11 @@ function buildBasicAuthHeader(apiKey: string): string {
   return `Basic ${token}`;
 }
 
-function buildUrl(baseUrl: string, path: string, query?: Record<string, string>): string {
+function buildUrl(
+  baseUrl: string,
+  path: string,
+  query?: Record<string, string>,
+): string {
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
   const url = new URL(`${baseUrl}${normalizedPath}`);
   if (query) {
@@ -283,13 +294,15 @@ export class CursorCloudClient {
 
     const modelsRaw = root.models;
     const models = Array.isArray(modelsRaw)
-      ? modelsRaw.filter((entry) => asRecord(entry) !== null).map((entry) => {
-          const row = asRecord(entry)!;
-          return {
-            ...(row as CursorModelRecord),
-            id: String(row.id || row.name || 'unknown'),
-          };
-        })
+      ? modelsRaw
+          .filter((entry) => asRecord(entry) !== null)
+          .map((entry) => {
+            const row = asRecord(entry)!;
+            return {
+              ...(row as CursorModelRecord),
+              id: String(row.id || row.name || 'unknown'),
+            };
+          })
       : [];
 
     return {
@@ -298,35 +311,48 @@ export class CursorCloudClient {
     } as CursorListModelsResponse;
   }
 
-  async createAgent(request: CursorCreateAgentRequest): Promise<CursorAgentRecord> {
+  async createAgent(
+    request: CursorCreateAgentRequest,
+  ): Promise<CursorAgentRecord> {
     return this.request<CursorAgentRecord>('POST', '/v0/agents', request);
   }
 
-  async listAgents(params: {
-    limit?: number;
-    cursor?: string;
-    status?: string;
-  } = {}): Promise<CursorListAgentsResponse> {
+  async listAgents(
+    params: {
+      limit?: number;
+      cursor?: string;
+      status?: string;
+    } = {},
+  ): Promise<CursorListAgentsResponse> {
     const query: Record<string, string> = {};
     if (params.limit && Number.isFinite(params.limit)) {
-      query.limit = String(Math.max(1, Math.min(200, Math.floor(params.limit))));
+      query.limit = String(
+        Math.max(1, Math.min(200, Math.floor(params.limit))),
+      );
     }
     if (params.cursor) query.cursor = params.cursor;
     if (params.status) query.status = params.status;
 
-    const payload = await this.request<unknown>('GET', '/v0/agents', undefined, query);
+    const payload = await this.request<unknown>(
+      'GET',
+      '/v0/agents',
+      undefined,
+      query,
+    );
     const root = asRecord(payload);
     if (!root) return { agents: [] };
 
     const agentsRaw = root.agents;
     const agents = Array.isArray(agentsRaw)
-      ? agentsRaw.filter((entry) => asRecord(entry) !== null).map((entry) => {
-          const row = asRecord(entry)!;
-          return {
-            ...(row as CursorAgentRecord),
-            id: String(row.id || ''),
-          };
-        })
+      ? agentsRaw
+          .filter((entry) => asRecord(entry) !== null)
+          .map((entry) => {
+            const row = asRecord(entry)!;
+            return {
+              ...(row as CursorAgentRecord),
+              id: String(row.id || ''),
+            };
+          })
       : [];
 
     return {
@@ -336,7 +362,10 @@ export class CursorCloudClient {
   }
 
   async getAgent(agentId: string): Promise<CursorAgentRecord> {
-    return this.request<CursorAgentRecord>('GET', `/v0/agents/${encodeURIComponent(agentId)}`);
+    return this.request<CursorAgentRecord>(
+      'GET',
+      `/v0/agents/${encodeURIComponent(agentId)}`,
+    );
   }
 
   async getConversation(agentId: string): Promise<CursorConversationResponse> {

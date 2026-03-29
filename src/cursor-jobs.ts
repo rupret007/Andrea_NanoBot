@@ -35,7 +35,9 @@ function toNullableString(value: unknown): string | null {
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === 'object' ? (value as Record<string, unknown>) : null;
+  return value && typeof value === 'object'
+    ? (value as Record<string, unknown>)
+    : null;
 }
 
 function parsePositiveInt(raw: string | undefined, fallback: number): number {
@@ -205,7 +207,9 @@ function mapDbAgentToView(record: CursorDbAgentRecord): CursorAgentView {
   };
 }
 
-function mapDbArtifactToView(record: CursorAgentArtifactRecord): CursorArtifactView {
+function mapDbArtifactToView(
+  record: CursorAgentArtifactRecord,
+): CursorArtifactView {
   return {
     agentId: record.agent_id,
     absolutePath: record.absolute_path,
@@ -257,7 +261,8 @@ export async function createCursorAgent(
   if (sourcePrUrl) source.prUrl = sourcePrUrl;
 
   const target: CursorCreateAgentRequest['target'] = {};
-  if (params.autoCreatePr !== undefined) target.autoCreatePr = params.autoCreatePr;
+  if (params.autoCreatePr !== undefined)
+    target.autoCreatePr = params.autoCreatePr;
   if (params.openAsCursorGithubApp !== undefined) {
     target.openAsCursorGithubApp = params.openAsCursorGithubApp;
   }
@@ -335,7 +340,9 @@ export async function syncCursorAgent(
       .map((artifact) =>
         mapApiArtifactToDbRecord(params.agentId, artifact, syncedAt),
       )
-      .filter((artifact): artifact is CursorAgentArtifactRecord => artifact !== null);
+      .filter(
+        (artifact): artifact is CursorAgentArtifactRecord => artifact !== null,
+      );
     replaceCursorAgentArtifacts(params.agentId, artifacts);
     artifactViews = artifacts.map(mapDbArtifactToView);
   } catch (err) {
@@ -367,7 +374,9 @@ export async function followupCursorAgent(
   assertValidGroupFolder(params.groupFolder);
   const existing = getCursorAgentById(params.agentId);
   if (!existing) {
-    throw new Error(`Cursor agent ${params.agentId} is not tracked in this workspace`);
+    throw new Error(
+      `Cursor agent ${params.agentId} is not tracked in this workspace`,
+    );
   }
   if (existing.group_folder !== params.groupFolder) {
     throw new Error('Cursor agent belongs to another group');
@@ -400,7 +409,9 @@ export async function stopCursorAgent(
   assertValidGroupFolder(params.groupFolder);
   const existing = getCursorAgentById(params.agentId);
   if (!existing) {
-    throw new Error(`Cursor agent ${params.agentId} is not tracked in this workspace`);
+    throw new Error(
+      `Cursor agent ${params.agentId} is not tracked in this workspace`,
+    );
   }
   if (existing.group_folder !== params.groupFolder) {
     throw new Error('Cursor agent belongs to another group');
@@ -431,7 +442,9 @@ export function listAllStoredCursorAgents(limit = 200): CursorAgentView[] {
   return listAllCursorAgents(limit).map(mapDbAgentToView);
 }
 
-export function listStoredCursorArtifacts(agentId: string): CursorArtifactView[] {
+export function listStoredCursorArtifacts(
+  agentId: string,
+): CursorArtifactView[] {
   return listCursorAgentArtifacts(agentId).map(mapDbArtifactToView);
 }
 
@@ -454,9 +467,14 @@ export async function getCursorAgentConversation(
   assertValidGroupFolder(params.groupFolder);
   const existing = getCursorAgentById(params.agentId);
   if (!existing) {
-    throw new Error(`Cursor agent ${params.agentId} is not tracked in this workspace`);
+    throw new Error(
+      `Cursor agent ${params.agentId} is not tracked in this workspace`,
+    );
   }
-  if (existing.group_folder !== params.groupFolder || existing.chat_jid !== params.chatJid) {
+  if (
+    existing.group_folder !== params.groupFolder ||
+    existing.chat_jid !== params.chatJid
+  ) {
     throw new Error('Cursor agent belongs to another group');
   }
 

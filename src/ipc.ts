@@ -227,7 +227,8 @@ export async function processTaskIpc(
     enableOpenClawSkill;
   const runSkillDisable = deps.disableOpenClawSkill || disableOpenClawSkill;
   const runCreateCursorAgent = deps.createCursorAgent || createCursorAgent;
-  const runFollowupCursorAgent = deps.followupCursorAgent || followupCursorAgent;
+  const runFollowupCursorAgent =
+    deps.followupCursorAgent || followupCursorAgent;
   const runStopCursorAgent = deps.stopCursorAgent || stopCursorAgent;
   const runSyncCursorAgent = deps.syncCursorAgent || syncCursorAgent;
 

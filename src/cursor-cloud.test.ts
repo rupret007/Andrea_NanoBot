@@ -45,7 +45,9 @@ describe('cursor-cloud client', () => {
   it('calls listModels with basic auth', async () => {
     let authHeader = '';
     const fetchImpl = (async (_input: unknown, init?: RequestInit) => {
-      authHeader = String((init?.headers as Record<string, string>).Authorization);
+      authHeader = String(
+        (init?.headers as Record<string, string>).Authorization,
+      );
       return new Response(
         JSON.stringify({
           models: [{ id: 'default', name: 'Default' }],
@@ -121,7 +123,9 @@ describe('cursor-cloud client', () => {
       { fetchImpl },
     );
 
-    await expect(client.listModels()).rejects.toBeInstanceOf(CursorCloudApiError);
+    await expect(client.listModels()).rejects.toBeInstanceOf(
+      CursorCloudApiError,
+    );
     await expect(client.listModels()).rejects.toMatchObject({
       status: 401,
     });

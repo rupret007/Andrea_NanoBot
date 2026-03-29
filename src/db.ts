@@ -955,9 +955,9 @@ export function upsertCursorAgent(record: CursorAgentRecord): void {
 }
 
 export function getCursorAgentById(id: string): CursorAgentRecord | undefined {
-  return db
-    .prepare('SELECT * FROM cursor_agents WHERE id = ?')
-    .get(id) as CursorAgentRecord | undefined;
+  return db.prepare('SELECT * FROM cursor_agents WHERE id = ?').get(id) as
+    | CursorAgentRecord
+    | undefined;
 }
 
 export function listCursorAgentsForGroup(

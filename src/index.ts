@@ -1157,7 +1157,11 @@ async function main(): Promise<void> {
   function refreshCursorSnapshotsForAllGroups(): void {
     const cursorRows = getCursorAgentsSnapshot();
     for (const group of Object.values(registeredGroups)) {
-      writeCursorAgentsSnapshot(group.folder, group.isMain === true, cursorRows);
+      writeCursorAgentsSnapshot(
+        group.folder,
+        group.isMain === true,
+        cursorRows,
+      );
     }
   }
 
@@ -1359,7 +1363,10 @@ async function main(): Promise<void> {
         if (!agentId) {
           const channel = findChannel(channels, chatJid);
           channel
-            ?.sendMessage(chatJid, 'Usage: /cursor_conversation <agent_id> [limit]')
+            ?.sendMessage(
+              chatJid,
+              'Usage: /cursor_conversation <agent_id> [limit]',
+            )
             .catch((err) =>
               logger.error(
                 { err, chatJid },

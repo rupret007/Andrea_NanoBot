@@ -271,13 +271,21 @@ describe('cursor-jobs', () => {
       new Response(
         JSON.stringify({
           messages: [
-            { role: 'user', content: 'First', createdAt: '2026-03-28T18:01:00.000Z' },
+            {
+              role: 'user',
+              content: 'First',
+              createdAt: '2026-03-28T18:01:00.000Z',
+            },
             {
               role: 'assistant',
               content: 'Second',
               createdAt: '2026-03-28T18:02:00.000Z',
             },
-            { role: 'user', content: 'Third', createdAt: '2026-03-28T18:03:00.000Z' },
+            {
+              role: 'user',
+              content: 'Third',
+              createdAt: '2026-03-28T18:03:00.000Z',
+            },
           ],
         }),
         { status: 200 },
