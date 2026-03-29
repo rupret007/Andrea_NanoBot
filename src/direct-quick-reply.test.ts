@@ -48,7 +48,9 @@ describe('direct quick reply', () => {
   });
 
   it('ignores extreme results', () => {
-    const reply = maybeBuildDirectQuickReply([{ content: 'what is 999999999999 * 999999999999' }]);
+    const reply = maybeBuildDirectQuickReply([
+      { content: 'what is 999999999999 * 999999999999' },
+    ]);
 
     expect(reply).toBeNull();
   });
