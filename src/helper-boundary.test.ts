@@ -36,6 +36,21 @@ describe('helper boundary wiring', () => {
     expect(source).toContain('mcp__nanoclaw__approve_amazon_purchase_request');
   });
 
+  it('retries one transient direct-assistant failure without exposing helper errors first', () => {
+    const source = readRepoFile('container/agent-runner/src/index.ts');
+
+    expect(source).toContain("route === 'direct_assistant'");
+    expect(source).toContain('suppressFirstErrorForRetry');
+    expect(source).toContain('suppressedTransientError');
+    expect(source).toContain(
+      'Retrying direct assistant request in recovery mode',
+    );
+    expect(source).toContain('disableMcpServer');
+    expect(source).toContain(
+      'Recovery mode: previous attempt hit a transient execution failure',
+    );
+  });
+
   it('keeps send_message as Andrea-only instead of advertising a second bot identity', () => {
     const source = readRepoFile('container/agent-runner/src/ipc-mcp-stdio.ts');
 

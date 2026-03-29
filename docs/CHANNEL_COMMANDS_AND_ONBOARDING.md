@@ -148,6 +148,10 @@ If people are confused in the channel, start here:
 - use `/amazon_status` before testing shopping
 - use `/purchase_requests` if someone forgot which request id Andrea already prepared
 
+Runtime behavior note:
+
+- for direct conversational asks, Andrea now auto-retries one transient execution failure before surfacing an error message
+
 For operator-side troubleshooting, also see:
 
 - [SETUP_AND_FEATURES_GUIDE.md](SETUP_AND_FEATURES_GUIDE.md)

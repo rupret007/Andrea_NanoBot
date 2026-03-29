@@ -478,10 +478,16 @@ async function runQuery(
   containerInput: ContainerInput,
   sdkEnv: Record<string, string | undefined>,
   resumeAt?: string,
+  options: {
+    fallbackMode?: boolean;
+    suppressFirstErrorForRetry?: boolean;
+    disableMcpServer?: boolean;
+  } = {},
 ): Promise<{
   newSessionId?: string;
   lastAssistantUuid?: string;
   closedDuringQuery: boolean;
+  suppressedTransientError: boolean;
 }> {
   const stream = new MessageStream();
   stream.push(prompt);
@@ -511,6 +517,8 @@ async function runQuery(
   let lastAssistantUuid: string | undefined;
   let messageCount = 0;
   let resultCount = 0;
+  let successResultCount = 0;
+  let suppressedTransientError = false;
   const requestPolicy = normalizeRequestPolicy(containerInput.requestPolicy);
 
   // Load global CLAUDE.md as additional system context (shared across all groups)
@@ -540,6 +548,14 @@ async function runQuery(
     log(`Using SDK model override: ${selectedModel}`);
   }
 
+  const recoveryGuidance = options.fallbackMode
+    ? 'Recovery mode: previous attempt hit a transient execution failure. Answer directly and concisely without relying on MCP helper orchestration unless absolutely necessary.'
+    : null;
+  const useMcpServer = options.disableMcpServer !== true;
+  const allowedTools = options.fallbackMode
+    ? dedupeTools(['WebSearch', 'WebFetch', 'TodoWrite'])
+    : dedupeTools([...requestPolicy.builtinTools, ...requestPolicy.mcpTools]);
+
   for await (const message of query({
     prompt: stream,
     options: {
@@ -550,33 +566,34 @@ async function runQuery(
       systemPrompt: {
         type: 'preset' as const,
         preset: 'claude_code' as const,
-        append: [globalClaudeMd, requestPolicy.guidance]
+        append: [globalClaudeMd, requestPolicy.guidance, recoveryGuidance]
           .filter((entry): entry is string => Boolean(entry?.trim()))
           .join('\n\n'),
       },
-      allowedTools: dedupeTools([
-        ...requestPolicy.builtinTools,
-        ...requestPolicy.mcpTools,
-      ]),
+      allowedTools,
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
       allowDangerouslySkipPermissions: true,
       settingSources: ['project', 'user'],
       model: selectedModel,
-      mcpServers: {
-        nanoclaw: {
-          command: 'node',
-          args: [mcpServerPath],
-          env: {
-            NANOCLAW_CHAT_JID: containerInput.chatJid,
-            NANOCLAW_GROUP_FOLDER: containerInput.groupFolder,
-            NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
-            NANOCLAW_REQUEST_ROUTE: requestPolicy.route,
-            NANOCLAW_REQUEST_REASON: requestPolicy.reason,
-            NANOCLAW_ALLOWED_MCP_TOOLS: JSON.stringify(requestPolicy.mcpTools),
-          },
-        },
-      },
+      mcpServers: useMcpServer
+        ? {
+            nanoclaw: {
+              command: 'node',
+              args: [mcpServerPath],
+              env: {
+                NANOCLAW_CHAT_JID: containerInput.chatJid,
+                NANOCLAW_GROUP_FOLDER: containerInput.groupFolder,
+                NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
+                NANOCLAW_REQUEST_ROUTE: requestPolicy.route,
+                NANOCLAW_REQUEST_REASON: requestPolicy.reason,
+                NANOCLAW_ALLOWED_MCP_TOOLS: JSON.stringify(
+                  requestPolicy.mcpTools,
+                ),
+              },
+            },
+          }
+        : undefined,
       hooks: {
         PreCompact: [
           { hooks: [createPreCompactHook(containerInput.assistantName)] },
@@ -633,7 +650,7 @@ async function runQuery(
       const fallbackErrorText = isErrorSubtype
         ? combinedErrorText ||
           textResult ||
-          'I hit an internal execution issue while processing that request. Please try again. If it keeps happening, I can switch to a different integration path.'
+          'I hit a temporary execution issue while processing that request. Please try again.'
         : null;
       const debugErrorText = isErrorSubtype
         ? combinedErrorText ||
@@ -643,6 +660,19 @@ async function runQuery(
       log(
         `Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}${combinedErrorText ? ` errors=${combinedErrorText.slice(0, 200)}` : ''}`,
       );
+      const shouldSuppressForRetry =
+        options.suppressFirstErrorForRetry === true &&
+        !options.fallbackMode &&
+        isErrorSubtype &&
+        resultCount === 1 &&
+        successResultCount === 0;
+      if (shouldSuppressForRetry) {
+        suppressedTransientError = true;
+        log(
+          `Suppressing first transient error result for direct retry (subtype=${message.subtype})`,
+        );
+        continue;
+      }
       writeOutput({
         status: isErrorSubtype ? 'error' : 'success',
         result: isErrorSubtype ? fallbackErrorText : (textResult ?? null),
@@ -651,6 +681,9 @@ async function runQuery(
           ? { error: debugErrorText || 'Agent execution failed' }
           : {}),
       });
+      if (!isErrorSubtype) {
+        successResultCount += 1;
+      }
     }
   }
 
@@ -658,7 +691,12 @@ async function runQuery(
   log(
     `Query done. Messages: ${messageCount}, results: ${resultCount}, lastAssistantUuid: ${lastAssistantUuid || 'none'}, closedDuringQuery: ${closedDuringQuery}`,
   );
-  return { newSessionId, lastAssistantUuid, closedDuringQuery };
+  return {
+    newSessionId,
+    lastAssistantUuid,
+    closedDuringQuery,
+    suppressedTransientError,
+  };
 }
 
 interface ScriptResult {
@@ -747,6 +785,7 @@ async function main(): Promise<void> {
 
   let sessionId = containerInput.sessionId;
   fs.mkdirSync(IPC_INPUT_DIR, { recursive: true });
+  const directRetryEligible = containerInput.requestPolicy?.route === 'direct_assistant';
 
   // Clean up stale _close sentinel from previous container runs
   try {
@@ -791,6 +830,7 @@ async function main(): Promise<void> {
   // Query loop: run query → wait for IPC message → run new query → repeat
   let resumeAt: string | undefined;
   try {
+    let usedDirectRecoveryRetry = false;
     while (true) {
       log(
         `Starting query (session: ${sessionId || 'new'}, resumeAt: ${resumeAt || 'latest'})...`,
@@ -803,6 +843,12 @@ async function main(): Promise<void> {
         containerInput,
         sdkEnv,
         resumeAt,
+        {
+          fallbackMode: usedDirectRecoveryRetry,
+          suppressFirstErrorForRetry:
+            directRetryEligible && !usedDirectRecoveryRetry,
+          disableMcpServer: usedDirectRecoveryRetry,
+        },
       );
       if (queryResult.newSessionId) {
         sessionId = queryResult.newSessionId;
@@ -810,6 +856,20 @@ async function main(): Promise<void> {
       if (queryResult.lastAssistantUuid) {
         resumeAt = queryResult.lastAssistantUuid;
       }
+
+      if (
+        queryResult.suppressedTransientError &&
+        directRetryEligible &&
+        !usedDirectRecoveryRetry
+      ) {
+        log(
+          'Retrying direct assistant request in recovery mode after transient execution error',
+        );
+        usedDirectRecoveryRetry = true;
+        resumeAt = undefined;
+        continue;
+      }
+      usedDirectRecoveryRetry = false;
 
       // If _close was consumed during the query, exit immediately.
       // Don't emit a session-update marker (it would reset the host's
