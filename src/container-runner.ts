@@ -3,6 +3,7 @@
  * Spawns agent execution in containers and handles IPC
  */
 import { ChildProcess, spawn } from 'child_process';
+import { createHash } from 'crypto';
 import fs from 'fs';
 import path from 'path';
 
@@ -410,6 +411,53 @@ function ensureSecretShadowFile(): string {
   return shadowFile;
 }
 
+interface AgentRunnerSyncMetadata {
+  sourceIndexHash: string;
+  cachedIndexHash: string;
+}
+
+function hashText(input: string): string {
+  return createHash('sha256').update(input).digest('hex');
+}
+
+function tryReadTextFile(filePath: string): string | null {
+  try {
+    if (!fs.existsSync(filePath)) return null;
+    return fs.readFileSync(filePath, 'utf-8');
+  } catch {
+    return null;
+  }
+}
+
+function readAgentRunnerSyncMetadata(
+  metadataPath: string,
+): AgentRunnerSyncMetadata | null {
+  const raw = tryReadTextFile(metadataPath);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<AgentRunnerSyncMetadata>;
+    if (
+      typeof parsed.sourceIndexHash !== 'string' ||
+      typeof parsed.cachedIndexHash !== 'string'
+    ) {
+      return null;
+    }
+    return {
+      sourceIndexHash: parsed.sourceIndexHash,
+      cachedIndexHash: parsed.cachedIndexHash,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeAgentRunnerSyncMetadata(
+  metadataPath: string,
+  metadata: AgentRunnerSyncMetadata,
+): void {
+  fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2));
+}
+
 function syncSkillsForGroup(
   groupFolder: string,
   groupSessionsDir: string,
@@ -616,13 +664,62 @@ function buildVolumeMounts(
   if (fs.existsSync(agentRunnerSrc)) {
     const srcIndex = path.join(agentRunnerSrc, 'index.ts');
     const cachedIndex = path.join(groupAgentRunnerDir, 'index.ts');
+    const syncMetadataPath = path.join(
+      groupAgentRunnerDir,
+      '.nanoclaw-source-sync.json',
+    );
+    const sourceIndex = tryReadTextFile(srcIndex);
+    const cachedIndexContent = tryReadTextFile(cachedIndex);
+    const syncMetadata = readAgentRunnerSyncMetadata(syncMetadataPath);
+    const sourceIndexHash = sourceIndex ? hashText(sourceIndex) : null;
+    const cachedIndexHash = cachedIndexContent
+      ? hashText(cachedIndexContent)
+      : null;
+
+    // Backward compatibility:
+    // If metadata does not exist yet, sync once whenever source and cached
+    // content diverge so hotfixes actually land in running group caches.
+    // After that first sync, we only auto-sync when the cache still matches
+    // the last synchronized hash, preserving intentional per-group edits.
+    const needsInitialContentSync =
+      !syncMetadata &&
+      Boolean(
+        sourceIndexHash &&
+        cachedIndexHash &&
+        sourceIndexHash !== cachedIndexHash,
+      );
+    const cacheMissingOrIncomplete =
+      !fs.existsSync(groupAgentRunnerDir) || !cachedIndexHash;
+    const cacheMatchesLastSync = Boolean(
+      syncMetadata &&
+      cachedIndexHash &&
+      syncMetadata.cachedIndexHash === cachedIndexHash,
+    );
+    const sourceChangedSinceLastSync = Boolean(
+      syncMetadata &&
+      sourceIndexHash &&
+      syncMetadata.sourceIndexHash !== sourceIndexHash,
+    );
     const needsCopy =
-      !fs.existsSync(groupAgentRunnerDir) ||
-      !fs.existsSync(cachedIndex) ||
-      (fs.existsSync(srcIndex) &&
-        fs.statSync(srcIndex).mtimeMs > fs.statSync(cachedIndex).mtimeMs);
+      cacheMissingOrIncomplete ||
+      needsInitialContentSync ||
+      (sourceChangedSinceLastSync && cacheMatchesLastSync);
+
     if (needsCopy) {
       fs.cpSync(agentRunnerSrc, groupAgentRunnerDir, { recursive: true });
+      const copiedIndex = tryReadTextFile(cachedIndex);
+      if (sourceIndexHash && copiedIndex) {
+        const copiedIndexHash = hashText(copiedIndex);
+        writeAgentRunnerSyncMetadata(syncMetadataPath, {
+          sourceIndexHash,
+          cachedIndexHash: copiedIndexHash,
+        });
+      }
+    } else if (!syncMetadata && sourceIndexHash && cachedIndexHash) {
+      writeAgentRunnerSyncMetadata(syncMetadataPath, {
+        sourceIndexHash,
+        cachedIndexHash,
+      });
     }
   }
   mounts.push({

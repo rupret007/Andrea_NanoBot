@@ -151,6 +151,7 @@ If people are confused in the channel, start here:
 Runtime behavior note:
 
 - for direct conversational asks, Andrea now auto-retries one transient execution failure before surfacing an error message
+- per-group `agent-runner-src` caches now auto-sync source hotfixes during container startup (without clobbering intentional cache edits after sync metadata is established)
 
 For operator-side troubleshooting, also see:
 

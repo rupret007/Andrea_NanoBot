@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { EventEmitter } from 'events';
+import fs from 'fs';
+import path from 'path';
 import { PassThrough } from 'stream';
 
 // Sentinel markers must match container-runner.ts
@@ -307,5 +309,97 @@ describe('container-runner timeout behavior', () => {
 
     const result = await resultPromise;
     expect(result.status).toBe('success');
+  });
+
+  it('refreshes stale per-group agent-runner cache even when cached file mtime is newer', async () => {
+    const projectRoot = process.cwd();
+    const sourceDir = path.join(
+      projectRoot,
+      'container',
+      'agent-runner',
+      'src',
+    );
+    const sourceIndex = path.join(sourceDir, 'index.ts');
+    const cacheDir = path.join(
+      '/tmp/nanoclaw-test-data',
+      'sessions',
+      'test-group',
+      'agent-runner-src',
+    );
+    const cachedIndex = path.join(cacheDir, 'index.ts');
+    const syncMetadata = path.join(cacheDir, '.nanoclaw-source-sync.json');
+
+    const existsSyncMock = vi.mocked(fs.existsSync);
+    const statSyncMock = vi.mocked(fs.statSync);
+    const readFileSyncMock = vi.mocked(fs.readFileSync);
+
+    existsSyncMock.mockImplementation((target) => {
+      const normalized = String(target).replace(/\\/g, '/');
+      if (normalized === sourceDir.replace(/\\/g, '/')) return true;
+      if (normalized === sourceIndex.replace(/\\/g, '/')) return true;
+      if (normalized === cacheDir.replace(/\\/g, '/')) return true;
+      if (normalized === cachedIndex.replace(/\\/g, '/')) return true;
+      if (normalized === syncMetadata.replace(/\\/g, '/')) return false;
+      return false;
+    });
+
+    statSyncMock.mockImplementation((target) => {
+      const normalized = String(target).replace(/\\/g, '/');
+      if (
+        normalized === sourceDir.replace(/\\/g, '/') ||
+        normalized === cacheDir.replace(/\\/g, '/')
+      ) {
+        return {
+          isDirectory: () => true,
+          mtimeMs: 1,
+        } as unknown as ReturnType<typeof fs.statSync>;
+      }
+      return {
+        isDirectory: () => false,
+        mtimeMs: normalized === cachedIndex.replace(/\\/g, '/') ? 999 : 1,
+      } as unknown as ReturnType<typeof fs.statSync>;
+    });
+
+    readFileSyncMock.mockImplementation((target) => {
+      const normalized = String(target).replace(/\\/g, '/');
+      if (normalized === sourceIndex.replace(/\\/g, '/')) {
+        return 'export const sourceVersion = "new";' as unknown as ReturnType<
+          typeof fs.readFileSync
+        >;
+      }
+      if (normalized === cachedIndex.replace(/\\/g, '/')) {
+        return 'export const sourceVersion = "old";' as unknown as ReturnType<
+          typeof fs.readFileSync
+        >;
+      }
+      return '' as unknown as ReturnType<typeof fs.readFileSync>;
+    });
+
+    const onOutput = vi.fn(async () => {});
+    const resultPromise = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+      onOutput,
+    );
+
+    emitOutputMarker(fakeProc, {
+      status: 'success',
+      result: 'synced',
+      newSessionId: 'session-sync',
+    });
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+
+    const result = await resultPromise;
+    expect(result.status).toBe('success');
+    expect(fs.cpSync).toHaveBeenCalledWith(sourceDir, cacheDir, {
+      recursive: true,
+    });
+    expect(fs.writeFileSync).toHaveBeenCalledWith(
+      syncMetadata,
+      expect.stringContaining('"sourceIndexHash"'),
+    );
   });
 });
