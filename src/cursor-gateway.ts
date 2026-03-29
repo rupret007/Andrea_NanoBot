@@ -6,6 +6,7 @@ const CURSOR_RELEVANT_ENV_KEYS = [
   'ANTHROPIC_AUTH_TOKEN',
   'ANTHROPIC_API_KEY',
   'OPENAI_API_KEY',
+  'CURSOR_GATEWAY_HINT',
   'NANOCLAW_AGENT_MODEL',
   'CLAUDE_CODE_MODEL',
   'CLAUDE_MODEL',
@@ -20,6 +21,7 @@ interface CursorGatewayConfig {
   authTokenConfigured: boolean;
   model: string | null;
   viaNineRouter: boolean;
+  cursorGatewayHinted: boolean;
   modelLooksCursorBacked: boolean;
 }
 
@@ -70,6 +72,11 @@ function looksLikeNineRouterEndpoint(endpoint: string | null): boolean {
 function looksLikeCursorModel(model: string | null): boolean {
   if (!model) return false;
   return model.trim().toLowerCase().startsWith('cu/');
+}
+
+function hasCursorGatewayHint(value: string | undefined): boolean {
+  const normalized = (value || '').trim().toLowerCase();
+  return normalized === '9router' || normalized === 'cursor';
 }
 
 function buildModelsUrl(endpoint: string): string {
@@ -129,6 +136,9 @@ function resolveCursorGatewayConfig(
   );
 
   const viaNineRouter = looksLikeNineRouterEndpoint(endpoint);
+  const cursorGatewayHinted = hasCursorGatewayHint(
+    env.CURSOR_GATEWAY_HINT || envFileValues.CURSOR_GATEWAY_HINT,
+  );
   const modelLooksCursorBacked = looksLikeCursorModel(model);
 
   return {
@@ -136,6 +146,7 @@ function resolveCursorGatewayConfig(
     authTokenConfigured,
     model,
     viaNineRouter,
+    cursorGatewayHinted,
     modelLooksCursorBacked,
   };
 }
@@ -218,7 +229,9 @@ export async function getCursorGatewayStatus(
   const config = resolveCursorGatewayConfig(options);
 
   const cursorSignalsEnabled =
-    config.viaNineRouter || config.modelLooksCursorBacked;
+    config.viaNineRouter ||
+    config.cursorGatewayHinted ||
+    config.modelLooksCursorBacked;
   const mode: CursorMode = !cursorSignalsEnabled
     ? 'disabled'
     : config.endpoint && config.authTokenConfigured
@@ -369,10 +382,14 @@ export function formatCursorGatewayStatusMessage(
     `- Mode: ${status.mode}`,
     `- Endpoint: ${status.endpoint || 'not configured'}`,
     `- Model: ${status.model || 'default'}`,
-    `- Cursor route detected: ${status.viaNineRouter || status.modelLooksCursorBacked ? 'yes' : 'no'}`,
+    `- Cursor route detected: ${status.viaNineRouter || status.cursorGatewayHinted || status.modelLooksCursorBacked ? 'yes' : 'no'}`,
     `- Auth configured: ${status.authTokenConfigured ? 'yes' : 'no'}`,
     `- Gateway probe: ${status.probeStatus}`,
   ];
+
+  if (status.cursorGatewayHinted) {
+    lines.push('- Gateway hint: explicit');
+  }
 
   if (status.probeDetail) {
     lines.push(`- Probe detail: ${status.probeDetail}`);
@@ -380,11 +397,11 @@ export function formatCursorGatewayStatusMessage(
 
   if (status.mode === 'partial') {
     lines.push(
-      '- Next step: set both `ANTHROPIC_BASE_URL` (9router endpoint) and a valid auth token/key.',
+      '- Next step: set both `ANTHROPIC_BASE_URL` and a valid auth token/key. Add `CURSOR_GATEWAY_HINT=9router` when using a remote/custom 9router URL.',
     );
   } else if (status.mode === 'disabled') {
     lines.push(
-      '- Next step: configure 9router + `NANOCLAW_AGENT_MODEL=cu/default` if you want Cursor-backed routing.',
+      '- Next step: configure 9router + `NANOCLAW_AGENT_MODEL=cu/default` if you want Cursor-backed routing. For remote/custom 9router URLs, also set `CURSOR_GATEWAY_HINT=9router`.',
     );
   }
 

@@ -157,6 +157,26 @@ CURSOR_API_KEY=cursor_api_...
 # CURSOR_MAX_ACTIVE_JOBS_PER_CHAT=4
 ```
 
+Cursor Desktop Bridge (for using your own Cursor machine remotely):
+
+```bash
+CURSOR_DESKTOP_BRIDGE_URL=https://your-mac-bridge.example.com
+CURSOR_DESKTOP_BRIDGE_TOKEN=replace-with-random-secret
+# Optional:
+# CURSOR_DESKTOP_BRIDGE_TIMEOUT_MS=30000
+# CURSOR_DESKTOP_BRIDGE_LABEL=Jeff MacBook Pro
+```
+
+Use this mode when you want Andrea to reach the Cursor machine you normally use, such as your Mac while you are away from your desk.
+
+Important notes:
+
+- the bridge runs on the machine that has your normal Cursor setup
+- it uses the local `cursor-agent` CLI there instead of the hosted Cursor API
+- if your main model runtime points at a remote 9router endpoint, set:
+  - `CURSOR_GATEWAY_HINT=9router`
+- see [CURSOR_DESKTOP_BRIDGE.md](CURSOR_DESKTOP_BRIDGE.md) for the full bridge setup
+
 When this mode is active:
 
 - `scripts/start-openai-gateway.ps1` runs LiteLLM as container `litellm-gateway`
@@ -309,10 +329,11 @@ Typical commands:
 - Cursor-focused control commands:
   - `/cursor_status` (show 9router/Cursor endpoint readiness)
   - `/cursor_models [filter]` (list available Cursor Cloud models)
-  - `/cursor_test` (run live 9router/Cursor smoke request)
-  - `/cursor_jobs` (list tracked Cursor cloud jobs for this chat)
-  - `/cursor_create [options] <prompt>` (start a Cursor cloud coding job)
-  - `/cursor_create --repo <url> --ref <branch> --model <id> <prompt>` (target a specific repo/ref/model)
+- `/cursor_test` (run live 9router/Cursor smoke request)
+- `/cursor_jobs` (list tracked Cursor cloud jobs for this chat)
+- `/cursor_create [options] <prompt>` (start a Cursor cloud coding job)
+- `/cursor_create [options] <prompt>` also uses the desktop bridge when `CURSOR_DESKTOP_BRIDGE_URL` and `CURSOR_DESKTOP_BRIDGE_TOKEN` are configured
+- `/cursor_create --repo <url> --ref <branch> --model <id> <prompt>` (target a specific repo/ref/model)
 - `/cursor_sync <agent_id>` (refresh Cursor job status/artifacts)
 - `/cursor_stop <agent_id>` (request stop for a Cursor job)
 - `/cursor_followup <agent_id> <text>` (send follow-up instructions)

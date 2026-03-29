@@ -244,6 +244,23 @@ describe('container-runner credential env wiring', () => {
     expect(args).not.toContain('NANOCLAW_AGENT_MODEL=cu/default');
   });
 
+  it('defaults model override when remote cursor gateway is explicitly hinted', async () => {
+    mockEnvValues = {
+      ANTHROPIC_BASE_URL: 'https://cursor-bridge.example.com/v1',
+      CURSOR_GATEWAY_HINT: '9router',
+    };
+
+    const resultPromise = runContainerAgent(testGroup, testInput, () => {});
+    await waitForSpawnCall();
+    emitSuccessfulExit(fakeProc);
+    await resultPromise;
+
+    const args = spawnMock.mock.calls[0]?.[1] as string[];
+    expect(args).toEqual(
+      expect.arrayContaining(['-e', 'NANOCLAW_AGENT_MODEL=cu/default']),
+    );
+  });
+
   it('maps OPENAI_BASE_URL to ANTHROPIC_BASE_URL when OneCLI is active', async () => {
     mockEnvValues = {
       OPENAI_BASE_URL: 'https://openai-compat.example.com',

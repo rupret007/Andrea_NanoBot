@@ -41,6 +41,27 @@ describe('cursor-gateway', () => {
     expect(status.probeDetail).toBe('Endpoint is missing.');
   });
 
+  it('treats a custom remote gateway as cursor-backed when explicitly hinted', async () => {
+    const status = await getCursorGatewayStatus({
+      env: {
+        ANTHROPIC_BASE_URL: 'https://cursor-bridge.example.com/v1',
+        ANTHROPIC_AUTH_TOKEN: 'token-123',
+        CURSOR_GATEWAY_HINT: '9router',
+      },
+      envFileValues: {},
+      probe: true,
+      fetchImpl: (async (input: unknown) => {
+        const url = String(input);
+        expect(url).toContain('/v1/models');
+        return new Response(JSON.stringify({ data: [] }), { status: 200 });
+      }) as unknown as typeof fetch,
+    });
+
+    expect(status.mode).toBe('configured');
+    expect(status.cursorGatewayHinted).toBe(true);
+    expect(status.probeStatus).toBe('ok');
+  });
+
   it('returns configured mode with successful gateway probe', async () => {
     const status = await getCursorGatewayStatus({
       env: {

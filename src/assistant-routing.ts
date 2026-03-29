@@ -237,6 +237,7 @@ function buildGuidance(route: AssistantRequestRoute): string {
     'OpenClaw, helper tools, and internal orchestration are implementation details. Never present them as a second public bot or public persona.',
     'Do not leak internal routes, helper chatter, hidden planning, or tool plumbing in user-facing replies.',
     'Andrea should remain the final response formatter even when internal helper capability is used.',
+    'Every handled user turn must end with a user-facing reply. Never finish with an empty final response.',
   ];
 
   const routeSpecific: Record<AssistantRequestRoute, string[]> = {
@@ -248,6 +249,9 @@ function buildGuidance(route: AssistantRequestRoute): string {
     protected_assistant: [
       'Treat this as a protected personal assistant task such as reminders, scheduling, weather, availability, or lightweight organization.',
       'Prefer the smallest viable action and a concise confirmation. Do not turn it into a coding or helper-orchestration workflow.',
+      'For reminders, scheduling, recurring follow-ups, and task changes, use the task MCP tools instead of freehand promises.',
+      'Do not claim a reminder, schedule, or task update is complete unless the relevant tool call succeeded and you can confirm the result.',
+      'If you cannot confirm completion, say so plainly instead of ending with a blank or implicit result.',
     ],
     control_plane: [
       'Treat this as control-plane work: inspect, stop, resume, sync, or update existing operational state.',

@@ -42,6 +42,10 @@ describe('assistant request routing', () => {
     expect(policy.mcpTools).toContain('mcp__nanoclaw__schedule_task');
     expect(policy.mcpTools).not.toContain('mcp__nanoclaw__create_cursor_agent');
     expect(policy.builtinTools).not.toContain('Bash');
+    expect(policy.guidance).toContain('use the task MCP tools');
+    expect(policy.guidance).toContain(
+      'Do not claim a reminder, schedule, or task update is complete',
+    );
   });
 
   it('routes operational status and stop asks to control plane handling', () => {

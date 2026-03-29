@@ -18,6 +18,12 @@ import {
   CursorCreateAgentRequest,
   resolveCursorCloudConfig,
 } from './cursor-cloud.js';
+import {
+  CursorDesktopClient,
+  CursorDesktopConversationMessage,
+  CursorDesktopSession,
+  resolveCursorDesktopConfig,
+} from './cursor-desktop.js';
 import { normalizeCursorAgentId } from './cursor-agent-id.js';
 import { readEnvFile } from './env.js';
 import { assertValidGroupFolder } from './group-folder.js';
@@ -40,6 +46,15 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object'
     ? (value as Record<string, unknown>)
     : null;
+}
+
+function parseRawJson(rawJson: string | null): Record<string, unknown> | null {
+  if (!rawJson) return null;
+  try {
+    return JSON.parse(rawJson) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
 }
 
 function parsePositiveInt(raw: string | undefined, fallback: number): number {
@@ -79,6 +94,31 @@ function resolveCursorClient(): CursorCloudClient {
     );
   }
   return new CursorCloudClient(config);
+}
+
+function resolveCursorDesktopClient(): CursorDesktopClient {
+  const config = resolveCursorDesktopConfig();
+  if (!config) {
+    throw new Error(
+      'Cursor desktop bridge is not configured. Set CURSOR_DESKTOP_BRIDGE_URL and CURSOR_DESKTOP_BRIDGE_TOKEN to reach your normal Cursor machine.',
+    );
+  }
+  return new CursorDesktopClient(config);
+}
+
+type CursorExecutionBackend = 'desktop' | 'cloud';
+
+function resolveCursorExecutionBackend(): CursorExecutionBackend {
+  if (resolveCursorDesktopConfig()) return 'desktop';
+  if (resolveCursorCloudConfig()) return 'cloud';
+  throw new Error(
+    'Cursor is not configured. Either set CURSOR_DESKTOP_BRIDGE_URL + CURSOR_DESKTOP_BRIDGE_TOKEN for your normal machine, or set CURSOR_API_KEY for Cursor Cloud Agents.',
+  );
+}
+
+function recordUsesDesktop(record: CursorDbAgentRecord | undefined): boolean {
+  const raw = parseRawJson(record?.raw_json || null);
+  return raw?.provider === 'desktop';
 }
 
 function mapApiAgentToDbRecord(
@@ -123,6 +163,48 @@ function mapApiAgentToDbRecord(
       toNullableString(apiAgent.createdAt) ||
       nowIso,
     last_synced_at: nowIso,
+  };
+}
+
+function mapDesktopSessionToDbRecord(
+  session: CursorDesktopSession,
+  context: {
+    groupFolder: string;
+    chatJid: string;
+    promptText: string;
+    createdBy?: string;
+    existing?: CursorDbAgentRecord;
+  },
+): CursorDbAgentRecord {
+  const nowIso = new Date().toISOString();
+
+  return {
+    id: session.id,
+    group_folder: context.groupFolder,
+    chat_jid: context.chatJid,
+    status: toNullableString(session.status) || 'UNKNOWN',
+    model: session.model,
+    prompt_text: context.promptText || session.promptText,
+    source_repository: session.sourceRepository,
+    source_ref: session.sourceRef,
+    source_pr_url: session.sourcePrUrl,
+    target_url: session.targetUrl,
+    target_pr_url: session.targetPrUrl,
+    target_branch_name: session.targetBranchName,
+    auto_create_pr: boolToInt(session.autoCreatePr),
+    open_as_cursor_github_app: boolToInt(session.openAsCursorGithubApp),
+    skip_reviewer_request: boolToInt(session.skipReviewerRequest),
+    summary: session.summary,
+    raw_json: JSON.stringify({
+      provider: 'desktop',
+      cursorSessionId: session.cursorSessionId,
+      cwd: session.cwd,
+      lastSyncedAt: session.lastSyncedAt,
+    }),
+    created_by: context.createdBy || context.existing?.created_by || null,
+    created_at: session.createdAt || context.existing?.created_at || nowIso,
+    updated_at: session.updatedAt || nowIso,
+    last_synced_at: session.lastSyncedAt || nowIso,
   };
 }
 
@@ -259,7 +341,7 @@ export async function createCursorAgent(
     );
   }
 
-  const client = resolveCursorClient();
+  const backend = resolveCursorExecutionBackend();
 
   const source: CursorCreateAgentRequest['source'] = {};
   const sourceRepository = toNullableString(params.sourceRepository);
@@ -280,6 +362,31 @@ export async function createCursorAgent(
   }
   if (params.branchName) target.branchName = params.branchName;
 
+  if (backend === 'desktop') {
+    const client = resolveCursorDesktopClient();
+    const created = await client.createSession({
+      promptText: params.promptText,
+      requestedBy: params.requestedBy,
+      model: params.model,
+      sourceRepository: sourceRepository || undefined,
+      sourceRef: sourceRef || undefined,
+      sourcePrUrl: sourcePrUrl || undefined,
+      branchName: params.branchName,
+      autoCreatePr: params.autoCreatePr,
+      openAsCursorGithubApp: params.openAsCursorGithubApp,
+      skipReviewerRequest: params.skipReviewerRequest,
+    });
+    const row = mapDesktopSessionToDbRecord(created, {
+      groupFolder: params.groupFolder,
+      chatJid: params.chatJid,
+      promptText: params.promptText,
+      createdBy: params.requestedBy,
+    });
+    upsertCursorAgent(row);
+    return mapDbAgentToView(row);
+  }
+
+  const client = resolveCursorClient();
   const request: CursorCreateAgentRequest = {
     prompt: {
       text: params.promptText,
@@ -329,6 +436,23 @@ export async function syncCursorAgent(
   const existing = getCursorAgentById(agentId);
   if (existing && existing.group_folder !== params.groupFolder) {
     throw new Error('Cursor agent belongs to another group');
+  }
+
+  if (recordUsesDesktop(existing)) {
+    const client = resolveCursorDesktopClient();
+    const session = await client.getSession(agentId);
+    const row = mapDesktopSessionToDbRecord(session, {
+      groupFolder: existing?.group_folder || params.groupFolder,
+      chatJid: existing?.chat_jid || params.chatJid,
+      promptText: existing?.prompt_text || session.promptText,
+      existing,
+    });
+    upsertCursorAgent(row);
+    replaceCursorAgentArtifacts(agentId, []);
+    return {
+      agent: mapDbAgentToView(row),
+      artifacts: [],
+    };
   }
 
   const client = resolveCursorClient();
@@ -389,6 +513,21 @@ export async function followupCursorAgent(
     throw new Error('Cursor agent belongs to another group');
   }
 
+  if (recordUsesDesktop(existing)) {
+    const client = resolveCursorDesktopClient();
+    const followed = await client.followupSession(agentId, {
+      promptText: params.promptText,
+    });
+    const row = mapDesktopSessionToDbRecord(followed, {
+      groupFolder: existing.group_folder,
+      chatJid: existing.chat_jid || params.chatJid,
+      promptText: existing.prompt_text,
+      existing,
+    });
+    upsertCursorAgent(row);
+    return mapDbAgentToView(row);
+  }
+
   const client = resolveCursorClient();
   const followed = await client.followupAgent(agentId, {
     prompt: { text: params.promptText },
@@ -421,6 +560,19 @@ export async function stopCursorAgent(
   }
   if (existing.group_folder !== params.groupFolder) {
     throw new Error('Cursor agent belongs to another group');
+  }
+
+  if (recordUsesDesktop(existing)) {
+    const client = resolveCursorDesktopClient();
+    const stopped = await client.stopSession(agentId);
+    const row = mapDesktopSessionToDbRecord(stopped, {
+      groupFolder: existing.group_folder,
+      chatJid: existing.chat_jid || params.chatJid,
+      promptText: existing.prompt_text,
+      existing,
+    });
+    upsertCursorAgent(row);
+    return mapDbAgentToView(row);
   }
 
   const client = resolveCursorClient();
@@ -506,6 +658,11 @@ export async function getCursorArtifactDownloadLink(
   ) {
     throw new Error('Cursor agent belongs to another group');
   }
+  if (recordUsesDesktop(existing)) {
+    throw new Error(
+      'Cursor desktop sessions do not expose artifact download links through this path.',
+    );
+  }
 
   const artifacts = listCursorAgentArtifacts(agentId);
   const tracked = artifacts.some(
@@ -561,6 +718,16 @@ export async function getCursorAgentConversation(
     throw new Error('Cursor agent belongs to another group');
   }
 
+  if (recordUsesDesktop(existing)) {
+    const client = resolveCursorDesktopClient();
+    const conversation = await client.getConversation(agentId, params.limit);
+    return conversation.map((message: CursorDesktopConversationMessage) => ({
+      role: toNullableString(message.role) || 'assistant',
+      content: message.content,
+      createdAt: message.createdAt,
+    }));
+  }
+
   const client = resolveCursorClient();
   const conversation = await client.getConversation(agentId);
   const limit =
@@ -596,6 +763,13 @@ export interface CursorModelView {
 }
 
 export async function listCursorModels(limit = 50): Promise<CursorModelView[]> {
+  if (!resolveCursorCloudConfig()) {
+    if (resolveCursorDesktopConfig()) {
+      throw new Error(
+        'Cursor model listing is only available through the Cursor Cloud API right now. The desktop bridge can still run jobs if you pass a model explicitly.',
+      );
+    }
+  }
   const safeLimit = Number.isFinite(limit)
     ? Math.max(1, Math.min(200, Math.floor(limit)))
     : 50;

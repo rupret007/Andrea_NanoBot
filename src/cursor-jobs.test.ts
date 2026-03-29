@@ -24,6 +24,8 @@ beforeEach(() => {
   process.env.CURSOR_API_KEY = 'cursor-test-key';
   process.env.CURSOR_API_BASE_URL = 'https://api.cursor.com';
   process.env.CURSOR_API_TIMEOUT_MS = '5000';
+  delete process.env.CURSOR_DESKTOP_BRIDGE_URL;
+  delete process.env.CURSOR_DESKTOP_BRIDGE_TOKEN;
 });
 
 afterEach(() => {
@@ -32,6 +34,8 @@ afterEach(() => {
   delete process.env.CURSOR_API_BASE_URL;
   delete process.env.CURSOR_API_TIMEOUT_MS;
   delete process.env.CURSOR_MAX_ACTIVE_JOBS_PER_CHAT;
+  delete process.env.CURSOR_DESKTOP_BRIDGE_URL;
+  delete process.env.CURSOR_DESKTOP_BRIDGE_TOKEN;
 });
 
 describe('cursor-jobs', () => {
@@ -485,5 +489,184 @@ describe('cursor-jobs', () => {
         absolutePath: '/opt/cursor/out/not-present.md',
       }),
     ).rejects.toThrow('is not tracked for Cursor agent');
+  });
+
+  it('uses the desktop bridge when configured for create/sync/followup/stop', async () => {
+    delete process.env.CURSOR_API_KEY;
+    delete process.env.CURSOR_API_BASE_URL;
+    process.env.CURSOR_DESKTOP_BRIDGE_URL = 'https://cursor-bridge.example.com';
+    process.env.CURSOR_DESKTOP_BRIDGE_TOKEN = 'bridge-token';
+
+    const requests: string[] = [];
+    globalThis.fetch = (async (input, init) => {
+      requests.push(`${init?.method || 'GET'} ${String(input)}`);
+      const url = String(input);
+
+      if (url === 'https://cursor-bridge.example.com/v1/sessions') {
+        return new Response(
+          JSON.stringify({
+            id: 'desk_900',
+            status: 'RUNNING',
+            promptText: 'Implement the login fix',
+            provider: 'desktop',
+            createdAt: '2026-03-29T20:20:00.000Z',
+            updatedAt: '2026-03-29T20:20:00.000Z',
+          }),
+          { status: 200 },
+        );
+      }
+
+      if (url === 'https://cursor-bridge.example.com/v1/sessions/desk_900') {
+        return new Response(
+          JSON.stringify({
+            id: 'desk_900',
+            status: 'COMPLETED',
+            promptText: 'Implement the login fix',
+            summary: 'Patched the login flow.',
+            provider: 'desktop',
+            cursorSessionId: 'cursor-session-900',
+            createdAt: '2026-03-29T20:20:00.000Z',
+            updatedAt: '2026-03-29T20:21:00.000Z',
+          }),
+          { status: 200 },
+        );
+      }
+
+      if (
+        url ===
+        'https://cursor-bridge.example.com/v1/sessions/desk_900/followup'
+      ) {
+        return new Response(
+          JSON.stringify({
+            id: 'desk_900',
+            status: 'RUNNING',
+            promptText: 'Implement the login fix',
+            summary: 'Follow-up queued.',
+            provider: 'desktop',
+            cursorSessionId: 'cursor-session-900',
+            createdAt: '2026-03-29T20:20:00.000Z',
+            updatedAt: '2026-03-29T20:22:00.000Z',
+          }),
+          { status: 200 },
+        );
+      }
+
+      if (
+        url === 'https://cursor-bridge.example.com/v1/sessions/desk_900/stop'
+      ) {
+        return new Response(
+          JSON.stringify({
+            id: 'desk_900',
+            status: 'STOPPED',
+            promptText: 'Implement the login fix',
+            summary: 'Stopped.',
+            provider: 'desktop',
+            cursorSessionId: 'cursor-session-900',
+            createdAt: '2026-03-29T20:20:00.000Z',
+            updatedAt: '2026-03-29T20:23:00.000Z',
+          }),
+          { status: 200 },
+        );
+      }
+
+      throw new Error(`unexpected desktop bridge request: ${url}`);
+    }) as typeof fetch;
+
+    const created = await createCursorAgent({
+      groupFolder: 'whatsapp_main',
+      chatJid: 'tg:42',
+      promptText: 'Implement the login fix',
+    });
+    expect(created.id).toBe('desk_900');
+
+    const synced = await syncCursorAgent({
+      groupFolder: 'whatsapp_main',
+      chatJid: 'tg:42',
+      agentId: 'desk_900',
+    });
+    expect(synced.agent.summary).toContain('Patched');
+    expect(synced.artifacts).toHaveLength(0);
+
+    const followed = await followupCursorAgent({
+      groupFolder: 'whatsapp_main',
+      chatJid: 'tg:42',
+      agentId: 'desk_900',
+      promptText: 'Add tests too',
+    });
+    expect(followed.summary).toContain('Follow-up');
+
+    const stopped = await stopCursorAgent({
+      groupFolder: 'whatsapp_main',
+      chatJid: 'tg:42',
+      agentId: 'desk_900',
+    });
+    expect(stopped.status).toBe('STOPPED');
+
+    expect(requests).toEqual([
+      'POST https://cursor-bridge.example.com/v1/sessions',
+      'GET https://cursor-bridge.example.com/v1/sessions/desk_900',
+      'POST https://cursor-bridge.example.com/v1/sessions/desk_900/followup',
+      'POST https://cursor-bridge.example.com/v1/sessions/desk_900/stop',
+    ]);
+  });
+
+  it('reads desktop bridge conversation for tracked desktop sessions', async () => {
+    delete process.env.CURSOR_API_KEY;
+    delete process.env.CURSOR_API_BASE_URL;
+    process.env.CURSOR_DESKTOP_BRIDGE_URL = 'https://cursor-bridge.example.com';
+    process.env.CURSOR_DESKTOP_BRIDGE_TOKEN = 'bridge-token';
+
+    upsertCursorAgent({
+      id: 'desk_convo',
+      group_folder: 'whatsapp_main',
+      chat_jid: 'tg:42',
+      status: 'COMPLETED',
+      model: null,
+      prompt_text: 'Initial desktop prompt',
+      source_repository: null,
+      source_ref: null,
+      source_pr_url: null,
+      target_url: null,
+      target_pr_url: null,
+      target_branch_name: null,
+      auto_create_pr: 0,
+      open_as_cursor_github_app: 0,
+      skip_reviewer_request: 0,
+      summary: 'Done',
+      raw_json: JSON.stringify({ provider: 'desktop' }),
+      created_by: 'tg:user',
+      created_at: '2026-03-29T20:00:00.000Z',
+      updated_at: '2026-03-29T20:00:00.000Z',
+      last_synced_at: '2026-03-29T20:00:00.000Z',
+    });
+
+    globalThis.fetch = (async (_input) =>
+      new Response(
+        JSON.stringify({
+          messages: [
+            {
+              role: 'user',
+              content: 'Initial desktop prompt',
+              createdAt: '2026-03-29T20:00:00.000Z',
+            },
+            {
+              role: 'assistant',
+              content: 'Done',
+              createdAt: '2026-03-29T20:01:00.000Z',
+            },
+          ],
+        }),
+        { status: 200 },
+      )) as typeof fetch;
+
+    const messages = await getCursorAgentConversation({
+      groupFolder: 'whatsapp_main',
+      chatJid: 'tg:42',
+      agentId: 'desk_convo',
+      limit: 10,
+    });
+
+    expect(messages).toHaveLength(2);
+    expect(messages[1].content).toBe('Done');
   });
 });

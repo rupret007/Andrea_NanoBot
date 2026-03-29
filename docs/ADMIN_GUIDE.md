@@ -97,6 +97,7 @@ Cursor:
 - `/cursor_status`
 - `/cursor_test`
 - `/cursor_models`
+- [CURSOR_DESKTOP_BRIDGE.md](CURSOR_DESKTOP_BRIDGE.md) when Andrea should drive your normal Cursor machine instead of only cloud jobs
 
 Alexa:
 

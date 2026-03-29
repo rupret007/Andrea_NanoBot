@@ -151,7 +151,7 @@ Optional integrations such as Alexa, shopping flows, marketplace skills, and cal
 
 - help with repos, debugging, and code tasks
 - use Cursor/9router-aware routing checks with `/cursor_status`
-- create, follow up, sync, and inspect Cursor cloud coding jobs directly from Telegram
+- create, follow up, sync, and inspect Cursor coding jobs directly from Telegram through Cursor Cloud or your own desktop bridge
 - keep optional integrations behind explicit operator setup instead of treating them as default demo features
 
 ## Using Andrea In Chat
@@ -219,6 +219,8 @@ Use the docs based on what you are trying to do:
   for Telegram onboarding, chat UX, and command reference
 - [docs/AMAZON_SHOPPING_AND_APPROVALS.md](docs/AMAZON_SHOPPING_AND_APPROVALS.md)
   for Amazon Business setup, safety rails, and shopping commands
+- [docs/CURSOR_DESKTOP_BRIDGE.md](docs/CURSOR_DESKTOP_BRIDGE.md)
+  for running Cursor work on your own Mac or desktop while Andrea controls it remotely
 - [docs/ALEXA_VOICE_INTEGRATION.md](docs/ALEXA_VOICE_INTEGRATION.md)
   for Alexa setup, signed endpoint behavior, and the ready-to-import interaction model
 - [docs/ADDONS_AND_FEATURE_MATRIX.md](docs/ADDONS_AND_FEATURE_MATRIX.md)

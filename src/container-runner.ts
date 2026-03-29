@@ -87,6 +87,7 @@ const RUNTIME_ENDPOINT_ENV_KEYS = [
   'OPENAI_BASE_URL',
 ] as const;
 const MODEL_OVERRIDE_ENV_KEYS = [
+  'CURSOR_GATEWAY_HINT',
   'NANOCLAW_AGENT_MODEL',
   'CLAUDE_CODE_MODEL',
   'CLAUDE_MODEL',
@@ -305,6 +306,11 @@ function endpointLooksLike9Router(endpointValue: string): boolean {
   return endpoint.hostname.toLowerCase().includes('9router');
 }
 
+function hasCursorGatewayHint(configured: Record<string, string>): boolean {
+  const hint = (configured.CURSOR_GATEWAY_HINT || '').trim().toLowerCase();
+  return hint === '9router' || hint === 'cursor';
+}
+
 function resolveModelOverridesForRuntime(
   runtimeEndpointEnv: Record<string, string>,
 ): Record<string, string> {
@@ -319,7 +325,10 @@ function resolveModelOverridesForRuntime(
 
   const endpoint =
     runtimeEndpointEnv.ANTHROPIC_BASE_URL || runtimeEndpointEnv.OPENAI_BASE_URL;
-  if (!endpoint || !endpointLooksLike9Router(endpoint)) {
+  if (
+    !endpoint ||
+    (!endpointLooksLike9Router(endpoint) && !hasCursorGatewayHint(configured))
+  ) {
     return configured;
   }
 

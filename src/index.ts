@@ -35,6 +35,7 @@ import {
   ensureContainerRuntimeRunning,
 } from './container-runtime.js';
 import {
+  createTask,
   getAllChats,
   getCursorAgentById,
   listAllCursorAgents,
@@ -58,6 +59,7 @@ import {
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
+import { planSimpleReminder } from './local-reminder.js';
 import { findChannel, formatMessages, formatOutbound } from './router.js';
 import {
   formatCursorGatewaySmokeTestMessage,
@@ -71,6 +73,10 @@ import {
   getCursorCloudStatus,
   resolveCursorCloudConfig,
 } from './cursor-cloud.js';
+import {
+  formatCursorDesktopStatusMessage,
+  getCursorDesktopStatus,
+} from './cursor-desktop.js';
 import {
   formatAmazonBusinessStatusMessage,
   getAmazonBusinessStatus,
@@ -129,6 +135,7 @@ import {
   maybeBuildDirectQuickReply,
   maybeBuildDirectRescueReply,
 } from './direct-quick-reply.js';
+import { buildSilentSuccessFallback } from './user-facing-fallback.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -148,6 +155,23 @@ const channels: Channel[] = [];
 const queue = new GroupQueue();
 
 const onecli = new OneCLI({ url: ONECLI_URL });
+
+function refreshTaskSnapshots(groups: Record<string, RegisteredGroup>): void {
+  const tasks = getAllTasks();
+  const taskRows = tasks.map((t) => ({
+    id: t.id,
+    groupFolder: t.group_folder,
+    prompt: t.prompt,
+    script: t.script || undefined,
+    schedule_type: t.schedule_type,
+    schedule_value: t.schedule_value,
+    status: t.status,
+    next_run: t.next_run,
+  }));
+  for (const group of Object.values(groups)) {
+    writeTasksSnapshot(group.folder, group.isMain === true, taskRows);
+  }
+}
 
 function ensureOneCLIAgent(jid: string, group: RegisteredGroup): void {
   if (group.isMain) return;
@@ -501,6 +525,35 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     }
   }
 
+  if (requestPolicy.route === 'protected_assistant') {
+    const lastContent = missedMessages.at(-1)?.content ?? '';
+    const plannedReminder = planSimpleReminder(
+      lastContent,
+      group.folder,
+      chatJid,
+    );
+    if (plannedReminder) {
+      try {
+        createTask(plannedReminder.task);
+        refreshTaskSnapshots(registeredGroups);
+        await channel.sendMessage(chatJid, plannedReminder.confirmation);
+        logger.info(
+          { group: group.name, taskId: plannedReminder.task.id },
+          'Handled reminder via local protected fast path',
+        );
+        return true;
+      } catch (err) {
+        lastAgentTimestamp[chatJid] = previousCursor;
+        saveState();
+        logger.warn(
+          { group: group.name, err },
+          'Local protected reminder path failed, rolled back cursor for retry',
+        );
+        return false;
+      }
+    }
+  }
+
   // Track idle timer for closing stdin when agent is idle
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
   const configuredTimeout = group.containerConfig?.timeout || CONTAINER_TIMEOUT;
@@ -633,6 +686,18 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       'Agent error, rolled back message cursor for retry',
     );
     return false;
+  }
+
+  if (!outputSentToUser) {
+    const fallbackReply = buildSilentSuccessFallback(
+      requestPolicy.route,
+      missedMessages,
+    );
+    await channel.sendMessage(chatJid, fallbackReply);
+    logger.warn(
+      { group: group.name, route: requestPolicy.route },
+      'Recovered blank agent success with user-facing fallback',
+    );
   }
 
   return true;
@@ -1025,11 +1090,13 @@ async function main(): Promise<void> {
     const channel = findChannel(channels, chatJid);
     if (!channel) return;
 
+    const desktopStatus = await getCursorDesktopStatus({ probe: true });
     const gatewayStatus = await getCursorGatewayStatus({ probe: true });
     const cloudStatus = getCursorCloudStatus();
     await channel.sendMessage(
       chatJid,
       [
+        formatCursorDesktopStatusMessage(desktopStatus),
         formatCursorGatewayStatusMessage(gatewayStatus),
         formatCursorCloudStatusMessage(cloudStatus),
       ].join('\n\n'),
@@ -1080,18 +1147,26 @@ async function main(): Promise<void> {
     }
   }
 
+  async function runCursorDesktopProbeMessage(): Promise<string> {
+    const status = await getCursorDesktopStatus({ probe: true });
+    return formatCursorDesktopStatusMessage(status);
+  }
+
   async function handleCursorSmokeTest(chatJid: string): Promise<void> {
     const channel = findChannel(channels, chatJid);
     if (!channel) return;
 
     const status = await getCursorGatewayStatus({ probe: true });
     const smoke = await runCursorGatewaySmokeTest({ status });
+    const desktopProbe = await runCursorDesktopProbeMessage();
     const cloudProbe = await runCursorCloudProbeMessage();
     await channel.sendMessage(
       chatJid,
-      [formatCursorGatewaySmokeTestMessage(status, smoke), cloudProbe].join(
-        '\n\n',
-      ),
+      [
+        desktopProbe,
+        formatCursorGatewaySmokeTestMessage(status, smoke),
+        cloudProbe,
+      ].join('\n\n'),
     );
   }
 
@@ -2181,22 +2256,7 @@ async function main(): Promise<void> {
     getAvailableGroups,
     writeGroupsSnapshot: (gf, im, ag, rj) =>
       writeGroupsSnapshot(gf, im, ag, rj),
-    onTasksChanged: () => {
-      const tasks = getAllTasks();
-      const taskRows = tasks.map((t) => ({
-        id: t.id,
-        groupFolder: t.group_folder,
-        prompt: t.prompt,
-        script: t.script || undefined,
-        schedule_type: t.schedule_type,
-        schedule_value: t.schedule_value,
-        status: t.status,
-        next_run: t.next_run,
-      }));
-      for (const group of Object.values(registeredGroups)) {
-        writeTasksSnapshot(group.folder, group.isMain === true, taskRows);
-      }
-    },
+    onTasksChanged: () => refreshTaskSnapshots(registeredGroups),
     onMarketplaceChanged: () => {
       const skillRows = getEnabledOpenClawSkillsSnapshot();
       for (const group of Object.values(registeredGroups)) {
