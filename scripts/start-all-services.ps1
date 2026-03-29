@@ -5,6 +5,7 @@ $entryPath = Join-Path $projectRoot 'dist\index.js'
 $pidFile = Join-Path $projectRoot 'nanoclaw.pid'
 $logDir = Join-Path $projectRoot 'logs'
 $logPath = Join-Path $logDir 'nanoclaw.log'
+$stderrLogPath = Join-Path $logDir 'nanoclaw.stderr.log'
 $gatewayStartScript = Join-Path $projectRoot 'scripts\start-openai-gateway.ps1'
 
 function Write-Step {
@@ -126,31 +127,26 @@ function Start-NanoClawFallback {
     return $null
   }
 
-  function Escape-SingleQuoted {
-    param([string] $Value)
-    if ($null -eq $Value) { return '' }
-    return $Value.Replace("'", "''")
-  }
-
-  function Start-HiddenRuntimeProcess {
-    param([string] $RuntimeCommand)
-    return Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-Command', $RuntimeCommand) -WorkingDirectory $Root -WindowStyle Hidden -PassThru
-  }
-
   $nodeExe = Resolve-NodeExecutable
-  $escapedEntry = Escape-SingleQuoted -Value $entryPath
-  $escapedLog = Escape-SingleQuoted -Value $logPath
 
-  if ($nodeExe) {
-    $escapedNodeExe = Escape-SingleQuoted -Value $nodeExe
-    # Use Out-File -Encoding utf8 so logs stay readable (PowerShell native
-    # redirection writes UTF-16 with NUL separators on Windows).
-    $runtimeCommand = "`$env:NODE_NO_WARNINGS='1'; & '$escapedNodeExe' '$escapedEntry' 2>&1 | Out-File -FilePath '$escapedLog' -Encoding utf8 -Append"
-    $proc = Start-HiddenRuntimeProcess -RuntimeCommand $runtimeCommand
-  } else {
-    # Last-resort fallback: long-running npx launcher.
-    $runtimeCommand = "`$env:NODE_NO_WARNINGS='1'; & 'npx.cmd' -y -p node@22 node '$escapedEntry' 2>&1 | Out-File -FilePath '$escapedLog' -Encoding utf8 -Append"
-    $proc = Start-HiddenRuntimeProcess -RuntimeCommand $runtimeCommand
+  # Use OS-level output redirection instead of a long-lived PowerShell command
+  # pipeline so native stderr stays readable and does not show up as
+  # NativeCommandError noise in the log.
+  $previousNoWarnings = $env:NODE_NO_WARNINGS
+  $env:NODE_NO_WARNINGS = '1'
+  try {
+    if ($nodeExe) {
+      $proc = Start-Process -FilePath $nodeExe -ArgumentList @($entryPath) -WorkingDirectory $Root -WindowStyle Hidden -RedirectStandardOutput $logPath -RedirectStandardError $stderrLogPath -PassThru
+    } else {
+      # Last-resort fallback: long-running npx launcher.
+      $proc = Start-Process -FilePath 'npx.cmd' -ArgumentList @('-y', '-p', 'node@22', 'node', $entryPath) -WorkingDirectory $Root -WindowStyle Hidden -RedirectStandardOutput $logPath -RedirectStandardError $stderrLogPath -PassThru
+    }
+  } finally {
+    if ($null -eq $previousNoWarnings) {
+      Remove-Item Env:NODE_NO_WARNINGS -ErrorAction SilentlyContinue
+    } else {
+      $env:NODE_NO_WARNINGS = $previousNoWarnings
+    }
   }
 
   Set-Content -LiteralPath $pidFile -Value $proc.Id -NoNewline

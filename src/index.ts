@@ -151,6 +151,7 @@ import {
   CURSOR_SYNC_COMMANDS,
   CURSOR_TEST_COMMANDS,
   getCommandAccessDecision,
+  normalizeCommandToken,
   PURCHASE_APPROVE_COMMANDS,
   PURCHASE_CANCEL_COMMANDS,
   PURCHASE_REQUEST_COMMANDS,
@@ -1764,7 +1765,7 @@ async function main(): Promise<void> {
       const rawTrimmed = msg.content.trim();
       const trimmed = rawTrimmed.toLowerCase();
       const rawCommandToken = trimmed.split(/\s+/)[0] || '';
-      const commandToken = rawCommandToken.split('@')[0] || '';
+      const commandToken = normalizeCommandToken(rawCommandToken);
       if (CURSOR_STATUS_COMMANDS.has(commandToken)) {
         handleCursorStatus(chatJid).catch((err) =>
           logger.error({ err, chatJid }, 'Cursor status command error'),

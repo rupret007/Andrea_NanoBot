@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   getCommandAccessDecision,
   isMainControlChat,
+  normalizeCommandToken,
 } from './operator-command-gate.js';
 
 describe('operator command gate', () => {
@@ -72,5 +73,20 @@ describe('operator command gate', () => {
       }),
     ).toBe(true);
     expect(isMainControlChat(undefined)).toBe(false);
+  });
+
+  it('normalizes Telegram command suffixes and trailing punctuation', () => {
+    expect(normalizeCommandToken('/cursor_create@andrea_nanobot')).toBe(
+      '/cursor_create',
+    );
+    expect(normalizeCommandToken('/cursor_create?!')).toBe('/cursor_create');
+    expect(normalizeCommandToken('/amazon_status.')).toBe('/amazon_status');
+  });
+
+  it('keeps operator-only commands blocked after token normalization', () => {
+    const decision = getCommandAccessDecision('/cursor_create?!', undefined);
+
+    expect(decision.allowed).toBe(false);
+    expect(decision.reason).toBe('main_control_only');
   });
 });

@@ -47,6 +47,18 @@ describe('direct quick reply', () => {
     expect(reply).toContain("I'll take that as a win");
   });
 
+  it('returns a stable acknowledgment for short confirmations', () => {
+    expect(maybeBuildDirectQuickReply([{ content: 'ok' }])).toBe(
+      'Sounds good.',
+    );
+    expect(maybeBuildDirectQuickReply([{ content: 'yes!' }])).toBe(
+      'Sounds good.',
+    );
+    expect(maybeBuildDirectQuickReply([{ content: 'go ahead' }])).toBe(
+      'Sounds good.',
+    );
+  });
+
   it("returns a witty what's-what response", () => {
     const reply = maybeBuildDirectQuickReply([
       { content: "do you know what's what" },

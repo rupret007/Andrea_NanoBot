@@ -130,6 +130,14 @@ export interface CommandAccessDecision {
   message: string | null;
 }
 
+export function normalizeCommandToken(commandToken: string): string {
+  return commandToken
+    .trim()
+    .toLowerCase()
+    .replace(/@[^@\s]+$/, '')
+    .replace(/[?!.,:;]+$/, '');
+}
+
 export function isMainControlChat(group: RegisteredGroup | undefined): boolean {
   return group?.isMain === true;
 }
@@ -138,7 +146,7 @@ export function getCommandAccessDecision(
   commandToken: string,
   group: RegisteredGroup | undefined,
 ): CommandAccessDecision {
-  const normalized = commandToken.trim().toLowerCase();
+  const normalized = normalizeCommandToken(commandToken);
 
   if (DISABLED_COMMANDS.has(normalized)) {
     return {

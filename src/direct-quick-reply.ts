@@ -100,6 +100,14 @@ export function maybeBuildDirectQuickReply(
   }
 
   if (
+    /^(ok|okay|kk|yes|yep|yup|sure|sounds good|that works|go ahead|please do)[!. ]*$/.test(
+      normalized,
+    )
+  ) {
+    return 'Sounds good.';
+  }
+
+  if (
     /\b(that'?s funny|thats funny|haha|lol|lmao)\b/.test(normalized) ||
     /\bahh+\b/.test(normalized)
   ) {
