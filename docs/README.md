@@ -1,51 +1,54 @@
 # Andrea Documentation
 
-This docs directory is the local source of truth for operating and maintaining Andrea_NanoBot.
+This folder is the source of truth for running Andrea_NanoBot in production and day-to-day usage.
 
-Andrea is built on the NanoClaw runtime, so some lower-level reference material still describes the underlying NanoClaw architecture and internals.
-When you are deciding what to read, use the guide below.
+## Read By Role
 
-## Start Here
+Start with exactly one document based on your role:
 
-If you are setting up or running Andrea, read these first:
+| Role | Read this first | Why |
+| --- | --- | --- |
+| End user | [USER_GUIDE.md](USER_GUIDE.md) | Daily usage, most useful commands, practical examples |
+| Operator/Admin | [ADMIN_GUIDE.md](ADMIN_GUIDE.md) | Ownership model, security defaults, service operations, release checks |
+| Setup owner | [SETUP_AND_FEATURES_GUIDE.md](SETUP_AND_FEATURES_GUIDE.md) | End-to-end install and runtime configuration |
 
-| Goal                                        | Read this                                                                | Why it exists                                                                                |
-| ------------------------------------------- | ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------- |
-| Get Andrea running on your machine          | [SETUP_AND_FEATURES_GUIDE.md](SETUP_AND_FEATURES_GUIDE.md)               | End-to-end operator setup, runtime choices, model config, and go-live flow                   |
-| Understand what users do in chat            | [CHANNEL_COMMANDS_AND_ONBOARDING.md](CHANNEL_COMMANDS_AND_ONBOARDING.md) | Telegram onboarding, commands, DM vs group usage, and user-facing examples                   |
-| Add voice without adding a second assistant | [ALEXA_VOICE_INTEGRATION.md](ALEXA_VOICE_INTEGRATION.md)                 | Alexa setup, signed endpoint flow, allowlists, and the importable interaction model          |
-| Configure shopping with approval safety     | [AMAZON_SHOPPING_AND_APPROVALS.md](AMAZON_SHOPPING_AND_APPROVALS.md)     | Amazon Business setup, guarded purchase flow, and why Andrea refuses to freestyle with money |
-| Decide which optional features to add       | [ADDONS_AND_FEATURE_MATRIX.md](ADDONS_AND_FEATURE_MATRIX.md)             | Practical map of skills, channels, tooling add-ons, and platform scope                       |
-| Validate a release before shipping          | [TESTING_AND_RELEASE_RUNBOOK.md](TESTING_AND_RELEASE_RUNBOOK.md)         | Repeatable testing process, including the three-round stability gate                         |
+## Feature Guides
 
-## Operator And Debugging Docs
+Use these when you are enabling or validating specific capabilities:
 
-Use these when something is wrong or you need to verify a specific runtime area:
+| Feature | Read this |
+| --- | --- |
+| Telegram onboarding and command UX | [CHANNEL_COMMANDS_AND_ONBOARDING.md](CHANNEL_COMMANDS_AND_ONBOARDING.md) |
+| Alexa voice ingress | [ALEXA_VOICE_INTEGRATION.md](ALEXA_VOICE_INTEGRATION.md) |
+| Amazon shopping + approvals | [AMAZON_SHOPPING_AND_APPROVALS.md](AMAZON_SHOPPING_AND_APPROVALS.md) |
+| Optional add-ons and skills | [ADDONS_AND_FEATURE_MATRIX.md](ADDONS_AND_FEATURE_MATRIX.md) |
 
-| Read this                                                      | Use it for                                            |
-| -------------------------------------------------------------- | ----------------------------------------------------- |
-| [DEBUG_CHECKLIST.md](DEBUG_CHECKLIST.md)                       | Fast incident triage and common failure patterns      |
-| [../PRIVACY.md](../PRIVACY.md)                                 | Public-facing privacy policy for Telegram or repo use |
-| [SECURITY.md](SECURITY.md)                                     | Security model and isolation assumptions              |
-| [REQUIREMENTS.md](REQUIREMENTS.md)                             | Environment, tool, and capability baseline            |
-| [APPLE-CONTAINER-NETWORKING.md](APPLE-CONTAINER-NETWORKING.md) | Apple Container networking details on macOS           |
-| [docker-sandboxes.md](docker-sandboxes.md)                     | Docker Sandboxes / micro-VM style isolation notes     |
+## Operations, Security, And Release
 
-## Runtime And Architecture References
+Use these during incidents, audits, or release preparation:
 
-These are useful when changing core behavior or reviewing how the inherited runtime works:
+| Need | Read this |
+| --- | --- |
+| Incident triage | [DEBUG_CHECKLIST.md](DEBUG_CHECKLIST.md) |
+| Security model | [SECURITY.md](SECURITY.md) |
+| Environment requirements | [REQUIREMENTS.md](REQUIREMENTS.md) |
+| Release test gate | [TESTING_AND_RELEASE_RUNBOOK.md](TESTING_AND_RELEASE_RUNBOOK.md) |
+| Public privacy policy | [../PRIVACY.md](../PRIVACY.md) |
 
-| Read this                                      | Use it for                                              |
-| ---------------------------------------------- | ------------------------------------------------------- |
-| [SPEC.md](SPEC.md)                             | Runtime architecture, storage, IPC, and system behavior |
-| [SDK_DEEP_DIVE.md](SDK_DEEP_DIVE.md)           | Claude SDK and agent-runner details                     |
-| [skills-as-branches.md](skills-as-branches.md) | How the skill and branch model works                    |
+## Runtime Internals
 
-## How To Read These Docs Accurately
+Only read these when changing core runtime behavior:
 
-The most practical reading rule is:
+| Read this | Use it for |
+| --- | --- |
+| [SPEC.md](SPEC.md) | Runtime architecture and IPC model |
+| [SDK_DEEP_DIVE.md](SDK_DEEP_DIVE.md) | Agent SDK/runtime implementation details |
+| [skills-as-branches.md](skills-as-branches.md) | Skill and branch workflow internals |
+| [APPLE-CONTAINER-NETWORKING.md](APPLE-CONTAINER-NETWORKING.md) | Apple Container network behavior on macOS |
+| [docker-sandboxes.md](docker-sandboxes.md) | Docker sandbox notes |
 
-- if you are operating Andrea day to day, prefer the Andrea-specific guides above
-- if you are changing core runtime internals, read the lower-level NanoClaw-derived reference docs too
+## Quick Rule
 
-That keeps the docs useful without pretending every inherited runtime document has already been fully rewritten from scratch.
+- If you are trying to use Andrea: read the user guide first.
+- If you are trying to keep Andrea safe and running: read the admin guide first.
+- If you are changing core internals: read the runtime docs before touching code.

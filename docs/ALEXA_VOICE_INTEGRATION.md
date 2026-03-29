@@ -1,159 +1,35 @@
 # Andrea Alexa Voice Integration
 
-Andrea can now speak through Alexa as a proper voice ingress instead of a second public bot persona.
-Telegram is still the main text front door.
-Alexa is just another way to talk to the same assistant.
+This guide shows how to add Alexa as a voice front door to Andrea.
+Andrea stays the assistant identity. Alexa is only the transport.
 
-That means:
+## 1) What You Get
 
-- the user hears Andrea
-- Andrea stays the final voice
-- OpenClaw stays internal
-- shopping and approvals stay guarded
-- nobody has to learn a weird two-bot dance at 7 a.m. before coffee
+With Alexa enabled:
 
-## What This Integration Actually Does
+- users can speak requests instead of typing
+- requests route into the same Andrea runtime
+- response formatting still stays Andrea-first
+- internal helper machinery stays hidden
 
-This repo now includes:
+## 2) Required Inputs
 
-- a custom Alexa skill web-service endpoint
-- official ASK request verification support
-- optional Alexa user/person allowlisting
-- optional account-link enforcement
-- a bridge into Andrea's existing routing and container helper path
-- speech cleanup so internal tags, markdown, and raw links do not spill into Alexa's voice output
-
-## Architecture In One Breath
-
-The shape is:
-
-1. Alexa sends a signed request to the Andrea host
-2. Andrea verifies the request
-3. Andrea authorizes the Alexa user according to env config
-4. Andrea converts the utterance into a normal assistant turn
-5. Andrea uses the same routing and helper boundary already used elsewhere
-6. Andrea formats the final voice response
-7. Alexa speaks it back
-
-No public bot-to-bot choreography.
-No "please ask the other assistant."
-No leaked internal helper chatter.
-
-## Files Added For This
-
-- `src/alexa.ts`
-- `src/alexa-bridge.ts`
-- `docs/alexa/interaction-model.en-US.json`
-
-## Recommended First Setup
-
-### 1) Set the env values
-
-At minimum:
+Minimum env value:
 
 ```bash
 ALEXA_SKILL_ID=amzn1.ask.skill.xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 ```
 
-Recommended for a private first rollout:
+Recommended secure private rollout:
 
 ```bash
 ALEXA_HOST=127.0.0.1
 ALEXA_PORT=4300
 ALEXA_PATH=/alexa
 ALEXA_VERIFY_SIGNATURE=true
-ALEXA_ALLOWED_USER_IDS=amzn1.ask.account.your-user-id
+ALEXA_ALLOWED_USER_IDS=amzn1.ask.account.your-account-id
 ALEXA_TARGET_GROUP_FOLDER=main
 ```
-
-Notes:
-
-- `ALEXA_VERIFY_SIGNATURE=true` should stay on outside local experiments.
-- `ALEXA_ALLOWED_USER_IDS` is the easiest guardrail when the skill is still personal/private.
-- `ALEXA_TARGET_GROUP_FOLDER=main` makes Alexa share the same core Andrea context as your Telegram main chat.
-- If `ALEXA_TARGET_GROUP_FOLDER` is omitted, Andrea uses `main` when available and otherwise creates an isolated Alexa voice workspace.
-
-### 2) Create a custom Alexa skill
-
-In the Alexa developer console:
-
-1. Create a new custom skill.
-2. Use your preferred display name.
-3. Set the invocation name to something natural like `andrea assistant`.
-4. Import the interaction model from:
-   - [docs/alexa/interaction-model.en-US.json](./alexa/interaction-model.en-US.json)
-
-### 3) Point Alexa at the Andrea endpoint
-
-Alexa requires HTTPS for hosted skill endpoints.
-That means the local Andrea server usually sits behind one of these:
-
-- a reverse proxy on a public host
-- a secure tunnel such as Cloudflare Tunnel or ngrok
-- your own HTTPS edge / ingress
-
-The runtime listens on:
-
-- `http://<ALEXA_HOST>:<ALEXA_PORT><ALEXA_PATH>`
-
-Default local example:
-
-- `http://127.0.0.1:4300/alexa`
-
-Typical public endpoint example after a tunnel:
-
-- `https://voice.example.com/alexa`
-
-### 4) Test the local runtime first
-
-From Telegram:
-
-```text
-/alexa_status
-```
-
-That shows:
-
-- whether Alexa is configured
-- whether the listener started
-- whether signature verification is on
-- whether account linking is required
-- whether a target group folder is pinned
-
-### 5) Test inside the Alexa console
-
-Try:
-
-- "open Andrea assistant"
-- "ask Andrea assistant to research the best standing desks for small apartments"
-- "ask Andrea assistant to remind me tomorrow at 9 a.m. to call Sam"
-- "ask Andrea assistant to look for a good keyboard before I buy anything"
-
-Andrea should answer conversationally.
-
-## Security Settings That Matter
-
-### Request verification
-
-Keep this on:
-
-```bash
-ALEXA_VERIFY_SIGNATURE=true
-```
-
-That validates Alexa-signed requests before Andrea processes them.
-
-### User allowlist
-
-Recommended for personal/private use:
-
-```bash
-ALEXA_ALLOWED_USER_IDS=amzn1.ask.account...,amzn1.ask.person...
-```
-
-If this is set, only matching Alexa identities are accepted.
-
-### Account linking
 
 Optional:
 
@@ -161,134 +37,126 @@ Optional:
 ALEXA_REQUIRE_ACCOUNT_LINKING=true
 ```
 
-This makes Andrea require a linked account before handling requests.
+## 3) Meaning Of Each Setting
 
-Current practical note:
+- `ALEXA_SKILL_ID`: required skill identifier from Alexa developer console.
+- `ALEXA_HOST`: bind interface (default `127.0.0.1`).
+- `ALEXA_PORT`: bind port (default `4300`).
+- `ALEXA_PATH`: HTTP path for Alexa requests (default `/alexa`).
+- `ALEXA_VERIFY_SIGNATURE`: validates ASK request signatures; keep this `true` in real environments.
+- `ALEXA_ALLOWED_USER_IDS`: comma-separated allowlist for account/person IDs.
+- `ALEXA_REQUIRE_ACCOUNT_LINKING`: rejects requests until skill account is linked.
+- `ALEXA_TARGET_GROUP_FOLDER`: routes voice requests into a specific group context (`main` recommended).
 
-- account-link presence is useful UX and policy enforcement
-- the simplest strong access control for personal rollout is still `ALEXA_ALLOWED_USER_IDS`
+## 4) Build The Alexa Skill
 
-## Shared Context Versus Isolated Voice Context
+In Alexa Developer Console:
 
-You have two good modes:
+1. Create a new **Custom** skill.
+2. Set invocation name (for example `andrea assistant`).
+3. Import interaction model from:
+   - `docs/alexa/interaction-model.en-US.json`
+4. Configure endpoint URL (HTTPS) to:
+   - `https://<your-public-host>/alexa` (or your configured `ALEXA_PATH`)
+5. Use the same `ALEXA_SKILL_ID` in `.env`.
 
-### Shared main context
+## 5) HTTPS Requirement
 
-Use:
+Alexa custom skills require HTTPS endpoints.
+
+Common patterns:
+
+- reverse proxy on your own host
+- Cloudflare Tunnel
+- ngrok
+
+Local runtime address can stay HTTP internally:
+
+- `http://127.0.0.1:4300/alexa`
+
+Expose that through HTTPS for Alexa console configuration.
+
+## 6) Start And Verify
+
+Start runtime:
 
 ```bash
-ALEXA_TARGET_GROUP_FOLDER=main
+npm run services:restart
 ```
 
-Best when:
+Run verification:
 
-- Alexa is for your personal Andrea
-- you want reminders, shopping, and follow-up context to line up with Telegram
-- you want one assistant brain and zero "which assistant knows this?" drama
+```bash
+npm run setup -- --step verify
+```
 
-### Isolated Alexa workspace
+In Telegram:
 
-Leave `ALEXA_TARGET_GROUP_FOLDER` unset and omit a registered `main` group.
+```text
+/alexa_status
+```
 
-Best when:
+Expected status traits:
 
-- you want voice experiments without touching main context
-- you are prototyping before tying Alexa into your real daily workflow
+- enabled
+- listening
+- signature verification on
+- correct target group folder
 
-## Shopping And Research Through Voice
+## 7) Voice Test Script
 
-Andrea can absolutely help research products over Alexa.
+In Alexa test console (or real device), try:
 
-Practical pattern:
+- `Open Andrea assistant`
+- `Ask Andrea assistant to remind me tomorrow at 8am to call Sam`
+- `Ask Andrea assistant to research the best standing desks for small apartments`
 
-1. ask Andrea to compare or narrow options
-2. ask Andrea to search Amazon Business if shopping is configured
-3. keep actual purchase approval in the explicit approval flow
+If this works, voice ingress is live.
 
-Important boundary:
+## 8) Security Hardening Checklist
 
-- this repo does not assume an OpenAI-native checkout API
-- OpenAI-backed models can help with research and recommendation
-- actual order execution in this repo stays on the guarded Amazon Business flow
+Keep these on for production:
 
-Andrea is happy to help choose the keyboard.
-Andrea is still not allowed to become a surprise procurement goblin.
+- `ALEXA_VERIFY_SIGNATURE=true`
+- `ALEXA_ALLOWED_USER_IDS` populated
+- `ALEXA_TARGET_GROUP_FOLDER=main` (or another intentional folder)
 
-## Example Utterances
+Add account linking when needed:
 
-- "Ask Andrea assistant to research the best humidifiers for a bedroom."
-- "Ask Andrea assistant to remind me tomorrow at 8 a.m. to stretch."
-- "Ask Andrea assistant to compare Outlook and Apple Calendar for a family."
-- "Ask Andrea assistant to look for a standing desk on Amazon before I buy one."
-- "Ask Andrea assistant to summarize what I should focus on today."
+- set `ALEXA_REQUIRE_ACCOUNT_LINKING=true`
 
-## Troubleshooting
+Avoid:
 
-### Alexa says the endpoint failed
+- public endpoint without signature verification
+- empty allowlist for personal/private skills
+- changing target group folder without documenting behavior impact
 
-Check:
+## 9) Troubleshooting
 
-- `/alexa_status`
-- the tunnel / HTTPS endpoint
-- `ALEXA_SKILL_ID`
-- `ALEXA_VERIFY_SIGNATURE`
+If `/alexa_status` says disabled:
 
-### Alexa says Andrea is not authorized
+- missing or wrong `ALEXA_SKILL_ID`
 
-Check:
+If status says configured but not started:
 
-- `ALEXA_ALLOWED_USER_IDS`
-- whether the request came from the Alexa user/profile you expect
+- runtime not started, or listener failed to bind host/port
 
-### Alexa asks for account linking
+If Alexa says endpoint failure:
 
-Check:
+- HTTPS endpoint mismatch
+- wrong path (`ALEXA_PATH` vs console endpoint path)
+- signature verification failing due to proxy/path rewriting
 
-- `ALEXA_REQUIRE_ACCOUNT_LINKING`
-- whether the skill account is linked in the Alexa app
+If requests are denied:
 
-### Andrea answers oddly or reads links like a robot lawyer
+- `ALEXA_ALLOWED_USER_IDS` does not include caller identity
+- `ALEXA_REQUIRE_ACCOUNT_LINKING=true` but skill not linked
 
-That should be much better now because the voice layer strips:
+## 10) Operational Notes
 
-- internal tags
-- markdown
-- raw URLs
-
-If a response still sounds clunky, improve the prompt or shorten the request.
-
-## Test Coverage Added
-
-This integration now has tests for:
-
-- config parsing
-- speech normalization
-- allowlist behavior
-- account-link prompts
-- bridge invocation
-- failure sanitization
-- live local HTTP request handling with signature verification disabled for test mode
-
-## Research Sources Used
-
-Official sources:
-
-- Alexa Skills Kit docs for hosting a custom skill as a web service
-- Alexa request-signature verification guidance
-- Alexa account-linking guidance
-- ASK SDK for Node.js
-
-Example repos and SDK references reviewed:
-
-- `alexa-samples/skill-sample-nodejs-fact`
-- `alexa/alexa-skills-kit-sdk-for-nodejs`
-
-## Recommended Next Step
-
-After your endpoint is live behind HTTPS:
-
-1. import the interaction model
-2. wire the endpoint in the Alexa console
-3. test with a private skill first
-4. keep `ALEXA_ALLOWED_USER_IDS` on
-5. use `/alexa_status` before blaming the nearest Echo
+- Alexa is additive. Telegram remains the primary operator control surface.
+- For incidents, use:
+  - `/alexa_status`
+  - `npm run setup -- --step verify`
+  - `logs/nanoclaw.log`
+- Keep this guide aligned with any future Alexa intent-model changes.

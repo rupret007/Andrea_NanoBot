@@ -3,6 +3,8 @@
 This guide covers the user-facing chat experience for Andrea, especially on Telegram.
 Use it when you want a simple but complete explanation of how people should interact with the bot once setup is complete.
 
+If you want a shorter day-to-day version, start with [USER_GUIDE.md](USER_GUIDE.md).
+
 ## 1) How Chat UX Works
 
 There are three common chat modes:

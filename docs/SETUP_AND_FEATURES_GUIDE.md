@@ -6,6 +6,8 @@ Use it when you need to install, configure, verify, or operate Andrea on a real 
 For the in-chat user journey and command reference, also see:
 
 - [CHANNEL_COMMANDS_AND_ONBOARDING.md](CHANNEL_COMMANDS_AND_ONBOARDING.md)
+- [USER_GUIDE.md](USER_GUIDE.md)
+- [ADMIN_GUIDE.md](ADMIN_GUIDE.md)
 
 ## What This Package Includes
 

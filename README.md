@@ -11,6 +11,8 @@
 </p>
 
 <p align="center">
+  <a href="docs/USER_GUIDE.md">User Guide</a>&nbsp; | &nbsp;
+  <a href="docs/ADMIN_GUIDE.md">Admin Guide</a>&nbsp; | &nbsp;
   <a href="docs/SETUP_AND_FEATURES_GUIDE.md">Setup Guide</a>&nbsp; | &nbsp;
   <a href="docs/CHANNEL_COMMANDS_AND_ONBOARDING.md">Chat Commands</a>&nbsp; | &nbsp;
   <a href="docs/ALEXA_VOICE_INTEGRATION.md">Alexa Voice</a>&nbsp; | &nbsp;
@@ -81,6 +83,14 @@ Then use this setup flow:
 6. In Telegram, run `/registermain`
 7. In Telegram, run `/help`
 8. Optionally add Alexa voice with [docs/ALEXA_VOICE_INTEGRATION.md](docs/ALEXA_VOICE_INTEGRATION.md)
+
+## Pick Your Guide
+
+If you only read one doc, use the one that matches your role:
+
+- User: [docs/USER_GUIDE.md](docs/USER_GUIDE.md)
+- Operator/Admin: [docs/ADMIN_GUIDE.md](docs/ADMIN_GUIDE.md)
+- Full setup and runtime details: [docs/SETUP_AND_FEATURES_GUIDE.md](docs/SETUP_AND_FEATURES_GUIDE.md)
 
 ## Two Command Surfaces
 
@@ -232,6 +242,10 @@ npm run services:restart
 
 Use the docs based on what you are trying to do:
 
+- [docs/USER_GUIDE.md](docs/USER_GUIDE.md)
+  for daily usage, command examples, and what Andrea can do for end users
+- [docs/ADMIN_GUIDE.md](docs/ADMIN_GUIDE.md)
+  for setup ownership, security rails, service operations, and release steps
 - [docs/SETUP_AND_FEATURES_GUIDE.md](docs/SETUP_AND_FEATURES_GUIDE.md)
   for operator setup, runtime config, and day-to-day operations
 - [docs/CHANNEL_COMMANDS_AND_ONBOARDING.md](docs/CHANNEL_COMMANDS_AND_ONBOARDING.md)
