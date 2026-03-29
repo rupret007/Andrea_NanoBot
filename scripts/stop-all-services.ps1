@@ -61,16 +61,30 @@ function Stop-OrphanedLauncherProcesses {
   $stopped = 0
   $projectPattern = [Regex]::Escape($Root)
   $launchers = @()
+  $powershellLaunchers = @()
   try {
     $launchers = Get-CimInstance Win32_Process -Filter "Name='cmd.exe'" | Where-Object {
       $cmd = [string]$_.CommandLine
       $cmd -match $projectPattern -and $cmd -match 'npx\.cmd' -and $cmd -match 'dist[\\/]index\.js'
+    }
+    $powershellLaunchers = Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object {
+      $cmd = [string]$_.CommandLine
+      $cmd -match $projectPattern -and $cmd -match 'dist[\\/]index\.js'
     }
   } catch {
     return 0
   }
 
   foreach ($proc in $launchers) {
+    try {
+      Stop-Process -Id $proc.ProcessId -Force -ErrorAction SilentlyContinue
+      $stopped++
+    } catch {
+      # continue stopping others
+    }
+  }
+
+  foreach ($proc in $powershellLaunchers) {
     try {
       Stop-Process -Id $proc.ProcessId -Force -ErrorAction SilentlyContinue
       $stopped++

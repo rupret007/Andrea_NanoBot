@@ -127,12 +127,30 @@ function Start-NanoClawFallback {
     return $null
   }
 
+  function Escape-SingleQuoted {
+    param([string] $Value)
+    if ($null -eq $Value) { return '' }
+    return $Value.Replace("'", "''")
+  }
+
+  function Start-HiddenRuntimeProcess {
+    param([string] $RuntimeCommand)
+    return Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-Command', $RuntimeCommand) -WorkingDirectory $Root -WindowStyle Hidden -PassThru
+  }
+
   $nodeExe = Resolve-NodeExecutable
+  $escapedEntry = Escape-SingleQuoted -Value $entryPath
+  $escapedLog = Escape-SingleQuoted -Value $logPath
+  $escapedErrLog = Escape-SingleQuoted -Value $errLogPath
+
   if ($nodeExe) {
-    $proc = Start-Process -FilePath $nodeExe -ArgumentList @($entryPath) -WorkingDirectory $Root -WindowStyle Hidden -RedirectStandardOutput $logPath -RedirectStandardError $errLogPath -PassThru
+    $escapedNodeExe = Escape-SingleQuoted -Value $nodeExe
+    $runtimeCommand = "& '$escapedNodeExe' '$escapedEntry' 1>> '$escapedLog' 2>> '$escapedErrLog'"
+    $proc = Start-HiddenRuntimeProcess -RuntimeCommand $runtimeCommand
   } else {
     # Last-resort fallback: long-running npx launcher.
-    $proc = Start-Process -FilePath 'npx.cmd' -ArgumentList @('-y', '-p', 'node@22', 'node', $entryPath) -WorkingDirectory $Root -WindowStyle Hidden -RedirectStandardOutput $logPath -RedirectStandardError $errLogPath -PassThru
+    $runtimeCommand = "& 'npx.cmd' -y -p node@22 node '$escapedEntry' 1>> '$escapedLog' 2>> '$escapedErrLog'"
+    $proc = Start-HiddenRuntimeProcess -RuntimeCommand $runtimeCommand
   }
 
   Set-Content -LiteralPath $pidFile -Value $proc.Id -NoNewline
