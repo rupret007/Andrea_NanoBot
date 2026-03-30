@@ -1169,6 +1169,14 @@ function mapTerminalOutputToView(
   };
 }
 
+function assertDesktopBridgeConfigured(): void {
+  if (!resolveCursorDesktopConfig()) {
+    throw new Error(
+      'Cursor desktop bridge is not configured. Set CURSOR_DESKTOP_BRIDGE_URL and CURSOR_DESKTOP_BRIDGE_TOKEN to reach your normal machine.',
+    );
+  }
+}
+
 async function ensureTrackedDesktopCursorAgent(
   params: {
     groupFolder: string;
@@ -1176,6 +1184,7 @@ async function ensureTrackedDesktopCursorAgent(
   },
   agentId: string,
 ): Promise<CursorDbAgentRecord> {
+  assertDesktopBridgeConfigured();
   const { record } = await ensureTrackedCursorAgent(params, agentId);
   if (
     record.group_folder !== params.groupFolder ||

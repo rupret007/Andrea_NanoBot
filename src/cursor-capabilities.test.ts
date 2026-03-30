@@ -266,6 +266,24 @@ describe('cursor-capabilities', () => {
     );
   });
 
+  it('explains when a Cursor Cloud job is already finished before stop', () => {
+    expect(
+      formatCursorOperationFailure(
+        'Cursor stop failed for bc-12345678-1234-1234-1234-123456789012',
+        new CursorCloudApiError(
+          'Cursor API POST /v0/agents/bc-12345678-1234-1234-1234-123456789012/stop failed with HTTP 400: Cloud Agent not running.: This Cloud Agent is no longer available.',
+          400,
+          {
+            error:
+              'Cloud Agent not running.: This Cloud Agent is no longer available.',
+          },
+        ),
+      ),
+    ).toBe(
+      'Cursor stop failed for bc-12345678-1234-1234-1234-123456789012. That Cursor Cloud job is no longer running, so there is nothing left to stop. Use /cursor_sync to refresh its final state.',
+    );
+  });
+
   it('passes through Cloud-only queued follow-up guidance for desktop sessions', () => {
     expect(
       formatCursorOperationFailure(

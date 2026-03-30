@@ -1742,7 +1742,7 @@ async function main(): Promise<void> {
       if (artifacts.length === 0) {
         await channel.sendMessage(
           chatJid,
-          `Cursor agent ${normalizedAgentId} has no tracked artifacts yet.`,
+          `Cursor Cloud job ${normalizedAgentId} has no tracked artifacts yet.`,
         );
         return;
       }

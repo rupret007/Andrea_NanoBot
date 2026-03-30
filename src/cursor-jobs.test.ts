@@ -1299,6 +1299,9 @@ describe('cursor-jobs', () => {
   });
 
   it('rejects terminal control for cloud-backed agents', async () => {
+    process.env.CURSOR_DESKTOP_BRIDGE_URL = 'https://cursor-bridge.example.com';
+    process.env.CURSOR_DESKTOP_BRIDGE_TOKEN = 'bridge-token';
+
     upsertCursorAgent({
       id: 'bc_term_cloud',
       group_folder: 'whatsapp_main',
@@ -1331,5 +1334,44 @@ describe('cursor-jobs', () => {
         commandText: 'pwd',
       }),
     ).rejects.toThrow('desktop bridge sessions');
+  });
+
+  it('rejects desktop terminal control cleanly when the bridge is not configured', async () => {
+    delete process.env.CURSOR_DESKTOP_BRIDGE_URL;
+    delete process.env.CURSOR_DESKTOP_BRIDGE_TOKEN;
+
+    await expect(
+      runCursorTerminalCommand({
+        groupFolder: 'whatsapp_main',
+        chatJid: 'tg:42',
+        agentId: 'desk_fake',
+        commandText: 'pwd',
+      }),
+    ).rejects.toThrow('Cursor desktop bridge is not configured');
+
+    await expect(
+      getCursorTerminalStatus({
+        groupFolder: 'whatsapp_main',
+        chatJid: 'tg:42',
+        agentId: 'desk_fake',
+      }),
+    ).rejects.toThrow('Cursor desktop bridge is not configured');
+
+    await expect(
+      getCursorTerminalOutput({
+        groupFolder: 'whatsapp_main',
+        chatJid: 'tg:42',
+        agentId: 'desk_fake',
+        limit: 20,
+      }),
+    ).rejects.toThrow('Cursor desktop bridge is not configured');
+
+    await expect(
+      stopCursorTerminal({
+        groupFolder: 'whatsapp_main',
+        chatJid: 'tg:42',
+        agentId: 'desk_fake',
+      }),
+    ).rejects.toThrow('Cursor desktop bridge is not configured');
   });
 });

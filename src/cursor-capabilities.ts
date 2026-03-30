@@ -160,6 +160,16 @@ function getCursorOperatorDetail(err: unknown): string | null {
     if (err.status === 404 && /\/v0\/agents\//i.test(message)) {
       return 'Cursor Cloud could not find that agent id.';
     }
+
+    if (
+      err.status === 400 &&
+      /\/stop\b/i.test(message) &&
+      /cloud agent not running|no longer available/i.test(
+        message + ' ' + detailText,
+      )
+    ) {
+      return 'That Cursor Cloud job is no longer running, so there is nothing left to stop. Use /cursor_sync to refresh its final state.';
+    }
   }
 
   if (!message) return null;
