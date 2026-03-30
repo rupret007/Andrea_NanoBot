@@ -310,11 +310,6 @@ Typical commands:
 - ask for regular assistance in any registered chat
 - ask for recurring tasks:
   - `@your_bot_username every weekday at 9am send me a sales summary`
-- manage groups from main chat:
-  - `@your_bot_username join the Family group`
-- manage marketplace skills:
-  - `@your_bot_username search OpenClaw skills for GitHub Actions debugging`
-  - `@your_bot_username enable that skill in this chat`
 - use the in-chat discovery layer:
   - `/start`
   - `/help`
@@ -328,7 +323,7 @@ Typical commands:
   - `/purchase_approve <request_id> <approval_code>`
   - `/purchase_cancel <request_id>`
 - Cursor-focused control commands:
-  - `/cursor_status` (safe public status check)
+  - `/cursor_status` (safe public status check for Cloud, desktop bridge, and route readiness)
   - `/cursor_models [filter]` (main control chat only; Cursor Cloud only)
   - `/cursor_test` (main control chat only; live 9router/Cursor smoke request)
   - `/cursor_jobs` (main control chat only; list tracked Cursor jobs for this chat)
@@ -346,6 +341,7 @@ Important scope rule:
 - `/cursor_status` is safe to keep visible in the narrower public product surface
 - the deeper Cursor, Amazon, and Alexa slash commands are operator-facing controls and should be run from Andrea's registered main control chat only
 - for Cursor specifically, those deeper job commands are only operational when `/cursor_status` shows a real job backend instead of `Job backend: not configured`
+- marketplace skill discovery and enablement still exist in the operator/runtime layer, but they are not part of the default Telegram command surface
 
 ## 8) OpenClaw Marketplace Behavior And Security
 

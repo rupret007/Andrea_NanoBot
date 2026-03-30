@@ -64,7 +64,7 @@ Core chat commands:
 
 Operator-safe status:
 
-- `/cursor_status` - show whether the Cursor/9router path is configured correctly
+- `/cursor_status` - show Cursor readiness, including Cloud, desktop bridge, and runtime-route status
 
 Advanced operator workflows still exist, but they are restricted to Andrea's main control chat and should stay in the admin guide and out of the default demo unless they were validated the same day.
 

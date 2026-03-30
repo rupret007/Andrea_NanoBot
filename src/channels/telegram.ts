@@ -98,7 +98,7 @@ export function buildTelegramCommandsText(): string {
     '- `/ping` - check bot health',
     '- `/chatid` - show chat ID and chat type',
     '- `/registermain` - bootstrap main control chat (DM only)',
-    '- `/cursor_status` - show Cursor/9router integration readiness',
+    '- `/cursor_status` - show Cursor readiness (Cloud, desktop bridge, and route status)',
     '- Advanced operator workflows stay in the admin guide and should be demoed only after same-day validation.',
   ].join('\n');
 }

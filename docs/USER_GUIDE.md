@@ -43,7 +43,7 @@ Core:
 
 Operator-safe status:
 
-- `/cursor_status`
+- `/cursor_status` - Cursor readiness, including Cloud, desktop bridge, and runtime-route status
 
 Optional note:
 
