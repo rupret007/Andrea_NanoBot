@@ -40,6 +40,7 @@
     "cursor:bridge": "tsx src/cursor-desktop-bridge.ts",
     "telegram:user:auth": "tsx src/telegram-user-session.ts auth",
     "telegram:user:send": "tsx src/telegram-user-session.ts send",
+    "telegram:user:tap": "tsx src/telegram-user-session.ts tap",
     "telegram:user:batch": "tsx src/telegram-user-session.ts batch"
   },
   "dependencies": {

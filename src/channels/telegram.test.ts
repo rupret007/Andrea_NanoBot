@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
+  TelegramChannel,
   buildTelegramChatIdText,
   buildTelegramCommandsText,
   buildTelegramFeaturesText,
@@ -167,5 +168,46 @@ describe('splitTelegramMessage', () => {
     expect(chunks).toHaveLength(2);
     expect(chunks[0]).toHaveLength(4096);
     expect(chunks[1]).toHaveLength(904);
+  });
+});
+
+describe('TelegramChannel.sendMessage', () => {
+  it('passes reply targets and inline actions through to Telegram and returns the sent message id', async () => {
+    const sendMessage = vi.fn().mockResolvedValue({ message_id: 321 });
+    const channel = new TelegramChannel('test-token', {
+      onMessage: () => undefined,
+      onChatMetadata: () => undefined,
+      registeredGroups: () => ({}),
+    });
+
+    (
+      channel as unknown as {
+        bot: { api: { sendMessage: typeof sendMessage } };
+      }
+    ).bot = {
+      api: { sendMessage },
+    };
+
+    const result = await channel.sendMessage('tg:123', 'Hello operator', {
+      threadId: '42',
+      replyToMessageId: '9001',
+      inlineActions: [
+        { label: 'Sync', actionId: '/cursor-sync' },
+        { label: 'Open', url: 'https://cursor.com' },
+      ],
+    });
+
+    expect(result.platformMessageId).toBe('321');
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith(
+      '123',
+      'Hello operator',
+      expect.objectContaining({
+        parse_mode: 'Markdown',
+        message_thread_id: 42,
+        reply_to_message_id: 9001,
+        reply_markup: expect.any(Object),
+      }),
+    );
   });
 });

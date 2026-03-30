@@ -9,6 +9,9 @@ import {
   matchesExpectedTelegramSender,
   normalizeTelegramSenderId,
   normalizeTelegramTestTarget,
+  parseTelegramSendCommandArgs,
+  parseTelegramTapCommandArgs,
+  resolveTelegramTapButtonTarget,
   resolveTelegramUserSessionConfig,
   withTelegramUserSessionLock,
 } from './telegram-user-session.js';
@@ -111,6 +114,75 @@ describe('resolveTelegramUserSessionConfig', () => {
 
     expect(config.testTarget).toBe('8004355504');
     expect(config.authMode).toBe('qr');
+  });
+});
+
+describe('parseTelegramSendCommandArgs', () => {
+  it('parses plain message text with no reply target', () => {
+    expect(parseTelegramSendCommandArgs(['hello', 'Andrea'])).toEqual({
+      message: 'hello Andrea',
+      replyToMessageId: undefined,
+    });
+  });
+
+  it('parses --reply-to message metadata for reply-linked operator flows', () => {
+    expect(
+      parseTelegramSendCommandArgs(['--reply-to', '1234', '/cursor-sync']),
+    ).toEqual({
+      message: '/cursor-sync',
+      replyToMessageId: 1234,
+    });
+  });
+
+  it('rejects malformed send arguments', () => {
+    expect(() => parseTelegramSendCommandArgs([])).toThrow('Usage:');
+    expect(() =>
+      parseTelegramSendCommandArgs(['--reply-to', 'oops', '/cursor-sync']),
+    ).toThrow('Usage:');
+  });
+});
+
+describe('parseTelegramTapCommandArgs', () => {
+  it('parses a target message id and button selection', () => {
+    expect(parseTelegramTapCommandArgs(['321', 'Terminal', 'Log'])).toEqual({
+      messageId: 321,
+      selection: 'Terminal Log',
+    });
+  });
+
+  it('rejects malformed tap arguments', () => {
+    expect(() => parseTelegramTapCommandArgs(['321'])).toThrow('Usage:');
+    expect(() => parseTelegramTapCommandArgs(['oops', '1'])).toThrow('Usage:');
+  });
+});
+
+describe('resolveTelegramTapButtonTarget', () => {
+  it('prefers exact label matches before numeric index selection', () => {
+    expect(
+      resolveTelegramTapButtonTarget(['Sync', 'Text', 'Files'], 'Text'),
+    ).toEqual({
+      index: 2,
+      label: 'Text',
+    });
+  });
+
+  it('falls back to case-insensitive labels and 1-based indices', () => {
+    expect(
+      resolveTelegramTapButtonTarget(['Sync', 'Text', 'Files'], 'files'),
+    ).toEqual({
+      index: 3,
+      label: 'Files',
+    });
+    expect(resolveTelegramTapButtonTarget(['Sync', 'Text'], '1')).toEqual({
+      index: 1,
+      label: 'Sync',
+    });
+  });
+
+  it('reports available buttons when selection fails', () => {
+    expect(() =>
+      resolveTelegramTapButtonTarget(['Sync', 'Text'], 'Stop'),
+    ).toThrow('Available buttons: Sync, Text');
   });
 });
 

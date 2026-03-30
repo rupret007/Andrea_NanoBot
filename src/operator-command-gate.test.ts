@@ -81,6 +81,21 @@ describe('operator command gate', () => {
     expect(decision.allowed).toBe(true);
   });
 
+  it('keeps hidden cursor selector helpers restricted to the main control chat', () => {
+    const blocked = getCommandAccessDecision('/cursor-select', undefined);
+    expect(blocked.allowed).toBe(false);
+    expect(blocked.reason).toBe('main_control_only');
+
+    const allowed = getCommandAccessDecision('/cursor-terminal-help', {
+      name: 'Andrea Main',
+      folder: 'main',
+      trigger: '@andrea',
+      added_at: '2026-03-29T00:00:00.000Z',
+      isMain: true,
+    });
+    expect(allowed.allowed).toBe(true);
+  });
+
   it('keeps remote control disabled even in the main chat', () => {
     const decision = getCommandAccessDecision('/remote_control', {
       name: 'Andrea Main',

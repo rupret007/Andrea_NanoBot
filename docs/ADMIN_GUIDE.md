@@ -155,12 +155,13 @@ Validate:
 - `/cursor_status`
 - `/cursor-jobs`
 - `/cursor-create --repo <url> ...`
-- `/cursor-sync <agent_id>`
-- `/cursor-conversation <agent_id> 5`
-- `/cursor-results <agent_id>`
+- tap/select a job from `/cursor-jobs`
+- `/cursor-sync`
+- `/cursor-conversation 5`
+- `/cursor-results`
 - `/cursor-models`
 
-Use `/cursor-conversation` for the text trail and `/cursor-results` for output files. Use `/cursor-download` only when `/cursor-results` shows a file you actually want.
+Use `/cursor-conversation` for the text trail and `/cursor-results` for output files. Use `/cursor-download <absolute_path>` as a reply to a Cursor card when `/cursor-results` shows a file you actually want. Raw ids still work, but they are now the fallback path rather than the normal taught path.
 
 If `/cursor_status` says `Cloud coding jobs: unavailable`, treat `/cursor-create`, `/cursor-followup`, `/cursor-stop`, `/cursor-models`, `/cursor-results`, and `/cursor-download` as unavailable until `CURSOR_API_KEY` is fixed.
 
@@ -185,10 +186,11 @@ Validate:
 
 - `/cursor_status`
 - `/cursor-jobs`
-- `/cursor-sync <desktop_session_id>`
+- tap/select a desktop session from `/cursor-jobs`
+- `/cursor-sync`
 - `/cursor-terminal <agent_id> echo operator smoke ok`
-- `/cursor-terminal-status <agent_id>`
-- `/cursor-terminal-log <agent_id> 20`
+- `/cursor-terminal-status`
+- `/cursor-terminal-log 20`
 
 Important truth:
 
@@ -249,6 +251,25 @@ Compatibility note:
 - underscore aliases are still accepted, but the hyphen form is the preferred operator-facing syntax
 - older `/cursor-artifacts` and `/cursor-artifact-link` aliases are still accepted, but `/cursor-results` and `/cursor-download` are the preferred workflow names now
 
+## Cursor Workflow In Telegram
+
+This is the normal operator flow now:
+
+1. Run `/cursor_status`
+2. Run `/cursor-jobs`
+3. Tap a numbered job button or reply to a Cursor card
+4. Use `/cursor-sync`, `/cursor-conversation`, or `/cursor-results` without repeating the id
+5. Reply with plain text to a **Cloud** Cursor card when you want to continue that job
+6. Use `/cursor-download <absolute_path>` as a reply to a Cursor card when you want one file
+7. Use `/cursor-terminal*` only for desktop bridge sessions
+
+Important behavior:
+
+- `/cursor-jobs` is now a selector, not just a dump
+- Telegram inline buttons and reply-linked flow are operator UX improvements; explicit ids still work everywhere
+- plain-text replies only turn into follow-up prompts when you reply to a stored **Cloud** Cursor card in the main control chat
+- plain-text replies do **not** continue desktop sessions; desktop sessions still use `/cursor-sync`, `/cursor-conversation`, and `/cursor-terminal*`
+
 ## Telegram Live Validation
 
 Use [TELEGRAM_OPERATOR_LIVE_TESTING.md](TELEGRAM_OPERATOR_LIVE_TESTING.md) when you want this machine to send real inbound Telegram test messages from your own operator account.
@@ -257,7 +278,9 @@ Recommended flow:
 
 1. `npm run telegram:user:auth`
 2. `npm run telegram:user:send -- "<message>"`
-3. `npm run telegram:user:batch`
+3. `npm run telegram:user:tap -- <message_id> <button>`
+4. `npm run telegram:user:send -- --reply-to <message_id> "<message>"`
+5. `npm run telegram:user:batch`
 
 Keep this tooling operator-only and pointed at your own DM or a dedicated test chat only.
 

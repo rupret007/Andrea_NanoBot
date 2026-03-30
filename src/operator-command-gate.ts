@@ -37,6 +37,11 @@ export const CURSOR_CREATE_COMMANDS = new Set([
 
 export const CURSOR_SYNC_COMMANDS = new Set(['/cursor-sync', '/cursor_sync']);
 
+export const CURSOR_SELECT_COMMANDS = new Set([
+  '/cursor-select',
+  '/cursor_select',
+]);
+
 export const CURSOR_STOP_COMMANDS = new Set(['/cursor-stop', '/cursor_stop']);
 
 export const CURSOR_FOLLOWUP_COMMANDS = new Set([
@@ -47,6 +52,11 @@ export const CURSOR_FOLLOWUP_COMMANDS = new Set([
 export const CURSOR_TERMINAL_COMMANDS = new Set([
   '/cursor-terminal',
   '/cursor_terminal',
+]);
+
+export const CURSOR_TERMINAL_HELP_COMMANDS = new Set([
+  '/cursor-terminal-help',
+  '/cursor_terminal_help',
 ]);
 
 export const CURSOR_TERMINAL_STATUS_COMMANDS = new Set([
@@ -131,9 +141,11 @@ const MAIN_CONTROL_ONLY_COMMANDS = new Set([
   ...CURSOR_JOBS_COMMANDS,
   ...CURSOR_CREATE_COMMANDS,
   ...CURSOR_SYNC_COMMANDS,
+  ...CURSOR_SELECT_COMMANDS,
   ...CURSOR_STOP_COMMANDS,
   ...CURSOR_FOLLOWUP_COMMANDS,
   ...CURSOR_TERMINAL_COMMANDS,
+  ...CURSOR_TERMINAL_HELP_COMMANDS,
   ...CURSOR_TERMINAL_STATUS_COMMANDS,
   ...CURSOR_TERMINAL_LOG_COMMANDS,
   ...CURSOR_TERMINAL_STOP_COMMANDS,

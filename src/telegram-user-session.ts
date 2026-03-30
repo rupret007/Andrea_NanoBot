@@ -65,12 +65,39 @@ export interface TelegramUserSessionConfig {
 export interface TelegramLiveReply {
   id: number;
   text: string;
+  buttonLabels?: string[];
 }
 
 export interface TelegramSendAndCaptureResult {
   message: string;
   sentId: number;
   replies: TelegramLiveReply[];
+}
+
+export interface TelegramTapAndCaptureResult {
+  sourceMessageId: number;
+  tappedLabel: string;
+  tappedIndex: number;
+  replies: TelegramLiveReply[];
+}
+
+export interface TelegramSendCommandArgs {
+  message: string;
+  replyToMessageId?: number;
+}
+
+export interface TelegramTapCommandArgs {
+  messageId: number;
+  selection: string;
+}
+
+export interface TelegramTapButtonTarget {
+  index: number;
+  label: string;
+}
+
+interface TelegramButtonRef extends TelegramTapButtonTarget {
+  click: () => Promise<unknown>;
 }
 
 const TELEGRAM_USER_BASE_LOGGER = new Logger(LogLevel.NONE);
@@ -506,6 +533,150 @@ function extractReplyText(message: { message?: string | null }): string {
   return (message.message || '').trim();
 }
 
+function extractTelegramButtonText(button: unknown): string {
+  if (!button || typeof button !== 'object') return '';
+  const record = button as Record<string, unknown>;
+  return typeof record.text === 'string' ? record.text.trim() : '';
+}
+
+async function getTelegramButtonRefs(message: {
+  buttons?: unknown;
+  getButtons?: () => Promise<unknown>;
+}): Promise<TelegramButtonRef[]> {
+  let rows = message.buttons;
+  if (!rows && typeof message.getButtons === 'function') {
+    rows = await message.getButtons();
+  }
+
+  if (!Array.isArray(rows)) return [];
+
+  const buttons: TelegramButtonRef[] = [];
+  for (const row of rows) {
+    if (!Array.isArray(row)) continue;
+    for (const button of row) {
+      const label = extractTelegramButtonText(button);
+      if (!label || !button || typeof button !== 'object') continue;
+      const click = (
+        button as {
+          click?: (options?: Record<string, unknown>) => Promise<unknown>;
+        }
+      ).click;
+      if (typeof click !== 'function') continue;
+      buttons.push({
+        index: buttons.length + 1,
+        label,
+        click: () => click.call(button, {}),
+      });
+    }
+  }
+
+  return buttons;
+}
+
+async function extractTelegramButtonLabels(message: {
+  buttons?: unknown;
+  getButtons?: () => Promise<unknown>;
+}): Promise<string[]> {
+  const refs = await getTelegramButtonRefs(message);
+  return refs.map((button) => button.label);
+}
+
+function extractReplyMetadata(
+  message: {
+    id: number;
+    message?: string | null;
+    buttons?: unknown;
+    getButtons?: () => Promise<unknown>;
+  },
+  buttonLabels: string[],
+): TelegramLiveReply {
+  return {
+    id: message.id,
+    text: extractReplyText(message),
+    ...(buttonLabels.length > 0 ? { buttonLabels } : {}),
+  };
+}
+
+export function parseTelegramSendCommandArgs(
+  args: string[],
+): TelegramSendCommandArgs {
+  if (args.length === 0) {
+    throw new Error(
+      'Usage: npm run telegram:user:send -- [--reply-to MESSAGE_ID] <message text to send to Andrea>',
+    );
+  }
+
+  let replyToMessageId: number | undefined;
+  let offset = 0;
+  if (args[0] === '--reply-to') {
+    const rawMessageId = args[1] || '';
+    const parsed = Number.parseInt(rawMessageId, 10);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      throw new Error(
+        'Usage: npm run telegram:user:send -- [--reply-to MESSAGE_ID] <message text to send to Andrea>',
+      );
+    }
+    replyToMessageId = parsed;
+    offset = 2;
+  }
+
+  const message = args.slice(offset).join(' ').trim();
+  if (!message) {
+    throw new Error(
+      'Usage: npm run telegram:user:send -- [--reply-to MESSAGE_ID] <message text to send to Andrea>',
+    );
+  }
+
+  return { message, replyToMessageId };
+}
+
+export function parseTelegramTapCommandArgs(
+  args: string[],
+): TelegramTapCommandArgs {
+  const rawMessageId = args[0] || '';
+  const messageId = Number.parseInt(rawMessageId, 10);
+  const selection = args.slice(1).join(' ').trim();
+  if (!Number.isFinite(messageId) || messageId <= 0 || !selection) {
+    throw new Error(
+      'Usage: npm run telegram:user:tap -- <messageId> <button label or 1-based index>',
+    );
+  }
+  return { messageId, selection };
+}
+
+export function resolveTelegramTapButtonTarget(
+  buttonLabels: string[],
+  selection: string,
+): TelegramTapButtonTarget {
+  const trimmed = selection.trim();
+  const exact = buttonLabels.findIndex((label) => label === trimmed);
+  if (exact >= 0) {
+    return { index: exact + 1, label: buttonLabels[exact] };
+  }
+
+  const caseInsensitive = buttonLabels.findIndex(
+    (label) => label.toLowerCase() === trimmed.toLowerCase(),
+  );
+  if (caseInsensitive >= 0) {
+    return {
+      index: caseInsensitive + 1,
+      label: buttonLabels[caseInsensitive],
+    };
+  }
+
+  const numericIndex = Number.parseInt(trimmed, 10);
+  if (Number.isFinite(numericIndex) && numericIndex >= 1) {
+    const label = buttonLabels[numericIndex - 1];
+    if (label) {
+      return { index: numericIndex, label };
+    }
+  }
+
+  throw new Error(
+    `That button selection was not found. Available buttons: ${buttonLabels.length > 0 ? buttonLabels.join(', ') : 'none'}.`,
+  );
+}
+
 async function resolveExpectedReplySenderId(
   client: TelegramClient,
   target: string,
@@ -528,7 +699,15 @@ async function mergeRepliesFromHistory(
   client: TelegramClient,
   target: string,
   sentId: number,
-  replies: Map<number, TelegramLiveReply>,
+  replies: Map<
+    number,
+    {
+      id: number;
+      message?: string | null;
+      buttons?: unknown;
+      getButtons?: () => Promise<unknown>;
+    }
+  >,
   expectedSenderId: string | null,
   limit = 12,
 ): Promise<void> {
@@ -538,20 +717,28 @@ async function mergeRepliesFromHistory(
     if (!matchesExpectedTelegramSender(item, expectedSenderId)) continue;
     const text = extractReplyText(item);
     if (!text || replies.has(item.id)) continue;
-    replies.set(item.id, { id: item.id, text });
+    replies.set(item.id, item);
   }
 }
 
-export async function sendTelegramUserMessageAndCaptureReplies(
+async function captureTelegramReplies(
   client: TelegramClient,
   target: string,
-  message: string,
+  sentId: number,
   timeoutMs: number,
   settleMs: number,
-): Promise<TelegramSendAndCaptureResult> {
-  const sent = await client.sendMessage(target, { message });
-  const sentId = sent.id;
-  const replies = new Map<number, TelegramLiveReply>();
+): Promise<TelegramLiveReply[]> {
+  const replies = new Map<
+    number,
+    {
+      id: number;
+      out?: boolean;
+      message?: string | null;
+      senderId?: unknown;
+      buttons?: unknown;
+      getButtons?: () => Promise<unknown>;
+    }
+  >();
   const eventFilter = new NewMessage({ incoming: true, chats: [target] });
   const expectedSenderId = await resolveExpectedReplySenderId(client, target);
 
@@ -604,6 +791,8 @@ export async function sendTelegramUserMessageAndCaptureReplies(
         out?: boolean;
         message?: string | null;
         senderId?: unknown;
+        buttons?: unknown;
+        getButtons?: () => Promise<unknown>;
       };
     }) => {
       const incoming = event.message;
@@ -611,7 +800,7 @@ export async function sendTelegramUserMessageAndCaptureReplies(
       if (!matchesExpectedTelegramSender(incoming, expectedSenderId)) return;
       const text = extractReplyText(incoming);
       if (!text || replies.has(incoming.id)) return;
-      replies.set(incoming.id, { id: incoming.id, text });
+      replies.set(incoming.id, incoming);
       armSettleTimer();
     };
 
@@ -621,10 +810,142 @@ export async function sendTelegramUserMessageAndCaptureReplies(
     }, timeoutMs);
   });
 
+  const summaries: TelegramLiveReply[] = [];
+  for (const reply of [...replies.values()].sort((a, b) => a.id - b.id)) {
+    const buttonLabels = await extractTelegramButtonLabels(reply);
+    summaries.push(extractReplyMetadata(reply, buttonLabels));
+  }
+  return summaries;
+}
+
+export async function sendTelegramUserMessageAndCaptureReplies(
+  client: TelegramClient,
+  target: string,
+  message: string,
+  timeoutMs: number,
+  settleMs: number,
+  options: { replyToMessageId?: number } = {},
+): Promise<TelegramSendAndCaptureResult> {
+  const sent = await client.sendMessage(target, {
+    message,
+    ...(options.replyToMessageId ? { replyTo: options.replyToMessageId } : {}),
+  });
+  const sentId = sent.id;
+  const replies = await captureTelegramReplies(
+    client,
+    target,
+    sentId,
+    timeoutMs,
+    settleMs,
+  );
   return {
     message,
     sentId,
-    replies: [...replies.values()].sort((a, b) => a.id - b.id),
+    replies,
+  };
+}
+
+async function fetchTelegramMessageById(
+  client: TelegramClient,
+  target: string,
+  messageId: number,
+): Promise<{
+  id: number;
+  buttons?: unknown;
+  getButtons?: () => Promise<unknown>;
+  click?: (params?: unknown) => Promise<unknown>;
+} | null> {
+  const messages = (await client.getMessages(target, {
+    ids: messageId,
+  })) as unknown;
+  if (Array.isArray(messages)) {
+    return (
+      (messages[0] as {
+        id: number;
+        buttons?: unknown;
+        getButtons?: () => Promise<unknown>;
+        click?: (params?: unknown) => Promise<unknown>;
+      }) || null
+    );
+  }
+
+  if (messages && typeof messages === 'object' && 'id' in messages) {
+    return messages as {
+      id: number;
+      buttons?: unknown;
+      getButtons?: () => Promise<unknown>;
+      click?: (params?: unknown) => Promise<unknown>;
+    };
+  }
+  return null;
+}
+
+async function getLatestTelegramMessageId(
+  client: TelegramClient,
+  target: string,
+): Promise<number> {
+  const history = (await client.getMessages(target, {
+    limit: 1,
+  })) as unknown;
+  if (
+    Array.isArray(history) &&
+    history[0] &&
+    typeof history[0].id === 'number'
+  ) {
+    return history[0].id;
+  }
+  if (history && typeof history === 'object' && 'id' in history) {
+    const id = (history as { id?: unknown }).id;
+    return typeof id === 'number' ? id : 0;
+  }
+  return 0;
+}
+
+export async function tapTelegramMessageButtonAndCaptureReplies(
+  client: TelegramClient,
+  target: string,
+  messageId: number,
+  selection: string,
+  timeoutMs: number,
+  settleMs: number,
+): Promise<TelegramTapAndCaptureResult> {
+  const message = await fetchTelegramMessageById(client, target, messageId);
+  if (!message) {
+    throw new Error(
+      `Telegram message ${messageId} was not found in ${target}.`,
+    );
+  }
+
+  const buttons = await getTelegramButtonRefs(message);
+  if (buttons.length === 0) {
+    throw new Error(
+      `Telegram message ${messageId} has no inline buttons to tap.`,
+    );
+  }
+
+  const targetButton = resolveTelegramTapButtonTarget(
+    buttons.map((button) => button.label),
+    selection,
+  );
+  const chosenButton = buttons[targetButton.index - 1];
+  const baselineId = Math.max(
+    await getLatestTelegramMessageId(client, target),
+    messageId,
+  );
+  await chosenButton.click();
+  const replies = await captureTelegramReplies(
+    client,
+    target,
+    baselineId,
+    timeoutMs,
+    settleMs,
+  );
+
+  return {
+    sourceMessageId: messageId,
+    tappedLabel: chosenButton.label,
+    tappedIndex: chosenButton.index,
+    replies,
   };
 }
 
@@ -643,13 +964,27 @@ async function runAuthCommand(): Promise<void> {
   });
 }
 
-async function runSendCommand(messageArgs: string[]): Promise<void> {
-  const message = messageArgs.join(' ').trim();
-  if (!message) {
-    throw new Error(
-      'Usage: npm run telegram:user:send -- <message text to send to Andrea>',
-    );
+function printTelegramCaptureReplies(replies: TelegramLiveReply[]): void {
+  if (replies.length === 0) {
+    console.log('Replies: none observed before timeout');
+    return;
   }
+
+  console.log('Replies:');
+  for (const reply of replies) {
+    console.log(`- [${reply.id}] ${reply.text}`);
+    if (reply.buttonLabels?.length) {
+      console.log(
+        `  Buttons: ${reply.buttonLabels
+          .map((label, index) => `${index + 1}=${label}`)
+          .join(' | ')}`,
+      );
+    }
+  }
+}
+
+async function runSendCommand(messageArgs: string[]): Promise<void> {
+  const parsed = parseTelegramSendCommandArgs(messageArgs);
 
   const config = resolveTelegramUserSessionConfig();
   const target = await ensureTelegramTestTarget(config);
@@ -659,19 +994,17 @@ async function runSendCommand(messageArgs: string[]): Promise<void> {
       const result = await sendTelegramUserMessageAndCaptureReplies(
         client,
         target,
-        message,
+        parsed.message,
         config.replyTimeoutMs,
         config.replySettleMs,
+        { replyToMessageId: parsed.replyToMessageId },
       );
       console.log(`Sent: ${result.message}`);
-      if (result.replies.length === 0) {
-        console.log('Replies: none observed before timeout');
-        return;
+      console.log(`Sent ID: ${result.sentId}`);
+      if (parsed.replyToMessageId) {
+        console.log(`Replying to: ${parsed.replyToMessageId}`);
       }
-      console.log('Replies:');
-      for (const reply of result.replies) {
-        console.log(`- ${reply.text}`);
-      }
+      printTelegramCaptureReplies(result.replies);
     } finally {
       await client.disconnect();
     }
@@ -702,15 +1035,34 @@ async function runBatchCommand(messageArgs: string[]): Promise<void> {
           config.replySettleMs,
         );
         console.log(`\nSent: ${result.message}`);
-        if (result.replies.length === 0) {
-          console.log('Replies: none observed before timeout');
-          continue;
-        }
-        console.log('Replies:');
-        for (const reply of result.replies) {
-          console.log(`- ${reply.text}`);
-        }
+        console.log(`Sent ID: ${result.sentId}`);
+        printTelegramCaptureReplies(result.replies);
       }
+    } finally {
+      await client.disconnect();
+    }
+  });
+}
+
+async function runTapCommand(messageArgs: string[]): Promise<void> {
+  const parsed = parseTelegramTapCommandArgs(messageArgs);
+
+  const config = resolveTelegramUserSessionConfig();
+  const target = await ensureTelegramTestTarget(config);
+  await withTelegramUserSessionLock(config.sessionFile, async () => {
+    const { client } = await connectTelegramUserSession(config, false);
+    try {
+      const result = await tapTelegramMessageButtonAndCaptureReplies(
+        client,
+        target,
+        parsed.messageId,
+        parsed.selection,
+        config.replyTimeoutMs,
+        config.replySettleMs,
+      );
+      console.log(`Tapped: ${result.tappedLabel} (#${result.tappedIndex})`);
+      console.log(`Source Message ID: ${result.sourceMessageId}`);
+      printTelegramCaptureReplies(result.replies);
     } finally {
       await client.disconnect();
     }
@@ -730,6 +1082,11 @@ export async function runTelegramUserSessionCli(argv: string[]): Promise<void> {
     return;
   }
 
+  if (command === 'tap') {
+    await runTapCommand(rest);
+    return;
+  }
+
   if (command === 'batch') {
     await runBatchCommand(rest);
     return;
@@ -739,7 +1096,8 @@ export async function runTelegramUserSessionCli(argv: string[]): Promise<void> {
 
 Commands:
 - npm run telegram:user:auth
-- npm run telegram:user:send -- <message>
+- npm run telegram:user:send -- [--reply-to MESSAGE_ID] <message>
+- npm run telegram:user:tap -- <messageId> <button label or 1-based index>
 - npm run telegram:user:batch
 
 Required env:

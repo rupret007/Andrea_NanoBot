@@ -14,6 +14,25 @@ import {
 
 let db: Database.Database;
 
+export interface CursorOperatorContextRecord {
+  chat_jid: string;
+  thread_id: string;
+  selected_agent_id: string | null;
+  last_list_snapshot_json: string | null;
+  last_list_message_id: string | null;
+  updated_at: string;
+}
+
+export interface CursorMessageContextRecord {
+  chat_jid: string;
+  platform_message_id: string;
+  thread_id: string | null;
+  context_kind: string;
+  agent_id: string | null;
+  payload_json: string | null;
+  created_at: string;
+}
+
 function createSchema(database: Database.Database): void {
   database.exec(`
     CREATE TABLE IF NOT EXISTS chats (
@@ -32,6 +51,8 @@ function createSchema(database: Database.Database): void {
       timestamp TEXT,
       is_from_me INTEGER,
       is_bot_message INTEGER DEFAULT 0,
+      thread_id TEXT,
+      reply_to_id TEXT,
       PRIMARY KEY (id, chat_jid),
       FOREIGN KEY (chat_jid) REFERENCES chats(jid)
     );
@@ -168,6 +189,27 @@ function createSchema(database: Database.Database): void {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_cursor_agent_events_webhook
       ON cursor_agent_events(webhook_id)
       WHERE webhook_id IS NOT NULL;
+    CREATE TABLE IF NOT EXISTS cursor_operator_contexts (
+      chat_jid TEXT NOT NULL,
+      thread_id TEXT NOT NULL DEFAULT '',
+      selected_agent_id TEXT,
+      last_list_snapshot_json TEXT,
+      last_list_message_id TEXT,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (chat_jid, thread_id)
+    );
+    CREATE TABLE IF NOT EXISTS cursor_message_contexts (
+      chat_jid TEXT NOT NULL,
+      platform_message_id TEXT NOT NULL,
+      thread_id TEXT,
+      context_kind TEXT NOT NULL,
+      agent_id TEXT,
+      payload_json TEXT,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (chat_jid, platform_message_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_cursor_message_contexts_agent
+      ON cursor_message_contexts(agent_id, created_at DESC);
     CREATE TABLE IF NOT EXISTS purchase_requests (
       id TEXT PRIMARY KEY,
       group_folder TEXT NOT NULL,
@@ -234,6 +276,18 @@ function createSchema(database: Database.Database): void {
     database
       .prepare(`UPDATE messages SET is_bot_message = 1 WHERE content LIKE ?`)
       .run(`${ASSISTANT_NAME}:%`);
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(`ALTER TABLE messages ADD COLUMN thread_id TEXT`);
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(`ALTER TABLE messages ADD COLUMN reply_to_id TEXT`);
   } catch {
     /* column already exists */
   }
@@ -399,7 +453,7 @@ export function setLastGroupSync(): void {
  */
 export function storeMessage(msg: NewMessage): void {
   db.prepare(
-    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, thread_id, reply_to_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     msg.id,
     msg.chat_jid,
@@ -409,6 +463,8 @@ export function storeMessage(msg: NewMessage): void {
     msg.timestamp,
     msg.is_from_me ? 1 : 0,
     msg.is_bot_message ? 1 : 0,
+    msg.thread_id || null,
+    msg.reply_to_id || null,
   );
 }
 
@@ -424,9 +480,11 @@ export function storeMessageDirect(msg: {
   timestamp: string;
   is_from_me: boolean;
   is_bot_message?: boolean;
+  thread_id?: string;
+  reply_to_id?: string;
 }): void {
   db.prepare(
-    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, thread_id, reply_to_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     msg.id,
     msg.chat_jid,
@@ -436,6 +494,8 @@ export function storeMessageDirect(msg: {
     msg.timestamp,
     msg.is_from_me ? 1 : 0,
     msg.is_bot_message ? 1 : 0,
+    msg.thread_id || null,
+    msg.reply_to_id || null,
   );
 }
 
@@ -453,7 +513,7 @@ export function getNewMessages(
   // Subquery takes the N most recent, outer query re-sorts chronologically.
   const sql = `
     SELECT * FROM (
-      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me
+      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, thread_id, reply_to_id
       FROM messages
       WHERE timestamp > ? AND chat_jid IN (${placeholders})
         AND is_bot_message = 0 AND content NOT LIKE ?
@@ -486,7 +546,7 @@ export function getMessagesSince(
   // Subquery takes the N most recent, outer query re-sorts chronologically.
   const sql = `
     SELECT * FROM (
-      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me
+      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, thread_id, reply_to_id
       FROM messages
       WHERE chat_jid = ? AND timestamp > ?
         AND is_bot_message = 0 AND content NOT LIKE ?
@@ -511,6 +571,125 @@ export function getLastBotMessageTimestamp(
     )
     .get(chatJid, `${botPrefix}:%`) as { ts: string | null } | undefined;
   return row?.ts ?? undefined;
+}
+
+function normalizeCursorContextThreadId(threadId?: string | null): string {
+  return threadId?.trim() || '';
+}
+
+export function upsertCursorOperatorContext(record: {
+  chatJid: string;
+  threadId?: string | null;
+  selectedAgentId?: string | null;
+  lastListSnapshotJson?: string | null;
+  lastListMessageId?: string | null;
+  updatedAt?: string;
+}): void {
+  const threadId = normalizeCursorContextThreadId(record.threadId);
+  const existing = db
+    .prepare(
+      `
+        SELECT *
+        FROM cursor_operator_contexts
+        WHERE chat_jid = ? AND thread_id = ?
+      `,
+    )
+    .get(record.chatJid, threadId) as CursorOperatorContextRecord | undefined;
+
+  db.prepare(
+    `
+      INSERT INTO cursor_operator_contexts (
+        chat_jid,
+        thread_id,
+        selected_agent_id,
+        last_list_snapshot_json,
+        last_list_message_id,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(chat_jid, thread_id) DO UPDATE SET
+        selected_agent_id = excluded.selected_agent_id,
+        last_list_snapshot_json = excluded.last_list_snapshot_json,
+        last_list_message_id = excluded.last_list_message_id,
+        updated_at = excluded.updated_at
+    `,
+  ).run(
+    record.chatJid,
+    threadId,
+    record.selectedAgentId === undefined
+      ? existing?.selected_agent_id || null
+      : record.selectedAgentId,
+    record.lastListSnapshotJson === undefined
+      ? existing?.last_list_snapshot_json || null
+      : record.lastListSnapshotJson,
+    record.lastListMessageId === undefined
+      ? existing?.last_list_message_id || null
+      : record.lastListMessageId,
+    record.updatedAt || new Date().toISOString(),
+  );
+}
+
+export function getCursorOperatorContext(
+  chatJid: string,
+  threadId?: string | null,
+): CursorOperatorContextRecord | undefined {
+  return db
+    .prepare(
+      `
+        SELECT *
+        FROM cursor_operator_contexts
+        WHERE chat_jid = ? AND thread_id = ?
+      `,
+    )
+    .get(chatJid, normalizeCursorContextThreadId(threadId)) as
+    | CursorOperatorContextRecord
+    | undefined;
+}
+
+export function storeCursorMessageContext(record: {
+  chatJid: string;
+  platformMessageId: string;
+  threadId?: string | null;
+  contextKind: string;
+  agentId?: string | null;
+  payloadJson?: string | null;
+  createdAt?: string;
+}): void {
+  db.prepare(
+    `
+      INSERT OR REPLACE INTO cursor_message_contexts (
+        chat_jid,
+        platform_message_id,
+        thread_id,
+        context_kind,
+        agent_id,
+        payload_json,
+        created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `,
+  ).run(
+    record.chatJid,
+    record.platformMessageId,
+    record.threadId || null,
+    record.contextKind,
+    record.agentId || null,
+    record.payloadJson || null,
+    record.createdAt || new Date().toISOString(),
+  );
+}
+
+export function getCursorMessageContext(
+  chatJid: string,
+  platformMessageId: string,
+): CursorMessageContextRecord | undefined {
+  return db
+    .prepare(
+      `
+        SELECT *
+        FROM cursor_message_contexts
+        WHERE chat_jid = ? AND platform_message_id = ?
+      `,
+    )
+    .get(chatJid, platformMessageId) as CursorMessageContextRecord | undefined;
 }
 
 export function createTask(

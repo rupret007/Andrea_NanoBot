@@ -28,6 +28,8 @@ Current scripts:
 ```bash
 npm run telegram:user:auth
 npm run telegram:user:send -- "What's the meaning of life?"
+npm run telegram:user:send -- --reply-to 1234 "/cursor-sync"
+npm run telegram:user:tap -- 1234 1
 npm run telegram:user:batch
 ```
 
@@ -113,9 +115,32 @@ Expected behavior:
 - the harness sends the message as your Telegram user
 - Andrea receives it through the real bot path
 - the harness waits for Andrea's reply
-- replies are printed to stdout
+- replies are printed to stdout with bot reply ids
+- if a bot reply contains inline buttons, the harness prints visible button labels too
 - runs are exclusive; if another auth/send/batch process is already active, wait for it to finish before starting a new one
 - the default 30s reply timeout is intentional because live Cursor Cloud syncs can take longer than a quick chat reply
+
+Reply-linked variant:
+
+```bash
+npm run telegram:user:send -- --reply-to 1234 "/cursor-sync"
+```
+
+Use this when you want to reply to a specific Cursor card without retyping a raw job id.
+
+## Tap An Inline Button
+
+```bash
+npm run telegram:user:tap -- 1234 1
+npm run telegram:user:tap -- 1234 "Files"
+```
+
+Expected behavior:
+
+- the harness fetches the target bot message
+- it resolves a button by exact label first, then by 1-based visible index
+- it sends the callback action as your Telegram user session
+- it captures Andrea's resulting replies just like `telegram:user:send`
 
 ## Run The Default Live Batch
 
@@ -133,6 +158,18 @@ Default batch:
 - `ok`
 - `Remind me tomorrow at 3pm to call Sam`
 - `/cursor_status`
+
+For Cursor-specific operator validation, prefer this live workflow:
+
+1. `/cursor-jobs`
+2. note the bot reply id and visible button labels from stdout
+3. `npm run telegram:user:tap -- <jobs_reply_id> 1`
+4. `npm run telegram:user:send -- --reply-to <job_card_id> "/cursor-sync"`
+5. `npm run telegram:user:send -- --reply-to <job_card_id> "/cursor-conversation"`
+6. `npm run telegram:user:send -- --reply-to <job_card_id> "/cursor-results"`
+7. `npm run telegram:user:send -- --reply-to <job_card_id> "continue with ..."` for a Cloud follow-up
+
+Raw ids still work, but the normal Telegram operator path is now selector- and reply-driven.
 
 ## Security Notes
 

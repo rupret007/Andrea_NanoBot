@@ -52,6 +52,7 @@ export interface NewMessage {
   is_from_me?: boolean;
   is_bot_message?: boolean;
   thread_id?: string;
+  reply_to_id?: string;
 }
 
 export interface ScheduledTask {
@@ -81,10 +82,30 @@ export interface TaskRunLog {
 
 // --- Channel abstraction ---
 
+export interface ChannelInlineAction {
+  label: string;
+  actionId?: string;
+  url?: string;
+}
+
+export interface SendMessageOptions {
+  threadId?: string;
+  replyToMessageId?: string;
+  inlineActions?: ChannelInlineAction[];
+}
+
+export interface SendMessageResult {
+  platformMessageId?: string;
+}
+
 export interface Channel {
   name: string;
   connect(): Promise<void>;
-  sendMessage(jid: string, text: string): Promise<void>;
+  sendMessage(
+    jid: string,
+    text: string,
+    options?: SendMessageOptions,
+  ): Promise<SendMessageResult>;
   isConnected(): boolean;
   ownsJid(jid: string): boolean;
   disconnect(): Promise<void>;

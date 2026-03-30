@@ -373,16 +373,16 @@ Typical commands:
   - `/cursor-jobs` (main control chat only; list tracked Cursor Cloud jobs plus tracked and recoverable desktop bridge sessions for this workspace)
   - `/cursor-create [options] <prompt>` (main control chat only; starts a Cursor Cloud job; Cloud jobs need either `--repo <url>` or a default repo configured in Cursor settings)
   - `/cursor-create --repo <url> --ref <branch> --model <id> <prompt>` (target a specific repo/ref/model)
-  - `/cursor-sync <agent_id>` (main control chat only; refresh a tracked Cursor Cloud job or attach an existing Cursor Cloud job or desktop bridge session to this workspace)
-  - `/cursor-stop <agent_id>` (main control chat only; request stop for a Cursor Cloud job)
-  - `/cursor-followup <agent_id> <text>` (main control chat only; send follow-up instructions to a Cursor Cloud job)
-  - `/cursor-conversation <agent_id> [limit]` (main control chat only; show the text trail for a Cursor Cloud job or a stored desktop session conversation)
-  - `/cursor-results <agent_id>` (main control chat only; list tracked Cursor Cloud result files)
-  - `/cursor-download <agent_id> <absolute_path>` (main control chat only; generate a temporary Cursor Cloud download link for one result file)
-  - `/cursor-terminal <agent_id> <command>` (main control chat only; run a line-oriented shell command for a desktop bridge session)
-  - `/cursor-terminal-status <agent_id>` (main control chat only; inspect the bridge-managed terminal state)
-  - `/cursor-terminal-log <agent_id> [limit]` (main control chat only; read cached terminal output)
-  - `/cursor-terminal-stop <agent_id>` (main control chat only; stop the active bridge-managed terminal command)
+  - `/cursor-sync [agent_id|list_number|current]` (main control chat only; refresh a tracked Cursor Cloud job or attach an existing Cursor Cloud job or desktop bridge session to this workspace)
+  - `/cursor-stop [agent_id|list_number|current]` (main control chat only; request stop for a Cursor Cloud job)
+  - `/cursor-followup [agent_id|list_number|current] <text>` (main control chat only; send follow-up instructions to a Cursor Cloud job)
+  - `/cursor-conversation [agent_id|list_number|current] [limit]` (main control chat only; show the text trail for a Cursor Cloud job or a stored desktop session conversation)
+  - `/cursor-results [agent_id|list_number|current]` (main control chat only; list tracked Cursor Cloud result files)
+  - `/cursor-download [agent_id|list_number|current] <absolute_path>` (main control chat only; generate a temporary Cursor Cloud download link for one result file)
+  - `/cursor-terminal [agent_id|list_number|current] <command>` (main control chat only; run a line-oriented shell command for a desktop bridge session)
+  - `/cursor-terminal-status [agent_id|list_number|current]` (main control chat only; inspect the bridge-managed terminal state)
+  - `/cursor-terminal-log [agent_id|list_number|current] [limit]` (main control chat only; read cached terminal output)
+  - `/cursor-terminal-stop [agent_id|list_number|current]` (main control chat only; stop the active bridge-managed terminal command)
   - `/cursor-test` (main control chat only; troubleshooting smoke for the optional runtime-route surface, not part of the normal Cloud workflow)
 
 Important scope rule:
@@ -394,6 +394,7 @@ Important scope rule:
 - older `/cursor-artifacts` and `/cursor-artifact-link` aliases still work, but `/cursor-results` and `/cursor-download` are the preferred operator examples
 - runtime-route readiness is optional and separate; `Cursor-backed runtime route: not configured` does not mean Cloud or desktop bridge are broken
 - the desktop bridge gives Andrea bridge-managed session recovery and line-oriented shell commands on your normal machine, but not a live PTY, remote desktop, or a guaranteed local Windows agent-job path
+- the normal Telegram operator flow is now `/cursor-jobs` -> tap/select a job -> reply with `/cursor-sync`, `/cursor-conversation`, `/cursor-results`, or plain-text follow-up for Cloud work
 - marketplace skill discovery and enablement still exist in the operator/runtime layer, but they are not part of the default Telegram command surface
 
 Preferred operator command style:

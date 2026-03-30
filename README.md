@@ -150,6 +150,7 @@ Preferred operator command style:
 - public-safe commands stay documented exactly as shown above
 - deeper operator examples use hyphen aliases in Telegram, such as `/cursor-jobs` and `/cursor-create`
 - operator examples use `/cursor-results` for output files and `/cursor-download` for one-file retrieval
+- the normal Telegram operator flow is now `/cursor-jobs` -> tap/select a job -> reply with `/cursor-sync`, `/cursor-conversation`, `/cursor-results`, or a plain-text Cloud follow-up
 - underscore aliases still work for compatibility, but the docs now standardize on the hyphen form for operator workflows
 - older `/cursor-artifacts` and `/cursor-artifact-link` aliases still work for compatibility, but they are no longer the preferred operator examples
 

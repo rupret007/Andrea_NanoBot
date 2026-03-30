@@ -5,14 +5,18 @@ import {
   createTask,
   deleteTask,
   getAllChats,
+  getCursorMessageContext,
+  getCursorOperatorContext,
   getAllRegisteredGroups,
   getLastBotMessageTimestamp,
   getMessagesSince,
   getNewMessages,
   getTaskById,
   setRegisteredGroup,
+  storeCursorMessageContext,
   storeChatMetadata,
   storeMessage,
+  upsertCursorOperatorContext,
   updateTask,
 } from './db.js';
 import { formatMessages } from './router.js';
@@ -30,6 +34,8 @@ function store(overrides: {
   content: string;
   timestamp: string;
   is_from_me?: boolean;
+  thread_id?: string;
+  reply_to_id?: string;
 }) {
   storeMessage({
     id: overrides.id,
@@ -39,6 +45,8 @@ function store(overrides: {
     content: overrides.content,
     timestamp: overrides.timestamp,
     is_from_me: overrides.is_from_me ?? false,
+    thread_id: overrides.thread_id,
+    reply_to_id: overrides.reply_to_id,
   });
 }
 
@@ -109,6 +117,26 @@ describe('storeMessage', () => {
       'Andy',
     );
     expect(messages).toHaveLength(1);
+  });
+
+  it('stores reply and thread metadata for reply-linked operator flows', () => {
+    storeChatMetadata('tg:1', '2024-01-01T00:00:00.000Z');
+
+    store({
+      id: 'tg-msg-1',
+      chat_jid: 'tg:1',
+      sender: '123',
+      sender_name: 'Alice',
+      content: 'replying to a cursor card',
+      timestamp: '2024-01-01T00:00:06.000Z',
+      thread_id: '42',
+      reply_to_id: '9001',
+    });
+
+    const messages = getMessagesSince('tg:1', '', 'Andy');
+    expect(messages).toHaveLength(1);
+    expect(messages[0].thread_id).toBe('42');
+    expect(messages[0].reply_to_id).toBe('9001');
   });
 
   it('upserts on duplicate id+chat_jid', () => {
@@ -568,5 +596,62 @@ describe('registered group isMain', () => {
     const group = groups['group@g.us'];
     expect(group).toBeDefined();
     expect(group.isMain).toBeUndefined();
+  });
+});
+
+describe('cursor operator context accessors', () => {
+  it('stores selection per chat and thread', () => {
+    upsertCursorOperatorContext({
+      chatJid: 'tg:1',
+      threadId: '42',
+      selectedAgentId: 'bc_123',
+      updatedAt: '2026-03-30T12:00:00.000Z',
+    });
+
+    const row = getCursorOperatorContext('tg:1', '42');
+    expect(row?.selected_agent_id).toBe('bc_123');
+    expect(getCursorOperatorContext('tg:1', undefined)).toBeUndefined();
+  });
+
+  it('preserves existing snapshot fields when updating selection only', () => {
+    upsertCursorOperatorContext({
+      chatJid: 'tg:1',
+      threadId: '',
+      lastListSnapshotJson: JSON.stringify([
+        { id: 'bc_123', provider: 'cloud' },
+      ]),
+      lastListMessageId: '99',
+      updatedAt: '2026-03-30T12:00:00.000Z',
+    });
+
+    upsertCursorOperatorContext({
+      chatJid: 'tg:1',
+      selectedAgentId: 'bc_123',
+      updatedAt: '2026-03-30T12:05:00.000Z',
+    });
+
+    const row = getCursorOperatorContext('tg:1');
+    expect(row?.selected_agent_id).toBe('bc_123');
+    expect(row?.last_list_message_id).toBe('99');
+    expect(row?.last_list_snapshot_json).toContain('bc_123');
+  });
+});
+
+describe('cursor message context accessors', () => {
+  it('stores message-to-agent linkage for reply resolution', () => {
+    storeCursorMessageContext({
+      chatJid: 'tg:1',
+      platformMessageId: '9001',
+      threadId: '42',
+      contextKind: 'cursor_job_card',
+      agentId: 'bc_123',
+      payloadJson: JSON.stringify({ provider: 'cloud' }),
+      createdAt: '2026-03-30T12:00:00.000Z',
+    });
+
+    const row = getCursorMessageContext('tg:1', '9001');
+    expect(row?.agent_id).toBe('bc_123');
+    expect(row?.context_kind).toBe('cursor_job_card');
+    expect(row?.thread_id).toBe('42');
   });
 });

@@ -1,15 +1,18 @@
 import https from 'https';
 
-import { Api, Bot } from 'grammy';
+import { Api, Bot, InlineKeyboard } from 'grammy';
 
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
 import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
 import {
   Channel,
+  ChannelInlineAction,
   OnChatMetadata,
   OnInboundMessage,
   RegisteredGroup,
+  SendMessageOptions,
+  SendMessageResult,
 } from '../types.js';
 import { ChannelOpts, registerChannel } from './registry.js';
 
@@ -186,17 +189,44 @@ async function sendTelegramMessage(
   api: { sendMessage: Api['sendMessage'] },
   chatId: string | number,
   text: string,
-  options: { message_thread_id?: number } = {},
-): Promise<void> {
+  options: {
+    message_thread_id?: number;
+    reply_to_message_id?: number;
+    reply_markup?: InlineKeyboard;
+  } = {},
+): Promise<SendMessageResult> {
   try {
-    await api.sendMessage(chatId, text, {
+    const sent = await api.sendMessage(chatId, text, {
       ...options,
       parse_mode: 'Markdown',
     });
+    return { platformMessageId: sent.message_id.toString() };
   } catch (err) {
     logger.debug({ err }, 'Markdown send failed, falling back to plain text');
-    await api.sendMessage(chatId, text, options);
+    const sent = await api.sendMessage(chatId, text, options);
+    return { platformMessageId: sent.message_id.toString() };
   }
+}
+
+function buildInlineKeyboard(
+  actions: ChannelInlineAction[] | undefined,
+): InlineKeyboard | null {
+  if (!actions || actions.length === 0) return null;
+
+  const keyboard = new InlineKeyboard();
+  actions.forEach((action, index) => {
+    const text = action.label.trim();
+    if (!text) return;
+    if (action.url) {
+      keyboard.url(text, action.url);
+    } else if (action.actionId) {
+      keyboard.text(text, action.actionId);
+    }
+    if ((index + 1) % 3 === 0 && index < actions.length - 1) {
+      keyboard.row();
+    }
+  });
+  return keyboard.inline_keyboard.length > 0 ? keyboard : null;
 }
 
 export class TelegramChannel implements Channel {
@@ -305,6 +335,7 @@ export class TelegramChannel implements Channel {
       const sender = ctx.from?.id.toString() || '';
       const msgId = ctx.message.message_id.toString();
       const threadId = ctx.message.message_thread_id;
+      const replyToId = ctx.message.reply_to_message?.message_id?.toString();
 
       const chatName =
         ctx.chat.type === 'private'
@@ -358,6 +389,7 @@ export class TelegramChannel implements Channel {
         timestamp,
         is_from_me: false,
         thread_id: threadId ? threadId.toString() : undefined,
+        reply_to_id: replyToId,
       });
 
       logger.info(
@@ -373,6 +405,8 @@ export class TelegramChannel implements Channel {
         message: {
           date: number;
           message_id: number;
+          message_thread_id?: number;
+          reply_to_message?: { message_id: number };
           caption?: string;
           document?: { file_name?: string };
           sticker?: { emoji?: string };
@@ -409,6 +443,8 @@ export class TelegramChannel implements Channel {
         content: `${placeholder}${caption}`,
         timestamp,
         is_from_me: false,
+        thread_id: ctx.message.message_thread_id?.toString(),
+        reply_to_id: ctx.message.reply_to_message?.message_id?.toString(),
       });
     };
 
@@ -426,6 +462,49 @@ export class TelegramChannel implements Channel {
     });
     this.bot.on('message:location', (ctx) => storeNonText(ctx, '[Location]'));
     this.bot.on('message:contact', (ctx) => storeNonText(ctx, '[Contact]'));
+
+    this.bot.on('callback_query:data', async (ctx) => {
+      const callbackMessage = ctx.callbackQuery.message;
+      if (!callbackMessage?.chat) {
+        await ctx.answerCallbackQuery({
+          text: 'That Cursor action is no longer available.',
+        });
+        return;
+      }
+
+      const chatJid = `tg:${callbackMessage.chat.id}`;
+      const senderName =
+        ctx.from.first_name || ctx.from.username || ctx.from.id.toString();
+      const timestamp = new Date().toISOString();
+      const isGroup =
+        callbackMessage.chat.type === 'group' ||
+        callbackMessage.chat.type === 'supergroup';
+      const chatName =
+        callbackMessage.chat.type === 'private'
+          ? senderName
+          : ((callbackMessage.chat as { title?: string }).title ?? chatJid);
+
+      this.opts.onChatMetadata(
+        chatJid,
+        timestamp,
+        chatName,
+        'telegram',
+        isGroup,
+      );
+
+      await ctx.answerCallbackQuery({ text: 'Working...' });
+      this.opts.onMessage(chatJid, {
+        id: `callback:${ctx.callbackQuery.id}`,
+        chat_jid: chatJid,
+        sender: ctx.from.id.toString(),
+        sender_name: senderName,
+        content: ctx.callbackQuery.data,
+        timestamp,
+        is_from_me: false,
+        thread_id: callbackMessage.message_thread_id?.toString(),
+        reply_to_id: callbackMessage.message_id.toString(),
+      });
+    });
 
     this.bot.catch((err) => {
       logger.error({ err: err.message }, 'Telegram bot error');
@@ -487,28 +566,65 @@ export class TelegramChannel implements Channel {
   async sendMessage(
     jid: string,
     text: string,
-    threadId?: string,
-  ): Promise<void> {
+    options: SendMessageOptions = {},
+  ): Promise<SendMessageResult> {
     if (!this.bot) {
       logger.warn('Telegram bot not initialized');
-      return;
+      return {};
     }
 
     try {
       const numericId = jid.replace(/^tg:/, '');
-      const options = threadId
-        ? { message_thread_id: parseInt(threadId, 10) }
-        : {};
+      const baseOptions = {
+        ...(options.threadId
+          ? { message_thread_id: parseInt(options.threadId, 10) }
+          : {}),
+        ...(options.replyToMessageId
+          ? {
+              reply_to_message_id: parseInt(options.replyToMessageId, 10),
+            }
+          : {}),
+      };
+      const inlineKeyboard = buildInlineKeyboard(options.inlineActions);
+      let firstMessageId: string | undefined;
 
-      for (const chunk of splitTelegramMessage(text)) {
-        await sendTelegramMessage(this.bot.api, numericId, chunk, options);
+      const chunks = splitTelegramMessage(text);
+      for (const [index, chunk] of chunks.entries()) {
+        const result = await sendTelegramMessage(
+          this.bot.api,
+          numericId,
+          chunk,
+          {
+            ...baseOptions,
+            ...(index === 0 && inlineKeyboard
+              ? { reply_markup: inlineKeyboard }
+              : {}),
+            ...(index > 0
+              ? {
+                  reply_to_message_id: undefined,
+                  reply_markup: undefined,
+                }
+              : {}),
+          },
+        );
+        if (!firstMessageId) {
+          firstMessageId = result.platformMessageId;
+        }
       }
       logger.info(
-        { jid, length: text.length, threadId },
+        {
+          jid,
+          length: text.length,
+          threadId: options.threadId,
+          replyToMessageId: options.replyToMessageId,
+          inlineActions: options.inlineActions?.length || 0,
+        },
         'Telegram message sent',
       );
+      return { platformMessageId: firstMessageId };
     } catch (err) {
       logger.error({ jid, err }, 'Failed to send Telegram message');
+      return {};
     }
   }
 
