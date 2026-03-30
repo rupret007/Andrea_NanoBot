@@ -119,6 +119,7 @@ describe('cursor-gateway', () => {
     expect(message).toContain('*Cursor Integration Status*');
     expect(message).toContain('Mode: partial');
     expect(message).toContain('Next step:');
+    expect(message).toContain('optional and separate');
   });
 
   it('runs e2e smoke test against configured gateway', async () => {

@@ -101,7 +101,10 @@ describe('cursor-capabilities', () => {
     expect(message).toContain('Cloud coding jobs: unavailable');
     expect(message).toContain('Desktop bridge terminal control: unavailable');
     expect(message).toContain('Desktop bridge agent jobs: unavailable');
-    expect(message).toContain('/cursor_models: requires Cursor Cloud API');
+    expect(message).toContain(
+      '/cursor_models: requires Cursor Cloud API (`CURSOR_API_KEY`)',
+    );
+    expect(summary.nextStep).toContain('CURSOR_DESKTOP_BRIDGE_URL');
   });
 
   it('reports both Cloud jobs and desktop terminal control when both are ready', () => {
@@ -141,6 +144,7 @@ describe('cursor-capabilities', () => {
     expect(summary.desktopTerminalReady).toBe(true);
     expect(summary.desktopAgentJobs).toBe('conditional');
     expect(summary.nextStep).toContain('still conditional');
+    expect(summary.nextStep).toContain('optional and separate');
   });
 
   it('keeps Cloud jobs ready while marking desktop agent jobs unavailable after a failed compatibility check', () => {
@@ -162,6 +166,7 @@ describe('cursor-capabilities', () => {
     expect(summary.nextStep).toContain(
       'Desktop bridge terminal control is ready',
     );
+    expect(summary.nextStep).toContain('optional and separate');
   });
 
   it('passes through actionable Cursor setup failures unchanged', () => {

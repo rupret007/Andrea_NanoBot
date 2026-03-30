@@ -26,15 +26,23 @@
 
 ## What Andrea Is
 
-Andrea is not just a chatbot wrapper.
-This repo turns a secure containerized agent runtime into a personal assistant that can actually help with real work:
+Andrea is one public assistant identity built on a secure NanoClaw runtime.
+The product is conversation-first in Telegram, with deeper operator tooling behind a narrower admin surface.
 
-- manage to-do lists and reminders
-- run recurring automations and check-ins
-- research and summarize information
-- answer simple questions, playful prompts, and basic math through a fast direct reply path
-- help with code, repos, and technical tasks
-- expose operator-validated extras without breaking the one-assistant experience
+What normal users should expect:
+
+- reminders, follow-ups, and simple task help
+- research, summaries, and project help
+- fast direct replies for simple questions, playful prompts, and basic math
+- a small safe Telegram command set
+- `/cursor_status` as the only public-safe Cursor command
+
+What operators should expect:
+
+- setup, restart, verify, and troubleshooting
+- Cursor Cloud job workflows
+- desktop bridge session and terminal workflows
+- optional integrations only after same-day validation
 
 The runtime is still based on NanoClaw, which means the security model matters:
 
@@ -90,6 +98,21 @@ If you only read one doc, use the one that matches your role:
 - Operator/Admin: [docs/ADMIN_GUIDE.md](docs/ADMIN_GUIDE.md)
 - Full setup and runtime details: [docs/SETUP_AND_FEATURES_GUIDE.md](docs/SETUP_AND_FEATURES_GUIDE.md)
 
+## Cursor In One Minute
+
+Andrea now documents Cursor as three separate surfaces:
+
+- **Cursor Cloud**
+  - requires `CURSOR_API_KEY`
+  - current validated heavy-lift queued coding path
+- **Cursor desktop bridge**
+  - requires `CURSOR_DESKTOP_BRIDGE_URL` and `CURSOR_DESKTOP_BRIDGE_TOKEN`
+  - operator-only session recovery plus line-oriented terminal control on your own machine
+  - does not automatically mean queued desktop-agent execution is validated on Windows
+- **Cursor-backed runtime route**
+  - optional diagnostic/runtime-routing surface
+  - separate from both Cloud jobs and desktop bridge readiness
+
 ## Two Command Surfaces
 
 This is one of the easiest places for new users to get confused, so the split is important:
@@ -120,7 +143,7 @@ These run inside Telegram after the bot is live:
 - `/registermain`
 - `/cursor_status`
 
-Advanced operator workflows still exist, but they live in the admin guide and should stay out of the default demo unless they were validated the same day.
+Advanced operator workflows still exist, but they are operator-only, live in the admin guide, and should stay out of the default demo unless they were validated the same day.
 
 ## Demo-Ready Surface
 
@@ -128,10 +151,10 @@ For a reliable demo, keep the story tight:
 
 - Telegram onboarding and `/registermain`
 - direct questions, fast quick replies for simple asks, reminders, and light research
-- stable health checks and `/cursor_status`
+- stable health checks, `/help`, and `/cursor_status`
 - secure per-chat isolation and clean user-facing replies
 
-Optional integrations such as Alexa, shopping flows, marketplace skills, and calendar-oriented skills exist, but they should be treated as operator-enabled extras unless they were validated the same day.
+Optional integrations such as Cursor Cloud job control, desktop bridge control, Alexa, shopping flows, marketplace skills, and calendar-oriented skills exist, but they should be treated as operator-enabled extras unless they were validated the same day.
 
 ## What Andrea Can Do
 
@@ -151,7 +174,7 @@ Optional integrations such as Alexa, shopping flows, marketplace skills, and cal
 ### Coding And Operator Work
 
 - help with repos, debugging, and code tasks
-- use Cursor/9router-aware routing checks with `/cursor_status`
+- use `/cursor_status` as the safe Cursor readiness check
 - operators can create, follow up, stop, inspect, and recover **Cursor Cloud** coding jobs from the main control chat
 - operators can sync and inspect **desktop bridge sessions**, then run line-oriented terminal commands against tracked bridge sessions on their own machine
 - keep optional integrations behind explicit operator setup instead of treating them as default demo features
@@ -194,7 +217,7 @@ Andrea currently supports:
 - Docker, Podman, and Apple Container
 - Anthropic-compatible model endpoints
 - OpenAI-key-backed gateways exposed through Anthropic-compatible APIs
-- 9router / Cursor-backed routing paths
+- optional 9router / Cursor-backed runtime-routing paths
 - optional Cursor Cloud Agents API control via `CURSOR_API_KEY` and optional `CURSOR_API_AUTH_MODE=auto|bearer|basic`
 - optional integrations only after operator validation
 

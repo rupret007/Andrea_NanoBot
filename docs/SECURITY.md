@@ -104,6 +104,12 @@ Current policy:
 - advanced Cursor, Amazon, and Alexa operator commands are gated to Andrea's registered main control chat
 - remote-control remains disabled in the runtime path
 
+Current Cursor trust split:
+
+- Cursor Cloud is the operator-enabled validated heavy-lift path
+- desktop bridge is operator-only and environment-dependent
+- Cursor-backed runtime routing is a separate diagnostic/config surface
+
 ## Privilege Comparison
 
 | Capability          | Main Group                                     | Non-Main Group                                    |
@@ -129,8 +135,9 @@ These are only as safe as their real deployment:
 
 - Alexa voice ingress
 - Amazon Business ordering
-- Cursor Cloud
+- Cursor Cloud beyond the configured operator path
 - Cursor desktop bridge
+- Cursor-backed runtime routing
 - community skill enablement from external catalogs
 
 They should be treated as operator-enabled extras, not baseline assumptions.

@@ -1,10 +1,23 @@
 # Andrea Demo Checklist
 
-Use this when you want the smoothest possible live demo of Andrea on the current Windows host.
+Use this when you want the smoothest possible live demo on the current operator host.
 
-## 1) Preflight
+## Safe Demo Baseline
 
-Run these before the audience is watching:
+The default demo should stay on the currently validated public-safe surface:
+
+- Telegram conversation
+- quick replies for simple asks
+- reminders and follow-ups
+- `/help`
+- `/commands`
+- `/cursor_status`
+
+Treat deeper operator workflows as optional same-day extras, not as the baseline demo.
+
+## Preflight
+
+Run before anyone is watching:
 
 ```bash
 npm run setup -- --step verify
@@ -20,47 +33,55 @@ Confirm:
 
 Then open a DM with `@andrea_nanobot`.
 
-## 2) Default Demo Script
+## Default Demo Script
 
-Use this exact order unless you have a reason to change it:
+Use this order unless you have a good reason to change it:
 
 1. `/start`
-   Expected: quick-start onboarding text.
+   - expected: quick onboarding
 2. `/registermain`
-   Expected: main chat registration success or “already registered” confirmation.
+   - expected: main chat registration success or an already-registered confirmation
 3. `/help`
-   Expected: a short, clean command/capability guide with no Alexa, Amazon, or remote-control clutter.
+   - expected: short, warm guide with the narrow safe command set
 4. `What's the meaning of life?`
-   Expected: fast witty direct reply that starts with `42`.
+   - expected: fast witty direct reply
 5. `What is 56 + 778?`
-   Expected: fast direct quick-reply math answer.
+   - expected: fast direct quick-reply math answer
 6. `Remind me tomorrow at 3pm to call Sam`
-   Expected: protected assistant flow, not internal helper chatter.
+   - expected: clear reminder confirmation, no helper chatter
 7. `/cursor_status`
-   Expected: clear status output for the coding/integration path.
+   - expected: honest status output that cleanly separates Cloud, desktop bridge, and runtime-route readiness
 
-## 3) Demo Success Criteria
+## Demo Success Criteria
 
-The demo is on track if:
+The demo is healthy if:
 
-- Andrea feels like one assistant, not two stitched systems
-- replies are answer-first
+- Andrea feels like one assistant
+- answers are clean and answer-first
 - simple asks resolve quickly
-- reminders/tasks do not get swallowed by heavy orchestration
-- `/help` and `/commands` only show the tight safe surface
-- no internal route/helper/tool chatter leaks into user replies
+- reminders do not fall into heavy orchestration
+- `/help` and `/commands` stay on the small safe surface
+- `/cursor_status` is honest and easy to understand
 
-## 4) What Not To Demo Today
+## Optional Same-Day Extras
 
-Do not demo these unless you validated them again the same day:
+Only demo these if you validated them again the same day:
 
+- Cursor Cloud job creation and follow-up
+- desktop bridge terminal control
 - Alexa voice ingress
-- live Amazon ordering
+- Amazon shopping flows
 - marketplace/community skill flows
-- remote-control flows
-- deep Cursor cloud job creation/follow-up flows
 
-## 5) If Something Feels Off
+## What Not To Demo Casually
+
+Do not casually demo:
+
+- remote-control flows
+- anything that depends on unvalidated desktop bridge setup
+- anything that depends on optional integrations you have not rechecked
+
+## If Something Feels Off
 
 Use these in order:
 
@@ -70,4 +91,4 @@ Use these in order:
 4. `npm run setup -- --step verify`
 5. `npm run services:restart`
 
-If the runtime is healthy but a reply looks brittle, keep the demo on simple direct asks, reminders, and `/cursor_status`.
+If the runtime is healthy but replies still feel brittle, stay on quick replies, reminders, and `/cursor_status`.

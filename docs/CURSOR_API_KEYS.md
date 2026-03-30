@@ -1,23 +1,52 @@
 # Cursor API Keys And Andrea
 
-Andrea supports two distinct Cursor backends:
+Andrea supports two different Cursor paths:
 
-- Cursor Cloud Agents over `https://api.cursor.com`
-- the optional desktop bridge that lets Andrea inspect bridge-known sessions and run machine-side terminal commands on your own machine
+- **Cursor Cloud** for queued heavy-lift coding jobs
+- **Cursor desktop bridge** for operator-only session recovery and line-oriented terminal control on your own machine
 
-This guide is about where the keys come from and what they do.
+This guide is about `CURSOR_API_KEY`, what it enables, and how that differs from the desktop bridge.
 
-## Two Supported Paths
+## What `CURSOR_API_KEY` Is
 
-| Path | What it enables | What Andrea needs |
-| --- | --- | --- |
-| Cursor Cloud Agents API | Create, follow up, inspect, and stop Cursor Cloud jobs | `CURSOR_API_KEY` plus optional `CURSOR_API_*` tuning |
-| Cursor desktop bridge | Recover bridge-known sessions and run line-oriented terminal commands on the Cursor machine you normally use | `CURSOR_DESKTOP_BRIDGE_URL` and `CURSOR_DESKTOP_BRIDGE_TOKEN` |
+`CURSOR_API_KEY` is your Cursor Cloud user API key.
+Andrea uses it to talk to the hosted Cursor Cloud Agents API at `https://api.cursor.com`.
+
+This key enables the current validated heavy-lift Cursor path in Andrea.
+
+## What `CURSOR_API_KEY` Enables
+
+When `CURSOR_API_KEY` is configured and accepted, Andrea can use Cursor Cloud for:
+
+- `/cursor_create`
+- `/cursor_sync` for Cursor Cloud jobs
+- `/cursor_conversation` for Cursor Cloud jobs
+- `/cursor_followup`
+- `/cursor_stop`
+- `/cursor_models`
+- `/cursor_artifacts`
+- `/cursor_artifact_link`
 
 Important boundary:
 
-- There is no documented public HTTP API for driving the desktop Cursor IDE UI directly.
-- If you want "use my Mac while I am away from my desk" behavior, use the desktop bridge path documented in [CURSOR_DESKTOP_BRIDGE.md](CURSOR_DESKTOP_BRIDGE.md).
+- `CURSOR_API_KEY` enables hosted Cursor Cloud workflows.
+- It does **not** configure the desktop bridge.
+- It does **not** expose a live remote-control API for the local Cursor IDE UI.
+
+## How This Differs From The Desktop Bridge
+
+The desktop bridge is a separate operator-only surface.
+
+| Path | Requires | What it is for |
+| --- | --- | --- |
+| Cursor Cloud | `CURSOR_API_KEY` | Queued heavy-lift coding jobs |
+| Cursor desktop bridge | `CURSOR_DESKTOP_BRIDGE_URL`, `CURSOR_DESKTOP_BRIDGE_TOKEN`, and sometimes `CURSOR_DESKTOP_CLI_PATH` on the bridge machine | Session recovery and line-oriented terminal control on your own machine |
+
+Important truth:
+
+- Desktop bridge readiness does not imply Cursor Cloud readiness.
+- Cursor Cloud readiness does not imply desktop bridge readiness.
+- Cursor-backed runtime routing is a third, separate surface.
 
 ## Where To Create `CURSOR_API_KEY`
 
@@ -31,9 +60,11 @@ Useful references:
 - [Cloud Agents API endpoints](https://cursor.com/docs/cloud-agent/api/endpoints.md)
 - [Cursor CLI authentication](https://cursor.com/docs/cli/reference/authentication)
 
-The dashboard key often looks like `key_...`. Store it only in secrets such as your local `.env` file. Do not commit it.
+The dashboard key often looks like `key_...`.
+Store it in secrets only, such as your local `.env`.
+Do not commit it.
 
-## Auth Mode
+## Supported Auth Modes
 
 Andrea accepts:
 
@@ -41,24 +72,67 @@ Andrea accepts:
 - `CURSOR_API_AUTH_MODE=basic`
 - `CURSOR_API_AUTH_MODE=bearer`
 
-Default is `auto`, which tries Bearer first and then falls back to Basic if the endpoint rejects it.
+Default is `auto`, which tries Bearer first and then falls back to Basic.
 
 Compatibility alias:
 
-- `CURSOR_AUTH_MODE` is also accepted
+- `CURSOR_AUTH_MODE`
 
-## What This Key Is Not
+## What To Put In `.env`
 
-- It is not the same as BYOK model keys you may store inside the Cursor IDE for OpenAI or Anthropic billing.
-- It does not expose a live remote-control API for the desktop editor UI.
-- It is not required for the desktop bridge path unless the bridge machine itself needs it for local Cursor CLI work.
+Minimum Cloud setup:
 
-## Quick Verification
+```bash
+CURSOR_API_KEY=key_...
+```
 
-After setting `CURSOR_API_KEY` in `.env`:
+Common optional tuning:
 
-1. restart Andrea
-2. run `/cursor_status`
-3. confirm the `Cursor Capability Summary` reports `Cloud coding jobs: ready`
+```bash
+CURSOR_API_BASE_URL=https://api.cursor.com
+CURSOR_API_AUTH_MODE=auto
+CURSOR_API_TIMEOUT_MS=20000
+CURSOR_API_MAX_RETRIES=2
+CURSOR_API_RETRY_BASE_MS=800
+```
 
-If `/cursor_status` still shows `Cloud coding jobs: unavailable`, queued Cursor Cloud job commands are not ready yet.
+## What Happens When It Is Missing
+
+If `CURSOR_API_KEY` is missing, Cursor Cloud heavy-lift workflows are unavailable.
+
+In practice that means:
+
+- `/cursor_create` will not be ready
+- `/cursor_followup` and `/cursor_stop` for Cloud jobs will not be ready
+- `/cursor_models` will not be ready
+- Cloud artifact lookup will not be ready
+- `/cursor_status` should say `Cloud coding jobs: unavailable`
+
+Operator next step:
+
+1. Add `CURSOR_API_KEY` to Andrea's `.env`.
+2. Restart Andrea.
+3. Run `/cursor_status`.
+4. Confirm it says `Cloud coding jobs: ready`.
+
+## Validation Steps
+
+After configuring the key:
+
+1. Restart Andrea.
+2. Run `/cursor_status`.
+3. Confirm:
+   - `Cloud coding jobs: ready`
+4. Run a safe Cloud smoke:
+   - `/cursor-create --repo https://github.com/rupret007/Andrea_NanoBot Reply with exactly: live cloud smoke ok. Do not modify files, branches, or PRs.`
+5. Run:
+   - `/cursor-sync <agent_id>`
+   - `/cursor-conversation <agent_id> 5`
+
+If `/cursor_models` returns no models, that does not automatically mean Cloud is broken.
+Some accounts still return an empty model list even while Cloud jobs work with the default model.
+
+## One-Line Mental Model
+
+Use `CURSOR_API_KEY` when you want Andrea to run validated queued Cursor Cloud jobs.
+Use the desktop bridge only when you want operator-only session or terminal access to your own machine.

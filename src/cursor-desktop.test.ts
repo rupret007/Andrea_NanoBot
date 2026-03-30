@@ -128,6 +128,8 @@ describe('cursor-desktop status', () => {
 
     expect(message).toContain('Terminal control: unavailable');
     expect(message).toContain('Desktop agent jobs: unavailable');
+    expect(message).toContain('CURSOR_DESKTOP_BRIDGE_URL');
+    expect(message).toContain('CURSOR_DESKTOP_BRIDGE_TOKEN');
   });
 });
 

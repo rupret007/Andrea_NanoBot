@@ -1,19 +1,27 @@
 # Andrea Testing And Release Runbook
 
-This runbook defines how to validate Andrea_NanoBot end-to-end for every major iteration.
-Use it before major merges, main-branch pushes, or live deployment changes.
+This runbook defines how to validate Andrea end to end before major merges, main-branch pushes, or live deployment changes.
 
-## Goals
+## What This Runbook Separates
 
-- catch regressions before release
-- keep Windows + Node 22 + container runtime paths reliable
-- validate runtime credentials, channel routing, and registration behavior
-- produce a repeatable process the team can run every time
-- enforce a stability gate of three consecutive full passes before sign-off
+This repo has three different validation layers:
 
-## Test Layers
+- **CI-safe validation**
+  - formatting, typecheck, lint, tests, build
+  - no assumption of live credentials or channels
+- **Operator-host live validation**
+  - real runtime, real credentials, real channel behavior
+  - restart and verify on the deployed machine
+- **Optional integration validation**
+  - Cursor Cloud
+  - desktop bridge
+  - Alexa
+  - Amazon
+  - marketplace/community skills
 
-### 1) Fast local checks
+Do not treat optional integration checks as baseline unless that integration is actually configured.
+
+## 1. Fast Local Checks
 
 ```bash
 npm run format:check
@@ -23,128 +31,188 @@ npm run test
 npm run build
 ```
 
-### 2) Major iteration suite (single command)
+## 2. Major Suite
 
 ```bash
 npm run test:major
 ```
 
+This is the standard pre-release validation stack on a real operator machine.
+
+It includes:
+
+1. formatting check
+2. typecheck
+3. lint
+4. unit tests
+5. production build
+6. `setup -- --step verify`
+
 Implementation note:
 
-- `test:major` and `test:major:ci` execute checks with Node 22 through `npx -p node@22` so validation remains deterministic even if your host default Node is newer.
+- `test:major` and `test:major:ci` already run with Node 22 through `npx -p node@22`
 
-What it runs in order:
-
-1. `format:check`
-2. `typecheck`
-3. `lint`
-4. `test` (Vitest suite)
-5. `build` (TypeScript compile)
-6. `setup -- --step verify` (live runtime verification)
-
-Use this before each major merge/deploy.
-
-### 3) Stability gate (three full successful rounds)
+## 3. Stability Gate
 
 ```bash
 npm run test:stability
 ```
 
-This runs the full CI-safe major stack three times in a row and fails immediately if any round fails.
-Use this when you want high confidence before a restart, deploy, or branch cut.
+Use this when you want release confidence, not just a single clean pass.
 
-For live environments where credential/runtime probes are expected:
+For live environments where credential/runtime probes should be exercised each round:
 
 ```bash
 npm run test:stability:live
 ```
 
-That adds `setup -- --step verify` to each round.
-
-### 4) CI-safe major suite
+## 4. CI-Safe Suite
 
 ```bash
 npm run test:major:ci
 ```
 
-This is the same suite without live credential verification (`--skip-live-verify`).
-Use this in CI runners that do not have live credentials/channels.
+Use this in CI runners that do not have live credentials, channels, or operator-only integrations.
 
-## Live End-to-End Acceptance (Operator Machine)
+## 5. Operator-Host Live Validation
 
-Run this on the real host where the bot is deployed.
+Run this on the real deployed host.
 
 ### Preconditions
 
-- Node 22 baseline available
-- at least one container runtime healthy (`docker info`, `podman info`, or `container --help`)
-- model credentials configured (OneCLI or `.env`)
-- at least one channel configured
-- at least one registered group or `/registermain` completed
+- Node 22 available
+- one healthy container runtime
+- model credentials configured
+- at least one configured channel
+- at least one registered chat or `/registermain` completed
 
-### Acceptance sequence
+### Baseline Runtime Checks
 
-1. Run:
-   - `npm run test:major`
-2. Run stability gate:
-   - `npm run test:stability`
-3. Confirm verify output includes:
-   - `STATUS: success`
-   - `CREDENTIAL_RUNTIME_PROBE: ok`
-   - `REGISTERED_GROUPS: >= 1`
-   - `SERVICE: running`
-4. Send a real message from a registered chat and confirm:
-   - message is stored in logs/DB
-   - assistant returns a response
-5. If using marketplace features:
-   - search a skill
-   - enable it in one target chat
-   - confirm it is available next message
-   - disable it and confirm removal from that chat
-
-## Failure Handling
-
-### `CREDENTIAL_RUNTIME_PROBE: failed`
-
-- quota/auth/model mismatch issues surface here
-- rerun `npm run setup -- --step verify`
-- check `CREDENTIAL_RUNTIME_PROBE_REASON` and `NEXT_STEPS` fields
-
-### Service not running
+Run:
 
 ```bash
-npm run services:restart
-npm run setup -- --step service
 npm run setup -- --step verify
 ```
 
-### Telegram registered group issues
+Confirm:
 
-- DM bot: `/registermain`
-- verify DB registration:
-  - `registered_groups` contains your `tg:<chat-id>` row
+- `STATUS: success`
+- `SERVICE: running`
+- `CREDENTIAL_RUNTIME_PROBE: ok`
+- `CONFIGURED_CHANNELS: telegram`
 
-## CI Policy
+Then validate the public-safe Telegram surface:
 
-`.github/workflows/ci.yml` runs on:
+- `/start`
+- `/help`
+- `/commands`
+- simple quick reply prompt
+- reminder prompt
+- `/cursor_status`
 
-- pull requests to `main`
-- pushes to `main`
-- `ubuntu-latest` and `windows-latest`
-- Node 22
+## 6. Cursor Validation
 
-CI command:
+### Cursor Cloud Validation
+
+Only run this if `CURSOR_API_KEY` is configured.
+
+Expected meaning:
+
+- `Cloud coding jobs: ready` means Cursor Cloud queued heavy-lift workflows are ready now
+
+Run:
+
+- `/cursor_status`
+- `/cursor-jobs`
+- `/cursor-create --repo https://github.com/rupret007/Andrea_NanoBot Reply with exactly: live cloud smoke ok. Do not modify files, branches, or PRs.`
+- `/cursor-sync <agent_id>`
+- `/cursor-conversation <agent_id> 5`
+- `/cursor-artifacts <agent_id>`
+
+Optional if safe:
+
+- `/cursor-followup <agent_id> ...`
+- `/cursor-stop <agent_id>` on a disposable job only
+
+### Desktop Bridge Validation
+
+Only run this if all of these are configured:
+
+- `CURSOR_DESKTOP_BRIDGE_URL`
+- `CURSOR_DESKTOP_BRIDGE_TOKEN`
+- a live bridge process on your normal machine
+
+Expected meaning:
+
+- `Desktop bridge terminal control: ready` means operator-only session recovery and line-oriented terminal control are ready
+- `Desktop bridge agent jobs: conditional|unavailable` means desktop terminal control can still be real while local queued desktop-agent execution is not the baseline promise on that machine
+
+Run:
+
+- `/cursor_status`
+- `/cursor-jobs`
+- `/cursor-sync <desktop_session_id>` if a recoverable session exists
+- `/cursor-terminal <agent_id> echo operator smoke ok`
+- `/cursor-terminal-status <agent_id>`
+- `/cursor-terminal-log <agent_id> 20`
+- `/cursor-terminal-stop <agent_id>` if appropriate
+
+Do not confuse desktop bridge readiness with Cursor Cloud readiness.
+
+## 7. Restart And Verify
+
+After meaningful runtime or operator-surface changes:
 
 ```bash
-npm run test:major:ci
+npm run services:restart
+npm run setup -- --step verify
 ```
 
-## Release Gate (Required)
+Important rule:
 
-Before pushing a release branch:
+- run restart and verify sequentially, not in parallel
 
-1. `npm run test:major` must pass.
-2. `npm run test:stability` must pass with `3/3` successful rounds.
-3. live verify must be green (`STATUS: success`) on the operator host.
-4. update docs if behavior changed (setup/runtime/channels/marketplace/testing/services).
-5. capture final command outputs in release notes/PR summary.
+Then rerun a small live smoke:
+
+- `/ping`
+- `/help`
+- `/cursor_status`
+
+## 8. Failure Handling
+
+### `CREDENTIAL_RUNTIME_PROBE: failed`
+
+- rerun `npm run setup -- --step verify`
+- check `CREDENTIAL_RUNTIME_PROBE_REASON`
+- check `NEXT_STEPS`
+
+### Cloud coding jobs unavailable
+
+- `CURSOR_API_KEY` is missing, rejected, or not loaded
+- fix `.env`
+- restart
+- rerun `/cursor_status`
+
+### Desktop bridge terminal control unavailable
+
+- `CURSOR_DESKTOP_BRIDGE_URL` and/or `CURSOR_DESKTOP_BRIDGE_TOKEN` are missing
+- or the configured bridge is unreachable/unhealthy
+- confirm the bridge process and tunnel
+- restart Andrea
+- rerun `/cursor_status`
+
+### Runtime route unavailable
+
+- treat it as optional unless you specifically want Cursor-backed runtime routing
+- check 9router endpoint/auth/model settings separately from Cloud/desktop
+
+## 9. Release Gate
+
+Before pushing a release:
+
+1. `npm run test:major` passes
+2. `npm run test:stability` passes
+3. live verify is green on the operator host
+4. docs and help surfaces are updated if wording or behavior changed
+5. optional integrations are documented as optional, not baseline
+6. final command outputs and any caveats are captured in release notes or the PR summary

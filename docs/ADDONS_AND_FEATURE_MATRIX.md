@@ -6,6 +6,13 @@ Use it when deciding what to enable, what to leave out, and which skills are wor
 This is an inventory, not the default public product surface.
 Many entries here are optional operator-enabled skills or integrations, and they should not be presented as baseline end-user capabilities unless they are actually configured and validated in the current environment.
 
+Important product split:
+
+- Andrea's public-safe surface stays narrow
+- Cursor Cloud is the validated operator-enabled heavy-lift path
+- desktop bridge is operator-only and environment-dependent
+- runtime routing is a separate diagnostic/config surface
+
 ## Core Runtime Features
 
 | Feature                    | What it does                                                 | Notes                                         |
@@ -90,11 +97,12 @@ Many entries here are optional operator-enabled skills or integrations, and they
 
 ## Cursor Operator Surfaces
 
-| Surface               | What it does                                                                                                  | Notes                                                                                     |
-| --------------------- | ------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| Cursor Cloud jobs     | Create, sync, follow up, stop, inspect conversation, and fetch artifacts                                      | Operator-only; requires `CURSOR_API_KEY`                                                  |
+| Surface | What it does | Notes |
+| --- | --- | --- |
+| Cursor Cloud jobs | Create, sync, follow up, stop, inspect conversation, and fetch artifacts | Operator-enabled validated path; requires `CURSOR_API_KEY` |
 | Cursor desktop bridge | Recover bridge-known sessions and run line-oriented shell commands on your normal Cursor machine | Operator-only; requires bridge setup; no live PTY, GUI control, arbitrary shell attach, or validated local Windows agent-job path |
-| `/cursor_status`      | Show readiness for Cloud, desktop bridge, and runtime-route wiring                                            | Safe status surface; public-safe                                                          |
+| Cursor-backed runtime route | Route Andrea's own runtime through a Cursor-aware gateway such as 9router | Optional diagnostic/runtime surface; separate from Cloud job readiness and desktop bridge readiness |
+| `/cursor_status` | Show readiness for Cloud, desktop bridge, and runtime-route wiring | Safe status surface; public-safe |
 
 ## Marketplace Tool Surface
 

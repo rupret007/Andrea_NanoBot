@@ -1,125 +1,99 @@
 # Andrea Channel Commands And Onboarding
 
-This guide covers the user-facing chat experience for Andrea, especially on Telegram.
-Use it when you want a simple but complete explanation of how people should interact with the bot once setup is complete.
+This guide explains the public-safe Telegram experience for Andrea.
+Use it when you want to know how people should actually interact with the bot once setup is complete.
 
-If you want a shorter day-to-day version, start with [USER_GUIDE.md](USER_GUIDE.md).
+For the shorter day-to-day version, start with [USER_GUIDE.md](USER_GUIDE.md).
 
-## 1) How Chat UX Works
+## Public-Safe Surface
 
-There are three common chat modes:
+Andrea is conversation-first.
+Most people should start with a normal message, not a command.
 
-- Direct chat with the bot:
-  - best for setup, private requests, and admin tasks
-  - slash commands work naturally here
-- Group chat:
-  - best for shared reminders, project work, and team coordination
-  - mention the bot when you want it to act
-- Main control chat:
-  - one chat is registered as the main control chat
-  - use it for administration, cross-group work, and higher-trust control actions
+Stable user-safe behaviors:
 
-For short questions like greetings, playful prompts, and simple math, Andrea may answer immediately through a direct quick-reply path. That fast path is intentional and exists to keep simple interactions stable and natural.
+- direct conversation in DMs
+- mention-based requests in groups
+- reminders and follow-ups
+- fast direct replies for simple questions and basic math
+- research and summaries in normal language
+- a small public-safe command set
 
-## 2) First-Time Telegram Onboarding
+## First-Time Telegram Onboarding
 
-Recommended flow:
+Recommended direct-message flow:
 
-1. Open the bot in a direct message.
+1. Open a DM with the bot.
 2. Run `/start`.
 3. Run `/registermain`.
 4. Run `/help` or `/commands`.
-5. Send a plain-language request such as:
-   - `Add "renew passport" to my to-do list`
-   - `Remind me tomorrow at 3pm to call Sam`
-   - `Research the best standing desks for small apartments`
+5. Send a plain-language request.
 
-If the bot is already configured, `/registermain` confirms whether this DM is already the main chat.
+Good first requests:
 
-## 3) Group Behavior
+- `What's the meaning of life?`
+- `Remind me tomorrow at 3pm to call Sam`
+- `Summarize my tasks for today`
+- `Research the best standing desks for small apartments`
+
+## Group Behavior
 
 In groups:
 
-- mention the bot to trigger work
-- ask for reminders, summaries, research, or project help
-- keep sensitive admin actions in the main control chat when possible
+- mention Andrea when you want action
+- use her for reminders, summaries, research, and project help
+- keep high-trust admin actions in the main control chat
 
 Examples:
 
 - `@your_bot_username remind the team every Monday at 9am to post weekly updates`
-- `@your_bot_username summarize the last week of discussion and turn it into action items`
+- `@your_bot_username summarize this thread and list action items`
 - `@your_bot_username research the best ergonomic keyboards under $150`
 
-## 4) Command Reference
+## Public-Safe Command Reference
 
-Core chat commands:
-
-- `/start` - quick-start welcome message
-- `/help` - full in-chat guide
-- `/commands` - command reference
-- `/features` - capability overview
-- `/ping` - health check
-- `/chatid` - show current Telegram chat ID and type
+- `/start` - quick-start welcome
+- `/help` - short in-chat guide
+- `/commands` - safe command list
+- `/features` - short capability overview
+- `/ping` - basic health check
+- `/chatid` - show the current Telegram chat ID and type
 - `/registermain` - register this DM as the main control chat
+- `/cursor_status` - safe Cursor readiness check only
 
-Operator-safe status:
+Important boundary:
 
-- `/cursor_status` - show safe Cursor readiness, including Cloud coding jobs, desktop bridge terminal control, desktop agent-job compatibility, and runtime-route status
+- `/cursor_status` is the only public-safe Cursor command.
+- Deeper Cursor job and desktop terminal commands are operator-only and should stay in the admin guide.
 
-Advanced operator workflows still exist, but they are restricted to Andrea's main control chat and should stay in the admin guide and out of the default demo unless they were validated the same day. That includes Cloud job control and any desktop bridge session or terminal actions.
+## What `/cursor_status` Means For Users
 
-## 5) Capability Overview
+`/cursor_status` is a readiness check, not a work command.
+It can safely tell you whether:
 
-Andrea is strongest when used as a practical assistant, not just a chatbot.
+- Cursor Cloud jobs are ready
+- desktop bridge terminal control is ready
+- local desktop agent execution is still conditional
+- optional Cursor-backed runtime routing is configured
 
-Typical jobs:
+If it says something is `unavailable`, that usually means your operator has not configured that path yet or it is unhealthy right now.
 
-- to-do lists and reminders
-- recurring scheduled tasks
-- research and summaries
-- coding help and repo work
-- optional admin-enabled extras only after they are validated in that environment
+## UX Principles
 
-## 6) Good Prompting Patterns
-
-Requests work best when they are specific about outcome, timing, and scope.
-
-Good examples:
-
-- `@your_bot_username remind me every weekday at 8:30am to review my priorities`
-- `@your_bot_username research the best Outlook alternatives for a small team and give me a short comparison`
-- `@your_bot_username summarize my tasks for today and suggest the top three priorities`
-- `@your_bot_username what's the meaning of life?`
-
-## 7) UX Principles In This Repo
-
-The intended UX direction is:
+This repo keeps the public chat experience intentionally small:
 
 - plain-language interaction first
-- quick direct answers for simple asks before heavier orchestration
-- minimal command memorization
-- helpful slash commands for discovery and setup
-- isolated, low-surprise behavior per chat
-- secure capability expansion through explicit skill enablement
+- slash commands for onboarding and status, not for everything
+- quick replies for simple asks
+- deeper operator tooling kept out of the default user surface
+- no helper chatter in normal replies
 
-## 8) Troubleshooting
+## Troubleshooting
 
-If people are confused in the channel, start here:
+If the channel experience feels wrong:
 
-- run `/help`
-- run `/commands`
-- verify the bot is in a direct chat if `/registermain` is needed
-- use `/chatid` to confirm the current chat identity
-- use `/cursor_status` when checking the coding/status path
-
-Runtime behavior note:
-
-- for direct conversational asks, Andrea now prefers a fast local reply path for simple questions before escalating to heavier runtime work
-- experimental surfaces should stay out of the demo until they have been validated in that exact environment
-
-For operator-side troubleshooting, also see:
-
-- [SETUP_AND_FEATURES_GUIDE.md](SETUP_AND_FEATURES_GUIDE.md)
-- [ADMIN_GUIDE.md](ADMIN_GUIDE.md)
-- [DEBUG_CHECKLIST.md](DEBUG_CHECKLIST.md)
-- [TESTING_AND_RELEASE_RUNBOOK.md](TESTING_AND_RELEASE_RUNBOOK.md)
+1. Run `/help`.
+2. Run `/commands`.
+3. Run `/ping`.
+4. Run `/cursor_status` if the issue touches coding/status readiness.
+5. Ask your admin to check the admin guide and release runbook.

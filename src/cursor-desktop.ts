@@ -437,7 +437,27 @@ export function formatCursorDesktopStatusMessage(
   }
   if (!status.enabled) {
     lines.push(
-      '- Next step: set `CURSOR_DESKTOP_BRIDGE_URL` and `CURSOR_DESKTOP_BRIDGE_TOKEN` to reach your normal Cursor machine.',
+      "- Next step: set `CURSOR_DESKTOP_BRIDGE_URL` and `CURSOR_DESKTOP_BRIDGE_TOKEN` on Andrea's host, then run the bridge on your normal machine to enable operator-only session recovery and line-oriented terminal control.",
+    );
+  } else if (status.probeStatus === 'failed') {
+    lines.push(
+      '- Next step: keep Cursor Cloud as the queued heavy-lift path, then fix the configured bridge URL/token or private-tunnel reachability before relying on `/cursor_terminal*`.',
+    );
+  } else if (
+    status.probeStatus === 'ok' &&
+    status.terminalAvailable &&
+    status.agentJobCompatibility === 'unknown'
+  ) {
+    lines.push(
+      '- Next step: desktop terminal control is ready, but desktop agent jobs are still conditional on this machine. Keep Cursor Cloud as the baseline queued heavy-lift path until local desktop agent compatibility is validated.',
+    );
+  } else if (
+    status.probeStatus === 'ok' &&
+    status.terminalAvailable &&
+    status.agentJobCompatibility === 'failed'
+  ) {
+    lines.push(
+      '- Next step: desktop terminal control is ready, but local desktop agent jobs are unavailable on this machine. Keep Cursor Cloud as the queued heavy-lift path and use the bridge for session recovery plus terminal control only.',
     );
   }
 

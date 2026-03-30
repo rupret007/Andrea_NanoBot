@@ -1,28 +1,83 @@
 # Andrea Admin Guide
 
-This guide is for operators who own uptime, security, and release quality.
-It is intentionally practical: runbook first, theory second.
+This guide is for operators who own uptime, setup, security, and release quality.
+It is intentionally practical: product shape first, runbook second, theory last.
 
-## 1) Your Job As Admin
+## Product Model
 
-You are responsible for:
+Andrea has one public assistant identity and one narrow public chat surface.
 
-- one public assistant identity (`Andrea`)
-- safe configuration of model credentials and external integrations
-- service lifecycle (`start`, `stop`, `restart`, startup policy)
-- release validation before users feel changes
-- keeping docs aligned with actual behavior
+### User-safe surface
 
-## 2) Baseline Requirements
+Normal users should experience:
 
-Required:
+- plain-language conversation
+- reminders, recurring follow-ups, and simple task help
+- fast direct replies for simple asks
+- summaries, research, and project help
+- the small public-safe Telegram command set
+- `/cursor_status` as the only public-safe Cursor command
+
+### Operator-only surface
+
+Operators own:
+
+- environment variables and credential setup
+- service lifecycle
+- Cloud versus desktop bridge setup
+- deeper Cursor workflows
+- startup, restart, verify, and troubleshooting
+- release validation and docs accuracy
+
+## What The Cursor Surfaces Mean
+
+Andrea now treats Cursor as three separate surfaces:
+
+### 1. Cursor Cloud
+
+- requires `CURSOR_API_KEY`
+- current validated heavy-lift queued coding path
+- supports:
+  - `/cursor_create`
+  - `/cursor_sync` for Cloud jobs
+  - `/cursor_conversation` for Cloud jobs
+  - `/cursor_followup`
+  - `/cursor_stop`
+  - `/cursor_models`
+  - `/cursor_artifacts`
+  - `/cursor_artifact_link`
+
+### 2. Cursor Desktop Bridge
+
+- requires `CURSOR_DESKTOP_BRIDGE_URL`
+- requires `CURSOR_DESKTOP_BRIDGE_TOKEN`
+- may also require `CURSOR_DESKTOP_CLI_PATH` on the bridge machine
+- supports operator-only session recovery plus line-oriented terminal control
+- does **not** automatically mean local queued desktop-agent execution is validated on Windows
+
+### 3. Cursor-Backed Runtime Route
+
+- optional diagnostic/runtime-routing surface
+- separate from Cursor Cloud job readiness
+- separate from desktop bridge terminal readiness
+
+## Status Terms
+
+Use these meanings consistently:
+
+- **configured** = required environment variables are present
+- **ready** = configured and validated enough for intended use now
+- **conditional** = partially wired or environment-dependent; not the baseline promise
+- **unavailable** = missing config, unreachable dependency, or unsupported on this machine
+
+## Baseline Requirements
 
 - Node.js 22.x
-- one healthy container runtime (`docker`, `podman`, or `apple-container`)
-- at least one configured channel (usually Telegram first)
-- valid model credentials (Anthropic-compatible endpoint + key flow)
+- one healthy container runtime
+- at least one configured channel
+- valid model credentials
 
-Run these checks:
+Quick checks:
 
 ```bash
 node --version
@@ -32,16 +87,18 @@ podman info
 npm run setup -- --step verify
 ```
 
-On Windows PowerShell, use `npm.cmd` / `npx.cmd` when policy blocks `npm.ps1` / `npx.ps1`.
+On Windows PowerShell, use `npm.cmd` and `npx.cmd` if policy blocks `npm.ps1` or `npx.ps1`.
 
-## 3) First Deployment Checklist
+## First Deployment Checklist
 
-1. Copy env template:
+1. Copy the template:
    - `Copy-Item .env.example .env`
-2. Configure model and channel credentials.
-3. Run setup in Claude Code (`/setup`, `/add-telegram`).
-4. Register main Telegram control chat via `/registermain` in DM.
-5. Verify runtime:
+2. Configure model credentials and at least one channel.
+3. Run setup in Claude Code:
+   - `/setup`
+   - `/add-telegram`
+4. Register the main Telegram control chat with `/registermain` in DM.
+5. Run:
    - `npm run setup -- --step verify`
 6. Start services:
    - `npm run services:start`
@@ -50,26 +107,7 @@ On Windows PowerShell, use `npm.cmd` / `npx.cmd` when policy blocks `npm.ps1` / 
    - `/help`
    - `/cursor_status`
 
-## 4) Security Defaults You Should Keep
-
-Keep these principles:
-
-- one public bot identity only
-- isolate chat workspaces by group folder
-- explicit approvals for purchases
-- least-privilege enablement for community skills
-- no secrets in prompts, logs, or responses
-
-Critical controls:
-
-- `ALEXA_VERIFY_SIGNATURE=true` in real environments
-- `ALEXA_ALLOWED_USER_IDS=...` for private Alexa rollout
-- `AMAZON_BUSINESS_ORDER_MODE=trial` until you validate purchase flow
-- `CURSOR_MAX_ACTIVE_JOBS_PER_CHAT` to prevent job flood
-
-## 5) Service Operations
-
-Primary commands:
+## Service Operations
 
 ```bash
 npm run services:start
@@ -77,117 +115,159 @@ npm run services:stop
 npm run services:restart
 ```
 
-Validation after restart:
+After restart:
 
 ```bash
 npm run setup -- --step verify
 ```
 
-Expected result:
+Expected:
 
 - `STATUS: success`
 - configured channel auth
-- container runtime healthy
-- credential probe healthy
+- healthy container runtime
+- healthy credential probe
 
-## 6) Feature-Specific Admin Checks
+## Cursor Setup And Validation
 
-Cursor:
+### Cursor Cloud
 
-- `/cursor_status`
-- `/cursor_test`
-- `/cursor_models`
-- `/cursor_jobs`
-- `/cursor_terminal <agent_id> <command>`
-- `/cursor_terminal_status <agent_id>`
-- `/cursor_terminal_log <agent_id> [limit]`
-- `/cursor_terminal_stop <agent_id>`
-- [CURSOR_API_KEYS.md](CURSOR_API_KEYS.md) when you need a real `CURSOR_API_KEY` from Cursor Cloud
-- [CURSOR_DESKTOP_BRIDGE.md](CURSOR_DESKTOP_BRIDGE.md) when Andrea should drive your normal Cursor machine instead of only cloud jobs
-- if Cursor Cloud auth behaves differently than expected, set `CURSOR_API_AUTH_MODE=auto|bearer|basic`; default `auto` tries Bearer first and falls back to Basic
-
-Before using deeper Cursor workflows, confirm `/cursor_status` shows the split you expect:
-
-- `Cloud coding jobs: ready` means Andrea can run queued heavy-lift Cursor Cloud jobs
-- `Desktop bridge terminal control: ready` means Andrea can inspect bridge-known sessions and run line-oriented shell commands on your normal machine
-- `Desktop bridge agent jobs: validated|conditional|unavailable` tells you whether local desktop agent execution is fully proven on that machine
-- if `Cloud coding jobs: unavailable`, keep `/cursor_create`, `/cursor_followup`, `/cursor_stop`, `/cursor_artifacts`, and `/cursor_artifact_link` out of the operational path until `CURSOR_API_KEY` is configured
-
-Run advanced Cursor, Amazon, and Alexa slash commands from the registered main control chat only. `/cursor_status` is the safe exception that can stay visible in the narrower public surface.
-
-Useful operator truth:
-
-- `/cursor_jobs` now separates tracked and recoverable Cursor Cloud jobs from tracked and recoverable desktop bridge sessions
-- `/cursor_models` is a Cursor Cloud query, but some accounts currently return no model list even when Cloud jobs work. If that happens, omit `--model` and let Cursor use the account default, or pass a known model id directly.
-- `/cursor_create` through Cursor Cloud needs either `--repo <url>` on the command or a default repository configured in Cursor settings
-- `/cursor_sync <agent_id>` can attach a recoverable Cursor Cloud job or desktop bridge session to the current workspace
-- `/cursor_followup`, `/cursor_stop`, `/cursor_artifacts`, and `/cursor_artifact_link` are Cloud-oriented workflows in the current product
-- Cursor desktop bridge can now run line-oriented shell commands for tracked bridge sessions through `/cursor_terminal ...`
-- terminal control stays operator-only and tied to bridge-known sessions; it is not a live PTY, arbitrary shell attach, or remote desktop surface
-
-Telegram live testing:
-
-- use [TELEGRAM_OPERATOR_LIVE_TESTING.md](TELEGRAM_OPERATOR_LIVE_TESTING.md) when you want this machine to send real inbound Telegram test messages from your own operator account
-- run `npm run telegram:user:auth` once to store a local MTProto session; QR auth is the recommended default
-- run `npm run telegram:user:send -- "<message>"` or `npm run telegram:user:batch`
-- run one harness command at a time; concurrent live-test sends can cross-capture replies and are blocked by the operator lock now
-- keep this tooling operator-only and pointed at your own DM or dedicated test chat only
-
-Alexa:
-
-- `/alexa_status`
-- validate HTTPS endpoint and ASK skill configuration
-- see [ALEXA_VOICE_INTEGRATION.md](ALEXA_VOICE_INTEGRATION.md)
-
-Amazon:
-
-- `/amazon_status`
-- `/amazon_search <keywords>`
-- `/purchase_request ...`
-- `/purchase_requests`
-- see [AMAZON_SHOPPING_AND_APPROVALS.md](AMAZON_SHOPPING_AND_APPROVALS.md)
-
-## 7) Release Gate (Do Not Skip)
-
-Use this minimum gate before pushing operational changes:
+Required:
 
 ```bash
-npm run test:major:ci
-npm run test:stability
+CURSOR_API_KEY=key_...
 ```
 
-`test:stability` runs three full validation rounds by design.
-Treat failures as release blockers until fixed or explicitly waived.
+Optional tuning:
 
-## 8) Incident Response Short Path
+```bash
+CURSOR_API_AUTH_MODE=auto
+CURSOR_API_BASE_URL=https://api.cursor.com
+CURSOR_API_TIMEOUT_MS=20000
+CURSOR_API_MAX_RETRIES=2
+CURSOR_API_RETRY_BASE_MS=800
+```
 
-1. Capture symptom and time.
+Use Cursor Cloud when you want the current validated queued heavy-lift coding path.
+
+Validate:
+
+- `/cursor_status`
+- `/cursor_models`
+- `/cursor_jobs`
+- `/cursor_create --repo <url> ...`
+- `/cursor_sync <agent_id>`
+- `/cursor_conversation <agent_id> 5`
+
+If `/cursor_status` says `Cloud coding jobs: unavailable`, treat `/cursor_create`, `/cursor_followup`, `/cursor_stop`, `/cursor_models`, and Cloud artifact commands as unavailable until `CURSOR_API_KEY` is fixed.
+
+### Cursor Desktop Bridge
+
+Required on Andrea's host:
+
+```bash
+CURSOR_DESKTOP_BRIDGE_URL=https://your-bridge.example.com
+CURSOR_DESKTOP_BRIDGE_TOKEN=replace-with-random-secret
+```
+
+Sometimes required on the bridge machine:
+
+```bash
+CURSOR_DESKTOP_CLI_PATH=/path/to/cursor-agent
+```
+
+Use the desktop bridge when you want operator-only machine-side session recovery or terminal control on your normal machine.
+
+Validate:
+
+- `/cursor_status`
+- `/cursor_jobs`
+- `/cursor_sync <desktop_session_id>`
+- `/cursor_terminal <agent_id> echo operator smoke ok`
+- `/cursor_terminal_status <agent_id>`
+- `/cursor_terminal_log <agent_id> 20`
+
+Important truth:
+
+- `Desktop bridge terminal control: ready` means session/terminal control is ready.
+- `Desktop bridge agent jobs: conditional|unavailable` means local desktop queued-agent execution is still not the baseline promise on that machine.
+- Keep Cursor Cloud as the baseline heavy-lift path unless the desktop machine is explicitly validated.
+
+### Runtime Route
+
+Runtime-route readiness is separate.
+Only configure it if you specifically want Cursor-backed runtime routing through 9router or an equivalent gateway.
+
+If `/cursor_status` says `Cursor-backed runtime route: not configured`, that does **not** mean Cursor Cloud or desktop bridge are broken.
+
+## Operator-Only Commands
+
+Keep these in the registered main control chat:
+
+- `/cursor_models`
+- `/cursor_test`
+- `/cursor_jobs`
+- `/cursor_create`
+- `/cursor_sync`
+- `/cursor_conversation`
+- `/cursor_followup`
+- `/cursor_stop`
+- `/cursor_artifacts`
+- `/cursor_artifact_link`
+- `/cursor_terminal`
+- `/cursor_terminal_status`
+- `/cursor_terminal_log`
+- `/cursor_terminal_stop`
+
+Safe public exception:
+
+- `/cursor_status`
+
+## Telegram Live Validation
+
+Use [TELEGRAM_OPERATOR_LIVE_TESTING.md](TELEGRAM_OPERATOR_LIVE_TESTING.md) when you want this machine to send real inbound Telegram test messages from your own operator account.
+
+Recommended flow:
+
+1. `npm run telegram:user:auth`
+2. `npm run telegram:user:send -- "<message>"`
+3. `npm run telegram:user:batch`
+
+Keep this tooling operator-only and pointed at your own DM or a dedicated test chat only.
+
+## Security Defaults To Keep
+
+- one public assistant identity only
+- per-chat isolation
+- least-privilege add-on enablement
+- explicit purchase approvals
+- no secrets in prompts, logs, or user-visible replies
+
+Useful controls:
+
+- `CURSOR_MAX_ACTIVE_JOBS_PER_CHAT`
+- `ALEXA_VERIFY_SIGNATURE=true`
+- `ALEXA_ALLOWED_USER_IDS=...`
+- `AMAZON_BUSINESS_ORDER_MODE=trial`
+
+## Incident Short Path
+
+1. Capture the failing symptom and time.
 2. Run `npm run setup -- --step verify`.
-3. Check runtime logs in `logs/`.
+3. Check `logs/`.
 4. Reproduce with the smallest failing command.
-5. Restart services if state appears stale.
-6. Re-run failing command and compare behavior.
-7. Document the root cause and fix in PR/commit notes.
+5. Restart services if state looks stale.
+6. Re-run the failing flow.
+7. Update docs if behavior changed.
 
-For deeper triage, use [DEBUG_CHECKLIST.md](DEBUG_CHECKLIST.md).
+## Documentation Rule
 
-## 9) Documentation Hygiene Rule
+If behavior or wording changes, update docs in the same change set:
 
-Any time behavior changes, update docs in the same change set:
-
-- root `README.md`
+- `README.md`
 - `docs/README.md`
-- feature docs touched by the change
-- user/admin guidance if workflow changed
+- user/admin/setup docs touched by the change
+- testing/runbook docs if validation changed
 
-If a command or flow is no longer true, remove or rewrite it immediately.
-
-## 10) Useful References
-
-- [SETUP_AND_FEATURES_GUIDE.md](SETUP_AND_FEATURES_GUIDE.md)
-- [CHANNEL_COMMANDS_AND_ONBOARDING.md](CHANNEL_COMMANDS_AND_ONBOARDING.md)
-- [TELEGRAM_OPERATOR_LIVE_TESTING.md](TELEGRAM_OPERATOR_LIVE_TESTING.md)
-- [ALEXA_VOICE_INTEGRATION.md](ALEXA_VOICE_INTEGRATION.md)
-- [AMAZON_SHOPPING_AND_APPROVALS.md](AMAZON_SHOPPING_AND_APPROVALS.md)
-- [TESTING_AND_RELEASE_RUNBOOK.md](TESTING_AND_RELEASE_RUNBOOK.md)
-- [SECURITY.md](SECURITY.md)
+If a flow is conditional, say exactly what it depends on.
+If a flow is operator-only, say that clearly.

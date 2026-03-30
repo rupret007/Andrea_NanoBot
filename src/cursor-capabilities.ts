@@ -43,6 +43,13 @@ function normalizePrefix(prefix: string): string {
   return prefix.trim().replace(/[. ]+$/, '');
 }
 
+const CURSOR_CLOUD_ENABLEMENT_MESSAGE =
+  'Cursor Cloud coding jobs are unavailable because `CURSOR_API_KEY` is not configured. Add it to enable queued heavy-lift Cloud workflows such as `/cursor_create`, `/cursor_followup`, `/cursor_stop`, `/cursor_models`, and Cloud artifact lookup.';
+const CURSOR_DESKTOP_ENABLEMENT_MESSAGE =
+  "Desktop bridge terminal control is unavailable because `CURSOR_DESKTOP_BRIDGE_URL` and `CURSOR_DESKTOP_BRIDGE_TOKEN` are not fully configured. Add both on Andrea's host and run the bridge on your normal machine if you want operator-only session recovery and line-oriented terminal control.";
+const CURSOR_RUNTIME_ROUTE_OPTIONAL_MESSAGE =
+  'Cursor-backed runtime routing is optional and separate from Cursor Cloud jobs and desktop bridge terminal control.';
+
 function buildNextStep(
   desktopStatus: CursorDesktopStatus,
   cloudStatus: CursorCloudStatus,
@@ -55,36 +62,36 @@ function buildNextStep(
   if (cloudReady && desktopReachable && desktopAgentJobs === 'validated') {
     return gatewayStatus.mode === 'configured'
       ? 'Cursor Cloud coding jobs, desktop bridge terminal control, and Cursor-backed runtime routing are all ready.'
-      : 'Cursor Cloud coding jobs are ready, and desktop bridge terminal control is ready. Configure 9router only if you also want Cursor-backed runtime routing.';
+      : `Cursor Cloud coding jobs and desktop bridge terminal control are ready. ${CURSOR_RUNTIME_ROUTE_OPTIONAL_MESSAGE}`;
   }
 
   if (cloudReady && desktopReachable && desktopAgentJobs === 'conditional') {
-    return 'Cursor Cloud coding jobs are ready, and desktop bridge terminal control is ready. Desktop agent-run compatibility on this machine is still conditional.';
+    return `Cursor Cloud coding jobs are ready, and desktop bridge terminal control is ready. Desktop agent-run compatibility on this machine is still conditional. ${CURSOR_RUNTIME_ROUTE_OPTIONAL_MESSAGE}`;
   }
 
   if (cloudReady && desktopReachable && desktopAgentJobs === 'unavailable') {
-    return 'Cursor Cloud coding jobs are ready. Desktop bridge terminal control is ready, but desktop agent jobs are unavailable on this machine.';
+    return `Cursor Cloud coding jobs are ready. Desktop bridge terminal control is ready, but desktop agent jobs are unavailable on this machine. ${CURSOR_RUNTIME_ROUTE_OPTIONAL_MESSAGE}`;
   }
 
   if (desktopStatus.enabled && desktopStatus.probeStatus === 'failed') {
     return cloudReady
-      ? 'Cursor Cloud coding jobs are ready, but the desktop bridge is unhealthy. Fix the bridge URL/token or reachability before relying on terminal control.'
-      : 'Fix the desktop bridge URL/token or bridge reachability before relying on desktop terminal control.';
+      ? 'Cursor Cloud coding jobs are ready, but desktop bridge terminal control is unavailable because the configured bridge is unhealthy. Fix the bridge URL/token or private-tunnel reachability before relying on `/cursor_terminal*`.'
+      : `${CURSOR_CLOUD_ENABLEMENT_MESSAGE} Desktop bridge terminal control is also unavailable because the configured bridge is unhealthy. Fix the bridge URL/token or private-tunnel reachability before relying on \`/cursor_terminal*\`.`;
   }
 
   if (cloudReady) {
     return gatewayStatus.mode === 'configured'
-      ? 'Cursor Cloud coding jobs are ready, and Cursor-backed runtime routing is configured.'
-      : 'Cursor Cloud coding jobs are ready. Configure 9router only if you also want Cursor-backed runtime routing.';
+      ? 'Cursor Cloud coding jobs are ready, and Cursor-backed runtime routing is configured. Desktop bridge terminal control remains optional and separate.'
+      : `Cursor Cloud coding jobs are ready. ${CURSOR_DESKTOP_ENABLEMENT_MESSAGE} ${CURSOR_RUNTIME_ROUTE_OPTIONAL_MESSAGE}`;
   }
 
   if (desktopReachable) {
     return desktopAgentJobs === 'validated'
-      ? 'Desktop bridge terminal control and desktop agent jobs are ready. Configure Cursor Cloud if you also want queued heavy-lift coding jobs.'
-      : 'Desktop bridge terminal control is ready. Configure Cursor Cloud if you want queued heavy-lift coding jobs.';
+      ? `Desktop bridge terminal control and desktop agent jobs are ready. ${CURSOR_CLOUD_ENABLEMENT_MESSAGE} ${CURSOR_RUNTIME_ROUTE_OPTIONAL_MESSAGE}`
+      : `Desktop bridge terminal control is ready. ${CURSOR_CLOUD_ENABLEMENT_MESSAGE} ${CURSOR_RUNTIME_ROUTE_OPTIONAL_MESSAGE}`;
   }
 
-  return 'Configure CURSOR_API_KEY for queued Cursor coding jobs, or configure CURSOR_DESKTOP_BRIDGE_URL + CURSOR_DESKTOP_BRIDGE_TOKEN for desktop terminal control.';
+  return `${CURSOR_CLOUD_ENABLEMENT_MESSAGE} ${CURSOR_DESKTOP_ENABLEMENT_MESSAGE} ${CURSOR_RUNTIME_ROUTE_OPTIONAL_MESSAGE}`;
 }
 
 export function summarizeCursorCapabilities(input: {
@@ -113,7 +120,7 @@ export function formatCursorCapabilitySummaryMessage(
     `- Cloud coding jobs: ${summary.cloudCodingJobsReady ? 'ready' : 'unavailable'}`,
     `- Desktop bridge terminal control: ${summary.desktopTerminalReady ? 'ready' : 'unavailable'}`,
     `- Desktop bridge agent jobs: ${summary.desktopAgentJobs}`,
-    `- /cursor_models: ${summary.canListModels ? 'enabled via Cursor Cloud (results depend on API response)' : 'requires Cursor Cloud API'}`,
+    `- /cursor_models: ${summary.canListModels ? 'enabled via Cursor Cloud (results depend on API response)' : 'requires Cursor Cloud API (`CURSOR_API_KEY`)'}`,
     `- Cursor-backed runtime route: ${summary.cursorRoutingReady ? 'configured' : 'not configured'}`,
   ];
 

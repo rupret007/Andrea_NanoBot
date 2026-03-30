@@ -10,6 +10,26 @@ For the in-chat user journey and command reference, also see:
 - [ADMIN_GUIDE.md](ADMIN_GUIDE.md)
 - [TELEGRAM_OPERATOR_LIVE_TESTING.md](TELEGRAM_OPERATOR_LIVE_TESTING.md) for operator-only closed-loop Telegram testing from this machine
 
+## Current Product Model
+
+Keep this split in mind while reading the rest of the setup guide:
+
+- Andrea is one public assistant identity
+- Telegram is the main public front door
+- the public-safe surface stays narrow and conversation-first
+- Cursor Cloud is the current validated heavy-lift queued coding path
+- desktop bridge is the operator-only session and terminal path on your own machine
+- Cursor-backed runtime routing is a separate optional diagnostic/runtime surface
+
+## Status Terms
+
+Use these meanings consistently when reading `/cursor_status` and the setup docs:
+
+- **configured** = the required environment variables are present
+- **ready** = configured and validated enough for intended use now
+- **conditional** = partially wired or environment-dependent; not the baseline promise
+- **unavailable** = missing config, unreachable dependency, or unsupported on this machine
+
 ## What This Package Includes
 
 - `nanoclaw` runtime and isolation model as the base.
@@ -162,6 +182,14 @@ CURSOR_API_KEY=key_...
 
 `CURSOR_API_AUTH_MODE` accepts `auto`, `bearer`, or `basic`. Default `auto` tries Bearer first and falls back to Basic, which matches the mixed real-world Cursor Cloud auth behavior seen across tools and docs.
 
+What this enables in Andrea today:
+
+- queued heavy-lift Cursor Cloud job creation
+- Cloud job sync, conversation, follow-up, and stop
+- model lookup and artifact lookup where applicable
+
+If `CURSOR_API_KEY` is missing, `/cursor_status` should say `Cloud coding jobs: unavailable`, and `/cursor_create`, `/cursor_followup`, `/cursor_stop`, `/cursor_models`, and Cloud artifact commands should stay out of the operational path.
+
 If you need to create the key itself or want the shortest explanation of Cloud versus desktop bridge, see [CURSOR_API_KEYS.md](CURSOR_API_KEYS.md).
 
 Cursor Desktop Bridge (for using your own Cursor machine remotely):
@@ -192,6 +220,8 @@ Important notes:
   - `Cloud coding jobs: ready` for queued heavy-lift Cloud work
   - `Desktop bridge terminal control: ready` for bridge-managed shell/session control
   - `Desktop bridge agent jobs: validated|conditional|unavailable` for local desktop agent-run compatibility on that machine
+
+If `Desktop bridge terminal control: unavailable`, treat that as a missing-config or bridge-health issue, not as a Cursor Cloud issue. The usual next step is to fix `CURSOR_DESKTOP_BRIDGE_URL`, `CURSOR_DESKTOP_BRIDGE_TOKEN`, or the bridge's private tunnel reachability.
 
 When this mode is active:
 
@@ -325,11 +355,12 @@ Typical commands:
 - ask for regular assistance in any registered chat
 - ask for recurring tasks:
   - `@your_bot_username every weekday at 9am send me a sales summary`
-- use the in-chat discovery layer:
+- public-safe Telegram commands:
   - `/start`
   - `/help`
   - `/commands`
   - `/features`
+- `/cursor_status` as the public-safe Cursor readiness check
 - Amazon shopping commands for operators in the main control chat:
   - `/amazon_status`
   - `/amazon_search <keywords>`
@@ -338,7 +369,6 @@ Typical commands:
   - `/purchase_approve <request_id> <approval_code>`
   - `/purchase_cancel <request_id>`
 - Cursor-focused control commands:
-  - `/cursor_status` (safe public status check for Cloud, desktop bridge, and route readiness)
   - `/cursor_models [filter]` (main control chat only; Cursor Cloud only; some accounts return no model list even when jobs still work with the default model)
   - `/cursor_test` (main control chat only; live 9router/Cursor smoke request)
   - `/cursor_jobs` (main control chat only; list tracked Cursor Cloud jobs plus tracked and recoverable desktop bridge sessions for this workspace)
@@ -361,6 +391,7 @@ Important scope rule:
 - the deeper Cursor, Amazon, and Alexa slash commands are operator-facing controls and should be run from Andrea's registered main control chat only
 - for Cursor specifically, Cloud job commands are only operational when `/cursor_status` says `Cloud coding jobs: ready`
 - desktop bridge terminal commands are only operational when `/cursor_status` says `Desktop bridge terminal control: ready`
+- runtime-route readiness is optional and separate; `Cursor-backed runtime route: not configured` does not mean Cloud or desktop bridge are broken
 - the desktop bridge gives Andrea bridge-managed session recovery and line-oriented shell commands on your normal machine, but not a live PTY, remote desktop, or a guaranteed local Windows agent-job path
 - marketplace skill discovery and enablement still exist in the operator/runtime layer, but they are not part of the default Telegram command surface
 

@@ -1505,7 +1505,7 @@ async function main(): Promise<void> {
     if (sections.length === 0) {
       const backendHint =
         !inventory.hasCloud && !inventory.hasDesktop
-          ? 'Neither Cursor Cloud nor the desktop bridge is configured right now.'
+          ? 'Neither Cursor Cloud nor the desktop bridge is configured right now. Add `CURSOR_API_KEY` for queued Cloud jobs, or add `CURSOR_DESKTOP_BRIDGE_URL` + `CURSOR_DESKTOP_BRIDGE_TOKEN` for operator-only desktop session and terminal control.'
           : 'No tracked or recoverable Cursor Cloud jobs or desktop bridge sessions were found for this workspace.';
       const warning = inventory.warning
         ? `\n\nLive backend lookup skipped: ${inventory.warning}`

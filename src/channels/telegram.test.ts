@@ -95,9 +95,9 @@ describe('buildTelegramCommandsText', () => {
     expect(commands).toContain('/commands');
     expect(commands).toContain('/features');
     expect(commands).toContain('/cursor_status');
-    expect(commands).toContain('safe Cursor readiness check');
+    expect(commands).toContain('safe readiness check');
     expect(commands).toContain(
-      'Advanced operator workflows stay in the admin guide',
+      'Deeper Cursor job and terminal commands are operator/admin-only',
     );
     expect(commands).not.toContain('/cursor_models [filter]');
     expect(commands).not.toContain('/cursor_create [options] <prompt>');
@@ -134,6 +134,7 @@ describe('buildTelegramFeaturesText', () => {
     const features = buildTelegramFeaturesText('Andrea');
 
     expect(features).toContain('Secure per-chat isolation');
+    expect(features).toContain('Conversation-first help');
     expect(features).toContain('Fast replies for simple questions');
     expect(features).toContain(
       'deeper Cursor controls kept in the operator/admin path',

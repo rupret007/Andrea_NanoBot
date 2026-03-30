@@ -397,11 +397,11 @@ export function formatCursorGatewayStatusMessage(
 
   if (status.mode === 'partial') {
     lines.push(
-      '- Next step: set both `ANTHROPIC_BASE_URL` and a valid auth token/key. Add `CURSOR_GATEWAY_HINT=9router` when using a remote/custom 9router URL.',
+      '- Next step: set both `ANTHROPIC_BASE_URL` and a valid auth token/key only if you want Cursor-backed runtime routing. This route is optional and separate from Cursor Cloud jobs and desktop bridge terminal control. Add `CURSOR_GATEWAY_HINT=9router` when using a remote/custom 9router URL.',
     );
   } else if (status.mode === 'disabled') {
     lines.push(
-      '- Next step: configure 9router + `NANOCLAW_AGENT_MODEL=cu/default` if you want Cursor-backed routing. For remote/custom 9router URLs, also set `CURSOR_GATEWAY_HINT=9router`.',
+      '- Next step: leave this disabled unless you want Cursor-backed runtime routing. It is optional and separate from Cursor Cloud jobs and desktop bridge terminal control. To enable it, configure 9router + `NANOCLAW_AGENT_MODEL=cu/default`. For remote/custom 9router URLs, also set `CURSOR_GATEWAY_HINT=9router`.',
     );
   }
 

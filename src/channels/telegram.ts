@@ -75,15 +75,16 @@ export function buildTelegramWelcomeText(
   return [
     `*Welcome to ${assistantName}*`,
     '',
+    '- Start with a normal request in plain language.',
     '- In a direct chat: send normal messages or slash commands.',
     '- In a group: mention my Telegram username when you want me to act.',
     '- First-time Telegram setup: DM me and run `/registermain`.',
-    '- Use `/commands` for a command reference and `/features` for capability details.',
+    '- Use `/commands` for the safe command list and `/features` for the short capability guide.',
     '',
     '*Quick Start*',
-    '- `Add "renew passport" to my to-do list`',
+    "- `What's the meaning of life?`",
     '- `Remind me tomorrow at 3pm to call Sam`',
-    '- `Research the best standing desks and summarize them`',
+    '- `Summarize my tasks for today`',
   ].join('\n');
 }
 
@@ -98,8 +99,8 @@ export function buildTelegramCommandsText(): string {
     '- `/ping` - check bot health',
     '- `/chatid` - show chat ID and chat type',
     '- `/registermain` - bootstrap main control chat (DM only)',
-    '- `/cursor_status` - safe Cursor readiness check for Cloud jobs, desktop bridge terminal control, and route status',
-    '- Advanced operator workflows stay in the admin guide and should be demoed only after same-day validation.',
+    '- `/cursor_status` - safe readiness check for Cursor Cloud, desktop bridge terminal control, and optional runtime-route wiring',
+    '- Deeper Cursor job and terminal commands are operator/admin-only and stay in the admin guide.',
   ].join('\n');
 }
 
@@ -123,10 +124,11 @@ export function buildTelegramFeaturesText(
   return [
     `*What ${assistantName} Can Do*`,
     '',
+    '- Conversation-first help for everyday questions and follow-through',
     '- To-do lists, reminders, and recurring tasks',
     '- Research and summaries',
     '- Fast replies for simple questions, playful prompts, and basic math',
-    '- Project and coding help, with deeper Cursor controls kept in the operator/admin path',
+    '- Project and coding help through Andrea, with `/cursor_status` as the safe Cursor readiness check and deeper Cursor controls kept in the operator/admin path',
     "- Secure per-chat isolation so one chat does not automatically get another chat's skills or files",
   ].join('\n');
 }
@@ -171,13 +173,13 @@ export function splitTelegramMessage(text: string, maxLength = 4096): string[] {
 }
 
 function buildTelegramDescriptionText(assistantName = ASSISTANT_NAME): string {
-  return `${assistantName} helps with tasks, reminders, research, coding, and clear everyday assistance. In DM, use /registermain to set up your main control chat.`;
+  return `${assistantName} helps with reminders, research, project help, and clear everyday assistance. In DM, use /registermain to set up your main control chat.`;
 }
 
 function buildTelegramShortDescriptionText(
   assistantName = ASSISTANT_NAME,
 ): string {
-  return `${assistantName}: tasks, reminders, research, coding, and quick everyday help.`;
+  return `${assistantName}: conversation-first help, reminders, research, and quick everyday answers.`;
 }
 
 async function sendTelegramMessage(
