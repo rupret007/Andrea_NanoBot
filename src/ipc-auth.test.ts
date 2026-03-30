@@ -144,6 +144,7 @@ beforeEach(() => {
     createCursorAgent: async ({ groupFolder, chatJid }) => {
       createdCursorAgents.push({ groupFolder, chatJid });
       return {
+        provider: 'cloud',
         id: 'bc_123',
         groupFolder,
         chatJid,
@@ -169,6 +170,7 @@ beforeEach(() => {
     followupCursorAgent: async ({ groupFolder, agentId }) => {
       followedCursorAgents.push({ groupFolder, agentId });
       return {
+        provider: 'cloud',
         id: agentId,
         groupFolder,
         chatJid: 'other@g.us',
@@ -194,6 +196,7 @@ beforeEach(() => {
     stopCursorAgent: async ({ groupFolder, agentId }) => {
       stoppedCursorAgents.push({ groupFolder, agentId });
       return {
+        provider: 'cloud',
         id: agentId,
         groupFolder,
         chatJid: 'other@g.us',
@@ -220,6 +223,7 @@ beforeEach(() => {
       syncedCursorAgents.push({ groupFolder, agentId });
       return {
         agent: {
+          provider: 'cloud',
           id: agentId,
           groupFolder,
           chatJid: 'other@g.us',

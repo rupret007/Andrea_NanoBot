@@ -3,18 +3,40 @@ import type { CursorDesktopStatus } from './cursor-desktop.js';
 import type { CursorGatewayStatus } from './cursor-gateway.js';
 import { formatUserFacingOperationFailure } from './user-facing-error.js';
 
-export type CursorJobBackend = 'desktop' | 'cloud' | 'none';
+export type CursorDesktopAgentJobsStatus =
+  | 'validated'
+  | 'conditional'
+  | 'unavailable';
 
 export interface CursorCapabilitySummary {
-  jobBackend: CursorJobBackend;
-  canRunJobs: boolean;
+  cloudCodingJobsReady: boolean;
+  desktopTerminalReady: boolean;
+  desktopAgentJobs: CursorDesktopAgentJobsStatus;
   canListModels: boolean;
   cursorRoutingReady: boolean;
   nextStep: string | null;
 }
 
-function isDesktopJobBackendUsable(status: CursorDesktopStatus): boolean {
-  return status.enabled && status.probeStatus !== 'failed';
+function isDesktopBridgeReachable(status: CursorDesktopStatus): boolean {
+  return status.enabled && status.probeStatus === 'ok';
+}
+
+function resolveDesktopAgentJobsStatus(
+  status: CursorDesktopStatus,
+): CursorDesktopAgentJobsStatus {
+  if (!isDesktopBridgeReachable(status) || !status.terminalAvailable) {
+    return 'unavailable';
+  }
+
+  if (status.agentJobCompatibility === 'validated') {
+    return 'validated';
+  }
+
+  if (status.agentJobCompatibility === 'failed') {
+    return 'unavailable';
+  }
+
+  return 'conditional';
 }
 
 function normalizePrefix(prefix: string): string {
@@ -26,23 +48,43 @@ function buildNextStep(
   cloudStatus: CursorCloudStatus,
   gatewayStatus: CursorGatewayStatus,
 ): string | null {
+  const desktopReachable = isDesktopBridgeReachable(desktopStatus);
+  const desktopAgentJobs = resolveDesktopAgentJobsStatus(desktopStatus);
+  const cloudReady = cloudStatus.enabled;
+
+  if (cloudReady && desktopReachable && desktopAgentJobs === 'validated') {
+    return gatewayStatus.mode === 'configured'
+      ? 'Cursor Cloud coding jobs, desktop bridge terminal control, and Cursor-backed runtime routing are all ready.'
+      : 'Cursor Cloud coding jobs are ready, and desktop bridge terminal control is ready. Configure 9router only if you also want Cursor-backed runtime routing.';
+  }
+
+  if (cloudReady && desktopReachable && desktopAgentJobs === 'conditional') {
+    return 'Cursor Cloud coding jobs are ready, and desktop bridge terminal control is ready. Desktop agent-run compatibility on this machine is still conditional.';
+  }
+
+  if (cloudReady && desktopReachable && desktopAgentJobs === 'unavailable') {
+    return 'Cursor Cloud coding jobs are ready. Desktop bridge terminal control is ready, but desktop agent jobs are unavailable on this machine.';
+  }
+
   if (desktopStatus.enabled && desktopStatus.probeStatus === 'failed') {
-    return 'Fix the desktop bridge URL/token or bridge reachability before using Cursor job commands.';
+    return cloudReady
+      ? 'Cursor Cloud coding jobs are ready, but the desktop bridge is unhealthy. Fix the bridge URL/token or reachability before relying on terminal control.'
+      : 'Fix the desktop bridge URL/token or bridge reachability before relying on desktop terminal control.';
   }
 
-  if (desktopStatus.enabled) {
+  if (cloudReady) {
     return gatewayStatus.mode === 'configured'
-      ? 'Desktop bridge job control is ready, and Cursor-backed runtime routing is configured.'
-      : 'Desktop bridge job control is ready. Configure 9router only if you also want Cursor-backed runtime routing.';
+      ? 'Cursor Cloud coding jobs are ready, and Cursor-backed runtime routing is configured.'
+      : 'Cursor Cloud coding jobs are ready. Configure 9router only if you also want Cursor-backed runtime routing.';
   }
 
-  if (cloudStatus.enabled) {
-    return gatewayStatus.mode === 'configured'
-      ? 'Cursor Cloud job control is ready, and Cursor-backed runtime routing is configured.'
-      : 'Cursor Cloud job control is ready. Configure 9router only if you also want Cursor-backed runtime routing.';
+  if (desktopReachable) {
+    return desktopAgentJobs === 'validated'
+      ? 'Desktop bridge terminal control and desktop agent jobs are ready. Configure Cursor Cloud if you also want queued heavy-lift coding jobs.'
+      : 'Desktop bridge terminal control is ready. Configure Cursor Cloud if you want queued heavy-lift coding jobs.';
   }
 
-  return 'Configure either CURSOR_DESKTOP_BRIDGE_URL + CURSOR_DESKTOP_BRIDGE_TOKEN, or CURSOR_API_KEY, before using deeper Cursor job commands.';
+  return 'Configure CURSOR_API_KEY for queued Cursor coding jobs, or configure CURSOR_DESKTOP_BRIDGE_URL + CURSOR_DESKTOP_BRIDGE_TOKEN for desktop terminal control.';
 }
 
 export function summarizeCursorCapabilities(input: {
@@ -51,24 +93,12 @@ export function summarizeCursorCapabilities(input: {
   gatewayStatus: CursorGatewayStatus;
 }): CursorCapabilitySummary {
   const { desktopStatus, cloudStatus, gatewayStatus } = input;
-  const desktopUsable = isDesktopJobBackendUsable(desktopStatus);
-
-  const jobBackend: CursorJobBackend = desktopUsable
-    ? 'desktop'
-    : cloudStatus.enabled
-      ? 'cloud'
-      : desktopStatus.enabled
-        ? 'desktop'
-        : 'none';
+  const desktopReachable = isDesktopBridgeReachable(desktopStatus);
 
   return {
-    jobBackend,
-    canRunJobs:
-      jobBackend === 'desktop'
-        ? desktopUsable
-        : jobBackend === 'cloud'
-          ? cloudStatus.enabled
-          : false,
+    cloudCodingJobsReady: cloudStatus.enabled,
+    desktopTerminalReady: desktopReachable && desktopStatus.terminalAvailable,
+    desktopAgentJobs: resolveDesktopAgentJobsStatus(desktopStatus),
     canListModels: cloudStatus.enabled,
     cursorRoutingReady: gatewayStatus.mode === 'configured',
     nextStep: buildNextStep(desktopStatus, cloudStatus, gatewayStatus),
@@ -78,17 +108,11 @@ export function summarizeCursorCapabilities(input: {
 export function formatCursorCapabilitySummaryMessage(
   summary: CursorCapabilitySummary,
 ): string {
-  const backendLabel =
-    summary.jobBackend === 'desktop'
-      ? 'desktop bridge'
-      : summary.jobBackend === 'cloud'
-        ? 'cloud agents'
-        : 'not configured';
-
   const lines = [
     '*Cursor Capability Summary*',
-    `- Job backend: ${backendLabel}`,
-    `- Main-control job commands: ${summary.canRunJobs ? 'ready' : 'unavailable'}`,
+    `- Cloud coding jobs: ${summary.cloudCodingJobsReady ? 'ready' : 'unavailable'}`,
+    `- Desktop bridge terminal control: ${summary.desktopTerminalReady ? 'ready' : 'unavailable'}`,
+    `- Desktop bridge agent jobs: ${summary.desktopAgentJobs}`,
     `- /cursor_models: ${summary.canListModels ? 'enabled via Cursor Cloud (results depend on API response)' : 'requires Cursor Cloud API'}`,
     `- Cursor-backed runtime route: ${summary.cursorRoutingReady ? 'configured' : 'not configured'}`,
   ];
@@ -147,8 +171,14 @@ function getCursorOperatorDetail(err: unknown): string | null {
   const safePatterns = [
     /^cursor is not configured\./i,
     /^cursor cloud is not configured\./i,
+    /^cursor cloud is required for queued coding jobs in the current product\./i,
     /^cursor desktop bridge is not configured\./i,
+    /^cursor cloud job control is only supported for cursor cloud jobs in the current product\./i,
     /^cursor model listing is only available through the cursor cloud api right now\./i,
+    /^cursor artifact listing is only available for cursor cloud jobs in the current product\./i,
+    /^cursor artifact links are only available for cursor cloud jobs in the current product\./i,
+    /^desktop bridge sessions are not part of the queued cloud follow-up flow in the current product\./i,
+    /^desktop bridge sessions are not part of the queued cloud stop flow in the current product\./i,
     /^cursor desktop sessions do not expose artifact download links through this path\./i,
     /^cursor terminal control is only available for desktop bridge sessions on your own machine\./i,
     /^cursor agent id is required\./i,

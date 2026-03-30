@@ -8,6 +8,7 @@ import path from 'path';
 import { logger, sanitizeLogString } from './logger.js';
 
 import type {
+  CursorDesktopAgentJobCompatibility,
   CursorDesktopConversationMessage,
   CursorDesktopHealth,
   CursorDesktopSession,
@@ -34,6 +35,8 @@ interface CursorDesktopBridgeRuntimeConfig {
 
 interface CursorDesktopBridgeStoredState {
   sessions: CursorDesktopSessionRecord[];
+  agentJobCompatibility?: CursorDesktopAgentJobCompatibility;
+  agentJobDetail?: string | null;
 }
 
 interface CursorDesktopSessionRecord extends CursorDesktopSession {
@@ -465,6 +468,8 @@ export class CursorDesktopBridge {
   private readonly sessions = new Map<string, CursorDesktopSessionRecord>();
   private readonly activeRuns = new Map<string, SpawnedRun>();
   private readonly activeTerminalRuns = new Map<string, SpawnedRun>();
+  private agentJobCompatibility: CursorDesktopAgentJobCompatibility = 'unknown';
+  private agentJobDetail: string | null = null;
 
   constructor(
     private readonly config: CursorDesktopBridgeRuntimeConfig,
@@ -488,6 +493,12 @@ export class CursorDesktopBridge {
       if (!this.deps.existsSync(this.config.stateFile)) return;
       const raw = this.deps.readFileSync(this.config.stateFile, 'utf-8');
       const parsed = JSON.parse(raw) as CursorDesktopBridgeStoredState;
+      this.agentJobCompatibility =
+        parsed.agentJobCompatibility === 'validated' ||
+        parsed.agentJobCompatibility === 'failed'
+          ? parsed.agentJobCompatibility
+          : 'unknown';
+      this.agentJobDetail = toNullableString(parsed.agentJobDetail);
       const sessions = Array.isArray(parsed.sessions) ? parsed.sessions : [];
       for (const session of sessions) {
         if (!session?.id) continue;
@@ -535,6 +546,8 @@ export class CursorDesktopBridge {
 
   private saveState(): void {
     const payload: CursorDesktopBridgeStoredState = {
+      agentJobCompatibility: this.agentJobCompatibility,
+      agentJobDetail: this.agentJobDetail,
       sessions: [...this.sessions.values()].map((session) => ({
         ...session,
         activePid: null,
@@ -685,6 +698,8 @@ export class CursorDesktopBridge {
       session.summary = session.lastError;
       session.updatedAt = this.deps.now().toISOString();
       session.lastSyncedAt = session.updatedAt;
+      this.agentJobCompatibility = 'failed';
+      this.agentJobDetail = session.lastError;
       this.saveState();
     });
 
@@ -702,6 +717,8 @@ export class CursorDesktopBridge {
         if (usableSummary) {
           session.status = 'COMPLETED';
           session.summary = usableSummary;
+          this.agentJobCompatibility = 'validated';
+          this.agentJobDetail = null;
           session.conversation.push({
             role: 'assistant',
             content: session.summary,
@@ -713,6 +730,8 @@ export class CursorDesktopBridge {
             truncateSummary(stderrBuffer) ||
             'Cursor desktop CLI exited without a usable agent response.';
           session.summary = session.lastError;
+          this.agentJobCompatibility = 'failed';
+          this.agentJobDetail = session.lastError;
         }
       } else {
         session.status = 'FAILED';
@@ -720,6 +739,8 @@ export class CursorDesktopBridge {
           truncateSummary(stderrBuffer) ||
           `Cursor CLI exited with code ${code ?? 'unknown'}.`;
         session.summary = session.lastError;
+        this.agentJobCompatibility = 'failed';
+        this.agentJobDetail = session.lastError;
       }
 
       this.saveState();
@@ -740,6 +761,9 @@ export class CursorDesktopBridge {
       activeRuns: this.activeRuns.size,
       trackedSessions: this.sessions.size,
       defaultCwd: this.config.defaultCwd,
+      terminalAvailable: true,
+      agentJobCompatibility: this.agentJobCompatibility,
+      agentJobDetail: this.agentJobDetail,
     };
   }
 

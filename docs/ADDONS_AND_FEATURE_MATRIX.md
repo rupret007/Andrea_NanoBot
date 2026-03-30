@@ -93,7 +93,7 @@ Many entries here are optional operator-enabled skills or integrations, and they
 | Surface               | What it does                                                                                                  | Notes                                                                                     |
 | --------------------- | ------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
 | Cursor Cloud jobs     | Create, sync, follow up, stop, inspect conversation, and fetch artifacts                                      | Operator-only; requires `CURSOR_API_KEY`                                                  |
-| Cursor desktop bridge | Queue jobs on your normal Cursor machine, recover bridge-known sessions, and run line-oriented shell commands | Operator-only; requires bridge setup; no live PTY, GUI control, or arbitrary shell attach |
+| Cursor desktop bridge | Recover bridge-known sessions and run line-oriented shell commands on your normal Cursor machine | Operator-only; requires bridge setup; no live PTY, GUI control, arbitrary shell attach, or validated local Windows agent-job path |
 | `/cursor_status`      | Show readiness for Cloud, desktop bridge, and runtime-route wiring                                            | Safe status surface; public-safe                                                          |
 
 ## Marketplace Tool Surface

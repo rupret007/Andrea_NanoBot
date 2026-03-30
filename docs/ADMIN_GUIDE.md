@@ -106,20 +106,22 @@ Cursor:
 - [CURSOR_DESKTOP_BRIDGE.md](CURSOR_DESKTOP_BRIDGE.md) when Andrea should drive your normal Cursor machine instead of only cloud jobs
 - if Cursor Cloud auth behaves differently than expected, set `CURSOR_API_AUTH_MODE=auto|bearer|basic`; default `auto` tries Bearer first and falls back to Basic
 
-Before using deeper Cursor job commands, confirm `/cursor_status` shows a real job backend:
+Before using deeper Cursor workflows, confirm `/cursor_status` shows the split you expect:
 
-- `Job backend: desktop bridge` means Andrea can use your normal Cursor machine through the bridge
-- `Job backend: cloud agents` means Andrea can run Cursor Cloud jobs
-- `Job backend: not configured` means keep deeper Cursor job commands out of the operational path until setup is complete
+- `Cloud coding jobs: ready` means Andrea can run queued heavy-lift Cursor Cloud jobs
+- `Desktop bridge terminal control: ready` means Andrea can inspect bridge-known sessions and run line-oriented shell commands on your normal machine
+- `Desktop bridge agent jobs: validated|conditional|unavailable` tells you whether local desktop agent execution is fully proven on that machine
+- if `Cloud coding jobs: unavailable`, keep `/cursor_create`, `/cursor_followup`, `/cursor_stop`, `/cursor_artifacts`, and `/cursor_artifact_link` out of the operational path until `CURSOR_API_KEY` is configured
 
 Run advanced Cursor, Amazon, and Alexa slash commands from the registered main control chat only. `/cursor_status` is the safe exception that can stay visible in the narrower public surface.
 
 Useful operator truth:
 
-- `/cursor_jobs` now shows both tracked workspace jobs and recoverable backend jobs when the configured backend can list them
+- `/cursor_jobs` now separates tracked and recoverable Cursor Cloud jobs from tracked and recoverable desktop bridge sessions
 - `/cursor_models` is a Cursor Cloud query, but some accounts currently return no model list even when Cloud jobs work. If that happens, omit `--model` and let Cursor use the account default, or pass a known model id directly.
 - `/cursor_create` through Cursor Cloud needs either `--repo <url>` on the command or a default repository configured in Cursor settings
-- `/cursor_sync <agent_id>` can attach one of those recoverable jobs to the current workspace
+- `/cursor_sync <agent_id>` can attach a recoverable Cursor Cloud job or desktop bridge session to the current workspace
+- `/cursor_followup`, `/cursor_stop`, `/cursor_artifacts`, and `/cursor_artifact_link` are Cloud-oriented workflows in the current product
 - Cursor desktop bridge can now run line-oriented shell commands for tracked bridge sessions through `/cursor_terminal ...`
 - terminal control stays operator-only and tied to bridge-known sessions; it is not a live PTY, arbitrary shell attach, or remote desktop surface
 

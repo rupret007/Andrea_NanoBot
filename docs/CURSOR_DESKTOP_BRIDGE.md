@@ -4,53 +4,52 @@ Use this when you want Andrea to reach the Cursor machine you normally use, such
 
 This is different from Cursor Cloud Agents:
 
-- Cursor Cloud runs work through Cursor's hosted API
-- Cursor Desktop Bridge runs work through the `cursor-agent` CLI on your own machine
+- Cursor Cloud is the supported queued heavy-lift coding path in Andrea today
+- Cursor Desktop Bridge is the operator-only path for session recovery and line-oriented terminal control on your own machine
 - Andrea talks to the bridge over HTTPS or a private tunnel, and the bridge talks to your local Cursor install
 
 If you need a real Cursor Cloud key instead, start with [CURSOR_API_KEYS.md](CURSOR_API_KEYS.md).
 
 ## What This Gives You
 
-With the desktop bridge enabled, Andrea can use the existing Cursor job controls against your own machine:
+With the desktop bridge enabled, Andrea can use these operator-only machine-side controls against your own machine:
 
 - `/cursor_status`
 - `/cursor_jobs`
-- `/cursor_create ...`
 - `/cursor_sync ...`
-- `/cursor_followup ...`
-- `/cursor_stop ...`
 - `/cursor_conversation ...`
 - `/cursor_terminal <agent_id> <command>`
 - `/cursor_terminal_status <agent_id>`
 - `/cursor_terminal_log <agent_id> [limit]`
 - `/cursor_terminal_stop <agent_id>`
 
-The experience is still asynchronous. This is not a live remote desktop. The goal is to let Andrea queue and manage real Cursor agent work on the machine you already trust and use.
+This is still asynchronous and operator-only. It is not a live remote desktop, and it is not the same thing as Cursor Cloud queued coding work.
 
 Important truth boundary:
 
 - `/cursor_jobs` can show tracked Andrea jobs plus recoverable bridge sessions that the bridge already knows about
 - `/cursor_sync <id>` can attach one of those recoverable bridge sessions to the current Andrea workspace
+- `/cursor_conversation <id>` can show stored desktop session conversation when the bridge has it
 - terminal commands work only for tracked or recoverable bridge sessions that the bridge itself knows about
 - terminal control is line-oriented shell execution on your own machine, not an attach-to-anything remote shell
 - the bridge does **not** attach to arbitrary already-open Cursor GUI tabs, random shell sessions, or a live PTY stream
+- the supported queued heavy-lift coding path in the current product is still Cursor Cloud, not the desktop bridge
 
 Important scope rule:
 
 - `/cursor_status` is the safe status command that can stay visible more broadly
-- the deeper Cursor job commands are operator controls and should be run from Andrea's registered main control chat
+- the deeper Cursor and terminal commands are operator controls and should be run from Andrea's registered main control chat
 
 ## 1) On The Machine That Normally Runs Cursor
 
-This is usually your Mac.
+This is your normal Cursor workstation. It can be a Mac or a Windows PC.
 
 Required:
 
 - Node.js 22.x
 - this repo checked out
 - `npm install`
-- Cursor CLI support available either as a standalone `cursor-agent` command, or through Cursor's installed CLI on Windows
+- Cursor CLI support available either as a standalone `cursor-agent` command, or through Cursor's installed CLI on Windows for bridge health and terminal control
 
 Start with these environment variables on that machine:
 
@@ -69,8 +68,16 @@ On Windows PCs, if you have Cursor installed but do not have a separate
 $env:CURSOR_DESKTOP_CLI_PATH="$env:LOCALAPPDATA\Programs\cursor\resources\app\bin\cursor.cmd"
 ```
 
-The bridge will run that CLI in its `agent` mode automatically. You do not
-need to create a wrapper script just to make the bridge work on Windows.
+The bridge can invoke that CLI in its `agent` mode automatically for bridge
+health checks and compatibility attempts. You do not need to create a wrapper
+script just to test the Windows bridge path, but `/cursor_status` is still the
+source of truth for whether desktop agent jobs are actually validated.
+
+Important Windows truth:
+
+- a healthy bridge probe and working terminal commands do **not** automatically mean local desktop agent jobs are validated on that machine
+- if the installed Windows Cursor CLI rejects the expected agent flags, `/cursor_status` will show desktop bridge terminal control as ready while desktop agent jobs remain conditional or unavailable
+- in that case, keep using Cursor Cloud for queued heavy-lift coding jobs on that machine
 
 Then run:
 
@@ -140,26 +147,29 @@ You should see a `Cursor Desktop Bridge Status` section with:
 
 You should also see a `Cursor Capability Summary` section where:
 
-- `Job backend: desktop bridge`
-- `Main-control job commands: ready`
+- `Desktop bridge terminal control: ready`
+- `Desktop bridge agent jobs: validated`, `conditional`, or `unavailable`
 
-Then run a small non-destructive job from the main control chat:
-
-```text
-/cursor_create Review the current README and suggest 3 improvements.
-```
-
-Follow with:
+Then run safe non-destructive bridge actions from the main control chat:
 
 ```text
 /cursor_jobs
 /cursor_sync <agent_id>
-/cursor_conversation <agent_id>
 /cursor_terminal <agent_id> git status
 /cursor_terminal_log <agent_id>
 ```
 
 If the bridge already has sessions from earlier Andrea-driven work, `/cursor_jobs` can surface them as recoverable even before they are attached to the current workspace record.
+
+If you want queued heavy-lift coding work, validate Cursor Cloud separately and use `/cursor_create` through the Cloud path instead of treating the bridge as the default queued-job backend.
+
+Useful safe follow-up:
+
+```text
+/cursor_conversation <agent_id>
+/cursor_terminal_status <agent_id>
+/cursor_terminal_stop <agent_id>
+```
 
 ## 5) Security Notes
 
@@ -175,14 +185,13 @@ Keep these rules:
 
 What is real today:
 
-- start a new `cursor-agent` run on your normal machine
-- follow up on a tracked bridge session
-- stop a tracked bridge session
-- read the stored session conversation
 - recover bridge sessions that the bridge itself has already persisted
+- attach a recoverable bridge session to the current Andrea workspace
+- read the stored session conversation when the bridge has it
 - run line-oriented shell commands for a tracked bridge session
 - read cached terminal output for those commands
 - stop an active terminal command that the bridge started
+- report whether local desktop agent-job compatibility is validated, conditional, or unavailable on that machine
 
 What is intentionally not real today:
 
@@ -190,6 +199,7 @@ What is intentionally not real today:
 - typing into an arbitrary existing terminal window
 - remote desktop control of the Cursor GUI
 - discovering random pre-existing Cursor tabs that were never started through the bridge
+- treating the bridge as the primary queued heavy-lift coding path in Andrea's current product shape
 
 ## 7) Troubleshooting
 
@@ -233,12 +243,13 @@ If Andrea can reach the bridge but your model routing still does not look Cursor
 
 Use the desktop bridge when:
 
-- you want Andrea to use your normal machine
-- you care about your existing local repo checkout or environment
-- you want "away from my desk" access to the Cursor setup you already trust
+- you want Andrea to inspect a bridge-known session on your normal machine
+- you want line-oriented shell control in the repo or environment you already trust
+- you want "away from my desk" access to machine-side terminal actions through Andrea
 
 Use Cursor Cloud Agents when:
 
 - you specifically want hosted jobs
 - you already have `CURSOR_API_KEY` configured
+- you want the supported queued heavy-lift coding path in the current product
 - you do not need the work to happen on your own machine

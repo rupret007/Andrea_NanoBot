@@ -1056,7 +1056,7 @@ async function main(): Promise<void> {
     },
   ): string {
     const lines = [
-      `Cursor terminal for ${agentId}:`,
+      `Desktop bridge terminal for ${agentId}:`,
       `- Status: ${terminal.status}`,
       `- CWD: ${terminal.cwd || 'unknown'}`,
       `- Shell: ${terminal.shell || 'unknown'}`,
@@ -1096,6 +1096,33 @@ async function main(): Promise<void> {
       joined = `...${joined.slice(-(MAX_CURSOR_TERMINAL_REPLY_CHARS - 3))}`;
     }
     return joined;
+  }
+
+  function labelCursorRecord(
+    record:
+      | {
+          provider?: 'cloud' | 'desktop';
+          id: string;
+        }
+      | string,
+  ): string {
+    const provider =
+      typeof record === 'string'
+        ? /^desk_/i.test(record)
+          ? 'desktop'
+          : /^bc[-_]/i.test(record)
+            ? 'cloud'
+            : null
+        : record.provider ||
+          (/^desk_/i.test(record.id)
+            ? 'desktop'
+            : /^bc[-_]/i.test(record.id)
+              ? 'cloud'
+              : null);
+
+    if (provider === 'desktop') return 'desktop bridge session';
+    if (provider === 'cloud') return 'Cursor Cloud job';
+    return 'Cursor job';
   }
 
   async function handleRemoteControl(
@@ -1439,23 +1466,25 @@ async function main(): Promise<void> {
     };
 
     const sections: string[] = [];
-    if (inventory.tracked.length > 0) {
+    if (inventory.cloudTracked.length > 0) {
       sections.push(
-        `Tracked for this workspace:\n${inventory.tracked
+        `Tracked Cursor Cloud jobs:\n${inventory.cloudTracked
           .map((agent, index) => formatAgentLine(agent, index))
           .join('\n\n')}`,
       );
     }
 
-    if (inventory.recoverable.length > 0) {
-      const backendLabel =
-        inventory.backend === 'desktop'
-          ? 'desktop bridge'
-          : inventory.backend === 'cloud'
-            ? 'cloud agents'
-            : 'configured Cursor backends';
+    if (inventory.desktopTracked.length > 0) {
       sections.push(
-        `Recoverable from ${backendLabel}:\n${inventory.recoverable
+        `Tracked desktop bridge sessions:\n${inventory.desktopTracked
+          .map((agent, index) => formatAgentLine(agent, index))
+          .join('\n\n')}`,
+      );
+    }
+
+    if (inventory.cloudRecoverable.length > 0) {
+      sections.push(
+        `Recoverable Cursor Cloud jobs:\n${inventory.cloudRecoverable
           .map((agent, index) => formatAgentLine(agent, index))
           .join(
             '\n\n',
@@ -1463,11 +1492,21 @@ async function main(): Promise<void> {
       );
     }
 
+    if (inventory.desktopRecoverable.length > 0) {
+      sections.push(
+        `Recoverable desktop bridge sessions:\n${inventory.desktopRecoverable
+          .map((agent, index) => formatAgentLine(agent, index))
+          .join(
+            '\n\n',
+          )}\n\nRun /cursor-sync AGENT_ID to attach one of these sessions to this workspace.`,
+      );
+    }
+
     if (sections.length === 0) {
       const backendHint =
-        inventory.backend === 'none'
-          ? 'No Cursor job backend is configured right now.'
-          : 'No tracked or recoverable Cursor jobs were found for this workspace.';
+        !inventory.hasCloud && !inventory.hasDesktop
+          ? 'Neither Cursor Cloud nor the desktop bridge is configured right now.'
+          : 'No tracked or recoverable Cursor Cloud jobs or desktop bridge sessions were found for this workspace.';
       const warning = inventory.warning
         ? `\n\nLive backend lookup skipped: ${inventory.warning}`
         : '';
@@ -1586,7 +1625,7 @@ async function main(): Promise<void> {
       await channel.sendMessage(
         chatJid,
         [
-          `Created Cursor agent ${created.id} (status: ${created.status}).`,
+          `Created ${labelCursorRecord(created)} ${created.id} (status: ${created.status}).`,
           targetBits || null,
         ]
           .filter(Boolean)
@@ -1654,7 +1693,7 @@ async function main(): Promise<void> {
         .join('\n\n');
       await channel.sendMessage(
         chatJid,
-        `Cursor conversation for ${normalizedAgentId} (latest ${messages.length}):\n\n${formatted}`,
+        `${labelCursorRecord(normalizedAgentId)} conversation for ${normalizedAgentId} (latest ${messages.length}):\n\n${formatted}`,
       );
     } catch (err) {
       await channel.sendMessage(
@@ -1715,7 +1754,7 @@ async function main(): Promise<void> {
 
       await channel.sendMessage(
         chatJid,
-        `Cursor artifacts for ${normalizedAgentId}:\n\n${lines.join('\n')}`,
+        `Cursor Cloud artifacts for ${normalizedAgentId}:\n\n${lines.join('\n')}`,
       );
     } catch (err) {
       await channel.sendMessage(
@@ -1793,11 +1832,11 @@ async function main(): Promise<void> {
         commandText,
       });
       const lines = [
-        `Started Cursor terminal command ${started.commandId}.`,
+        `Started desktop bridge terminal command ${started.commandId}.`,
         formatCursorTerminalStatusMessage(agentId, started.terminal),
         'Recent output:',
         formatCursorTerminalOutputSection(started.output),
-        'Use /cursor_terminal_status or /cursor_terminal_log for follow-up.',
+        'Use /cursor-terminal-status or /cursor-terminal-log for follow-up.',
       ];
       await channel.sendMessage(chatJid, lines.join('\n\n'));
     } catch (err) {
@@ -1922,7 +1961,7 @@ async function main(): Promise<void> {
       });
       await channel.sendMessage(
         chatJid,
-        `Stopped Cursor terminal command for ${agentId}.\n\n${formatCursorTerminalStatusMessage(agentId, terminal)}`,
+        `Stopped desktop bridge terminal command for ${agentId}.\n\n${formatCursorTerminalStatusMessage(agentId, terminal)}`,
       );
     } catch (err) {
       await channel.sendMessage(
@@ -1971,7 +2010,7 @@ async function main(): Promise<void> {
       refreshCursorSnapshotsForAllGroups();
       await channel.sendMessage(
         chatJid,
-        `Synced ${synced.agent.id}. Status: ${synced.agent.status}. Artifacts: ${synced.artifacts.length}.`,
+        `Synced ${labelCursorRecord(synced.agent)} ${synced.agent.id}. Status: ${synced.agent.status}. Artifacts: ${synced.artifacts.length}.`,
       );
     } catch (err) {
       await channel.sendMessage(
@@ -2006,7 +2045,7 @@ async function main(): Promise<void> {
       refreshCursorSnapshotsForAllGroups();
       await channel.sendMessage(
         chatJid,
-        `Stop requested for ${stopped.id}. Current status: ${stopped.status}.`,
+        `Stop requested for ${labelCursorRecord(stopped)} ${stopped.id}. Current status: ${stopped.status}.`,
       );
     } catch (err) {
       await channel.sendMessage(
@@ -2043,7 +2082,7 @@ async function main(): Promise<void> {
       refreshCursorSnapshotsForAllGroups();
       await channel.sendMessage(
         chatJid,
-        `Follow-up sent to ${followed.id}. Status: ${followed.status}.`,
+        `Follow-up sent to ${labelCursorRecord(followed)} ${followed.id}. Status: ${followed.status}.`,
       );
     } catch (err) {
       await channel.sendMessage(

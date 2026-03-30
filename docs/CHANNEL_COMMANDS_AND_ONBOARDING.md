@@ -64,9 +64,9 @@ Core chat commands:
 
 Operator-safe status:
 
-- `/cursor_status` - show Cursor readiness, including Cloud, desktop bridge, and runtime-route status
+- `/cursor_status` - show safe Cursor readiness, including Cloud coding jobs, desktop bridge terminal control, desktop agent-job compatibility, and runtime-route status
 
-Advanced operator workflows still exist, but they are restricted to Andrea's main control chat and should stay in the admin guide and out of the default demo unless they were validated the same day.
+Advanced operator workflows still exist, but they are restricted to Andrea's main control chat and should stay in the admin guide and out of the default demo unless they were validated the same day. That includes Cloud job control and any desktop bridge session or terminal actions.
 
 ## 5) Capability Overview
 

@@ -43,12 +43,12 @@ Core:
 
 Operator-safe status:
 
-- `/cursor_status` - Cursor readiness, including Cloud, desktop bridge, and runtime-route status
+- `/cursor_status` - safe Cursor readiness, including Cloud coding jobs, desktop bridge terminal control, desktop agent-job compatibility, and runtime-route status
 
 Optional note:
 
 - Alexa, shopping, marketplace skills, and calendar-oriented skills are operator-enabled extras rather than the default demo path
-- advanced Cursor, shopping, and voice control workflows live in the admin guide, are restricted to the main control chat, and should be used only after same-day validation
+- advanced Cursor job and desktop-control workflows live in the admin guide, are restricted to the main control chat, and should be used only after same-day validation
 
 ## 4) Best Request Patterns
 

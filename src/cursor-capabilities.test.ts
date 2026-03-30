@@ -7,7 +7,10 @@ import {
 } from './cursor-capabilities.js';
 import { CursorCloudApiError } from './cursor-cloud.js';
 import type { CursorCloudStatus } from './cursor-cloud.js';
-import type { CursorDesktopStatus } from './cursor-desktop.js';
+import type {
+  CursorDesktopAgentJobCompatibility,
+  CursorDesktopStatus,
+} from './cursor-desktop.js';
 import type { CursorGatewayStatus } from './cursor-gateway.js';
 
 function buildDesktopStatus(
@@ -25,6 +28,9 @@ function buildDesktopStatus(
     cliPath: null,
     activeRuns: null,
     trackedSessions: null,
+    terminalAvailable: false,
+    agentJobCompatibility: 'unknown',
+    agentJobDetail: null,
     ...overrides,
   };
 }
@@ -62,33 +68,45 @@ function buildGatewayStatus(
   };
 }
 
+function buildReadyDesktopStatus(
+  compatibility: CursorDesktopAgentJobCompatibility,
+  detail: string | null = null,
+): CursorDesktopStatus {
+  return buildDesktopStatus({
+    enabled: true,
+    baseUrl: 'https://cursor-bridge.example.com',
+    hasToken: true,
+    probeStatus: 'ok',
+    terminalAvailable: true,
+    agentJobCompatibility: compatibility,
+    agentJobDetail: detail,
+  });
+}
+
 describe('cursor-capabilities', () => {
-  it('reports unavailable job control when neither desktop nor cloud is configured', () => {
+  it('reports both Cloud and desktop as unavailable when nothing is configured', () => {
     const summary = summarizeCursorCapabilities({
       desktopStatus: buildDesktopStatus(),
       cloudStatus: buildCloudStatus(),
       gatewayStatus: buildGatewayStatus(),
     });
 
-    expect(summary.jobBackend).toBe('none');
-    expect(summary.canRunJobs).toBe(false);
+    expect(summary.cloudCodingJobsReady).toBe(false);
+    expect(summary.desktopTerminalReady).toBe(false);
+    expect(summary.desktopAgentJobs).toBe('unavailable');
     expect(summary.canListModels).toBe(false);
-    expect(summary.nextStep).toContain('CURSOR_DESKTOP_BRIDGE_URL');
+    expect(summary.nextStep).toContain('CURSOR_API_KEY');
 
     const message = formatCursorCapabilitySummaryMessage(summary);
-    expect(message).toContain('Job backend: not configured');
-    expect(message).toContain('Main-control job commands: unavailable');
+    expect(message).toContain('Cloud coding jobs: unavailable');
+    expect(message).toContain('Desktop bridge terminal control: unavailable');
+    expect(message).toContain('Desktop bridge agent jobs: unavailable');
     expect(message).toContain('/cursor_models: requires Cursor Cloud API');
   });
 
-  it('prefers the desktop bridge for job control when both backends are configured', () => {
+  it('reports both Cloud jobs and desktop terminal control when both are ready', () => {
     const summary = summarizeCursorCapabilities({
-      desktopStatus: buildDesktopStatus({
-        enabled: true,
-        probeStatus: 'ok',
-        hasToken: true,
-        baseUrl: 'https://cursor-mac.example.com',
-      }),
+      desktopStatus: buildReadyDesktopStatus('validated'),
       cloudStatus: buildCloudStatus({
         enabled: true,
         hasApiKey: true,
@@ -98,25 +116,20 @@ describe('cursor-capabilities', () => {
       }),
     });
 
-    expect(summary.jobBackend).toBe('desktop');
-    expect(summary.canRunJobs).toBe(true);
+    expect(summary.cloudCodingJobsReady).toBe(true);
+    expect(summary.desktopTerminalReady).toBe(true);
+    expect(summary.desktopAgentJobs).toBe('validated');
     expect(summary.canListModels).toBe(true);
     expect(summary.cursorRoutingReady).toBe(true);
-    expect(summary.nextStep).toContain('Desktop bridge job control is ready');
+    expect(summary.nextStep).toContain('Cursor Cloud coding jobs');
     expect(formatCursorCapabilitySummaryMessage(summary)).toContain(
       '/cursor_models: enabled via Cursor Cloud (results depend on API response)',
     );
   });
 
-  it('falls back to cloud job control in status when the desktop bridge probe failed', () => {
+  it('marks desktop agent jobs conditional when the bridge is healthy but compatibility is unknown', () => {
     const summary = summarizeCursorCapabilities({
-      desktopStatus: buildDesktopStatus({
-        enabled: true,
-        hasToken: true,
-        baseUrl: 'https://cursor-mac.example.com',
-        probeStatus: 'failed',
-        probeDetail: 'bridge temporarily unavailable',
-      }),
+      desktopStatus: buildReadyDesktopStatus('unknown'),
       cloudStatus: buildCloudStatus({
         enabled: true,
         hasApiKey: true,
@@ -124,9 +137,31 @@ describe('cursor-capabilities', () => {
       gatewayStatus: buildGatewayStatus(),
     });
 
-    expect(summary.jobBackend).toBe('cloud');
-    expect(summary.canRunJobs).toBe(true);
-    expect(summary.nextStep).toContain('Fix the desktop bridge URL/token');
+    expect(summary.cloudCodingJobsReady).toBe(true);
+    expect(summary.desktopTerminalReady).toBe(true);
+    expect(summary.desktopAgentJobs).toBe('conditional');
+    expect(summary.nextStep).toContain('still conditional');
+  });
+
+  it('keeps Cloud jobs ready while marking desktop agent jobs unavailable after a failed compatibility check', () => {
+    const summary = summarizeCursorCapabilities({
+      desktopStatus: buildReadyDesktopStatus(
+        'failed',
+        "Warning: 'p' is not in the list of known options, but still passed to Electron/Chromium.",
+      ),
+      cloudStatus: buildCloudStatus({
+        enabled: true,
+        hasApiKey: true,
+      }),
+      gatewayStatus: buildGatewayStatus(),
+    });
+
+    expect(summary.cloudCodingJobsReady).toBe(true);
+    expect(summary.desktopTerminalReady).toBe(true);
+    expect(summary.desktopAgentJobs).toBe('unavailable');
+    expect(summary.nextStep).toContain(
+      'Desktop bridge terminal control is ready',
+    );
   });
 
   it('passes through actionable Cursor setup failures unchanged', () => {
@@ -228,6 +263,30 @@ describe('cursor-capabilities', () => {
       ),
     ).toBe(
       'Cursor sync failed for bc-12345678-1234-1234-1234-123456789012. Cursor Cloud could not find that agent id.',
+    );
+  });
+
+  it('passes through Cloud-only queued follow-up guidance for desktop sessions', () => {
+    expect(
+      formatCursorOperationFailure(
+        'Cursor follow-up failed for desk_123',
+        new Error(
+          'Desktop bridge sessions are not part of the queued Cloud follow-up flow in the current product. Use /cursor_sync to refresh the session, /cursor_conversation to inspect it, and /cursor_terminal for machine-side actions.',
+        ),
+      ),
+    ).toContain('queued Cloud follow-up flow');
+  });
+
+  it('passes through Cloud-only artifact guidance for desktop sessions', () => {
+    expect(
+      formatCursorOperationFailure(
+        'Cursor artifacts lookup failed for desk_123',
+        new Error(
+          'Cursor artifact listing is only available for Cursor Cloud jobs in the current product.',
+        ),
+      ),
+    ).toBe(
+      'Cursor artifacts lookup failed for desk_123. Cursor artifact listing is only available for Cursor Cloud jobs in the current product.',
     );
   });
 });

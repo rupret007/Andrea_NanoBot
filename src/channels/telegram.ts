@@ -98,7 +98,7 @@ export function buildTelegramCommandsText(): string {
     '- `/ping` - check bot health',
     '- `/chatid` - show chat ID and chat type',
     '- `/registermain` - bootstrap main control chat (DM only)',
-    '- `/cursor_status` - show Cursor readiness (Cloud, desktop bridge, and route status)',
+    '- `/cursor_status` - safe Cursor readiness check for Cloud jobs, desktop bridge terminal control, and route status',
     '- Advanced operator workflows stay in the admin guide and should be demoed only after same-day validation.',
   ].join('\n');
 }
@@ -126,7 +126,7 @@ export function buildTelegramFeaturesText(
     '- To-do lists, reminders, and recurring tasks',
     '- Research and summaries',
     '- Fast replies for simple questions, playful prompts, and basic math',
-    '- Project and coding help with operator-safe status checks',
+    '- Project and coding help, with deeper Cursor controls kept in the operator/admin path',
     "- Secure per-chat isolation so one chat does not automatically get another chat's skills or files",
   ].join('\n');
 }

@@ -3,7 +3,7 @@
 Andrea supports two distinct Cursor backends:
 
 - Cursor Cloud Agents over `https://api.cursor.com`
-- the optional desktop bridge that lets Andrea queue work on your own machine
+- the optional desktop bridge that lets Andrea inspect bridge-known sessions and run machine-side terminal commands on your own machine
 
 This guide is about where the keys come from and what they do.
 
@@ -12,7 +12,7 @@ This guide is about where the keys come from and what they do.
 | Path | What it enables | What Andrea needs |
 | --- | --- | --- |
 | Cursor Cloud Agents API | Create, follow up, inspect, and stop Cursor Cloud jobs | `CURSOR_API_KEY` plus optional `CURSOR_API_*` tuning |
-| Cursor desktop bridge | Queue work on the Cursor machine you normally use | `CURSOR_DESKTOP_BRIDGE_URL` and `CURSOR_DESKTOP_BRIDGE_TOKEN` |
+| Cursor desktop bridge | Recover bridge-known sessions and run line-oriented terminal commands on the Cursor machine you normally use | `CURSOR_DESKTOP_BRIDGE_URL` and `CURSOR_DESKTOP_BRIDGE_TOKEN` |
 
 Important boundary:
 
@@ -59,6 +59,6 @@ After setting `CURSOR_API_KEY` in `.env`:
 
 1. restart Andrea
 2. run `/cursor_status`
-3. confirm the `Cursor Capability Summary` reports `Job backend: cloud agents`
+3. confirm the `Cursor Capability Summary` reports `Cloud coding jobs: ready`
 
-If `/cursor_status` still shows `Job backend: not configured`, deeper Cursor job commands are not ready yet.
+If `/cursor_status` still shows `Cloud coding jobs: unavailable`, queued Cursor Cloud job commands are not ready yet.

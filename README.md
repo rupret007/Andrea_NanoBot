@@ -152,15 +152,17 @@ Optional integrations such as Alexa, shopping flows, marketplace skills, and cal
 
 - help with repos, debugging, and code tasks
 - use Cursor/9router-aware routing checks with `/cursor_status`
-- operators can create, follow up, sync, inspect, and recover existing Cursor coding jobs from the main control chat through Cursor Cloud or the desktop bridge
-- desktop-bridge operators can also run line-oriented terminal commands against tracked bridge sessions on their own machine
+- operators can create, follow up, stop, inspect, and recover **Cursor Cloud** coding jobs from the main control chat
+- operators can sync and inspect **desktop bridge sessions**, then run line-oriented terminal commands against tracked bridge sessions on their own machine
 - keep optional integrations behind explicit operator setup instead of treating them as default demo features
 
 Important Cursor rule:
 
-- `/cursor_status` now tells you whether deeper Cursor job commands are actually available
-- if it says `Job backend: not configured`, treat `/cursor_create`, `/cursor_sync`, `/cursor_followup`, and related job controls as unavailable until you finish Cloud or desktop-bridge setup
-- Cursor desktop bridge job control is asynchronous and operator-only. It can run line-oriented shell commands for tracked bridge sessions, but it is not a live PTY or remote desktop surface.
+- `/cursor_status` now splits Cloud coding jobs, desktop bridge terminal control, desktop agent-job compatibility, and Cursor-backed runtime routing into separate lines
+- if it says `Cloud coding jobs: unavailable`, treat `/cursor_create`, `/cursor_followup`, `/cursor_stop`, `/cursor_artifacts`, and `/cursor_artifact_link` as unavailable until `CURSOR_API_KEY` is configured
+- if it says `Desktop bridge terminal control: unavailable`, treat `/cursor_terminal*` and desktop session recovery as unavailable until the bridge is configured and reachable
+- if it says `Desktop bridge agent jobs: conditional` or `unavailable`, keep using Cursor Cloud for queued heavy-lift work and treat the bridge as terminal/session control only on that machine
+- Cursor desktop bridge control is operator-only. It can inspect bridge-known sessions and run line-oriented shell commands for tracked bridge sessions, but it is not a live PTY or remote desktop surface.
 
 ## Using Andrea In Chat
 
@@ -230,7 +232,7 @@ Use the docs based on what you are trying to do:
 - [docs/AMAZON_SHOPPING_AND_APPROVALS.md](docs/AMAZON_SHOPPING_AND_APPROVALS.md)
   for Amazon Business setup, safety rails, and shopping commands
 - [docs/CURSOR_DESKTOP_BRIDGE.md](docs/CURSOR_DESKTOP_BRIDGE.md)
-  for running Cursor work and operator-only terminal commands on your own Mac or desktop while Andrea controls it remotely
+  for operator-only desktop session recovery and terminal commands on your own machine while Andrea controls it remotely
 - [docs/CURSOR_API_KEYS.md](docs/CURSOR_API_KEYS.md)
   for where `CURSOR_API_KEY` comes from, what it enables, and how it differs from the desktop bridge
 - [docs/ALEXA_VOICE_INTEGRATION.md](docs/ALEXA_VOICE_INTEGRATION.md)

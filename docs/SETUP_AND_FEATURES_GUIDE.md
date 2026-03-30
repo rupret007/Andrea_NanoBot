@@ -179,15 +179,19 @@ Use this mode when you want Andrea to reach the Cursor machine you normally use,
 Important notes:
 
 - the bridge runs on the machine that has your normal Cursor setup
-- it uses the local Cursor agent CLI there instead of the hosted Cursor API
-- on Windows PCs, if you do not have a standalone `cursor-agent` command on `PATH`, set `CURSOR_DESKTOP_CLI_PATH` to Cursor's installed `cursor.cmd`; the bridge will invoke it in agent mode automatically
+- in the current product shape, use Cursor Cloud for queued heavy-lift coding jobs and use the desktop bridge for operator-only session recovery plus line-oriented terminal control on that machine
+- it uses the local Cursor agent CLI there for bridge-managed session state instead of the hosted Cursor API
+- on Windows PCs, if you do not have a standalone `cursor-agent` command on `PATH`, set `CURSOR_DESKTOP_CLI_PATH` to Cursor's installed `cursor.cmd`; the bridge can invoke it in agent mode for health checks and compatibility attempts, but `/cursor_status` is still the source of truth for whether desktop agent jobs are actually validated on that machine
 - after a bridge session is tracked or recovered, operators can also run line-oriented shell commands on that machine with `/cursor_terminal ...`
 - those terminal commands are operator-only and limited to bridge-managed session state
 - if the bridge health probe works on Windows but desktop sessions fail immediately with `Warning: 'p' is not in the list of known options`, your local Cursor CLI is not accepting the expected agent flags yet; keep using Cursor Cloud for heavy-lift jobs on that machine until the Windows agent entrypoint is confirmed
 - if your main model runtime points at a remote 9router endpoint, set:
   - `CURSOR_GATEWAY_HINT=9router`
 - see [CURSOR_DESKTOP_BRIDGE.md](CURSOR_DESKTOP_BRIDGE.md) for the full bridge setup
-- after restart, use `/cursor_status` and confirm the `Cursor Capability Summary` says `Job backend: desktop bridge` or `Job backend: cloud agents` before relying on deeper Cursor job commands
+- after restart, use `/cursor_status` and confirm it reports the correct split for your environment before relying on deeper Cursor job commands:
+  - `Cloud coding jobs: ready` for queued heavy-lift Cloud work
+  - `Desktop bridge terminal control: ready` for bridge-managed shell/session control
+  - `Desktop bridge agent jobs: validated|conditional|unavailable` for local desktop agent-run compatibility on that machine
 
 When this mode is active:
 
@@ -337,15 +341,15 @@ Typical commands:
   - `/cursor_status` (safe public status check for Cloud, desktop bridge, and route readiness)
   - `/cursor_models [filter]` (main control chat only; Cursor Cloud only; some accounts return no model list even when jobs still work with the default model)
   - `/cursor_test` (main control chat only; live 9router/Cursor smoke request)
-  - `/cursor_jobs` (main control chat only; list tracked jobs for this workspace plus recoverable backend jobs)
-  - `/cursor_create [options] <prompt>` (main control chat only; starts a Cursor job through Cloud or the desktop bridge; Cloud jobs need either `--repo <url>` or a default repo configured in Cursor settings)
+  - `/cursor_jobs` (main control chat only; list tracked Cursor Cloud jobs plus tracked and recoverable desktop bridge sessions for this workspace)
+  - `/cursor_create [options] <prompt>` (main control chat only; starts a Cursor Cloud job; Cloud jobs need either `--repo <url>` or a default repo configured in Cursor settings)
   - `/cursor_create --repo <url> --ref <branch> --model <id> <prompt>` (target a specific repo/ref/model)
-  - `/cursor_sync <agent_id>` (main control chat only; refresh a tracked job or attach an existing backend job to this workspace)
-  - `/cursor_stop <agent_id>` (main control chat only; request stop for a Cursor job)
-  - `/cursor_followup <agent_id> <text>` (main control chat only; send follow-up instructions)
-  - `/cursor_conversation <agent_id> [limit]` (main control chat only; show recent Cursor job conversation)
-  - `/cursor_artifacts <agent_id>` (main control chat only; list tracked Cursor job artifacts)
-  - `/cursor_artifact_link <agent_id> <absolute_path>` (main control chat only; generate a temporary artifact download link)
+  - `/cursor_sync <agent_id>` (main control chat only; refresh a tracked Cursor Cloud job or attach an existing Cursor Cloud job or desktop bridge session to this workspace)
+  - `/cursor_stop <agent_id>` (main control chat only; request stop for a Cursor Cloud job)
+  - `/cursor_followup <agent_id> <text>` (main control chat only; send follow-up instructions to a Cursor Cloud job)
+  - `/cursor_conversation <agent_id> [limit]` (main control chat only; show recent Cursor Cloud conversation or a stored desktop session conversation)
+  - `/cursor_artifacts <agent_id>` (main control chat only; list tracked Cursor Cloud job artifacts)
+  - `/cursor_artifact_link <agent_id> <absolute_path>` (main control chat only; generate a temporary Cursor Cloud artifact download link)
   - `/cursor_terminal <agent_id> <command>` (main control chat only; run a line-oriented shell command for a desktop bridge session)
   - `/cursor_terminal_status <agent_id>` (main control chat only; inspect the bridge-managed terminal state)
   - `/cursor_terminal_log <agent_id> [limit]` (main control chat only; read cached terminal output)
@@ -355,8 +359,9 @@ Important scope rule:
 
 - `/cursor_status` is safe to keep visible in the narrower public product surface
 - the deeper Cursor, Amazon, and Alexa slash commands are operator-facing controls and should be run from Andrea's registered main control chat only
-- for Cursor specifically, those deeper job commands are only operational when `/cursor_status` shows a real job backend instead of `Job backend: not configured`
-- the desktop bridge gives Andrea queued job control plus line-oriented shell commands on your normal machine, but not a live PTY or remote desktop
+- for Cursor specifically, Cloud job commands are only operational when `/cursor_status` says `Cloud coding jobs: ready`
+- desktop bridge terminal commands are only operational when `/cursor_status` says `Desktop bridge terminal control: ready`
+- the desktop bridge gives Andrea bridge-managed session recovery and line-oriented shell commands on your normal machine, but not a live PTY, remote desktop, or a guaranteed local Windows agent-job path
 - marketplace skill discovery and enablement still exist in the operator/runtime layer, but they are not part of the default Telegram command surface
 
 ## 8) OpenClaw Marketplace Behavior And Security

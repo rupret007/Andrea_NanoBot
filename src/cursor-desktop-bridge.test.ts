@@ -41,9 +41,7 @@ function createFakeRun() {
 describe('CursorDesktopBridge', () => {
   it('detects the installed Cursor CLI as a subcommand-based bridge runner', () => {
     expect(resolveCursorDesktopCliMode('cursor-agent')).toBe('cursor-agent');
-    expect(resolveCursorDesktopCliMode('cursor.cmd')).toBe(
-      'cursor-subcommand',
-    );
+    expect(resolveCursorDesktopCliMode('cursor.cmd')).toBe('cursor-subcommand');
     expect(
       resolveCursorDesktopCliMode(
         'C:\\Users\\jeff\\AppData\\Local\\Programs\\cursor\\resources\\app\\bin\\cursor.cmd',
@@ -153,6 +151,11 @@ describe('CursorDesktopBridge', () => {
     expect(conversation).toHaveLength(2);
     expect(conversation[0].role).toBe('user');
     expect(conversation[1].role).toBe('assistant');
+    expect(bridge.getHealth()).toMatchObject({
+      terminalAvailable: true,
+      agentJobCompatibility: 'validated',
+      agentJobDetail: null,
+    });
     expect(writes.length).toBeGreaterThan(0);
   });
 
@@ -244,6 +247,11 @@ describe('CursorDesktopBridge', () => {
     expect(synced.status).toBe('FAILED');
     expect(synced.summary).toContain('known options');
     expect(bridge.getConversation(created.id, 10)).toHaveLength(1);
+    expect(bridge.getHealth()).toMatchObject({
+      terminalAvailable: true,
+      agentJobCompatibility: 'failed',
+    });
+    expect(bridge.getHealth().agentJobDetail).toContain('known options');
   });
 
   it('supports terminal commands, status, output, and stop', () => {

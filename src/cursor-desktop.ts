@@ -10,6 +10,10 @@ const CURSOR_DESKTOP_ENV_KEYS = [
 const DEFAULT_CURSOR_DESKTOP_TIMEOUT_MS = 30_000;
 
 type CursorDesktopProbeStatus = 'ok' | 'failed' | 'skipped';
+export type CursorDesktopAgentJobCompatibility =
+  | 'validated'
+  | 'failed'
+  | 'unknown';
 
 export interface CursorDesktopConfig {
   baseUrl: string;
@@ -30,6 +34,9 @@ export interface CursorDesktopStatus {
   cliPath: string | null;
   activeRuns: number | null;
   trackedSessions: number | null;
+  terminalAvailable: boolean;
+  agentJobCompatibility: CursorDesktopAgentJobCompatibility;
+  agentJobDetail: string | null;
 }
 
 export interface CursorDesktopConversationMessage {
@@ -102,6 +109,9 @@ export interface CursorDesktopHealth {
   activeRuns: number;
   trackedSessions: number;
   defaultCwd: string | null;
+  terminalAvailable: boolean;
+  agentJobCompatibility: CursorDesktopAgentJobCompatibility;
+  agentJobDetail: string | null;
 }
 
 export interface CursorDesktopCreateSessionRequest {
@@ -215,6 +225,13 @@ function mapHealth(value: unknown): CursorDesktopHealth {
     activeRuns,
     trackedSessions,
     defaultCwd: toNullableString(row.defaultCwd),
+    terminalAvailable: row.terminalAvailable !== false,
+    agentJobCompatibility:
+      row.agentJobCompatibility === 'validated' ||
+      row.agentJobCompatibility === 'failed'
+        ? row.agentJobCompatibility
+        : 'unknown',
+    agentJobDetail: toNullableString(row.agentJobDetail),
   };
 }
 
@@ -328,6 +345,9 @@ export async function getCursorDesktopStatus(
     cliPath: null,
     activeRuns: null,
     trackedSessions: null,
+    terminalAvailable: false,
+    agentJobCompatibility: 'unknown',
+    agentJobDetail: null,
   };
 
   if (!options.probe) return baseStatus;
@@ -363,6 +383,9 @@ export async function getCursorDesktopStatus(
       cliPath: health.cliPath,
       activeRuns: health.activeRuns,
       trackedSessions: health.trackedSessions,
+      terminalAvailable: health.terminalAvailable,
+      agentJobCompatibility: health.agentJobCompatibility,
+      agentJobDetail: health.agentJobDetail,
     };
   } catch (err) {
     return {
@@ -376,12 +399,19 @@ export async function getCursorDesktopStatus(
 export function formatCursorDesktopStatusMessage(
   status: CursorDesktopStatus,
 ): string {
+  const terminalAvailable = status.enabled && status.terminalAvailable;
+  const agentJobsLabel =
+    status.enabled && status.probeStatus === 'ok' && terminalAvailable
+      ? status.agentJobCompatibility
+      : 'unavailable';
   const lines = [
     '*Cursor Desktop Bridge Status*',
     `- Enabled: ${status.enabled ? 'yes' : 'no'}`,
     `- URL: ${status.baseUrl || 'not configured'}`,
     `- Auth configured: ${status.hasToken ? 'yes' : 'no'}`,
     `- Probe: ${status.probeStatus}`,
+    `- Terminal control: ${terminalAvailable ? 'available' : 'unavailable'}`,
+    `- Desktop agent jobs: ${agentJobsLabel}`,
   ];
 
   if (status.label) {
@@ -401,6 +431,9 @@ export function formatCursorDesktopStatusMessage(
   }
   if (status.probeDetail) {
     lines.push(`- Probe detail: ${status.probeDetail}`);
+  }
+  if (status.agentJobDetail) {
+    lines.push(`- Agent job detail: ${status.agentJobDetail}`);
   }
   if (!status.enabled) {
     lines.push(

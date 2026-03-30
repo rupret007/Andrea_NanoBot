@@ -21,6 +21,8 @@ describe('cursor-desktop status', () => {
     expect(status.enabled).toBe(false);
     expect(status.probeStatus).toBe('skipped');
     expect(status.probeDetail).toContain('Bridge URL is missing');
+    expect(status.terminalAvailable).toBe(false);
+    expect(status.agentJobCompatibility).toBe('unknown');
   });
 
   it('resolves desktop config from env', () => {
@@ -62,6 +64,10 @@ describe('cursor-desktop status', () => {
             cliPath: '/usr/local/bin/cursor-agent',
             activeRuns: 1,
             trackedSessions: 3,
+            terminalAvailable: true,
+            agentJobCompatibility: 'failed',
+            agentJobDetail:
+              "Warning: 'p' is not in the list of known options, but still passed to Electron/Chromium.",
           }),
           { status: 200 },
         );
@@ -72,6 +78,9 @@ describe('cursor-desktop status', () => {
     expect(status.probeStatus).toBe('ok');
     expect(status.machineName).toBe('Jeff-Mac');
     expect(status.activeRuns).toBe(1);
+    expect(status.terminalAvailable).toBe(true);
+    expect(status.agentJobCompatibility).toBe('failed');
+    expect(status.agentJobDetail).toContain('known options');
   });
 
   it('formats a user-facing desktop status message', () => {
@@ -87,11 +96,38 @@ describe('cursor-desktop status', () => {
       cliPath: '/usr/local/bin/cursor-agent',
       activeRuns: 0,
       trackedSessions: 4,
+      terminalAvailable: true,
+      agentJobCompatibility: 'unknown',
+      agentJobDetail: null,
     });
 
     expect(message).toContain('*Cursor Desktop Bridge Status*');
     expect(message).toContain('Machine: Jeff-Mac');
     expect(message).toContain('Tracked sessions: 4');
+    expect(message).toContain('Terminal control: available');
+    expect(message).toContain('Desktop agent jobs: unknown');
+  });
+
+  it('formats unavailable desktop agent jobs when the bridge is disabled', () => {
+    const message = formatCursorDesktopStatusMessage({
+      enabled: false,
+      baseUrl: null,
+      hasToken: false,
+      timeoutMs: 30000,
+      label: null,
+      probeStatus: 'skipped',
+      probeDetail: 'Bridge URL is missing.',
+      machineName: null,
+      cliPath: null,
+      activeRuns: null,
+      trackedSessions: null,
+      terminalAvailable: false,
+      agentJobCompatibility: 'unknown',
+      agentJobDetail: null,
+    });
+
+    expect(message).toContain('Terminal control: unavailable');
+    expect(message).toContain('Desktop agent jobs: unavailable');
   });
 });
 

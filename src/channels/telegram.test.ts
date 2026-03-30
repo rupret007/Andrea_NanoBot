@@ -95,6 +95,7 @@ describe('buildTelegramCommandsText', () => {
     expect(commands).toContain('/commands');
     expect(commands).toContain('/features');
     expect(commands).toContain('/cursor_status');
+    expect(commands).toContain('safe Cursor readiness check');
     expect(commands).toContain(
       'Advanced operator workflows stay in the admin guide',
     );
@@ -134,7 +135,9 @@ describe('buildTelegramFeaturesText', () => {
 
     expect(features).toContain('Secure per-chat isolation');
     expect(features).toContain('Fast replies for simple questions');
-    expect(features).toContain('operator-safe status checks');
+    expect(features).toContain(
+      'deeper Cursor controls kept in the operator/admin path',
+    );
     expect(features).not.toContain('Amazon shopping search');
     expect(features).not.toContain('Apple Calendar');
   });

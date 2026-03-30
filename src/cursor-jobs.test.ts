@@ -9,6 +9,7 @@ import {
   createCursorAgent,
   followupCursorAgent,
   getCursorArtifactDownloadLink,
+  getCursorAgentArtifacts,
   getCursorAgentConversation,
   getCursorTerminalOutput,
   getCursorTerminalStatus,
@@ -651,126 +652,26 @@ describe('cursor-jobs', () => {
     ).rejects.toThrow('is not tracked for Cursor agent');
   });
 
-  it('uses the desktop bridge when configured for create/sync/followup/stop', async () => {
+  it('requires Cursor Cloud for queued job creation even when only the desktop bridge is configured', async () => {
     process.env.CURSOR_API_KEY = ' ';
     process.env.CURSOR_API_BASE_URL = ' ';
     process.env.CURSOR_DESKTOP_BRIDGE_URL = 'https://cursor-bridge.example.com';
     process.env.CURSOR_DESKTOP_BRIDGE_TOKEN = 'bridge-token';
 
-    const requests: string[] = [];
-    globalThis.fetch = (async (input, init) => {
-      requests.push(`${init?.method || 'GET'} ${String(input)}`);
-      const url = String(input);
-
-      if (url === 'https://cursor-bridge.example.com/v1/sessions') {
-        return new Response(
-          JSON.stringify({
-            id: 'desk_900',
-            status: 'RUNNING',
-            promptText: 'Implement the login fix',
-            provider: 'desktop',
-            createdAt: '2026-03-29T20:20:00.000Z',
-            updatedAt: '2026-03-29T20:20:00.000Z',
-          }),
-          { status: 200 },
-        );
-      }
-
-      if (url === 'https://cursor-bridge.example.com/v1/sessions/desk_900') {
-        return new Response(
-          JSON.stringify({
-            id: 'desk_900',
-            status: 'COMPLETED',
-            promptText: 'Implement the login fix',
-            summary: 'Patched the login flow.',
-            provider: 'desktop',
-            cursorSessionId: 'cursor-session-900',
-            createdAt: '2026-03-29T20:20:00.000Z',
-            updatedAt: '2026-03-29T20:21:00.000Z',
-          }),
-          { status: 200 },
-        );
-      }
-
-      if (
-        url ===
-        'https://cursor-bridge.example.com/v1/sessions/desk_900/followup'
-      ) {
-        return new Response(
-          JSON.stringify({
-            id: 'desk_900',
-            status: 'RUNNING',
-            promptText: 'Implement the login fix',
-            summary: 'Follow-up queued.',
-            provider: 'desktop',
-            cursorSessionId: 'cursor-session-900',
-            createdAt: '2026-03-29T20:20:00.000Z',
-            updatedAt: '2026-03-29T20:22:00.000Z',
-          }),
-          { status: 200 },
-        );
-      }
-
-      if (
-        url === 'https://cursor-bridge.example.com/v1/sessions/desk_900/stop'
-      ) {
-        return new Response(
-          JSON.stringify({
-            id: 'desk_900',
-            status: 'STOPPED',
-            promptText: 'Implement the login fix',
-            summary: 'Stopped.',
-            provider: 'desktop',
-            cursorSessionId: 'cursor-session-900',
-            createdAt: '2026-03-29T20:20:00.000Z',
-            updatedAt: '2026-03-29T20:23:00.000Z',
-          }),
-          { status: 200 },
-        );
-      }
-
-      throw new Error(`unexpected desktop bridge request: ${url}`);
+    globalThis.fetch = (async () => {
+      throw new Error('desktop bridge should not be used for create');
     }) as typeof fetch;
 
-    const created = await createCursorAgent({
-      groupFolder: 'whatsapp_main',
-      chatJid: 'tg:42',
-      promptText: 'Implement the login fix',
-    });
-    expect(created.id).toBe('desk_900');
-
-    const synced = await syncCursorAgent({
-      groupFolder: 'whatsapp_main',
-      chatJid: 'tg:42',
-      agentId: 'desk_900',
-    });
-    expect(synced.agent.summary).toContain('Patched');
-    expect(synced.artifacts).toHaveLength(0);
-
-    const followed = await followupCursorAgent({
-      groupFolder: 'whatsapp_main',
-      chatJid: 'tg:42',
-      agentId: 'desk_900',
-      promptText: 'Add tests too',
-    });
-    expect(followed.summary).toContain('Follow-up');
-
-    const stopped = await stopCursorAgent({
-      groupFolder: 'whatsapp_main',
-      chatJid: 'tg:42',
-      agentId: 'desk_900',
-    });
-    expect(stopped.status).toBe('STOPPED');
-
-    expect(requests).toEqual([
-      'POST https://cursor-bridge.example.com/v1/sessions',
-      'GET https://cursor-bridge.example.com/v1/sessions/desk_900',
-      'POST https://cursor-bridge.example.com/v1/sessions/desk_900/followup',
-      'POST https://cursor-bridge.example.com/v1/sessions/desk_900/stop',
-    ]);
+    await expect(
+      createCursorAgent({
+        groupFolder: 'whatsapp_main',
+        chatJid: 'tg:42',
+        promptText: 'Implement the login fix',
+      }),
+    ).rejects.toThrow('Cursor Cloud is required for queued coding jobs');
   });
 
-  it('falls back to Cursor Cloud job creation when the desktop bridge create fails', async () => {
+  it('creates Cursor Cloud jobs even when the desktop bridge is also configured', async () => {
     process.env.CURSOR_DESKTOP_BRIDGE_URL = 'https://cursor-bridge.example.com';
     process.env.CURSOR_DESKTOP_BRIDGE_TOKEN = 'bridge-token';
 
@@ -779,17 +680,13 @@ describe('cursor-jobs', () => {
       const url = String(input);
       requests.push(`${init?.method || 'GET'} ${url}`);
 
-      if (url === 'https://cursor-bridge.example.com/v1/sessions') {
-        return new Response('bridge temporarily unavailable', { status: 503 });
-      }
-
       if (url === 'https://api.cursor.com/v0/agents') {
         return new Response(
           JSON.stringify({
-            id: 'bc_fallback',
+            id: 'bc_create',
             status: 'CREATING',
             target: {
-              url: 'https://cursor.com/agents?id=bc_fallback',
+              url: 'https://cursor.com/agents?id=bc_create',
             },
             createdAt: '2026-03-29T20:24:00.000Z',
           }),
@@ -803,15 +700,13 @@ describe('cursor-jobs', () => {
     const created = await createCursorAgent({
       groupFolder: 'whatsapp_main',
       chatJid: 'tg:42',
-      promptText: 'Fall back to cloud if desktop is down',
+      promptText: 'Create through Cloud even when desktop bridge exists',
       sourceRepository: 'https://github.com/example/repo',
     });
 
-    expect(created.id).toBe('bc_fallback');
-    expect(requests).toEqual([
-      'POST https://cursor-bridge.example.com/v1/sessions',
-      'POST https://api.cursor.com/v0/agents',
-    ]);
+    expect(created.id).toBe('bc_create');
+    expect(created.provider).toBe('cloud');
+    expect(requests).toEqual(['POST https://api.cursor.com/v0/agents']);
   });
 
   it('reads desktop bridge conversation for tracked desktop sessions', async () => {
@@ -874,6 +769,54 @@ describe('cursor-jobs', () => {
     expect(messages[1].content).toBe('Done');
   });
 
+  it('rejects Cloud follow-up and stop flows for tracked desktop sessions', async () => {
+    process.env.CURSOR_API_KEY = ' ';
+    process.env.CURSOR_API_BASE_URL = ' ';
+    process.env.CURSOR_DESKTOP_BRIDGE_URL = 'https://cursor-bridge.example.com';
+    process.env.CURSOR_DESKTOP_BRIDGE_TOKEN = 'bridge-token';
+
+    upsertCursorAgent({
+      id: 'desk_control',
+      group_folder: 'whatsapp_main',
+      chat_jid: 'tg:42',
+      status: 'COMPLETED',
+      model: null,
+      prompt_text: 'Desktop-only work',
+      source_repository: null,
+      source_ref: null,
+      source_pr_url: null,
+      target_url: null,
+      target_pr_url: null,
+      target_branch_name: null,
+      auto_create_pr: 0,
+      open_as_cursor_github_app: 0,
+      skip_reviewer_request: 0,
+      summary: 'Done',
+      raw_json: JSON.stringify({ provider: 'desktop' }),
+      created_by: 'tg:user',
+      created_at: '2026-03-29T20:00:00.000Z',
+      updated_at: '2026-03-29T20:00:00.000Z',
+      last_synced_at: '2026-03-29T20:00:00.000Z',
+    });
+
+    await expect(
+      followupCursorAgent({
+        groupFolder: 'whatsapp_main',
+        chatJid: 'tg:42',
+        agentId: 'desk_control',
+        promptText: 'Continue the desktop session',
+      }),
+    ).rejects.toThrow('queued Cloud follow-up flow');
+
+    await expect(
+      stopCursorAgent({
+        groupFolder: 'whatsapp_main',
+        chatJid: 'tg:42',
+        agentId: 'desk_control',
+      }),
+    ).rejects.toThrow('queued Cloud stop flow');
+  });
+
   it('recovers an existing untracked desktop session on sync', async () => {
     process.env.CURSOR_API_KEY = ' ';
     process.env.CURSOR_API_BASE_URL = ' ';
@@ -908,6 +851,7 @@ describe('cursor-jobs', () => {
     });
 
     expect(synced.agent.id).toBe('desk_recover');
+    expect(synced.agent.provider).toBe('desktop');
     expect(synced.agent.summary).toContain('Recovered');
 
     const stored = listStoredCursorAgentsForGroup('main');
@@ -975,6 +919,7 @@ describe('cursor-jobs', () => {
     });
 
     expect(synced.agent.id).toBe('bc_recover');
+    expect(synced.agent.provider).toBe('cloud');
     expect(synced.agent.promptText).toContain('Recovered');
   });
 
@@ -1057,10 +1002,11 @@ describe('cursor-jobs', () => {
       limit: 20,
     });
 
-    expect(['desktop', 'mixed']).toContain(inventory.backend);
-    expect(inventory.tracked).toHaveLength(1);
-    expect(inventory.recoverable).toHaveLength(1);
-    expect(inventory.recoverable[0].id).toBe('desk_recoverable');
+    expect(inventory.hasDesktop).toBe(true);
+    expect(inventory.hasCloud).toBe(false);
+    expect(inventory.desktopTracked).toHaveLength(1);
+    expect(inventory.desktopRecoverable).toHaveLength(1);
+    expect(inventory.desktopRecoverable[0].id).toBe('desk_recoverable');
   });
 
   it('lists recoverable jobs from both desktop bridge and cloud when both are configured', async () => {
@@ -1116,11 +1062,51 @@ describe('cursor-jobs', () => {
       limit: 20,
     });
 
-    expect(inventory.backend).toBe('mixed');
-    expect(inventory.recoverable).toHaveLength(2);
-    expect(inventory.recoverable.map((agent) => agent.id)).toEqual(
-      expect.arrayContaining(['desk_recoverable', 'bc_recoverable']),
-    );
+    expect(inventory.hasDesktop).toBe(true);
+    expect(inventory.hasCloud).toBe(true);
+    expect(inventory.desktopRecoverable).toHaveLength(1);
+    expect(inventory.cloudRecoverable).toHaveLength(1);
+    expect(inventory.desktopRecoverable[0].id).toBe('desk_recoverable');
+    expect(inventory.cloudRecoverable[0].id).toBe('bc_recoverable');
+  });
+
+  it('rejects artifact listing for desktop sessions with a Cloud-only message', async () => {
+    process.env.CURSOR_API_KEY = ' ';
+    process.env.CURSOR_API_BASE_URL = ' ';
+    process.env.CURSOR_DESKTOP_BRIDGE_URL = 'https://cursor-bridge.example.com';
+    process.env.CURSOR_DESKTOP_BRIDGE_TOKEN = 'bridge-token';
+
+    upsertCursorAgent({
+      id: 'desk_artifacts',
+      group_folder: 'main',
+      chat_jid: 'tg:42',
+      status: 'COMPLETED',
+      model: null,
+      prompt_text: 'Desktop artifact check',
+      source_repository: null,
+      source_ref: null,
+      source_pr_url: null,
+      target_url: null,
+      target_pr_url: null,
+      target_branch_name: null,
+      auto_create_pr: 0,
+      open_as_cursor_github_app: 0,
+      skip_reviewer_request: 0,
+      summary: 'Done',
+      raw_json: JSON.stringify({ provider: 'desktop' }),
+      created_by: 'tg:user',
+      created_at: '2026-03-29T20:00:00.000Z',
+      updated_at: '2026-03-29T20:00:00.000Z',
+      last_synced_at: '2026-03-29T20:00:00.000Z',
+    });
+
+    await expect(
+      getCursorAgentArtifacts({
+        groupFolder: 'main',
+        chatJid: 'tg:42',
+        agentId: 'desk_artifacts',
+      }),
+    ).rejects.toThrow('Cursor artifact listing is only available');
   });
 
   it('runs terminal commands for desktop sessions and reads terminal state', async () => {
