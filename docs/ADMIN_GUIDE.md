@@ -97,6 +97,7 @@ Cursor:
 - `/cursor_status`
 - `/cursor_test`
 - `/cursor_models`
+- `/cursor_jobs`
 - [CURSOR_DESKTOP_BRIDGE.md](CURSOR_DESKTOP_BRIDGE.md) when Andrea should drive your normal Cursor machine instead of only cloud jobs
 - if Cursor Cloud auth behaves differently than expected, set `CURSOR_API_AUTH_MODE=auto|bearer|basic`; default `auto` tries Bearer first and falls back to Basic
 
@@ -107,6 +108,12 @@ Before using deeper Cursor job commands, confirm `/cursor_status` shows a real j
 - `Job backend: not configured` means keep deeper Cursor job commands out of the operational path until setup is complete
 
 Run advanced Cursor, Amazon, and Alexa slash commands from the registered main control chat only. `/cursor_status` is the safe exception that can stay visible in the narrower public surface.
+
+Useful operator truth:
+
+- `/cursor_jobs` now shows both tracked workspace jobs and recoverable backend jobs when the configured backend can list them
+- `/cursor_sync <agent_id>` can attach one of those recoverable jobs to the current workspace
+- Cursor desktop bridge is still queued job control only. It is not a live terminal, PTY, or remote desktop surface.
 
 Alexa:
 

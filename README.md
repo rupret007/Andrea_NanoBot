@@ -151,13 +151,14 @@ Optional integrations such as Alexa, shopping flows, marketplace skills, and cal
 
 - help with repos, debugging, and code tasks
 - use Cursor/9router-aware routing checks with `/cursor_status`
-- operators can create, follow up, sync, and inspect Cursor coding jobs from the main control chat through Cursor Cloud or the desktop bridge
+- operators can create, follow up, sync, inspect, and recover existing Cursor coding jobs from the main control chat through Cursor Cloud or the desktop bridge
 - keep optional integrations behind explicit operator setup instead of treating them as default demo features
 
 Important Cursor rule:
 
 - `/cursor_status` now tells you whether deeper Cursor job commands are actually available
 - if it says `Job backend: not configured`, treat `/cursor_create`, `/cursor_sync`, `/cursor_followup`, and related job controls as unavailable until you finish Cloud or desktop-bridge setup
+- Cursor desktop bridge job control is asynchronous and operator-only. It is not a live terminal or remote desktop surface.
 
 ## Using Andrea In Chat
 

@@ -88,6 +88,14 @@ Many entries here are optional operator-enabled skills or integrations, and they
 | `/capabilities`   | Full capability report (skills, tools, runtime, mounts) | Main chat only                                    |
 | `openclaw-market` | Community skill marketplace flow                        | Uses search/enable/disable/list marketplace tools |
 
+## Cursor Operator Surfaces
+
+| Surface               | What it does                                                               | Notes                                                                 |
+| --------------------- | -------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| Cursor Cloud jobs     | Create, sync, follow up, stop, inspect conversation, and fetch artifacts   | Operator-only; requires `CURSOR_API_KEY`                              |
+| Cursor desktop bridge | Queue jobs on your normal Cursor machine and recover bridge-known sessions | Operator-only; requires bridge setup; no live terminal or PTY control |
+| `/cursor_status`      | Show readiness for Cloud, desktop bridge, and runtime-route wiring         | Safe status surface; public-safe                                      |
+
 ## Marketplace Tool Surface
 
 These runtime tools back the community skill lifecycle:

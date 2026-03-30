@@ -13,6 +13,7 @@ This is different from Cursor Cloud Agents:
 With the desktop bridge enabled, Andrea can use the existing Cursor job controls against your own machine:
 
 - `/cursor_status`
+- `/cursor_jobs`
 - `/cursor_create ...`
 - `/cursor_sync ...`
 - `/cursor_followup ...`
@@ -20,6 +21,13 @@ With the desktop bridge enabled, Andrea can use the existing Cursor job controls
 - `/cursor_conversation ...`
 
 The experience is still asynchronous. This is not a live remote desktop. The goal is to let Andrea queue and manage real Cursor agent work on the machine you already trust and use.
+
+Important truth boundary:
+
+- `/cursor_jobs` can show tracked Andrea jobs plus recoverable bridge sessions that the bridge already knows about
+- `/cursor_sync <id>` can attach one of those recoverable bridge sessions to the current Andrea workspace
+- the bridge does **not** attach to arbitrary already-open Cursor GUI tabs, random shell sessions, or a live PTY stream
+- terminal-style remote control is not part of Andrea's current product surface
 
 Important scope rule:
 
@@ -127,9 +135,12 @@ Then run a small non-destructive job from the main control chat:
 Follow with:
 
 ```text
+/cursor_jobs
 /cursor_sync <agent_id>
 /cursor_conversation <agent_id>
 ```
+
+If the bridge already has sessions from earlier Andrea-driven work, `/cursor_jobs` can surface them as recoverable even before they are attached to the current workspace record.
 
 ## 5) Security Notes
 
@@ -141,7 +152,24 @@ Keep these rules:
 - do not treat the bridge as a public API
 - rotate the bridge token if the machine or tunnel is ever exposed
 
-## 6) Troubleshooting
+## 6) What The Bridge Can And Cannot Control
+
+What is real today:
+
+- start a new `cursor-agent` run on your normal machine
+- follow up on a tracked bridge session
+- stop a tracked bridge session
+- read the stored session conversation
+- recover bridge sessions that the bridge itself has already persisted
+
+What is intentionally not real today:
+
+- attaching to a live shell or PTY
+- typing into an arbitrary existing terminal window
+- remote desktop control of the Cursor GUI
+- discovering random pre-existing Cursor tabs that were never started through the bridge
+
+## 7) Troubleshooting
 
 If `/cursor_status` still says the desktop bridge is disabled:
 
@@ -151,13 +179,20 @@ If `/cursor_status` still says the desktop bridge is disabled:
 4. confirm your tunnel or reverse proxy forwards to the bridge port
 5. restart Andrea and run `/cursor_status` again
 
+If `/cursor_jobs` does not show a bridge session you expected:
+
+1. confirm that session was started through the bridge, not only inside the local GUI
+2. confirm the bridge state file still exists on the machine running Cursor
+3. run `/cursor_jobs` from Andrea's registered main control chat
+4. if the session appears as recoverable, run `/cursor_sync <agent_id>` to attach it to the current workspace
+
 If Andrea can reach the bridge but your model routing still does not look Cursor-backed:
 
 1. confirm your main runtime points at the intended 9router endpoint
 2. set `CURSOR_GATEWAY_HINT=9router`
 3. if needed, set `NANOCLAW_AGENT_MODEL=cu/default`
 
-## 7) When To Use Desktop Bridge vs Cloud
+## 8) When To Use Desktop Bridge vs Cloud
 
 Use the desktop bridge when:
 

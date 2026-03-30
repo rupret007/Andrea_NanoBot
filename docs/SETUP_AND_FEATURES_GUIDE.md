@@ -329,10 +329,10 @@ Typical commands:
   - `/cursor_status` (safe public status check for Cloud, desktop bridge, and route readiness)
   - `/cursor_models [filter]` (main control chat only; Cursor Cloud only)
   - `/cursor_test` (main control chat only; live 9router/Cursor smoke request)
-  - `/cursor_jobs` (main control chat only; list tracked Cursor jobs for this chat)
+  - `/cursor_jobs` (main control chat only; list tracked jobs for this workspace plus recoverable backend jobs)
   - `/cursor_create [options] <prompt>` (main control chat only; starts a Cursor job through Cloud or the desktop bridge)
   - `/cursor_create --repo <url> --ref <branch> --model <id> <prompt>` (target a specific repo/ref/model)
-  - `/cursor_sync <agent_id>` (main control chat only; refresh Cursor job status/artifacts)
+  - `/cursor_sync <agent_id>` (main control chat only; refresh a tracked job or attach an existing backend job to this workspace)
   - `/cursor_stop <agent_id>` (main control chat only; request stop for a Cursor job)
   - `/cursor_followup <agent_id> <text>` (main control chat only; send follow-up instructions)
   - `/cursor_conversation <agent_id> [limit]` (main control chat only; show recent Cursor job conversation)
@@ -344,6 +344,7 @@ Important scope rule:
 - `/cursor_status` is safe to keep visible in the narrower public product surface
 - the deeper Cursor, Amazon, and Alexa slash commands are operator-facing controls and should be run from Andrea's registered main control chat only
 - for Cursor specifically, those deeper job commands are only operational when `/cursor_status` shows a real job backend instead of `Job backend: not configured`
+- the desktop bridge gives Andrea queued job control on your normal machine, not a live terminal or remote desktop
 - marketplace skill discovery and enablement still exist in the operator/runtime layer, but they are not part of the default Telegram command surface
 
 ## 8) OpenClaw Marketplace Behavior And Security

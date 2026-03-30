@@ -43,7 +43,6 @@ import {
   getAllSessions,
   getAllTasks,
   getLastBotMessageTimestamp,
-  listCursorAgentsForGroup,
   listCursorAgentArtifacts,
   getMessagesSince,
   getNewMessages,
@@ -122,6 +121,7 @@ import {
   followupCursorAgent,
   getCursorArtifactDownloadLink,
   getCursorAgentConversation,
+  listCursorJobInventory,
   listCursorModels,
   stopCursorAgent,
   syncCursorAgent,
@@ -1340,21 +1340,73 @@ async function main(): Promise<void> {
       return;
     }
 
-    const agents = listCursorAgentsForGroup(group.folder, 20);
-    if (agents.length === 0) {
-      await channel.sendMessage(
-        chatJid,
-        'No Cursor agent jobs are tracked for this chat yet.',
+    const inventory = await listCursorJobInventory({
+      groupFolder: group.folder,
+      chatJid,
+      limit: 20,
+    });
+
+    const formatAgentLine = (
+      agent: {
+        id: string;
+        status: string;
+        model: string | null;
+        updatedAt?: string;
+        updated_at?: string;
+        targetUrl?: string | null;
+        target_url?: string | null;
+        targetPrUrl?: string | null;
+        target_pr_url?: string | null;
+      },
+      index: number,
+    ) => {
+      const updatedAt = agent.updatedAt || agent.updated_at || 'unknown';
+      const targetUrl = agent.targetUrl || agent.target_url;
+      const targetPrUrl = agent.targetPrUrl || agent.target_pr_url;
+      return `${index + 1}. ${agent.id} [${agent.status}] model=${agent.model || 'default'} updated=${updatedAt}${targetUrl ? `\nURL: ${targetUrl}` : ''}${targetPrUrl ? `\nPR: ${targetPrUrl}` : ''}`;
+    };
+
+    const sections: string[] = [];
+    if (inventory.tracked.length > 0) {
+      sections.push(
+        `Tracked for this workspace:\n${inventory.tracked
+          .map((agent, index) => formatAgentLine(agent, index))
+          .join('\n\n')}`,
       );
+    }
+
+    if (inventory.recoverable.length > 0) {
+      const backendLabel =
+        inventory.backend === 'desktop' ? 'desktop bridge' : 'cloud agents';
+      sections.push(
+        `Recoverable from ${backendLabel}:\n${inventory.recoverable
+          .map((agent, index) => formatAgentLine(agent, index))
+          .join(
+            '\n\n',
+          )}\n\nRun /cursor_sync <agent_id> to attach one of these jobs to this workspace.`,
+      );
+    }
+
+    if (sections.length === 0) {
+      const backendHint =
+        inventory.backend === 'none'
+          ? 'No Cursor job backend is configured right now.'
+          : 'No tracked or recoverable Cursor jobs were found for this workspace.';
+      const warning = inventory.warning
+        ? `\n\nLive backend lookup skipped: ${inventory.warning}`
+        : '';
+      await channel.sendMessage(chatJid, `${backendHint}${warning}`);
       return;
     }
 
-    const lines = agents.map(
-      (agent, index) =>
-        `${index + 1}. ${agent.id} [${agent.status}] model=${agent.model || 'default'} updated=${agent.updated_at}${agent.target_url ? `\nURL: ${agent.target_url}` : ''}${agent.target_pr_url ? `\nPR: ${agent.target_pr_url}` : ''}`,
-    );
+    if (inventory.warning) {
+      sections.push(`Live backend lookup skipped: ${inventory.warning}`);
+    }
 
-    await channel.sendMessage(chatJid, `Cursor jobs:\n\n${lines.join('\n\n')}`);
+    await channel.sendMessage(
+      chatJid,
+      `Cursor jobs:\n\n${sections.join('\n\n')}`,
+    );
   }
 
   async function handleCursorModels(

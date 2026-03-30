@@ -63,6 +63,8 @@ describe('CursorDesktopBridge', () => {
     const created = bridge.createSession({
       promptText: 'Fix the auth tests',
       requestedBy: 'tg:jeff',
+      groupFolder: 'main',
+      chatJid: 'tg:42',
     });
 
     run.emitStdoutLine(
@@ -77,6 +79,8 @@ describe('CursorDesktopBridge', () => {
     expect(synced.status).toBe('COMPLETED');
     expect(synced.cursorSessionId).toBe('cursor-session-1');
     expect(synced.summary).toContain('Auth tests are fixed');
+    expect(synced.groupFolder).toBe('main');
+    expect(synced.chatJid).toBe('tg:42');
 
     const conversation = bridge.getConversation(created.id, 10);
     expect(conversation).toHaveLength(2);

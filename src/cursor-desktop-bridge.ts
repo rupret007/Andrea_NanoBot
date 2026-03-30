@@ -68,6 +68,8 @@ interface CreateSessionInput {
   promptText: string;
   requestedBy?: string;
   model?: string;
+  groupFolder?: string;
+  chatJid?: string;
   cwd?: string;
   sourceRepository?: string;
   sourceRef?: string;
@@ -491,6 +493,8 @@ export class CursorDesktopBridge {
       status: 'RUNNING',
       model: toNullableString(input.model),
       promptText,
+      groupFolder: toNullableString(input.groupFolder),
+      chatJid: toNullableString(input.chatJid),
       sourceRepository: toNullableString(input.sourceRepository),
       sourceRef: toNullableString(input.sourceRef),
       sourcePrUrl: toNullableString(input.sourcePrUrl),
@@ -613,6 +617,8 @@ export class CursorDesktopBridge {
             promptText: String(body.promptText || ''),
             requestedBy: toNullableString(body.requestedBy) || undefined,
             model: toNullableString(body.model) || undefined,
+            groupFolder: toNullableString(body.groupFolder) || undefined,
+            chatJid: toNullableString(body.chatJid) || undefined,
             cwd: toNullableString(body.cwd) || undefined,
             sourceRepository:
               toNullableString(body.sourceRepository) || undefined,

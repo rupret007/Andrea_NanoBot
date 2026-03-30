@@ -119,6 +119,8 @@ describe('CursorDesktopClient', () => {
                 id: 'desk_123',
                 status: 'RUNNING',
                 promptText: 'Fix the flaky test',
+                groupFolder: 'main',
+                chatJid: 'tg:42',
                 provider: 'desktop',
                 createdAt: '2026-03-29T20:00:00.000Z',
                 updatedAt: '2026-03-29T20:00:00.000Z',
@@ -137,6 +139,8 @@ describe('CursorDesktopClient', () => {
                 id: 'desk_123',
                 status: 'COMPLETED',
                 promptText: 'Fix the flaky test',
+                groupFolder: 'main',
+                chatJid: 'tg:42',
                 summary: 'Patched the flaky path.',
                 provider: 'desktop',
                 cursorSessionId: 'cursor-session-1',
@@ -157,6 +161,8 @@ describe('CursorDesktopClient', () => {
                 id: 'desk_123',
                 status: 'RUNNING',
                 promptText: 'Fix the flaky test',
+                groupFolder: 'main',
+                chatJid: 'tg:42',
                 summary: 'Follow-up queued.',
                 provider: 'desktop',
                 cursorSessionId: 'cursor-session-1',
@@ -174,12 +180,18 @@ describe('CursorDesktopClient', () => {
 
     const created = await client.createSession({
       promptText: 'Fix the flaky test',
+      groupFolder: 'main',
+      chatJid: 'tg:42',
     });
     expect(created.id).toBe('desk_123');
+    expect(created.groupFolder).toBe('main');
+    expect(created.chatJid).toBe('tg:42');
 
     const synced = await client.getSession('desk_123');
     expect(synced.status).toBe('COMPLETED');
     expect(synced.cursorSessionId).toBe('cursor-session-1');
+    expect(synced.groupFolder).toBe('main');
+    expect(synced.chatJid).toBe('tg:42');
 
     const followed = await client.followupSession('desk_123', {
       promptText: 'Now add the regression test',
@@ -191,6 +203,43 @@ describe('CursorDesktopClient', () => {
       'GET https://cursor-bridge.example.com/v1/sessions/desk_123',
       'POST https://cursor-bridge.example.com/v1/sessions/desk_123/followup',
     ]);
+  });
+
+  it('lists tracked bridge sessions with workspace metadata', async () => {
+    const client = new CursorDesktopClient(
+      {
+        baseUrl: 'https://cursor-bridge.example.com',
+        token: 'bridge-token',
+        timeoutMs: 5000,
+        label: null,
+      },
+      {
+        fetchImpl: (async () =>
+          new Response(
+            JSON.stringify({
+              sessions: [
+                {
+                  id: 'desk_existing',
+                  status: 'RUNNING',
+                  promptText: 'Review the open PR',
+                  groupFolder: 'main',
+                  chatJid: 'tg:42',
+                  provider: 'desktop',
+                  createdAt: '2026-03-29T20:00:00.000Z',
+                  updatedAt: '2026-03-29T20:01:00.000Z',
+                },
+              ],
+            }),
+            { status: 200 },
+          )) as unknown as typeof fetch,
+      },
+    );
+
+    const sessions = await client.listSessions(20);
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].id).toBe('desk_existing');
+    expect(sessions[0].groupFolder).toBe('main');
+    expect(sessions[0].chatJid).toBe('tg:42');
   });
 
   it('surfaces plain-text bridge errors without a JSON parse failure', async () => {

@@ -10,6 +10,7 @@ import {
   followupCursorAgent,
   getCursorArtifactDownloadLink,
   getCursorAgentConversation,
+  listCursorJobInventory,
   listCursorModels,
   listStoredCursorArtifacts,
   listStoredCursorAgentsForGroup,
@@ -668,5 +669,194 @@ describe('cursor-jobs', () => {
 
     expect(messages).toHaveLength(2);
     expect(messages[1].content).toBe('Done');
+  });
+
+  it('recovers an existing untracked desktop session on sync', async () => {
+    delete process.env.CURSOR_API_KEY;
+    delete process.env.CURSOR_API_BASE_URL;
+    process.env.CURSOR_DESKTOP_BRIDGE_URL = 'https://cursor-bridge.example.com';
+    process.env.CURSOR_DESKTOP_BRIDGE_TOKEN = 'bridge-token';
+
+    globalThis.fetch = (async (input) => {
+      expect(String(input)).toBe(
+        'https://cursor-bridge.example.com/v1/sessions/desk_recover',
+      );
+      return new Response(
+        JSON.stringify({
+          id: 'desk_recover',
+          status: 'COMPLETED',
+          promptText: 'Recover the current refactor',
+          groupFolder: 'main',
+          chatJid: 'tg:42',
+          summary: 'Recovered from bridge state.',
+          provider: 'desktop',
+          cursorSessionId: 'cursor-session-recover',
+          createdAt: '2026-03-29T20:30:00.000Z',
+          updatedAt: '2026-03-29T20:31:00.000Z',
+        }),
+        { status: 200 },
+      );
+    }) as typeof fetch;
+
+    const synced = await syncCursorAgent({
+      groupFolder: 'main',
+      chatJid: 'tg:42',
+      agentId: 'desk_recover',
+    });
+
+    expect(synced.agent.id).toBe('desk_recover');
+    expect(synced.agent.summary).toContain('Recovered');
+
+    const stored = listStoredCursorAgentsForGroup('main');
+    expect(stored.some((agent) => agent.id === 'desk_recover')).toBe(true);
+  });
+
+  it('rejects recovering a desktop session that belongs to another workspace', async () => {
+    delete process.env.CURSOR_API_KEY;
+    delete process.env.CURSOR_API_BASE_URL;
+    process.env.CURSOR_DESKTOP_BRIDGE_URL = 'https://cursor-bridge.example.com';
+    process.env.CURSOR_DESKTOP_BRIDGE_TOKEN = 'bridge-token';
+
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          id: 'desk_other',
+          status: 'RUNNING',
+          promptText: 'Other workspace work',
+          groupFolder: 'ops',
+          chatJid: 'tg:99',
+          provider: 'desktop',
+          createdAt: '2026-03-29T20:30:00.000Z',
+          updatedAt: '2026-03-29T20:31:00.000Z',
+        }),
+        { status: 200 },
+      )) as typeof fetch;
+
+    await expect(
+      syncCursorAgent({
+        groupFolder: 'main',
+        chatJid: 'tg:42',
+        agentId: 'desk_other',
+      }),
+    ).rejects.toThrow('belongs to another workspace');
+  });
+
+  it('recovers an existing untracked cloud agent on sync', async () => {
+    globalThis.fetch = (async (input) => {
+      const url = String(input);
+      if (url === 'https://api.cursor.com/v0/agents/bc_recover') {
+        return new Response(
+          JSON.stringify({
+            id: 'bc_recover',
+            name: 'Recovered cloud job',
+            status: 'RUNNING',
+            target: { url: 'https://cursor.com/agents?id=bc_recover' },
+            createdAt: '2026-03-29T20:40:00.000Z',
+            updatedAt: '2026-03-29T20:41:00.000Z',
+          }),
+          { status: 200 },
+        );
+      }
+
+      if (url === 'https://api.cursor.com/v0/agents/bc_recover/artifacts') {
+        return new Response(JSON.stringify({ artifacts: [] }), { status: 200 });
+      }
+
+      throw new Error(`unexpected cloud recovery request: ${url}`);
+    }) as typeof fetch;
+
+    const synced = await syncCursorAgent({
+      groupFolder: 'whatsapp_main',
+      chatJid: 'tg:42',
+      agentId: 'bc_recover',
+    });
+
+    expect(synced.agent.id).toBe('bc_recover');
+    expect(synced.agent.promptText).toContain('Recovered');
+  });
+
+  it('lists recoverable desktop sessions alongside tracked jobs', async () => {
+    delete process.env.CURSOR_API_KEY;
+    delete process.env.CURSOR_API_BASE_URL;
+    process.env.CURSOR_DESKTOP_BRIDGE_URL = 'https://cursor-bridge.example.com';
+    process.env.CURSOR_DESKTOP_BRIDGE_TOKEN = 'bridge-token';
+
+    upsertCursorAgent({
+      id: 'desk_tracked',
+      group_folder: 'main',
+      chat_jid: 'tg:42',
+      status: 'RUNNING',
+      model: null,
+      prompt_text: 'Tracked work',
+      source_repository: null,
+      source_ref: null,
+      source_pr_url: null,
+      target_url: null,
+      target_pr_url: null,
+      target_branch_name: null,
+      auto_create_pr: 0,
+      open_as_cursor_github_app: 0,
+      skip_reviewer_request: 0,
+      summary: null,
+      raw_json: JSON.stringify({ provider: 'desktop' }),
+      created_by: 'tg:user',
+      created_at: '2026-03-29T20:00:00.000Z',
+      updated_at: '2026-03-29T20:00:00.000Z',
+      last_synced_at: null,
+    });
+
+    globalThis.fetch = (async (input) => {
+      expect(String(input)).toBe(
+        'https://cursor-bridge.example.com/v1/sessions?limit=20',
+      );
+      return new Response(
+        JSON.stringify({
+          sessions: [
+            {
+              id: 'desk_tracked',
+              status: 'RUNNING',
+              promptText: 'Tracked work',
+              groupFolder: 'main',
+              chatJid: 'tg:42',
+              provider: 'desktop',
+              createdAt: '2026-03-29T20:00:00.000Z',
+              updatedAt: '2026-03-29T20:01:00.000Z',
+            },
+            {
+              id: 'desk_recoverable',
+              status: 'COMPLETED',
+              promptText: 'Existing bridge session',
+              groupFolder: 'main',
+              chatJid: 'tg:42',
+              provider: 'desktop',
+              createdAt: '2026-03-29T20:02:00.000Z',
+              updatedAt: '2026-03-29T20:03:00.000Z',
+            },
+            {
+              id: 'desk_other_group',
+              status: 'COMPLETED',
+              promptText: 'Other group session',
+              groupFolder: 'ops',
+              chatJid: 'tg:99',
+              provider: 'desktop',
+              createdAt: '2026-03-29T20:04:00.000Z',
+              updatedAt: '2026-03-29T20:05:00.000Z',
+            },
+          ],
+        }),
+        { status: 200 },
+      );
+    }) as typeof fetch;
+
+    const inventory = await listCursorJobInventory({
+      groupFolder: 'main',
+      chatJid: 'tg:42',
+      limit: 20,
+    });
+
+    expect(inventory.backend).toBe('desktop');
+    expect(inventory.tracked).toHaveLength(1);
+    expect(inventory.recoverable).toHaveLength(1);
+    expect(inventory.recoverable[0].id).toBe('desk_recoverable');
   });
 });

@@ -43,6 +43,8 @@ export interface CursorDesktopSession {
   status: string;
   model: string | null;
   promptText: string;
+  groupFolder: string | null;
+  chatJid: string | null;
   sourceRepository: string | null;
   sourceRef: string | null;
   sourcePrUrl: string | null;
@@ -75,6 +77,8 @@ export interface CursorDesktopCreateSessionRequest {
   promptText: string;
   requestedBy?: string;
   model?: string;
+  groupFolder?: string;
+  chatJid?: string;
   cwd?: string;
   sourceRepository?: string;
   sourceRef?: string;
@@ -139,6 +143,8 @@ function mapSession(value: unknown): CursorDesktopSession {
     status: String(row.status || 'UNKNOWN'),
     model: toNullableString(row.model),
     promptText: toNullableString(row.promptText) || '',
+    groupFolder: toNullableString(row.groupFolder),
+    chatJid: toNullableString(row.chatJid),
     sourceRepository: toNullableString(row.sourceRepository),
     sourceRef: toNullableString(row.sourceRef),
     sourcePrUrl: toNullableString(row.sourcePrUrl),
