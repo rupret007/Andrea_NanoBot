@@ -11,9 +11,16 @@ import type {
   CursorDesktopConversationMessage,
   CursorDesktopHealth,
   CursorDesktopSession,
+  CursorDesktopStartTerminalCommandResponse,
+  CursorDesktopTerminalOutputLine,
+  CursorDesktopTerminalStatus,
 } from './cursor-desktop.js';
 
 type SessionStatus = 'RUNNING' | 'COMPLETED' | 'FAILED' | 'STOPPED';
+type TerminalStatus = 'IDLE' | 'RUNNING' | 'FAILED' | 'STOPPED';
+
+const MAX_TERMINAL_OUTPUT_LINES = 400;
+const MAX_TERMINAL_LINE_LENGTH = 4_000;
 
 interface CursorDesktopBridgeRuntimeConfig {
   host: string;
@@ -34,6 +41,11 @@ interface CursorDesktopSessionRecord extends CursorDesktopSession {
   activePid: number | null;
   lastError: string | null;
   conversation: CursorDesktopConversationMessage[];
+  terminal: CursorDesktopTerminalRecord;
+}
+
+interface CursorDesktopTerminalRecord extends CursorDesktopTerminalStatus {
+  output: CursorDesktopTerminalOutputLine[];
 }
 
 interface SpawnedRun {
@@ -55,6 +67,11 @@ interface CursorDesktopBridgeDeps {
     model?: string | null;
     resumeSessionId?: string | null;
     force: boolean;
+  }) => SpawnedRun;
+  createTerminalRun?: (options: {
+    cwd: string;
+    commandText: string;
+    metadataToken: string;
   }) => SpawnedRun;
   now?: () => Date;
   hostname?: () => string;
@@ -100,6 +117,14 @@ function truncateSummary(value: string): string {
   const compact = value.replace(/\s+/g, ' ').trim();
   if (!compact) return '';
   return compact.length > 1_500 ? `${compact.slice(0, 1_500)}...` : compact;
+}
+
+function truncateTerminalLine(value: string): string {
+  const normalized = value.replace(/\0/g, '').replace(/\r/g, '');
+  if (!normalized) return '';
+  return normalized.length > MAX_TERMINAL_LINE_LENGTH
+    ? `${normalized.slice(0, MAX_TERMINAL_LINE_LENGTH)}...`
+    : normalized;
 }
 
 function randomId(prefix: string): string {
@@ -156,6 +181,13 @@ function extractTextFromJsonLine(line: string): string | null {
   return null;
 }
 
+function resolveTerminalShellPath(): string {
+  if (process.platform === 'win32') {
+    return process.env.COMSPEC || 'cmd.exe';
+  }
+  return process.env.SHELL || '/bin/sh';
+}
+
 function createChildRun(options: {
   cliPath: string;
   cwd: string;
@@ -174,6 +206,42 @@ function createChildRun(options: {
   }
 
   const child = spawn(options.cliPath, args, {
+    cwd: options.cwd,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  return {
+    pid: child.pid ?? null,
+    kill: (signal) => child.kill(signal),
+    stdout: child.stdout,
+    stderr: child.stderr,
+    onClose: (handler) => child.on('close', handler),
+    onError: (handler) => child.on('error', handler),
+  };
+}
+
+function createTerminalChildRun(options: {
+  cwd: string;
+  commandText: string;
+  metadataToken: string;
+}): SpawnedRun {
+  const shellPath = resolveTerminalShellPath();
+  let args: string[];
+
+  if (process.platform === 'win32') {
+    const script = `${options.commandText} & for %I in (.) do @echo ${options.metadataToken}%~fI::!errorlevel! & exit /b 0`;
+    args = ['/v:on', '/d', '/s', '/c', script];
+  } else {
+    const script = [
+      options.commandText,
+      '__andrea_exit=$?',
+      `printf '\\n${options.metadataToken}%s::%s\\n' "$PWD" "$__andrea_exit"`,
+      'exit 0',
+    ].join('\n');
+    args = ['-lc', script];
+  }
+
+  const child = spawn(shellPath, args, {
     cwd: options.cwd,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -249,10 +317,117 @@ function cloneConversation(
   return messages.slice(-safeLimit).map((message) => ({ ...message }));
 }
 
+function cloneTerminalOutput(
+  lines: CursorDesktopTerminalOutputLine[],
+  limit?: number,
+): CursorDesktopTerminalOutputLine[] {
+  const safeLimit =
+    limit && Number.isFinite(limit)
+      ? Math.max(1, Math.min(500, Math.floor(limit)))
+      : lines.length;
+  return lines.slice(-safeLimit).map((line) => ({ ...line }));
+}
+
+function createDefaultTerminalState(
+  cwd: string | null,
+): CursorDesktopTerminalRecord {
+  return {
+    available: true,
+    status: 'IDLE',
+    shell: resolveTerminalShellPath(),
+    cwd,
+    lastCommand: null,
+    activeCommandId: null,
+    lastCompletedCommandId: null,
+    lastExitCode: null,
+    lastStartedAt: null,
+    lastFinishedAt: null,
+    activePid: null,
+    outputLineCount: 0,
+    output: [],
+  };
+}
+
+function toNonNegativeInt(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? Math.floor(value)
+    : null;
+}
+
+function restoreTerminalState(
+  value: unknown,
+  fallbackCwd: string | null,
+): CursorDesktopTerminalRecord {
+  const row =
+    value && typeof value === 'object'
+      ? (value as Record<string, unknown>)
+      : null;
+  const base = createDefaultTerminalState(fallbackCwd);
+  const output = Array.isArray(row?.output)
+    ? row.output
+        .map((entry) => {
+          if (!entry || typeof entry !== 'object') return null;
+          const item = entry as Record<string, unknown>;
+          const text = toNullableString(item.text);
+          if (!text) return null;
+          return {
+            commandId: toNullableString(item.commandId),
+            stream: toNullableString(item.stream) || 'stdout',
+            text: truncateTerminalLine(text),
+            createdAt: toNullableString(item.createdAt),
+          } satisfies CursorDesktopTerminalOutputLine;
+        })
+        .filter(
+          (entry): entry is CursorDesktopTerminalOutputLine => entry !== null,
+        )
+        .slice(-MAX_TERMINAL_OUTPUT_LINES)
+    : [];
+
+  return {
+    ...base,
+    status:
+      row?.status === 'RUNNING'
+        ? 'STOPPED'
+        : (toNullableString(row?.status) as TerminalStatus | null) || 'IDLE',
+    shell: toNullableString(row?.shell) || base.shell,
+    cwd: toNullableString(row?.cwd) || fallbackCwd,
+    lastCommand: toNullableString(row?.lastCommand),
+    activeCommandId: null,
+    lastCompletedCommandId: toNullableString(row?.lastCompletedCommandId),
+    lastExitCode: toNonNegativeInt(row?.lastExitCode),
+    lastStartedAt: toNullableString(row?.lastStartedAt),
+    lastFinishedAt: toNullableString(row?.lastFinishedAt),
+    activePid: null,
+    outputLineCount: output.length,
+    output,
+  };
+}
+
+function parseTerminalMetadataLine(
+  line: string,
+  metadataToken: string,
+): { cwd: string | null; exitCode: number | null } | null {
+  if (!line.startsWith(metadataToken)) return null;
+  const payload = line.slice(metadataToken.length);
+  const delimiterIndex = payload.lastIndexOf('::');
+  if (delimiterIndex < 0) return null;
+
+  const cwd = toNullableString(payload.slice(0, delimiterIndex));
+  const exitRaw = payload.slice(delimiterIndex + 2).trim();
+  const parsedExit = Number.parseInt(exitRaw, 10);
+
+  return {
+    cwd,
+    exitCode:
+      Number.isFinite(parsedExit) && parsedExit >= 0 ? parsedExit : null,
+  };
+}
+
 export class CursorDesktopBridge {
   private readonly deps: Required<CursorDesktopBridgeDeps>;
   private readonly sessions = new Map<string, CursorDesktopSessionRecord>();
   private readonly activeRuns = new Map<string, SpawnedRun>();
+  private readonly activeTerminalRuns = new Map<string, SpawnedRun>();
 
   constructor(
     private readonly config: CursorDesktopBridgeRuntimeConfig,
@@ -260,6 +435,7 @@ export class CursorDesktopBridge {
   ) {
     this.deps = {
       createRun: deps.createRun ?? createChildRun,
+      createTerminalRun: deps.createTerminalRun ?? createTerminalChildRun,
       now: deps.now ?? defaultNow,
       hostname: deps.hostname ?? os.hostname,
       readFileSync: deps.readFileSync ?? fs.readFileSync,
@@ -278,6 +454,22 @@ export class CursorDesktopBridge {
       const sessions = Array.isArray(parsed.sessions) ? parsed.sessions : [];
       for (const session of sessions) {
         if (!session?.id) continue;
+        const restoredTerminal = restoreTerminalState(
+          (session as unknown as Record<string, unknown>).terminal,
+          session.cwd || null,
+        );
+        if (restoredTerminal.status === 'STOPPED') {
+          restoredTerminal.output.push({
+            commandId: restoredTerminal.activeCommandId,
+            stream: 'system',
+            text: 'Bridge restarted while a terminal command was active.',
+            createdAt: this.deps.now().toISOString(),
+          });
+          restoredTerminal.output = restoredTerminal.output.slice(
+            -MAX_TERMINAL_OUTPUT_LINES,
+          );
+          restoredTerminal.outputLineCount = restoredTerminal.output.length;
+        }
         this.sessions.set(session.id, {
           ...session,
           provider: 'desktop',
@@ -293,6 +485,7 @@ export class CursorDesktopBridge {
           conversation: Array.isArray(session.conversation)
             ? session.conversation
             : [],
+          terminal: restoredTerminal,
         });
       }
     } catch (err) {
@@ -308,6 +501,11 @@ export class CursorDesktopBridge {
       sessions: [...this.sessions.values()].map((session) => ({
         ...session,
         activePid: null,
+        terminal: {
+          ...session.terminal,
+          activePid: null,
+          activeCommandId: null,
+        },
       })),
     };
     this.deps.mkdirSync(path.dirname(this.config.stateFile), {
@@ -343,6 +541,37 @@ export class CursorDesktopBridge {
     session.lastSyncedAt = session.updatedAt;
     this.saveState();
     return session;
+  }
+
+  private serializeSession(
+    session: CursorDesktopSessionRecord,
+  ): CursorDesktopSession {
+    const {
+      conversation: _conversation,
+      activePid: _activePid,
+      lastError: _lastError,
+      terminal: _terminal,
+      ...rest
+    } = session;
+    return { ...rest };
+  }
+
+  private appendTerminalOutput(
+    terminal: CursorDesktopTerminalRecord,
+    line: Omit<CursorDesktopTerminalOutputLine, 'createdAt'> & {
+      createdAt?: string | null;
+    },
+  ): void {
+    const text = truncateTerminalLine(line.text);
+    if (!text) return;
+    terminal.output.push({
+      commandId: line.commandId ?? null,
+      stream: line.stream,
+      text,
+      createdAt: line.createdAt || this.deps.now().toISOString(),
+    });
+    terminal.output = terminal.output.slice(-MAX_TERMINAL_OUTPUT_LINES);
+    terminal.outputLineCount = terminal.output.length;
   }
 
   private launchRun(
@@ -468,16 +697,7 @@ export class CursorDesktopBridge {
     return [...this.sessions.values()]
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
       .slice(0, safeLimit)
-      .map(
-        ({
-          conversation: _conversation,
-          activePid: _activePid,
-          lastError: _lastError,
-          ...rest
-        }) => ({
-          ...rest,
-        }),
-      );
+      .map((session) => this.serializeSession(session));
   }
 
   createSession(input: CreateSessionInput): CursorDesktopSession {
@@ -521,23 +741,17 @@ export class CursorDesktopBridge {
           createdAt: nowIso,
         },
       ],
+      terminal: createDefaultTerminalState(this.getCwd(input.cwd)),
     };
 
     this.sessions.set(id, session);
     this.saveState();
     this.launchRun(session, promptText, null);
-    return this.getSession(id);
+    return this.serializeSession(session);
   }
 
   getSession(id: string): CursorDesktopSession {
-    const session = this.getSessionOrThrow(id);
-    const {
-      conversation: _conversation,
-      activePid: _activePid,
-      lastError: _lastError,
-      ...rest
-    } = session;
-    return { ...rest };
+    return this.serializeSession(this.getSessionOrThrow(id));
   }
 
   followupSession(id: string, promptTextRaw: string): CursorDesktopSession {
@@ -580,6 +794,213 @@ export class CursorDesktopBridge {
   getConversation(id: string, limit = 20): CursorDesktopConversationMessage[] {
     const session = this.getSessionOrThrow(id);
     return cloneConversation(session.conversation, limit);
+  }
+
+  getTerminalStatus(id: string): CursorDesktopTerminalStatus {
+    const session = this.getSessionOrThrow(id);
+    const { output: _output, ...rest } = session.terminal;
+    return { ...rest };
+  }
+
+  getTerminalOutput(
+    id: string,
+    options: {
+      limit?: number;
+      commandId?: string | null;
+    } = {},
+  ): CursorDesktopTerminalOutputLine[] {
+    const session = this.getSessionOrThrow(id);
+    const filtered = options.commandId
+      ? session.terminal.output.filter(
+          (line) => line.commandId === options.commandId,
+        )
+      : session.terminal.output;
+    return cloneTerminalOutput(filtered, options.limit);
+  }
+
+  startTerminalCommand(
+    id: string,
+    commandTextRaw: string,
+  ): CursorDesktopStartTerminalCommandResponse {
+    const commandText = toNullableString(commandTextRaw);
+    if (!commandText) {
+      throw new Error('Terminal command text is required.');
+    }
+
+    const session = this.getSessionOrThrow(id);
+    if (this.activeTerminalRuns.has(id)) {
+      throw new Error(
+        `Cursor desktop terminal for ${id} is already running a command.`,
+      );
+    }
+
+    const terminal = session.terminal;
+    const commandId = randomId('term');
+    const metadataToken = `__ANDREA_TERM_META_${commandId}__`;
+    const run = this.deps.createTerminalRun({
+      cwd: this.getCwd(terminal.cwd || session.cwd || undefined),
+      commandText,
+      metadataToken,
+    });
+
+    this.activeTerminalRuns.set(id, run);
+    const startedAt = this.deps.now().toISOString();
+    terminal.available = true;
+    terminal.status = 'RUNNING';
+    terminal.lastCommand = commandText;
+    terminal.activeCommandId = commandId;
+    terminal.lastStartedAt = startedAt;
+    terminal.activePid = run.pid ?? null;
+    this.appendTerminalOutput(terminal, {
+      commandId,
+      stream: 'system',
+      text: `$ ${commandText}`,
+      createdAt: startedAt,
+    });
+    session.updatedAt = startedAt;
+    session.lastSyncedAt = startedAt;
+    this.saveState();
+
+    let stdoutBuffer = '';
+    let stderrBuffer = '';
+    let terminalMeta: { cwd: string | null; exitCode: number | null } | null =
+      null;
+    let stoppedByBridge = false;
+
+    const flushBuffered = (buffer: string, stream: 'stdout' | 'stderr') => {
+      const lines = buffer.split(/\r?\n/);
+      for (const line of lines) {
+        const normalized = truncateTerminalLine(line);
+        if (!normalized) continue;
+        const meta = parseTerminalMetadataLine(normalized, metadataToken);
+        if (meta) {
+          terminalMeta = meta;
+          if (meta.cwd) {
+            const resolvedCwd = path.resolve(meta.cwd);
+            terminal.cwd = resolvedCwd;
+            session.cwd = resolvedCwd;
+          }
+          if (meta.exitCode !== null) {
+            terminal.lastExitCode = meta.exitCode;
+          }
+          continue;
+        }
+        this.appendTerminalOutput(terminal, {
+          commandId,
+          stream,
+          text: normalized,
+        });
+      }
+    };
+
+    run.stdout.on('data', (chunk) => {
+      stdoutBuffer += chunk.toString('utf-8');
+      const lines = stdoutBuffer.split(/\r?\n/);
+      stdoutBuffer = lines.pop() || '';
+      flushBuffered(lines.join('\n'), 'stdout');
+      session.updatedAt = this.deps.now().toISOString();
+      session.lastSyncedAt = session.updatedAt;
+      this.saveState();
+    });
+
+    run.stderr.on('data', (chunk) => {
+      stderrBuffer += chunk.toString('utf-8');
+      const lines = stderrBuffer.split(/\r?\n/);
+      stderrBuffer = lines.pop() || '';
+      flushBuffered(lines.join('\n'), 'stderr');
+      session.updatedAt = this.deps.now().toISOString();
+      session.lastSyncedAt = session.updatedAt;
+      this.saveState();
+    });
+
+    run.onError((err) => {
+      this.activeTerminalRuns.delete(id);
+      terminal.status = 'FAILED';
+      terminal.activePid = null;
+      terminal.activeCommandId = null;
+      terminal.lastCompletedCommandId = commandId;
+      terminal.lastFinishedAt = this.deps.now().toISOString();
+      this.appendTerminalOutput(terminal, {
+        commandId,
+        stream: 'system',
+        text: `Terminal command failed to start: ${sanitizeLogString(err.message || 'unknown error')}`,
+        createdAt: terminal.lastFinishedAt,
+      });
+      session.updatedAt = terminal.lastFinishedAt;
+      session.lastSyncedAt = session.updatedAt;
+      this.saveState();
+    });
+
+    run.onClose((code, signal) => {
+      this.activeTerminalRuns.delete(id);
+      if (stdoutBuffer) {
+        flushBuffered(stdoutBuffer, 'stdout');
+        stdoutBuffer = '';
+      }
+      if (stderrBuffer) {
+        flushBuffered(stderrBuffer, 'stderr');
+        stderrBuffer = '';
+      }
+
+      const finishedAt = this.deps.now().toISOString();
+      terminal.activePid = null;
+      terminal.activeCommandId = null;
+      terminal.lastCompletedCommandId = commandId;
+      terminal.lastFinishedAt = finishedAt;
+      const exitCode = terminalMeta?.exitCode ?? code ?? null;
+      terminal.lastExitCode = exitCode;
+
+      if (stoppedByBridge || signal === 'SIGTERM') {
+        terminal.status = 'STOPPED';
+        this.appendTerminalOutput(terminal, {
+          commandId,
+          stream: 'system',
+          text: 'Terminal command stopped.',
+          createdAt: finishedAt,
+        });
+      } else if (exitCode === 0) {
+        terminal.status = 'IDLE';
+        this.appendTerminalOutput(terminal, {
+          commandId,
+          stream: 'system',
+          text: 'Terminal command finished with exit 0.',
+          createdAt: finishedAt,
+        });
+      } else {
+        terminal.status = 'FAILED';
+        this.appendTerminalOutput(terminal, {
+          commandId,
+          stream: 'system',
+          text: `Terminal command finished with exit ${exitCode ?? 'unknown'}.`,
+          createdAt: finishedAt,
+        });
+      }
+
+      session.updatedAt = finishedAt;
+      session.lastSyncedAt = finishedAt;
+      this.saveState();
+    });
+
+    const stop = run.kill;
+    run.kill = (signal) => {
+      stoppedByBridge = true;
+      stop(signal);
+    };
+
+    return {
+      commandId,
+      terminal: this.getTerminalStatus(id),
+    };
+  }
+
+  stopTerminalCommand(id: string): CursorDesktopTerminalStatus {
+    const active = this.activeTerminalRuns.get(id);
+    if (!active) {
+      throw new Error(`Cursor desktop terminal for ${id} is not running.`);
+    }
+
+    active.kill('SIGTERM');
+    return this.getTerminalStatus(id);
   }
 
   async handleRequest(
@@ -665,6 +1086,42 @@ export class CursorDesktopBridge {
         if (method === 'POST' && segments[3] === 'stop') {
           writeJson(res, 200, this.stopSession(id));
           return;
+        }
+
+        if (segments[3] === 'terminal') {
+          if (method === 'GET' && segments.length === 4) {
+            writeJson(res, 200, this.getTerminalStatus(id));
+            return;
+          }
+
+          if (method === 'GET' && segments[4] === 'output') {
+            const limit = Number.parseInt(
+              url.searchParams.get('limit') || '',
+              10,
+            );
+            writeJson(res, 200, {
+              lines: this.getTerminalOutput(id, {
+                limit,
+                commandId: toNullableString(url.searchParams.get('commandId')),
+              }),
+            });
+            return;
+          }
+
+          if (method === 'POST' && segments[4] === 'command') {
+            const body = (await readJsonBody(req)) as Record<string, unknown>;
+            writeJson(
+              res,
+              200,
+              this.startTerminalCommand(id, String(body.commandText || '')),
+            );
+            return;
+          }
+
+          if (method === 'POST' && segments[4] === 'stop') {
+            writeJson(res, 200, this.stopTerminalCommand(id));
+            return;
+          }
         }
       }
 

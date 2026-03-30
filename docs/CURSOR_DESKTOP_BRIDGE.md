@@ -21,6 +21,10 @@ With the desktop bridge enabled, Andrea can use the existing Cursor job controls
 - `/cursor_followup ...`
 - `/cursor_stop ...`
 - `/cursor_conversation ...`
+- `/cursor_terminal <agent_id> <command>`
+- `/cursor_terminal_status <agent_id>`
+- `/cursor_terminal_log <agent_id> [limit]`
+- `/cursor_terminal_stop <agent_id>`
 
 The experience is still asynchronous. This is not a live remote desktop. The goal is to let Andrea queue and manage real Cursor agent work on the machine you already trust and use.
 
@@ -28,8 +32,9 @@ Important truth boundary:
 
 - `/cursor_jobs` can show tracked Andrea jobs plus recoverable bridge sessions that the bridge already knows about
 - `/cursor_sync <id>` can attach one of those recoverable bridge sessions to the current Andrea workspace
+- terminal commands work only for tracked or recoverable bridge sessions that the bridge itself knows about
+- terminal control is line-oriented shell execution on your own machine, not an attach-to-anything remote shell
 - the bridge does **not** attach to arbitrary already-open Cursor GUI tabs, random shell sessions, or a live PTY stream
-- terminal-style remote control is not part of Andrea's current product surface
 
 Important scope rule:
 
@@ -140,6 +145,8 @@ Follow with:
 /cursor_jobs
 /cursor_sync <agent_id>
 /cursor_conversation <agent_id>
+/cursor_terminal <agent_id> git status
+/cursor_terminal_log <agent_id>
 ```
 
 If the bridge already has sessions from earlier Andrea-driven work, `/cursor_jobs` can surface them as recoverable even before they are attached to the current workspace record.
@@ -163,6 +170,9 @@ What is real today:
 - stop a tracked bridge session
 - read the stored session conversation
 - recover bridge sessions that the bridge itself has already persisted
+- run line-oriented shell commands for a tracked bridge session
+- read cached terminal output for those commands
+- stop an active terminal command that the bridge started
 
 What is intentionally not real today:
 
@@ -187,6 +197,13 @@ If `/cursor_jobs` does not show a bridge session you expected:
 2. confirm the bridge state file still exists on the machine running Cursor
 3. run `/cursor_jobs` from Andrea's registered main control chat
 4. if the session appears as recoverable, run `/cursor_sync <agent_id>` to attach it to the current workspace
+
+If `/cursor_terminal ...` fails:
+
+1. confirm the job id belongs to a desktop bridge session, not a Cursor Cloud job
+2. confirm that session is tracked or recoverable in `/cursor_jobs`
+3. run `/cursor_sync <agent_id>` first if it is only listed as recoverable
+4. remember that commands run in bridge-managed shell state, not in an arbitrary already-open terminal window
 
 If Andrea can reach the bridge but your model routing still does not look Cursor-backed:
 

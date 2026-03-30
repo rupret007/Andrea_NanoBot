@@ -37,7 +37,6 @@ import {
 import {
   createTask,
   getAllChats,
-  getCursorAgentById,
   listAllCursorAgents,
   getAllRegisteredGroups,
   getAllSessions,
@@ -119,10 +118,15 @@ import { analyzeAgentError } from './agent-error.js';
 import {
   createCursorAgent,
   followupCursorAgent,
+  getCursorAgentArtifacts,
   getCursorArtifactDownloadLink,
   getCursorAgentConversation,
+  getCursorTerminalOutput,
+  getCursorTerminalStatus,
   listCursorJobInventory,
   listCursorModels,
+  runCursorTerminalCommand,
+  stopCursorTerminal,
   stopCursorAgent,
   syncCursorAgent,
 } from './cursor-jobs.js';
@@ -154,6 +158,10 @@ import {
   CURSOR_MODELS_COMMANDS,
   CURSOR_STOP_COMMANDS,
   CURSOR_SYNC_COMMANDS,
+  CURSOR_TERMINAL_COMMANDS,
+  CURSOR_TERMINAL_LOG_COMMANDS,
+  CURSOR_TERMINAL_STATUS_COMMANDS,
+  CURSOR_TERMINAL_STOP_COMMANDS,
   CURSOR_TEST_COMMANDS,
   getCommandAccessDecision,
   normalizeCommandToken,
@@ -1025,6 +1033,71 @@ async function main(): Promise<void> {
     'Usage: /cursor_create [--model <id>] [--repo <url>] [--ref <git_ref>] [--pr <pr_url>] [--branch <name>] [--auto-pr] [--cursor-github-app] [--skip-reviewer] <prompt>';
   const CURSOR_ARTIFACT_LINK_USAGE =
     'Usage: /cursor_artifact_link <agent_id> <absolute_path>';
+  const CURSOR_TERMINAL_USAGE = 'Usage: /cursor_terminal <agent_id> <command>';
+  const CURSOR_TERMINAL_STATUS_USAGE =
+    'Usage: /cursor_terminal_status <agent_id>';
+  const CURSOR_TERMINAL_LOG_USAGE =
+    'Usage: /cursor_terminal_log <agent_id> [limit]';
+  const CURSOR_TERMINAL_STOP_USAGE = 'Usage: /cursor_terminal_stop <agent_id>';
+  const MAX_CURSOR_TERMINAL_REPLY_CHARS = 3000;
+  const MAX_CURSOR_TERMINAL_LINES = 40;
+
+  function formatCursorTerminalStatusMessage(
+    agentId: string,
+    terminal: {
+      status: string;
+      cwd: string | null;
+      shell: string | null;
+      lastCommand: string | null;
+      lastExitCode: number | null;
+      activePid: number | null;
+      outputLineCount: number;
+      lastStartedAt: string | null;
+      lastFinishedAt: string | null;
+    },
+  ): string {
+    const lines = [
+      `Cursor terminal for ${agentId}:`,
+      `- Status: ${terminal.status}`,
+      `- CWD: ${terminal.cwd || 'unknown'}`,
+      `- Shell: ${terminal.shell || 'unknown'}`,
+      `- Last exit: ${terminal.lastExitCode ?? 'unknown'}`,
+      `- Active PID: ${terminal.activePid ?? 'none'}`,
+      `- Output lines cached: ${terminal.outputLineCount}`,
+    ];
+
+    if (terminal.lastCommand) {
+      lines.push(`- Last command: ${terminal.lastCommand}`);
+    }
+    if (terminal.lastStartedAt) {
+      lines.push(`- Last started: ${terminal.lastStartedAt}`);
+    }
+    if (terminal.lastFinishedAt) {
+      lines.push(`- Last finished: ${terminal.lastFinishedAt}`);
+    }
+
+    return lines.join('\n');
+  }
+
+  function formatCursorTerminalOutputSection(
+    output: Array<{
+      stream: string;
+      text: string;
+    }>,
+  ): string {
+    if (output.length === 0) {
+      return 'No terminal output captured yet.';
+    }
+
+    const clippedLines = output
+      .slice(-MAX_CURSOR_TERMINAL_LINES)
+      .map((line) => `[${line.stream}] ${line.text}`);
+    let joined = clippedLines.join('\n');
+    if (joined.length > MAX_CURSOR_TERMINAL_REPLY_CHARS) {
+      joined = `...${joined.slice(-(MAX_CURSOR_TERMINAL_REPLY_CHARS - 3))}`;
+    }
+    return joined;
+  }
 
   async function handleRemoteControl(
     action: 'start' | 'stop',
@@ -1617,38 +1690,39 @@ async function main(): Promise<void> {
       );
       return;
     }
+    try {
+      const artifacts = await getCursorAgentArtifacts({
+        groupFolder: group.folder,
+        chatJid,
+        agentId: normalizedAgentId,
+      });
 
-    const stored = getCursorAgentById(normalizedAgentId);
-    if (
-      !stored ||
-      stored.group_folder !== group.folder ||
-      stored.chat_jid !== chatJid
-    ) {
+      if (artifacts.length === 0) {
+        await channel.sendMessage(
+          chatJid,
+          `Cursor agent ${normalizedAgentId} has no tracked artifacts yet.`,
+        );
+        return;
+      }
+
+      const lines = artifacts.map(
+        (artifact, index) =>
+          `${index + 1}. ${artifact.absolutePath} (${artifact.sizeBytes ?? 'unknown'} bytes)${artifact.updatedAt ? ` updated=${artifact.updatedAt}` : ''}`,
+      );
+
       await channel.sendMessage(
         chatJid,
-        `No tracked Cursor agent with id "${normalizedAgentId}" exists for this chat.`,
+        `Cursor artifacts for ${normalizedAgentId}:\n\n${lines.join('\n')}`,
       );
-      return;
-    }
-
-    const artifacts = listCursorAgentArtifacts(normalizedAgentId);
-    if (artifacts.length === 0) {
+    } catch (err) {
       await channel.sendMessage(
         chatJid,
-        `Cursor agent ${normalizedAgentId} has no tracked artifacts yet. Run /cursor_sync ${normalizedAgentId} first.`,
+        formatCursorOperationFailure(
+          `Cursor artifacts lookup failed for ${normalizedAgentId}`,
+          err,
+        ),
       );
-      return;
     }
-
-    const lines = artifacts.map(
-      (artifact, index) =>
-        `${index + 1}. ${artifact.absolute_path} (${artifact.size_bytes ?? 'unknown'} bytes)${artifact.updated_at ? ` updated=${artifact.updated_at}` : ''}`,
-    );
-
-    await channel.sendMessage(
-      chatJid,
-      `Cursor artifacts for ${normalizedAgentId}:\n\n${lines.join('\n')}`,
-    );
   }
 
   async function handleCursorArtifactLink(
@@ -1685,6 +1759,173 @@ async function main(): Promise<void> {
         chatJid,
         formatCursorOperationFailure(
           `Cursor artifact link failed for ${agentId}`,
+          err,
+        ),
+      );
+    }
+  }
+
+  async function handleCursorTerminal(
+    chatJid: string,
+    agentId: string,
+    commandText: string,
+  ): Promise<void> {
+    const channel = findChannel(channels, chatJid);
+    if (!channel) return;
+
+    const group = registeredGroups[chatJid];
+    if (!group) {
+      await channel.sendMessage(
+        chatJid,
+        'This chat is not registered yet. Run /registermain in a DM first.',
+      );
+      return;
+    }
+
+    try {
+      const started = await runCursorTerminalCommand({
+        groupFolder: group.folder,
+        chatJid,
+        agentId,
+        commandText,
+      });
+      const lines = [
+        `Started Cursor terminal command ${started.commandId}.`,
+        formatCursorTerminalStatusMessage(agentId, started.terminal),
+        'Recent output:',
+        formatCursorTerminalOutputSection(started.output),
+        'Use /cursor_terminal_status or /cursor_terminal_log for follow-up.',
+      ];
+      await channel.sendMessage(chatJid, lines.join('\n\n'));
+    } catch (err) {
+      await channel.sendMessage(
+        chatJid,
+        formatCursorOperationFailure(
+          `Cursor terminal command failed for ${agentId}`,
+          err,
+        ),
+      );
+    }
+  }
+
+  async function handleCursorTerminalStatus(
+    chatJid: string,
+    agentId: string,
+  ): Promise<void> {
+    const channel = findChannel(channels, chatJid);
+    if (!channel) return;
+
+    const group = registeredGroups[chatJid];
+    if (!group) {
+      await channel.sendMessage(
+        chatJid,
+        'This chat is not registered yet. Run /registermain in a DM first.',
+      );
+      return;
+    }
+
+    try {
+      const terminal = await getCursorTerminalStatus({
+        groupFolder: group.folder,
+        chatJid,
+        agentId,
+      });
+      await channel.sendMessage(
+        chatJid,
+        formatCursorTerminalStatusMessage(agentId, terminal),
+      );
+    } catch (err) {
+      await channel.sendMessage(
+        chatJid,
+        formatCursorOperationFailure(
+          `Cursor terminal status failed for ${agentId}`,
+          err,
+        ),
+      );
+    }
+  }
+
+  async function handleCursorTerminalLog(
+    chatJid: string,
+    agentId: string,
+    limit: number,
+  ): Promise<void> {
+    const channel = findChannel(channels, chatJid);
+    if (!channel) return;
+
+    const group = registeredGroups[chatJid];
+    if (!group) {
+      await channel.sendMessage(
+        chatJid,
+        'This chat is not registered yet. Run /registermain in a DM first.',
+      );
+      return;
+    }
+
+    try {
+      const [terminal, output] = await Promise.all([
+        getCursorTerminalStatus({
+          groupFolder: group.folder,
+          chatJid,
+          agentId,
+        }),
+        getCursorTerminalOutput({
+          groupFolder: group.folder,
+          chatJid,
+          agentId,
+          limit,
+        }),
+      ]);
+      await channel.sendMessage(
+        chatJid,
+        [
+          formatCursorTerminalStatusMessage(agentId, terminal),
+          'Recent output:',
+          formatCursorTerminalOutputSection(output),
+        ].join('\n\n'),
+      );
+    } catch (err) {
+      await channel.sendMessage(
+        chatJid,
+        formatCursorOperationFailure(
+          `Cursor terminal log failed for ${agentId}`,
+          err,
+        ),
+      );
+    }
+  }
+
+  async function handleCursorTerminalStop(
+    chatJid: string,
+    agentId: string,
+  ): Promise<void> {
+    const channel = findChannel(channels, chatJid);
+    if (!channel) return;
+
+    const group = registeredGroups[chatJid];
+    if (!group) {
+      await channel.sendMessage(
+        chatJid,
+        'This chat is not registered yet. Run /registermain in a DM first.',
+      );
+      return;
+    }
+
+    try {
+      const terminal = await stopCursorTerminal({
+        groupFolder: group.folder,
+        chatJid,
+        agentId,
+      });
+      await channel.sendMessage(
+        chatJid,
+        `Stopped Cursor terminal command for ${agentId}.\n\n${formatCursorTerminalStatusMessage(agentId, terminal)}`,
+      );
+    } catch (err) {
+      await channel.sendMessage(
+        chatJid,
+        formatCursorOperationFailure(
+          `Cursor terminal stop failed for ${agentId}`,
           err,
         ),
       );
@@ -2015,6 +2256,104 @@ async function main(): Promise<void> {
 
         handleCursorArtifactLink(chatJid, agentId, absolutePath).catch((err) =>
           logger.error({ err, chatJid }, 'Cursor artifact link command error'),
+        );
+        return;
+      }
+
+      if (CURSOR_TERMINAL_COMMANDS.has(commandToken)) {
+        const terminalMatch = rawTrimmed.match(/^\/\S+\s+(\S+)\s+([\s\S]+)$/);
+        const agentId = terminalMatch?.[1];
+        const commandText = terminalMatch?.[2]?.trim() || '';
+        if (!agentId || !commandText) {
+          const channel = findChannel(channels, chatJid);
+          channel
+            ?.sendMessage(chatJid, CURSOR_TERMINAL_USAGE)
+            .catch((err) =>
+              logger.error(
+                { err, chatJid },
+                'Cursor terminal usage send failed',
+              ),
+            );
+          return;
+        }
+
+        handleCursorTerminal(chatJid, agentId, commandText).catch((err) =>
+          logger.error({ err, chatJid }, 'Cursor terminal command error'),
+        );
+        return;
+      }
+
+      if (CURSOR_TERMINAL_STATUS_COMMANDS.has(commandToken)) {
+        const parts = tokenizeCommandArguments(rawTrimmed);
+        const agentId = parts[1];
+        if (!agentId) {
+          const channel = findChannel(channels, chatJid);
+          channel
+            ?.sendMessage(chatJid, CURSOR_TERMINAL_STATUS_USAGE)
+            .catch((err) =>
+              logger.error(
+                { err, chatJid },
+                'Cursor terminal status usage send failed',
+              ),
+            );
+          return;
+        }
+
+        handleCursorTerminalStatus(chatJid, agentId).catch((err) =>
+          logger.error(
+            { err, chatJid },
+            'Cursor terminal status command error',
+          ),
+        );
+        return;
+      }
+
+      if (CURSOR_TERMINAL_LOG_COMMANDS.has(commandToken)) {
+        const parts = tokenizeCommandArguments(rawTrimmed);
+        const agentId = parts[1];
+        if (!agentId) {
+          const channel = findChannel(channels, chatJid);
+          channel
+            ?.sendMessage(chatJid, CURSOR_TERMINAL_LOG_USAGE)
+            .catch((err) =>
+              logger.error(
+                { err, chatJid },
+                'Cursor terminal log usage send failed',
+              ),
+            );
+          return;
+        }
+
+        const parsedLimit = Number.parseInt(parts[2] || '', 10);
+        const limit =
+          Number.isFinite(parsedLimit) && parsedLimit > 0
+            ? Math.min(200, parsedLimit)
+            : 40;
+
+        handleCursorTerminalLog(chatJid, agentId, limit).catch((err) =>
+          logger.error({ err, chatJid }, 'Cursor terminal log command error'),
+        );
+        return;
+      }
+
+      if (CURSOR_TERMINAL_STOP_COMMANDS.has(commandToken)) {
+        const parts = tokenizeCommandArguments(rawTrimmed);
+        const agentId = parts[1];
+        if (!agentId) {
+          const channel = findChannel(channels, chatJid);
+          channel
+            ?.sendMessage(chatJid, CURSOR_TERMINAL_STOP_USAGE)
+            .catch((err) =>
+              logger.error(
+                { err, chatJid },
+                'Cursor terminal stop usage send failed',
+              ),
+            );
+          return;
+        }
+
+        handleCursorTerminalStop(chatJid, agentId).catch((err) =>
+          logger.error({ err, chatJid }, 'Cursor terminal stop command error'),
         );
         return;
       }

@@ -98,6 +98,10 @@ Cursor:
 - `/cursor_test`
 - `/cursor_models`
 - `/cursor_jobs`
+- `/cursor_terminal <agent_id> <command>`
+- `/cursor_terminal_status <agent_id>`
+- `/cursor_terminal_log <agent_id> [limit]`
+- `/cursor_terminal_stop <agent_id>`
 - [CURSOR_API_KEYS.md](CURSOR_API_KEYS.md) when you need a real `CURSOR_API_KEY` from Cursor Cloud
 - [CURSOR_DESKTOP_BRIDGE.md](CURSOR_DESKTOP_BRIDGE.md) when Andrea should drive your normal Cursor machine instead of only cloud jobs
 - if Cursor Cloud auth behaves differently than expected, set `CURSOR_API_AUTH_MODE=auto|bearer|basic`; default `auto` tries Bearer first and falls back to Basic
@@ -114,7 +118,8 @@ Useful operator truth:
 
 - `/cursor_jobs` now shows both tracked workspace jobs and recoverable backend jobs when the configured backend can list them
 - `/cursor_sync <agent_id>` can attach one of those recoverable jobs to the current workspace
-- Cursor desktop bridge is still queued job control only. It is not a live terminal, PTY, or remote desktop surface.
+- Cursor desktop bridge can now run line-oriented shell commands for tracked bridge sessions through `/cursor_terminal ...`
+- terminal control stays operator-only and tied to bridge-known sessions; it is not a live PTY, arbitrary shell attach, or remote desktop surface
 
 Alexa:
 

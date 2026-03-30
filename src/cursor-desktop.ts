@@ -38,6 +38,37 @@ export interface CursorDesktopConversationMessage {
   createdAt: string | null;
 }
 
+export interface CursorDesktopTerminalStatus {
+  available: boolean;
+  status: string;
+  shell: string | null;
+  cwd: string | null;
+  lastCommand: string | null;
+  activeCommandId: string | null;
+  lastCompletedCommandId: string | null;
+  lastExitCode: number | null;
+  lastStartedAt: string | null;
+  lastFinishedAt: string | null;
+  activePid: number | null;
+  outputLineCount: number;
+}
+
+export interface CursorDesktopTerminalOutputLine {
+  commandId: string | null;
+  stream: string;
+  text: string;
+  createdAt: string | null;
+}
+
+export interface CursorDesktopTerminalCommandRequest {
+  commandText: string;
+}
+
+export interface CursorDesktopStartTerminalCommandResponse {
+  commandId: string;
+  terminal: CursorDesktopTerminalStatus;
+}
+
 export interface CursorDesktopSession {
   id: string;
   status: string;
@@ -184,6 +215,43 @@ function mapHealth(value: unknown): CursorDesktopHealth {
     activeRuns,
     trackedSessions,
     defaultCwd: toNullableString(row.defaultCwd),
+  };
+}
+
+function toNonNegativeInt(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    return null;
+  }
+  return Math.floor(value);
+}
+
+function mapTerminalStatus(value: unknown): CursorDesktopTerminalStatus {
+  const row = asRecord(value) || {};
+  return {
+    available: row.available !== false,
+    status: String(row.status || 'IDLE'),
+    shell: toNullableString(row.shell),
+    cwd: toNullableString(row.cwd),
+    lastCommand: toNullableString(row.lastCommand),
+    activeCommandId: toNullableString(row.activeCommandId),
+    lastCompletedCommandId: toNullableString(row.lastCompletedCommandId),
+    lastExitCode: toNonNegativeInt(row.lastExitCode),
+    lastStartedAt: toNullableString(row.lastStartedAt),
+    lastFinishedAt: toNullableString(row.lastFinishedAt),
+    activePid: toNonNegativeInt(row.activePid),
+    outputLineCount: toNonNegativeInt(row.outputLineCount) || 0,
+  };
+}
+
+function mapTerminalOutputLine(
+  value: unknown,
+): CursorDesktopTerminalOutputLine {
+  const row = asRecord(value) || {};
+  return {
+    commandId: toNullableString(row.commandId),
+    stream: String(row.stream || 'stdout'),
+    text: toNullableString(row.text) || '',
+    createdAt: toNullableString(row.createdAt),
   };
 }
 
@@ -432,6 +500,63 @@ export class CursorDesktopClient {
         createdAt: toNullableString(record.createdAt),
       };
     });
+  }
+
+  async getTerminalStatus(id: string): Promise<CursorDesktopTerminalStatus> {
+    const payload = await this.request(
+      'GET',
+      `/v1/sessions/${encodeURIComponent(id)}/terminal`,
+    );
+    return mapTerminalStatus(payload);
+  }
+
+  async listTerminalOutput(
+    id: string,
+    options: {
+      limit?: number;
+      commandId?: string | null;
+    } = {},
+  ): Promise<CursorDesktopTerminalOutputLine[]> {
+    const safeLimit =
+      options.limit && Number.isFinite(options.limit)
+        ? Math.max(1, Math.min(500, Math.floor(options.limit)))
+        : 50;
+    const query = new URLSearchParams({ limit: String(safeLimit) });
+    if (options.commandId) {
+      query.set('commandId', options.commandId);
+    }
+    const payload = await this.request(
+      'GET',
+      `/v1/sessions/${encodeURIComponent(id)}/terminal/output?${query.toString()}`,
+    );
+    const row = asRecord(payload) || {};
+    const lines = Array.isArray(row.lines) ? row.lines : [];
+    return lines.map(mapTerminalOutputLine);
+  }
+
+  async startTerminalCommand(
+    id: string,
+    request: CursorDesktopTerminalCommandRequest,
+  ): Promise<CursorDesktopStartTerminalCommandResponse> {
+    const payload = await this.request(
+      'POST',
+      `/v1/sessions/${encodeURIComponent(id)}/terminal/command`,
+      request,
+    );
+    const row = asRecord(payload) || {};
+    return {
+      commandId: String(row.commandId || ''),
+      terminal: mapTerminalStatus(row.terminal),
+    };
+  }
+
+  async stopTerminalCommand(id: string): Promise<CursorDesktopTerminalStatus> {
+    const payload = await this.request(
+      'POST',
+      `/v1/sessions/${encodeURIComponent(id)}/terminal/stop`,
+      {},
+    );
+    return mapTerminalStatus(payload);
   }
 
   private async request(

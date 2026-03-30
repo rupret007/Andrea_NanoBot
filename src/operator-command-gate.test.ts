@@ -89,4 +89,14 @@ describe('operator command gate', () => {
     expect(decision.allowed).toBe(false);
     expect(decision.reason).toBe('main_control_only');
   });
+
+  it('treats terminal control commands as main-control-only', () => {
+    const decision = getCommandAccessDecision(
+      '/cursor_terminal@andrea_nanobot',
+      undefined,
+    );
+
+    expect(decision.allowed).toBe(false);
+    expect(decision.reason).toBe('main_control_only');
+  });
 });

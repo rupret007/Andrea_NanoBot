@@ -242,6 +242,154 @@ describe('CursorDesktopClient', () => {
     expect(sessions[0].chatJid).toBe('tg:42');
   });
 
+  it('starts terminal commands and reads terminal status/output', async () => {
+    const calls: string[] = [];
+
+    const client = new CursorDesktopClient(
+      {
+        baseUrl: 'https://cursor-bridge.example.com',
+        token: 'bridge-token',
+        timeoutMs: 5000,
+        label: null,
+      },
+      {
+        fetchImpl: (async (input: unknown, init?: RequestInit) => {
+          calls.push(`${init?.method || 'GET'} ${String(input)}`);
+
+          if (
+            String(input) ===
+              'https://cursor-bridge.example.com/v1/sessions/desk_123/terminal/command' &&
+            init?.method === 'POST'
+          ) {
+            return new Response(
+              JSON.stringify({
+                commandId: 'term_123',
+                terminal: {
+                  available: true,
+                  status: 'RUNNING',
+                  shell: '/bin/zsh',
+                  cwd: '/Users/jeff/src/repo',
+                  lastCommand: 'git status',
+                  activeCommandId: 'term_123',
+                  lastCompletedCommandId: null,
+                  lastExitCode: null,
+                  lastStartedAt: '2026-03-29T20:02:00.000Z',
+                  lastFinishedAt: null,
+                  activePid: 4444,
+                  outputLineCount: 1,
+                },
+              }),
+              { status: 200 },
+            );
+          }
+
+          if (
+            String(input) ===
+              'https://cursor-bridge.example.com/v1/sessions/desk_123/terminal' &&
+            init?.method === 'GET'
+          ) {
+            return new Response(
+              JSON.stringify({
+                available: true,
+                status: 'IDLE',
+                shell: '/bin/zsh',
+                cwd: '/Users/jeff/src/repo',
+                lastCommand: 'git status',
+                activeCommandId: null,
+                lastCompletedCommandId: 'term_123',
+                lastExitCode: 0,
+                lastStartedAt: '2026-03-29T20:02:00.000Z',
+                lastFinishedAt: '2026-03-29T20:02:01.000Z',
+                activePid: null,
+                outputLineCount: 3,
+              }),
+              { status: 200 },
+            );
+          }
+
+          if (
+            String(input) ===
+              'https://cursor-bridge.example.com/v1/sessions/desk_123/terminal/output?limit=25&commandId=term_123' &&
+            init?.method === 'GET'
+          ) {
+            return new Response(
+              JSON.stringify({
+                lines: [
+                  {
+                    commandId: 'term_123',
+                    stream: 'system',
+                    text: '$ git status',
+                    createdAt: '2026-03-29T20:02:00.000Z',
+                  },
+                  {
+                    commandId: 'term_123',
+                    stream: 'stdout',
+                    text: 'On branch main',
+                    createdAt: '2026-03-29T20:02:01.000Z',
+                  },
+                ],
+              }),
+              { status: 200 },
+            );
+          }
+
+          if (
+            String(input) ===
+              'https://cursor-bridge.example.com/v1/sessions/desk_123/terminal/stop' &&
+            init?.method === 'POST'
+          ) {
+            return new Response(
+              JSON.stringify({
+                available: true,
+                status: 'STOPPED',
+                shell: '/bin/zsh',
+                cwd: '/Users/jeff/src/repo',
+                lastCommand: 'npm test',
+                activeCommandId: null,
+                lastCompletedCommandId: 'term_456',
+                lastExitCode: null,
+                lastStartedAt: '2026-03-29T20:03:00.000Z',
+                lastFinishedAt: '2026-03-29T20:03:05.000Z',
+                activePid: null,
+                outputLineCount: 5,
+              }),
+              { status: 200 },
+            );
+          }
+
+          throw new Error(`unexpected request: ${String(input)}`);
+        }) as unknown as typeof fetch,
+      },
+    );
+
+    const started = await client.startTerminalCommand('desk_123', {
+      commandText: 'git status',
+    });
+    expect(started.commandId).toBe('term_123');
+    expect(started.terminal.status).toBe('RUNNING');
+
+    const terminal = await client.getTerminalStatus('desk_123');
+    expect(terminal.status).toBe('IDLE');
+    expect(terminal.lastExitCode).toBe(0);
+
+    const output = await client.listTerminalOutput('desk_123', {
+      limit: 25,
+      commandId: 'term_123',
+    });
+    expect(output).toHaveLength(2);
+    expect(output[1].text).toContain('On branch main');
+
+    const stopped = await client.stopTerminalCommand('desk_123');
+    expect(stopped.status).toBe('STOPPED');
+
+    expect(calls).toEqual([
+      'POST https://cursor-bridge.example.com/v1/sessions/desk_123/terminal/command',
+      'GET https://cursor-bridge.example.com/v1/sessions/desk_123/terminal',
+      'GET https://cursor-bridge.example.com/v1/sessions/desk_123/terminal/output?limit=25&commandId=term_123',
+      'POST https://cursor-bridge.example.com/v1/sessions/desk_123/terminal/stop',
+    ]);
+  });
+
   it('surfaces plain-text bridge errors without a JSON parse failure', async () => {
     const client = new CursorDesktopClient(
       {

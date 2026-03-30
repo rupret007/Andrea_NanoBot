@@ -178,6 +178,8 @@ Important notes:
 
 - the bridge runs on the machine that has your normal Cursor setup
 - it uses the local `cursor-agent` CLI there instead of the hosted Cursor API
+- after a bridge session is tracked or recovered, operators can also run line-oriented shell commands on that machine with `/cursor_terminal ...`
+- those terminal commands are operator-only and limited to bridge-managed session state
 - if your main model runtime points at a remote 9router endpoint, set:
   - `CURSOR_GATEWAY_HINT=9router`
 - see [CURSOR_DESKTOP_BRIDGE.md](CURSOR_DESKTOP_BRIDGE.md) for the full bridge setup
@@ -340,13 +342,17 @@ Typical commands:
   - `/cursor_conversation <agent_id> [limit]` (main control chat only; show recent Cursor job conversation)
   - `/cursor_artifacts <agent_id>` (main control chat only; list tracked Cursor job artifacts)
   - `/cursor_artifact_link <agent_id> <absolute_path>` (main control chat only; generate a temporary artifact download link)
+  - `/cursor_terminal <agent_id> <command>` (main control chat only; run a line-oriented shell command for a desktop bridge session)
+  - `/cursor_terminal_status <agent_id>` (main control chat only; inspect the bridge-managed terminal state)
+  - `/cursor_terminal_log <agent_id> [limit]` (main control chat only; read cached terminal output)
+  - `/cursor_terminal_stop <agent_id>` (main control chat only; stop the active bridge-managed terminal command)
 
 Important scope rule:
 
 - `/cursor_status` is safe to keep visible in the narrower public product surface
 - the deeper Cursor, Amazon, and Alexa slash commands are operator-facing controls and should be run from Andrea's registered main control chat only
 - for Cursor specifically, those deeper job commands are only operational when `/cursor_status` shows a real job backend instead of `Job backend: not configured`
-- the desktop bridge gives Andrea queued job control on your normal machine, not a live terminal or remote desktop
+- the desktop bridge gives Andrea queued job control plus line-oriented shell commands on your normal machine, but not a live PTY or remote desktop
 - marketplace skill discovery and enablement still exist in the operator/runtime layer, but they are not part of the default Telegram command surface
 
 ## 8) OpenClaw Marketplace Behavior And Security

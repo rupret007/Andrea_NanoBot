@@ -90,11 +90,11 @@ Many entries here are optional operator-enabled skills or integrations, and they
 
 ## Cursor Operator Surfaces
 
-| Surface               | What it does                                                               | Notes                                                                 |
-| --------------------- | -------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| Cursor Cloud jobs     | Create, sync, follow up, stop, inspect conversation, and fetch artifacts   | Operator-only; requires `CURSOR_API_KEY`                              |
-| Cursor desktop bridge | Queue jobs on your normal Cursor machine and recover bridge-known sessions | Operator-only; requires bridge setup; no live terminal or PTY control |
-| `/cursor_status`      | Show readiness for Cloud, desktop bridge, and runtime-route wiring         | Safe status surface; public-safe                                      |
+| Surface               | What it does                                                                                                  | Notes                                                                                     |
+| --------------------- | ------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Cursor Cloud jobs     | Create, sync, follow up, stop, inspect conversation, and fetch artifacts                                      | Operator-only; requires `CURSOR_API_KEY`                                                  |
+| Cursor desktop bridge | Queue jobs on your normal Cursor machine, recover bridge-known sessions, and run line-oriented shell commands | Operator-only; requires bridge setup; no live PTY, GUI control, or arbitrary shell attach |
+| `/cursor_status`      | Show readiness for Cloud, desktop bridge, and runtime-route wiring                                            | Safe status surface; public-safe                                                          |
 
 ## Marketplace Tool Surface
 

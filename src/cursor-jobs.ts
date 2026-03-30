@@ -22,6 +22,8 @@ import {
   CursorDesktopClient,
   CursorDesktopConversationMessage,
   CursorDesktopSession,
+  CursorDesktopTerminalOutputLine,
+  CursorDesktopTerminalStatus,
   resolveCursorDesktopConfig,
 } from './cursor-desktop.js';
 import { normalizeCursorAgentId } from './cursor-agent-id.js';
@@ -143,12 +145,6 @@ function isCursorLookupNotFound(
 
   const message = normalizeCursorLookupErrorMessage(err);
   return message.includes('not found');
-}
-
-function buildAttachFirstError(agentId: string): Error {
-  return new Error(
-    `Cursor agent ${agentId} is not tracked in this workspace yet. Run /cursor_sync ${agentId} first to attach an existing Cloud or desktop-bridge job.`,
-  );
 }
 
 function mapApiAgentToDbRecord(
@@ -583,6 +579,53 @@ async function recoverUntrackedCursorAgent(
   );
 }
 
+interface EnsureTrackedCursorAgentResult {
+  record: CursorDbAgentRecord;
+  recovered: boolean;
+}
+
+async function ensureTrackedCursorAgent(
+  params: {
+    groupFolder: string;
+    chatJid: string;
+  },
+  agentId: string,
+): Promise<EnsureTrackedCursorAgentResult> {
+  const existing = getCursorAgentById(agentId);
+  if (existing) {
+    if (existing.group_folder !== params.groupFolder) {
+      throw new Error('Cursor agent belongs to another group');
+    }
+    return {
+      record: existing,
+      recovered: false,
+    };
+  }
+
+  await recoverUntrackedCursorAgent(
+    {
+      groupFolder: params.groupFolder,
+      chatJid: params.chatJid,
+      agentId,
+    },
+    agentId,
+  );
+
+  const recovered = getCursorAgentById(agentId);
+  if (!recovered) {
+    throw new Error(
+      `Cursor agent ${agentId} could not be attached to this workspace.`,
+    );
+  }
+  if (recovered.group_folder !== params.groupFolder) {
+    throw new Error('Cursor agent belongs to another group');
+  }
+  return {
+    record: recovered,
+    recovered: true,
+  };
+}
+
 export interface SyncCursorAgentParams {
   groupFolder: string;
   chatJid: string;
@@ -670,13 +713,13 @@ export async function followupCursorAgent(
 ): Promise<CursorAgentView> {
   assertValidGroupFolder(params.groupFolder);
   const agentId = normalizeCursorAgentId(params.agentId);
-  const existing = getCursorAgentById(agentId);
-  if (!existing) {
-    throw buildAttachFirstError(agentId);
-  }
-  if (existing.group_folder !== params.groupFolder) {
-    throw new Error('Cursor agent belongs to another group');
-  }
+  const { record: existing } = await ensureTrackedCursorAgent(
+    {
+      groupFolder: params.groupFolder,
+      chatJid: params.chatJid,
+    },
+    agentId,
+  );
 
   if (recordUsesDesktop(existing)) {
     const client = resolveCursorDesktopClient();
@@ -719,13 +762,13 @@ export async function stopCursorAgent(
 ): Promise<CursorAgentView> {
   assertValidGroupFolder(params.groupFolder);
   const agentId = normalizeCursorAgentId(params.agentId);
-  const existing = getCursorAgentById(agentId);
-  if (!existing) {
-    throw buildAttachFirstError(agentId);
-  }
-  if (existing.group_folder !== params.groupFolder) {
-    throw new Error('Cursor agent belongs to another group');
-  }
+  const { record: existing } = await ensureTrackedCursorAgent(
+    {
+      groupFolder: params.groupFolder,
+      chatJid: params.chatJid,
+    },
+    agentId,
+  );
 
   if (recordUsesDesktop(existing)) {
     const client = resolveCursorDesktopClient();
@@ -871,6 +914,12 @@ export interface GetCursorArtifactDownloadLinkParams {
   absolutePath: string;
 }
 
+export interface GetCursorAgentArtifactsParams {
+  groupFolder: string;
+  chatJid: string;
+  agentId: string;
+}
+
 function normalizeArtifactAbsolutePath(raw: string): string {
   const trimmed = raw.trim();
   if (!trimmed) {
@@ -905,10 +954,13 @@ export async function getCursorArtifactDownloadLink(
   assertValidGroupFolder(params.groupFolder);
   const agentId = normalizeCursorAgentId(params.agentId);
   const absolutePath = normalizeArtifactAbsolutePath(params.absolutePath);
-  const existing = getCursorAgentById(agentId);
-  if (!existing) {
-    throw buildAttachFirstError(agentId);
-  }
+  const { record: existing } = await ensureTrackedCursorAgent(
+    {
+      groupFolder: params.groupFolder,
+      chatJid: params.chatJid,
+    },
+    agentId,
+  );
   if (
     existing.group_folder !== params.groupFolder ||
     existing.chat_jid !== params.chatJid
@@ -922,9 +974,19 @@ export async function getCursorArtifactDownloadLink(
   }
 
   const artifacts = listCursorAgentArtifacts(agentId);
-  const tracked = artifacts.some(
+  let tracked = artifacts.some(
     (artifact) => artifact.absolute_path === absolutePath,
   );
+  if (!tracked) {
+    const synced = await syncCursorAgent({
+      groupFolder: params.groupFolder,
+      chatJid: params.chatJid,
+      agentId,
+    });
+    tracked = synced.artifacts.some(
+      (artifact) => artifact.absolutePath === absolutePath,
+    );
+  }
   if (!tracked) {
     throw new Error(
       `Artifact path "${absolutePath}" is not tracked for Cursor agent ${agentId}. Run /cursor_sync ${agentId} first.`,
@@ -964,10 +1026,13 @@ export async function getCursorAgentConversation(
 ): Promise<CursorConversationMessageView[]> {
   assertValidGroupFolder(params.groupFolder);
   const agentId = normalizeCursorAgentId(params.agentId);
-  const existing = getCursorAgentById(agentId);
-  if (!existing) {
-    throw buildAttachFirstError(agentId);
-  }
+  const { record: existing } = await ensureTrackedCursorAgent(
+    {
+      groupFolder: params.groupFolder,
+      chatJid: params.chatJid,
+    },
+    agentId,
+  );
   if (
     existing.group_folder !== params.groupFolder ||
     existing.chat_jid !== params.chatJid
@@ -1005,6 +1070,254 @@ export async function getCursorAgentConversation(
     : [];
 
   return messages;
+}
+
+export interface CursorTerminalStatusView {
+  available: boolean;
+  status: string;
+  shell: string | null;
+  cwd: string | null;
+  lastCommand: string | null;
+  activeCommandId: string | null;
+  lastCompletedCommandId: string | null;
+  lastExitCode: number | null;
+  lastStartedAt: string | null;
+  lastFinishedAt: string | null;
+  activePid: number | null;
+  outputLineCount: number;
+}
+
+export interface CursorTerminalOutputLineView {
+  commandId: string | null;
+  stream: string;
+  text: string;
+  createdAt: string | null;
+}
+
+export interface RunCursorTerminalCommandParams {
+  groupFolder: string;
+  chatJid: string;
+  agentId: string;
+  commandText: string;
+}
+
+export interface GetCursorTerminalStatusParams {
+  groupFolder: string;
+  chatJid: string;
+  agentId: string;
+}
+
+export interface GetCursorTerminalOutputParams {
+  groupFolder: string;
+  chatJid: string;
+  agentId: string;
+  limit?: number;
+  commandId?: string | null;
+}
+
+export interface StopCursorTerminalParams {
+  groupFolder: string;
+  chatJid: string;
+  agentId: string;
+}
+
+export interface CursorTerminalCommandRunView {
+  commandId: string;
+  terminal: CursorTerminalStatusView;
+  output: CursorTerminalOutputLineView[];
+}
+
+function mapTerminalStatusToView(
+  status: CursorDesktopTerminalStatus,
+): CursorTerminalStatusView {
+  return {
+    available: status.available,
+    status: status.status,
+    shell: status.shell,
+    cwd: status.cwd,
+    lastCommand: status.lastCommand,
+    activeCommandId: status.activeCommandId,
+    lastCompletedCommandId: status.lastCompletedCommandId,
+    lastExitCode: status.lastExitCode,
+    lastStartedAt: status.lastStartedAt,
+    lastFinishedAt: status.lastFinishedAt,
+    activePid: status.activePid,
+    outputLineCount: status.outputLineCount,
+  };
+}
+
+function mapTerminalOutputToView(
+  line: CursorDesktopTerminalOutputLine,
+): CursorTerminalOutputLineView {
+  return {
+    commandId: line.commandId,
+    stream: line.stream,
+    text: line.text,
+    createdAt: line.createdAt,
+  };
+}
+
+async function ensureTrackedDesktopCursorAgent(
+  params: {
+    groupFolder: string;
+    chatJid: string;
+  },
+  agentId: string,
+): Promise<CursorDbAgentRecord> {
+  const { record } = await ensureTrackedCursorAgent(params, agentId);
+  if (
+    record.group_folder !== params.groupFolder ||
+    record.chat_jid !== params.chatJid
+  ) {
+    throw new Error('Cursor agent belongs to another group');
+  }
+  if (!recordUsesDesktop(record)) {
+    throw new Error(
+      'Cursor terminal control is only available for desktop bridge sessions on your own machine.',
+    );
+  }
+  return record;
+}
+
+function normalizeTerminalOutputLimit(raw: number | undefined): number {
+  return raw && Number.isFinite(raw)
+    ? Math.max(1, Math.min(200, Math.floor(raw)))
+    : 40;
+}
+
+export async function getCursorTerminalStatus(
+  params: GetCursorTerminalStatusParams,
+): Promise<CursorTerminalStatusView> {
+  assertValidGroupFolder(params.groupFolder);
+  const agentId = normalizeCursorAgentId(params.agentId);
+  await ensureTrackedDesktopCursorAgent(
+    {
+      groupFolder: params.groupFolder,
+      chatJid: params.chatJid,
+    },
+    agentId,
+  );
+  const client = resolveCursorDesktopClient();
+  const status = await client.getTerminalStatus(agentId);
+  return mapTerminalStatusToView(status);
+}
+
+export async function getCursorTerminalOutput(
+  params: GetCursorTerminalOutputParams,
+): Promise<CursorTerminalOutputLineView[]> {
+  assertValidGroupFolder(params.groupFolder);
+  const agentId = normalizeCursorAgentId(params.agentId);
+  await ensureTrackedDesktopCursorAgent(
+    {
+      groupFolder: params.groupFolder,
+      chatJid: params.chatJid,
+    },
+    agentId,
+  );
+  const client = resolveCursorDesktopClient();
+  const lines = await client.listTerminalOutput(agentId, {
+    limit: normalizeTerminalOutputLimit(params.limit),
+    commandId: params.commandId,
+  });
+  return lines.map(mapTerminalOutputToView);
+}
+
+export async function runCursorTerminalCommand(
+  params: RunCursorTerminalCommandParams,
+): Promise<CursorTerminalCommandRunView> {
+  assertValidGroupFolder(params.groupFolder);
+  const agentId = normalizeCursorAgentId(params.agentId);
+  await ensureTrackedDesktopCursorAgent(
+    {
+      groupFolder: params.groupFolder,
+      chatJid: params.chatJid,
+    },
+    agentId,
+  );
+  const client = resolveCursorDesktopClient();
+  const started = await client.startTerminalCommand(agentId, {
+    commandText: params.commandText,
+  });
+  const [terminal, output] = await Promise.all([
+    client.getTerminalStatus(agentId),
+    client.listTerminalOutput(agentId, {
+      limit: 60,
+      commandId: started.commandId,
+    }),
+  ]);
+
+  return {
+    commandId: started.commandId,
+    terminal: mapTerminalStatusToView(terminal),
+    output: output.map(mapTerminalOutputToView),
+  };
+}
+
+export async function stopCursorTerminal(
+  params: StopCursorTerminalParams,
+): Promise<CursorTerminalStatusView> {
+  assertValidGroupFolder(params.groupFolder);
+  const agentId = normalizeCursorAgentId(params.agentId);
+  await ensureTrackedDesktopCursorAgent(
+    {
+      groupFolder: params.groupFolder,
+      chatJid: params.chatJid,
+    },
+    agentId,
+  );
+  const client = resolveCursorDesktopClient();
+  const status = await client.stopTerminalCommand(agentId);
+  return mapTerminalStatusToView(status);
+}
+
+export async function getCursorAgentArtifacts(
+  params: GetCursorAgentArtifactsParams,
+): Promise<CursorArtifactView[]> {
+  assertValidGroupFolder(params.groupFolder);
+  const agentId = normalizeCursorAgentId(params.agentId);
+  const { record: existing, recovered } = await ensureTrackedCursorAgent(
+    {
+      groupFolder: params.groupFolder,
+      chatJid: params.chatJid,
+    },
+    agentId,
+  );
+  if (
+    existing.group_folder !== params.groupFolder ||
+    existing.chat_jid !== params.chatJid
+  ) {
+    throw new Error('Cursor agent belongs to another group');
+  }
+  if (recordUsesDesktop(existing)) {
+    return [];
+  }
+
+  const stored = listCursorAgentArtifacts(agentId).map(mapDbArtifactToView);
+  if (stored.length > 0 && !recovered) {
+    return stored;
+  }
+
+  try {
+    const synced = await syncCursorAgent({
+      groupFolder: params.groupFolder,
+      chatJid: params.chatJid,
+      agentId,
+    });
+    if (synced.artifacts.length > 0 || recovered) {
+      return synced.artifacts;
+    }
+  } catch (err) {
+    if (stored.length > 0) {
+      logger.debug(
+        { err: String(err), agentId },
+        'Returning stored Cursor artifacts after live refresh failed',
+      );
+      return stored;
+    }
+    throw err;
+  }
+
+  return stored;
 }
 
 function toCursorModelView(record: CursorModelRecord): CursorModelView {

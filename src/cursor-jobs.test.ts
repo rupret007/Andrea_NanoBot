@@ -10,10 +10,14 @@ import {
   followupCursorAgent,
   getCursorArtifactDownloadLink,
   getCursorAgentConversation,
+  getCursorTerminalOutput,
+  getCursorTerminalStatus,
   listCursorJobInventory,
   listCursorModels,
   listStoredCursorArtifacts,
   listStoredCursorAgentsForGroup,
+  runCursorTerminalCommand,
+  stopCursorTerminal,
   stopCursorAgent,
   syncCursorAgent,
 } from './cursor-jobs.js';
@@ -478,8 +482,28 @@ describe('cursor-jobs', () => {
       last_synced_at: null,
     });
 
-    globalThis.fetch = (async () => {
-      throw new Error('fetch should not be called for untracked artifact');
+    globalThis.fetch = (async (input) => {
+      const url = String(input);
+      if (url === 'https://api.cursor.com/v0/agents/bc_missing_artifact') {
+        return new Response(
+          JSON.stringify({
+            id: 'bc_missing_artifact',
+            status: 'FINISHED',
+            target: { url: 'https://cursor.com/agents?id=bc_missing_artifact' },
+            createdAt: '2026-03-28T18:00:00.000Z',
+            updatedAt: '2026-03-28T18:01:00.000Z',
+          }),
+          { status: 200 },
+        );
+      }
+
+      if (
+        url === 'https://api.cursor.com/v0/agents/bc_missing_artifact/artifacts'
+      ) {
+        return new Response(JSON.stringify({ artifacts: [] }), { status: 200 });
+      }
+
+      throw new Error(`unexpected request for untracked artifact: ${url}`);
     }) as typeof fetch;
 
     await expect(
@@ -858,5 +882,229 @@ describe('cursor-jobs', () => {
     expect(inventory.tracked).toHaveLength(1);
     expect(inventory.recoverable).toHaveLength(1);
     expect(inventory.recoverable[0].id).toBe('desk_recoverable');
+  });
+
+  it('runs terminal commands for desktop sessions and reads terminal state', async () => {
+    delete process.env.CURSOR_API_KEY;
+    delete process.env.CURSOR_API_BASE_URL;
+    process.env.CURSOR_DESKTOP_BRIDGE_URL = 'https://cursor-bridge.example.com';
+    process.env.CURSOR_DESKTOP_BRIDGE_TOKEN = 'bridge-token';
+
+    upsertCursorAgent({
+      id: 'desk_term',
+      group_folder: 'main',
+      chat_jid: 'tg:42',
+      status: 'COMPLETED',
+      model: null,
+      prompt_text: 'Desktop terminal work',
+      source_repository: null,
+      source_ref: null,
+      source_pr_url: null,
+      target_url: null,
+      target_pr_url: null,
+      target_branch_name: null,
+      auto_create_pr: 0,
+      open_as_cursor_github_app: 0,
+      skip_reviewer_request: 0,
+      summary: 'Done',
+      raw_json: JSON.stringify({ provider: 'desktop', cwd: '/repo' }),
+      created_by: 'tg:user',
+      created_at: '2026-03-29T20:00:00.000Z',
+      updated_at: '2026-03-29T20:00:00.000Z',
+      last_synced_at: '2026-03-29T20:00:00.000Z',
+    });
+
+    globalThis.fetch = (async (input, init) => {
+      const url = String(input);
+      if (
+        url ===
+          'https://cursor-bridge.example.com/v1/sessions/desk_term/terminal/command' &&
+        init?.method === 'POST'
+      ) {
+        return new Response(
+          JSON.stringify({
+            commandId: 'term_1',
+            terminal: {
+              available: true,
+              status: 'RUNNING',
+              shell: '/bin/zsh',
+              cwd: '/repo',
+              lastCommand: 'git status',
+              activeCommandId: 'term_1',
+              lastCompletedCommandId: null,
+              lastExitCode: null,
+              lastStartedAt: '2026-03-29T20:01:00.000Z',
+              lastFinishedAt: null,
+              activePid: 777,
+              outputLineCount: 1,
+            },
+          }),
+          { status: 200 },
+        );
+      }
+
+      if (
+        url ===
+          'https://cursor-bridge.example.com/v1/sessions/desk_term/terminal' &&
+        init?.method === 'GET'
+      ) {
+        return new Response(
+          JSON.stringify({
+            available: true,
+            status: 'IDLE',
+            shell: '/bin/zsh',
+            cwd: '/repo',
+            lastCommand: 'git status',
+            activeCommandId: null,
+            lastCompletedCommandId: 'term_1',
+            lastExitCode: 0,
+            lastStartedAt: '2026-03-29T20:01:00.000Z',
+            lastFinishedAt: '2026-03-29T20:01:01.000Z',
+            activePid: null,
+            outputLineCount: 3,
+          }),
+          { status: 200 },
+        );
+      }
+
+      if (
+        url ===
+          'https://cursor-bridge.example.com/v1/sessions/desk_term/terminal/output?limit=60&commandId=term_1' &&
+        init?.method === 'GET'
+      ) {
+        return new Response(
+          JSON.stringify({
+            lines: [
+              {
+                commandId: 'term_1',
+                stream: 'system',
+                text: '$ git status',
+                createdAt: '2026-03-29T20:01:00.000Z',
+              },
+              {
+                commandId: 'term_1',
+                stream: 'stdout',
+                text: 'On branch main',
+                createdAt: '2026-03-29T20:01:01.000Z',
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+
+      if (
+        url ===
+          'https://cursor-bridge.example.com/v1/sessions/desk_term/terminal/output?limit=20' &&
+        init?.method === 'GET'
+      ) {
+        return new Response(
+          JSON.stringify({
+            lines: [
+              {
+                commandId: 'term_1',
+                stream: 'stdout',
+                text: 'On branch main',
+                createdAt: '2026-03-29T20:01:01.000Z',
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+
+      if (
+        url ===
+          'https://cursor-bridge.example.com/v1/sessions/desk_term/terminal/stop' &&
+        init?.method === 'POST'
+      ) {
+        return new Response(
+          JSON.stringify({
+            available: true,
+            status: 'STOPPED',
+            shell: '/bin/zsh',
+            cwd: '/repo',
+            lastCommand: 'npm test',
+            activeCommandId: null,
+            lastCompletedCommandId: 'term_2',
+            lastExitCode: null,
+            lastStartedAt: '2026-03-29T20:02:00.000Z',
+            lastFinishedAt: '2026-03-29T20:02:05.000Z',
+            activePid: null,
+            outputLineCount: 5,
+          }),
+          { status: 200 },
+        );
+      }
+
+      throw new Error(`unexpected desktop terminal request: ${url}`);
+    }) as typeof fetch;
+
+    const started = await runCursorTerminalCommand({
+      groupFolder: 'main',
+      chatJid: 'tg:42',
+      agentId: 'desk_term',
+      commandText: 'git status',
+    });
+    expect(started.commandId).toBe('term_1');
+    expect(started.terminal.status).toBe('IDLE');
+    expect(started.output[1].text).toContain('On branch main');
+
+    const status = await getCursorTerminalStatus({
+      groupFolder: 'main',
+      chatJid: 'tg:42',
+      agentId: 'desk_term',
+    });
+    expect(status.lastExitCode).toBe(0);
+
+    const output = await getCursorTerminalOutput({
+      groupFolder: 'main',
+      chatJid: 'tg:42',
+      agentId: 'desk_term',
+      limit: 20,
+    });
+    expect(output).toHaveLength(1);
+
+    const stopped = await stopCursorTerminal({
+      groupFolder: 'main',
+      chatJid: 'tg:42',
+      agentId: 'desk_term',
+    });
+    expect(stopped.status).toBe('STOPPED');
+  });
+
+  it('rejects terminal control for cloud-backed agents', async () => {
+    upsertCursorAgent({
+      id: 'bc_term_cloud',
+      group_folder: 'whatsapp_main',
+      chat_jid: 'tg:42',
+      status: 'RUNNING',
+      model: 'default',
+      prompt_text: 'Cloud job',
+      source_repository: null,
+      source_ref: null,
+      source_pr_url: null,
+      target_url: 'https://cursor.com/agents?id=bc_term_cloud',
+      target_pr_url: null,
+      target_branch_name: null,
+      auto_create_pr: 0,
+      open_as_cursor_github_app: 0,
+      skip_reviewer_request: 0,
+      summary: null,
+      raw_json: JSON.stringify({ provider: 'cloud' }),
+      created_by: 'tg:user',
+      created_at: '2026-03-29T20:00:00.000Z',
+      updated_at: '2026-03-29T20:00:00.000Z',
+      last_synced_at: null,
+    });
+
+    await expect(
+      runCursorTerminalCommand({
+        groupFolder: 'whatsapp_main',
+        chatJid: 'tg:42',
+        agentId: 'bc_term_cloud',
+        commandText: 'pwd',
+      }),
+    ).rejects.toThrow('desktop bridge sessions');
   });
 });

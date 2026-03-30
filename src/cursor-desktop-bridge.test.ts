@@ -1,4 +1,5 @@
 import { EventEmitter } from 'events';
+import path from 'path';
 import { PassThrough } from 'stream';
 
 import { describe, expect, it } from 'vitest';
@@ -137,6 +138,88 @@ describe('CursorDesktopBridge', () => {
     expect(secondRun.killed).toBe(false);
 
     const stopped = bridge.stopSession(created.id);
+    expect(stopped.status).toBe('STOPPED');
+    expect(secondRun.killed).toBe(true);
+  });
+
+  it('supports terminal commands, status, output, and stop', () => {
+    const run = createFakeRun();
+
+    const bridge = new CursorDesktopBridge(
+      {
+        host: '127.0.0.1',
+        port: 4124,
+        token: 'bridge-token',
+        cliPath: 'cursor-agent',
+        defaultCwd: '/workspace',
+        force: true,
+        stateFile: '/tmp/cursor-desktop-bridge-test.json',
+      },
+      {
+        createRun: () => createFakeRun(),
+        createTerminalRun: () => run,
+        now: () => new Date('2026-03-29T20:12:00.000Z'),
+        hostname: () => 'Jeff-Mac',
+        existsSync: () => false,
+        mkdirSync: () => undefined as never,
+        readFileSync: (() => '') as unknown as typeof import('fs').readFileSync,
+        writeFileSync: () => undefined as never,
+      },
+    );
+
+    const created = bridge.createSession({
+      promptText: 'Inspect the repo',
+      cwd: '/workspace/repo',
+    });
+
+    const started = bridge.startTerminalCommand(created.id, 'pwd');
+    expect(started.commandId).toContain('term_');
+    expect(started.terminal.status).toBe('RUNNING');
+
+    run.emitStdoutLine('/workspace/repo');
+    const metadataLine = `__ANDREA_TERM_META_${started.commandId}__`;
+    run.emitStdoutLine(`${metadataLine}/workspace/repo::0`);
+    run.finish(0);
+
+    const status = bridge.getTerminalStatus(created.id);
+    expect(status.status).toBe('IDLE');
+    expect(status.cwd).toBe(path.resolve('/workspace/repo'));
+    expect(status.lastExitCode).toBe(0);
+
+    const output = bridge.getTerminalOutput(created.id, { limit: 10 });
+    expect(output.some((line) => line.text.includes('pwd'))).toBe(true);
+    expect(output.some((line) => line.text.includes('/workspace/repo'))).toBe(
+      true,
+    );
+
+    const secondRun = createFakeRun();
+    const bridgeWithStop = new CursorDesktopBridge(
+      {
+        host: '127.0.0.1',
+        port: 4124,
+        token: 'bridge-token',
+        cliPath: 'cursor-agent',
+        defaultCwd: '/workspace',
+        force: true,
+        stateFile: '/tmp/cursor-desktop-bridge-test.json',
+      },
+      {
+        createRun: () => createFakeRun(),
+        createTerminalRun: () => secondRun,
+        now: () => new Date('2026-03-29T20:12:00.000Z'),
+        hostname: () => 'Jeff-Mac',
+        existsSync: () => false,
+        mkdirSync: () => undefined as never,
+        readFileSync: (() => '') as unknown as typeof import('fs').readFileSync,
+        writeFileSync: () => undefined as never,
+      },
+    );
+
+    const stopSession = bridgeWithStop.createSession({
+      promptText: 'Long-running repo work',
+    });
+    bridgeWithStop.startTerminalCommand(stopSession.id, 'npm test');
+    const stopped = bridgeWithStop.stopTerminalCommand(stopSession.id);
     expect(stopped.status).toBe('STOPPED');
     expect(secondRun.killed).toBe(true);
   });
