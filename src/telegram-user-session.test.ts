@@ -6,6 +6,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   DEFAULT_TELEGRAM_LIVE_TEST_MESSAGES,
+  matchesExpectedTelegramSender,
+  normalizeTelegramSenderId,
   normalizeTelegramTestTarget,
   resolveTelegramUserSessionConfig,
   withTelegramUserSessionLock,
@@ -21,6 +23,31 @@ describe('normalizeTelegramTestTarget', () => {
       '@andrea_nanobot',
     );
     expect(normalizeTelegramTestTarget('8004355504')).toBe('8004355504');
+  });
+});
+
+describe('normalizeTelegramSenderId', () => {
+  it('normalizes primitive and peer-like sender ids', () => {
+    expect(normalizeTelegramSenderId(12345)).toBe('12345');
+    expect(normalizeTelegramSenderId(12345n)).toBe('12345');
+    expect(normalizeTelegramSenderId(' 12345 ')).toBe('12345');
+    expect(normalizeTelegramSenderId({ userId: 12345n })).toBe('12345');
+    expect(normalizeTelegramSenderId({ channelId: '555' })).toBe('555');
+  });
+});
+
+describe('matchesExpectedTelegramSender', () => {
+  it('accepts any sender when no expectation is configured', () => {
+    expect(matchesExpectedTelegramSender({ senderId: 123 }, null)).toBe(true);
+  });
+
+  it('matches only the expected sender id when provided', () => {
+    expect(
+      matchesExpectedTelegramSender({ senderId: { userId: 12345n } }, '12345'),
+    ).toBe(true);
+    expect(
+      matchesExpectedTelegramSender({ senderId: { userId: 999n } }, '12345'),
+    ).toBe(false);
   });
 });
 
@@ -104,27 +131,31 @@ describe('withTelegramUserSessionLock', () => {
   it('rejects concurrent harness runs for the same session file', async () => {
     const tempDir = mkdtempSync(path.join(os.tmpdir(), 'nanoclaw-tg-lock-'));
     const sessionFile = path.join(tempDir, 'telegram-user.session');
-    let enteredResolve!: () => void;
-    const entered = new Promise<void>((resolve) => {
-      enteredResolve = resolve;
-    });
-    let release!: () => void;
+    const lockFile = path.join(tempDir, 'telegram-user-session.lock');
+    fs.writeFileSync(
+      lockFile,
+      `${JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() })}\n`,
+      'utf8',
+    );
 
-    const firstRun = withTelegramUserSessionLock(sessionFile, async () => {
-      enteredResolve();
-      await new Promise<void>((resolve) => {
-        release = resolve;
-      });
-    });
-
-    await entered;
-    await expect(
-      withTelegramUserSessionLock(sessionFile, async () => undefined),
-    ).rejects.toThrow('already running');
-
-    release();
-    await firstRun;
-    rmSync(tempDir, { recursive: true, force: true });
+    const setTimeoutSpy = vi
+      .spyOn(globalThis, 'setTimeout')
+      .mockImplementation(((callback: Parameters<typeof setTimeout>[0]) => {
+        queueMicrotask(() => {
+          if (typeof callback === 'function') callback();
+        });
+        return 0 as unknown as ReturnType<typeof setTimeout>;
+      }) as typeof setTimeout);
+    try {
+      await expect(
+        withTelegramUserSessionLock(sessionFile, async () => {
+          throw new Error('should not run while a live lock exists');
+        }),
+      ).rejects.toThrow('already running');
+    } finally {
+      setTimeoutSpy.mockRestore();
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   it('retries a transient lock collision before succeeding', async () => {
@@ -153,6 +184,28 @@ describe('withTelegramUserSessionLock', () => {
       expect(attempts).toBeGreaterThanOrEqual(2);
     } finally {
       openSpy.mockRestore();
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('clears a stale lock file from a dead process before running', async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), 'nanoclaw-tg-lock-'));
+    const sessionFile = path.join(tempDir, 'telegram-user.session');
+    const lockFile = path.join(tempDir, 'telegram-user-session.lock');
+    fs.writeFileSync(
+      lockFile,
+      `${JSON.stringify({ pid: 999999, startedAt: new Date().toISOString() })}\n`,
+      'utf8',
+    );
+
+    try {
+      let ran = false;
+      await withTelegramUserSessionLock(sessionFile, async () => {
+        ran = true;
+      });
+      expect(ran).toBe(true);
+      expect(fs.existsSync(lockFile)).toBe(false);
+    } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
   });

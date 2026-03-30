@@ -652,8 +652,8 @@ describe('cursor-jobs', () => {
   });
 
   it('uses the desktop bridge when configured for create/sync/followup/stop', async () => {
-    delete process.env.CURSOR_API_KEY;
-    delete process.env.CURSOR_API_BASE_URL;
+    process.env.CURSOR_API_KEY = ' ';
+    process.env.CURSOR_API_BASE_URL = ' ';
     process.env.CURSOR_DESKTOP_BRIDGE_URL = 'https://cursor-bridge.example.com';
     process.env.CURSOR_DESKTOP_BRIDGE_TOKEN = 'bridge-token';
 
@@ -770,9 +770,53 @@ describe('cursor-jobs', () => {
     ]);
   });
 
+  it('falls back to Cursor Cloud job creation when the desktop bridge create fails', async () => {
+    process.env.CURSOR_DESKTOP_BRIDGE_URL = 'https://cursor-bridge.example.com';
+    process.env.CURSOR_DESKTOP_BRIDGE_TOKEN = 'bridge-token';
+
+    const requests: string[] = [];
+    globalThis.fetch = (async (input, init) => {
+      const url = String(input);
+      requests.push(`${init?.method || 'GET'} ${url}`);
+
+      if (url === 'https://cursor-bridge.example.com/v1/sessions') {
+        return new Response('bridge temporarily unavailable', { status: 503 });
+      }
+
+      if (url === 'https://api.cursor.com/v0/agents') {
+        return new Response(
+          JSON.stringify({
+            id: 'bc_fallback',
+            status: 'CREATING',
+            target: {
+              url: 'https://cursor.com/agents?id=bc_fallback',
+            },
+            createdAt: '2026-03-29T20:24:00.000Z',
+          }),
+          { status: 200 },
+        );
+      }
+
+      throw new Error(`unexpected fallback request: ${url}`);
+    }) as typeof fetch;
+
+    const created = await createCursorAgent({
+      groupFolder: 'whatsapp_main',
+      chatJid: 'tg:42',
+      promptText: 'Fall back to cloud if desktop is down',
+      sourceRepository: 'https://github.com/example/repo',
+    });
+
+    expect(created.id).toBe('bc_fallback');
+    expect(requests).toEqual([
+      'POST https://cursor-bridge.example.com/v1/sessions',
+      'POST https://api.cursor.com/v0/agents',
+    ]);
+  });
+
   it('reads desktop bridge conversation for tracked desktop sessions', async () => {
-    delete process.env.CURSOR_API_KEY;
-    delete process.env.CURSOR_API_BASE_URL;
+    process.env.CURSOR_API_KEY = ' ';
+    process.env.CURSOR_API_BASE_URL = ' ';
     process.env.CURSOR_DESKTOP_BRIDGE_URL = 'https://cursor-bridge.example.com';
     process.env.CURSOR_DESKTOP_BRIDGE_TOKEN = 'bridge-token';
 
@@ -831,8 +875,8 @@ describe('cursor-jobs', () => {
   });
 
   it('recovers an existing untracked desktop session on sync', async () => {
-    delete process.env.CURSOR_API_KEY;
-    delete process.env.CURSOR_API_BASE_URL;
+    process.env.CURSOR_API_KEY = ' ';
+    process.env.CURSOR_API_BASE_URL = ' ';
     process.env.CURSOR_DESKTOP_BRIDGE_URL = 'https://cursor-bridge.example.com';
     process.env.CURSOR_DESKTOP_BRIDGE_TOKEN = 'bridge-token';
 
@@ -871,8 +915,8 @@ describe('cursor-jobs', () => {
   });
 
   it('rejects recovering a desktop session that belongs to another workspace', async () => {
-    delete process.env.CURSOR_API_KEY;
-    delete process.env.CURSOR_API_BASE_URL;
+    process.env.CURSOR_API_KEY = ' ';
+    process.env.CURSOR_API_BASE_URL = ' ';
     process.env.CURSOR_DESKTOP_BRIDGE_URL = 'https://cursor-bridge.example.com';
     process.env.CURSOR_DESKTOP_BRIDGE_TOKEN = 'bridge-token';
 
@@ -935,8 +979,8 @@ describe('cursor-jobs', () => {
   });
 
   it('lists recoverable desktop sessions alongside tracked jobs', async () => {
-    delete process.env.CURSOR_API_KEY;
-    delete process.env.CURSOR_API_BASE_URL;
+    process.env.CURSOR_API_KEY = ' ';
+    process.env.CURSOR_API_BASE_URL = ' ';
     process.env.CURSOR_DESKTOP_BRIDGE_URL = 'https://cursor-bridge.example.com';
     process.env.CURSOR_DESKTOP_BRIDGE_TOKEN = 'bridge-token';
 
@@ -1013,15 +1057,75 @@ describe('cursor-jobs', () => {
       limit: 20,
     });
 
-    expect(inventory.backend).toBe('desktop');
+    expect(['desktop', 'mixed']).toContain(inventory.backend);
     expect(inventory.tracked).toHaveLength(1);
     expect(inventory.recoverable).toHaveLength(1);
     expect(inventory.recoverable[0].id).toBe('desk_recoverable');
   });
 
+  it('lists recoverable jobs from both desktop bridge and cloud when both are configured', async () => {
+    process.env.CURSOR_DESKTOP_BRIDGE_URL = 'https://cursor-bridge.example.com';
+    process.env.CURSOR_DESKTOP_BRIDGE_TOKEN = 'bridge-token';
+
+    globalThis.fetch = (async (input) => {
+      const url = String(input);
+      if (url === 'https://cursor-bridge.example.com/v1/sessions?limit=20') {
+        return new Response(
+          JSON.stringify({
+            sessions: [
+              {
+                id: 'desk_recoverable',
+                status: 'COMPLETED',
+                promptText: 'Existing bridge session',
+                groupFolder: 'main',
+                chatJid: 'tg:42',
+                provider: 'desktop',
+                createdAt: '2026-03-29T20:02:00.000Z',
+                updatedAt: '2026-03-29T20:03:00.000Z',
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+
+      if (url === 'https://api.cursor.com/v0/agents?limit=20') {
+        return new Response(
+          JSON.stringify({
+            agents: [
+              {
+                id: 'bc_recoverable',
+                name: 'Recovered cloud job',
+                status: 'RUNNING',
+                target: { url: 'https://cursor.com/agents?id=bc_recoverable' },
+                createdAt: '2026-03-29T20:40:00.000Z',
+                updatedAt: '2026-03-29T20:41:00.000Z',
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+
+      throw new Error(`unexpected mixed inventory request: ${url}`);
+    }) as typeof fetch;
+
+    const inventory = await listCursorJobInventory({
+      groupFolder: 'main',
+      chatJid: 'tg:42',
+      limit: 20,
+    });
+
+    expect(inventory.backend).toBe('mixed');
+    expect(inventory.recoverable).toHaveLength(2);
+    expect(inventory.recoverable.map((agent) => agent.id)).toEqual(
+      expect.arrayContaining(['desk_recoverable', 'bc_recoverable']),
+    );
+  });
+
   it('runs terminal commands for desktop sessions and reads terminal state', async () => {
-    delete process.env.CURSOR_API_KEY;
-    delete process.env.CURSOR_API_BASE_URL;
+    process.env.CURSOR_API_KEY = ' ';
+    process.env.CURSOR_API_BASE_URL = ' ';
     process.env.CURSOR_DESKTOP_BRIDGE_URL = 'https://cursor-bridge.example.com';
     process.env.CURSOR_DESKTOP_BRIDGE_TOKEN = 'bridge-token';
 

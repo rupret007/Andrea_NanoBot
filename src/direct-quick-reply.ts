@@ -62,6 +62,14 @@ function countWords(input: string): number {
   return input.trim().split(/\s+/).filter(Boolean).length;
 }
 
+function isStandalonePrompt(
+  normalized: string,
+  pattern: RegExp,
+  maxWords = 4,
+): boolean {
+  return pattern.test(normalized) && countWords(normalized) <= maxWords;
+}
+
 export function maybeBuildDirectQuickReply(
   messages: Pick<NewMessage, 'content'>[],
 ): string | null {
@@ -70,50 +78,78 @@ export function maybeBuildDirectQuickReply(
   const normalized = normalizeText(lastContent);
 
   if (
-    /\b(what('?s| is) )?the meaning of life\b/.test(normalized) ||
-    /\bmeaning of life\b/.test(normalized)
+    isStandalonePrompt(
+      normalized,
+      /^(?:(?:what('?s| is) )?the meaning of life(?: then)?|meaning of life)[?.! ]*$/,
+      7,
+    )
   ) {
     return '42. Final answer. The rest is universe patch notes.';
   }
 
   if (
-    /\bwhat are you best at\b/.test(normalized) ||
-    /\bwhat are you good at\b/.test(normalized)
+    isStandalonePrompt(normalized, /^what are you (?:best|good) at[?.! ]*$/, 6)
   ) {
     return "Keeping tasks, reminders, research, and operator status checks clean and calm. Give me one concrete ask and I'll keep it moving.";
   }
 
-  if (/\bare you funny or just pretending\b/.test(normalized)) {
+  if (
+    isStandalonePrompt(
+      normalized,
+      /^are you funny or just pretending[?.! ]*$/,
+      6,
+    )
+  ) {
     return 'A little of both. Useful first, funny second, and chaos never.';
   }
 
   if (
-    /\bdo you have a personality\b/.test(normalized) ||
-    /\bare you (funny|witty)\b/.test(normalized)
+    isStandalonePrompt(
+      normalized,
+      /^(?:do you have a personality|are you (?:funny|witty))[?.! ]*$/,
+      5,
+    )
   ) {
     return "I do. I'm Andrea: helpful, a little quippy, and occasionally dramatic about clean checklists.";
   }
 
   if (
-    /^(hi|hello|hey|good morning|good afternoon|good evening)\b/.test(
+    isStandalonePrompt(
       normalized,
+      /^(hi|hello|hey|good morning|good afternoon|good evening)(?:[!., ]+| there| andrea)*$/,
+      5,
     )
   ) {
     return "Hi. I'm Andrea. Give me one thing to tackle and I'll keep it crisp.";
   }
 
-  if (/\b(how are you|how're you)\b/.test(normalized)) {
+  if (
+    isStandalonePrompt(
+      normalized,
+      /^(?:how are you|how're you)(?: today)?[?.! ]*$/,
+      5,
+    )
+  ) {
     return 'Doing well and fully caffeinated in spirit. What do you want to tackle?';
   }
 
   if (
-    /\b(you there|are you there|still there)\b/.test(normalized) ||
-    /^you\?$/.test(normalized)
+    isStandalonePrompt(
+      normalized,
+      /^(?:you there|are you there|still there|you)\??[!. ]*$/,
+      3,
+    )
   ) {
     return "I'm here and ready.";
   }
 
-  if (/^(thanks|thank you|thx)\b/.test(normalized)) {
+  if (
+    isStandalonePrompt(
+      normalized,
+      /^(thanks|thank you|thx)(?:[!., ]+| andrea)*$/,
+      4,
+    )
+  ) {
     return "Anytime. What's next?";
   }
 
@@ -122,30 +158,41 @@ export function maybeBuildDirectQuickReply(
   }
 
   if (
-    /^(ok|okay|kk|yes|yep|yup|sure|sounds good|that works|go ahead|please do)[!. ]*$/.test(
+    isStandalonePrompt(
       normalized,
+      /^(ok|okay|kk|yes|yep|yup|sure|sounds good|that works|go ahead|please do)[!. ]*$/,
+      3,
     )
   ) {
     return 'Sounds good.';
   }
 
   if (
-    /\b(that'?s funny|thats funny|haha|lol|lmao)\b/.test(normalized) ||
-    /\bahh+\b/.test(normalized)
+    isStandalonePrompt(
+      normalized,
+      /^(?:(?:ahh+[!., ]+)?(?:that'?s funny|thats funny)|haha|lol|lmao|ahh+)[!. ]*$/,
+      5,
+    )
   ) {
     return "I'll take that as a win.";
   }
 
   if (
-    /\bwho are you\b/.test(normalized) ||
-    /\bwhat can you do\b/.test(normalized)
+    isStandalonePrompt(
+      normalized,
+      /^(?:who are you|what can you do)[?.! ]*$/,
+      5,
+    )
   ) {
     return "I'm Andrea. I'm strongest on tasks, reminders, research, status checks, and careful approvals without turning the chat into a control panel.";
   }
 
   if (
-    /\bwhat commands do you have\b/.test(normalized) ||
-    /\bwhat are your commands\b/.test(normalized)
+    isStandalonePrompt(
+      normalized,
+      /^(?:what commands do you have|what are your commands)[?.! ]*$/,
+      6,
+    )
   ) {
     return 'Use /commands for the short list and /help for the fuller guide.';
   }
@@ -167,8 +214,11 @@ export function maybeBuildDirectQuickReply(
   }
 
   if (
-    /\bdo you know what('?s| is) what\b/.test(normalized) ||
-    /\bwhat('?s| is) what\b/.test(normalized)
+    isStandalonePrompt(
+      normalized,
+      /^(?:do you know what('?s| is) what|what('?s| is) what)[?.! ]*$/,
+      7,
+    )
   ) {
     return "I know what's what. If chaos appears, I bring clarity and snacks.";
   }

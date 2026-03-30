@@ -125,6 +125,16 @@ function resolveCursorExecutionBackend(): CursorExecutionBackend {
   );
 }
 
+function shouldFallbackFromDesktopToCloud(err: unknown): boolean {
+  if (!(err instanceof Error)) return true;
+  const message = err.message.trim().toLowerCase();
+  if (!message) return true;
+  if (message.includes('repository is required')) return false;
+  if (message.includes('belongs to another workspace')) return false;
+  if (message.includes('artifact path is required')) return false;
+  return true;
+}
+
 function recordUsesDesktop(record: CursorDbAgentRecord | undefined): boolean {
   const raw = parseRawJson(record?.raw_json || null);
   return raw?.provider === 'desktop';
@@ -283,7 +293,7 @@ export interface CursorAgentView {
 }
 
 export interface CursorJobInventory {
-  backend: CursorExecutionBackend | 'none';
+  backend: CursorExecutionBackend | 'none' | 'mixed';
   tracked: CursorAgentView[];
   recoverable: CursorAgentView[];
   warning: string | null;
@@ -374,7 +384,10 @@ export async function createCursorAgent(
     );
   }
 
-  const backend = resolveCursorExecutionBackend();
+  const backends = getConfiguredCursorExecutionBackends();
+  if (backends.length === 0) {
+    resolveCursorExecutionBackend();
+  }
 
   const source: CursorCreateAgentRequest['source'] = {};
   const sourceRepository = toNullableString(params.sourceRepository);
@@ -395,33 +408,6 @@ export async function createCursorAgent(
   }
   if (params.branchName) target.branchName = params.branchName;
 
-  if (backend === 'desktop') {
-    const client = resolveCursorDesktopClient();
-    const created = await client.createSession({
-      promptText: params.promptText,
-      requestedBy: params.requestedBy,
-      model: params.model,
-      groupFolder: params.groupFolder,
-      chatJid: params.chatJid,
-      sourceRepository: sourceRepository || undefined,
-      sourceRef: sourceRef || undefined,
-      sourcePrUrl: sourcePrUrl || undefined,
-      branchName: params.branchName,
-      autoCreatePr: params.autoCreatePr,
-      openAsCursorGithubApp: params.openAsCursorGithubApp,
-      skipReviewerRequest: params.skipReviewerRequest,
-    });
-    const row = mapDesktopSessionToDbRecord(created, {
-      groupFolder: params.groupFolder,
-      chatJid: params.chatJid,
-      promptText: params.promptText,
-      createdBy: params.requestedBy,
-    });
-    upsertCursorAgent(row);
-    return mapDbAgentToView(row);
-  }
-
-  const client = resolveCursorClient();
   const request: CursorCreateAgentRequest = {
     prompt: {
       text: params.promptText,
@@ -432,29 +418,78 @@ export async function createCursorAgent(
   if (Object.keys(source).length > 0) request.source = source;
   if (Object.keys(target).length > 0) request.target = target;
 
-  try {
-    const created = await client.createAgent(request);
-    const row = mapApiAgentToDbRecord(created, {
-      groupFolder: params.groupFolder,
-      chatJid: params.chatJid,
-      promptText: params.promptText,
-      createdBy: params.requestedBy,
-    });
-    upsertCursorAgent(row);
-    return mapDbAgentToView(row);
-  } catch (err) {
-    if (err instanceof CursorCloudApiError) {
-      logger.warn(
-        {
-          status: err.status,
+  let lastError: unknown = null;
+
+  for (const backend of backends) {
+    try {
+      if (backend === 'desktop') {
+        const client = resolveCursorDesktopClient();
+        const created = await client.createSession({
+          promptText: params.promptText,
+          requestedBy: params.requestedBy,
+          model: params.model,
           groupFolder: params.groupFolder,
           chatJid: params.chatJid,
-        },
-        'Cursor agent create failed',
-      );
+          sourceRepository: sourceRepository || undefined,
+          sourceRef: sourceRef || undefined,
+          sourcePrUrl: sourcePrUrl || undefined,
+          branchName: params.branchName,
+          autoCreatePr: params.autoCreatePr,
+          openAsCursorGithubApp: params.openAsCursorGithubApp,
+          skipReviewerRequest: params.skipReviewerRequest,
+        });
+        const row = mapDesktopSessionToDbRecord(created, {
+          groupFolder: params.groupFolder,
+          chatJid: params.chatJid,
+          promptText: params.promptText,
+          createdBy: params.requestedBy,
+        });
+        upsertCursorAgent(row);
+        return mapDbAgentToView(row);
+      }
+
+      const client = resolveCursorClient();
+      const created = await client.createAgent(request);
+      const row = mapApiAgentToDbRecord(created, {
+        groupFolder: params.groupFolder,
+        chatJid: params.chatJid,
+        promptText: params.promptText,
+        createdBy: params.requestedBy,
+      });
+      upsertCursorAgent(row);
+      return mapDbAgentToView(row);
+    } catch (err) {
+      lastError = err;
+      if (backend === 'desktop') {
+        if (
+          backends.includes('cloud') &&
+          shouldFallbackFromDesktopToCloud(err)
+        ) {
+          logger.warn(
+            {
+              err: err instanceof Error ? err.message : String(err),
+              groupFolder: params.groupFolder,
+              chatJid: params.chatJid,
+            },
+            'Cursor desktop create failed; falling back to Cursor Cloud',
+          );
+          continue;
+        }
+      } else if (err instanceof CursorCloudApiError) {
+        logger.warn(
+          {
+            status: err.status,
+            groupFolder: params.groupFolder,
+            chatJid: params.chatJid,
+          },
+          'Cursor agent create failed',
+        );
+      }
+      throw err;
     }
-    throw err;
   }
+
+  throw lastError;
 }
 
 function mapRecoverableDesktopSessionToView(
@@ -835,75 +870,75 @@ export async function listCursorJobInventory(params: {
       warning: null,
     };
   }
-  const backend = backends[0];
+  const recoverable: CursorAgentView[] = [];
+  const warnings: string[] = [];
+  const recoverableIds = new Set<string>();
 
-  try {
-    if (backend === 'desktop') {
-      const client = resolveCursorDesktopClient();
-      const sessions = await client.listSessions(safeLimit);
-      const recoverable = sessions
-        .filter((session) => {
-          if (trackedIds.has(session.id)) return false;
+  for (const backend of backends) {
+    try {
+      if (backend === 'desktop') {
+        const client = resolveCursorDesktopClient();
+        const sessions = await client.listSessions(safeLimit);
+        for (const session of sessions) {
+          if (trackedIds.has(session.id) || recoverableIds.has(session.id)) {
+            continue;
+          }
           const existing = getCursorAgentById(session.id);
-          if (existing && existing.group_folder !== params.groupFolder)
-            return false;
+          if (existing && existing.group_folder !== params.groupFolder) {
+            continue;
+          }
           if (
             session.groupFolder &&
             session.groupFolder !== params.groupFolder
           ) {
-            return false;
+            continue;
           }
-          if (session.chatJid && session.chatJid !== params.chatJid)
-            return false;
-          return true;
-        })
-        .map((session) =>
-          mapRecoverableDesktopSessionToView(session, {
+          if (session.chatJid && session.chatJid !== params.chatJid) {
+            continue;
+          }
+          recoverable.push(
+            mapRecoverableDesktopSessionToView(session, {
+              groupFolder: params.groupFolder,
+              chatJid: params.chatJid,
+            }),
+          );
+          recoverableIds.add(session.id);
+        }
+        continue;
+      }
+
+      const client = resolveCursorClient();
+      const listed = await client.listAgents({ limit: safeLimit });
+      for (const agent of listed.agents || []) {
+        const normalizedId = normalizeCursorAgentId(agent.id);
+        if (trackedIds.has(normalizedId) || recoverableIds.has(normalizedId)) {
+          continue;
+        }
+        const existing = getCursorAgentById(normalizedId);
+        if (existing && existing.group_folder !== params.groupFolder) {
+          continue;
+        }
+        recoverable.push(
+          mapRecoverableCloudAgentToView(agent, {
             groupFolder: params.groupFolder,
             chatJid: params.chatJid,
           }),
         );
-
-      return {
-        backend,
-        tracked,
-        recoverable,
-        warning: null,
-      };
-    }
-
-    const client = resolveCursorClient();
-    const listed = await client.listAgents({ limit: safeLimit });
-    const recoverable = (listed.agents || [])
-      .filter((agent) => {
-        const normalizedId = normalizeCursorAgentId(agent.id);
-        if (trackedIds.has(normalizedId)) return false;
-        const existing = getCursorAgentById(normalizedId);
-        if (existing && existing.group_folder !== params.groupFolder)
-          return false;
-        return true;
-      })
-      .map((agent) =>
-        mapRecoverableCloudAgentToView(agent, {
-          groupFolder: params.groupFolder,
-          chatJid: params.chatJid,
-        }),
+        recoverableIds.add(normalizedId);
+      }
+    } catch (err) {
+      warnings.push(
+        `${backend === 'desktop' ? 'Desktop bridge' : 'Cursor Cloud'}: ${err instanceof Error ? err.message : String(err)}`,
       );
-
-    return {
-      backend,
-      tracked,
-      recoverable,
-      warning: null,
-    };
-  } catch (err) {
-    return {
-      backend,
-      tracked,
-      recoverable: [],
-      warning: err instanceof Error ? err.message : String(err),
-    };
+    }
   }
+
+  return {
+    backend: backends.length > 1 ? 'mixed' : backends[0] || 'none',
+    tracked,
+    recoverable,
+    warning: warnings.length > 0 ? warnings.join(' | ') : null,
+  };
 }
 
 export function listAllStoredCursorAgents(limit = 200): CursorAgentView[] {

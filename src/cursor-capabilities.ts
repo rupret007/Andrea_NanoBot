@@ -13,6 +13,10 @@ export interface CursorCapabilitySummary {
   nextStep: string | null;
 }
 
+function isDesktopJobBackendUsable(status: CursorDesktopStatus): boolean {
+  return status.enabled && status.probeStatus !== 'failed';
+}
+
 function normalizePrefix(prefix: string): string {
   return prefix.trim().replace(/[. ]+$/, '');
 }
@@ -47,16 +51,24 @@ export function summarizeCursorCapabilities(input: {
   gatewayStatus: CursorGatewayStatus;
 }): CursorCapabilitySummary {
   const { desktopStatus, cloudStatus, gatewayStatus } = input;
+  const desktopUsable = isDesktopJobBackendUsable(desktopStatus);
 
-  const jobBackend: CursorJobBackend = desktopStatus.enabled
+  const jobBackend: CursorJobBackend = desktopUsable
     ? 'desktop'
     : cloudStatus.enabled
       ? 'cloud'
-      : 'none';
+      : desktopStatus.enabled
+        ? 'desktop'
+        : 'none';
 
   return {
     jobBackend,
-    canRunJobs: jobBackend !== 'none',
+    canRunJobs:
+      jobBackend === 'desktop'
+        ? desktopUsable
+        : jobBackend === 'cloud'
+          ? cloudStatus.enabled
+          : false,
     canListModels: cloudStatus.enabled,
     cursorRoutingReady: gatewayStatus.mode === 'configured',
     nextStep: buildNextStep(desktopStatus, cloudStatus, gatewayStatus),

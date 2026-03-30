@@ -100,10 +100,9 @@ import {
   searchAmazonProducts,
 } from './amazon-shopping.js';
 import {
-  isSenderAllowed,
   isTriggerAllowed,
   loadSenderAllowlist,
-  shouldDropMessage,
+  shouldDropIncomingMessageBeforeCommands,
 } from './sender-allowlist.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
@@ -1450,7 +1449,11 @@ async function main(): Promise<void> {
 
     if (inventory.recoverable.length > 0) {
       const backendLabel =
-        inventory.backend === 'desktop' ? 'desktop bridge' : 'cloud agents';
+        inventory.backend === 'desktop'
+          ? 'desktop bridge'
+          : inventory.backend === 'cloud'
+            ? 'cloud agents'
+            : 'configured Cursor backends';
       sections.push(
         `Recoverable from ${backendLabel}:\n${inventory.recoverable
           .map((agent, index) => formatAgentLine(agent, index))
@@ -2056,11 +2059,30 @@ async function main(): Promise<void> {
   // Channel callbacks (shared by all channels)
   const channelOpts = {
     onMessage: (chatJid: string, msg: NewMessage) => {
-      // Remote control commands — intercept before storage
       const rawTrimmed = msg.content.trim();
       const trimmed = rawTrimmed.toLowerCase();
       const rawCommandToken = trimmed.split(/\s+/)[0] || '';
       const commandToken = normalizeCommandToken(rawCommandToken);
+
+      const allowlistCfg = loadSenderAllowlist();
+      if (
+        shouldDropIncomingMessageBeforeCommands(
+          chatJid,
+          msg,
+          allowlistCfg,
+          Boolean(registeredGroups[chatJid]),
+        )
+      ) {
+        if (allowlistCfg.logDenied) {
+          logger.debug(
+            { chatJid, sender: msg.sender },
+            'sender-allowlist: dropping message before command handling',
+          );
+        }
+        return;
+      }
+
+      // Remote control commands — intercept before storage
       if (CURSOR_STATUS_COMMANDS.has(commandToken)) {
         handleCursorStatus(chatJid).catch((err) =>
           logger.error({ err, chatJid }, 'Cursor status command error'),
@@ -2539,21 +2561,6 @@ async function main(): Promise<void> {
       }
 
       // Sender allowlist drop mode: discard messages from denied senders before storing
-      if (!msg.is_from_me && !msg.is_bot_message && registeredGroups[chatJid]) {
-        const cfg = loadSenderAllowlist();
-        if (
-          shouldDropMessage(chatJid, cfg) &&
-          !isSenderAllowed(chatJid, msg.sender, cfg)
-        ) {
-          if (cfg.logDenied) {
-            logger.debug(
-              { chatJid, sender: msg.sender },
-              'sender-allowlist: dropping message (drop mode)',
-            );
-          }
-          return;
-        }
-      }
       storeMessage(msg);
     },
     onChatMetadata: (

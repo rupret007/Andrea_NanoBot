@@ -21,7 +21,7 @@ describe('getUserFacingErrorDetail', () => {
   it('maps timeouts to a concise timeout message', () => {
     expect(
       getUserFacingErrorDetail(new Error('request timed out after 30000ms')),
-    ).toBe('The request timed out before the helper finished.');
+    ).toBe('The request timed out before it finished on my side.');
   });
 
   it('maps not-found failures to a safe missing-item message', () => {
@@ -36,7 +36,7 @@ describe('getUserFacingErrorDetail', () => {
     );
 
     expect(detail).toBe(
-      'The helper hit an internal error while handling that request.',
+      'Something went wrong on my side while handling that request.',
     );
     expect(detail).not.toContain('stacktrace');
   });

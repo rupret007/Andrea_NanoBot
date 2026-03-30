@@ -22,6 +22,16 @@ const DAYPART_HOURS: Record<string, number> = {
   tonight: 20,
 };
 
+function normalizeReminderInput(message: string): string {
+  return message
+    .trim()
+    .replace(
+      /^(?:(?:hi|hello|hey|thanks|thank you|ok|okay|please)[,!. ]+)*(?:andrea[,!. ]+)?/i,
+      '',
+    )
+    .trim();
+}
+
 export interface PlannedReminder {
   confirmation: string;
   task: Omit<ScheduledTask, 'last_run' | 'last_result'>;
@@ -101,10 +111,11 @@ export function planSimpleReminder(
   chatJid: string,
   now = new Date(),
 ): PlannedReminder | null {
-  const explicitMatch = message.trim().match(REMINDER_PATTERN);
+  const normalizedMessage = normalizeReminderInput(message);
+  const explicitMatch = normalizedMessage.match(REMINDER_PATTERN);
   const flexibleMatch = explicitMatch
     ? null
-    : message.trim().match(FLEXIBLE_REMINDER_PATTERN);
+    : normalizedMessage.match(FLEXIBLE_REMINDER_PATTERN);
   if (!explicitMatch && !flexibleMatch) return null;
 
   let dayPhrase: string;

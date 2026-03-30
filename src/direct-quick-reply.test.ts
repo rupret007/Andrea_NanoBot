@@ -28,6 +28,22 @@ describe('direct quick reply', () => {
     expect(reply).toContain("I'm Andrea");
   });
 
+  it('does not hijack mixed greeting requests', () => {
+    const reply = maybeBuildDirectQuickReply([
+      { content: 'Hi, can you remind me tomorrow at 3pm to call Sam?' },
+    ]);
+
+    expect(reply).toBeNull();
+  });
+
+  it('does not hijack mixed reminder asks that start with a greeting', () => {
+    const reply = maybeBuildDirectQuickReply([
+      { content: 'Hi, can you remind me tomorrow at 3pm to call Sam?' },
+    ]);
+
+    expect(reply).toBeNull();
+  });
+
   it('returns a presence response', () => {
     const reply = maybeBuildDirectQuickReply([{ content: 'you there?' }]);
 
@@ -79,6 +95,14 @@ describe('direct quick reply', () => {
     );
   });
 
+  it('does not hijack mixed thank-you requests', () => {
+    const reply = maybeBuildDirectQuickReply([
+      { content: 'Thanks, can you also remind me Friday at 2pm?' },
+    ]);
+
+    expect(reply).toBeNull();
+  });
+
   it('returns a stable acknowledgment for short confirmations', () => {
     expect(maybeBuildDirectQuickReply([{ content: 'ok' }])).toBe(
       'Sounds good.',
@@ -89,6 +113,17 @@ describe('direct quick reply', () => {
     expect(maybeBuildDirectQuickReply([{ content: 'go ahead' }])).toBe(
       'Sounds good.',
     );
+  });
+
+  it('does not hijack mixed requests that start with thanks', () => {
+    const reply = maybeBuildDirectQuickReply([
+      {
+        content:
+          'Thanks, can you remind me Friday at 2pm to check on the demo?',
+      },
+    ]);
+
+    expect(reply).toBeNull();
   });
 
   it('returns a stable project-help response', () => {

@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildTelegramChatIdText,
   buildTelegramCommandsText,
   buildTelegramFeaturesText,
   buildTelegramHelpText,
+  buildTelegramUnregisteredDmText,
   buildTelegramWelcomeText,
   extractTelegramLeadingCommand,
   splitTelegramMessage,
@@ -105,6 +107,24 @@ describe('buildTelegramCommandsText', () => {
     );
     expect(commands).not.toContain('/cursor_remote');
     expect(commands).not.toContain('/cursor_remote_end');
+  });
+});
+
+describe('buildTelegramChatIdText', () => {
+  it('renders chat info without markdown-sensitive formatting', () => {
+    const text = buildTelegramChatIdText('123', 'Ops_[Alpha]*', 'supergroup');
+
+    expect(text).toBe('Chat ID: tg:123\nName: Ops_[Alpha]*\nType: supergroup');
+  });
+});
+
+describe('buildTelegramUnregisteredDmText', () => {
+  it('guides first-contact DMs toward setup instead of staying silent', () => {
+    const text = buildTelegramUnregisteredDmText('Andrea');
+
+    expect(text).toContain('this chat is not set up yet');
+    expect(text).toContain('/start');
+    expect(text).toContain('/registermain');
   });
 });
 

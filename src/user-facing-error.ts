@@ -11,7 +11,7 @@ export function getUserFacingErrorDetail(err: unknown): string {
   const message = normalizeErrorMessage(err).trim().toLowerCase();
 
   if (!message) {
-    return 'The helper hit an internal error while handling that request.';
+    return 'Something went wrong on my side while handling that request.';
   }
 
   if (
@@ -22,7 +22,7 @@ export function getUserFacingErrorDetail(err: unknown): string {
       'took too long',
     ])
   ) {
-    return 'The request timed out before the helper finished.';
+    return 'The request timed out before it finished on my side.';
   }
 
   if (
@@ -106,7 +106,7 @@ export function getUserFacingErrorDetail(err: unknown): string {
     return 'The request was rejected because some required input was invalid.';
   }
 
-  return 'The helper hit an internal error while handling that request.';
+  return 'Something went wrong on my side while handling that request.';
 }
 
 export function formatUserFacingOperationFailure(

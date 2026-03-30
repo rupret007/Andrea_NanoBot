@@ -108,6 +108,27 @@ describe('cursor-capabilities', () => {
     );
   });
 
+  it('falls back to cloud job control in status when the desktop bridge probe failed', () => {
+    const summary = summarizeCursorCapabilities({
+      desktopStatus: buildDesktopStatus({
+        enabled: true,
+        hasToken: true,
+        baseUrl: 'https://cursor-mac.example.com',
+        probeStatus: 'failed',
+        probeDetail: 'bridge temporarily unavailable',
+      }),
+      cloudStatus: buildCloudStatus({
+        enabled: true,
+        hasApiKey: true,
+      }),
+      gatewayStatus: buildGatewayStatus(),
+    });
+
+    expect(summary.jobBackend).toBe('cloud');
+    expect(summary.canRunJobs).toBe(true);
+    expect(summary.nextStep).toContain('Fix the desktop bridge URL/token');
+  });
+
   it('passes through actionable Cursor setup failures unchanged', () => {
     expect(
       formatCursorOperationFailure(

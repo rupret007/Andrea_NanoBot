@@ -8,6 +8,7 @@ import {
   isTriggerAllowed,
   loadSenderAllowlist,
   SenderAllowlistConfig,
+  shouldDropIncomingMessageBeforeCommands,
   shouldDropMessage,
 } from './sender-allowlist.js';
 
@@ -212,5 +213,65 @@ describe('isTriggerAllowed', () => {
     };
     isTriggerAllowed('g1', 'eve', cfg);
     // Logger.debug is called — we just verify no crash; logger is a real pino instance
+  });
+});
+
+describe('shouldDropIncomingMessageBeforeCommands', () => {
+  const cfg: SenderAllowlistConfig = {
+    default: { allow: ['alice'], mode: 'drop' },
+    chats: {},
+    logDenied: false,
+  };
+
+  it('drops denied senders in registered chats before command handling', () => {
+    expect(
+      shouldDropIncomingMessageBeforeCommands(
+        'g1',
+        { is_from_me: false, is_bot_message: false, sender: 'eve' },
+        cfg,
+        true,
+      ),
+    ).toBe(true);
+  });
+
+  it('does not drop allowed senders in drop mode', () => {
+    expect(
+      shouldDropIncomingMessageBeforeCommands(
+        'g1',
+        { is_from_me: false, is_bot_message: false, sender: 'alice' },
+        cfg,
+        true,
+      ),
+    ).toBe(false);
+  });
+
+  it('does not drop bot or self messages', () => {
+    expect(
+      shouldDropIncomingMessageBeforeCommands(
+        'g1',
+        { is_from_me: true, is_bot_message: false, sender: 'eve' },
+        cfg,
+        true,
+      ),
+    ).toBe(false);
+    expect(
+      shouldDropIncomingMessageBeforeCommands(
+        'g1',
+        { is_from_me: false, is_bot_message: true, sender: 'eve' },
+        cfg,
+        true,
+      ),
+    ).toBe(false);
+  });
+
+  it('does not drop unregistered chats', () => {
+    expect(
+      shouldDropIncomingMessageBeforeCommands(
+        'g1',
+        { is_from_me: false, is_bot_message: false, sender: 'eve' },
+        cfg,
+        false,
+      ),
+    ).toBe(false);
   });
 });

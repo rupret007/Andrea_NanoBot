@@ -17,7 +17,7 @@ const DEFAULT_AUTH_STATUS_FILE = 'telegram-user-auth-status.json';
 const DEFAULT_AUTH_QR_IMAGE_FILE = 'telegram-user-login.png';
 const DEFAULT_AUTH_QR_TEXT_FILE = 'telegram-user-login.txt';
 const DEFAULT_SESSION_LOCK_FILE = 'telegram-user-session.lock';
-const TELEGRAM_SESSION_LOCK_RETRY_ATTEMPTS = 8;
+const TELEGRAM_SESSION_LOCK_RETRY_ATTEMPTS = 20;
 const TELEGRAM_SESSION_LOCK_RETRY_DELAY_MS = 250;
 
 export type TelegramUserAuthMode = 'phone' | 'qr';
@@ -98,11 +98,49 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function isProcessAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function normalizeTelegramTestTarget(value: string): string {
   const normalized = value.trim();
   if (!normalized) return '';
   if (normalized.startsWith('tg:')) return normalized.slice(3);
   return normalized;
+}
+
+export function normalizeTelegramSenderId(value: unknown): string | null {
+  if (typeof value === 'bigint') return value.toString();
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.trunc(value).toString();
+  }
+  if (typeof value === 'string') {
+    const normalized = value.trim();
+    return normalized || null;
+  }
+  if (!value || typeof value !== 'object') return null;
+
+  const record = value as Record<string, unknown>;
+  if ('userId' in record) return normalizeTelegramSenderId(record.userId);
+  if ('channelId' in record) return normalizeTelegramSenderId(record.channelId);
+  if ('chatId' in record) return normalizeTelegramSenderId(record.chatId);
+  if ('value' in record) return normalizeTelegramSenderId(record.value);
+  if ('id' in record) return normalizeTelegramSenderId(record.id);
+  return null;
+}
+
+export function matchesExpectedTelegramSender(
+  message: { senderId?: unknown },
+  expectedSenderId: string | null,
+): boolean {
+  if (!expectedSenderId) return true;
+  return normalizeTelegramSenderId(message.senderId) === expectedSenderId;
 }
 
 export function resolveTelegramUserSessionConfig(
@@ -204,6 +242,22 @@ export async function withTelegramUserSessionLock<T>(
         'code' in err &&
         err.code === 'EEXIST'
       ) {
+        try {
+          const raw = fs.readFileSync(lockFile, 'utf8').trim();
+          const parsed = raw
+            ? (JSON.parse(raw) as Record<string, unknown>)
+            : {};
+          const lockPid =
+            typeof parsed.pid === 'number' ? parsed.pid : Number(parsed.pid);
+          if (!isProcessAlive(lockPid)) {
+            fs.rmSync(lockFile, { force: true });
+            continue;
+          }
+        } catch {
+          fs.rmSync(lockFile, { force: true });
+          continue;
+        }
+
         if (attempt < TELEGRAM_SESSION_LOCK_RETRY_ATTEMPTS - 1) {
           await sleep(TELEGRAM_SESSION_LOCK_RETRY_DELAY_MS);
           continue;
@@ -452,15 +506,35 @@ function extractReplyText(message: { message?: string | null }): string {
   return (message.message || '').trim();
 }
 
+async function resolveExpectedReplySenderId(
+  client: TelegramClient,
+  target: string,
+): Promise<string | null> {
+  try {
+    const entity = (await client.getEntity(target)) as unknown as Record<
+      string,
+      unknown
+    >;
+    if (!entity || typeof entity !== 'object') return null;
+    if ('title' in entity) return null;
+    return normalizeTelegramSenderId(entity.id);
+  } catch (err) {
+    logger.debug({ err, target }, 'Telegram reply sender resolution failed');
+    return null;
+  }
+}
+
 async function mergeRepliesFromHistory(
   client: TelegramClient,
   target: string,
   sentId: number,
   replies: Map<number, TelegramLiveReply>,
+  expectedSenderId: string | null,
 ): Promise<void> {
   const history = await client.getMessages(target, { limit: 12 });
   for (const item of history) {
     if (item.out || item.id <= sentId) continue;
+    if (!matchesExpectedTelegramSender(item, expectedSenderId)) continue;
     const text = extractReplyText(item);
     if (!text || replies.has(item.id)) continue;
     replies.set(item.id, { id: item.id, text });
@@ -478,6 +552,7 @@ export async function sendTelegramUserMessageAndCaptureReplies(
   const sentId = sent.id;
   const replies = new Map<number, TelegramLiveReply>();
   const eventFilter = new NewMessage({ incoming: true, chats: [target] });
+  const expectedSenderId = await resolveExpectedReplySenderId(client, target);
 
   await new Promise<void>((resolve) => {
     let settled = false;
@@ -491,7 +566,13 @@ export async function sendTelegramUserMessageAndCaptureReplies(
       if (timeoutTimer) clearTimeout(timeoutTimer);
       client.removeEventHandler(onMessage, eventFilter);
       try {
-        await mergeRepliesFromHistory(client, target, sentId, replies);
+        await mergeRepliesFromHistory(
+          client,
+          target,
+          sentId,
+          replies,
+          expectedSenderId,
+        );
       } catch (err) {
         logger.debug({ err }, 'Telegram reply history fallback failed');
       }
@@ -506,10 +587,16 @@ export async function sendTelegramUserMessageAndCaptureReplies(
     };
 
     const onMessage = (event: {
-      message: { id: number; out?: boolean; message?: string | null };
+      message: {
+        id: number;
+        out?: boolean;
+        message?: string | null;
+        senderId?: unknown;
+      };
     }) => {
       const incoming = event.message;
       if (incoming.out || incoming.id <= sentId) return;
+      if (!matchesExpectedTelegramSender(incoming, expectedSenderId)) return;
       const text = extractReplyText(incoming);
       if (!text || replies.has(incoming.id)) return;
       replies.set(incoming.id, { id: incoming.id, text });

@@ -35,4 +35,13 @@ describe('buildSilentSuccessFallback', () => {
 
     expect(reply).toContain('control action completed');
   });
+
+  it('keeps generic fallback wording free of helper internals', () => {
+    const reply = buildSilentSuccessFallback('advanced_helper', [
+      { content: 'do the complicated thing' },
+    ]);
+
+    expect(reply).not.toContain('helper');
+    expect(reply).toContain('usable final response');
+  });
 });

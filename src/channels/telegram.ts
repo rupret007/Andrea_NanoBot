@@ -103,6 +103,20 @@ export function buildTelegramCommandsText(): string {
   ].join('\n');
 }
 
+export function buildTelegramChatIdText(
+  chatId: string | number,
+  chatName: string,
+  chatType: string,
+): string {
+  return `Chat ID: tg:${chatId}\nName: ${chatName}\nType: ${chatType}`;
+}
+
+export function buildTelegramUnregisteredDmText(
+  assistantName = ASSISTANT_NAME,
+): string {
+  return `I'm ${assistantName}, but this chat is not set up yet. Run /start for the quick guide or /registermain here to make this your main control chat.`;
+}
+
 export function buildTelegramFeaturesText(
   assistantName = ASSISTANT_NAME,
 ): string {
@@ -209,10 +223,7 @@ export class TelegramChannel implements Channel {
           ? ctx.from?.first_name || 'Private'
           : ((ctx.chat as { title?: string }).title ?? 'Unknown');
 
-      ctx.reply(
-        `Chat ID: \`tg:${chatId}\`\nName: ${chatName}\nType: ${chatType}`,
-        { parse_mode: 'Markdown' },
-      );
+      ctx.reply(buildTelegramChatIdText(chatId, chatName, chatType));
     });
 
     this.bot.command('help', (ctx) => {
@@ -330,6 +341,9 @@ export class TelegramChannel implements Channel {
           { chatJid, chatName },
           'Message from unregistered Telegram chat',
         );
+        if (ctx.chat.type === 'private') {
+          await ctx.reply(buildTelegramUnregisteredDmText());
+        }
         return;
       }
 

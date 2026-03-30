@@ -2,6 +2,7 @@ import fs from 'fs';
 
 import { SENDER_ALLOWLIST_PATH } from './config.js';
 import { logger } from './logger.js';
+import type { NewMessage } from './types.js';
 
 export interface ChatAllowlistEntry {
   allow: '*' | string[];
@@ -110,6 +111,20 @@ export function shouldDropMessage(
   cfg: SenderAllowlistConfig,
 ): boolean {
   return getEntry(chatJid, cfg).mode === 'drop';
+}
+
+export function shouldDropIncomingMessageBeforeCommands(
+  chatJid: string,
+  message: Pick<NewMessage, 'is_from_me' | 'is_bot_message' | 'sender'>,
+  cfg: SenderAllowlistConfig,
+  isRegisteredChat: boolean,
+): boolean {
+  if (!isRegisteredChat) return false;
+  if (message.is_from_me || message.is_bot_message) return false;
+  return (
+    shouldDropMessage(chatJid, cfg) &&
+    !isSenderAllowed(chatJid, message.sender, cfg)
+  );
 }
 
 export function isTriggerAllowed(

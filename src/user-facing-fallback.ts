@@ -34,5 +34,5 @@ export function buildSilentSuccessFallback(
     return "I couldn't confirm that control action completed. Please check status and try again.";
   }
 
-  return "I didn't get a usable final response back from the helper. Please try again.";
+  return "I didn't get a usable final response back in time. Please try again.";
 }

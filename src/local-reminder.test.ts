@@ -45,6 +45,32 @@ describe('planSimpleReminder', () => {
     expect(planned?.task.prompt).toContain('call Brian');
   });
 
+  it('parses reminder asks with a leading greeting', () => {
+    const planned = planSimpleReminder(
+      'Hi, can you remind me tomorrow at 3pm to call Sam?',
+      'main',
+      'tg:123',
+      new Date('2026-03-29T10:00:00-05:00'),
+    );
+
+    expect(planned).not.toBeNull();
+    expect(planned?.confirmation).toContain("I'll prompt you tomorrow at 3pm");
+    expect(planned?.task.prompt).toContain('call Sam');
+  });
+
+  it('parses reminder asks with a leading thank-you', () => {
+    const planned = planSimpleReminder(
+      'Thanks, can you remind me Friday at 2pm to check on the demo?',
+      'main',
+      'tg:123',
+      new Date('2026-03-29T10:00:00-05:00'),
+    );
+
+    expect(planned).not.toBeNull();
+    expect(planned?.confirmation).toContain('Friday at 2pm');
+    expect(planned?.task.prompt).toContain('check on the demo');
+  });
+
   it('handles a reminder ask with a trailing simple math request', () => {
     const planned = planSimpleReminder(
       'Can you remind me tomorrow at 3pm to call Sam and also what is 5 + 7?',
