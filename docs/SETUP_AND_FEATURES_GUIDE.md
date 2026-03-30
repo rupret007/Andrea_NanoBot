@@ -148,7 +148,7 @@ OPENAI_API_KEY=...
 Cursor Cloud Agents API (for direct Cursor job lifecycle control):
 
 ```bash
-CURSOR_API_KEY=cursor_api_...
+CURSOR_API_KEY=key_...
 # Optional:
 # CURSOR_API_BASE_URL=https://api.cursor.com
 # CURSOR_API_AUTH_MODE=auto
@@ -159,6 +159,8 @@ CURSOR_API_KEY=cursor_api_...
 ```
 
 `CURSOR_API_AUTH_MODE` accepts `auto`, `bearer`, or `basic`. Default `auto` tries Bearer first and falls back to Basic, which matches the mixed real-world Cursor Cloud auth behavior seen across tools and docs.
+
+If you need to create the key itself or want the shortest explanation of Cloud versus desktop bridge, see [CURSOR_API_KEYS.md](CURSOR_API_KEYS.md).
 
 Cursor Desktop Bridge (for using your own Cursor machine remotely):
 

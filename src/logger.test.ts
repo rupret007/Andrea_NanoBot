@@ -24,6 +24,15 @@ describe('sanitizeLogString', () => {
     expect(redacted).not.toContain('abcdefghijklmnop');
     expect(redacted).not.toContain('sk-proj-super-secret');
   });
+
+  it('redacts Cursor dashboard-style keys', () => {
+    const redacted = sanitizeLogString(
+      'Cursor key key_abcdefghijklmnopqrstuvwxyz0123456789',
+    );
+
+    expect(redacted).toContain('key_***');
+    expect(redacted).not.toContain('key_abcdefghijklmnopqrstuvwxyz0123456789');
+  });
 });
 
 describe('sanitizeLogData', () => {
@@ -32,7 +41,11 @@ describe('sanitizeLogData', () => {
       message: 'request failed for OPENAI_API_KEY=sk-live-abc123',
       nested: {
         authorization: 'Bearer token-secret-value',
-        arr: ['cursor_api_abcdef123456', 'safe'],
+        arr: [
+          'cursor_api_abcdef123456',
+          'key_abcdefghijklmnopqrstuvwxyz0123456789',
+          'safe',
+        ],
       },
     });
     const serialized = JSON.stringify(sanitized);
@@ -40,8 +53,12 @@ describe('sanitizeLogData', () => {
     expect(serialized).toContain('OPENAI_API_KEY=***');
     expect(serialized).toContain('Bearer ***');
     expect(serialized).toContain('cursor_api_***');
+    expect(serialized).toContain('key_***');
     expect(serialized).not.toContain('sk-live-abc123');
     expect(serialized).not.toContain('token-secret-value');
     expect(serialized).not.toContain('cursor_api_abcdef123456');
+    expect(serialized).not.toContain(
+      'key_abcdefghijklmnopqrstuvwxyz0123456789',
+    );
   });
 });

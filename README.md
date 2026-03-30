@@ -17,6 +17,7 @@
   <a href="docs/CHANNEL_COMMANDS_AND_ONBOARDING.md">Chat Commands</a>&nbsp; | &nbsp;
   <a href="docs/DEMO_CHECKLIST.md">Demo Checklist</a>&nbsp; | &nbsp;
   <a href="docs/ADDONS_AND_FEATURE_MATRIX.md">Add-On Matrix</a>&nbsp; | &nbsp;
+  <a href="docs/CURSOR_API_KEYS.md">Cursor API Keys</a>&nbsp; | &nbsp;
   <a href="docs/TESTING_AND_RELEASE_RUNBOOK.md">Testing Runbook</a>&nbsp; | &nbsp;
   <a href="PRIVACY.md">Privacy Policy</a>
 </p>
@@ -194,6 +195,8 @@ Andrea currently supports:
 - optional Cursor Cloud Agents API control via `CURSOR_API_KEY` and optional `CURSOR_API_AUTH_MODE=auto|bearer|basic`
 - optional integrations only after operator validation
 
+If you need to create or verify a real Cursor Cloud key, see [docs/CURSOR_API_KEYS.md](docs/CURSOR_API_KEYS.md).
+
 Useful runtime validation commands:
 
 ```text
@@ -227,6 +230,8 @@ Use the docs based on what you are trying to do:
   for Amazon Business setup, safety rails, and shopping commands
 - [docs/CURSOR_DESKTOP_BRIDGE.md](docs/CURSOR_DESKTOP_BRIDGE.md)
   for running Cursor work on your own Mac or desktop while Andrea controls it remotely
+- [docs/CURSOR_API_KEYS.md](docs/CURSOR_API_KEYS.md)
+  for where `CURSOR_API_KEY` comes from, what it enables, and how it differs from the desktop bridge
 - [docs/ALEXA_VOICE_INTEGRATION.md](docs/ALEXA_VOICE_INTEGRATION.md)
   for Alexa setup, signed endpoint behavior, and the ready-to-import interaction model
 - [docs/ADDONS_AND_FEATURE_MATRIX.md](docs/ADDONS_AND_FEATURE_MATRIX.md)

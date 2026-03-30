@@ -98,6 +98,7 @@ Cursor:
 - `/cursor_test`
 - `/cursor_models`
 - `/cursor_jobs`
+- [CURSOR_API_KEYS.md](CURSOR_API_KEYS.md) when you need a real `CURSOR_API_KEY` from Cursor Cloud
 - [CURSOR_DESKTOP_BRIDGE.md](CURSOR_DESKTOP_BRIDGE.md) when Andrea should drive your normal Cursor machine instead of only cloud jobs
 - if Cursor Cloud auth behaves differently than expected, set `CURSOR_API_AUTH_MODE=auto|bearer|basic`; default `auto` tries Bearer first and falls back to Basic
 

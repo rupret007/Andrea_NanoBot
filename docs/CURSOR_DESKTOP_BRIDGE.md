@@ -8,6 +8,8 @@ This is different from Cursor Cloud Agents:
 - Cursor Desktop Bridge runs work through the `cursor-agent` CLI on your own machine
 - Andrea talks to the bridge over HTTPS or a private tunnel, and the bridge talks to your local Cursor install
 
+If you need a real Cursor Cloud key instead, start with [CURSOR_API_KEYS.md](CURSOR_API_KEYS.md).
+
 ## What This Gives You
 
 With the desktop bridge enabled, Andrea can use the existing Cursor job controls against your own machine:

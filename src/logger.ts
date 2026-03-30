@@ -22,6 +22,7 @@ const SENSITIVE_BEARER_PATTERN = /\b(authorization:\s*bearer)\s+[^\s,;'"`]+/gi;
 const GENERIC_BEARER_PATTERN = /\bbearer\s+[a-z0-9._-]{12,}\b/gi;
 const OPENAI_KEY_PATTERN = /\bsk-[a-z0-9][a-z0-9_-]{8,}\b/gi;
 const CURSOR_KEY_PATTERN = /\bcursor_api_[a-z0-9_-]{8,}\b/gi;
+const CURSOR_DASHBOARD_KEY_PATTERN = /\bkey_[a-z0-9]{20,}\b/gi;
 
 export function sanitizeLogString(value: string): string {
   if (!value) return value;
@@ -30,7 +31,8 @@ export function sanitizeLogString(value: string): string {
     .replace(SENSITIVE_BEARER_PATTERN, '$1 ***')
     .replace(GENERIC_BEARER_PATTERN, 'Bearer ***')
     .replace(OPENAI_KEY_PATTERN, 'sk-***')
-    .replace(CURSOR_KEY_PATTERN, 'cursor_api_***');
+    .replace(CURSOR_KEY_PATTERN, 'cursor_api_***')
+    .replace(CURSOR_DASHBOARD_KEY_PATTERN, 'key_***');
 }
 
 function sanitizeUnknown(
