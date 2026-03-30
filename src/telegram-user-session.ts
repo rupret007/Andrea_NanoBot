@@ -530,8 +530,9 @@ async function mergeRepliesFromHistory(
   sentId: number,
   replies: Map<number, TelegramLiveReply>,
   expectedSenderId: string | null,
+  limit = 12,
 ): Promise<void> {
-  const history = await client.getMessages(target, { limit: 12 });
+  const history = await client.getMessages(target, { limit });
   for (const item of history) {
     if (item.out || item.id <= sentId) continue;
     if (!matchesExpectedTelegramSender(item, expectedSenderId)) continue;
@@ -573,6 +574,17 @@ export async function sendTelegramUserMessageAndCaptureReplies(
           replies,
           expectedSenderId,
         );
+        if (replies.size === 0) {
+          await sleep(Math.min(settleMs, 2_000));
+          await mergeRepliesFromHistory(
+            client,
+            target,
+            sentId,
+            replies,
+            null,
+            25,
+          );
+        }
       } catch (err) {
         logger.debug({ err }, 'Telegram reply history fallback failed');
       }
