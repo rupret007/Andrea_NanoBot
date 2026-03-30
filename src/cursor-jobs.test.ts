@@ -319,6 +319,77 @@ describe('cursor-jobs', () => {
     expect(messages[1].content).toBe('Third');
   });
 
+  it('uses text/type fallback when cloud conversation content is empty', async () => {
+    upsertCursorAgent({
+      id: 'bc_convo_text',
+      group_folder: 'whatsapp_main',
+      chat_jid: 'tg:42',
+      status: 'RUNNING',
+      model: 'default',
+      prompt_text: 'Initial prompt',
+      source_repository: null,
+      source_ref: null,
+      source_pr_url: null,
+      target_url: null,
+      target_pr_url: null,
+      target_branch_name: null,
+      auto_create_pr: 0,
+      open_as_cursor_github_app: 0,
+      skip_reviewer_request: 0,
+      summary: null,
+      raw_json: null,
+      created_by: 'tg:user',
+      created_at: '2026-03-28T18:00:00.000Z',
+      updated_at: '2026-03-28T18:00:00.000Z',
+      last_synced_at: null,
+    });
+
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          messages: [
+            {
+              type: 'user_message',
+              text: 'First',
+              role: 'assistant',
+              content: '',
+              createdAt: '2026-03-28T18:01:00.000Z',
+            },
+            {
+              type: 'assistant_message',
+              text: 'Second',
+              content: '',
+              createdAt: '2026-03-28T18:02:00.000Z',
+            },
+            {
+              type: 'assistant_message',
+              text: 'Third',
+              content: '',
+              createdAt: '2026-03-28T18:03:00.000Z',
+            },
+          ],
+        }),
+        { status: 200 },
+      )) as typeof fetch;
+
+    const messages = await getCursorAgentConversation({
+      groupFolder: 'whatsapp_main',
+      chatJid: 'tg:42',
+      agentId: 'bc_convo_text',
+      limit: 3,
+    });
+
+    expect(messages).toHaveLength(3);
+    expect(messages[0]).toMatchObject({
+      role: 'user',
+      content: 'First',
+    });
+    expect(messages[2]).toMatchObject({
+      role: 'assistant',
+      content: 'Third',
+    });
+  });
+
   it('accepts cursor URL input when syncing tracked agents', async () => {
     upsertCursorAgent({
       id: 'bc_url',

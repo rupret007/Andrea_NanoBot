@@ -177,6 +177,54 @@ describe('cursor-cloud client', () => {
     expect(created.id).toBe('bc_123');
   });
 
+  it('normalizes conversation entries that use text/type fields', async () => {
+    const fetchImpl = (async () =>
+      new Response(
+        JSON.stringify({
+          messages: [
+            {
+              id: 'm1',
+              type: 'user_message',
+              text: 'Do the thing',
+              role: 'assistant',
+              content: '',
+            },
+            {
+              id: 'm2',
+              type: 'assistant_message',
+              text: 'Done.',
+              content: '',
+            },
+          ],
+        }),
+        { status: 200 },
+      )) as unknown as typeof fetch;
+
+    const client = new CursorCloudClient(
+      {
+        baseUrl: 'https://api.cursor.com',
+        apiKey: 'test-key',
+        authMode: 'basic',
+        webhookSecret: null,
+        timeoutMs: 10_000,
+        maxRetries: 0,
+        retryBaseMs: 0,
+      },
+      { fetchImpl },
+    );
+
+    const conversation = await client.getConversation('bc_123');
+    expect(conversation.messages).toHaveLength(2);
+    expect(conversation.messages[0]).toMatchObject({
+      role: 'user',
+      content: 'Do the thing',
+    });
+    expect(conversation.messages[1]).toMatchObject({
+      role: 'assistant',
+      content: 'Done.',
+    });
+  });
+
   it('throws typed api errors on non-2xx responses', async () => {
     const fetchImpl = (async () =>
       new Response(JSON.stringify({ error: 'unauthorized' }), {

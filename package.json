@@ -44,12 +44,14 @@
   },
   "dependencies": {
     "@onecli-sh/sdk": "^0.2.0",
+    "@types/qrcode": "^1.5.5",
     "ask-sdk-core": "^2.14.0",
     "ask-sdk-express-adapter": "^2.14.0",
     "ask-sdk-model": "^1.86.0",
     "better-sqlite3": "11.10.0",
     "cron-parser": "5.5.0",
     "grammy": "^1.39.3",
+    "qrcode": "^1.5.4",
     "telegram": "^2.26.22"
   },
   "devDependencies": {

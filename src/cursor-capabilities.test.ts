@@ -102,6 +102,9 @@ describe('cursor-capabilities', () => {
     expect(summary.canListModels).toBe(true);
     expect(summary.cursorRoutingReady).toBe(true);
     expect(summary.nextStep).toContain('Desktop bridge job control is ready');
+    expect(formatCursorCapabilitySummaryMessage(summary)).toContain(
+      '/cursor_models: enabled via Cursor Cloud (results depend on API response)',
+    );
   });
 
   it('passes through actionable Cursor setup failures unchanged', () => {
@@ -114,6 +117,19 @@ describe('cursor-capabilities', () => {
       ),
     ).toContain(
       'Either set CURSOR_DESKTOP_BRIDGE_URL + CURSOR_DESKTOP_BRIDGE_TOKEN',
+    );
+  });
+
+  it('explains when Cursor Cloud requires a repository for job creation', () => {
+    expect(
+      formatCursorOperationFailure(
+        'Cursor create failed',
+        new Error(
+          'Cursor API POST /v0/agents failed with HTTP 400: Repository is required. Either provide a repository URL in the source.repository field, or configure a default repository at https://cursor.com/settings.',
+        ),
+      ),
+    ).toBe(
+      'Cursor create failed. Cursor Cloud needs a repository for that job. Use `/cursor_create --repo <url> ...` or configure a default repository in Cursor settings.',
     );
   });
 

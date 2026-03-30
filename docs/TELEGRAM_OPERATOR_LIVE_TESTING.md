@@ -50,6 +50,8 @@ TELEGRAM_USER_SESSION_FILE=store/telegram-user.session
 TELEGRAM_TEST_TARGET=@andrea_nanobot
 TELEGRAM_TEST_CHAT_ID=tg:123456789
 TELEGRAM_PHONE=+15551234567
+TELEGRAM_USER_AUTH_MODE=qr
+TELEGRAM_USER_2FA_PASSWORD=...
 TELEGRAM_LIVE_REPLY_TIMEOUT_MS=20000
 TELEGRAM_LIVE_REPLY_SETTLE_MS=1500
 ```
@@ -62,17 +64,35 @@ Notes:
 
 ## One-Time Login
 
+Recommended default:
+
+- `TELEGRAM_USER_AUTH_MODE=qr`
+
+That lets this machine generate a QR login image instead of forcing a phone-number prompt.
+
 Run:
 
 ```bash
 npm run telegram:user:auth
 ```
 
-The harness will prompt for:
+If `TELEGRAM_USER_AUTH_MODE=qr`, the harness will:
+
+- write a QR image to `store/telegram-user-login.png`
+- write login details to `store/telegram-user-login.txt`
+- update `store/telegram-user-auth-status.json`
+- wait for you to scan the QR in Telegram:
+  - `Settings`
+  - `Devices`
+  - `Link Desktop Device`
+
+If `TELEGRAM_USER_AUTH_MODE=phone`, the harness will prompt for:
 
 - phone number
 - Telegram login code
 - 2FA password if Telegram asks for it
+
+If QR auth still hits Telegram 2FA, set `TELEGRAM_USER_2FA_PASSWORD` or rerun the auth command interactively.
 
 After a successful login, the session is saved locally to:
 
@@ -94,6 +114,7 @@ Expected behavior:
 - Andrea receives it through the real bot path
 - the harness waits for Andrea's reply
 - replies are printed to stdout
+- runs are exclusive; if another auth/send/batch process is already active, wait for it to finish before starting a new one
 
 ## Run The Default Live Batch
 
@@ -121,6 +142,7 @@ Keep these rules:
 - do not paste `TELEGRAM_USER_SESSION` into screenshots or tickets
 - keep this tooling operator-only
 - do not expose it through Andrea's public Telegram command surface
+- do not run multiple `telegram:user:*` commands in parallel against the same chat; the harness now locks to prevent cross-captured replies
 
 ## Truth Boundary
 

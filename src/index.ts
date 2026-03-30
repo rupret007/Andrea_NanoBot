@@ -1504,7 +1504,7 @@ async function main(): Promise<void> {
           chatJid,
           normalizedFilter
             ? `No Cursor models matched "${filterText.trim()}".`
-            : 'No Cursor models were returned by the Cursor Cloud API.',
+            : 'Cursor Cloud returned no models for this account right now. Job control can still work without `/cursor_models` if you omit `--model` and let Cursor use its default.',
         );
         return;
       }

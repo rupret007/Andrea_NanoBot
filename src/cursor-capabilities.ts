@@ -77,7 +77,7 @@ export function formatCursorCapabilitySummaryMessage(
     '*Cursor Capability Summary*',
     `- Job backend: ${backendLabel}`,
     `- Main-control job commands: ${summary.canRunJobs ? 'ready' : 'unavailable'}`,
-    `- /cursor_models: ${summary.canListModels ? 'available' : 'requires Cursor Cloud API'}`,
+    `- /cursor_models: ${summary.canListModels ? 'enabled via Cursor Cloud (results depend on API response)' : 'requires Cursor Cloud API'}`,
     `- Cursor-backed runtime route: ${summary.cursorRoutingReady ? 'configured' : 'not configured'}`,
   ];
 
@@ -96,6 +96,10 @@ function getCursorOperatorDetail(err: unknown): string | null {
         ? err.trim()
         : '';
   if (!message) return null;
+
+  if (/repository is required/i.test(message)) {
+    return 'Cursor Cloud needs a repository for that job. Use `/cursor_create --repo <url> ...` or configure a default repository in Cursor settings.';
+  }
 
   const safePatterns = [
     /^cursor is not configured\./i,

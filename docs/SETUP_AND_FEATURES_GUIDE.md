@@ -333,10 +333,10 @@ Typical commands:
   - `/purchase_cancel <request_id>`
 - Cursor-focused control commands:
   - `/cursor_status` (safe public status check for Cloud, desktop bridge, and route readiness)
-  - `/cursor_models [filter]` (main control chat only; Cursor Cloud only)
+  - `/cursor_models [filter]` (main control chat only; Cursor Cloud only; some accounts return no model list even when jobs still work with the default model)
   - `/cursor_test` (main control chat only; live 9router/Cursor smoke request)
   - `/cursor_jobs` (main control chat only; list tracked jobs for this workspace plus recoverable backend jobs)
-  - `/cursor_create [options] <prompt>` (main control chat only; starts a Cursor job through Cloud or the desktop bridge)
+  - `/cursor_create [options] <prompt>` (main control chat only; starts a Cursor job through Cloud or the desktop bridge; Cloud jobs need either `--repo <url>` or a default repo configured in Cursor settings)
   - `/cursor_create --repo <url> --ref <branch> --model <id> <prompt>` (target a specific repo/ref/model)
   - `/cursor_sync <agent_id>` (main control chat only; refresh a tracked job or attach an existing backend job to this workspace)
   - `/cursor_stop <agent_id>` (main control chat only; request stop for a Cursor job)

@@ -19,14 +19,21 @@ function formatNumber(value: number): string {
 function extractMathExpression(message: string): string | null {
   const normalized = normalizeText(message)
     .replace(/[?=]/g, ' ')
+    .replace(/,/g, '')
     .replace(/\u00d7/g, '*')
-    .replace(/\u00f7/g, '/');
+    .replace(/\u00f7/g, '/')
+    .replace(/\bmultiplied by\b/g, ' * ')
+    .replace(/\bdivided by\b/g, ' / ')
+    .replace(/\bplus\b/g, ' + ')
+    .replace(/\bminus\b/g, ' - ')
+    .replace(/\btimes\b/g, ' * ');
 
   const stripped = normalized
     .replace(
       /^(what is|what's|whats|calculate|compute|solve|math|quick math|can you do)\s+/,
       '',
     )
+    .replace(/\s+/g, ' ')
     .trim();
 
   if (!/[+\-*/]/.test(stripped)) return null;
@@ -35,7 +42,7 @@ function extractMathExpression(message: string): string | null {
   return stripped;
 }
 
-function trySolveMath(message: string): string | null {
+export function buildQuickMathReply(message: string): string | null {
   const expression = extractMathExpression(message);
   if (!expression) return null;
 
@@ -67,6 +74,17 @@ export function maybeBuildDirectQuickReply(
     /\bmeaning of life\b/.test(normalized)
   ) {
     return '42. Final answer. The rest is universe patch notes.';
+  }
+
+  if (
+    /\bwhat are you best at\b/.test(normalized) ||
+    /\bwhat are you good at\b/.test(normalized)
+  ) {
+    return "Keeping tasks, reminders, research, and operator status checks clean and calm. Give me one concrete ask and I'll keep it moving.";
+  }
+
+  if (/\bare you funny or just pretending\b/.test(normalized)) {
+    return 'A little of both. Useful first, funny second, and chaos never.';
   }
 
   if (
@@ -128,7 +146,7 @@ export function maybeBuildDirectQuickReply(
     return "I know what's what. If chaos appears, I bring clarity and snacks.";
   }
 
-  return trySolveMath(lastContent);
+  return buildQuickMathReply(lastContent);
 }
 
 export function maybeBuildDirectRescueReply(

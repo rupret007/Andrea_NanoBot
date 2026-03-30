@@ -48,6 +48,15 @@ describe('assistant request routing', () => {
     );
   });
 
+  it('routes help-me-remember phrasing to protected assistant handling', () => {
+    const policy = classifyAssistantRequest([
+      { content: 'Can you help me remember to call Brian tomorrow morning?' },
+    ]);
+
+    expect(policy.route).toBe('protected_assistant');
+    expect(policy.mcpTools).toContain('mcp__nanoclaw__schedule_task');
+  });
+
   it('routes operational status and stop asks to control plane handling', () => {
     const policy = classifyAssistantRequest([
       { content: 'List my active cursor jobs and stop the stuck one.' },

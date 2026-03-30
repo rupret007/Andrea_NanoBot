@@ -2,7 +2,10 @@ import fs from 'fs';
 import path from 'path';
 import readline from 'readline/promises';
 
+import QRCode from 'qrcode';
 import { TelegramClient } from 'telegram';
+import { NewMessage } from 'telegram/events/index.js';
+import { LogLevel, Logger } from 'telegram/extensions/Logger.js';
 import { StringSession } from 'telegram/sessions/index.js';
 
 import { readEnvFile } from './env.js';
@@ -10,7 +13,12 @@ import { logger } from './logger.js';
 
 const DEFAULT_REPLY_TIMEOUT_MS = 20_000;
 const DEFAULT_SETTLE_MS = 1_500;
-const POLL_INTERVAL_MS = 700;
+const DEFAULT_AUTH_STATUS_FILE = 'telegram-user-auth-status.json';
+const DEFAULT_AUTH_QR_IMAGE_FILE = 'telegram-user-login.png';
+const DEFAULT_AUTH_QR_TEXT_FILE = 'telegram-user-login.txt';
+const DEFAULT_SESSION_LOCK_FILE = 'telegram-user-session.lock';
+
+export type TelegramUserAuthMode = 'phone' | 'qr';
 
 export const DEFAULT_TELEGRAM_LIVE_TEST_MESSAGES = [
   '/start',
@@ -31,6 +39,8 @@ const TELEGRAM_USER_ENV_KEYS = [
   'TELEGRAM_TEST_TARGET',
   'TELEGRAM_TEST_CHAT_ID',
   'TELEGRAM_PHONE',
+  'TELEGRAM_USER_AUTH_MODE',
+  'TELEGRAM_USER_2FA_PASSWORD',
   'TELEGRAM_BOT_TOKEN',
   'TELEGRAM_BOT_USERNAME',
   'TELEGRAM_LIVE_REPLY_TIMEOUT_MS',
@@ -44,6 +54,8 @@ export interface TelegramUserSessionConfig {
   sessionFile: string;
   testTarget: string;
   phoneNumber: string;
+  authMode: TelegramUserAuthMode;
+  twoFactorPassword: string;
   replyTimeoutMs: number;
   replySettleMs: number;
 }
@@ -59,9 +71,21 @@ export interface TelegramSendAndCaptureResult {
   replies: TelegramLiveReply[];
 }
 
+const TELEGRAM_USER_BASE_LOGGER = new Logger(LogLevel.NONE);
+
 function parsePositiveInt(value: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(value || '', 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function normalizeAuthMode(
+  value: string | undefined,
+  hasPhoneNumber: boolean,
+): TelegramUserAuthMode {
+  const normalized = (value || '').trim().toLowerCase();
+  if (normalized === 'phone') return 'phone';
+  if (normalized === 'qr') return 'qr';
+  return hasPhoneNumber ? 'phone' : 'qr';
 }
 
 function uniqueMessages(messages: string[]): string[] {
@@ -78,10 +102,14 @@ export function normalizeTelegramTestTarget(value: string): string {
 export function resolveTelegramUserSessionConfig(
   cwd = process.cwd(),
   env = process.env,
+  envFileValues?: Partial<
+    Record<(typeof TELEGRAM_USER_ENV_KEYS)[number], string>
+  >,
 ): TelegramUserSessionConfig {
-  const envFile = readEnvFile([...TELEGRAM_USER_ENV_KEYS]);
+  const envFile = envFileValues ?? readEnvFile([...TELEGRAM_USER_ENV_KEYS]);
   const get = (key: (typeof TELEGRAM_USER_ENV_KEYS)[number]): string =>
     (env[key] || envFile[key] || '').trim();
+  const phoneNumber = get('TELEGRAM_PHONE');
 
   return {
     apiId: (() => {
@@ -96,7 +124,9 @@ export function resolveTelegramUserSessionConfig(
     testTarget: normalizeTelegramTestTarget(
       get('TELEGRAM_TEST_TARGET') || get('TELEGRAM_TEST_CHAT_ID'),
     ),
-    phoneNumber: get('TELEGRAM_PHONE'),
+    phoneNumber,
+    authMode: normalizeAuthMode(get('TELEGRAM_USER_AUTH_MODE'), !!phoneNumber),
+    twoFactorPassword: get('TELEGRAM_USER_2FA_PASSWORD'),
     replyTimeoutMs: parsePositiveInt(
       get('TELEGRAM_LIVE_REPLY_TIMEOUT_MS'),
       DEFAULT_REPLY_TIMEOUT_MS,
@@ -121,6 +151,86 @@ function saveSessionToFile(sessionFile: string, session: string): void {
   fs.writeFileSync(sessionFile, `${session.trim()}\n`, 'utf8');
 }
 
+function getTelegramUserAuthArtifacts(sessionFile: string): {
+  statusFile: string;
+  qrImageFile: string;
+  qrTextFile: string;
+} {
+  const baseDir = path.dirname(sessionFile);
+  return {
+    statusFile: path.join(baseDir, DEFAULT_AUTH_STATUS_FILE),
+    qrImageFile: path.join(baseDir, DEFAULT_AUTH_QR_IMAGE_FILE),
+    qrTextFile: path.join(baseDir, DEFAULT_AUTH_QR_TEXT_FILE),
+  };
+}
+
+function getTelegramUserSessionLockFile(sessionFile: string): string {
+  return path.join(path.dirname(sessionFile), DEFAULT_SESSION_LOCK_FILE);
+}
+
+export async function withTelegramUserSessionLock<T>(
+  sessionFile: string,
+  run: () => Promise<T>,
+): Promise<T> {
+  const lockFile = getTelegramUserSessionLockFile(sessionFile);
+  fs.mkdirSync(path.dirname(lockFile), { recursive: true });
+
+  let handle: fs.promises.FileHandle | null = null;
+  try {
+    handle = await fs.promises.open(lockFile, 'wx');
+    await handle.writeFile(
+      `${JSON.stringify({
+        pid: process.pid,
+        startedAt: new Date().toISOString(),
+      })}\n`,
+      'utf8',
+    );
+  } catch (err) {
+    if (
+      err &&
+      typeof err === 'object' &&
+      'code' in err &&
+      err.code === 'EEXIST'
+    ) {
+      throw new Error(
+        `Telegram user-session harness is already running. Wait for the current run to finish, or remove the stale lock file if a previous run crashed: ${lockFile}`,
+        { cause: err },
+      );
+    }
+    throw err;
+  }
+
+  try {
+    return await run();
+  } finally {
+    try {
+      await handle?.close();
+    } catch {
+      // Best-effort close before cleanup.
+    }
+    fs.rmSync(lockFile, { force: true });
+  }
+}
+
+function writeTelegramUserAuthStatus(
+  statusFile: string,
+  payload: Record<string, unknown>,
+): void {
+  fs.mkdirSync(path.dirname(statusFile), { recursive: true });
+  fs.writeFileSync(
+    statusFile,
+    `${JSON.stringify(
+      {
+        updatedAt: new Date().toISOString(),
+        ...payload,
+      },
+      null,
+      2,
+    )}\n`,
+    'utf8',
+  );
+}
+
 async function prompt(promptText: string): Promise<string> {
   const rl = readline.createInterface({
     input: process.stdin,
@@ -132,6 +242,18 @@ async function prompt(promptText: string): Promise<string> {
   } finally {
     rl.close();
   }
+}
+
+async function resolveTwoFactorPassword(
+  config: TelegramUserSessionConfig,
+): Promise<string> {
+  if (config.twoFactorPassword) return config.twoFactorPassword;
+  if (!process.stdin.isTTY) {
+    throw new Error(
+      'Telegram 2FA password is required. Set TELEGRAM_USER_2FA_PASSWORD or rerun `npm run telegram:user:auth` interactively.',
+    );
+  }
+  return prompt('Telegram 2FA password (if any): ');
 }
 
 async function resolveBotUsernameFromToken(
@@ -199,6 +321,7 @@ export async function connectTelegramUserSession(
     config.apiHash,
     {
       connectionRetries: 5,
+      baseLogger: TELEGRAM_USER_BASE_LOGGER,
     },
   );
 
@@ -212,29 +335,112 @@ export async function connectTelegramUserSession(
       );
     }
 
-    const phoneNumber =
-      config.phoneNumber || (await prompt('Telegram phone number: '));
-    await client.start({
-      phoneNumber: async () => phoneNumber,
-      phoneCode: async () => prompt('Telegram login code: '),
-      password: async () => prompt('Telegram 2FA password (if any): '),
-      onError: (err) => {
-        logger.warn({ err }, 'Telegram user-session auth error');
-      },
+    const artifacts = getTelegramUserAuthArtifacts(config.sessionFile);
+    writeTelegramUserAuthStatus(artifacts.statusFile, {
+      state: 'authorizing',
+      authMode: config.authMode,
+      sessionFile: config.sessionFile,
     });
+
+    if (config.authMode === 'qr') {
+      await client.signInUserWithQrCode(
+        {
+          apiId: config.apiId,
+          apiHash: config.apiHash,
+        },
+        {
+          qrCode: async (qrCode) => {
+            const loginUrl = `tg://login?token=${qrCode.token.toString('base64url')}`;
+            await QRCode.toFile(artifacts.qrImageFile, loginUrl, {
+              margin: 1,
+              width: 360,
+            });
+            fs.writeFileSync(
+              artifacts.qrTextFile,
+              [
+                'Open Telegram on your phone, go to Settings > Devices > Link Desktop Device, then scan the QR image.',
+                `QR image: ${artifacts.qrImageFile}`,
+                `Login URL: ${loginUrl}`,
+                `Expires (unix): ${qrCode.expires}`,
+              ].join('\n'),
+              'utf8',
+            );
+            writeTelegramUserAuthStatus(artifacts.statusFile, {
+              state: 'awaiting_scan',
+              authMode: config.authMode,
+              sessionFile: config.sessionFile,
+              qrImageFile: artifacts.qrImageFile,
+              qrTextFile: artifacts.qrTextFile,
+              expiresAtUnix: qrCode.expires,
+            });
+            console.log(
+              `Telegram QR login image written to ${artifacts.qrImageFile}`,
+            );
+            console.log(
+              'Open Telegram on your phone, go to Settings > Devices > Link Desktop Device, and scan that image.',
+            );
+          },
+          password: async () => resolveTwoFactorPassword(config),
+          onError: (err) => {
+            writeTelegramUserAuthStatus(artifacts.statusFile, {
+              state: 'error',
+              authMode: config.authMode,
+              sessionFile: config.sessionFile,
+              message: err.message,
+            });
+            logger.warn({ err }, 'Telegram user-session auth error');
+          },
+        },
+      );
+    } else {
+      const phoneNumber =
+        config.phoneNumber || (await prompt('Telegram phone number: '));
+      await client.start({
+        phoneNumber: async () => phoneNumber,
+        phoneCode: async () => prompt('Telegram login code: '),
+        password: async () => resolveTwoFactorPassword(config),
+        onError: (err) => {
+          writeTelegramUserAuthStatus(artifacts.statusFile, {
+            state: 'error',
+            authMode: config.authMode,
+            sessionFile: config.sessionFile,
+            message: err.message,
+          });
+          logger.warn({ err }, 'Telegram user-session auth error');
+        },
+      });
+    }
   }
 
   const savedSession = stringSession.save();
   saveSessionToFile(config.sessionFile, savedSession);
+  await client.getMe();
+  const artifacts = getTelegramUserAuthArtifacts(config.sessionFile);
+  writeTelegramUserAuthStatus(artifacts.statusFile, {
+    state: 'authorized',
+    authMode: config.authMode,
+    sessionFile: config.sessionFile,
+  });
   return { client, savedSession };
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function extractReplyText(message: { message?: string | null }): string {
   return (message.message || '').trim();
+}
+
+async function mergeRepliesFromHistory(
+  client: TelegramClient,
+  target: string,
+  sentId: number,
+  replies: Map<number, TelegramLiveReply>,
+): Promise<void> {
+  const history = await client.getMessages(target, { limit: 12 });
+  for (const item of history) {
+    if (item.out || item.id <= sentId) continue;
+    const text = extractReplyText(item);
+    if (!text || replies.has(item.id)) continue;
+    replies.set(item.id, { id: item.id, text });
+  }
 }
 
 export async function sendTelegramUserMessageAndCaptureReplies(
@@ -247,26 +453,50 @@ export async function sendTelegramUserMessageAndCaptureReplies(
   const sent = await client.sendMessage(target, { message });
   const sentId = sent.id;
   const replies = new Map<number, TelegramLiveReply>();
-  const deadline = Date.now() + timeoutMs;
-  let latestReplyAt = 0;
+  const eventFilter = new NewMessage({ incoming: true, chats: [target] });
 
-  while (Date.now() < deadline) {
-    const history = await client.getMessages(target, { limit: 20 });
-    for (const item of history) {
-      if (item.out || item.id <= sentId) continue;
-      const text = extractReplyText(item);
-      if (!text) continue;
-      if (!replies.has(item.id)) {
-        replies.set(item.id, { id: item.id, text });
-        latestReplyAt = Date.now();
+  await new Promise<void>((resolve) => {
+    let settled = false;
+    let settleTimer: NodeJS.Timeout | null = null;
+    let timeoutTimer: NodeJS.Timeout | null = null;
+
+    const finish = async () => {
+      if (settled) return;
+      settled = true;
+      if (settleTimer) clearTimeout(settleTimer);
+      if (timeoutTimer) clearTimeout(timeoutTimer);
+      client.removeEventHandler(onMessage, eventFilter);
+      try {
+        await mergeRepliesFromHistory(client, target, sentId, replies);
+      } catch (err) {
+        logger.debug({ err }, 'Telegram reply history fallback failed');
       }
-    }
+      resolve();
+    };
 
-    if (replies.size > 0 && Date.now() - latestReplyAt >= settleMs) {
-      break;
-    }
-    await sleep(POLL_INTERVAL_MS);
-  }
+    const armSettleTimer = () => {
+      if (settleTimer) clearTimeout(settleTimer);
+      settleTimer = setTimeout(() => {
+        void finish();
+      }, settleMs);
+    };
+
+    const onMessage = (event: {
+      message: { id: number; out?: boolean; message?: string | null };
+    }) => {
+      const incoming = event.message;
+      if (incoming.out || incoming.id <= sentId) return;
+      const text = extractReplyText(incoming);
+      if (!text || replies.has(incoming.id)) return;
+      replies.set(incoming.id, { id: incoming.id, text });
+      armSettleTimer();
+    };
+
+    client.addEventHandler(onMessage, eventFilter);
+    timeoutTimer = setTimeout(() => {
+      void finish();
+    }, timeoutMs);
+  });
 
   return {
     message,
@@ -277,15 +507,17 @@ export async function sendTelegramUserMessageAndCaptureReplies(
 
 async function runAuthCommand(): Promise<void> {
   const config = resolveTelegramUserSessionConfig();
-  const { client } = await connectTelegramUserSession(config, true);
-  try {
-    console.log(`Telegram user session saved to ${config.sessionFile}`);
-    console.log(
-      'You can also export this session manually by setting TELEGRAM_USER_SESSION.',
-    );
-  } finally {
-    await client.disconnect();
-  }
+  await withTelegramUserSessionLock(config.sessionFile, async () => {
+    const { client } = await connectTelegramUserSession(config, true);
+    try {
+      console.log(`Telegram user session saved to ${config.sessionFile}`);
+      console.log(
+        'You can also export this session manually by setting TELEGRAM_USER_SESSION.',
+      );
+    } finally {
+      await client.disconnect();
+    }
+  });
 }
 
 async function runSendCommand(messageArgs: string[]): Promise<void> {
@@ -298,27 +530,29 @@ async function runSendCommand(messageArgs: string[]): Promise<void> {
 
   const config = resolveTelegramUserSessionConfig();
   const target = await ensureTelegramTestTarget(config);
-  const { client } = await connectTelegramUserSession(config, false);
-  try {
-    const result = await sendTelegramUserMessageAndCaptureReplies(
-      client,
-      target,
-      message,
-      config.replyTimeoutMs,
-      config.replySettleMs,
-    );
-    console.log(`Sent: ${result.message}`);
-    if (result.replies.length === 0) {
-      console.log('Replies: none observed before timeout');
-      return;
+  await withTelegramUserSessionLock(config.sessionFile, async () => {
+    const { client } = await connectTelegramUserSession(config, false);
+    try {
+      const result = await sendTelegramUserMessageAndCaptureReplies(
+        client,
+        target,
+        message,
+        config.replyTimeoutMs,
+        config.replySettleMs,
+      );
+      console.log(`Sent: ${result.message}`);
+      if (result.replies.length === 0) {
+        console.log('Replies: none observed before timeout');
+        return;
+      }
+      console.log('Replies:');
+      for (const reply of result.replies) {
+        console.log(`- ${reply.text}`);
+      }
+    } finally {
+      await client.disconnect();
     }
-    console.log('Replies:');
-    for (const reply of result.replies) {
-      console.log(`- ${reply.text}`);
-    }
-  } finally {
-    await client.disconnect();
-  }
+  });
 }
 
 async function runBatchCommand(messageArgs: string[]): Promise<void> {
@@ -333,29 +567,31 @@ async function runBatchCommand(messageArgs: string[]): Promise<void> {
 
   const config = resolveTelegramUserSessionConfig();
   const target = await ensureTelegramTestTarget(config);
-  const { client } = await connectTelegramUserSession(config, false);
-  try {
-    for (const message of messages) {
-      const result = await sendTelegramUserMessageAndCaptureReplies(
-        client,
-        target,
-        message,
-        config.replyTimeoutMs,
-        config.replySettleMs,
-      );
-      console.log(`\nSent: ${result.message}`);
-      if (result.replies.length === 0) {
-        console.log('Replies: none observed before timeout');
-        continue;
+  await withTelegramUserSessionLock(config.sessionFile, async () => {
+    const { client } = await connectTelegramUserSession(config, false);
+    try {
+      for (const message of messages) {
+        const result = await sendTelegramUserMessageAndCaptureReplies(
+          client,
+          target,
+          message,
+          config.replyTimeoutMs,
+          config.replySettleMs,
+        );
+        console.log(`\nSent: ${result.message}`);
+        if (result.replies.length === 0) {
+          console.log('Replies: none observed before timeout');
+          continue;
+        }
+        console.log('Replies:');
+        for (const reply of result.replies) {
+          console.log(`- ${reply.text}`);
+        }
       }
-      console.log('Replies:');
-      for (const reply of result.replies) {
-        console.log(`- ${reply.text}`);
-      }
+    } finally {
+      await client.disconnect();
     }
-  } finally {
-    await client.disconnect();
-  }
+  });
 }
 
 export async function runTelegramUserSessionCli(argv: string[]): Promise<void> {
@@ -394,6 +630,8 @@ Optional env:
 - TELEGRAM_TEST_CHAT_ID
 - TELEGRAM_BOT_USERNAME
 - TELEGRAM_PHONE
+- TELEGRAM_USER_AUTH_MODE=qr|phone
+- TELEGRAM_USER_2FA_PASSWORD
 `);
 }
 

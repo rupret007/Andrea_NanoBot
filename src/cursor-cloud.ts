@@ -117,6 +117,8 @@ export interface CursorListAgentsResponse {
 export interface CursorConversationMessage {
   role: string;
   content: string;
+  text?: string;
+  type?: string;
   createdAt?: string;
   [key: string]: unknown;
 }
@@ -320,6 +322,29 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+function normalizeConversationRole(row: Record<string, unknown>): string {
+  const type = String(row.type || '')
+    .trim()
+    .toLowerCase();
+  if (type === 'user_message') return 'user';
+  if (type === 'assistant_message') return 'assistant';
+  return String(row.role || 'assistant');
+}
+
+function normalizeConversationContent(row: Record<string, unknown>): string {
+  const content = row.content;
+  if (typeof content === 'string' && content.trim()) return content;
+
+  const text = row.text;
+  if (typeof text === 'string' && text.trim()) return text;
+
+  if (content !== undefined && content !== null) {
+    return typeof content === 'string' ? content : JSON.stringify(content);
+  }
+
+  return '';
+}
+
 function buildBasicAuthHeader(apiKey: string): string {
   const token = Buffer.from(`${apiKey}:`, 'utf-8').toString('base64');
   return `Basic ${token}`;
@@ -521,8 +546,8 @@ export class CursorCloudClient {
             const row = asRecord(entry)!;
             return {
               ...(row as CursorConversationMessage),
-              role: String(row.role || 'assistant'),
-              content: String(row.content || ''),
+              role: normalizeConversationRole(row),
+              content: normalizeConversationContent(row),
             };
           })
       : [];

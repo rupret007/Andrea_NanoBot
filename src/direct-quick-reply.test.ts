@@ -41,6 +41,23 @@ describe('direct quick reply', () => {
     expect(reply).toContain('tasks');
   });
 
+  it('returns a strongest-capabilities response for best-at asks', () => {
+    const reply = maybeBuildDirectQuickReply([
+      { content: 'what are you best at?' },
+    ]);
+
+    expect(reply).toContain('tasks');
+    expect(reply).toContain('operator status checks');
+  });
+
+  it('returns a stable response for funny-or-pretending asks', () => {
+    const reply = maybeBuildDirectQuickReply([
+      { content: 'Are you funny or just pretending?' },
+    ]);
+
+    expect(reply).toContain('Useful first');
+  });
+
   it('returns a light acknowledgment for funny remarks', () => {
     const reply = maybeBuildDirectQuickReply([{ content: "ahh that's funny" }]);
 
@@ -77,6 +94,14 @@ describe('direct quick reply', () => {
     const reply = maybeBuildDirectQuickReply([{ content: 'what is 46 / 6' }]);
 
     expect(reply).toContain('46 / 6 = 7.666667');
+  });
+
+  it('supports textual math prompts with commas', () => {
+    const reply = maybeBuildDirectQuickReply([
+      { content: 'What is 1,234 plus 99?' },
+    ]);
+
+    expect(reply).toContain('1234 + 99 = 1333');
   });
 
   it('ignores unsupported expressions', () => {

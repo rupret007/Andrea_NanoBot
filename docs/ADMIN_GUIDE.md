@@ -117,6 +117,8 @@ Run advanced Cursor, Amazon, and Alexa slash commands from the registered main c
 Useful operator truth:
 
 - `/cursor_jobs` now shows both tracked workspace jobs and recoverable backend jobs when the configured backend can list them
+- `/cursor_models` is a Cursor Cloud query, but some accounts currently return no model list even when Cloud jobs work. If that happens, omit `--model` and let Cursor use the account default, or pass a known model id directly.
+- `/cursor_create` through Cursor Cloud needs either `--repo <url>` on the command or a default repository configured in Cursor settings
 - `/cursor_sync <agent_id>` can attach one of those recoverable jobs to the current workspace
 - Cursor desktop bridge can now run line-oriented shell commands for tracked bridge sessions through `/cursor_terminal ...`
 - terminal control stays operator-only and tied to bridge-known sessions; it is not a live PTY, arbitrary shell attach, or remote desktop surface
@@ -124,8 +126,9 @@ Useful operator truth:
 Telegram live testing:
 
 - use [TELEGRAM_OPERATOR_LIVE_TESTING.md](TELEGRAM_OPERATOR_LIVE_TESTING.md) when you want this machine to send real inbound Telegram test messages from your own operator account
-- run `npm run telegram:user:auth` once to store a local MTProto session
+- run `npm run telegram:user:auth` once to store a local MTProto session; QR auth is the recommended default
 - run `npm run telegram:user:send -- "<message>"` or `npm run telegram:user:batch`
+- run one harness command at a time; concurrent live-test sends can cross-capture replies and are blocked by the operator lock now
 - keep this tooling operator-only and pointed at your own DM or dedicated test chat only
 
 Alexa:
