@@ -144,6 +144,29 @@ export function maybeBuildDirectQuickReply(
   }
 
   if (
+    /\bwhat commands do you have\b/.test(normalized) ||
+    /\bwhat are your commands\b/.test(normalized)
+  ) {
+    return 'Use /commands for the short list and /help for the fuller guide.';
+  }
+
+  if (
+    /\b(help me|can you help me|help with)\b.*\bproject work\b/.test(
+      normalized,
+    ) ||
+    /\bproject work\b.*\b(help me|can you help me|help with)\b/.test(normalized)
+  ) {
+    return 'Yes. Tell me the repo, file, or task and I will help you work through it.';
+  }
+
+  if (
+    /^can you check https?:\/\/\S+/.test(normalized) ||
+    /^check https?:\/\/\S+/.test(normalized)
+  ) {
+    return 'Yes. Tell me what you want checked on that link and I will focus on that.';
+  }
+
+  if (
     /\bdo you know what('?s| is) what\b/.test(normalized) ||
     /\bwhat('?s| is) what\b/.test(normalized)
   ) {

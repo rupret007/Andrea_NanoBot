@@ -219,6 +219,70 @@ describe('cursor-jobs', () => {
     expect(stopped.status).toBe('STOPPED');
   });
 
+  it('refreshes Cloud agent status when followup response omits it', async () => {
+    upsertCursorAgent({
+      id: 'bc_301',
+      group_folder: 'whatsapp_main',
+      chat_jid: 'tg:42',
+      status: 'FINISHED',
+      model: 'default',
+      prompt_text: 'Initial prompt',
+      source_repository: null,
+      source_ref: null,
+      source_pr_url: null,
+      target_url: 'https://cursor.com/agents?id=bc_301',
+      target_pr_url: null,
+      target_branch_name: null,
+      auto_create_pr: 0,
+      open_as_cursor_github_app: 0,
+      skip_reviewer_request: 0,
+      summary: null,
+      raw_json: null,
+      created_by: 'tg:user',
+      created_at: '2026-03-28T18:00:00.000Z',
+      updated_at: '2026-03-28T18:00:00.000Z',
+      last_synced_at: null,
+    });
+
+    const requests: string[] = [];
+    globalThis.fetch = (async (input) => {
+      requests.push(String(input));
+      if (requests.length === 1) {
+        return new Response(
+          JSON.stringify({
+            id: 'bc_301',
+            summary: 'Followup accepted',
+            target: { url: 'https://cursor.com/agents?id=bc_301' },
+          }),
+          { status: 200 },
+        );
+      }
+
+      return new Response(
+        JSON.stringify({
+          id: 'bc_301',
+          status: 'RUNNING',
+          summary: 'Followup accepted',
+          target: { url: 'https://cursor.com/agents?id=bc_301' },
+        }),
+        { status: 200 },
+      );
+    }) as typeof fetch;
+
+    const followup = await followupCursorAgent({
+      groupFolder: 'whatsapp_main',
+      chatJid: 'tg:42',
+      agentId: 'bc_301',
+      promptText: 'Continue with tests',
+    });
+
+    expect(followup.status).toBe('RUNNING');
+    expect(requests).toEqual([
+      'https://api.cursor.com/v0/agents/bc_301/followup',
+      'https://api.cursor.com/v0/agents/bc_301',
+    ]);
+  });
+
   it('enforces per-chat active job guardrail before creating new agent', async () => {
     process.env.CURSOR_MAX_ACTIVE_JOBS_PER_CHAT = '1';
     upsertCursorAgent({

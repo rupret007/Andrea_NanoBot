@@ -737,9 +737,19 @@ export async function followupCursorAgent(
   }
 
   const client = resolveCursorClient();
-  const followed = await client.followupAgent(agentId, {
+  let followed = await client.followupAgent(agentId, {
     prompt: { text: params.promptText },
   });
+  if (!toNullableString(followed.status)) {
+    try {
+      followed = await client.getAgent(agentId);
+    } catch (err) {
+      logger.debug(
+        { err: String(err), agentId },
+        'Cursor follow-up status refresh skipped',
+      );
+    }
+  }
 
   const row = mapApiAgentToDbRecord(followed, {
     groupFolder: existing.group_folder,

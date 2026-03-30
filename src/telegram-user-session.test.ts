@@ -1,8 +1,8 @@
-import path from 'path';
-import { mkdtempSync, rmSync } from 'fs';
+import fs, { mkdtempSync, rmSync } from 'fs';
 import os from 'os';
+import path from 'path';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   DEFAULT_TELEGRAM_LIVE_TEST_MESSAGES,
@@ -125,5 +125,35 @@ describe('withTelegramUserSessionLock', () => {
     release();
     await firstRun;
     rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it('retries a transient lock collision before succeeding', async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), 'nanoclaw-tg-lock-'));
+    const sessionFile = path.join(tempDir, 'telegram-user.session');
+    const originalOpen = fs.promises.open.bind(fs.promises);
+    let attempts = 0;
+    const openSpy = vi
+      .spyOn(fs.promises, 'open')
+      .mockImplementation(async (...args) => {
+        attempts += 1;
+        if (attempts === 1) {
+          const error = new Error('exists') as NodeJS.ErrnoException;
+          error.code = 'EEXIST';
+          throw error;
+        }
+        return originalOpen(...args);
+      });
+
+    try {
+      let ran = false;
+      await withTelegramUserSessionLock(sessionFile, async () => {
+        ran = true;
+      });
+      expect(ran).toBe(true);
+      expect(attempts).toBeGreaterThanOrEqual(2);
+    } finally {
+      openSpy.mockRestore();
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 });

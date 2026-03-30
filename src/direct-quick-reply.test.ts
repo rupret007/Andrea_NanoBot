@@ -41,6 +41,15 @@ describe('direct quick reply', () => {
     expect(reply).toContain('tasks');
   });
 
+  it('returns a stable command-help response', () => {
+    const reply = maybeBuildDirectQuickReply([
+      { content: 'What commands do you have?' },
+    ]);
+
+    expect(reply).toContain('/commands');
+    expect(reply).toContain('/help');
+  });
+
   it('returns a strongest-capabilities response for best-at asks', () => {
     const reply = maybeBuildDirectQuickReply([
       { content: 'what are you best at?' },
@@ -80,6 +89,22 @@ describe('direct quick reply', () => {
     expect(maybeBuildDirectQuickReply([{ content: 'go ahead' }])).toBe(
       'Sounds good.',
     );
+  });
+
+  it('returns a stable project-help response', () => {
+    const reply = maybeBuildDirectQuickReply([
+      { content: 'Can you help me with project work?' },
+    ]);
+
+    expect(reply).toContain('repo, file, or task');
+  });
+
+  it('returns a stable link-check response', () => {
+    const reply = maybeBuildDirectQuickReply([
+      { content: 'Can you check https://example.com for me?' },
+    ]);
+
+    expect(reply).toContain('what you want checked on that link');
   });
 
   it("returns a witty what's-what response", () => {
@@ -163,7 +188,10 @@ describe('direct rescue reply', () => {
 
   it('does not rescue URL-heavy messages', () => {
     const reply = maybeBuildDirectRescueReply([
-      { content: 'can you check https://example.com for me?' },
+      {
+        content:
+          'can you compare https://example.com and https://example.org for me?',
+      },
     ]);
 
     expect(reply).toBeNull();

@@ -17,6 +17,8 @@ const DEFAULT_AUTH_STATUS_FILE = 'telegram-user-auth-status.json';
 const DEFAULT_AUTH_QR_IMAGE_FILE = 'telegram-user-login.png';
 const DEFAULT_AUTH_QR_TEXT_FILE = 'telegram-user-login.txt';
 const DEFAULT_SESSION_LOCK_FILE = 'telegram-user-session.lock';
+const TELEGRAM_SESSION_LOCK_RETRY_ATTEMPTS = 8;
+const TELEGRAM_SESSION_LOCK_RETRY_DELAY_MS = 250;
 
 export type TelegramUserAuthMode = 'phone' | 'qr';
 
@@ -90,6 +92,10 @@ function normalizeAuthMode(
 
 function uniqueMessages(messages: string[]): string[] {
   return messages.map((message) => message.trim()).filter(Boolean);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export function normalizeTelegramTestTarget(value: string): string {
@@ -176,28 +182,46 @@ export async function withTelegramUserSessionLock<T>(
   fs.mkdirSync(path.dirname(lockFile), { recursive: true });
 
   let handle: fs.promises.FileHandle | null = null;
-  try {
-    handle = await fs.promises.open(lockFile, 'wx');
-    await handle.writeFile(
-      `${JSON.stringify({
-        pid: process.pid,
-        startedAt: new Date().toISOString(),
-      })}\n`,
-      'utf8',
-    );
-  } catch (err) {
-    if (
-      err &&
-      typeof err === 'object' &&
-      'code' in err &&
-      err.code === 'EEXIST'
-    ) {
-      throw new Error(
-        `Telegram user-session harness is already running. Wait for the current run to finish, or remove the stale lock file if a previous run crashed: ${lockFile}`,
-        { cause: err },
+  for (
+    let attempt = 0;
+    attempt < TELEGRAM_SESSION_LOCK_RETRY_ATTEMPTS;
+    attempt += 1
+  ) {
+    try {
+      handle = await fs.promises.open(lockFile, 'wx');
+      await handle.writeFile(
+        `${JSON.stringify({
+          pid: process.pid,
+          startedAt: new Date().toISOString(),
+        })}\n`,
+        'utf8',
       );
+      break;
+    } catch (err) {
+      if (
+        err &&
+        typeof err === 'object' &&
+        'code' in err &&
+        err.code === 'EEXIST'
+      ) {
+        if (attempt < TELEGRAM_SESSION_LOCK_RETRY_ATTEMPTS - 1) {
+          await sleep(TELEGRAM_SESSION_LOCK_RETRY_DELAY_MS);
+          continue;
+        }
+
+        throw new Error(
+          `Telegram user-session harness is already running. Wait for the current run to finish, or remove the stale lock file if a previous run crashed: ${lockFile}`,
+          { cause: err },
+        );
+      }
+      throw err;
     }
-    throw err;
+  }
+
+  if (!handle) {
+    throw new Error(
+      `Telegram user-session harness could not acquire its lock file: ${lockFile}`,
+    );
   }
 
   try {
