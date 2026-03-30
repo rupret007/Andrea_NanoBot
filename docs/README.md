@@ -2,7 +2,7 @@
 
 These documents describe the current Codex-first Andrea runtime in this repo.
 
-Current docs:
+Current source-of-truth docs:
 
 - [Runtime](RUNTIME.md)
 - [Runtime reality audit](RUNTIME_AUDIT.md)
@@ -12,8 +12,10 @@ Current docs:
 - [Testing And Validation](TESTING.md)
 - [Merge Boundary](MERGE_BOUNDARY.md)
 - [Debug Checklist](DEBUG_CHECKLIST.md)
+- [Current Runtime Spec](SPEC.md)
+- [Legacy Reference](LEGACY_REFERENCE.md)
 
 Important:
 
-- The English docs in this set are the current source of truth for the standalone Codex/OpenAI runtime.
-- Older NanoClaw-specific materials elsewhere in the repo should be treated as legacy reference unless they have been updated to match this runtime.
+- The docs listed above are the current source of truth for the standalone Codex/OpenAI runtime.
+- Older NanoClaw-era or Claude-era materials elsewhere in `docs/` are preserved only as legacy reference unless they have been updated to match this runtime.

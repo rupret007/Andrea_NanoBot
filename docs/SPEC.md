@@ -40,8 +40,10 @@ This document describes the current standalone Codex-first Andrea runtime, not t
   - secondary path
   - limited text fallback today
 
-- `claude_legacy`
-  - compatibility only
+Internal compatibility:
+
+- imported legacy session rows may still be hydrated as `claude_legacy`
+- that compatibility exists only to preserve state while migrating older data
 
 ## Operator Surface
 
@@ -54,7 +56,7 @@ This document describes the current standalone Codex-first Andrea runtime, not t
 Not included:
 
 - `/runtime-artifacts`
-- Claude remote-control bridge
+- legacy provider-specific remote-control bridges
 
 ## Validation State
 
@@ -63,5 +65,6 @@ As of March 30, 2026:
 - architecture exists and is wired through the real container runner
 - Podman behavior is live-validated
 - Codex auth seeding is live-validated
-- successful local Codex completion is blocked by runtime account usage limits in this environment
+- successful local Codex completion is live-validated
+- same-thread local Codex follow-up reuse is live-validated
 - successful cloud fallback is blocked by missing configured OpenAI credentials in this environment

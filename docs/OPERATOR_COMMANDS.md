@@ -19,7 +19,7 @@ These commands are intended for Andrea's main control chat only.
 - `/runtime-logs GROUP_FOLDER [LINES]`
   - Returns the tail of the latest runtime log for that group.
 
-## Disabled
+## Legacy Unsupported Commands
 
 - `/remote-control`
 - `/remote-control-end`
@@ -27,7 +27,7 @@ These commands are intended for Andrea's main control chat only.
 Reason:
 
 - this repo does not expose the old Claude remote-control bridge
-- operator control is now service-native instead of tied to a Claude UI bridge
+- operator control is now service-native instead of tied to a provider-specific UI bridge
 
 ## Truthfulness Rules
 
@@ -51,7 +51,8 @@ Validated in focused tests:
 
 - command gating
 - main-control-only restrictions
-- disabled remote-control messaging
+- legacy remote-control rejection messaging
+- runtime status, jobs, follow-up, stop, and logs dispatch behavior
 
 Not live-driven through Telegram in this pass:
 

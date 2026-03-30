@@ -215,6 +215,47 @@ describe('container-runner timeout behavior', () => {
     expect(onOutput).not.toHaveBeenCalled();
   });
 
+  it('includes the latest raw runtime output when initial structured output times out', async () => {
+    const resultPromise = runContainerAgent(testGroup, testInput, () => {});
+
+    fakeProc.stderr.push(
+      '[agent-runner] codex exec is waiting for provider output\n',
+    );
+
+    await vi.advanceTimersByTimeAsync(300000);
+    fakeProc.emit('close', 137);
+    await vi.advanceTimersByTimeAsync(10);
+
+    const result = await resultPromise;
+    expect(result.status).toBe('error');
+    expect(result.error).toContain(
+      'Container produced no structured output within 300000ms.',
+    );
+    expect(result.error).toContain('Last stderr');
+    expect(result.error).toContain('codex exec is waiting for provider output');
+  });
+
+  it('treats one-shot structured output as success even if the container exits later', async () => {
+    const resultPromise = runContainerAgent(testGroup, testInput, () => {});
+
+    emitOutputMarker(fakeProc, {
+      status: 'success',
+      result: 'Andrea Codex local ok',
+      newSessionId: 'session-789',
+      runtime: 'codex_local',
+    });
+
+    await vi.advanceTimersByTimeAsync(300000);
+    fakeProc.emit('close', 137);
+    await vi.advanceTimersByTimeAsync(10);
+
+    const result = await resultPromise;
+    expect(result.status).toBe('success');
+    expect(result.result).toBe('Andrea Codex local ok');
+    expect(result.newSessionId).toBe('session-789');
+    expect(result.runtime).toBe('codex_local');
+  });
+
   it('normal exit after output resolves as success', async () => {
     const onOutput = vi.fn(async () => {});
     const resultPromise = runContainerAgent(
@@ -244,6 +285,8 @@ describe('container-runner timeout behavior', () => {
   });
 
   it('surfaces structured runtime errors from a non-zero container exit', async () => {
+    const containerRuntime = await import('./container-runtime.js');
+    vi.mocked(containerRuntime.stopContainer).mockClear();
     const resultPromise = runContainerAgent(testGroup, testInput, () => {});
 
     emitOutputMarker(fakeProc, {
@@ -262,5 +305,6 @@ describe('container-runner timeout behavior', () => {
     expect(result.status).toBe('error');
     expect(result.runtime).toBe('openai_cloud');
     expect(result.error).toContain('OPENAI_API_KEY');
+    expect(containerRuntime.stopContainer).not.toHaveBeenCalled();
   });
 });

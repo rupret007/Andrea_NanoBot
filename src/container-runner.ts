@@ -163,6 +163,25 @@ function parseStructuredContainerOutput(
   }
 }
 
+function buildOutputTail(text: string, label: string): string | null {
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length === 0) return null;
+
+  const tail = lines.slice(-8).join(' | ');
+  const normalizedTail = tail.length > 400 ? `${tail.slice(0, 397)}...` : tail;
+  return `${label}: ${normalizedTail}`;
+}
+
+function buildRuntimeOutputHint(stdout: string, stderr: string): string | null {
+  return (
+    buildOutputTail(stderr, 'Last stderr') ||
+    buildOutputTail(stdout, 'Last stdout')
+  );
+}
+
 function ensureSecretShadowFile(): string {
   const shadowFile = path.join(RUNTIME_STATE_DIR, 'secret-shadow-empty');
   fs.mkdirSync(path.dirname(shadowFile), { recursive: true });
@@ -661,38 +680,44 @@ export async function runContainerAgent(
         }
       }
 
-      // Stream-parse for output markers
-      if (onOutput) {
-        parseBuffer += chunk;
-        let startIdx: number;
-        while ((startIdx = parseBuffer.indexOf(OUTPUT_START_MARKER)) !== -1) {
-          const endIdx = parseBuffer.indexOf(OUTPUT_END_MARKER, startIdx);
-          if (endIdx === -1) break; // Incomplete pair, wait for more data
+      // Parse structured output markers as they arrive.
+      parseBuffer += chunk;
+      let startIdx: number;
+      while ((startIdx = parseBuffer.indexOf(OUTPUT_START_MARKER)) !== -1) {
+        const endIdx = parseBuffer.indexOf(OUTPUT_END_MARKER, startIdx);
+        if (endIdx === -1) break; // Incomplete pair, wait for more data
 
-          const jsonStr = parseBuffer
-            .slice(startIdx + OUTPUT_START_MARKER.length, endIdx)
-            .trim();
-          parseBuffer = parseBuffer.slice(endIdx + OUTPUT_END_MARKER.length);
+        const jsonStr = parseBuffer
+          .slice(startIdx + OUTPUT_START_MARKER.length, endIdx)
+          .trim();
+        parseBuffer = parseBuffer.slice(endIdx + OUTPUT_END_MARKER.length);
 
-          try {
-            const parsed: ContainerOutput = JSON.parse(jsonStr);
-            if (parsed.newSessionId) {
-              newSessionId = parsed.newSessionId;
-            }
-            hadStructuredOutput = true;
-            clearTimeout(initialOutputTimeout);
+        try {
+          const parsed: ContainerOutput = JSON.parse(jsonStr);
+          if (parsed.newSessionId) {
+            newSessionId = parsed.newSessionId;
+          }
+          hadStructuredOutput = true;
+          clearTimeout(initialOutputTimeout);
+          if (onOutput) {
             hadStreamingOutput = true;
             // Activity detected — reset the hard timeout
             resetTimeout();
             // Call onOutput for all markers (including null results)
             // so idle timers start even for "silent" query completions.
             outputChain = outputChain.then(() => onOutput(parsed));
-          } catch (err) {
-            logger.warn(
-              { group: group.name, error: err },
-              'Failed to parse streamed output chunk',
-            );
+          } else if (
+            parsed.status === 'success' &&
+            !requestedNonStreamingStop
+          ) {
+            requestedNonStreamingStop = true;
+            stopContainerGracefully('non_streaming_output_complete');
           }
+        } catch (err) {
+          logger.warn(
+            { group: group.name, error: err },
+            'Failed to parse streamed output chunk',
+          );
         }
       }
     });
@@ -723,6 +748,7 @@ export async function runContainerAgent(
     let timeoutReason: 'hard' | 'no_output' | null = null;
     let hadStreamingOutput = false;
     let hadStructuredOutput = false;
+    let requestedNonStreamingStop = false;
     const configTimeout = group.containerConfig?.timeout || CONTAINER_TIMEOUT;
     const effectiveIdleTimeout = resolveEffectiveIdleTimeout(
       input.idleTimeoutMs ?? IDLE_TIMEOUT,
@@ -786,6 +812,7 @@ export async function runContainerAgent(
       clearTimeout(timeout);
       clearTimeout(initialOutputTimeout);
       const duration = Date.now() - startTime;
+      const runtimeOutputHint = buildRuntimeOutputHint(stdout, stderr);
 
       if (timedOut) {
         const ts = new Date().toISOString().replace(/[:.]/g, '-');
@@ -801,8 +828,34 @@ export async function runContainerAgent(
             `Exit Code: ${code}`,
             `Timeout Reason: ${timeoutReason || 'unknown'}`,
             `Had Streaming Output: ${hadStreamingOutput}`,
+            '',
+            '--- STDOUT ---',
+            stdout || '(empty)',
+            '',
+            '--- STDERR ---',
+            stderr || '(empty)',
           ].join('\n'),
         );
+
+        if (!onOutput) {
+          const structuredOutputOnTimeout =
+            parseStructuredContainerOutput(stdout);
+          if (structuredOutputOnTimeout) {
+            logger.warn(
+              {
+                group: group.name,
+                containerName,
+                duration,
+                code,
+                timeoutReason,
+                runtime: structuredOutputOnTimeout.runtime,
+              },
+              'Container timed out after structured output in one-shot mode',
+            );
+            resolve(structuredOutputOnTimeout);
+            return;
+          }
+        }
 
         // Timeout after output = idle cleanup, not failure.
         // The agent already sent its response; this is just the
@@ -830,6 +883,7 @@ export async function runContainerAgent(
               duration,
               code,
               initialOutputTimeoutMs,
+              runtimeOutputHint,
             },
             'Container timed out waiting for initial structured output',
           );
@@ -837,20 +891,31 @@ export async function runContainerAgent(
           resolve({
             status: 'error',
             result: null,
-            error: `Container produced no output within ${initialOutputTimeoutMs}ms. Check credentials or runtime setup.`,
+            error: runtimeOutputHint
+              ? `Container produced no structured output within ${initialOutputTimeoutMs}ms. ${runtimeOutputHint}`
+              : `Container produced no structured output within ${initialOutputTimeoutMs}ms. Check credentials or runtime setup.`,
           });
           return;
         }
 
         logger.error(
-          { group: group.name, containerName, duration, code, configTimeout },
+          {
+            group: group.name,
+            containerName,
+            duration,
+            code,
+            configTimeout,
+            runtimeOutputHint,
+          },
           'Container timed out with no output',
         );
 
         resolve({
           status: 'error',
           result: null,
-          error: `Container timed out after ${configTimeout}ms`,
+          error: runtimeOutputHint
+            ? `Container timed out after ${configTimeout}ms. ${runtimeOutputHint}`
+            : `Container timed out after ${configTimeout}ms`,
         });
         return;
       }

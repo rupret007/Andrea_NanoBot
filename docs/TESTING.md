@@ -11,7 +11,7 @@ Why:
 
 ### Windows note
 
-On Windows, Node `24.x` may have **no prebuilt** `better-sqlite3` binary; `npm install` can fall back to `node-gyp` and fail without **Visual Studio** “Desktop development with C++”. Prefer **Node 22.x** (matching `engines` in `package.json`) so install uses a prebuild.
+On Windows, Node `24.x` may have no prebuilt `better-sqlite3` binary. `npm install` can fall back to `node-gyp` and fail without Visual Studio "Desktop development with C++". Prefer Node `22.x` to match `engines` in `package.json` and use the validated prebuild path.
 
 See also [RUNTIME_AUDIT.md](RUNTIME_AUDIT.md) and [OPERATIONS.md](OPERATIONS.md).
 
@@ -28,7 +28,7 @@ This suite covers:
 - Codex auth seeding
 - Podman selection behavior
 - DB persistence for runtime threads
-- operator command gating
+- operator command gating and runtime command dispatch
 - scheduler/runtime integration
 - IPC auth
 - failure message behavior
@@ -72,42 +72,37 @@ npm run validate:runtime -- --runtime openai_cloud --route cloud_allowed
 
 Succeeded:
 
-- focused runtime suite
+- `npm run test`: 253 passed under Node `22.22.2`
+- `npm run test:runtime`: 154 passed under Node `22.22.2`
 - root typecheck
 - root build
 - agent-runner build
 - Podman image build
 - Podman smoke run
-- real local container launch through the runtime runner
-
-**Second run (same day, plan implementation):**
-
-- Full `npm test`: **257** passed; `npm run test:runtime`: **143** passed — inside `podman run` with `docker.io/node:22`, after `npm install` **and** `npm --prefix container/agent-runner install` (Windows host Node 24 cannot `npm install` without VS; Linux container path used).
-- `podman build -t andrea-openai-agent:latest ./container` and smoke `Container OK`.
-- `validate:runtime` on a host where `podman run` works from the **Node process**: used Podman’s Linux VM + portable Node 22 (`curl` tarball into `/tmp`) from repo path `/mnt/c/.../NanoClaw`, with `CONTAINER_RUNTIME_BIN=podman`. Results: structured errors — `codex_local` missing Codex auth seed; `openai_cloud` missing `OPENAI_API_KEY` (expected without `.env`).
-- Real-world corpus: `node scripts/realworld-send.mjs --dry-run` — **200** messages.
+- successful `codex_local` one-shot reply in a real Podman container
+- same-thread `codex_local` follow-up reuse with the returned session id
+- `openai_cloud` returns an explicit structured credential error when `OPENAI_API_KEY` is missing
 
 Conditionally blocked:
 
-- successful `codex_local` reply because the Codex account hit a usage limit
 - successful `openai_cloud` reply because `OPENAI_API_KEY` was not configured
-- same-thread live follow-up because there was no successful first local turn to continue
+- live Telegram-side operator walkthrough because it was not exercised against a connected chat in this pass
 
 ## Windows + Podman: run validate when host `npm install` fails
 
 If Windows has Node 24 without C++ build tools, run validation from the Podman machine (Linux), where `podman` can spawn the agent container:
 
 ```bash
-podman machine ssh 'curl -fsSL https://nodejs.org/dist/v22.22.2/node-v22.22.2-linux-x64.tar.xz -o /tmp/node.tar.xz && tar -xJf /tmp/node.tar.xz -C /tmp && export PATH=/tmp/node-v22.22.2-linux-x64/bin:$PATH && cd /mnt/c/Users/<you>/Desktop/NanoClaw && npm install && npm --prefix container/agent-runner install && CONTAINER_RUNTIME_BIN=podman npx tsx scripts/validate-runtime.ts --runtime codex_local'
+podman machine ssh 'curl -fsSL https://nodejs.org/dist/v22.22.2/node-v22.22.2-linux-x64.tar.xz -o /tmp/node.tar.xz && tar -xJf /tmp/node.tar.xz -C /tmp && export PATH=/tmp/node-v22.22.2-linux-x64/bin:$PATH && cd /mnt/c/Users/<you>/Desktop/Andrea_OpenAI_Bot && npm run install:all && CONTAINER_RUNTIME_BIN=podman npx tsx scripts/validate-runtime.ts --runtime codex_local'
 ```
 
 Adjust the repo path. OneCLI may be unreachable from the VM; the runner logs a warning but still exercises Podman.
 
-## Reality audit
+## Reality Audit
 
 Subsystem classification (tests vs live vs conditional) lives in [RUNTIME_AUDIT.md](RUNTIME_AUDIT.md). Update that file whenever validation state changes.
 
-## Real-world message corpus (~200)
+## Real-World Message Corpus (~200)
 
 Regenerate JSON (exactly 200 messages):
 
@@ -133,8 +128,8 @@ $env:TELEGRAM_CHAT_ID = "<chat id>"
 node scripts/realworld-send.mjs --send --delay-ms 45000 --jitter-ms 15000
 ```
 
-**Do not** fire 200 heavy `codex_heavy` prompts back-to-back while Codex is rate-limited. Prefer filtering by category, smaller `--limit`, or long delays. Operator commands belong in the **main control** chat only.
+Do not fire 200 heavy `codex_heavy` prompts back-to-back while Codex is rate-limited. Prefer filtering by category, smaller `--limit`, or long delays. Operator commands belong in the main control chat only.
 
-## Service restart
+## Service Restart
 
 See [OPERATIONS.md](OPERATIONS.md) for stop/start order and smoke checks after a restart.

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   getCommandAccessDecision,
+  isKnownOperatorCommand,
   isMainControlChat,
   normalizeCommandToken,
 } from './operator-command-gate.js';
@@ -46,7 +47,7 @@ describe('operator command gate', () => {
     expect(decision.allowed).toBe(true);
   });
 
-  it('keeps remote control disabled even in the main chat', () => {
+  it('treats legacy operator commands as unsupported', () => {
     const decision = getCommandAccessDecision('/remote_control', {
       name: 'Andrea Main',
       folder: 'main',
@@ -56,7 +57,8 @@ describe('operator command gate', () => {
     });
 
     expect(decision.allowed).toBe(false);
-    expect(decision.reason).toBe('disabled');
+    expect(decision.reason).toBe('unsupported_legacy');
+    expect(isKnownOperatorCommand('/remote_control')).toBe(true);
   });
 
   it('detects main control chats explicitly', () => {

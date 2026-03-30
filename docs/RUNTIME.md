@@ -2,11 +2,10 @@
 
 ## Architecture
 
-This repo uses a provider-neutral runtime model:
+This repo uses a provider-neutral runtime model with two supported runtime lanes:
 
 - `codex_local`
 - `openai_cloud`
-- `claude_legacy`
 
 Routing policy:
 
@@ -43,12 +42,13 @@ What was live-validated on March 30, 2026:
 - Podman smoke run
 - real container launch through `runContainerAgent`
 - host Codex auth seeding into the per-group `.codex` mount
-- structured Codex runtime error propagation back to the host runner
+- successful local Codex one-shot reply in a real containerized group workspace
+- same-thread follow-up reuse with the same returned session id
+- structured Codex runtime error propagation back to the host runner when validation is forced into failure cases
 
 What is still blocked:
 
-- a successful live local answer in this environment, because the Codex account hit a usage limit during validation
-- live same-thread follow-up proof, because there was no successful first turn to continue from
+- a live Telegram-mediated operator walkthrough, because that was not exercised against a connected chat in this pass
 
 ## Cloud Fallback
 
@@ -86,7 +86,7 @@ Persisted state includes:
 - task run logs
 - registered groups
 
-Legacy `sessions` rows are hydrated as `claude_legacy` thread records so old session state is not silently dropped.
+Legacy `sessions` rows are hydrated internally as `claude_legacy` thread records so old session state is not silently dropped. That compatibility is migration-focused only and is not a supported Andrea runtime lane.
 
 ## Operator Surface
 
@@ -98,7 +98,7 @@ Operator-only runtime commands are handled separately from normal assistant conv
 - `/runtime-stop`
 - `/runtime-logs`
 
-The old Claude remote-control bridge is intentionally disabled.
+Legacy `/remote-control` commands are rejected with guidance toward the supported runtime commands.
 
 ## `/runtime-artifacts`
 

@@ -8,22 +8,24 @@ This repo is not the Cursor/design sibling project. `Andrea_NanoBot` remains the
 
 - A standalone Andrea bot with a Codex-first runtime.
 - Podman-first local execution with per-group isolation.
-- Provider-neutral runtime routing with `codex_local`, `openai_cloud`, and a limited `claude_legacy` compatibility lane.
+- Provider-neutral runtime routing with `codex_local` and `openai_cloud`.
+- Internal legacy session compatibility so older imported state is not dropped.
 - SQLite-backed thread and job persistence.
-- Operator-only runtime controls that stay secondary to Andrea’s normal assistant behavior.
+- Operator-only runtime controls that stay secondary to Andrea's normal assistant behavior.
 
 ## Current Runtime Truth
 
 Validated on March 30, 2026:
 
 - `codex_local` reaches a real Podman container, seeds per-group `.codex` auth from the host Codex home, and returns structured runtime errors correctly.
+- `codex_local` now also returns a successful live one-shot result in this environment.
+- Same-thread `codex_local` follow-up was live-validated with the same returned session id.
 - Podman image build and smoke run passed on Windows with Podman Desktop.
 - Runtime-focused tests passed under Node `22.22.2`.
-- Thread/job persistence, routing, Podman selection, scheduler integration, IPC auth, and operator command gating are covered by focused tests.
+- Thread/job persistence, routing, Podman selection, scheduler integration, IPC auth, and operator command handling are covered by focused tests.
 
 Conditional or blocked:
 
-- A fully successful live `codex_local` response is currently blocked on the host Codex account hitting a usage limit. The runtime wiring is working; capacity is the blocker.
 - `openai_cloud` is implemented as a limited text fallback. It is not yet a full local-tool-parity runtime.
 - `openai_cloud` live success is blocked until `OPENAI_API_KEY` or a compatible gateway token is configured.
 - End-to-end operator command flows were validated through focused tests, but not through a live Telegram chat in this pass.
@@ -38,7 +40,7 @@ Deferred:
   - Primary runtime.
   - Runs inside per-group Podman containers.
   - Uses the local Codex CLI in the container.
-  - Seeds each group’s mounted `.codex` home from the host Codex auth files when available.
+  - Seeds each group's mounted `.codex` home from the host Codex auth files when available.
 
 - `openai_cloud`
   - Secondary fallback lane.
@@ -46,10 +48,10 @@ Deferred:
   - Requires `OPENAI_API_KEY` or a compatible gateway token.
   - Currently focused on text responses rather than local-tool parity.
 
-- `claude_legacy`
-  - Internal compatibility lane only.
-  - Not the primary product path.
-  - Kept to avoid hard-breaking imported legacy session state.
+Internal legacy compatibility:
+
+- Older imported session rows are still hydrated internally as `claude_legacy`.
+- That compatibility exists to preserve state during migration, not as a supported Andrea runtime lane.
 
 ## Product Shape
 
@@ -65,7 +67,7 @@ Andrea should feel like one assistant, not a bag of runtimes.
 - Node `22.x`
 - Podman Desktop with a working local machine/runtime
 - Windows, macOS, or Linux
-- Existing Codex host auth in `%USERPROFILE%\\.codex` or `CODEX_HOME`, or an `OPENAI_API_KEY`
+- Existing Codex host auth in `%USERPROFILE%\.codex` or `CODEX_HOME`, or an `OPENAI_API_KEY`
 
 Important:
 
@@ -135,7 +137,7 @@ Main control chat only:
 - `/runtime-stop GROUP_FOLDER`
 - `/runtime-logs GROUP_FOLDER [LINES]`
 
-The old Claude remote-control bridge is intentionally disabled in this repo.
+Legacy `/remote-control` commands are not part of the supported Andrea operator surface in this repo.
 
 ## Docs
 
@@ -147,12 +149,13 @@ The old Claude remote-control bridge is intentionally disabled in this repo.
 - [Operator Commands](docs/OPERATOR_COMMANDS.md)
 - [Testing And Validation](docs/TESTING.md)
 - [Merge Boundary](docs/MERGE_BOUNDARY.md)
+- [Legacy Reference](docs/LEGACY_REFERENCE.md)
 
 Stress-style chat testing (~200 scripted messages, optional Telegram sender) is documented in [docs/TESTING.md](docs/TESTING.md).
 
 ## Honest Bottom Line
 
-This repo is now operationally real enough to build, test, and exercise as Andrea’s Codex-first runtime bot.
+This repo is now operationally real enough to build, test, and exercise as Andrea's Codex-first runtime bot.
 
 It is not fully proven as a production-ready daily driver yet because:
 

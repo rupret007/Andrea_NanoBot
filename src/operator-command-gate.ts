@@ -1,11 +1,11 @@
 import type { RegisteredGroup } from './types.js';
 
-export const REMOTE_CONTROL_START_COMMANDS = new Set([
+const LEGACY_REMOTE_CONTROL_START_COMMANDS = new Set([
   '/remote-control',
   '/remote_control',
 ]);
 
-export const REMOTE_CONTROL_STOP_COMMANDS = new Set([
+const LEGACY_REMOTE_CONTROL_STOP_COMMANDS = new Set([
   '/remote-control-end',
   '/remote_control_end',
 ]);
@@ -45,9 +45,9 @@ export const RUNTIME_LOGS_COMMANDS = new Set([
   '/codex_logs',
 ]);
 
-const DISABLED_COMMANDS = new Set([
-  ...REMOTE_CONTROL_START_COMMANDS,
-  ...REMOTE_CONTROL_STOP_COMMANDS,
+const LEGACY_UNSUPPORTED_COMMANDS = new Set([
+  ...LEGACY_REMOTE_CONTROL_START_COMMANDS,
+  ...LEGACY_REMOTE_CONTROL_STOP_COMMANDS,
 ]);
 
 const MAIN_CONTROL_ONLY_COMMANDS = new Set([
@@ -60,7 +60,7 @@ const MAIN_CONTROL_ONLY_COMMANDS = new Set([
 
 export interface CommandAccessDecision {
   allowed: boolean;
-  reason: 'public' | 'main_control_only' | 'disabled';
+  reason: 'public' | 'main_control_only' | 'unsupported_legacy';
   message: string | null;
 }
 
@@ -76,18 +76,26 @@ export function isMainControlChat(group: RegisteredGroup | undefined): boolean {
   return group?.isMain === true;
 }
 
+export function isKnownOperatorCommand(commandToken: string): boolean {
+  const normalized = normalizeCommandToken(commandToken);
+  return (
+    LEGACY_UNSUPPORTED_COMMANDS.has(normalized) ||
+    MAIN_CONTROL_ONLY_COMMANDS.has(normalized)
+  );
+}
+
 export function getCommandAccessDecision(
   commandToken: string,
   group: RegisteredGroup | undefined,
 ): CommandAccessDecision {
   const normalized = normalizeCommandToken(commandToken);
 
-  if (DISABLED_COMMANDS.has(normalized)) {
+  if (LEGACY_UNSUPPORTED_COMMANDS.has(normalized)) {
     return {
       allowed: false,
-      reason: 'disabled',
+      reason: 'unsupported_legacy',
       message:
-        'Andrea does not expose the old Claude remote-control bridge in this runtime.',
+        'That legacy operator command is not supported in Andrea_OpenAI_Bot. Use /runtime-status, /runtime-jobs, /runtime-followup, /runtime-stop, or /runtime-logs.',
     };
   }
 

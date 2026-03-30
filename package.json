@@ -20,7 +20,7 @@
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",
     "test": "vitest run",
-    "test:runtime": "vitest run src/agent-runtime.test.ts src/codex-home.test.ts src/container-runtime.test.ts src/container-runner.test.ts src/db-agent-threads.test.ts src/task-scheduler.test.ts src/operator-command-gate.test.ts src/ipc-auth.test.ts src/routing.test.ts setup/environment.test.ts setup/platform.test.ts setup/register.test.ts src/db.test.ts src/db-migration.test.ts",
+    "test:runtime": "vitest run src/agent-runtime.test.ts src/codex-home.test.ts src/container-runtime.test.ts src/container-runner.test.ts src/db-agent-threads.test.ts src/runtime-commands.test.ts src/task-scheduler.test.ts src/operator-command-gate.test.ts src/ipc-auth.test.ts src/routing.test.ts setup/environment.test.ts setup/platform.test.ts setup/register.test.ts src/db.test.ts src/db-migration.test.ts",
     "validate:runtime": "tsx scripts/validate-runtime.ts",
     "generate:realworld-corpus": "node scripts/generate-realworld-corpus.mjs",
     "realworld:send:dry-run": "node scripts/realworld-send.mjs --dry-run",

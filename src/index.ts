@@ -64,15 +64,10 @@ import { startIpcWatcher } from './ipc.js';
 import { findChannel, formatMessages, formatOutbound } from './router.js';
 import {
   getCommandAccessDecision,
+  isKnownOperatorCommand,
   normalizeCommandToken,
-  REMOTE_CONTROL_START_COMMANDS,
-  REMOTE_CONTROL_STOP_COMMANDS,
-  RUNTIME_FOLLOWUP_COMMANDS,
-  RUNTIME_JOBS_COMMANDS,
-  RUNTIME_LOGS_COMMANDS,
-  RUNTIME_STATUS_COMMANDS,
-  RUNTIME_STOP_COMMANDS,
 } from './operator-command-gate.js';
+import { dispatchRuntimeCommand } from './runtime-commands.js';
 import {
   isSenderAllowed,
   isTriggerAllowed,
@@ -282,49 +277,6 @@ function getRegisteredGroupByFolder(
   );
   if (!match) return null;
   return { jid: match[0], group: match[1] };
-}
-
-function formatRuntimeJobsMessage(): string {
-  const jobs = queue.getRuntimeJobs();
-  if (jobs.length === 0) {
-    return 'Andrea has no active or queued runtime jobs right now.';
-  }
-
-  return [
-    '*Andrea Runtime Jobs*',
-    ...jobs.map((job) =>
-      [
-        `- ${job.groupFolder || job.groupJid}`,
-        `active=${job.active ? 'yes' : 'no'}`,
-        `idle=${job.idleWaiting ? 'yes' : 'no'}`,
-        `pending_messages=${job.pendingMessages ? 'yes' : 'no'}`,
-        `pending_tasks=${job.pendingTaskCount}`,
-        `container=${job.containerName || 'none'}`,
-      ].join(' | '),
-    ),
-  ].join('\n');
-}
-
-function readLatestRuntimeLog(
-  groupFolder: string,
-  lineLimit: number,
-): string | null {
-  const groupDir = resolveGroupFolderPath(groupFolder);
-  const logsDir = path.join(groupDir, 'logs');
-  if (!fs.existsSync(logsDir)) return null;
-
-  const entries = fs
-    .readdirSync(logsDir)
-    .filter((entry) => entry.endsWith('.log'))
-    .sort();
-
-  const latest = entries.at(-1);
-  if (!latest) return null;
-
-  const content = fs.readFileSync(path.join(logsDir, latest), 'utf-8');
-  const lines = content.trim().split(/\r?\n/);
-  const tail = lines.slice(-Math.max(1, lineLimit));
-  return [`Latest log: ${latest}`, ...tail].join('\n');
 }
 
 async function sendToChat(chatJid: string, text: string): Promise<void> {
@@ -543,83 +495,25 @@ async function runAgent(
   }
 }
 
-async function handleRuntimeStatus(chatJid: string): Promise<void> {
-  const snapshot = getAgentRuntimeStatusSnapshot({
-    activeThreads: agentThreads,
-    activeJobs: queue.getRuntimeJobs().length,
-    containerRuntimeName: CONTAINER_RUNTIME_NAME,
-    containerRuntimeStatus: getContainerRuntimeStatus(CONTAINER_RUNTIME_NAME),
-  });
-  await sendToChat(chatJid, formatAgentRuntimeStatusMessage(snapshot));
-}
-
-async function handleRuntimeJobs(chatJid: string): Promise<void> {
-  await sendToChat(chatJid, formatRuntimeJobsMessage());
-}
-
-async function handleRuntimeStop(
+async function queueRuntimeFollowup(
   operatorChatJid: string,
-  targetFolder: string,
-): Promise<void> {
-  const target = getRegisteredGroupByFolder(targetFolder);
-  if (!target) {
-    await sendToChat(
-      operatorChatJid,
-      `No registered group found for folder "${targetFolder}".`,
-    );
-    return;
-  }
-
-  const stopped = queue.requestStop(target.jid);
-  await sendToChat(
-    operatorChatJid,
-    stopped
-      ? `Requested runtime stop for ${targetFolder}.`
-      : `No active runtime job found for ${targetFolder}.`,
-  );
-}
-
-async function handleRuntimeLogs(
-  operatorChatJid: string,
-  targetFolder: string,
-  lineLimit: number,
-): Promise<void> {
-  const target = getRegisteredGroupByFolder(targetFolder);
-  if (!target) {
-    await sendToChat(
-      operatorChatJid,
-      `No registered group found for folder "${targetFolder}".`,
-    );
-    return;
-  }
-
-  const logText = readLatestRuntimeLog(target.group.folder, lineLimit);
-  await sendToChat(
-    operatorChatJid,
-    logText || `No runtime logs found yet for ${targetFolder}.`,
-  );
-}
-
-async function handleRuntimeFollowup(
-  operatorChatJid: string,
+  targetJid: string,
   targetFolder: string,
   prompt: string,
 ): Promise<void> {
-  const target = getRegisteredGroupByFolder(targetFolder);
-  if (!target) {
-    await sendToChat(
-      operatorChatJid,
-      `No registered group found for folder "${targetFolder}".`,
+  const target = registeredGroups[targetJid];
+  if (!target || target.folder !== targetFolder) {
+    throw new Error(
+      `No registered group found for folder "${targetFolder}" during follow-up dispatch.`,
     );
-    return;
   }
 
-  const taskId = `runtime-followup-${Date.now()}-${target.group.folder}`;
+  const taskId = `runtime-followup-${Date.now()}-${target.folder}`;
   const requestPolicy = classifyAssistantRequest([{ content: prompt }]);
 
-  queue.enqueueTask(target.jid, taskId, async () => {
+  queue.enqueueTask(targetJid, taskId, async () => {
     const existingThread =
-      getAgentThread(target.group.folder) || agentThreads[target.group.folder];
+      getAgentThread(target.folder) || agentThreads[target.folder];
     const runtimeRoute = classifyRuntimeRoute(requestPolicy, prompt);
     const preferredRuntime = selectPreferredRuntime(
       existingThread,
@@ -630,33 +524,28 @@ async function handleRuntimeFollowup(
       preferredRuntime,
     )
       ? existingThread.thread_id
-      : sessions[target.group.folder];
+      : sessions[target.folder];
     let emittedOutput = false;
 
     const output = await runContainerAgent(
-      target.group,
+      target,
       {
         prompt,
         sessionId,
         preferredRuntime,
         runtimeRoute,
-        groupFolder: target.group.folder,
-        chatJid: target.jid,
-        isMain: target.group.isMain === true,
+        groupFolder: target.folder,
+        chatJid: targetJid,
+        isMain: target.isMain === true,
         assistantName: ASSISTANT_NAME,
         requestPolicy,
       },
       (proc, containerName) =>
-        queue.registerProcess(
-          target.jid,
-          proc,
-          containerName,
-          target.group.folder,
-        ),
+        queue.registerProcess(targetJid, proc, containerName, target.folder),
       async (result) => {
         if (result.newSessionId) {
           persistAgentThread(
-            target.group.folder,
+            target.folder,
             result.newSessionId,
             result.runtime || preferredRuntime,
           );
@@ -669,14 +558,14 @@ async function handleRuntimeFollowup(
           }
         }
         if (result.status === 'success') {
-          queue.notifyIdle(target.jid);
+          queue.notifyIdle(targetJid);
         }
       },
     );
 
     if (output.newSessionId) {
       persistAgentThread(
-        target.group.folder,
+        target.folder,
         output.newSessionId,
         output.runtime || preferredRuntime,
       );
@@ -697,11 +586,6 @@ async function handleRuntimeFollowup(
       );
     }
   });
-
-  await sendToChat(
-    operatorChatJid,
-    `Queued runtime follow-up for ${targetFolder}.`,
-  );
 }
 
 async function handleOperatorCommand(
@@ -723,67 +607,45 @@ async function handleOperatorCommand(
     if (decision.message) {
       await sendToChat(chatJid, decision.message);
     }
-    return (
-      REMOTE_CONTROL_START_COMMANDS.has(commandToken) ||
-      REMOTE_CONTROL_STOP_COMMANDS.has(commandToken) ||
-      RUNTIME_STATUS_COMMANDS.has(commandToken) ||
-      RUNTIME_JOBS_COMMANDS.has(commandToken) ||
-      RUNTIME_FOLLOWUP_COMMANDS.has(commandToken) ||
-      RUNTIME_STOP_COMMANDS.has(commandToken) ||
-      RUNTIME_LOGS_COMMANDS.has(commandToken)
-    );
+    return isKnownOperatorCommand(commandToken);
   }
-
-  if (RUNTIME_STATUS_COMMANDS.has(commandToken)) {
-    await handleRuntimeStatus(chatJid);
-    return true;
-  }
-
-  if (RUNTIME_JOBS_COMMANDS.has(commandToken)) {
-    await handleRuntimeJobs(chatJid);
-    return true;
-  }
-
-  if (RUNTIME_FOLLOWUP_COMMANDS.has(commandToken)) {
-    const parts = rawTrimmed.split(/\s+/);
-    const targetFolder = parts[1];
-    const followupText = parts.slice(2).join(' ').trim();
-    if (!targetFolder || !followupText) {
-      await sendToChat(chatJid, 'Usage: /runtime-followup GROUP_FOLDER TEXT');
-      return true;
-    }
-    await handleRuntimeFollowup(chatJid, targetFolder, followupText);
-    return true;
-  }
-
-  if (RUNTIME_STOP_COMMANDS.has(commandToken)) {
-    const parts = rawTrimmed.split(/\s+/);
-    const targetFolder = parts[1];
-    if (!targetFolder) {
-      await sendToChat(chatJid, 'Usage: /runtime-stop GROUP_FOLDER');
-      return true;
-    }
-    await handleRuntimeStop(chatJid, targetFolder);
-    return true;
-  }
-
-  if (RUNTIME_LOGS_COMMANDS.has(commandToken)) {
-    const parts = rawTrimmed.split(/\s+/);
-    const targetFolder = parts[1];
-    const parsedLimit = Number.parseInt(parts[2] || '', 10);
-    const lineLimit =
-      Number.isFinite(parsedLimit) && parsedLimit > 0
-        ? Math.min(120, parsedLimit)
-        : 40;
-    if (!targetFolder) {
-      await sendToChat(chatJid, 'Usage: /runtime-logs GROUP_FOLDER [LINES]');
-      return true;
-    }
-    await handleRuntimeLogs(chatJid, targetFolder, lineLimit);
-    return true;
-  }
-
-  return false;
+  return dispatchRuntimeCommand(
+    {
+      sendToChat,
+      getStatusMessage() {
+        const snapshot = getAgentRuntimeStatusSnapshot({
+          activeThreads: agentThreads,
+          activeJobs: queue.getRuntimeJobs().length,
+          containerRuntimeName: CONTAINER_RUNTIME_NAME,
+          containerRuntimeStatus: getContainerRuntimeStatus(
+            CONTAINER_RUNTIME_NAME,
+          ),
+        });
+        return formatAgentRuntimeStatusMessage(snapshot);
+      },
+      getRuntimeJobs() {
+        return queue.getRuntimeJobs();
+      },
+      findGroupByFolder(folder) {
+        const target = getRegisteredGroupByFolder(folder);
+        return target ? { jid: target.jid, folder: target.group.folder } : null;
+      },
+      requestStop(groupJid) {
+        return queue.requestStop(groupJid);
+      },
+      queueFollowup(args) {
+        return queueRuntimeFollowup(
+          args.operatorChatJid,
+          args.targetGroupJid,
+          args.targetFolder,
+          args.prompt,
+        );
+      },
+    },
+    chatJid,
+    rawTrimmed,
+    commandToken,
+  );
 }
 
 async function startMessageLoop(): Promise<void> {
