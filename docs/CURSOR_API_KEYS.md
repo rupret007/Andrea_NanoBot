@@ -18,14 +18,14 @@ This key enables the current validated heavy-lift Cursor path in Andrea.
 
 When `CURSOR_API_KEY` is configured and accepted, Andrea can use Cursor Cloud for:
 
-- `/cursor_create`
-- `/cursor_sync` for Cursor Cloud jobs
-- `/cursor_conversation` for Cursor Cloud jobs
-- `/cursor_followup`
-- `/cursor_stop`
-- `/cursor_models`
-- `/cursor_artifacts`
-- `/cursor_artifact_link`
+- `/cursor-create`
+- `/cursor-sync` for Cursor Cloud jobs
+- `/cursor-conversation` for Cursor Cloud jobs
+- `/cursor-followup`
+- `/cursor-stop`
+- `/cursor-models`
+- `/cursor-results`
+- `/cursor-download`
 
 Important boundary:
 
@@ -102,10 +102,10 @@ If `CURSOR_API_KEY` is missing, Cursor Cloud heavy-lift workflows are unavailabl
 
 In practice that means:
 
-- `/cursor_create` will not be ready
-- `/cursor_followup` and `/cursor_stop` for Cloud jobs will not be ready
-- `/cursor_models` will not be ready
-- Cloud artifact lookup will not be ready
+- `/cursor-create` will not be ready
+- `/cursor-followup` and `/cursor-stop` for Cloud jobs will not be ready
+- `/cursor-models` will not be ready
+- Cloud result-file lookup and download will not be ready
 - `/cursor_status` should say `Cloud coding jobs: unavailable`
 
 Operator next step:
@@ -128,9 +128,15 @@ After configuring the key:
 5. Run:
    - `/cursor-sync <agent_id>`
    - `/cursor-conversation <agent_id> 5`
+   - `/cursor-results <agent_id>`
 
-If `/cursor_models` returns no models, that does not automatically mean Cloud is broken.
+If `/cursor-models` returns no models, that does not automatically mean Cloud is broken.
 Some accounts still return an empty model list even while Cloud jobs work with the default model.
+
+Compatibility note:
+
+- `/cursor-artifacts` and `/cursor-artifact-link` still work
+- `/cursor-results` and `/cursor-download` are the preferred operator examples
 
 ## One-Line Mental Model
 

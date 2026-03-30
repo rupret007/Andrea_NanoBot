@@ -424,7 +424,7 @@ export function formatCursorGatewaySmokeTestMessage(
 
   if (smoke.status !== 'ok') {
     lines.push(
-      '- Next step: verify endpoint/auth/model values in `.env`, then run `/cursor_test` again.',
+      '- Next step: verify endpoint/auth/model values in `.env`, then run `/cursor-test` again.',
     );
   }
 

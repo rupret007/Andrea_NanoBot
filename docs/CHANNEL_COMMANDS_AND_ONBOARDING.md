@@ -64,7 +64,7 @@ Examples:
 Important boundary:
 
 - `/cursor_status` is the only public-safe Cursor command.
-- Deeper Cursor job and desktop terminal commands are operator-only and should stay in the admin guide.
+- Deeper Cursor work, result retrieval, and desktop terminal commands are operator-only and should stay in the admin guide.
 
 ## What `/cursor_status` Means For Users
 

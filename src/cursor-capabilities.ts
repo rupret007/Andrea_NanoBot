@@ -44,7 +44,7 @@ function normalizePrefix(prefix: string): string {
 }
 
 const CURSOR_CLOUD_ENABLEMENT_MESSAGE =
-  'Cursor Cloud coding jobs are unavailable because `CURSOR_API_KEY` is not configured. Add it to enable queued heavy-lift Cloud workflows such as `/cursor_create`, `/cursor_followup`, `/cursor_stop`, `/cursor_models`, and Cloud artifact lookup.';
+  'Cursor Cloud coding jobs are unavailable because `CURSOR_API_KEY` is not configured. Add it to enable queued heavy-lift Cloud workflows such as `/cursor-create`, `/cursor-followup`, `/cursor-stop`, `/cursor-models`, `/cursor-results`, and `/cursor-download`.';
 const CURSOR_DESKTOP_ENABLEMENT_MESSAGE =
   "Desktop bridge terminal control is unavailable because `CURSOR_DESKTOP_BRIDGE_URL` and `CURSOR_DESKTOP_BRIDGE_TOKEN` are not fully configured. Add both on Andrea's host and run the bridge on your normal machine if you want operator-only session recovery and line-oriented terminal control.";
 const CURSOR_RUNTIME_ROUTE_OPTIONAL_MESSAGE =
@@ -75,8 +75,8 @@ function buildNextStep(
 
   if (desktopStatus.enabled && desktopStatus.probeStatus === 'failed') {
     return cloudReady
-      ? 'Cursor Cloud coding jobs are ready, but desktop bridge terminal control is unavailable because the configured bridge is unhealthy. Fix the bridge URL/token or private-tunnel reachability before relying on `/cursor_terminal*`.'
-      : `${CURSOR_CLOUD_ENABLEMENT_MESSAGE} Desktop bridge terminal control is also unavailable because the configured bridge is unhealthy. Fix the bridge URL/token or private-tunnel reachability before relying on \`/cursor_terminal*\`.`;
+      ? 'Cursor Cloud coding jobs are ready, but desktop bridge terminal control is unavailable because the configured bridge is unhealthy. Fix the bridge URL/token or private-tunnel reachability before relying on `/cursor-terminal*`.'
+      : `${CURSOR_CLOUD_ENABLEMENT_MESSAGE} Desktop bridge terminal control is also unavailable because the configured bridge is unhealthy. Fix the bridge URL/token or private-tunnel reachability before relying on \`/cursor-terminal*\`.`;
   }
 
   if (cloudReady) {
@@ -120,7 +120,7 @@ export function formatCursorCapabilitySummaryMessage(
     `- Cloud coding jobs: ${summary.cloudCodingJobsReady ? 'ready' : 'unavailable'}`,
     `- Desktop bridge terminal control: ${summary.desktopTerminalReady ? 'ready' : 'unavailable'}`,
     `- Desktop bridge agent jobs: ${summary.desktopAgentJobs}`,
-    `- /cursor_models: ${summary.canListModels ? 'enabled via Cursor Cloud (results depend on API response)' : 'requires Cursor Cloud API (`CURSOR_API_KEY`)'}`,
+    `- /cursor-models: ${summary.canListModels ? 'enabled via Cursor Cloud (results depend on API response)' : 'requires Cursor Cloud API (`CURSOR_API_KEY`)'}`,
     `- Cursor-backed runtime route: ${summary.cursorRoutingReady ? 'configured' : 'not configured'}`,
   ];
 
@@ -175,14 +175,14 @@ function getCursorOperatorDetail(err: unknown): string | null {
         message + ' ' + detailText,
       )
     ) {
-      return 'That Cursor Cloud job is no longer running, so there is nothing left to stop. Use /cursor_sync to refresh its final state.';
+      return 'That Cursor Cloud job is no longer running, so there is nothing left to stop. Use /cursor-sync to refresh its final state.';
     }
   }
 
   if (!message) return null;
 
   if (/repository is required/i.test(message)) {
-    return 'Cursor Cloud needs a repository for that job. Use `/cursor_create --repo <url> ...` or configure a default repository in Cursor settings.';
+    return 'Cursor Cloud needs a repository for that job. Use `/cursor-create --repo <url> ...` or configure a default repository in Cursor settings.';
   }
 
   const safePatterns = [
@@ -192,7 +192,9 @@ function getCursorOperatorDetail(err: unknown): string | null {
     /^cursor desktop bridge is not configured\./i,
     /^cursor cloud job control is only supported for cursor cloud jobs in the current product\./i,
     /^cursor model listing is only available through the cursor cloud api right now\./i,
+    /^cursor results are only available for cursor cloud jobs in the current product\./i,
     /^cursor artifact listing is only available for cursor cloud jobs in the current product\./i,
+    /^cursor download links are only available for cursor cloud jobs in the current product\./i,
     /^cursor artifact links are only available for cursor cloud jobs in the current product\./i,
     /^desktop bridge sessions are not part of the queued cloud follow-up flow in the current product\./i,
     /^desktop bridge sessions are not part of the queued cloud stop flow in the current product\./i,

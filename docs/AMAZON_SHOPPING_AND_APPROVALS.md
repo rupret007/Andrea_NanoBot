@@ -101,31 +101,31 @@ AMAZON_BUSINESS_TIMEOUT_MS=20000
 
 Andrea exposes these shopping commands in Telegram for operators in the main control chat:
 
-- `/amazon_status`
-- `/amazon_search <keywords>`
-- `/purchase_request <asin> <offer_id> [quantity]`
-- `/purchase_requests`
-- `/purchase_approve <request_id> <approval_code>`
-- `/purchase_cancel <request_id>`
+- `/amazon-status`
+- `/amazon-search <keywords>`
+- `/purchase-request <asin> <offer_id> [quantity]`
+- `/purchase-requests`
+- `/purchase-approve <request_id> <approval_code>`
+- `/purchase-cancel <request_id>`
 
 ## Typical Flow
 
 1. Check readiness:
 
 ```text
-/amazon_status
+/amazon-status
 ```
 
 2. Search for something:
 
 ```text
-/amazon_search ergonomic keyboard
+/amazon-search ergonomic keyboard
 ```
 
 3. Pick the specific result and prepare an approval request:
 
 ```text
-/purchase_request B012345678 OFFER123 1
+/purchase-request B012345678 OFFER123 1
 ```
 
 4. Andrea replies with:
@@ -138,13 +138,13 @@ Andrea exposes these shopping commands in Telegram for operators in the main con
 5. Approve it explicitly:
 
 ```text
-/purchase_approve purchase-abc123 CODE1234
+/purchase-approve purchase-abc123 CODE1234
 ```
 
 6. Or cancel it:
 
 ```text
-/purchase_cancel purchase-abc123
+/purchase-cancel purchase-abc123
 ```
 
 ## How Andrea Behaves In Natural Language

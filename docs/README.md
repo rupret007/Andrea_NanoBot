@@ -34,6 +34,10 @@ Cursor-specific docs also split into three surfaces:
 - **Cursor desktop bridge**: operator-only session recovery plus line-oriented terminal control, requires `CURSOR_DESKTOP_BRIDGE_URL` and `CURSOR_DESKTOP_BRIDGE_TOKEN`
 - **Cursor-backed runtime route**: optional diagnostic/runtime-routing surface, separate from both Cloud jobs and desktop bridge readiness
 
+Operator command examples in the docs use hyphen aliases in Telegram, such as `/cursor-jobs`, `/cursor-create`, and `/purchase-request`.
+Underscore aliases remain accepted for compatibility, but they are not the preferred examples anymore.
+For Cursor output files specifically, the preferred operator examples are `/cursor-results` and `/cursor-download`. Older `/cursor-artifacts` and `/cursor-artifact-link` aliases still work.
+
 ## Feature Guides
 
 Use these when you are enabling or validating specific capabilities:

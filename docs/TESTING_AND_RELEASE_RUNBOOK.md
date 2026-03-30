@@ -159,6 +159,34 @@ Run:
 
 Do not confuse desktop bridge readiness with Cursor Cloud readiness.
 
+### Optional Alexa Validation
+
+Only run this if Alexa is configured and the HTTPS ingress is live.
+
+Run:
+
+- `/alexa-status`
+- one Alexa console or device request against the currently configured skill
+
+Confirm:
+
+- status says the listener is enabled and healthy
+- requests route into the intended Andrea group context
+
+### Optional Amazon Validation
+
+Only run this if Amazon Business credentials are configured.
+
+Run from the main control chat:
+
+- `/amazon-status`
+- `/amazon-search ergonomic keyboard`
+
+Optional if safe:
+
+- `/purchase-request <asin> <offer_id> 1`
+- `/purchase-approve <request_id> <approval_code>` only in trial mode or another intentionally disposable validation setup
+
 ## 7. Restart And Verify
 
 After meaningful runtime or operator-surface changes:

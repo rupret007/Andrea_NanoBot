@@ -36,15 +36,15 @@ const DEFAULT_CURSOR_MAX_ACTIVE_JOBS_PER_CHAT = 4;
 const CURSOR_NOT_CONFIGURED_MESSAGE =
   'Cursor is not configured. Either set CURSOR_DESKTOP_BRIDGE_URL + CURSOR_DESKTOP_BRIDGE_TOKEN for your normal machine, or set CURSOR_API_KEY for Cursor Cloud Agents.';
 const CURSOR_CLOUD_REQUIRED_FOR_JOBS_MESSAGE =
-  'Cursor Cloud is required for queued coding jobs in the current product. Set CURSOR_API_KEY before using /cursor_create.';
+  'Cursor Cloud is required for queued coding jobs in the current product. Set CURSOR_API_KEY before using /cursor-create.';
 const CURSOR_CLOUD_ONLY_FOLLOWUP_MESSAGE =
-  'Desktop bridge sessions are not part of the queued Cloud follow-up flow in the current product. Use /cursor_sync to refresh the session, /cursor_conversation to inspect it, and /cursor_terminal for machine-side actions.';
+  'Desktop bridge sessions are not part of the queued Cloud follow-up flow in the current product. Use /cursor-sync to refresh the session, /cursor-conversation to inspect it, and /cursor-terminal for machine-side actions.';
 const CURSOR_CLOUD_ONLY_STOP_MESSAGE =
-  'Desktop bridge sessions are not part of the queued Cloud stop flow in the current product. Use /cursor_terminal_stop for a bridge-managed shell command, or stop the session on the bridged machine.';
+  'Desktop bridge sessions are not part of the queued Cloud stop flow in the current product. Use /cursor-terminal-stop for a bridge-managed shell command, or stop the session on the bridged machine.';
 const CURSOR_CLOUD_ONLY_ARTIFACTS_MESSAGE =
-  'Cursor artifact listing is only available for Cursor Cloud jobs in the current product.';
+  'Cursor results are only available for Cursor Cloud jobs in the current product. Use /cursor-conversation for text output from desktop bridge sessions, and /cursor-terminal* for machine-side actions.';
 const CURSOR_CLOUD_ONLY_ARTIFACT_LINK_MESSAGE =
-  'Cursor artifact links are only available for Cursor Cloud jobs in the current product. Desktop bridge sessions do not expose artifact download links through this path.';
+  'Cursor download links are only available for Cursor Cloud jobs in the current product. Desktop bridge sessions do not expose downloadable result files through this path.';
 
 function boolToInt(value: boolean | undefined): number {
   return value ? 1 : 0;
@@ -1001,7 +1001,7 @@ export async function getCursorArtifactDownloadLink(
   }
   if (!tracked) {
     throw new Error(
-      `Artifact path "${absolutePath}" is not tracked for Cursor agent ${agentId}. Run /cursor_sync ${agentId} first.`,
+      `Artifact path "${absolutePath}" is not tracked for Cursor agent ${agentId}. Run /cursor-sync ${agentId} first.`,
     );
   }
 
@@ -1357,7 +1357,7 @@ export async function listCursorModels(limit = 50): Promise<CursorModelView[]> {
   if (!resolveCursorCloudConfig()) {
     if (resolveCursorDesktopConfig()) {
       throw new Error(
-        'Cursor model listing is only available through the Cursor Cloud API right now. The desktop bridge can still run jobs if you pass a model explicitly.',
+        'Cursor model listing is only available through the Cursor Cloud API right now. The desktop bridge remains useful for session recovery and terminal control, but queued heavy work stays on Cursor Cloud in the current product.',
       );
     }
   }

@@ -441,7 +441,7 @@ export function formatCursorDesktopStatusMessage(
     );
   } else if (status.probeStatus === 'failed') {
     lines.push(
-      '- Next step: keep Cursor Cloud as the queued heavy-lift path, then fix the configured bridge URL/token or private-tunnel reachability before relying on `/cursor_terminal*`.',
+      '- Next step: keep Cursor Cloud as the queued heavy-lift path, then fix the configured bridge URL/token or private-tunnel reachability before relying on `/cursor-terminal*`.',
     );
   } else if (
     status.probeStatus === 'ok' &&

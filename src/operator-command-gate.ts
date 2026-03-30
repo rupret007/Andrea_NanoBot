@@ -72,15 +72,16 @@ export const CURSOR_CONVERSATION_COMMANDS = new Set([
 ]);
 
 export const CURSOR_ARTIFACTS_COMMANDS = new Set([
+  '/cursor-results',
   '/cursor-artifacts',
   '/cursor_artifacts',
 ]);
 
 export const CURSOR_ARTIFACT_LINK_COMMANDS = new Set([
-  '/cursor-artifact-link',
-  '/cursor_artifact_link',
   '/cursor-download',
   '/cursor_download',
+  '/cursor-artifact-link',
+  '/cursor_artifact_link',
 ]);
 
 export const ALEXA_STATUS_COMMANDS = new Set([

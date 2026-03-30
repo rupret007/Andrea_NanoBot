@@ -1030,8 +1030,9 @@ async function main(): Promise<void> {
   ]);
   const CURSOR_CREATE_USAGE =
     'Usage: /cursor-create [--model MODEL_ID] [--repo REPO_URL] [--ref GIT_REF] [--pr PR_URL] [--branch BRANCH_NAME] [--auto-pr] [--cursor-github-app] [--skip-reviewer] PROMPT';
-  const CURSOR_ARTIFACT_LINK_USAGE =
-    'Usage: /cursor-artifact-link AGENT_ID ABSOLUTE_PATH';
+  const CURSOR_RESULTS_USAGE = 'Usage: /cursor-results AGENT_ID';
+  const CURSOR_DOWNLOAD_USAGE =
+    'Usage: /cursor-download AGENT_ID ABSOLUTE_PATH';
   const CURSOR_TERMINAL_USAGE = 'Usage: /cursor-terminal AGENT_ID COMMAND';
   const CURSOR_TERMINAL_STATUS_USAGE =
     'Usage: /cursor-terminal-status AGENT_ID';
@@ -1123,6 +1124,37 @@ async function main(): Promise<void> {
     if (provider === 'desktop') return 'desktop bridge session';
     if (provider === 'cloud') return 'Cursor Cloud job';
     return 'Cursor job';
+  }
+
+  function isDesktopCursorRecord(
+    record:
+      | {
+          provider?: 'cloud' | 'desktop';
+          id: string;
+        }
+      | string,
+  ): boolean {
+    if (typeof record !== 'string' && record.provider) {
+      return record.provider === 'desktop';
+    }
+    const id = typeof record === 'string' ? record : record.id;
+    return /^desk_/i.test(id);
+  }
+
+  function buildCursorNextStepMessage(
+    record:
+      | {
+          provider?: 'cloud' | 'desktop';
+          id: string;
+        }
+      | string,
+  ): string {
+    const id = typeof record === 'string' ? record : record.id;
+    if (isDesktopCursorRecord(record)) {
+      return `Next: use /cursor-sync ${id} to refresh it, /cursor-conversation ${id} for stored messages, and /cursor-terminal ${id} <command> for machine-side actions.`;
+    }
+
+    return `Next: use /cursor-sync ${id} to refresh it, /cursor-conversation ${id} for text output, and /cursor-results ${id} for file outputs.`;
   }
 
   async function handleRemoteControl(
@@ -1242,7 +1274,7 @@ async function main(): Promise<void> {
       [
         formatAmazonBusinessStatusMessage(status),
         status.searchReady
-          ? 'Try `/amazon_search <keywords>` to look for a product, then Andrea can prepare a guarded purchase approval.'
+          ? 'Try `/amazon-search <keywords>` to look for a product, then Andrea can prepare a guarded purchase approval.'
           : null,
       ]
         .filter((line): line is string => Boolean(line))
@@ -1506,7 +1538,7 @@ async function main(): Promise<void> {
       const backendHint =
         !inventory.hasCloud && !inventory.hasDesktop
           ? 'Neither Cursor Cloud nor the desktop bridge is configured right now. Add `CURSOR_API_KEY` for queued Cloud jobs, or add `CURSOR_DESKTOP_BRIDGE_URL` + `CURSOR_DESKTOP_BRIDGE_TOKEN` for operator-only desktop session and terminal control.'
-          : 'No tracked or recoverable Cursor Cloud jobs or desktop bridge sessions were found for this workspace.';
+          : 'No active or recoverable Cursor Cloud jobs or desktop bridge sessions were found for this workspace.';
       const warning = inventory.warning
         ? `\n\nLive backend lookup skipped: ${inventory.warning}`
         : '';
@@ -1520,7 +1552,7 @@ async function main(): Promise<void> {
 
     await channel.sendMessage(
       chatJid,
-      `Cursor jobs:\n\n${sections.join('\n\n')}`,
+      `Cursor work:\n\n${sections.join('\n\n')}`,
     );
   }
 
@@ -1546,7 +1578,7 @@ async function main(): Promise<void> {
           chatJid,
           normalizedFilter
             ? `No Cursor models matched "${filterText.trim()}".`
-            : 'Cursor Cloud returned no models for this account right now. Job control can still work without `/cursor_models` if you omit `--model` and let Cursor use its default.',
+            : 'Cursor Cloud returned no models for this account right now. Job control can still work without `/cursor-models` if you omit `--model` and let Cursor use its default.',
         );
         return;
       }
@@ -1627,6 +1659,7 @@ async function main(): Promise<void> {
         [
           `Created ${labelCursorRecord(created)} ${created.id} (status: ${created.status}).`,
           targetBits || null,
+          buildCursorNextStepMessage(created),
         ]
           .filter(Boolean)
           .join('\n'),
@@ -1677,7 +1710,7 @@ async function main(): Promise<void> {
       if (messages.length === 0) {
         await channel.sendMessage(
           chatJid,
-          `No conversation messages are available yet for ${normalizedAgentId}.`,
+          `No conversation messages are available yet for ${normalizedAgentId}.\n\n${buildCursorNextStepMessage(normalizedAgentId)}`,
         );
         return;
       }
@@ -1693,7 +1726,7 @@ async function main(): Promise<void> {
         .join('\n\n');
       await channel.sendMessage(
         chatJid,
-        `${labelCursorRecord(normalizedAgentId)} conversation for ${normalizedAgentId} (latest ${messages.length}):\n\n${formatted}`,
+        `${labelCursorRecord(normalizedAgentId)} conversation for ${normalizedAgentId} (latest ${messages.length}):\n\n${formatted}\n\n${buildCursorNextStepMessage(normalizedAgentId)}`,
       );
     } catch (err) {
       await channel.sendMessage(
@@ -1742,7 +1775,7 @@ async function main(): Promise<void> {
       if (artifacts.length === 0) {
         await channel.sendMessage(
           chatJid,
-          `Cursor Cloud job ${normalizedAgentId} has no tracked artifacts yet.`,
+          `Cursor Cloud job ${normalizedAgentId} has no tracked result files yet.\n\nUse /cursor-conversation ${normalizedAgentId} for text output, then rerun /cursor-results if you expect files.`,
         );
         return;
       }
@@ -1754,13 +1787,13 @@ async function main(): Promise<void> {
 
       await channel.sendMessage(
         chatJid,
-        `Cursor Cloud artifacts for ${normalizedAgentId}:\n\n${lines.join('\n')}`,
+        `Cursor Cloud results for ${normalizedAgentId}:\n\n${lines.join('\n')}\n\nUse /cursor-download ${normalizedAgentId} ABSOLUTE_PATH to fetch one file.`,
       );
     } catch (err) {
       await channel.sendMessage(
         chatJid,
         formatCursorOperationFailure(
-          `Cursor artifacts lookup failed for ${normalizedAgentId}`,
+          `Cursor results lookup failed for ${normalizedAgentId}`,
           err,
         ),
       );
@@ -1794,13 +1827,13 @@ async function main(): Promise<void> {
       const expiry = link.expiresAt ? `\nExpires: ${link.expiresAt}` : '';
       await channel.sendMessage(
         chatJid,
-        `Artifact link for ${link.agentId}\nPath: ${link.absolutePath}\nURL: ${link.url}${expiry}`,
+        `Download link for ${link.agentId}\nPath: ${link.absolutePath}\nURL: ${link.url}${expiry}`,
       );
     } catch (err) {
       await channel.sendMessage(
         chatJid,
         formatCursorOperationFailure(
-          `Cursor artifact link failed for ${agentId}`,
+          `Cursor download failed for ${agentId}`,
           err,
         ),
       );
@@ -1836,7 +1869,7 @@ async function main(): Promise<void> {
         formatCursorTerminalStatusMessage(agentId, started.terminal),
         'Recent output:',
         formatCursorTerminalOutputSection(started.output),
-        'Use /cursor-terminal-status or /cursor-terminal-log for follow-up.',
+        'Use /cursor-terminal-status or /cursor-terminal-log for machine-control follow-up.',
       ];
       await channel.sendMessage(chatJid, lines.join('\n\n'));
     } catch (err) {
@@ -2010,7 +2043,10 @@ async function main(): Promise<void> {
       refreshCursorSnapshotsForAllGroups();
       await channel.sendMessage(
         chatJid,
-        `Synced ${labelCursorRecord(synced.agent)} ${synced.agent.id}. Status: ${synced.agent.status}. Artifacts: ${synced.artifacts.length}.`,
+        [
+          `Synced ${labelCursorRecord(synced.agent)} ${synced.agent.id}. Status: ${synced.agent.status}. Result files: ${synced.artifacts.length}.`,
+          buildCursorNextStepMessage(synced.agent),
+        ].join('\n\n'),
       );
     } catch (err) {
       await channel.sendMessage(
@@ -2045,7 +2081,7 @@ async function main(): Promise<void> {
       refreshCursorSnapshotsForAllGroups();
       await channel.sendMessage(
         chatJid,
-        `Stop requested for ${labelCursorRecord(stopped)} ${stopped.id}. Current status: ${stopped.status}.`,
+        `Stop requested for ${labelCursorRecord(stopped)} ${stopped.id}. Current status: ${stopped.status}.\n\nUse /cursor-sync ${stopped.id} to refresh its final state.`,
       );
     } catch (err) {
       await channel.sendMessage(
@@ -2082,7 +2118,10 @@ async function main(): Promise<void> {
       refreshCursorSnapshotsForAllGroups();
       await channel.sendMessage(
         chatJid,
-        `Follow-up sent to ${labelCursorRecord(followed)} ${followed.id}. Status: ${followed.status}.`,
+        [
+          `Follow-up sent to ${labelCursorRecord(followed)} ${followed.id}. Status: ${followed.status}.`,
+          buildCursorNextStepMessage(followed),
+        ].join('\n\n'),
       );
     } catch (err) {
       await channel.sendMessage(
@@ -2282,7 +2321,7 @@ async function main(): Promise<void> {
         if (!agentId) {
           const channel = findChannel(channels, chatJid);
           channel
-            ?.sendMessage(chatJid, 'Usage: /cursor-artifacts AGENT_ID')
+            ?.sendMessage(chatJid, CURSOR_RESULTS_USAGE)
             .catch((err) =>
               logger.error(
                 { err, chatJid },
@@ -2305,7 +2344,7 @@ async function main(): Promise<void> {
         if (!agentId || !absolutePath) {
           const channel = findChannel(channels, chatJid);
           channel
-            ?.sendMessage(chatJid, CURSOR_ARTIFACT_LINK_USAGE)
+            ?.sendMessage(chatJid, CURSOR_DOWNLOAD_USAGE)
             .catch((err) =>
               logger.error(
                 { err, chatJid },
@@ -2474,7 +2513,7 @@ async function main(): Promise<void> {
         if (!query) {
           const channel = findChannel(channels, chatJid);
           channel
-            ?.sendMessage(chatJid, 'Usage: /amazon_search <keywords>')
+            ?.sendMessage(chatJid, 'Usage: /amazon-search <keywords>')
             .catch((err) =>
               logger.error({ err, chatJid }, 'Amazon search usage send failed'),
             );
@@ -2502,7 +2541,7 @@ async function main(): Promise<void> {
           channel
             ?.sendMessage(
               chatJid,
-              'Usage: /purchase_request <asin> <offer_id> [quantity]',
+              'Usage: /purchase-request <asin> <offer_id> [quantity]',
             )
             .catch((err) =>
               logger.error(
@@ -2541,7 +2580,7 @@ async function main(): Promise<void> {
           channel
             ?.sendMessage(
               chatJid,
-              'Usage: /purchase_approve <request_id> <approval_code>',
+              'Usage: /purchase-approve <request_id> <approval_code>',
             )
             .catch((err) =>
               logger.error(
@@ -2569,7 +2608,7 @@ async function main(): Promise<void> {
         if (!requestId) {
           const channel = findChannel(channels, chatJid);
           channel
-            ?.sendMessage(chatJid, 'Usage: /purchase_cancel <request_id>')
+            ?.sendMessage(chatJid, 'Usage: /purchase-cancel <request_id>')
             .catch((err) =>
               logger.error(
                 { err, chatJid },

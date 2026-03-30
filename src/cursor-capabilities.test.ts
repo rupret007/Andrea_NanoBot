@@ -102,7 +102,7 @@ describe('cursor-capabilities', () => {
     expect(message).toContain('Desktop bridge terminal control: unavailable');
     expect(message).toContain('Desktop bridge agent jobs: unavailable');
     expect(message).toContain(
-      '/cursor_models: requires Cursor Cloud API (`CURSOR_API_KEY`)',
+      '/cursor-models: requires Cursor Cloud API (`CURSOR_API_KEY`)',
     );
     expect(summary.nextStep).toContain('CURSOR_DESKTOP_BRIDGE_URL');
   });
@@ -126,7 +126,7 @@ describe('cursor-capabilities', () => {
     expect(summary.cursorRoutingReady).toBe(true);
     expect(summary.nextStep).toContain('Cursor Cloud coding jobs');
     expect(formatCursorCapabilitySummaryMessage(summary)).toContain(
-      '/cursor_models: enabled via Cursor Cloud (results depend on API response)',
+      '/cursor-models: enabled via Cursor Cloud (results depend on API response)',
     );
   });
 
@@ -191,7 +191,7 @@ describe('cursor-capabilities', () => {
         ),
       ),
     ).toBe(
-      'Cursor create failed. Cursor Cloud needs a repository for that job. Use `/cursor_create --repo <url> ...` or configure a default repository in Cursor settings.',
+      'Cursor create failed. Cursor Cloud needs a repository for that job. Use `/cursor-create --repo <url> ...` or configure a default repository in Cursor settings.',
     );
   });
 
@@ -285,7 +285,7 @@ describe('cursor-capabilities', () => {
         ),
       ),
     ).toBe(
-      'Cursor stop failed for bc-12345678-1234-1234-1234-123456789012. That Cursor Cloud job is no longer running, so there is nothing left to stop. Use /cursor_sync to refresh its final state.',
+      'Cursor stop failed for bc-12345678-1234-1234-1234-123456789012. That Cursor Cloud job is no longer running, so there is nothing left to stop. Use /cursor-sync to refresh its final state.',
     );
   });
 
@@ -294,22 +294,35 @@ describe('cursor-capabilities', () => {
       formatCursorOperationFailure(
         'Cursor follow-up failed for desk_123',
         new Error(
-          'Desktop bridge sessions are not part of the queued Cloud follow-up flow in the current product. Use /cursor_sync to refresh the session, /cursor_conversation to inspect it, and /cursor_terminal for machine-side actions.',
+          'Desktop bridge sessions are not part of the queued Cloud follow-up flow in the current product. Use /cursor-sync to refresh the session, /cursor-conversation to inspect it, and /cursor-terminal for machine-side actions.',
         ),
       ),
     ).toContain('queued Cloud follow-up flow');
   });
 
-  it('passes through Cloud-only artifact guidance for desktop sessions', () => {
+  it('passes through Cloud-only results guidance for desktop sessions', () => {
     expect(
       formatCursorOperationFailure(
-        'Cursor artifacts lookup failed for desk_123',
+        'Cursor results lookup failed for desk_123',
         new Error(
-          'Cursor artifact listing is only available for Cursor Cloud jobs in the current product.',
+          'Cursor results are only available for Cursor Cloud jobs in the current product. Use /cursor-conversation for text output from desktop bridge sessions, and /cursor-terminal* for machine-side actions.',
         ),
       ),
     ).toBe(
-      'Cursor artifacts lookup failed for desk_123. Cursor artifact listing is only available for Cursor Cloud jobs in the current product.',
+      'Cursor results lookup failed for desk_123. Cursor results are only available for Cursor Cloud jobs in the current product. Use /cursor-conversation for text output from desktop bridge sessions, and /cursor-terminal* for machine-side actions.',
+    );
+  });
+
+  it('passes through Cloud-only download guidance for desktop sessions', () => {
+    expect(
+      formatCursorOperationFailure(
+        'Cursor download failed for desk_123',
+        new Error(
+          'Cursor download links are only available for Cursor Cloud jobs in the current product. Desktop bridge sessions do not expose downloadable result files through this path.',
+        ),
+      ),
+    ).toBe(
+      'Cursor download failed for desk_123. Cursor download links are only available for Cursor Cloud jobs in the current product. Desktop bridge sessions do not expose downloadable result files through this path.',
     );
   });
 });

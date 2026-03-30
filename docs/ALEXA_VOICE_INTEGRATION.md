@@ -95,7 +95,7 @@ npm run setup -- --step verify
 In Telegram main control chat:
 
 ```text
-/alexa_status
+/alexa-status
 ```
 
 Expected status traits:
@@ -135,7 +135,7 @@ Avoid:
 
 ## 9) Troubleshooting
 
-If `/alexa_status` says disabled:
+If `/alexa-status` says disabled:
 
 - missing or wrong `ALEXA_SKILL_ID`
 
@@ -158,7 +158,7 @@ If requests are denied:
 
 - Alexa is additive. Telegram remains the primary operator control surface and the safer default front door.
 - For incidents, use:
-  - `/alexa_status`
+  - `/alexa-status`
   - `npm run setup -- --step verify`
   - `logs/nanoclaw.log`
 - Keep this guide aligned with any future Alexa intent-model changes.

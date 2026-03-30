@@ -38,14 +38,14 @@ Andrea now treats Cursor as three separate surfaces:
 - requires `CURSOR_API_KEY`
 - current validated heavy-lift queued coding path
 - supports:
-  - `/cursor_create`
-  - `/cursor_sync` for Cloud jobs
-  - `/cursor_conversation` for Cloud jobs
-  - `/cursor_followup`
-  - `/cursor_stop`
-  - `/cursor_models`
-  - `/cursor_artifacts`
-  - `/cursor_artifact_link`
+  - `/cursor-create`
+  - `/cursor-sync` for Cloud jobs
+  - `/cursor-conversation` for Cloud jobs
+  - `/cursor-followup`
+  - `/cursor-stop`
+  - `/cursor-models`
+  - `/cursor-results`
+  - `/cursor-download`
 
 ### 2. Cursor Desktop Bridge
 
@@ -153,13 +153,16 @@ Use Cursor Cloud when you want the current validated queued heavy-lift coding pa
 Validate:
 
 - `/cursor_status`
-- `/cursor_models`
-- `/cursor_jobs`
-- `/cursor_create --repo <url> ...`
-- `/cursor_sync <agent_id>`
-- `/cursor_conversation <agent_id> 5`
+- `/cursor-jobs`
+- `/cursor-create --repo <url> ...`
+- `/cursor-sync <agent_id>`
+- `/cursor-conversation <agent_id> 5`
+- `/cursor-results <agent_id>`
+- `/cursor-models`
 
-If `/cursor_status` says `Cloud coding jobs: unavailable`, treat `/cursor_create`, `/cursor_followup`, `/cursor_stop`, `/cursor_models`, and Cloud artifact commands as unavailable until `CURSOR_API_KEY` is fixed.
+Use `/cursor-conversation` for the text trail and `/cursor-results` for output files. Use `/cursor-download` only when `/cursor-results` shows a file you actually want.
+
+If `/cursor_status` says `Cloud coding jobs: unavailable`, treat `/cursor-create`, `/cursor-followup`, `/cursor-stop`, `/cursor-models`, `/cursor-results`, and `/cursor-download` as unavailable until `CURSOR_API_KEY` is fixed.
 
 ### Cursor Desktop Bridge
 
@@ -181,11 +184,11 @@ Use the desktop bridge when you want operator-only machine-side session recovery
 Validate:
 
 - `/cursor_status`
-- `/cursor_jobs`
-- `/cursor_sync <desktop_session_id>`
-- `/cursor_terminal <agent_id> echo operator smoke ok`
-- `/cursor_terminal_status <agent_id>`
-- `/cursor_terminal_log <agent_id> 20`
+- `/cursor-jobs`
+- `/cursor-sync <desktop_session_id>`
+- `/cursor-terminal <agent_id> echo operator smoke ok`
+- `/cursor-terminal-status <agent_id>`
+- `/cursor-terminal-log <agent_id> 20`
 
 Important truth:
 
@@ -204,24 +207,47 @@ If `/cursor_status` says `Cursor-backed runtime route: not configured`, that doe
 
 Keep these in the registered main control chat:
 
-- `/cursor_models`
-- `/cursor_test`
-- `/cursor_jobs`
-- `/cursor_create`
-- `/cursor_sync`
-- `/cursor_conversation`
-- `/cursor_followup`
-- `/cursor_stop`
-- `/cursor_artifacts`
-- `/cursor_artifact_link`
-- `/cursor_terminal`
-- `/cursor_terminal_status`
-- `/cursor_terminal_log`
-- `/cursor_terminal_stop`
+- Readiness and reference:
+  - `/cursor-models`
+- Work creation and control:
+  - `/cursor-jobs`
+  - `/cursor-create`
+  - `/cursor-sync`
+  - `/cursor-followup`
+  - `/cursor-stop`
+- Results:
+  - `/cursor-conversation`
+  - `/cursor-results`
+  - `/cursor-download`
+- Desktop machine-control:
+  - `/cursor-terminal`
+  - `/cursor-terminal-status`
+  - `/cursor-terminal-log`
+  - `/cursor-terminal-stop`
+- Troubleshooting only:
+  - `/cursor-test`
 
 Safe public exception:
 
 - `/cursor_status`
+
+Optional operator-only integrations, only when configured:
+
+- Alexa status:
+  - `/alexa-status`
+- Amazon shopping:
+  - `/amazon-status`
+  - `/amazon-search <keywords>`
+  - `/purchase-request <asin> <offer_id> [quantity]`
+  - `/purchase-requests`
+  - `/purchase-approve <request_id> <approval_code>`
+  - `/purchase-cancel <request_id>`
+
+Compatibility note:
+
+- operator docs use hyphen aliases in Telegram
+- underscore aliases are still accepted, but the hyphen form is the preferred operator-facing syntax
+- older `/cursor-artifacts` and `/cursor-artifact-link` aliases are still accepted, but `/cursor-results` and `/cursor-download` are the preferred workflow names now
 
 ## Telegram Live Validation
 

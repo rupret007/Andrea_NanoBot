@@ -97,7 +97,7 @@ describe('buildTelegramCommandsText', () => {
     expect(commands).toContain('/cursor_status');
     expect(commands).toContain('safe readiness check');
     expect(commands).toContain(
-      'Deeper Cursor job and terminal commands are operator/admin-only',
+      'Deeper Cursor work and machine-control commands are operator/admin-only',
     );
     expect(commands).not.toContain('/cursor_models [filter]');
     expect(commands).not.toContain('/cursor_create [options] <prompt>');
@@ -137,10 +137,11 @@ describe('buildTelegramFeaturesText', () => {
     expect(features).toContain('Conversation-first help');
     expect(features).toContain('Fast replies for simple questions');
     expect(features).toContain(
-      'deeper Cursor controls kept in the operator/admin path',
+      'deeper Cursor work kept in the operator/admin path',
     );
     expect(features).not.toContain('Amazon shopping search');
     expect(features).not.toContain('Apple Calendar');
+    expect(features).not.toContain('/cursor-results');
   });
 });
 

@@ -47,7 +47,7 @@ These are the commands normal users should rely on:
 Important Cursor rule:
 
 - `/cursor_status` is safe to use.
-- Deeper Cursor job and terminal controls are operator-only and live in the admin guide.
+- Deeper Cursor work, result-file retrieval, and terminal controls are operator-only and live in the admin guide.
 
 ## Best Ways To Ask
 

@@ -100,7 +100,7 @@ export function buildTelegramCommandsText(): string {
     '- `/chatid` - show chat ID and chat type',
     '- `/registermain` - bootstrap main control chat (DM only)',
     '- `/cursor_status` - safe readiness check for Cursor Cloud, desktop bridge terminal control, and optional runtime-route wiring',
-    '- Deeper Cursor job and terminal commands are operator/admin-only and stay in the admin guide.',
+    '- Deeper Cursor work and machine-control commands are operator/admin-only and stay in the admin guide.',
   ].join('\n');
 }
 
@@ -128,7 +128,7 @@ export function buildTelegramFeaturesText(
     '- To-do lists, reminders, and recurring tasks',
     '- Research and summaries',
     '- Fast replies for simple questions, playful prompts, and basic math',
-    '- Project and coding help through Andrea, with `/cursor_status` as the safe Cursor readiness check and deeper Cursor controls kept in the operator/admin path',
+    '- Project and coding help through Andrea, with `/cursor_status` as the safe Cursor readiness check and deeper Cursor work kept in the operator/admin path',
     "- Secure per-chat isolation so one chat does not automatically get another chat's skills or files",
   ].join('\n');
 }

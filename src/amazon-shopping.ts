@@ -194,7 +194,7 @@ function buildPurchaseRequestMessage(
     priceText ? `Expected total: ${priceText}` : null,
     `Mode: ${record.order_mode}`,
     `Approval code: ${approvalCode}`,
-    `Approve with \`/purchase_approve ${record.id} ${approvalCode}\` before ${formatExpiration(record.approval_expires_at)}.`,
+    `Approve with \`/purchase-approve ${record.id} ${approvalCode}\` before ${formatExpiration(record.approval_expires_at)}.`,
     'Andrea will not submit the order without that code. Very obedient. Slightly dramatic. But obedient.',
   ]
     .filter((line): line is string => Boolean(line))
@@ -256,7 +256,7 @@ export function formatAmazonSearchResultsMessage(
     '',
     lines.join('\n\n'),
     '',
-    'Use `/purchase_request <asin> <offer_id> [quantity]` if you want Andrea to prepare an approval request.',
+    'Use `/purchase-request <asin> <offer_id> [quantity]` if you want Andrea to prepare an approval request.',
   ].join('\n');
 }
 

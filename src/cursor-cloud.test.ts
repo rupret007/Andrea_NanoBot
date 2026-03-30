@@ -25,7 +25,11 @@ describe('cursor-cloud status', () => {
       'Auth mode: auto (Bearer -> Basic fallback)',
     );
     expect(formatCursorCloudStatusMessage(status)).toContain('Next step:');
-    expect(formatCursorCloudStatusMessage(status)).toContain('/cursor_create');
+    expect(formatCursorCloudStatusMessage(status)).toContain('/cursor-create');
+    expect(formatCursorCloudStatusMessage(status)).toContain('/cursor-results');
+    expect(formatCursorCloudStatusMessage(status)).toContain(
+      '/cursor-download',
+    );
   });
 
   it('resolves cloud config from env', () => {

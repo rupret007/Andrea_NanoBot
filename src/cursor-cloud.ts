@@ -301,7 +301,7 @@ export function formatCursorCloudStatusMessage(
 
   if (!status.hasApiKey) {
     lines.push(
-      '- Next step: add `CURSOR_API_KEY` to enable validated Cursor Cloud heavy-lift workflows such as `/cursor_create`, `/cursor_followup`, `/cursor_stop`, `/cursor_models`, and Cloud artifact lookup.',
+      '- Next step: add `CURSOR_API_KEY` to enable validated Cursor Cloud heavy-lift workflows such as `/cursor-create`, `/cursor-followup`, `/cursor-stop`, `/cursor-models`, `/cursor-results`, and `/cursor-download`.',
     );
   }
 

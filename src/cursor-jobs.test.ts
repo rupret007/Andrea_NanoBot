@@ -1070,7 +1070,7 @@ describe('cursor-jobs', () => {
     expect(inventory.cloudRecoverable[0].id).toBe('bc_recoverable');
   });
 
-  it('rejects artifact listing for desktop sessions with a Cloud-only message', async () => {
+  it('rejects results listing for desktop sessions with a Cloud-only message', async () => {
     process.env.CURSOR_API_KEY = ' ';
     process.env.CURSOR_API_BASE_URL = ' ';
     process.env.CURSOR_DESKTOP_BRIDGE_URL = 'https://cursor-bridge.example.com';
@@ -1106,7 +1106,7 @@ describe('cursor-jobs', () => {
         chatJid: 'tg:42',
         agentId: 'desk_artifacts',
       }),
-    ).rejects.toThrow('Cursor artifact listing is only available');
+    ).rejects.toThrow('Cursor results are only available');
   });
 
   it('runs terminal commands for desktop sessions and reads terminal state', async () => {

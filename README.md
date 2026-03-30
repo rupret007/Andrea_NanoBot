@@ -145,6 +145,14 @@ These run inside Telegram after the bot is live:
 
 Advanced operator workflows still exist, but they are operator-only, live in the admin guide, and should stay out of the default demo unless they were validated the same day.
 
+Preferred operator command style:
+
+- public-safe commands stay documented exactly as shown above
+- deeper operator examples use hyphen aliases in Telegram, such as `/cursor-jobs` and `/cursor-create`
+- operator examples use `/cursor-results` for output files and `/cursor-download` for one-file retrieval
+- underscore aliases still work for compatibility, but the docs now standardize on the hyphen form for operator workflows
+- older `/cursor-artifacts` and `/cursor-artifact-link` aliases still work for compatibility, but they are no longer the preferred operator examples
+
 ## Demo-Ready Surface
 
 For a reliable demo, keep the story tight:
@@ -176,14 +184,15 @@ Optional integrations such as Cursor Cloud job control, desktop bridge control, 
 - help with repos, debugging, and code tasks
 - use `/cursor_status` as the safe Cursor readiness check
 - operators can create, follow up, stop, inspect, and recover **Cursor Cloud** coding jobs from the main control chat
+- operators use `/cursor-conversation` for text output and `/cursor-results` plus `/cursor-download` for Cloud output files
 - operators can sync and inspect **desktop bridge sessions**, then run line-oriented terminal commands against tracked bridge sessions on their own machine
 - keep optional integrations behind explicit operator setup instead of treating them as default demo features
 
 Important Cursor rule:
 
 - `/cursor_status` now splits Cloud coding jobs, desktop bridge terminal control, desktop agent-job compatibility, and Cursor-backed runtime routing into separate lines
-- if it says `Cloud coding jobs: unavailable`, treat `/cursor_create`, `/cursor_followup`, `/cursor_stop`, `/cursor_artifacts`, and `/cursor_artifact_link` as unavailable until `CURSOR_API_KEY` is configured
-- if it says `Desktop bridge terminal control: unavailable`, treat `/cursor_terminal*` and desktop session recovery as unavailable until the bridge is configured and reachable
+- if it says `Cloud coding jobs: unavailable`, treat `/cursor-create`, `/cursor-followup`, `/cursor-stop`, `/cursor-models`, `/cursor-results`, and `/cursor-download` as unavailable until `CURSOR_API_KEY` is configured
+- if it says `Desktop bridge terminal control: unavailable`, treat `/cursor-terminal*` and desktop session recovery as unavailable until the bridge is configured and reachable
 - if it says `Desktop bridge agent jobs: conditional` or `unavailable`, keep using Cursor Cloud for queued heavy-lift work and treat the bridge as terminal/session control only on that machine
 - Cursor desktop bridge control is operator-only. It can inspect bridge-known sessions and run line-oriented shell commands for tracked bridge sessions, but it is not a live PTY or remote desktop surface.
 

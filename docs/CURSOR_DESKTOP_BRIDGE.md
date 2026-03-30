@@ -13,6 +13,12 @@ The desktop bridge is the current operator-only path for:
 - inspecting stored bridge conversation
 - running line-oriented terminal commands on your own machine
 
+For a cleaner mental model:
+
+- use `/cursor-conversation` for stored text output from a bridge session
+- use `/cursor-terminal*` for machine-side control
+- keep `/cursor-results` and `/cursor-download` in the Cursor Cloud output-files lane, not the desktop bridge lane
+
 It is **not**:
 
 - the default queued heavy-lift coding path
@@ -104,7 +110,7 @@ Then restart Andrea and run `/cursor_status`.
 After setup, run:
 
 - `/cursor_status`
-- `/cursor_jobs`
+- `/cursor-jobs`
 
 What you want to see:
 
@@ -116,19 +122,19 @@ What you want to see:
 
 Then run safe bridge-only commands from the main control chat:
 
-- `/cursor_sync <agent_id>` if a recoverable desktop session exists
-- `/cursor_terminal <agent_id> echo operator smoke ok`
-- `/cursor_terminal_status <agent_id>`
-- `/cursor_terminal_log <agent_id> 20`
+- `/cursor-sync <agent_id>` if a recoverable desktop session exists
+- `/cursor-terminal <agent_id> echo operator smoke ok`
+- `/cursor-terminal-status <agent_id>`
+- `/cursor-terminal-log <agent_id> 20`
 
-Only use `/cursor_terminal_stop <agent_id>` when a bridge-started terminal command is actually active.
+Only use `/cursor-terminal-stop <agent_id>` when a bridge-started terminal command is actually active.
 
-## What `/cursor_jobs` Means Here
+## What `/cursor-jobs` Means Here
 
 For desktop bridge sessions:
 
 - tracked desktop sessions are already attached to the current Andrea workspace
-- recoverable desktop sessions are bridge-known sessions you can attach with `/cursor_sync <agent_id>`
+- recoverable desktop sessions are bridge-known sessions you can attach with `/cursor-sync <agent_id>`
 
 Terminal commands only work for tracked or recoverable bridge sessions that the bridge itself knows about.
 
@@ -154,12 +160,12 @@ Check:
 3. bridge process is running
 4. private tunnel or reverse proxy reachability
 
-### `/cursor_terminal ...` fails
+### `/cursor-terminal ...` fails
 
 Check:
 
 1. the id belongs to a desktop bridge session, not a Cloud job
-2. the session is tracked or recoverable in `/cursor_jobs`
+2. the session is tracked or recoverable in `/cursor-jobs`
 3. the bridge is reachable
 
 ### Bridge health works but desktop agent jobs stay conditional or unavailable

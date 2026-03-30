@@ -122,7 +122,7 @@ describe('amazon shopping approval flow', () => {
       productUrl: 'https://amazon.example/items/B012345678',
     });
 
-    expect(created.message).toContain('/purchase_approve');
+    expect(created.message).toContain('/purchase-approve');
     expect(created.message).toContain(created.approvalCode);
 
     const stored = getPurchaseRequestById(created.record.id);

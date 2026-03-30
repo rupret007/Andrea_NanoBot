@@ -99,10 +99,18 @@ Important product split:
 
 | Surface | What it does | Notes |
 | --- | --- | --- |
-| Cursor Cloud jobs | Create, sync, follow up, stop, inspect conversation, and fetch artifacts | Operator-enabled validated path; requires `CURSOR_API_KEY` |
+| Cursor Cloud jobs | Create, sync, follow up, stop, inspect conversation, and fetch result files or download links | Operator-enabled validated path; requires `CURSOR_API_KEY`; preferred result commands are `/cursor-results` and `/cursor-download` |
 | Cursor desktop bridge | Recover bridge-known sessions and run line-oriented shell commands on your normal Cursor machine | Operator-only; requires bridge setup; no live PTY, GUI control, arbitrary shell attach, or validated local Windows agent-job path |
 | Cursor-backed runtime route | Route Andrea's own runtime through a Cursor-aware gateway such as 9router | Optional diagnostic/runtime surface; separate from Cloud job readiness and desktop bridge readiness |
 | `/cursor_status` | Show readiness for Cloud, desktop bridge, and runtime-route wiring | Safe status surface; public-safe |
+
+## Optional Operator-Only Integration Surfaces
+
+| Surface | What it does | Notes |
+| --- | --- | --- |
+| Alexa voice ingress | Routes approved Alexa voice requests into Andrea | Optional operator-enabled ingress; keep HTTPS, signature verification, and allowlists in place; status check is `/alexa-status` |
+| Amazon shopping approvals | Search Amazon Business products and run approval-gated purchase requests | Optional operator-enabled main-control workflow; prefer trial mode first; commands use `/amazon-status`, `/amazon-search`, and `/purchase-*` |
+| Marketplace and community skills | Discover and enable external skills per chat | Optional operator/runtime layer; not part of the default Telegram command surface |
 
 ## Marketplace Tool Surface
 

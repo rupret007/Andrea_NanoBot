@@ -22,6 +22,13 @@ describe('operator command gate', () => {
     expect(decision.message).toContain('/registermain');
   });
 
+  it('treats /cursor-results as an operator-only alias', () => {
+    const decision = getCommandAccessDecision('/cursor-results', undefined);
+
+    expect(decision.allowed).toBe(false);
+    expect(decision.reason).toBe('main_control_only');
+  });
+
   it('blocks advanced commands in non-main chats', () => {
     const decision = getCommandAccessDecision('/amazon_status', {
       name: 'Family',
@@ -36,8 +43,34 @@ describe('operator command gate', () => {
     expect(decision.message).toContain('main control chat');
   });
 
+  it('blocks optional operator commands in non-main chats across hyphen aliases too', () => {
+    const decision = getCommandAccessDecision('/alexa-status', {
+      name: 'Family',
+      folder: 'family',
+      trigger: '@andrea',
+      added_at: '2026-03-29T00:00:00.000Z',
+      isMain: false,
+    });
+
+    expect(decision.allowed).toBe(false);
+    expect(decision.reason).toBe('main_control_only');
+    expect(decision.message).toContain('main control chat');
+  });
+
   it('allows advanced commands from the main control chat', () => {
     const decision = getCommandAccessDecision('/cursor_test', {
+      name: 'Andrea Main',
+      folder: 'main',
+      trigger: '@andrea',
+      added_at: '2026-03-29T00:00:00.000Z',
+      isMain: true,
+    });
+
+    expect(decision.allowed).toBe(true);
+  });
+
+  it('allows the preferred /cursor-download alias from the main control chat', () => {
+    const decision = getCommandAccessDecision('/cursor-download', {
       name: 'Andrea Main',
       folder: 'main',
       trigger: '@andrea',
@@ -81,6 +114,10 @@ describe('operator command gate', () => {
     );
     expect(normalizeCommandToken('/cursor_create?!')).toBe('/cursor_create');
     expect(normalizeCommandToken('/amazon_status.')).toBe('/amazon_status');
+    expect(normalizeCommandToken('/amazon-search?!')).toBe('/amazon-search');
+    expect(normalizeCommandToken('/purchase-approve@andrea_nanobot')).toBe(
+      '/purchase-approve',
+    );
   });
 
   it('keeps operator-only commands blocked after token normalization', () => {
