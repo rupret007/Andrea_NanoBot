@@ -5,13 +5,15 @@ import { sanitizeLogData, sanitizeLogString } from './logger.js';
 describe('sanitizeLogString', () => {
   it('redacts assignment-style secrets', () => {
     const redacted = sanitizeLogString(
-      'OPENAI_API_KEY=sk-test-secret ANTHROPIC_AUTH_TOKEN=token-123',
+      'OPENAI_API_KEY=sk-test-secret ANTHROPIC_AUTH_TOKEN=token-123 TELEGRAM_USER_SESSION=very-secret-session',
     );
 
     expect(redacted).toContain('OPENAI_API_KEY=***');
     expect(redacted).toContain('ANTHROPIC_AUTH_TOKEN=***');
+    expect(redacted).toContain('TELEGRAM_USER_SESSION=***');
     expect(redacted).not.toContain('sk-test-secret');
     expect(redacted).not.toContain('token-123');
+    expect(redacted).not.toContain('very-secret-session');
   });
 
   it('redacts bearer headers and token-like key values', () => {

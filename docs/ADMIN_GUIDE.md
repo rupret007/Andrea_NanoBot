@@ -121,6 +121,13 @@ Useful operator truth:
 - Cursor desktop bridge can now run line-oriented shell commands for tracked bridge sessions through `/cursor_terminal ...`
 - terminal control stays operator-only and tied to bridge-known sessions; it is not a live PTY, arbitrary shell attach, or remote desktop surface
 
+Telegram live testing:
+
+- use [TELEGRAM_OPERATOR_LIVE_TESTING.md](TELEGRAM_OPERATOR_LIVE_TESTING.md) when you want this machine to send real inbound Telegram test messages from your own operator account
+- run `npm run telegram:user:auth` once to store a local MTProto session
+- run `npm run telegram:user:send -- "<message>"` or `npm run telegram:user:batch`
+- keep this tooling operator-only and pointed at your own DM or dedicated test chat only
+
 Alexa:
 
 - `/alexa_status`
@@ -174,6 +181,7 @@ If a command or flow is no longer true, remove or rewrite it immediately.
 
 - [SETUP_AND_FEATURES_GUIDE.md](SETUP_AND_FEATURES_GUIDE.md)
 - [CHANNEL_COMMANDS_AND_ONBOARDING.md](CHANNEL_COMMANDS_AND_ONBOARDING.md)
+- [TELEGRAM_OPERATOR_LIVE_TESTING.md](TELEGRAM_OPERATOR_LIVE_TESTING.md)
 - [ALEXA_VOICE_INTEGRATION.md](ALEXA_VOICE_INTEGRATION.md)
 - [AMAZON_SHOPPING_AND_APPROVALS.md](AMAZON_SHOPPING_AND_APPROVALS.md)
 - [TESTING_AND_RELEASE_RUNBOOK.md](TESTING_AND_RELEASE_RUNBOOK.md)

@@ -17,7 +17,7 @@ const threshold =
   LEVELS[(process.env.LOG_LEVEL as Level) || 'info'] ?? LEVELS.info;
 
 const SENSITIVE_ASSIGNMENT_PATTERN =
-  /\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY|AUTH_KEY|AUTH_TOKEN)[A-Z0-9_]*)=([^\s,;'"`]+)/gi;
+  /\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY|AUTH_KEY|AUTH_TOKEN|SESSION)[A-Z0-9_]*)=([^\s,;'"`]+)/gi;
 const SENSITIVE_BEARER_PATTERN = /\b(authorization:\s*bearer)\s+[^\s,;'"`]+/gi;
 const GENERIC_BEARER_PATTERN = /\bbearer\s+[a-z0-9._-]{12,}\b/gi;
 const OPENAI_KEY_PATTERN = /\bsk-[a-z0-9][a-z0-9_-]{8,}\b/gi;

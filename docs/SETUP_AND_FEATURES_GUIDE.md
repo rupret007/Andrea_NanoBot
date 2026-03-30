@@ -8,6 +8,7 @@ For the in-chat user journey and command reference, also see:
 - [CHANNEL_COMMANDS_AND_ONBOARDING.md](CHANNEL_COMMANDS_AND_ONBOARDING.md)
 - [USER_GUIDE.md](USER_GUIDE.md)
 - [ADMIN_GUIDE.md](ADMIN_GUIDE.md)
+- [TELEGRAM_OPERATOR_LIVE_TESTING.md](TELEGRAM_OPERATOR_LIVE_TESTING.md) for operator-only closed-loop Telegram testing from this machine
 
 ## What This Package Includes
 
@@ -35,6 +36,7 @@ npm install
 Windows PowerShell note:
 
 - If script execution policy blocks `npx.ps1`, use `npx.cmd`/`npm.cmd` in commands instead of `npx`/`npm`.
+- The same applies to the Telegram user-session test tooling: use `npm.cmd run telegram:user:auth` / `npm.cmd run telegram:user:batch` if needed.
 
 Create local env file:
 
