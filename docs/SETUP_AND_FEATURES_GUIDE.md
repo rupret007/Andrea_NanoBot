@@ -176,6 +176,7 @@ Important notes:
 - if your main model runtime points at a remote 9router endpoint, set:
   - `CURSOR_GATEWAY_HINT=9router`
 - see [CURSOR_DESKTOP_BRIDGE.md](CURSOR_DESKTOP_BRIDGE.md) for the full bridge setup
+- after restart, use `/cursor_status` and confirm the `Cursor Capability Summary` says `Job backend: desktop bridge` or `Job backend: cloud agents` before relying on deeper Cursor job commands
 
 When this mode is active:
 
@@ -344,6 +345,7 @@ Important scope rule:
 
 - `/cursor_status` is safe to keep visible in the narrower public product surface
 - the deeper Cursor, Amazon, and Alexa slash commands are operator-facing controls and should be run from Andrea's registered main control chat only
+- for Cursor specifically, those deeper job commands are only operational when `/cursor_status` shows a real job backend instead of `Job backend: not configured`
 
 ## 8) OpenClaw Marketplace Behavior And Security
 

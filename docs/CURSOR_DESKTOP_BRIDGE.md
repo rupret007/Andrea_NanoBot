@@ -113,6 +113,11 @@ You should see a `Cursor Desktop Bridge Status` section with:
 - `Auth configured: yes`
 - `Probe: ok`
 
+You should also see a `Cursor Capability Summary` section where:
+
+- `Job backend: desktop bridge`
+- `Main-control job commands: ready`
+
 Then run a small non-destructive job from the main control chat:
 
 ```text

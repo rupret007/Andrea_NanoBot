@@ -78,6 +78,11 @@ import {
   getCursorDesktopStatus,
 } from './cursor-desktop.js';
 import {
+  formatCursorCapabilitySummaryMessage,
+  formatCursorOperationFailure,
+  summarizeCursorCapabilities,
+} from './cursor-capabilities.js';
+import {
   formatAmazonBusinessStatusMessage,
   getAmazonBusinessStatus,
 } from './amazon-business.js';
@@ -1045,9 +1050,15 @@ async function main(): Promise<void> {
     const desktopStatus = await getCursorDesktopStatus({ probe: true });
     const gatewayStatus = await getCursorGatewayStatus({ probe: true });
     const cloudStatus = getCursorCloudStatus();
+    const capabilitySummary = summarizeCursorCapabilities({
+      desktopStatus,
+      cloudStatus,
+      gatewayStatus,
+    });
     await channel.sendMessage(
       chatJid,
       [
+        formatCursorCapabilitySummaryMessage(capabilitySummary),
         formatCursorDesktopStatusMessage(desktopStatus),
         formatCursorGatewayStatusMessage(gatewayStatus),
         formatCursorCloudStatusMessage(cloudStatus),
@@ -1390,7 +1401,7 @@ async function main(): Promise<void> {
     } catch (err) {
       await channel.sendMessage(
         chatJid,
-        formatUserFacingOperationFailure('Cursor model list failed', err),
+        formatCursorOperationFailure('Cursor model list failed', err),
       );
     }
   }
@@ -1456,7 +1467,7 @@ async function main(): Promise<void> {
     } catch (err) {
       await channel.sendMessage(
         chatJid,
-        formatUserFacingOperationFailure('Cursor create failed', err),
+        formatCursorOperationFailure('Cursor create failed', err),
       );
     }
   }
@@ -1484,10 +1495,7 @@ async function main(): Promise<void> {
     } catch (err) {
       await channel.sendMessage(
         chatJid,
-        formatUserFacingOperationFailure(
-          'Cursor conversation fetch failed',
-          err,
-        ),
+        formatCursorOperationFailure('Cursor conversation fetch failed', err),
       );
       return;
     }
@@ -1523,7 +1531,7 @@ async function main(): Promise<void> {
     } catch (err) {
       await channel.sendMessage(
         chatJid,
-        formatUserFacingOperationFailure(
+        formatCursorOperationFailure(
           `Cursor conversation fetch failed for ${normalizedAgentId}`,
           err,
         ),
@@ -1553,7 +1561,7 @@ async function main(): Promise<void> {
     } catch (err) {
       await channel.sendMessage(
         chatJid,
-        formatUserFacingOperationFailure('Cursor artifacts lookup failed', err),
+        formatCursorOperationFailure('Cursor artifacts lookup failed', err),
       );
       return;
     }
@@ -1623,7 +1631,7 @@ async function main(): Promise<void> {
     } catch (err) {
       await channel.sendMessage(
         chatJid,
-        formatUserFacingOperationFailure(
+        formatCursorOperationFailure(
           `Cursor artifact link failed for ${agentId}`,
           err,
         ),
@@ -1672,10 +1680,7 @@ async function main(): Promise<void> {
     } catch (err) {
       await channel.sendMessage(
         chatJid,
-        formatUserFacingOperationFailure(
-          `Cursor sync failed for ${agentId}`,
-          err,
-        ),
+        formatCursorOperationFailure(`Cursor sync failed for ${agentId}`, err),
       );
     }
   }
@@ -1710,10 +1715,7 @@ async function main(): Promise<void> {
     } catch (err) {
       await channel.sendMessage(
         chatJid,
-        formatUserFacingOperationFailure(
-          `Cursor stop failed for ${agentId}`,
-          err,
-        ),
+        formatCursorOperationFailure(`Cursor stop failed for ${agentId}`, err),
       );
     }
   }
@@ -1750,7 +1752,7 @@ async function main(): Promise<void> {
     } catch (err) {
       await channel.sendMessage(
         chatJid,
-        formatUserFacingOperationFailure(
+        formatCursorOperationFailure(
           `Cursor follow-up failed for ${agentId}`,
           err,
         ),
