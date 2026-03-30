@@ -35,6 +35,7 @@ function buildCloudStatus(
     enabled: false,
     baseUrl: 'https://api.cursor.com',
     hasApiKey: false,
+    authMode: 'auto',
     hasWebhookSecret: false,
     timeoutMs: 20_000,
     maxRetries: 2,

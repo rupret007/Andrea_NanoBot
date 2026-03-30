@@ -190,7 +190,7 @@ Andrea currently supports:
 - Anthropic-compatible model endpoints
 - OpenAI-key-backed gateways exposed through Anthropic-compatible APIs
 - 9router / Cursor-backed routing paths
-- optional Cursor Cloud Agents API control via `CURSOR_API_KEY`
+- optional Cursor Cloud Agents API control via `CURSOR_API_KEY` and optional `CURSOR_API_AUTH_MODE=auto|bearer|basic`
 - optional integrations only after operator validation
 
 Useful runtime validation commands:

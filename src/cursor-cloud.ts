@@ -5,6 +5,8 @@ import { readEnvFile } from './env.js';
 const CURSOR_ENV_KEYS = [
   'CURSOR_API_BASE_URL',
   'CURSOR_API_KEY',
+  'CURSOR_API_AUTH_MODE',
+  'CURSOR_AUTH_MODE',
   'CURSOR_WEBHOOK_SECRET',
   'CURSOR_API_TIMEOUT_MS',
   'CURSOR_API_MAX_RETRIES',
@@ -19,16 +21,20 @@ const DEFAULT_CURSOR_API_RETRY_BASE_MS = 800;
 export interface CursorCloudConfig {
   baseUrl: string;
   apiKey: string;
+  authMode: CursorCloudAuthMode;
   webhookSecret: string | null;
   timeoutMs: number;
   maxRetries: number;
   retryBaseMs: number;
 }
 
+export type CursorCloudAuthMode = 'auto' | 'basic' | 'bearer';
+
 export interface CursorCloudStatus {
   enabled: boolean;
   baseUrl: string;
   hasApiKey: boolean;
+  authMode: CursorCloudAuthMode;
   hasWebhookSecret: boolean;
   timeoutMs: number;
   maxRetries: number;
@@ -191,6 +197,18 @@ function normalizeRetryBaseMs(raw: string | undefined): number {
   return Math.min(60_000, Math.floor(parsed));
 }
 
+function normalizeAuthMode(raw: string | undefined): CursorCloudAuthMode {
+  const normalized = raw?.trim().toLowerCase();
+  if (
+    normalized === 'auto' ||
+    normalized === 'basic' ||
+    normalized === 'bearer'
+  ) {
+    return normalized;
+  }
+  return 'auto';
+}
+
 function resolveCursorEnv(
   options: CursorCloudStatusOptions = {},
 ): Record<string, string | undefined> {
@@ -202,6 +220,11 @@ function resolveCursorEnv(
     CURSOR_API_BASE_URL:
       env.CURSOR_API_BASE_URL || envFileValues.CURSOR_API_BASE_URL,
     CURSOR_API_KEY: env.CURSOR_API_KEY || envFileValues.CURSOR_API_KEY,
+    CURSOR_API_AUTH_MODE:
+      env.CURSOR_API_AUTH_MODE ||
+      env.CURSOR_AUTH_MODE ||
+      envFileValues.CURSOR_API_AUTH_MODE ||
+      envFileValues.CURSOR_AUTH_MODE,
     CURSOR_WEBHOOK_SECRET:
       env.CURSOR_WEBHOOK_SECRET || envFileValues.CURSOR_WEBHOOK_SECRET,
     CURSOR_API_TIMEOUT_MS:
@@ -219,6 +242,7 @@ export function getCursorCloudStatus(
   const resolved = resolveCursorEnv(options);
   const baseUrl = normalizeCursorBaseUrl(resolved.CURSOR_API_BASE_URL);
   const apiKey = resolved.CURSOR_API_KEY?.trim() || '';
+  const authMode = normalizeAuthMode(resolved.CURSOR_API_AUTH_MODE);
   const webhookSecret = resolved.CURSOR_WEBHOOK_SECRET?.trim() || '';
   const timeoutMs = normalizeTimeoutMs(resolved.CURSOR_API_TIMEOUT_MS);
   const maxRetries = normalizeMaxRetries(resolved.CURSOR_API_MAX_RETRIES);
@@ -228,6 +252,7 @@ export function getCursorCloudStatus(
     enabled: apiKey.length > 0,
     baseUrl,
     hasApiKey: apiKey.length > 0,
+    authMode,
     hasWebhookSecret: webhookSecret.length > 0,
     timeoutMs,
     maxRetries,
@@ -245,6 +270,7 @@ export function resolveCursorCloudConfig(
   return {
     baseUrl: normalizeCursorBaseUrl(resolved.CURSOR_API_BASE_URL),
     apiKey,
+    authMode: normalizeAuthMode(resolved.CURSOR_API_AUTH_MODE),
     webhookSecret: resolved.CURSOR_WEBHOOK_SECRET?.trim() || null,
     timeoutMs: normalizeTimeoutMs(resolved.CURSOR_API_TIMEOUT_MS),
     maxRetries: normalizeMaxRetries(resolved.CURSOR_API_MAX_RETRIES),
@@ -255,11 +281,16 @@ export function resolveCursorCloudConfig(
 export function formatCursorCloudStatusMessage(
   status: CursorCloudStatus,
 ): string {
+  const authModeLabel =
+    status.authMode === 'auto'
+      ? 'auto (Bearer -> Basic fallback)'
+      : status.authMode;
   const lines = [
     '*Cursor Cloud Agents Status*',
     `- Enabled: ${status.enabled ? 'yes' : 'no'}`,
     `- API Base URL: ${status.baseUrl}`,
     `- API key configured: ${status.hasApiKey ? 'yes' : 'no'}`,
+    `- Auth mode: ${authModeLabel}`,
     `- Webhook secret configured: ${status.hasWebhookSecret ? 'yes' : 'no'}`,
     `- Request timeout: ${status.timeoutMs}ms`,
     `- API retries: ${status.maxRetries}`,
@@ -292,6 +323,10 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 function buildBasicAuthHeader(apiKey: string): string {
   const token = Buffer.from(`${apiKey}:`, 'utf-8').toString('base64');
   return `Basic ${token}`;
+}
+
+function buildBearerAuthHeader(apiKey: string): string {
+  return `Bearer ${apiKey}`;
 }
 
 function buildUrl(
@@ -381,6 +416,12 @@ export class CursorCloudClient {
     options: CursorCloudClientOptions = {},
   ) {
     this.fetchImpl = options.fetchImpl ?? fetch;
+  }
+
+  private getAuthModes(): CursorCloudAuthMode[] {
+    return this.config.authMode === 'auto'
+      ? ['bearer', 'basic']
+      : [this.config.authMode];
   }
 
   async listModels(): Promise<CursorListModelsResponse> {
@@ -557,68 +598,101 @@ export class CursorCloudClient {
     query?: Record<string, string>,
   ): Promise<T> {
     const url = buildUrl(this.config.baseUrl, path, query);
-    let attempt = 0;
     const maxAttempts = Math.max(1, this.config.maxRetries + 1);
     let lastError: unknown;
 
-    while (attempt < maxAttempts) {
-      const controller = new AbortController();
-      const timeout = setTimeout(
-        () => controller.abort(),
-        this.config.timeoutMs,
-      );
-      try {
-        const response = await this.fetchImpl(url, {
-          method,
-          headers: {
-            Authorization: buildBasicAuthHeader(this.config.apiKey),
-            'Content-Type': 'application/json',
-          },
-          body: body === undefined ? undefined : JSON.stringify(body),
-          signal: controller.signal,
-        });
+    const authModes = this.getAuthModes();
+    for (let modeIndex = 0; modeIndex < authModes.length; modeIndex += 1) {
+      const authMode = authModes[modeIndex];
+      let attempt = 0;
 
-        const rawText = await response.text();
-        const parsed = rawText ? parseJsonSafely(rawText) : null;
+      while (attempt < maxAttempts) {
+        const controller = new AbortController();
+        const timeout = setTimeout(
+          () => controller.abort(),
+          this.config.timeoutMs,
+        );
+        try {
+          const authorization =
+            authMode === 'bearer'
+              ? buildBearerAuthHeader(this.config.apiKey)
+              : buildBasicAuthHeader(this.config.apiKey);
+          const response = await this.fetchImpl(url, {
+            method,
+            headers: {
+              Authorization: authorization,
+              'Content-Type': 'application/json',
+            },
+            body: body === undefined ? undefined : JSON.stringify(body),
+            signal: controller.signal,
+          });
 
-        if (!response.ok) {
-          const record = asRecord(parsed);
-          const detail =
-            (record?.error as string | undefined) ||
-            (record?.message as string | undefined) ||
-            (typeof parsed === 'string' ? parsed : null);
-          const apiError = new CursorCloudApiError(
-            `Cursor API ${method} ${path} failed with HTTP ${response.status}${detail ? `: ${detail}` : ''}`,
-            response.status,
-            parsed,
-          );
-          lastError = apiError;
+          const rawText = await response.text();
+          const parsed = rawText ? parseJsonSafely(rawText) : null;
 
-          if (isRetryableStatus(response.status) && attempt < maxAttempts - 1) {
-            const delayMs = computeBackoffDelayMs(
-              response.headers.get('retry-after'),
-              attempt,
-              this.config.retryBaseMs,
+          if (!response.ok) {
+            const record = asRecord(parsed);
+            const detail =
+              (record?.error as string | undefined) ||
+              (record?.message as string | undefined) ||
+              (typeof parsed === 'string' ? parsed : null);
+            const apiError = new CursorCloudApiError(
+              `Cursor API ${method} ${path} failed with HTTP ${response.status}${detail ? `: ${detail}` : ''}`,
+              response.status,
+              parsed,
             );
-            await sleep(delayMs);
-            attempt += 1;
-            continue;
+            lastError = apiError;
+
+            if (
+              isRetryableStatus(response.status) &&
+              attempt < maxAttempts - 1
+            ) {
+              const delayMs = computeBackoffDelayMs(
+                response.headers.get('retry-after'),
+                attempt,
+                this.config.retryBaseMs,
+              );
+              await sleep(delayMs);
+              attempt += 1;
+              continue;
+            }
+
+            if (
+              this.config.authMode === 'auto' &&
+              (response.status === 401 || response.status === 403) &&
+              modeIndex < authModes.length - 1
+            ) {
+              break;
+            }
+
+            throw apiError;
           }
 
-          throw apiError;
-        }
+          return parsed as T;
+        } catch (err) {
+          if (err instanceof CursorCloudApiError) throw err;
 
-        return parsed as T;
-      } catch (err) {
-        if (err instanceof CursorCloudApiError) throw err;
+          if (err instanceof Error && err.name === 'AbortError') {
+            const timeoutError = new Error(
+              `Cursor API ${method} ${path} timed out after ${this.config.timeoutMs}ms`,
+              { cause: err },
+            );
+            lastError = timeoutError;
+            if (attempt < maxAttempts - 1) {
+              const delayMs = computeBackoffDelayMs(
+                null,
+                attempt,
+                this.config.retryBaseMs,
+              );
+              await sleep(delayMs);
+              attempt += 1;
+              continue;
+            }
+            throw timeoutError;
+          }
 
-        if (err instanceof Error && err.name === 'AbortError') {
-          const timeoutError = new Error(
-            `Cursor API ${method} ${path} timed out after ${this.config.timeoutMs}ms`,
-            { cause: err },
-          );
-          lastError = timeoutError;
-          if (attempt < maxAttempts - 1) {
+          lastError = err;
+          if (isRetryableFetchError(err) && attempt < maxAttempts - 1) {
             const delayMs = computeBackoffDelayMs(
               null,
               attempt,
@@ -628,24 +702,11 @@ export class CursorCloudClient {
             attempt += 1;
             continue;
           }
-          throw timeoutError;
-        }
 
-        lastError = err;
-        if (isRetryableFetchError(err) && attempt < maxAttempts - 1) {
-          const delayMs = computeBackoffDelayMs(
-            null,
-            attempt,
-            this.config.retryBaseMs,
-          );
-          await sleep(delayMs);
-          attempt += 1;
-          continue;
+          throw err;
+        } finally {
+          clearTimeout(timeout);
         }
-
-        throw err;
-      } finally {
-        clearTimeout(timeout);
       }
     }
 

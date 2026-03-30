@@ -17,9 +17,13 @@ describe('cursor-cloud status', () => {
     expect(status.enabled).toBe(false);
     expect(status.baseUrl).toBe('https://api.cursor.com');
     expect(status.hasApiKey).toBe(false);
+    expect(status.authMode).toBe('auto');
     expect(status.timeoutMs).toBe(20_000);
     expect(status.maxRetries).toBe(2);
     expect(status.retryBaseMs).toBe(800);
+    expect(formatCursorCloudStatusMessage(status)).toContain(
+      'Auth mode: auto (Bearer -> Basic fallback)',
+    );
     expect(formatCursorCloudStatusMessage(status)).toContain('Next step:');
   });
 
@@ -28,6 +32,7 @@ describe('cursor-cloud status', () => {
       env: {
         CURSOR_API_BASE_URL: 'https://api.cursor.com/',
         CURSOR_API_KEY: 'cursor-key',
+        CURSOR_API_AUTH_MODE: 'bearer',
         CURSOR_WEBHOOK_SECRET: 'secret',
         CURSOR_API_TIMEOUT_MS: '12000',
         CURSOR_API_MAX_RETRIES: '3',
@@ -39,16 +44,29 @@ describe('cursor-cloud status', () => {
     expect(config).toEqual({
       baseUrl: 'https://api.cursor.com',
       apiKey: 'cursor-key',
+      authMode: 'bearer',
       webhookSecret: 'secret',
       timeoutMs: 12_000,
       maxRetries: 3,
       retryBaseMs: 250,
     });
   });
+
+  it('accepts CURSOR_AUTH_MODE as a compatibility alias', () => {
+    const status = getCursorCloudStatus({
+      env: {
+        CURSOR_API_KEY: 'cursor-key',
+        CURSOR_AUTH_MODE: 'basic',
+      },
+      envFileValues: {},
+    });
+
+    expect(status.authMode).toBe('basic');
+  });
 });
 
 describe('cursor-cloud client', () => {
-  it('calls listModels with basic auth', async () => {
+  it('calls listModels with explicit basic auth', async () => {
     let authHeader = '';
     const fetchImpl = (async (_input: unknown, init?: RequestInit) => {
       authHeader = String(
@@ -66,6 +84,7 @@ describe('cursor-cloud client', () => {
       {
         baseUrl: 'https://api.cursor.com',
         apiKey: 'test-key',
+        authMode: 'basic',
         webhookSecret: null,
         timeoutMs: 10_000,
         maxRetries: 0,
@@ -77,6 +96,46 @@ describe('cursor-cloud client', () => {
     const models = await client.listModels();
     expect(models.models[0].id).toBe('default');
     expect(authHeader).toMatch(/^Basic\s+/);
+  });
+
+  it('falls back from bearer to basic auth in auto mode', async () => {
+    const authHeaders: string[] = [];
+    const fetchImpl = (async (_input: unknown, init?: RequestInit) => {
+      const authHeader = String(
+        (init?.headers as Record<string, string>).Authorization,
+      );
+      authHeaders.push(authHeader);
+      if (authHeaders.length === 1) {
+        return new Response(JSON.stringify({ error: 'unauthorized' }), {
+          status: 401,
+        });
+      }
+      return new Response(
+        JSON.stringify({
+          models: [{ id: 'default', name: 'Default' }],
+        }),
+        { status: 200 },
+      );
+    }) as unknown as typeof fetch;
+
+    const client = new CursorCloudClient(
+      {
+        baseUrl: 'https://api.cursor.com',
+        apiKey: 'test-key',
+        authMode: 'auto',
+        webhookSecret: null,
+        timeoutMs: 10_000,
+        maxRetries: 0,
+        retryBaseMs: 0,
+      },
+      { fetchImpl },
+    );
+
+    const models = await client.listModels();
+    expect(models.models[0].id).toBe('default');
+    expect(authHeaders).toHaveLength(2);
+    expect(authHeaders[0]).toBe('Bearer test-key');
+    expect(authHeaders[1]).toMatch(/^Basic\s+/);
   });
 
   it('calls createAgent and serializes request body', async () => {
@@ -98,6 +157,7 @@ describe('cursor-cloud client', () => {
       {
         baseUrl: 'https://api.cursor.com',
         apiKey: 'test-key',
+        authMode: 'basic',
         webhookSecret: null,
         timeoutMs: 10_000,
         maxRetries: 0,
@@ -127,6 +187,7 @@ describe('cursor-cloud client', () => {
       {
         baseUrl: 'https://api.cursor.com',
         apiKey: 'bad-key',
+        authMode: 'basic',
         webhookSecret: null,
         timeoutMs: 10_000,
         maxRetries: 0,
@@ -164,6 +225,7 @@ describe('cursor-cloud client', () => {
       {
         baseUrl: 'https://api.cursor.com',
         apiKey: 'test-key',
+        authMode: 'basic',
         webhookSecret: null,
         timeoutMs: 10_000,
         maxRetries: 2,
@@ -192,6 +254,7 @@ describe('cursor-cloud client', () => {
       {
         baseUrl: 'https://api.cursor.com',
         apiKey: 'test-key',
+        authMode: 'basic',
         webhookSecret: null,
         timeoutMs: 10_000,
         maxRetries: 1,

@@ -151,11 +151,14 @@ Cursor Cloud Agents API (for direct Cursor job lifecycle control):
 CURSOR_API_KEY=cursor_api_...
 # Optional:
 # CURSOR_API_BASE_URL=https://api.cursor.com
+# CURSOR_API_AUTH_MODE=auto
 # CURSOR_API_TIMEOUT_MS=20000
 # CURSOR_API_MAX_RETRIES=2
 # CURSOR_API_RETRY_BASE_MS=800
 # CURSOR_MAX_ACTIVE_JOBS_PER_CHAT=4
 ```
+
+`CURSOR_API_AUTH_MODE` accepts `auto`, `bearer`, or `basic`. Default `auto` tries Bearer first and falls back to Basic, which matches the mixed real-world Cursor Cloud auth behavior seen across tools and docs.
 
 Cursor Desktop Bridge (for using your own Cursor machine remotely):
 
