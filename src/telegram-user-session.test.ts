@@ -64,6 +64,8 @@ describe('resolveTelegramUserSessionConfig', () => {
     expect(config.testTarget).toBe('');
     expect(config.authMode).toBe('qr');
     expect(config.twoFactorPassword).toBe('');
+    expect(config.replyTimeoutMs).toBe(30000);
+    expect(config.replySettleMs).toBe(1500);
   });
 
   it('prefers explicit test target and session env values', () => {

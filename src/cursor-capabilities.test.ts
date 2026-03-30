@@ -130,6 +130,25 @@ describe('cursor-capabilities', () => {
     );
   });
 
+  it('frames missing optional surfaces more softly when Cursor Cloud is already ready', () => {
+    const summary = summarizeCursorCapabilities({
+      desktopStatus: buildDesktopStatus(),
+      cloudStatus: buildCloudStatus({
+        enabled: true,
+        hasApiKey: true,
+      }),
+      gatewayStatus: buildGatewayStatus(),
+    });
+
+    const message = formatCursorCapabilitySummaryMessage(summary);
+    expect(summary.nextStep).toContain('Desktop bridge remains optional');
+    expect(summary.nextStep).toContain('optional and separate');
+    expect(message).toContain('Optional next step:');
+    expect(message).not.toContain(
+      'Next step: Cursor Cloud coding jobs are ready. Desktop bridge terminal control is unavailable because',
+    );
+  });
+
   it('marks desktop agent jobs conditional when the bridge is healthy but compatibility is unknown', () => {
     const summary = summarizeCursorCapabilities({
       desktopStatus: buildReadyDesktopStatus('unknown'),

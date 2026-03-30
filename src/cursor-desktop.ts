@@ -437,7 +437,7 @@ export function formatCursorDesktopStatusMessage(
   }
   if (!status.enabled) {
     lines.push(
-      "- Next step: set `CURSOR_DESKTOP_BRIDGE_URL` and `CURSOR_DESKTOP_BRIDGE_TOKEN` on Andrea's host, then run the bridge on your normal machine to enable operator-only session recovery and line-oriented terminal control.",
+      "- Optional next step: set `CURSOR_DESKTOP_BRIDGE_URL` and `CURSOR_DESKTOP_BRIDGE_TOKEN` on Andrea's host, then run the bridge on your normal machine to enable operator-only session recovery and line-oriented terminal control.",
     );
   } else if (status.probeStatus === 'failed') {
     lines.push(

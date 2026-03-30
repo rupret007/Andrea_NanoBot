@@ -47,8 +47,10 @@ const CURSOR_CLOUD_ENABLEMENT_MESSAGE =
   'Cursor Cloud coding jobs are unavailable because `CURSOR_API_KEY` is not configured. Add it to enable queued heavy-lift Cloud workflows such as `/cursor-create`, `/cursor-followup`, `/cursor-stop`, `/cursor-models`, `/cursor-results`, and `/cursor-download`.';
 const CURSOR_DESKTOP_ENABLEMENT_MESSAGE =
   "Desktop bridge terminal control is unavailable because `CURSOR_DESKTOP_BRIDGE_URL` and `CURSOR_DESKTOP_BRIDGE_TOKEN` are not fully configured. Add both on Andrea's host and run the bridge on your normal machine if you want operator-only session recovery and line-oriented terminal control.";
+const CURSOR_DESKTOP_OPTIONAL_MESSAGE =
+  "Desktop bridge remains optional. Add `CURSOR_DESKTOP_BRIDGE_URL` and `CURSOR_DESKTOP_BRIDGE_TOKEN` on Andrea's host, then run the bridge on your normal machine only if you want operator-only session recovery and line-oriented terminal control.";
 const CURSOR_RUNTIME_ROUTE_OPTIONAL_MESSAGE =
-  'Cursor-backed runtime routing is optional and separate from Cursor Cloud jobs and desktop bridge terminal control.';
+  'Cursor-backed runtime routing remains optional and separate from Cursor Cloud jobs and desktop bridge terminal control.';
 
 function buildNextStep(
   desktopStatus: CursorDesktopStatus,
@@ -81,8 +83,8 @@ function buildNextStep(
 
   if (cloudReady) {
     return gatewayStatus.mode === 'configured'
-      ? 'Cursor Cloud coding jobs are ready, and Cursor-backed runtime routing is configured. Desktop bridge terminal control remains optional and separate.'
-      : `Cursor Cloud coding jobs are ready. ${CURSOR_DESKTOP_ENABLEMENT_MESSAGE} ${CURSOR_RUNTIME_ROUTE_OPTIONAL_MESSAGE}`;
+      ? 'Cursor Cloud coding jobs are ready, and Cursor-backed runtime routing is configured. Desktop bridge remains optional and separate.'
+      : `Cursor Cloud coding jobs are ready. ${CURSOR_DESKTOP_OPTIONAL_MESSAGE} ${CURSOR_RUNTIME_ROUTE_OPTIONAL_MESSAGE}`;
   }
 
   if (desktopReachable) {
@@ -125,7 +127,9 @@ export function formatCursorCapabilitySummaryMessage(
   ];
 
   if (summary.nextStep) {
-    lines.push(`- Next step: ${summary.nextStep}`);
+    lines.push(
+      `- ${summary.cloudCodingJobsReady ? 'Optional next step' : 'Next step'}: ${summary.nextStep}`,
+    );
   }
 
   return lines.join('\n');

@@ -118,7 +118,7 @@ describe('cursor-gateway', () => {
     const message = formatCursorGatewayStatusMessage(status);
     expect(message).toContain('*Cursor Integration Status*');
     expect(message).toContain('Mode: partial');
-    expect(message).toContain('Next step:');
+    expect(message).toContain('Optional next step:');
     expect(message).toContain('optional and separate');
   });
 

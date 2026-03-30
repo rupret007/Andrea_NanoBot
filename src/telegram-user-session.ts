@@ -11,7 +11,7 @@ import { StringSession } from 'telegram/sessions/index.js';
 import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
 
-const DEFAULT_REPLY_TIMEOUT_MS = 20_000;
+const DEFAULT_REPLY_TIMEOUT_MS = 30_000;
 const DEFAULT_SETTLE_MS = 1_500;
 const DEFAULT_AUTH_STATUS_FILE = 'telegram-user-auth-status.json';
 const DEFAULT_AUTH_QR_IMAGE_FILE = 'telegram-user-login.png';

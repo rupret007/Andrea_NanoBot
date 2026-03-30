@@ -127,7 +127,7 @@ Run:
 - `/cursor-create --repo https://github.com/rupret007/Andrea_NanoBot Reply with exactly: live cloud smoke ok. Do not modify files, branches, or PRs.`
 - `/cursor-sync <agent_id>`
 - `/cursor-conversation <agent_id> 5`
-- `/cursor-artifacts <agent_id>`
+- `/cursor-results <agent_id>`
 
 Optional if safe:
 

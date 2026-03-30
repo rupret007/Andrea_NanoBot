@@ -52,7 +52,7 @@ TELEGRAM_TEST_CHAT_ID=tg:123456789
 TELEGRAM_PHONE=+15551234567
 TELEGRAM_USER_AUTH_MODE=qr
 TELEGRAM_USER_2FA_PASSWORD=...
-TELEGRAM_LIVE_REPLY_TIMEOUT_MS=20000
+TELEGRAM_LIVE_REPLY_TIMEOUT_MS=30000
 TELEGRAM_LIVE_REPLY_SETTLE_MS=1500
 ```
 
@@ -115,6 +115,7 @@ Expected behavior:
 - the harness waits for Andrea's reply
 - replies are printed to stdout
 - runs are exclusive; if another auth/send/batch process is already active, wait for it to finish before starting a new one
+- the default 30s reply timeout is intentional because live Cursor Cloud syncs can take longer than a quick chat reply
 
 ## Run The Default Live Batch
 
