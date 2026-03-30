@@ -6,6 +6,7 @@ import {
   buildTelegramHelpText,
   buildTelegramWelcomeText,
   extractTelegramLeadingCommand,
+  splitTelegramMessage,
 } from './telegram.js';
 
 describe('extractTelegramLeadingCommand', () => {
@@ -116,5 +117,30 @@ describe('buildTelegramFeaturesText', () => {
     expect(features).toContain('operator-safe status checks');
     expect(features).not.toContain('Amazon shopping search');
     expect(features).not.toContain('Apple Calendar');
+  });
+});
+
+describe('splitTelegramMessage', () => {
+  it('keeps long Telegram replies from splitting in the middle of command hints', () => {
+    const prefix = 'A'.repeat(4070);
+    const text = `${prefix}\n\nRun /cursor-sync AGENT_ID to attach one of these jobs to this workspace.`;
+
+    const chunks = splitTelegramMessage(text, 4096);
+
+    expect(chunks).toHaveLength(2);
+    expect(chunks[0]).not.toContain('/cursor-sync AGENT_ID');
+    expect(chunks[1]).toBe(
+      'Run /cursor-sync AGENT_ID to attach one of these jobs to this workspace.',
+    );
+  });
+
+  it('falls back to a hard split when there is no safe breakpoint', () => {
+    const text = 'A'.repeat(5000);
+
+    const chunks = splitTelegramMessage(text, 4096);
+
+    expect(chunks).toHaveLength(2);
+    expect(chunks[0]).toHaveLength(4096);
+    expect(chunks[1]).toHaveLength(904);
   });
 });

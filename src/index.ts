@@ -1030,15 +1030,15 @@ async function main(): Promise<void> {
     '/cursor_status',
   ]);
   const CURSOR_CREATE_USAGE =
-    'Usage: /cursor_create [--model <id>] [--repo <url>] [--ref <git_ref>] [--pr <pr_url>] [--branch <name>] [--auto-pr] [--cursor-github-app] [--skip-reviewer] <prompt>';
+    'Usage: /cursor-create [--model MODEL_ID] [--repo REPO_URL] [--ref GIT_REF] [--pr PR_URL] [--branch BRANCH_NAME] [--auto-pr] [--cursor-github-app] [--skip-reviewer] PROMPT';
   const CURSOR_ARTIFACT_LINK_USAGE =
-    'Usage: /cursor_artifact_link <agent_id> <absolute_path>';
-  const CURSOR_TERMINAL_USAGE = 'Usage: /cursor_terminal <agent_id> <command>';
+    'Usage: /cursor-artifact-link AGENT_ID ABSOLUTE_PATH';
+  const CURSOR_TERMINAL_USAGE = 'Usage: /cursor-terminal AGENT_ID COMMAND';
   const CURSOR_TERMINAL_STATUS_USAGE =
-    'Usage: /cursor_terminal_status <agent_id>';
+    'Usage: /cursor-terminal-status AGENT_ID';
   const CURSOR_TERMINAL_LOG_USAGE =
-    'Usage: /cursor_terminal_log <agent_id> [limit]';
-  const CURSOR_TERMINAL_STOP_USAGE = 'Usage: /cursor_terminal_stop <agent_id>';
+    'Usage: /cursor-terminal-log AGENT_ID [LIMIT]';
+  const CURSOR_TERMINAL_STOP_USAGE = 'Usage: /cursor-terminal-stop AGENT_ID';
   const MAX_CURSOR_TERMINAL_REPLY_CHARS = 3000;
   const MAX_CURSOR_TERMINAL_LINES = 40;
 
@@ -1456,7 +1456,7 @@ async function main(): Promise<void> {
           .map((agent, index) => formatAgentLine(agent, index))
           .join(
             '\n\n',
-          )}\n\nRun /cursor_sync <agent_id> to attach one of these jobs to this workspace.`,
+          )}\n\nRun /cursor-sync AGENT_ID to attach one of these jobs to this workspace.`,
       );
     }
 
@@ -1516,7 +1516,7 @@ async function main(): Promise<void> {
       });
       const truncated =
         matches.length > capped.length
-          ? `\n\nShowing ${capped.length} of ${matches.length} models. Narrow with /cursor_models <filter>.`
+          ? `\n\nShowing ${capped.length} of ${matches.length} models. Narrow with /cursor-models FILTER.`
           : '';
 
       await channel.sendMessage(
@@ -2153,7 +2153,7 @@ async function main(): Promise<void> {
         if (!agentId) {
           const channel = findChannel(channels, chatJid);
           channel
-            ?.sendMessage(chatJid, 'Usage: /cursor_sync <agent_id>')
+            ?.sendMessage(chatJid, 'Usage: /cursor-sync AGENT_ID')
             .catch((err) =>
               logger.error({ err, chatJid }, 'Cursor sync usage send failed'),
             );
@@ -2172,7 +2172,7 @@ async function main(): Promise<void> {
         if (!agentId) {
           const channel = findChannel(channels, chatJid);
           channel
-            ?.sendMessage(chatJid, 'Usage: /cursor_stop <agent_id>')
+            ?.sendMessage(chatJid, 'Usage: /cursor-stop AGENT_ID')
             .catch((err) =>
               logger.error({ err, chatJid }, 'Cursor stop usage send failed'),
             );
@@ -2193,7 +2193,7 @@ async function main(): Promise<void> {
           channel
             ?.sendMessage(
               chatJid,
-              'Usage: /cursor_conversation <agent_id> [limit]',
+              'Usage: /cursor-conversation AGENT_ID [LIMIT]',
             )
             .catch((err) =>
               logger.error(
@@ -2221,7 +2221,7 @@ async function main(): Promise<void> {
         if (!agentId) {
           const channel = findChannel(channels, chatJid);
           channel
-            ?.sendMessage(chatJid, 'Usage: /cursor_artifacts <agent_id>')
+            ?.sendMessage(chatJid, 'Usage: /cursor-artifacts AGENT_ID')
             .catch((err) =>
               logger.error(
                 { err, chatJid },
@@ -2364,7 +2364,7 @@ async function main(): Promise<void> {
         if (!agentId) {
           const channel = findChannel(channels, chatJid);
           channel
-            ?.sendMessage(chatJid, 'Usage: /cursor_followup <agent_id> <text>')
+            ?.sendMessage(chatJid, 'Usage: /cursor-followup AGENT_ID TEXT')
             .catch((err) =>
               logger.error(
                 { err, chatJid },
@@ -2378,7 +2378,7 @@ async function main(): Promise<void> {
         if (!promptText) {
           const channel = findChannel(channels, chatJid);
           channel
-            ?.sendMessage(chatJid, 'Usage: /cursor_followup <agent_id> <text>')
+            ?.sendMessage(chatJid, 'Usage: /cursor-followup AGENT_ID TEXT')
             .catch((err) =>
               logger.error(
                 { err, chatJid },

@@ -117,6 +117,45 @@ export function buildTelegramFeaturesText(
   ].join('\n');
 }
 
+export function splitTelegramMessage(text: string, maxLength = 4096): string[] {
+  if (text.length <= maxLength) {
+    return [text];
+  }
+
+  const chunks: string[] = [];
+  let remaining = text;
+
+  while (remaining.length > maxLength) {
+    const candidate = remaining.slice(0, maxLength);
+    const paragraphSplitAt = candidate.lastIndexOf('\n\n');
+    const newlineSplitAt = candidate.lastIndexOf('\n');
+    const spaceSplitAt = candidate.lastIndexOf(' ');
+    const safeSplitAt =
+      paragraphSplitAt >= Math.floor(maxLength * 0.4)
+        ? paragraphSplitAt
+        : newlineSplitAt >= Math.floor(maxLength * 0.6)
+          ? newlineSplitAt
+          : spaceSplitAt >= Math.floor(maxLength * 0.6)
+            ? spaceSplitAt
+            : -1;
+    const chunkEnd = safeSplitAt > 0 ? safeSplitAt : maxLength;
+    const chunk = remaining.slice(0, chunkEnd).trimEnd();
+    if (!chunk) {
+      chunks.push(remaining.slice(0, maxLength));
+      remaining = remaining.slice(maxLength);
+      continue;
+    }
+    chunks.push(chunk);
+    remaining = remaining.slice(chunkEnd).trimStart();
+  }
+
+  if (remaining) {
+    chunks.push(remaining);
+  }
+
+  return chunks;
+}
+
 function buildTelegramDescriptionText(assistantName = ASSISTANT_NAME): string {
   return `${assistantName} helps with tasks, reminders, research, coding, and clear everyday assistance. In DM, use /registermain to set up your main control chat.`;
 }
@@ -445,18 +484,8 @@ export class TelegramChannel implements Channel {
         ? { message_thread_id: parseInt(threadId, 10) }
         : {};
 
-      const MAX_LENGTH = 4096;
-      if (text.length <= MAX_LENGTH) {
-        await sendTelegramMessage(this.bot.api, numericId, text, options);
-      } else {
-        for (let i = 0; i < text.length; i += MAX_LENGTH) {
-          await sendTelegramMessage(
-            this.bot.api,
-            numericId,
-            text.slice(i, i + MAX_LENGTH),
-            options,
-          );
-        }
+      for (const chunk of splitTelegramMessage(text)) {
+        await sendTelegramMessage(this.bot.api, numericId, chunk, options);
       }
       logger.info(
         { jid, length: text.length, threadId },
