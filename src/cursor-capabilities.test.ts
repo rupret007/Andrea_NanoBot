@@ -5,6 +5,7 @@ import {
   formatCursorOperationFailure,
   summarizeCursorCapabilities,
 } from './cursor-capabilities.js';
+import { CursorCloudApiError } from './cursor-cloud.js';
 import type { CursorCloudStatus } from './cursor-cloud.js';
 import type { CursorDesktopStatus } from './cursor-desktop.js';
 import type { CursorGatewayStatus } from './cursor-gateway.js';
@@ -141,6 +142,71 @@ describe('cursor-capabilities', () => {
       ),
     ).toBe(
       'Cursor create failed. The external integration is currently unreachable.',
+    );
+  });
+
+  it('passes through desktop-only terminal-control errors unchanged', () => {
+    expect(
+      formatCursorOperationFailure(
+        'Cursor terminal status failed for bc-demo',
+        new Error(
+          'Cursor terminal control is only available for desktop bridge sessions on your own machine.',
+        ),
+      ),
+    ).toBe(
+      'Cursor terminal status failed for bc-demo. Cursor terminal control is only available for desktop bridge sessions on your own machine.',
+    );
+  });
+
+  it('passes through invalid agent id guidance unchanged', () => {
+    expect(
+      formatCursorOperationFailure(
+        'Cursor sync failed for bad-id',
+        new Error(
+          'Invalid Cursor agent id "not-a-real-agent-id". Use an id like bc_abc123 or a Cursor URL that contains ?id=<agent_id>.',
+        ),
+      ),
+    ).toBe(
+      'Cursor sync failed for bad-id. Invalid Cursor agent id "not-a-real-agent-id". Use an id like bc_abc123 or a Cursor URL that contains ?id=<agent_id>.',
+    );
+  });
+
+  it('explains invalid Cursor Cloud agent ids with a recovery hint', () => {
+    expect(
+      formatCursorOperationFailure(
+        'Cursor sync failed for not-a-real-agent-id',
+        new CursorCloudApiError(
+          'Cursor API GET /v0/agents/not-a-real-agent-id failed with HTTP 400: Invalid agent ID',
+          400,
+          {
+            error: 'Invalid agent ID',
+            details: [
+              {
+                code: 'custom',
+                message: "Agent ID must be in the format 'bc-<uuid>'",
+                path: ['id'],
+              },
+            ],
+          },
+        ),
+      ),
+    ).toBe(
+      'Cursor sync failed for not-a-real-agent-id. Cursor Cloud could not use that agent id. Use an id like bc-<uuid> or a full Cursor URL that contains ?id=<agent_id>.',
+    );
+  });
+
+  it('explains when Cursor Cloud cannot find a valid-looking agent id', () => {
+    expect(
+      formatCursorOperationFailure(
+        'Cursor sync failed for bc-12345678-1234-1234-1234-123456789012',
+        new CursorCloudApiError(
+          'Cursor API GET /v0/agents/bc-12345678-1234-1234-1234-123456789012 failed with HTTP 404: Not found',
+          404,
+          { error: 'Not found' },
+        ),
+      ),
+    ).toBe(
+      'Cursor sync failed for bc-12345678-1234-1234-1234-123456789012. Cursor Cloud could not find that agent id.',
     );
   });
 });

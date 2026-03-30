@@ -117,6 +117,10 @@ export function maybeBuildDirectQuickReply(
     return "Anytime. What's next?";
   }
 
+  if (/^ping[!. ]*$/.test(normalized)) {
+    return 'Andrea is online.';
+  }
+
   if (
     /^(ok|okay|kk|yes|yep|yup|sure|sounds good|that works|go ahead|please do)[!. ]*$/.test(
       normalized,

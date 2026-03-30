@@ -64,6 +64,12 @@ describe('direct quick reply', () => {
     expect(reply).toContain("I'll take that as a win");
   });
 
+  it('returns a stable online response for plain ping', () => {
+    expect(maybeBuildDirectQuickReply([{ content: 'Ping' }])).toBe(
+      'Andrea is online.',
+    );
+  });
+
   it('returns a stable acknowledgment for short confirmations', () => {
     expect(maybeBuildDirectQuickReply([{ content: 'ok' }])).toBe(
       'Sounds good.',

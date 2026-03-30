@@ -1,4 +1,4 @@
-import type { CursorCloudStatus } from './cursor-cloud.js';
+import { CursorCloudApiError, type CursorCloudStatus } from './cursor-cloud.js';
 import type { CursorDesktopStatus } from './cursor-desktop.js';
 import type { CursorGatewayStatus } from './cursor-gateway.js';
 import { formatUserFacingOperationFailure } from './user-facing-error.js';
@@ -95,6 +95,37 @@ function getCursorOperatorDetail(err: unknown): string | null {
       : typeof err === 'string'
         ? err.trim()
         : '';
+
+  if (err instanceof CursorCloudApiError) {
+    const body =
+      err.body && typeof err.body === 'object'
+        ? (err.body as Record<string, unknown>)
+        : null;
+    const detailRows = Array.isArray(body?.details)
+      ? body.details.filter(
+          (entry): entry is Record<string, unknown> =>
+            Boolean(entry) && typeof entry === 'object',
+        )
+      : [];
+    const detailText = detailRows
+      .map((entry) =>
+        typeof entry.message === 'string' ? entry.message.trim() : '',
+      )
+      .filter(Boolean)
+      .join(' ');
+
+    if (
+      err.status === 400 &&
+      /invalid agent id/i.test(message + ' ' + detailText)
+    ) {
+      return 'Cursor Cloud could not use that agent id. Use an id like bc-<uuid> or a full Cursor URL that contains ?id=<agent_id>.';
+    }
+
+    if (err.status === 404 && /\/v0\/agents\//i.test(message)) {
+      return 'Cursor Cloud could not find that agent id.';
+    }
+  }
+
   if (!message) return null;
 
   if (/repository is required/i.test(message)) {
@@ -107,6 +138,9 @@ function getCursorOperatorDetail(err: unknown): string | null {
     /^cursor desktop bridge is not configured\./i,
     /^cursor model listing is only available through the cursor cloud api right now\./i,
     /^cursor desktop sessions do not expose artifact download links through this path\./i,
+    /^cursor terminal control is only available for desktop bridge sessions on your own machine\./i,
+    /^cursor agent id is required\./i,
+    /^invalid cursor agent id /i,
   ];
 
   return safePatterns.some((pattern) => pattern.test(message)) ? message : null;
