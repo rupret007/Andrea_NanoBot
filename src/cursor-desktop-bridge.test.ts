@@ -4,7 +4,12 @@ import { PassThrough } from 'stream';
 
 import { describe, expect, it } from 'vitest';
 
-import { CursorDesktopBridge } from './cursor-desktop-bridge.js';
+import {
+  buildCursorDesktopCliArgs,
+  CursorDesktopBridge,
+  resolveCursorDesktopCliMode,
+  shouldUseShellForCursorDesktopCli,
+} from './cursor-desktop-bridge.js';
 
 function createFakeRun() {
   const emitter = new EventEmitter();
@@ -34,6 +39,67 @@ function createFakeRun() {
 }
 
 describe('CursorDesktopBridge', () => {
+  it('detects the installed Cursor CLI as a subcommand-based bridge runner', () => {
+    expect(resolveCursorDesktopCliMode('cursor-agent')).toBe('cursor-agent');
+    expect(resolveCursorDesktopCliMode('cursor.cmd')).toBe(
+      'cursor-subcommand',
+    );
+    expect(
+      resolveCursorDesktopCliMode(
+        'C:\\Users\\jeff\\AppData\\Local\\Programs\\cursor\\resources\\app\\bin\\cursor.cmd',
+      ),
+    ).toBe('cursor-subcommand');
+  });
+
+  it('uses the Windows shell only for .cmd/.bat Cursor entrypoints', () => {
+    expect(shouldUseShellForCursorDesktopCli('cursor-agent')).toBe(false);
+    expect(shouldUseShellForCursorDesktopCli('cursor.cmd')).toBe(
+      process.platform === 'win32',
+    );
+    expect(shouldUseShellForCursorDesktopCli('cursor.bat')).toBe(
+      process.platform === 'win32',
+    );
+  });
+
+  it('builds Cursor CLI args for both standalone and subcommand modes', () => {
+    expect(
+      buildCursorDesktopCliArgs({
+        cliPath: 'cursor-agent',
+        promptText: 'Fix the flaky test',
+        model: 'cu/default',
+        resumeSessionId: 'cursor-session-1',
+        force: true,
+      }),
+    ).toEqual([
+      '-p',
+      'Fix the flaky test',
+      '--output-format',
+      'stream-json',
+      '--force',
+      '--model',
+      'cu/default',
+      '--resume=cursor-session-1',
+    ]);
+
+    expect(
+      buildCursorDesktopCliArgs({
+        cliPath:
+          'C:\\Users\\jeff\\AppData\\Local\\Programs\\cursor\\resources\\app\\bin\\cursor.cmd',
+        promptText: 'Fix the flaky test',
+        model: null,
+        resumeSessionId: null,
+        force: true,
+      }),
+    ).toEqual([
+      'agent',
+      '-p',
+      'Fix the flaky test',
+      '--output-format',
+      'stream-json',
+      '--force',
+    ]);
+  });
+
   it('creates a session, captures Cursor session id, and records conversation', () => {
     const run = createFakeRun();
     const writes: string[] = [];
@@ -140,6 +206,44 @@ describe('CursorDesktopBridge', () => {
     const stopped = bridge.stopSession(created.id);
     expect(stopped.status).toBe('STOPPED');
     expect(secondRun.killed).toBe(true);
+  });
+
+  it('fails a run that exits cleanly without any usable agent output', () => {
+    const run = createFakeRun();
+
+    const bridge = new CursorDesktopBridge(
+      {
+        host: '127.0.0.1',
+        port: 4124,
+        token: 'bridge-token',
+        cliPath: 'cursor-agent',
+        defaultCwd: '/workspace',
+        force: true,
+        stateFile: '/tmp/cursor-desktop-bridge-test.json',
+      },
+      {
+        createRun: () => run,
+        now: () => new Date('2026-03-29T20:11:30.000Z'),
+        hostname: () => 'Jeff-Mac',
+        existsSync: () => false,
+        mkdirSync: () => undefined as never,
+        readFileSync: (() => '') as unknown as typeof import('fs').readFileSync,
+        writeFileSync: () => undefined as never,
+      },
+    );
+
+    const created = bridge.createSession({
+      promptText: 'Reply with exactly: smoke ok.',
+    });
+    run.emitStderr(
+      "Warning: 'p' is not in the list of known options, but still passed to Electron/Chromium.",
+    );
+    run.finish(0);
+
+    const synced = bridge.getSession(created.id);
+    expect(synced.status).toBe('FAILED');
+    expect(synced.summary).toContain('known options');
+    expect(bridge.getConversation(created.id, 10)).toHaveLength(1);
   });
 
   it('supports terminal commands, status, output, and stop', () => {

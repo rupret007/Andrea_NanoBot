@@ -97,6 +97,8 @@ interface CreateSessionInput {
   skipReviewerRequest?: boolean;
 }
 
+type CursorDesktopCliMode = 'cursor-agent' | 'cursor-subcommand';
+
 function defaultNow(): Date {
   return new Date();
 }
@@ -188,14 +190,31 @@ function resolveTerminalShellPath(): string {
   return process.env.SHELL || '/bin/sh';
 }
 
-function createChildRun(options: {
+function resolveCursorDesktopCliMode(cliPath: string): CursorDesktopCliMode {
+  const normalized = path.basename(cliPath).trim().toLowerCase();
+  if (
+    normalized === 'cursor' ||
+    normalized === 'cursor.cmd' ||
+    normalized === 'cursor.exe'
+  ) {
+    return 'cursor-subcommand';
+  }
+  return 'cursor-agent';
+}
+
+function shouldUseShellForCursorDesktopCli(cliPath: string): boolean {
+  if (process.platform !== 'win32') return false;
+  const normalized = path.basename(cliPath).trim().toLowerCase();
+  return normalized.endsWith('.cmd') || normalized.endsWith('.bat');
+}
+
+function buildCursorDesktopCliArgs(options: {
   cliPath: string;
-  cwd: string;
   promptText: string;
   model?: string | null;
   resumeSessionId?: string | null;
   force: boolean;
-}): SpawnedRun {
+}): string[] {
   const args = ['-p', options.promptText, '--output-format', 'stream-json'];
   if (options.force) args.push('--force');
   if (options.model) {
@@ -205,9 +224,27 @@ function createChildRun(options: {
     args.push(`--resume=${options.resumeSessionId}`);
   }
 
+  if (resolveCursorDesktopCliMode(options.cliPath) === 'cursor-subcommand') {
+    return ['agent', ...args];
+  }
+
+  return args;
+}
+
+function createChildRun(options: {
+  cliPath: string;
+  cwd: string;
+  promptText: string;
+  model?: string | null;
+  resumeSessionId?: string | null;
+  force: boolean;
+}): SpawnedRun {
+  const args = buildCursorDesktopCliArgs(options);
+
   const child = spawn(options.cliPath, args, {
     cwd: options.cwd,
     stdio: ['ignore', 'pipe', 'pipe'],
+    shell: shouldUseShellForCursorDesktopCli(options.cliPath),
   });
 
   return {
@@ -605,6 +642,7 @@ export class CursorDesktopBridge {
     let stdoutBuffer = '';
     let stderrBuffer = '';
     let latestSummary = '';
+    let latestPlainText = '';
     let stoppedByBridge = false;
 
     run.stdout.on('data', (chunk) => {
@@ -623,6 +661,12 @@ export class CursorDesktopBridge {
         const extracted = extractTextFromJsonLine(trimmed);
         if (extracted) {
           latestSummary = extracted;
+          continue;
+        }
+
+        const plainText = truncateSummary(trimmed);
+        if (plainText) {
+          latestPlainText = plainText;
         }
       }
       session.updatedAt = this.deps.now().toISOString();
@@ -654,14 +698,21 @@ export class CursorDesktopBridge {
         session.status = 'STOPPED';
         session.summary = latestSummary || 'Stopped.';
       } else if (code === 0) {
-        session.status = 'COMPLETED';
-        session.summary = latestSummary || 'Completed.';
-        if (session.summary) {
+        const usableSummary = latestSummary || latestPlainText;
+        if (usableSummary) {
+          session.status = 'COMPLETED';
+          session.summary = usableSummary;
           session.conversation.push({
             role: 'assistant',
             content: session.summary,
             createdAt: session.updatedAt,
           });
+        } else {
+          session.status = 'FAILED';
+          session.lastError =
+            truncateSummary(stderrBuffer) ||
+            'Cursor desktop CLI exited without a usable agent response.';
+          session.summary = session.lastError;
         }
       } else {
         session.status = 'FAILED';
@@ -1181,3 +1232,9 @@ const isDirectRun =
 if (isDirectRun) {
   startCursorDesktopBridge();
 }
+
+export {
+  buildCursorDesktopCliArgs,
+  resolveCursorDesktopCliMode,
+  shouldUseShellForCursorDesktopCli,
+};

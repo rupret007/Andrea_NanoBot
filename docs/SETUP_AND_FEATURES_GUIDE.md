@@ -179,9 +179,11 @@ Use this mode when you want Andrea to reach the Cursor machine you normally use,
 Important notes:
 
 - the bridge runs on the machine that has your normal Cursor setup
-- it uses the local `cursor-agent` CLI there instead of the hosted Cursor API
+- it uses the local Cursor agent CLI there instead of the hosted Cursor API
+- on Windows PCs, if you do not have a standalone `cursor-agent` command on `PATH`, set `CURSOR_DESKTOP_CLI_PATH` to Cursor's installed `cursor.cmd`; the bridge will invoke it in agent mode automatically
 - after a bridge session is tracked or recovered, operators can also run line-oriented shell commands on that machine with `/cursor_terminal ...`
 - those terminal commands are operator-only and limited to bridge-managed session state
+- if the bridge health probe works on Windows but desktop sessions fail immediately with `Warning: 'p' is not in the list of known options`, your local Cursor CLI is not accepting the expected agent flags yet; keep using Cursor Cloud for heavy-lift jobs on that machine until the Windows agent entrypoint is confirmed
 - if your main model runtime points at a remote 9router endpoint, set:
   - `CURSOR_GATEWAY_HINT=9router`
 - see [CURSOR_DESKTOP_BRIDGE.md](CURSOR_DESKTOP_BRIDGE.md) for the full bridge setup

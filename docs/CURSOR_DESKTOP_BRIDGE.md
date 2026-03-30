@@ -50,7 +50,7 @@ Required:
 - Node.js 22.x
 - this repo checked out
 - `npm install`
-- Cursor CLI support available as `cursor-agent`
+- Cursor CLI support available either as a standalone `cursor-agent` command, or through Cursor's installed CLI on Windows
 
 Start with these environment variables on that machine:
 
@@ -61,6 +61,16 @@ export CURSOR_DESKTOP_BRIDGE_HOST="127.0.0.1"
 export CURSOR_DESKTOP_BRIDGE_PORT="4124"
 export CURSOR_DESKTOP_FORCE="true"
 ```
+
+On Windows PCs, if you have Cursor installed but do not have a separate
+`cursor-agent` command on `PATH`, point the bridge at Cursor's installed CLI:
+
+```powershell
+$env:CURSOR_DESKTOP_CLI_PATH="$env:LOCALAPPDATA\Programs\cursor\resources\app\bin\cursor.cmd"
+```
+
+The bridge will run that CLI in its `agent` mode automatically. You do not
+need to create a wrapper script just to make the bridge work on Windows.
 
 Then run:
 
@@ -204,6 +214,14 @@ If `/cursor_terminal ...` fails:
 2. confirm that session is tracked or recoverable in `/cursor_jobs`
 3. run `/cursor_sync <agent_id>` first if it is only listed as recoverable
 4. remember that commands run in bridge-managed shell state, not in an arbitrary already-open terminal window
+
+If the bridge `/health` probe works on Windows but a desktop session immediately
+fails with warnings like `Warning: 'p' is not in the list of known options`:
+
+1. your bridge process is reachable, but the configured local Cursor CLI is not accepting the expected agent flags
+2. confirm the machine really exposes a compatible `cursor-agent` entrypoint, or another CLI path that supports `-p ... --output-format stream-json`
+3. keep using Cursor Cloud for heavy-lift jobs on that machine until the Windows agent CLI entrypoint is confirmed
+4. the bridge terminal commands can still be useful for tracked desktop sessions, but that is not the same as a working desktop agent run
 
 If Andrea can reach the bridge but your model routing still does not look Cursor-backed:
 
