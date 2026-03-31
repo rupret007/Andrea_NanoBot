@@ -34,7 +34,10 @@ vi.mock('./config.js', () => ({
 
 // Mock logger
 vi.mock('./logger.js', () => ({
+  isLogLevelEnabled: vi.fn(() => false),
+  sanitizeLogString: (value: string) => value,
   logger: {
+    trace: vi.fn(),
     debug: vi.fn(),
     info: vi.fn(),
     warn: vi.fn(),

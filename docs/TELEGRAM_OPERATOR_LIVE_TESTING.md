@@ -189,6 +189,32 @@ If you are validating the merged `andrea_runtime` lane instead of Cursor:
 - treat `/runtime-*` as secondary scaffolding, not the primary shell
 - only expect live execution when `ANDREA_RUNTIME_EXECUTION_ENABLED=true` and the Codex/OpenAI runtime has been validated on this host
 
+## Live Troubleshooting Loop
+
+When a real Telegram turn fails or goes quiet, keep the debug loop tight and temporary.
+
+Recommended operator-only flow in the main control chat:
+
+1. `/debug-status`
+2. `/debug-level debug chat 60m`
+3. `/debug-level verbose component:container 30m`
+4. reproduce the failing turn
+5. `/debug-logs current 120`
+6. `/debug-logs stderr 120`
+7. `/debug-reset all`
+
+Use this to distinguish:
+
+- credential/auth/endpoint failures
+- assistant runtime startup failures before first output
+- chat-specific routing or state issues
+
+Important truth:
+
+- `setup verify` now reports both `CREDENTIAL_RUNTIME_PROBE` and `ASSISTANT_EXECUTION_PROBE`
+- if the assistant execution probe fails with `initial_output_timeout`, that is a runtime-startup/output problem, not automatically a missing-key problem
+- `/debug-*` is troubleshooting-only and should stay out of the public command story
+
 ## Security Notes
 
 Keep these rules:

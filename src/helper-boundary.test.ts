@@ -43,6 +43,10 @@ describe('helper boundary wiring', () => {
     expect(source).toContain('suppressFirstErrorForRetry');
     expect(source).toContain('suppressedTransientError');
     expect(source).toContain(
+      'End the prompt stream and exit this query immediately so the outer',
+    );
+    expect(source).toContain('stream.end();');
+    expect(source).toContain(
       'Retrying direct assistant request in recovery mode',
     );
     expect(source).toContain('disableMcpServer');

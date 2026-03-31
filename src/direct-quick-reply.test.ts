@@ -28,6 +28,22 @@ describe('direct quick reply', () => {
     expect(reply).toContain("I'm Andrea");
   });
 
+  it('returns a casual morning check-in response for the exact live failure phrasing', () => {
+    const reply = maybeBuildDirectQuickReply([
+      { content: 'hey hows it going this morning' },
+    ]);
+
+    expect(reply).toContain('Doing well');
+  });
+
+  it('returns a casual response for good-morning check-ins', () => {
+    const reply = maybeBuildDirectQuickReply([
+      { content: 'good morning, how are you' },
+    ]);
+
+    expect(reply).toContain('Doing well');
+  });
+
   it('does not hijack mixed greeting requests', () => {
     const reply = maybeBuildDirectQuickReply([
       { content: 'Hi, can you remind me tomorrow at 3pm to call Sam?' },
@@ -39,6 +55,14 @@ describe('direct quick reply', () => {
   it('does not hijack mixed reminder asks that start with a greeting', () => {
     const reply = maybeBuildDirectQuickReply([
       { content: 'Hi, can you remind me tomorrow at 3pm to call Sam?' },
+    ]);
+
+    expect(reply).toBeNull();
+  });
+
+  it('does not hijack mixed reminder asks that start casually', () => {
+    const reply = maybeBuildDirectQuickReply([
+      { content: 'hey can you remind me tomorrow at 3pm to call Sam?' },
     ]);
 
     expect(reply).toBeNull();

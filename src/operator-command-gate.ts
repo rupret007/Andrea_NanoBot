@@ -123,6 +123,17 @@ export const RUNTIME_LOGS_COMMANDS = new Set([
   '/runtime_logs',
 ]);
 
+export const DEBUG_STATUS_COMMANDS = new Set([
+  '/debug-status',
+  '/debug_status',
+]);
+
+export const DEBUG_LEVEL_COMMANDS = new Set(['/debug-level', '/debug_level']);
+
+export const DEBUG_RESET_COMMANDS = new Set(['/debug-reset', '/debug_reset']);
+
+export const DEBUG_LOGS_COMMANDS = new Set(['/debug-logs', '/debug_logs']);
+
 export const ALEXA_STATUS_COMMANDS = new Set([
   '/alexa',
   '/alexa-status',
@@ -188,6 +199,10 @@ const MAIN_CONTROL_ONLY_COMMANDS = new Set([
   ...RUNTIME_FOLLOWUP_COMMANDS,
   ...RUNTIME_STOP_COMMANDS,
   ...RUNTIME_LOGS_COMMANDS,
+  ...DEBUG_STATUS_COMMANDS,
+  ...DEBUG_LEVEL_COMMANDS,
+  ...DEBUG_RESET_COMMANDS,
+  ...DEBUG_LOGS_COMMANDS,
   ...ALEXA_STATUS_COMMANDS,
   ...AMAZON_STATUS_COMMANDS,
   ...AMAZON_SEARCH_COMMANDS,

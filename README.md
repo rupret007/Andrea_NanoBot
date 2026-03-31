@@ -44,6 +44,7 @@ What operators should expect:
 - Cursor Cloud job workflows through the primary `/cursor` dashboard
 - a secondary `andrea_runtime` lane for Codex/OpenAI execution truth
 - desktop bridge session and terminal workflows
+- live `/debug-*` troubleshooting controls plus host-side `npm run debug:*` fallbacks
 - optional integrations only after same-day validation
 
 The runtime is still based on NanoClaw, which means the security model matters:
@@ -262,6 +263,10 @@ Useful runtime validation commands:
 ```text
 /ping
 /cursor_status
+/debug-status
+/debug-level debug chat 60m
+/debug-logs current 120
+/debug-reset all
 ```
 
 Useful local validation commands:
@@ -272,7 +277,26 @@ npm run test:major
 npm run test:stability
 npm run setup -- --step verify
 npm run services:restart
+npm run debug:status
+npm run debug:level -- verbose component:container 30m
+npm run debug:logs -- stderr 120
+npm run debug:reset -- all
 ```
+
+## Verify And Troubleshooting
+
+`npm run setup -- --step verify` now checks two different things:
+
+- `CREDENTIAL_RUNTIME_PROBE`
+  - endpoint/auth/model reachability
+- `ASSISTANT_EXECUTION_PROBE`
+  - whether Andrea's main direct-assistant container path can actually start and produce first output
+
+That distinction matters during incidents:
+
+- a passing credential probe does **not** guarantee the assistant lane can answer
+- an `initial_output_timeout` is a runtime-startup/output problem, not automatically a missing-key problem
+- `/debug-*` commands are operator-only and let you turn log volume up or down live without restarting the service
 
 ## Documentation Map
 

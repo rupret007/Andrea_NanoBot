@@ -369,6 +369,15 @@ For a full health check, always run:
 npm run setup -- --step verify
 ```
 
+`verify` now reports two separate runtime truths:
+
+- `CREDENTIAL_RUNTIME_PROBE`
+  - the configured auth/endpoint/model path is reachable
+- `ASSISTANT_EXECUTION_PROBE`
+  - Andrea's real direct-assistant container path can start and produce first output
+
+Read both fields together. A passing credential probe does **not** guarantee that the assistant lane can actually answer.
+
 ## 7) Daily Usage
 
 Use your configured trigger in chats.
@@ -490,6 +499,10 @@ npm run setup -- --step verify
 npm run services:start
 npm run services:stop
 npm run services:restart
+npm run debug:status
+npm run debug:level -- verbose component:container 30m
+npm run debug:logs -- current 120
+npm run debug:reset -- all
 ```
 
 Validation runner note:
@@ -522,14 +535,44 @@ Update workflows:
 - `/update-skills` for installed skill branch updates
 - `/debug` for guided incident triage
 
+Live troubleshooting controls:
+
+- `/debug-status`
+- `/debug-level <normal|debug|verbose> [scope] [duration]`
+- `/debug-reset [scope|all]`
+- `/debug-logs [service|stderr|current|cursor|runtime] [lines]`
+
+Supported scopes:
+
+- `global`
+- `chat` or `current`
+- `lane:cursor`
+- `lane:andrea_runtime`
+- `component:assistant`
+- `component:container`
+- `component:telegram`
+
+Operator truth:
+
+- these controls are operator-only and should stay in the registered main control chat
+- Telegram-issued overrides default to `60m`
+- log changes apply live without restart
+- the same persisted control state is available from the host with the `npm run debug:*` commands above
+
 ## 11) Common "Not Live Yet" Causes
 
 - missing model credentials
 - model credentials configured but unusable at runtime (for example, OpenAI `insufficient_quota`)
+- model credentials look reachable but the assistant lane still fails before first output
 - no authenticated or configured channel
 - no registered groups
 - runtime binary installed but daemon not running
 - wrong Node version (must be `22.x`)
+
+Important interpretation:
+
+- if `ASSISTANT_EXECUTION_PROBE=failed` with `initial_output_timeout`, treat that as a runtime-startup/output problem first
+- do not flatten that into "credentials are missing" unless the credential probe also failed with an auth/endpoint/model signal
 
 When blocked, start here:
 

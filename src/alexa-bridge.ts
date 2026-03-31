@@ -453,7 +453,7 @@ export async function runAlexaAssistantTurn(
     }
 
     if (output.status === 'error') {
-      const analysis = analyzeAgentError(output.error);
+      const analysis = analyzeAgentError(output);
       const failureText =
         analysis.userMessage ||
         `Sorry, ${assistantName} hit a snag and needs another try.`;

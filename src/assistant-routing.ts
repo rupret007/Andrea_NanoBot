@@ -15,6 +15,10 @@ export interface AssistantRequestPolicy {
   guidance: string;
 }
 
+export interface AssistantRoutingOptions {
+  allowCombinedContext?: boolean;
+}
+
 const STANDARD_ASSISTANT_TOOLS = [
   'Read',
   'Write',
@@ -376,6 +380,7 @@ export function createCompatibilityRequestPolicy(): AssistantRequestPolicy {
 
 export function classifyAssistantRequest(
   messages: Pick<NewMessage, 'content'>[],
+  options: AssistantRoutingOptions = {},
 ): AssistantRequestPolicy {
   const contents = messages
     .map((message) => message.content.trim())
@@ -383,9 +388,12 @@ export function classifyAssistantRequest(
   const lastContent = contents.at(-1) || '';
   const combinedContent = contents.join('\n');
   const lastOnly = dedupe([lastContent]).filter(Boolean);
+  const allowCombinedContext = options.allowCombinedContext !== false;
   const candidates = dedupe([
     ...lastOnly,
-    ...(shouldUseCombinedContext(lastContent) ? [combinedContent] : []),
+    ...(allowCombinedContext && shouldUseCombinedContext(lastContent)
+      ? [combinedContent]
+      : []),
   ]).filter(Boolean);
 
   const explicitControlReason = evaluateSignals(

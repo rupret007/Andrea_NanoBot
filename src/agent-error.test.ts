@@ -22,6 +22,29 @@ describe('analyzeAgentError', () => {
     expect(analysis.nonRetriable).toBe(true);
   });
 
+  it('does not misclassify initial output timeout as credentials', () => {
+    const analysis = analyzeAgentError({
+      error: 'Container produced no structured output within 20000ms.',
+      failureKind: 'initial_output_timeout',
+      failureStage: 'startup',
+      diagnosticHint:
+        'container did not emit first structured result before timeout',
+    });
+
+    expect(analysis.code).toBe('initial_output_timeout');
+    expect(analysis.nonRetriable).toBe(false);
+    expect(analysis.userMessage).toContain('failed before first output');
+  });
+
+  it('keeps true credential failures non-retriable', () => {
+    const analysis = analyzeAgentError(
+      'Gateway authentication failed because the API key is invalid.',
+    );
+
+    expect(analysis.code).toBe('auth_failed');
+    expect(analysis.nonRetriable).toBe(true);
+  });
+
   it('keeps unknown transport failures retriable', () => {
     const analysis = analyzeAgentError(
       'Container exited with code 1: fetch failed ECONNRESET',

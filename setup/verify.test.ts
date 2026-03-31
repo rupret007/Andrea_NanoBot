@@ -5,6 +5,7 @@ import {
   classifyCredentialProbeFailure,
   determineCredentialStatus,
   isLikelyNativeOpenAiEndpoint,
+  probeAssistantExecution,
   probeCredentialRuntime,
   resolveCredentialProbeEndpoints,
 } from './verify.js';
@@ -193,5 +194,50 @@ describe('probeCredentialRuntime', () => {
     expect(result.status).toBe('failed');
     expect(result.reason).toBe('network_error');
     expect(calls).toBe(1);
+  });
+});
+
+describe('probeAssistantExecution', () => {
+  it('reports failure when the assistant runtime times out before first output', async () => {
+    const result = await probeAssistantExecution({
+      requestClose: () => {},
+      runProbe: async () => ({
+        status: 'error',
+        result: null,
+        error: 'Container produced no structured output within 20000ms.',
+        failureKind: 'initial_output_timeout',
+        failureStage: 'startup',
+        diagnosticHint:
+          'container did not emit first structured result before timeout',
+      }),
+    });
+
+    expect(result).toEqual({
+      status: 'failed',
+      reason: 'initial_output_timeout',
+      detail: 'container did not emit first structured result before timeout',
+    });
+  });
+
+  it('reports success when structured assistant output is observed', async () => {
+    const result = await probeAssistantExecution({
+      requestClose: () => {},
+      runProbe: async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          result: 'assistant execution probe ok.',
+          newSessionId: 'probe-session',
+        });
+        return {
+          status: 'success',
+          result: null,
+          newSessionId: 'probe-session',
+        };
+      },
+    });
+
+    expect(result.status).toBe('ok');
+    expect(result.reason).toBe('ok');
+    expect(result.detail).toContain('assistant execution produced structured output');
   });
 });

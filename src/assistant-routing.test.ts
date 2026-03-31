@@ -149,6 +149,36 @@ describe('assistant request routing', () => {
     expect(policy.route).toBe('advanced_helper');
   });
 
+  it('does not inherit older work context for terse standalone phrases when combined context is disabled', () => {
+    const policy = classifyAssistantRequest(
+      [
+        {
+          content:
+            'Implement the stop command handler for cursor jobs and add tests.',
+        },
+        { content: 'continue' },
+      ],
+      { allowCombinedContext: false },
+    );
+
+    expect(policy.route).toBe('direct_assistant');
+  });
+
+  it('does not inherit older work context for do-that phrasing when combined context is disabled', () => {
+    const policy = classifyAssistantRequest(
+      [
+        {
+          content:
+            'Implement the stop command handler for cursor jobs and add tests.',
+        },
+        { content: 'do that' },
+      ],
+      { allowCombinedContext: false },
+    );
+
+    expect(policy.route).toBe('direct_assistant');
+  });
+
   it('defaults scheduled tasks to protected assistant handling when the prompt is otherwise plain', () => {
     const policy = classifyScheduledTaskRequest(
       "Send me a short daily reminder to review tomorrow's plan.",

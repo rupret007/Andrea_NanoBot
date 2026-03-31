@@ -556,6 +556,12 @@ async function runQuery(
   const allowedTools = options.fallbackMode
     ? dedupeTools(['WebSearch', 'WebFetch', 'TodoWrite'])
     : dedupeTools([...requestPolicy.builtinTools, ...requestPolicy.mcpTools]);
+  log(
+    `Tool mode: ${options.fallbackMode ? 'recovery' : 'standard'} | MCP ${useMcpServer ? 'enabled' : 'disabled'} | allowedTools=${allowedTools.join(', ')}`,
+  );
+  log(
+    `Query start: route=${requestPolicy.route} reason=${requestPolicy.reason} session=${sessionId || 'new'} resumeAt=${resumeAt || 'latest'}`,
+  );
 
   for await (const message of query({
     prompt: stream,
@@ -676,7 +682,12 @@ async function runQuery(
         log(
           `Suppressing first transient error result for direct retry (subtype=${message.subtype})`,
         );
-        continue;
+        // End the prompt stream and exit this query immediately so the outer
+        // loop can perform the recovery retry instead of hanging until the
+        // initial-output timeout expires.
+        ipcPolling = false;
+        stream.end();
+        break;
       }
       writeOutput({
         status: isErrorSubtype ? 'error' : 'success',
@@ -790,7 +801,8 @@ async function main(): Promise<void> {
 
   let sessionId = containerInput.sessionId;
   fs.mkdirSync(IPC_INPUT_DIR, { recursive: true });
-  const directRetryEligible = containerInput.requestPolicy?.route === 'direct_assistant';
+  const directRetryEligible =
+    containerInput.requestPolicy?.route === 'direct_assistant';
 
   // Clean up stale _close sentinel from previous container runs
   try {

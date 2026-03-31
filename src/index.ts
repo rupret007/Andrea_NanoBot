@@ -120,6 +120,15 @@ import {
 } from './types.js';
 import { logger } from './logger.js';
 import {
+  formatDebugStatus,
+  loadLogControlFromPersistence,
+  readDebugLogs,
+  refreshLogControlFromPersistence,
+  resetDebugLevel,
+  setDebugLevel,
+  startLogControlAutoRefresh,
+} from './debug-control.js';
+import {
   disableOpenClawSkill,
   enableOpenClawSkill,
   installOpenClawSkill,
@@ -161,6 +170,11 @@ import {
   maybeBuildDirectQuickReply,
   maybeBuildDirectRescueReply,
 } from './direct-quick-reply.js';
+import {
+  decideMainChatRouting,
+  shouldAvoidCombinedContextForMainChat,
+  type MainChatSessionState,
+} from './main-chat-routing.js';
 import { buildSilentSuccessFallback } from './user-facing-fallback.js';
 import {
   buildCursorJobCardActions,
@@ -227,6 +241,10 @@ import {
   CURSOR_TERMINAL_STOP_COMMANDS,
   CURSOR_TEST_COMMANDS,
   CURSOR_UI_COMMANDS,
+  DEBUG_LEVEL_COMMANDS,
+  DEBUG_LOGS_COMMANDS,
+  DEBUG_RESET_COMMANDS,
+  DEBUG_STATUS_COMMANDS,
   RUNTIME_FOLLOWUP_COMMANDS,
   RUNTIME_JOBS_COMMANDS,
   RUNTIME_LOGS_COMMANDS,
@@ -644,6 +662,15 @@ export function _setRegisteredGroups(
   registeredGroups = groups;
 }
 
+function getMainChatSessionState(chatJid: string): MainChatSessionState {
+  const snapshot = queue
+    .getRuntimeJobs()
+    .find((job) => job.groupJid === chatJid && job.active);
+  if (!snapshot) return 'inactive';
+  if (snapshot.isTaskContainer) return 'task_container';
+  return snapshot.idleWaiting ? 'idle_assistant' : 'busy_assistant';
+}
+
 /**
  * Process all pending messages for a group.
  * Called by the GroupQueue when it's this group's turn.
@@ -682,7 +709,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   }
 
   const prompt = formatMessages(missedMessages, TIMEZONE);
-  const requestPolicy = classifyAssistantRequest(missedMessages);
+  const requestPolicy = classifyAssistantRequest(missedMessages, {
+    allowCombinedContext:
+      !isMainGroup || !shouldAvoidCombinedContextForMainChat(missedMessages),
+  });
 
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
   // these messages. Save the old cursor so we can roll back on error.
@@ -693,6 +723,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   logger.info(
     {
+      component: 'assistant',
+      chatJid,
+      groupFolder: group.folder,
       group: group.name,
       messageCount: missedMessages.length,
       requestRoute: requestPolicy.route,
@@ -707,7 +740,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       try {
         await channel.sendMessage(chatJid, quickReply);
         logger.info(
-          { group: group.name },
+          {
+            component: 'assistant',
+            chatJid,
+            groupFolder: group.folder,
+            group: group.name,
+            requestRoute: requestPolicy.route,
+          },
           'Handled message via direct quick reply path',
         );
         return true;
@@ -736,7 +775,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         refreshTaskSnapshots(registeredGroups);
         await channel.sendMessage(chatJid, plannedReminder.confirmation);
         logger.info(
-          { group: group.name, taskId: plannedReminder.task.id },
+          {
+            component: 'assistant',
+            chatJid,
+            groupFolder: group.folder,
+            group: group.name,
+            taskId: plannedReminder.task.id,
+          },
           'Handled reminder via local protected fast path',
         );
         return true;
@@ -763,6 +808,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   if (effectiveIdleTimeout !== IDLE_TIMEOUT) {
     logger.debug(
       {
+        component: 'assistant',
+        chatJid,
+        groupFolder: group.folder,
         group: group.name,
         configuredTimeout,
         requestedIdleTimeout: IDLE_TIMEOUT,
@@ -776,7 +824,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (idleTimer) clearTimeout(idleTimer);
     idleTimer = setTimeout(() => {
       logger.debug(
-        { group: group.name },
+        {
+          component: 'assistant',
+          chatJid,
+          groupFolder: group.folder,
+          group: group.name,
+        },
         'Idle timeout, closing container stdin',
       );
       queue.closeStdin(chatJid);
@@ -802,7 +855,17 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             : JSON.stringify(result.result);
         // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
         const text = formatOutbound(raw);
-        logger.info({ group: group.name }, `Agent output: ${raw.length} chars`);
+        logger.info(
+          {
+            component: 'assistant',
+            chatJid,
+            groupFolder: group.folder,
+            group: group.name,
+            outputChars: raw.length,
+            requestRoute: requestPolicy.route,
+          },
+          'Agent output chunk received',
+        );
         if (text) {
           await channel.sendMessage(chatJid, text);
           outputSentToUser = true;
@@ -829,7 +892,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     // the user got their response and re-processing would send duplicates.
     if (outputSentToUser) {
       logger.warn(
-        { group: group.name },
+        {
+          component: 'assistant',
+          chatJid,
+          groupFolder: group.folder,
+          group: group.name,
+        },
         'Agent error after output was sent, skipping cursor rollback to prevent duplicates',
       );
       return true;
@@ -854,6 +922,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
       logger.warn(
         {
+          component: 'assistant',
+          chatJid,
+          groupFolder: group.folder,
           group: group.name,
           code: output.code,
           notified: shouldNotify,
@@ -869,7 +940,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       if (rescueReply) {
         await channel.sendMessage(chatJid, rescueReply);
         logger.warn(
-          { group: group.name },
+          {
+            component: 'assistant',
+            chatJid,
+            groupFolder: group.folder,
+            group: group.name,
+          },
           'Recovered direct assistant error with local rescue reply',
         );
         return true;
@@ -880,7 +956,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     lastAgentTimestamp[chatJid] = previousCursor;
     saveState();
     logger.warn(
-      { group: group.name },
+      {
+        component: 'assistant',
+        chatJid,
+        groupFolder: group.folder,
+        group: group.name,
+      },
       'Agent error, rolled back message cursor for retry',
     );
     return false;
@@ -893,7 +974,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     );
     await channel.sendMessage(chatJid, fallbackReply);
     logger.warn(
-      { group: group.name, route: requestPolicy.route },
+      {
+        component: 'assistant',
+        chatJid,
+        groupFolder: group.folder,
+        group: group.name,
+        route: requestPolicy.route,
+      },
       'Recovered blank agent success with user-facing fallback',
     );
   }
@@ -915,6 +1002,9 @@ async function runAgent(
     | 'auth_failed'
     | 'invalid_model_alias'
     | 'unsupported_endpoint'
+    | 'initial_output_timeout'
+    | 'runtime_bootstrap_failed'
+    | 'container_runtime_unavailable'
     | 'credentials_missing_or_unusable'
     | 'transient_or_unknown';
   nonRetriable: boolean;
@@ -990,11 +1080,15 @@ async function runAgent(
     }
 
     if (output.status === 'error') {
-      const analysis = analyzeAgentError(output.error);
+      const analysis = analyzeAgentError(output);
       logger.error(
         {
           group: group.name,
           error: output.error,
+          failureKind: output.failureKind,
+          failureStage: output.failureStage,
+          diagnosticHint: output.diagnosticHint,
+          logFile: output.logFile,
           code: analysis.code,
           nonRetriable: analysis.nonRetriable,
         },
@@ -1099,6 +1193,65 @@ async function startMessageLoop(): Promise<void> {
           );
           const messagesToSend =
             allPending.length > 0 ? allPending : groupMessages;
+          const sessionState = getMainChatSessionState(chatJid);
+          const localQuickReply =
+            groupMessages.length === 1
+              ? maybeBuildDirectQuickReply(groupMessages)
+              : null;
+          const mainChatRoutingDecision = decideMainChatRouting({
+            isMainGroup,
+            messages: groupMessages,
+            sessionState,
+            localQuickReply,
+          });
+
+          if (mainChatRoutingDecision.kind === 'reply_locally') {
+            try {
+              await channel.sendMessage(
+                chatJid,
+                mainChatRoutingDecision.replyText,
+              );
+              lastAgentTimestamp[chatJid] =
+                groupMessages[groupMessages.length - 1].timestamp;
+              saveState();
+              logger.info(
+                { chatJid, sessionState },
+                'Handled standalone main-chat message locally while work session stayed intact',
+              );
+            } catch (err) {
+              logger.warn(
+                { chatJid, err },
+                'Local main-chat reply failed, deferring to standard processing',
+              );
+              queue.enqueueMessageCheck(chatJid);
+              if (sessionState === 'idle_assistant') {
+                queue.closeStdin(chatJid);
+              }
+            }
+            continue;
+          }
+
+          if (mainChatRoutingDecision.kind === 'process_fresh_turn_now') {
+            queue.enqueueMessageCheck(chatJid);
+            if (sessionState === 'idle_assistant') {
+              queue.closeStdin(chatJid);
+            }
+            logger.debug(
+              { chatJid, sessionState },
+              'Queued standalone main-chat turn for fresh processing',
+            );
+            continue;
+          }
+
+          if (mainChatRoutingDecision.kind === 'queue_fresh_turn_after_work') {
+            queue.enqueueMessageCheck(chatJid);
+            logger.debug(
+              { chatJid, sessionState },
+              'Queued standalone main-chat turn behind active work',
+            );
+            continue;
+          }
+
           const formatted = formatMessages(messagesToSend, TIMEZONE);
 
           if (queue.sendMessage(chatJid, formatted)) {
@@ -1158,7 +1311,9 @@ function ensureContainerSystemRunning(): void {
 async function main(): Promise<void> {
   ensureContainerSystemRunning();
   initDatabase();
-  logger.info('Database initialized');
+  loadLogControlFromPersistence();
+  startLogControlAutoRefresh();
+  logger.info({ component: 'assistant' }, 'Database initialized');
   loadState();
 
   // Ensure OneCLI agents exist for all registered groups.
@@ -1350,6 +1505,137 @@ async function main(): Promise<void> {
       buildOperatorSendOptions(message, extra),
     );
     return sent.platformMessageId;
+  }
+
+  function buildDebugUpdatedBy(chatJid: string, message?: NewMessage): string {
+    if (message?.sender) {
+      return `telegram:${message.sender}`;
+    }
+    return `telegram:${chatJid}`;
+  }
+
+  function getActiveRuntimeSnapshot(chatJid: string) {
+    return queue
+      .getRuntimeJobs()
+      .find((job) => job.groupJid === chatJid && job.active);
+  }
+
+  async function handleDebugStatus(
+    chatJid: string,
+    message?: NewMessage,
+  ): Promise<void> {
+    refreshLogControlFromPersistence();
+    await sendCursorMessage(chatJid, formatDebugStatus(), message);
+  }
+
+  async function handleDebugLevel(
+    chatJid: string,
+    rawTrimmed: string,
+    message?: NewMessage,
+  ): Promise<void> {
+    const args = rawTrimmed.split(/\s+/).slice(1);
+    const levelToken = args[0];
+    if (!levelToken) {
+      await sendCursorMessage(
+        chatJid,
+        'Usage: /debug-level <normal|debug|verbose> [scope] [duration]',
+        message,
+      );
+      return;
+    }
+
+    try {
+      const result = setDebugLevel({
+        level: levelToken,
+        scopeToken: args[1],
+        durationToken: args[2],
+        updatedBy: buildDebugUpdatedBy(chatJid, message),
+        chatJid,
+      });
+
+      const aliasLabel =
+        result.level === 'trace'
+          ? 'verbose'
+          : result.level === 'debug'
+            ? 'debug'
+            : 'normal';
+      await sendCursorMessage(
+        chatJid,
+        [
+          '*Debug Level Updated*',
+          `- Scope: ${result.resolvedScope.label}`,
+          `- Level: ${aliasLabel}`,
+          `- Expires: ${result.expiresAt || 'persistent'}`,
+        ].join('\n'),
+        message,
+      );
+    } catch (err) {
+      await sendCursorMessage(
+        chatJid,
+        err instanceof Error ? err.message : String(err),
+        message,
+      );
+    }
+  }
+
+  async function handleDebugReset(
+    chatJid: string,
+    rawTrimmed: string,
+    message?: NewMessage,
+  ): Promise<void> {
+    try {
+      const scopeToken = rawTrimmed.split(/\s+/).slice(1).join(' ').trim();
+      const result = resetDebugLevel({
+        scopeToken: scopeToken || 'chat',
+        updatedBy: buildDebugUpdatedBy(chatJid, message),
+        chatJid,
+      });
+
+      await sendCursorMessage(
+        chatJid,
+        `Debug logging reset for ${result.resetScope}.`,
+        message,
+      );
+    } catch (err) {
+      await sendCursorMessage(
+        chatJid,
+        err instanceof Error ? err.message : String(err),
+        message,
+      );
+    }
+  }
+
+  async function handleDebugLogs(
+    chatJid: string,
+    rawTrimmed: string,
+    message?: NewMessage,
+  ): Promise<void> {
+    try {
+      refreshLogControlFromPersistence();
+      const args = rawTrimmed.split(/\s+/).slice(1);
+      const target = args[0] || 'service';
+      const parsedLines = Number.parseInt(args[1] || '', 10);
+      const runtimeSnapshot = getActiveRuntimeSnapshot(chatJid);
+      const logPayload = readDebugLogs({
+        target,
+        lines: Number.isFinite(parsedLines) ? parsedLines : 80,
+        chatJid,
+        groupFolder: registeredGroups[chatJid]?.folder,
+        containerName: runtimeSnapshot?.containerName || null,
+      });
+
+      await sendCursorMessage(
+        chatJid,
+        `Debug Logs: ${logPayload.title}\n${logPayload.body}`,
+        message,
+      );
+    } catch (err) {
+      await sendCursorMessage(
+        chatJid,
+        err instanceof Error ? err.message : String(err),
+        message,
+      );
+    }
   }
 
   async function sendBackendJobMessage(params: {
@@ -3886,6 +4172,34 @@ async function main(): Promise<void> {
           msg,
         ).catch((err) =>
           logger.error({ err, chatJid }, 'Andrea runtime command error'),
+        );
+        return;
+      }
+
+      if (DEBUG_STATUS_COMMANDS.has(commandToken)) {
+        handleDebugStatus(chatJid, msg).catch((err) =>
+          logger.error({ err, chatJid }, 'Debug status command error'),
+        );
+        return;
+      }
+
+      if (DEBUG_LEVEL_COMMANDS.has(commandToken)) {
+        handleDebugLevel(chatJid, rawTrimmed, msg).catch((err) =>
+          logger.error({ err, chatJid }, 'Debug level command error'),
+        );
+        return;
+      }
+
+      if (DEBUG_RESET_COMMANDS.has(commandToken)) {
+        handleDebugReset(chatJid, rawTrimmed, msg).catch((err) =>
+          logger.error({ err, chatJid }, 'Debug reset command error'),
+        );
+        return;
+      }
+
+      if (DEBUG_LOGS_COMMANDS.has(commandToken)) {
+        handleDebugLogs(chatJid, rawTrimmed, msg).catch((err) =>
+          logger.error({ err, chatJid }, 'Debug logs command error'),
         );
         return;
       }

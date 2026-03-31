@@ -126,6 +126,16 @@ export function maybeBuildDirectQuickReply(
   if (
     isStandalonePrompt(
       normalized,
+      /^(?:(?:hi|hello|hey|good morning|good afternoon|good evening)[!., ]+)?(?:(?:how(?:'s|s| is) it going)|(?:how are you))(?: (?:this|your)? ?(?:morning|afternoon|evening|today))?[?.! ]*$/,
+      9,
+    )
+  ) {
+    return 'Doing well and fully caffeinated in spirit. What do you want to tackle?';
+  }
+
+  if (
+    isStandalonePrompt(
+      normalized,
       /^(?:how are you|how're you)(?: today)?[?.! ]*$/,
       5,
     )

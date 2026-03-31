@@ -32,6 +32,7 @@ export interface RuntimeJobSnapshot {
   groupJid: string;
   active: boolean;
   idleWaiting: boolean;
+  isTaskContainer: boolean;
   runningTaskId?: string | null;
   pendingMessages: boolean;
   pendingTaskCount: number;
@@ -77,7 +78,16 @@ export class GroupQueue {
 
     if (state.active) {
       state.pendingMessages = true;
-      logger.debug({ groupJid }, 'Container active, message queued');
+      logger.debug(
+        {
+          component: 'assistant',
+          chatJid: groupJid,
+          groupJid,
+          groupFolder: state.groupFolder,
+          containerName: state.containerName,
+        },
+        'Container active, message queued',
+      );
       return;
     }
 
@@ -87,7 +97,12 @@ export class GroupQueue {
         this.waitingGroups.push(groupJid);
       }
       logger.debug(
-        { groupJid, activeCount: this.activeCount },
+        {
+          component: 'assistant',
+          chatJid: groupJid,
+          groupJid,
+          activeCount: this.activeCount,
+        },
         'At concurrency limit, message queued',
       );
       return;
@@ -105,11 +120,17 @@ export class GroupQueue {
 
     // Prevent double-queuing: check both pending and currently-running task
     if (state.runningTaskId === taskId) {
-      logger.debug({ groupJid, taskId }, 'Task already running, skipping');
+      logger.debug(
+        { component: 'assistant', chatJid: groupJid, groupJid, taskId },
+        'Task already running, skipping',
+      );
       return;
     }
     if (state.pendingTasks.some((t) => t.id === taskId)) {
-      logger.debug({ groupJid, taskId }, 'Task already queued, skipping');
+      logger.debug(
+        { component: 'assistant', chatJid: groupJid, groupJid, taskId },
+        'Task already queued, skipping',
+      );
       return;
     }
 
@@ -118,7 +139,17 @@ export class GroupQueue {
       if (state.idleWaiting) {
         this.closeStdin(groupJid);
       }
-      logger.debug({ groupJid, taskId }, 'Container active, task queued');
+      logger.debug(
+        {
+          component: 'assistant',
+          chatJid: groupJid,
+          groupJid,
+          taskId,
+          groupFolder: state.groupFolder,
+          containerName: state.containerName,
+        },
+        'Container active, task queued',
+      );
       return;
     }
 
@@ -128,7 +159,13 @@ export class GroupQueue {
         this.waitingGroups.push(groupJid);
       }
       logger.debug(
-        { groupJid, taskId, activeCount: this.activeCount },
+        {
+          component: 'assistant',
+          chatJid: groupJid,
+          groupJid,
+          taskId,
+          activeCount: this.activeCount,
+        },
         'At concurrency limit, task queued',
       );
       return;
@@ -159,6 +196,16 @@ export class GroupQueue {
   notifyIdle(groupJid: string): void {
     const state = this.getGroup(groupJid);
     state.idleWaiting = true;
+    logger.debug(
+      {
+        component: 'assistant',
+        chatJid: groupJid,
+        groupJid,
+        groupFolder: state.groupFolder,
+        containerName: state.containerName,
+      },
+      'Container entered idle-waiting state',
+    );
     if (state.pendingTasks.length > 0) {
       this.closeStdin(groupJid);
     }
@@ -217,6 +264,7 @@ export class GroupQueue {
       groupJid,
       active: state.active,
       idleWaiting: state.idleWaiting,
+      isTaskContainer: state.isTaskContainer,
       runningTaskId: state.runningTaskId,
       pendingMessages: state.pendingMessages,
       pendingTaskCount: state.pendingTasks.length,
@@ -236,7 +284,13 @@ export class GroupQueue {
     this.activeCount++;
 
     logger.debug(
-      { groupJid, reason, activeCount: this.activeCount },
+      {
+        component: 'assistant',
+        chatJid: groupJid,
+        groupJid,
+        reason,
+        activeCount: this.activeCount,
+      },
       'Starting container for group',
     );
 
@@ -250,7 +304,10 @@ export class GroupQueue {
         }
       }
     } catch (err) {
-      logger.error({ groupJid, err }, 'Error processing messages for group');
+      logger.error(
+        { component: 'assistant', chatJid: groupJid, groupJid, err },
+        'Error processing messages for group',
+      );
       this.scheduleRetry(groupJid, state);
     } finally {
       state.active = false;
@@ -271,14 +328,29 @@ export class GroupQueue {
     this.activeCount++;
 
     logger.debug(
-      { groupJid, taskId: task.id, activeCount: this.activeCount },
+      {
+        component: 'assistant',
+        chatJid: groupJid,
+        groupJid,
+        taskId: task.id,
+        activeCount: this.activeCount,
+      },
       'Running queued task',
     );
 
     try {
       await task.fn();
     } catch (err) {
-      logger.error({ groupJid, taskId: task.id, err }, 'Error running task');
+      logger.error(
+        {
+          component: 'assistant',
+          chatJid: groupJid,
+          groupJid,
+          taskId: task.id,
+          err,
+        },
+        'Error running task',
+      );
     } finally {
       state.active = false;
       state.isTaskContainer = false;
@@ -295,7 +367,12 @@ export class GroupQueue {
     state.retryCount++;
     if (state.retryCount > MAX_RETRIES) {
       logger.error(
-        { groupJid, retryCount: state.retryCount },
+        {
+          component: 'assistant',
+          chatJid: groupJid,
+          groupJid,
+          retryCount: state.retryCount,
+        },
         'Max retries exceeded, dropping messages (will retry on next incoming message)',
       );
       state.retryCount = 0;
@@ -304,7 +381,13 @@ export class GroupQueue {
 
     const delayMs = BASE_RETRY_MS * Math.pow(2, state.retryCount - 1);
     logger.info(
-      { groupJid, retryCount: state.retryCount, delayMs },
+      {
+        component: 'assistant',
+        chatJid: groupJid,
+        groupJid,
+        retryCount: state.retryCount,
+        delayMs,
+      },
       'Scheduling retry with backoff',
     );
     setTimeout(() => {
@@ -324,7 +407,13 @@ export class GroupQueue {
       const task = state.pendingTasks.shift()!;
       this.runTask(groupJid, task).catch((err) =>
         logger.error(
-          { groupJid, taskId: task.id, err },
+          {
+            component: 'assistant',
+            chatJid: groupJid,
+            groupJid,
+            taskId: task.id,
+            err,
+          },
           'Unhandled error in runTask (drain)',
         ),
       );
@@ -335,7 +424,7 @@ export class GroupQueue {
     if (state.pendingMessages) {
       this.runForGroup(groupJid, 'drain').catch((err) =>
         logger.error(
-          { groupJid, err },
+          { component: 'assistant', chatJid: groupJid, groupJid, err },
           'Unhandled error in runForGroup (drain)',
         ),
       );
@@ -359,14 +448,25 @@ export class GroupQueue {
         const task = state.pendingTasks.shift()!;
         this.runTask(nextJid, task).catch((err) =>
           logger.error(
-            { groupJid: nextJid, taskId: task.id, err },
+            {
+              component: 'assistant',
+              chatJid: nextJid,
+              groupJid: nextJid,
+              taskId: task.id,
+              err,
+            },
             'Unhandled error in runTask (waiting)',
           ),
         );
       } else if (state.pendingMessages) {
         this.runForGroup(nextJid, 'drain').catch((err) =>
           logger.error(
-            { groupJid: nextJid, err },
+            {
+              component: 'assistant',
+              chatJid: nextJid,
+              groupJid: nextJid,
+              err,
+            },
             'Unhandled error in runForGroup (waiting)',
           ),
         );
@@ -389,7 +489,11 @@ export class GroupQueue {
     }
 
     logger.info(
-      { activeCount: this.activeCount, detachedContainers: activeContainers },
+      {
+        component: 'assistant',
+        activeCount: this.activeCount,
+        detachedContainers: activeContainers,
+      },
       'GroupQueue shutting down (containers detached, not killed)',
     );
   }

@@ -149,6 +149,13 @@ Expected:
 - configured channel auth
 - healthy container runtime
 - healthy credential probe
+- healthy assistant execution probe
+
+Important verify truth:
+
+- `CREDENTIAL_RUNTIME_PROBE` answers "can the configured endpoint/auth/model be reached?"
+- `ASSISTANT_EXECUTION_PROBE` answers "can Andrea's main assistant runtime actually start and produce first output?"
+- a passing credential probe does **not** mean the direct-assistant lane is fully usable
 
 ## Cursor Setup And Validation
 
@@ -275,6 +282,11 @@ Optional operator-only integrations, only when configured:
   - `/runtime-followup [job_id|list_number|current|group_folder] <text>`
   - `/runtime-stop [job_id|list_number|current|group_folder]`
   - `/runtime-logs [job_id|list_number|current|group_folder] [lines]`
+- Live troubleshooting controls:
+  - `/debug-status`
+  - `/debug-level <normal|debug|verbose> [scope] [duration]`
+  - `/debug-reset [scope|all]`
+  - `/debug-logs [service|stderr|current|cursor|runtime] [lines]`
 
 Compatibility note:
 
@@ -282,6 +294,43 @@ Compatibility note:
 - underscore aliases are still accepted, but the hyphen form is the preferred operator-facing syntax
 - older `/cursor-artifacts` and `/cursor-artifact-link` aliases are still accepted, but `/cursor-results` and `/cursor-download` are the preferred workflow names now
 - `/runtime-*` is temporary secondary scaffolding for the `andrea_runtime` lane, not a second primary shell
+- `/debug-*` is troubleshooting-only and operator-only; keep it out of the public command story
+
+## Live Debug Controls
+
+Use these only in Andrea's main control chat when you are actively troubleshooting:
+
+- `/debug-status`
+  - show current global level, scoped overrides, and last assistant execution probe
+- `/debug-level <normal|debug|verbose> [scope] [duration]`
+  - apply a live override without restart
+  - Telegram defaults to `60m` when duration is omitted
+- `/debug-reset [scope|all]`
+  - clear one override or reset everything back to normal
+- `/debug-logs [service|stderr|current|cursor|runtime] [lines]`
+  - tail recent sanitized logs
+
+Supported scopes:
+
+- `global`
+- `chat` or `current`
+- `lane:cursor`
+- `lane:andrea_runtime`
+- `component:assistant`
+- `component:container`
+- `component:telegram`
+
+Host-side fallback uses the same persisted state:
+
+```bash
+npm run debug:status
+npm run debug:level -- debug current 60m
+npm run debug:level -- verbose component:container 30m
+npm run debug:logs -- current 120
+npm run debug:reset -- all
+```
+
+These changes apply live and survive restart because they are stored in `router_state`.
 
 ## Cursor Workflow In Telegram
 
@@ -342,11 +391,16 @@ Useful controls:
 
 1. Capture the failing symptom and time.
 2. Run `npm run setup -- --step verify`.
-3. Check `logs/`.
-4. Reproduce with the smallest failing command.
-5. Restart services if state looks stale.
-6. Re-run the failing flow.
-7. Update docs if behavior changed.
+3. Run `/debug-status` or `npm run debug:status`.
+4. Turn logging up only where needed:
+   - `/debug-level debug chat 60m`
+   - `/debug-level verbose component:container 30m`
+5. Reproduce with the smallest failing command or chat turn.
+6. Tail `/debug-logs current 120` and `/debug-logs stderr 120` (or the host-side equivalents).
+7. Restart services if state looks stale.
+8. Re-run the failing flow.
+9. Reset debug overrides with `/debug-reset all`.
+10. Update docs if behavior changed.
 
 ## Documentation Rule
 

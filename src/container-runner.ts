@@ -22,7 +22,7 @@ import {
 import { listEnabledCommunitySkillsForGroup } from './db.js';
 import { readEnvFile } from './env.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
-import { logger } from './logger.js';
+import { isLogLevelEnabled, logger, sanitizeLogString } from './logger.js';
 import {
   CONTAINER_RUNTIME_BIN,
   CONTAINER_RUNTIME_NAME,
@@ -73,12 +73,32 @@ export interface ContainerOutput {
   runtime?: AgentRuntimeName;
   error?: string;
   logFile?: string;
+  failureKind?:
+    | 'auth_failed'
+    | 'invalid_model_alias'
+    | 'unsupported_endpoint'
+    | 'insufficient_quota'
+    | 'initial_output_timeout'
+    | 'runtime_bootstrap_failed'
+    | 'container_runtime_unavailable'
+    | 'credentials_missing_or_unusable'
+    | 'transient_or_unknown';
+  failureStage?: 'startup' | 'runtime' | 'shutdown' | 'parse' | 'spawn';
+  diagnosticHint?: string;
+  stderrTail?: string;
+  selectedModel?: string | null;
+  endpointMode?: string | null;
 }
 
 interface VolumeMount {
   hostPath: string;
   containerPath: string;
   readonly: boolean;
+}
+
+interface ContainerLaunchMetadata {
+  selectedModel: string | null;
+  endpointMode: string | null;
 }
 
 const FALLBACK_CREDENTIAL_KEYS = [
@@ -765,15 +785,17 @@ async function buildContainerArgs(
   mounts: VolumeMount[],
   containerName: string,
   agentIdentifier?: string,
-): Promise<string[]> {
+): Promise<{ args: string[]; metadata: ContainerLaunchMetadata }> {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
   const runtimeEndpointEnv = collectRuntimeEndpointEnv();
   const localOpenAiGatewayBinding =
     resolveLocalOpenAiGatewayBinding(runtimeEndpointEnv);
+  let endpointMode: string | null = null;
 
   if (localOpenAiGatewayBinding) {
     runtimeEndpointEnv.ANTHROPIC_BASE_URL = localOpenAiGatewayBinding.endpoint;
     runtimeEndpointEnv.OPENAI_BASE_URL = localOpenAiGatewayBinding.endpoint;
+    endpointMode = 'local_openai_gateway';
     if (
       !hasContainerFlagValue(
         args,
@@ -785,6 +807,7 @@ async function buildContainerArgs(
     }
     logger.info(
       {
+        component: 'container',
         containerName,
         network: localOpenAiGatewayBinding.network,
         endpoint: localOpenAiGatewayBinding.endpoint,
@@ -798,6 +821,11 @@ async function buildContainerArgs(
   const modelOverrides = resolveModelOverridesForRuntime(
     runtimeEndpointEnvForContainer,
   );
+  const selectedModel =
+    modelOverrides.NANOCLAW_AGENT_MODEL ||
+    modelOverrides.CLAUDE_CODE_MODEL ||
+    modelOverrides.CLAUDE_MODEL ||
+    null;
 
   // Pass host timezone so container's local time matches the user's
   args.push('-e', `TZ=${TIMEZONE}`);
@@ -810,6 +838,7 @@ async function buildContainerArgs(
     agent: agentIdentifier,
   });
   if (onecliApplied) {
+    endpointMode = endpointMode ? `${endpointMode}+onecli` : 'onecli_gateway';
     for (const [key, value] of Object.entries(runtimeEndpointEnvForContainer)) {
       args.push('-e', `${key}=${value}`);
     }
@@ -827,11 +856,14 @@ async function buildContainerArgs(
     }
     if (modelOverrides.NANOCLAW_AGENT_MODEL === 'cu/default') {
       logger.info(
-        { containerName },
+        { component: 'container', containerName },
         'Detected 9router endpoint; defaulting model override to cu/default',
       );
     }
-    logger.info({ containerName }, 'OneCLI gateway config applied');
+    logger.info(
+      { component: 'container', containerName, endpointMode, selectedModel },
+      'OneCLI gateway config applied',
+    );
   } else {
     const fallbackCredentials = collectFallbackCredentialEnv(
       runtimeEndpointEnvForContainer,
@@ -841,6 +873,10 @@ async function buildContainerArgs(
       ...fallbackCredentials,
       ...modelOverrides,
     };
+    endpointMode =
+      Object.keys(passthroughEnv).length > 0
+        ? 'env_passthrough'
+        : 'no_runtime_env';
 
     for (const [key, value] of Object.entries(passthroughEnv)) {
       args.push('-e', `${key}=${value}`);
@@ -849,14 +885,17 @@ async function buildContainerArgs(
     if (Object.keys(passthroughEnv).length > 0) {
       logger.warn(
         {
+          component: 'container',
           containerName,
           fallbackKeys: Object.keys(passthroughEnv),
+          endpointMode,
+          selectedModel,
         },
         'OneCLI gateway not reachable — using .env credential passthrough fallback',
       );
     } else {
       logger.warn(
-        { containerName },
+        { component: 'container', containerName, endpointMode },
         'OneCLI gateway not reachable and no fallback credentials found',
       );
     }
@@ -885,7 +924,47 @@ async function buildContainerArgs(
 
   args.push(CONTAINER_IMAGE);
 
-  return normalizeRuntimeArgs(args);
+  return {
+    args: normalizeRuntimeArgs(args),
+    metadata: {
+      selectedModel,
+      endpointMode,
+    },
+  };
+}
+
+function buildSanitizedStderrTail(
+  stderr: string,
+  maxChars = 800,
+): string | null {
+  const sanitized = sanitizeLogString(stderr || '').trim();
+  if (!sanitized) return null;
+  if (sanitized.length <= maxChars) return sanitized;
+  return sanitized.slice(sanitized.length - maxChars);
+}
+
+function buildFailureOutput(params: {
+  error: string;
+  failureKind: NonNullable<ContainerOutput['failureKind']>;
+  failureStage: NonNullable<ContainerOutput['failureStage']>;
+  diagnosticHint: string;
+  logFile?: string;
+  stderr?: string;
+  selectedModel?: string | null;
+  endpointMode?: string | null;
+}): ContainerOutput {
+  return {
+    status: 'error',
+    result: null,
+    error: params.error,
+    logFile: params.logFile,
+    failureKind: params.failureKind,
+    failureStage: params.failureStage,
+    diagnosticHint: params.diagnosticHint,
+    stderrTail: buildSanitizedStderrTail(params.stderr || '') || undefined,
+    selectedModel: params.selectedModel || null,
+    endpointMode: params.endpointMode || null,
+  };
 }
 
 export async function runContainerAgent(
@@ -906,15 +985,15 @@ export async function runContainerAgent(
   const agentIdentifier = input.isMain
     ? undefined
     : group.folder.toLowerCase().replace(/_/g, '-');
-  const containerArgs = await buildContainerArgs(
-    mounts,
-    containerName,
-    agentIdentifier,
-  );
+  const { args: containerArgs, metadata: launchMetadata } =
+    await buildContainerArgs(mounts, containerName, agentIdentifier);
   const containerArgsForLogs = sanitizeContainerArgsForLogs(containerArgs);
 
   logger.debug(
     {
+      component: 'container',
+      chatJid: input.chatJid,
+      groupFolder: group.folder,
       group: group.name,
       containerName,
       mounts: mounts.map(
@@ -922,22 +1001,35 @@ export async function runContainerAgent(
           `${m.hostPath} -> ${m.containerPath}${m.readonly ? ' (ro)' : ''}`,
       ),
       containerArgs: containerArgsForLogs.join(' '),
+      selectedModel: launchMetadata.selectedModel,
+      endpointMode: launchMetadata.endpointMode,
     },
     'Container mount configuration',
   );
 
   logger.info(
     {
+      component: 'container',
+      chatJid: input.chatJid,
+      groupFolder: group.folder,
       group: group.name,
       containerName,
       mountCount: mounts.length,
       isMain: input.isMain,
+      selectedModel: launchMetadata.selectedModel,
+      endpointMode: launchMetadata.endpointMode,
     },
     'Spawning container agent',
   );
 
   const logsDir = path.join(groupDir, 'logs');
   fs.mkdirSync(logsDir, { recursive: true });
+  const logContext = {
+    component: 'container' as const,
+    chatJid: input.chatJid,
+    groupFolder: group.folder,
+    containerName,
+  };
 
   return new Promise((resolve) => {
     const container = spawn(CONTAINER_RUNTIME_BIN, containerArgs, {
@@ -984,7 +1076,7 @@ export async function runContainerAgent(
         stopContainer(containerName);
       } catch (err) {
         logger.warn(
-          { group: group.name, containerName, err, reason },
+          { ...logContext, group: group.name, err, reason },
           'Graceful stop failed, force killing',
         );
         container.kill('SIGKILL');
@@ -995,7 +1087,7 @@ export async function runContainerAgent(
       timedOut = true;
       timeoutReason = 'hard';
       logger.error(
-        { group: group.name, containerName, timeoutMs },
+        { ...logContext, group: group.name, timeoutMs },
         'Container timeout, stopping gracefully',
       );
       stopContainerGracefully('hard_timeout');
@@ -1014,7 +1106,13 @@ export async function runContainerAgent(
       timedOut = true;
       timeoutReason = 'no_output';
       logger.error(
-        { group: group.name, containerName, initialOutputTimeoutMs },
+        {
+          ...logContext,
+          group: group.name,
+          initialOutputTimeoutMs,
+          selectedModel: launchMetadata.selectedModel,
+          endpointMode: launchMetadata.endpointMode,
+        },
         'Container produced no structured output before initial timeout',
       );
       stopContainerGracefully('initial_output_timeout');
@@ -1039,7 +1137,7 @@ export async function runContainerAgent(
           stdout += chunk.slice(0, remaining);
           stdoutTruncated = true;
           logger.warn(
-            { group: group.name, size: stdout.length },
+            { ...logContext, group: group.name, size: stdout.length },
             'Container stdout truncated due to size limit',
           );
         } else {
@@ -1053,6 +1151,15 @@ export async function runContainerAgent(
       ) {
         hadStructuredOutput = true;
         clearInitialOutputTimeout();
+        logger.debug(
+          {
+            ...logContext,
+            group: group.name,
+            selectedModel: launchMetadata.selectedModel,
+            endpointMode: launchMetadata.endpointMode,
+          },
+          'Received first structured output marker from container',
+        );
       }
 
       // Stream-parse for output markers
@@ -1081,7 +1188,7 @@ export async function runContainerAgent(
             outputChain = outputChain.then(() => onOutput(parsed));
           } catch (err) {
             logger.warn(
-              { group: group.name, error: err },
+              { ...logContext, group: group.name, error: err },
               'Failed to parse streamed output chunk',
             );
           }
@@ -1093,7 +1200,14 @@ export async function runContainerAgent(
       const chunk = data.toString();
       const lines = chunk.trim().split('\n');
       for (const line of lines) {
-        if (line) logger.debug({ container: group.folder }, line);
+        if (!line) continue;
+        logger.trace(
+          {
+            ...logContext,
+            group: group.name,
+          },
+          line,
+        );
       }
       // Don't reset timeout on stderr — SDK writes debug logs continuously.
       // Timeout only resets on actual output (OUTPUT_MARKER in stdout).
@@ -1103,7 +1217,7 @@ export async function runContainerAgent(
         stderr += chunk.slice(0, remaining);
         stderrTruncated = true;
         logger.warn(
-          { group: group.name, size: stderr.length },
+          { ...logContext, group: group.name, size: stderr.length },
           'Container stderr truncated due to size limit',
         );
       } else {
@@ -1130,6 +1244,15 @@ export async function runContainerAgent(
             `Exit Code: ${code}`,
             `Timeout Reason: ${timeoutReason || 'unknown'}`,
             `Had Streaming Output: ${hadStreamingOutput}`,
+            ``,
+            `=== Container Args ===`,
+            containerArgsForLogs.join(' '),
+            ``,
+            `=== Stderr Tail ===`,
+            buildSanitizedStderrTail(stderr) || '(empty)',
+            ``,
+            `=== Stdout Tail ===`,
+            sanitizeLogString(stdout.slice(-800) || '(empty)'),
           ].join('\n'),
         );
 
@@ -1138,7 +1261,7 @@ export async function runContainerAgent(
         // container being reaped after the idle period expired.
         if (hadStreamingOutput) {
           logger.info(
-            { group: group.name, containerName, duration, code },
+            { ...logContext, group: group.name, duration, code },
             'Container timed out after output (idle cleanup)',
           );
           outputChain.then(() => {
@@ -1154,38 +1277,62 @@ export async function runContainerAgent(
         if (timeoutReason === 'no_output') {
           logger.error(
             {
+              ...logContext,
               group: group.name,
-              containerName,
               duration,
               code,
               initialOutputTimeoutMs,
+              selectedModel: launchMetadata.selectedModel,
+              endpointMode: launchMetadata.endpointMode,
+              stderrTail: buildSanitizedStderrTail(stderr),
             },
             'Container timed out waiting for initial structured output',
           );
-          resolve({
-            status: 'error',
-            result: null,
-            error: `Container produced no output within ${initialOutputTimeoutMs}ms. Check credentials/channel setup.`,
-          });
+          resolve(
+            buildFailureOutput({
+              error: `Container produced no structured output within ${initialOutputTimeoutMs}ms.`,
+              failureKind: 'initial_output_timeout',
+              failureStage: 'startup',
+              diagnosticHint:
+                'container did not emit first structured result before timeout',
+              logFile: timeoutLog,
+              stderr,
+              selectedModel: launchMetadata.selectedModel,
+              endpointMode: launchMetadata.endpointMode,
+            }),
+          );
           return;
         }
 
         logger.error(
-          { group: group.name, containerName, duration, code, configTimeout },
+          {
+            ...logContext,
+            group: group.name,
+            duration,
+            code,
+            configTimeout,
+            stderrTail: buildSanitizedStderrTail(stderr),
+          },
           'Container timed out with no output',
         );
-        resolve({
-          status: 'error',
-          result: null,
-          error: `Container timed out after ${configTimeout}ms`,
-        });
+        resolve(
+          buildFailureOutput({
+            error: `Container timed out after ${configTimeout}ms`,
+            failureKind: 'runtime_bootstrap_failed',
+            failureStage: 'runtime',
+            diagnosticHint: 'container exceeded the configured hard timeout',
+            logFile: timeoutLog,
+            stderr,
+            selectedModel: launchMetadata.selectedModel,
+            endpointMode: launchMetadata.endpointMode,
+          }),
+        );
         return;
       }
 
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
       const logFile = path.join(logsDir, `container-${timestamp}.log`);
-      const isVerbose =
-        process.env.LOG_LEVEL === 'debug' || process.env.LOG_LEVEL === 'trace';
+      const isVerbose = isLogLevelEnabled('trace', logContext);
 
       const logLines = [
         `=== Container Run Log ===`,
@@ -1248,26 +1395,40 @@ export async function runContainerAgent(
       }
 
       fs.writeFileSync(logFile, logLines.join('\n'));
-      logger.debug({ logFile, verbose: isVerbose }, 'Container log written');
+      logger.debug(
+        { ...logContext, logFile, verbose: isVerbose },
+        'Container log written',
+      );
 
       if (code !== 0) {
         logger.error(
           {
+            ...logContext,
             group: group.name,
             code,
             duration,
-            stderr,
-            stdout,
+            stderrTail: buildSanitizedStderrTail(stderr),
+            stdoutTail: sanitizeLogString(stdout.slice(-400)),
             logFile,
+            selectedModel: launchMetadata.selectedModel,
+            endpointMode: launchMetadata.endpointMode,
           },
           'Container exited with error',
         );
 
-        resolve({
-          status: 'error',
-          result: null,
-          error: `Container exited with code ${code}: ${stderr.slice(-200)}`,
-        });
+        resolve(
+          buildFailureOutput({
+            error: `Container exited with code ${code}: ${sanitizeLogString(stderr.slice(-200))}`,
+            failureKind: 'runtime_bootstrap_failed',
+            failureStage: 'runtime',
+            diagnosticHint:
+              'container exited non-zero before producing a stable result',
+            logFile,
+            stderr,
+            selectedModel: launchMetadata.selectedModel,
+            endpointMode: launchMetadata.endpointMode,
+          }),
+        );
         return;
       }
 
@@ -1275,7 +1436,7 @@ export async function runContainerAgent(
       if (onOutput) {
         outputChain.then(() => {
           logger.info(
-            { group: group.name, duration, newSessionId },
+            { ...logContext, group: group.name, duration, newSessionId },
             'Container completed (streaming mode)',
           );
           resolve({
@@ -1308,6 +1469,7 @@ export async function runContainerAgent(
 
         logger.info(
           {
+            ...logContext,
             group: group.name,
             duration,
             status: output.status,
@@ -1320,19 +1482,28 @@ export async function runContainerAgent(
       } catch (err) {
         logger.error(
           {
+            ...logContext,
             group: group.name,
-            stdout,
-            stderr,
+            stdoutTail: sanitizeLogString(stdout.slice(-400)),
+            stderrTail: buildSanitizedStderrTail(stderr),
             error: err,
           },
           'Failed to parse container output',
         );
 
-        resolve({
-          status: 'error',
-          result: null,
-          error: `Failed to parse container output: ${err instanceof Error ? err.message : String(err)}`,
-        });
+        resolve(
+          buildFailureOutput({
+            error: `Failed to parse container output: ${err instanceof Error ? err.message : String(err)}`,
+            failureKind: 'runtime_bootstrap_failed',
+            failureStage: 'parse',
+            diagnosticHint:
+              'container returned output that could not be parsed cleanly',
+            logFile,
+            stderr,
+            selectedModel: launchMetadata.selectedModel,
+            endpointMode: launchMetadata.endpointMode,
+          }),
+        );
       }
     });
 
@@ -1340,14 +1511,26 @@ export async function runContainerAgent(
       clearTimeout(timeout);
       clearInitialOutputTimeout();
       logger.error(
-        { group: group.name, containerName, error: err },
+        {
+          ...logContext,
+          group: group.name,
+          error: err,
+          selectedModel: launchMetadata.selectedModel,
+          endpointMode: launchMetadata.endpointMode,
+        },
         'Container spawn error',
       );
-      resolve({
-        status: 'error',
-        result: null,
-        error: `Container spawn error: ${err.message}`,
-      });
+      resolve(
+        buildFailureOutput({
+          error: `Container spawn error: ${err.message}`,
+          failureKind: 'container_runtime_unavailable',
+          failureStage: 'spawn',
+          diagnosticHint: 'container runtime could not start the agent process',
+          stderr,
+          selectedModel: launchMetadata.selectedModel,
+          endpointMode: launchMetadata.endpointMode,
+        }),
+      );
     });
   });
 }

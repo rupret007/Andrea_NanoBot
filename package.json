@@ -41,7 +41,11 @@
     "telegram:user:auth": "tsx src/telegram-user-session.ts auth",
     "telegram:user:send": "tsx src/telegram-user-session.ts send",
     "telegram:user:tap": "tsx src/telegram-user-session.ts tap",
-    "telegram:user:batch": "tsx src/telegram-user-session.ts batch"
+    "telegram:user:batch": "tsx src/telegram-user-session.ts batch",
+    "debug:status": "tsx scripts/debug-control.ts status",
+    "debug:level": "tsx scripts/debug-control.ts level",
+    "debug:reset": "tsx scripts/debug-control.ts reset",
+    "debug:logs": "tsx scripts/debug-control.ts logs"
   },
   "dependencies": {
     "@onecli-sh/sdk": "^0.2.0",

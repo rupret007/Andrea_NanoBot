@@ -23,7 +23,9 @@ vi.mock('./container-runner.js', () => ({
 }));
 
 vi.mock('./logger.js', () => ({
+  isLogLevelEnabled: vi.fn(() => false),
   logger: {
+    trace: vi.fn(),
     info: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),

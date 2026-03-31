@@ -24,7 +24,10 @@ vi.mock('./config.js', () => ({
 
 // Mock logger
 vi.mock('./logger.js', () => ({
+  isLogLevelEnabled: vi.fn(() => false),
+  sanitizeLogString: (value: string) => value,
   logger: {
+    trace: vi.fn(),
     debug: vi.fn(),
     info: vi.fn(),
     warn: vi.fn(),
@@ -213,7 +216,9 @@ describe('container-runner timeout behavior', () => {
 
     const result = await resultPromise;
     expect(result.status).toBe('error');
-    expect(result.error).toContain('produced no output');
+    expect(result.error).toContain('produced no structured output');
+    expect(result.failureKind).toBe('initial_output_timeout');
+    expect(result.failureStage).toBe('startup');
     expect(onOutput).not.toHaveBeenCalled();
   });
 
@@ -239,8 +244,9 @@ describe('container-runner timeout behavior', () => {
     const result = await resultPromise;
     expect(result.status).toBe('error');
     expect(result.error).toContain(
-      'Container produced no output within 40000ms',
+      'Container produced no structured output within 40000ms',
     );
+    expect(result.failureKind).toBe('initial_output_timeout');
     expect(onOutput).not.toHaveBeenCalled();
   });
 

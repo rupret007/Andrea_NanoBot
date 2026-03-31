@@ -202,7 +202,10 @@ async function sendTelegramMessage(
     });
     return { platformMessageId: sent.message_id.toString() };
   } catch (err) {
-    logger.debug({ err }, 'Markdown send failed, falling back to plain text');
+    logger.debug(
+      { component: 'telegram', err },
+      'Markdown send failed, falling back to plain text',
+    );
     const sent = await api.sendMessage(chatId, text, options);
     return { platformMessageId: sent.message_id.toString() };
   }
@@ -231,7 +234,10 @@ async function editTelegramMessage(
     if (detail.includes('message is not modified')) {
       return { platformMessageId: messageId.toString() };
     }
-    logger.debug({ err }, 'Markdown edit failed, falling back to plain text');
+    logger.debug(
+      { component: 'telegram', err },
+      'Markdown edit failed, falling back to plain text',
+    );
     await api.editMessageText(chatId, messageId, text, options);
     return { platformMessageId: messageId.toString() };
   }
@@ -417,7 +423,7 @@ export class TelegramChannel implements Channel {
       const group = this.opts.registeredGroups()[chatJid];
       if (!group) {
         logger.debug(
-          { chatJid, chatName },
+          { component: 'telegram', chatJid, chatName },
           'Message from unregistered Telegram chat',
         );
         if (ctx.chat.type === 'private') {
@@ -439,7 +445,7 @@ export class TelegramChannel implements Channel {
       });
 
       logger.info(
-        { chatJid, chatName, sender: senderName },
+        { component: 'telegram', chatJid, chatName, sender: senderName },
         'Telegram message stored',
       );
     });
@@ -553,7 +559,10 @@ export class TelegramChannel implements Channel {
     });
 
     this.bot.catch((err) => {
-      logger.error({ err: err.message }, 'Telegram bot error');
+      logger.error(
+        { component: 'telegram', err: err.message },
+        'Telegram bot error',
+      );
     });
 
     return new Promise<void>((resolve) => {
@@ -561,14 +570,17 @@ export class TelegramChannel implements Channel {
         onStart: (botInfo) => {
           this.bot!.api.setMyDescription(buildTelegramDescriptionText()).catch(
             (err) => {
-              logger.warn({ err }, 'Failed to set Telegram bot description');
+              logger.warn(
+                { component: 'telegram', err },
+                'Failed to set Telegram bot description',
+              );
             },
           );
           this.bot!.api.setMyShortDescription(
             buildTelegramShortDescriptionText(),
           ).catch((err) => {
             logger.warn(
-              { err },
+              { component: 'telegram', err },
               'Failed to set Telegram bot short description',
             );
           });
@@ -592,11 +604,18 @@ export class TelegramChannel implements Channel {
               description: 'Register this DM as main control chat',
             },
           ]).catch((err) => {
-            logger.warn({ err }, 'Failed to register Telegram command menu');
+            logger.warn(
+              { component: 'telegram', err },
+              'Failed to register Telegram command menu',
+            );
           });
 
           logger.info(
-            { username: botInfo.username, id: botInfo.id },
+            {
+              component: 'telegram',
+              username: botInfo.username,
+              id: botInfo.id,
+            },
             'Telegram bot connected',
           );
           console.log(`\n  Telegram bot: @${botInfo.username}`);
@@ -659,6 +678,7 @@ export class TelegramChannel implements Channel {
       }
       logger.info(
         {
+          component: 'telegram',
           jid,
           length: text.length,
           threadId: options.threadId,
@@ -670,7 +690,10 @@ export class TelegramChannel implements Channel {
       );
       return { platformMessageId: firstMessageId };
     } catch (err) {
-      logger.error({ jid, err }, 'Failed to send Telegram message');
+      logger.error(
+        { component: 'telegram', jid, err },
+        'Failed to send Telegram message',
+      );
       return {};
     }
   }
@@ -704,6 +727,7 @@ export class TelegramChannel implements Channel {
       );
       logger.info(
         {
+          component: 'telegram',
           jid,
           platformMessageId,
           inlineActions: options.inlineActions?.length || 0,
@@ -714,7 +738,7 @@ export class TelegramChannel implements Channel {
       return result;
     } catch (err) {
       logger.error(
-        { jid, platformMessageId, err },
+        { component: 'telegram', jid, platformMessageId, err },
         'Failed to edit Telegram message',
       );
       return {};
@@ -743,7 +767,10 @@ export class TelegramChannel implements Channel {
       const numericId = jid.replace(/^tg:/, '');
       await this.bot.api.sendChatAction(numericId, 'typing');
     } catch (err) {
-      logger.debug({ jid, err }, 'Failed to send Telegram typing indicator');
+      logger.debug(
+        { component: 'telegram', jid, err },
+        'Failed to send Telegram typing indicator',
+      );
     }
   }
 }

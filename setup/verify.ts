@@ -12,12 +12,17 @@ import Database from 'better-sqlite3';
 import { OneCLI } from '@onecli-sh/sdk';
 
 import { ONECLI_URL, RUNTIME_STATE_DIR, STORE_DIR } from '../src/config.js';
+import { runContainerAgent } from '../src/container-runner.js';
 import {
   getContainerRuntimeStatus,
   resolveContainerRuntimeName,
 } from '../src/container-runtime.js';
+import { setAssistantExecutionProbeState } from '../src/debug-control.js';
+import { initDatabase } from '../src/db.js';
 import { readEnvFile } from '../src/env.js';
+import { resolveGroupIpcPath } from '../src/group-folder.js';
 import { logger } from '../src/logger.js';
+import type { RegisteredGroup } from '../src/types.js';
 import {
   getNodeMajorVersion,
   getNodeVersion,
@@ -49,6 +54,12 @@ const MODEL_OVERRIDE_ENV_KEYS = [
 ] as const;
 
 interface CredentialRuntimeProbeResult {
+  status: 'ok' | 'skipped' | 'failed';
+  reason: string;
+  detail?: string;
+}
+
+export interface AssistantExecutionProbeResult {
   status: 'ok' | 'skipped' | 'failed';
   reason: string;
   detail?: string;
@@ -458,6 +469,103 @@ export async function probeCredentialRuntime(input: {
   }
 }
 
+function requestContainerProbeClose(groupFolder: string): void {
+  const inputDir = path.join(resolveGroupIpcPath(groupFolder), 'input');
+  fs.mkdirSync(inputDir, { recursive: true });
+  fs.writeFileSync(path.join(inputDir, '_close'), '');
+}
+
+export async function probeAssistantExecution(
+  input: {
+    requestTimeoutMs?: number;
+    runProbe?: typeof runContainerAgent;
+    requestClose?: (groupFolder: string) => void;
+  } = {},
+): Promise<AssistantExecutionProbeResult> {
+  const probeGroup: RegisteredGroup = {
+    name: 'Verify Runtime Probe',
+    folder: 'verify_runtime_probe',
+    trigger: '@andrea',
+    added_at: new Date().toISOString(),
+    containerConfig: {
+      timeout: input.requestTimeoutMs ?? 20_000,
+    },
+  };
+
+  const runProbe = input.runProbe || runContainerAgent;
+  let sawStructuredOutput = false;
+  let closeRequested = false;
+
+  try {
+    const output = await runProbe(
+      probeGroup,
+      {
+        prompt: 'Reply with exactly: assistant execution probe ok.',
+        groupFolder: probeGroup.folder,
+        chatJid: 'verify:assistant-execution',
+        isMain: false,
+        assistantName: 'Andrea',
+        idleTimeoutMs: 5_000,
+        requestPolicy: {
+          route: 'direct_assistant',
+          reason: 'verify assistant execution probe',
+          builtinTools: ['Read'],
+          mcpTools: [],
+          guidance: 'Reply with exactly: assistant execution probe ok.',
+        },
+      },
+      () => {},
+      async () => {
+        sawStructuredOutput = true;
+        if (closeRequested) return;
+        closeRequested = true;
+        (input.requestClose || requestContainerProbeClose)(probeGroup.folder);
+      },
+    );
+
+    if (output.status === 'error') {
+      return {
+        status: 'failed',
+        reason: output.failureKind || 'runtime_bootstrap_failed',
+        detail: truncateDetail(
+          output.diagnosticHint || output.error || 'Assistant execution failed.',
+        ),
+      };
+    }
+
+    if (!sawStructuredOutput) {
+      return {
+        status: 'failed',
+        reason: 'initial_output_timeout',
+        detail:
+          'Execution probe completed without any structured assistant output.',
+      };
+    }
+
+    return {
+      status: 'ok',
+      reason: 'ok',
+      detail: truncateDetail(
+        [
+          output.newSessionId ? `session=${output.newSessionId}` : '',
+          'assistant execution produced structured output',
+        ]
+          .filter(Boolean)
+          .join(' | '),
+      ),
+    };
+  } catch (err) {
+    const detail = truncateDetail(
+      err instanceof Error ? err.message : String(err),
+    );
+    return {
+      status: 'failed',
+      reason: 'runtime_bootstrap_failed',
+      detail,
+    };
+  }
+}
+
 async function tryStartLocalGatewayForVerify(projectRoot: string): Promise<{
   ok: boolean;
   detail?: string;
@@ -521,6 +629,7 @@ function buildVerifyNextSteps(input: {
   missingRequirements: string[];
   hasNativeOpenAiEndpointMisconfig: boolean;
   credentialRuntimeProbeReason?: string;
+  assistantExecutionProbeReason?: string;
   configuredChannels?: string[];
 }): string {
   const steps: string[] = [];
@@ -574,6 +683,14 @@ function buildVerifyNextSteps(input: {
         'Runtime credential check failed against the configured endpoint. Verify endpoint reachability and auth.',
       );
     }
+  }
+
+  if (input.missingRequirements.includes('assistant_execution_unusable')) {
+    steps.push(
+      input.assistantExecutionProbeReason === 'initial_output_timeout'
+        ? 'Assistant execution probe failed before first output. Check /debug-status, /debug-logs current, and the container runtime path.'
+        : 'Assistant execution probe failed inside the container runtime. Check /debug-status, /debug-logs current, and the latest group container log.',
+    );
   }
 
   if (steps.length === 0) {
@@ -707,6 +824,7 @@ export async function run(_args: string[]): Promise<void> {
   let nodeOk = nodeMajor === 22;
   const homeDir = os.homedir();
 
+  initDatabase();
   logger.info('Starting verification');
 
   // 1. Check service status
@@ -928,6 +1046,27 @@ export async function run(_args: string[]): Promise<void> {
     }
   }
 
+  const assistantExecutionProbe =
+    credentials !== 'missing'
+      ? await probeAssistantExecution()
+      : ({
+          status: 'skipped',
+          reason: 'missing_credentials',
+          detail: 'Skipped because no usable credentials are configured.',
+        } as AssistantExecutionProbeResult);
+
+  setAssistantExecutionProbeState({
+    status:
+      assistantExecutionProbe.status === 'ok'
+        ? 'ok'
+        : assistantExecutionProbe.status === 'failed'
+          ? 'failed'
+          : 'skipped',
+    reason: assistantExecutionProbe.reason,
+    detail: assistantExecutionProbe.detail || '',
+    checkedAt: new Date().toISOString(),
+  });
+
   // 4. Check channel auth (detect configured channels by credentials)
   const channelEnvVars = readEnvFile([
     'TELEGRAM_BOT_TOKEN',
@@ -1004,11 +1143,15 @@ export async function run(_args: string[]): Promise<void> {
   if (credentialRuntimeProbe.status === 'failed') {
     missingRequirements.push('credential_runtime_unusable');
   }
+  if (assistantExecutionProbe.status === 'failed') {
+    missingRequirements.push('assistant_execution_unusable');
+  }
 
   const nextSteps = buildVerifyNextSteps({
     missingRequirements,
     hasNativeOpenAiEndpointMisconfig: nativeOpenAiEndpointMisconfig,
     credentialRuntimeProbeReason: credentialRuntimeProbe.reason,
+    assistantExecutionProbeReason: assistantExecutionProbe.reason,
     configuredChannels,
   });
 
@@ -1019,7 +1162,8 @@ export async function run(_args: string[]): Promise<void> {
     credentials !== 'missing' &&
     anyChannelConfigured &&
     registeredGroups > 0 &&
-    credentialRuntimeProbe.status !== 'failed'
+    credentialRuntimeProbe.status !== 'failed' &&
+    assistantExecutionProbe.status !== 'failed'
       ? 'success'
       : 'failed';
 
@@ -1047,6 +1191,9 @@ export async function run(_args: string[]): Promise<void> {
     CREDENTIAL_RUNTIME_PROBE_ENDPOINTS: probeEndpoints.join(','),
     CREDENTIAL_RUNTIME_PROBE_REASON: credentialRuntimeProbe.reason,
     CREDENTIAL_RUNTIME_PROBE_DETAIL: credentialRuntimeProbe.detail || '',
+    ASSISTANT_EXECUTION_PROBE: assistantExecutionProbe.status,
+    ASSISTANT_EXECUTION_PROBE_REASON: assistantExecutionProbe.reason,
+    ASSISTANT_EXECUTION_PROBE_DETAIL: assistantExecutionProbe.detail || '',
     CONFIGURED_CHANNELS: configuredChannels.join(','),
     CHANNEL_AUTH: JSON.stringify(channelAuth),
     REGISTERED_GROUPS: registeredGroups,
