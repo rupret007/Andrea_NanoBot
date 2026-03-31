@@ -139,7 +139,7 @@ describe('createAndreaRuntimeBackendLane', () => {
       laneId: 'andrea_runtime',
       jobId: 'runtime-job-1',
     });
-    expect(created.laneLabel).toBe('Andrea Runtime');
+    expect(created.laneLabel).toBe('Codex/OpenAI Runtime');
     expect(logs.logText).toBe('tail');
     expect(output.text).toBe('latest');
     expect(files.supported).toBe(false);
@@ -152,5 +152,13 @@ describe('createAndreaRuntimeBackendLane', () => {
       'job.followup',
       'job.stop',
     ]);
+    expect(
+      lane
+        .getActionDescriptors({
+          ...created,
+          status: 'running',
+        })
+        .map((action) => action.label),
+    ).toEqual(['Refresh', 'View Output', 'Continue', 'Stop Run']);
   });
 });

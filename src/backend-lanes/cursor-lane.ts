@@ -87,7 +87,7 @@ function toBackendJobSummary(record: CursorAgentView): BackendJobSummary {
     handle: { laneId: 'cursor', jobId: record.id },
     title:
       record.provider === 'cloud'
-        ? 'Cursor Cloud job'
+        ? 'Cursor Cloud task'
         : 'Desktop bridge session',
     status: record.status,
     summary: summarizeCursorJob(record),
@@ -318,8 +318,8 @@ export function createCursorBackendLane(): CursorBackendLane {
             : 'cloud';
       if (provider === 'desktop') {
         return [
-          { actionId: 'job.refresh', label: 'Sync' },
-          { actionId: 'job.output', label: 'Messages' },
+          { actionId: 'job.refresh', label: 'Refresh' },
+          { actionId: 'job.output', label: 'View Output' },
           { actionId: 'cursor.terminal_status', label: 'Terminal Status' },
           { actionId: 'cursor.terminal_log', label: 'Terminal Log' },
           { actionId: 'cursor.terminal_help', label: 'Terminal Help' },
@@ -327,21 +327,21 @@ export function createCursorBackendLane(): CursorBackendLane {
       }
 
       return [
-        { actionId: 'job.refresh', label: 'Sync' },
-        { actionId: 'job.output', label: 'Text' },
-        { actionId: 'job.files', label: 'Files' },
+        { actionId: 'job.refresh', label: 'Refresh' },
+        { actionId: 'job.output', label: 'View Output' },
+        { actionId: 'job.files', label: 'Results' },
         ...(('targetUrl' in job ? job.targetUrl : null)
           ? [
               {
                 actionId: 'cursor.open',
-                label: 'Open',
+                label: 'Open in Cursor',
                 kind: 'url' as const,
                 url: ('targetUrl' in job ? job.targetUrl : null) || undefined,
               },
             ]
           : []),
-        { actionId: 'job.followup', label: 'Follow Up' },
-        { actionId: 'job.stop', label: 'Stop' },
+        { actionId: 'job.followup', label: 'Continue' },
+        { actionId: 'job.stop', label: 'Stop Run' },
       ];
     },
     async getJobLogs(params) {

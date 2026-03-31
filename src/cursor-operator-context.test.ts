@@ -310,14 +310,14 @@ describe('operator context helpers', () => {
     expect(context?.payload?.provider).toBe('cloud');
   });
 
-  it('keeps cursor-results and cursor-download buttons human-readable', () => {
+  it('keeps current-task buttons human-readable', () => {
     const actions = buildCursorJobCardActions(makeInventory().cloudTracked[0]);
     expect(actions.map((action) => action.label)).toEqual([
-      'Sync',
-      'Text',
-      'Files',
-      'Open',
-      'Stop',
+      'Refresh',
+      'View Output',
+      'Results',
+      'Open in Cursor',
+      'Stop Run',
     ]);
     expect(actions[0].actionId).toBe('/cursor-sync');
     expect(actions[1].actionId).toBe('/cursor-conversation');

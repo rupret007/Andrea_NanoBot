@@ -49,13 +49,14 @@ function getBackendOperatorDetail(
           /^follow-up target mismatch:/i,
           /^runtime group folder is required/i,
           /^andrea runtime jobs do not expose shell file results yet\./i,
+          /^codex\/openai tasks do not expose shell results yet\./i,
         ];
 
   return safePatterns.some((pattern) => pattern.test(message)) ? message : null;
 }
 
 function laneLabel(laneId: BackendLaneId): string {
-  return laneId === 'andrea_runtime' ? 'Andrea runtime' : 'Cursor';
+  return laneId === 'andrea_runtime' ? 'Codex/OpenAI runtime' : 'Cursor';
 }
 
 export function formatBackendOperationFailure(params: {

@@ -18,6 +18,11 @@ import {
   RUNTIME_STOP_COMMANDS,
 } from '../operator-command-gate.js';
 import { resolveGroupFolderPath } from '../group-folder.js';
+import {
+  formatHumanTaskStatus,
+  formatOpaqueTaskId,
+  formatSystemStatus,
+} from '../task-presentation.js';
 
 export interface RuntimeJobSnapshot {
   groupFolder: string | null;
@@ -129,19 +134,19 @@ function formatRuntimeJobListEntry(
   ordinal: number,
 ): string {
   const updatedAt = job.updatedAt || job.createdAt;
-  return `${ordinal}. ${job.handle.jobId} [${job.status}]${job.summary ? `\n   ${job.summary}` : ''}${updatedAt ? `\n   updated ${updatedAt}` : ''}`;
+  return `${ordinal}. ${formatOpaqueTaskId(job.handle.jobId)} [${formatHumanTaskStatus(job.status)}]${job.summary ? `\n   ${job.summary}` : ''}${updatedAt ? `\n   updated ${updatedAt}` : ''}`;
 }
 
 export function formatRuntimeJobsMessage(jobs: BackendJobSummary[]): string {
   if (jobs.length === 0) {
-    return 'Andrea has no active or queued runtime jobs right now.';
+    return 'Andrea has no recent Codex/OpenAI tasks in this workspace right now.';
   }
 
   return [
-    '*Andrea Runtime Jobs*',
+    '*Codex/OpenAI Work*',
     ...jobs.map((job, index) => formatRuntimeJobListEntry(job, index + 1)),
     '',
-    'Use /runtime-logs, /runtime-followup, or /runtime-stop with a list number, `current`, a runtime job id, or as a reply to a runtime job message.',
+    'Reply to a Codex/OpenAI task card to continue it or inspect output. `/runtime-logs`, `/runtime-followup`, and `/runtime-stop` still accept a list number, `current`, or a runtime task id when you want an explicit fallback.',
   ].join('\n');
 }
 
@@ -153,13 +158,14 @@ function parsePositiveInt(raw: string | undefined, fallback: number): number {
   return Math.min(120, parsed);
 }
 
-function formatRuntimeJobCard(job: BackendJobDetails): string {
+export function formatRuntimeJobCard(job: BackendJobDetails): string {
   const metadata = (job.metadata || {}) as Record<string, unknown>;
   const lines = [
-    `Andrea runtime job ${job.handle.jobId}`,
-    `Status: ${job.status}`,
+    `Codex/OpenAI task ${formatOpaqueTaskId(job.handle.jobId)}`,
+    `Status: ${formatHumanTaskStatus(job.status)}`,
+    `System status: ${formatSystemStatus(job.status)}`,
     typeof metadata.groupFolder === 'string'
-      ? `Group: ${metadata.groupFolder}`
+      ? `Workspace: ${metadata.groupFolder}`
       : null,
     typeof metadata.selectedRuntime === 'string'
       ? `Runtime: ${metadata.selectedRuntime}`
@@ -173,13 +179,23 @@ function formatRuntimeJobCard(job: BackendJobDetails): string {
   return lines.join('\n');
 }
 
-function formatRuntimeNextStep(jobId: string): string {
+function formatOutputSourceLabel(
+  source: BackendPrimaryOutputResult['source'],
+): string {
+  if (source === 'final_output') return 'final output';
+  if (source === 'latest_output') return 'latest output';
+  if (source === 'logs') return 'log excerpt';
+  if (source === 'conversation') return 'conversation';
+  return 'output';
+}
+
+export function formatRuntimeNextStep(jobId: string): string {
   return [
     'Next:',
-    `- use /runtime-logs as a reply to this runtime card for output`,
-    `- use /runtime-stop as a reply to request stop`,
-    '- reply with plain text to continue the same runtime job',
-    `- use /runtime-followup ${jobId} <text> anywhere if you need an explicit fallback`,
+    '- Reply with plain text to continue this task.',
+    '- Use `/runtime-logs` as a reply when you want the latest output.',
+    '- Use `/runtime-stop` as a reply when you need to stop it.',
+    `- \`/runtime-followup ${jobId} <text>\` still works anywhere as an explicit fallback.`,
   ].join('\n');
 }
 
@@ -313,7 +329,7 @@ async function handleRuntimeFollowup(
         contextKind: 'runtime_job_card',
         payload: followed.metadata || null,
         text: [
-          `Follow-up sent to Andrea runtime job ${followed.handle.jobId}. Status: ${followed.status}.`,
+          `Andrea is continuing Codex/OpenAI task ${formatOpaqueTaskId(followed.handle.jobId)}. Status: ${formatHumanTaskStatus(followed.status)}.`,
           formatRuntimeNextStep(followed.handle.jobId),
         ].join('\n\n'),
       });
@@ -362,7 +378,7 @@ async function handleRuntimeFollowup(
       contextKind: 'runtime_job_card',
       payload: followed.metadata || null,
       text: [
-        `Follow-up queued for ${legacyTarget} as Andrea runtime job ${followed.handle.jobId}. Status: ${followed.status}.`,
+        `Andrea started Codex/OpenAI task ${formatOpaqueTaskId(followed.handle.jobId)} for workspace ${legacyTarget}. Status: ${formatHumanTaskStatus(followed.status)}.`,
         formatRuntimeNextStep(followed.handle.jobId),
       ].join('\n\n'),
     });
@@ -402,7 +418,7 @@ async function handleRuntimeStop(
         jobId: stopped.handle.jobId,
         contextKind: 'runtime_job_card',
         payload: stopped.metadata || null,
-        text: `Stop requested for Andrea runtime job ${stopped.handle.jobId}. Current status: ${stopped.status}.\n\nUse /runtime-logs as a reply to this runtime card to refresh its latest output or error state.`,
+        text: `Stop requested for Codex/OpenAI task ${formatOpaqueTaskId(stopped.handle.jobId)}. Status: ${formatHumanTaskStatus(stopped.status)}.\n\nReply to this task card with \`/runtime-logs\` when you want to refresh its latest output or error state.`,
       });
       return;
     } catch (err) {
@@ -459,7 +475,7 @@ async function handleRuntimeStop(
         jobId: stopped.handle.jobId,
         contextKind: 'runtime_job_card',
         payload: stopped.metadata || null,
-        text: `Stop requested for ${legacyTarget} via Andrea runtime job ${stopped.handle.jobId}. Current status: ${stopped.status}.`,
+        text: `Stop requested for workspace ${legacyTarget} via Codex/OpenAI task ${formatOpaqueTaskId(stopped.handle.jobId)}. Status: ${formatHumanTaskStatus(stopped.status)}.`,
       });
       return;
     } catch (err) {
@@ -479,8 +495,8 @@ async function handleRuntimeStop(
   await deps.sendToChat(
     context.operatorChatJid,
     stopRequested
-      ? `Requested runtime stop for ${legacyTarget}.`
-      : `No active runtime job found for ${legacyTarget}.`,
+      ? `Stop requested for runtime work in ${legacyTarget}.`
+      : `No active Codex/OpenAI task was found for ${legacyTarget}.`,
   );
 }
 
@@ -542,12 +558,12 @@ async function handleRuntimeLogs(
               `${formatRuntimeJobCard(targetJob as BackendJobDetails)}`,
               '',
               output.text
-                ? `Output (${output.source}):\n${output.text}`
+                ? `Current ${formatOutputSourceLabel(output.source)}:\n${output.text}`
                 : `Logs:\n${logs.logText}`,
               '',
               formatRuntimeNextStep(resolution.target.jobId),
             ].join('\n')
-          : `Andrea runtime job ${resolution.target.jobId} has no output or logs yet.\n\nReply to this runtime card with plain text for follow-up, or rerun /runtime-logs later.`,
+          : `Codex/OpenAI task ${formatOpaqueTaskId(resolution.target.jobId)} does not have output yet.\n\nReply with plain text to continue it, or rerun \`/runtime-logs\` later if you want another explicit check.`,
       });
       return;
     } catch (err) {
@@ -621,12 +637,12 @@ async function handleRuntimeLogs(
               `${formatRuntimeJobCard((job || latestJob) as BackendJobDetails)}`,
               '',
               output.text
-                ? `Output (${output.source}):\n${output.text}`
+                ? `Current ${formatOutputSourceLabel(output.source)}:\n${output.text}`
                 : `Logs:\n${logs.logText}`,
               '',
               formatRuntimeNextStep(latestJob.handle.jobId),
             ].join('\n')
-          : `Andrea runtime job ${latestJob.handle.jobId} has no output or logs yet.`,
+          : `Codex/OpenAI task ${formatOpaqueTaskId(latestJob.handle.jobId)} does not have output yet.`,
       });
       return;
     } catch (err) {
@@ -645,7 +661,8 @@ async function handleRuntimeLogs(
   const legacyLogText = readLegacyLogTail(groupTarget.folder, lineLimit);
   await deps.sendToChat(
     context.operatorChatJid,
-    legacyLogText || `No runtime logs found yet for ${legacyTarget}.`,
+    legacyLogText ||
+      `No Codex/OpenAI runtime logs were found yet for ${legacyTarget}.`,
   );
 }
 

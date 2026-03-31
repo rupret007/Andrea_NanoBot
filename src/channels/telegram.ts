@@ -82,7 +82,7 @@ export function buildTelegramWelcomeText(
     '- In a direct chat: send normal messages or slash commands.',
     '- In a group: mention my Telegram username when you want me to act.',
     '- First-time Telegram setup: DM me and run `/registermain`.',
-    '- Use `/commands` for the safe command list and `/features` for the short capability guide.',
+    '- Use `/commands` for the safe command list and `/features` for the short capability guide, including Andrea’s deeper operator work lanes.',
     '',
     '*Quick Start*',
     "- `What's the meaning of life?`",
@@ -103,7 +103,7 @@ export function buildTelegramCommandsText(): string {
     '- `/chatid` - show chat ID and chat type',
     '- `/registermain` - bootstrap main control chat (DM only)',
     '- `/cursor_status` - safe readiness check for Cursor Cloud, desktop bridge terminal control, and optional runtime-route wiring',
-    '- Deeper Cursor work and machine-control commands are operator/admin-only and stay in the admin guide.',
+    '- Deeper operator work lanes stay operator/admin-only and are documented in the admin guide.',
   ].join('\n');
 }
 
@@ -131,7 +131,7 @@ export function buildTelegramFeaturesText(
     '- To-do lists, reminders, and recurring tasks',
     '- Research and summaries',
     '- Fast replies for simple questions, playful prompts, and basic math',
-    '- Project and coding help through Andrea, with `/cursor_status` as the safe Cursor readiness check and deeper Cursor work kept in the operator/admin path',
+    '- Project and coding help through Andrea, with `/cursor_status` as the safe readiness check and deeper Cursor plus Codex/OpenAI operator work kept in the admin path',
     "- Secure per-chat isolation so one chat does not automatically get another chat's skills or files",
   ].join('\n');
 }

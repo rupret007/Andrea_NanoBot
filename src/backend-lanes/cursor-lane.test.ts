@@ -59,12 +59,27 @@ describe('createCursorBackendLane', () => {
       'job.followup',
       'job.stop',
     ]);
+    expect(cloud.map((action) => action.label)).toEqual([
+      'Refresh',
+      'View Output',
+      'Results',
+      'Open in Cursor',
+      'Continue',
+      'Stop Run',
+    ]);
     expect(desktop.map((action) => action.actionId)).toEqual([
       'job.refresh',
       'job.output',
       'cursor.terminal_status',
       'cursor.terminal_log',
       'cursor.terminal_help',
+    ]);
+    expect(desktop.map((action) => action.label)).toEqual([
+      'Refresh',
+      'View Output',
+      'Terminal Status',
+      'Terminal Log',
+      'Terminal Help',
     ]);
   });
 });

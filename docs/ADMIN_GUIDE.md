@@ -72,7 +72,8 @@ Andrea now treats Cursor as three separate surfaces:
 
 - integrated Codex/OpenAI backend lane under the shared shell
 - execution truth lives in the lane, not in Telegram command handlers
-- currently surfaced only through temporary `/runtime-*` scaffolding
+- surfaced through the `Codex/OpenAI` tile inside `/cursor`
+- `/runtime-*` remains temporary secondary scaffolding
 - does **not** replace `/cursor` as the taught operator flow
 - `codex_local` is the intended primary runtime for this lane
 - `openai_cloud` remains conditional on `OPENAI_API_KEY` or a compatible gateway
@@ -178,7 +179,7 @@ Validate:
 - tap `Jobs`
 - `/cursor-create --repo <url> ...`
 - tap/select a job from `Jobs`
-- tap `Sync`, `Text`, or `Files`
+- tap `Refresh`, `View Output`, or `Results`
 - or reply to the current job dashboard with `/cursor-sync`, `/cursor-conversation`, or `/cursor-results`
 - `/cursor-models`
 
@@ -209,7 +210,7 @@ Validate:
 - `/cursor`
 - tap `Jobs`
 - tap/select a desktop session
-- tap `Sync`
+- tap `Refresh`
 - `/cursor-terminal <agent_id> echo operator smoke ok`
 - tap `Current Job`
 - tap `Terminal Status`
@@ -268,12 +269,12 @@ Optional operator-only integrations, only when configured:
   - `/purchase-requests`
   - `/purchase-approve <request_id> <approval_code>`
   - `/purchase-cancel <request_id>`
-- Andrea runtime scaffolding:
+- Codex/OpenAI runtime scaffolding:
   - `/runtime-status`
   - `/runtime-jobs`
-  - `/runtime-followup <group_folder> <text>`
-  - `/runtime-stop <group_folder>`
-  - `/runtime-logs <group_folder> [lines]`
+  - `/runtime-followup [job_id|list_number|current|group_folder] <text>`
+  - `/runtime-stop [job_id|list_number|current|group_folder]`
+  - `/runtime-logs [job_id|list_number|current|group_folder] [lines]`
 
 Compatibility note:
 
@@ -288,9 +289,9 @@ This is the normal operator flow now:
 
 1. Run `/cursor_status`
 2. Run `/cursor`
-3. Tap `Jobs`, `Current Job`, or `New Cloud Job`
-4. Tap a job tile to make it current
-5. Tap `Sync`, `Text`, or `Files`, or reply with `/cursor-sync`, `/cursor-conversation`, or `/cursor-results` without repeating the id
+3. Tap `Jobs`, `Current Job`, `New Cloud Job`, or `Codex/OpenAI`
+4. Tap a task tile to make it current
+5. Tap `Refresh`, `View Output`, `Results`, or `Continue`, or reply with `/cursor-sync`, `/cursor-conversation`, or `/cursor-results` without repeating the id
 6. Reply with plain text to the **Current Job** dashboard when you want to continue a Cloud job
 7. Use `/cursor-download <absolute_path>` as a reply to the current job dashboard or a result card when you want one file
 8. Use `/cursor-terminal*` only for desktop bridge sessions
@@ -299,6 +300,7 @@ Important behavior:
 
 - `/cursor` is now the main operator control panel
 - `/cursor-jobs` now opens the Jobs browser view inside that control panel
+- the `Codex/OpenAI` tile keeps the integrated runtime lane inside the same operator shell without turning `/runtime-*` into a second primary UX
 - Telegram inline buttons, in-place dashboard edits, and reply-linked output are operator UX improvements; explicit ids still work everywhere
 - plain-text replies only turn into follow-up prompts when you reply to the **Current Job** dashboard or a stored **Cloud** Cursor card in the main control chat
 - plain-text replies do **not** continue desktop sessions; desktop sessions still use `/cursor-sync`, `/cursor-conversation`, and `/cursor-terminal*`

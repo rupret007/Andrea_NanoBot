@@ -43,7 +43,7 @@ Use these meanings consistently when reading `/cursor_status` and the setup docs
   - explicit per-chat enable/disable
 - Anthropic-compatible model routing with OpenAI-key-backed gateway support.
 - Optional operator-enabled integrations such as Amazon Business shopping and Alexa voice.
-- A secondary integrated `andrea_runtime` lane for Codex/OpenAI execution truth behind temporary `/runtime-*` scaffolding.
+- A secondary integrated `andrea_runtime` lane for Codex/OpenAI execution truth, with a small `Codex/OpenAI` view inside `/cursor` and temporary `/runtime-*` scaffolding for explicit fallback control.
 
 For demo use, keep the default public surface smaller than the full operator feature set.
 The safest baseline is Telegram + direct assistance + fast quick replies for simple asks + reminders/tasks + `/cursor_status` + clean startup/health checks.
@@ -241,6 +241,7 @@ Use this only after validating Codex/OpenAI runtime execution on the host.
 Important truth:
 
 - `/cursor` remains the primary operator workflow
+- the `Codex/OpenAI` tile inside `/cursor` is the natural shell-facing entry for runtime work
 - `/runtime-*` is temporary secondary scaffolding for the integrated `andrea_runtime` lane
 - `codex_local` is the intended primary runtime for this lane
 - `openai_cloud` remains conditional on `OPENAI_API_KEY` or a compatible gateway token
@@ -418,7 +419,8 @@ Important scope rule:
 - older `/cursor-artifacts` and `/cursor-artifact-link` aliases still work, but `/cursor-results` and `/cursor-download` are the preferred operator examples
 - runtime-route readiness is optional and separate; `Cursor-backed runtime route: not configured` does not mean Cloud or desktop bridge are broken
 - the desktop bridge gives Andrea bridge-managed session recovery and line-oriented shell commands on your normal machine, but not a live PTY, remote desktop, or a guaranteed local Windows agent-job path
-- the normal Telegram operator flow is now `/cursor` -> tap `Jobs`/`Current Job`/`New Cloud Job` -> tap a job or control tile -> reply with plain text only when you are supplying a Cloud follow-up or a new-job prompt
+- the normal Telegram operator flow is now `/cursor` -> tap `Jobs`/`Current Job`/`New Cloud Job` or `Codex/OpenAI` -> tap a task or control tile -> reply with plain text only when you are supplying a follow-up prompt or a new-job prompt
+- the same `/cursor` shell now also exposes a `Codex/OpenAI` tile so runtime work feels like part of the same assistant instead of a second operator surface
 - `/runtime-*` remains available as secondary main-chat-only scaffolding for the integrated `andrea_runtime` lane when `ANDREA_RUNTIME_EXECUTION_ENABLED=true`
 - marketplace skill discovery and enablement still exist in the operator/runtime layer, but they are not part of the default Telegram command surface
 

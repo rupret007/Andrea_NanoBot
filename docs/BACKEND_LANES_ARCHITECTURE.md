@@ -38,7 +38,8 @@ Backend lanes own:
 ### `andrea_runtime`
 
 - integrated Codex/OpenAI backend lane
-- currently exposed only through temporary `/runtime-*` scaffolding
+- now has a small `Codex/OpenAI` surface inside the primary `/cursor` work shell
+- `/runtime-*` remains temporary secondary scaffolding
 - does not replace Cursor or the `/cursor` dashboard
 - prefers `codex_local`
 - keeps `openai_cloud` conditional on credentials and host validation
@@ -89,6 +90,7 @@ What is primary today:
 - Cursor jobs browser
 - Cursor current-job controls
 - Cursor reply-linked follow-up
+- the embedded `Codex/OpenAI` dashboard views inside `/cursor`
 
 What is secondary today:
 
@@ -103,6 +105,7 @@ Those `/runtime-*` commands are temporary secondary scaffolding for the `andrea_
 ## What Is Validated Today
 
 - the merged shell still preserves the current Cursor dashboard UX
+- the same shell now surfaces a small first-class Codex/OpenAI lane view without replacing Cursor as the primary taught path
 - shared lane types and registry exist in the main repo
 - Cursor is wrapped behind the lane architecture without losing its richer controls
 - the integrated `andrea_runtime` lane satisfies the shared lane contract in focused tests

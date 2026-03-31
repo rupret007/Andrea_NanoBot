@@ -68,6 +68,7 @@ describe('buildTelegramHelpText', () => {
     expect(help).toContain('/cursor_status');
     expect(help).toContain('To-do lists, reminders, and recurring tasks');
     expect(help).toContain('Fast replies for simple questions');
+    expect(help).toContain('deeper operator work lanes');
     expect(help).not.toContain('/alexa_status');
     expect(help).not.toContain('/amazon_status');
     expect(help).not.toContain('/amazon_search');
@@ -98,7 +99,7 @@ describe('buildTelegramCommandsText', () => {
     expect(commands).toContain('/cursor_status');
     expect(commands).toContain('safe readiness check');
     expect(commands).toContain(
-      'Deeper Cursor work and machine-control commands are operator/admin-only',
+      'Deeper operator work lanes stay operator/admin-only',
     );
     expect(commands).not.toContain('/cursor_models [filter]');
     expect(commands).not.toContain('/cursor_create [options] <prompt>');
@@ -137,9 +138,7 @@ describe('buildTelegramFeaturesText', () => {
     expect(features).toContain('Secure per-chat isolation');
     expect(features).toContain('Conversation-first help');
     expect(features).toContain('Fast replies for simple questions');
-    expect(features).toContain(
-      'deeper Cursor work kept in the operator/admin path',
-    );
+    expect(features).toContain('deeper Cursor plus Codex/OpenAI operator work');
     expect(features).not.toContain('Amazon shopping search');
     expect(features).not.toContain('Apple Calendar');
     expect(features).not.toContain('/cursor-results');

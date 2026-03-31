@@ -131,7 +131,11 @@ import {
   formatAgentRuntimeStatusMessage,
   getAgentRuntimeStatusSnapshot,
 } from './andrea-runtime/agent-runtime.js';
-import { dispatchRuntimeCommand } from './andrea-runtime/commands.js';
+import {
+  dispatchRuntimeCommand,
+  formatRuntimeJobCard,
+  formatRuntimeNextStep,
+} from './andrea-runtime/commands.js';
 import { createRuntimeOrchestrationService } from './andrea-runtime/orchestration.js';
 import { createBackendLaneRegistry } from './backend-lanes/registry.js';
 import {
@@ -139,7 +143,11 @@ import {
   type AndreaRuntimeBackendLane,
 } from './backend-lanes/andrea-runtime-lane.js';
 import { createCursorBackendLane } from './backend-lanes/cursor-lane.js';
-import type { BackendJobHandle } from './backend-lanes/types.js';
+import type {
+  BackendJobDetails,
+  BackendJobHandle,
+  BackendJobSummary,
+} from './backend-lanes/types.js';
 import {
   parseCursorCreateCommand,
   tokenizeCommandArguments,
@@ -179,6 +187,10 @@ import {
   buildCursorDashboardHelp,
   buildCursorDashboardHome,
   buildCursorDashboardJobs,
+  buildCursorDashboardRuntime,
+  buildCursorDashboardRuntimeCurrent,
+  buildCursorDashboardRuntimeCurrentEmpty,
+  buildCursorDashboardRuntimeJobs,
   buildCursorDashboardStatus,
   buildCursorDashboardWizardConfirm,
   buildCursorDashboardWizardPrompt,
@@ -189,6 +201,10 @@ import {
   parseCursorDashboardState,
   type CursorDashboardState,
 } from './cursor-dashboard.js';
+import {
+  formatHumanTaskStatus,
+  formatOpaqueTaskId,
+} from './task-presentation.js';
 import {
   ALEXA_STATUS_COMMANDS,
   AMAZON_SEARCH_COMMANDS,
@@ -514,9 +530,9 @@ export function getAvailableGroups(): import('./container-runner.js').AvailableG
 
 function buildAndreaRuntimeDisabledMessage(): string {
   return [
-    'Andrea runtime execution is integrated but not enabled on this host yet.',
-    'Keep using /cursor as the primary operator surface.',
-    'To enable the temporary /runtime-* scaffolding, set ANDREA_RUNTIME_EXECUTION_ENABLED=true after validating the Codex/OpenAI runtime container and credentials on this machine.',
+    "Andrea's Codex/OpenAI runtime lane is integrated, but execution is still turned off on this host.",
+    'Keep using /cursor as the main operator shell today. You can still review existing runtime work where it is available.',
+    'Enable ANDREA_RUNTIME_EXECUTION_ENABLED=true only after validating the Codex/OpenAI runtime container and credentials on this machine.',
   ].join('\n');
 }
 
@@ -534,7 +550,8 @@ function buildAndreaRuntimeStatusMessage(): string {
     formatAgentRuntimeStatusMessage(snapshot),
     '',
     `- Runtime execution enabled on this host: ${andreaRuntimeExecutionEnabled ? 'yes' : 'no'}`,
-    '- Shell ownership remains in Andrea_NanoBot; /runtime-* is temporary secondary scaffolding.',
+    "- This is Andrea's integrated Codex/OpenAI runtime lane inside the same shell.",
+    '- /cursor remains the primary operator surface today; /runtime-* is the explicit fallback when you need direct runtime control.',
   ].join('\n');
 }
 
@@ -1259,8 +1276,8 @@ async function main(): Promise<void> {
               : null);
 
     if (provider === 'desktop') return 'desktop bridge session';
-    if (provider === 'cloud') return 'Cursor Cloud job';
-    return 'Cursor job';
+    if (provider === 'cloud') return 'Cursor Cloud task';
+    return 'Cursor task';
   }
 
   function isDesktopCursorRecord(
@@ -1287,10 +1304,10 @@ async function main(): Promise<void> {
       | string,
   ): string {
     if (isDesktopCursorRecord(record)) {
-      return 'Next: reply to this Cursor card with /cursor-sync, /cursor-conversation, or /cursor-terminal-log to avoid repeating the id. Use /cursor-terminal AGENT_ID <command> when you want to run a new machine-side command.';
+      return 'Next: use this card to refresh the session or view output. `/cursor-terminal` and `/cursor-terminal-log` still work as explicit fallbacks when you need machine-side control.';
     }
 
-    return 'Next: reply to this Cursor card with /cursor-sync, /cursor-conversation, or /cursor-results to avoid repeating the id.';
+    return 'Next: use this card to refresh the task, view output, or check results. Reply with plain text to continue it. Slash commands still work if you want an explicit fallback.';
   }
 
   function toCursorHandle(jobId: string): BackendJobHandle {
@@ -1426,7 +1443,8 @@ async function main(): Promise<void> {
   }): {
     cloudLine: string;
     desktopLine: string;
-    runtimeLine: string;
+    runtimeRouteLine: string;
+    codexRuntimeLine: string;
   } {
     const cloudLine =
       params.cloudStatus.enabled && params.cloudStatus.hasApiKey
@@ -1439,7 +1457,7 @@ async function main(): Promise<void> {
           ? `conditional (${params.desktopStatus.probeDetail})`
           : 'conditional'
         : 'optional and unavailable';
-    const runtimeLine =
+    const runtimeRouteLine =
       params.gatewayStatus.mode === 'configured'
         ? params.gatewayStatus.probeStatus === 'ok'
           ? 'configured'
@@ -1449,7 +1467,10 @@ async function main(): Promise<void> {
         : params.gatewayStatus.mode === 'partial'
           ? 'partial'
           : 'optional and off';
-    return { cloudLine, desktopLine, runtimeLine };
+    const codexRuntimeLine = andreaRuntimeExecutionEnabled
+      ? 'enabled on this host'
+      : 'integrated but off on this host';
+    return { cloudLine, desktopLine, runtimeRouteLine, codexRuntimeLine };
   }
 
   async function getCursorSelectedAgentRecord(
@@ -1476,6 +1497,38 @@ async function main(): Promise<void> {
     };
   }
 
+  async function getRuntimeSelectedJobRecord(
+    chatJid: string,
+    threadId?: string,
+  ): Promise<{
+    jobs: BackendJobSummary[];
+    selected: BackendJobDetails | null;
+  } | null> {
+    const group = registeredGroups[chatJid];
+    if (!group) return null;
+
+    const runtimeLane = getAndreaRuntimeLane();
+    const selectedJobId = getSelectedLaneJobId(
+      chatJid,
+      threadId,
+      'andrea_runtime',
+    );
+    const jobs = await runtimeLane.listJobs({
+      groupFolder: group.folder,
+      chatJid,
+      limit: 50,
+    });
+    const selected = selectedJobId
+      ? await runtimeLane.getJob({
+          handle: { laneId: 'andrea_runtime', jobId: selectedJobId },
+          groupFolder: group.folder,
+          chatJid,
+        })
+      : null;
+
+    return { jobs, selected };
+  }
+
   async function upsertCursorDashboardMessage(params: {
     chatJid: string;
     sourceMessage?: NewMessage;
@@ -1483,6 +1536,7 @@ async function main(): Promise<void> {
     text: string;
     inlineActionRows: SendMessageOptions['inlineActionRows'];
     selectedAgentId?: string | null;
+    selectedLaneId?: 'cursor' | 'andrea_runtime';
     forceNew?: boolean;
   }): Promise<string | undefined> {
     const channel = findChannel(channels, params.chatJid);
@@ -1527,12 +1581,14 @@ async function main(): Promise<void> {
       threadId: params.sourceMessage?.thread_id,
       dashboardMessageId: platformMessageId,
       selectedAgentId: params.selectedAgentId,
+      selectedLaneId: params.selectedLaneId,
     });
     rememberCursorMessageContext({
       chatJid: params.chatJid,
       platformMessageId,
       threadId: params.sourceMessage?.thread_id,
       contextKind: 'cursor_dashboard',
+      laneId: params.selectedLaneId || 'cursor',
       agentId: params.selectedAgentId || null,
       payload: formatCursorDashboardState(params.state),
     });
@@ -1560,10 +1616,16 @@ async function main(): Promise<void> {
         getCursorGatewayStatus({ probe: false }),
       ]);
       const cloudStatus = getCursorCloudStatus();
-      const selection = await getCursorSelectedAgentRecord(
-        params.chatJid,
-        params.sourceMessage?.thread_id,
-      );
+      const [selection, runtimeSelection] = await Promise.all([
+        getCursorSelectedAgentRecord(
+          params.chatJid,
+          params.sourceMessage?.thread_id,
+        ),
+        getRuntimeSelectedJobRecord(
+          params.chatJid,
+          params.sourceMessage?.thread_id,
+        ),
+      ]);
       const render = buildCursorDashboardHome({
         ...summarizeCursorDashboardLines({
           cloudStatus,
@@ -1571,6 +1633,7 @@ async function main(): Promise<void> {
           gatewayStatus,
         }),
         currentJob: selection?.selected || undefined,
+        currentRuntimeTask: runtimeSelection?.selected || undefined,
       });
       return upsertCursorDashboardMessage({
         chatJid: params.chatJid,
@@ -1612,15 +1675,15 @@ async function main(): Promise<void> {
         limit: 50,
       });
       const flattened = flattenCursorJobInventory(inventory);
-      const activeContext = getActiveCursorOperatorContext(
-        params.chatJid,
-        params.sourceMessage?.thread_id,
-      );
       const render = buildCursorDashboardJobs({
         entries: flattened,
         page: params.state.page || 0,
         pageSize: CURSOR_DASHBOARD_PAGE_SIZE,
-        selectedAgentId: activeContext?.selectedAgentId || null,
+        selectedAgentId: getSelectedLaneJobId(
+          params.chatJid,
+          params.sourceMessage?.thread_id,
+          'cursor',
+        ),
       });
       const platformMessageId = await upsertCursorDashboardMessage({
         chatJid: params.chatJid,
@@ -1670,6 +1733,95 @@ async function main(): Promise<void> {
         text: render.text,
         inlineActionRows: render.inlineActionRows,
         selectedAgentId: render.selectedAgentId,
+        selectedLaneId: 'cursor',
+        forceNew: params.forceNew,
+      });
+    }
+
+    if (params.state.kind === 'runtime') {
+      const runtimeSelection = await getRuntimeSelectedJobRecord(
+        params.chatJid,
+        params.sourceMessage?.thread_id,
+      );
+      const render = buildCursorDashboardRuntime({
+        executionEnabled: andreaRuntimeExecutionEnabled,
+        readinessLine: andreaRuntimeExecutionEnabled
+          ? 'ready on this host'
+          : 'integrated but execution is still off on this host',
+        currentTask: runtimeSelection?.selected || undefined,
+      });
+      return upsertCursorDashboardMessage({
+        chatJid: params.chatJid,
+        sourceMessage: params.sourceMessage,
+        state: params.state,
+        text: render.text,
+        inlineActionRows: render.inlineActionRows,
+        selectedAgentId: runtimeSelection?.selected?.handle.jobId || null,
+        selectedLaneId: 'andrea_runtime',
+        forceNew: params.forceNew,
+      });
+    }
+
+    if (params.state.kind === 'runtime_jobs') {
+      const runtimeSelection = await getRuntimeSelectedJobRecord(
+        params.chatJid,
+        params.sourceMessage?.thread_id,
+      );
+      const jobs = runtimeSelection?.jobs || [];
+      const render = buildCursorDashboardRuntimeJobs({
+        jobs,
+        page: params.state.page || 0,
+        pageSize: CURSOR_DASHBOARD_PAGE_SIZE,
+        selectedJobId: runtimeSelection?.selected?.handle.jobId || null,
+      });
+      const platformMessageId = await upsertCursorDashboardMessage({
+        chatJid: params.chatJid,
+        sourceMessage: params.sourceMessage,
+        state: {
+          kind: 'runtime_jobs',
+          page: params.state.page || 0,
+        },
+        text: render.text,
+        inlineActionRows: render.inlineActionRows,
+        selectedAgentId: render.selectedAgentId,
+        selectedLaneId: 'andrea_runtime',
+        forceNew: params.forceNew,
+      });
+      rememberCursorJobList({
+        chatJid: params.chatJid,
+        threadId: params.sourceMessage?.thread_id,
+        listMessageId: platformMessageId,
+        items: jobs.map((job) => ({
+          laneId: 'andrea_runtime',
+          id: job.handle.jobId,
+          provider: null,
+        })),
+        selectedAgentId: render.selectedAgentId || null,
+        selectedLaneId: 'andrea_runtime',
+      });
+      return platformMessageId;
+    }
+
+    if (params.state.kind === 'runtime_current') {
+      const runtimeSelection = await getRuntimeSelectedJobRecord(
+        params.chatJid,
+        params.sourceMessage?.thread_id,
+      );
+      const render = runtimeSelection?.selected
+        ? buildCursorDashboardRuntimeCurrent(
+            runtimeSelection.selected,
+            andreaRuntimeExecutionEnabled,
+          )
+        : buildCursorDashboardRuntimeCurrentEmpty();
+      return upsertCursorDashboardMessage({
+        chatJid: params.chatJid,
+        sourceMessage: params.sourceMessage,
+        state: params.state,
+        text: render.text,
+        inlineActionRows: render.inlineActionRows,
+        selectedAgentId:
+          runtimeSelection?.selected?.handle.jobId || render.selectedAgentId,
+        selectedLaneId: 'andrea_runtime',
         forceNew: params.forceNew,
       });
     }
@@ -1981,6 +2133,7 @@ async function main(): Promise<void> {
       chatJid,
       sourceMessage,
       state: { kind: 'home' },
+      forceNew: true,
     });
   }
 
@@ -2186,6 +2339,23 @@ async function main(): Promise<void> {
       chatJid,
       sourceMessage,
       state: { kind: 'jobs', page: 0 },
+      forceNew: true,
+    });
+  }
+
+  async function sendRuntimeDashboardPrompt(
+    chatJid: string,
+    job: BackendJobDetails,
+    sourceMessage?: NewMessage,
+  ): Promise<void> {
+    await sendBackendJobMessage({
+      chatJid,
+      laneId: 'andrea_runtime',
+      jobId: job.handle.jobId,
+      sourceMessage,
+      contextKind: 'runtime_job_message',
+      payload: job.metadata || null,
+      text: `Reply to this dashboard with what Andrea should change next for Codex/OpenAI task ${formatOpaqueTaskId(job.handle.jobId)}.`,
     });
   }
 
@@ -2270,6 +2440,42 @@ async function main(): Promise<void> {
       return;
     }
 
+    if (action === 'runtime') {
+      await openCursorDashboard({
+        chatJid,
+        sourceMessage,
+        state: { kind: 'runtime' },
+      });
+      return;
+    }
+
+    if (action === 'runtime-jobs') {
+      const rawPage = Number.parseInt(args[2] || '', 10);
+      await openCursorDashboard({
+        chatJid,
+        sourceMessage,
+        state: {
+          kind: 'runtime_jobs',
+          page:
+            Number.isFinite(rawPage) && rawPage > 0
+              ? Math.max(0, rawPage - 1)
+              : dashboardContext?.state.kind === 'runtime_jobs'
+                ? dashboardContext.state.page || 0
+                : 0,
+        },
+      });
+      return;
+    }
+
+    if (action === 'runtime-current') {
+      await openCursorDashboard({
+        chatJid,
+        sourceMessage,
+        state: { kind: 'runtime_current' },
+      });
+      return;
+    }
+
     if (action === 'help') {
       await openCursorDashboard({
         chatJid,
@@ -2301,7 +2507,7 @@ async function main(): Promise<void> {
       if (!Number.isFinite(visibleIndex) || visibleIndex <= 0) {
         await sendCursorMessage(
           chatJid,
-          'That job tile is invalid. Open `/cursor` and browse Jobs again.',
+          'That task tile is invalid. Open `/cursor` and browse Jobs again.',
           sourceMessage,
         );
         return;
@@ -2318,7 +2524,7 @@ async function main(): Promise<void> {
       if (!selected) {
         await sendCursorMessage(
           chatJid,
-          'That job is no longer visible in this Cursor jobs page. Open `Jobs` again to refresh the list.',
+          'That task is no longer visible in this Cursor jobs page. Open `Jobs` again to refresh the list.',
           sourceMessage,
         );
         return;
@@ -2332,6 +2538,55 @@ async function main(): Promise<void> {
         chatJid,
         sourceMessage,
         state: { kind: 'current' },
+      });
+      return;
+    }
+
+    if (action === 'runtime-select') {
+      if (dashboardContext?.state.kind !== 'runtime_jobs') {
+        await sendCursorMessage(
+          chatJid,
+          CURSOR_DASHBOARD_EXPIRED_MESSAGE,
+          sourceMessage,
+        );
+        return;
+      }
+      const visibleIndex = Number.parseInt(args[2] || '', 10);
+      if (!Number.isFinite(visibleIndex) || visibleIndex <= 0) {
+        await sendCursorMessage(
+          chatJid,
+          'That task tile is invalid. Open `Codex/OpenAI` and browse Recent Work again.',
+          sourceMessage,
+        );
+        return;
+      }
+      const runtimeLane = getAndreaRuntimeLane();
+      const jobs = await runtimeLane.listJobs({
+        groupFolder: registeredGroups[chatJid].folder,
+        chatJid,
+        limit: 50,
+      });
+      const page = dashboardContext.state.page || 0;
+      const selected =
+        jobs[page * CURSOR_DASHBOARD_PAGE_SIZE + visibleIndex - 1];
+      if (!selected) {
+        await sendCursorMessage(
+          chatJid,
+          'That task is no longer visible in this Codex/OpenAI work page. Open `Recent Work` again to refresh the list.',
+          sourceMessage,
+        );
+        return;
+      }
+      rememberCursorOperatorSelection({
+        chatJid,
+        threadId: sourceMessage?.thread_id,
+        laneId: 'andrea_runtime',
+        agentId: selected.handle.jobId,
+      });
+      await openCursorDashboard({
+        chatJid,
+        sourceMessage,
+        state: { kind: 'runtime_current' },
       });
       return;
     }
@@ -2370,7 +2625,7 @@ async function main(): Promise<void> {
       if (!selectedAgent || selectedAgent.provider !== 'cloud') {
         await sendCursorMessage(
           chatJid,
-          'Follow-up is only available for the current Cursor Cloud job. Open `Current Job`, then reply with plain text to that dashboard.',
+          'Continue is only available for the current Cursor Cloud task. Open `Current Job`, then reply with plain text to that dashboard.',
           sourceMessage,
         );
         return;
@@ -2381,7 +2636,105 @@ async function main(): Promise<void> {
         provider: 'cloud',
         sourceMessage,
         contextKind: 'cursor_job_message',
-        text: `Reply to this dashboard with the next instruction for ${labelCursorRecord(selectedAgent)} ${selectedAgent.id}.`,
+        text: `Reply to this dashboard with what Andrea should change next for ${labelCursorRecord(selectedAgent)} ${selectedAgent.id}.`,
+      });
+      return;
+    }
+
+    if (
+      action === 'runtime-refresh' ||
+      action === 'runtime-output' ||
+      action === 'runtime-followup' ||
+      action === 'runtime-stop'
+    ) {
+      const runtimeSelection = await getRuntimeSelectedJobRecord(
+        chatJid,
+        sourceMessage?.thread_id,
+      );
+      const selectedRuntimeJob = runtimeSelection?.selected || null;
+      if (!selectedRuntimeJob) {
+        await sendCursorMessage(
+          chatJid,
+          'No Codex/OpenAI task is selected yet. Open `Codex/OpenAI`, then tap `Recent Work` to choose one.',
+          sourceMessage,
+        );
+        return;
+      }
+
+      if (action === 'runtime-refresh') {
+        const runtimeLane = getAndreaRuntimeLane();
+        const refreshed = await runtimeLane.refreshJob({
+          handle: selectedRuntimeJob.handle,
+          groupFolder: registeredGroups[chatJid].folder,
+          chatJid,
+        });
+        if (!refreshed) {
+          await sendCursorMessage(
+            chatJid,
+            `Codex/OpenAI task ${formatOpaqueTaskId(selectedRuntimeJob.handle.jobId)} is no longer available in this workspace.`,
+            sourceMessage,
+          );
+          return;
+        }
+        await sendBackendJobMessage({
+          chatJid,
+          laneId: 'andrea_runtime',
+          jobId: refreshed.handle.jobId,
+          sourceMessage,
+          contextKind: 'runtime_job_card',
+          payload: refreshed.metadata || null,
+          text: [
+            `Refreshed Codex/OpenAI task ${formatOpaqueTaskId(refreshed.handle.jobId)}.`,
+            formatRuntimeJobCard(refreshed),
+            formatRuntimeNextStep(refreshed.handle.jobId),
+          ].join('\n\n'),
+        });
+        await openCursorDashboard({
+          chatJid,
+          sourceMessage,
+          state: { kind: 'runtime_current' },
+        });
+        return;
+      }
+
+      if (action === 'runtime-output') {
+        await handleAndreaRuntimeCommand(
+          chatJid,
+          '/runtime-logs current',
+          '/runtime-logs',
+          sourceMessage,
+        );
+        return;
+      }
+
+      if (!andreaRuntimeExecutionEnabled) {
+        await sendCursorMessage(
+          chatJid,
+          buildAndreaRuntimeDisabledMessage(),
+          sourceMessage,
+        );
+        return;
+      }
+
+      if (action === 'runtime-followup') {
+        await sendRuntimeDashboardPrompt(
+          chatJid,
+          selectedRuntimeJob,
+          sourceMessage,
+        );
+        return;
+      }
+
+      await handleAndreaRuntimeCommand(
+        chatJid,
+        '/runtime-stop current',
+        '/runtime-stop',
+        sourceMessage,
+      );
+      await openCursorDashboard({
+        chatJid,
+        sourceMessage,
+        state: { kind: 'runtime_current' },
       });
       return;
     }
@@ -2594,10 +2947,10 @@ async function main(): Promise<void> {
         contextKind: 'cursor_job_card',
         inlineActions: buildCursorJobCardActions(created),
         text: [
-          `Created ${labelCursorRecord(created)} ${created.id} (status: ${created.status}).`,
+          `Andrea started ${labelCursorRecord(created)} ${formatOpaqueTaskId(created.id)}.`,
+          `Status: ${formatHumanTaskStatus(created.status)}`,
           targetBits || null,
           buildCursorNextStepMessage(created),
-          'Tip: after you select a job from /cursor-jobs, you can use /cursor-sync or /cursor-results without repeating the id.',
         ]
           .filter(Boolean)
           .join('\n'),
@@ -2654,7 +3007,7 @@ async function main(): Promise<void> {
             : 'cloud',
           sourceMessage,
           contextKind: 'cursor_job_message',
-          text: `No conversation messages are available yet for ${normalizedAgentId}.\n\n${buildCursorNextStepMessage(normalizedAgentId)}`,
+          text: `No output is available yet for ${labelCursorRecord(normalizedAgentId)} ${formatOpaqueTaskId(normalizedAgentId)}.\n\n${buildCursorNextStepMessage(normalizedAgentId)}`,
         });
         return;
       }
@@ -2676,7 +3029,7 @@ async function main(): Promise<void> {
           : 'cloud',
         sourceMessage,
         contextKind: 'cursor_job_message',
-        text: `${labelCursorRecord(normalizedAgentId)} conversation for ${normalizedAgentId} (latest ${messages.length}):\n\n${formatted}\n\n${buildCursorNextStepMessage(normalizedAgentId)}`,
+        text: `View output for ${labelCursorRecord(normalizedAgentId)} ${formatOpaqueTaskId(normalizedAgentId)} (latest ${messages.length} messages):\n\n${formatted}\n\n${buildCursorNextStepMessage(normalizedAgentId)}`,
       });
     } catch (err) {
       await sendCursorMessage(
@@ -2728,7 +3081,7 @@ async function main(): Promise<void> {
           provider: 'cloud',
           sourceMessage,
           contextKind: 'cursor_job_message',
-          text: `Cursor Cloud job ${normalizedAgentId} has no tracked result files yet.\n\nUse /cursor-conversation as a reply to this Cursor card for text output, then rerun /cursor-results if you expect files.`,
+          text: `Cursor Cloud task ${formatOpaqueTaskId(normalizedAgentId)} does not have results yet.\n\nView output first, then check Results again if you expect files from this task.`,
         });
         return;
       }
@@ -2744,7 +3097,7 @@ async function main(): Promise<void> {
         provider: 'cloud',
         sourceMessage,
         contextKind: 'cursor_job_message',
-        text: `Cursor Cloud results for ${normalizedAgentId}:\n\n${lines.join('\n')}\n\nUse /cursor-download ABSOLUTE_PATH as a reply to this Cursor card, or /cursor-download ${normalizedAgentId} ABSOLUTE_PATH anywhere.`,
+        text: `Results for Cursor Cloud task ${formatOpaqueTaskId(normalizedAgentId)}:\n\n${lines.join('\n')}\n\nReply to this result card with \`/cursor-download ABSOLUTE_PATH\` when you want one file. \`/cursor-download ${normalizedAgentId} ABSOLUTE_PATH\` still works anywhere as an explicit fallback.`,
       });
     } catch (err) {
       await sendCursorMessage(
@@ -2844,11 +3197,11 @@ async function main(): Promise<void> {
         commandText,
       });
       const lines = [
-        `Started desktop bridge terminal command ${started.commandId}.`,
+        `Andrea started desktop bridge terminal command ${started.commandId}.`,
         formatCursorTerminalStatusMessage(normalizedAgentId, started.terminal),
         'Recent output:',
         formatCursorTerminalOutputSection(started.output),
-        'Use /cursor-terminal-status or /cursor-terminal-log as a reply to this Cursor card for machine-control follow-up.',
+        'Reply to this card with `/cursor-terminal-status` or `/cursor-terminal-log` when you want the latest machine-side state.',
       ];
       await sendCursorAgentMessage({
         chatJid,
@@ -3080,7 +3433,7 @@ async function main(): Promise<void> {
       provider: 'desktop',
       sourceMessage,
       contextKind: 'cursor_job_message',
-      text: `Desktop bridge terminal control is available for ${normalizedAgentId}.\n\nRun /cursor-terminal ${normalizedAgentId} <command> for a new command, /cursor-terminal-status ${normalizedAgentId} for the current state, or /cursor-terminal-log ${normalizedAgentId} for recent output.\n\nIf you reply to this Cursor card, you can omit the id for /cursor-terminal-status and /cursor-terminal-log.`,
+      text: `Desktop bridge terminal control is available for ${formatOpaqueTaskId(normalizedAgentId)}.\n\nUse \`/cursor-terminal ${normalizedAgentId} <command>\` when you want Andrea to run a new machine-side command. Reply to this card with \`/cursor-terminal-status\` or \`/cursor-terminal-log\` when you want the latest state or output without retyping the id.`,
     });
   }
 
@@ -3134,9 +3487,15 @@ async function main(): Promise<void> {
         contextKind: 'cursor_job_card',
         inlineActions: buildCursorJobCardActions(synced.cursorJob),
         text: [
-          `Synced ${labelCursorRecord(synced.cursorJob)} ${synced.cursorJob.id}. Status: ${synced.cursorJob.status}. Result files: ${synced.artifacts.length}.`,
+          `Refreshed ${labelCursorRecord(synced.cursorJob)} ${formatOpaqueTaskId(synced.cursorJob.id)}.`,
+          `Status: ${formatHumanTaskStatus(synced.cursorJob.status)}`,
+          synced.cursorJob.provider === 'cloud'
+            ? `Results: ${synced.artifacts.length === 0 ? 'none yet' : `${synced.artifacts.length} file${synced.artifacts.length === 1 ? '' : 's'}`}`
+            : null,
           buildCursorNextStepMessage(synced.cursorJob),
-        ].join('\n\n'),
+        ]
+          .filter((line): line is string => Boolean(line))
+          .join('\n\n'),
       });
     } catch (err) {
       await sendCursorMessage(
@@ -3188,7 +3547,7 @@ async function main(): Promise<void> {
         sourceMessage,
         contextKind: 'cursor_job_card',
         inlineActions: buildCursorJobCardActions(stopped),
-        text: `Stop requested for ${labelCursorRecord(stopped)} ${stopped.id}. Current status: ${stopped.status}.\n\nUse /cursor-sync ${stopped.id} to refresh its final state.`,
+        text: `Andrea asked Cursor to stop ${labelCursorRecord(stopped)} ${formatOpaqueTaskId(stopped.id)}.\n\nStatus: ${formatHumanTaskStatus(stopped.status)}\n\nTap \`Refresh\` when you want the latest final state.`,
       });
     } catch (err) {
       await sendCursorMessage(
@@ -3243,9 +3602,12 @@ async function main(): Promise<void> {
         contextKind: 'cursor_job_card',
         inlineActions: buildCursorJobCardActions(followed),
         text: [
-          `Follow-up sent to ${labelCursorRecord(followed)} ${followed.id}. Status: ${followed.status}.`,
+          `Andrea is continuing ${labelCursorRecord(followed)} ${formatOpaqueTaskId(followed.id)}.`,
+          `Status: ${formatHumanTaskStatus(followed.status)}`,
           buildCursorNextStepMessage(followed),
-        ].join('\n\n'),
+        ]
+          .filter((line): line is string => Boolean(line))
+          .join('\n\n'),
       });
     } catch (err) {
       await sendCursorMessage(
@@ -3980,7 +4342,7 @@ async function main(): Promise<void> {
             channel
               ?.sendMessage(
                 chatJid,
-                'No current Cursor job is selected yet. Open `Jobs`, tap a job, then reply here with plain text for Cloud follow-up.',
+                'No current Cursor task is selected yet. Open `Jobs`, tap a task, then reply here with plain text to continue it.',
                 buildOperatorSendOptions(msg),
               )
               .catch((err) =>
@@ -3997,7 +4359,7 @@ async function main(): Promise<void> {
             channel
               ?.sendMessage(
                 chatJid,
-                'Desktop bridge sessions use `Sync`, `Messages`, and `Terminal*` controls rather than plain-text follow-up prompts.',
+                'Desktop sessions use `Refresh`, `View Output`, and `Terminal*` controls rather than plain-text continuation prompts.',
                 buildOperatorSendOptions(msg),
               )
               .catch((err) =>
@@ -4009,8 +4371,59 @@ async function main(): Promise<void> {
             return;
           }
 
-          handleCursorFollowup(chatJid, null, rawTrimmed, msg).catch((err) =>
+          handleCursorFollowup(
+            chatJid,
+            repliedCursorDashboard.agentId,
+            rawTrimmed,
+            msg,
+          ).catch((err) =>
             logger.error({ err, chatJid }, 'Cursor dashboard followup error'),
+          );
+          return;
+        }
+
+        if (repliedCursorDashboard.state.kind === 'runtime_current') {
+          if (!repliedCursorDashboard.agentId) {
+            const channel = findChannel(channels, chatJid);
+            channel
+              ?.sendMessage(
+                chatJid,
+                'No current Codex/OpenAI task is selected yet. Open `Codex/OpenAI`, tap `Recent Work`, then reply here with plain text to continue it.',
+                buildOperatorSendOptions(msg),
+              )
+              .catch((err) =>
+                logger.error(
+                  { err, chatJid },
+                  'Runtime current dashboard guidance send failed',
+                ),
+              );
+            return;
+          }
+
+          if (!andreaRuntimeExecutionEnabled) {
+            const channel = findChannel(channels, chatJid);
+            channel
+              ?.sendMessage(
+                chatJid,
+                buildAndreaRuntimeDisabledMessage(),
+                buildOperatorSendOptions(msg),
+              )
+              .catch((err) =>
+                logger.error(
+                  { err, chatJid },
+                  'Runtime current dashboard disabled guidance send failed',
+                ),
+              );
+            return;
+          }
+
+          handleAndreaRuntimeCommand(
+            chatJid,
+            `/runtime-followup ${repliedCursorDashboard.agentId} ${rawTrimmed}`,
+            '/runtime-followup',
+            msg,
+          ).catch((err) =>
+            logger.error({ err, chatJid }, 'Runtime dashboard followup error'),
           );
           return;
         }
@@ -4054,7 +4467,7 @@ async function main(): Promise<void> {
           channel
             ?.sendMessage(
               chatJid,
-              'Desktop bridge sessions use /cursor-sync, /cursor-conversation, and /cursor-terminal* rather than plain-text follow-up prompts.',
+              'Desktop sessions use /cursor-sync, /cursor-conversation, and /cursor-terminal* rather than plain-text continuation prompts.',
               buildOperatorSendOptions(msg),
             )
             .catch((err) =>

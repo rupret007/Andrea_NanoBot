@@ -138,7 +138,7 @@ Use this when you want to reply to a specific Cursor card without retyping a raw
 
 ```bash
 npm run telegram:user:tap -- 1234 1
-npm run telegram:user:tap -- 1234 "Files"
+npm run telegram:user:tap -- 1234 "Results"
 ```
 
 Expected behavior:
@@ -172,10 +172,10 @@ For Cursor-specific operator validation, prefer this live workflow:
 2. note the dashboard message id from stdout
 3. `npm run telegram:user:tap -- <dashboard_id> "Jobs"`
 4. `npm run telegram:user:tap -- <dashboard_id> 1`
-5. `npm run telegram:user:tap -- <dashboard_id> "Sync"`
-6. `npm run telegram:user:tap -- <dashboard_id> "Text"`
-7. `npm run telegram:user:tap -- <dashboard_id> "Files"`
-8. `npm run telegram:user:tap -- <dashboard_id> "Follow Up"`
+5. `npm run telegram:user:tap -- <dashboard_id> "Refresh"`
+6. `npm run telegram:user:tap -- <dashboard_id> "View Output"`
+7. `npm run telegram:user:tap -- <dashboard_id> "Results"`
+8. `npm run telegram:user:tap -- <dashboard_id> "Continue"`
 9. `npm run telegram:user:send -- --reply-to <dashboard_id> "continue with ..."` for a Cloud follow-up
 10. `npm run telegram:user:tap -- <dashboard_id> "New Cloud Job"` when you want to exercise the create wizard
 
@@ -184,6 +184,8 @@ Raw ids still work, but the normal Telegram operator path is now dashboard-, til
 If you are validating the merged `andrea_runtime` lane instead of Cursor:
 
 - keep the test in the main control chat
+- start from `/cursor`, then tap `Codex/OpenAI`
+- use `Recent Work` or `Current Task` there before falling back to `/runtime-*`
 - treat `/runtime-*` as secondary scaffolding, not the primary shell
 - only expect live execution when `ANDREA_RUNTIME_EXECUTION_ENABLED=true` and the Codex/OpenAI runtime has been validated on this host
 

@@ -128,7 +128,8 @@ Andrea_NanoBot now owns the shared shell while backend lanes own execution truth
   - primary taught dashboard and job workflow
 - **`andrea_runtime` is now integrated as a secondary lane**
   - brings Codex/OpenAI runtime orchestration into this repo
-  - currently exposed only through temporary `/runtime-*` scaffolding
+  - now has a small `Codex/OpenAI` surface inside the primary `/cursor` work panel
+  - `/runtime-*` remains secondary transitional scaffolding
   - does not replace Cursor or the `/cursor` dashboard
 
 Shared shell handles now resolve as `{ laneId, jobId }`.
@@ -171,7 +172,7 @@ Preferred operator command style:
 - public-safe commands stay documented exactly as shown above
 - deeper operator examples use hyphen aliases in Telegram, such as `/cursor`, `/cursor-jobs`, and `/cursor-create`
 - operator examples use `/cursor-results` for output files and `/cursor-download` for one-file retrieval
-- the normal Telegram operator flow is now `/cursor` -> `Jobs`/`Current Job`/`New Cloud Job` tiles -> tap a job/action -> reply with plain text only when you are supplying a Cloud follow-up or a new-job prompt
+- the normal Telegram operator flow is now `/cursor` -> `Jobs`/`Current Job`/`New Cloud Job` or `Codex/OpenAI` tiles -> tap a task/action -> reply with plain text only when you are supplying a follow-up prompt or a new-job prompt
 - underscore aliases still work for compatibility, but the docs now standardize on the hyphen form for operator workflows
 - older `/cursor-artifacts` and `/cursor-artifact-link` aliases still work for compatibility, but they are no longer the preferred operator examples
 
@@ -205,10 +206,11 @@ Optional integrations such as Cursor Cloud job control, desktop bridge control, 
 
 - help with repos, debugging, and code tasks
 - use `/cursor_status` as the safe Cursor readiness check
-- operators can create, follow up, stop, inspect, and recover **Cursor Cloud** coding jobs from the main control chat
-- operators use `/cursor-conversation` for text output and `/cursor-results` plus `/cursor-download` for Cloud output files
+- operators can create, continue, stop, inspect, and recover **Cursor Cloud** coding tasks from the main control chat
+- operators use `Refresh`, `View Output`, and `Results` in `/cursor`, while `/cursor-conversation`, `/cursor-results`, and `/cursor-download` stay available as explicit fallbacks
 - operators can sync and inspect **desktop bridge sessions**, then run line-oriented terminal commands against tracked bridge sessions on their own machine
-- operators can also use the integrated **`andrea_runtime` lane** through temporary `/runtime-*` commands when that lane is explicitly enabled and validated on the host
+- operators can also open the integrated **Codex/OpenAI runtime** lane from `/cursor` to review or continue runtime tasks when that lane is enabled and validated on the host
+- `/runtime-*` remains available as secondary explicit scaffolding for direct runtime control
 - keep optional integrations behind explicit operator setup instead of treating them as default demo features
 
 Important Cursor rule:

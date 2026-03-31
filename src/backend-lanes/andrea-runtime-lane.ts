@@ -31,14 +31,14 @@ const ANDREA_RUNTIME_CAPABILITIES: BackendCapabilitySet = {
 function toBackendJobSummary(job: RuntimeOrchestrationJob): BackendJobSummary {
   return {
     handle: { laneId: 'andrea_runtime', jobId: job.jobId },
-    title: 'Andrea runtime job',
+    title: 'Codex/OpenAI task',
     status: job.status,
     summary: job.promptPreview,
     updatedAt: job.updatedAt,
     createdAt: job.createdAt,
     sourceRepository: null,
     targetUrl: null,
-    laneLabel: 'Andrea Runtime',
+    laneLabel: 'Codex/OpenAI Runtime',
     capabilities: ANDREA_RUNTIME_CAPABILITIES,
   };
 }
@@ -90,12 +90,12 @@ function buildRuntimeActionDescriptors(
 ): BackendActionDescriptor[] {
   const actions: BackendActionDescriptor[] = [
     { actionId: 'job.refresh', label: 'Refresh' },
-    { actionId: 'job.output', label: 'Output' },
-    { actionId: 'job.followup', label: 'Follow Up' },
+    { actionId: 'job.output', label: 'View Output' },
+    { actionId: 'job.followup', label: 'Continue' },
   ];
 
   if (job.status === 'queued' || job.status === 'running') {
-    actions.push({ actionId: 'job.stop', label: 'Stop' });
+    actions.push({ actionId: 'job.stop', label: 'Stop Run' });
   }
 
   return actions;
@@ -106,7 +106,7 @@ export function createAndreaRuntimeBackendLane(
 ): AndreaRuntimeBackendLane {
   return {
     id: 'andrea_runtime',
-    label: 'Andrea Runtime',
+    label: 'Codex/OpenAI Runtime',
     getService() {
       return service;
     },
@@ -214,7 +214,7 @@ export function createAndreaRuntimeBackendLane(
         handle: params.handle,
         supported: false,
         files: [],
-        note: 'Andrea runtime jobs do not expose shell file results yet.',
+        note: 'Codex/OpenAI tasks do not expose shell results yet.',
       };
     },
     getActionDescriptors(job) {

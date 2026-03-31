@@ -21,14 +21,14 @@ function makeSummary(
 ): BackendJobSummary {
   return {
     handle: { laneId: 'andrea_runtime', jobId: 'runtime-job-1' },
-    title: 'Andrea runtime job',
+    title: 'Codex/OpenAI task',
     status: 'running',
     summary: 'Keep shipping',
     updatedAt: '2026-03-30T00:02:00.000Z',
     createdAt: '2026-03-30T00:00:00.000Z',
     sourceRepository: null,
     targetUrl: null,
-    laneLabel: 'Andrea Runtime',
+    laneLabel: 'Codex/OpenAI Runtime',
     capabilities: {
       canCreateJob: true,
       canFollowUp: true,
@@ -103,7 +103,7 @@ describe('runtime commands', () => {
       },
       canExecute: true,
       getExecutionDisabledMessage() {
-        return 'Andrea runtime execution is integrated but not enabled on this host yet.';
+        return "Andrea's Codex/OpenAI runtime lane is integrated, but execution is still turned off on this host.\nKeep using /cursor as the main operator shell today. You can still review existing runtime work where it is available.\nEnable ANDREA_RUNTIME_EXECUTION_ENABLED=true only after validating the Codex/OpenAI runtime container and credentials on this machine.";
       },
       getRuntimeJobs() {
         return [];
@@ -165,7 +165,7 @@ describe('runtime commands', () => {
 
   it('formats the empty jobs state clearly', () => {
     expect(formatRuntimeJobsMessage([])).toBe(
-      'Andrea has no active or queued runtime jobs right now.',
+      'Andrea has no recent Codex/OpenAI tasks in this workspace right now.',
     );
   });
 
@@ -178,9 +178,10 @@ describe('runtime commands', () => {
       }),
     ]);
 
-    expect(message).toContain('*Andrea Runtime Jobs*');
-    expect(message).toContain('1. runtime-job-1 [running]');
-    expect(message).toContain('2. runtime-job-2 [queued]');
+    expect(message).toContain('*Codex/OpenAI Work*');
+    expect(message).toContain('1. runtime-job-1 [Working]');
+    expect(message).toContain('2. runtime-job-2 [Queued]');
+    expect(message).toContain('Reply to a Codex/OpenAI task card');
     expect(message).toContain('/runtime-followup');
   });
 
@@ -248,6 +249,9 @@ describe('runtime commands', () => {
     });
     expect(followUpLegacyGroup).not.toHaveBeenCalled();
     expect(runtimeMessages[0].jobId).toBe('runtime-job-2');
+    expect(runtimeMessages[0].text).toContain(
+      'Andrea is continuing Codex/OpenAI task runtime-job-2. Status: Queued.',
+    );
   });
 
   it('falls back to legacy group folders for follow-up when no job context exists', async () => {
@@ -316,7 +320,7 @@ describe('runtime commands', () => {
     await dispatchRuntimeCommand(deps, context);
 
     expect(runtimeMessages[0].jobId).toBe('runtime-job-1');
-    expect(runtimeMessages[0].text).toContain('Output (final_output):');
+    expect(runtimeMessages[0].text).toContain('Current final output:');
     expect(runtimeMessages[0].text).toContain('final output');
   });
 
@@ -363,7 +367,7 @@ describe('runtime commands', () => {
     await dispatchRuntimeCommand(deps, context);
 
     expect(sentMessages).toEqual([
-      'Andrea runtime execution is integrated but not enabled on this host yet.',
+      "Andrea's Codex/OpenAI runtime lane is integrated, but execution is still turned off on this host.\nKeep using /cursor as the main operator shell today. You can still review existing runtime work where it is available.\nEnable ANDREA_RUNTIME_EXECUTION_ENABLED=true only after validating the Codex/OpenAI runtime container and credentials on this machine.",
     ]);
   });
 });

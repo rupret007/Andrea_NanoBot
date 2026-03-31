@@ -7,6 +7,11 @@ import {
   upsertCursorOperatorContext,
 } from './db.js';
 import { normalizeCursorAgentId } from './cursor-agent-id.js';
+import {
+  formatHumanTaskStatus,
+  formatOpaqueTaskId,
+  formatSystemStatus,
+} from './task-presentation.js';
 import type { ChannelInlineAction } from './types.js';
 
 const CURSOR_CONTEXT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -606,8 +611,7 @@ export function resolveCursorTarget(params: {
 }
 
 export function formatCursorDisplayId(id: string): string {
-  if (id.length <= 18) return id;
-  return `${id.slice(0, 10)}...${id.slice(-6)}`;
+  return formatOpaqueTaskId(id);
 }
 
 function summarizeCursorRecord(record: CursorAgentView): string | null {
@@ -622,23 +626,26 @@ function summarizeCursorRecord(record: CursorAgentView): string | null {
 export function formatCursorListEntry(record: FlattenedCursorJobEntry): string {
   const summary = summarizeCursorRecord(record);
   const updatedAt = record.updatedAt || record.lastSyncedAt || record.createdAt;
-  return `${record.ordinal}. ${record.provider === 'cloud' ? 'Cloud' : 'Desktop'} ${formatCursorDisplayId(record.id)} [${record.status}]${summary ? `\n   ${summary}` : ''}${updatedAt ? `\n   updated ${updatedAt}` : ''}`;
+  return `${record.ordinal}. ${record.provider === 'cloud' ? 'Cloud' : 'Desktop'} ${formatCursorDisplayId(record.id)} [${formatHumanTaskStatus(record.status)}]${summary ? `\n   ${summary}` : ''}${updatedAt ? `\n   updated ${updatedAt}` : ''}`;
 }
 
 export function formatCursorJobCard(
   record: CursorAgentView,
   resultCount = 0,
 ): string {
-  const title = `${record.provider === 'cloud' ? 'Cursor Cloud job' : 'Desktop bridge session'} ${formatCursorDisplayId(record.id)}`;
+  const title = `${record.provider === 'cloud' ? 'Cursor Cloud task' : 'Desktop bridge session'} ${formatCursorDisplayId(record.id)}`;
   const lines = [
     title,
-    `Status: ${record.status}`,
+    `Status: ${formatHumanTaskStatus(record.status)}`,
+    `System status: ${formatSystemStatus(record.status)}`,
     record.model ? `Model: ${record.model}` : null,
     record.sourceRepository ? `Repo: ${record.sourceRepository}` : null,
     record.targetUrl ? `URL: ${record.targetUrl}` : null,
     record.targetPrUrl ? `PR: ${record.targetPrUrl}` : null,
     record.updatedAt ? `Updated: ${record.updatedAt}` : null,
-    record.provider === 'cloud' ? `Result files: ${resultCount}` : null,
+    record.provider === 'cloud'
+      ? `Results: ${resultCount === 0 ? 'none yet' : `${resultCount} file${resultCount === 1 ? '' : 's'}`}`
+      : null,
   ].filter((line): line is string => Boolean(line));
 
   return lines.join('\n');
@@ -666,18 +673,20 @@ export function buildCursorJobCardActions(
 ): ChannelInlineAction[] {
   if (record.provider === 'desktop') {
     return [
-      { label: 'Sync', actionId: '/cursor-sync' },
-      { label: 'Messages', actionId: '/cursor-conversation' },
+      { label: 'Refresh', actionId: '/cursor-sync' },
+      { label: 'View Output', actionId: '/cursor-conversation' },
       { label: 'Terminal', actionId: '/cursor-terminal-help' },
       { label: 'Terminal Log', actionId: '/cursor-terminal-log' },
     ];
   }
 
   return [
-    { label: 'Sync', actionId: '/cursor-sync' },
-    { label: 'Text', actionId: '/cursor-conversation' },
-    { label: 'Files', actionId: '/cursor-results' },
-    ...(record.targetUrl ? [{ label: 'Open', url: record.targetUrl }] : []),
-    { label: 'Stop', actionId: '/cursor-stop' },
+    { label: 'Refresh', actionId: '/cursor-sync' },
+    { label: 'View Output', actionId: '/cursor-conversation' },
+    { label: 'Results', actionId: '/cursor-results' },
+    ...(record.targetUrl
+      ? [{ label: 'Open in Cursor', url: record.targetUrl }]
+      : []),
+    { label: 'Stop Run', actionId: '/cursor-stop' },
   ];
 }
