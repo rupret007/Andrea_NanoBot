@@ -86,6 +86,7 @@ import {
   formatCursorOperationFailure,
   summarizeCursorCapabilities,
 } from './cursor-capabilities.js';
+import { formatBackendOperationFailure } from './backend-lane-errors.js';
 import {
   formatAmazonBusinessStatusMessage,
   getAmazonBusinessStatus,
@@ -160,12 +161,15 @@ import {
   type FlattenedCursorJobEntry,
   getActiveCursorOperatorContext,
   getActiveCursorMessageContext,
+  getBackendContextGuidance,
   getCursorContextGuidance,
+  getSelectedLaneJobId,
   looksLikeCursorTargetToken,
   rememberCursorDashboardMessage,
   rememberCursorJobList,
   rememberCursorMessageContext,
   rememberCursorOperatorSelection,
+  resolveBackendTarget,
   resolveCursorTarget,
 } from './cursor-operator-context.js';
 import {
@@ -1331,13 +1335,14 @@ async function main(): Promise<void> {
     return sent.platformMessageId;
   }
 
-  async function sendCursorAgentMessage(params: {
+  async function sendBackendJobMessage(params: {
     chatJid: string;
     text: string;
-    agentId: string;
-    provider?: 'cloud' | 'desktop';
+    laneId: 'cursor' | 'andrea_runtime';
+    jobId: string;
     sourceMessage?: NewMessage;
     contextKind: string;
+    payload?: Record<string, unknown> | null;
     inlineActions?: SendMessageOptions['inlineActions'];
     replyToMessageId?: string;
   }): Promise<string | undefined> {
@@ -1356,18 +1361,41 @@ async function main(): Promise<void> {
         platformMessageId,
         threadId: params.sourceMessage?.thread_id,
         contextKind: params.contextKind,
-        laneId: 'cursor',
-        agentId: params.agentId,
-        payload: params.provider ? { provider: params.provider } : null,
+        laneId: params.laneId,
+        agentId: params.jobId,
+        payload: params.payload || null,
       });
     }
     rememberCursorOperatorSelection({
       chatJid: params.chatJid,
       threadId: params.sourceMessage?.thread_id,
-      laneId: 'cursor',
-      agentId: params.agentId,
+      laneId: params.laneId,
+      agentId: params.jobId,
     });
     return platformMessageId;
+  }
+
+  async function sendCursorAgentMessage(params: {
+    chatJid: string;
+    text: string;
+    agentId: string;
+    provider?: 'cloud' | 'desktop';
+    sourceMessage?: NewMessage;
+    contextKind: string;
+    inlineActions?: SendMessageOptions['inlineActions'];
+    replyToMessageId?: string;
+  }): Promise<string | undefined> {
+    return sendBackendJobMessage({
+      chatJid: params.chatJid,
+      text: params.text,
+      laneId: 'cursor',
+      jobId: params.agentId,
+      sourceMessage: params.sourceMessage,
+      contextKind: params.contextKind,
+      payload: params.provider ? { provider: params.provider } : null,
+      inlineActions: params.inlineActions,
+      replyToMessageId: params.replyToMessageId,
+    });
   }
 
   function getCursorDashboardMessageContext(
@@ -1433,8 +1461,7 @@ async function main(): Promise<void> {
   } | null> {
     const group = registeredGroups[chatJid];
     if (!group) return null;
-    const activeContext = getActiveCursorOperatorContext(chatJid, threadId);
-    const selectedAgentId = activeContext?.selectedAgentId;
+    const selectedAgentId = getSelectedLaneJobId(chatJid, threadId, 'cursor');
     const inventory = await cursorBackendLane.getInventory({
       groupFolder: group.folder,
       chatJid,
@@ -1723,7 +1750,6 @@ async function main(): Promise<void> {
       forceNew: params.forceNew,
     });
   }
-
   async function resolveCursorTargetOrReply(params: {
     chatJid: string;
     message?: NewMessage;
@@ -2689,7 +2715,7 @@ async function main(): Promise<void> {
     }
 
     try {
-      const artifacts = await cursorBackendLane.getFiles({
+      const artifacts = await cursorBackendLane.getCursorFiles({
         handle: toCursorHandle(normalizedAgentId),
         groupFolder: group.folder,
         chatJid,
@@ -3241,16 +3267,61 @@ async function main(): Promise<void> {
   ): Promise<void> {
     const channel = findChannel(channels, chatJid);
     if (!channel) return;
+    const group = registeredGroups[chatJid];
+    if (!group) {
+      await channel.sendMessage(
+        chatJid,
+        'This chat is not registered yet. Run /registermain in a DM first.',
+        buildOperatorSendOptions(sourceMessage),
+      );
+      return;
+    }
     const runtimeLane = getAndreaRuntimeLane();
 
     await dispatchRuntimeCommand(
       {
         async sendToChat(targetChatJid, text) {
-          await channel.sendMessage(
+          const sent = await channel.sendMessage(
             targetChatJid,
             text,
             buildOperatorSendOptions(sourceMessage),
           );
+          return sent.platformMessageId;
+        },
+        async sendRuntimeJobMessage({
+          operatorChatJid,
+          text,
+          jobId,
+          contextKind,
+          payload,
+        }) {
+          return sendBackendJobMessage({
+            chatJid: operatorChatJid,
+            text,
+            laneId: 'andrea_runtime',
+            jobId,
+            sourceMessage,
+            contextKind,
+            payload,
+          });
+        },
+        rememberRuntimeJobList({
+          chatJid: targetChatJid,
+          threadId,
+          listMessageId,
+          jobs,
+        }) {
+          rememberCursorJobList({
+            chatJid: targetChatJid,
+            threadId,
+            listMessageId,
+            items: jobs.map((job) => ({
+              laneId: 'andrea_runtime',
+              id: job.handle.jobId,
+              provider: null,
+            })),
+            selectedLaneId: 'andrea_runtime',
+          });
         },
         getStatusMessage() {
           return buildAndreaRuntimeStatusMessage();
@@ -3261,6 +3332,85 @@ async function main(): Promise<void> {
         },
         getRuntimeJobs() {
           return queue.getRuntimeJobs();
+        },
+        async listJobs({ chatJid: targetChatJid, groupFolder, limit }) {
+          return runtimeLane.listJobs({
+            chatJid: targetChatJid,
+            groupFolder,
+            limit,
+          });
+        },
+        resolveTarget({
+          chatJid: targetChatJid,
+          threadId,
+          replyToMessageId,
+          requestedTarget,
+        }) {
+          const resolved = resolveBackendTarget({
+            chatJid: targetChatJid,
+            threadId,
+            replyToMessageId,
+            requestedTarget,
+            laneId: 'andrea_runtime',
+            parseExplicitTarget(raw) {
+              return /^runtime-job-/i.test(raw.trim()) ? raw.trim() : null;
+            },
+          });
+          return resolved.target
+            ? {
+                target: {
+                  handle: resolved.target.handle,
+                  jobId: resolved.target.agentId,
+                  via: resolved.target.via,
+                },
+                failureMessage: null,
+              }
+            : {
+                target: null,
+                failureMessage:
+                  resolved.failureMessage ||
+                  getBackendContextGuidance('andrea_runtime'),
+              };
+        },
+        async refreshJob(args) {
+          return runtimeLane.refreshJob(args);
+        },
+        async getPrimaryOutput(args) {
+          return runtimeLane.getPrimaryOutput(args);
+        },
+        async getJobLogs(args) {
+          return runtimeLane.getJobLogs(args);
+        },
+        async stopJob(args) {
+          return runtimeLane.stopJob(args);
+        },
+        async followUpJob(args) {
+          return runtimeLane.followUp(args);
+        },
+        async followUpLegacyGroup({
+          groupFolder,
+          chatJid: targetChatJid,
+          promptText,
+        }) {
+          const created = await runtimeLane.getService().followUp({
+            groupFolder,
+            prompt: promptText,
+            source: {
+              system: 'operator_command',
+              actorRef: targetChatJid,
+            },
+          });
+          const details = await runtimeLane.getJob({
+            handle: { laneId: 'andrea_runtime', jobId: created.jobId },
+            groupFolder,
+            chatJid: targetChatJid,
+          });
+          if (!details) {
+            throw new Error(
+              `No runtime job found for "${created.jobId}" after follow-up queued.`,
+            );
+          }
+          return details;
         },
         findGroupByFolder(folder) {
           const entry = Object.entries(registeredGroups).find(
@@ -3273,16 +3423,24 @@ async function main(): Promise<void> {
         requestStop(groupJid) {
           return queue.requestStop(groupJid);
         },
-        orchestration: andreaRuntimeExecutionEnabled
-          ? runtimeLane.getService()
-          : undefined,
-        async queueFollowup() {
-          throw new Error(buildAndreaRuntimeDisabledMessage());
+        formatFailure({ operation, err, targetDisplay, guidance }) {
+          return formatBackendOperationFailure({
+            laneId: 'andrea_runtime',
+            operation,
+            err,
+            targetDisplay,
+            guidance,
+          });
         },
       },
-      chatJid,
-      rawTrimmed,
-      commandToken,
+      {
+        operatorChatJid: chatJid,
+        groupFolder: group.folder,
+        rawTrimmed,
+        commandToken,
+        threadId: sourceMessage?.thread_id,
+        replyToMessageId: sourceMessage?.reply_to_id,
+      },
     );
   }
 
@@ -3858,21 +4016,36 @@ async function main(): Promise<void> {
         }
       }
 
-      const repliedCursorContext =
+      const repliedMessageContext =
         registeredGroups[chatJid]?.isMain === true &&
         !isSlashCommand &&
         rawTrimmed
           ? getActiveCursorMessageContext(chatJid, msg.reply_to_id)
           : null;
       if (
-        repliedCursorContext?.agentId &&
-        repliedCursorContext.contextKind !== 'cursor_dashboard'
+        repliedMessageContext?.agentId &&
+        repliedMessageContext.contextKind !== 'cursor_dashboard'
       ) {
+        if (repliedMessageContext.laneId === 'andrea_runtime') {
+          handleAndreaRuntimeCommand(
+            chatJid,
+            `/runtime-followup ${rawTrimmed}`,
+            '/runtime-followup',
+            msg,
+          ).catch((err) =>
+            logger.error(
+              { err, chatJid },
+              'Andrea runtime reply followup error',
+            ),
+          );
+          return;
+        }
+
         const provider =
-          repliedCursorContext.payload?.provider === 'desktop' ||
-          repliedCursorContext.payload?.provider === 'cloud'
-            ? repliedCursorContext.payload.provider
-            : isDesktopCursorRecord(repliedCursorContext.agentId)
+          repliedMessageContext.payload?.provider === 'desktop' ||
+          repliedMessageContext.payload?.provider === 'cloud'
+            ? repliedMessageContext.payload.provider
+            : isDesktopCursorRecord(repliedMessageContext.agentId)
               ? 'desktop'
               : 'cloud';
 

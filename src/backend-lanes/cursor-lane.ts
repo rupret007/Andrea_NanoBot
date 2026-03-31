@@ -26,11 +26,14 @@ import type {
   BackendActionDescriptor,
   BackendCapabilitySet,
   BackendCreateJobParams,
+  BackendFileEntry,
   BackendFollowUpJobParams,
   BackendGetJobLogsParams,
   BackendGetJobParams,
   BackendJobDetails,
+  BackendJobFilesResult,
   BackendJobHandle,
+  BackendPrimaryOutputResult,
   BackendJobSummary,
   BackendLane,
   BackendListJobsParams,
@@ -42,11 +45,17 @@ const CURSOR_LANE_CAPABILITIES: BackendCapabilitySet = {
   canFollowUp: true,
   canGetLogs: true,
   canStop: true,
+  canRefresh: true,
+  canViewOutput: true,
+  canViewFiles: true,
   actionIds: [
-    'cursor.sync',
-    'cursor.text',
-    'cursor.files',
+    'job.refresh',
+    'job.output',
+    'job.files',
+    'job.followup',
+    'job.stop',
     'cursor.download',
+    'cursor.open',
     'cursor.terminal_status',
     'cursor.terminal_log',
     'cursor.terminal_help',
@@ -54,6 +63,15 @@ const CURSOR_LANE_CAPABILITIES: BackendCapabilitySet = {
     'cursor.terminal_stop',
   ],
 };
+
+function toBackendFileEntry(record: CursorArtifactView): BackendFileEntry {
+  return {
+    path: record.absolutePath,
+    sizeBytes: record.sizeBytes,
+    updatedAt: record.updatedAt,
+    downloadUrl: record.downloadUrl,
+  };
+}
 
 function summarizeCursorJob(record: CursorAgentView): string | null {
   return (
@@ -130,6 +148,13 @@ async function findCursorJob(
   );
 }
 
+function requireCursorGroupFolder(groupFolder: string | undefined): string {
+  if (!groupFolder) {
+    throw new Error('Cursor group folder is required for this operation.');
+  }
+  return groupFolder;
+}
+
 export interface CursorBackendLane extends BackendLane {
   createCursorJob(params: BackendCreateJobParams): Promise<CursorAgentView>;
   followUpCursorJob(params: BackendFollowUpJobParams): Promise<CursorAgentView>;
@@ -143,7 +168,7 @@ export interface CursorBackendLane extends BackendLane {
   getConversation(
     params: BackendGetJobLogsParams,
   ): Promise<CursorConversationMessageView[]>;
-  getFiles(params: BackendGetJobParams): Promise<CursorArtifactView[]>;
+  getCursorFiles(params: BackendGetJobParams): Promise<CursorArtifactView[]>;
   getDownloadLink(params: {
     handle: BackendJobHandle;
     groupFolder: string;
@@ -151,7 +176,9 @@ export interface CursorBackendLane extends BackendLane {
     absolutePath: string;
   }): Promise<CursorArtifactDownloadLinkView>;
   getTrackedArtifactCount(jobId: string): number;
-  getActionDescriptors(record: CursorAgentView): BackendActionDescriptor[];
+  getActionDescriptors(
+    record: BackendJobDetails | CursorAgentView,
+  ): BackendActionDescriptor[];
   getTerminalStatus(
     params: BackendGetJobParams,
   ): Promise<CursorTerminalStatusView>;
@@ -227,7 +254,7 @@ export function createCursorBackendLane(): CursorBackendLane {
     },
     async listJobs(params) {
       const inventory = await listCursorJobInventory({
-        groupFolder: params.groupFolder,
+        groupFolder: requireCursorGroupFolder(params.groupFolder),
         chatJid: params.chatJid,
         limit: params.limit,
       });
@@ -237,6 +264,85 @@ export function createCursorBackendLane(): CursorBackendLane {
         ...inventory.cloudRecoverable,
         ...inventory.desktopRecoverable,
       ].map(toBackendJobSummary);
+    },
+    async refreshJob(params) {
+      const refreshed = await syncCursorAgent({
+        groupFolder: params.groupFolder,
+        chatJid: params.chatJid,
+        agentId: assertCursorHandle(params.handle),
+      });
+      return toBackendJobDetails(refreshed.agent);
+    },
+    async getPrimaryOutput(params): Promise<BackendPrimaryOutputResult> {
+      const messages = await getCursorAgentConversation({
+        groupFolder: params.groupFolder,
+        chatJid: params.chatJid,
+        agentId: assertCursorHandle(params.handle),
+        limit: params.limit ?? 40,
+      });
+      const text =
+        messages.length > 0
+          ? messages
+              .map((message) => {
+                const compact = message.content.replace(/\s+/g, ' ').trim();
+                return `[${message.role}] ${compact}`;
+              })
+              .join('\n')
+          : null;
+      return {
+        handle: params.handle,
+        text,
+        source: messages.length > 0 ? 'conversation' : 'none',
+        lineCount: messages.length,
+      };
+    },
+    async getFiles(params): Promise<BackendJobFilesResult> {
+      const files = await getCursorAgentArtifacts({
+        groupFolder: params.groupFolder,
+        chatJid: params.chatJid,
+        agentId: assertCursorHandle(params.handle),
+      });
+      return {
+        handle: params.handle,
+        supported: true,
+        files: files.map(toBackendFileEntry),
+        note: null,
+      };
+    },
+    getActionDescriptors(job) {
+      const provider =
+        'provider' in job
+          ? job.provider
+          : job.metadata?.provider === 'desktop'
+            ? 'desktop'
+            : 'cloud';
+      if (provider === 'desktop') {
+        return [
+          { actionId: 'job.refresh', label: 'Sync' },
+          { actionId: 'job.output', label: 'Messages' },
+          { actionId: 'cursor.terminal_status', label: 'Terminal Status' },
+          { actionId: 'cursor.terminal_log', label: 'Terminal Log' },
+          { actionId: 'cursor.terminal_help', label: 'Terminal Help' },
+        ];
+      }
+
+      return [
+        { actionId: 'job.refresh', label: 'Sync' },
+        { actionId: 'job.output', label: 'Text' },
+        { actionId: 'job.files', label: 'Files' },
+        ...(('targetUrl' in job ? job.targetUrl : null)
+          ? [
+              {
+                actionId: 'cursor.open',
+                label: 'Open',
+                kind: 'url' as const,
+                url: ('targetUrl' in job ? job.targetUrl : null) || undefined,
+              },
+            ]
+          : []),
+        { actionId: 'job.followup', label: 'Follow Up' },
+        { actionId: 'job.stop', label: 'Stop' },
+      ];
     },
     async getJobLogs(params) {
       const messages = await getCursorAgentConversation({
@@ -269,7 +375,11 @@ export function createCursorBackendLane(): CursorBackendLane {
       return stopCursorJob(params);
     },
     async getInventory(params) {
-      return listCursorJobInventory(params);
+      return listCursorJobInventory({
+        groupFolder: requireCursorGroupFolder(params.groupFolder),
+        chatJid: params.chatJid,
+        limit: params.limit,
+      });
     },
     async syncJob(params) {
       const synced = await syncCursorAgent({
@@ -291,7 +401,7 @@ export function createCursorBackendLane(): CursorBackendLane {
         limit: params.limit ?? 40,
       });
     },
-    async getFiles(params) {
+    async getCursorFiles(params) {
       return getCursorAgentArtifacts({
         groupFolder: params.groupFolder,
         chatJid: params.chatJid,
@@ -308,34 +418,6 @@ export function createCursorBackendLane(): CursorBackendLane {
     },
     getTrackedArtifactCount(jobId) {
       return listCursorAgentArtifacts(jobId).length;
-    },
-    getActionDescriptors(record) {
-      if (record.provider === 'desktop') {
-        return [
-          { actionId: 'cursor.sync', label: 'Sync' },
-          { actionId: 'cursor.text', label: 'Messages' },
-          { actionId: 'cursor.terminal_status', label: 'Terminal Status' },
-          { actionId: 'cursor.terminal_log', label: 'Terminal Log' },
-          { actionId: 'cursor.terminal_help', label: 'Terminal Help' },
-        ];
-      }
-
-      return [
-        { actionId: 'cursor.sync', label: 'Sync' },
-        { actionId: 'cursor.text', label: 'Text' },
-        { actionId: 'cursor.files', label: 'Files' },
-        ...(record.targetUrl
-          ? [
-              {
-                actionId: 'cursor.open',
-                label: 'Open',
-                kind: 'url' as const,
-                url: record.targetUrl,
-              },
-            ]
-          : []),
-        { actionId: 'cursor.stop', label: 'Stop' },
-      ];
     },
     async getTerminalStatus(params) {
       return getCursorTerminalStatus({

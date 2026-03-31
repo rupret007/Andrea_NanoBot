@@ -6,13 +6,16 @@ import {
   buildCursorListSelectionActions,
   flattenCursorJobInventory,
   formatCursorDisplayId,
+  getBackendContextGuidance,
   getActiveCursorMessageContext,
   getActiveCursorOperatorContext,
+  getSelectedLaneJobId,
   looksLikeCursorTargetToken,
   rememberCursorDashboardMessage,
   rememberCursorJobList,
   rememberCursorMessageContext,
   rememberCursorOperatorSelection,
+  resolveBackendTarget,
   resolveCursorTarget,
 } from './cursor-operator-context.js';
 import type { CursorJobInventory } from './cursor-jobs.js';
@@ -142,6 +145,28 @@ describe('resolveCursorTarget', () => {
     expect(resolved.target?.via).toBe('current');
   });
 
+  it('keeps per-lane selections when switching between cursor and runtime jobs', () => {
+    rememberCursorOperatorSelection({
+      chatJid: 'tg:1',
+      threadId: '42',
+      laneId: 'cursor',
+      agentId: 'bc_current',
+    });
+    rememberCursorOperatorSelection({
+      chatJid: 'tg:1',
+      threadId: '42',
+      laneId: 'andrea_runtime',
+      agentId: 'runtime-job-1',
+    });
+
+    const context = getActiveCursorOperatorContext('tg:1', '42');
+    expect(context?.selectedLaneId).toBe('andrea_runtime');
+    expect(getSelectedLaneJobId('tg:1', '42', 'cursor')).toBe('bc_current');
+    expect(getSelectedLaneJobId('tg:1', '42', 'andrea_runtime')).toBe(
+      'runtime-job-1',
+    );
+  });
+
   it('resolves reply context when no explicit target is provided', () => {
     rememberCursorMessageContext({
       chatJid: 'tg:1',
@@ -158,6 +183,62 @@ describe('resolveCursorTarget', () => {
 
     expect(resolved.target?.agentId).toBe('bc_reply');
     expect(resolved.target?.via).toBe('reply');
+  });
+
+  it('resolves runtime ordinals and reply contexts without clobbering cursor snapshots', () => {
+    rememberCursorJobList({
+      chatJid: 'tg:1',
+      threadId: '42',
+      selectedLaneId: 'cursor',
+      items: [
+        { laneId: 'cursor', id: 'bc_123', provider: 'cloud' },
+        { laneId: 'cursor', id: 'desk_456', provider: 'desktop' },
+      ],
+    });
+    rememberCursorJobList({
+      chatJid: 'tg:1',
+      threadId: '42',
+      selectedLaneId: 'andrea_runtime',
+      items: [
+        { laneId: 'andrea_runtime', id: 'runtime-job-1', provider: null },
+        { laneId: 'andrea_runtime', id: 'runtime-job-2', provider: null },
+      ],
+    });
+    rememberCursorMessageContext({
+      chatJid: 'tg:1',
+      platformMessageId: '9002',
+      contextKind: 'runtime_job_card',
+      laneId: 'andrea_runtime',
+      agentId: 'runtime-job-reply',
+      payload: { groupFolder: 'main' },
+    });
+
+    const runtimeOrdinal = resolveBackendTarget({
+      chatJid: 'tg:1',
+      threadId: '42',
+      requestedTarget: '2',
+      laneId: 'andrea_runtime',
+      parseExplicitTarget(raw) {
+        return /^runtime-job-/.test(raw) ? raw : null;
+      },
+    });
+    const cursorOrdinal = resolveCursorTarget({
+      chatJid: 'tg:1',
+      threadId: '42',
+      requestedTarget: '1',
+    });
+    const runtimeReply = resolveBackendTarget({
+      chatJid: 'tg:1',
+      replyToMessageId: '9002',
+      laneId: 'andrea_runtime',
+      parseExplicitTarget(raw) {
+        return /^runtime-job-/.test(raw) ? raw : null;
+      },
+    });
+
+    expect(runtimeOrdinal.target?.agentId).toBe('runtime-job-2');
+    expect(cursorOrdinal.target?.agentId).toBe('bc_123');
+    expect(runtimeReply.target?.agentId).toBe('runtime-job-reply');
   });
 
   it('ignores stale selection context after seven days', () => {
@@ -195,6 +276,21 @@ describe('resolveCursorTarget', () => {
 
     expect(resolved.target).toBeNull();
     expect(resolved.failureMessage).toContain('/cursor');
+  });
+
+  it('returns runtime guidance when runtime context is missing', () => {
+    const resolved = resolveBackendTarget({
+      chatJid: 'tg:1',
+      laneId: 'andrea_runtime',
+      parseExplicitTarget(raw) {
+        return /^runtime-job-/.test(raw) ? raw : null;
+      },
+    });
+
+    expect(resolved.target).toBeNull();
+    expect(resolved.failureMessage).toBe(
+      getBackendContextGuidance('andrea_runtime'),
+    );
   });
 });
 

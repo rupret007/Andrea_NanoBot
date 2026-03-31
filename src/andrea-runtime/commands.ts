@@ -1,6 +1,15 @@
 import path from 'path';
 import fs from 'fs';
 
+import type {
+  BackendGetJobLogsParams,
+  BackendGetJobParams,
+  BackendJobDetails,
+  BackendJobHandle,
+  BackendJobLogsResult,
+  BackendJobSummary,
+  BackendPrimaryOutputResult,
+} from '../backend-lanes/types.js';
 import {
   RUNTIME_FOLLOWUP_COMMANDS,
   RUNTIME_JOBS_COMMANDS,
@@ -8,7 +17,6 @@ import {
   RUNTIME_STATUS_COMMANDS,
   RUNTIME_STOP_COMMANDS,
 } from '../operator-command-gate.js';
-import type { RuntimeOrchestrationService } from './orchestration.js';
 import { resolveGroupFolderPath } from '../group-folder.js';
 
 export interface RuntimeJobSnapshot {
@@ -27,47 +35,191 @@ export interface ResolvedRuntimeGroup {
   folder: string;
 }
 
+export interface ResolvedRuntimeTarget {
+  handle: BackendJobHandle;
+  jobId: string;
+  via: 'explicit' | 'ordinal' | 'current' | 'reply' | 'selected';
+}
+
+export interface RuntimeTargetResolutionResult {
+  target: ResolvedRuntimeTarget | null;
+  failureMessage: string | null;
+}
+
+export interface RuntimeCommandContext {
+  operatorChatJid: string;
+  groupFolder: string;
+  rawTrimmed: string;
+  commandToken: string;
+  threadId?: string;
+  replyToMessageId?: string;
+}
+
 export interface RuntimeCommandDependencies {
-  sendToChat(chatJid: string, text: string): Promise<void>;
+  sendToChat(chatJid: string, text: string): Promise<string | undefined>;
+  sendRuntimeJobMessage(args: {
+    operatorChatJid: string;
+    text: string;
+    jobId: string;
+    contextKind: string;
+    payload?: Record<string, unknown> | null;
+  }): Promise<string | undefined>;
+  rememberRuntimeJobList(args: {
+    chatJid: string;
+    threadId?: string;
+    listMessageId?: string;
+    jobs: BackendJobSummary[];
+  }): void;
   getStatusMessage(): string;
   canExecute: boolean;
   getExecutionDisabledMessage(): string;
   getRuntimeJobs(): RuntimeJobSnapshot[];
   findGroupByFolder(folder: string): ResolvedRuntimeGroup | null;
   requestStop(groupJid: string): boolean;
-  orchestration?: Pick<
-    RuntimeOrchestrationService,
-    'followUp' | 'getJobLogs' | 'listJobs' | 'stopJob'
-  >;
-  queueFollowup(args: {
-    operatorChatJid: string;
-    targetGroupJid: string;
-    targetFolder: string;
-    prompt: string;
-  }): Promise<void>;
+  listJobs(args: {
+    chatJid: string;
+    groupFolder?: string;
+    limit?: number;
+  }): Promise<BackendJobSummary[]>;
+  resolveTarget(args: {
+    chatJid: string;
+    threadId?: string;
+    replyToMessageId?: string;
+    requestedTarget?: string | null;
+  }): RuntimeTargetResolutionResult;
+  refreshJob(args: BackendGetJobParams): Promise<BackendJobDetails | null>;
+  getPrimaryOutput(
+    args: BackendGetJobLogsParams,
+  ): Promise<BackendPrimaryOutputResult>;
+  getJobLogs(args: BackendGetJobLogsParams): Promise<BackendJobLogsResult>;
+  stopJob(args: {
+    handle: BackendJobHandle;
+    groupFolder: string;
+    chatJid: string;
+  }): Promise<BackendJobDetails>;
+  followUpJob(args: {
+    handle: BackendJobHandle;
+    groupFolder: string;
+    chatJid: string;
+    promptText: string;
+  }): Promise<BackendJobDetails>;
+  followUpLegacyGroup(args: {
+    groupFolder: string;
+    chatJid: string;
+    promptText: string;
+  }): Promise<BackendJobDetails>;
+  formatFailure(args: {
+    operation: string;
+    err: unknown;
+    targetDisplay?: string | null;
+    guidance?: string | null;
+  }): string;
 }
 
-export function formatRuntimeJobsMessage(jobs: RuntimeJobSnapshot[]): string {
+function isExplicitRuntimeTargetToken(token: string | undefined): boolean {
+  const trimmed = token?.trim();
+  if (!trimmed) return false;
+  if (/^\d+$/.test(trimmed)) return true;
+  if (trimmed.toLowerCase() === 'current') return true;
+  return /^runtime-job-/i.test(trimmed);
+}
+
+function formatRuntimeJobListEntry(
+  job: BackendJobSummary,
+  ordinal: number,
+): string {
+  const updatedAt = job.updatedAt || job.createdAt;
+  return `${ordinal}. ${job.handle.jobId} [${job.status}]${job.summary ? `\n   ${job.summary}` : ''}${updatedAt ? `\n   updated ${updatedAt}` : ''}`;
+}
+
+export function formatRuntimeJobsMessage(jobs: BackendJobSummary[]): string {
   if (jobs.length === 0) {
     return 'Andrea has no active or queued runtime jobs right now.';
   }
 
   return [
     '*Andrea Runtime Jobs*',
-    ...jobs.map((job) =>
-      [
-        `- ${job.groupFolder || job.groupJid}`,
-        `active=${job.active ? 'yes' : 'no'}`,
-        `idle=${job.idleWaiting ? 'yes' : 'no'}`,
-        `pending_messages=${job.pendingMessages ? 'yes' : 'no'}`,
-        `pending_tasks=${job.pendingTaskCount}`,
-        `container=${job.containerName || 'none'}`,
-      ].join(' | '),
-    ),
+    ...jobs.map((job, index) => formatRuntimeJobListEntry(job, index + 1)),
+    '',
+    'Use /runtime-logs, /runtime-followup, or /runtime-stop with a list number, `current`, a runtime job id, or as a reply to a runtime job message.',
   ].join('\n');
 }
 
-export function readLatestRuntimeLog(
+function parsePositiveInt(raw: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt(raw || '', 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return Math.min(120, parsed);
+}
+
+function formatRuntimeJobCard(job: BackendJobDetails): string {
+  const metadata = (job.metadata || {}) as Record<string, unknown>;
+  const lines = [
+    `Andrea runtime job ${job.handle.jobId}`,
+    `Status: ${job.status}`,
+    typeof metadata.groupFolder === 'string'
+      ? `Group: ${metadata.groupFolder}`
+      : null,
+    typeof metadata.selectedRuntime === 'string'
+      ? `Runtime: ${metadata.selectedRuntime}`
+      : null,
+    typeof metadata.threadId === 'string'
+      ? `Thread: ${metadata.threadId}`
+      : null,
+    job.summary ? `Summary: ${job.summary}` : null,
+    job.updatedAt ? `Updated: ${job.updatedAt}` : null,
+  ].filter((line): line is string => Boolean(line));
+  return lines.join('\n');
+}
+
+function formatRuntimeNextStep(jobId: string): string {
+  return [
+    'Next:',
+    `- use /runtime-logs as a reply to this runtime card for output`,
+    `- use /runtime-stop as a reply to request stop`,
+    '- reply with plain text to continue the same runtime job',
+    `- use /runtime-followup ${jobId} <text> anywhere if you need an explicit fallback`,
+  ].join('\n');
+}
+
+function buildLegacyFallbackContext(params: {
+  deps: RuntimeCommandDependencies;
+  context: RuntimeCommandContext;
+  requestedTarget: string | null;
+}): {
+  target: ResolvedRuntimeTarget | null;
+  failureMessage: string | null;
+  legacyTargetToken: string | null;
+} {
+  const requestedTarget = params.requestedTarget?.trim() || null;
+  if (requestedTarget && isExplicitRuntimeTargetToken(requestedTarget)) {
+    const resolved = params.deps.resolveTarget({
+      chatJid: params.context.operatorChatJid,
+      threadId: params.context.threadId,
+      replyToMessageId: params.context.replyToMessageId,
+      requestedTarget,
+    });
+    return {
+      target: resolved.target,
+      failureMessage: resolved.failureMessage,
+      legacyTargetToken: null,
+    };
+  }
+
+  const resolved = params.deps.resolveTarget({
+    chatJid: params.context.operatorChatJid,
+    threadId: params.context.threadId,
+    replyToMessageId: params.context.replyToMessageId,
+  });
+  return {
+    target: resolved.target,
+    failureMessage: resolved.failureMessage,
+    legacyTargetToken: requestedTarget,
+  };
+}
+
+function readLegacyLogTail(
   groupFolder: string,
   lineLimit: number,
 ): string | null {
@@ -89,187 +241,449 @@ export function readLatestRuntimeLog(
   return [`Latest log: ${latest}`, ...tail].join('\n');
 }
 
+async function handleRuntimeJobs(
+  deps: RuntimeCommandDependencies,
+  context: RuntimeCommandContext,
+): Promise<void> {
+  const jobs = await deps.listJobs({
+    chatJid: context.operatorChatJid,
+    limit: 20,
+  });
+  const messageId = await deps.sendToChat(
+    context.operatorChatJid,
+    formatRuntimeJobsMessage(jobs),
+  );
+  deps.rememberRuntimeJobList({
+    chatJid: context.operatorChatJid,
+    threadId: context.threadId,
+    listMessageId: messageId,
+    jobs,
+  });
+}
+
+async function handleRuntimeFollowup(
+  deps: RuntimeCommandDependencies,
+  context: RuntimeCommandContext,
+): Promise<void> {
+  if (!deps.canExecute) {
+    await deps.sendToChat(
+      context.operatorChatJid,
+      deps.getExecutionDisabledMessage(),
+    );
+    return;
+  }
+
+  const parts = context.rawTrimmed.split(/\s+/);
+  const requestedTarget = parts[1] || null;
+  const resolution = buildLegacyFallbackContext({
+    deps,
+    context,
+    requestedTarget,
+  });
+  const promptText = resolution.target
+    ? parts
+        .slice(
+          requestedTarget && isExplicitRuntimeTargetToken(requestedTarget)
+            ? 2
+            : 1,
+        )
+        .join(' ')
+        .trim()
+    : parts.slice(2).join(' ').trim();
+
+  if (resolution.target) {
+    if (!promptText) {
+      await deps.sendToChat(
+        context.operatorChatJid,
+        'Usage: /runtime-followup [JOB_ID|LIST_NUMBER|current] TEXT',
+      );
+      return;
+    }
+
+    try {
+      const followed = await deps.followUpJob({
+        handle: resolution.target.handle,
+        groupFolder: context.groupFolder,
+        chatJid: context.operatorChatJid,
+        promptText,
+      });
+      await deps.sendRuntimeJobMessage({
+        operatorChatJid: context.operatorChatJid,
+        jobId: followed.handle.jobId,
+        contextKind: 'runtime_job_card',
+        payload: followed.metadata || null,
+        text: [
+          `Follow-up sent to Andrea runtime job ${followed.handle.jobId}. Status: ${followed.status}.`,
+          formatRuntimeNextStep(followed.handle.jobId),
+        ].join('\n\n'),
+      });
+      return;
+    } catch (err) {
+      await deps.sendToChat(
+        context.operatorChatJid,
+        deps.formatFailure({
+          operation: 'Andrea runtime follow-up failed',
+          err,
+          targetDisplay: resolution.target.jobId,
+        }),
+      );
+      return;
+    }
+  }
+
+  const legacyTarget = resolution.legacyTargetToken;
+  if (!legacyTarget || !promptText) {
+    await deps.sendToChat(
+      context.operatorChatJid,
+      resolution.failureMessage ||
+        'Usage: /runtime-followup [JOB_ID|LIST_NUMBER|current|GROUP_FOLDER] TEXT',
+    );
+    return;
+  }
+
+  const groupTarget = deps.findGroupByFolder(legacyTarget);
+  if (!groupTarget) {
+    await deps.sendToChat(
+      context.operatorChatJid,
+      `No registered group found for folder "${legacyTarget}".`,
+    );
+    return;
+  }
+
+  try {
+    const followed = await deps.followUpLegacyGroup({
+      groupFolder: groupTarget.folder,
+      chatJid: context.operatorChatJid,
+      promptText,
+    });
+    await deps.sendRuntimeJobMessage({
+      operatorChatJid: context.operatorChatJid,
+      jobId: followed.handle.jobId,
+      contextKind: 'runtime_job_card',
+      payload: followed.metadata || null,
+      text: [
+        `Follow-up queued for ${legacyTarget} as Andrea runtime job ${followed.handle.jobId}. Status: ${followed.status}.`,
+        formatRuntimeNextStep(followed.handle.jobId),
+      ].join('\n\n'),
+    });
+  } catch (err) {
+    await deps.sendToChat(
+      context.operatorChatJid,
+      deps.formatFailure({
+        operation: 'Andrea runtime follow-up failed',
+        err,
+        targetDisplay: legacyTarget,
+      }),
+    );
+  }
+}
+
+async function handleRuntimeStop(
+  deps: RuntimeCommandDependencies,
+  context: RuntimeCommandContext,
+): Promise<void> {
+  const parts = context.rawTrimmed.split(/\s+/);
+  const requestedTarget = parts[1] || null;
+  const resolution = buildLegacyFallbackContext({
+    deps,
+    context,
+    requestedTarget,
+  });
+
+  if (resolution.target) {
+    try {
+      const stopped = await deps.stopJob({
+        handle: resolution.target.handle,
+        groupFolder: context.groupFolder,
+        chatJid: context.operatorChatJid,
+      });
+      await deps.sendRuntimeJobMessage({
+        operatorChatJid: context.operatorChatJid,
+        jobId: stopped.handle.jobId,
+        contextKind: 'runtime_job_card',
+        payload: stopped.metadata || null,
+        text: `Stop requested for Andrea runtime job ${stopped.handle.jobId}. Current status: ${stopped.status}.\n\nUse /runtime-logs as a reply to this runtime card to refresh its latest output or error state.`,
+      });
+      return;
+    } catch (err) {
+      await deps.sendToChat(
+        context.operatorChatJid,
+        deps.formatFailure({
+          operation: 'Andrea runtime stop failed',
+          err,
+          targetDisplay: resolution.target.jobId,
+        }),
+      );
+      return;
+    }
+  }
+
+  const legacyTarget = resolution.legacyTargetToken;
+  if (!legacyTarget) {
+    await deps.sendToChat(
+      context.operatorChatJid,
+      resolution.failureMessage ||
+        'Usage: /runtime-stop [JOB_ID|LIST_NUMBER|current|GROUP_FOLDER]',
+    );
+    return;
+  }
+
+  const targetGroup = deps.findGroupByFolder(legacyTarget);
+  if (!targetGroup) {
+    await deps.sendToChat(
+      context.operatorChatJid,
+      `No registered group found for folder "${legacyTarget}".`,
+    );
+    return;
+  }
+
+  const candidateJobs = await deps.listJobs({
+    chatJid: context.operatorChatJid,
+    groupFolder: targetGroup.folder,
+    limit: 20,
+  });
+  const activeJob =
+    candidateJobs.find((job) => job.status === 'running') ||
+    candidateJobs.find((job) => job.status === 'queued') ||
+    null;
+
+  if (activeJob) {
+    try {
+      const stopped = await deps.stopJob({
+        handle: activeJob.handle,
+        groupFolder: targetGroup.folder,
+        chatJid: context.operatorChatJid,
+      });
+      await deps.sendRuntimeJobMessage({
+        operatorChatJid: context.operatorChatJid,
+        jobId: stopped.handle.jobId,
+        contextKind: 'runtime_job_card',
+        payload: stopped.metadata || null,
+        text: `Stop requested for ${legacyTarget} via Andrea runtime job ${stopped.handle.jobId}. Current status: ${stopped.status}.`,
+      });
+      return;
+    } catch (err) {
+      await deps.sendToChat(
+        context.operatorChatJid,
+        deps.formatFailure({
+          operation: 'Andrea runtime stop failed',
+          err,
+          targetDisplay: legacyTarget,
+        }),
+      );
+      return;
+    }
+  }
+
+  const stopRequested = deps.requestStop(targetGroup.jid);
+  await deps.sendToChat(
+    context.operatorChatJid,
+    stopRequested
+      ? `Requested runtime stop for ${legacyTarget}.`
+      : `No active runtime job found for ${legacyTarget}.`,
+  );
+}
+
+async function handleRuntimeLogs(
+  deps: RuntimeCommandDependencies,
+  context: RuntimeCommandContext,
+): Promise<void> {
+  const parts = context.rawTrimmed.split(/\s+/);
+  const requestedTarget = parts[1] || null;
+  const resolution = buildLegacyFallbackContext({
+    deps,
+    context,
+    requestedTarget,
+  });
+  const explicitTargetUsed =
+    Boolean(requestedTarget) &&
+    isExplicitRuntimeTargetToken(requestedTarget || undefined);
+  const lineLimit = parsePositiveInt(
+    parts[explicitTargetUsed ? 2 : 1] || undefined,
+    40,
+  );
+
+  if (resolution.target) {
+    try {
+      const [job, output, logs] = await Promise.all([
+        deps.refreshJob({
+          handle: resolution.target.handle,
+          groupFolder: context.groupFolder,
+          chatJid: context.operatorChatJid,
+        }),
+        deps.getPrimaryOutput({
+          handle: resolution.target.handle,
+          groupFolder: context.groupFolder,
+          chatJid: context.operatorChatJid,
+          limit: lineLimit,
+        }),
+        deps.getJobLogs({
+          handle: resolution.target.handle,
+          groupFolder: context.groupFolder,
+          chatJid: context.operatorChatJid,
+          limit: lineLimit,
+        }),
+      ]);
+      const targetJob = job || {
+        handle: resolution.target.handle,
+        status: 'unknown',
+        metadata: null,
+      };
+      const text = output.text || logs.logText;
+      await deps.sendRuntimeJobMessage({
+        operatorChatJid: context.operatorChatJid,
+        jobId: resolution.target.jobId,
+        contextKind: 'runtime_job_message',
+        payload: job?.metadata || {
+          logFile: logs.logFile,
+        },
+        text: text
+          ? [
+              `${formatRuntimeJobCard(targetJob as BackendJobDetails)}`,
+              '',
+              output.text
+                ? `Output (${output.source}):\n${output.text}`
+                : `Logs:\n${logs.logText}`,
+              '',
+              formatRuntimeNextStep(resolution.target.jobId),
+            ].join('\n')
+          : `Andrea runtime job ${resolution.target.jobId} has no output or logs yet.\n\nReply to this runtime card with plain text for follow-up, or rerun /runtime-logs later.`,
+      });
+      return;
+    } catch (err) {
+      await deps.sendToChat(
+        context.operatorChatJid,
+        deps.formatFailure({
+          operation: 'Andrea runtime output lookup failed',
+          err,
+          targetDisplay: resolution.target.jobId,
+        }),
+      );
+      return;
+    }
+  }
+
+  const legacyTarget = resolution.legacyTargetToken;
+  if (!legacyTarget) {
+    await deps.sendToChat(
+      context.operatorChatJid,
+      resolution.failureMessage ||
+        'Usage: /runtime-logs [JOB_ID|LIST_NUMBER|current|GROUP_FOLDER] [LINES]',
+    );
+    return;
+  }
+
+  const groupTarget = deps.findGroupByFolder(legacyTarget);
+  if (!groupTarget) {
+    await deps.sendToChat(
+      context.operatorChatJid,
+      `No registered group found for folder "${legacyTarget}".`,
+    );
+    return;
+  }
+
+  const jobs = await deps.listJobs({
+    chatJid: context.operatorChatJid,
+    groupFolder: groupTarget.folder,
+    limit: 20,
+  });
+  const latestJob = jobs[0] || null;
+
+  if (latestJob) {
+    try {
+      const [job, output, logs] = await Promise.all([
+        deps.refreshJob({
+          handle: latestJob.handle,
+          groupFolder: groupTarget.folder,
+          chatJid: context.operatorChatJid,
+        }),
+        deps.getPrimaryOutput({
+          handle: latestJob.handle,
+          groupFolder: groupTarget.folder,
+          chatJid: context.operatorChatJid,
+          limit: lineLimit,
+        }),
+        deps.getJobLogs({
+          handle: latestJob.handle,
+          groupFolder: groupTarget.folder,
+          chatJid: context.operatorChatJid,
+          limit: lineLimit,
+        }),
+      ]);
+      const text = output.text || logs.logText;
+      await deps.sendRuntimeJobMessage({
+        operatorChatJid: context.operatorChatJid,
+        jobId: latestJob.handle.jobId,
+        contextKind: 'runtime_job_message',
+        payload: job?.metadata || null,
+        text: text
+          ? [
+              `${formatRuntimeJobCard((job || latestJob) as BackendJobDetails)}`,
+              '',
+              output.text
+                ? `Output (${output.source}):\n${output.text}`
+                : `Logs:\n${logs.logText}`,
+              '',
+              formatRuntimeNextStep(latestJob.handle.jobId),
+            ].join('\n')
+          : `Andrea runtime job ${latestJob.handle.jobId} has no output or logs yet.`,
+      });
+      return;
+    } catch (err) {
+      await deps.sendToChat(
+        context.operatorChatJid,
+        deps.formatFailure({
+          operation: 'Andrea runtime output lookup failed',
+          err,
+          targetDisplay: legacyTarget,
+        }),
+      );
+      return;
+    }
+  }
+
+  const legacyLogText = readLegacyLogTail(groupTarget.folder, lineLimit);
+  await deps.sendToChat(
+    context.operatorChatJid,
+    legacyLogText || `No runtime logs found yet for ${legacyTarget}.`,
+  );
+}
+
 export async function dispatchRuntimeCommand(
   deps: RuntimeCommandDependencies,
-  operatorChatJid: string,
-  rawTrimmed: string,
-  commandToken: string,
+  context: RuntimeCommandContext,
 ): Promise<boolean> {
-  if (RUNTIME_STATUS_COMMANDS.has(commandToken)) {
-    await deps.sendToChat(operatorChatJid, deps.getStatusMessage());
+  if (RUNTIME_STATUS_COMMANDS.has(context.commandToken)) {
+    await deps.sendToChat(context.operatorChatJid, deps.getStatusMessage());
     return true;
   }
 
-  if (RUNTIME_JOBS_COMMANDS.has(commandToken)) {
-    await deps.sendToChat(
-      operatorChatJid,
-      formatRuntimeJobsMessage(deps.getRuntimeJobs()),
-    );
+  if (RUNTIME_JOBS_COMMANDS.has(context.commandToken)) {
+    await handleRuntimeJobs(deps, context);
     return true;
   }
 
-  if (RUNTIME_FOLLOWUP_COMMANDS.has(commandToken)) {
-    if (!deps.canExecute) {
-      await deps.sendToChat(
-        operatorChatJid,
-        deps.getExecutionDisabledMessage(),
-      );
-      return true;
-    }
-    const parts = rawTrimmed.split(/\s+/);
-    const targetFolder = parts[1];
-    const followupText = parts.slice(2).join(' ').trim();
-    if (!targetFolder || !followupText) {
-      await deps.sendToChat(
-        operatorChatJid,
-        'Usage: /runtime-followup GROUP_FOLDER TEXT',
-      );
-      return true;
-    }
-
-    const target = deps.findGroupByFolder(targetFolder);
-    if (!target) {
-      await deps.sendToChat(
-        operatorChatJid,
-        `No registered group found for folder "${targetFolder}".`,
-      );
-      return true;
-    }
-
-    if (deps.orchestration) {
-      await deps.orchestration.followUp({
-        groupFolder: target.folder,
-        prompt: followupText,
-        source: {
-          system: 'operator_command',
-          actorRef: operatorChatJid,
-        },
-      });
-    } else {
-      await deps.queueFollowup({
-        operatorChatJid,
-        targetGroupJid: target.jid,
-        targetFolder: target.folder,
-        prompt: followupText,
-      });
-    }
-    await deps.sendToChat(
-      operatorChatJid,
-      `Queued runtime follow-up for ${targetFolder}.`,
-    );
+  if (RUNTIME_FOLLOWUP_COMMANDS.has(context.commandToken)) {
+    await handleRuntimeFollowup(deps, context);
     return true;
   }
 
-  if (RUNTIME_STOP_COMMANDS.has(commandToken)) {
-    if (!deps.canExecute) {
-      await deps.sendToChat(
-        operatorChatJid,
-        deps.getExecutionDisabledMessage(),
-      );
-      return true;
-    }
-    const parts = rawTrimmed.split(/\s+/);
-    const targetFolder = parts[1];
-    if (!targetFolder) {
-      await deps.sendToChat(
-        operatorChatJid,
-        'Usage: /runtime-stop GROUP_FOLDER',
-      );
-      return true;
-    }
-
-    const target = deps.findGroupByFolder(targetFolder);
-    if (!target) {
-      await deps.sendToChat(
-        operatorChatJid,
-        `No registered group found for folder "${targetFolder}".`,
-      );
-      return true;
-    }
-
-    let stopped = false;
-    if (deps.orchestration) {
-      const activeJob = deps.orchestration
-        .listJobs({ groupFolder: target.folder, limit: 20 })
-        .jobs.find((job) => job.status === 'running');
-
-      if (activeJob) {
-        const stopResult = await deps.orchestration.stopJob({
-          jobId: activeJob.jobId,
-          source: {
-            system: 'operator_command',
-            actorRef: operatorChatJid,
-          },
-        });
-        stopped = stopResult.liveStopAccepted || stopResult.job.stopRequested;
-      }
-    }
-
-    if (!stopped) {
-      stopped = deps.requestStop(target.jid);
-    }
-
-    await deps.sendToChat(
-      operatorChatJid,
-      stopped
-        ? `Requested runtime stop for ${targetFolder}.`
-        : `No active runtime job found for ${targetFolder}.`,
-    );
+  if (RUNTIME_STOP_COMMANDS.has(context.commandToken)) {
+    await handleRuntimeStop(deps, context);
     return true;
   }
 
-  if (RUNTIME_LOGS_COMMANDS.has(commandToken)) {
-    const parts = rawTrimmed.split(/\s+/);
-    const targetFolder = parts[1];
-    const parsedLimit = Number.parseInt(parts[2] || '', 10);
-    const lineLimit =
-      Number.isFinite(parsedLimit) && parsedLimit > 0
-        ? Math.min(120, parsedLimit)
-        : 40;
-    if (!targetFolder) {
-      await deps.sendToChat(
-        operatorChatJid,
-        'Usage: /runtime-logs GROUP_FOLDER [LINES]',
-      );
-      return true;
-    }
-
-    const target = deps.findGroupByFolder(targetFolder);
-    if (!target) {
-      await deps.sendToChat(
-        operatorChatJid,
-        `No registered group found for folder "${targetFolder}".`,
-      );
-      return true;
-    }
-
-    let logText: string | null = null;
-    if (deps.orchestration) {
-      const latestJob = deps.orchestration
-        .listJobs({ groupFolder: target.folder, limit: 20 })
-        .jobs.find((job) => Boolean(job.logFile));
-
-      if (latestJob) {
-        const jobLogs = deps.orchestration.getJobLogs({
-          jobId: latestJob.jobId,
-          lines: lineLimit,
-        });
-        logText = jobLogs.logText
-          ? `Runtime job ${latestJob.jobId}\n${jobLogs.logText}`
-          : null;
-      }
-    }
-
-    if (!logText) {
-      logText = readLatestRuntimeLog(target.folder, lineLimit);
-    }
-
-    await deps.sendToChat(
-      operatorChatJid,
-      logText || `No runtime logs found yet for ${targetFolder}.`,
-    );
+  if (RUNTIME_LOGS_COMMANDS.has(context.commandToken)) {
+    await handleRuntimeLogs(deps, context);
     return true;
   }
 
   return false;
+}
+
+export function readLatestRuntimeLog(
+  groupFolder: string,
+  lineLimit: number,
+): string | null {
+  return readLegacyLogTail(groupFolder, lineLimit);
 }

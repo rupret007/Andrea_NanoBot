@@ -123,6 +123,17 @@ describe('createAndreaRuntimeBackendLane', () => {
       chatJid: 'tg:main',
       limit: 10,
     });
+    const output = await lane.getPrimaryOutput({
+      handle: { laneId: 'andrea_runtime', jobId: 'runtime-job-1' },
+      groupFolder: 'main',
+      chatJid: 'tg:main',
+      limit: 10,
+    });
+    const files = await lane.getFiles({
+      handle: { laneId: 'andrea_runtime', jobId: 'runtime-job-1' },
+      groupFolder: 'main',
+      chatJid: 'tg:main',
+    });
 
     expect(created.handle).toEqual({
       laneId: 'andrea_runtime',
@@ -130,10 +141,16 @@ describe('createAndreaRuntimeBackendLane', () => {
     });
     expect(created.laneLabel).toBe('Andrea Runtime');
     expect(logs.logText).toBe('tail');
+    expect(output.text).toBe('latest');
+    expect(files.supported).toBe(false);
+    expect(lane.getCapabilities().canRefresh).toBe(true);
+    expect(lane.getCapabilities().canViewOutput).toBe(true);
+    expect(lane.getCapabilities().canViewFiles).toBe(false);
     expect(lane.getCapabilities().actionIds).toEqual([
-      'runtime.logs',
-      'runtime.followup',
-      'runtime.stop',
+      'job.refresh',
+      'job.output',
+      'job.followup',
+      'job.stop',
     ]);
   });
 });

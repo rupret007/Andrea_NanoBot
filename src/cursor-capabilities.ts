@@ -1,7 +1,7 @@
 import { CursorCloudApiError, type CursorCloudStatus } from './cursor-cloud.js';
 import type { CursorDesktopStatus } from './cursor-desktop.js';
 import type { CursorGatewayStatus } from './cursor-gateway.js';
-import { formatUserFacingOperationFailure } from './user-facing-error.js';
+import { formatBackendOperationFailure } from './backend-lane-errors.js';
 
 export type CursorDesktopAgentJobsStatus =
   | 'validated'
@@ -220,5 +220,9 @@ export function formatCursorOperationFailure(
     return `${normalizePrefix(prefix)}. ${operatorDetail}`;
   }
 
-  return formatUserFacingOperationFailure(prefix, err);
+  return formatBackendOperationFailure({
+    laneId: 'cursor',
+    operation: prefix,
+    err,
+  });
 }

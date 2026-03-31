@@ -13,6 +13,9 @@ function makeLane(id: 'cursor' | 'andrea_runtime'): BackendLane {
         canFollowUp: true,
         canGetLogs: true,
         canStop: true,
+        canRefresh: true,
+        canViewOutput: true,
+        canViewFiles: false,
         actionIds: [],
       };
     },
@@ -27,6 +30,18 @@ function makeLane(id: 'cursor' | 'andrea_runtime'): BackendLane {
     },
     async listJobs() {
       throw new Error('not used');
+    },
+    async refreshJob() {
+      throw new Error('not used');
+    },
+    async getPrimaryOutput() {
+      throw new Error('not used');
+    },
+    async getFiles() {
+      throw new Error('not used');
+    },
+    getActionDescriptors() {
+      return [];
     },
     async getJobLogs() {
       throw new Error('not used');
