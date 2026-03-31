@@ -302,13 +302,23 @@ describe('operator context helpers', () => {
       platformMessageId: '9001',
       contextKind: 'cursor_job_card',
       agentId: 'bc_123',
-      payload: { provider: 'cloud' },
+      payload: {
+        provider: 'cloud',
+        taskContextType: 'output',
+        taskSummary: 'Tighten the launch copy',
+        outputPreview: 'Launch faster with one assistant.',
+      },
     });
 
     const context = getActiveCursorMessageContext('tg:1', '9001');
     expect(context?.agentId).toBe('bc_123');
     expect(context?.laneId).toBe('cursor');
     expect(context?.payload?.provider).toBe('cloud');
+    expect(context?.payload?.taskContextType).toBe('output');
+    expect(context?.payload?.taskSummary).toBe('Tighten the launch copy');
+    expect(context?.payload?.outputPreview).toBe(
+      'Launch faster with one assistant.',
+    );
   });
 
   it('keeps current-task buttons human-readable', () => {

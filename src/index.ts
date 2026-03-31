@@ -225,6 +225,15 @@ import {
   formatTaskReplyPrompt,
 } from './task-presentation.js';
 import {
+  buildTaskOutputSuggestion,
+  getTaskContextType,
+  interpretTaskContinuation,
+  maybeBuildHarmlessTaskReply,
+  mergeTaskMessageContextPayload,
+  summarizeVisibleTaskText,
+  type TaskContextType,
+} from './task-continuation.js';
+import {
   ALEXA_STATUS_COMMANDS,
   AMAZON_SEARCH_COMMANDS,
   AMAZON_STATUS_COMMANDS,
@@ -1512,6 +1521,29 @@ async function main(): Promise<void> {
     });
   }
 
+  function buildCursorTaskContextPayload(params: {
+    agentId: string;
+    provider: 'cloud' | 'desktop';
+    contextType: TaskContextType;
+    summary?: string | null;
+    outputPreview?: string | null;
+    outputSource?: string | null;
+  }): Record<string, unknown> | null {
+    return mergeTaskMessageContextPayload(
+      { provider: params.provider },
+      {
+        taskContextType: params.contextType,
+        taskTitle: `${labelCursorRecord({
+          provider: params.provider,
+          id: params.agentId,
+        })} ${formatOpaqueTaskId(params.agentId)}`,
+        taskSummary: summarizeVisibleTaskText(params.summary),
+        outputPreview: summarizeVisibleTaskText(params.outputPreview),
+        outputSource: params.outputSource || null,
+      },
+    );
+  }
+
   function toCursorHandle(jobId: string): BackendJobHandle {
     return { laneId: 'cursor', jobId };
   }
@@ -1732,9 +1764,14 @@ async function main(): Promise<void> {
     provider?: 'cloud' | 'desktop';
     sourceMessage?: NewMessage;
     contextKind: string;
+    payload?: Record<string, unknown> | null;
     inlineActions?: SendMessageOptions['inlineActions'];
     replyToMessageId?: string;
   }): Promise<string | undefined> {
+    const mergedPayload = mergeTaskMessageContextPayload(
+      params.provider ? { provider: params.provider } : null,
+      (params.payload || {}) as Record<string, unknown>,
+    );
     return sendBackendJobMessage({
       chatJid: params.chatJid,
       text: params.text,
@@ -1742,7 +1779,7 @@ async function main(): Promise<void> {
       jobId: params.agentId,
       sourceMessage: params.sourceMessage,
       contextKind: params.contextKind,
-      payload: params.provider ? { provider: params.provider } : null,
+      payload: mergedPayload,
       inlineActions: params.inlineActions,
       replyToMessageId: params.replyToMessageId,
     });
@@ -2356,6 +2393,16 @@ async function main(): Promise<void> {
       provider: selected.provider,
       sourceMessage,
       contextKind: 'cursor_job_card',
+      payload: buildCursorTaskContextPayload({
+        agentId: selected.id,
+        provider: selected.provider,
+        contextType: 'job_card',
+        summary:
+          selected.summary ||
+          selected.sourceRepository ||
+          selected.promptText ||
+          null,
+      }),
       inlineActions: buildCursorJobCardActions(selected),
       replyToMessageId,
     });
@@ -2698,7 +2745,11 @@ async function main(): Promise<void> {
       jobId: job.handle.jobId,
       sourceMessage,
       contextKind: 'runtime_job_message',
-      payload: job.metadata || null,
+      payload: mergeTaskMessageContextPayload(job.metadata, {
+        taskContextType: 'job_card',
+        taskTitle: `Codex/OpenAI runtime ${formatOpaqueTaskId(job.handle.jobId)}`,
+        taskSummary: summarizeVisibleTaskText(job.summary),
+      }),
       text: formatTaskReplyPrompt({
         lane: 'codex_runtime',
         taskId: job.handle.jobId,
@@ -3032,7 +3083,11 @@ async function main(): Promise<void> {
           jobId: refreshed.handle.jobId,
           sourceMessage,
           contextKind: 'runtime_job_card',
-          payload: refreshed.metadata || null,
+          payload: mergeTaskMessageContextPayload(refreshed.metadata, {
+            taskContextType: 'job_card',
+            taskTitle: `Codex/OpenAI runtime ${formatOpaqueTaskId(refreshed.handle.jobId)}`,
+            taskSummary: summarizeVisibleTaskText(refreshed.summary),
+          }),
           text: [
             `Refreshed Codex/OpenAI task ${formatOpaqueTaskId(refreshed.handle.jobId)}.`,
             formatRuntimeJobCard(refreshed),
@@ -3295,6 +3350,16 @@ async function main(): Promise<void> {
         provider: created.provider,
         sourceMessage,
         contextKind: 'cursor_job_card',
+        payload: buildCursorTaskContextPayload({
+          agentId: created.id,
+          provider: created.provider,
+          contextType: 'job_card',
+          summary:
+            created.summary ||
+            created.sourceRepository ||
+            created.promptText ||
+            null,
+        }),
         inlineActions: buildCursorJobCardActions(created),
         text: [
           `Andrea started ${labelCursorRecord(created)} ${formatOpaqueTaskId(created.id)}.`,
@@ -3349,14 +3414,21 @@ async function main(): Promise<void> {
         limit,
       });
       if (messages.length === 0) {
+        const provider = isDesktopCursorRecord(normalizedAgentId)
+          ? 'desktop'
+          : 'cloud';
         await sendCursorAgentMessage({
           chatJid,
           agentId: normalizedAgentId,
-          provider: isDesktopCursorRecord(normalizedAgentId)
-            ? 'desktop'
-            : 'cloud',
+          provider,
           sourceMessage,
           contextKind: 'cursor_job_message',
+          payload: buildCursorTaskContextPayload({
+            agentId: normalizedAgentId,
+            provider,
+            contextType: 'output',
+            outputSource: 'none',
+          }),
           text: `No output is available yet for this task.\nTask: ${labelCursorRecord(normalizedAgentId)} ${formatOpaqueTaskId(normalizedAgentId)}.\n\n${buildCursorNextStepMessage(normalizedAgentId)}`,
         });
         return;
@@ -3371,15 +3443,29 @@ async function main(): Promise<void> {
           return `${index + 1}. [${message.role}]${createdAt}\n${preview}`;
         })
         .join('\n\n');
+      const provider = isDesktopCursorRecord(normalizedAgentId)
+        ? 'desktop'
+        : 'cloud';
+      const outputSuggestion = buildTaskOutputSuggestion({
+        laneId: 'cursor',
+        contextKind: 'output',
+        hasStructuredOutput: true,
+        canReplyContinue: provider !== 'desktop',
+      });
       await sendCursorAgentMessage({
         chatJid,
         agentId: normalizedAgentId,
-        provider: isDesktopCursorRecord(normalizedAgentId)
-          ? 'desktop'
-          : 'cloud',
+        provider,
         sourceMessage,
         contextKind: 'cursor_job_message',
-        text: `Current output for this task\nTask: ${labelCursorRecord(normalizedAgentId)} ${formatOpaqueTaskId(normalizedAgentId)} (latest ${messages.length} messages)\n\n${formatted}\n\n${buildCursorNextStepMessage(normalizedAgentId)}`,
+        payload: buildCursorTaskContextPayload({
+          agentId: normalizedAgentId,
+          provider,
+          contextType: 'output',
+          outputPreview: messages.at(-1)?.content || formatted,
+          outputSource: 'conversation',
+        }),
+        text: `Current output for this task\nTask: ${labelCursorRecord(normalizedAgentId)} ${formatOpaqueTaskId(normalizedAgentId)} (latest ${messages.length} messages)\n\n${formatted}${outputSuggestion ? `\n\n${outputSuggestion}` : ''}\n\n${buildCursorNextStepMessage(normalizedAgentId)}`,
       });
     } catch (err) {
       await sendCursorMessage(
@@ -3447,6 +3533,12 @@ async function main(): Promise<void> {
         provider: 'cloud',
         sourceMessage,
         contextKind: 'cursor_job_message',
+        payload: buildCursorTaskContextPayload({
+          agentId: normalizedAgentId,
+          provider: 'cloud',
+          contextType: 'results',
+          summary: lines.slice(0, 3).join('\n'),
+        }),
         text: `Results for this task\nTask: Cursor Cloud ${formatOpaqueTaskId(normalizedAgentId)}\n\n${lines.join('\n')}\n\nReply to this result card with \`/cursor-download ABSOLUTE_PATH\` when you want one file. \`/cursor-download ${normalizedAgentId} ABSOLUTE_PATH\` still works anywhere as an explicit fallback.`,
       });
     } catch (err) {
@@ -3835,6 +3927,16 @@ async function main(): Promise<void> {
         provider: synced.cursorJob.provider,
         sourceMessage,
         contextKind: 'cursor_job_card',
+        payload: buildCursorTaskContextPayload({
+          agentId: synced.cursorJob.id,
+          provider: synced.cursorJob.provider,
+          contextType: 'job_card',
+          summary:
+            synced.cursorJob.summary ||
+            synced.cursorJob.sourceRepository ||
+            synced.cursorJob.promptText ||
+            null,
+        }),
         inlineActions: buildCursorJobCardActions(synced.cursorJob),
         text: [
           `Refreshed ${labelCursorRecord(synced.cursorJob)} ${formatOpaqueTaskId(synced.cursorJob.id)}.`,
@@ -3937,11 +4039,35 @@ async function main(): Promise<void> {
     }
 
     try {
+      const replyMessageContext = getActiveCursorMessageContext(
+        chatJid,
+        sourceMessage?.reply_to_id,
+      );
+      const canUseReplyContext =
+        replyMessageContext?.agentId === normalizedAgentId &&
+        !isDesktopCursorRecord(normalizedAgentId);
+      if (canUseReplyContext) {
+        const harmlessReply = maybeBuildHarmlessTaskReply(promptText);
+        if (harmlessReply) {
+          await sendCursorMessage(chatJid, harmlessReply, sourceMessage);
+          return;
+        }
+      }
+      const normalizedPromptText = canUseReplyContext
+        ? interpretTaskContinuation({
+            laneId: 'cursor',
+            rawPrompt: promptText,
+            contextKind: getTaskContextType(replyMessageContext?.payload),
+            messageContextPayload: replyMessageContext?.payload,
+            taskId: normalizedAgentId,
+            taskLabel: labelCursorRecord(normalizedAgentId),
+          }).normalizedPromptText
+        : promptText;
       const followed = await cursorBackendLane.followUpCursorJob({
         handle: toCursorHandle(normalizedAgentId),
         groupFolder: group.folder,
         chatJid,
-        promptText,
+        promptText: normalizedPromptText,
       });
       refreshCursorSnapshotsForAllGroups();
       await sendCursorAgentMessage({
@@ -3950,6 +4076,16 @@ async function main(): Promise<void> {
         provider: followed.provider,
         sourceMessage,
         contextKind: 'cursor_job_card',
+        payload: buildCursorTaskContextPayload({
+          agentId: followed.id,
+          provider: followed.provider,
+          contextType: 'job_card',
+          summary:
+            followed.summary ||
+            followed.sourceRepository ||
+            followed.promptText ||
+            null,
+        }),
         inlineActions: buildCursorJobCardActions(followed),
         text: [
           `Andrea sent your next instruction to ${labelCursorRecord(followed)} ${formatOpaqueTaskId(followed.id)}.`,
@@ -3988,6 +4124,10 @@ async function main(): Promise<void> {
       return;
     }
     const runtimeLane = getAndreaRuntimeLane();
+    const replyMessageContext = getActiveCursorMessageContext(
+      chatJid,
+      sourceMessage?.reply_to_id,
+    );
 
     await dispatchRuntimeCommand(
       {
@@ -4151,6 +4291,13 @@ async function main(): Promise<void> {
         commandToken,
         threadId: sourceMessage?.thread_id,
         replyToMessageId: sourceMessage?.reply_to_id,
+        replyMessageContext: replyMessageContext
+          ? {
+              agentId: replyMessageContext.agentId,
+              contextKind: replyMessageContext.contextKind,
+              payload: replyMessageContext.payload,
+            }
+          : null,
       },
     );
   }

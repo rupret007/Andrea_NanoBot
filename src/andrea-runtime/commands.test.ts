@@ -259,6 +259,84 @@ describe('runtime commands', () => {
     );
   });
 
+  it('normalizes terse reply-linked runtime refinements with visible task context', async () => {
+    deps.resolveTarget = vi.fn(() => ({
+      target: {
+        handle: {
+          laneId: 'andrea_runtime' as const,
+          jobId: 'runtime-job-reply',
+        },
+        jobId: 'runtime-job-reply',
+        via: 'reply' as const,
+      },
+      failureMessage: null,
+    }));
+    const followUpJob = vi.fn(deps.followUpJob);
+    deps.followUpJob = followUpJob;
+    context = {
+      ...context,
+      rawTrimmed: '/runtime-followup make it shorter',
+      commandToken: '/runtime-followup',
+      replyToMessageId: '9001',
+      replyMessageContext: {
+        agentId: 'runtime-job-reply',
+        contextKind: 'runtime_job_message',
+        payload: {
+          taskContextType: 'output',
+          outputPreview:
+            'Launch faster with one assistant that keeps your task moving.',
+        },
+      },
+    };
+
+    await dispatchRuntimeCommand(deps, context);
+
+    expect(followUpJob).toHaveBeenCalledWith({
+      handle: { laneId: 'andrea_runtime', jobId: 'runtime-job-reply' },
+      groupFolder: 'main',
+      chatJid: 'tg:operator',
+      promptText:
+        'Use the visible task context below and make it shorter while preserving the key meaning.\n\nVisible task context:\nLaunch faster with one assistant that keeps your task moving.',
+    });
+  });
+
+  it('treats harmless reply-linked acknowledgments as local guidance instead of task follow-up', async () => {
+    deps.resolveTarget = vi.fn(() => ({
+      target: {
+        handle: {
+          laneId: 'andrea_runtime' as const,
+          jobId: 'runtime-job-reply',
+        },
+        jobId: 'runtime-job-reply',
+        via: 'reply' as const,
+      },
+      failureMessage: null,
+    }));
+    const followUpJob = vi.fn(deps.followUpJob);
+    deps.followUpJob = followUpJob;
+    context = {
+      ...context,
+      rawTrimmed: '/runtime-followup thanks',
+      commandToken: '/runtime-followup',
+      replyToMessageId: '9001',
+      replyMessageContext: {
+        agentId: 'runtime-job-reply',
+        contextKind: 'runtime_job_message',
+        payload: {
+          taskContextType: 'output',
+          outputPreview: 'Visible output',
+        },
+      },
+    };
+
+    await dispatchRuntimeCommand(deps, context);
+
+    expect(followUpJob).not.toHaveBeenCalled();
+    expect(sentMessages[0]).toContain(
+      'Reply with what Andrea should change next for this task',
+    );
+  });
+
   it('falls back to legacy group folders for follow-up when no job context exists', async () => {
     deps.resolveTarget = vi.fn(() => ({
       target: null,
@@ -328,6 +406,49 @@ describe('runtime commands', () => {
     expect(runtimeMessages[0].text).toContain('Lane: Codex/OpenAI runtime');
     expect(runtimeMessages[0].text).toContain('Current output:');
     expect(runtimeMessages[0].text).toContain('final output');
+    expect(runtimeMessages[0].text).toContain('make it shorter');
+    expect(runtimeMessages[0].text).toContain('add more detail');
+  });
+
+  it('uses task-activity suggestions when structured output is not available yet', async () => {
+    deps.resolveTarget = vi.fn(() => ({
+      target: {
+        handle: { laneId: 'andrea_runtime' as const, jobId: 'runtime-job-1' },
+        jobId: 'runtime-job-1',
+        via: 'current' as const,
+      },
+      failureMessage: null,
+    }));
+    deps.getPrimaryOutput = vi.fn(async () => ({
+      handle: {
+        laneId: 'andrea_runtime' as const,
+        jobId: 'runtime-job-1',
+      },
+      text: null,
+      source: 'none' as const,
+      lineCount: 0,
+    }));
+    deps.getJobLogs = vi.fn(async () => ({
+      handle: {
+        laneId: 'andrea_runtime' as const,
+        jobId: 'runtime-job-1',
+      },
+      logText: 'retrying with a clean task context',
+      lines: 1,
+      logFile: 'C:\\logs\\runtime.log',
+    }));
+    context = {
+      ...context,
+      rawTrimmed: '/runtime-logs current 10',
+      commandToken: '/runtime-logs',
+    };
+
+    await dispatchRuntimeCommand(deps, context);
+
+    expect(runtimeMessages[0].text).toContain('Recent activity:');
+    expect(runtimeMessages[0].text).toContain(
+      'what Andrea should try next for this task',
+    );
   });
 
   it('falls back to legacy file logs when no runtime job exists for a folder', async () => {

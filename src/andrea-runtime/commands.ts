@@ -25,6 +25,15 @@ import {
   formatTaskNextStepMessage,
   formatTaskOutputHeading,
 } from '../task-presentation.js';
+import {
+  buildTaskOutputSuggestion,
+  getTaskContextType,
+  interpretTaskContinuation,
+  maybeBuildHarmlessTaskReply,
+  mergeTaskMessageContextPayload,
+  summarizeVisibleTaskText,
+  type TaskContextType,
+} from '../task-continuation.js';
 
 export interface RuntimeJobSnapshot {
   groupFolder: string | null;
@@ -60,6 +69,11 @@ export interface RuntimeCommandContext {
   commandToken: string;
   threadId?: string;
   replyToMessageId?: string;
+  replyMessageContext?: {
+    agentId: string | null;
+    contextKind: string;
+    payload: Record<string, unknown> | null;
+  } | null;
 }
 
 export interface RuntimeCommandDependencies {
@@ -191,6 +205,23 @@ export function formatRuntimeNextStep(jobId: string): string {
   });
 }
 
+function buildRuntimeTaskPayload(
+  job: Pick<BackendJobDetails, 'handle' | 'summary' | 'metadata'>,
+  contextType: TaskContextType,
+  extras: {
+    outputPreview?: string | null;
+    outputSource?: string | null;
+  } = {},
+): Record<string, unknown> | null {
+  return mergeTaskMessageContextPayload(job.metadata || null, {
+    taskContextType: contextType,
+    taskTitle: `Codex/OpenAI runtime ${formatOpaqueTaskId(job.handle.jobId)}`,
+    taskSummary: summarizeVisibleTaskText(job.summary),
+    outputPreview: summarizeVisibleTaskText(extras.outputPreview),
+    outputSource: extras.outputSource || null,
+  });
+}
+
 function buildLegacyFallbackContext(params: {
   deps: RuntimeCommandDependencies;
   context: RuntimeCommandContext;
@@ -309,17 +340,38 @@ async function handleRuntimeFollowup(
     }
 
     try {
+      const canUseReplyContext =
+        context.replyMessageContext?.agentId === resolution.target.jobId;
+      if (canUseReplyContext) {
+        const harmlessReply = maybeBuildHarmlessTaskReply(promptText);
+        if (harmlessReply) {
+          await deps.sendToChat(context.operatorChatJid, harmlessReply);
+          return;
+        }
+      }
+      const normalizedPromptText = canUseReplyContext
+        ? interpretTaskContinuation({
+            laneId: 'andrea_runtime',
+            rawPrompt: promptText,
+            contextKind: getTaskContextType(
+              context.replyMessageContext?.payload,
+            ),
+            messageContextPayload: context.replyMessageContext?.payload,
+            taskId: resolution.target.jobId,
+            taskLabel: 'Codex/OpenAI runtime',
+          }).normalizedPromptText
+        : promptText;
       const followed = await deps.followUpJob({
         handle: resolution.target.handle,
         groupFolder: context.groupFolder,
         chatJid: context.operatorChatJid,
-        promptText,
+        promptText: normalizedPromptText,
       });
       await deps.sendRuntimeJobMessage({
         operatorChatJid: context.operatorChatJid,
         jobId: followed.handle.jobId,
         contextKind: 'runtime_job_card',
-        payload: followed.metadata || null,
+        payload: buildRuntimeTaskPayload(followed, 'job_card'),
         text: [
           'Andrea sent your next instruction to this task.',
           `Task: Codex/OpenAI runtime ${formatOpaqueTaskId(followed.handle.jobId)}.`,
@@ -369,7 +421,7 @@ async function handleRuntimeFollowup(
       operatorChatJid: context.operatorChatJid,
       jobId: followed.handle.jobId,
       contextKind: 'runtime_job_card',
-      payload: followed.metadata || null,
+      payload: buildRuntimeTaskPayload(followed, 'job_card'),
       text: [
         `Andrea started this task in the Codex/OpenAI lane for workspace ${legacyTarget}.`,
         `Task: Codex/OpenAI runtime ${formatOpaqueTaskId(followed.handle.jobId)}.`,
@@ -412,7 +464,7 @@ async function handleRuntimeStop(
         operatorChatJid: context.operatorChatJid,
         jobId: stopped.handle.jobId,
         contextKind: 'runtime_job_card',
-        payload: stopped.metadata || null,
+        payload: buildRuntimeTaskPayload(stopped, 'job_card'),
         text: `Stop requested for this task.\nTask: Codex/OpenAI runtime ${formatOpaqueTaskId(stopped.handle.jobId)}.\nStatus: ${formatHumanTaskStatus(stopped.status)}.\n\nReply to this task card with \`/runtime-logs\` when you want to refresh its latest output or error state.`,
       });
       return;
@@ -469,7 +521,7 @@ async function handleRuntimeStop(
         operatorChatJid: context.operatorChatJid,
         jobId: stopped.handle.jobId,
         contextKind: 'runtime_job_card',
-        payload: stopped.metadata || null,
+        payload: buildRuntimeTaskPayload(stopped, 'job_card'),
         text: `Stop requested for this task in workspace ${legacyTarget}.\nTask: Codex/OpenAI runtime ${formatOpaqueTaskId(stopped.handle.jobId)}.\nStatus: ${formatHumanTaskStatus(stopped.status)}.`,
       });
       return;
@@ -538,16 +590,35 @@ async function handleRuntimeLogs(
       const targetJob = job || {
         handle: resolution.target.handle,
         status: 'unknown',
+        summary: null,
         metadata: null,
       };
       const text = output.text || logs.logText;
+      const hasStructuredOutput = Boolean(output.text);
+      const contextType: TaskContextType = hasStructuredOutput
+        ? 'output'
+        : 'activity';
+      const suggestion = buildTaskOutputSuggestion({
+        laneId: 'andrea_runtime',
+        contextKind: contextType,
+        hasStructuredOutput,
+        canReplyContinue: deps.canExecute,
+      });
       await deps.sendRuntimeJobMessage({
         operatorChatJid: context.operatorChatJid,
         jobId: resolution.target.jobId,
         contextKind: 'runtime_job_message',
-        payload: job?.metadata || {
-          logFile: logs.logFile,
-        },
+        payload: buildRuntimeTaskPayload(
+          (job || targetJob) as Pick<
+            BackendJobDetails,
+            'handle' | 'summary' | 'metadata'
+          >,
+          contextType,
+          {
+            outputPreview: output.text || logs.logText,
+            outputSource: hasStructuredOutput ? output.source : 'logs',
+          },
+        ),
         text: text
           ? [
               `${formatRuntimeJobCard(targetJob as BackendJobDetails)}`,
@@ -555,9 +626,13 @@ async function handleRuntimeLogs(
               output.text
                 ? `${formatTaskOutputHeading(output.source)}:\n${output.text}`
                 : `Recent activity:\n${logs.logText}\n\nStructured output is not available yet, so Andrea is showing recent task activity instead.`,
+              suggestion ? '' : null,
+              suggestion,
               '',
               formatRuntimeNextStep(resolution.target.jobId),
-            ].join('\n')
+            ]
+              .filter((line): line is string => Boolean(line))
+              .join('\n')
           : `This task does not have output yet.\nTask: Codex/OpenAI runtime ${formatOpaqueTaskId(resolution.target.jobId)}.\n\nReply with plain text to continue this task, or rerun \`/runtime-logs\` later if you want another explicit check.`,
       });
       return;
@@ -622,11 +697,31 @@ async function handleRuntimeLogs(
         }),
       ]);
       const text = output.text || logs.logText;
+      const hasStructuredOutput = Boolean(output.text);
+      const contextType: TaskContextType = hasStructuredOutput
+        ? 'output'
+        : 'activity';
+      const suggestion = buildTaskOutputSuggestion({
+        laneId: 'andrea_runtime',
+        contextKind: contextType,
+        hasStructuredOutput,
+        canReplyContinue: deps.canExecute,
+      });
       await deps.sendRuntimeJobMessage({
         operatorChatJid: context.operatorChatJid,
         jobId: latestJob.handle.jobId,
         contextKind: 'runtime_job_message',
-        payload: job?.metadata || null,
+        payload: buildRuntimeTaskPayload(
+          (job || latestJob) as Pick<
+            BackendJobDetails,
+            'handle' | 'summary' | 'metadata'
+          >,
+          contextType,
+          {
+            outputPreview: output.text || logs.logText,
+            outputSource: hasStructuredOutput ? output.source : 'logs',
+          },
+        ),
         text: text
           ? [
               `${formatRuntimeJobCard((job || latestJob) as BackendJobDetails)}`,
@@ -634,9 +729,13 @@ async function handleRuntimeLogs(
               output.text
                 ? `${formatTaskOutputHeading(output.source)}:\n${output.text}`
                 : `Recent activity:\n${logs.logText}\n\nStructured output is not available yet, so Andrea is showing recent task activity instead.`,
+              suggestion ? '' : null,
+              suggestion,
               '',
               formatRuntimeNextStep(latestJob.handle.jobId),
-            ].join('\n')
+            ]
+              .filter((line): line is string => Boolean(line))
+              .join('\n')
           : `This task does not have output yet.\nTask: Codex/OpenAI runtime ${formatOpaqueTaskId(latestJob.handle.jobId)}.`,
       });
       return;

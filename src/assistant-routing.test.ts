@@ -179,6 +179,36 @@ describe('assistant request routing', () => {
     expect(policy.route).toBe('direct_assistant');
   });
 
+  it('keeps standalone fix-that phrasing out of implicit task continuation when combined context is disabled', () => {
+    const policy = classifyAssistantRequest(
+      [
+        {
+          content:
+            'Implement the stop command handler for cursor jobs and add tests.',
+        },
+        { content: 'fix that' },
+      ],
+      { allowCombinedContext: false },
+    );
+
+    expect(policy.route).toBe('direct_assistant');
+  });
+
+  it('keeps standalone make-it-shorter phrasing out of implicit task continuation when combined context is disabled', () => {
+    const policy = classifyAssistantRequest(
+      [
+        {
+          content:
+            'Implement the stop command handler for cursor jobs and add tests.',
+        },
+        { content: 'make it shorter' },
+      ],
+      { allowCombinedContext: false },
+    );
+
+    expect(policy.route).toBe('direct_assistant');
+  });
+
   it('defaults scheduled tasks to protected assistant handling when the prompt is otherwise plain', () => {
     const policy = classifyScheduledTaskRequest(
       "Send me a short daily reminder to review tomorrow's plan.",
