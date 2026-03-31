@@ -181,6 +181,11 @@ For Cursor-specific operator validation, prefer this live workflow:
 
 Raw ids still work, but the normal Telegram operator path is now dashboard-, tile-, and reply-driven.
 
+Continuity rule:
+
+- replying to a task card always continues that task
+- otherwise Andrea uses the current task in the lane you opened
+
 If you are validating the merged `andrea_runtime` lane instead of Cursor:
 
 - keep the test in the main control chat

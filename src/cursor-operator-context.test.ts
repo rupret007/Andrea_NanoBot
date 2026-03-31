@@ -291,6 +291,7 @@ describe('resolveCursorTarget', () => {
     expect(resolved.failureMessage).toBe(
       getBackendContextGuidance('andrea_runtime'),
     );
+    expect(resolved.failureMessage).toContain('/cursor` -> `Codex/OpenAI`');
   });
 });
 
@@ -342,6 +343,15 @@ describe('operator context helpers', () => {
     expect(context?.selectedAgentId).toBe('bc_123');
     expect(context?.selectedLaneId).toBe('cursor');
     expect(context?.selectedJobsByLane?.cursor).toBe('bc_123');
+  });
+
+  it('returns dashboard-first lane guidance', () => {
+    expect(getBackendContextGuidance('cursor')).toContain(
+      'Open `/cursor`, then tap `Jobs` or `Current Job`',
+    );
+    expect(getBackendContextGuidance('andrea_runtime')).toContain(
+      'Open `/cursor` -> `Codex/OpenAI` -> `Recent Work`',
+    );
   });
 
   it('recognizes target-like tokens without mistaking normal paths', () => {

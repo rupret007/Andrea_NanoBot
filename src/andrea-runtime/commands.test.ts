@@ -181,7 +181,9 @@ describe('runtime commands', () => {
     expect(message).toContain('*Codex/OpenAI Work*');
     expect(message).toContain('1. runtime-job-1 [Working]');
     expect(message).toContain('2. runtime-job-2 [Queued]');
-    expect(message).toContain('Reply to a Codex/OpenAI task card');
+    expect(message).toContain(
+      'Open `/cursor` -> `Codex/OpenAI` -> `Recent Work`',
+    );
     expect(message).toContain('/runtime-followup');
   });
 
@@ -250,7 +252,10 @@ describe('runtime commands', () => {
     expect(followUpLegacyGroup).not.toHaveBeenCalled();
     expect(runtimeMessages[0].jobId).toBe('runtime-job-2');
     expect(runtimeMessages[0].text).toContain(
-      'Andrea sent your next instruction to Codex/OpenAI task runtime-job-2.',
+      'Andrea sent your next instruction to this task.',
+    );
+    expect(runtimeMessages[0].text).toContain(
+      'Task: Codex/OpenAI runtime runtime-job-2.',
     );
   });
 
@@ -320,7 +325,8 @@ describe('runtime commands', () => {
     await dispatchRuntimeCommand(deps, context);
 
     expect(runtimeMessages[0].jobId).toBe('runtime-job-1');
-    expect(runtimeMessages[0].text).toContain('Current final output:');
+    expect(runtimeMessages[0].text).toContain('Lane: Codex/OpenAI runtime');
+    expect(runtimeMessages[0].text).toContain('Current output:');
     expect(runtimeMessages[0].text).toContain('final output');
   });
 

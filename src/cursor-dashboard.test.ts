@@ -127,8 +127,10 @@ describe('cursor dashboard helpers', () => {
     const render = buildCursorDashboardCurrentJob(cloudJob, 3);
     const labels = render.inlineActionRows.flat().map((action) => action.label);
 
+    expect(render.text).toContain('*Current Task*');
+    expect(render.text).toContain('Lane: Cursor Cloud');
     expect(render.text).toContain(
-      'Reply with plain text to continue the current task',
+      'Reply with plain text to continue this task',
     );
     expect(labels).toContain('Refresh');
     expect(labels).toContain('View Output');
@@ -141,6 +143,8 @@ describe('cursor dashboard helpers', () => {
     const render = buildCursorDashboardCurrentJob(desktopJob, 0);
     const labels = render.inlineActionRows.flat().map((action) => action.label);
 
+    expect(render.text).toContain('*Current Session*');
+    expect(render.text).toContain('Lane: Cursor Desktop');
     expect(labels).toContain('Refresh');
     expect(labels).toContain('View Output');
     expect(labels).toContain('Terminal Status');
@@ -150,7 +154,7 @@ describe('cursor dashboard helpers', () => {
 
   it('provides a friendly empty current-job state and compact home/help tiles', () => {
     expect(buildCursorDashboardCurrentJobEmpty().text).toContain(
-      'No Cursor task is selected',
+      'No current task is selected in the Cursor lane',
     );
     expect(
       buildCursorDashboardHome({
@@ -159,6 +163,7 @@ describe('cursor dashboard helpers', () => {
         runtimeRouteLine: 'optional and off',
         codexRuntimeLine: 'integrated and conditional',
         currentRuntimeTask: runtimeJob,
+        currentFocusLaneId: 'andrea_runtime',
       }).inlineActionRows,
     ).toHaveLength(4);
     expect(
@@ -168,8 +173,22 @@ describe('cursor dashboard helpers', () => {
         runtimeRouteLine: 'optional and off',
         codexRuntimeLine: 'integrated and conditional',
         currentRuntimeTask: runtimeJob,
+        currentFocusLaneId: 'andrea_runtime',
       }).text,
     ).toContain('Current Codex/OpenAI task');
+    expect(
+      buildCursorDashboardHome({
+        cloudLine: 'ready',
+        desktopLine: 'optional and unavailable',
+        runtimeRouteLine: 'optional and off',
+        codexRuntimeLine: 'integrated and conditional',
+        currentRuntimeTask: runtimeJob,
+        currentFocusLaneId: 'andrea_runtime',
+      }).text,
+    ).toContain('Current focus: Codex/OpenAI runtime');
+    expect(buildCursorDashboardHelp().text).toContain(
+      'Replying to a task card always continues that task',
+    );
     expect(buildCursorDashboardHelp().text).toContain(
       'Slash commands still work',
     );
@@ -199,14 +218,14 @@ describe('cursor dashboard helpers', () => {
     ]);
     expect(jobs.text).toContain('*Codex/OpenAI Work*');
     expect(jobs.inlineActionRows[0][0].label).toContain('1.');
-    expect(current.text).toContain('*Current Codex/OpenAI Task*');
+    expect(current.text).toContain('*Current Task*');
     expect(current.text).toContain('Lane: Codex/OpenAI runtime');
     expect(currentLabels).toContain('Refresh');
     expect(currentLabels).toContain('View Output');
     expect(currentLabels).not.toContain('Results');
     expect(currentLabels).not.toContain('Continue');
     expect(buildCursorDashboardRuntimeCurrentEmpty().text).toContain(
-      'No Codex/OpenAI task is selected',
+      'No current task is selected in the Codex/OpenAI lane',
     );
   });
 

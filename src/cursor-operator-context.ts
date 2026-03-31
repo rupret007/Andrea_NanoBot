@@ -8,18 +8,18 @@ import {
 } from './db.js';
 import { normalizeCursorAgentId } from './cursor-agent-id.js';
 import {
+  formatShellTaskCard,
   formatHumanTaskStatus,
   formatOpaqueTaskId,
-  formatSystemStatus,
 } from './task-presentation.js';
 import type { ChannelInlineAction } from './types.js';
 
 const CURSOR_CONTEXT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const CONTEXT_GUIDANCE_BY_LANE: Record<BackendLaneId, string> = {
   cursor:
-    'Run `/cursor` or `/cursor-jobs`, then tap a job or reply to a Cursor card.',
+    'Open `/cursor`, then tap `Jobs` or `Current Job` and reply to a task card. `/cursor-jobs` still works when you want an explicit fallback.',
   andrea_runtime:
-    'Run `/runtime-jobs`, then use a list number, `current`, or reply to an Andrea runtime job message.',
+    'Open `/cursor` -> `Codex/OpenAI` -> `Recent Work`, then reply to a task card. `/runtime-jobs`, list numbers, and `current` still work as explicit fallbacks.',
 };
 const CURSOR_LANE_ID: BackendLaneId = 'cursor';
 
@@ -633,22 +633,22 @@ export function formatCursorJobCard(
   record: CursorAgentView,
   resultCount = 0,
 ): string {
-  const title = `${record.provider === 'cloud' ? 'Cursor Cloud task' : 'Desktop bridge session'} ${formatCursorDisplayId(record.id)}`;
-  const lines = [
-    title,
-    `Status: ${formatHumanTaskStatus(record.status)}`,
-    `System status: ${formatSystemStatus(record.status)}`,
-    record.model ? `Model: ${record.model}` : null,
-    record.sourceRepository ? `Repo: ${record.sourceRepository}` : null,
-    record.targetUrl ? `URL: ${record.targetUrl}` : null,
-    record.targetPrUrl ? `PR: ${record.targetPrUrl}` : null,
-    record.updatedAt ? `Updated: ${record.updatedAt}` : null,
-    record.provider === 'cloud'
-      ? `Results: ${resultCount === 0 ? 'none yet' : `${resultCount} file${resultCount === 1 ? '' : 's'}`}`
-      : null,
-  ].filter((line): line is string => Boolean(line));
-
-  return lines.join('\n');
+  const isDesktop = record.provider === 'desktop';
+  return formatShellTaskCard({
+    title: `${isDesktop ? 'Session' : 'Task'} ${formatCursorDisplayId(record.id)}`,
+    lane: isDesktop ? 'cursor_desktop' : 'cursor_cloud',
+    status: record.status,
+    detailLines: [
+      record.model ? `Model: ${record.model}` : null,
+      record.sourceRepository ? `Repo: ${record.sourceRepository}` : null,
+      record.targetUrl ? `URL: ${record.targetUrl}` : null,
+      record.targetPrUrl ? `PR: ${record.targetPrUrl}` : null,
+      !isDesktop
+        ? `Results: ${resultCount === 0 ? 'none yet' : `${resultCount} file${resultCount === 1 ? '' : 's'}`}`
+        : null,
+    ],
+    updatedAt: record.updatedAt,
+  });
 }
 
 export function buildCursorListSelectionActions(

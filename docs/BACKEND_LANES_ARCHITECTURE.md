@@ -57,6 +57,7 @@ Rules:
 - `laneId` identifies the backend lane, such as `cursor` or `andrea_runtime`
 - `jobId` is the opaque per-lane execution handle
 - `threadId` or other continuity metadata stays lane-specific secondary metadata
+- replying to a task card always continues that specific task; otherwise the shell uses the current task in the opened lane
 
 ## Persistence
 
@@ -124,5 +125,6 @@ The shared lane layer should support:
 
 - common operations that every backend can honor
 - backend-specific capabilities where a richer lane already exists
+- one coherent task mental model in the shell, while preserving truthful lane differences underneath
 
 That is how Andrea can keep a clean shared shell while still preserving Cursor depth and leaving room for future `andrea_runtime` shell UX.

@@ -22,6 +22,7 @@ Keep this split in mind while reading the rest of the setup guide:
 - Andrea_NanoBot is the merged home for the shared shell and backend-lane registry
 - the integrated `andrea_runtime` lane is secondary and conditional; `/cursor` remains the primary taught operator surface
 - Cursor-backed runtime routing is a separate optional diagnostic/runtime surface
+- the shell increasingly presents one task model with lane-specific capabilities, while keeping Cursor as the stronger validated lane
 
 ## Status Terms
 

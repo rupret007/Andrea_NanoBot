@@ -221,6 +221,8 @@ import {
 import {
   formatHumanTaskStatus,
   formatOpaqueTaskId,
+  formatTaskNextStepMessage,
+  formatTaskReplyPrompt,
 } from './task-presentation.js';
 import {
   ALEXA_STATUS_COMMANDS,
@@ -1494,10 +1496,20 @@ async function main(): Promise<void> {
       | string,
   ): string {
     if (isDesktopCursorRecord(record)) {
-      return 'Next: use this card to refresh the session or view output. `/cursor-terminal` and `/cursor-terminal-log` still work as explicit fallbacks when you need machine-side control.';
+      return formatTaskNextStepMessage({
+        primaryActions: 'Use this card to refresh the session or view output.',
+        explicitFallback:
+          '`/cursor-terminal` and `/cursor-terminal-log` still work as explicit fallbacks when you need machine-side control.',
+      });
     }
 
-    return 'Next: use this card to refresh the task, view output, or check results. Reply with plain text to continue it. Slash commands still work if you want an explicit fallback.';
+    return formatTaskNextStepMessage({
+      primaryActions:
+        'Use this card to refresh the task, view output, or check results.',
+      canReplyContinue: true,
+      explicitFallback:
+        'Slash commands still work if you want an explicit fallback.',
+    });
   }
 
   function toCursorHandle(jobId: string): BackendJobHandle {
@@ -1947,6 +1959,15 @@ async function main(): Promise<void> {
           params.sourceMessage?.thread_id,
         ),
       ]);
+      const activeContext = getActiveCursorOperatorContext(
+        params.chatJid,
+        params.sourceMessage?.thread_id,
+      );
+      const selectedLaneId = activeContext?.selectedLaneId || 'cursor';
+      const selectedAgentId =
+        selectedLaneId === 'andrea_runtime'
+          ? runtimeSelection?.selected?.handle.jobId || null
+          : selection?.selected?.id || null;
       const render = buildCursorDashboardHome({
         ...summarizeCursorDashboardLines({
           cloudStatus,
@@ -1955,6 +1976,7 @@ async function main(): Promise<void> {
         }),
         currentJob: selection?.selected || undefined,
         currentRuntimeTask: runtimeSelection?.selected || undefined,
+        currentFocusLaneId: activeContext?.selectedLaneId || null,
       });
       return upsertCursorDashboardMessage({
         chatJid: params.chatJid,
@@ -1962,7 +1984,8 @@ async function main(): Promise<void> {
         state: params.state,
         text: render.text,
         inlineActionRows: render.inlineActionRows,
-        selectedAgentId: render.selectedAgentId,
+        selectedAgentId,
+        selectedLaneId,
         forceNew: params.forceNew,
       });
     }
@@ -2676,7 +2699,10 @@ async function main(): Promise<void> {
       sourceMessage,
       contextKind: 'runtime_job_message',
       payload: job.metadata || null,
-      text: `Reply here with what Andrea should change next for Codex/OpenAI task ${formatOpaqueTaskId(job.handle.jobId)}.`,
+      text: formatTaskReplyPrompt({
+        lane: 'codex_runtime',
+        taskId: job.handle.jobId,
+      }),
     });
   }
 
@@ -2957,7 +2983,10 @@ async function main(): Promise<void> {
         provider: 'cloud',
         sourceMessage,
         contextKind: 'cursor_job_message',
-        text: `Reply here with what Andrea should change next for ${labelCursorRecord(selectedAgent)} ${formatOpaqueTaskId(selectedAgent.id)}.`,
+        text: formatTaskReplyPrompt({
+          lane: 'cursor_cloud',
+          taskId: selectedAgent.id,
+        }),
       });
       return;
     }
@@ -3328,7 +3357,7 @@ async function main(): Promise<void> {
             : 'cloud',
           sourceMessage,
           contextKind: 'cursor_job_message',
-          text: `No output is available yet for ${labelCursorRecord(normalizedAgentId)} ${formatOpaqueTaskId(normalizedAgentId)}.\n\n${buildCursorNextStepMessage(normalizedAgentId)}`,
+          text: `No output is available yet for this task.\nTask: ${labelCursorRecord(normalizedAgentId)} ${formatOpaqueTaskId(normalizedAgentId)}.\n\n${buildCursorNextStepMessage(normalizedAgentId)}`,
         });
         return;
       }
@@ -3350,7 +3379,7 @@ async function main(): Promise<void> {
           : 'cloud',
         sourceMessage,
         contextKind: 'cursor_job_message',
-        text: `View output for ${labelCursorRecord(normalizedAgentId)} ${formatOpaqueTaskId(normalizedAgentId)} (latest ${messages.length} messages):\n\n${formatted}\n\n${buildCursorNextStepMessage(normalizedAgentId)}`,
+        text: `Current output for this task\nTask: ${labelCursorRecord(normalizedAgentId)} ${formatOpaqueTaskId(normalizedAgentId)} (latest ${messages.length} messages)\n\n${formatted}\n\n${buildCursorNextStepMessage(normalizedAgentId)}`,
       });
     } catch (err) {
       await sendCursorMessage(
@@ -3402,7 +3431,7 @@ async function main(): Promise<void> {
           provider: 'cloud',
           sourceMessage,
           contextKind: 'cursor_job_message',
-          text: `Cursor Cloud task ${formatOpaqueTaskId(normalizedAgentId)} does not have results yet.\n\nView output first, then check Results again if you expect files from this task.`,
+          text: `This task does not have results yet.\nTask: Cursor Cloud ${formatOpaqueTaskId(normalizedAgentId)}.\n\nView output first, then check Results again if you expect files from this task.`,
         });
         return;
       }
@@ -3418,7 +3447,7 @@ async function main(): Promise<void> {
         provider: 'cloud',
         sourceMessage,
         contextKind: 'cursor_job_message',
-        text: `Results for Cursor Cloud task ${formatOpaqueTaskId(normalizedAgentId)}:\n\n${lines.join('\n')}\n\nReply to this result card with \`/cursor-download ABSOLUTE_PATH\` when you want one file. \`/cursor-download ${normalizedAgentId} ABSOLUTE_PATH\` still works anywhere as an explicit fallback.`,
+        text: `Results for this task\nTask: Cursor Cloud ${formatOpaqueTaskId(normalizedAgentId)}\n\n${lines.join('\n')}\n\nReply to this result card with \`/cursor-download ABSOLUTE_PATH\` when you want one file. \`/cursor-download ${normalizedAgentId} ABSOLUTE_PATH\` still works anywhere as an explicit fallback.`,
       });
     } catch (err) {
       await sendCursorMessage(
@@ -4690,7 +4719,7 @@ async function main(): Promise<void> {
             channel
               ?.sendMessage(
                 chatJid,
-                'No current Cursor task is selected yet. Open `Jobs`, tap a task, then reply here with plain text to continue it.',
+                'No current task is selected in the Cursor lane. Open `Jobs`, then tap a task before replying here. Slash commands and raw ids still work if you want an explicit fallback.',
                 buildOperatorSendOptions(msg),
               )
               .catch((err) =>
@@ -4736,7 +4765,7 @@ async function main(): Promise<void> {
             channel
               ?.sendMessage(
                 chatJid,
-                'No current Codex/OpenAI task is selected yet. Open `Codex/OpenAI`, tap `Recent Work`, then reply here with plain text to continue it.',
+                'No current task is selected in the Codex/OpenAI lane. Open `Codex/OpenAI` -> `Recent Work`, then tap a task before replying here. Slash commands still work if you want an explicit fallback.',
                 buildOperatorSendOptions(msg),
               )
               .catch((err) =>

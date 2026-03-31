@@ -78,6 +78,7 @@ Andrea now treats Cursor as three separate surfaces:
 - `codex_local` is the intended primary runtime for this lane
 - `openai_cloud` remains conditional on `OPENAI_API_KEY` or a compatible gateway
 - host execution stays disabled until `ANDREA_RUNTIME_EXECUTION_ENABLED=true`
+- operators should increasingly think in terms of one current task with lane-specific capabilities, not two separate task systems
 
 Read the architecture note when you need the ownership boundary:
 
@@ -191,6 +192,11 @@ Validate:
 - `/cursor-models`
 
 Use `/cursor-conversation` for the text trail and `/cursor-results` for output files. Use `/cursor-download <absolute_path>` as a reply to the current job dashboard or a Cursor result card when `/cursor-results` shows a file you actually want. Raw ids still work, but they are now the fallback path rather than the normal taught path.
+
+Task continuity rule:
+
+- replying to a task card always continues that task
+- otherwise Andrea uses the current task in the lane you opened
 
 If `/cursor_status` says `Cloud coding jobs: unavailable`, treat `/cursor-create`, `/cursor-followup`, `/cursor-stop`, `/cursor-models`, `/cursor-results`, and `/cursor-download` as unavailable until `CURSOR_API_KEY` is fixed.
 

@@ -132,6 +132,7 @@ Andrea_NanoBot now owns the shared shell while backend lanes own execution truth
   - now has a small `Codex/OpenAI` surface inside the primary `/cursor` work panel
   - `/runtime-*` remains secondary transitional scaffolding
   - does not replace Cursor or the `/cursor` dashboard
+  - the shell increasingly presents one task model with lane-specific capabilities, not two separate operator products
 
 Shared shell handles now resolve as `{ laneId, jobId }`.
 The imported `imported/andrea_openai_bot` subtree is temporary staging plus history preservation, not the long-term runtime home.
@@ -174,6 +175,7 @@ Preferred operator command style:
 - deeper operator examples use hyphen aliases in Telegram, such as `/cursor`, `/cursor-jobs`, and `/cursor-create`
 - operator examples use `/cursor-results` for output files and `/cursor-download` for one-file retrieval
 - the normal Telegram operator flow is now `/cursor` -> `Jobs`/`Current Job`/`New Cloud Job` or `Codex/OpenAI` tiles -> tap a task/action -> reply with plain text only when you are supplying a follow-up prompt or a new-job prompt
+- replying to a task card always continues that task; otherwise Andrea uses the current task in the lane you opened
 - underscore aliases still work for compatibility, but the docs now standardize on the hyphen form for operator workflows
 - older `/cursor-artifacts` and `/cursor-artifact-link` aliases still work for compatibility, but they are no longer the preferred operator examples
 

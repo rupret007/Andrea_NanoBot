@@ -1,17 +1,21 @@
 import type {
+  BackendLaneId,
   BackendJobDetails,
   BackendJobSummary,
 } from './backend-lanes/types.js';
 import type { CursorAgentView } from './cursor-jobs.js';
 import type { FlattenedCursorJobEntry } from './cursor-operator-context.js';
+import { formatRuntimeJobCard } from './andrea-runtime/commands.js';
 import {
   formatCursorDisplayId,
   formatCursorJobCard,
 } from './cursor-operator-context.js';
 import {
+  formatCurrentFocusLabel,
+  formatTaskContinuationGuidance,
+  formatTaskReplyRoutingGuidance,
   formatHumanTaskStatus,
   formatOpaqueTaskId,
-  formatSystemStatus,
 } from './task-presentation.js';
 import type { ChannelInlineAction } from './types.js';
 
@@ -181,6 +185,7 @@ export function buildCursorDashboardHome(params: {
   codexRuntimeLine: string;
   currentJob?: CursorAgentView | null;
   currentRuntimeTask?: BackendJobDetails | null;
+  currentFocusLaneId?: BackendLaneId | null;
 }): CursorDashboardRender {
   return {
     text: [
@@ -200,6 +205,9 @@ export function buildCursorDashboardHome(params: {
       params.currentRuntimeTask
         ? `- Current Codex/OpenAI task: ${summarizeRuntimeTask(params.currentRuntimeTask)}`
         : '- Current Codex/OpenAI task: none selected yet',
+      `- Current focus: ${formatCurrentFocusLabel(params.currentFocusLaneId)}`,
+      '',
+      formatTaskReplyRoutingGuidance(),
       '',
       'Tap a tile to keep working on the current task, browse recent work, or start a new Cursor Cloud task.',
     ].join('\n'),
@@ -324,13 +332,13 @@ export function buildCursorDashboardCurrentJob(
 
   return {
     text: [
-      isCloud ? '*Current Cursor Cloud Task*' : '*Current Desktop Session*',
+      isCloud ? '*Current Task*' : '*Current Session*',
       '',
       formatCursorJobCard(record, resultCount),
       '',
-      isCloud
-        ? 'Tap below to refresh this task, view output, or check results. Reply with plain text to continue the current task.'
-        : 'Tap below to refresh this session, view output, or use machine-side terminal controls.',
+      formatTaskContinuationGuidance({
+        lane: isCloud ? 'cursor_cloud' : 'cursor_desktop',
+      }),
     ].join('\n'),
     inlineActionRows: rows.map((row) =>
       row.filter((action) => Boolean(action.label)),
@@ -342,11 +350,11 @@ export function buildCursorDashboardCurrentJob(
 export function buildCursorDashboardCurrentJobEmpty(): CursorDashboardRender {
   return {
     text: [
-      '*Current Job*',
+      '*Current Task*',
       '',
-      'No Cursor task is selected right now.',
+      'No current task is selected in the Cursor lane.',
       '',
-      'Open `Jobs`, then tap a task to make it current. Slash commands and raw ids still work if you want an explicit fallback.',
+      'Open `Jobs`, then tap a task to make it current. Buttons are the main path. Slash commands and raw ids still work if you want an explicit fallback.',
     ].join('\n'),
     inlineActionRows: [
       [
@@ -382,6 +390,8 @@ export function buildCursorDashboardHelp(): CursorDashboardRender {
       '4. Reply with plain text when you want Andrea to continue the current task.',
       '5. Open `Codex/OpenAI` when you want the integrated runtime lane.',
       '6. Use `Desktop` only for the operator-only machine-control lane.',
+      '',
+      formatTaskReplyRoutingGuidance(),
       '',
       'Buttons are the main operator path now. Slash commands still work if you want an explicit fallback.',
     ].join('\n'),
@@ -519,15 +529,6 @@ export function buildCursorDashboardRuntimeCurrent(
   job: BackendJobDetails,
   executionEnabled: boolean,
 ): CursorDashboardRender {
-  const selectedRuntime =
-    typeof job.metadata?.selectedRuntime === 'string'
-      ? job.metadata.selectedRuntime
-      : null;
-  const workspace =
-    typeof job.metadata?.groupFolder === 'string'
-      ? job.metadata.groupFolder
-      : null;
-
   const rows: ChannelInlineAction[][] = [
     [
       { label: 'Refresh', actionId: '/cursor-ui runtime-refresh' },
@@ -547,20 +548,14 @@ export function buildCursorDashboardRuntimeCurrent(
 
   return {
     text: [
-      '*Current Codex/OpenAI Task*',
+      '*Current Task*',
       '',
-      `Codex/OpenAI task ${formatOpaqueTaskId(job.handle.jobId)}`,
-      'Lane: Codex/OpenAI runtime',
-      `Status: ${formatHumanTaskStatus(job.status)}`,
-      `System status: ${formatSystemStatus(job.status)}`,
-      selectedRuntime ? `Runtime: ${selectedRuntime}` : null,
-      workspace ? `Workspace: ${workspace}` : null,
-      job.summary ? `Summary: ${job.summary}` : null,
-      job.updatedAt ? `Updated: ${job.updatedAt}` : null,
+      formatRuntimeJobCard(job),
       '',
-      executionEnabled
-        ? 'Tap below to refresh this task or view output. Reply with plain text to continue the same Codex/OpenAI task.'
-        : 'Tap below to refresh this task or view output. New runtime execution stays off on this host until it is explicitly enabled.',
+      formatTaskContinuationGuidance({
+        lane: 'codex_runtime',
+        canReplyContinue: executionEnabled,
+      }),
     ]
       .filter((line): line is string => Boolean(line))
       .join('\n'),
@@ -572,11 +567,11 @@ export function buildCursorDashboardRuntimeCurrent(
 export function buildCursorDashboardRuntimeCurrentEmpty(): CursorDashboardRender {
   return {
     text: [
-      '*Current Codex/OpenAI Task*',
+      '*Current Task*',
       '',
-      'No Codex/OpenAI task is selected right now.',
+      'No current task is selected in the Codex/OpenAI lane.',
       '',
-      "Open `Recent Work`, then tap a task to keep working in Andrea's Codex/OpenAI lane. `/runtime-jobs` still works if you want an explicit fallback.",
+      "Open `Recent Work`, then tap a task to keep working in Andrea's Codex/OpenAI lane. Buttons are the main path. `/runtime-jobs` still works if you want an explicit fallback.",
     ].join('\n'),
     inlineActionRows: [
       [

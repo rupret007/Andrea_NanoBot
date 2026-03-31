@@ -21,7 +21,9 @@ import { resolveGroupFolderPath } from '../group-folder.js';
 import {
   formatHumanTaskStatus,
   formatOpaqueTaskId,
-  formatSystemStatus,
+  formatShellTaskCard,
+  formatTaskNextStepMessage,
+  formatTaskOutputHeading,
 } from '../task-presentation.js';
 
 export interface RuntimeJobSnapshot {
@@ -146,7 +148,7 @@ export function formatRuntimeJobsMessage(jobs: BackendJobSummary[]): string {
     '*Codex/OpenAI Work*',
     ...jobs.map((job, index) => formatRuntimeJobListEntry(job, index + 1)),
     '',
-    'Reply to a Codex/OpenAI task card to continue it or inspect output. `/runtime-logs`, `/runtime-followup`, and `/runtime-stop` still accept a list number, `current`, or a runtime task id when you want an explicit fallback.',
+    'Open `/cursor` -> `Codex/OpenAI` -> `Recent Work`, then reply to a task card to continue or inspect this work. `/runtime-logs`, `/runtime-followup`, and `/runtime-stop` still accept a list number, `current`, or a runtime task id when you want an explicit fallback.',
   ].join('\n');
 }
 
@@ -160,43 +162,33 @@ function parsePositiveInt(raw: string | undefined, fallback: number): number {
 
 export function formatRuntimeJobCard(job: BackendJobDetails): string {
   const metadata = (job.metadata || {}) as Record<string, unknown>;
-  const lines = [
-    `Codex/OpenAI task ${formatOpaqueTaskId(job.handle.jobId)}`,
-    `Status: ${formatHumanTaskStatus(job.status)}`,
-    `System status: ${formatSystemStatus(job.status)}`,
-    typeof metadata.groupFolder === 'string'
-      ? `Workspace: ${metadata.groupFolder}`
-      : null,
-    typeof metadata.selectedRuntime === 'string'
-      ? `Runtime: ${metadata.selectedRuntime}`
-      : null,
-    typeof metadata.threadId === 'string'
-      ? `Thread: ${metadata.threadId}`
-      : null,
-    job.summary ? `Summary: ${job.summary}` : null,
-    job.updatedAt ? `Updated: ${job.updatedAt}` : null,
-  ].filter((line): line is string => Boolean(line));
-  return lines.join('\n');
-}
-
-function formatOutputSourceLabel(
-  source: BackendPrimaryOutputResult['source'],
-): string {
-  if (source === 'final_output') return 'final output';
-  if (source === 'latest_output') return 'latest output';
-  if (source === 'logs') return 'log excerpt';
-  if (source === 'conversation') return 'conversation';
-  return 'output';
+  return formatShellTaskCard({
+    title: `Task ${formatOpaqueTaskId(job.handle.jobId)}`,
+    lane: 'codex_runtime',
+    status: job.status,
+    detailLines: [
+      typeof metadata.groupFolder === 'string'
+        ? `Workspace: ${metadata.groupFolder}`
+        : null,
+      typeof metadata.selectedRuntime === 'string'
+        ? `Runtime: ${metadata.selectedRuntime}`
+        : null,
+      typeof metadata.threadId === 'string'
+        ? `Thread: ${metadata.threadId}`
+        : null,
+    ],
+    summary: job.summary,
+    updatedAt: job.updatedAt,
+  });
 }
 
 export function formatRuntimeNextStep(jobId: string): string {
-  return [
-    'Next:',
-    '- Reply with plain text to continue this task.',
-    '- Use `/runtime-logs` as a reply when you want the latest output.',
-    '- Use `/runtime-stop` as a reply when you need to stop it.',
-    `- \`/runtime-followup ${jobId} <text>\` still works anywhere as an explicit fallback.`,
-  ].join('\n');
+  return formatTaskNextStepMessage({
+    primaryActions:
+      'Use this task card or `/runtime-logs` to refresh this task or view output.',
+    canReplyContinue: true,
+    explicitFallback: `\`/runtime-followup ${jobId} <text>\` and \`/runtime-stop\` still work if you want explicit fallbacks.`,
+  });
 }
 
 function buildLegacyFallbackContext(params: {
@@ -329,7 +321,8 @@ async function handleRuntimeFollowup(
         contextKind: 'runtime_job_card',
         payload: followed.metadata || null,
         text: [
-          `Andrea sent your next instruction to Codex/OpenAI task ${formatOpaqueTaskId(followed.handle.jobId)}.`,
+          'Andrea sent your next instruction to this task.',
+          `Task: Codex/OpenAI runtime ${formatOpaqueTaskId(followed.handle.jobId)}.`,
           formatRuntimeNextStep(followed.handle.jobId),
         ].join('\n\n'),
       });
@@ -378,7 +371,9 @@ async function handleRuntimeFollowup(
       contextKind: 'runtime_job_card',
       payload: followed.metadata || null,
       text: [
-        `Andrea started Codex/OpenAI task ${formatOpaqueTaskId(followed.handle.jobId)} for workspace ${legacyTarget}. Status: ${formatHumanTaskStatus(followed.status)}.`,
+        `Andrea started this task in the Codex/OpenAI lane for workspace ${legacyTarget}.`,
+        `Task: Codex/OpenAI runtime ${formatOpaqueTaskId(followed.handle.jobId)}.`,
+        `Status: ${formatHumanTaskStatus(followed.status)}.`,
         formatRuntimeNextStep(followed.handle.jobId),
       ].join('\n\n'),
     });
@@ -418,7 +413,7 @@ async function handleRuntimeStop(
         jobId: stopped.handle.jobId,
         contextKind: 'runtime_job_card',
         payload: stopped.metadata || null,
-        text: `Stop requested for Codex/OpenAI task ${formatOpaqueTaskId(stopped.handle.jobId)}. Status: ${formatHumanTaskStatus(stopped.status)}.\n\nReply to this task card with \`/runtime-logs\` when you want to refresh its latest output or error state.`,
+        text: `Stop requested for this task.\nTask: Codex/OpenAI runtime ${formatOpaqueTaskId(stopped.handle.jobId)}.\nStatus: ${formatHumanTaskStatus(stopped.status)}.\n\nReply to this task card with \`/runtime-logs\` when you want to refresh its latest output or error state.`,
       });
       return;
     } catch (err) {
@@ -475,7 +470,7 @@ async function handleRuntimeStop(
         jobId: stopped.handle.jobId,
         contextKind: 'runtime_job_card',
         payload: stopped.metadata || null,
-        text: `Stop requested for workspace ${legacyTarget} via Codex/OpenAI task ${formatOpaqueTaskId(stopped.handle.jobId)}. Status: ${formatHumanTaskStatus(stopped.status)}.`,
+        text: `Stop requested for this task in workspace ${legacyTarget}.\nTask: Codex/OpenAI runtime ${formatOpaqueTaskId(stopped.handle.jobId)}.\nStatus: ${formatHumanTaskStatus(stopped.status)}.`,
       });
       return;
     } catch (err) {
@@ -558,12 +553,12 @@ async function handleRuntimeLogs(
               `${formatRuntimeJobCard(targetJob as BackendJobDetails)}`,
               '',
               output.text
-                ? `Current ${formatOutputSourceLabel(output.source)}:\n${output.text}`
-                : `Logs:\n${logs.logText}`,
+                ? `${formatTaskOutputHeading(output.source)}:\n${output.text}`
+                : `Recent activity:\n${logs.logText}\n\nStructured output is not available yet, so Andrea is showing recent task activity instead.`,
               '',
               formatRuntimeNextStep(resolution.target.jobId),
             ].join('\n')
-          : `Codex/OpenAI task ${formatOpaqueTaskId(resolution.target.jobId)} does not have output yet.\n\nReply with plain text to continue it, or rerun \`/runtime-logs\` later if you want another explicit check.`,
+          : `This task does not have output yet.\nTask: Codex/OpenAI runtime ${formatOpaqueTaskId(resolution.target.jobId)}.\n\nReply with plain text to continue this task, or rerun \`/runtime-logs\` later if you want another explicit check.`,
       });
       return;
     } catch (err) {
@@ -637,12 +632,12 @@ async function handleRuntimeLogs(
               `${formatRuntimeJobCard((job || latestJob) as BackendJobDetails)}`,
               '',
               output.text
-                ? `Current ${formatOutputSourceLabel(output.source)}:\n${output.text}`
-                : `Logs:\n${logs.logText}`,
+                ? `${formatTaskOutputHeading(output.source)}:\n${output.text}`
+                : `Recent activity:\n${logs.logText}\n\nStructured output is not available yet, so Andrea is showing recent task activity instead.`,
               '',
               formatRuntimeNextStep(latestJob.handle.jobId),
             ].join('\n')
-          : `Codex/OpenAI task ${formatOpaqueTaskId(latestJob.handle.jobId)} does not have output yet.`,
+          : `This task does not have output yet.\nTask: Codex/OpenAI runtime ${formatOpaqueTaskId(latestJob.handle.jobId)}.`,
       });
       return;
     } catch (err) {
