@@ -238,6 +238,49 @@ describe('probeAssistantExecution', () => {
 
     expect(result.status).toBe('ok');
     expect(result.reason).toBe('ok');
-    expect(result.detail).toContain('assistant execution produced structured output');
+    expect(result.detail).toContain('assistant execution produced a real assistant answer');
+  });
+
+  it('fails when the probe only sees lifecycle output', async () => {
+    const result = await probeAssistantExecution({
+      requestClose: () => {},
+      runProbe: async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          result: null,
+          newSessionId: 'probe-session',
+          sawLifecycleOnlyOutput: true,
+        });
+        return {
+          status: 'success',
+          result: null,
+          newSessionId: 'probe-session',
+          sawLifecycleOnlyOutput: true,
+        };
+      },
+    });
+
+    expect(result.status).toBe('failed');
+    expect(result.reason).toBe('runtime_bootstrap_failed');
+    expect(result.detail).toContain('lifecycle output');
+  });
+
+  it('includes retry detail when the probe exhausted one recovery retry', async () => {
+    const result = await probeAssistantExecution({
+      requestClose: () => {},
+      runProbe: async () => ({
+        status: 'error',
+        result: null,
+        error: 'Container exited with code 1.',
+        failureKind: 'runtime_bootstrap_failed',
+        failureStage: 'runtime',
+        diagnosticHint:
+          'assistant runtime hit a transient execution failure before producing a stable answer',
+        recoveryAttempted: true,
+      }),
+    });
+
+    expect(result.status).toBe('failed');
+    expect(result.detail).toContain('recovery retry');
   });
 });

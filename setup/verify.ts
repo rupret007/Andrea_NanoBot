@@ -494,6 +494,9 @@ export async function probeAssistantExecution(
 
   const runProbe = input.runProbe || runContainerAgent;
   let sawStructuredOutput = false;
+  let sawAssistantText = false;
+  let sawLifecycleOnlyOutput = false;
+  let sawRecoveryAttempt = false;
   let closeRequested = false;
 
   try {
@@ -515,11 +518,33 @@ export async function probeAssistantExecution(
         },
       },
       () => {},
-      async () => {
+      async (streamedOutput) => {
         sawStructuredOutput = true;
+        if (streamedOutput.recoveryAttempted) {
+          sawRecoveryAttempt = true;
+        }
+        if (
+          streamedOutput.status === 'success' &&
+          typeof streamedOutput.result === 'string' &&
+          streamedOutput.result.trim()
+        ) {
+          sawAssistantText = true;
+        } else if (
+          streamedOutput.status === 'success' &&
+          !streamedOutput.result?.trim()
+        ) {
+          sawLifecycleOnlyOutput =
+            streamedOutput.sawLifecycleOnlyOutput !== false;
+        }
         if (closeRequested) return;
-        closeRequested = true;
-        (input.requestClose || requestContainerProbeClose)(probeGroup.folder);
+        if (
+          sawAssistantText ||
+          streamedOutput.status === 'error' ||
+          sawLifecycleOnlyOutput
+        ) {
+          closeRequested = true;
+          (input.requestClose || requestContainerProbeClose)(probeGroup.folder);
+        }
       },
     );
 
@@ -528,7 +553,14 @@ export async function probeAssistantExecution(
         status: 'failed',
         reason: output.failureKind || 'runtime_bootstrap_failed',
         detail: truncateDetail(
-          output.diagnosticHint || output.error || 'Assistant execution failed.',
+          [
+            output.diagnosticHint || output.error || 'Assistant execution failed.',
+            output.recoveryAttempted
+              ? 'probe exhausted one recovery retry before failing'
+              : '',
+          ]
+            .filter(Boolean)
+            .join(' | '),
         ),
       };
     }
@@ -542,13 +574,34 @@ export async function probeAssistantExecution(
       };
     }
 
+    if (!sawAssistantText) {
+      return {
+        status: 'failed',
+        reason: 'runtime_bootstrap_failed',
+        detail: truncateDetail(
+          [
+            sawLifecycleOnlyOutput
+              ? 'Execution probe only produced lifecycle output, not a real assistant answer.'
+              : 'Execution probe completed without a usable assistant answer.',
+            sawRecoveryAttempt || output.recoveryAttempted
+              ? 'probe exhausted one recovery retry before failing'
+              : '',
+          ]
+            .filter(Boolean)
+            .join(' | '),
+        ),
+      };
+    }
+
     return {
       status: 'ok',
       reason: 'ok',
       detail: truncateDetail(
         [
           output.newSessionId ? `session=${output.newSessionId}` : '',
-          'assistant execution produced structured output',
+          sawRecoveryAttempt || output.recoveryAttempted
+            ? 'assistant execution recovered after one retry'
+            : 'assistant execution produced a real assistant answer',
         ]
           .filter(Boolean)
           .join(' | '),

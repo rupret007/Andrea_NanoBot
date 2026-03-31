@@ -278,6 +278,72 @@ describe('container-runner timeout behavior', () => {
     expect(result.newSessionId).toBe('session-456');
   });
 
+  it('tracks lifecycle-only output without treating it as a user-visible result', async () => {
+    const onOutput = vi.fn(async () => {});
+    const resultPromise = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+      onOutput,
+    );
+
+    emitOutputMarker(fakeProc, {
+      status: 'success',
+      result: null,
+      newSessionId: 'session-lifecycle',
+    });
+
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+
+    const result = await resultPromise;
+    expect(result.status).toBe('success');
+    expect(result.sawLifecycleOnlyOutput).toBe(true);
+    expect(result.firstResultSubtype).toBeNull();
+  });
+
+  it('returns a terminal direct-assistant error instead of idling after the error marker', async () => {
+    const onOutput = vi.fn(async () => {});
+    const resultPromise = runContainerAgent(
+      testGroup,
+      {
+        ...testInput,
+        requestPolicy: {
+          route: 'direct_assistant',
+          reason: 'test',
+          builtinTools: [],
+          mcpTools: [],
+          guidance: 'reply directly',
+        },
+      },
+      () => {},
+      onOutput,
+    );
+
+    emitOutputMarker(fakeProc, {
+      status: 'error',
+      result: null,
+      error: 'Gateway authentication failed because the API key is invalid.',
+      failureKind: 'auth_failed',
+      failureStage: 'runtime',
+      diagnosticHint:
+        'assistant runtime returned an authentication failure before producing a stable answer',
+      recoveryAttempted: true,
+      firstResultSubtype: 'error_auth',
+    });
+
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+
+    const result = await resultPromise;
+    expect(result.status).toBe('error');
+    expect(result.failureKind).toBe('auth_failed');
+    expect(result.recoveryAttempted).toBe(true);
+    expect(result.firstResultSubtype).toBe('error_auth');
+  });
+
   it('redacts sensitive env vars in logged container args', () => {
     const args = [
       'run',
@@ -360,10 +426,15 @@ describe('container-runner timeout behavior', () => {
       'agent-runner-src',
     );
     const cachedIndex = path.join(cacheDir, 'index.ts');
+    const cachedStaleTest = path.join(
+      cacheDir,
+      'runtime-error-classification.test.ts',
+    );
     const syncMetadata = path.join(cacheDir, '.nanoclaw-source-sync.json');
 
     const existsSyncMock = vi.mocked(fs.existsSync);
     const statSyncMock = vi.mocked(fs.statSync);
+    const readdirSyncMock = vi.mocked(fs.readdirSync);
     const readFileSyncMock = vi.mocked(fs.readFileSync);
 
     existsSyncMock.mockImplementation((target) => {
@@ -372,8 +443,23 @@ describe('container-runner timeout behavior', () => {
       if (normalized === sourceIndex.replace(/\\/g, '/')) return true;
       if (normalized === cacheDir.replace(/\\/g, '/')) return true;
       if (normalized === cachedIndex.replace(/\\/g, '/')) return true;
+      if (normalized === cachedStaleTest.replace(/\\/g, '/')) return true;
       if (normalized === syncMetadata.replace(/\\/g, '/')) return false;
       return false;
+    });
+
+    readdirSyncMock.mockImplementation((target) => {
+      const normalized = String(target).replace(/\\/g, '/');
+      if (normalized === sourceDir.replace(/\\/g, '/')) {
+        return ['index.ts'] as unknown as ReturnType<typeof fs.readdirSync>;
+      }
+      if (normalized === cacheDir.replace(/\\/g, '/')) {
+        return [
+          'index.ts',
+          'runtime-error-classification.test.ts',
+        ] as unknown as ReturnType<typeof fs.readdirSync>;
+      }
+      return [] as unknown as ReturnType<typeof fs.readdirSync>;
     });
 
     statSyncMock.mockImplementation((target) => {
@@ -405,6 +491,11 @@ describe('container-runner timeout behavior', () => {
           typeof fs.readFileSync
         >;
       }
+      if (normalized === cachedStaleTest.replace(/\\/g, '/')) {
+        return "import { describe } from 'vitest';" as unknown as ReturnType<
+          typeof fs.readFileSync
+        >;
+      }
       return '' as unknown as ReturnType<typeof fs.readFileSync>;
     });
 
@@ -427,12 +518,16 @@ describe('container-runner timeout behavior', () => {
 
     const result = await resultPromise;
     expect(result.status).toBe('success');
+    expect(fs.rmSync).toHaveBeenCalledWith(cacheDir, {
+      recursive: true,
+      force: true,
+    });
     expect(fs.cpSync).toHaveBeenCalledWith(sourceDir, cacheDir, {
       recursive: true,
     });
     expect(fs.writeFileSync).toHaveBeenCalledWith(
       syncMetadata,
-      expect.stringContaining('"sourceIndexHash"'),
+      expect.stringContaining('"sourceTreeHash"'),
     );
   });
 });

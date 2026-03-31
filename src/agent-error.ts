@@ -48,6 +48,8 @@ type AgentErrorInput =
       | 'selectedModel'
       | 'endpointMode'
       | 'stderrTail'
+      | 'recoveryAttempted'
+      | 'sawLifecycleOnlyOutput'
     >;
 
 function includesAny(haystack: string, needles: string[]): boolean {
@@ -64,10 +66,19 @@ function analyzeStructuredFailure(
         | 'diagnosticHint'
         | 'selectedModel'
         | 'endpointMode'
+        | 'recoveryAttempted'
+        | 'sawLifecycleOnlyOutput'
       >
     | undefined,
 ): AgentErrorAnalysis | null {
   if (!input?.failureKind) return null;
+
+  const retryNote = input.recoveryAttempted
+    ? ' Andrea retried once and the runtime still failed.'
+    : '';
+  const lifecycleOnlyNote = input.sawLifecycleOnlyOutput
+    ? ' The runtime only produced lifecycle output, not a real assistant answer.'
+    : '';
 
   switch (input.failureKind) {
     case 'insufficient_quota':
@@ -89,7 +100,7 @@ function analyzeStructuredFailure(
         code: 'invalid_model_alias',
         nonRetriable: true,
         userMessage:
-          'I cannot run right now because the configured model is not supported by the gateway. Set NANOCLAW_AGENT_MODEL to a supported alias.',
+          'I cannot run right now because the configured model is not supported by the gateway. Set `NANOCLAW_AGENT_MODEL` to a supported alias.',
       };
     case 'unsupported_endpoint':
       return {
@@ -102,22 +113,19 @@ function analyzeStructuredFailure(
       return {
         code: 'container_runtime_unavailable',
         nonRetriable: false,
-        userMessage:
-          'Andrea cannot run that assistant turn right now because the container runtime could not start cleanly. An operator should re-run setup verify and inspect the runtime logs.',
+        userMessage: `Andrea cannot run that assistant turn right now because the container runtime could not start cleanly.${retryNote} An operator should re-run setup verify and inspect the runtime logs.`,
       };
     case 'initial_output_timeout':
       return {
         code: 'initial_output_timeout',
         nonRetriable: false,
-        userMessage:
-          'Andrea cannot run that assistant turn right now because the runtime failed before first output. This is different from a plain credential failure. An operator should re-run setup verify and inspect execution readiness logs.',
+        userMessage: `Andrea cannot run that assistant turn right now because the runtime failed before first output.${lifecycleOnlyNote}${retryNote} This is different from a plain credential failure. An operator should re-run setup verify and inspect execution readiness logs.`,
       };
     case 'runtime_bootstrap_failed':
       return {
         code: 'runtime_bootstrap_failed',
         nonRetriable: false,
-        userMessage:
-          'Andrea cannot run that assistant turn right now because the runtime failed during startup or execution. An operator should re-run setup verify and inspect execution readiness logs.',
+        userMessage: `Andrea cannot run that assistant turn right now because the runtime failed during startup or execution.${lifecycleOnlyNote}${retryNote} An operator should re-run setup verify and inspect execution readiness logs.`,
       };
     case 'credentials_missing_or_unusable':
       return {
@@ -166,8 +174,27 @@ export function analyzeAgentError(
 
   if (
     includesAny(message, [
+      'produced no structured output',
+      'failed before first output',
+      'initial_output_timeout',
+    ])
+  ) {
+    return {
+      code: 'initial_output_timeout',
+      nonRetriable: false,
+      userMessage:
+        'Andrea cannot run that assistant turn right now because the runtime failed before first output. This is different from a plain credential failure. An operator should re-run setup verify and inspect execution readiness logs.',
+    };
+  }
+
+  if (
+    includesAny(message, [
       'invalid_api_key',
+      'invalid api key',
+      'incorrect api key',
+      'api key is invalid',
       'authentication',
+      'authentication failed',
       'unauthorized',
       'forbidden',
       'permission denied',
@@ -194,7 +221,7 @@ export function analyzeAgentError(
       code: 'invalid_model_alias',
       nonRetriable: true,
       userMessage:
-        'I cannot run right now because the configured model is not supported by the gateway. Set NANOCLAW_AGENT_MODEL to a supported alias (for example claude-3-5-sonnet-latest).',
+        'I cannot run right now because the configured model is not supported by the gateway. Set `NANOCLAW_AGENT_MODEL` to a supported alias (for example claude-3-5-sonnet-latest).',
     };
   }
 
@@ -207,12 +234,37 @@ export function analyzeAgentError(
     };
   }
 
-  if (includesAny(message, ['missing credentials', 'credential', 'api key'])) {
+  if (
+    includesAny(message, [
+      'credentials_missing_or_unusable',
+      'missing credentials',
+      'credentials are missing',
+      'no api key',
+      'api key missing',
+      'credential runtime checks',
+    ])
+  ) {
     return {
       code: 'credentials_missing_or_unusable',
       nonRetriable: true,
       userMessage:
         'I cannot run right now because credentials are missing or unusable for the current model endpoint. Re-run setup verify and fix credential runtime checks.',
+    };
+  }
+
+  if (
+    includesAny(message, [
+      'runtime failed during startup or execution',
+      'container exited with code',
+      'container timed out after',
+      'runtime_bootstrap_failed',
+    ])
+  ) {
+    return {
+      code: 'runtime_bootstrap_failed',
+      nonRetriable: false,
+      userMessage:
+        'Andrea cannot run that assistant turn right now because the runtime failed during startup or execution. An operator should re-run setup verify and inspect execution readiness logs.',
     };
   }
 

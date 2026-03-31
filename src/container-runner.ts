@@ -88,6 +88,9 @@ export interface ContainerOutput {
   stderrTail?: string;
   selectedModel?: string | null;
   endpointMode?: string | null;
+  recoveryAttempted?: boolean;
+  sawLifecycleOnlyOutput?: boolean;
+  firstResultSubtype?: string | null;
 }
 
 interface VolumeMount {
@@ -452,8 +455,8 @@ function ensureSecretShadowFile(): string {
 }
 
 interface AgentRunnerSyncMetadata {
-  sourceIndexHash: string;
-  cachedIndexHash: string;
+  sourceTreeHash: string;
+  cachedTreeHash: string;
 }
 
 function hashText(input: string): string {
@@ -477,14 +480,14 @@ function readAgentRunnerSyncMetadata(
   try {
     const parsed = JSON.parse(raw) as Partial<AgentRunnerSyncMetadata>;
     if (
-      typeof parsed.sourceIndexHash !== 'string' ||
-      typeof parsed.cachedIndexHash !== 'string'
+      typeof parsed.sourceTreeHash !== 'string' ||
+      typeof parsed.cachedTreeHash !== 'string'
     ) {
       return null;
     }
     return {
-      sourceIndexHash: parsed.sourceIndexHash,
-      cachedIndexHash: parsed.cachedIndexHash,
+      sourceTreeHash: parsed.sourceTreeHash,
+      cachedTreeHash: parsed.cachedTreeHash,
     };
   } catch {
     return null;
@@ -496,6 +499,42 @@ function writeAgentRunnerSyncMetadata(
   metadata: AgentRunnerSyncMetadata,
 ): void {
   fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2));
+}
+
+function hashDirectoryTree(
+  dirPath: string,
+  ignoredNames = new Set<string>(),
+): string | null {
+  if (!fs.existsSync(dirPath)) return null;
+
+  const entries: string[] = [];
+
+  const walk = (currentPath: string, relativePrefix: string): void => {
+    const names = fs
+      .readdirSync(currentPath)
+      .filter((name) => !ignoredNames.has(name))
+      .sort();
+
+    for (const name of names) {
+      const fullPath = path.join(currentPath, name);
+      const relativePath = relativePrefix
+        ? path.join(relativePrefix, name)
+        : name;
+      const stat = fs.statSync(fullPath);
+      if (stat.isDirectory()) {
+        walk(fullPath, relativePath);
+        continue;
+      }
+
+      const content = tryReadTextFile(fullPath);
+      entries.push(
+        `${relativePath.replace(/\\/g, '/')}:${hashText(content || '')}`,
+      );
+    }
+  };
+
+  walk(dirPath, '');
+  return hashText(entries.join('\n'));
 }
 
 function syncSkillsForGroup(
@@ -702,19 +741,16 @@ function buildVolumeMounts(
     'agent-runner-src',
   );
   if (fs.existsSync(agentRunnerSrc)) {
-    const srcIndex = path.join(agentRunnerSrc, 'index.ts');
-    const cachedIndex = path.join(groupAgentRunnerDir, 'index.ts');
     const syncMetadataPath = path.join(
       groupAgentRunnerDir,
       '.nanoclaw-source-sync.json',
     );
-    const sourceIndex = tryReadTextFile(srcIndex);
-    const cachedIndexContent = tryReadTextFile(cachedIndex);
     const syncMetadata = readAgentRunnerSyncMetadata(syncMetadataPath);
-    const sourceIndexHash = sourceIndex ? hashText(sourceIndex) : null;
-    const cachedIndexHash = cachedIndexContent
-      ? hashText(cachedIndexContent)
-      : null;
+    const sourceTreeHash = hashDirectoryTree(agentRunnerSrc);
+    const cachedTreeHash = hashDirectoryTree(
+      groupAgentRunnerDir,
+      new Set(['.nanoclaw-source-sync.json']),
+    );
 
     // Backward compatibility:
     // If metadata does not exist yet, sync once whenever source and cached
@@ -724,21 +760,19 @@ function buildVolumeMounts(
     const needsInitialContentSync =
       !syncMetadata &&
       Boolean(
-        sourceIndexHash &&
-        cachedIndexHash &&
-        sourceIndexHash !== cachedIndexHash,
+        sourceTreeHash && cachedTreeHash && sourceTreeHash !== cachedTreeHash,
       );
     const cacheMissingOrIncomplete =
-      !fs.existsSync(groupAgentRunnerDir) || !cachedIndexHash;
+      !fs.existsSync(groupAgentRunnerDir) || !cachedTreeHash;
     const cacheMatchesLastSync = Boolean(
       syncMetadata &&
-      cachedIndexHash &&
-      syncMetadata.cachedIndexHash === cachedIndexHash,
+      cachedTreeHash &&
+      syncMetadata.cachedTreeHash === cachedTreeHash,
     );
     const sourceChangedSinceLastSync = Boolean(
       syncMetadata &&
-      sourceIndexHash &&
-      syncMetadata.sourceIndexHash !== sourceIndexHash,
+      sourceTreeHash &&
+      syncMetadata.sourceTreeHash !== sourceTreeHash,
     );
     const needsCopy =
       cacheMissingOrIncomplete ||
@@ -746,19 +780,24 @@ function buildVolumeMounts(
       (sourceChangedSinceLastSync && cacheMatchesLastSync);
 
     if (needsCopy) {
+      // Replace the cached source tree so deleted files do not linger in the
+      // mounted runtime and break future container starts.
+      fs.rmSync(groupAgentRunnerDir, { recursive: true, force: true });
       fs.cpSync(agentRunnerSrc, groupAgentRunnerDir, { recursive: true });
-      const copiedIndex = tryReadTextFile(cachedIndex);
-      if (sourceIndexHash && copiedIndex) {
-        const copiedIndexHash = hashText(copiedIndex);
+      const copiedTreeHash = hashDirectoryTree(
+        groupAgentRunnerDir,
+        new Set(['.nanoclaw-source-sync.json']),
+      );
+      if (sourceTreeHash && copiedTreeHash) {
         writeAgentRunnerSyncMetadata(syncMetadataPath, {
-          sourceIndexHash,
-          cachedIndexHash: copiedIndexHash,
+          sourceTreeHash,
+          cachedTreeHash: copiedTreeHash,
         });
       }
-    } else if (!syncMetadata && sourceIndexHash && cachedIndexHash) {
+    } else if (!syncMetadata && sourceTreeHash && cachedTreeHash) {
       writeAgentRunnerSyncMetadata(syncMetadataPath, {
-        sourceIndexHash,
-        cachedIndexHash,
+        sourceTreeHash,
+        cachedTreeHash,
       });
     }
   }
@@ -952,6 +991,9 @@ function buildFailureOutput(params: {
   stderr?: string;
   selectedModel?: string | null;
   endpointMode?: string | null;
+  recoveryAttempted?: boolean;
+  sawLifecycleOnlyOutput?: boolean;
+  firstResultSubtype?: string | null;
 }): ContainerOutput {
   return {
     status: 'error',
@@ -964,6 +1006,9 @@ function buildFailureOutput(params: {
     stderrTail: buildSanitizedStderrTail(params.stderr || '') || undefined,
     selectedModel: params.selectedModel || null,
     endpointMode: params.endpointMode || null,
+    recoveryAttempted: params.recoveryAttempted || undefined,
+    sawLifecycleOnlyOutput: params.sawLifecycleOnlyOutput || undefined,
+    firstResultSubtype: params.firstResultSubtype || null,
   };
 }
 
@@ -1003,6 +1048,7 @@ export async function runContainerAgent(
       containerArgs: containerArgsForLogs.join(' '),
       selectedModel: launchMetadata.selectedModel,
       endpointMode: launchMetadata.endpointMode,
+      route: input.requestPolicy?.route || null,
     },
     'Container mount configuration',
   );
@@ -1018,6 +1064,7 @@ export async function runContainerAgent(
       isMain: input.isMain,
       selectedModel: launchMetadata.selectedModel,
       endpointMode: launchMetadata.endpointMode,
+      route: input.requestPolicy?.route || null,
     },
     'Spawning container agent',
   );
@@ -1054,6 +1101,11 @@ export async function runContainerAgent(
     let timeoutReason: 'hard' | 'no_output' | null = null;
     let hadStreamingOutput = false;
     let hadStructuredOutput = false;
+    let hadUserVisibleAssistantResult = false;
+    let hadLifecycleOnlyOutput = false;
+    let recoveryAttempted = false;
+    let firstResultSubtype: string | null = null;
+    let terminalDirectAssistantErrorOutput: ContainerOutput | null = null;
 
     const configTimeout = group.containerConfig?.timeout || CONTAINER_TIMEOUT;
     const effectiveIdleTimeout = resolveEffectiveIdleTimeout(
@@ -1112,6 +1164,10 @@ export async function runContainerAgent(
           initialOutputTimeoutMs,
           selectedModel: launchMetadata.selectedModel,
           endpointMode: launchMetadata.endpointMode,
+          route: input.requestPolicy?.route || null,
+          recoveryAttempted,
+          sawLifecycleOnlyOutput: hadLifecycleOnlyOutput,
+          firstResultSubtype,
         },
         'Container produced no structured output before initial timeout',
       );
@@ -1180,6 +1236,34 @@ export async function runContainerAgent(
             if (parsed.newSessionId) {
               newSessionId = parsed.newSessionId;
             }
+            if (parsed.recoveryAttempted) {
+              recoveryAttempted = true;
+            }
+            if (!firstResultSubtype && parsed.firstResultSubtype) {
+              firstResultSubtype = parsed.firstResultSubtype;
+            }
+            const normalizedResult =
+              typeof parsed.result === 'string' ? parsed.result.trim() : '';
+            if (parsed.status === 'success' && normalizedResult) {
+              hadUserVisibleAssistantResult = true;
+            } else if (parsed.status === 'success' && !normalizedResult) {
+              hadLifecycleOnlyOutput = true;
+            } else if (
+              parsed.status === 'error' &&
+              input.requestPolicy?.route === 'direct_assistant'
+            ) {
+              terminalDirectAssistantErrorOutput = {
+                ...parsed,
+                recoveryAttempted:
+                  parsed.recoveryAttempted || recoveryAttempted || undefined,
+                sawLifecycleOnlyOutput:
+                  parsed.sawLifecycleOnlyOutput ||
+                  hadLifecycleOnlyOutput ||
+                  undefined,
+                firstResultSubtype:
+                  parsed.firstResultSubtype || firstResultSubtype || null,
+              };
+            }
             hadStreamingOutput = true;
             // Activity detected — reset the hard timeout
             resetTimeout();
@@ -1244,6 +1328,10 @@ export async function runContainerAgent(
             `Exit Code: ${code}`,
             `Timeout Reason: ${timeoutReason || 'unknown'}`,
             `Had Streaming Output: ${hadStreamingOutput}`,
+            `Had User Visible Assistant Result: ${hadUserVisibleAssistantResult}`,
+            `Had Lifecycle Only Output: ${hadLifecycleOnlyOutput}`,
+            `Recovery Attempted: ${recoveryAttempted}`,
+            `First Result Subtype: ${firstResultSubtype || 'none'}`,
             ``,
             `=== Container Args ===`,
             containerArgsForLogs.join(' '),
@@ -1261,14 +1349,28 @@ export async function runContainerAgent(
         // container being reaped after the idle period expired.
         if (hadStreamingOutput) {
           logger.info(
-            { ...logContext, group: group.name, duration, code },
-            'Container timed out after output (idle cleanup)',
+            {
+              ...logContext,
+              group: group.name,
+              duration,
+              code,
+              route: input.requestPolicy?.route || null,
+              recoveryAttempted,
+              sawLifecycleOnlyOutput: hadLifecycleOnlyOutput,
+              firstResultSubtype,
+            },
+            hadUserVisibleAssistantResult
+              ? 'Container timed out after output (idle cleanup)'
+              : 'Container timed out after lifecycle-only output',
           );
           outputChain.then(() => {
             resolve({
               status: 'success',
               result: null,
               newSessionId,
+              recoveryAttempted: recoveryAttempted || undefined,
+              sawLifecycleOnlyOutput: hadLifecycleOnlyOutput || undefined,
+              firstResultSubtype,
             });
           });
           return;
@@ -1284,6 +1386,10 @@ export async function runContainerAgent(
               initialOutputTimeoutMs,
               selectedModel: launchMetadata.selectedModel,
               endpointMode: launchMetadata.endpointMode,
+              route: input.requestPolicy?.route || null,
+              recoveryAttempted,
+              sawLifecycleOnlyOutput: hadLifecycleOnlyOutput,
+              firstResultSubtype,
               stderrTail: buildSanitizedStderrTail(stderr),
             },
             'Container timed out waiting for initial structured output',
@@ -1299,6 +1405,9 @@ export async function runContainerAgent(
               stderr,
               selectedModel: launchMetadata.selectedModel,
               endpointMode: launchMetadata.endpointMode,
+              recoveryAttempted,
+              sawLifecycleOnlyOutput: hadLifecycleOnlyOutput,
+              firstResultSubtype,
             }),
           );
           return;
@@ -1311,6 +1420,10 @@ export async function runContainerAgent(
             duration,
             code,
             configTimeout,
+            route: input.requestPolicy?.route || null,
+            recoveryAttempted,
+            sawLifecycleOnlyOutput: hadLifecycleOnlyOutput,
+            firstResultSubtype,
             stderrTail: buildSanitizedStderrTail(stderr),
           },
           'Container timed out with no output',
@@ -1320,11 +1433,16 @@ export async function runContainerAgent(
             error: `Container timed out after ${configTimeout}ms`,
             failureKind: 'runtime_bootstrap_failed',
             failureStage: 'runtime',
-            diagnosticHint: 'container exceeded the configured hard timeout',
+            diagnosticHint: hadLifecycleOnlyOutput
+              ? 'container produced lifecycle-only output but never reached a real assistant answer before the hard timeout'
+              : 'container exceeded the configured hard timeout',
             logFile: timeoutLog,
             stderr,
             selectedModel: launchMetadata.selectedModel,
             endpointMode: launchMetadata.endpointMode,
+            recoveryAttempted,
+            sawLifecycleOnlyOutput: hadLifecycleOnlyOutput,
+            firstResultSubtype,
           }),
         );
         return;
@@ -1412,6 +1530,10 @@ export async function runContainerAgent(
             logFile,
             selectedModel: launchMetadata.selectedModel,
             endpointMode: launchMetadata.endpointMode,
+            route: input.requestPolicy?.route || null,
+            recoveryAttempted,
+            sawLifecycleOnlyOutput: hadLifecycleOnlyOutput,
+            firstResultSubtype,
           },
           'Container exited with error',
         );
@@ -1427,6 +1549,9 @@ export async function runContainerAgent(
             stderr,
             selectedModel: launchMetadata.selectedModel,
             endpointMode: launchMetadata.endpointMode,
+            recoveryAttempted,
+            sawLifecycleOnlyOutput: hadLifecycleOnlyOutput,
+            firstResultSubtype,
           }),
         );
         return;
@@ -1435,14 +1560,59 @@ export async function runContainerAgent(
       // Streaming mode: wait for output chain to settle, return completion marker
       if (onOutput) {
         outputChain.then(() => {
+          if (
+            input.requestPolicy?.route === 'direct_assistant' &&
+            terminalDirectAssistantErrorOutput &&
+            !hadUserVisibleAssistantResult
+          ) {
+            logger.warn(
+              {
+                ...logContext,
+                group: group.name,
+                duration,
+                route: input.requestPolicy?.route,
+                recoveryAttempted,
+                sawLifecycleOnlyOutput: hadLifecycleOnlyOutput,
+                firstResultSubtype,
+              },
+              'Container completed after terminal direct assistant error',
+            );
+            resolve({
+              ...terminalDirectAssistantErrorOutput,
+              recoveryAttempted:
+                terminalDirectAssistantErrorOutput.recoveryAttempted ||
+                recoveryAttempted ||
+                undefined,
+              sawLifecycleOnlyOutput:
+                terminalDirectAssistantErrorOutput.sawLifecycleOnlyOutput ||
+                hadLifecycleOnlyOutput ||
+                undefined,
+              firstResultSubtype:
+                terminalDirectAssistantErrorOutput.firstResultSubtype ||
+                firstResultSubtype,
+            });
+            return;
+          }
           logger.info(
-            { ...logContext, group: group.name, duration, newSessionId },
+            {
+              ...logContext,
+              group: group.name,
+              duration,
+              newSessionId,
+              route: input.requestPolicy?.route || null,
+              recoveryAttempted,
+              sawLifecycleOnlyOutput: hadLifecycleOnlyOutput,
+              firstResultSubtype,
+            },
             'Container completed (streaming mode)',
           );
           resolve({
             status: 'success',
             result: null,
             newSessionId,
+            recoveryAttempted: recoveryAttempted || undefined,
+            sawLifecycleOnlyOutput: hadLifecycleOnlyOutput || undefined,
+            firstResultSubtype,
           });
         });
         return;
@@ -1502,6 +1672,9 @@ export async function runContainerAgent(
             stderr,
             selectedModel: launchMetadata.selectedModel,
             endpointMode: launchMetadata.endpointMode,
+            recoveryAttempted,
+            sawLifecycleOnlyOutput: hadLifecycleOnlyOutput,
+            firstResultSubtype,
           }),
         );
       }
@@ -1529,6 +1702,9 @@ export async function runContainerAgent(
           stderr,
           selectedModel: launchMetadata.selectedModel,
           endpointMode: launchMetadata.endpointMode,
+          recoveryAttempted,
+          sawLifecycleOnlyOutput: hadLifecycleOnlyOutput,
+          firstResultSubtype,
         }),
       );
     });

@@ -23,6 +23,11 @@ import {
   PreCompactHookInput,
 } from '@anthropic-ai/claude-agent-sdk';
 import { fileURLToPath } from 'url';
+import { planDirectAssistantRecoveryRetry } from './direct-assistant-retry.js';
+import {
+  classifyDirectAssistantError,
+  isDirectAssistantErrorText,
+} from './runtime-error-classification.js';
 
 interface ContainerInput {
   prompt: string;
@@ -48,6 +53,17 @@ interface ContainerOutput {
   result: string | null;
   newSessionId?: string;
   error?: string;
+  failureKind?:
+    | 'insufficient_quota'
+    | 'auth_failed'
+    | 'invalid_model_alias'
+    | 'unsupported_endpoint'
+    | 'runtime_bootstrap_failed';
+  failureStage?: 'startup' | 'runtime' | 'shutdown' | 'parse' | 'spawn';
+  diagnosticHint?: string;
+  recoveryAttempted?: boolean;
+  sawLifecycleOnlyOutput?: boolean;
+  firstResultSubtype?: string | null;
 }
 
 interface SessionEntry {
@@ -206,6 +222,13 @@ function writeOutput(output: ContainerOutput): void {
 
 function log(message: string): void {
   console.error(`[agent-runner] ${message}`);
+}
+
+function logEvent(
+  event: string,
+  fields: Record<string, string | number | boolean | null | undefined>,
+): void {
+  log(`${event} ${JSON.stringify(fields)}`);
 }
 
 function getSessionSummary(
@@ -489,6 +512,10 @@ async function runQuery(
   lastAssistantUuid?: string;
   closedDuringQuery: boolean;
   suppressedTransientError: boolean;
+  endedAfterTerminalError: boolean;
+  hadSuccessfulResult: boolean;
+  hadErrorResult: boolean;
+  firstResultSubtype?: string;
 }> {
   const stream = new MessageStream();
   stream.push(prompt);
@@ -520,6 +547,9 @@ async function runQuery(
   let resultCount = 0;
   let successResultCount = 0;
   let suppressedTransientError = false;
+  let endedAfterTerminalError = false;
+  let hadErrorResult = false;
+  let firstResultSubtype: string | undefined;
   const requestPolicy = normalizeRequestPolicy(containerInput.requestPolicy);
 
   // Load global CLAUDE.md as additional system context (shared across all groups)
@@ -640,11 +670,19 @@ async function runQuery(
 
     if (message.type === 'result') {
       resultCount++;
+      if (!firstResultSubtype && typeof message.subtype === 'string') {
+        firstResultSubtype = message.subtype;
+      }
       const textResult =
         'result' in message ? (message as { result?: string }).result : null;
       const isErrorSubtype =
         typeof message.subtype === 'string' &&
         message.subtype.startsWith('error');
+      const successTextLooksLikeError =
+        requestPolicy.route === 'direct_assistant' &&
+        !isErrorSubtype &&
+        isDirectAssistantErrorText(textResult);
+      const treatAsErrorResult = isErrorSubtype || successTextLooksLikeError;
       const resultErrors =
         'errors' in message &&
         Array.isArray((message as { errors?: unknown }).errors)
@@ -655,15 +693,15 @@ async function runQuery(
       const combinedErrorText =
         resultErrors.length > 0 ? resultErrors.join(' | ') : null;
       const suppressUserVisibleErrorResult =
-        isErrorSubtype && requestPolicy.route === 'direct_assistant';
-      const fallbackErrorText = isErrorSubtype
+        treatAsErrorResult && requestPolicy.route === 'direct_assistant';
+      const fallbackErrorText = treatAsErrorResult
         ? suppressUserVisibleErrorResult
           ? null
           : combinedErrorText ||
             textResult ||
             'I hit a temporary execution issue while processing that request. Please try again.'
         : null;
-      const debugErrorText = isErrorSubtype
+      const debugErrorText = treatAsErrorResult
         ? combinedErrorText ||
           textResult ||
           `Agent execution failed (${message.subtype})`
@@ -671,14 +709,29 @@ async function runQuery(
       log(
         `Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}${combinedErrorText ? ` errors=${combinedErrorText.slice(0, 200)}` : ''}`,
       );
+      const directAssistantError =
+        requestPolicy.route === 'direct_assistant' && treatAsErrorResult
+          ? classifyDirectAssistantError(
+              typeof message.subtype === 'string' ? message.subtype : undefined,
+              textResult ?? null,
+              resultErrors,
+            )
+          : null;
       const shouldSuppressForRetry =
         options.suppressFirstErrorForRetry === true &&
         !options.fallbackMode &&
-        isErrorSubtype &&
+        treatAsErrorResult &&
         resultCount === 1 &&
-        successResultCount === 0;
+        successResultCount === 0 &&
+        (directAssistantError?.retryable ?? true);
       if (shouldSuppressForRetry) {
         suppressedTransientError = true;
+        logEvent('retry_suppressed_first_error', {
+          route: requestPolicy.route,
+          subtype: typeof message.subtype === 'string' ? message.subtype : null,
+          reason: directAssistantError?.reason || 'transient_execution_failure',
+          recoveryAttempted: false,
+        });
         log(
           `Suppressing first transient error result for direct retry (subtype=${message.subtype})`,
         );
@@ -689,16 +742,42 @@ async function runQuery(
         stream.end();
         break;
       }
-      writeOutput({
-        status: isErrorSubtype ? 'error' : 'success',
-        result: isErrorSubtype ? fallbackErrorText : (textResult ?? null),
+      const output: ContainerOutput = {
+        status: treatAsErrorResult ? 'error' : 'success',
+        result: treatAsErrorResult ? fallbackErrorText : (textResult ?? null),
         newSessionId,
-        ...(isErrorSubtype
-          ? { error: debugErrorText || 'Agent execution failed' }
+        firstResultSubtype:
+          typeof message.subtype === 'string' ? message.subtype : null,
+        ...(treatAsErrorResult
+          ? {
+              error: debugErrorText || 'Agent execution failed',
+              failureKind: directAssistantError?.failureKind,
+              failureStage: 'runtime',
+              diagnosticHint: directAssistantError?.diagnosticHint,
+              recoveryAttempted: options.fallbackMode || undefined,
+            }
           : {}),
-      });
-      if (!isErrorSubtype) {
+      };
+      writeOutput(output);
+      if (!treatAsErrorResult) {
         successResultCount += 1;
+      } else {
+        hadErrorResult = true;
+        if (requestPolicy.route === 'direct_assistant') {
+          if (options.fallbackMode) {
+            logEvent('retry_exhausted', {
+              route: requestPolicy.route,
+              subtype:
+                typeof message.subtype === 'string' ? message.subtype : null,
+              reason: directAssistantError?.reason || 'terminal_error',
+              recoveryAttempted: true,
+            });
+          }
+          endedAfterTerminalError = true;
+          ipcPolling = false;
+          stream.end();
+          break;
+        }
       }
     }
   }
@@ -712,6 +791,10 @@ async function runQuery(
     lastAssistantUuid,
     closedDuringQuery,
     suppressedTransientError,
+    endedAfterTerminalError,
+    hadSuccessfulResult: successResultCount > 0,
+    hadErrorResult,
+    firstResultSubtype,
   };
 }
 
@@ -849,24 +932,91 @@ async function main(): Promise<void> {
   try {
     let usedDirectRecoveryRetry = false;
     while (true) {
+      const retryAttemptedForThisQuery = usedDirectRecoveryRetry;
       log(
         `Starting query (session: ${sessionId || 'new'}, resumeAt: ${resumeAt || 'latest'})...`,
       );
 
-      const queryResult = await runQuery(
-        prompt,
-        sessionId,
-        mcpServerPath,
-        containerInput,
-        sdkEnv,
-        resumeAt,
-        {
-          fallbackMode: usedDirectRecoveryRetry,
-          suppressFirstErrorForRetry:
-            directRetryEligible && !usedDirectRecoveryRetry,
-          disableMcpServer: usedDirectRecoveryRetry,
-        },
-      );
+      let queryResult: Awaited<ReturnType<typeof runQuery>>;
+      try {
+        queryResult = await runQuery(
+          prompt,
+          sessionId,
+          mcpServerPath,
+          containerInput,
+          sdkEnv,
+          resumeAt,
+          {
+            fallbackMode: usedDirectRecoveryRetry,
+            suppressFirstErrorForRetry:
+              directRetryEligible && !usedDirectRecoveryRetry,
+            disableMcpServer: usedDirectRecoveryRetry,
+          },
+        );
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        const directAssistantError = directRetryEligible
+          ? classifyDirectAssistantError(undefined, errorMessage, [])
+          : null;
+
+        log(`Agent query error: ${errorMessage}`);
+
+        if (
+          directRetryEligible &&
+          directAssistantError?.retryable &&
+          !usedDirectRecoveryRetry
+        ) {
+          logEvent('retry_suppressed_first_error', {
+            route: containerInput.requestPolicy?.route || 'unknown',
+            subtype: null,
+            reason: directAssistantError.reason,
+            recoveryAttempted: false,
+          });
+          const retryPlan = planDirectAssistantRecoveryRetry(sessionId);
+          logEvent('retry_started', {
+            route: containerInput.requestPolicy?.route || 'unknown',
+            subtype: null,
+            recoveryAttempted: true,
+            startsFreshSession: retryPlan.startsFreshSession,
+          });
+          log(
+            retryPlan.startsFreshSession
+              ? 'Retrying direct assistant request in recovery mode with a fresh session after transient thrown execution error'
+              : 'Retrying direct assistant request in recovery mode after transient thrown execution error',
+          );
+          usedDirectRecoveryRetry = true;
+          sessionId = retryPlan.sessionId;
+          resumeAt = retryPlan.resumeAt;
+          continue;
+        }
+
+        if (directRetryEligible) {
+          if (usedDirectRecoveryRetry) {
+            logEvent('retry_exhausted', {
+              route: containerInput.requestPolicy?.route || 'unknown',
+              subtype: null,
+              reason: directAssistantError?.reason || 'thrown_error',
+              recoveryAttempted: true,
+            });
+          }
+          writeOutput({
+            status: 'error',
+            result: null,
+            newSessionId: sessionId,
+            error: errorMessage,
+            failureKind:
+              directAssistantError?.failureKind || 'runtime_bootstrap_failed',
+            failureStage: 'runtime',
+            diagnosticHint:
+              directAssistantError?.diagnosticHint ||
+              'assistant runtime failed before producing a stable answer',
+            recoveryAttempted: usedDirectRecoveryRetry || undefined,
+          });
+          break;
+        }
+
+        throw err;
+      }
       if (queryResult.newSessionId) {
         sessionId = queryResult.newSessionId;
       }
@@ -879,14 +1029,36 @@ async function main(): Promise<void> {
         directRetryEligible &&
         !usedDirectRecoveryRetry
       ) {
+        const retryPlan = planDirectAssistantRecoveryRetry(sessionId);
+        logEvent('retry_started', {
+          route: containerInput.requestPolicy?.route || 'unknown',
+          subtype: queryResult.firstResultSubtype || null,
+          recoveryAttempted: true,
+          startsFreshSession: retryPlan.startsFreshSession,
+        });
         log(
-          'Retrying direct assistant request in recovery mode after transient execution error',
+          retryPlan.startsFreshSession
+            ? 'Retrying direct assistant request in recovery mode with a fresh session after transient execution error'
+            : 'Retrying direct assistant request in recovery mode after transient execution error',
         );
         usedDirectRecoveryRetry = true;
-        resumeAt = undefined;
+        sessionId = retryPlan.sessionId;
+        resumeAt = retryPlan.resumeAt;
         continue;
       }
+      if (retryAttemptedForThisQuery && queryResult.hadSuccessfulResult) {
+        logEvent('retry_succeeded', {
+          route: containerInput.requestPolicy?.route || 'unknown',
+          subtype: queryResult.firstResultSubtype || null,
+          recoveryAttempted: true,
+        });
+      }
       usedDirectRecoveryRetry = false;
+
+      if (queryResult.endedAfterTerminalError) {
+        log('Direct assistant query ended after terminal error, exiting');
+        break;
+      }
 
       // If _close was consumed during the query, exit immediately.
       // Don't emit a session-update marker (it would reset the host's

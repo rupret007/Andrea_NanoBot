@@ -943,6 +943,26 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       return true;
     }
 
+    if (
+      output.status === 'error' &&
+      requestPolicy.route === 'direct_assistant' &&
+      output.userMessage
+    ) {
+      await channel.sendMessage(chatJid, output.userMessage);
+      logger.warn(
+        {
+          component: 'assistant',
+          chatJid,
+          groupFolder: group.folder,
+          group: group.name,
+          code: output.code,
+          recoveryAttempted: output.recoveryAttempted,
+        },
+        'Surfaced direct assistant runtime failure to user without queue retry',
+      );
+      return true;
+    }
+
     if (requestPolicy.route === 'direct_assistant') {
       const rescueReply = maybeBuildDirectRescueReply(missedMessages);
       if (rescueReply) {
@@ -1017,6 +1037,7 @@ async function runAgent(
     | 'transient_or_unknown';
   nonRetriable: boolean;
   userMessage: string | null;
+  recoveryAttempted: boolean;
 }> {
   const isMain = group.isMain === true;
   const sessionId = sessions[group.folder];
@@ -1097,6 +1118,9 @@ async function runAgent(
           failureStage: output.failureStage,
           diagnosticHint: output.diagnosticHint,
           logFile: output.logFile,
+          recoveryAttempted: output.recoveryAttempted,
+          sawLifecycleOnlyOutput: output.sawLifecycleOnlyOutput,
+          firstResultSubtype: output.firstResultSubtype,
           code: analysis.code,
           nonRetriable: analysis.nonRetriable,
         },
@@ -1107,6 +1131,7 @@ async function runAgent(
         code: analysis.code,
         nonRetriable: analysis.nonRetriable,
         userMessage: analysis.userMessage,
+        recoveryAttempted: output.recoveryAttempted === true,
       };
     }
 
@@ -1115,6 +1140,7 @@ async function runAgent(
       code: 'transient_or_unknown',
       nonRetriable: false,
       userMessage: null,
+      recoveryAttempted: output.recoveryAttempted === true,
     };
   } catch (err) {
     logger.error({ group: group.name, err }, 'Agent error');
@@ -1123,6 +1149,7 @@ async function runAgent(
       code: 'transient_or_unknown',
       nonRetriable: false,
       userMessage: null,
+      recoveryAttempted: false,
     };
   }
 }
