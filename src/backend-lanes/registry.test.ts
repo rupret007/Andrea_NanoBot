@@ -41,11 +41,15 @@ describe('createBackendLaneRegistry', () => {
   it('registers and resolves backend lanes by id', () => {
     const registry = createBackendLaneRegistry();
     const cursorLane = makeLane('cursor');
+    const runtimeLane = makeLane('andrea_runtime');
 
     registry.register(cursorLane);
+    registry.register(runtimeLane);
 
     expect(registry.has('cursor')).toBe(true);
+    expect(registry.has('andrea_runtime')).toBe(true);
     expect(registry.get('cursor')).toBe(cursorLane);
-    expect(registry.list()).toEqual([cursorLane]);
+    expect(registry.get('andrea_runtime')).toBe(runtimeLane);
+    expect(registry.list()).toEqual([cursorLane, runtimeLane]);
   });
 });

@@ -1,7 +1,4 @@
-import type {
-  BackendJobHandle,
-  BackendLaneId,
-} from './backend-lanes/types.js';
+import type { BackendJobHandle, BackendLaneId } from './backend-lanes/types.js';
 import type { CursorAgentView, CursorJobInventory } from './cursor-jobs.js';
 import {
   getCursorMessageContext,
@@ -123,10 +120,7 @@ function parseSelectedJobsByLaneJson(
     if (typeof row.cursor === 'string' || row.cursor === null) {
       selectedJobs.cursor = row.cursor as string | null;
     }
-    if (
-      typeof row.andrea_runtime === 'string' ||
-      row.andrea_runtime === null
-    ) {
+    if (typeof row.andrea_runtime === 'string' || row.andrea_runtime === null) {
       selectedJobs.andrea_runtime = row.andrea_runtime as string | null;
     }
     return selectedJobs;

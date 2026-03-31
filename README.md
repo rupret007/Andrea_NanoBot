@@ -3,11 +3,11 @@
 </p>
 
 <p align="center">
-  Andrea_NanoBot is a Telegram-first personal AI assistant built on NanoClaw isolation and expanded with curated OpenClaw skills.
+  Andrea_NanoBot is the merged home for Andrea's Telegram-first orchestration shell, built on NanoClaw isolation and expanded with curated OpenClaw skills.
 </p>
 
 <p align="center">
-  Andrea is designed to be practically useful every day: tasks, reminders, research, coding help, guarded shopping approvals, and secure chat-based automation.
+  Andrea is designed to be practically useful every day: tasks, reminders, research, coding help, guarded shopping approvals, and secure chat-based automation across multiple backend lanes.
 </p>
 
 <p align="center">
@@ -15,6 +15,7 @@
   <a href="docs/ADMIN_GUIDE.md">Admin Guide</a>&nbsp; | &nbsp;
   <a href="docs/SETUP_AND_FEATURES_GUIDE.md">Setup Guide</a>&nbsp; | &nbsp;
   <a href="docs/CHANNEL_COMMANDS_AND_ONBOARDING.md">Chat Commands</a>&nbsp; | &nbsp;
+  <a href="docs/BACKEND_LANES_ARCHITECTURE.md">Backend Lanes</a>&nbsp; | &nbsp;
   <a href="docs/DEMO_CHECKLIST.md">Demo Checklist</a>&nbsp; | &nbsp;
   <a href="docs/ADDONS_AND_FEATURE_MATRIX.md">Add-On Matrix</a>&nbsp; | &nbsp;
   <a href="docs/CURSOR_API_KEYS.md">Cursor API Keys</a>&nbsp; | &nbsp;
@@ -40,7 +41,8 @@ What normal users should expect:
 What operators should expect:
 
 - setup, restart, verify, and troubleshooting
-- Cursor Cloud job workflows
+- Cursor Cloud job workflows through the primary `/cursor` dashboard
+- a secondary `andrea_runtime` lane for Codex/OpenAI execution truth
 - desktop bridge session and terminal workflows
 - optional integrations only after same-day validation
 
@@ -112,6 +114,25 @@ Andrea now documents Cursor as three separate surfaces:
 - **Cursor-backed runtime route**
   - optional diagnostic/runtime-routing surface
   - separate from both Cloud jobs and desktop bridge readiness
+
+## Backend Lanes
+
+Andrea_NanoBot now owns the shared shell while backend lanes own execution truth.
+
+- **Shell ownership stays here**
+  - Telegram UX
+  - `/cursor` tile dashboard
+  - selection state, wizard state, and reply-linked operator behavior
+- **Cursor lane stays first-class**
+  - current rich operator lane
+  - primary taught dashboard and job workflow
+- **`andrea_runtime` is now integrated as a secondary lane**
+  - brings Codex/OpenAI runtime orchestration into this repo
+  - currently exposed only through temporary `/runtime-*` scaffolding
+  - does not replace Cursor or the `/cursor` dashboard
+
+Shared shell handles now resolve as `{ laneId, jobId }`.
+The imported `imported/andrea_openai_bot` subtree is temporary staging plus history preservation, not the long-term runtime home.
 
 ## Two Command Surfaces
 
@@ -187,6 +208,7 @@ Optional integrations such as Cursor Cloud job control, desktop bridge control, 
 - operators can create, follow up, stop, inspect, and recover **Cursor Cloud** coding jobs from the main control chat
 - operators use `/cursor-conversation` for text output and `/cursor-results` plus `/cursor-download` for Cloud output files
 - operators can sync and inspect **desktop bridge sessions**, then run line-oriented terminal commands against tracked bridge sessions on their own machine
+- operators can also use the integrated **`andrea_runtime` lane** through temporary `/runtime-*` commands when that lane is explicitly enabled and validated on the host
 - keep optional integrations behind explicit operator setup instead of treating them as default demo features
 
 Important Cursor rule:
@@ -262,6 +284,8 @@ Use the docs based on what you are trying to do:
   for operator setup, runtime config, and day-to-day operations
 - [docs/CHANNEL_COMMANDS_AND_ONBOARDING.md](docs/CHANNEL_COMMANDS_AND_ONBOARDING.md)
   for Telegram onboarding, chat UX, and command reference
+- [docs/BACKEND_LANES_ARCHITECTURE.md](docs/BACKEND_LANES_ARCHITECTURE.md)
+  for shell-versus-lane ownership, the `{ laneId, jobId }` handle model, and the temporary imported subtree boundary
 - [docs/AMAZON_SHOPPING_AND_APPROVALS.md](docs/AMAZON_SHOPPING_AND_APPROVALS.md)
   for Amazon Business setup, safety rails, and shopping commands
 - [docs/CURSOR_DESKTOP_BRIDGE.md](docs/CURSOR_DESKTOP_BRIDGE.md)

@@ -31,24 +31,30 @@ import {
   writeTasksSnapshot,
 } from './container-runner.js';
 import {
+  CONTAINER_RUNTIME_NAME,
   cleanupOrphans,
   ensureContainerRuntimeRunning,
+  getContainerRuntimeStatus,
 } from './container-runtime.js';
 import {
   createTask,
+  getAllAgentThreads,
   getAllChats,
+  getAgentThread,
   listAllCursorAgents,
   getAllRegisteredGroups,
   getAllSessions,
   getAllTasks,
   getLastBotMessageTimestamp,
   listCursorAgentArtifacts,
+  listRuntimeOrchestrationJobs,
   getMessagesSince,
   getNewMessages,
   getRouterState,
   initDatabase,
   listAllEnabledCommunitySkills,
   setRegisteredGroup,
+  setAgentThread,
   setRouterState,
   setSession,
   storeChatMetadata,
@@ -119,16 +125,19 @@ import {
 } from './openclaw-market.js';
 import { classifyAssistantRequest } from './assistant-routing.js';
 import { analyzeAgentError } from './agent-error.js';
+import { listCursorModels, type CursorAgentView } from './cursor-jobs.js';
 import {
-  listCursorModels,
-  type CursorAgentView,
-} from './cursor-jobs.js';
+  formatAgentRuntimeStatusMessage,
+  getAgentRuntimeStatusSnapshot,
+} from './andrea-runtime/agent-runtime.js';
+import { dispatchRuntimeCommand } from './andrea-runtime/commands.js';
+import { createRuntimeOrchestrationService } from './andrea-runtime/orchestration.js';
+import { createBackendLaneRegistry } from './backend-lanes/registry.js';
 import {
-  createBackendLaneRegistry,
-} from './backend-lanes/registry.js';
-import {
-  createCursorBackendLane,
-} from './backend-lanes/cursor-lane.js';
+  createAndreaRuntimeBackendLane,
+  type AndreaRuntimeBackendLane,
+} from './backend-lanes/andrea-runtime-lane.js';
+import { createCursorBackendLane } from './backend-lanes/cursor-lane.js';
 import type { BackendJobHandle } from './backend-lanes/types.js';
 import {
   parseCursorCreateCommand,
@@ -198,6 +207,11 @@ import {
   CURSOR_TERMINAL_STOP_COMMANDS,
   CURSOR_TEST_COMMANDS,
   CURSOR_UI_COMMANDS,
+  RUNTIME_FOLLOWUP_COMMANDS,
+  RUNTIME_JOBS_COMMANDS,
+  RUNTIME_LOGS_COMMANDS,
+  RUNTIME_STATUS_COMMANDS,
+  RUNTIME_STOP_COMMANDS,
   getCommandAccessDecision,
   normalizeCommandToken,
   PURCHASE_APPROVE_COMMANDS,
@@ -226,8 +240,66 @@ const channels: Channel[] = [];
 const queue = new GroupQueue();
 const backendLaneRegistry = createBackendLaneRegistry();
 const cursorBackendLane = createCursorBackendLane();
+const andreaRuntimeExecutionEnabled =
+  (process.env.ANDREA_RUNTIME_EXECUTION_ENABLED || '').toLowerCase() === 'true';
+const andreaRuntimeService = createRuntimeOrchestrationService({
+  assistantName: ASSISTANT_NAME,
+  enqueueJob(groupJid, jobId, fn) {
+    queue.enqueueTask(groupJid, jobId, fn);
+  },
+  getAvailableGroups() {
+    return getAvailableGroups();
+  },
+  getRegisteredGroupJids() {
+    return new Set(Object.keys(registeredGroups));
+  },
+  getRuntimeJobs() {
+    return queue.getRuntimeJobs();
+  },
+  getSession(groupFolder) {
+    return sessions[groupFolder];
+  },
+  getStoredThread(groupFolder) {
+    return getAgentThread(groupFolder);
+  },
+  notifyIdle(groupJid) {
+    queue.notifyIdle(groupJid);
+  },
+  persistAgentThread(groupFolder, threadId, runtime) {
+    sessions[groupFolder] = threadId;
+    setAgentThread({
+      group_folder: groupFolder,
+      runtime,
+      thread_id: threadId,
+      last_response_id: threadId,
+      updated_at: new Date().toISOString(),
+    });
+  },
+  refreshTaskSnapshots() {
+    refreshTaskSnapshots(registeredGroups);
+  },
+  registerProcess(groupJid, proc, containerName, groupFolder) {
+    queue.registerProcess(groupJid, proc, containerName, groupFolder);
+  },
+  requestStop(groupJid) {
+    return queue.requestStop(groupJid);
+  },
+  resolveGroupByFolder(folder) {
+    const entry = Object.entries(registeredGroups).find(
+      ([, group]) => group.folder === folder,
+    );
+    if (!entry) return null;
+    const [jid, group] = entry;
+    return { jid, group };
+  },
+  runContainerAgent,
+  writeGroupsSnapshot,
+});
+const andreaRuntimeBackendLane =
+  createAndreaRuntimeBackendLane(andreaRuntimeService);
 
 backendLaneRegistry.register(cursorBackendLane);
+backendLaneRegistry.register(andreaRuntimeBackendLane);
 
 const onecli = new OneCLI({ url: ONECLI_URL });
 
@@ -434,6 +506,36 @@ export function getAvailableGroups(): import('./container-runner.js').AvailableG
       lastActivity: c.last_message_time,
       isRegistered: registeredJids.has(c.jid),
     }));
+}
+
+function buildAndreaRuntimeDisabledMessage(): string {
+  return [
+    'Andrea runtime execution is integrated but not enabled on this host yet.',
+    'Keep using /cursor as the primary operator surface.',
+    'To enable the temporary /runtime-* scaffolding, set ANDREA_RUNTIME_EXECUTION_ENABLED=true after validating the Codex/OpenAI runtime container and credentials on this machine.',
+  ].join('\n');
+}
+
+function buildAndreaRuntimeStatusMessage(): string {
+  const snapshot = getAgentRuntimeStatusSnapshot({
+    activeThreads: getAllAgentThreads(),
+    activeJobs: listRuntimeOrchestrationJobs({ limit: 100 }).jobs.filter(
+      (job) => job.status === 'queued' || job.status === 'running',
+    ).length,
+    containerRuntimeName: CONTAINER_RUNTIME_NAME,
+    containerRuntimeStatus: getContainerRuntimeStatus(CONTAINER_RUNTIME_NAME),
+  });
+
+  return [
+    formatAgentRuntimeStatusMessage(snapshot),
+    '',
+    `- Runtime execution enabled on this host: ${andreaRuntimeExecutionEnabled ? 'yes' : 'no'}`,
+    '- Shell ownership remains in Andrea_NanoBot; /runtime-* is temporary secondary scaffolding.',
+  ].join('\n');
+}
+
+function getAndreaRuntimeLane(): AndreaRuntimeBackendLane {
+  return backendLaneRegistry.get('andrea_runtime') as AndreaRuntimeBackendLane;
 }
 
 function getEnabledOpenClawSkillsSnapshot(): AvailableOpenClawSkill[] {
@@ -3131,6 +3233,59 @@ async function main(): Promise<void> {
     }
   }
 
+  async function handleAndreaRuntimeCommand(
+    chatJid: string,
+    rawTrimmed: string,
+    commandToken: string,
+    sourceMessage?: NewMessage,
+  ): Promise<void> {
+    const channel = findChannel(channels, chatJid);
+    if (!channel) return;
+    const runtimeLane = getAndreaRuntimeLane();
+
+    await dispatchRuntimeCommand(
+      {
+        async sendToChat(targetChatJid, text) {
+          await channel.sendMessage(
+            targetChatJid,
+            text,
+            buildOperatorSendOptions(sourceMessage),
+          );
+        },
+        getStatusMessage() {
+          return buildAndreaRuntimeStatusMessage();
+        },
+        canExecute: andreaRuntimeExecutionEnabled,
+        getExecutionDisabledMessage() {
+          return buildAndreaRuntimeDisabledMessage();
+        },
+        getRuntimeJobs() {
+          return queue.getRuntimeJobs();
+        },
+        findGroupByFolder(folder) {
+          const entry = Object.entries(registeredGroups).find(
+            ([, group]) => group.folder === folder,
+          );
+          if (!entry) return null;
+          const [jid, group] = entry;
+          return { jid, folder: group.folder };
+        },
+        requestStop(groupJid) {
+          return queue.requestStop(groupJid);
+        },
+        orchestration: andreaRuntimeExecutionEnabled
+          ? runtimeLane.getService()
+          : undefined,
+        async queueFollowup() {
+          throw new Error(buildAndreaRuntimeDisabledMessage());
+        },
+      },
+      chatJid,
+      rawTrimmed,
+      commandToken,
+    );
+  }
+
   // Channel callbacks (shared by all channels)
   const channelOpts = {
     onMessage: (chatJid: string, msg: NewMessage) => {
@@ -3194,6 +3349,24 @@ async function main(): Promise<void> {
             isMain: registeredGroups[chatJid]?.isMain === true,
           },
           'Blocked command outside allowed surface',
+        );
+        return;
+      }
+
+      if (
+        RUNTIME_STATUS_COMMANDS.has(commandToken) ||
+        RUNTIME_JOBS_COMMANDS.has(commandToken) ||
+        RUNTIME_FOLLOWUP_COMMANDS.has(commandToken) ||
+        RUNTIME_STOP_COMMANDS.has(commandToken) ||
+        RUNTIME_LOGS_COMMANDS.has(commandToken)
+      ) {
+        handleAndreaRuntimeCommand(
+          chatJid,
+          rawTrimmed,
+          commandToken,
+          msg,
+        ).catch((err) =>
+          logger.error({ err, chatJid }, 'Andrea runtime command error'),
         );
         return;
       }

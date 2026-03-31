@@ -36,6 +36,21 @@ describe('operator command gate', () => {
     expect(decision.reason).toBe('main_control_only');
   });
 
+  it('keeps temporary runtime scaffolding operator-only', () => {
+    const blocked = getCommandAccessDecision('/runtime-status', undefined);
+    expect(blocked.allowed).toBe(false);
+    expect(blocked.reason).toBe('main_control_only');
+
+    const allowed = getCommandAccessDecision('/runtime-jobs', {
+      name: 'Andrea Main',
+      folder: 'main',
+      trigger: '@andrea',
+      added_at: '2026-03-29T00:00:00.000Z',
+      isMain: true,
+    });
+    expect(allowed.allowed).toBe(true);
+  });
+
   it('blocks advanced commands in non-main chats', () => {
     const decision = getCommandAccessDecision('/amazon_status', {
       name: 'Family',

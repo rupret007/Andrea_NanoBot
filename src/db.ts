@@ -5,6 +5,12 @@ import path from 'path';
 import { ASSISTANT_NAME, DATA_DIR, STORE_DIR } from './config.js';
 import { assertValidGroupFolder, isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
+import type {
+  AgentThreadState,
+  ListRuntimeJobsRequest,
+  RuntimeOrchestrationJob,
+  RuntimeOrchestrationJobList,
+} from './andrea-runtime/types.js';
 import {
   NewMessage,
   RegisteredGroup,
@@ -98,6 +104,15 @@ function createSchema(database: Database.Database): void {
       group_folder TEXT PRIMARY KEY,
       session_id TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS agent_threads (
+      group_folder TEXT PRIMARY KEY,
+      runtime TEXT NOT NULL,
+      thread_id TEXT NOT NULL,
+      last_response_id TEXT,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_threads_updated
+      ON agent_threads(updated_at DESC);
     CREATE TABLE IF NOT EXISTS registered_groups (
       jid TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -218,6 +233,38 @@ function createSchema(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_cursor_message_contexts_agent
       ON cursor_message_contexts(agent_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS runtime_orchestration_jobs (
+      job_id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL,
+      group_folder TEXT NOT NULL,
+      group_jid TEXT NOT NULL,
+      parent_job_id TEXT,
+      thread_id TEXT,
+      runtime_route TEXT NOT NULL,
+      requested_runtime TEXT,
+      selected_runtime TEXT,
+      status TEXT NOT NULL,
+      stop_requested INTEGER DEFAULT 0,
+      prompt_preview TEXT NOT NULL,
+      latest_output_text TEXT,
+      final_output_text TEXT,
+      error_text TEXT,
+      log_file TEXT,
+      source_system TEXT NOT NULL,
+      actor_ref TEXT,
+      correlation_id TEXT,
+      reply_ref TEXT,
+      created_at TEXT NOT NULL,
+      started_at TEXT,
+      finished_at TEXT,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_runtime_orchestration_jobs_created
+      ON runtime_orchestration_jobs(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_runtime_orchestration_jobs_group_created
+      ON runtime_orchestration_jobs(group_folder, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_runtime_orchestration_jobs_thread_created
+      ON runtime_orchestration_jobs(thread_id, created_at DESC);
     CREATE TABLE IF NOT EXISTS purchase_requests (
       id TEXT PRIMARY KEY,
       group_folder TEXT NOT NULL,
@@ -325,7 +372,9 @@ function createSchema(database: Database.Database): void {
   }
 
   try {
-    database.exec(`ALTER TABLE cursor_message_contexts ADD COLUMN lane_id TEXT`);
+    database.exec(
+      `ALTER TABLE cursor_message_contexts ADD COLUMN lane_id TEXT`,
+    );
   } catch {
     /* column already exists */
   }
@@ -933,6 +982,347 @@ export function getAllSessions(): Record<string, string> {
     result[row.group_folder] = row.session_id;
   }
   return result;
+}
+
+export function getAgentThread(
+  groupFolder: string,
+): AgentThreadState | undefined {
+  const row = db
+    .prepare(
+      `
+        SELECT group_folder, runtime, thread_id, last_response_id, updated_at
+        FROM agent_threads
+        WHERE group_folder = ?
+      `,
+    )
+    .get(groupFolder) as AgentThreadState | undefined;
+
+  if (row) {
+    return row;
+  }
+
+  const legacySessionId = getSession(groupFolder);
+  if (!legacySessionId) return undefined;
+
+  return {
+    group_folder: groupFolder,
+    runtime: 'claude_legacy',
+    thread_id: legacySessionId,
+    last_response_id: null,
+    updated_at: '',
+  };
+}
+
+export function setAgentThread(thread: AgentThreadState): void {
+  assertValidGroupFolder(thread.group_folder);
+  db.prepare(
+    `
+      INSERT OR REPLACE INTO agent_threads (
+        group_folder,
+        runtime,
+        thread_id,
+        last_response_id,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?)
+    `,
+  ).run(
+    thread.group_folder,
+    thread.runtime,
+    thread.thread_id,
+    thread.last_response_id || null,
+    thread.updated_at,
+  );
+  setSession(thread.group_folder, thread.thread_id);
+}
+
+export function getAllAgentThreads(): Record<string, AgentThreadState> {
+  const rows = db
+    .prepare(
+      `
+        SELECT group_folder, runtime, thread_id, last_response_id, updated_at
+        FROM agent_threads
+      `,
+    )
+    .all() as AgentThreadState[];
+  const result: Record<string, AgentThreadState> = {};
+
+  for (const row of rows) {
+    result[row.group_folder] = row;
+  }
+
+  const legacySessions = getAllSessions();
+  for (const [groupFolder, threadId] of Object.entries(legacySessions)) {
+    if (result[groupFolder]) continue;
+    result[groupFolder] = {
+      group_folder: groupFolder,
+      runtime: 'claude_legacy',
+      thread_id: threadId,
+      last_response_id: null,
+      updated_at: '',
+    };
+  }
+
+  return result;
+}
+
+interface RuntimeOrchestrationJobRow {
+  job_id: string;
+  kind: RuntimeOrchestrationJob['kind'];
+  status: RuntimeOrchestrationJob['status'];
+  stop_requested: number;
+  group_folder: string;
+  group_jid: string;
+  parent_job_id: string | null;
+  thread_id: string | null;
+  runtime_route: RuntimeOrchestrationJob['runtimeRoute'];
+  requested_runtime: RuntimeOrchestrationJob['requestedRuntime'] | null;
+  selected_runtime: RuntimeOrchestrationJob['selectedRuntime'] | null;
+  prompt_preview: string;
+  latest_output_text: string | null;
+  final_output_text: string | null;
+  error_text: string | null;
+  log_file: string | null;
+  source_system: string;
+  actor_ref: string | null;
+  correlation_id: string | null;
+  reply_ref: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  updated_at: string;
+}
+
+export interface RuntimeOrchestrationJobRecord extends RuntimeOrchestrationJob {
+  actorRef?: string | null;
+}
+
+function mapRuntimeOrchestrationJobRow(
+  row: RuntimeOrchestrationJobRow,
+): RuntimeOrchestrationJobRecord {
+  return {
+    jobId: row.job_id,
+    kind: row.kind,
+    status: row.status,
+    stopRequested: row.stop_requested === 1,
+    groupFolder: row.group_folder,
+    groupJid: row.group_jid,
+    parentJobId: row.parent_job_id,
+    threadId: row.thread_id,
+    runtimeRoute: row.runtime_route,
+    requestedRuntime: row.requested_runtime,
+    selectedRuntime: row.selected_runtime,
+    promptPreview: row.prompt_preview,
+    latestOutputText: row.latest_output_text,
+    finalOutputText: row.final_output_text,
+    errorText: row.error_text,
+    logFile: row.log_file,
+    sourceSystem: row.source_system,
+    actorRef: row.actor_ref,
+    correlationId: row.correlation_id,
+    replyRef: row.reply_ref,
+    createdAt: row.created_at,
+    startedAt: row.started_at,
+    finishedAt: row.finished_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export function createRuntimeOrchestrationJob(
+  job: RuntimeOrchestrationJobRecord,
+): void {
+  assertValidGroupFolder(job.groupFolder);
+  db.prepare(
+    `
+      INSERT INTO runtime_orchestration_jobs (
+        job_id,
+        kind,
+        group_folder,
+        group_jid,
+        parent_job_id,
+        thread_id,
+        runtime_route,
+        requested_runtime,
+        selected_runtime,
+        status,
+        stop_requested,
+        prompt_preview,
+        latest_output_text,
+        final_output_text,
+        error_text,
+        log_file,
+        source_system,
+        actor_ref,
+        correlation_id,
+        reply_ref,
+        created_at,
+        started_at,
+        finished_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+  ).run(
+    job.jobId,
+    job.kind,
+    job.groupFolder,
+    job.groupJid,
+    job.parentJobId || null,
+    job.threadId || null,
+    job.runtimeRoute,
+    job.requestedRuntime || null,
+    job.selectedRuntime || null,
+    job.status,
+    job.stopRequested ? 1 : 0,
+    job.promptPreview,
+    job.latestOutputText || null,
+    job.finalOutputText || null,
+    job.errorText || null,
+    job.logFile || null,
+    job.sourceSystem,
+    job.actorRef || null,
+    job.correlationId || null,
+    job.replyRef || null,
+    job.createdAt,
+    job.startedAt || null,
+    job.finishedAt || null,
+    job.updatedAt,
+  );
+}
+
+export function updateRuntimeOrchestrationJob(
+  jobId: string,
+  updates: Partial<RuntimeOrchestrationJobRecord>,
+): void {
+  const fields: string[] = [];
+  const values: unknown[] = [];
+
+  const addField = (field: string, value: unknown): void => {
+    fields.push(`${field} = ?`);
+    values.push(value);
+  };
+
+  if (updates.threadId !== undefined) addField('thread_id', updates.threadId);
+  if (updates.requestedRuntime !== undefined) {
+    addField('requested_runtime', updates.requestedRuntime);
+  }
+  if (updates.selectedRuntime !== undefined) {
+    addField('selected_runtime', updates.selectedRuntime);
+  }
+  if (updates.status !== undefined) addField('status', updates.status);
+  if (updates.stopRequested !== undefined) {
+    addField('stop_requested', updates.stopRequested ? 1 : 0);
+  }
+  if (updates.latestOutputText !== undefined) {
+    addField('latest_output_text', updates.latestOutputText);
+  }
+  if (updates.finalOutputText !== undefined) {
+    addField('final_output_text', updates.finalOutputText);
+  }
+  if (updates.errorText !== undefined)
+    addField('error_text', updates.errorText);
+  if (updates.logFile !== undefined) addField('log_file', updates.logFile);
+  if (updates.correlationId !== undefined) {
+    addField('correlation_id', updates.correlationId);
+  }
+  if (updates.replyRef !== undefined) addField('reply_ref', updates.replyRef);
+  if (updates.startedAt !== undefined)
+    addField('started_at', updates.startedAt);
+  if (updates.finishedAt !== undefined) {
+    addField('finished_at', updates.finishedAt);
+  }
+  if (updates.updatedAt !== undefined)
+    addField('updated_at', updates.updatedAt);
+
+  if (fields.length === 0) return;
+
+  values.push(jobId);
+  db.prepare(
+    `UPDATE runtime_orchestration_jobs SET ${fields.join(', ')} WHERE job_id = ?`,
+  ).run(...values);
+}
+
+export function getRuntimeOrchestrationJob(
+  jobId: string,
+): RuntimeOrchestrationJobRecord | undefined {
+  const row = db
+    .prepare(
+      `
+        SELECT *
+        FROM runtime_orchestration_jobs
+        WHERE job_id = ?
+      `,
+    )
+    .get(jobId) as RuntimeOrchestrationJobRow | undefined;
+
+  return row ? mapRuntimeOrchestrationJobRow(row) : undefined;
+}
+
+export function listRuntimeOrchestrationJobs(
+  query: ListRuntimeJobsRequest = {},
+): RuntimeOrchestrationJobList {
+  const limit = Math.min(Math.max(query.limit ?? 20, 1), 100);
+  const conditions: string[] = [];
+  const values: unknown[] = [];
+
+  if (query.groupFolder) {
+    assertValidGroupFolder(query.groupFolder);
+    conditions.push('group_folder = ?');
+    values.push(query.groupFolder);
+  }
+
+  if (query.threadId) {
+    conditions.push('thread_id = ?');
+    values.push(query.threadId);
+  }
+
+  if (query.beforeJobId) {
+    const anchor = getRuntimeOrchestrationJob(query.beforeJobId);
+    if (anchor) {
+      conditions.push('(created_at < ? OR (created_at = ? AND job_id < ?))');
+      values.push(anchor.createdAt, anchor.createdAt, anchor.jobId);
+    }
+  }
+
+  const whereClause =
+    conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM runtime_orchestration_jobs
+        ${whereClause}
+        ORDER BY created_at DESC, job_id DESC
+        LIMIT ?
+      `,
+    )
+    .all(...values, limit + 1) as RuntimeOrchestrationJobRow[];
+
+  const hasMore = rows.length > limit;
+  const visibleRows = hasMore ? rows.slice(0, limit) : rows;
+  const jobs = visibleRows.map(mapRuntimeOrchestrationJobRow);
+
+  return {
+    jobs,
+    nextBeforeJobId: hasMore ? jobs.at(-1)?.jobId || null : null,
+  };
+}
+
+export function findLatestRuntimeJobByThread(
+  threadId: string,
+): RuntimeOrchestrationJobRecord | undefined {
+  const row = db
+    .prepare(
+      `
+        SELECT *
+        FROM runtime_orchestration_jobs
+        WHERE thread_id = ?
+        ORDER BY created_at DESC, job_id DESC
+        LIMIT 1
+      `,
+    )
+    .get(threadId) as RuntimeOrchestrationJobRow | undefined;
+
+  return row ? mapRuntimeOrchestrationJobRow(row) : undefined;
 }
 
 export interface CommunitySkillRecord {

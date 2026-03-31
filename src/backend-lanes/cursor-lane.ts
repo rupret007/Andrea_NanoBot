@@ -31,7 +31,6 @@ import type {
   BackendGetJobParams,
   BackendJobDetails,
   BackendJobHandle,
-  BackendJobLogsResult,
   BackendJobSummary,
   BackendLane,
   BackendListJobsParams,
@@ -132,15 +131,9 @@ async function findCursorJob(
 }
 
 export interface CursorBackendLane extends BackendLane {
-  createCursorJob(
-    params: BackendCreateJobParams,
-  ): Promise<CursorAgentView>;
-  followUpCursorJob(
-    params: BackendFollowUpJobParams,
-  ): Promise<CursorAgentView>;
-  stopCursorJob(
-    params: BackendStopJobParams,
-  ): Promise<CursorAgentView>;
+  createCursorJob(params: BackendCreateJobParams): Promise<CursorAgentView>;
+  followUpCursorJob(params: BackendFollowUpJobParams): Promise<CursorAgentView>;
+  stopCursorJob(params: BackendStopJobParams): Promise<CursorAgentView>;
   getInventory(params: BackendListJobsParams): Promise<CursorJobInventory>;
   syncJob(params: BackendGetJobParams): Promise<{
     job: BackendJobDetails;
@@ -171,9 +164,7 @@ export interface CursorBackendLane extends BackendLane {
     chatJid: string;
     commandText: string;
   }): Promise<CursorTerminalCommandRunView>;
-  stopTerminal(
-    params: BackendGetJobParams,
-  ): Promise<CursorTerminalStatusView>;
+  stopTerminal(params: BackendGetJobParams): Promise<CursorTerminalStatusView>;
 }
 
 export function createCursorBackendLane(): CursorBackendLane {

@@ -37,6 +37,7 @@ import { OneCLI } from '@onecli-sh/sdk';
 import { validateAdditionalMounts } from './mount-security.js';
 import { OPENCLAW_MARKET_MANIFEST_FILENAME } from './openclaw-market.js';
 import { RegisteredGroup } from './types.js';
+import type { AgentRuntimeName, RuntimeRoute } from './andrea-runtime/types.js';
 import type { AssistantRequestPolicy } from './assistant-routing.js';
 import {
   CONTAINER_CLOSE_GRACE_PERIOD_MS,
@@ -52,6 +53,9 @@ const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
 export interface ContainerInput {
   prompt: string;
   sessionId?: string;
+  preferredRuntime?: AgentRuntimeName;
+  fallbackRuntime?: AgentRuntimeName;
+  runtimeRoute?: RuntimeRoute;
   groupFolder: string;
   chatJid: string;
   isMain: boolean;
@@ -66,7 +70,9 @@ export interface ContainerOutput {
   status: 'success' | 'error';
   result: string | null;
   newSessionId?: string;
+  runtime?: AgentRuntimeName;
   error?: string;
+  logFile?: string;
 }
 
 interface VolumeMount {

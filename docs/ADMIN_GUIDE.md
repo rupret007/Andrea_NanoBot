@@ -7,6 +7,13 @@ It is intentionally practical: product shape first, runbook second, theory last.
 
 Andrea has one public assistant identity and one narrow public chat surface.
 
+Andrea_NanoBot is now also the merged home for Andrea's shared orchestration shell:
+
+- the shell stays here
+- Cursor remains the primary rich backend lane
+- `andrea_runtime` is integrated as a secondary Codex/OpenAI lane
+- the imported `imported/andrea_openai_bot` subtree is temporary staging and history preservation only
+
 ### User-safe surface
 
 Normal users should experience:
@@ -60,6 +67,20 @@ Andrea now treats Cursor as three separate surfaces:
 - optional diagnostic/runtime-routing surface
 - separate from Cursor Cloud job readiness
 - separate from desktop bridge terminal readiness
+
+### 4. Andrea Runtime Lane
+
+- integrated Codex/OpenAI backend lane under the shared shell
+- execution truth lives in the lane, not in Telegram command handlers
+- currently surfaced only through temporary `/runtime-*` scaffolding
+- does **not** replace `/cursor` as the taught operator flow
+- `codex_local` is the intended primary runtime for this lane
+- `openai_cloud` remains conditional on `OPENAI_API_KEY` or a compatible gateway
+- host execution stays disabled until `ANDREA_RUNTIME_EXECUTION_ENABLED=true`
+
+Read the architecture note when you need the ownership boundary:
+
+- [BACKEND_LANES_ARCHITECTURE.md](BACKEND_LANES_ARCHITECTURE.md)
 
 ## Status Terms
 
@@ -247,12 +268,19 @@ Optional operator-only integrations, only when configured:
   - `/purchase-requests`
   - `/purchase-approve <request_id> <approval_code>`
   - `/purchase-cancel <request_id>`
+- Andrea runtime scaffolding:
+  - `/runtime-status`
+  - `/runtime-jobs`
+  - `/runtime-followup <group_folder> <text>`
+  - `/runtime-stop <group_folder>`
+  - `/runtime-logs <group_folder> [lines]`
 
 Compatibility note:
 
 - operator docs use hyphen aliases in Telegram
 - underscore aliases are still accepted, but the hyphen form is the preferred operator-facing syntax
 - older `/cursor-artifacts` and `/cursor-artifact-link` aliases are still accepted, but `/cursor-results` and `/cursor-download` are the preferred workflow names now
+- `/runtime-*` is temporary secondary scaffolding for the `andrea_runtime` lane, not a second primary shell
 
 ## Cursor Workflow In Telegram
 
@@ -288,6 +316,10 @@ Recommended flow:
 5. `npm run telegram:user:batch`
 
 Keep this tooling operator-only and pointed at your own DM or a dedicated test chat only.
+
+For merged-shell architecture details, see:
+
+- [BACKEND_LANES_ARCHITECTURE.md](BACKEND_LANES_ARCHITECTURE.md)
 
 ## Security Defaults To Keep
 

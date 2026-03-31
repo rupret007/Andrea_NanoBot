@@ -13,6 +13,12 @@ This is different from the normal bot runtime:
 
 Do not treat this as a public product feature.
 
+Andrea_NanoBot remains the shared Telegram-first shell in the merged repo:
+
+- `/cursor` stays the primary taught operator surface
+- Cursor remains the validated rich backend lane
+- `/runtime-*` is temporary secondary scaffolding for the integrated `andrea_runtime` lane
+
 ## What It Can Do
 
 With a configured Telegram user session, this machine can:
@@ -175,6 +181,12 @@ For Cursor-specific operator validation, prefer this live workflow:
 
 Raw ids still work, but the normal Telegram operator path is now dashboard-, tile-, and reply-driven.
 
+If you are validating the merged `andrea_runtime` lane instead of Cursor:
+
+- keep the test in the main control chat
+- treat `/runtime-*` as secondary scaffolding, not the primary shell
+- only expect live execution when `ANDREA_RUNTIME_EXECUTION_ENABLED=true` and the Codex/OpenAI runtime has been validated on this host
+
 ## Security Notes
 
 Keep these rules:
@@ -192,6 +204,7 @@ What is real:
 
 - real inbound Telegram testing from this machine is possible once user-session auth is configured
 - this is useful for regression loops against the live bot
+- the merged repo still teaches `/cursor` first; `/runtime-*` is only for secondary runtime-lane validation
 
 What is not real:
 

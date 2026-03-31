@@ -3,9 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { createCursorBackendLane } from './cursor-lane.js';
 import type { CursorAgentView } from '../cursor-jobs.js';
 
-function makeRecord(
-  overrides: Partial<CursorAgentView> = {},
-): CursorAgentView {
+function makeRecord(overrides: Partial<CursorAgentView> = {}): CursorAgentView {
   return {
     provider: 'cloud',
     id: 'bc_test_123',

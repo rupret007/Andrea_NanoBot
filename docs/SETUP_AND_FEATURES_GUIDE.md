@@ -19,6 +19,8 @@ Keep this split in mind while reading the rest of the setup guide:
 - the public-safe surface stays narrow and conversation-first
 - Cursor Cloud is the current validated heavy-lift queued coding path
 - desktop bridge is the operator-only session and terminal path on your own machine
+- Andrea_NanoBot is the merged home for the shared shell and backend-lane registry
+- the integrated `andrea_runtime` lane is secondary and conditional; `/cursor` remains the primary taught operator surface
 - Cursor-backed runtime routing is a separate optional diagnostic/runtime surface
 
 ## Status Terms
@@ -41,6 +43,7 @@ Use these meanings consistently when reading `/cursor_status` and the setup docs
   - explicit per-chat enable/disable
 - Anthropic-compatible model routing with OpenAI-key-backed gateway support.
 - Optional operator-enabled integrations such as Amazon Business shopping and Alexa voice.
+- A secondary integrated `andrea_runtime` lane for Codex/OpenAI execution truth behind temporary `/runtime-*` scaffolding.
 
 For demo use, keep the default public surface smaller than the full operator feature set.
 The safest baseline is Telegram + direct assistance + fast quick replies for simple asks + reminders/tasks + `/cursor_status` + clean startup/health checks.
@@ -223,6 +226,26 @@ Important notes:
 
 If `Desktop bridge terminal control: unavailable`, treat that as a missing-config or bridge-health issue, not as a Cursor Cloud issue. The usual next step is to fix `CURSOR_DESKTOP_BRIDGE_URL`, `CURSOR_DESKTOP_BRIDGE_TOKEN`, or the bridge's private tunnel reachability.
 
+Andrea runtime lane (secondary, conditional):
+
+```bash
+ANDREA_RUNTIME_EXECUTION_ENABLED=true
+AGENT_RUNTIME_DEFAULT=codex_local
+AGENT_RUNTIME_FALLBACK=openai_cloud
+CODEX_LOCAL_ENABLED=true
+OPENAI_MODEL_FALLBACK=gpt-5.4
+```
+
+Use this only after validating Codex/OpenAI runtime execution on the host.
+
+Important truth:
+
+- `/cursor` remains the primary operator workflow
+- `/runtime-*` is temporary secondary scaffolding for the integrated `andrea_runtime` lane
+- `codex_local` is the intended primary runtime for this lane
+- `openai_cloud` remains conditional on `OPENAI_API_KEY` or a compatible gateway token
+- the imported `imported/andrea_openai_bot` subtree is temporary staging/history preservation, not the long-term runtime home
+
 When this mode is active:
 
 - `scripts/start-openai-gateway.ps1` runs LiteLLM as container `litellm-gateway`
@@ -396,12 +419,17 @@ Important scope rule:
 - runtime-route readiness is optional and separate; `Cursor-backed runtime route: not configured` does not mean Cloud or desktop bridge are broken
 - the desktop bridge gives Andrea bridge-managed session recovery and line-oriented shell commands on your normal machine, but not a live PTY, remote desktop, or a guaranteed local Windows agent-job path
 - the normal Telegram operator flow is now `/cursor` -> tap `Jobs`/`Current Job`/`New Cloud Job` -> tap a job or control tile -> reply with plain text only when you are supplying a Cloud follow-up or a new-job prompt
+- `/runtime-*` remains available as secondary main-chat-only scaffolding for the integrated `andrea_runtime` lane when `ANDREA_RUNTIME_EXECUTION_ENABLED=true`
 - marketplace skill discovery and enablement still exist in the operator/runtime layer, but they are not part of the default Telegram command surface
 
 Preferred operator command style:
 
 - use hyphen aliases in Telegram for deeper operator commands
 - underscore aliases still work for compatibility, but docs and examples standardize on the hyphen form
+
+Architecture note:
+
+- [BACKEND_LANES_ARCHITECTURE.md](BACKEND_LANES_ARCHITECTURE.md)
 
 ## 8) OpenClaw Marketplace Behavior And Security
 

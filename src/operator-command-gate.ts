@@ -98,6 +98,31 @@ export const CURSOR_ARTIFACT_LINK_COMMANDS = new Set([
   '/cursor_artifact_link',
 ]);
 
+export const RUNTIME_STATUS_COMMANDS = new Set([
+  '/runtime-status',
+  '/runtime_status',
+]);
+
+export const RUNTIME_JOBS_COMMANDS = new Set([
+  '/runtime-jobs',
+  '/runtime_jobs',
+]);
+
+export const RUNTIME_FOLLOWUP_COMMANDS = new Set([
+  '/runtime-followup',
+  '/runtime_followup',
+]);
+
+export const RUNTIME_STOP_COMMANDS = new Set([
+  '/runtime-stop',
+  '/runtime_stop',
+]);
+
+export const RUNTIME_LOGS_COMMANDS = new Set([
+  '/runtime-logs',
+  '/runtime_logs',
+]);
+
 export const ALEXA_STATUS_COMMANDS = new Set([
   '/alexa',
   '/alexa-status',
@@ -158,6 +183,11 @@ const MAIN_CONTROL_ONLY_COMMANDS = new Set([
   ...CURSOR_CONVERSATION_COMMANDS,
   ...CURSOR_ARTIFACTS_COMMANDS,
   ...CURSOR_ARTIFACT_LINK_COMMANDS,
+  ...RUNTIME_STATUS_COMMANDS,
+  ...RUNTIME_JOBS_COMMANDS,
+  ...RUNTIME_FOLLOWUP_COMMANDS,
+  ...RUNTIME_STOP_COMMANDS,
+  ...RUNTIME_LOGS_COMMANDS,
   ...ALEXA_STATUS_COMMANDS,
   ...AMAZON_STATUS_COMMANDS,
   ...AMAZON_SEARCH_COMMANDS,
