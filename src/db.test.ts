@@ -604,12 +604,16 @@ describe('cursor operator context accessors', () => {
     upsertCursorOperatorContext({
       chatJid: 'tg:1',
       threadId: '42',
+      selectedLaneId: 'cursor',
       selectedAgentId: 'bc_123',
+      selectedJobsByLaneJson: JSON.stringify({ cursor: 'bc_123' }),
       updatedAt: '2026-03-30T12:00:00.000Z',
     });
 
     const row = getCursorOperatorContext('tg:1', '42');
     expect(row?.selected_agent_id).toBe('bc_123');
+    expect(row?.selected_lane_id).toBe('cursor');
+    expect(row?.selected_jobs_by_lane_json).toContain('bc_123');
     expect(getCursorOperatorContext('tg:1', undefined)).toBeUndefined();
   });
 
@@ -618,7 +622,7 @@ describe('cursor operator context accessors', () => {
       chatJid: 'tg:1',
       threadId: '',
       lastListSnapshotJson: JSON.stringify([
-        { id: 'bc_123', provider: 'cloud' },
+        { laneId: 'cursor', id: 'bc_123', provider: 'cloud' },
       ]),
       lastListMessageId: '99',
       dashboardMessageId: '555',
@@ -627,12 +631,16 @@ describe('cursor operator context accessors', () => {
 
     upsertCursorOperatorContext({
       chatJid: 'tg:1',
+      selectedLaneId: 'cursor',
       selectedAgentId: 'bc_123',
+      selectedJobsByLaneJson: JSON.stringify({ cursor: 'bc_123' }),
       updatedAt: '2026-03-30T12:05:00.000Z',
     });
 
     const row = getCursorOperatorContext('tg:1');
     expect(row?.selected_agent_id).toBe('bc_123');
+    expect(row?.selected_lane_id).toBe('cursor');
+    expect(row?.selected_jobs_by_lane_json).toContain('bc_123');
     expect(row?.last_list_message_id).toBe('99');
     expect(row?.dashboard_message_id).toBe('555');
     expect(row?.last_list_snapshot_json).toContain('bc_123');
@@ -646,6 +654,7 @@ describe('cursor message context accessors', () => {
       platformMessageId: '9001',
       threadId: '42',
       contextKind: 'cursor_job_card',
+      laneId: 'cursor',
       agentId: 'bc_123',
       payloadJson: JSON.stringify({ provider: 'cloud' }),
       createdAt: '2026-03-30T12:00:00.000Z',
@@ -653,6 +662,7 @@ describe('cursor message context accessors', () => {
 
     const row = getCursorMessageContext('tg:1', '9001');
     expect(row?.agent_id).toBe('bc_123');
+    expect(row?.lane_id).toBe('cursor');
     expect(row?.context_kind).toBe('cursor_job_card');
     expect(row?.thread_id).toBe('42');
   });

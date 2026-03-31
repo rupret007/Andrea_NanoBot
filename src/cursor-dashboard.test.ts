@@ -13,6 +13,7 @@ import {
 import type { FlattenedCursorJobEntry } from './cursor-operator-context.js';
 
 const cloudJob: FlattenedCursorJobEntry = {
+  laneId: 'cursor',
   provider: 'cloud',
   id: 'bc-11111111-2222-3333-4444-555555555555',
   groupFolder: 'main',

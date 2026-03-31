@@ -120,21 +120,16 @@ import {
 import { classifyAssistantRequest } from './assistant-routing.js';
 import { analyzeAgentError } from './agent-error.js';
 import {
-  createCursorAgent,
-  followupCursorAgent,
-  getCursorAgentArtifacts,
-  getCursorArtifactDownloadLink,
-  getCursorAgentConversation,
-  getCursorTerminalOutput,
-  getCursorTerminalStatus,
-  listCursorJobInventory,
   listCursorModels,
-  runCursorTerminalCommand,
-  stopCursorTerminal,
-  stopCursorAgent,
-  syncCursorAgent,
   type CursorAgentView,
 } from './cursor-jobs.js';
+import {
+  createBackendLaneRegistry,
+} from './backend-lanes/registry.js';
+import {
+  createCursorBackendLane,
+} from './backend-lanes/cursor-lane.js';
+import type { BackendJobHandle } from './backend-lanes/types.js';
 import {
   parseCursorCreateCommand,
   tokenizeCommandArguments,
@@ -229,6 +224,10 @@ const lastNonRetriableErrorNotice: Record<
 
 const channels: Channel[] = [];
 const queue = new GroupQueue();
+const backendLaneRegistry = createBackendLaneRegistry();
+const cursorBackendLane = createCursorBackendLane();
+
+backendLaneRegistry.register(cursorBackendLane);
 
 const onecli = new OneCLI({ url: ONECLI_URL });
 
@@ -1188,6 +1187,10 @@ async function main(): Promise<void> {
     return 'Next: reply to this Cursor card with /cursor-sync, /cursor-conversation, or /cursor-results to avoid repeating the id.';
   }
 
+  function toCursorHandle(jobId: string): BackendJobHandle {
+    return { laneId: 'cursor', jobId };
+  }
+
   function getOperatorReplyToMessageId(
     message: NewMessage | undefined,
   ): string | undefined {
@@ -1251,6 +1254,7 @@ async function main(): Promise<void> {
         platformMessageId,
         threadId: params.sourceMessage?.thread_id,
         contextKind: params.contextKind,
+        laneId: 'cursor',
         agentId: params.agentId,
         payload: params.provider ? { provider: params.provider } : null,
       });
@@ -1258,6 +1262,7 @@ async function main(): Promise<void> {
     rememberCursorOperatorSelection({
       chatJid: params.chatJid,
       threadId: params.sourceMessage?.thread_id,
+      laneId: 'cursor',
       agentId: params.agentId,
     });
     return platformMessageId;
@@ -1321,14 +1326,14 @@ async function main(): Promise<void> {
     chatJid: string,
     threadId?: string,
   ): Promise<{
-    inventory: Awaited<ReturnType<typeof listCursorJobInventory>>;
+    inventory: Awaited<ReturnType<typeof cursorBackendLane.getInventory>>;
     selected: FlattenedCursorJobEntry | null;
   } | null> {
     const group = registeredGroups[chatJid];
     if (!group) return null;
     const activeContext = getActiveCursorOperatorContext(chatJid, threadId);
     const selectedAgentId = activeContext?.selectedAgentId;
-    const inventory = await listCursorJobInventory({
+    const inventory = await cursorBackendLane.getInventory({
       groupFolder: group.folder,
       chatJid,
       limit: 50,
@@ -1472,7 +1477,7 @@ async function main(): Promise<void> {
     }
 
     if (params.state.kind === 'jobs') {
-      const inventory = await listCursorJobInventory({
+      const inventory = await cursorBackendLane.getInventory({
         groupFolder: group.folder,
         chatJid: params.chatJid,
         limit: 50,
@@ -1505,10 +1510,12 @@ async function main(): Promise<void> {
         threadId: params.sourceMessage?.thread_id,
         listMessageId: platformMessageId,
         items: flattened.map((entry) => ({
+          laneId: 'cursor',
           id: entry.id,
           provider: entry.provider,
         })),
         selectedAgentId: render.selectedAgentId || null,
+        selectedLaneId: 'cursor',
       });
       return platformMessageId;
     }
@@ -1523,7 +1530,7 @@ async function main(): Promise<void> {
         ? buildCursorDashboardCurrentJob(
             selected,
             selected.provider === 'cloud'
-              ? listCursorAgentArtifacts(selected.id).length
+              ? cursorBackendLane.getTrackedArtifactCount(selected.id)
               : 0,
           )
         : buildCursorDashboardCurrentJobEmpty();
@@ -1693,7 +1700,7 @@ async function main(): Promise<void> {
     const group = registeredGroups[chatJid];
     if (!group) return;
 
-    const inventory = await listCursorJobInventory({
+    const inventory = await cursorBackendLane.getInventory({
       groupFolder: group.folder,
       chatJid,
       limit: 50,
@@ -1713,7 +1720,7 @@ async function main(): Promise<void> {
 
     const resultCount =
       selected.provider === 'cloud'
-        ? listCursorAgentArtifacts(selected.id).length
+        ? cursorBackendLane.getTrackedArtifactCount(selected.id)
         : 0;
     const text = `${formatCursorJobCard(selected, resultCount)}\n\n${buildCursorNextStepMessage(selected.id)}`;
     const replyToMessageId =
@@ -2171,7 +2178,7 @@ async function main(): Promise<void> {
         );
         return;
       }
-      const inventory = await listCursorJobInventory({
+      const inventory = await cursorBackendLane.getInventory({
         groupFolder: registeredGroups[chatJid].folder,
         chatJid,
         limit: 50,
@@ -2428,19 +2435,21 @@ async function main(): Promise<void> {
     }
 
     try {
-      const created = await createCursorAgent({
+      const created = await cursorBackendLane.createCursorJob({
         groupFolder: group.folder,
         chatJid,
         promptText,
         requestedBy,
-        model: options.model,
-        sourceRepository: options.sourceRepository,
-        sourceRef: options.sourceRef,
-        sourcePrUrl: options.sourcePrUrl,
-        branchName: options.branchName,
-        autoCreatePr: options.autoCreatePr,
-        openAsCursorGithubApp: options.openAsCursorGithubApp,
-        skipReviewerRequest: options.skipReviewerRequest,
+        options: {
+          model: options.model,
+          sourceRepository: options.sourceRepository,
+          sourceRef: options.sourceRef,
+          sourcePrUrl: options.sourcePrUrl,
+          branchName: options.branchName,
+          autoCreatePr: options.autoCreatePr,
+          openAsCursorGithubApp: options.openAsCursorGithubApp,
+          skipReviewerRequest: options.skipReviewerRequest,
+        },
       });
       refreshCursorSnapshotsForAllGroups();
       const targetBits = [
@@ -2502,10 +2511,10 @@ async function main(): Promise<void> {
     }
 
     try {
-      const messages = await getCursorAgentConversation({
+      const messages = await cursorBackendLane.getConversation({
+        handle: toCursorHandle(normalizedAgentId),
         groupFolder: group.folder,
         chatJid,
-        agentId: normalizedAgentId,
         limit,
       });
       if (messages.length === 0) {
@@ -2578,10 +2587,10 @@ async function main(): Promise<void> {
     }
 
     try {
-      const artifacts = await getCursorAgentArtifacts({
+      const artifacts = await cursorBackendLane.getFiles({
+        handle: toCursorHandle(normalizedAgentId),
         groupFolder: group.folder,
         chatJid,
-        agentId: normalizedAgentId,
       });
 
       if (artifacts.length === 0) {
@@ -2647,10 +2656,10 @@ async function main(): Promise<void> {
     }
 
     try {
-      const link = await getCursorArtifactDownloadLink({
+      const link = await cursorBackendLane.getDownloadLink({
+        handle: toCursorHandle(normalizedAgentId),
         groupFolder: group.folder,
         chatJid,
-        agentId: normalizedAgentId,
         absolutePath,
       });
       const expiry = link.expiresAt ? `\nExpires: ${link.expiresAt}` : '';
@@ -2700,10 +2709,10 @@ async function main(): Promise<void> {
     }
 
     try {
-      const started = await runCursorTerminalCommand({
+      const started = await cursorBackendLane.runTerminalCommand({
+        handle: toCursorHandle(normalizedAgentId),
         groupFolder: group.folder,
         chatJid,
-        agentId: normalizedAgentId,
         commandText,
       });
       const lines = [
@@ -2758,10 +2767,10 @@ async function main(): Promise<void> {
     }
 
     try {
-      const terminal = await getCursorTerminalStatus({
+      const terminal = await cursorBackendLane.getTerminalStatus({
+        handle: toCursorHandle(normalizedAgentId),
         groupFolder: group.folder,
         chatJid,
-        agentId: normalizedAgentId,
       });
       await sendCursorAgentMessage({
         chatJid,
@@ -2810,15 +2819,15 @@ async function main(): Promise<void> {
 
     try {
       const [terminal, output] = await Promise.all([
-        getCursorTerminalStatus({
+        cursorBackendLane.getTerminalStatus({
+          handle: toCursorHandle(normalizedAgentId),
           groupFolder: group.folder,
           chatJid,
-          agentId: normalizedAgentId,
         }),
-        getCursorTerminalOutput({
+        cursorBackendLane.getTerminalOutput({
+          handle: toCursorHandle(normalizedAgentId),
           groupFolder: group.folder,
           chatJid,
-          agentId: normalizedAgentId,
           limit,
         }),
       ]);
@@ -2871,10 +2880,10 @@ async function main(): Promise<void> {
     }
 
     try {
-      const terminal = await stopCursorTerminal({
+      const terminal = await cursorBackendLane.stopTerminal({
+        handle: toCursorHandle(normalizedAgentId),
         groupFolder: group.folder,
         chatJid,
-        agentId: normalizedAgentId,
       });
       await sendCursorAgentMessage({
         chatJid,
@@ -2983,22 +2992,22 @@ async function main(): Promise<void> {
     }
 
     try {
-      const synced = await syncCursorAgent({
+      const synced = await cursorBackendLane.syncJob({
+        handle: toCursorHandle(normalizedAgentId),
         groupFolder: group.folder,
         chatJid,
-        agentId: normalizedAgentId,
       });
       refreshCursorSnapshotsForAllGroups();
       await sendCursorAgentMessage({
         chatJid,
-        agentId: synced.agent.id,
-        provider: synced.agent.provider,
+        agentId: synced.cursorJob.id,
+        provider: synced.cursorJob.provider,
         sourceMessage,
         contextKind: 'cursor_job_card',
-        inlineActions: buildCursorJobCardActions(synced.agent),
+        inlineActions: buildCursorJobCardActions(synced.cursorJob),
         text: [
-          `Synced ${labelCursorRecord(synced.agent)} ${synced.agent.id}. Status: ${synced.agent.status}. Result files: ${synced.artifacts.length}.`,
-          buildCursorNextStepMessage(synced.agent),
+          `Synced ${labelCursorRecord(synced.cursorJob)} ${synced.cursorJob.id}. Status: ${synced.cursorJob.status}. Result files: ${synced.artifacts.length}.`,
+          buildCursorNextStepMessage(synced.cursorJob),
         ].join('\n\n'),
       });
     } catch (err) {
@@ -3038,10 +3047,10 @@ async function main(): Promise<void> {
     }
 
     try {
-      const stopped = await stopCursorAgent({
+      const stopped = await cursorBackendLane.stopCursorJob({
+        handle: toCursorHandle(normalizedAgentId),
         groupFolder: group.folder,
         chatJid,
-        agentId: normalizedAgentId,
       });
       refreshCursorSnapshotsForAllGroups();
       await sendCursorAgentMessage({
@@ -3091,10 +3100,10 @@ async function main(): Promise<void> {
     }
 
     try {
-      const followed = await followupCursorAgent({
+      const followed = await cursorBackendLane.followUpCursorJob({
+        handle: toCursorHandle(normalizedAgentId),
         groupFolder: group.folder,
         chatJid,
-        agentId: normalizedAgentId,
         promptText,
       });
       refreshCursorSnapshotsForAllGroups();

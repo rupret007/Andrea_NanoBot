@@ -1,3 +1,7 @@
+import type {
+  BackendJobHandle,
+  BackendLaneId,
+} from './backend-lanes/types.js';
 import type { CursorAgentView, CursorJobInventory } from './cursor-jobs.js';
 import {
   getCursorMessageContext,
@@ -11,6 +15,7 @@ import type { ChannelInlineAction } from './types.js';
 const CURSOR_CONTEXT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const NO_CURSOR_CONTEXT_MESSAGE =
   'Run `/cursor` or `/cursor-jobs`, then tap a job or reply to a Cursor card.';
+const CURSOR_LANE_ID: BackendLaneId = 'cursor';
 
 export type CursorJobBucket =
   | 'cloudTracked'
@@ -19,16 +24,20 @@ export type CursorJobBucket =
   | 'desktopRecoverable';
 
 export interface CursorListSnapshotItem {
+  laneId: BackendLaneId;
   id: string;
   provider: 'cloud' | 'desktop';
 }
 
 export interface FlattenedCursorJobEntry extends CursorAgentView {
+  laneId: BackendLaneId;
   bucket: CursorJobBucket;
   ordinal: number;
 }
 
 export interface ResolvedCursorTarget {
+  laneId: BackendLaneId;
+  handle: BackendJobHandle;
   agentId: string;
   via: 'explicit' | 'ordinal' | 'current' | 'reply' | 'selected';
 }
@@ -43,15 +52,23 @@ export interface ActiveCursorMessageContext {
   platformMessageId: string;
   threadId?: string;
   contextKind: string;
+  laneId: BackendLaneId;
   agentId: string | null;
   payload: Record<string, unknown> | null;
   createdAt: string;
 }
 
+export interface SelectedJobsByLane {
+  cursor?: string | null;
+  andrea_runtime?: string | null;
+}
+
 export interface ActiveCursorOperatorContext {
   chatJid: string;
   threadId?: string;
+  selectedLaneId: BackendLaneId;
   selectedAgentId: string | null;
+  selectedJobsByLane: SelectedJobsByLane | null;
   lastListSnapshot: CursorListSnapshotItem[] | null;
   lastListMessageId: string | null;
   dashboardMessageId: string | null;
@@ -75,17 +92,81 @@ function parseSnapshotJson(
     return parsed.flatMap((entry) => {
       if (!entry || typeof entry !== 'object') return [];
       const row = entry as Record<string, unknown>;
+      const laneId =
+        row.laneId === 'andrea_runtime' || row.laneId === 'cursor'
+          ? row.laneId
+          : CURSOR_LANE_ID;
       const id = typeof row.id === 'string' ? row.id.trim() : '';
       const provider =
         row.provider === 'desktop' || row.provider === 'cloud'
           ? row.provider
           : null;
       if (!id || !provider) return [];
-      return [{ id, provider }];
+      return [{ laneId, id, provider }];
     });
   } catch {
     return undefined;
   }
+}
+
+function parseSelectedJobsByLaneJson(
+  raw: string | null,
+): SelectedJobsByLane | undefined {
+  if (!raw) return undefined;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return undefined;
+    }
+    const row = parsed as Record<string, unknown>;
+    const selectedJobs: SelectedJobsByLane = {};
+    if (typeof row.cursor === 'string' || row.cursor === null) {
+      selectedJobs.cursor = row.cursor as string | null;
+    }
+    if (
+      typeof row.andrea_runtime === 'string' ||
+      row.andrea_runtime === null
+    ) {
+      selectedJobs.andrea_runtime = row.andrea_runtime as string | null;
+    }
+    return selectedJobs;
+  } catch {
+    return undefined;
+  }
+}
+
+function formatSelectedJobsByLaneJson(
+  laneId: BackendLaneId,
+  agentId: string | null,
+  existingRaw: string | null,
+): string | null {
+  const selectedJobs = parseSelectedJobsByLaneJson(existingRaw) || {};
+  selectedJobs[laneId] = agentId;
+  return JSON.stringify(selectedJobs);
+}
+
+function getSelectedCursorAgentId(
+  record:
+    | {
+        selected_lane_id: string | null;
+        selected_agent_id: string | null;
+        selected_jobs_by_lane_json: string | null;
+      }
+    | null
+    | undefined,
+): string | null {
+  if (!record) return null;
+  const selectedJobs =
+    parseSelectedJobsByLaneJson(record.selected_jobs_by_lane_json) || null;
+  if (selectedJobs?.cursor !== undefined) {
+    return selectedJobs.cursor || null;
+  }
+  if (record.selected_lane_id === CURSOR_LANE_ID) {
+    return record.selected_agent_id;
+  }
+  return record.selected_agent_id && !record.selected_lane_id
+    ? record.selected_agent_id
+    : null;
 }
 
 export function getCursorContextGuidance(): string {
@@ -107,6 +188,7 @@ export function flattenCursorJobInventory(
     for (const record of records) {
       flattened.push({
         ...record,
+        laneId: CURSOR_LANE_ID,
         bucket,
         ordinal: flattened.length + 1,
       });
@@ -119,11 +201,19 @@ export function rememberCursorOperatorSelection(params: {
   chatJid: string;
   threadId?: string;
   agentId: string;
+  laneId?: BackendLaneId;
 }): void {
   upsertCursorOperatorContext({
     chatJid: params.chatJid,
     threadId: params.threadId,
+    selectedLaneId: params.laneId || CURSOR_LANE_ID,
     selectedAgentId: params.agentId,
+    selectedJobsByLaneJson: formatSelectedJobsByLaneJson(
+      params.laneId || CURSOR_LANE_ID,
+      params.agentId,
+      getCursorOperatorContext(params.chatJid, params.threadId)
+        ?.selected_jobs_by_lane_json || null,
+    ),
   });
 }
 
@@ -132,11 +222,27 @@ export function rememberCursorDashboardMessage(params: {
   threadId?: string;
   dashboardMessageId: string | null;
   selectedAgentId?: string | null;
+  selectedLaneId?: BackendLaneId | null;
 }): void {
+  const existing = getCursorOperatorContext(params.chatJid, params.threadId);
+  const selectedLaneId =
+    params.selectedLaneId ||
+    (existing?.selected_lane_id === 'andrea_runtime'
+      ? 'andrea_runtime'
+      : CURSOR_LANE_ID);
   upsertCursorOperatorContext({
     chatJid: params.chatJid,
     threadId: params.threadId,
+    selectedLaneId,
     selectedAgentId: params.selectedAgentId,
+    selectedJobsByLaneJson:
+      params.selectedAgentId === undefined
+        ? existing?.selected_jobs_by_lane_json || null
+        : formatSelectedJobsByLaneJson(
+            selectedLaneId,
+            params.selectedAgentId,
+            existing?.selected_jobs_by_lane_json || null,
+          ),
     dashboardMessageId: params.dashboardMessageId,
   });
 }
@@ -147,11 +253,27 @@ export function rememberCursorJobList(params: {
   listMessageId?: string;
   items: CursorListSnapshotItem[];
   selectedAgentId?: string | null;
+  selectedLaneId?: BackendLaneId | null;
 }): void {
+  const existing = getCursorOperatorContext(params.chatJid, params.threadId);
+  const selectedLaneId =
+    params.selectedLaneId ||
+    (existing?.selected_lane_id === 'andrea_runtime'
+      ? 'andrea_runtime'
+      : CURSOR_LANE_ID);
   upsertCursorOperatorContext({
     chatJid: params.chatJid,
     threadId: params.threadId,
+    selectedLaneId,
     selectedAgentId: params.selectedAgentId,
+    selectedJobsByLaneJson:
+      params.selectedAgentId === undefined
+        ? existing?.selected_jobs_by_lane_json || null
+        : formatSelectedJobsByLaneJson(
+            selectedLaneId,
+            params.selectedAgentId,
+            existing?.selected_jobs_by_lane_json || null,
+          ),
     lastListSnapshotJson: JSON.stringify(params.items),
     lastListMessageId: params.listMessageId || null,
   });
@@ -162,6 +284,7 @@ export function rememberCursorMessageContext(params: {
   platformMessageId: string;
   threadId?: string;
   contextKind: string;
+  laneId?: BackendLaneId;
   agentId?: string | null;
   payload?: Record<string, unknown> | null;
 }): void {
@@ -170,6 +293,7 @@ export function rememberCursorMessageContext(params: {
     platformMessageId: params.platformMessageId,
     threadId: params.threadId,
     contextKind: params.contextKind,
+    laneId: params.laneId || CURSOR_LANE_ID,
     agentId: params.agentId || null,
     payloadJson: params.payload ? JSON.stringify(params.payload) : null,
   });
@@ -200,6 +324,8 @@ export function getActiveCursorMessageContext(
     platformMessageId: record.platform_message_id,
     threadId: record.thread_id || undefined,
     contextKind: record.context_kind,
+    laneId:
+      record.lane_id === 'andrea_runtime' ? 'andrea_runtime' : CURSOR_LANE_ID,
     agentId: record.agent_id,
     payload,
     createdAt: record.created_at,
@@ -215,7 +341,13 @@ export function getActiveCursorOperatorContext(
   return {
     chatJid: record.chat_jid,
     threadId: record.thread_id || undefined,
-    selectedAgentId: record.selected_agent_id,
+    selectedLaneId:
+      record.selected_lane_id === 'andrea_runtime'
+        ? 'andrea_runtime'
+        : CURSOR_LANE_ID,
+    selectedAgentId: getSelectedCursorAgentId(record),
+    selectedJobsByLane:
+      parseSelectedJobsByLaneJson(record.selected_jobs_by_lane_json) || null,
     lastListSnapshot: parseSnapshotJson(record.last_list_snapshot_json) || null,
     lastListMessageId: record.last_list_message_id,
     dashboardMessageId: record.dashboard_message_id,
@@ -270,6 +402,8 @@ function resolveFromOrdinal(
 
   return {
     target: {
+      laneId: selected.laneId,
+      handle: { laneId: selected.laneId, jobId: selected.id },
       agentId: selected.id,
       via: 'ordinal',
     },
@@ -301,7 +435,8 @@ export function resolveCursorTarget(params: {
           failureMessage: NO_CURSOR_CONTEXT_MESSAGE,
         };
       }
-      if (!context.selected_agent_id) {
+      const selectedAgentId = getSelectedCursorAgentId(context);
+      if (!selectedAgentId) {
         return {
           target: null,
           failureMessage: NO_CURSOR_CONTEXT_MESSAGE,
@@ -309,7 +444,9 @@ export function resolveCursorTarget(params: {
       }
       return {
         target: {
-          agentId: context.selected_agent_id,
+          laneId: CURSOR_LANE_ID,
+          handle: { laneId: CURSOR_LANE_ID, jobId: selectedAgentId },
+          agentId: selectedAgentId,
           via: 'current',
         },
         failureMessage: null,
@@ -318,6 +455,11 @@ export function resolveCursorTarget(params: {
 
     return {
       target: {
+        laneId: CURSOR_LANE_ID,
+        handle: {
+          laneId: CURSOR_LANE_ID,
+          jobId: normalizeCursorAgentId(requestedTarget),
+        },
         agentId: normalizeCursorAgentId(requestedTarget),
         via: 'explicit',
       },
@@ -332,10 +474,13 @@ export function resolveCursorTarget(params: {
     );
     if (
       messageContext?.agent_id &&
+      (messageContext.lane_id === 'cursor' || !messageContext.lane_id) &&
       isFreshTimestamp(messageContext.created_at)
     ) {
       return {
         target: {
+          laneId: CURSOR_LANE_ID,
+          handle: { laneId: CURSOR_LANE_ID, jobId: messageContext.agent_id },
           agentId: messageContext.agent_id,
           via: 'reply',
         },
@@ -345,10 +490,16 @@ export function resolveCursorTarget(params: {
   }
 
   const context = getCursorOperatorContext(params.chatJid, params.threadId);
-  if (context?.selected_agent_id && isFreshTimestamp(context.updated_at)) {
+  const selectedAgentId =
+    context && isFreshTimestamp(context.updated_at)
+      ? getSelectedCursorAgentId(context)
+      : null;
+  if (selectedAgentId) {
     return {
       target: {
-        agentId: context.selected_agent_id,
+        laneId: CURSOR_LANE_ID,
+        handle: { laneId: CURSOR_LANE_ID, jobId: selectedAgentId },
+        agentId: selectedAgentId,
         via: 'selected',
       },
       failureMessage: null,

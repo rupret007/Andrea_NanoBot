@@ -17,7 +17,9 @@ let db: Database.Database;
 export interface CursorOperatorContextRecord {
   chat_jid: string;
   thread_id: string;
+  selected_lane_id: string | null;
   selected_agent_id: string | null;
+  selected_jobs_by_lane_json: string | null;
   last_list_snapshot_json: string | null;
   last_list_message_id: string | null;
   dashboard_message_id: string | null;
@@ -29,6 +31,7 @@ export interface CursorMessageContextRecord {
   platform_message_id: string;
   thread_id: string | null;
   context_kind: string;
+  lane_id: string | null;
   agent_id: string | null;
   payload_json: string | null;
   created_at: string;
@@ -193,7 +196,9 @@ function createSchema(database: Database.Database): void {
     CREATE TABLE IF NOT EXISTS cursor_operator_contexts (
       chat_jid TEXT NOT NULL,
       thread_id TEXT NOT NULL DEFAULT '',
+      selected_lane_id TEXT,
       selected_agent_id TEXT,
+      selected_jobs_by_lane_json TEXT,
       last_list_snapshot_json TEXT,
       last_list_message_id TEXT,
       dashboard_message_id TEXT,
@@ -205,6 +210,7 @@ function createSchema(database: Database.Database): void {
       platform_message_id TEXT NOT NULL,
       thread_id TEXT,
       context_kind TEXT NOT NULL,
+      lane_id TEXT,
       agent_id TEXT,
       payload_json TEXT,
       created_at TEXT NOT NULL,
@@ -296,8 +302,30 @@ function createSchema(database: Database.Database): void {
 
   try {
     database.exec(
+      `ALTER TABLE cursor_operator_contexts ADD COLUMN selected_lane_id TEXT`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(
+      `ALTER TABLE cursor_operator_contexts ADD COLUMN selected_jobs_by_lane_json TEXT`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(
       `ALTER TABLE cursor_operator_contexts ADD COLUMN dashboard_message_id TEXT`,
     );
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(`ALTER TABLE cursor_message_contexts ADD COLUMN lane_id TEXT`);
   } catch {
     /* column already exists */
   }
@@ -590,7 +618,9 @@ function normalizeCursorContextThreadId(threadId?: string | null): string {
 export function upsertCursorOperatorContext(record: {
   chatJid: string;
   threadId?: string | null;
+  selectedLaneId?: string | null;
   selectedAgentId?: string | null;
+  selectedJobsByLaneJson?: string | null;
   lastListSnapshotJson?: string | null;
   lastListMessageId?: string | null;
   dashboardMessageId?: string | null;
@@ -612,14 +642,18 @@ export function upsertCursorOperatorContext(record: {
       INSERT INTO cursor_operator_contexts (
         chat_jid,
         thread_id,
+        selected_lane_id,
         selected_agent_id,
+        selected_jobs_by_lane_json,
         last_list_snapshot_json,
         last_list_message_id,
         dashboard_message_id,
         updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(chat_jid, thread_id) DO UPDATE SET
+        selected_lane_id = excluded.selected_lane_id,
         selected_agent_id = excluded.selected_agent_id,
+        selected_jobs_by_lane_json = excluded.selected_jobs_by_lane_json,
         last_list_snapshot_json = excluded.last_list_snapshot_json,
         last_list_message_id = excluded.last_list_message_id,
         dashboard_message_id = excluded.dashboard_message_id,
@@ -628,9 +662,15 @@ export function upsertCursorOperatorContext(record: {
   ).run(
     record.chatJid,
     threadId,
+    record.selectedLaneId === undefined
+      ? existing?.selected_lane_id || null
+      : record.selectedLaneId,
     record.selectedAgentId === undefined
       ? existing?.selected_agent_id || null
       : record.selectedAgentId,
+    record.selectedJobsByLaneJson === undefined
+      ? existing?.selected_jobs_by_lane_json || null
+      : record.selectedJobsByLaneJson,
     record.lastListSnapshotJson === undefined
       ? existing?.last_list_snapshot_json || null
       : record.lastListSnapshotJson,
@@ -666,6 +706,7 @@ export function storeCursorMessageContext(record: {
   platformMessageId: string;
   threadId?: string | null;
   contextKind: string;
+  laneId?: string | null;
   agentId?: string | null;
   payloadJson?: string | null;
   createdAt?: string;
@@ -677,16 +718,18 @@ export function storeCursorMessageContext(record: {
         platform_message_id,
         thread_id,
         context_kind,
+        lane_id,
         agent_id,
         payload_json,
         created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `,
   ).run(
     record.chatJid,
     record.platformMessageId,
     record.threadId || null,
     record.contextKind,
+    record.laneId || null,
     record.agentId || null,
     record.payloadJson || null,
     record.createdAt || new Date().toISOString(),

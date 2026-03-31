@@ -110,8 +110,8 @@ describe('resolveCursorTarget', () => {
       chatJid: 'tg:1',
       threadId: '42',
       items: [
-        { id: 'bc_123', provider: 'cloud' },
-        { id: 'desk_456', provider: 'desktop' },
+        { laneId: 'cursor', id: 'bc_123', provider: 'cloud' },
+        { laneId: 'cursor', id: 'desk_456', provider: 'desktop' },
       ],
     });
 
@@ -163,7 +163,7 @@ describe('resolveCursorTarget', () => {
   it('ignores stale selection context after seven days', () => {
     rememberCursorJobList({
       chatJid: 'tg:1',
-      items: [{ id: 'bc_old', provider: 'cloud' }],
+      items: [{ laneId: 'cursor', id: 'bc_old', provider: 'cloud' }],
       selectedAgentId: 'bc_old',
     });
     rememberCursorOperatorSelection({
@@ -175,7 +175,7 @@ describe('resolveCursorTarget', () => {
     const staleTime = '2026-03-20T00:00:00.000Z';
     rememberCursorJobList({
       chatJid: 'tg:1',
-      items: [{ id: 'bc_old', provider: 'cloud' }],
+      items: [{ laneId: 'cursor', id: 'bc_old', provider: 'cloud' }],
       selectedAgentId: 'bc_old',
     });
     // direct DB update via helper keeps data but ages it out
@@ -183,7 +183,7 @@ describe('resolveCursorTarget', () => {
       chatJid: 'tg:1',
       selectedAgentId: 'bc_old',
       lastListSnapshotJson: JSON.stringify([
-        { id: 'bc_old', provider: 'cloud' },
+        { laneId: 'cursor', id: 'bc_old', provider: 'cloud' },
       ]),
       updatedAt: staleTime,
     });
@@ -210,6 +210,7 @@ describe('operator context helpers', () => {
 
     const context = getActiveCursorMessageContext('tg:1', '9001');
     expect(context?.agentId).toBe('bc_123');
+    expect(context?.laneId).toBe('cursor');
     expect(context?.payload?.provider).toBe('cloud');
   });
 
@@ -243,6 +244,8 @@ describe('operator context helpers', () => {
     const context = getActiveCursorOperatorContext('tg:1', '42');
     expect(context?.dashboardMessageId).toBe('9001');
     expect(context?.selectedAgentId).toBe('bc_123');
+    expect(context?.selectedLaneId).toBe('cursor');
+    expect(context?.selectedJobsByLane?.cursor).toBe('bc_123');
   });
 
   it('recognizes target-like tokens without mistaking normal paths', () => {
