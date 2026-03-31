@@ -5,6 +5,7 @@ import {
   CODEX_LOCAL_MODEL,
   OPENAI_MODEL_FALLBACK,
 } from '../config.js';
+import { readEnvFile } from '../env.js';
 import { hasHostCodexAuthMaterial } from './codex-home.js';
 import type { AssistantRequestPolicy } from '../assistant-routing.js';
 import type {
@@ -95,7 +96,10 @@ export function getAgentRuntimeStatusSnapshot(params: {
   containerRuntimeName: string;
   containerRuntimeStatus: string;
 }): AgentRuntimeStatusSnapshot {
-  const openAiApiKeyPresent = Boolean(process.env.OPENAI_API_KEY);
+  const envFileValues = readEnvFile(['OPENAI_API_KEY', 'OPENAI_BASE_URL']);
+  const openAiApiKeyPresent = Boolean(
+    process.env.OPENAI_API_KEY || envFileValues.OPENAI_API_KEY,
+  );
   const hostCodexAuthPresent = hasHostCodexAuthMaterial();
 
   return {
@@ -109,7 +113,8 @@ export function getAgentRuntimeStatusSnapshot(params: {
     openAiModelFallback: OPENAI_MODEL_FALLBACK,
     openAiApiKeyPresent,
     openAiCloudReady: openAiApiKeyPresent,
-    openAiBaseUrl: process.env.OPENAI_BASE_URL || null,
+    openAiBaseUrl:
+      process.env.OPENAI_BASE_URL || envFileValues.OPENAI_BASE_URL || null,
     activeThreadCount: Object.keys(params.activeThreads).length,
     activeJobCount: params.activeJobs,
     containerRuntimeName: params.containerRuntimeName,

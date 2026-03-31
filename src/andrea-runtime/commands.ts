@@ -25,6 +25,7 @@ import {
   formatTaskNextStepMessage,
   formatTaskOutputHeading,
 } from '../task-presentation.js';
+import type { SendMessageOptions } from '../types.js';
 import {
   buildTaskOutputSuggestion,
   getTaskContextType,
@@ -84,6 +85,7 @@ export interface RuntimeCommandDependencies {
     jobId: string;
     contextKind: string;
     payload?: Record<string, unknown> | null;
+    inlineActions?: SendMessageOptions['inlineActions'];
   }): Promise<string | undefined>;
   rememberRuntimeJobList(args: {
     chatJid: string;
@@ -203,6 +205,40 @@ export function formatRuntimeNextStep(jobId: string): string {
     canReplyContinue: true,
     explicitFallback: `\`/runtime-followup ${jobId} <text>\` and \`/runtime-stop\` still work if you want explicit fallbacks.`,
   });
+}
+
+function getRuntimeJobErrorText(
+  job: Pick<BackendJobDetails, 'metadata'> | null | undefined,
+): string | null {
+  const metadata = (job?.metadata || {}) as Record<string, unknown>;
+  const errorText =
+    typeof metadata.errorText === 'string' ? metadata.errorText.trim() : '';
+  return errorText || null;
+}
+
+export function buildRuntimeJobInlineActions(params: {
+  job: Pick<BackendJobDetails, 'status'>;
+  contextKind: 'runtime_job_card' | 'runtime_job_message';
+  canExecute: boolean;
+}): SendMessageOptions['inlineActions'] {
+  const actions: NonNullable<SendMessageOptions['inlineActions']> = [
+    {
+      label:
+        params.contextKind === 'runtime_job_message'
+          ? 'Refresh'
+          : 'View Output',
+      actionId: '/runtime-logs',
+    },
+  ];
+
+  if (
+    params.canExecute &&
+    (params.job.status === 'queued' || params.job.status === 'running')
+  ) {
+    actions.push({ label: 'Stop Run', actionId: '/runtime-stop' });
+  }
+
+  return actions;
 }
 
 function buildRuntimeTaskPayload(
@@ -372,6 +408,11 @@ async function handleRuntimeFollowup(
         jobId: followed.handle.jobId,
         contextKind: 'runtime_job_card',
         payload: buildRuntimeTaskPayload(followed, 'job_card'),
+        inlineActions: buildRuntimeJobInlineActions({
+          job: followed,
+          contextKind: 'runtime_job_card',
+          canExecute: deps.canExecute,
+        }),
         text: [
           'Andrea sent your next instruction to this task.',
           `Task: Codex/OpenAI runtime ${formatOpaqueTaskId(followed.handle.jobId)}.`,
@@ -422,6 +463,11 @@ async function handleRuntimeFollowup(
       jobId: followed.handle.jobId,
       contextKind: 'runtime_job_card',
       payload: buildRuntimeTaskPayload(followed, 'job_card'),
+      inlineActions: buildRuntimeJobInlineActions({
+        job: followed,
+        contextKind: 'runtime_job_card',
+        canExecute: deps.canExecute,
+      }),
       text: [
         `Andrea started this task in the Codex/OpenAI lane for workspace ${legacyTarget}.`,
         `Task: Codex/OpenAI runtime ${formatOpaqueTaskId(followed.handle.jobId)}.`,
@@ -465,6 +511,11 @@ async function handleRuntimeStop(
         jobId: stopped.handle.jobId,
         contextKind: 'runtime_job_card',
         payload: buildRuntimeTaskPayload(stopped, 'job_card'),
+        inlineActions: buildRuntimeJobInlineActions({
+          job: stopped,
+          contextKind: 'runtime_job_card',
+          canExecute: deps.canExecute,
+        }),
         text: `Stop requested for this task.\nTask: Codex/OpenAI runtime ${formatOpaqueTaskId(stopped.handle.jobId)}.\nStatus: ${formatHumanTaskStatus(stopped.status)}.\n\nReply to this task card with \`/runtime-logs\` when you want to refresh its latest output or error state.`,
       });
       return;
@@ -522,6 +573,11 @@ async function handleRuntimeStop(
         jobId: stopped.handle.jobId,
         contextKind: 'runtime_job_card',
         payload: buildRuntimeTaskPayload(stopped, 'job_card'),
+        inlineActions: buildRuntimeJobInlineActions({
+          job: stopped,
+          contextKind: 'runtime_job_card',
+          canExecute: deps.canExecute,
+        }),
         text: `Stop requested for this task in workspace ${legacyTarget}.\nTask: Codex/OpenAI runtime ${formatOpaqueTaskId(stopped.handle.jobId)}.\nStatus: ${formatHumanTaskStatus(stopped.status)}.`,
       });
       return;
@@ -593,7 +649,8 @@ async function handleRuntimeLogs(
         summary: null,
         metadata: null,
       };
-      const text = output.text || logs.logText;
+      const errorText = getRuntimeJobErrorText(targetJob as BackendJobDetails);
+      const text = output.text || logs.logText || errorText;
       const hasStructuredOutput = Boolean(output.text);
       const contextType: TaskContextType = hasStructuredOutput
         ? 'output'
@@ -615,17 +672,28 @@ async function handleRuntimeLogs(
           >,
           contextType,
           {
-            outputPreview: output.text || logs.logText,
-            outputSource: hasStructuredOutput ? output.source : 'logs',
+            outputPreview: output.text || logs.logText || errorText,
+            outputSource: hasStructuredOutput
+              ? output.source
+              : errorText
+                ? 'error'
+                : 'logs',
           },
         ),
+        inlineActions: buildRuntimeJobInlineActions({
+          job: targetJob as BackendJobDetails,
+          contextKind: 'runtime_job_message',
+          canExecute: deps.canExecute,
+        }),
         text: text
           ? [
               `${formatRuntimeJobCard(targetJob as BackendJobDetails)}`,
               '',
               output.text
                 ? `${formatTaskOutputHeading(output.source)}:\n${output.text}`
-                : `Recent activity:\n${logs.logText}\n\nStructured output is not available yet, so Andrea is showing recent task activity instead.`,
+                : errorText
+                  ? `Current error:\n${errorText}`
+                  : `Recent activity:\n${logs.logText}\n\nStructured output is not available yet, so Andrea is showing recent task activity instead.`,
               suggestion ? '' : null,
               suggestion,
               '',
@@ -696,7 +764,9 @@ async function handleRuntimeLogs(
           limit: lineLimit,
         }),
       ]);
-      const text = output.text || logs.logText;
+      const hydratedJob = (job || latestJob) as BackendJobDetails;
+      const errorText = getRuntimeJobErrorText(hydratedJob);
+      const text = output.text || logs.logText || errorText;
       const hasStructuredOutput = Boolean(output.text);
       const contextType: TaskContextType = hasStructuredOutput
         ? 'output'
@@ -712,23 +782,34 @@ async function handleRuntimeLogs(
         jobId: latestJob.handle.jobId,
         contextKind: 'runtime_job_message',
         payload: buildRuntimeTaskPayload(
-          (job || latestJob) as Pick<
+          hydratedJob as Pick<
             BackendJobDetails,
             'handle' | 'summary' | 'metadata'
           >,
           contextType,
           {
-            outputPreview: output.text || logs.logText,
-            outputSource: hasStructuredOutput ? output.source : 'logs',
+            outputPreview: output.text || logs.logText || errorText,
+            outputSource: hasStructuredOutput
+              ? output.source
+              : errorText
+                ? 'error'
+                : 'logs',
           },
         ),
+        inlineActions: buildRuntimeJobInlineActions({
+          job: hydratedJob,
+          contextKind: 'runtime_job_message',
+          canExecute: deps.canExecute,
+        }),
         text: text
           ? [
-              `${formatRuntimeJobCard((job || latestJob) as BackendJobDetails)}`,
+              `${formatRuntimeJobCard(hydratedJob)}`,
               '',
               output.text
                 ? `${formatTaskOutputHeading(output.source)}:\n${output.text}`
-                : `Recent activity:\n${logs.logText}\n\nStructured output is not available yet, so Andrea is showing recent task activity instead.`,
+                : errorText
+                  ? `Current error:\n${errorText}`
+                  : `Recent activity:\n${logs.logText}\n\nStructured output is not available yet, so Andrea is showing recent task activity instead.`,
               suggestion ? '' : null,
               suggestion,
               '',

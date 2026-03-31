@@ -144,6 +144,7 @@ import {
   getAgentRuntimeStatusSnapshot,
 } from './andrea-runtime/agent-runtime.js';
 import {
+  buildRuntimeJobInlineActions,
   dispatchRuntimeCommand,
   formatRuntimeJobCard,
   formatRuntimeNextStep,
@@ -3088,6 +3089,11 @@ async function main(): Promise<void> {
             taskTitle: `Codex/OpenAI runtime ${formatOpaqueTaskId(refreshed.handle.jobId)}`,
             taskSummary: summarizeVisibleTaskText(refreshed.summary),
           }),
+          inlineActions: buildRuntimeJobInlineActions({
+            job: refreshed,
+            contextKind: 'runtime_job_card',
+            canExecute: andreaRuntimeExecutionEnabled,
+          }),
           text: [
             `Refreshed Codex/OpenAI task ${formatOpaqueTaskId(refreshed.handle.jobId)}.`,
             formatRuntimeJobCard(refreshed),
@@ -4145,6 +4151,7 @@ async function main(): Promise<void> {
           jobId,
           contextKind,
           payload,
+          inlineActions,
         }) {
           return sendBackendJobMessage({
             chatJid: operatorChatJid,
@@ -4154,6 +4161,7 @@ async function main(): Promise<void> {
             sourceMessage,
             contextKind,
             payload,
+            inlineActions,
           });
         },
         rememberRuntimeJobList({

@@ -9,6 +9,7 @@ import type {
   BackendJobSummary,
 } from '../backend-lanes/types.js';
 import {
+  buildRuntimeJobInlineActions,
   dispatchRuntimeCommand,
   formatRuntimeJobsMessage,
   readLatestRuntimeLog,
@@ -63,7 +64,11 @@ function makeDetails(
 
 describe('runtime commands', () => {
   let sentMessages: string[];
-  let runtimeMessages: Array<{ jobId: string; text: string }>;
+  let runtimeMessages: Array<{
+    jobId: string;
+    text: string;
+    inlineActionLabels: string[];
+  }>;
   let rememberedLists: Array<{
     jobs: BackendJobSummary[];
     listMessageId?: string;
@@ -89,7 +94,12 @@ describe('runtime commands', () => {
         return 'msg-1';
       },
       async sendRuntimeJobMessage(args) {
-        runtimeMessages.push({ jobId: args.jobId, text: args.text });
+        runtimeMessages.push({
+          jobId: args.jobId,
+          text: args.text,
+          inlineActionLabels:
+            args.inlineActions?.map((action) => action.label) || [],
+        });
         return 'msg-job';
       },
       rememberRuntimeJobList(args) {
@@ -257,6 +267,10 @@ describe('runtime commands', () => {
     expect(runtimeMessages[0].text).toContain(
       'Task: Codex/OpenAI runtime runtime-job-2.',
     );
+    expect(runtimeMessages[0].inlineActionLabels).toEqual([
+      'View Output',
+      'Stop Run',
+    ]);
   });
 
   it('normalizes terse reply-linked runtime refinements with visible task context', async () => {
@@ -408,6 +422,10 @@ describe('runtime commands', () => {
     expect(runtimeMessages[0].text).toContain('final output');
     expect(runtimeMessages[0].text).toContain('make it shorter');
     expect(runtimeMessages[0].text).toContain('add more detail');
+    expect(runtimeMessages[0].inlineActionLabels).toEqual([
+      'Refresh',
+      'Stop Run',
+    ]);
   });
 
   it('uses task-activity suggestions when structured output is not available yet', async () => {
@@ -449,6 +467,66 @@ describe('runtime commands', () => {
     expect(runtimeMessages[0].text).toContain(
       'what Andrea should try next for this task',
     );
+    expect(runtimeMessages[0].inlineActionLabels).toEqual([
+      'Refresh',
+      'Stop Run',
+    ]);
+  });
+
+  it('surfaces runtime error text instead of claiming failed tasks have no output yet', async () => {
+    deps.resolveTarget = vi.fn(() => ({
+      target: {
+        handle: { laneId: 'andrea_runtime' as const, jobId: 'runtime-job-1' },
+        jobId: 'runtime-job-1',
+        via: 'current' as const,
+      },
+      failureMessage: null,
+    }));
+    deps.refreshJob = vi.fn(async () =>
+      makeDetails({
+        status: 'failed',
+        metadata: {
+          groupFolder: 'main',
+          threadId: 'thread-1',
+          selectedRuntime: 'codex_local',
+          errorText: 'Agent execution failed (error_during_execution)',
+        },
+      }),
+    );
+    deps.getPrimaryOutput = vi.fn(async () => ({
+      handle: {
+        laneId: 'andrea_runtime' as const,
+        jobId: 'runtime-job-1',
+      },
+      text: null,
+      source: 'none' as const,
+      lineCount: 0,
+    }));
+    deps.getJobLogs = vi.fn(async () => ({
+      handle: {
+        laneId: 'andrea_runtime' as const,
+        jobId: 'runtime-job-1',
+      },
+      logText: null,
+      lines: 0,
+      logFile: null,
+    }));
+    context = {
+      ...context,
+      rawTrimmed: '/runtime-logs current 10',
+      commandToken: '/runtime-logs',
+    };
+
+    await dispatchRuntimeCommand(deps, context);
+
+    expect(runtimeMessages[0].text).toContain('Current error:');
+    expect(runtimeMessages[0].text).toContain(
+      'Agent execution failed (error_during_execution)',
+    );
+    expect(runtimeMessages[0].text).not.toContain(
+      'This task does not have output yet.',
+    );
+    expect(runtimeMessages[0].inlineActionLabels).toEqual(['Refresh']);
   });
 
   it('falls back to legacy file logs when no runtime job exists for a folder', async () => {
@@ -496,6 +574,31 @@ describe('runtime commands', () => {
     expect(sentMessages).toEqual([
       "Andrea's Codex/OpenAI runtime lane is integrated, but execution is still turned off on this host.\nKeep using /cursor as the main operator shell today. You can still review existing runtime work where it is available.\nEnable ANDREA_RUNTIME_EXECUTION_ENABLED=true only after validating the Codex/OpenAI runtime container and credentials on this machine.",
     ]);
+  });
+});
+
+describe('buildRuntimeJobInlineActions', () => {
+  it('adds output and stop tiles for active runtime task cards', () => {
+    expect(
+      buildRuntimeJobInlineActions({
+        job: { status: 'running' },
+        contextKind: 'runtime_job_card',
+        canExecute: true,
+      }),
+    ).toEqual([
+      { label: 'View Output', actionId: '/runtime-logs' },
+      { label: 'Stop Run', actionId: '/runtime-stop' },
+    ]);
+  });
+
+  it('keeps output cards refreshable without stop once a task is done', () => {
+    expect(
+      buildRuntimeJobInlineActions({
+        job: { status: 'succeeded' },
+        contextKind: 'runtime_job_message',
+        canExecute: true,
+      }),
+    ).toEqual([{ label: 'Refresh', actionId: '/runtime-logs' }]);
   });
 });
 
