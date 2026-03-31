@@ -275,8 +275,8 @@ Useful local validation commands:
 npm run test:major:ci
 npm run test:major
 npm run test:stability
-npm run setup -- --step verify
 npm run services:restart
+npm run setup -- --step verify
 npm run debug:status
 npm run debug:level -- verbose component:container 30m
 npm run debug:logs -- stderr 120
@@ -297,6 +297,7 @@ That distinction matters during incidents:
 - a passing credential probe does **not** guarantee the assistant lane can answer
 - an `initial_output_timeout` is a runtime-startup/output problem, not automatically a missing-key problem
 - `/debug-*` commands are operator-only and let you turn log volume up or down live without restarting the service
+- when you need both restart and verify, run `npm run services:restart` first, wait for it to finish, then run `npm run setup -- --step verify`
 
 ## Documentation Map
 

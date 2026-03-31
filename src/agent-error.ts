@@ -15,6 +15,27 @@ export interface AgentErrorAnalysis {
   userMessage: string | null;
 }
 
+export function buildRepeatedAgentErrorMessage(
+  code: AgentErrorAnalysis['code'],
+): string {
+  switch (code) {
+    case 'insufficient_quota':
+      return 'I still cannot run right now because the configured model quota is exhausted.';
+    case 'auth_failed':
+    case 'invalid_model_alias':
+    case 'unsupported_endpoint':
+    case 'credentials_missing_or_unusable':
+      return 'I still cannot run right now because the current model/runtime configuration needs operator attention.';
+    case 'container_runtime_unavailable':
+    case 'initial_output_timeout':
+    case 'runtime_bootstrap_failed':
+      return "I still can't answer from the assistant runtime right now. An operator can re-run setup verify and inspect the runtime logs.";
+    case 'transient_or_unknown':
+    default:
+      return "I still can't run that right now.";
+  }
+}
+
 type AgentErrorInput =
   | string
   | undefined
@@ -82,21 +103,21 @@ function analyzeStructuredFailure(
         code: 'container_runtime_unavailable',
         nonRetriable: false,
         userMessage:
-          'Andrea cannot run that assistant turn right now because the container runtime could not start cleanly. Check /debug-status, /debug-logs current, and setup verify for the runtime startup path.',
+          'Andrea cannot run that assistant turn right now because the container runtime could not start cleanly. An operator should re-run setup verify and inspect the runtime logs.',
       };
     case 'initial_output_timeout':
       return {
         code: 'initial_output_timeout',
         nonRetriable: false,
         userMessage:
-          'Andrea cannot run that assistant turn right now because the runtime failed before first output. This is different from a plain credential failure. Re-run /debug-status, /debug-logs current, and setup verify to inspect execution readiness.',
+          'Andrea cannot run that assistant turn right now because the runtime failed before first output. This is different from a plain credential failure. An operator should re-run setup verify and inspect execution readiness logs.',
       };
     case 'runtime_bootstrap_failed':
       return {
         code: 'runtime_bootstrap_failed',
         nonRetriable: false,
         userMessage:
-          'Andrea cannot run that assistant turn right now because the runtime failed during startup or execution. Re-run /debug-status, /debug-logs current, and setup verify to inspect execution readiness.',
+          'Andrea cannot run that assistant turn right now because the runtime failed during startup or execution. An operator should re-run setup verify and inspect execution readiness logs.',
       };
     case 'credentials_missing_or_unusable':
       return {

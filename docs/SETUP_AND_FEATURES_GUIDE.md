@@ -533,7 +533,7 @@ Update workflows:
 
 - `/update-nanoclaw` for upstream core updates
 - `/update-skills` for installed skill branch updates
-- `/debug` for guided incident triage
+- `/debug-status` plus `/debug-level` and `/debug-logs` for live incident triage
 
 Live troubleshooting controls:
 
@@ -576,10 +576,18 @@ Important interpretation:
 
 When blocked, start here:
 
-- `/debug`
-- `npm run setup -- --step verify`
+- `/debug-status`
+- if service state looks stale: `npm run services:restart`, wait for it to finish, then run `npm run setup -- --step verify`
+- `/debug-level debug chat 60m`
+- `/debug-logs current 120`
 - [DEBUG_CHECKLIST.md](DEBUG_CHECKLIST.md)
 - [SECURITY.md](SECURITY.md)
+
+Short interpretation:
+
+- no reply: restart first, then verify, then reproduce and inspect `current`
+- delayed reply: add `verbose` on `component:container`, reproduce, then inspect `current` and `stderr`
+- `ASSISTANT_EXECUTION_PROBE=failed` with `initial_output_timeout` means the runtime did not reach first output cleanly; do not flatten it into a missing-key issue unless the credential probe also failed
 
 ## 12) Go-Live Checklist (Methodical)
 

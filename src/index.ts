@@ -134,7 +134,10 @@ import {
   installOpenClawSkill,
 } from './openclaw-market.js';
 import { classifyAssistantRequest } from './assistant-routing.js';
-import { analyzeAgentError } from './agent-error.js';
+import {
+  analyzeAgentError,
+  buildRepeatedAgentErrorMessage,
+} from './agent-error.js';
 import { listCursorModels, type CursorAgentView } from './cursor-jobs.js';
 import {
   formatAgentRuntimeStatusMessage,
@@ -913,6 +916,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
       if (shouldNotify && output.userMessage) {
         await channel.sendMessage(chatJid, output.userMessage);
+      } else if (!shouldNotify) {
+        await channel.sendMessage(
+          chatJid,
+          buildRepeatedAgentErrorMessage(output.code),
+        );
       }
 
       lastNonRetriableErrorNotice[chatJid] = {

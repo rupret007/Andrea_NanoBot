@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { analyzeAgentError } from './agent-error.js';
+import {
+  analyzeAgentError,
+  buildRepeatedAgentErrorMessage,
+} from './agent-error.js';
 
 describe('analyzeAgentError', () => {
   it('classifies insufficient quota as non-retriable', () => {
@@ -34,6 +37,7 @@ describe('analyzeAgentError', () => {
     expect(analysis.code).toBe('initial_output_timeout');
     expect(analysis.nonRetriable).toBe(false);
     expect(analysis.userMessage).toContain('failed before first output');
+    expect(analysis.userMessage).not.toContain('/debug-status');
   });
 
   it('keeps true credential failures non-retriable', () => {
@@ -53,5 +57,17 @@ describe('analyzeAgentError', () => {
     expect(analysis.code).toBe('transient_or_unknown');
     expect(analysis.nonRetriable).toBe(false);
     expect(analysis.userMessage).toBeNull();
+  });
+
+  it('builds a concise repeated message for runtime startup failures', () => {
+    expect(buildRepeatedAgentErrorMessage('initial_output_timeout')).toContain(
+      'assistant runtime',
+    );
+  });
+
+  it('builds a concise repeated message for auth/config failures', () => {
+    expect(buildRepeatedAgentErrorMessage('auth_failed')).toContain(
+      'operator attention',
+    );
   });
 });

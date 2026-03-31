@@ -203,6 +203,8 @@ Recommended operator-only flow in the main control chat:
 6. `/debug-logs stderr 120`
 7. `/debug-reset all`
 
+If you restart services during this loop, wait for restart to finish and only then run `npm run setup -- --step verify`.
+
 Use this to distinguish:
 
 - credential/auth/endpoint failures

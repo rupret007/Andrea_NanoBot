@@ -390,17 +390,22 @@ Useful controls:
 ## Incident Short Path
 
 1. Capture the failing symptom and time.
-2. Run `npm run setup -- --step verify`.
-3. Run `/debug-status` or `npm run debug:status`.
-4. Turn logging up only where needed:
+2. Run `/debug-status` or `npm run debug:status`.
+3. If service state looks stale, run `npm run services:restart` and wait for it to finish.
+4. Run `npm run setup -- --step verify` after restart completes. Do not overlap restart and verify.
+5. Turn logging up only where needed:
    - `/debug-level debug chat 60m`
    - `/debug-level verbose component:container 30m`
-5. Reproduce with the smallest failing command or chat turn.
-6. Tail `/debug-logs current 120` and `/debug-logs stderr 120` (or the host-side equivalents).
-7. Restart services if state looks stale.
-8. Re-run the failing flow.
-9. Reset debug overrides with `/debug-reset all`.
-10. Update docs if behavior changed.
+6. Reproduce with the smallest failing command or chat turn.
+7. Tail `/debug-logs current 120` and `/debug-logs stderr 120` (or the host-side equivalents).
+8. Reset debug overrides with `/debug-reset all`.
+9. Update docs if behavior changed.
+
+Quick interpretation:
+
+- no reply: restart first, then verify, then reproduce and inspect `current`
+- delayed reply: add `verbose` on `component:container`, reproduce, then inspect `current` and `stderr`
+- `ASSISTANT_EXECUTION_PROBE=failed` with `initial_output_timeout`: treat it as a runtime-startup/output issue first, not a plain credential miss
 
 ## Documentation Rule
 
