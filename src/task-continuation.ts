@@ -51,7 +51,15 @@ const EXPAND_PATTERNS = new Set([
   'expand this',
   'make it more detailed',
 ]);
-const FIX_PATTERNS = new Set(['fix that', 'fix it', 'correct that']);
+const FIX_PATTERNS = new Set([
+  'fix that',
+  'fix it',
+  'correct that',
+  'improve that',
+  'improve it',
+  'clean that up',
+  'make this better',
+]);
 const RETRY_PATTERNS = new Set(['try again', 'retry', 'do it again']);
 const CONTINUE_PATTERNS = new Set(['continue', 'go ahead', 'use that']);
 const HARMLESS_ACK_PATTERNS = new Set([
@@ -227,7 +235,7 @@ export function interpretTaskContinuation(
       break;
     case 'fix_issue':
       actionText =
-        'Revise this task using the visible task context below, and fix the issue the user is pointing at.';
+        'Revise the previous output using the visible task context below. Improve clarity, wording, and overall quality. If no specific issue is stated, perform a general improvement pass.';
       break;
     case 'revise_shorter':
       actionText =

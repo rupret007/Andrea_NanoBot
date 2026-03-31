@@ -29,10 +29,67 @@ describe('task continuation helper', () => {
     expect(result.continuationKind).toBe('fix_issue');
     expect(result.usedVisibleContext).toBe(true);
     expect(result.normalizedPromptText).toContain(
-      'fix the issue the user is pointing at',
+      'Improve clarity, wording, and overall quality',
+    );
+    expect(result.normalizedPromptText).toContain(
+      'If no specific issue is stated, perform a general improvement pass',
     );
     expect(result.normalizedPromptText).toContain(
       'Launch faster with one assistant',
+    );
+  });
+
+  it('normalizes improve-that prompts using the same general improvement fallback', () => {
+    const result = interpretTaskContinuation({
+      laneId: 'cursor',
+      rawPrompt: 'improve that',
+      contextKind: 'output',
+      messageContextPayload: outputPayload,
+    });
+
+    expect(result.continuationKind).toBe('fix_issue');
+    expect(result.usedVisibleContext).toBe(true);
+    expect(result.normalizedPromptText).toContain(
+      'Revise the previous output using the visible task context below',
+    );
+    expect(result.normalizedPromptText).toContain(
+      'Improve clarity, wording, and overall quality',
+    );
+  });
+
+  it('leaves explicit fix instructions unchanged', () => {
+    const rawPrompt = 'fix the grammar';
+    const result = interpretTaskContinuation({
+      laneId: 'cursor',
+      rawPrompt,
+      contextKind: 'output',
+      messageContextPayload: outputPayload,
+    });
+
+    expect(result.continuationKind).toBe('fresh_instruction');
+    expect(result.normalizedPromptText).toBe(rawPrompt);
+    expect(result.usedVisibleContext).toBe(false);
+  });
+
+  it('keeps the shorter rewrite working after a vague fix-style reply', () => {
+    const fixResult = interpretTaskContinuation({
+      laneId: 'cursor',
+      rawPrompt: 'fix that',
+      contextKind: 'output',
+      messageContextPayload: outputPayload,
+    });
+    expect(fixResult.continuationKind).toBe('fix_issue');
+
+    const shorterResult = interpretTaskContinuation({
+      laneId: 'cursor',
+      rawPrompt: 'make it shorter',
+      contextKind: 'output',
+      messageContextPayload: outputPayload,
+    });
+
+    expect(shorterResult.continuationKind).toBe('revise_shorter');
+    expect(shorterResult.normalizedPromptText).toContain(
+      'make it shorter while preserving the key meaning',
     );
   });
 
