@@ -551,7 +551,7 @@ function buildAndreaRuntimeStatusMessage(): string {
     '',
     `- Runtime execution enabled on this host: ${andreaRuntimeExecutionEnabled ? 'yes' : 'no'}`,
     "- This is Andrea's integrated Codex/OpenAI runtime lane inside the same shell.",
-    '- /cursor remains the primary operator surface today; /runtime-* is the explicit fallback when you need direct runtime control.',
+    '- /cursor is still the cleaner operator surface today. Use /runtime-* only when you want explicit runtime controls.',
   ].join('\n');
 }
 
@@ -1747,7 +1747,7 @@ async function main(): Promise<void> {
         executionEnabled: andreaRuntimeExecutionEnabled,
         readinessLine: andreaRuntimeExecutionEnabled
           ? 'ready on this host'
-          : 'integrated but execution is still off on this host',
+          : 'historical review is available, but new runtime work is still off on this host',
         currentTask: runtimeSelection?.selected || undefined,
       });
       return upsertCursorDashboardMessage({
@@ -2355,7 +2355,7 @@ async function main(): Promise<void> {
       sourceMessage,
       contextKind: 'runtime_job_message',
       payload: job.metadata || null,
-      text: `Reply to this dashboard with what Andrea should change next for Codex/OpenAI task ${formatOpaqueTaskId(job.handle.jobId)}.`,
+      text: `Reply here with what Andrea should change next for Codex/OpenAI task ${formatOpaqueTaskId(job.handle.jobId)}.`,
     });
   }
 
@@ -2636,7 +2636,7 @@ async function main(): Promise<void> {
         provider: 'cloud',
         sourceMessage,
         contextKind: 'cursor_job_message',
-        text: `Reply to this dashboard with what Andrea should change next for ${labelCursorRecord(selectedAgent)} ${selectedAgent.id}.`,
+        text: `Reply here with what Andrea should change next for ${labelCursorRecord(selectedAgent)} ${formatOpaqueTaskId(selectedAgent.id)}.`,
       });
       return;
     }
@@ -3602,8 +3602,7 @@ async function main(): Promise<void> {
         contextKind: 'cursor_job_card',
         inlineActions: buildCursorJobCardActions(followed),
         text: [
-          `Andrea is continuing ${labelCursorRecord(followed)} ${formatOpaqueTaskId(followed.id)}.`,
-          `Status: ${formatHumanTaskStatus(followed.status)}`,
+          `Andrea sent your next instruction to ${labelCursorRecord(followed)} ${formatOpaqueTaskId(followed.id)}.`,
           buildCursorNextStepMessage(followed),
         ]
           .filter((line): line is string => Boolean(line))

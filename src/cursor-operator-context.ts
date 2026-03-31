@@ -626,7 +626,7 @@ function summarizeCursorRecord(record: CursorAgentView): string | null {
 export function formatCursorListEntry(record: FlattenedCursorJobEntry): string {
   const summary = summarizeCursorRecord(record);
   const updatedAt = record.updatedAt || record.lastSyncedAt || record.createdAt;
-  return `${record.ordinal}. ${record.provider === 'cloud' ? 'Cloud' : 'Desktop'} ${formatCursorDisplayId(record.id)} [${formatHumanTaskStatus(record.status)}]${summary ? `\n   ${summary}` : ''}${updatedAt ? `\n   updated ${updatedAt}` : ''}`;
+  return `${record.ordinal}. ${record.provider === 'cloud' ? 'Cloud' : 'Desktop'} ${formatCursorDisplayId(record.id)} ${formatHumanTaskStatus(record.status)}${summary ? `\n   ${summary}` : ''}${updatedAt ? `\n   updated ${updatedAt}` : ''}`;
 }
 
 export function formatCursorJobCard(

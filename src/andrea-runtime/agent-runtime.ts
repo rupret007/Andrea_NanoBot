@@ -121,12 +121,12 @@ export function formatAgentRuntimeStatusMessage(
   snapshot: AgentRuntimeStatusSnapshot,
 ): string {
   return [
-    '*Andrea Runtime Status*',
-    `- Local default: ${snapshot.defaultRuntime}`,
+    '*Codex/OpenAI Runtime Status*',
+    `- Preferred local runtime: ${snapshot.defaultRuntime}`,
     `- Cloud fallback: ${snapshot.fallbackRuntime}`,
-    `- Codex local enabled: ${snapshot.codexLocalEnabled ? 'yes' : 'no'}`,
+    `- Codex local execution: ${snapshot.codexLocalEnabled ? 'enabled' : 'disabled'}`,
     `- Codex local readiness: ${snapshot.codexLocalReady ? 'ready' : 'conditional'}`,
-    `- Host Codex auth seed available: ${snapshot.hostCodexAuthPresent ? 'yes' : 'no'}`,
+    `- Host Codex auth seed: ${snapshot.hostCodexAuthPresent ? 'available' : 'missing'}`,
     snapshot.codexLocalModel
       ? `- Codex local model override: ${snapshot.codexLocalModel}`
       : null,
@@ -137,10 +137,9 @@ export function formatAgentRuntimeStatusMessage(
       ? `- OpenAI base URL: ${snapshot.openAiBaseUrl}`
       : null,
     `- Container runtime: ${snapshot.containerRuntimeName} (${snapshot.containerRuntimeStatus})`,
-    `- Active jobs: ${snapshot.activeJobCount}`,
+    `- Active tasks: ${snapshot.activeJobCount}`,
     `- Stored runtime threads: ${snapshot.activeThreadCount}`,
-    '- Note: openai_cloud is currently a limited text fallback, not full local tool parity.',
-    '- Operator commands: /runtime-status, /runtime-jobs, /runtime-followup, /runtime-stop, /runtime-logs',
+    '- Note: OpenAI cloud is still a limited text fallback, not full Codex-local tool parity.',
   ]
     .filter((line): line is string => Boolean(line))
     .join('\n');

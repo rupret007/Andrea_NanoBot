@@ -15,7 +15,11 @@ function toTitleCase(value: string): string {
 export function formatHumanTaskStatus(
   status: string | null | undefined,
 ): string {
-  const normalized = (status || '').trim().toLowerCase();
+  const normalized = (status || '')
+    .trim()
+    .toLowerCase()
+    .replace(/^\[+/, '')
+    .replace(/\]+$/, '');
   if (!normalized) return 'Unknown';
 
   if (

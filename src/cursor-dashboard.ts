@@ -166,7 +166,7 @@ function summarizeJobLine(record: FlattenedCursorJobEntry): string {
     record.summary;
   const updatedAt = record.updatedAt || record.lastSyncedAt || record.createdAt;
   return [
-    `${record.ordinal}. ${prefix} ${formatCursorDisplayId(record.id)} [${formatHumanTaskStatus(record.status)}]`,
+    `${record.ordinal}. ${prefix} ${formatCursorDisplayId(record.id)} ${formatHumanTaskStatus(record.status)}`,
     summary ? `   ${summary}` : null,
     updatedAt ? `   updated ${updatedAt}` : null,
   ]
@@ -417,8 +417,8 @@ export function buildCursorDashboardRuntime(params: {
       '*Codex/OpenAI Runtime*',
       '',
       "Andrea's Codex/OpenAI runtime lane lives inside the same shell as Cursor.",
-      `- Host execution: ${params.executionEnabled ? 'enabled' : 'integrated but off on this host'}`,
-      `- Lane status: ${params.readinessLine}`,
+      `- Host execution: ${params.executionEnabled ? 'enabled' : 'disabled on this host'}`,
+      `- Readiness: ${params.readinessLine}`,
       params.currentTask
         ? `- Current task: ${summarizeRuntimeTask(params.currentTask)}`
         : '- Current task: none selected yet',

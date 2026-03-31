@@ -99,7 +99,7 @@ describe('runtime commands', () => {
         });
       },
       getStatusMessage() {
-        return '*Andrea Runtime Status*\n- Container runtime: podman (running)';
+        return '*Codex/OpenAI Runtime Status*\n- Container runtime: podman (running)';
       },
       canExecute: true,
       getExecutionDisabledMessage() {
@@ -190,7 +190,7 @@ describe('runtime commands', () => {
 
     expect(handled).toBe(true);
     expect(sentMessages).toEqual([
-      '*Andrea Runtime Status*\n- Container runtime: podman (running)',
+      '*Codex/OpenAI Runtime Status*\n- Container runtime: podman (running)',
     ]);
   });
 
@@ -250,7 +250,7 @@ describe('runtime commands', () => {
     expect(followUpLegacyGroup).not.toHaveBeenCalled();
     expect(runtimeMessages[0].jobId).toBe('runtime-job-2');
     expect(runtimeMessages[0].text).toContain(
-      'Andrea is continuing Codex/OpenAI task runtime-job-2. Status: Queued.',
+      'Andrea sent your next instruction to Codex/OpenAI task runtime-job-2.',
     );
   });
 

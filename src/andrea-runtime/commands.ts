@@ -329,7 +329,7 @@ async function handleRuntimeFollowup(
         contextKind: 'runtime_job_card',
         payload: followed.metadata || null,
         text: [
-          `Andrea is continuing Codex/OpenAI task ${formatOpaqueTaskId(followed.handle.jobId)}. Status: ${formatHumanTaskStatus(followed.status)}.`,
+          `Andrea sent your next instruction to Codex/OpenAI task ${formatOpaqueTaskId(followed.handle.jobId)}.`,
           formatRuntimeNextStep(followed.handle.jobId),
         ].join('\n\n'),
       });
