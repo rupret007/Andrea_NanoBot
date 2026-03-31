@@ -28,6 +28,8 @@ export const CURSOR_TEST_COMMANDS = new Set([
   '/cursor_smoke',
 ]);
 
+export const CURSOR_DASHBOARD_COMMANDS = new Set(['/cursor']);
+
 export const CURSOR_JOBS_COMMANDS = new Set(['/cursor-jobs', '/cursor_jobs']);
 
 export const CURSOR_CREATE_COMMANDS = new Set([
@@ -41,6 +43,8 @@ export const CURSOR_SELECT_COMMANDS = new Set([
   '/cursor-select',
   '/cursor_select',
 ]);
+
+export const CURSOR_UI_COMMANDS = new Set(['/cursor-ui', '/cursor_ui']);
 
 export const CURSOR_STOP_COMMANDS = new Set(['/cursor-stop', '/cursor_stop']);
 
@@ -138,10 +142,12 @@ const DISABLED_COMMANDS = new Set([
 const MAIN_CONTROL_ONLY_COMMANDS = new Set([
   ...CURSOR_MODELS_COMMANDS,
   ...CURSOR_TEST_COMMANDS,
+  ...CURSOR_DASHBOARD_COMMANDS,
   ...CURSOR_JOBS_COMMANDS,
   ...CURSOR_CREATE_COMMANDS,
   ...CURSOR_SYNC_COMMANDS,
   ...CURSOR_SELECT_COMMANDS,
+  ...CURSOR_UI_COMMANDS,
   ...CURSOR_STOP_COMMANDS,
   ...CURSOR_FOLLOWUP_COMMANDS,
   ...CURSOR_TERMINAL_COMMANDS,

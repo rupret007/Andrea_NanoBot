@@ -369,8 +369,9 @@ Typical commands:
   - `/purchase-approve <request_id> <approval_code>`
   - `/purchase-cancel <request_id>`
 - Cursor-focused control commands:
+  - `/cursor` (main control chat only; open the Cursor tile dashboard for status, jobs, current-job controls, and the new-job wizard)
   - `/cursor-models [filter]` (main control chat only; Cursor Cloud only; some accounts return no model list even when jobs still work with the default model)
-  - `/cursor-jobs` (main control chat only; list tracked Cursor Cloud jobs plus tracked and recoverable desktop bridge sessions for this workspace)
+  - `/cursor-jobs` (main control chat only; open the Jobs browser inside the Cursor dashboard and refresh tracked/recoverable jobs for this workspace)
   - `/cursor-create [options] <prompt>` (main control chat only; starts a Cursor Cloud job; Cloud jobs need either `--repo <url>` or a default repo configured in Cursor settings)
   - `/cursor-create --repo <url> --ref <branch> --model <id> <prompt>` (target a specific repo/ref/model)
   - `/cursor-sync [agent_id|list_number|current]` (main control chat only; refresh a tracked Cursor Cloud job or attach an existing Cursor Cloud job or desktop bridge session to this workspace)
@@ -394,7 +395,7 @@ Important scope rule:
 - older `/cursor-artifacts` and `/cursor-artifact-link` aliases still work, but `/cursor-results` and `/cursor-download` are the preferred operator examples
 - runtime-route readiness is optional and separate; `Cursor-backed runtime route: not configured` does not mean Cloud or desktop bridge are broken
 - the desktop bridge gives Andrea bridge-managed session recovery and line-oriented shell commands on your normal machine, but not a live PTY, remote desktop, or a guaranteed local Windows agent-job path
-- the normal Telegram operator flow is now `/cursor-jobs` -> tap/select a job -> reply with `/cursor-sync`, `/cursor-conversation`, `/cursor-results`, or plain-text follow-up for Cloud work
+- the normal Telegram operator flow is now `/cursor` -> tap `Jobs`/`Current Job`/`New Cloud Job` -> tap a job or control tile -> reply with plain text only when you are supplying a Cloud follow-up or a new-job prompt
 - marketplace skill discovery and enablement still exist in the operator/runtime layer, but they are not part of the default Telegram command surface
 
 Preferred operator command style:

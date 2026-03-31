@@ -148,9 +148,9 @@ Advanced operator workflows still exist, but they are operator-only, live in the
 Preferred operator command style:
 
 - public-safe commands stay documented exactly as shown above
-- deeper operator examples use hyphen aliases in Telegram, such as `/cursor-jobs` and `/cursor-create`
+- deeper operator examples use hyphen aliases in Telegram, such as `/cursor`, `/cursor-jobs`, and `/cursor-create`
 - operator examples use `/cursor-results` for output files and `/cursor-download` for one-file retrieval
-- the normal Telegram operator flow is now `/cursor-jobs` -> tap/select a job -> reply with `/cursor-sync`, `/cursor-conversation`, `/cursor-results`, or a plain-text Cloud follow-up
+- the normal Telegram operator flow is now `/cursor` -> `Jobs`/`Current Job`/`New Cloud Job` tiles -> tap a job/action -> reply with plain text only when you are supplying a Cloud follow-up or a new-job prompt
 - underscore aliases still work for compatibility, but the docs now standardize on the hyphen form for operator workflows
 - older `/cursor-artifacts` and `/cursor-artifact-link` aliases still work for compatibility, but they are no longer the preferred operator examples
 

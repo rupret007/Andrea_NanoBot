@@ -133,6 +133,7 @@ import {
   stopCursorTerminal,
   stopCursorAgent,
   syncCursorAgent,
+  type CursorAgentView,
 } from './cursor-jobs.js';
 import {
   parseCursorCreateCommand,
@@ -150,18 +151,36 @@ import {
 import { buildSilentSuccessFallback } from './user-facing-fallback.js';
 import {
   buildCursorJobCardActions,
-  buildCursorListSelectionActions,
   flattenCursorJobInventory,
   formatCursorJobCard,
-  formatCursorListEntry,
+  type FlattenedCursorJobEntry,
+  getActiveCursorOperatorContext,
   getActiveCursorMessageContext,
   getCursorContextGuidance,
   looksLikeCursorTargetToken,
+  rememberCursorDashboardMessage,
   rememberCursorJobList,
   rememberCursorMessageContext,
   rememberCursorOperatorSelection,
   resolveCursorTarget,
 } from './cursor-operator-context.js';
+import {
+  buildCursorDashboardCurrentJob,
+  buildCursorDashboardCurrentJobEmpty,
+  buildCursorDashboardDesktop,
+  buildCursorDashboardHelp,
+  buildCursorDashboardHome,
+  buildCursorDashboardJobs,
+  buildCursorDashboardStatus,
+  buildCursorDashboardWizardConfirm,
+  buildCursorDashboardWizardPrompt,
+  buildCursorDashboardWizardRepo,
+  CURSOR_DASHBOARD_EXPIRED_MESSAGE,
+  CURSOR_DASHBOARD_PAGE_SIZE,
+  formatCursorDashboardState,
+  parseCursorDashboardState,
+  type CursorDashboardState,
+} from './cursor-dashboard.js';
 import {
   ALEXA_STATUS_COMMANDS,
   AMAZON_SEARCH_COMMANDS,
@@ -170,6 +189,7 @@ import {
   CURSOR_ARTIFACT_LINK_COMMANDS,
   CURSOR_CONVERSATION_COMMANDS,
   CURSOR_CREATE_COMMANDS,
+  CURSOR_DASHBOARD_COMMANDS,
   CURSOR_FOLLOWUP_COMMANDS,
   CURSOR_JOBS_COMMANDS,
   CURSOR_MODELS_COMMANDS,
@@ -182,6 +202,7 @@ import {
   CURSOR_TERMINAL_STATUS_COMMANDS,
   CURSOR_TERMINAL_STOP_COMMANDS,
   CURSOR_TEST_COMMANDS,
+  CURSOR_UI_COMMANDS,
   getCommandAccessDecision,
   normalizeCommandToken,
   PURCHASE_APPROVE_COMMANDS,
@@ -1043,11 +1064,7 @@ async function main(): Promise<void> {
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
 
-  const CURSOR_STATUS_COMMANDS = new Set([
-    '/cursor',
-    '/cursor-status',
-    '/cursor_status',
-  ]);
+  const CURSOR_STATUS_COMMANDS = new Set(['/cursor-status', '/cursor_status']);
   const CURSOR_CREATE_USAGE =
     'Usage: /cursor-create [--model MODEL_ID] [--repo REPO_URL] [--ref GIT_REF] [--pr PR_URL] [--branch BRANCH_NAME] [--auto-pr] [--cursor-github-app] [--skip-reviewer] PROMPT';
   const CURSOR_DOWNLOAD_USAGE =
@@ -1244,6 +1261,358 @@ async function main(): Promise<void> {
       agentId: params.agentId,
     });
     return platformMessageId;
+  }
+
+  function getCursorDashboardMessageContext(
+    chatJid: string,
+    platformMessageId: string | undefined,
+  ): {
+    platformMessageId: string;
+    agentId: string | null;
+    state: CursorDashboardState;
+  } | null {
+    const context = getActiveCursorMessageContext(chatJid, platformMessageId);
+    if (!context || context.contextKind !== 'cursor_dashboard') {
+      return null;
+    }
+    const state = parseCursorDashboardState(context.payload);
+    if (!state) return null;
+    return {
+      platformMessageId: context.platformMessageId,
+      agentId: context.agentId,
+      state,
+    };
+  }
+
+  function summarizeCursorDashboardLines(params: {
+    cloudStatus: ReturnType<typeof getCursorCloudStatus>;
+    desktopStatus: Awaited<ReturnType<typeof getCursorDesktopStatus>>;
+    gatewayStatus: Awaited<ReturnType<typeof getCursorGatewayStatus>>;
+  }): {
+    cloudLine: string;
+    desktopLine: string;
+    runtimeLine: string;
+  } {
+    const cloudLine =
+      params.cloudStatus.enabled && params.cloudStatus.hasApiKey
+        ? 'ready'
+        : 'unavailable (add CURSOR_API_KEY)';
+    const desktopLine = params.desktopStatus.terminalAvailable
+      ? 'ready'
+      : params.desktopStatus.enabled
+        ? params.desktopStatus.probeDetail
+          ? `conditional (${params.desktopStatus.probeDetail})`
+          : 'conditional'
+        : 'optional and unavailable';
+    const runtimeLine =
+      params.gatewayStatus.mode === 'configured'
+        ? params.gatewayStatus.probeStatus === 'ok'
+          ? 'configured'
+          : params.gatewayStatus.probeStatus === 'failed'
+            ? `configured (${params.gatewayStatus.probeDetail || 'probe failed'})`
+            : 'configured'
+        : params.gatewayStatus.mode === 'partial'
+          ? 'partial'
+          : 'optional and off';
+    return { cloudLine, desktopLine, runtimeLine };
+  }
+
+  async function getCursorSelectedAgentRecord(
+    chatJid: string,
+    threadId?: string,
+  ): Promise<{
+    inventory: Awaited<ReturnType<typeof listCursorJobInventory>>;
+    selected: FlattenedCursorJobEntry | null;
+  } | null> {
+    const group = registeredGroups[chatJid];
+    if (!group) return null;
+    const activeContext = getActiveCursorOperatorContext(chatJid, threadId);
+    const selectedAgentId = activeContext?.selectedAgentId;
+    const inventory = await listCursorJobInventory({
+      groupFolder: group.folder,
+      chatJid,
+      limit: 50,
+    });
+    const flattened = flattenCursorJobInventory(inventory);
+    return {
+      inventory,
+      selected: selectedAgentId
+        ? flattened.find((entry) => entry.id === selectedAgentId) || null
+        : null,
+    };
+  }
+
+  async function upsertCursorDashboardMessage(params: {
+    chatJid: string;
+    sourceMessage?: NewMessage;
+    state: CursorDashboardState;
+    text: string;
+    inlineActionRows: SendMessageOptions['inlineActionRows'];
+    selectedAgentId?: string | null;
+    forceNew?: boolean;
+  }): Promise<string | undefined> {
+    const channel = findChannel(channels, params.chatJid);
+    if (!channel) return undefined;
+
+    const activeContext = getActiveCursorOperatorContext(
+      params.chatJid,
+      params.sourceMessage?.thread_id,
+    );
+    const existingDashboardMessageId = params.forceNew
+      ? null
+      : activeContext?.dashboardMessageId || null;
+
+    let platformMessageId: string | undefined;
+    if (existingDashboardMessageId && channel.editMessage) {
+      const edited = await channel.editMessage(
+        params.chatJid,
+        existingDashboardMessageId,
+        params.text,
+        {
+          inlineActionRows: params.inlineActionRows,
+        },
+      );
+      platformMessageId = edited.platformMessageId;
+    }
+
+    if (!platformMessageId) {
+      const sent = await channel.sendMessage(
+        params.chatJid,
+        params.text,
+        buildOperatorSendOptions(params.sourceMessage, {
+          inlineActionRows: params.inlineActionRows,
+        }),
+      );
+      platformMessageId = sent.platformMessageId;
+    }
+
+    if (!platformMessageId) return undefined;
+
+    rememberCursorDashboardMessage({
+      chatJid: params.chatJid,
+      threadId: params.sourceMessage?.thread_id,
+      dashboardMessageId: platformMessageId,
+      selectedAgentId: params.selectedAgentId,
+    });
+    rememberCursorMessageContext({
+      chatJid: params.chatJid,
+      platformMessageId,
+      threadId: params.sourceMessage?.thread_id,
+      contextKind: 'cursor_dashboard',
+      agentId: params.selectedAgentId || null,
+      payload: formatCursorDashboardState(params.state),
+    });
+    return platformMessageId;
+  }
+
+  async function openCursorDashboard(params: {
+    chatJid: string;
+    sourceMessage?: NewMessage;
+    state: CursorDashboardState;
+    forceNew?: boolean;
+  }): Promise<string | undefined> {
+    const group = registeredGroups[params.chatJid];
+    if (!group) {
+      return sendCursorMessage(
+        params.chatJid,
+        'This chat is not registered yet. Run /registermain in a DM first.',
+        params.sourceMessage,
+      );
+    }
+
+    if (params.state.kind === 'home') {
+      const [desktopStatus, gatewayStatus] = await Promise.all([
+        getCursorDesktopStatus({ probe: false }),
+        getCursorGatewayStatus({ probe: false }),
+      ]);
+      const cloudStatus = getCursorCloudStatus();
+      const selection = await getCursorSelectedAgentRecord(
+        params.chatJid,
+        params.sourceMessage?.thread_id,
+      );
+      const render = buildCursorDashboardHome({
+        ...summarizeCursorDashboardLines({
+          cloudStatus,
+          desktopStatus,
+          gatewayStatus,
+        }),
+        currentJob: selection?.selected || undefined,
+      });
+      return upsertCursorDashboardMessage({
+        chatJid: params.chatJid,
+        sourceMessage: params.sourceMessage,
+        state: params.state,
+        text: render.text,
+        inlineActionRows: render.inlineActionRows,
+        selectedAgentId: render.selectedAgentId,
+        forceNew: params.forceNew,
+      });
+    }
+
+    if (params.state.kind === 'status') {
+      const desktopStatus = await getCursorDesktopStatus({ probe: true });
+      const gatewayStatus = await getCursorGatewayStatus({ probe: true });
+      const cloudStatus = getCursorCloudStatus();
+      const capabilitySummary = summarizeCursorCapabilities({
+        desktopStatus,
+        cloudStatus,
+        gatewayStatus,
+      });
+      const render = buildCursorDashboardStatus(
+        formatCursorCapabilitySummaryMessage(capabilitySummary),
+      );
+      return upsertCursorDashboardMessage({
+        chatJid: params.chatJid,
+        sourceMessage: params.sourceMessage,
+        state: params.state,
+        text: render.text,
+        inlineActionRows: render.inlineActionRows,
+        forceNew: params.forceNew,
+      });
+    }
+
+    if (params.state.kind === 'jobs') {
+      const inventory = await listCursorJobInventory({
+        groupFolder: group.folder,
+        chatJid: params.chatJid,
+        limit: 50,
+      });
+      const flattened = flattenCursorJobInventory(inventory);
+      const activeContext = getActiveCursorOperatorContext(
+        params.chatJid,
+        params.sourceMessage?.thread_id,
+      );
+      const render = buildCursorDashboardJobs({
+        entries: flattened,
+        page: params.state.page || 0,
+        pageSize: CURSOR_DASHBOARD_PAGE_SIZE,
+        selectedAgentId: activeContext?.selectedAgentId || null,
+      });
+      const platformMessageId = await upsertCursorDashboardMessage({
+        chatJid: params.chatJid,
+        sourceMessage: params.sourceMessage,
+        state: {
+          kind: 'jobs',
+          page: params.state.page || 0,
+        },
+        text: render.text,
+        inlineActionRows: render.inlineActionRows,
+        selectedAgentId: render.selectedAgentId,
+        forceNew: params.forceNew,
+      });
+      rememberCursorJobList({
+        chatJid: params.chatJid,
+        threadId: params.sourceMessage?.thread_id,
+        listMessageId: platformMessageId,
+        items: flattened.map((entry) => ({
+          id: entry.id,
+          provider: entry.provider,
+        })),
+        selectedAgentId: render.selectedAgentId || null,
+      });
+      return platformMessageId;
+    }
+
+    if (params.state.kind === 'current') {
+      const selection = await getCursorSelectedAgentRecord(
+        params.chatJid,
+        params.sourceMessage?.thread_id,
+      );
+      const selected = selection?.selected || null;
+      const render = selected
+        ? buildCursorDashboardCurrentJob(
+            selected,
+            selected.provider === 'cloud'
+              ? listCursorAgentArtifacts(selected.id).length
+              : 0,
+          )
+        : buildCursorDashboardCurrentJobEmpty();
+      return upsertCursorDashboardMessage({
+        chatJid: params.chatJid,
+        sourceMessage: params.sourceMessage,
+        state: params.state,
+        text: render.text,
+        inlineActionRows: render.inlineActionRows,
+        selectedAgentId: render.selectedAgentId,
+        forceNew: params.forceNew,
+      });
+    }
+
+    if (params.state.kind === 'desktop') {
+      const desktopStatus = await getCursorDesktopStatus({ probe: true });
+      const render = buildCursorDashboardDesktop(
+        formatCursorDesktopStatusMessage(desktopStatus),
+      );
+      return upsertCursorDashboardMessage({
+        chatJid: params.chatJid,
+        sourceMessage: params.sourceMessage,
+        state: params.state,
+        text: render.text,
+        inlineActionRows: render.inlineActionRows,
+        forceNew: params.forceNew,
+      });
+    }
+
+    if (params.state.kind === 'help') {
+      const render = buildCursorDashboardHelp();
+      return upsertCursorDashboardMessage({
+        chatJid: params.chatJid,
+        sourceMessage: params.sourceMessage,
+        state: params.state,
+        text: render.text,
+        inlineActionRows: render.inlineActionRows,
+        forceNew: params.forceNew,
+      });
+    }
+
+    if (params.state.kind === 'wizard_repo') {
+      const selection = await getCursorSelectedAgentRecord(
+        params.chatJid,
+        params.sourceMessage?.thread_id,
+      );
+      const render = buildCursorDashboardWizardRepo({
+        selectedRepo:
+          params.state.wizard?.sourceRepository !== undefined
+            ? params.state.wizard.sourceRepository
+            : selection?.selected?.sourceRepository || null,
+      });
+      return upsertCursorDashboardMessage({
+        chatJid: params.chatJid,
+        sourceMessage: params.sourceMessage,
+        state: params.state,
+        text: render.text,
+        inlineActionRows: render.inlineActionRows,
+        selectedAgentId: selection?.selected?.id || null,
+        forceNew: params.forceNew,
+      });
+    }
+
+    if (params.state.kind === 'wizard_prompt') {
+      const render = buildCursorDashboardWizardPrompt({
+        sourceRepository: params.state.wizard?.sourceRepository || null,
+      });
+      return upsertCursorDashboardMessage({
+        chatJid: params.chatJid,
+        sourceMessage: params.sourceMessage,
+        state: params.state,
+        text: render.text,
+        inlineActionRows: render.inlineActionRows,
+        forceNew: params.forceNew,
+      });
+    }
+
+    const render = buildCursorDashboardWizardConfirm({
+      sourceRepository: params.state.wizard?.sourceRepository || null,
+      promptText: params.state.wizard?.promptText || '',
+    });
+    return upsertCursorDashboardMessage({
+      chatJid: params.chatJid,
+      sourceMessage: params.sourceMessage,
+      state: params.state,
+      text: render.text,
+      inlineActionRows: render.inlineActionRows,
+      forceNew: params.forceNew,
+    });
   }
 
   async function resolveCursorTargetOrReply(params: {
@@ -1469,6 +1838,17 @@ async function main(): Promise<void> {
     );
   }
 
+  async function handleCursorDashboard(
+    chatJid: string,
+    sourceMessage?: NewMessage,
+  ): Promise<void> {
+    await openCursorDashboard({
+      chatJid,
+      sourceMessage,
+      state: { kind: 'home' },
+    });
+  }
+
   async function handleAmazonStatus(chatJid: string): Promise<void> {
     const channel = findChannel(channels, chatJid);
     if (!channel) return;
@@ -1667,107 +2047,309 @@ async function main(): Promise<void> {
     chatJid: string,
     sourceMessage?: NewMessage,
   ): Promise<void> {
-    const group = registeredGroups[chatJid];
-    if (!group) {
-      await sendCursorMessage(
-        chatJid,
-        'This chat is not registered yet. Run /registermain in a DM first.',
-        sourceMessage,
-      );
-      return;
-    }
-
-    const inventory = await listCursorJobInventory({
-      groupFolder: group.folder,
+    await openCursorDashboard({
       chatJid,
-      limit: 20,
-    });
-
-    const flattened = flattenCursorJobInventory(inventory);
-
-    const formatSection = (title: string, bucketItems: typeof flattened) =>
-      bucketItems.length > 0
-        ? `${title}:\n${bucketItems.map((entry) => formatCursorListEntry(entry)).join('\n\n')}`
-        : null;
-
-    const sections: string[] = [];
-    const cloudTracked = flattened.filter(
-      (entry) => entry.bucket === 'cloudTracked',
-    );
-    const desktopTracked = flattened.filter(
-      (entry) => entry.bucket === 'desktopTracked',
-    );
-    const cloudRecoverable = flattened.filter(
-      (entry) => entry.bucket === 'cloudRecoverable',
-    );
-    const desktopRecoverable = flattened.filter(
-      (entry) => entry.bucket === 'desktopRecoverable',
-    );
-
-    for (const section of [
-      formatSection('Tracked Cursor Cloud jobs', cloudTracked),
-      formatSection('Tracked desktop bridge sessions', desktopTracked),
-      cloudRecoverable.length > 0
-        ? `${formatSection('Recoverable Cursor Cloud jobs', cloudRecoverable)}\n\nTap a number or run /cursor-sync <number> to attach one of these jobs to this workspace.`
-        : null,
-      desktopRecoverable.length > 0
-        ? `${formatSection('Recoverable desktop bridge sessions', desktopRecoverable)}\n\nTap a number or run /cursor-sync <number> to attach one of these sessions to this workspace.`
-        : null,
-    ]) {
-      if (section) sections.push(section);
-    }
-
-    if (sections.length === 0) {
-      const backendHint =
-        !inventory.hasCloud && !inventory.hasDesktop
-          ? 'Neither Cursor Cloud nor the desktop bridge is configured right now. Add `CURSOR_API_KEY` for queued Cloud jobs, or add `CURSOR_DESKTOP_BRIDGE_URL` + `CURSOR_DESKTOP_BRIDGE_TOKEN` for operator-only desktop session and terminal control.'
-          : 'No active or recoverable Cursor Cloud jobs or desktop bridge sessions were found for this workspace.';
-      const warning = inventory.warning
-        ? `\n\nLive backend lookup skipped: ${inventory.warning}`
-        : '';
-      rememberCursorJobList({
-        chatJid,
-        threadId: sourceMessage?.thread_id,
-        items: [],
-      });
-      await sendCursorMessage(
-        chatJid,
-        `${backendHint}${warning}`,
-        sourceMessage,
-      );
-      return;
-    }
-
-    if (inventory.warning) {
-      sections.push(`Live backend lookup skipped: ${inventory.warning}`);
-    }
-
-    const platformMessageId = await sendCursorMessage(
-      chatJid,
-      `Cursor work:\n\n${sections.join('\n\n')}\n\nTap a number to select a job, or reply to a Cursor card and use /cursor-sync, /cursor-conversation, or /cursor-results without an id.`,
       sourceMessage,
-      {
-        inlineActions: buildCursorListSelectionActions(flattened.length),
-      },
-    );
-    rememberCursorJobList({
-      chatJid,
-      threadId: sourceMessage?.thread_id,
-      listMessageId: platformMessageId,
-      items: flattened.map((entry) => ({
-        id: entry.id,
-        provider: entry.provider,
-      })),
+      state: { kind: 'jobs', page: 0 },
     });
-    if (platformMessageId) {
-      rememberCursorMessageContext({
+  }
+
+  async function handleCursorUi(
+    chatJid: string,
+    rawMessage: string,
+    sourceMessage?: NewMessage,
+  ): Promise<void> {
+    const args = tokenizeCommandArguments(rawMessage);
+    const action = (args[1] || 'home').trim().toLowerCase();
+    const dashboardContext = getCursorDashboardMessageContext(
+      chatJid,
+      sourceMessage?.reply_to_id,
+    );
+
+    if (sourceMessage?.reply_to_id && !dashboardContext) {
+      await sendCursorMessage(
         chatJid,
-        platformMessageId,
-        threadId: sourceMessage?.thread_id,
-        contextKind: 'cursor_job_list',
-        payload: { count: flattened.length },
-      });
+        CURSOR_DASHBOARD_EXPIRED_MESSAGE,
+        sourceMessage,
+      );
+      return;
     }
+
+    const activeSelection = await getCursorSelectedAgentRecord(
+      chatJid,
+      sourceMessage?.thread_id,
+    );
+    const selectedAgent = activeSelection?.selected || null;
+
+    if (action === 'home') {
+      await openCursorDashboard({
+        chatJid,
+        sourceMessage,
+        state: { kind: 'home' },
+      });
+      return;
+    }
+
+    if (action === 'status') {
+      await openCursorDashboard({
+        chatJid,
+        sourceMessage,
+        state: { kind: 'status' },
+      });
+      return;
+    }
+
+    if (action === 'jobs') {
+      const rawPage = Number.parseInt(args[2] || '', 10);
+      await openCursorDashboard({
+        chatJid,
+        sourceMessage,
+        state: {
+          kind: 'jobs',
+          page:
+            Number.isFinite(rawPage) && rawPage > 0
+              ? Math.max(0, rawPage - 1)
+              : dashboardContext?.state.kind === 'jobs'
+                ? dashboardContext.state.page || 0
+                : 0,
+        },
+      });
+      return;
+    }
+
+    if (action === 'current') {
+      await openCursorDashboard({
+        chatJid,
+        sourceMessage,
+        state: { kind: 'current' },
+      });
+      return;
+    }
+
+    if (action === 'desktop') {
+      await openCursorDashboard({
+        chatJid,
+        sourceMessage,
+        state: { kind: 'desktop' },
+      });
+      return;
+    }
+
+    if (action === 'help') {
+      await openCursorDashboard({
+        chatJid,
+        sourceMessage,
+        state: { kind: 'help' },
+      });
+      return;
+    }
+
+    if (action === 'new') {
+      await openCursorDashboard({
+        chatJid,
+        sourceMessage,
+        state: { kind: 'wizard_repo' },
+      });
+      return;
+    }
+
+    if (action === 'select') {
+      if (dashboardContext?.state.kind !== 'jobs') {
+        await sendCursorMessage(
+          chatJid,
+          CURSOR_DASHBOARD_EXPIRED_MESSAGE,
+          sourceMessage,
+        );
+        return;
+      }
+      const visibleIndex = Number.parseInt(args[2] || '', 10);
+      if (!Number.isFinite(visibleIndex) || visibleIndex <= 0) {
+        await sendCursorMessage(
+          chatJid,
+          'That job tile is invalid. Open `/cursor` and browse Jobs again.',
+          sourceMessage,
+        );
+        return;
+      }
+      const inventory = await listCursorJobInventory({
+        groupFolder: registeredGroups[chatJid].folder,
+        chatJid,
+        limit: 50,
+      });
+      const flattened = flattenCursorJobInventory(inventory);
+      const page = dashboardContext.state.page || 0;
+      const selected =
+        flattened[page * CURSOR_DASHBOARD_PAGE_SIZE + visibleIndex - 1];
+      if (!selected) {
+        await sendCursorMessage(
+          chatJid,
+          'That job is no longer visible in this Cursor jobs page. Open `Jobs` again to refresh the list.',
+          sourceMessage,
+        );
+        return;
+      }
+      rememberCursorOperatorSelection({
+        chatJid,
+        threadId: sourceMessage?.thread_id,
+        agentId: selected.id,
+      });
+      await openCursorDashboard({
+        chatJid,
+        sourceMessage,
+        state: { kind: 'current' },
+      });
+      return;
+    }
+
+    if (action === 'sync') {
+      await handleCursorSync(chatJid, null, sourceMessage);
+      await openCursorDashboard({
+        chatJid,
+        sourceMessage,
+        state: { kind: 'current' },
+      });
+      return;
+    }
+
+    if (action === 'text') {
+      await handleCursorConversation(chatJid, null, 20, sourceMessage);
+      return;
+    }
+
+    if (action === 'files') {
+      await handleCursorArtifacts(chatJid, null, sourceMessage);
+      return;
+    }
+
+    if (action === 'stop') {
+      await handleCursorStop(chatJid, null, sourceMessage);
+      await openCursorDashboard({
+        chatJid,
+        sourceMessage,
+        state: { kind: 'current' },
+      });
+      return;
+    }
+
+    if (action === 'followup') {
+      if (!selectedAgent || selectedAgent.provider !== 'cloud') {
+        await sendCursorMessage(
+          chatJid,
+          'Follow-up is only available for the current Cursor Cloud job. Open `Current Job`, then reply with plain text to that dashboard.',
+          sourceMessage,
+        );
+        return;
+      }
+      await sendCursorAgentMessage({
+        chatJid,
+        agentId: selectedAgent.id,
+        provider: 'cloud',
+        sourceMessage,
+        contextKind: 'cursor_job_message',
+        text: `Reply to this dashboard with the next instruction for ${labelCursorRecord(selectedAgent)} ${selectedAgent.id}.`,
+      });
+      return;
+    }
+
+    if (action === 'terminal-status') {
+      await handleCursorTerminalStatus(chatJid, null, sourceMessage);
+      return;
+    }
+
+    if (action === 'terminal-log') {
+      await handleCursorTerminalLog(chatJid, null, 40, sourceMessage);
+      return;
+    }
+
+    if (action === 'terminal-help') {
+      await handleCursorTerminalHelp(chatJid, null, sourceMessage);
+      return;
+    }
+
+    if (action === 'wizard') {
+      const step = (args[2] || '').trim().toLowerCase();
+      const priorWizard = dashboardContext?.state.wizard || {};
+
+      if (step === 'repo-selected') {
+        const selectedRepo = selectedAgent?.sourceRepository || null;
+        await openCursorDashboard({
+          chatJid,
+          sourceMessage,
+          state: {
+            kind: 'wizard_prompt',
+            wizard: {
+              ...priorWizard,
+              sourceRepository: selectedRepo,
+            },
+          },
+        });
+        return;
+      }
+
+      if (step === 'repo-none') {
+        await openCursorDashboard({
+          chatJid,
+          sourceMessage,
+          state: {
+            kind: 'wizard_prompt',
+            wizard: {
+              ...priorWizard,
+              sourceRepository: null,
+            },
+          },
+        });
+        return;
+      }
+
+      if (step === 'edit-repo') {
+        await openCursorDashboard({
+          chatJid,
+          sourceMessage,
+          state: {
+            kind: 'wizard_repo',
+            wizard: {
+              ...priorWizard,
+            },
+          },
+        });
+        return;
+      }
+
+      if (step === 'create') {
+        const promptText = priorWizard.promptText?.trim();
+        if (!promptText) {
+          await sendCursorMessage(
+            chatJid,
+            'Reply to the dashboard with the Cloud job prompt before you tap Create.',
+            sourceMessage,
+          );
+          return;
+        }
+        const created = await handleCursorCreate(
+          chatJid,
+          promptText,
+          sourceMessage?.sender,
+          {
+            sourceRepository: priorWizard.sourceRepository || undefined,
+          },
+          sourceMessage,
+        );
+        if (created) {
+          await openCursorDashboard({
+            chatJid,
+            sourceMessage,
+            state: { kind: 'current' },
+          });
+        }
+        return;
+      }
+    }
+
+    await sendCursorMessage(
+      chatJid,
+      CURSOR_DASHBOARD_EXPIRED_MESSAGE,
+      sourceMessage,
+    );
   }
 
   async function handleCursorModels(
@@ -1834,7 +2416,7 @@ async function main(): Promise<void> {
       skipReviewerRequest?: boolean;
     } = {},
     sourceMessage?: NewMessage,
-  ): Promise<void> {
+  ): Promise<CursorAgentView | null> {
     const group = registeredGroups[chatJid];
     if (!group) {
       await sendCursorMessage(
@@ -1842,7 +2424,7 @@ async function main(): Promise<void> {
         'This chat is not registered yet. Run /registermain in a DM first.',
         sourceMessage,
       );
-      return;
+      return null;
     }
 
     try {
@@ -1883,12 +2465,14 @@ async function main(): Promise<void> {
           .filter(Boolean)
           .join('\n'),
       });
+      return created;
     } catch (err) {
       await sendCursorMessage(
         chatJid,
         formatCursorOperationFailure('Cursor create failed', err),
         sourceMessage,
       );
+      return null;
     }
   }
 
@@ -2621,6 +3205,20 @@ async function main(): Promise<void> {
         return;
       }
 
+      if (CURSOR_DASHBOARD_COMMANDS.has(commandToken)) {
+        handleCursorDashboard(chatJid, msg).catch((err) =>
+          logger.error({ err, chatJid }, 'Cursor dashboard command error'),
+        );
+        return;
+      }
+
+      if (CURSOR_UI_COMMANDS.has(commandToken)) {
+        handleCursorUi(chatJid, rawTrimmed, msg).catch((err) =>
+          logger.error({ err, chatJid }, 'Cursor dashboard UI command error'),
+        );
+        return;
+      }
+
       if (CURSOR_SELECT_COMMANDS.has(commandToken)) {
         const { targetToken, args } = parseCursorCommandTarget(rawTrimmed);
         handleCursorSelect(chatJid, targetToken || args[1] || null, msg).catch(
@@ -2988,13 +3586,106 @@ async function main(): Promise<void> {
         return;
       }
 
+      const repliedCursorDashboard =
+        registeredGroups[chatJid]?.isMain === true &&
+        !isSlashCommand &&
+        rawTrimmed
+          ? getCursorDashboardMessageContext(chatJid, msg.reply_to_id)
+          : null;
+      if (repliedCursorDashboard) {
+        if (repliedCursorDashboard.state.kind === 'wizard_repo') {
+          const normalizedRepo =
+            rawTrimmed.trim().toLowerCase() === 'none'
+              ? null
+              : rawTrimmed.trim();
+          openCursorDashboard({
+            chatJid,
+            sourceMessage: msg,
+            state: {
+              kind: 'wizard_prompt',
+              wizard: {
+                ...repliedCursorDashboard.state.wizard,
+                sourceRepository: normalizedRepo,
+              },
+            },
+          }).catch((err) =>
+            logger.error({ err, chatJid }, 'Cursor wizard repo reply error'),
+          );
+          return;
+        }
+
+        if (
+          repliedCursorDashboard.state.kind === 'wizard_prompt' ||
+          repliedCursorDashboard.state.kind === 'wizard_confirm'
+        ) {
+          openCursorDashboard({
+            chatJid,
+            sourceMessage: msg,
+            state: {
+              kind: 'wizard_confirm',
+              wizard: {
+                ...repliedCursorDashboard.state.wizard,
+                promptText: rawTrimmed,
+              },
+            },
+          }).catch((err) =>
+            logger.error({ err, chatJid }, 'Cursor wizard prompt reply error'),
+          );
+          return;
+        }
+
+        if (repliedCursorDashboard.state.kind === 'current') {
+          if (!repliedCursorDashboard.agentId) {
+            const channel = findChannel(channels, chatJid);
+            channel
+              ?.sendMessage(
+                chatJid,
+                'No current Cursor job is selected yet. Open `Jobs`, tap a job, then reply here with plain text for Cloud follow-up.',
+                buildOperatorSendOptions(msg),
+              )
+              .catch((err) =>
+                logger.error(
+                  { err, chatJid },
+                  'Current dashboard empty guidance send failed',
+                ),
+              );
+            return;
+          }
+
+          if (isDesktopCursorRecord(repliedCursorDashboard.agentId)) {
+            const channel = findChannel(channels, chatJid);
+            channel
+              ?.sendMessage(
+                chatJid,
+                'Desktop bridge sessions use `Sync`, `Messages`, and `Terminal*` controls rather than plain-text follow-up prompts.',
+                buildOperatorSendOptions(msg),
+              )
+              .catch((err) =>
+                logger.error(
+                  { err, chatJid },
+                  'Desktop dashboard followup guidance send failed',
+                ),
+              );
+            return;
+          }
+
+          handleCursorFollowup(chatJid, null, rawTrimmed, msg).catch((err) =>
+            logger.error({ err, chatJid }, 'Cursor dashboard followup error'),
+          );
+          return;
+        }
+      }
+
       const repliedCursorContext =
         registeredGroups[chatJid]?.isMain === true &&
         !isSlashCommand &&
         rawTrimmed
           ? getActiveCursorMessageContext(chatJid, msg.reply_to_id)
           : null;
-      if (repliedCursorContext?.agentId) {
+      if (
+        repliedCursorContext?.agentId &&
+        repliedCursorContext.contextKind !== 'cursor_dashboard'
+      ) {
         const provider =
           repliedCursorContext.payload?.provider === 'desktop' ||
           repliedCursorContext.payload?.provider === 'cloud'

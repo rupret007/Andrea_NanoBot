@@ -123,11 +123,13 @@ Expected meaning:
 Run:
 
 - `/cursor_status`
-- `/cursor-jobs`
+- `/cursor`
+- tap `Jobs`
 - `/cursor-create --repo https://github.com/rupret007/Andrea_NanoBot Reply with exactly: live cloud smoke ok. Do not modify files, branches, or PRs.`
-- `/cursor-sync <agent_id>`
-- `/cursor-conversation <agent_id> 5`
-- `/cursor-results <agent_id>`
+- tap a job tile or use `Current Job`
+- tap `Sync`
+- tap `Text`
+- tap `Files`
 
 Optional if safe:
 
@@ -150,11 +152,13 @@ Expected meaning:
 Run:
 
 - `/cursor_status`
-- `/cursor-jobs`
-- `/cursor-sync <desktop_session_id>` if a recoverable session exists
+- `/cursor`
+- tap `Jobs`
+- tap a desktop session
+- tap `Sync` if a recoverable session exists
 - `/cursor-terminal <agent_id> echo operator smoke ok`
-- `/cursor-terminal-status <agent_id>`
-- `/cursor-terminal-log <agent_id> 20`
+- tap `Current Job` -> `Terminal Status`
+- tap `Current Job` -> `Terminal Log`
 - `/cursor-terminal-stop <agent_id>` if appropriate
 
 Do not confuse desktop bridge readiness with Cursor Cloud readiness.

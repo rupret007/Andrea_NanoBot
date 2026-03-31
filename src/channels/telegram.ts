@@ -208,21 +208,67 @@ async function sendTelegramMessage(
   }
 }
 
+async function editTelegramMessage(
+  api: { editMessageText: Api['editMessageText'] },
+  chatId: string | number,
+  messageId: number,
+  text: string,
+  options: {
+    reply_markup?: InlineKeyboard;
+  } = {},
+): Promise<SendMessageResult> {
+  try {
+    await api.editMessageText(chatId, messageId, text, {
+      ...options,
+      parse_mode: 'Markdown',
+    });
+    return { platformMessageId: messageId.toString() };
+  } catch (err) {
+    const detail =
+      err instanceof Error
+        ? err.message.toLowerCase()
+        : String(err).toLowerCase();
+    if (detail.includes('message is not modified')) {
+      return { platformMessageId: messageId.toString() };
+    }
+    logger.debug({ err }, 'Markdown edit failed, falling back to plain text');
+    await api.editMessageText(chatId, messageId, text, options);
+    return { platformMessageId: messageId.toString() };
+  }
+}
+
 function buildInlineKeyboard(
-  actions: ChannelInlineAction[] | undefined,
+  options: SendMessageOptions = {},
 ): InlineKeyboard | null {
-  if (!actions || actions.length === 0) return null;
+  const rows =
+    options.inlineActionRows && options.inlineActionRows.length > 0
+      ? options.inlineActionRows
+      : options.inlineActions && options.inlineActions.length > 0
+        ? options.inlineActions.reduce<ChannelInlineAction[][]>(
+            (all, action, index) => {
+              const rowIndex = Math.floor(index / 3);
+              if (!all[rowIndex]) all[rowIndex] = [];
+              all[rowIndex].push(action);
+              return all;
+            },
+            [],
+          )
+        : [];
+
+  if (rows.length === 0) return null;
 
   const keyboard = new InlineKeyboard();
-  actions.forEach((action, index) => {
-    const text = action.label.trim();
-    if (!text) return;
-    if (action.url) {
-      keyboard.url(text, action.url);
-    } else if (action.actionId) {
-      keyboard.text(text, action.actionId);
-    }
-    if ((index + 1) % 3 === 0 && index < actions.length - 1) {
+  rows.forEach((row, rowIndex) => {
+    row.forEach((action) => {
+      const text = action.label.trim();
+      if (!text) return;
+      if (action.url) {
+        keyboard.url(text, action.url);
+      } else if (action.actionId) {
+        keyboard.text(text, action.actionId);
+      }
+    });
+    if (rowIndex < rows.length - 1) {
       keyboard.row();
     }
   });
@@ -585,7 +631,7 @@ export class TelegramChannel implements Channel {
             }
           : {}),
       };
-      const inlineKeyboard = buildInlineKeyboard(options.inlineActions);
+      const inlineKeyboard = buildInlineKeyboard(options);
       let firstMessageId: string | undefined;
 
       const chunks = splitTelegramMessage(text);
@@ -618,12 +664,59 @@ export class TelegramChannel implements Channel {
           threadId: options.threadId,
           replyToMessageId: options.replyToMessageId,
           inlineActions: options.inlineActions?.length || 0,
+          inlineActionRows: options.inlineActionRows?.length || 0,
         },
         'Telegram message sent',
       );
       return { platformMessageId: firstMessageId };
     } catch (err) {
       logger.error({ jid, err }, 'Failed to send Telegram message');
+      return {};
+    }
+  }
+
+  async editMessage(
+    jid: string,
+    platformMessageId: string,
+    text: string,
+    options: SendMessageOptions = {},
+  ): Promise<SendMessageResult> {
+    if (!this.bot) {
+      logger.warn('Telegram bot not initialized');
+      return {};
+    }
+
+    try {
+      const numericId = jid.replace(/^tg:/, '');
+      const messageId = Number.parseInt(platformMessageId, 10);
+      if (!Number.isFinite(messageId) || messageId <= 0) {
+        return {};
+      }
+      const inlineKeyboard = buildInlineKeyboard(options);
+      const result = await editTelegramMessage(
+        this.bot.api,
+        numericId,
+        messageId,
+        splitTelegramMessage(text)[0] || text,
+        {
+          ...(inlineKeyboard ? { reply_markup: inlineKeyboard } : {}),
+        },
+      );
+      logger.info(
+        {
+          jid,
+          platformMessageId,
+          inlineActions: options.inlineActions?.length || 0,
+          inlineActionRows: options.inlineActionRows?.length || 0,
+        },
+        'Telegram message edited',
+      );
+      return result;
+    } catch (err) {
+      logger.error(
+        { jid, platformMessageId, err },
+        'Failed to edit Telegram message',
+      );
       return {};
     }
   }

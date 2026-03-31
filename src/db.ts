@@ -20,6 +20,7 @@ export interface CursorOperatorContextRecord {
   selected_agent_id: string | null;
   last_list_snapshot_json: string | null;
   last_list_message_id: string | null;
+  dashboard_message_id: string | null;
   updated_at: string;
 }
 
@@ -195,6 +196,7 @@ function createSchema(database: Database.Database): void {
       selected_agent_id TEXT,
       last_list_snapshot_json TEXT,
       last_list_message_id TEXT,
+      dashboard_message_id TEXT,
       updated_at TEXT NOT NULL,
       PRIMARY KEY (chat_jid, thread_id)
     );
@@ -288,6 +290,14 @@ function createSchema(database: Database.Database): void {
 
   try {
     database.exec(`ALTER TABLE messages ADD COLUMN reply_to_id TEXT`);
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(
+      `ALTER TABLE cursor_operator_contexts ADD COLUMN dashboard_message_id TEXT`,
+    );
   } catch {
     /* column already exists */
   }
@@ -583,6 +593,7 @@ export function upsertCursorOperatorContext(record: {
   selectedAgentId?: string | null;
   lastListSnapshotJson?: string | null;
   lastListMessageId?: string | null;
+  dashboardMessageId?: string | null;
   updatedAt?: string;
 }): void {
   const threadId = normalizeCursorContextThreadId(record.threadId);
@@ -604,12 +615,14 @@ export function upsertCursorOperatorContext(record: {
         selected_agent_id,
         last_list_snapshot_json,
         last_list_message_id,
+        dashboard_message_id,
         updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(chat_jid, thread_id) DO UPDATE SET
         selected_agent_id = excluded.selected_agent_id,
         last_list_snapshot_json = excluded.last_list_snapshot_json,
         last_list_message_id = excluded.last_list_message_id,
+        dashboard_message_id = excluded.dashboard_message_id,
         updated_at = excluded.updated_at
     `,
   ).run(
@@ -624,6 +637,9 @@ export function upsertCursorOperatorContext(record: {
     record.lastListMessageId === undefined
       ? existing?.last_list_message_id || null
       : record.lastListMessageId,
+    record.dashboardMessageId === undefined
+      ? existing?.dashboard_message_id || null
+      : record.dashboardMessageId,
     record.updatedAt || new Date().toISOString(),
   );
 }

@@ -210,4 +210,80 @@ describe('TelegramChannel.sendMessage', () => {
       }),
     );
   });
+
+  it('supports row-based inline button layouts for dashboard tiles', async () => {
+    const sendMessage = vi.fn().mockResolvedValue({ message_id: 654 });
+    const channel = new TelegramChannel('test-token', {
+      onMessage: () => undefined,
+      onChatMetadata: () => undefined,
+      registeredGroups: () => ({}),
+    });
+
+    (
+      channel as unknown as {
+        bot: { api: { sendMessage: typeof sendMessage } };
+      }
+    ).bot = {
+      api: { sendMessage },
+    };
+
+    await channel.sendMessage('tg:123', 'Cursor dashboard', {
+      inlineActionRows: [
+        [
+          { label: 'Status', actionId: '/cursor-ui status' },
+          { label: 'Jobs', actionId: '/cursor-ui jobs' },
+        ],
+        [{ label: 'Back', actionId: '/cursor-ui home' }],
+      ],
+    });
+
+    const replyMarkup = sendMessage.mock.calls[0][2].reply_markup;
+    expect(replyMarkup.inline_keyboard).toHaveLength(2);
+    expect(replyMarkup.inline_keyboard[0]).toHaveLength(2);
+    expect(replyMarkup.inline_keyboard[1]).toHaveLength(1);
+  });
+});
+
+describe('TelegramChannel.editMessage', () => {
+  it('edits an existing Telegram message and preserves inline button rows', async () => {
+    const editMessageText = vi.fn().mockResolvedValue({});
+    const channel = new TelegramChannel('test-token', {
+      onMessage: () => undefined,
+      onChatMetadata: () => undefined,
+      registeredGroups: () => ({}),
+    });
+
+    (
+      channel as unknown as {
+        bot: { api: { editMessageText: typeof editMessageText } };
+      }
+    ).bot = {
+      api: { editMessageText },
+    };
+
+    const result = await channel.editMessage?.(
+      'tg:123',
+      '9001',
+      'Updated dashboard',
+      {
+        inlineActionRows: [
+          [
+            { label: 'Sync', actionId: '/cursor-ui sync' },
+            { label: 'Text', actionId: '/cursor-ui text' },
+          ],
+        ],
+      },
+    );
+
+    expect(result?.platformMessageId).toBe('9001');
+    expect(editMessageText).toHaveBeenCalledWith(
+      '123',
+      9001,
+      'Updated dashboard',
+      expect.objectContaining({
+        parse_mode: 'Markdown',
+        reply_markup: expect.any(Object),
+      }),
+    );
+  });
 });

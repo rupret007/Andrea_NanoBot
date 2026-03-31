@@ -22,6 +22,13 @@ describe('operator command gate', () => {
     expect(decision.message).toContain('/registermain');
   });
 
+  it('treats /cursor as an operator-only dashboard entrypoint', () => {
+    const decision = getCommandAccessDecision('/cursor', undefined);
+
+    expect(decision.allowed).toBe(false);
+    expect(decision.reason).toBe('main_control_only');
+  });
+
   it('treats /cursor-results as an operator-only alias', () => {
     const decision = getCommandAccessDecision('/cursor-results', undefined);
 
@@ -85,6 +92,10 @@ describe('operator command gate', () => {
     const blocked = getCommandAccessDecision('/cursor-select', undefined);
     expect(blocked.allowed).toBe(false);
     expect(blocked.reason).toBe('main_control_only');
+
+    const hiddenUiBlocked = getCommandAccessDecision('/cursor-ui', undefined);
+    expect(hiddenUiBlocked.allowed).toBe(false);
+    expect(hiddenUiBlocked.reason).toBe('main_control_only');
 
     const allowed = getCommandAccessDecision('/cursor-terminal-help', {
       name: 'Andrea Main',

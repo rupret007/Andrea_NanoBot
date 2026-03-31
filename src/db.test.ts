@@ -621,6 +621,7 @@ describe('cursor operator context accessors', () => {
         { id: 'bc_123', provider: 'cloud' },
       ]),
       lastListMessageId: '99',
+      dashboardMessageId: '555',
       updatedAt: '2026-03-30T12:00:00.000Z',
     });
 
@@ -633,6 +634,7 @@ describe('cursor operator context accessors', () => {
     const row = getCursorOperatorContext('tg:1');
     expect(row?.selected_agent_id).toBe('bc_123');
     expect(row?.last_list_message_id).toBe('99');
+    expect(row?.dashboard_message_id).toBe('555');
     expect(row?.last_list_snapshot_json).toContain('bc_123');
   });
 });

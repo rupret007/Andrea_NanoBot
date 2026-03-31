@@ -7,7 +7,9 @@ import {
   flattenCursorJobInventory,
   formatCursorDisplayId,
   getActiveCursorMessageContext,
+  getActiveCursorOperatorContext,
   looksLikeCursorTargetToken,
+  rememberCursorDashboardMessage,
   rememberCursorJobList,
   rememberCursorMessageContext,
   rememberCursorOperatorSelection,
@@ -192,7 +194,7 @@ describe('resolveCursorTarget', () => {
     });
 
     expect(resolved.target).toBeNull();
-    expect(resolved.failureMessage).toContain('/cursor-jobs');
+    expect(resolved.failureMessage).toContain('/cursor');
   });
 });
 
@@ -228,6 +230,19 @@ describe('operator context helpers', () => {
     expect(
       buildCursorListSelectionActions(3).map((action) => action.label),
     ).toEqual(['1', '2', '3', 'Refresh']);
+  });
+
+  it('keeps dashboard message ids and selected jobs per chat/thread', () => {
+    rememberCursorDashboardMessage({
+      chatJid: 'tg:1',
+      threadId: '42',
+      dashboardMessageId: '9001',
+      selectedAgentId: 'bc_123',
+    });
+
+    const context = getActiveCursorOperatorContext('tg:1', '42');
+    expect(context?.dashboardMessageId).toBe('9001');
+    expect(context?.selectedAgentId).toBe('bc_123');
   });
 
   it('recognizes target-like tokens without mistaking normal paths', () => {

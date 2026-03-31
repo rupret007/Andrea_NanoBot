@@ -110,7 +110,8 @@ Then restart Andrea and run `/cursor_status`.
 After setup, run:
 
 - `/cursor_status`
-- `/cursor-jobs`
+- `/cursor`
+- tap `Jobs`
 
 What you want to see:
 
@@ -122,10 +123,11 @@ What you want to see:
 
 Then run safe bridge-only commands from the main control chat:
 
-- `/cursor-sync <agent_id>` if a recoverable desktop session exists
+- tap a desktop session to make it current
+- tap `Sync` if a recoverable desktop session exists
 - `/cursor-terminal <agent_id> echo operator smoke ok`
-- `/cursor-terminal-status <agent_id>`
-- `/cursor-terminal-log <agent_id> 20`
+- tap `Current Job` -> `Terminal Status`
+- tap `Current Job` -> `Terminal Log`
 
 Only use `/cursor-terminal-stop <agent_id>` when a bridge-started terminal command is actually active.
 
@@ -134,7 +136,7 @@ Only use `/cursor-terminal-stop <agent_id>` when a bridge-started terminal comma
 For desktop bridge sessions:
 
 - tracked desktop sessions are already attached to the current Andrea workspace
-- recoverable desktop sessions are bridge-known sessions you can attach with `/cursor-sync <agent_id>`
+- recoverable desktop sessions are bridge-known sessions you can attach with `Sync` from the dashboard or `/cursor-sync <agent_id>`
 
 Terminal commands only work for tracked or recoverable bridge sessions that the bridge itself knows about.
 

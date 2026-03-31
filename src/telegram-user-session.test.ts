@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   DEFAULT_TELEGRAM_LIVE_TEST_MESSAGES,
+  didTelegramReplyChange,
   matchesExpectedTelegramSender,
   normalizeTelegramSenderId,
   normalizeTelegramTestTarget,
@@ -183,6 +184,23 @@ describe('resolveTelegramTapButtonTarget', () => {
     expect(() =>
       resolveTelegramTapButtonTarget(['Sync', 'Text'], 'Stop'),
     ).toThrow('Available buttons: Sync, Text');
+  });
+});
+
+describe('didTelegramReplyChange', () => {
+  it('detects edited dashboard text and button changes', () => {
+    expect(
+      didTelegramReplyChange(
+        { id: 1, text: 'Old', buttonLabels: ['Jobs'] },
+        { id: 1, text: 'New', buttonLabels: ['Jobs', 'Help'] },
+      ),
+    ).toBe(true);
+    expect(
+      didTelegramReplyChange(
+        { id: 1, text: 'Same', buttonLabels: ['Jobs'] },
+        { id: 1, text: 'Same', buttonLabels: ['Jobs'] },
+      ),
+    ).toBe(false);
   });
 });
 

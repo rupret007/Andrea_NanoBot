@@ -141,6 +141,7 @@ Expected behavior:
 - it resolves a button by exact label first, then by 1-based visible index
 - it sends the callback action as your Telegram user session
 - it captures Andrea's resulting replies just like `telegram:user:send`
+- if the button only edits the existing dashboard message, the harness prints the edited source message and its updated buttons
 
 ## Run The Default Live Batch
 
@@ -161,15 +162,18 @@ Default batch:
 
 For Cursor-specific operator validation, prefer this live workflow:
 
-1. `/cursor-jobs`
-2. note the bot reply id and visible button labels from stdout
-3. `npm run telegram:user:tap -- <jobs_reply_id> 1`
-4. `npm run telegram:user:send -- --reply-to <job_card_id> "/cursor-sync"`
-5. `npm run telegram:user:send -- --reply-to <job_card_id> "/cursor-conversation"`
-6. `npm run telegram:user:send -- --reply-to <job_card_id> "/cursor-results"`
-7. `npm run telegram:user:send -- --reply-to <job_card_id> "continue with ..."` for a Cloud follow-up
+1. `/cursor`
+2. note the dashboard message id from stdout
+3. `npm run telegram:user:tap -- <dashboard_id> "Jobs"`
+4. `npm run telegram:user:tap -- <dashboard_id> 1`
+5. `npm run telegram:user:tap -- <dashboard_id> "Sync"`
+6. `npm run telegram:user:tap -- <dashboard_id> "Text"`
+7. `npm run telegram:user:tap -- <dashboard_id> "Files"`
+8. `npm run telegram:user:tap -- <dashboard_id> "Follow Up"`
+9. `npm run telegram:user:send -- --reply-to <dashboard_id> "continue with ..."` for a Cloud follow-up
+10. `npm run telegram:user:tap -- <dashboard_id> "New Cloud Job"` when you want to exercise the create wizard
 
-Raw ids still work, but the normal Telegram operator path is now selector- and reply-driven.
+Raw ids still work, but the normal Telegram operator path is now dashboard-, tile-, and reply-driven.
 
 ## Security Notes
 

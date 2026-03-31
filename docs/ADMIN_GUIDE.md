@@ -153,15 +153,15 @@ Use Cursor Cloud when you want the current validated queued heavy-lift coding pa
 Validate:
 
 - `/cursor_status`
-- `/cursor-jobs`
+- `/cursor`
+- tap `Jobs`
 - `/cursor-create --repo <url> ...`
-- tap/select a job from `/cursor-jobs`
-- `/cursor-sync`
-- `/cursor-conversation 5`
-- `/cursor-results`
+- tap/select a job from `Jobs`
+- tap `Sync`, `Text`, or `Files`
+- or reply to the current job dashboard with `/cursor-sync`, `/cursor-conversation`, or `/cursor-results`
 - `/cursor-models`
 
-Use `/cursor-conversation` for the text trail and `/cursor-results` for output files. Use `/cursor-download <absolute_path>` as a reply to a Cursor card when `/cursor-results` shows a file you actually want. Raw ids still work, but they are now the fallback path rather than the normal taught path.
+Use `/cursor-conversation` for the text trail and `/cursor-results` for output files. Use `/cursor-download <absolute_path>` as a reply to the current job dashboard or a Cursor result card when `/cursor-results` shows a file you actually want. Raw ids still work, but they are now the fallback path rather than the normal taught path.
 
 If `/cursor_status` says `Cloud coding jobs: unavailable`, treat `/cursor-create`, `/cursor-followup`, `/cursor-stop`, `/cursor-models`, `/cursor-results`, and `/cursor-download` as unavailable until `CURSOR_API_KEY` is fixed.
 
@@ -185,12 +185,14 @@ Use the desktop bridge when you want operator-only machine-side session recovery
 Validate:
 
 - `/cursor_status`
-- `/cursor-jobs`
-- tap/select a desktop session from `/cursor-jobs`
-- `/cursor-sync`
+- `/cursor`
+- tap `Jobs`
+- tap/select a desktop session
+- tap `Sync`
 - `/cursor-terminal <agent_id> echo operator smoke ok`
-- `/cursor-terminal-status`
-- `/cursor-terminal-log 20`
+- tap `Current Job`
+- tap `Terminal Status`
+- tap `Terminal Log`
 
 Important truth:
 
@@ -210,6 +212,7 @@ If `/cursor_status` says `Cursor-backed runtime route: not configured`, that doe
 Keep these in the registered main control chat:
 
 - Readiness and reference:
+  - `/cursor`
   - `/cursor-models`
 - Work creation and control:
   - `/cursor-jobs`
@@ -256,18 +259,20 @@ Compatibility note:
 This is the normal operator flow now:
 
 1. Run `/cursor_status`
-2. Run `/cursor-jobs`
-3. Tap a numbered job button or reply to a Cursor card
-4. Use `/cursor-sync`, `/cursor-conversation`, or `/cursor-results` without repeating the id
-5. Reply with plain text to a **Cloud** Cursor card when you want to continue that job
-6. Use `/cursor-download <absolute_path>` as a reply to a Cursor card when you want one file
-7. Use `/cursor-terminal*` only for desktop bridge sessions
+2. Run `/cursor`
+3. Tap `Jobs`, `Current Job`, or `New Cloud Job`
+4. Tap a job tile to make it current
+5. Tap `Sync`, `Text`, or `Files`, or reply with `/cursor-sync`, `/cursor-conversation`, or `/cursor-results` without repeating the id
+6. Reply with plain text to the **Current Job** dashboard when you want to continue a Cloud job
+7. Use `/cursor-download <absolute_path>` as a reply to the current job dashboard or a result card when you want one file
+8. Use `/cursor-terminal*` only for desktop bridge sessions
 
 Important behavior:
 
-- `/cursor-jobs` is now a selector, not just a dump
-- Telegram inline buttons and reply-linked flow are operator UX improvements; explicit ids still work everywhere
-- plain-text replies only turn into follow-up prompts when you reply to a stored **Cloud** Cursor card in the main control chat
+- `/cursor` is now the main operator control panel
+- `/cursor-jobs` now opens the Jobs browser view inside that control panel
+- Telegram inline buttons, in-place dashboard edits, and reply-linked output are operator UX improvements; explicit ids still work everywhere
+- plain-text replies only turn into follow-up prompts when you reply to the **Current Job** dashboard or a stored **Cloud** Cursor card in the main control chat
 - plain-text replies do **not** continue desktop sessions; desktop sessions still use `/cursor-sync`, `/cursor-conversation`, and `/cursor-terminal*`
 
 ## Telegram Live Validation

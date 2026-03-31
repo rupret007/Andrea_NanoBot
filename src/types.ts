@@ -92,6 +92,7 @@ export interface SendMessageOptions {
   threadId?: string;
   replyToMessageId?: string;
   inlineActions?: ChannelInlineAction[];
+  inlineActionRows?: ChannelInlineAction[][];
 }
 
 export interface SendMessageResult {
@@ -103,6 +104,12 @@ export interface Channel {
   connect(): Promise<void>;
   sendMessage(
     jid: string,
+    text: string,
+    options?: SendMessageOptions,
+  ): Promise<SendMessageResult>;
+  editMessage?(
+    jid: string,
+    platformMessageId: string,
     text: string,
     options?: SendMessageOptions,
   ): Promise<SendMessageResult>;

@@ -10,7 +10,7 @@ import type { ChannelInlineAction } from './types.js';
 
 const CURSOR_CONTEXT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const NO_CURSOR_CONTEXT_MESSAGE =
-  'Run `/cursor-jobs`, then tap a job or reply to a Cursor card.';
+  'Run `/cursor` or `/cursor-jobs`, then tap a job or reply to a Cursor card.';
 
 export type CursorJobBucket =
   | 'cloudTracked'
@@ -46,6 +46,16 @@ export interface ActiveCursorMessageContext {
   agentId: string | null;
   payload: Record<string, unknown> | null;
   createdAt: string;
+}
+
+export interface ActiveCursorOperatorContext {
+  chatJid: string;
+  threadId?: string;
+  selectedAgentId: string | null;
+  lastListSnapshot: CursorListSnapshotItem[] | null;
+  lastListMessageId: string | null;
+  dashboardMessageId: string | null;
+  updatedAt: string;
 }
 
 function isFreshTimestamp(timestamp: string | null | undefined): boolean {
@@ -117,6 +127,20 @@ export function rememberCursorOperatorSelection(params: {
   });
 }
 
+export function rememberCursorDashboardMessage(params: {
+  chatJid: string;
+  threadId?: string;
+  dashboardMessageId: string | null;
+  selectedAgentId?: string | null;
+}): void {
+  upsertCursorOperatorContext({
+    chatJid: params.chatJid,
+    threadId: params.threadId,
+    selectedAgentId: params.selectedAgentId,
+    dashboardMessageId: params.dashboardMessageId,
+  });
+}
+
 export function rememberCursorJobList(params: {
   chatJid: string;
   threadId?: string;
@@ -179,6 +203,23 @@ export function getActiveCursorMessageContext(
     agentId: record.agent_id,
     payload,
     createdAt: record.created_at,
+  };
+}
+
+export function getActiveCursorOperatorContext(
+  chatJid: string,
+  threadId?: string,
+): ActiveCursorOperatorContext | null {
+  const record = getCursorOperatorContext(chatJid, threadId);
+  if (!record || !isFreshTimestamp(record.updated_at)) return null;
+  return {
+    chatJid: record.chat_jid,
+    threadId: record.thread_id || undefined,
+    selectedAgentId: record.selected_agent_id,
+    lastListSnapshot: parseSnapshotJson(record.last_list_snapshot_json) || null,
+    lastListMessageId: record.last_list_message_id,
+    dashboardMessageId: record.dashboard_message_id,
+    updatedAt: record.updated_at,
   };
 }
 

@@ -72,6 +72,7 @@ export interface TelegramSendAndCaptureResult {
   message: string;
   sentId: number;
   replies: TelegramLiveReply[];
+  editedSource?: TelegramLiveReply;
 }
 
 export interface TelegramTapAndCaptureResult {
@@ -79,6 +80,7 @@ export interface TelegramTapAndCaptureResult {
   tappedLabel: string;
   tappedIndex: number;
   replies: TelegramLiveReply[];
+  editedSource?: TelegramLiveReply;
 }
 
 export interface TelegramSendCommandArgs {
@@ -597,6 +599,19 @@ function extractReplyMetadata(
   };
 }
 
+export function didTelegramReplyChange(
+  before: TelegramLiveReply,
+  after: TelegramLiveReply,
+): boolean {
+  const beforeButtons = before.buttonLabels || [];
+  const afterButtons = after.buttonLabels || [];
+  return (
+    before.text !== after.text ||
+    beforeButtons.length !== afterButtons.length ||
+    beforeButtons.some((label, index) => label !== afterButtons[index])
+  );
+}
+
 export function parseTelegramSendCommandArgs(
   args: string[],
 ): TelegramSendCommandArgs {
@@ -826,6 +841,18 @@ export async function sendTelegramUserMessageAndCaptureReplies(
   settleMs: number,
   options: { replyToMessageId?: number } = {},
 ): Promise<TelegramSendAndCaptureResult> {
+  let beforeSnapshot: TelegramLiveReply | undefined;
+  if (options.replyToMessageId) {
+    const repliedMessage = await fetchTelegramMessageById(
+      client,
+      target,
+      options.replyToMessageId,
+    );
+    if (repliedMessage) {
+      const buttonLabels = await extractTelegramButtonLabels(repliedMessage);
+      beforeSnapshot = extractReplyMetadata(repliedMessage, buttonLabels);
+    }
+  }
   const sent = await client.sendMessage(target, {
     message,
     ...(options.replyToMessageId ? { replyTo: options.replyToMessageId } : {}),
@@ -838,10 +865,26 @@ export async function sendTelegramUserMessageAndCaptureReplies(
     timeoutMs,
     settleMs,
   );
+  let editedSource: TelegramLiveReply | undefined;
+  if (options.replyToMessageId && beforeSnapshot) {
+    const repliedMessage = await fetchTelegramMessageById(
+      client,
+      target,
+      options.replyToMessageId,
+    );
+    if (repliedMessage) {
+      const buttonLabels = await extractTelegramButtonLabels(repliedMessage);
+      const afterSnapshot = extractReplyMetadata(repliedMessage, buttonLabels);
+      if (didTelegramReplyChange(beforeSnapshot, afterSnapshot)) {
+        editedSource = afterSnapshot;
+      }
+    }
+  }
   return {
     message,
     sentId,
     replies,
+    editedSource,
   };
 }
 
@@ -922,6 +965,8 @@ export async function tapTelegramMessageButtonAndCaptureReplies(
       `Telegram message ${messageId} has no inline buttons to tap.`,
     );
   }
+  const beforeButtonLabels = await extractTelegramButtonLabels(message);
+  const beforeSnapshot = extractReplyMetadata(message, beforeButtonLabels);
 
   const targetButton = resolveTelegramTapButtonTarget(
     buttons.map((button) => button.label),
@@ -940,12 +985,30 @@ export async function tapTelegramMessageButtonAndCaptureReplies(
     timeoutMs,
     settleMs,
   );
+  let editedSource: TelegramLiveReply | undefined;
+  const updatedSourceMessage = await fetchTelegramMessageById(
+    client,
+    target,
+    messageId,
+  );
+  if (updatedSourceMessage) {
+    const afterButtonLabels =
+      await extractTelegramButtonLabels(updatedSourceMessage);
+    const afterSnapshot = extractReplyMetadata(
+      updatedSourceMessage,
+      afterButtonLabels,
+    );
+    if (didTelegramReplyChange(beforeSnapshot, afterSnapshot)) {
+      editedSource = afterSnapshot;
+    }
+  }
 
   return {
     sourceMessageId: messageId,
     tappedLabel: chosenButton.label,
     tappedIndex: chosenButton.index,
     replies,
+    editedSource,
   };
 }
 
@@ -964,9 +1027,24 @@ async function runAuthCommand(): Promise<void> {
   });
 }
 
-function printTelegramCaptureReplies(replies: TelegramLiveReply[]): void {
+function printTelegramCaptureReplies(
+  replies: TelegramLiveReply[],
+  editedSource?: TelegramLiveReply,
+): void {
+  if (editedSource) {
+    console.log(`Edited Source: [${editedSource.id}] ${editedSource.text}`);
+    if (editedSource.buttonLabels?.length) {
+      console.log(
+        `  Buttons: ${editedSource.buttonLabels
+          .map((label, index) => `${index + 1}=${label}`)
+          .join(' | ')}`,
+      );
+    }
+  }
   if (replies.length === 0) {
-    console.log('Replies: none observed before timeout');
+    if (!editedSource) {
+      console.log('Replies: none observed before timeout');
+    }
     return;
   }
 
@@ -1004,7 +1082,7 @@ async function runSendCommand(messageArgs: string[]): Promise<void> {
       if (parsed.replyToMessageId) {
         console.log(`Replying to: ${parsed.replyToMessageId}`);
       }
-      printTelegramCaptureReplies(result.replies);
+      printTelegramCaptureReplies(result.replies, result.editedSource);
     } finally {
       await client.disconnect();
     }
@@ -1036,7 +1114,7 @@ async function runBatchCommand(messageArgs: string[]): Promise<void> {
         );
         console.log(`\nSent: ${result.message}`);
         console.log(`Sent ID: ${result.sentId}`);
-        printTelegramCaptureReplies(result.replies);
+        printTelegramCaptureReplies(result.replies, result.editedSource);
       }
     } finally {
       await client.disconnect();
@@ -1062,7 +1140,7 @@ async function runTapCommand(messageArgs: string[]): Promise<void> {
       );
       console.log(`Tapped: ${result.tappedLabel} (#${result.tappedIndex})`);
       console.log(`Source Message ID: ${result.sourceMessageId}`);
-      printTelegramCaptureReplies(result.replies);
+      printTelegramCaptureReplies(result.replies, result.editedSource);
     } finally {
       await client.disconnect();
     }
