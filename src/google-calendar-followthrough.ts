@@ -25,10 +25,10 @@ const WEEKDAY_INDEX: Record<string, number> = {
 };
 
 const DAYPART_RANGES = {
-  morning: { startHour: 6 },
-  afternoon: { startHour: 12 },
-  evening: { startHour: 17 },
-  tonight: { startHour: 18 },
+  morning: { startHour: 6, endHour: 12 },
+  afternoon: { startHour: 12, endHour: 17 },
+  evening: { startHour: 17, endHour: 21 },
+  tonight: { startHour: 18, endHour: 24 },
 } as const;
 
 export interface GoogleCalendarTrackedEvent {
@@ -48,21 +48,41 @@ export interface ActiveGoogleCalendarEventContextState {
   event: GoogleCalendarTrackedEvent;
 }
 
+interface ReminderScopeFilter {
+  kind: 'family_shared';
+  label: string;
+  terms: string[];
+}
+
+type ReminderSelectorMode =
+  | 'named'
+  | 'next_timed'
+  | 'first_timed_in_window'
+  | 'single_in_window'
+  | 'all_timed_in_window';
+
 interface ReminderOffset {
-  kind: 'minutes_before' | 'hours_before' | 'night_before';
+  kind:
+    | 'minutes_before'
+    | 'hours_before'
+    | 'night_before'
+    | 'unspecified_before';
   minutes: number | null;
   label: string;
 }
 
 export interface PendingCalendarReminderState {
-  version: 1;
+  version: 2;
   createdAt: string;
-  step: 'clarify_event' | 'clarify_time' | 'confirm';
+  step: 'clarify_event' | 'clarify_offset' | 'clarify_time' | 'confirm';
   offset: ReminderOffset;
   targetLabel: string;
   targetEvent: GoogleCalendarTrackedEvent | null;
+  targetEvents: GoogleCalendarTrackedEvent[];
   candidates: GoogleCalendarTrackedEvent[];
   remindAtIso: string | null;
+  remindAtByEventId: Record<string, string> | null;
+  incompleteNote: string | null;
 }
 
 export interface PendingGoogleCalendarEventActionState {
@@ -89,9 +109,11 @@ export type CalendarEventReminderPlanResult =
       kind: 'lookup';
       offset: ReminderOffset;
       targetLabel: string;
-      queryText: string;
+      queryText: string | null;
       searchStart: Date;
       searchEnd: Date;
+      selectorMode: ReminderSelectorMode;
+      scopeFilter: ReminderScopeFilter | null;
     }
   | {
       kind: 'awaiting_input';
@@ -143,7 +165,8 @@ export type PendingGoogleCalendarEventActionResult =
 
 export interface EventReminderTaskPlan {
   confirmation: string;
-  task: Omit<ScheduledTask, 'last_run' | 'last_result'>;
+  tasks?: Array<Omit<ScheduledTask, 'last_run' | 'last_result'>>;
+  task?: Omit<ScheduledTask, 'last_run' | 'last_result'>;
 }
 
 function normalizeMessage(message: string): string {
@@ -309,6 +332,36 @@ function normalizeEventQuery(value: string): string {
   );
 }
 
+function detectReminderScopeFilter(
+  normalized: string,
+): ReminderScopeFilter | null {
+  if (/\bfamily calendar\b/.test(normalized)) {
+    return {
+      kind: 'family_shared',
+      label: 'the family calendar',
+      terms: ['family'],
+    };
+  }
+  return null;
+}
+
+function eventMatchesReminderScope(
+  event: GoogleCalendarTrackedEvent,
+  scopeFilter: ReminderScopeFilter | null,
+): boolean {
+  if (!scopeFilter) {
+    return true;
+  }
+  const haystack = `${event.calendarName} ${event.calendarId}`.toLowerCase();
+  return scopeFilter.terms.some((term) => haystack.includes(term));
+}
+
+function stripReminderScopePhrases(value: string): string {
+  return collapseWhitespace(
+    value.replace(/\b(?:the\s+)?family calendar(?: event)?\b/gi, ' '),
+  );
+}
+
 function extractDateWindow(
   text: string,
   now = new Date(),
@@ -319,47 +372,55 @@ function extractDateWindow(
 } {
   const normalized = collapseWhitespace(text);
   const lower = normalized.toLowerCase();
+  let searchStart: Date | null = null;
+  let searchEnd: Date | null = null;
+  let targetText = normalized;
 
   if (/\btomorrow\b/.test(lower)) {
-    const date = addDays(startOfDay(now), 1);
-    return {
-      searchStart: date,
-      searchEnd: addDays(date, 1),
-      targetText: collapseWhitespace(normalized.replace(/\btomorrow\b/i, '')),
-    };
-  }
-
-  if (/\btoday\b/.test(lower)) {
-    const date = startOfDay(now);
-    return {
-      searchStart: date,
-      searchEnd: addDays(date, 1),
-      targetText: collapseWhitespace(normalized.replace(/\btoday\b/i, '')),
-    };
-  }
-
-  const weekdayMatch = normalized.match(
-    /\b(?:(next)\s+)?(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/i,
-  );
-  if (weekdayMatch) {
-    const base = startOfDay(now);
-    const weekdayName = weekdayMatch[2].toLowerCase();
-    let offset = (WEEKDAY_INDEX[weekdayName] - base.getDay() + 7) % 7;
-    if (offset === 0) {
-      offset = 7;
+    searchStart = addDays(startOfDay(now), 1);
+    searchEnd = addDays(searchStart, 1);
+    targetText = collapseWhitespace(targetText.replace(/\btomorrow\b/i, ''));
+  } else if (/\btoday\b/.test(lower)) {
+    searchStart = startOfDay(now);
+    searchEnd = addDays(searchStart, 1);
+    targetText = collapseWhitespace(targetText.replace(/\btoday\b/i, ''));
+  } else {
+    const weekdayMatch = normalized.match(
+      /\b(?:(next)\s+)?(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/i,
+    );
+    if (weekdayMatch) {
+      const base = startOfDay(now);
+      const weekdayName = weekdayMatch[2].toLowerCase();
+      let offset = (WEEKDAY_INDEX[weekdayName] - base.getDay() + 7) % 7;
+      if (offset === 0) {
+        offset = 7;
+      }
+      searchStart = addDays(base, offset);
+      searchEnd = addDays(searchStart, 1);
+      targetText = collapseWhitespace(targetText.replace(weekdayMatch[0], ''));
     }
-    const date = addDays(base, offset);
-    return {
-      searchStart: date,
-      searchEnd: addDays(date, 1),
-      targetText: collapseWhitespace(normalized.replace(weekdayMatch[0], '')),
-    };
+  }
+
+  const daypartMatch = targetText.match(
+    /\b(morning|afternoon|evening|tonight)\b/i,
+  );
+  if (daypartMatch && searchStart && searchEnd) {
+    const daypart =
+      daypartMatch[1].toLowerCase() as keyof typeof DAYPART_RANGES;
+    const range = DAYPART_RANGES[daypart];
+    const baseDay = startOfDay(searchStart);
+    searchStart = setLocalTime(baseDay, range.startHour);
+    searchEnd =
+      range.endHour === 24
+        ? addDays(baseDay, 1)
+        : setLocalTime(baseDay, range.endHour);
+    targetText = collapseWhitespace(targetText.replace(daypartMatch[0], ''));
   }
 
   return {
-    searchStart: now,
-    searchEnd: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000),
-    targetText: normalized,
+    searchStart: searchStart || now,
+    searchEnd: searchEnd || new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000),
+    targetText: targetText || normalized,
   };
 }
 
@@ -551,6 +612,64 @@ function parseReminderOffset(message: string): {
   const hourMatch = normalized.match(
     /^remind me\s+(?:(an?|one)|(\d{1,3}))\s*(hours?|hrs?)\s+before\s+(.+)$/i,
   );
+  if (hourMatch) {
+    const hours = hourMatch[1] ? 1 : Number(hourMatch[2]);
+    if (!Number.isInteger(hours) || hours <= 0) {
+      return null;
+    }
+
+    return {
+      offset: {
+        kind: 'hours_before',
+        minutes: hours * 60,
+        label: formatReminderOffsetMinutes(hours * 60),
+      },
+      targetText: stripTargetPunctuation(hourMatch[4]),
+    };
+  }
+
+  const beforeMatch = normalized.match(/^remind me\s+before\s+(.+)$/i);
+  if (!beforeMatch) {
+    return null;
+  }
+
+  return {
+    offset: {
+      kind: 'unspecified_before',
+      minutes: null,
+      label: 'before',
+    },
+    targetText: stripTargetPunctuation(beforeMatch[1]),
+  };
+}
+
+function parseReminderOffsetReply(message: string): ReminderOffset | null {
+  const normalized = normalizeMessage(message);
+  if (!normalized) return null;
+
+  if (/^(?:the\s+)?night before\b/i.test(normalized)) {
+    return {
+      kind: 'night_before',
+      minutes: null,
+      label: 'the night before',
+    };
+  }
+
+  const minuteMatch = normalized.match(/^(\d{1,3})\s*(minutes?|mins?)\b/i);
+  if (minuteMatch) {
+    const minutes = Number(minuteMatch[1]);
+    if (minutes > 0) {
+      return {
+        kind: 'minutes_before',
+        minutes,
+        label: formatReminderOffsetMinutes(minutes),
+      };
+    }
+  }
+
+  const hourMatch = normalized.match(
+    /^(?:(an?|one)|(\d{1,3}))\s*(hours?|hrs?)\b/i,
+  );
   if (!hourMatch) {
     return null;
   }
@@ -561,59 +680,234 @@ function parseReminderOffset(message: string): {
   }
 
   return {
-    offset: {
-      kind: 'hours_before',
-      minutes: hours * 60,
-      label: formatReminderOffsetMinutes(hours * 60),
-    },
-    targetText: stripTargetPunctuation(hourMatch[4]),
+    kind: 'hours_before',
+    minutes: hours * 60,
+    label: formatReminderOffsetMinutes(hours * 60),
   };
 }
 
-function buildReminderStateFromEvent(
-  event: GoogleCalendarTrackedEvent,
-  offset: ReminderOffset,
-  targetLabel: string,
-  now = new Date(),
-): PendingCalendarReminderResult {
-  if (offset.kind === 'night_before') {
-    const state: PendingCalendarReminderState = {
-      version: 1,
-      createdAt: now.toISOString(),
-      step: 'clarify_time',
-      offset,
-      targetLabel,
-      targetEvent: event,
-      candidates: [],
-      remindAtIso: null,
-    };
+function buildReminderStateBase(input: {
+  step: PendingCalendarReminderState['step'];
+  offset: ReminderOffset;
+  targetLabel: string;
+  targetEvent?: GoogleCalendarTrackedEvent | null;
+  targetEvents?: GoogleCalendarTrackedEvent[];
+  candidates?: GoogleCalendarTrackedEvent[];
+  remindAtIso?: string | null;
+  remindAtByEventId?: Record<string, string> | null;
+  incompleteNote?: string | null;
+  now?: Date;
+}): PendingCalendarReminderState {
+  const targetEvents = [...(input.targetEvents || [])].sort(
+    (left, right) =>
+      new Date(left.startIso).getTime() - new Date(right.startIso).getTime(),
+  );
+  const targetEvent =
+    input.targetEvent === undefined
+      ? targetEvents.length === 1
+        ? targetEvents[0]!
+        : null
+      : input.targetEvent;
+
+  return {
+    version: 2,
+    createdAt: (input.now || new Date()).toISOString(),
+    step: input.step,
+    offset: input.offset,
+    targetLabel: input.targetLabel,
+    targetEvent,
+    targetEvents,
+    candidates: input.candidates || [],
+    remindAtIso: input.remindAtIso || null,
+    remindAtByEventId: input.remindAtByEventId || null,
+    incompleteNote: input.incompleteNote || null,
+  };
+}
+
+function getReminderTargetEvents(
+  state: PendingCalendarReminderState,
+): GoogleCalendarTrackedEvent[] {
+  if (state.targetEvents.length > 0) {
+    return state.targetEvents;
+  }
+  return state.targetEvent ? [state.targetEvent] : [];
+}
+
+function buildReminderNoMatchState(input: {
+  offset: ReminderOffset;
+  targetLabel: string;
+  now?: Date;
+  incompleteNote?: string | null;
+}): PendingCalendarReminderState {
+  return buildReminderStateBase({
+    step: 'clarify_event',
+    offset: input.offset,
+    targetLabel: input.targetLabel,
+    incompleteNote: input.incompleteNote,
+    now: input.now,
+  });
+}
+
+function buildReminderScheduleForEvents(input: {
+  events: GoogleCalendarTrackedEvent[];
+  offset: ReminderOffset;
+  now?: Date;
+  explicitTime?: { hours: number; minutes: number } | null;
+}):
+  | { kind: 'invalid'; message: string }
+  | {
+      kind: 'ok';
+      remindAtIso: string | null;
+      remindAtByEventId: Record<string, string> | null;
+    } {
+  const now = input.now || new Date();
+  const remindAtByEventId: Record<string, string> = {};
+
+  for (const event of input.events) {
+    let remindAt: Date | null = null;
+    if (input.offset.kind === 'night_before') {
+      if (!input.explicitTime) {
+        return { kind: 'invalid', message: 'I still need a reminder time.' };
+      }
+      remindAt = setLocalTime(
+        addDays(startOfDay(new Date(event.startIso)), -1),
+        input.explicitTime.hours,
+        input.explicitTime.minutes,
+      );
+    } else if (event.allDay) {
+      if (!input.explicitTime) {
+        return { kind: 'invalid', message: 'I still need a reminder time.' };
+      }
+      remindAt = setLocalTime(
+        startOfDay(new Date(event.startIso)),
+        input.explicitTime.hours,
+        input.explicitTime.minutes,
+      );
+    } else {
+      remindAt = new Date(
+        new Date(event.startIso).getTime() -
+          (input.offset.minutes || 0) * 60 * 1000,
+      );
+    }
+
+    if (remindAt.getTime() <= now.getTime()) {
+      return {
+        kind: 'invalid',
+        message:
+          input.events.length === 1
+            ? `That reminder time has already passed for ${event.title}.`
+            : 'One or more of those reminder times have already passed.',
+      };
+    }
+    remindAtByEventId[event.id] = remindAt.toISOString();
+  }
+
+  if (input.events.length === 1) {
     return {
-      kind: 'awaiting_input',
-      state,
-      message: `What time should I use the night before ${event.title}?`,
+      kind: 'ok',
+      remindAtIso: remindAtByEventId[input.events[0]!.id] || null,
+      remindAtByEventId: null,
     };
   }
 
-  const remindAt = new Date(
-    new Date(event.startIso).getTime() - (offset.minutes || 0) * 60 * 1000,
-  );
-  const confirmState: PendingCalendarReminderState = {
-    version: 1,
-    createdAt: now.toISOString(),
-    step: 'confirm',
-    offset,
-    targetLabel,
-    targetEvent: event,
-    candidates: [],
-    remindAtIso: remindAt.toISOString(),
+  return {
+    kind: 'ok',
+    remindAtIso: null,
+    remindAtByEventId,
   };
-  if (remindAt.getTime() <= now.getTime()) {
+}
+
+function buildReminderStateFromSelectedEvents(input: {
+  events: GoogleCalendarTrackedEvent[];
+  offset: ReminderOffset;
+  targetLabel: string;
+  now?: Date;
+  incompleteNote?: string | null;
+}): PendingCalendarReminderResult {
+  const now = input.now || new Date();
+  const events = [...input.events].sort(
+    (left, right) =>
+      new Date(left.startIso).getTime() - new Date(right.startIso).getTime(),
+  );
+
+  if (events.length === 0) {
     return {
       kind: 'invalid',
-      state: confirmState,
-      message: `That reminder time has already passed for ${event.title}.`,
+      state: buildReminderNoMatchState({
+        offset: input.offset,
+        targetLabel: input.targetLabel,
+        incompleteNote: input.incompleteNote,
+        now,
+      }),
+      message: `I couldn't find an event matching "${input.targetLabel}".`,
     };
   }
+
+  if (input.offset.kind === 'unspecified_before') {
+    const state = buildReminderStateBase({
+      step: 'clarify_offset',
+      offset: input.offset,
+      targetLabel: input.targetLabel,
+      targetEvents: events,
+      incompleteNote: input.incompleteNote,
+      now,
+    });
+    return {
+      kind: 'awaiting_input',
+      state,
+      message: formatPendingCalendarReminderPrompt(state),
+    };
+  }
+
+  if (
+    input.offset.kind === 'night_before' ||
+    events.some((event) => event.allDay)
+  ) {
+    const state = buildReminderStateBase({
+      step: 'clarify_time',
+      offset: input.offset,
+      targetLabel: input.targetLabel,
+      targetEvents: events,
+      incompleteNote: input.incompleteNote,
+      now,
+    });
+    return {
+      kind: 'awaiting_input',
+      state,
+      message: formatPendingCalendarReminderPrompt(state),
+    };
+  }
+
+  const schedule = buildReminderScheduleForEvents({
+    events,
+    offset: input.offset,
+    now,
+  });
+  if (schedule.kind === 'invalid') {
+    return {
+      kind: 'invalid',
+      state: buildReminderStateBase({
+        step: 'confirm',
+        offset: input.offset,
+        targetLabel: input.targetLabel,
+        targetEvents: events,
+        incompleteNote: input.incompleteNote,
+        now,
+      }),
+      message: schedule.message,
+    };
+  }
+
+  const confirmState = buildReminderStateBase({
+    step: 'confirm',
+    offset: input.offset,
+    targetLabel: input.targetLabel,
+    targetEvents: events,
+    remindAtIso: schedule.remindAtIso,
+    remindAtByEventId: schedule.remindAtByEventId,
+    incompleteNote: input.incompleteNote,
+    now,
+  });
   return {
     kind: 'awaiting_input',
     state: confirmState,
@@ -638,12 +932,12 @@ export function planCalendarEventReminder(
         message: 'Which event do you mean?',
       };
     }
-    const resolved = buildReminderStateFromEvent(
-      activeEventContext.event,
-      parsed.offset,
-      parsed.targetText,
+    const resolved = buildReminderStateFromSelectedEvents({
+      events: [activeEventContext.event],
+      offset: parsed.offset,
+      targetLabel: parsed.targetText,
       now,
-    );
+    });
     if (resolved.kind === 'awaiting_input') {
       return {
         kind: 'awaiting_input',
@@ -660,9 +954,44 @@ export function planCalendarEventReminder(
     };
   }
 
-  const window = extractDateWindow(parsed.targetText, now);
-  const queryText = normalizeEventQuery(window.targetText);
-  if (!queryText) {
+  const scopeFilter = detectReminderScopeFilter(
+    parsed.targetText.toLowerCase(),
+  );
+  const targetText = stripReminderScopePhrases(parsed.targetText);
+  const lowerTarget = targetText.toLowerCase();
+  let selectorMode: ReminderSelectorMode = 'named';
+  let searchStart = now;
+  let searchEnd = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+  let queryText: string | null = null;
+  let targetLabel = parsed.targetText;
+
+  if (/\bnext meeting\b/.test(lowerTarget)) {
+    selectorMode = 'next_timed';
+    searchEnd = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+    targetLabel = 'your next meeting';
+  } else {
+    const window = extractDateWindow(targetText, now);
+    searchStart = window.searchStart;
+    searchEnd = window.searchEnd;
+
+    if (/\bfirst event\b/.test(lowerTarget)) {
+      selectorMode = 'first_timed_in_window';
+      targetLabel = 'your first event';
+    } else if (/\banything on my calendar\b/.test(lowerTarget)) {
+      selectorMode = 'all_timed_in_window';
+    } else if (
+      scopeFilter &&
+      /\bevent\b/.test(parsed.targetText.toLowerCase()) &&
+      !normalizeEventQuery(stripReminderScopePhrases(window.targetText))
+    ) {
+      selectorMode = 'single_in_window';
+      targetLabel = scopeFilter.label;
+    } else {
+      queryText = normalizeEventQuery(window.targetText);
+    }
+  }
+
+  if (selectorMode === 'named' && !queryText) {
     return {
       kind: 'needs_event_context',
       message: 'Which event should I use for that reminder?',
@@ -672,10 +1001,12 @@ export function planCalendarEventReminder(
   return {
     kind: 'lookup',
     offset: parsed.offset,
-    targetLabel: parsed.targetText,
+    targetLabel,
     queryText,
-    searchStart: window.searchStart,
-    searchEnd: window.searchEnd,
+    searchStart,
+    searchEnd,
+    selectorMode,
+    scopeFilter,
   };
 }
 
@@ -683,67 +1014,166 @@ export function buildPendingCalendarReminderStateFromMatches(input: {
   events: GoogleCalendarTrackedEvent[];
   offset: ReminderOffset;
   targetLabel: string;
+  selectorMode?: ReminderSelectorMode;
+  incompleteNote?: string | null;
   now?: Date;
 }): PendingCalendarReminderResult {
   const now = input.now || new Date();
+  const selectorMode = input.selectorMode || 'named';
   if (input.events.length === 0) {
     return {
       kind: 'invalid',
-      state: {
-        version: 1,
-        createdAt: now.toISOString(),
-        step: 'clarify_event',
+      state: buildReminderNoMatchState({
         offset: input.offset,
         targetLabel: input.targetLabel,
-        targetEvent: null,
-        candidates: [],
-        remindAtIso: null,
-      },
+        incompleteNote: input.incompleteNote,
+        now,
+      }),
       message: `I couldn't find an event matching "${input.targetLabel}".`,
     };
   }
 
-  if (input.events.length === 1) {
-    return buildReminderStateFromEvent(
-      input.events[0],
-      input.offset,
-      input.targetLabel,
+  if (
+    selectorMode === 'next_timed' ||
+    selectorMode === 'first_timed_in_window'
+  ) {
+    return buildReminderStateFromSelectedEvents({
+      events: [input.events[0]!],
+      offset: input.offset,
+      targetLabel: input.targetLabel,
+      incompleteNote: input.incompleteNote,
       now,
-    );
+    });
+  }
+
+  if (selectorMode === 'all_timed_in_window') {
+    if (input.events.length > 3) {
+      return {
+        kind: 'invalid',
+        state: buildReminderNoMatchState({
+          offset: input.offset,
+          targetLabel: input.targetLabel,
+          incompleteNote: input.incompleteNote,
+          now,
+        }),
+        message:
+          'I found more than 3 events in that range. Can you narrow it down?',
+      };
+    }
+    return buildReminderStateFromSelectedEvents({
+      events: input.events.slice(0, 3),
+      offset: input.offset,
+      targetLabel: input.targetLabel,
+      incompleteNote: input.incompleteNote,
+      now,
+    });
+  }
+
+  if (input.events.length === 1) {
+    return buildReminderStateFromSelectedEvents({
+      events: [input.events[0]!],
+      offset: input.offset,
+      targetLabel: input.targetLabel,
+      incompleteNote: input.incompleteNote,
+      now,
+    });
   }
 
   if (input.events.length > 3) {
     return {
       kind: 'invalid',
-      state: {
-        version: 1,
-        createdAt: now.toISOString(),
-        step: 'clarify_event',
+      state: buildReminderNoMatchState({
         offset: input.offset,
         targetLabel: input.targetLabel,
-        targetEvent: null,
-        candidates: [],
-        remindAtIso: null,
-      },
+        incompleteNote: input.incompleteNote,
+        now,
+      }),
       message: `I found more than one event matching "${input.targetLabel}". What day do you mean?`,
     };
   }
 
-  const state: PendingCalendarReminderState = {
-    version: 1,
-    createdAt: now.toISOString(),
+  const state = buildReminderStateBase({
     step: 'clarify_event',
     offset: input.offset,
     targetLabel: input.targetLabel,
-    targetEvent: null,
     candidates: input.events.slice(0, 3),
-    remindAtIso: null,
-  };
+    incompleteNote: input.incompleteNote,
+    now,
+  });
   return {
     kind: 'awaiting_input',
     state,
     message: formatPendingCalendarReminderPrompt(state),
   };
+}
+
+export function resolveCalendarReminderLookup(input: {
+  events: GoogleCalendarEventRecord[];
+  failures?: string[];
+  offset: ReminderOffset;
+  targetLabel: string;
+  selectorMode: ReminderSelectorMode;
+  queryText: string | null;
+  scopeFilter: ReminderScopeFilter | null;
+  now?: Date;
+}): PendingCalendarReminderResult {
+  const now = input.now || new Date();
+  const trackedEvents = input.events
+    .map(toTrackedGoogleCalendarEvent)
+    .filter((event) => eventMatchesReminderScope(event, input.scopeFilter))
+    .sort(
+      (left, right) =>
+        new Date(left.startIso).getTime() - new Date(right.startIso).getTime(),
+    );
+
+  if (
+    input.failures?.length &&
+    input.selectorMode !== 'named' &&
+    input.selectorMode !== 'single_in_window'
+  ) {
+    return {
+      kind: 'invalid',
+      state: buildReminderNoMatchState({
+        offset: input.offset,
+        targetLabel: input.targetLabel,
+        now,
+      }),
+      message:
+        "I can't confirm that reminder yet because I couldn't read every configured calendar right now.",
+    };
+  }
+
+  let matches: GoogleCalendarTrackedEvent[] = trackedEvents;
+  if (input.selectorMode === 'named') {
+    matches = input.queryText
+      ? trackedEvents.filter((event) =>
+          eventTitleMatchesQuery(event, input.queryText!),
+        )
+      : [];
+  } else if (input.selectorMode === 'next_timed') {
+    matches = trackedEvents.filter(
+      (event) =>
+        !event.allDay && new Date(event.startIso).getTime() >= now.getTime(),
+    );
+  } else if (input.selectorMode === 'first_timed_in_window') {
+    matches = trackedEvents.filter((event) => !event.allDay);
+  } else if (input.selectorMode === 'all_timed_in_window') {
+    matches = trackedEvents.filter((event) => !event.allDay);
+  }
+
+  return buildPendingCalendarReminderStateFromMatches({
+    events: matches,
+    offset: input.offset,
+    targetLabel: input.targetLabel,
+    selectorMode: input.selectorMode,
+    incompleteNote:
+      input.failures?.length &&
+      input.selectorMode === 'named' &&
+      matches.length > 0
+        ? "I found this in the calendars I could read, but I couldn't read every configured calendar right now."
+        : null,
+    now,
+  });
 }
 
 function parseStandaloneTime(
@@ -800,39 +1230,62 @@ export function advancePendingCalendarReminder(
   if (state.step === 'clarify_event') {
     const selected = selectEventCandidate(normalized, state.candidates);
     return selected
-      ? buildReminderStateFromEvent(
-          selected,
-          state.offset,
-          state.targetLabel,
+      ? buildReminderStateFromSelectedEvents({
+          events: [selected],
+          offset: state.offset,
+          targetLabel: state.targetLabel,
+          incompleteNote: state.incompleteNote,
           now,
-        )
+        })
       : { kind: 'no_match' };
   }
 
+  if (state.step === 'clarify_offset') {
+    const offset = parseReminderOffsetReply(normalized);
+    if (!offset) {
+      return { kind: 'no_match' };
+    }
+    return buildReminderStateFromSelectedEvents({
+      events: getReminderTargetEvents(state),
+      offset,
+      targetLabel: state.targetLabel,
+      incompleteNote: state.incompleteNote,
+      now,
+    });
+  }
+
   if (state.step === 'clarify_time') {
-    if (!state.targetEvent) {
+    const targetEvents = getReminderTargetEvents(state);
+    if (targetEvents.length === 0) {
       return { kind: 'no_match' };
     }
     const time = parseStandaloneTime(normalized);
     if (!time) {
       return { kind: 'no_match' };
     }
-
-    const eventStart = new Date(state.targetEvent.startIso);
-    const reminderDate = addDays(startOfDay(eventStart), -1);
-    const remindAt = setLocalTime(reminderDate, time.hours, time.minutes);
-    if (remindAt.getTime() <= now.getTime()) {
+    const schedule = buildReminderScheduleForEvents({
+      events: targetEvents,
+      offset: state.offset,
+      explicitTime: time,
+      now,
+    });
+    if (schedule.kind === 'invalid') {
       return {
         kind: 'invalid',
         state,
-        message: 'That reminder time has already passed.',
+        message: schedule.message,
       };
     }
-    const nextState: PendingCalendarReminderState = {
-      ...state,
+    const nextState = buildReminderStateBase({
       step: 'confirm',
-      remindAtIso: remindAt.toISOString(),
-    };
+      offset: state.offset,
+      targetLabel: state.targetLabel,
+      targetEvents,
+      remindAtIso: schedule.remindAtIso,
+      remindAtByEventId: schedule.remindAtByEventId,
+      incompleteNote: state.incompleteNote,
+      now,
+    });
     return {
       kind: 'awaiting_input',
       state: nextState,
@@ -855,7 +1308,7 @@ export function formatPendingCalendarReminderPrompt(
   timeZone = TIMEZONE,
 ): string {
   if (state.step === 'clarify_event') {
-    return [
+    const lines = [
       `I found more than one event matching "${state.targetLabel}".`,
       '',
       ...state.candidates.map(
@@ -863,14 +1316,51 @@ export function formatPendingCalendarReminderPrompt(
       ),
       '',
       'Which one should I use?',
-    ].join('\n');
+    ];
+    if (state.incompleteNote) {
+      lines.push('', state.incompleteNote);
+    }
+    return lines.join('\n');
   }
 
-  if (state.step === 'clarify_time' && state.targetEvent) {
-    return `What time should I use the night before ${state.targetEvent.title}?`;
+  if (state.step === 'clarify_offset') {
+    const targetEvents = getReminderTargetEvents(state);
+    if (targetEvents.length > 1) {
+      return [
+        'How far before should I remind you about these events?',
+        '',
+        ...targetEvents.map(
+          (event, index) =>
+            `- ${formatEventChoice(event, index + 1, timeZone)}`,
+        ),
+      ].join('\n');
+    }
+    return state.targetEvent
+      ? `How far before should I remind you about ${state.targetEvent.title}?`
+      : 'How far before should I remind you?';
   }
 
-  if (!state.targetEvent || !state.remindAtIso) {
+  if (state.step === 'clarify_time') {
+    const targetEvents = getReminderTargetEvents(state);
+    if (state.offset.kind === 'night_before') {
+      return targetEvents.length > 1
+        ? 'What time should I use the night before these events?'
+        : state.targetEvent
+          ? `What time should I use the night before ${state.targetEvent.title}?`
+          : 'What time should I use the night before that event?';
+    }
+    return targetEvents.length > 1
+      ? 'Those events are all day. What time should I use for the reminders?'
+      : state.targetEvent
+        ? `That event is all day. What time should I use for ${state.targetEvent.title}?`
+        : 'That event is all day. What time should I use for the reminder?';
+  }
+
+  const targetEvents = getReminderTargetEvents(state);
+  if (
+    targetEvents.length === 0 ||
+    (!state.remindAtIso && !state.remindAtByEventId)
+  ) {
     return 'I still need a target event before I can set that reminder.';
   }
 
@@ -891,12 +1381,37 @@ export function formatPendingCalendarReminderPrompt(
     minute: '2-digit',
   });
 
+  if (targetEvents.length === 1) {
+    const event = targetEvents[0]!;
+    const reminderIso =
+      state.remindAtIso || state.remindAtByEventId?.[event.id] || null;
+    return [
+      event.allDay && state.offset.kind !== 'night_before'
+        ? `I can remind you about ${event.title}.`
+        : `I can remind you ${state.offset.label} ${event.title}.`,
+      `- Reminder: ${reminderIso ? remindFormatter.format(new Date(reminderIso)) : 'pending'}`,
+      `- Event: ${
+        event.allDay
+          ? formatEventWhen(event, timeZone)
+          : eventFormatter.format(new Date(event.startIso))
+      }`,
+      ...(state.incompleteNote ? ['', state.incompleteNote] : []),
+      '',
+      'Reply "yes" to save it or "cancel" to stop.',
+    ].join('\n');
+  }
+
   return [
-    `I can remind you ${state.offset.label} ${state.targetEvent.title}.`,
-    `- Reminder: ${remindFormatter.format(new Date(state.remindAtIso))}`,
-    `- Event: ${eventFormatter.format(new Date(state.targetEvent.startIso))}`,
+    `I can set ${targetEvents.length} reminders for these events:`,
+    ...targetEvents.map((event) => {
+      const reminderIso = state.remindAtByEventId?.[event.id];
+      return `- ${event.title}: ${
+        reminderIso ? remindFormatter.format(new Date(reminderIso)) : 'pending'
+      } for ${formatEventWhen(event, timeZone)}`;
+    }),
+    ...(state.incompleteNote ? ['', state.incompleteNote] : []),
     '',
-    'Reply "yes" to save it or "cancel" to stop.',
+    'Reply "yes" to save them or "cancel" to stop.',
   ].join('\n');
 }
 
@@ -909,8 +1424,13 @@ export function buildEventReminderTaskPlan(input: {
 }): EventReminderTaskPlan {
   const now = input.now || new Date();
   const timeZone = input.timeZone || TIMEZONE;
-  const event = input.state.targetEvent!;
-  const remindAt = new Date(input.state.remindAtIso!);
+  const targetEvents = getReminderTargetEvents(input.state);
+  const event = targetEvents[0]!;
+  const remindAt = new Date(
+    input.state.remindAtIso ||
+      input.state.remindAtByEventId?.[event?.id || ''] ||
+      now.toISOString(),
+  );
   const eventFormatter = new Intl.DateTimeFormat('en-US', {
     timeZone,
     weekday: 'short',
@@ -927,6 +1447,59 @@ export function buildEventReminderTaskPlan(input: {
     hour: 'numeric',
     minute: '2-digit',
   });
+
+  const tasks = targetEvents.map((event, index) => {
+    const remindAt = new Date(
+      input.state.remindAtByEventId?.[event.id] || input.state.remindAtIso!,
+    );
+    return {
+      id: `task-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}`,
+      group_folder: input.groupFolder,
+      chat_jid: input.chatJid,
+      prompt: `Send a concise reminder that "${event.title}" is scheduled for ${
+        event.allDay
+          ? formatEventWhen(event, timeZone)
+          : eventFormatter.format(new Date(event.startIso))
+      }.`,
+      script: null,
+      schedule_type: 'once' as const,
+      schedule_value: toLocalTimestamp(remindAt),
+      context_mode: 'isolated' as const,
+      next_run: remindAt.toISOString(),
+      status: 'active' as const,
+      created_at: now.toISOString(),
+    };
+  });
+
+  const confirmation =
+    targetEvents.length === 1
+      ? `Okay, I'll remind you ${
+          targetEvents[0]!.allDay && input.state.offset.kind !== 'night_before'
+            ? `about ${targetEvents[0]!.title}`
+            : `${input.state.offset.label} ${targetEvents[0]!.title}`
+        }.\n\nReminder: ${reminderFormatter.format(
+          new Date(
+            input.state.remindAtIso ||
+              input.state.remindAtByEventId?.[targetEvents[0]!.id] ||
+              '',
+          ),
+        )}`
+      : [
+          `Okay, I'll set reminders for these ${targetEvents.length} events:`,
+          ...targetEvents.map((event) => {
+            const remindAt = input.state.remindAtByEventId?.[event.id];
+            return `- ${event.title}: ${
+              remindAt
+                ? reminderFormatter.format(new Date(remindAt))
+                : 'pending'
+            }`;
+          }),
+        ].join('\n');
+
+  return {
+    confirmation,
+    tasks,
+  };
 
   return {
     confirmation: `Okay — I'll remind you ${input.state.offset.label} ${event.title}.\n\nReminder: ${reminderFormatter.format(remindAt)}`,

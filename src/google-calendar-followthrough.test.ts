@@ -9,6 +9,7 @@ import {
   matchGoogleCalendarTrackedEvents,
   planCalendarEventReminder,
   planGoogleCalendarEventAction,
+  resolveCalendarReminderLookup,
 } from './google-calendar-followthrough.js';
 
 const familyCalendars = [
@@ -67,6 +68,31 @@ describe('calendar follow-through reminders', () => {
     expect(result.message).toContain('1 hour before');
   });
 
+  it('asks for an offset before the next meeting when none is provided', () => {
+    const result = planCalendarEventReminder(
+      'remind me before my next meeting',
+      new Date('2026-04-01T10:00:00-05:00'),
+    );
+
+    expect(result.kind).toBe('lookup');
+    if (result.kind !== 'lookup') return;
+    expect(result.selectorMode).toBe('next_timed');
+    expect(result.queryText).toBeNull();
+  });
+
+  it('targets the first timed event tomorrow when asked', () => {
+    const result = planCalendarEventReminder(
+      'remind me before my first event tomorrow',
+      new Date('2026-04-01T10:00:00-05:00'),
+    );
+
+    expect(result.kind).toBe('lookup');
+    if (result.kind !== 'lookup') return;
+    expect(result.selectorMode).toBe('first_timed_in_window');
+    expect(result.searchStart.toISOString()).toBe('2026-04-02T05:00:00.000Z');
+    expect(result.searchEnd.toISOString()).toBe('2026-04-03T05:00:00.000Z');
+  });
+
   it('asks for an exact time for night-before reminders', () => {
     const context = buildActiveGoogleCalendarEventContextState(dentistEvent);
     const result = planCalendarEventReminder(
@@ -123,6 +149,137 @@ describe('calendar follow-through reminders', () => {
 
     expect(matches).toHaveLength(1);
     expect(matches[0]?.id).toBe('evt-1');
+  });
+
+  it('builds a grouped confirmation for timed events in a requested range', () => {
+    const result = resolveCalendarReminderLookup({
+      events: [
+        {
+          id: 'evt-1',
+          title: 'Soccer practice',
+          startIso: '2026-04-02T19:00:00.000Z',
+          endIso: '2026-04-02T20:00:00.000Z',
+          allDay: false,
+          calendarId: 'family@group.calendar.google.com',
+          calendarName: 'Family',
+        },
+        {
+          id: 'evt-2',
+          title: 'Dinner reservation',
+          startIso: '2026-04-02T21:00:00.000Z',
+          endIso: '2026-04-02T22:00:00.000Z',
+          allDay: false,
+          calendarId: 'primary',
+          calendarName: 'Jeff',
+        },
+      ],
+      offset: {
+        kind: 'minutes_before',
+        minutes: 30,
+        label: '30 minutes before',
+      },
+      targetLabel: 'anything on my calendar tomorrow afternoon',
+      selectorMode: 'all_timed_in_window',
+      queryText: null,
+      scopeFilter: null,
+      now: new Date('2026-04-01T10:00:00-05:00'),
+    });
+
+    expect(result.kind).toBe('awaiting_input');
+    if (result.kind !== 'awaiting_input') return;
+    expect(result.state.step).toBe('confirm');
+    expect(result.state.targetEvents).toHaveLength(2);
+    expect(result.message).toContain('I can set 2 reminders');
+  });
+
+  it('asks the user to narrow a grouped reminder range with too many matches', () => {
+    const result = resolveCalendarReminderLookup({
+      events: [1, 2, 3, 4].map((index) => ({
+        id: `evt-${index}`,
+        title: `Event ${index}`,
+        startIso: `2026-04-02T1${index}:00:00.000Z`,
+        endIso: `2026-04-02T1${index}:30:00.000Z`,
+        allDay: false,
+        calendarId: 'primary',
+        calendarName: 'Jeff',
+      })),
+      offset: {
+        kind: 'minutes_before',
+        minutes: 30,
+        label: '30 minutes before',
+      },
+      targetLabel: 'anything on my calendar tomorrow afternoon',
+      selectorMode: 'all_timed_in_window',
+      queryText: null,
+      scopeFilter: null,
+      now: new Date('2026-04-01T10:00:00-05:00'),
+    });
+
+    expect(result.kind).toBe('invalid');
+    if (result.kind !== 'invalid') return;
+    expect(result.message).toContain('more than 3 events');
+  });
+
+  it('keeps selector-based reminders honest when calendar reads are partial', () => {
+    const result = resolveCalendarReminderLookup({
+      events: [
+        {
+          ...dentistEvent,
+        },
+      ],
+      failures: ['Family calendar unavailable'],
+      offset: {
+        kind: 'unspecified_before',
+        minutes: null,
+        label: 'before',
+      },
+      targetLabel: 'your next meeting',
+      selectorMode: 'next_timed',
+      queryText: null,
+      scopeFilter: null,
+      now: new Date('2026-04-01T10:00:00-05:00'),
+    });
+
+    expect(result.kind).toBe('invalid');
+    if (result.kind !== 'invalid') return;
+    expect(result.message).toContain("couldn't read every configured calendar");
+  });
+
+  it('asks for an explicit reminder time for all-day events', () => {
+    const result = buildPendingCalendarReminderStateFromMatches({
+      events: [
+        {
+          ...dentistEvent,
+          allDay: true,
+          startIso: '2026-04-03T05:00:00.000Z',
+          endIso: '2026-04-04T05:00:00.000Z',
+        },
+      ],
+      offset: {
+        kind: 'minutes_before',
+        minutes: 30,
+        label: '30 minutes before',
+      },
+      targetLabel: 'dentist appointment',
+      now: new Date('2026-04-01T10:00:00-05:00'),
+    });
+
+    expect(result.kind).toBe('awaiting_input');
+    if (result.kind !== 'awaiting_input') return;
+    expect(result.state.step).toBe('clarify_time');
+    expect(result.message).toContain('all day');
+  });
+
+  it('filters family calendar reminder asks by shared calendar metadata', () => {
+    const result = planCalendarEventReminder(
+      'remind me before the family calendar event on friday',
+      new Date('2026-04-01T10:00:00-05:00'),
+    );
+
+    expect(result.kind).toBe('lookup');
+    if (result.kind !== 'lookup') return;
+    expect(result.selectorMode).toBe('single_in_window');
+    expect(result.scopeFilter?.kind).toBe('family_shared');
   });
 });
 

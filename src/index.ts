@@ -74,15 +74,14 @@ import {
   advancePendingGoogleCalendarEventAction,
   buildActiveGoogleCalendarEventContextState,
   buildEventReminderTaskPlan,
-  buildPendingCalendarReminderStateFromMatches,
   buildSameDaySuggestions,
   formatPendingGoogleCalendarEventActionPrompt,
   isActiveGoogleCalendarEventContextExpired,
   isPendingCalendarReminderExpired,
   isPendingGoogleCalendarEventActionExpired,
-  matchGoogleCalendarTrackedEvents,
   planCalendarEventReminder,
   planGoogleCalendarEventAction,
+  resolveCalendarReminderLookup,
   type ActiveGoogleCalendarEventContextState,
   type PendingCalendarReminderState,
   type PendingGoogleCalendarEventActionState,
@@ -487,7 +486,7 @@ function getPendingCalendarReminderState(
 
   try {
     const parsed = JSON.parse(raw) as PendingCalendarReminderState;
-    if (!parsed || parsed.version !== 1 || !parsed.step || !parsed.offset) {
+    if (!parsed || parsed.version !== 2 || !parsed.step || !parsed.offset) {
       return null;
     }
     return parsed;
@@ -630,6 +629,42 @@ const CALENDAR_LOOKUP_TOMORROW_PROMPT = "What's on my calendar tomorrow?";
 const CALENDAR_LOOKUP_WEEK_PROMPT = "What's on my calendar this week?";
 const CALENDAR_LOOKUP_POINT_PROMPT = 'Do I have anything at 3pm tomorrow?';
 const CALENDAR_LOOKUP_FREE_PROMPT = 'Am I free Friday afternoon?';
+const CALENDAR_LOOKUP_COMING_SOON_PROMPT = 'What do I have coming up soon?';
+const CALENDAR_LOOKUP_TODAY_AWARENESS_PROMPT =
+  'What should I know about today?';
+const CALENDAR_LOOKUP_MORNING_BRIEF_PROMPT =
+  'Give me a morning brief for tomorrow';
+
+function resolveSafeCalendarRefreshPrompt(refreshPrompt: string): string {
+  const normalized = refreshPrompt.trim();
+  if (!normalized) {
+    return CALENDAR_LOOKUP_TOMORROW_PROMPT;
+  }
+
+  const lower = normalized.toLowerCase();
+  let candidate = normalized;
+  if (
+    /\bcoming up soon\b/.test(lower) ||
+    /\bnext two hours\b/.test(lower) ||
+    /\bcoming up in the next two hours\b/.test(lower)
+  ) {
+    candidate = CALENDAR_LOOKUP_COMING_SOON_PROMPT;
+  } else if (
+    /\bwhat should i know about today\b/.test(lower) ||
+    /\brest of today\b/.test(lower)
+  ) {
+    candidate = CALENDAR_LOOKUP_TODAY_AWARENESS_PROMPT;
+  } else if (
+    /\bmorning brief\b/.test(lower) ||
+    /\bwhat do i need to know about tomorrow\b/.test(lower)
+  ) {
+    candidate = CALENDAR_LOOKUP_MORNING_BRIEF_PROMPT;
+  }
+
+  return Buffer.byteLength(candidate, 'utf8') <= 60
+    ? candidate
+    : CALENDAR_LOOKUP_TOMORROW_PROMPT;
+}
 
 function formatCalendarPanelText(title: string, body: string): string {
   return formatWorkPanel({
@@ -643,7 +678,10 @@ function buildCalendarLookupInlineActionRows(
 ): SendMessageOptions['inlineActionRows'] {
   return [
     [
-      { label: 'Refresh', actionId: refreshPrompt },
+      {
+        label: 'Refresh',
+        actionId: resolveSafeCalendarRefreshPrompt(refreshPrompt),
+      },
       { label: 'Tomorrow', actionId: CALENDAR_LOOKUP_TOMORROW_PROMPT },
     ],
     [
@@ -723,7 +761,7 @@ function buildCalendarReminderInlineActionRows(
     ];
   }
 
-  if (state.step === 'clarify_time') {
+  if (state.step === 'clarify_time' || state.step === 'clarify_offset') {
     return [[{ label: 'Cancel', actionId: 'cancel' }]];
   }
 
@@ -1630,76 +1668,93 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           clearPendingGoogleCalendarEventActionState(chatJid);
         }
 
+        const refreshedActiveEventContext =
+          getActiveGoogleCalendarEventContext(chatJid);
+        const freshReminderPlan = planCalendarEventReminder(
+          lastContent,
+          now,
+          refreshedActiveEventContext,
+        );
+
         const activeReminder = getPendingCalendarReminderState(chatJid);
         if (activeReminder) {
-          const result = advancePendingCalendarReminder(
-            lastContent,
-            activeReminder,
-            now,
-          );
-          if (result.kind === 'no_match') {
-            return false;
-          }
-          if (result.kind === 'cancelled') {
+          if (freshReminderPlan.kind !== 'none') {
             clearPendingCalendarReminderState(chatJid);
-            await channel.sendMessage(
-              chatJid,
-              formatCalendarPanelText('*Calendar*', result.message),
-              {
-                inlineActionRows: buildCalendarLookupInlineActionRows(
-                  CALENDAR_LOOKUP_TOMORROW_PROMPT,
-                ),
-              },
+          } else {
+            const result = advancePendingCalendarReminder(
+              lastContent,
+              activeReminder,
+              now,
             );
-            return true;
-          }
-          if (result.kind === 'invalid') {
-            clearPendingCalendarReminderState(chatJid);
-            await channel.sendMessage(
-              chatJid,
-              formatCalendarPanelText('*Calendar*', result.message),
-              {
-                inlineActionRows: buildCalendarLookupInlineActionRows(
-                  CALENDAR_LOOKUP_TOMORROW_PROMPT,
-                ),
-              },
-            );
-            return true;
-          }
-          if (result.kind === 'awaiting_input') {
-            setPendingCalendarReminderState(chatJid, result.state);
-            await channel.sendMessage(
-              chatJid,
-              formatCalendarPanelText('*Calendar*', result.message),
-              {
-                inlineActionRows: buildCalendarReminderInlineActionRows(
-                  result.state,
-                ),
-              },
-            );
-            return true;
-          }
+            if (result.kind === 'no_match') {
+              return false;
+            }
+            if (result.kind === 'cancelled') {
+              clearPendingCalendarReminderState(chatJid);
+              await channel.sendMessage(
+                chatJid,
+                formatCalendarPanelText('*Calendar*', result.message),
+                {
+                  inlineActionRows: buildCalendarLookupInlineActionRows(
+                    CALENDAR_LOOKUP_TOMORROW_PROMPT,
+                  ),
+                },
+              );
+              return true;
+            }
+            if (result.kind === 'invalid') {
+              clearPendingCalendarReminderState(chatJid);
+              await channel.sendMessage(
+                chatJid,
+                formatCalendarPanelText('*Calendar*', result.message),
+                {
+                  inlineActionRows: buildCalendarLookupInlineActionRows(
+                    CALENDAR_LOOKUP_TOMORROW_PROMPT,
+                  ),
+                },
+              );
+              return true;
+            }
+            if (result.kind === 'awaiting_input') {
+              setPendingCalendarReminderState(chatJid, result.state);
+              await channel.sendMessage(
+                chatJid,
+                formatCalendarPanelText('*Calendar*', result.message),
+                {
+                  inlineActionRows: buildCalendarReminderInlineActionRows(
+                    result.state,
+                  ),
+                },
+              );
+              return true;
+            }
 
-          const reminderPlan = buildEventReminderTaskPlan({
-            state: result.state,
-            groupFolder: group.folder,
-            chatJid,
-            now,
-            timeZone: TIMEZONE,
-          });
-          createTask(reminderPlan.task);
-          refreshTaskSnapshots(registeredGroups);
-          clearPendingCalendarReminderState(chatJid);
-          await channel.sendMessage(
-            chatJid,
-            formatCalendarPanelText('*Calendar*', reminderPlan.confirmation),
-            {
-              inlineActionRows: buildCalendarLookupInlineActionRows(
-                CALENDAR_LOOKUP_TOMORROW_PROMPT,
-              ),
-            },
-          );
-          return true;
+            const reminderPlan = buildEventReminderTaskPlan({
+              state: result.state,
+              groupFolder: group.folder,
+              chatJid,
+              now,
+              timeZone: TIMEZONE,
+            });
+            for (const task of reminderPlan.tasks || []) {
+              createTask(task);
+            }
+            if (reminderPlan.task) {
+              createTask(reminderPlan.task);
+            }
+            refreshTaskSnapshots(registeredGroups);
+            clearPendingCalendarReminderState(chatJid);
+            await channel.sendMessage(
+              chatJid,
+              formatCalendarPanelText('*Calendar*', reminderPlan.confirmation),
+              {
+                inlineActionRows: buildCalendarLookupInlineActionRows(
+                  CALENDAR_LOOKUP_TOMORROW_PROMPT,
+                ),
+              },
+            );
+            return true;
+          }
         }
 
         const activeEventAction =
@@ -1941,13 +1996,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           return true;
         }
 
-        const refreshedActiveEventContext =
-          getActiveGoogleCalendarEventContext(chatJid);
-        const reminderPlan = planCalendarEventReminder(
-          lastContent,
-          now,
-          refreshedActiveEventContext,
-        );
+        const reminderPlan = freshReminderPlan;
         if (reminderPlan.kind !== 'none') {
           if (reminderPlan.kind === 'needs_event_context') {
             await channel.sendMessage(
@@ -1964,22 +2013,38 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
           if (reminderPlan.kind === 'lookup') {
             const googleConfig = resolveGoogleCalendarConfig();
-            const { events } = await listGoogleCalendarEvents(
-              {
-                start: reminderPlan.searchStart,
-                end: reminderPlan.searchEnd,
-                calendarIds: googleConfig.calendarIds,
-              },
-              googleConfig,
-            );
-            const matches = matchGoogleCalendarTrackedEvents(
+            const { events, failures, successCount } =
+              await listGoogleCalendarEvents(
+                {
+                  start: reminderPlan.searchStart,
+                  end: reminderPlan.searchEnd,
+                  calendarIds: googleConfig.calendarIds,
+                },
+                googleConfig,
+              );
+            if (successCount === 0) {
+              await channel.sendMessage(
+                chatJid,
+                formatCalendarPanelText(
+                  '*Calendar*',
+                  "I can't confirm that reminder right now because Google Calendar access is unavailable on this host.",
+                ),
+                {
+                  inlineActionRows: buildCalendarLookupInlineActionRows(
+                    CALENDAR_LOOKUP_TOMORROW_PROMPT,
+                  ),
+                },
+              );
+              return true;
+            }
+            const resolved = resolveCalendarReminderLookup({
               events,
-              reminderPlan.queryText,
-            );
-            const resolved = buildPendingCalendarReminderStateFromMatches({
-              events: matches,
+              failures,
               offset: reminderPlan.offset,
               targetLabel: reminderPlan.targetLabel,
+              selectorMode: reminderPlan.selectorMode,
+              queryText: reminderPlan.queryText,
+              scopeFilter: reminderPlan.scopeFilter,
               now,
             });
             if (resolved.kind === 'awaiting_input') {

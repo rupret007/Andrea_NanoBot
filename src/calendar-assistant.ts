@@ -53,6 +53,11 @@ type CalendarProviderId =
   | 'google_calendar'
   | 'outlook';
 type CalendarProviderState = 'ready' | 'not_configured' | 'error';
+type CalendarAwarenessKind =
+  | 'none'
+  | 'coming_up_soon'
+  | 'rest_of_day'
+  | 'morning_brief';
 type CalendarReasoningMode =
   | 'agenda'
   | 'agenda_briefing_day'
@@ -100,6 +105,8 @@ export interface PlannedCalendarLookup {
   scopeFilter: CalendarScopeFilter | null;
   subjectLabel: string | null;
   forceIncludeCalendarNames: boolean;
+  awarenessKind: CalendarAwarenessKind;
+  lookaheadMinutes: number | null;
 }
 
 export interface CalendarEvent {
@@ -213,6 +220,10 @@ function startOfDay(date: Date): Date {
   const next = new Date(date);
   next.setHours(0, 0, 0, 0);
   return next;
+}
+
+function endOfDay(date: Date): Date {
+  return addDays(startOfDay(date), 1);
 }
 
 function addDays(date: Date, count: number): Date {
@@ -391,6 +402,28 @@ function resolveUpcomingRange(
   return { start, end, label };
 }
 
+function resolveUpcomingMinutesRange(
+  now: Date,
+  minutes: number,
+  label: string,
+): { start: Date; end: Date; label: string } {
+  const start = new Date(now);
+  const end = new Date(now.getTime() + minutes * 60 * 1000);
+  return { start, end, label };
+}
+
+function resolveRemainingDayRange(now: Date): {
+  start: Date;
+  end: Date;
+  label: string;
+} {
+  return {
+    start: new Date(now),
+    end: endOfDay(now),
+    label: 'the rest of today',
+  };
+}
+
 function resolveWeekRange(
   now: Date,
   nextWeek: boolean,
@@ -492,6 +525,8 @@ function looksLikeBriefingQuery(normalized: string): boolean {
   return (
     /\bwhat(?:'s| is) my day look like\b/.test(normalized) ||
     /\bgive me (?:a )?quick schedule\b/.test(normalized) ||
+    /\bgive me (?:a )?morning brief\b/.test(normalized) ||
+    /\bwhat should i know about today\b/.test(normalized) ||
     /\bwhat do i need to know about\b/.test(normalized) ||
     /\b(?:what(?:'s| is)|anything)\b[\s\S]{0,40}\bimportant\b/.test(
       normalized,
@@ -504,7 +539,12 @@ function looksLikeNextAgendaQuery(normalized: string): boolean {
   return (
     /\bwhat(?:'s| is)\b[\s\S]{0,40}\bnext on my calendar\b/.test(normalized) ||
     /\bwhat(?:'s| is)\b[\s\S]{0,30}\bmy next meeting\b/.test(normalized) ||
+    /\bwhat(?:'s| is)\b[\s\S]{0,20}\bnext after this\b/.test(normalized) ||
     /\bwhat do i have after this\b/.test(normalized) ||
+    /\bwhat do i have coming up soon\b/.test(normalized) ||
+    /\banything coming up in the next two hours\b/.test(normalized) ||
+    /\bcoming up soon\b/.test(normalized) ||
+    /\bnext two hours\b/.test(normalized) ||
     /\bwhat(?:'s| is)\b[\s\S]{0,40}\bcoming up this\b[\s\S]{0,20}\b(?:morning|afternoon|evening|tonight)\b/.test(
       normalized,
     )
@@ -669,6 +709,15 @@ export function planCalendarAssistantLookup(
   const nextAgendaQuery = looksLikeNextAgendaQuery(normalized);
   const openWindowQuery = looksLikeOpenWindowQuery(normalized);
   const conflictQuery = looksLikeConflictSummaryQuery(normalized);
+  const nearTermAwarenessQuery =
+    /\bcoming up soon\b/.test(normalized) ||
+    /\bnext two hours\b/.test(normalized);
+  const restOfDayBriefingQuery =
+    /\bwhat should i know about today\b/.test(normalized) ||
+    /\bwhat do i need to know about today\b/.test(normalized);
+  const morningBriefQuery =
+    /\bgive me (?:a )?morning brief\b/.test(normalized) &&
+    /\btomorrow\b/.test(normalized);
   const intent =
     openWindowQuery || conflictQuery || looksLikeAvailabilityQuery(normalized)
       ? 'availability'
@@ -683,7 +732,28 @@ export function planCalendarAssistantLookup(
 
   const explicitRange = hasExplicitRangeReference(normalized);
   let range = resolveLookupRange(normalized, now);
-  if (/\bcoming up\b/.test(normalized) && !explicitRange) {
+  let awarenessKind: CalendarAwarenessKind = 'none';
+  let lookaheadMinutes: number | null = null;
+  if (nearTermAwarenessQuery) {
+    awarenessKind = 'coming_up_soon';
+    lookaheadMinutes = 120;
+    range = resolveUpcomingMinutesRange(
+      now,
+      lookaheadMinutes,
+      'coming up soon',
+    );
+  } else if (restOfDayBriefingQuery) {
+    awarenessKind = 'rest_of_day';
+    range = resolveRemainingDayRange(now);
+  } else if (morningBriefQuery) {
+    awarenessKind = 'morning_brief';
+    const tomorrow = addDays(startOfDay(now), 1);
+    range = {
+      start: tomorrow,
+      end: addDays(tomorrow, 1),
+      label: 'tomorrow',
+    };
+  } else if (/\bcoming up\b/.test(normalized) && !explicitRange) {
     range = resolveUpcomingRange(now, 7, 'coming up');
   }
   const parsedClockTime = parseClockTime(normalized);
@@ -710,10 +780,16 @@ export function planCalendarAssistantLookup(
     const anchor =
       /\bafter this\b/.test(normalized) && activeEnd ? activeEnd : now;
 
-    if (!explicitRange && !/\bcoming up this\b/.test(normalized)) {
+    if (
+      !explicitRange &&
+      !/\bcoming up this\b/.test(normalized) &&
+      awarenessKind !== 'coming_up_soon'
+    ) {
       range = resolveUpcomingRange(anchor, 7, 'coming up');
       resolvedEnd = range.end;
       label = /\bafter this\b/.test(normalized) ? 'after this' : 'next';
+    } else if (awarenessKind === 'coming_up_soon') {
+      label = 'coming up soon';
     }
 
     resolvedStart =
@@ -811,6 +887,8 @@ export function planCalendarAssistantLookup(
     scopeFilter,
     subjectLabel,
     forceIncludeCalendarNames,
+    awarenessKind,
+    lookaheadMinutes,
   };
 }
 
@@ -2149,6 +2227,72 @@ function countDistinctDays(events: CalendarEvent[], timeZone: string): number {
   ).size;
 }
 
+function formatMorningBriefLine(
+  result: CalendarLookupResult,
+  timedEvents: CalendarEvent[],
+): string | null {
+  if (result.plan.awarenessKind !== 'morning_brief') {
+    return null;
+  }
+
+  const morningEnd = setLocalTime(startOfDay(result.plan.start), 12);
+  const morningEvents = timedEvents.filter(
+    (event) => new Date(event.startIso).getTime() < morningEnd.getTime(),
+  );
+  if (morningEvents.length === 0) {
+    return 'Morning looks clear.';
+  }
+
+  return `Morning starts with ${formatEventSummary(
+    morningEvents[0]!,
+    result.plan.timeZone,
+    result.plan.forceIncludeCalendarNames,
+  )}.`;
+}
+
+function formatBriefingDensityLine(
+  result: CalendarLookupResult,
+  timedEvents: CalendarEvent[],
+): string | null {
+  if (
+    result.plan.awarenessKind !== 'rest_of_day' &&
+    result.plan.awarenessKind !== 'morning_brief'
+  ) {
+    return null;
+  }
+
+  const totalWindowMinutes = Math.max(
+    0,
+    Math.round(
+      (result.plan.end.getTime() - result.plan.start.getTime()) / (60 * 1000),
+    ),
+  );
+  if (totalWindowMinutes < 180) {
+    return null;
+  }
+
+  const busyMinutes = buildBusyWindows(timedEvents).reduce(
+    (total, window) =>
+      total +
+      Math.max(
+        0,
+        Math.round(
+          (window.end.getTime() - window.start.getTime()) / (60 * 1000),
+        ),
+      ),
+    0,
+  );
+  const openMinutes = Math.max(0, totalWindowMinutes - busyMinutes);
+
+  if (openMinutes > 0 && openMinutes < 60) {
+    return 'You have very little free time in that stretch.';
+  }
+  if (busyMinutes >= totalWindowMinutes * 0.75) {
+    return 'It looks pretty packed.';
+  }
+  return null;
+}
+
 function buildAdjacencyClusters(events: CalendarEvent[]): CalendarEvent[][] {
   const timedEvents = getTimedEvents(events).sort(
     (left, right) =>
@@ -2320,6 +2464,8 @@ function buildBriefingReply(
     result.plan.timeZone,
     forceIncludeCalendarName,
   );
+  const morningBriefLine = formatMorningBriefLine(result, timedEvents);
+  const densityLine = formatBriefingDensityLine(result, timedEvents);
 
   if (result.events.length === 0) {
     if (!fullyConfirmed) {
@@ -2349,6 +2495,8 @@ function buildBriefingReply(
 
   const lines = [
     `${capitalizeLabel(result.plan.label)} has ${formatListWithAnd(summaryBits)}.`,
+    ...(morningBriefLine ? [morningBriefLine] : []),
+    ...(densityLine ? [densityLine] : []),
     ...formatGroupedEvents(
       [...allDayEvents, ...timedEvents],
       result.plan.timeZone,
@@ -2381,7 +2529,8 @@ function buildNextReply(
   );
   const shouldListMultiple =
     /\b(?:morning|afternoon|evening|tonight)\b/.test(result.plan.label) ||
-    result.plan.label === 'coming up';
+    result.plan.label === 'coming up' ||
+    result.plan.awarenessKind === 'coming_up_soon';
 
   if (timedEvents.length === 0) {
     if (activeAllDayEvents.length > 0 && !result.plan.nextTimedOnly) {
@@ -2403,6 +2552,10 @@ function buildNextReply(
       )} in the calendars I could read.${incompleteNote}`;
     }
 
+    if (result.plan.awarenessKind === 'coming_up_soon') {
+      return `I don't see anything coming up in the next 2 hours.`;
+    }
+
     return result.plan.nextTimedOnly
       ? `I don't see a timed event coming up ${result.plan.label === 'next' ? 'next' : result.plan.label}.`
       : `I don't see anything else coming up ${result.plan.label === 'next' ? 'next' : result.plan.label}.`;
@@ -2410,7 +2563,9 @@ function buildNextReply(
 
   if (shouldListMultiple) {
     const lines = [
-      `Coming up ${result.plan.label}:`,
+      result.plan.awarenessKind === 'coming_up_soon'
+        ? 'Coming up in the next 2 hours:'
+        : `Coming up ${result.plan.label}:`,
       ...formatGroupedEvents(
         timedEvents.slice(0, 3),
         result.plan.timeZone,
@@ -2784,7 +2939,8 @@ function selectAgendaNextActiveEvent(
 ): CalendarEvent | null {
   const shouldListMultiple =
     /\b(?:morning|afternoon|evening|tonight)\b/.test(result.plan.label) ||
-    result.plan.label === 'coming up';
+    result.plan.label === 'coming up' ||
+    result.plan.awarenessKind === 'coming_up_soon';
   if (shouldListMultiple) {
     return null;
   }

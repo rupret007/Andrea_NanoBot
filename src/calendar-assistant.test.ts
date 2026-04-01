@@ -163,6 +163,39 @@ describe('planCalendarAssistantLookup', () => {
     expect(weekPlan?.label).toBe('this week');
   });
 
+  it('uses bounded awareness windows for coming-up-soon and rest-of-day asks', () => {
+    const now = new Date('2026-04-01T10:15:00-05:00');
+    const soonPlan = planCalendarAssistantLookup(
+      'What do I have coming up soon?',
+      now,
+      'America/Chicago',
+    );
+    const todayPlan = planCalendarAssistantLookup(
+      'What should I know about today?',
+      now,
+      'America/Chicago',
+    );
+    const morningBriefPlan = planCalendarAssistantLookup(
+      'Give me a morning brief for tomorrow',
+      now,
+      'America/Chicago',
+    );
+
+    expect(soonPlan?.reasoningMode).toBe('agenda_next');
+    expect(soonPlan?.awarenessKind).toBe('coming_up_soon');
+    expect(soonPlan?.lookaheadMinutes).toBe(120);
+    expect(soonPlan?.start.toISOString()).toBe(now.toISOString());
+    expect(soonPlan?.end.toISOString()).toBe('2026-04-01T17:15:00.000Z');
+
+    expect(todayPlan?.awarenessKind).toBe('rest_of_day');
+    expect(todayPlan?.label).toBe('the rest of today');
+    expect(todayPlan?.start.toISOString()).toBe(now.toISOString());
+    expect(todayPlan?.end.toISOString()).toBe('2026-04-02T05:00:00.000Z');
+
+    expect(morningBriefPlan?.awarenessKind).toBe('morning_brief');
+    expect(morningBriefPlan?.reasoningMode).toBe('agenda_briefing_day');
+  });
+
   it('parses next-event, open-window, conflict, and family-calendar asks', () => {
     const nextPlan = planCalendarAssistantLookup(
       "What's my next meeting?",
@@ -281,6 +314,88 @@ describe('buildCalendarAssistantReply', () => {
 
     expect(response?.reply).toContain('Next up: 9:00 AM-10:00 AM Dentist');
     expect(response?.activeEventContext?.id).toBe('evt-1');
+  });
+
+  it('answers bounded coming-up-soon prompts without surfacing later events', async () => {
+    const fetchImpl = createGoogleCalendarFetchMock({
+      eventsByCalendar: {
+        primary: {
+          summary: 'Jeff',
+          items: [
+            {
+              id: 'evt-soon-1',
+              summary: 'School pickup',
+              start: { dateTime: '2026-04-01T16:00:00Z' },
+              end: { dateTime: '2026-04-01T16:30:00Z' },
+            },
+            {
+              id: 'evt-soon-2',
+              summary: 'Call Mom',
+              start: { dateTime: '2026-04-01T16:45:00Z' },
+              end: { dateTime: '2026-04-01T17:15:00Z' },
+            },
+          ],
+        },
+      },
+    });
+
+    const response = await buildCalendarAssistantResponse(
+      'Anything coming up in the next two hours?',
+      {
+        now: new Date('2026-04-01T10:15:00-05:00'),
+        timeZone: 'America/Chicago',
+        env: {
+          GOOGLE_CALENDAR_ACCESS_TOKEN: 'token',
+        },
+        fetchImpl,
+      },
+    );
+
+    expect(response?.reply).toContain('Coming up in the next 2 hours:');
+    expect(response?.reply).toContain('11:00 AM-11:30 AM School pickup');
+    expect(response?.reply).toContain('11:45 AM-12:15 PM Call Mom');
+    expect(response?.activeEventContext).toBeNull();
+  });
+
+  it('adds morning emphasis to tomorrow brief replies', async () => {
+    const fetchImpl = createGoogleCalendarFetchMock({
+      eventsByCalendar: {
+        primary: {
+          summary: 'Jeff',
+          items: [
+            {
+              id: 'evt-1',
+              summary: 'Breakfast meeting',
+              start: { dateTime: '2026-04-02T13:30:00Z' },
+              end: { dateTime: '2026-04-02T14:00:00Z' },
+            },
+            {
+              id: 'evt-2',
+              summary: 'Afternoon call',
+              start: { dateTime: '2026-04-02T19:00:00Z' },
+              end: { dateTime: '2026-04-02T19:30:00Z' },
+            },
+          ],
+        },
+      },
+    });
+
+    const reply = await buildCalendarAssistantReply(
+      'Give me a morning brief for tomorrow',
+      {
+        now: new Date('2026-04-01T10:00:00-05:00'),
+        timeZone: 'America/Chicago',
+        env: {
+          GOOGLE_CALENDAR_ACCESS_TOKEN: 'token',
+        },
+        fetchImpl,
+      },
+    );
+
+    expect(reply).toContain('Tomorrow has 2 timed events');
+    expect(reply).toContain(
+      'Morning starts with 8:30 AM-9:00 AM Breakfast meeting.',
+    );
   });
 
   it('uses active event context for after-this next-event questions', async () => {
