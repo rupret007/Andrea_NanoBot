@@ -26,6 +26,13 @@ const MONTH_INDEX: Record<string, number> = {
   december: 11,
 };
 
+const DAYPART_RANGES = {
+  morning: { startHour: 6, endHour: 12 },
+  afternoon: { startHour: 12, endHour: 17 },
+  evening: { startHour: 17, endHour: 21 },
+  tonight: { startHour: 18, endHour: 24 },
+} as const;
+
 const CANCEL_PATTERN = /^(?:cancel|never mind|nevermind|stop|no)\b/i;
 const CONFIRM_PATTERN =
   /^(?:yes|yep|yeah|confirm|create it|go ahead|looks good|ok|okay)\b/i;
@@ -42,8 +49,37 @@ export interface GoogleCalendarCreateDraft {
   description?: string | null;
 }
 
-export interface PendingGoogleCalendarCreateState {
+export interface GoogleCalendarConflictEvent {
+  title: string;
+  startIso: string;
+  endIso: string;
+  allDay: boolean;
+  calendarName?: string | null;
+}
+
+export interface GoogleCalendarSlotSuggestion {
+  startIso: string;
+  endIso: string;
+  label: string;
+}
+
+export interface GoogleCalendarDraftConflictSummary {
+  blockingEvents: GoogleCalendarConflictEvent[];
+  suggestions: GoogleCalendarSlotSuggestion[];
+  selectedSuggestionStartIso: string | null;
+  warningMessage?: string | null;
+}
+
+export interface GoogleCalendarSchedulingContextState {
   version: 1;
+  createdAt: string;
+  title: string;
+  durationMinutes: number;
+  timeZone: string;
+}
+
+export interface PendingGoogleCalendarCreateState {
+  version: 2;
   createdAt: string;
   step: 'choose_calendar' | 'confirm_create';
   draft: GoogleCalendarCreateDraft;
@@ -53,6 +89,7 @@ export interface PendingGoogleCalendarCreateState {
     primary: boolean;
   }>;
   selectedCalendarId: string | null;
+  conflictSummary: GoogleCalendarDraftConflictSummary | null;
 }
 
 export type GoogleCalendarCreatePlanResult =
@@ -76,6 +113,12 @@ export type PendingGoogleCalendarCreateResult =
       kind: 'confirmed';
       state: PendingGoogleCalendarCreateState;
       calendarId: string;
+    }
+  | {
+      kind: 'resolve_anchor';
+      state: PendingGoogleCalendarCreateState;
+      anchorTime: { hours: number; minutes: number; displayLabel: string };
+      anchorDate: Date;
     };
 
 function normalizeMessage(message: string): string {
@@ -127,6 +170,62 @@ function formatClockLabel(hours: number, minutes: number): string {
   return minutes === 0
     ? `${displayHour} ${suffix}`
     : `${displayHour}:${String(minutes).padStart(2, '0')} ${suffix}`;
+}
+
+function inferClockHourWithoutMeridiem(rawHour: number): number | null {
+  if (rawHour < 0 || rawHour > 23) {
+    return null;
+  }
+  if (rawHour >= 13) {
+    return rawHour;
+  }
+  if (rawHour === 12) {
+    return 12;
+  }
+  if (rawHour >= 1 && rawHour <= 7) {
+    return rawHour + 12;
+  }
+  return rawHour;
+}
+
+function parseLooseClockTime(
+  hoursText: string,
+  minutesText: string | undefined,
+  meridiem: string | undefined,
+): { hours: number; minutes: number; displayLabel: string } | null {
+  const rawHour = Number(hoursText);
+  const minutes = minutesText ? Number(minutesText) : 0;
+  const normalizedMeridiem = meridiem?.toLowerCase() ?? null;
+  if (!Number.isInteger(minutes) || minutes < 0 || minutes > 59) {
+    return null;
+  }
+
+  let hours: number | null = null;
+  if (normalizedMeridiem) {
+    if (!Number.isInteger(rawHour) || rawHour < 1 || rawHour > 12) {
+      return null;
+    }
+    hours =
+      rawHour === 12
+        ? normalizedMeridiem === 'am'
+          ? 0
+          : 12
+        : normalizedMeridiem === 'pm'
+          ? rawHour + 12
+          : rawHour;
+  } else {
+    hours = inferClockHourWithoutMeridiem(rawHour);
+  }
+
+  if (hours === null) {
+    return null;
+  }
+
+  return {
+    hours,
+    minutes,
+    displayLabel: formatClockLabel(hours, minutes),
+  };
 }
 
 function resolveNextWeekdayDate(weekdayName: string, now: Date): Date {
@@ -226,31 +325,7 @@ function parseClockPart(
   minutesText: string | undefined,
   meridiem: string | undefined,
 ): { hours: number; minutes: number; displayLabel: string } | null {
-  const rawHour = Number(hoursText);
-  const minutes = minutesText ? Number(minutesText) : 0;
-  const normalizedMeridiem = meridiem?.toLowerCase() ?? null;
-
-  if (!Number.isInteger(rawHour) || rawHour < 1 || rawHour > 12) {
-    return null;
-  }
-  if (!Number.isInteger(minutes) || minutes < 0 || minutes > 59) {
-    return null;
-  }
-
-  const hours =
-    rawHour === 12
-      ? normalizedMeridiem === 'am'
-        ? 0
-        : 12
-      : normalizedMeridiem === 'pm'
-        ? rawHour + 12
-        : rawHour;
-
-  return {
-    hours,
-    minutes,
-    displayLabel: formatClockLabel(hours, minutes),
-  };
+  return parseLooseClockTime(hoursText, minutesText, meridiem);
 }
 
 function parseTimeRange(working: string): {
@@ -259,7 +334,7 @@ function parseTimeRange(working: string): {
   matchedText: string | null;
 } {
   const explicitRange = working.match(
-    /\b(?:from\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\s*(?:-|to|until|til)\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/i,
+    /\b(?:from\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*(?:-|to|until|til)\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/i,
   );
   if (explicitRange) {
     const start = parseClockPart(
@@ -280,7 +355,7 @@ function parseTimeRange(working: string): {
   }
 
   const startOnly = working.match(
-    /\b(?:at|from)\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i,
+    /\b(?:at|from)\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/i,
   );
   if (!startOnly) {
     return {
@@ -295,6 +370,37 @@ function parseTimeRange(working: string): {
     end: null,
     matchedText: startOnly[0],
   };
+}
+
+function parseDaypartPhrase(working: string): {
+  name: keyof typeof DAYPART_RANGES;
+  matchedText: string;
+} | null {
+  for (const daypart of Object.keys(DAYPART_RANGES) as Array<
+    keyof typeof DAYPART_RANGES
+  >) {
+    const match = working.match(new RegExp(`\\b${daypart}\\b`, 'i'));
+    if (match) {
+      return {
+        name: daypart,
+        matchedText: match[0],
+      };
+    }
+  }
+  return null;
+}
+
+function getDraftDurationMinutes(draft: GoogleCalendarCreateDraft): number {
+  if (draft.allDay) {
+    return 24 * 60;
+  }
+  return Math.max(
+    15,
+    Math.round(
+      (new Date(draft.endIso).getTime() - new Date(draft.startIso).getTime()) /
+        (60 * 1000),
+    ),
+  );
 }
 
 function looksLikeExplicitCalendarCreate(normalized: string): boolean {
@@ -403,6 +509,7 @@ function stripCreatePhrases(
   const collapsed = collapseWhitespace(next.replace(/^["']|["']$/g, ''));
   return collapsed
     .replace(/^(?:an?\s+)+/i, '')
+    .replace(/^(?:that|it)\b/i, '')
     .replace(/\s+\bon\b$/i, '')
     .trim();
 }
@@ -444,11 +551,26 @@ function formatCalendarChoice(
   return `${prefix}${calendar.summary}${calendar.primary ? ' (primary)' : ''}`;
 }
 
+function formatConflictSuggestion(
+  suggestion: GoogleCalendarSlotSuggestion,
+  timeZone: string,
+): string {
+  const draft: GoogleCalendarCreateDraft = {
+    title: '',
+    startIso: suggestion.startIso,
+    endIso: suggestion.endIso,
+    allDay: false,
+    timeZone,
+  };
+  return formatDraftWhen(draft, timeZone);
+}
+
 export function planGoogleCalendarCreate(
   message: string,
   writableCalendars: GoogleCalendarMetadata[],
   now = new Date(),
   timeZone = TIMEZONE,
+  schedulingContext?: GoogleCalendarSchedulingContextState | null,
 ): GoogleCalendarCreatePlanResult {
   const normalizedMessage = normalizeMessage(message);
   const normalizedLower = normalizedMessage.toLowerCase();
@@ -471,29 +593,38 @@ export function planGoogleCalendarCreate(
   const allDay = ALL_DAY_PATTERN.test(working);
   const dateInfo = parseDatePhrase(working, now);
   const timeInfo = parseTimeRange(working);
+  const daypartInfo = parseDaypartPhrase(working);
+  const contextDurationMinutes =
+    schedulingContext && schedulingContext.timeZone === timeZone
+      ? schedulingContext.durationMinutes
+      : schedulingContext?.durationMinutes || null;
 
-  if (!dateInfo || (!allDay && !timeInfo.start)) {
+  if (!dateInfo || (!allDay && !timeInfo.start && !daypartInfo)) {
     return {
       kind: 'needs_details',
       message: buildMissingDetailsReply({
         missingDate: !dateInfo,
-        missingTime: !timeInfo.start,
+        missingTime: !timeInfo.start && !daypartInfo,
         allDay,
       }),
     };
   }
 
-  const title = stripCreatePhrases(
+  let title = stripCreatePhrases(
     working,
     dateInfo?.matchedText || null,
-    timeInfo.matchedText,
+    timeInfo.matchedText || daypartInfo?.matchedText || null,
     selectedCalendar?.summary || null,
   );
+  if (!title && schedulingContext?.title && /\b(?:that|it)\b/i.test(working)) {
+    title = schedulingContext.title;
+  }
   if (!title) {
     return {
       kind: 'needs_details',
-      message:
-        'I can create that as a calendar event, but I still need a title.',
+      message: /\b(?:that|it)\b/i.test(working)
+        ? 'What should I put on your calendar?'
+        : 'I can create that as a calendar event, but I still need a title.',
     };
   }
 
@@ -516,8 +647,14 @@ export function planGoogleCalendarCreate(
         end = addDays(end, 1);
       }
     } else {
-      end = new Date(start.getTime() + 60 * 60 * 1000);
+      const durationMinutes = contextDurationMinutes || 60;
+      end = new Date(start.getTime() + durationMinutes * 60 * 1000);
     }
+  } else if (!allDay && daypartInfo) {
+    const range = DAYPART_RANGES[daypartInfo.name];
+    start = setLocalTime(dateInfo.date, range.startHour);
+    const durationMinutes = contextDurationMinutes || 60;
+    end = new Date(start.getTime() + durationMinutes * 60 * 1000);
   }
 
   return {
@@ -551,13 +688,39 @@ export function buildPendingGoogleCalendarCreateState(input: {
     (calendars.length === 1 ? calendars[0].id : null);
 
   return {
-    version: 1,
+    version: 2,
     createdAt: (input.now || new Date()).toISOString(),
     step: selectedCalendarId ? 'confirm_create' : 'choose_calendar',
     draft: input.draft,
     calendars,
     selectedCalendarId,
+    conflictSummary: null,
   };
+}
+
+export function buildGoogleCalendarSchedulingContextState(input: {
+  draft: GoogleCalendarCreateDraft;
+  now?: Date;
+}): GoogleCalendarSchedulingContextState | null {
+  if (input.draft.allDay) {
+    return null;
+  }
+  return {
+    version: 1,
+    createdAt: (input.now || new Date()).toISOString(),
+    title: input.draft.title,
+    durationMinutes: getDraftDurationMinutes(input.draft),
+    timeZone: input.draft.timeZone,
+  };
+}
+
+export function isGoogleCalendarSchedulingContextExpired(
+  state: GoogleCalendarSchedulingContextState,
+  now = new Date(),
+): boolean {
+  const createdAt = new Date(state.createdAt).getTime();
+  if (Number.isNaN(createdAt)) return true;
+  return now.getTime() - createdAt > DEFAULT_CONFIRMATION_TTL_MS;
 }
 
 export function isPendingGoogleCalendarCreateExpired(
@@ -593,6 +756,45 @@ export function formatGoogleCalendarCreatePrompt(
   );
 
   return [
+    ...(state.conflictSummary?.blockingEvents.length
+      ? [
+          'That time conflicts with:',
+          ...state.conflictSummary.blockingEvents.map(
+            (event) =>
+              `- ${
+                event.allDay
+                  ? 'All day'
+                  : `${formatDraftWhen(
+                      {
+                        title: event.title,
+                        startIso: event.startIso,
+                        endIso: event.endIso,
+                        allDay: event.allDay,
+                        timeZone: state.draft.timeZone,
+                      },
+                      state.draft.timeZone,
+                    )}`
+              } ${event.title}${event.calendarName ? ` [${event.calendarName}]` : ''}`,
+          ),
+          ...(state.conflictSummary.suggestions.length > 0
+            ? [
+                '',
+                'You could also use:',
+                ...state.conflictSummary.suggestions.map(
+                  (suggestion, index) =>
+                    `- ${index + 1}. ${formatConflictSuggestion(
+                      suggestion,
+                      state.draft.timeZone,
+                    )}`,
+                ),
+              ]
+            : []),
+          '',
+        ]
+      : []),
+    ...(state.conflictSummary?.warningMessage
+      ? [state.conflictSummary.warningMessage, '']
+      : []),
     'Ready to create this Google Calendar event:',
     `- Title: ${state.draft.title}`,
     `- When: ${state.draft.allDay ? `All day on ${formatDraftWhen(state.draft, state.draft.timeZone)}` : formatDraftWhen(state.draft, state.draft.timeZone)}`,
@@ -600,7 +802,9 @@ export function formatGoogleCalendarCreatePrompt(
     ...(state.draft.location ? [`- Location: ${state.draft.location}`] : []),
     ...(state.draft.description ? [`- Notes: ${state.draft.description}`] : []),
     '',
-    'Reply "yes" to create it or "cancel" to stop.',
+    state.conflictSummary?.blockingEvents.length
+      ? 'Reply "yes" to create it anyway, choose a suggestion number, or say "cancel".'
+      : 'Reply "yes" to create it or "cancel" to stop.',
   ].join('\n');
 }
 
@@ -632,6 +836,115 @@ function matchCalendarSelection(
   return null;
 }
 
+function cloneDraftWithTiming(
+  draft: GoogleCalendarCreateDraft,
+  start: Date,
+  end: Date,
+  allDay = draft.allDay,
+): GoogleCalendarCreateDraft {
+  return {
+    ...draft,
+    startIso: start.toISOString(),
+    endIso: end.toISOString(),
+    allDay,
+  };
+}
+
+function parsePendingDraftAdjustment(
+  message: string,
+  state: PendingGoogleCalendarCreateState,
+  now = new Date(),
+): GoogleCalendarCreateDraft | null {
+  const normalized = normalizeMessage(message);
+  if (!normalized) return null;
+
+  const draftStart = new Date(state.draft.startIso);
+  const durationMinutes = getDraftDurationMinutes(state.draft);
+  const working = normalized.replace(/[.?!]+$/g, '');
+  const dateInfo = parseDatePhrase(working, now);
+  const timeInfo = parseTimeRange(working);
+  const daypartInfo = parseDaypartPhrase(working);
+  const allDay = ALL_DAY_PATTERN.test(working);
+
+  if (!dateInfo && !timeInfo.start && !daypartInfo && !allDay) {
+    return null;
+  }
+
+  const targetDate = dateInfo ? dateInfo.date : startOfDay(draftStart);
+  if (allDay) {
+    const start = startOfDay(targetDate);
+    const end = addDays(start, 1);
+    return cloneDraftWithTiming(state.draft, start, end, true);
+  }
+
+  let start: Date;
+  let end: Date;
+  if (timeInfo.start) {
+    start = setLocalTime(
+      targetDate,
+      timeInfo.start.hours,
+      timeInfo.start.minutes,
+    );
+    if (timeInfo.end) {
+      end = setLocalTime(targetDate, timeInfo.end.hours, timeInfo.end.minutes);
+      if (end <= start) {
+        end = addDays(end, 1);
+      }
+    } else {
+      end = new Date(start.getTime() + durationMinutes * 60 * 1000);
+    }
+    return cloneDraftWithTiming(state.draft, start, end, false);
+  }
+
+  if (daypartInfo) {
+    const range = DAYPART_RANGES[daypartInfo.name];
+    start = setLocalTime(targetDate, range.startHour);
+    end = new Date(start.getTime() + durationMinutes * 60 * 1000);
+    return cloneDraftWithTiming(state.draft, start, end, false);
+  }
+
+  start = setLocalTime(
+    targetDate,
+    draftStart.getHours(),
+    draftStart.getMinutes(),
+    draftStart.getSeconds(),
+  );
+  end = new Date(start.getTime() + durationMinutes * 60 * 1000);
+  return cloneDraftWithTiming(state.draft, start, end, false);
+}
+
+function parseAfterAnchorRequest(
+  message: string,
+  state: PendingGoogleCalendarCreateState,
+  now = new Date(),
+): {
+  anchorTime: { hours: number; minutes: number; displayLabel: string };
+  anchorDate: Date;
+} | null {
+  const normalized = normalizeMessage(message);
+  if (!normalized) return null;
+
+  const match = normalized.match(
+    /\bafter my (\d{1,2})(?::(\d{2}))?\s*(am|pm)? meeting\b/i,
+  );
+  if (!match) {
+    return null;
+  }
+
+  const anchorTime = parseLooseClockTime(match[1], match[2], match[3]);
+  if (!anchorTime) {
+    return null;
+  }
+
+  const dateInfo = parseDatePhrase(normalized, now);
+  return {
+    anchorTime,
+    anchorDate: dateInfo
+      ? dateInfo.date
+      : startOfDay(new Date(state.draft.startIso)),
+  };
+}
+
 export function advancePendingGoogleCalendarCreate(
   message: string,
   state: PendingGoogleCalendarCreateState,
@@ -651,13 +964,28 @@ export function advancePendingGoogleCalendarCreate(
   if (state.step === 'choose_calendar') {
     const selection = matchCalendarSelection(normalized, state.calendars);
     if (!selection) {
-      return { kind: 'no_match' };
+      const adjustedDraft = parsePendingDraftAdjustment(normalized, state);
+      if (!adjustedDraft) {
+        return { kind: 'no_match' };
+      }
+      const nextState: PendingGoogleCalendarCreateState = {
+        ...state,
+        step: state.selectedCalendarId ? 'confirm_create' : 'choose_calendar',
+        draft: adjustedDraft,
+        conflictSummary: null,
+      };
+      return {
+        kind: 'awaiting_input',
+        state: nextState,
+        message: formatGoogleCalendarCreatePrompt(nextState),
+      };
     }
 
     const nextState: PendingGoogleCalendarCreateState = {
       ...state,
       step: 'confirm_create',
       selectedCalendarId: selection.id,
+      conflictSummary: null,
     };
 
     return {
@@ -667,12 +995,38 @@ export function advancePendingGoogleCalendarCreate(
     };
   }
 
+  if (state.conflictSummary?.suggestions.length) {
+    const numeric = normalized.match(/\b(\d{1,2})\b/);
+    if (numeric) {
+      const suggestionIndex = Number(numeric[1]) - 1;
+      const suggestion = state.conflictSummary.suggestions[suggestionIndex];
+      if (suggestion) {
+        const nextState: PendingGoogleCalendarCreateState = {
+          ...state,
+          draft: cloneDraftWithTiming(
+            state.draft,
+            new Date(suggestion.startIso),
+            new Date(suggestion.endIso),
+            false,
+          ),
+          conflictSummary: null,
+        };
+        return {
+          kind: 'awaiting_input',
+          state: nextState,
+          message: formatGoogleCalendarCreatePrompt(nextState),
+        };
+      }
+    }
+  }
+
   if (state.calendars.length > 1) {
     const selection = matchCalendarSelection(normalized, state.calendars);
     if (selection && selection.id !== state.selectedCalendarId) {
       const nextState: PendingGoogleCalendarCreateState = {
         ...state,
         selectedCalendarId: selection.id,
+        conflictSummary: null,
       };
       return {
         kind: 'awaiting_input',
@@ -693,6 +1047,30 @@ export function advancePendingGoogleCalendarCreate(
         ...state,
         step: 'choose_calendar',
       }),
+    };
+  }
+
+  const anchorRequest = parseAfterAnchorRequest(normalized, state);
+  if (anchorRequest) {
+    return {
+      kind: 'resolve_anchor',
+      state,
+      anchorTime: anchorRequest.anchorTime,
+      anchorDate: anchorRequest.anchorDate,
+    };
+  }
+
+  const adjustedDraft = parsePendingDraftAdjustment(normalized, state);
+  if (adjustedDraft) {
+    const nextState: PendingGoogleCalendarCreateState = {
+      ...state,
+      draft: adjustedDraft,
+      conflictSummary: null,
+    };
+    return {
+      kind: 'awaiting_input',
+      state: nextState,
+      message: formatGoogleCalendarCreatePrompt(nextState),
     };
   }
 

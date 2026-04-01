@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  buildCalendarAssistantResponse,
   buildCalendarAssistantReply,
   planCalendarAssistantLookup,
 } from './calendar-assistant.js';
@@ -46,6 +47,44 @@ describe('planCalendarAssistantLookup', () => {
     expect(plan?.start.toISOString()).toBe('2026-04-01T05:00:00.000Z');
     expect(plan?.end.toISOString()).toBe('2026-04-02T05:00:00.000Z');
     expect(plan?.pointInTime?.toISOString()).toBe('2026-04-01T20:00:00.000Z');
+  });
+
+  it('parses after-time availability ranges naturally', () => {
+    const plan = planCalendarAssistantLookup(
+      'Am I free after 3 tomorrow?',
+      new Date('2026-03-31T23:55:00-05:00'),
+      'America/Chicago',
+    );
+
+    expect(plan?.intent).toBe('availability');
+    expect(plan?.label).toBe('after 3 PM tomorrow');
+    expect(plan?.start.toISOString()).toBe('2026-04-01T20:00:00.000Z');
+    expect(plan?.end.toISOString()).toBe('2026-04-02T05:00:00.000Z');
+  });
+
+  it('flags vague anchors for clarification', () => {
+    const plan = planCalendarAssistantLookup(
+      'What do I have after work today?',
+      new Date('2026-04-01T09:00:00-05:00'),
+      'America/Chicago',
+    );
+
+    expect(plan?.clarificationQuestion).toBe(
+      'What time should I treat as after work?',
+    );
+  });
+
+  it('captures duration-fit availability requests', () => {
+    const plan = planCalendarAssistantLookup(
+      'Do I have time at 4 for a one-hour meeting tomorrow?',
+      new Date('2026-03-31T23:55:00-05:00'),
+      'America/Chicago',
+    );
+
+    expect(plan?.reasoningMode).toBe('availability_duration');
+    expect(plan?.durationMinutes).toBe(60);
+    expect(plan?.requestedTitle).toBe('meeting');
+    expect(plan?.pointInTime?.toISOString()).toBe('2026-04-01T21:00:00.000Z');
   });
 });
 
@@ -347,7 +386,156 @@ END:VCALENDAR</c:calendar-data>
       },
     );
 
-    expect(reply).toBe('You look free tomorrow afternoon.');
+    expect(reply).toBe('You look open tomorrow afternoon.');
+  });
+
+  it('summarizes partial open time after a requested boundary', async () => {
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            summary: 'Jeff',
+            items: [
+              {
+                id: 'google-7',
+                summary: 'School pickup',
+                start: {
+                  dateTime: '2026-04-01T20:00:00Z',
+                },
+                end: {
+                  dateTime: '2026-04-01T20:30:00Z',
+                },
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+    );
+
+    const reply = await buildCalendarAssistantReply(
+      'Am I free after 3 tomorrow?',
+      {
+        now: new Date('2026-03-31T23:55:00-05:00'),
+        timeZone: 'America/Chicago',
+        platform: 'win32',
+        env: {
+          GOOGLE_CALENDAR_ACCESS_TOKEN: 'token',
+        },
+        fetchImpl,
+      },
+    );
+
+    expect(reply).toContain("You're partly open after 3 PM tomorrow.");
+    expect(reply).toContain('3:00 PM-3:30 PM School pickup');
+    expect(reply).toContain('Open: 3:30 PM-12:00 AM');
+  });
+
+  it('checks duration-fit availability against the full interval', async () => {
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            summary: 'Jeff',
+            items: [
+              {
+                id: 'google-8',
+                summary: 'Project sync',
+                start: {
+                  dateTime: '2026-04-01T21:30:00Z',
+                },
+                end: {
+                  dateTime: '2026-04-01T22:00:00Z',
+                },
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+    );
+
+    const reply = await buildCalendarAssistantReply(
+      'Do I have time at 4 for a one-hour meeting tomorrow?',
+      {
+        now: new Date('2026-03-31T23:55:00-05:00'),
+        timeZone: 'America/Chicago',
+        platform: 'win32',
+        env: {
+          GOOGLE_CALENDAR_ACCESS_TOKEN: 'token',
+        },
+        fetchImpl,
+      },
+    );
+
+    expect(reply).toContain("don't have a full 1 hour at 4 PM tomorrow");
+    expect(reply).toContain('4:30 PM-5:00 PM Project sync');
+  });
+
+  it('reports back-to-back meetings as clusters', async () => {
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            summary: 'Jeff',
+            items: [
+              {
+                id: 'google-9',
+                summary: '1:1',
+                start: {
+                  dateTime: '2026-04-01T15:00:00Z',
+                },
+                end: {
+                  dateTime: '2026-04-01T15:30:00Z',
+                },
+              },
+              {
+                id: 'google-10',
+                summary: 'Team sync',
+                start: {
+                  dateTime: '2026-04-01T15:40:00Z',
+                },
+                end: {
+                  dateTime: '2026-04-01T16:10:00Z',
+                },
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+    );
+
+    const reply = await buildCalendarAssistantReply(
+      'Do I have back-to-back meetings tomorrow?',
+      {
+        now: new Date('2026-03-31T23:55:00-05:00'),
+        timeZone: 'America/Chicago',
+        platform: 'win32',
+        env: {
+          GOOGLE_CALENDAR_ACCESS_TOKEN: 'token',
+        },
+        fetchImpl,
+      },
+    );
+
+    expect(reply).toContain('You do have back-to-back meetings tomorrow:');
+    expect(reply).toContain(
+      '10:00 AM-10:30 AM 1:1 -> 10:40 AM-11:10 AM Team sync',
+    );
+  });
+
+  it('asks a concise follow-up for vague anchors', async () => {
+    const response = await buildCalendarAssistantResponse(
+      'What do I have after work today?',
+      {
+        now: new Date('2026-04-01T09:00:00-05:00'),
+        timeZone: 'America/Chicago',
+        platform: 'win32',
+        env: {
+          GOOGLE_CALENDAR_ACCESS_TOKEN: 'token',
+        },
+      },
+    );
+
+    expect(response?.reply).toBe('What time should I treat as after work?');
   });
 
   it('checks exact-time overlap conservatively for Google availability', async () => {

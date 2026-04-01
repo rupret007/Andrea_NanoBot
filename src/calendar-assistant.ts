@@ -51,6 +51,12 @@ type CalendarProviderId =
   | 'google_calendar'
   | 'outlook';
 type CalendarProviderState = 'ready' | 'not_configured' | 'error';
+type CalendarReasoningMode =
+  | 'agenda'
+  | 'availability_point'
+  | 'availability_range'
+  | 'availability_duration'
+  | 'availability_back_to_back';
 
 export interface PlannedCalendarLookup {
   intent: CalendarIntent;
@@ -59,6 +65,11 @@ export interface PlannedCalendarLookup {
   label: string;
   timeZone: string;
   pointInTime: Date | null;
+  durationMinutes: number | null;
+  durationLabel: string | null;
+  reasoningMode: CalendarReasoningMode;
+  clarificationQuestion: string | null;
+  requestedTitle: string | null;
 }
 
 export interface CalendarEvent {
@@ -86,6 +97,17 @@ export interface CalendarLookupResult {
   plan: PlannedCalendarLookup;
   events: CalendarEvent[];
   statuses: CalendarProviderStatus[];
+}
+
+export interface CalendarSchedulingContext {
+  title: string;
+  durationMinutes: number;
+  timeZone: string;
+}
+
+export interface CalendarAssistantResponse {
+  reply: string;
+  schedulingContext: CalendarSchedulingContext | null;
 }
 
 interface CalendarAssistantConfig {
@@ -133,6 +155,12 @@ interface ParsedClockTime {
   displayLabel: string;
 }
 
+interface ParsedDuration {
+  minutes: number;
+  label: string;
+  requestedTitle: string | null;
+}
+
 function normalizeMessage(message: string): string {
   return message
     .replace(/[’‘]/g, "'")
@@ -176,6 +204,22 @@ function formatClockLabel(hours: number, minutes: number): string {
     : `${displayHour}:${String(minutes).padStart(2, '0')} ${suffix}`;
 }
 
+function inferClockHourWithoutMeridiem(rawHour: number): number | null {
+  if (rawHour < 0 || rawHour > 23) {
+    return null;
+  }
+  if (rawHour >= 13) {
+    return rawHour;
+  }
+  if (rawHour === 12) {
+    return 12;
+  }
+  if (rawHour >= 1 && rawHour <= 7) {
+    return rawHour + 12;
+  }
+  return rawHour;
+}
+
 function parseClockTime(normalized: string): ParsedClockTime | null {
   const match = normalized.match(/\bat\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/i);
   if (!match) return null;
@@ -209,15 +253,77 @@ function parseClockTime(normalized: string): ParsedClockTime | null {
     };
   }
 
-  if (rawHour < 0 || rawHour > 23) {
+  const inferredHour = inferClockHourWithoutMeridiem(rawHour);
+  if (inferredHour === null) {
     return null;
   }
 
   return {
-    hours: rawHour,
+    hours: inferredHour,
     minutes,
-    displayLabel: formatClockLabel(rawHour, minutes),
+    displayLabel: formatClockLabel(inferredHour, minutes),
   };
+}
+
+function parseDurationRequest(normalized: string): ParsedDuration | null {
+  const hyphenHourMatch = normalized.match(
+    /\bfor\s+(?:a\s+)?one-hour\b([\s\S]*?)(?:[?.!]|$)/i,
+  );
+  if (hyphenHourMatch) {
+    return {
+      minutes: 60,
+      label: '1 hour',
+      requestedTitle: inferRequestedTitle(hyphenHourMatch[1] || normalized),
+    };
+  }
+
+  const hourMatch = normalized.match(
+    /\bfor\s+(?:(an?|one)\s+hour|(\d+(?:\.\d+)?)\s*(hours?|hrs?))\b([\s\S]*?)(?:[?.!]|$)/i,
+  );
+  if (hourMatch) {
+    const numericHours = hourMatch[2] ? Number(hourMatch[2]) : 1;
+    if (Number.isFinite(numericHours) && numericHours > 0) {
+      return {
+        minutes: Math.round(numericHours * 60),
+        label: numericHours === 1 ? '1 hour' : `${numericHours} hours`,
+        requestedTitle: inferRequestedTitle(hourMatch[4] || normalized),
+      };
+    }
+  }
+
+  const minuteMatch = normalized.match(
+    /\bfor\s+(\d{1,3})\s*(minutes?|mins?)\b([\s\S]*?)(?:[?.!]|$)/i,
+  );
+  if (minuteMatch) {
+    const minutes = Number(minuteMatch[1]);
+    if (Number.isFinite(minutes) && minutes > 0) {
+      return {
+        minutes,
+        label: `${minutes} minutes`,
+        requestedTitle: inferRequestedTitle(minuteMatch[3] || normalized),
+      };
+    }
+  }
+
+  return null;
+}
+
+function inferRequestedTitle(raw: string): string | null {
+  const normalized = raw
+    .replace(/[?.!]+$/g, '')
+    .replace(
+      /\b(?:for|a|an|the|my|our|that|this|at|on|in|to|tomorrow|today|friday|monday|tuesday|wednesday|thursday|saturday|sunday|afternoon|morning|evening|tonight|meeting|meetings)\b/gi,
+      ' ',
+    )
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (/\bmeeting\b/i.test(raw)) return 'meeting';
+  if (/\bcall\b/i.test(raw)) return 'call';
+  if (/\bappointment\b/i.test(raw)) return 'appointment';
+  if (/\bsync\b/i.test(raw)) return 'sync';
+  if (/\bevent\b/i.test(raw)) return 'event';
+  return normalized || null;
 }
 
 function resolveNextWeekdayRange(
@@ -327,6 +433,8 @@ function resolveLookupRange(
 function looksLikeAgendaQuery(normalized: string): boolean {
   return (
     /\bwhat(?:'s| is)\b[\s\S]{0,80}\b(calendar|schedule)\b/.test(normalized) ||
+    /\bwhat does my\b[\s\S]{0,80}\blook like\b/.test(normalized) ||
+    /\bwhat do i have\b/.test(normalized) ||
     /\b(?:show|check|look at|pull up|read)\b[\s\S]{0,80}\b(calendar|schedule)\b/.test(
       normalized,
     ) ||
@@ -343,11 +451,69 @@ function looksLikeAvailabilityQuery(normalized: string): boolean {
     /\b(?:am i|are we)\b[\s\S]{0,80}\b(free|available|open)\b/.test(
       normalized,
     ) ||
+    /\bdo i have time\b/.test(normalized) ||
+    /\bdo i have back(?:\s*|-)?to(?:\s*|-)?back\b/.test(normalized) ||
     /\bdo i have anything\b[\s\S]{0,40}\bat\b/.test(normalized) ||
     /\bwhat(?:'s| is)\b[\s\S]{0,80}\b(availability|available)\b/.test(
       normalized,
     )
   );
+}
+
+function detectClarificationQuestion(normalized: string): string | null {
+  if (/\bafter work\b/.test(normalized)) {
+    return 'What time should I treat as after work?';
+  }
+  if (/\bbefore lunch\b/.test(normalized)) {
+    return 'What time should I treat as before lunch?';
+  }
+  return null;
+}
+
+function parseRelativeBoundaryTime(
+  normalized: string,
+): { kind: 'after' | 'before'; time: ParsedClockTime } | null {
+  const match = normalized.match(
+    /\b(after|before)\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/i,
+  );
+  if (!match) return null;
+
+  const rawHour = Number(match[2]);
+  const minutes = match[3] ? Number(match[3]) : 0;
+  const meridiem = match[4]?.toLowerCase() ?? null;
+  let hours: number | null = null;
+  if (meridiem) {
+    if (rawHour < 1 || rawHour > 12) {
+      return null;
+    }
+    hours =
+      rawHour === 12
+        ? meridiem === 'am'
+          ? 0
+          : 12
+        : meridiem === 'pm'
+          ? rawHour + 12
+          : rawHour;
+  } else {
+    hours = inferClockHourWithoutMeridiem(rawHour);
+  }
+  if (
+    hours === null ||
+    !Number.isInteger(minutes) ||
+    minutes < 0 ||
+    minutes > 59
+  ) {
+    return null;
+  }
+
+  return {
+    kind: match[1].toLowerCase() === 'after' ? 'after' : 'before',
+    time: {
+      hours,
+      minutes,
+      displayLabel: formatClockLabel(hours, minutes),
+    },
+  };
 }
 
 export function planCalendarAssistantLookup(
@@ -358,6 +524,7 @@ export function planCalendarAssistantLookup(
   const normalized = normalizeMessage(message).toLowerCase();
   if (!normalized) return null;
 
+  const clarificationQuestion = detectClarificationQuestion(normalized);
   const intent = looksLikeAvailabilityQuery(normalized)
     ? 'availability'
     : looksLikeAgendaQuery(normalized)
@@ -368,9 +535,35 @@ export function planCalendarAssistantLookup(
 
   const range = resolveLookupRange(normalized, now);
   const parsedClockTime = parseClockTime(normalized);
+  const relativeBoundary = parseRelativeBoundaryTime(normalized);
+  const parsedDuration = parseDurationRequest(normalized);
   const rangeDurationMs = range.end.getTime() - range.start.getTime();
   let pointInTime: Date | null = null;
   let label = range.label;
+  let reasoningMode: CalendarReasoningMode =
+    intent === 'agenda' ? 'agenda' : 'availability_range';
+
+  let resolvedStart = range.start;
+  let resolvedEnd = range.end;
+
+  if (relativeBoundary && rangeDurationMs <= 24 * 60 * 60 * 1000) {
+    const boundary = setLocalTime(
+      startOfDay(range.start),
+      relativeBoundary.time.hours,
+      relativeBoundary.time.minutes,
+    );
+    if (relativeBoundary.kind === 'after') {
+      if (boundary >= range.start && boundary < range.end) {
+        resolvedStart = boundary;
+        label = `after ${relativeBoundary.time.displayLabel} ${range.label}`;
+        reasoningMode = 'availability_range';
+      }
+    } else if (boundary > range.start && boundary <= range.end) {
+      resolvedEnd = boundary;
+      label = `before ${relativeBoundary.time.displayLabel} ${range.label}`;
+      reasoningMode = 'availability_range';
+    }
+  }
 
   if (parsedClockTime && rangeDurationMs <= 24 * 60 * 60 * 1000) {
     const candidate = setLocalTime(
@@ -380,17 +573,35 @@ export function planCalendarAssistantLookup(
     );
     if (candidate >= range.start && candidate < range.end) {
       pointInTime = candidate;
-      label = `at ${parsedClockTime.displayLabel} ${range.label}`;
+      label =
+        intent === 'availability'
+          ? `at ${parsedClockTime.displayLabel} ${range.label}`
+          : `at ${parsedClockTime.displayLabel} ${range.label}`;
+      reasoningMode = parsedDuration
+        ? 'availability_duration'
+        : 'availability_point';
     }
+  }
+
+  if (
+    intent === 'availability' &&
+    /\bback(?:\s*|-)?to(?:\s*|-)?back\b/.test(normalized)
+  ) {
+    reasoningMode = 'availability_back_to_back';
   }
 
   return {
     intent,
-    start: range.start,
-    end: range.end,
+    start: resolvedStart,
+    end: resolvedEnd,
     label,
     timeZone,
     pointInTime,
+    durationMinutes: parsedDuration?.minutes || null,
+    durationLabel: parsedDuration?.label || null,
+    reasoningMode,
+    clarificationQuestion,
+    requestedTitle: parsedDuration?.requestedTitle || null,
   };
 }
 
@@ -749,6 +960,17 @@ function filterEventsForPlan(
     }
     if (!plan.pointInTime) {
       return true;
+    }
+    if (
+      plan.reasoningMode === 'availability_duration' &&
+      plan.durationMinutes &&
+      plan.durationMinutes > 0
+    ) {
+      return eventOverlapsRange(
+        event,
+        plan.pointInTime,
+        new Date(plan.pointInTime.getTime() + plan.durationMinutes * 60 * 1000),
+      );
     }
     return eventOverlapsPoint(event, plan.pointInTime);
   });
@@ -1436,9 +1658,125 @@ function formatStatusDetailList(statuses: CalendarProviderStatus[]): string {
     .join('\n');
 }
 
-export function formatCalendarAssistantReply(
-  result: CalendarLookupResult,
-): string {
+function formatWindowRange(start: Date, end: Date, timeZone: string): string {
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+  return `${formatter.format(start)}-${formatter.format(end)}`;
+}
+
+function getTimedEvents(events: CalendarEvent[]): CalendarEvent[] {
+  return events.filter((event) => !event.allDay);
+}
+
+function getAllDayEvents(events: CalendarEvent[]): CalendarEvent[] {
+  return events.filter((event) => event.allDay);
+}
+
+function buildBusyWindows(events: CalendarEvent[]): Array<{
+  start: Date;
+  end: Date;
+}> {
+  const sorted = getTimedEvents(events).sort(
+    (left, right) =>
+      new Date(left.startIso).getTime() - new Date(right.startIso).getTime(),
+  );
+  const windows: Array<{ start: Date; end: Date }> = [];
+  for (const event of sorted) {
+    const start = new Date(event.startIso);
+    const end = new Date(event.endIso);
+    const current = windows.at(-1);
+    if (!current || start.getTime() > current.end.getTime()) {
+      windows.push({ start, end });
+      continue;
+    }
+    if (end.getTime() > current.end.getTime()) {
+      current.end = end;
+    }
+  }
+  return windows;
+}
+
+function buildOpenWindows(
+  start: Date,
+  end: Date,
+  busyWindows: Array<{ start: Date; end: Date }>,
+): Array<{ start: Date; end: Date }> {
+  const windows: Array<{ start: Date; end: Date }> = [];
+  let cursor = start.getTime();
+  for (const busy of busyWindows) {
+    const busyStart = Math.max(busy.start.getTime(), start.getTime());
+    const busyEnd = Math.min(busy.end.getTime(), end.getTime());
+    if (busyEnd <= start.getTime() || busyStart >= end.getTime()) {
+      continue;
+    }
+    if (busyStart > cursor) {
+      windows.push({
+        start: new Date(cursor),
+        end: new Date(busyStart),
+      });
+    }
+    cursor = Math.max(cursor, busyEnd);
+  }
+  if (cursor < end.getTime()) {
+    windows.push({
+      start: new Date(cursor),
+      end: new Date(end.getTime()),
+    });
+  }
+  return windows.filter(
+    (window) => window.end.getTime() > window.start.getTime(),
+  );
+}
+
+function formatOpenWindows(
+  windows: Array<{ start: Date; end: Date }>,
+  timeZone: string,
+): string[] {
+  return windows.map(
+    (window) =>
+      `- Open: ${formatWindowRange(window.start, window.end, timeZone)}`,
+  );
+}
+
+function buildAdjacencyClusters(events: CalendarEvent[]): CalendarEvent[][] {
+  const timedEvents = getTimedEvents(events).sort(
+    (left, right) =>
+      new Date(left.startIso).getTime() - new Date(right.startIso).getTime(),
+  );
+  const clusters: CalendarEvent[][] = [];
+  let current: CalendarEvent[] = [];
+
+  for (const event of timedEvents) {
+    if (current.length === 0) {
+      current = [event];
+      continue;
+    }
+
+    const previous = current.at(-1)!;
+    const gapMs =
+      new Date(event.startIso).getTime() - new Date(previous.endIso).getTime();
+    if (gapMs >= 0 && gapMs <= 15 * 60 * 1000) {
+      current.push(event);
+      continue;
+    }
+
+    if (current.length > 1) {
+      clusters.push(current);
+    }
+    current = [event];
+  }
+
+  if (current.length > 1) {
+    clusters.push(current);
+  }
+
+  return clusters;
+}
+
+function buildAvailabilityReply(result: CalendarLookupResult): string {
   const configuredStatuses = result.statuses.filter(
     (status) => status.configured,
   );
@@ -1455,6 +1793,13 @@ export function formatCalendarAssistantReply(
     configuredStatuses.every(
       (status) => status.state === 'ready' && status.complete,
     );
+  const incompleteNote =
+    incompleteStatuses.length > 0
+      ? `\n\nI couldn't confirm every configured calendar right now.\n${formatStatusDetailList(
+          incompleteStatuses,
+        )}`
+      : '';
+  const incompleteNoteBody = incompleteNote.replace(/^\n+/, '');
 
   if (!hasConfiguredProviders) {
     return [
@@ -1478,17 +1823,150 @@ export function formatCalendarAssistantReply(
     ].join('\n');
   }
 
+  if (result.plan.clarificationQuestion) {
+    return result.plan.clarificationQuestion;
+  }
+
+  if (result.plan.reasoningMode === 'availability_back_to_back') {
+    const clusters = buildAdjacencyClusters(result.events);
+    if (clusters.length === 0) {
+      if (!fullyConfirmed) {
+        return `I didn't find any back-to-back meetings ${result.plan.label} in the calendars I could read.${incompleteNote}`;
+      }
+      return `You don't have any back-to-back meetings ${result.plan.label}.`;
+    }
+
+    const clusterLines = clusters.map((cluster) => {
+      const parts = cluster.map(
+        (event) =>
+          `${formatTimeRange(event, result.plan.timeZone)} ${event.title}`,
+      );
+      return `- ${parts.join(' -> ')}`;
+    });
+    return [
+      `You do have back-to-back meetings ${result.plan.label}:`,
+      ...clusterLines,
+      ...(fullyConfirmed ? [] : ['', incompleteNoteBody]),
+    ]
+      .filter(Boolean)
+      .join('\n');
+  }
+
+  if (
+    result.plan.reasoningMode === 'availability_point' ||
+    result.plan.reasoningMode === 'availability_duration' ||
+    result.plan.reasoningMode === 'availability_range'
+  ) {
+    const timedEvents = getTimedEvents(result.events);
+    const allDayEvents = getAllDayEvents(result.events);
+
+    if (result.plan.reasoningMode === 'availability_point') {
+      if (timedEvents.length === 0) {
+        if (!fullyConfirmed) {
+          return `I didn't find anything blocking ${result.plan.label} in the calendars I could read.${incompleteNote}`;
+        }
+        const allDayNote =
+          allDayEvents.length > 0
+            ? `\n\nAll-day events:\n${formatGroupedEvents(
+                allDayEvents,
+                result.plan.timeZone,
+              ).join('\n')}`
+            : '';
+        return `You look free ${result.plan.label}.${allDayNote}`;
+      }
+
+      return [
+        `You're not free ${result.plan.label}.`,
+        ...formatGroupedEvents(timedEvents, result.plan.timeZone),
+        ...(allDayEvents.length > 0
+          ? [
+              '',
+              'All-day events:',
+              ...formatGroupedEvents(allDayEvents, result.plan.timeZone),
+            ]
+          : []),
+        ...(fullyConfirmed ? [] : ['', incompleteNoteBody]),
+      ]
+        .filter(Boolean)
+        .join('\n');
+    }
+
+    if (
+      result.plan.reasoningMode === 'availability_duration' &&
+      result.plan.pointInTime &&
+      result.plan.durationMinutes
+    ) {
+      if (timedEvents.length === 0) {
+        if (!fullyConfirmed) {
+          return `I didn't find anything blocking ${result.plan.label} for ${result.plan.durationLabel || `${result.plan.durationMinutes} minutes`} in the calendars I could read.${incompleteNote}`;
+        }
+        return `Yes, you have time ${result.plan.label} for ${result.plan.durationLabel || `${result.plan.durationMinutes} minutes`}.`;
+      }
+
+      return [
+        `No, you don't have a full ${result.plan.durationLabel || `${result.plan.durationMinutes} minutes`} ${result.plan.label}.`,
+        ...formatGroupedEvents(timedEvents, result.plan.timeZone),
+        ...(fullyConfirmed ? [] : ['', incompleteNoteBody]),
+      ]
+        .filter(Boolean)
+        .join('\n');
+    }
+
+    const busyWindows = buildBusyWindows(timedEvents);
+    const openWindows = buildOpenWindows(
+      result.plan.start,
+      result.plan.end,
+      busyWindows,
+    );
+    const rangeEvents = formatGroupedEvents(timedEvents, result.plan.timeZone);
+    const allDayLines =
+      allDayEvents.length > 0
+        ? [
+            '',
+            'All-day events:',
+            ...formatGroupedEvents(allDayEvents, result.plan.timeZone),
+          ]
+        : [];
+
+    if (timedEvents.length === 0) {
+      if (!fullyConfirmed) {
+        return `I didn't find anything blocking ${result.plan.label} in the calendars I could read.${incompleteNote}`;
+      }
+      return [`You look open ${result.plan.label}.`, ...allDayLines]
+        .filter(Boolean)
+        .join('\n');
+    }
+
+    if (openWindows.length === 0) {
+      return [
+        `You're busy ${result.plan.label}.`,
+        ...rangeEvents,
+        ...allDayLines,
+        ...(fullyConfirmed ? [] : ['', incompleteNoteBody]),
+      ]
+        .filter(Boolean)
+        .join('\n');
+    }
+
+    return [
+      `You're partly open ${result.plan.label}.`,
+      ...rangeEvents,
+      '',
+      ...formatOpenWindows(openWindows, result.plan.timeZone),
+      ...allDayLines,
+      ...(fullyConfirmed ? [] : ['', incompleteNoteBody]),
+    ]
+      .filter(Boolean)
+      .join('\n');
+  }
+
   if (result.events.length === 0) {
     if (!fullyConfirmed) {
       const inspected =
         result.plan.intent === 'availability'
           ? `I didn't find anything blocking ${result.plan.label} in the calendars I could read.`
           : `I didn't find anything on your calendar ${result.plan.label} in the calendars I could read.`;
-      return [
-        `${inspected} I couldn't confirm every configured calendar right now.`,
-        '',
-        formatStatusDetailList(incompleteStatuses),
-      ].join('\n');
+      return `${inspected}${incompleteNote}`;
     }
 
     if (result.plan.intent === 'availability') {
@@ -1502,10 +1980,53 @@ export function formatCalendarAssistantReply(
       ? `You're not free ${result.plan.label}.`
       : `Here's what's on your calendar ${result.plan.label}:`;
   const lines = formatGroupedEvents(result.events, result.plan.timeZone);
-  const note = !fullyConfirmed
-    ? `\n\nI found these events, but I couldn't read every configured calendar right now.\n${formatStatusDetailList(incompleteStatuses)}`
-    : '';
-  return `${header}\n${lines.join('\n')}${note}`;
+  return `${header}\n${lines.join('\n')}${!fullyConfirmed ? `\n\nI found these events, but I couldn't read every configured calendar right now.\n${formatStatusDetailList(incompleteStatuses)}` : ''}`;
+}
+
+export function formatCalendarAssistantReply(
+  result: CalendarLookupResult,
+): string {
+  return buildAvailabilityReply(result);
+}
+
+export async function buildCalendarAssistantResponse(
+  message: string,
+  deps: CalendarAssistantDeps & {
+    now?: Date;
+    timeZone?: string;
+  } = {},
+): Promise<CalendarAssistantResponse | null> {
+  const plan = planCalendarAssistantLookup(
+    message,
+    deps.now || new Date(),
+    deps.timeZone || TIMEZONE,
+  );
+  if (!plan) return null;
+  if (plan.clarificationQuestion) {
+    return {
+      reply: plan.clarificationQuestion,
+      schedulingContext:
+        plan.durationMinutes && plan.requestedTitle
+          ? {
+              title: plan.requestedTitle,
+              durationMinutes: plan.durationMinutes,
+              timeZone: plan.timeZone,
+            }
+          : null,
+    };
+  }
+  const result = await lookupCalendarAssistantEvents(plan, deps);
+  return {
+    reply: formatCalendarAssistantReply(result),
+    schedulingContext:
+      plan.durationMinutes && plan.requestedTitle
+        ? {
+            title: plan.requestedTitle,
+            durationMinutes: plan.durationMinutes,
+            timeZone: plan.timeZone,
+          }
+        : null,
+  };
 }
 
 export async function buildCalendarAssistantReply(
@@ -1515,12 +2036,6 @@ export async function buildCalendarAssistantReply(
     timeZone?: string;
   } = {},
 ): Promise<string | null> {
-  const plan = planCalendarAssistantLookup(
-    message,
-    deps.now || new Date(),
-    deps.timeZone || TIMEZONE,
-  );
-  if (!plan) return null;
-  const result = await lookupCalendarAssistantEvents(plan, deps);
-  return formatCalendarAssistantReply(result);
+  const response = await buildCalendarAssistantResponse(message, deps);
+  return response?.reply || null;
 }

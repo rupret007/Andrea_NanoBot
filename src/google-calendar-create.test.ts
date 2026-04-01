@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   advancePendingGoogleCalendarCreate,
+  buildGoogleCalendarSchedulingContextState,
   buildPendingGoogleCalendarCreateState,
   formatGoogleCalendarCreatePrompt,
   planGoogleCalendarCreate,
@@ -95,6 +96,33 @@ describe('planGoogleCalendarCreate', () => {
     if (plan.kind !== 'needs_details') return;
     expect(plan.message).toContain('still need the start time');
   });
+
+  it('uses scheduling context for pronoun-based follow-through', () => {
+    const context = buildGoogleCalendarSchedulingContextState({
+      draft: {
+        title: 'Project sync',
+        startIso: '2026-04-02T21:00:00.000Z',
+        endIso: '2026-04-02T22:00:00.000Z',
+        allDay: false,
+        timeZone: 'America/Chicago',
+      },
+      now: new Date('2026-04-01T09:00:00-05:00'),
+    });
+
+    const plan = planGoogleCalendarCreate(
+      'Put that on my calendar Friday afternoon.',
+      [...writableCalendars],
+      new Date('2026-04-01T09:00:00-05:00'),
+      'America/Chicago',
+      context,
+    );
+
+    expect(plan.kind).toBe('draft');
+    if (plan.kind !== 'draft') return;
+    expect(plan.draft.title).toBe('Project sync');
+    expect(plan.draft.startIso).toBe('2026-04-03T17:00:00.000Z');
+    expect(plan.draft.endIso).toBe('2026-04-03T18:00:00.000Z');
+  });
 });
 
 describe('google calendar create pending flow', () => {
@@ -164,5 +192,161 @@ describe('google calendar create pending flow', () => {
     expect(result.kind).toBe('confirmed');
     if (result.kind !== 'confirmed') return;
     expect(result.calendarId).toBe('primary');
+  });
+
+  it('updates a pending draft when the user retimes it', () => {
+    const pending = buildPendingGoogleCalendarCreateState({
+      draft: {
+        title: 'project sync',
+        startIso: '2026-04-02T21:00:00.000Z',
+        endIso: '2026-04-02T22:00:00.000Z',
+        allDay: false,
+        timeZone: 'America/Chicago',
+      },
+      writableCalendars: [...writableCalendars],
+      selectedCalendarId: 'primary',
+      now: new Date('2026-04-01T09:00:00-05:00'),
+    });
+
+    const result = advancePendingGoogleCalendarCreate(
+      'Put that on my calendar Friday afternoon',
+      pending,
+    );
+    expect(result.kind).toBe('awaiting_input');
+    if (result.kind !== 'awaiting_input') return;
+    expect(result.state.draft.startIso).toBe('2026-04-03T17:00:00.000Z');
+    expect(result.state.draft.endIso).toBe('2026-04-03T18:00:00.000Z');
+  });
+
+  it('switches calendars from a follow-up phrase', () => {
+    const pending = buildPendingGoogleCalendarCreateState({
+      draft: {
+        title: 'project sync',
+        startIso: '2026-04-02T21:00:00.000Z',
+        endIso: '2026-04-02T22:00:00.000Z',
+        allDay: false,
+        timeZone: 'America/Chicago',
+      },
+      writableCalendars: [...writableCalendars],
+      selectedCalendarId: 'primary',
+      now: new Date('2026-04-01T09:00:00-05:00'),
+    });
+
+    const result = advancePendingGoogleCalendarCreate(
+      'Add that to the family calendar',
+      pending,
+    );
+    expect(result.kind).toBe('awaiting_input');
+    if (result.kind !== 'awaiting_input') return;
+    expect(result.state.selectedCalendarId).toBe(
+      'family@group.calendar.google.com',
+    );
+  });
+
+  it('surfaces conflict suggestions in the confirmation prompt', () => {
+    const pending = {
+      ...buildPendingGoogleCalendarCreateState({
+        draft: {
+          title: 'project sync',
+          startIso: '2026-04-02T21:00:00.000Z',
+          endIso: '2026-04-02T22:00:00.000Z',
+          allDay: false,
+          timeZone: 'America/Chicago',
+        },
+        writableCalendars: [...writableCalendars],
+        selectedCalendarId: 'primary',
+        now: new Date('2026-04-01T09:00:00-05:00'),
+      }),
+      conflictSummary: {
+        blockingEvents: [
+          {
+            title: 'Doctor visit',
+            startIso: '2026-04-02T21:00:00.000Z',
+            endIso: '2026-04-02T21:30:00.000Z',
+            allDay: false,
+            calendarName: 'Family',
+          },
+        ],
+        suggestions: [
+          {
+            startIso: '2026-04-02T21:30:00.000Z',
+            endIso: '2026-04-02T22:30:00.000Z',
+            label: 'Thu, Apr 2, 4:30 PM-5:30 PM',
+          },
+        ],
+        selectedSuggestionStartIso: null,
+      },
+    };
+
+    const prompt = formatGoogleCalendarCreatePrompt(pending);
+    expect(prompt).toContain('That time conflicts with:');
+    expect(prompt).toContain('Doctor visit [Family]');
+    expect(prompt).toContain('You could also use:');
+    expect(prompt).toContain('1. Thu, Apr 2, 2026, 4:30 PM-5:30 PM');
+  });
+
+  it('lets the user pick a suggested conflict alternative', () => {
+    const pending = {
+      ...buildPendingGoogleCalendarCreateState({
+        draft: {
+          title: 'project sync',
+          startIso: '2026-04-02T21:00:00.000Z',
+          endIso: '2026-04-02T22:00:00.000Z',
+          allDay: false,
+          timeZone: 'America/Chicago',
+        },
+        writableCalendars: [...writableCalendars],
+        selectedCalendarId: 'primary',
+        now: new Date('2026-04-01T09:00:00-05:00'),
+      }),
+      conflictSummary: {
+        blockingEvents: [
+          {
+            title: 'Doctor visit',
+            startIso: '2026-04-02T21:00:00.000Z',
+            endIso: '2026-04-02T21:30:00.000Z',
+            allDay: false,
+            calendarName: 'Family',
+          },
+        ],
+        suggestions: [
+          {
+            startIso: '2026-04-02T21:30:00.000Z',
+            endIso: '2026-04-02T22:30:00.000Z',
+            label: 'Thu, Apr 2, 4:30 PM-5:30 PM',
+          },
+        ],
+        selectedSuggestionStartIso: null,
+      },
+    };
+
+    const result = advancePendingGoogleCalendarCreate('1', pending);
+    expect(result.kind).toBe('awaiting_input');
+    if (result.kind !== 'awaiting_input') return;
+    expect(result.state.draft.startIso).toBe('2026-04-02T21:30:00.000Z');
+    expect(result.state.conflictSummary).toBeNull();
+  });
+
+  it('asks index-level anchor resolution for after-my-meeting phrasing', () => {
+    const pending = buildPendingGoogleCalendarCreateState({
+      draft: {
+        title: 'project sync',
+        startIso: '2026-04-02T21:00:00.000Z',
+        endIso: '2026-04-02T22:00:00.000Z',
+        allDay: false,
+        timeZone: 'America/Chicago',
+      },
+      writableCalendars: [...writableCalendars],
+      selectedCalendarId: 'primary',
+      now: new Date('2026-04-01T09:00:00-05:00'),
+    });
+
+    const result = advancePendingGoogleCalendarCreate(
+      'Move it to after my 2pm meeting',
+      pending,
+    );
+    expect(result.kind).toBe('resolve_anchor');
+    if (result.kind !== 'resolve_anchor') return;
+    expect(result.anchorTime.displayLabel).toBe('2 PM');
   });
 });
