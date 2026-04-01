@@ -64,6 +64,7 @@ import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
 import { planSimpleReminder } from './local-reminder.js';
+import { buildCalendarAssistantReply } from './calendar-assistant.js';
 import { findChannel, formatMessages, formatOutbound } from './router.js';
 import {
   formatCursorGatewaySmokeTestMessage,
@@ -178,6 +179,7 @@ import {
   maybeBuildDirectRescueReply,
 } from './direct-quick-reply.js';
 import { buildDirectAssistantContinuationPrompt } from './direct-assistant-continuation.js';
+import { getAssistantSessionStorageKey } from './assistant-session.js';
 import {
   decideMainChatRouting,
   shouldAvoidCombinedContextForMainChat,
@@ -297,15 +299,6 @@ const lastNonRetriableErrorNotice: Record<
   { code: string; at: number }
 > = {};
 const lastDirectAssistantTextByChatJid: Record<string, string> = {};
-
-function getSessionStorageKey(
-  groupFolder: string,
-  route?: ReturnType<typeof classifyAssistantRequest>['route'],
-): string {
-  return route === 'direct_assistant'
-    ? `${groupFolder}::direct_assistant`
-    : groupFolder;
-}
 
 function classifyDirectAssistantPromptKind(input: {
   rawPrompt: string;
@@ -935,6 +928,34 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         return false;
       }
     }
+
+    const calendarReply = await buildCalendarAssistantReply(lastContent, {
+      now: new Date(),
+      timeZone: TIMEZONE,
+    });
+    if (calendarReply) {
+      try {
+        await channel.sendMessage(chatJid, calendarReply);
+        logger.info(
+          {
+            component: 'assistant',
+            chatJid,
+            groupFolder: group.folder,
+            group: group.name,
+          },
+          'Handled calendar lookup via local protected fast path',
+        );
+        return true;
+      } catch (err) {
+        lastAgentTimestamp[chatJid] = previousCursor;
+        saveState();
+        logger.warn(
+          { group: group.name, err },
+          'Local protected calendar path failed, rolled back cursor for retry',
+        );
+        return false;
+      }
+    }
   }
 
   // Track idle timer for closing stdin when agent is idle
@@ -1283,7 +1304,7 @@ async function runAgent(
   recoveryAttempted: boolean;
 }> {
   const isMain = group.isMain === true;
-  const sessionStorageKey = getSessionStorageKey(
+  const sessionStorageKey = getAssistantSessionStorageKey(
     group.folder,
     requestPolicy.route,
   );

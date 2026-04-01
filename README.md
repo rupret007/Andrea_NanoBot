@@ -190,6 +190,22 @@ For a reliable demo, keep the story tight:
 
 Optional integrations such as Cursor Cloud job control, desktop bridge control, Alexa, shopping flows, marketplace skills, and calendar-oriented skills exist, but they should be treated as operator-enabled extras unless they were validated the same day.
 
+## Calendar Integration
+
+Andrea now has a local fast path for plain-language calendar reads such as:
+
+- `What's on my calendar tomorrow?`
+- `What's on my schedule this week?`
+- `Am I free Friday afternoon?`
+
+Supported provider paths:
+
+- Apple Calendar directly on a Mac running Andrea
+- Apple/iCloud-style CalDAV using calendar collection URLs plus credentials
+- Outlook calendars through Microsoft Graph
+
+These are optional operator-enabled integrations. Andrea answers truthfully when no provider is configured instead of pretending a calendar is connected.
+
 ## What Andrea Can Do
 
 ### Personal Assistant Work
