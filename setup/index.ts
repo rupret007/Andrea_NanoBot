@@ -17,6 +17,7 @@ const STEPS: Record<
   mounts: () => import('./mounts.js'),
   service: () => import('./service.js'),
   verify: () => import('./verify.js'),
+  'google-calendar': () => import('./google-calendar.js'),
 };
 
 async function main(): Promise<void> {

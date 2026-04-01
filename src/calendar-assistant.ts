@@ -2,6 +2,10 @@ import { spawn } from 'child_process';
 
 import { TIMEZONE } from './config.js';
 import { readEnvFile } from './env.js';
+import {
+  listGoogleCalendarEvents,
+  resolveGoogleCalendarConfig,
+} from './google-calendar.js';
 
 const CALENDAR_ENV_KEYS = [
   'APPLE_CALENDAR_LOCAL_ENABLED',
@@ -119,11 +123,6 @@ interface CalendarProviderResult {
 }
 
 interface ParsedIcsDate {
-  iso: string | null;
-  allDay: boolean;
-}
-
-interface ParsedGoogleDate {
   iso: string | null;
   allDay: boolean;
 }
@@ -400,7 +399,10 @@ function resolveConfigValue(
   envFile: Record<string, string>,
   env?: Record<string, string | undefined>,
 ): string | undefined {
-  return env?.[key] ?? process.env[key] ?? envFile[key];
+  if (env) {
+    return env[key];
+  }
+  return process.env[key] ?? envFile[key];
 }
 
 function resolveCsvList(
@@ -428,10 +430,7 @@ function resolveCalendarConfig(
   const appleCalDavCalendarUrls = resolveCsvList(
     resolveConfigValue('APPLE_CALDAV_CALENDAR_URLS', envFile, env),
   );
-  const googleCalendarIds = resolveCsvList(
-    resolveConfigValue('GOOGLE_CALENDAR_IDS', envFile, env),
-    ['primary'],
-  );
+  const googleConfig = resolveGoogleCalendarConfig(env);
 
   return {
     appleLocalEnabled: appleLocalEnabledValue
@@ -443,16 +442,11 @@ function resolveCalendarConfig(
     appleCalDavPassword:
       resolveConfigValue('APPLE_CALDAV_PASSWORD', envFile, env) || null,
     appleCalDavCalendarUrls,
-    googleAccessToken:
-      resolveConfigValue('GOOGLE_CALENDAR_ACCESS_TOKEN', envFile, env) || null,
-    googleRefreshToken:
-      resolveConfigValue('GOOGLE_CALENDAR_REFRESH_TOKEN', envFile, env) || null,
-    googleClientId:
-      resolveConfigValue('GOOGLE_CALENDAR_CLIENT_ID', envFile, env)?.trim() ||
-      null,
-    googleClientSecret:
-      resolveConfigValue('GOOGLE_CALENDAR_CLIENT_SECRET', envFile, env) || null,
-    googleCalendarIds,
+    googleAccessToken: googleConfig.accessToken,
+    googleRefreshToken: googleConfig.refreshToken,
+    googleClientId: googleConfig.clientId,
+    googleClientSecret: googleConfig.clientSecret,
+    googleCalendarIds: googleConfig.calendarIds,
     outlookAccessToken:
       resolveConfigValue('OUTLOOK_CALENDAR_ACCESS_TOKEN', envFile, env) || null,
     outlookRefreshToken:
@@ -669,35 +663,6 @@ function parseGraphDateTime(
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
 }
 
-function parseGoogleDate(
-  value?: {
-    date?: string;
-    dateTime?: string;
-  } | null,
-): ParsedGoogleDate {
-  if (!value) {
-    return { iso: null, allDay: false };
-  }
-
-  if (value.date) {
-    const parsed = new Date(`${value.date}T00:00:00`);
-    return {
-      iso: Number.isNaN(parsed.getTime()) ? null : parsed.toISOString(),
-      allDay: true,
-    };
-  }
-
-  if (value.dateTime) {
-    const parsed = new Date(value.dateTime);
-    return {
-      iso: Number.isNaN(parsed.getTime()) ? null : parsed.toISOString(),
-      allDay: false,
-    };
-  }
-
-  return { iso: null, allDay: false };
-}
-
 function extractJsonErrorDetail(
   rawText: string,
   fallbackPrefix: string,
@@ -764,14 +729,29 @@ function eventOverlapsPoint(event: CalendarEvent, pointInTime: Date): boolean {
   return eventStart <= point && eventEnd > point;
 }
 
+function eventOverlapsRange(
+  event: CalendarEvent,
+  start: Date,
+  end: Date,
+): boolean {
+  const eventStart = new Date(event.startIso).getTime();
+  const eventEnd = new Date(event.endIso).getTime();
+  return eventStart < end.getTime() && eventEnd > start.getTime();
+}
+
 function filterEventsForPlan(
   events: CalendarEvent[],
   plan: PlannedCalendarLookup,
 ): CalendarEvent[] {
-  if (!plan.pointInTime) {
-    return events;
-  }
-  return events.filter((event) => eventOverlapsPoint(event, plan.pointInTime!));
+  return events.filter((event) => {
+    if (!eventOverlapsRange(event, plan.start, plan.end)) {
+      return false;
+    }
+    if (!plan.pointInTime) {
+      return true;
+    }
+    return eventOverlapsPoint(event, plan.pointInTime);
+  });
 }
 
 async function defaultAppleCalendarScriptRunner(
@@ -1051,53 +1031,6 @@ async function loadAppleCalDavEvents(
   }
 }
 
-async function getGoogleAccessToken(
-  config: CalendarAssistantConfig,
-  fetchImpl: FetchLike,
-): Promise<string> {
-  if (config.googleAccessToken) {
-    return config.googleAccessToken;
-  }
-
-  if (
-    !config.googleRefreshToken ||
-    !config.googleClientId ||
-    !config.googleClientSecret
-  ) {
-    throw new Error(
-      'Set GOOGLE_CALENDAR_ACCESS_TOKEN or GOOGLE_CALENDAR_REFRESH_TOKEN plus GOOGLE_CALENDAR_CLIENT_ID and GOOGLE_CALENDAR_CLIENT_SECRET.',
-    );
-  }
-
-  const body = new URLSearchParams({
-    client_id: config.googleClientId,
-    client_secret: config.googleClientSecret,
-    grant_type: 'refresh_token',
-    refresh_token: config.googleRefreshToken,
-  });
-
-  const response = await fetchImpl('https://oauth2.googleapis.com/token', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
-    body,
-  });
-
-  const text = await response.text();
-  if (!response.ok) {
-    throw new Error(
-      extractJsonErrorDetail(text, 'Google token refresh', response.status),
-    );
-  }
-
-  const payload = JSON.parse(text) as { access_token?: string };
-  if (!payload.access_token) {
-    throw new Error('Google token refresh did not return an access token.');
-  }
-  return payload.access_token;
-}
-
 async function loadGoogleCalendarEvents(
   plan: PlannedCalendarLookup,
   config: CalendarAssistantConfig,
@@ -1131,87 +1064,34 @@ async function loadGoogleCalendarEvents(
   }
 
   try {
-    const accessToken = await getGoogleAccessToken(config, fetchImpl);
-    const events: CalendarEvent[] = [];
-    const failures: string[] = [];
-    let successCount = 0;
-
-    for (const calendarId of config.googleCalendarIds) {
-      const url = new URL(
-        `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`,
-      );
-      url.searchParams.set('timeMin', plan.start.toISOString());
-      url.searchParams.set('timeMax', plan.end.toISOString());
-      url.searchParams.set('singleEvents', 'true');
-      url.searchParams.set('orderBy', 'startTime');
-      url.searchParams.set('maxResults', '250');
-
-      try {
-        const response = await fetchImpl(url.toString(), {
-          method: 'GET',
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-          },
-        });
-        const text = await response.text();
-        if (!response.ok) {
-          throw new Error(
-            extractJsonErrorDetail(text, 'Google Calendar', response.status),
-          );
-        }
-
-        const payload = JSON.parse(text) as {
-          summary?: string;
-          items?: Array<{
-            id?: string;
-            summary?: string;
-            location?: string;
-            status?: string;
-            start?: { date?: string; dateTime?: string };
-            end?: { date?: string; dateTime?: string };
-          }>;
-        };
-        if (!Array.isArray(payload.items)) {
-          throw new Error(
-            'Google Calendar returned an invalid events payload.',
-          );
-        }
-        successCount += 1;
-
-        const calendarName = payload.summary || calendarId;
-        for (const item of payload.items) {
-          if (item.status === 'cancelled') {
-            continue;
-          }
-          const parsedStart = parseGoogleDate(item.start);
-          const parsedEnd = parseGoogleDate(item.end);
-          if (!parsedStart.iso || !parsedEnd.iso) {
-            continue;
-          }
-          events.push({
-            id:
-              item.id ||
-              `google_calendar:${calendarId}:${parsedStart.iso}:${item.summary || 'event'}`,
-            providerId: 'google_calendar',
-            providerLabel: statusBase.label,
-            title: item.summary || 'Untitled event',
-            startIso: parsedStart.iso,
-            endIso: parsedEnd.iso,
-            allDay: parsedStart.allDay,
-            location: item.location || null,
-            calendarName,
-          });
-        }
-      } catch (error) {
-        failures.push(
-          `${calendarId}: ${truncateDetail(
-            error instanceof Error ? error.message : String(error),
-          )}`,
-        );
-      }
-    }
-
-    const deduped = dedupeEvents(events);
+    const { events, failures, successCount } = await listGoogleCalendarEvents(
+      {
+        start: plan.start,
+        end: plan.end,
+        calendarIds: config.googleCalendarIds,
+      },
+      {
+        accessToken: config.googleAccessToken,
+        refreshToken: config.googleRefreshToken,
+        clientId: config.googleClientId,
+        clientSecret: config.googleClientSecret,
+        calendarIds: config.googleCalendarIds,
+      },
+      fetchImpl,
+    );
+    const deduped = dedupeEvents(
+      events.map((event) => ({
+        id: event.id,
+        providerId: 'google_calendar' as const,
+        providerLabel: statusBase.label,
+        title: event.title,
+        startIso: event.startIso,
+        endIso: event.endIso,
+        allDay: event.allDay,
+        location: event.location || null,
+        calendarName: event.calendarName,
+      })),
+    );
     if (successCount === 0 && failures.length > 0) {
       return {
         events: [],

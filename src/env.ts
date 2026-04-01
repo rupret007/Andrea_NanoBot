@@ -41,3 +41,46 @@ export function readEnvFile(keys: string[]): Record<string, string> {
 
   return result;
 }
+
+function encodeEnvValue(value: string): string {
+  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+}
+
+export function upsertEnvFileValues(
+  updates: Record<string, string>,
+  cwd = process.cwd(),
+): void {
+  const envFile = path.join(cwd, '.env');
+  const content = fs.existsSync(envFile)
+    ? fs.readFileSync(envFile, 'utf-8')
+    : '';
+  const lines = content === '' ? [] : content.split(/\r?\n/);
+  const nextUpdates = Object.entries(updates).filter(
+    ([key, value]) => key.trim() && typeof value === 'string',
+  );
+
+  if (nextUpdates.length === 0) {
+    return;
+  }
+
+  const handled = new Set<string>();
+  const nextLines = lines.map((line) => {
+    const match = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)=/);
+    if (!match) return line;
+
+    const key = match[1];
+    const next = nextUpdates.find(([candidate]) => candidate === key);
+    if (!next) return line;
+
+    handled.add(key);
+    return `${key}=${encodeEnvValue(next[1])}`;
+  });
+
+  for (const [key, value] of nextUpdates) {
+    if (handled.has(key)) continue;
+    nextLines.push(`${key}=${encodeEnvValue(value)}`);
+  }
+
+  const output = nextLines.join('\n').replace(/\n*$/, '\n');
+  fs.writeFileSync(envFile, output, 'utf-8');
+}

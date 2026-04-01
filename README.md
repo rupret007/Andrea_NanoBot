@@ -208,6 +208,25 @@ Supported provider paths:
 
 These are optional operator-enabled integrations. Google Calendar is the best first setup when your real family events already live there, and Andrea answers truthfully when no provider is configured instead of pretending a calendar is connected.
 
+Google Calendar now supports two practical operator flows on a configured host:
+
+- read real events from explicit selected calendars such as `primary` plus family/shared calendars
+- create simple one-time Google Calendar events after a clear confirmation in chat
+
+Use the Google setup flow on the host instead of trying to give Andrea your Google account password:
+
+```powershell
+npm run setup -- --step google-calendar auth --client-secret-json "C:\path\to\client_secret.json"
+npm run setup -- --step google-calendar discover --select all
+npm run setup -- --step google-calendar validate
+```
+
+Notes:
+
+- while the Google OAuth app stays in Testing, the Google account must be listed as a test user
+- `GOOGLE_CALENDAR_IDS` should stay explicit so Andrea only reads the calendars you selected
+- reminder phrasing still creates reminders, not Google Calendar events
+
 ## What Andrea Can Do
 
 ### Personal Assistant Work

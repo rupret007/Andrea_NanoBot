@@ -429,6 +429,45 @@ END:VCALENDAR</c:calendar-data>
     expect(reply).toContain('All day Spring break');
   });
 
+  it('does not leak a next-day all-day event into tomorrow agenda results', async () => {
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            summary: 'Family',
+            items: [
+              {
+                id: 'google-5b',
+                summary: 'Friday all day',
+                start: {
+                  date: '2026-04-03',
+                },
+                end: {
+                  date: '2026-04-04',
+                },
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+    );
+
+    const reply = await buildCalendarAssistantReply(
+      "What's on my calendar tomorrow?",
+      {
+        now: new Date('2026-04-01T11:40:00-05:00'),
+        timeZone: 'America/Chicago',
+        platform: 'win32',
+        env: {
+          GOOGLE_CALENDAR_ACCESS_TOKEN: 'token',
+        },
+        fetchImpl,
+      },
+    );
+
+    expect(reply).toBe("I don't see anything on your calendar tomorrow.");
+  });
+
   it('fails clearly instead of claiming open time when Google access fails', async () => {
     const fetchImpl = vi.fn(
       async () =>

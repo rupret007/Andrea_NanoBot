@@ -56,6 +56,7 @@ import {
   setRegisteredGroup,
   setAgentThread,
   setRouterState,
+  deleteRouterState,
   setSession,
   storeChatMetadata,
   storeMessage,
@@ -65,6 +66,19 @@ import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
 import { planSimpleReminder } from './local-reminder.js';
 import { buildCalendarAssistantReply } from './calendar-assistant.js';
+import {
+  advancePendingGoogleCalendarCreate,
+  buildPendingGoogleCalendarCreateState,
+  formatGoogleCalendarCreatePrompt,
+  isPendingGoogleCalendarCreateExpired,
+  planGoogleCalendarCreate,
+  type PendingGoogleCalendarCreateState,
+} from './google-calendar-create.js';
+import {
+  createGoogleCalendarEvent,
+  listGoogleCalendars,
+  resolveGoogleCalendarConfig,
+} from './google-calendar.js';
 import { findChannel, formatMessages, formatOutbound } from './router.js';
 import {
   formatCursorGatewaySmokeTestMessage,
@@ -299,6 +313,160 @@ const lastNonRetriableErrorNotice: Record<
   { code: string; at: number }
 > = {};
 const lastDirectAssistantTextByChatJid: Record<string, string> = {};
+const GOOGLE_CALENDAR_PENDING_STATE_PREFIX = 'google_calendar_pending_create:';
+
+function getGoogleCalendarPendingStateKey(chatJid: string): string {
+  return `${GOOGLE_CALENDAR_PENDING_STATE_PREFIX}${chatJid}`;
+}
+
+function getPendingGoogleCalendarCreateState(
+  chatJid: string,
+): PendingGoogleCalendarCreateState | null {
+  const raw = getRouterState(getGoogleCalendarPendingStateKey(chatJid));
+  if (!raw) return null;
+
+  try {
+    const parsed = JSON.parse(raw) as PendingGoogleCalendarCreateState;
+    if (
+      !parsed ||
+      parsed.version !== 1 ||
+      !parsed.step ||
+      !parsed.draft ||
+      !Array.isArray(parsed.calendars)
+    ) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function setPendingGoogleCalendarCreateState(
+  chatJid: string,
+  state: PendingGoogleCalendarCreateState,
+): void {
+  setRouterState(
+    getGoogleCalendarPendingStateKey(chatJid),
+    JSON.stringify(state),
+  );
+}
+
+function clearPendingGoogleCalendarCreateState(chatJid: string): void {
+  deleteRouterState(getGoogleCalendarPendingStateKey(chatJid));
+}
+
+function formatCreatedGoogleCalendarEventReply(input: {
+  title: string;
+  startIso: string;
+  endIso: string;
+  allDay: boolean;
+  timeZone: string;
+  calendarName: string;
+  htmlLink?: string | null;
+}): string {
+  const dateFormatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: input.timeZone,
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+
+  if (input.allDay) {
+    const base = `Added "${input.title}" to ${input.calendarName} on ${dateFormatter.format(
+      new Date(input.startIso),
+    )} as an all-day event.`;
+    return input.htmlLink
+      ? `${base}\n\nOpen in Google Calendar: ${input.htmlLink}`
+      : base;
+  }
+
+  const timeFormatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: input.timeZone,
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+  const base = `Added "${input.title}" to ${input.calendarName} on ${dateFormatter.format(
+    new Date(input.startIso),
+  )} from ${timeFormatter.format(new Date(input.startIso))} to ${timeFormatter.format(
+    new Date(input.endIso),
+  )}.`;
+  return input.htmlLink
+    ? `${base}\n\nOpen in Google Calendar: ${input.htmlLink}`
+    : base;
+}
+
+const CALENDAR_LOOKUP_TOMORROW_PROMPT = "What's on my calendar tomorrow?";
+const CALENDAR_LOOKUP_WEEK_PROMPT = "What's on my calendar this week?";
+const CALENDAR_LOOKUP_POINT_PROMPT = 'Do I have anything at 3pm tomorrow?';
+const CALENDAR_LOOKUP_FREE_PROMPT = 'Am I free Friday afternoon?';
+
+function formatCalendarPanelText(title: string, body: string): string {
+  return formatWorkPanel({
+    title,
+    sections: [stripLeadingMarkdownTitle(body)],
+  });
+}
+
+function buildCalendarLookupInlineActionRows(
+  refreshPrompt: string,
+): SendMessageOptions['inlineActionRows'] {
+  return [
+    [
+      { label: 'Refresh', actionId: refreshPrompt },
+      { label: 'Tomorrow', actionId: CALENDAR_LOOKUP_TOMORROW_PROMPT },
+    ],
+    [
+      { label: 'This Week', actionId: CALENDAR_LOOKUP_WEEK_PROMPT },
+      { label: '3 PM Tomorrow', actionId: CALENDAR_LOOKUP_POINT_PROMPT },
+    ],
+    [{ label: 'Friday Afternoon', actionId: CALENDAR_LOOKUP_FREE_PROMPT }],
+  ];
+}
+
+function buildGoogleCalendarCreateInlineActionRows(
+  state: PendingGoogleCalendarCreateState,
+): SendMessageOptions['inlineActionRows'] {
+  if (state.step === 'choose_calendar') {
+    const rows: NonNullable<SendMessageOptions['inlineActionRows']> = [];
+    for (let index = 0; index < state.calendars.length; index += 2) {
+      const slice = state.calendars
+        .slice(index, index + 2)
+        .map((calendar, offset) => ({
+          label: `${index + offset + 1}. ${calendar.summary}${calendar.primary ? ' (primary)' : ''}`,
+          actionId: String(index + offset + 1),
+        }));
+      rows.push(slice);
+    }
+    rows.push([{ label: 'Cancel', actionId: 'cancel' }]);
+    return rows;
+  }
+
+  return [
+    [
+      { label: 'Create', actionId: 'yes' },
+      { label: 'Cancel', actionId: 'cancel' },
+    ],
+  ];
+}
+
+function buildGoogleCalendarCreatedInlineActionRows(params: {
+  htmlLink?: string | null;
+}): SendMessageOptions['inlineActionRows'] {
+  const rows: NonNullable<SendMessageOptions['inlineActionRows']> = [];
+  if (params.htmlLink) {
+    rows.push([{ label: 'Open in Google Calendar', url: params.htmlLink }]);
+  }
+  rows.push([
+    { label: 'Tomorrow', actionId: CALENDAR_LOOKUP_TOMORROW_PROMPT },
+    { label: 'This Week', actionId: CALENDAR_LOOKUP_WEEK_PROMPT },
+  ]);
+  rows.push([
+    { label: 'Friday Afternoon', actionId: CALENDAR_LOOKUP_FREE_PROMPT },
+  ]);
+  return rows;
+}
 
 function classifyDirectAssistantPromptKind(input: {
   rawPrompt: string;
@@ -864,11 +1032,295 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   );
 
   const lastContent = missedMessages.at(-1)?.content ?? '';
+  const now = new Date();
+  const tryHandleLocalGoogleCalendarCreate = async (): Promise<boolean> => {
+    const pendingState = getPendingGoogleCalendarCreateState(chatJid);
+    if (
+      pendingState &&
+      isPendingGoogleCalendarCreateExpired(pendingState, now)
+    ) {
+      clearPendingGoogleCalendarCreateState(chatJid);
+    }
+
+    const activePendingState = getPendingGoogleCalendarCreateState(chatJid);
+    if (!activePendingState) {
+      const explicitCreate =
+        /\b(?:add|put)\b[\s\S]{0,140}\bcalendar\b/i.test(lastContent) ||
+        /\bcreate\b[\s\S]{0,50}\bevent\b/i.test(lastContent) ||
+        /\bschedule\b[\s\S]{0,80}\b(?:event|calendar)\b/i.test(lastContent);
+      if (!explicitCreate) {
+        return false;
+      }
+
+      let writableCalendars;
+      let createPlan;
+      try {
+        const googleConfig = resolveGoogleCalendarConfig();
+        const discoveredCalendars = await listGoogleCalendars(googleConfig);
+        writableCalendars = discoveredCalendars.filter(
+          (calendar) => calendar.selected && calendar.writable,
+        );
+        createPlan = planGoogleCalendarCreate(
+          lastContent,
+          writableCalendars,
+          now,
+          TIMEZONE,
+        );
+      } catch (error) {
+        try {
+          await channel.sendMessage(
+            chatJid,
+            formatCalendarPanelText(
+              '*Google Calendar*',
+              `I can't create a Google Calendar event right now because Google Calendar access is unavailable on this host.\n\n${error instanceof Error ? error.message : String(error)}`,
+            ),
+            {
+              inlineActionRows: buildCalendarLookupInlineActionRows(
+                CALENDAR_LOOKUP_TOMORROW_PROMPT,
+              ),
+            },
+          );
+          logger.warn(
+            {
+              component: 'assistant',
+              chatJid,
+              groupFolder: group.folder,
+              group: group.name,
+            },
+            'Google calendar create unavailable during local fast path',
+          );
+          return true;
+        } catch (sendError) {
+          lastAgentTimestamp[chatJid] = previousCursor;
+          saveState();
+          logger.warn(
+            { group: group.name, err: sendError },
+            'Google calendar unavailable reply failed, rolled back cursor for retry',
+          );
+          return false;
+        }
+      }
+
+      if (!createPlan || createPlan.kind === 'none') {
+        return false;
+      }
+
+      const noWritableCalendars =
+        !writableCalendars || writableCalendars.length === 0;
+      const reply =
+        createPlan.kind === 'needs_details'
+          ? createPlan.message
+          : noWritableCalendars
+            ? 'I can read your Google calendars here, but none of the selected Google calendars are writable right now.'
+            : formatGoogleCalendarCreatePrompt(
+                buildPendingGoogleCalendarCreateState({
+                  draft: createPlan.draft,
+                  writableCalendars,
+                  selectedCalendarId: createPlan.selectedCalendarId,
+                  now,
+                }),
+              );
+
+      try {
+        if (createPlan.kind === 'draft' && !noWritableCalendars) {
+          const pendingDraftState = buildPendingGoogleCalendarCreateState({
+            draft: createPlan.draft,
+            writableCalendars,
+            selectedCalendarId: createPlan.selectedCalendarId,
+            now,
+          });
+          setPendingGoogleCalendarCreateState(chatJid, pendingDraftState);
+        }
+        await channel.sendMessage(
+          chatJid,
+          formatCalendarPanelText('*Google Calendar*', reply),
+          {
+            inlineActionRows:
+              createPlan.kind === 'draft' && !noWritableCalendars
+                ? buildGoogleCalendarCreateInlineActionRows(
+                    buildPendingGoogleCalendarCreateState({
+                      draft: createPlan.draft,
+                      writableCalendars,
+                      selectedCalendarId: createPlan.selectedCalendarId,
+                      now,
+                    }),
+                  )
+                : buildCalendarLookupInlineActionRows(
+                    CALENDAR_LOOKUP_TOMORROW_PROMPT,
+                  ),
+          },
+        );
+        logger.info(
+          {
+            component: 'assistant',
+            chatJid,
+            groupFolder: group.folder,
+            group: group.name,
+          },
+          'Handled Google calendar create via local fast path',
+        );
+        return true;
+      } catch (err) {
+        lastAgentTimestamp[chatJid] = previousCursor;
+        saveState();
+        logger.warn(
+          { group: group.name, err },
+          'Local Google calendar create path failed, rolled back cursor for retry',
+        );
+        return false;
+      }
+    }
+
+    const continueResult = advancePendingGoogleCalendarCreate(
+      lastContent,
+      activePendingState,
+    );
+    if (continueResult.kind === 'no_match') {
+      return false;
+    }
+
+    if (continueResult.kind === 'cancelled') {
+      try {
+        clearPendingGoogleCalendarCreateState(chatJid);
+        await channel.sendMessage(
+          chatJid,
+          formatCalendarPanelText('*Google Calendar*', continueResult.message),
+          {
+            inlineActionRows: buildCalendarLookupInlineActionRows(
+              CALENDAR_LOOKUP_TOMORROW_PROMPT,
+            ),
+          },
+        );
+        return true;
+      } catch (err) {
+        lastAgentTimestamp[chatJid] = previousCursor;
+        saveState();
+        logger.warn(
+          { group: group.name, err },
+          'Local Google calendar cancel reply failed, rolled back cursor for retry',
+        );
+        return false;
+      }
+    }
+
+    if (continueResult.kind === 'awaiting_input') {
+      try {
+        setPendingGoogleCalendarCreateState(chatJid, continueResult.state);
+        await channel.sendMessage(
+          chatJid,
+          formatCalendarPanelText('*Google Calendar*', continueResult.message),
+          {
+            inlineActionRows: buildGoogleCalendarCreateInlineActionRows(
+              continueResult.state,
+            ),
+          },
+        );
+        return true;
+      } catch (err) {
+        lastAgentTimestamp[chatJid] = previousCursor;
+        saveState();
+        logger.warn(
+          { group: group.name, err },
+          'Local Google calendar follow-up prompt failed, rolled back cursor for retry',
+        );
+        return false;
+      }
+    }
+
+    try {
+      const googleConfig = resolveGoogleCalendarConfig();
+      const createdEvent = await createGoogleCalendarEvent(
+        {
+          calendarId: continueResult.calendarId,
+          title: continueResult.state.draft.title,
+          start: new Date(continueResult.state.draft.startIso),
+          end: new Date(continueResult.state.draft.endIso),
+          timeZone: continueResult.state.draft.timeZone,
+          allDay: continueResult.state.draft.allDay,
+          location: continueResult.state.draft.location,
+          description: continueResult.state.draft.description,
+        },
+        googleConfig,
+      );
+      const selectedCalendar = continueResult.state.calendars.find(
+        (calendar) => calendar.id === continueResult.calendarId,
+      );
+      clearPendingGoogleCalendarCreateState(chatJid);
+      await channel.sendMessage(
+        chatJid,
+        formatCalendarPanelText(
+          '*Google Calendar*',
+          formatCreatedGoogleCalendarEventReply({
+            title: continueResult.state.draft.title,
+            startIso: createdEvent.startIso,
+            endIso: createdEvent.endIso,
+            allDay: continueResult.state.draft.allDay,
+            timeZone: continueResult.state.draft.timeZone,
+            calendarName:
+              selectedCalendar?.summary ||
+              createdEvent.calendarName ||
+              'Google Calendar',
+            htmlLink: createdEvent.htmlLink || null,
+          }),
+        ),
+        {
+          inlineActionRows: buildGoogleCalendarCreatedInlineActionRows({
+            htmlLink: createdEvent.htmlLink || null,
+          }),
+        },
+      );
+      logger.info(
+        {
+          component: 'assistant',
+          chatJid,
+          groupFolder: group.folder,
+          group: group.name,
+          calendarId: continueResult.calendarId,
+        },
+        'Created Google calendar event via local fast path',
+      );
+      return true;
+    } catch (error) {
+      try {
+        clearPendingGoogleCalendarCreateState(chatJid);
+        await channel.sendMessage(
+          chatJid,
+          formatCalendarPanelText(
+            '*Google Calendar*',
+            `I couldn't create that Google Calendar event.\n\n${error instanceof Error ? error.message : String(error)}`,
+          ),
+          {
+            inlineActionRows: buildCalendarLookupInlineActionRows(
+              CALENDAR_LOOKUP_TOMORROW_PROMPT,
+            ),
+          },
+        );
+        logger.warn(
+          {
+            component: 'assistant',
+            chatJid,
+            groupFolder: group.folder,
+            group: group.name,
+          },
+          'Google calendar event create failed during local fast path',
+        );
+        return true;
+      } catch (sendError) {
+        lastAgentTimestamp[chatJid] = previousCursor;
+        saveState();
+        logger.warn(
+          { group: group.name, err: sendError },
+          'Google calendar create failure reply failed, rolled back cursor for retry',
+        );
+        return false;
+      }
+    }
+  };
   const tryHandleLocalCalendarReply = async (
     fastPathKind: 'direct' | 'protected',
   ): Promise<boolean> => {
     const calendarReply = await buildCalendarAssistantReply(lastContent, {
-      now: new Date(),
+      now,
       timeZone: TIMEZONE,
     });
     if (!calendarReply) {
@@ -876,7 +1328,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     }
 
     try {
-      await channel.sendMessage(chatJid, calendarReply);
+      await channel.sendMessage(
+        chatJid,
+        formatCalendarPanelText('*Calendar*', calendarReply),
+        {
+          inlineActionRows: buildCalendarLookupInlineActionRows(lastContent),
+        },
+      );
       logger.info(
         {
           component: 'assistant',
@@ -899,6 +1357,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       return false;
     }
   };
+
+  if (await tryHandleLocalGoogleCalendarCreate()) {
+    return true;
+  }
 
   if (requestPolicy.route === 'direct_assistant') {
     if (quickReply) {

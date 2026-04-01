@@ -958,6 +958,10 @@ export function setRouterState(key: string, value: string): void {
   ).run(key, value);
 }
 
+export function deleteRouterState(key: string): void {
+  db.prepare('DELETE FROM router_state WHERE key = ?').run(key);
+}
+
 // --- Session accessors ---
 
 export function getSession(groupFolder: string): string | undefined {
