@@ -863,6 +863,43 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     'Processing messages',
   );
 
+  const lastContent = missedMessages.at(-1)?.content ?? '';
+  const tryHandleLocalCalendarReply = async (
+    fastPathKind: 'direct' | 'protected',
+  ): Promise<boolean> => {
+    const calendarReply = await buildCalendarAssistantReply(lastContent, {
+      now: new Date(),
+      timeZone: TIMEZONE,
+    });
+    if (!calendarReply) {
+      return false;
+    }
+
+    try {
+      await channel.sendMessage(chatJid, calendarReply);
+      logger.info(
+        {
+          component: 'assistant',
+          chatJid,
+          groupFolder: group.folder,
+          group: group.name,
+          requestRoute: requestPolicy.route,
+          calendarFastPath: fastPathKind,
+        },
+        'Handled calendar lookup via local fast path',
+      );
+      return true;
+    } catch (err) {
+      lastAgentTimestamp[chatJid] = previousCursor;
+      saveState();
+      logger.warn(
+        { group: group.name, err, requestRoute: requestPolicy.route },
+        'Local calendar path failed, rolled back cursor for retry',
+      );
+      return false;
+    }
+  };
+
   if (requestPolicy.route === 'direct_assistant') {
     if (quickReply) {
       try {
@@ -893,10 +930,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         return false;
       }
     }
+
+    if (await tryHandleLocalCalendarReply('direct')) {
+      return true;
+    }
   }
 
   if (requestPolicy.route === 'protected_assistant') {
-    const lastContent = missedMessages.at(-1)?.content ?? '';
     const plannedReminder = planSimpleReminder(
       lastContent,
       group.folder,
@@ -929,32 +969,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       }
     }
 
-    const calendarReply = await buildCalendarAssistantReply(lastContent, {
-      now: new Date(),
-      timeZone: TIMEZONE,
-    });
-    if (calendarReply) {
-      try {
-        await channel.sendMessage(chatJid, calendarReply);
-        logger.info(
-          {
-            component: 'assistant',
-            chatJid,
-            groupFolder: group.folder,
-            group: group.name,
-          },
-          'Handled calendar lookup via local protected fast path',
-        );
-        return true;
-      } catch (err) {
-        lastAgentTimestamp[chatJid] = previousCursor;
-        saveState();
-        logger.warn(
-          { group: group.name, err },
-          'Local protected calendar path failed, rolled back cursor for retry',
-        );
-        return false;
-      }
+    if (await tryHandleLocalCalendarReply('protected')) {
+      return true;
     }
   }
 

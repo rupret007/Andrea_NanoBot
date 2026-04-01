@@ -9,6 +9,11 @@ const CALENDAR_ENV_KEYS = [
   'APPLE_CALDAV_USERNAME',
   'APPLE_CALDAV_PASSWORD',
   'APPLE_CALDAV_CALENDAR_URLS',
+  'GOOGLE_CALENDAR_ACCESS_TOKEN',
+  'GOOGLE_CALENDAR_REFRESH_TOKEN',
+  'GOOGLE_CALENDAR_CLIENT_ID',
+  'GOOGLE_CALENDAR_CLIENT_SECRET',
+  'GOOGLE_CALENDAR_IDS',
   'OUTLOOK_CALENDAR_ACCESS_TOKEN',
   'OUTLOOK_CALENDAR_REFRESH_TOKEN',
   'OUTLOOK_CALENDAR_CLIENT_ID',
@@ -36,7 +41,11 @@ const DAYPART_RANGES = {
 
 type FetchLike = typeof fetch;
 type CalendarIntent = 'agenda' | 'availability';
-type CalendarProviderId = 'apple_local' | 'apple_caldav' | 'outlook';
+type CalendarProviderId =
+  | 'apple_local'
+  | 'apple_caldav'
+  | 'google_calendar'
+  | 'outlook';
 type CalendarProviderState = 'ready' | 'not_configured' | 'error';
 
 export interface PlannedCalendarLookup {
@@ -45,6 +54,7 @@ export interface PlannedCalendarLookup {
   end: Date;
   label: string;
   timeZone: string;
+  pointInTime: Date | null;
 }
 
 export interface CalendarEvent {
@@ -64,6 +74,8 @@ export interface CalendarProviderStatus {
   label: string;
   state: CalendarProviderState;
   detail: string;
+  configured: boolean;
+  complete: boolean;
 }
 
 export interface CalendarLookupResult {
@@ -78,6 +90,11 @@ interface CalendarAssistantConfig {
   appleCalDavUsername: string | null;
   appleCalDavPassword: string | null;
   appleCalDavCalendarUrls: string[];
+  googleAccessToken: string | null;
+  googleRefreshToken: string | null;
+  googleClientId: string | null;
+  googleClientSecret: string | null;
+  googleCalendarIds: string[];
   outlookAccessToken: string | null;
   outlookRefreshToken: string | null;
   outlookClientId: string | null;
@@ -104,6 +121,17 @@ interface CalendarProviderResult {
 interface ParsedIcsDate {
   iso: string | null;
   allDay: boolean;
+}
+
+interface ParsedGoogleDate {
+  iso: string | null;
+  allDay: boolean;
+}
+
+interface ParsedClockTime {
+  hours: number;
+  minutes: number;
+  displayLabel: string;
 }
 
 function normalizeMessage(message: string): string {
@@ -139,6 +167,58 @@ function setLocalTime(
   const next = new Date(date);
   next.setHours(hours, minutes, seconds, 0);
   return next;
+}
+
+function formatClockLabel(hours: number, minutes: number): string {
+  const displayHour = hours % 12 || 12;
+  const suffix = hours >= 12 ? 'PM' : 'AM';
+  return minutes === 0
+    ? `${displayHour} ${suffix}`
+    : `${displayHour}:${String(minutes).padStart(2, '0')} ${suffix}`;
+}
+
+function parseClockTime(normalized: string): ParsedClockTime | null {
+  const match = normalized.match(/\bat\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/i);
+  if (!match) return null;
+
+  const rawHour = Number(match[1]);
+  const minutes = match[2] ? Number(match[2]) : 0;
+  const meridiem = match[3]?.toLowerCase() ?? null;
+  if (!Number.isInteger(rawHour) || !Number.isInteger(minutes)) {
+    return null;
+  }
+  if (minutes < 0 || minutes > 59) {
+    return null;
+  }
+
+  if (meridiem) {
+    if (rawHour < 1 || rawHour > 12) {
+      return null;
+    }
+    const normalizedHour =
+      rawHour === 12
+        ? meridiem === 'am'
+          ? 0
+          : 12
+        : meridiem === 'pm'
+          ? rawHour + 12
+          : rawHour;
+    return {
+      hours: normalizedHour,
+      minutes,
+      displayLabel: formatClockLabel(normalizedHour, minutes),
+    };
+  }
+
+  if (rawHour < 0 || rawHour > 23) {
+    return null;
+  }
+
+  return {
+    hours: rawHour,
+    minutes,
+    displayLabel: formatClockLabel(rawHour, minutes),
+  };
 }
 
 function resolveNextWeekdayRange(
@@ -264,6 +344,7 @@ function looksLikeAvailabilityQuery(normalized: string): boolean {
     /\b(?:am i|are we)\b[\s\S]{0,80}\b(free|available|open)\b/.test(
       normalized,
     ) ||
+    /\bdo i have anything\b[\s\S]{0,40}\bat\b/.test(normalized) ||
     /\bwhat(?:'s| is)\b[\s\S]{0,80}\b(availability|available)\b/.test(
       normalized,
     )
@@ -287,12 +368,30 @@ export function planCalendarAssistantLookup(
   if (!intent) return null;
 
   const range = resolveLookupRange(normalized, now);
+  const parsedClockTime = parseClockTime(normalized);
+  const rangeDurationMs = range.end.getTime() - range.start.getTime();
+  let pointInTime: Date | null = null;
+  let label = range.label;
+
+  if (parsedClockTime && rangeDurationMs <= 24 * 60 * 60 * 1000) {
+    const candidate = setLocalTime(
+      startOfDay(range.start),
+      parsedClockTime.hours,
+      parsedClockTime.minutes,
+    );
+    if (candidate >= range.start && candidate < range.end) {
+      pointInTime = candidate;
+      label = `at ${parsedClockTime.displayLabel} ${range.label}`;
+    }
+  }
+
   return {
     intent,
     start: range.start,
     end: range.end,
-    label: range.label,
+    label,
     timeZone,
+    pointInTime,
   };
 }
 
@@ -302,6 +401,17 @@ function resolveConfigValue(
   env?: Record<string, string | undefined>,
 ): string | undefined {
   return env?.[key] ?? process.env[key] ?? envFile[key];
+}
+
+function resolveCsvList(
+  value: string | null | undefined,
+  fallback: string[] = [],
+): string[] {
+  if (!value) return fallback;
+  return value
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
 }
 
 function resolveCalendarConfig(
@@ -315,11 +425,13 @@ function resolveCalendarConfig(
   );
   const appleCalDavUrl =
     resolveConfigValue('APPLE_CALDAV_URL', envFile, env)?.trim() || null;
-  const appleCalDavCalendarUrls =
-    resolveConfigValue('APPLE_CALDAV_CALENDAR_URLS', envFile, env)
-      ?.split(',')
-      .map((value) => value.trim())
-      .filter(Boolean) || [];
+  const appleCalDavCalendarUrls = resolveCsvList(
+    resolveConfigValue('APPLE_CALDAV_CALENDAR_URLS', envFile, env),
+  );
+  const googleCalendarIds = resolveCsvList(
+    resolveConfigValue('GOOGLE_CALENDAR_IDS', envFile, env),
+    ['primary'],
+  );
 
   return {
     appleLocalEnabled: appleLocalEnabledValue
@@ -331,6 +443,16 @@ function resolveCalendarConfig(
     appleCalDavPassword:
       resolveConfigValue('APPLE_CALDAV_PASSWORD', envFile, env) || null,
     appleCalDavCalendarUrls,
+    googleAccessToken:
+      resolveConfigValue('GOOGLE_CALENDAR_ACCESS_TOKEN', envFile, env) || null,
+    googleRefreshToken:
+      resolveConfigValue('GOOGLE_CALENDAR_REFRESH_TOKEN', envFile, env) || null,
+    googleClientId:
+      resolveConfigValue('GOOGLE_CALENDAR_CLIENT_ID', envFile, env)?.trim() ||
+      null,
+    googleClientSecret:
+      resolveConfigValue('GOOGLE_CALENDAR_CLIENT_SECRET', envFile, env) || null,
+    googleCalendarIds,
     outlookAccessToken:
       resolveConfigValue('OUTLOOK_CALENDAR_ACCESS_TOKEN', envFile, env) || null,
     outlookRefreshToken:
@@ -547,6 +669,77 @@ function parseGraphDateTime(
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
 }
 
+function parseGoogleDate(
+  value?: {
+    date?: string;
+    dateTime?: string;
+  } | null,
+): ParsedGoogleDate {
+  if (!value) {
+    return { iso: null, allDay: false };
+  }
+
+  if (value.date) {
+    const parsed = new Date(`${value.date}T00:00:00`);
+    return {
+      iso: Number.isNaN(parsed.getTime()) ? null : parsed.toISOString(),
+      allDay: true,
+    };
+  }
+
+  if (value.dateTime) {
+    const parsed = new Date(value.dateTime);
+    return {
+      iso: Number.isNaN(parsed.getTime()) ? null : parsed.toISOString(),
+      allDay: false,
+    };
+  }
+
+  return { iso: null, allDay: false };
+}
+
+function extractJsonErrorDetail(
+  rawText: string,
+  fallbackPrefix: string,
+  status?: number,
+): string {
+  const trimmed = rawText.trim();
+  if (!trimmed) {
+    return status ? `${fallbackPrefix} ${status}` : fallbackPrefix;
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed) as {
+      error?:
+        | string
+        | {
+            message?: string;
+            error_description?: string;
+            description?: string;
+          };
+      error_description?: string;
+    };
+    const nestedError =
+      typeof parsed.error === 'string'
+        ? parsed.error
+        : parsed.error?.message ||
+          parsed.error?.error_description ||
+          parsed.error?.description;
+    const detail = nestedError || parsed.error_description;
+    if (detail) {
+      return status
+        ? `${fallbackPrefix} ${status}: ${truncateDetail(detail)}`
+        : `${fallbackPrefix}: ${truncateDetail(detail)}`;
+    }
+  } catch {
+    // Fall through to plain-text handling.
+  }
+
+  return status
+    ? `${fallbackPrefix} ${status}: ${truncateDetail(trimmed)}`
+    : `${fallbackPrefix}: ${truncateDetail(trimmed)}`;
+}
+
 function dedupeEvents(events: CalendarEvent[]): CalendarEvent[] {
   const seen = new Set<string>();
   const result: CalendarEvent[] = [];
@@ -562,6 +755,23 @@ function dedupeEvents(events: CalendarEvent[]): CalendarEvent[] {
     if (startDiff !== 0) return startDiff;
     return left.title.localeCompare(right.title);
   });
+}
+
+function eventOverlapsPoint(event: CalendarEvent, pointInTime: Date): boolean {
+  const eventStart = new Date(event.startIso).getTime();
+  const eventEnd = new Date(event.endIso).getTime();
+  const point = pointInTime.getTime();
+  return eventStart <= point && eventEnd > point;
+}
+
+function filterEventsForPlan(
+  events: CalendarEvent[],
+  plan: PlannedCalendarLookup,
+): CalendarEvent[] {
+  if (!plan.pointInTime) {
+    return events;
+  }
+  return events.filter((event) => eventOverlapsPoint(event, plan.pointInTime!));
 }
 
 async function defaultAppleCalendarScriptRunner(
@@ -640,6 +850,8 @@ async function loadAppleLocalEvents(
         ...statusBase,
         state: 'not_configured',
         detail: 'This host is not a Mac.',
+        configured: false,
+        complete: false,
       },
     };
   }
@@ -651,6 +863,8 @@ async function loadAppleLocalEvents(
         ...statusBase,
         state: 'not_configured',
         detail: 'Disabled by APPLE_CALENDAR_LOCAL_ENABLED=false.',
+        configured: false,
+        complete: false,
       },
     };
   }
@@ -694,6 +908,8 @@ async function loadAppleLocalEvents(
           events.length > 0
             ? `${events.length} event(s) found.`
             : 'No events found in range.',
+        configured: true,
+        complete: true,
       },
     };
   } catch (error) {
@@ -705,6 +921,8 @@ async function loadAppleLocalEvents(
         detail: truncateDetail(
           error instanceof Error ? error.message : String(error),
         ),
+        configured: true,
+        complete: false,
       },
     };
   }
@@ -740,6 +958,8 @@ async function loadAppleCalDavEvents(
         state: 'not_configured',
         detail:
           'Set APPLE_CALDAV_URL or APPLE_CALDAV_CALENDAR_URLS plus APPLE_CALDAV_USERNAME and APPLE_CALDAV_PASSWORD.',
+        configured: false,
+        complete: false,
       },
     };
   }
@@ -751,40 +971,68 @@ async function loadAppleCalDavEvents(
     ).toString('base64');
     const body = buildCalDavQueryBody(plan.start, plan.end);
     const events: CalendarEvent[] = [];
+    const failures: string[] = [];
+    let successCount = 0;
 
     for (const calendarUrl of calendarUrls) {
-      const response = await fetchImpl(calendarUrl, {
-        method: 'REPORT',
-        headers: {
-          Authorization: `Basic ${authToken}`,
-          Depth: '1',
-          'Content-Type': 'application/xml; charset=utf-8',
-        },
-        body,
-      });
+      try {
+        const response = await fetchImpl(calendarUrl, {
+          method: 'REPORT',
+          headers: {
+            Authorization: `Basic ${authToken}`,
+            Depth: '1',
+            'Content-Type': 'application/xml; charset=utf-8',
+          },
+          body,
+        });
 
-      const text = await response.text();
-      if (!response.ok) {
-        throw new Error(`CalDAV ${response.status}: ${truncateDetail(text)}`);
-      }
+        const text = await response.text();
+        if (!response.ok) {
+          throw new Error(`CalDAV ${response.status}: ${truncateDetail(text)}`);
+        }
+        successCount += 1;
 
-      for (const payload of extractCalDavPayloads(text)) {
-        events.push(
-          ...parseIcsEvents(payload, 'apple_caldav', statusBase.label),
+        for (const payload of extractCalDavPayloads(text)) {
+          events.push(
+            ...parseIcsEvents(payload, 'apple_caldav', statusBase.label),
+          );
+        }
+      } catch (error) {
+        failures.push(
+          truncateDetail(
+            error instanceof Error ? error.message : String(error),
+          ),
         );
       }
     }
 
     const deduped = dedupeEvents(events);
+    if (successCount === 0 && failures.length > 0) {
+      return {
+        events: [],
+        status: {
+          ...statusBase,
+          state: 'error',
+          detail: failures.join(' | '),
+          configured: true,
+          complete: false,
+        },
+      };
+    }
+
     return {
       events: deduped,
       status: {
         ...statusBase,
         state: 'ready',
         detail:
-          deduped.length > 0
-            ? `${deduped.length} event(s) found.`
-            : 'No events found in range.',
+          failures.length === 0
+            ? deduped.length > 0
+              ? `${deduped.length} event(s) found.`
+              : 'No events found in range.'
+            : `Read ${successCount} of ${calendarUrls.length} calendar collection(s). Failures: ${failures.join(' | ')}`,
+        configured: true,
+        complete: failures.length === 0,
       },
     };
   } catch (error) {
@@ -796,6 +1044,213 @@ async function loadAppleCalDavEvents(
         detail: truncateDetail(
           error instanceof Error ? error.message : String(error),
         ),
+        configured: true,
+        complete: false,
+      },
+    };
+  }
+}
+
+async function getGoogleAccessToken(
+  config: CalendarAssistantConfig,
+  fetchImpl: FetchLike,
+): Promise<string> {
+  if (config.googleAccessToken) {
+    return config.googleAccessToken;
+  }
+
+  if (
+    !config.googleRefreshToken ||
+    !config.googleClientId ||
+    !config.googleClientSecret
+  ) {
+    throw new Error(
+      'Set GOOGLE_CALENDAR_ACCESS_TOKEN or GOOGLE_CALENDAR_REFRESH_TOKEN plus GOOGLE_CALENDAR_CLIENT_ID and GOOGLE_CALENDAR_CLIENT_SECRET.',
+    );
+  }
+
+  const body = new URLSearchParams({
+    client_id: config.googleClientId,
+    client_secret: config.googleClientSecret,
+    grant_type: 'refresh_token',
+    refresh_token: config.googleRefreshToken,
+  });
+
+  const response = await fetchImpl('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body,
+  });
+
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(
+      extractJsonErrorDetail(text, 'Google token refresh', response.status),
+    );
+  }
+
+  const payload = JSON.parse(text) as { access_token?: string };
+  if (!payload.access_token) {
+    throw new Error('Google token refresh did not return an access token.');
+  }
+  return payload.access_token;
+}
+
+async function loadGoogleCalendarEvents(
+  plan: PlannedCalendarLookup,
+  config: CalendarAssistantConfig,
+  deps: CalendarAssistantDeps,
+): Promise<CalendarProviderResult> {
+  const statusBase = {
+    id: 'google_calendar' as const,
+    label: 'Google Calendar',
+  };
+
+  const fetchImpl = deps.fetchImpl || globalThis.fetch;
+  if (
+    !config.googleAccessToken &&
+    !(
+      config.googleRefreshToken &&
+      config.googleClientId &&
+      config.googleClientSecret
+    )
+  ) {
+    return {
+      events: [],
+      status: {
+        ...statusBase,
+        state: 'not_configured',
+        detail:
+          'Set GOOGLE_CALENDAR_ACCESS_TOKEN or GOOGLE_CALENDAR_REFRESH_TOKEN plus GOOGLE_CALENDAR_CLIENT_ID and GOOGLE_CALENDAR_CLIENT_SECRET.',
+        configured: false,
+        complete: false,
+      },
+    };
+  }
+
+  try {
+    const accessToken = await getGoogleAccessToken(config, fetchImpl);
+    const events: CalendarEvent[] = [];
+    const failures: string[] = [];
+    let successCount = 0;
+
+    for (const calendarId of config.googleCalendarIds) {
+      const url = new URL(
+        `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`,
+      );
+      url.searchParams.set('timeMin', plan.start.toISOString());
+      url.searchParams.set('timeMax', plan.end.toISOString());
+      url.searchParams.set('singleEvents', 'true');
+      url.searchParams.set('orderBy', 'startTime');
+      url.searchParams.set('maxResults', '250');
+
+      try {
+        const response = await fetchImpl(url.toString(), {
+          method: 'GET',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+        });
+        const text = await response.text();
+        if (!response.ok) {
+          throw new Error(
+            extractJsonErrorDetail(text, 'Google Calendar', response.status),
+          );
+        }
+
+        const payload = JSON.parse(text) as {
+          summary?: string;
+          items?: Array<{
+            id?: string;
+            summary?: string;
+            location?: string;
+            status?: string;
+            start?: { date?: string; dateTime?: string };
+            end?: { date?: string; dateTime?: string };
+          }>;
+        };
+        if (!Array.isArray(payload.items)) {
+          throw new Error(
+            'Google Calendar returned an invalid events payload.',
+          );
+        }
+        successCount += 1;
+
+        const calendarName = payload.summary || calendarId;
+        for (const item of payload.items) {
+          if (item.status === 'cancelled') {
+            continue;
+          }
+          const parsedStart = parseGoogleDate(item.start);
+          const parsedEnd = parseGoogleDate(item.end);
+          if (!parsedStart.iso || !parsedEnd.iso) {
+            continue;
+          }
+          events.push({
+            id:
+              item.id ||
+              `google_calendar:${calendarId}:${parsedStart.iso}:${item.summary || 'event'}`,
+            providerId: 'google_calendar',
+            providerLabel: statusBase.label,
+            title: item.summary || 'Untitled event',
+            startIso: parsedStart.iso,
+            endIso: parsedEnd.iso,
+            allDay: parsedStart.allDay,
+            location: item.location || null,
+            calendarName,
+          });
+        }
+      } catch (error) {
+        failures.push(
+          `${calendarId}: ${truncateDetail(
+            error instanceof Error ? error.message : String(error),
+          )}`,
+        );
+      }
+    }
+
+    const deduped = dedupeEvents(events);
+    if (successCount === 0 && failures.length > 0) {
+      return {
+        events: [],
+        status: {
+          ...statusBase,
+          state: 'error',
+          detail: failures.join(' | '),
+          configured: true,
+          complete: false,
+        },
+      };
+    }
+
+    return {
+      events: deduped,
+      status: {
+        ...statusBase,
+        state: 'ready',
+        detail:
+          failures.length === 0
+            ? deduped.length > 0
+              ? `${deduped.length} event(s) found across ${config.googleCalendarIds.length} calendar(s).`
+              : `No events found across ${config.googleCalendarIds.length} calendar(s).`
+            : `Read ${successCount} of ${config.googleCalendarIds.length} configured Google calendar(s). Failures: ${failures.join(' | ')}`,
+        configured: true,
+        complete: failures.length === 0,
+      },
+    };
+  } catch (error) {
+    return {
+      events: [],
+      status: {
+        ...statusBase,
+        state: 'error',
+        detail: truncateDetail(
+          error instanceof Error ? error.message : String(error),
+        ),
+        configured: true,
+        complete: false,
       },
     };
   }
@@ -839,7 +1294,7 @@ async function getOutlookAccessToken(
   const text = await response.text();
   if (!response.ok) {
     throw new Error(
-      `Outlook token refresh ${response.status}: ${truncateDetail(text)}`,
+      extractJsonErrorDetail(text, 'Outlook token refresh', response.status),
     );
   }
 
@@ -872,6 +1327,8 @@ async function loadOutlookEvents(
         state: 'not_configured',
         detail:
           'Set OUTLOOK_CALENDAR_ACCESS_TOKEN or OUTLOOK_CALENDAR_REFRESH_TOKEN plus OUTLOOK_CALENDAR_CLIENT_ID.',
+        configured: false,
+        complete: false,
       },
     };
   }
@@ -901,7 +1358,7 @@ async function loadOutlookEvents(
     const text = await response.text();
     if (!response.ok) {
       throw new Error(
-        `Microsoft Graph ${response.status}: ${truncateDetail(text)}`,
+        extractJsonErrorDetail(text, 'Microsoft Graph', response.status),
       );
     }
     const payload = JSON.parse(text) as {
@@ -951,6 +1408,8 @@ async function loadOutlookEvents(
           events.length > 0
             ? `${events.length} event(s) found.`
             : 'No events found in range.',
+        configured: true,
+        complete: true,
       },
     };
   } catch (error) {
@@ -962,6 +1421,8 @@ async function loadOutlookEvents(
         detail: truncateDetail(
           error instanceof Error ? error.message : String(error),
         ),
+        configured: true,
+        complete: false,
       },
     };
   }
@@ -981,12 +1442,16 @@ export async function lookupCalendarAssistantEvents(
   const providerResults = await Promise.all([
     loadAppleLocalEvents(plan, config, resolvedDeps),
     loadAppleCalDavEvents(plan, config, resolvedDeps),
+    loadGoogleCalendarEvents(plan, config, resolvedDeps),
     loadOutlookEvents(plan, config, resolvedDeps),
   ]);
 
   return {
     plan,
-    events: dedupeEvents(providerResults.flatMap((result) => result.events)),
+    events: filterEventsForPlan(
+      dedupeEvents(providerResults.flatMap((result) => result.events)),
+      plan,
+    ),
     statuses: providerResults.map((result) => result.status),
   };
 }
@@ -1008,10 +1473,14 @@ function formatEventLine(
   event: CalendarEvent,
   timeZone: string,
   includeProvider: boolean,
+  includeCalendarName: boolean,
 ): string {
   const parts = [`- ${formatTimeRange(event, timeZone)} ${event.title}`];
   if (event.location) {
     parts.push(`@ ${event.location}`);
+  }
+  if (includeCalendarName && event.calendarName) {
+    parts.push(`[${event.calendarName}]`);
   }
   if (includeProvider) {
     parts.push(`(${event.providerLabel})`);
@@ -1035,6 +1504,8 @@ function formatGroupedEvents(
   });
   const includeProvider =
     new Set(events.map((event) => event.providerLabel)).size > 1;
+  const includeCalendarName =
+    new Set(events.map((event) => event.calendarName).filter(Boolean)).size > 1;
   const grouped = new Map<string, CalendarEvent[]>();
 
   for (const event of events) {
@@ -1049,7 +1520,7 @@ function formatGroupedEvents(
 
   if (grouped.size === 1) {
     return [...grouped.values()][0].map((event) =>
-      formatEventLine(event, timeZone, includeProvider),
+      formatEventLine(event, timeZone, includeProvider, includeCalendarName),
     );
   }
 
@@ -1057,68 +1528,103 @@ function formatGroupedEvents(
   for (const [dayKey, bucket] of grouped.entries()) {
     lines.push(`${dayKey}:`);
     for (const event of bucket) {
-      lines.push(formatEventLine(event, timeZone, includeProvider));
+      lines.push(
+        formatEventLine(event, timeZone, includeProvider, includeCalendarName),
+      );
     }
   }
   return lines;
 }
 
+function formatStatusLabelList(statuses: CalendarProviderStatus[]): string {
+  if (statuses.length === 0) {
+    return 'your configured calendars';
+  }
+  const labels = statuses.map((status) => status.label);
+  if (labels.length === 1) {
+    return labels[0];
+  }
+  if (labels.length === 2) {
+    return `${labels[0]} and ${labels[1]}`;
+  }
+  return `${labels.slice(0, -1).join(', ')}, and ${labels.at(-1)}`;
+}
+
+function formatStatusDetailList(statuses: CalendarProviderStatus[]): string {
+  return statuses
+    .map((status) => `- ${status.label}: ${status.detail}`)
+    .join('\n');
+}
+
 export function formatCalendarAssistantReply(
   result: CalendarLookupResult,
 ): string {
-  const readyStatuses = result.statuses.filter(
+  const configuredStatuses = result.statuses.filter(
+    (status) => status.configured,
+  );
+  const readyStatuses = configuredStatuses.filter(
     (status) => status.state === 'ready',
   );
-  const errorStatuses = result.statuses.filter(
-    (status) => status.state === 'error',
+  const incompleteStatuses = configuredStatuses.filter(
+    (status) => status.state !== 'ready' || !status.complete,
   );
   const configuredReady = readyStatuses.length > 0;
+  const hasConfiguredProviders = configuredStatuses.length > 0;
+  const fullyConfirmed =
+    hasConfiguredProviders &&
+    configuredStatuses.every(
+      (status) => status.state === 'ready' && status.complete,
+    );
 
-  if (!configuredReady) {
-    const errorDetail =
-      errorStatuses.length > 0
-        ? `\n\nI tried these providers but hit errors:\n${errorStatuses
-            .map((status) => `- ${status.label}: ${status.detail}`)
-            .join('\n')}`
-        : '';
+  if (!hasConfiguredProviders) {
     return [
       "I can't check your calendar yet because no supported calendar provider is ready on this host.",
       '',
       'Andrea can read:',
+      '- Google Calendar with a configured OAuth token',
       '- Apple Calendar directly on a Mac',
       '- Apple/iCloud calendars over CalDAV',
       '- Outlook calendars through Microsoft Graph',
-      errorDetail.trim(),
     ]
       .filter(Boolean)
       .join('\n');
   }
 
+  if (!configuredReady) {
+    return [
+      `I can't confirm your calendar right now because ${formatStatusLabelList(configuredStatuses)} ${configuredStatuses.length === 1 ? 'is' : 'are'} unavailable on this host.`,
+      '',
+      formatStatusDetailList(configuredStatuses),
+    ].join('\n');
+  }
+
   if (result.events.length === 0) {
-    const lead =
-      result.plan.intent === 'availability'
-        ? `You look open ${result.plan.label}.`
-        : `I don't see anything on your calendar ${result.plan.label}.`;
-    const note =
-      errorStatuses.length > 0
-        ? `\n\nNote: I couldn't read ${errorStatuses
-            .map((status) => status.label)
-            .join(' or ')} right now.`
-        : '';
-    return `${lead}${note}`;
+    if (!fullyConfirmed) {
+      const inspected =
+        result.plan.intent === 'availability'
+          ? `I didn't find anything blocking ${result.plan.label} in the calendars I could read.`
+          : `I didn't find anything on your calendar ${result.plan.label} in the calendars I could read.`;
+      return [
+        `${inspected} I couldn't confirm every configured calendar right now.`,
+        '',
+        formatStatusDetailList(incompleteStatuses),
+      ].join('\n');
+    }
+
+    if (result.plan.intent === 'availability') {
+      return `You look free ${result.plan.label}.`;
+    }
+    return `I don't see anything on your calendar ${result.plan.label}.`;
   }
 
   const header =
     result.plan.intent === 'availability'
-      ? `You're not fully open ${result.plan.label}. Here's what I found:`
+      ? `You're not free ${result.plan.label}.`
       : `Here's what's on your calendar ${result.plan.label}:`;
   const lines = formatGroupedEvents(result.events, result.plan.timeZone);
-  const note =
-    errorStatuses.length > 0
-      ? `\n\nNote: I couldn't read ${errorStatuses
-          .map((status) => status.label)
-          .join(' or ')} right now.`
-      : '';
+  const note = !fullyConfirmed
+    ? `\n\nI found these events, but I couldn't read every configured calendar right now.\n${formatStatusDetailList(incompleteStatuses)}`
+    : '';
   return `${header}\n${lines.join('\n')}${note}`;
 }
 

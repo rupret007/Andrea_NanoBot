@@ -197,14 +197,16 @@ Andrea now has a local fast path for plain-language calendar reads such as:
 - `What's on my calendar tomorrow?`
 - `What's on my schedule this week?`
 - `Am I free Friday afternoon?`
+- `Do I have anything at 3pm tomorrow?`
 
 Supported provider paths:
 
+- Google Calendar with an access token or refresh token plus explicit calendar ids
 - Apple Calendar directly on a Mac running Andrea
 - Apple/iCloud-style CalDAV using calendar collection URLs plus credentials
 - Outlook calendars through Microsoft Graph
 
-These are optional operator-enabled integrations. Andrea answers truthfully when no provider is configured instead of pretending a calendar is connected.
+These are optional operator-enabled integrations. Google Calendar is the best first setup when your real family events already live there, and Andrea answers truthfully when no provider is configured instead of pretending a calendar is connected.
 
 ## What Andrea Can Do
 
