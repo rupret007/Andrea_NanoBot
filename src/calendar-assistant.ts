@@ -4,6 +4,8 @@ import { TIMEZONE } from './config.js';
 import { readEnvFile } from './env.js';
 import {
   listGoogleCalendarEvents,
+  listGoogleCalendars,
+  type GoogleCalendarMetadata,
   resolveGoogleCalendarConfig,
 } from './google-calendar.js';
 
@@ -53,10 +55,33 @@ type CalendarProviderId =
 type CalendarProviderState = 'ready' | 'not_configured' | 'error';
 type CalendarReasoningMode =
   | 'agenda'
+  | 'agenda_briefing_day'
+  | 'agenda_briefing_week'
+  | 'agenda_next'
   | 'availability_point'
   | 'availability_range'
   | 'availability_duration'
-  | 'availability_back_to_back';
+  | 'availability_back_to_back'
+  | 'availability_open_windows'
+  | 'availability_conflicts';
+
+interface CalendarScopeFilter {
+  kind: 'family_shared' | 'person_shared';
+  label: string;
+  terms: string[];
+}
+
+export interface CalendarActiveEventContext {
+  providerId: CalendarProviderId;
+  id: string;
+  title: string;
+  startIso: string;
+  endIso: string;
+  allDay: boolean;
+  calendarId?: string | null;
+  calendarName?: string | null;
+  htmlLink?: string | null;
+}
 
 export interface PlannedCalendarLookup {
   intent: CalendarIntent;
@@ -70,6 +95,11 @@ export interface PlannedCalendarLookup {
   reasoningMode: CalendarReasoningMode;
   clarificationQuestion: string | null;
   requestedTitle: string | null;
+  minimumOpenMinutes: number | null;
+  nextTimedOnly: boolean;
+  scopeFilter: CalendarScopeFilter | null;
+  subjectLabel: string | null;
+  forceIncludeCalendarNames: boolean;
 }
 
 export interface CalendarEvent {
@@ -99,6 +129,8 @@ export interface CalendarLookupResult {
   plan: PlannedCalendarLookup;
   events: CalendarEvent[];
   statuses: CalendarProviderStatus[];
+  scopeResolutionMessage: string | null;
+  matchedScopeCalendars: string[];
 }
 
 export interface CalendarSchedulingContext {
@@ -110,17 +142,7 @@ export interface CalendarSchedulingContext {
 export interface CalendarAssistantResponse {
   reply: string;
   schedulingContext: CalendarSchedulingContext | null;
-  activeEventContext: {
-    providerId: CalendarProviderId;
-    id: string;
-    title: string;
-    startIso: string;
-    endIso: string;
-    allDay: boolean;
-    calendarId?: string | null;
-    calendarName?: string | null;
-    htmlLink?: string | null;
-  } | null;
+  activeEventContext: CalendarActiveEventContext | null;
 }
 
 interface CalendarAssistantConfig {
@@ -146,6 +168,7 @@ interface CalendarAssistantDeps {
   env?: Record<string, string | undefined>;
   fetchImpl?: FetchLike;
   platform?: NodeJS.Platform;
+  activeEventContext?: CalendarActiveEventContext | null;
   runAppleCalendarScript?: (
     startIso: string,
     endIso: string,
@@ -357,6 +380,17 @@ function resolveNextWeekdayRange(
   };
 }
 
+function resolveUpcomingRange(
+  now: Date,
+  days: number,
+  label: string,
+): { start: Date; end: Date; label: string } {
+  const start = new Date(now);
+  const end = new Date(now);
+  end.setDate(end.getDate() + days);
+  return { start, end, label };
+}
+
 function resolveWeekRange(
   now: Date,
   nextWeek: boolean,
@@ -443,6 +477,52 @@ function resolveLookupRange(
   return { start, end, label };
 }
 
+function hasExplicitRangeReference(normalized: string): boolean {
+  return (
+    /\b(?:today|tomorrow|next week|this week|weekend)\b/.test(normalized) ||
+    /\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/.test(
+      normalized,
+    ) ||
+    /\b(?:morning|afternoon|evening|tonight)\b/.test(normalized) ||
+    /\b(?:after|before)\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?\b/.test(normalized)
+  );
+}
+
+function looksLikeBriefingQuery(normalized: string): boolean {
+  return (
+    /\bwhat(?:'s| is) my day look like\b/.test(normalized) ||
+    /\bgive me (?:a )?quick schedule\b/.test(normalized) ||
+    /\bwhat do i need to know about\b/.test(normalized) ||
+    /\b(?:what(?:'s| is)|anything)\b[\s\S]{0,40}\bimportant\b/.test(
+      normalized,
+    ) ||
+    /\bwhat(?:'s| is)\b[\s\S]{0,40}\bcoming up\b/.test(normalized)
+  );
+}
+
+function looksLikeNextAgendaQuery(normalized: string): boolean {
+  return (
+    /\bwhat(?:'s| is)\b[\s\S]{0,40}\bnext on my calendar\b/.test(normalized) ||
+    /\bwhat(?:'s| is)\b[\s\S]{0,30}\bmy next meeting\b/.test(normalized) ||
+    /\bwhat do i have after this\b/.test(normalized) ||
+    /\bwhat(?:'s| is)\b[\s\S]{0,40}\bcoming up this\b[\s\S]{0,20}\b(?:morning|afternoon|evening|tonight)\b/.test(
+      normalized,
+    )
+  );
+}
+
+function looksLikeOpenWindowQuery(normalized: string): boolean {
+  return (
+    /\bdo i have any gaps\b/.test(normalized) ||
+    /\bwhat openings do i have\b/.test(normalized) ||
+    /\bwhen (?:am i|are we)\b[\s\S]{0,20}\bfree\b/.test(normalized)
+  );
+}
+
+function looksLikeConflictSummaryQuery(normalized: string): boolean {
+  return /\bdo i have any conflicts\b/.test(normalized);
+}
+
 function looksLikeAgendaQuery(normalized: string): boolean {
   return (
     /\bwhat(?:'s| is)\b[\s\S]{0,80}\b(calendar|schedule)\b/.test(normalized) ||
@@ -481,6 +561,51 @@ function detectClarificationQuestion(normalized: string): string | null {
     return 'What time should I treat as before lunch?';
   }
   return null;
+}
+
+function toTitleCase(value: string): string {
+  return value
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((token) => token[0]?.toUpperCase() + token.slice(1))
+    .join(' ');
+}
+
+function detectCalendarScopeFilter(
+  normalized: string,
+): CalendarScopeFilter | null {
+  if (/\bfamily calendar\b/.test(normalized)) {
+    return {
+      kind: 'family_shared',
+      label: 'the family calendar',
+      terms: ['family'],
+    };
+  }
+
+  const sharedPeopleMatch = normalized.match(
+    /\bwhat do ([a-z,&\s]+?) and i have coming up\b/,
+  );
+  if (!sharedPeopleMatch) {
+    return null;
+  }
+
+  const names = sharedPeopleMatch[1]
+    .split(/\band\b|,|&/)
+    .map((token) => token.trim())
+    .filter(
+      (token) =>
+        token.length >= 2 &&
+        !['my', 'our', 'the', 'calendar', 'schedule'].includes(token),
+    );
+  if (names.length === 0) {
+    return null;
+  }
+
+  return {
+    kind: 'person_shared',
+    label: `${names.map(toTitleCase).join(' and ')} and your shared calendars`,
+    terms: [...names, 'family'],
+  };
 }
 
 function parseRelativeBoundaryTime(
@@ -533,20 +658,34 @@ export function planCalendarAssistantLookup(
   message: string,
   now = new Date(),
   timeZone = TIMEZONE,
+  activeEventContext: CalendarActiveEventContext | null = null,
 ): PlannedCalendarLookup | null {
   const normalized = normalizeMessage(message).toLowerCase();
   if (!normalized) return null;
 
   const clarificationQuestion = detectClarificationQuestion(normalized);
-  const intent = looksLikeAvailabilityQuery(normalized)
-    ? 'availability'
-    : looksLikeAgendaQuery(normalized)
-      ? 'agenda'
-      : null;
+  const scopeFilter = detectCalendarScopeFilter(normalized);
+  const briefingQuery = looksLikeBriefingQuery(normalized);
+  const nextAgendaQuery = looksLikeNextAgendaQuery(normalized);
+  const openWindowQuery = looksLikeOpenWindowQuery(normalized);
+  const conflictQuery = looksLikeConflictSummaryQuery(normalized);
+  const intent =
+    openWindowQuery || conflictQuery || looksLikeAvailabilityQuery(normalized)
+      ? 'availability'
+      : briefingQuery ||
+          nextAgendaQuery ||
+          looksLikeAgendaQuery(normalized) ||
+          !!scopeFilter
+        ? 'agenda'
+        : null;
 
   if (!intent) return null;
 
-  const range = resolveLookupRange(normalized, now);
+  const explicitRange = hasExplicitRangeReference(normalized);
+  let range = resolveLookupRange(normalized, now);
+  if (/\bcoming up\b/.test(normalized) && !explicitRange) {
+    range = resolveUpcomingRange(now, 7, 'coming up');
+  }
   const parsedClockTime = parseClockTime(normalized);
   const relativeBoundary = parseRelativeBoundaryTime(normalized);
   const parsedDuration = parseDurationRequest(normalized);
@@ -555,9 +694,46 @@ export function planCalendarAssistantLookup(
   let label = range.label;
   let reasoningMode: CalendarReasoningMode =
     intent === 'agenda' ? 'agenda' : 'availability_range';
+  let minimumOpenMinutes: number | null = null;
+  let nextTimedOnly = false;
+  const subjectLabel: string | null = scopeFilter?.label || null;
+  const forceIncludeCalendarNames = Boolean(scopeFilter);
 
   let resolvedStart = range.start;
   let resolvedEnd = range.end;
+
+  if (nextAgendaQuery) {
+    reasoningMode = 'agenda_next';
+    const activeEnd = activeEventContext
+      ? new Date(activeEventContext.endIso)
+      : null;
+    const anchor =
+      /\bafter this\b/.test(normalized) && activeEnd ? activeEnd : now;
+
+    if (!explicitRange && !/\bcoming up this\b/.test(normalized)) {
+      range = resolveUpcomingRange(anchor, 7, 'coming up');
+      resolvedEnd = range.end;
+      label = /\bafter this\b/.test(normalized) ? 'after this' : 'next';
+    }
+
+    resolvedStart =
+      anchor.getTime() > range.start.getTime() ? anchor : range.start;
+    if (/\bnext meeting\b/.test(normalized)) {
+      nextTimedOnly = true;
+    }
+  } else if (intent === 'agenda') {
+    const multiDayRange = rangeDurationMs > 24 * 60 * 60 * 1000;
+    if (
+      briefingQuery &&
+      (multiDayRange || /\b(?:week|weekend)\b/.test(normalized))
+    ) {
+      reasoningMode = 'agenda_briefing_week';
+    } else if (briefingQuery) {
+      reasoningMode = 'agenda_briefing_day';
+    } else if (scopeFilter && multiDayRange) {
+      reasoningMode = 'agenda_briefing_week';
+    }
+  }
 
   if (relativeBoundary && rangeDurationMs <= 24 * 60 * 60 * 1000) {
     const boundary = setLocalTime(
@@ -569,12 +745,16 @@ export function planCalendarAssistantLookup(
       if (boundary >= range.start && boundary < range.end) {
         resolvedStart = boundary;
         label = `after ${relativeBoundary.time.displayLabel} ${range.label}`;
-        reasoningMode = 'availability_range';
+        if (intent === 'availability') {
+          reasoningMode = 'availability_range';
+        }
       }
     } else if (boundary > range.start && boundary <= range.end) {
       resolvedEnd = boundary;
       label = `before ${relativeBoundary.time.displayLabel} ${range.label}`;
-      reasoningMode = 'availability_range';
+      if (intent === 'availability') {
+        reasoningMode = 'availability_range';
+      }
     }
   }
 
@@ -590,10 +770,21 @@ export function planCalendarAssistantLookup(
         intent === 'availability'
           ? `at ${parsedClockTime.displayLabel} ${range.label}`
           : `at ${parsedClockTime.displayLabel} ${range.label}`;
-      reasoningMode = parsedDuration
-        ? 'availability_duration'
-        : 'availability_point';
+      if (intent === 'availability') {
+        reasoningMode = parsedDuration
+          ? 'availability_duration'
+          : 'availability_point';
+      }
     }
+  }
+
+  if (intent === 'availability' && openWindowQuery) {
+    reasoningMode = 'availability_open_windows';
+    minimumOpenMinutes = parsedDuration?.minutes || 30;
+  }
+
+  if (intent === 'availability' && conflictQuery) {
+    reasoningMode = 'availability_conflicts';
   }
 
   if (
@@ -615,6 +806,11 @@ export function planCalendarAssistantLookup(
     reasoningMode,
     clarificationQuestion,
     requestedTitle: parsedDuration?.requestedTitle || null,
+    minimumOpenMinutes,
+    nextTimedOnly,
+    scopeFilter,
+    subjectLabel,
+    forceIncludeCalendarNames,
   };
 }
 
@@ -987,6 +1183,94 @@ function filterEventsForPlan(
     }
     return eventOverlapsPoint(event, plan.pointInTime);
   });
+}
+
+function matchesScopeCalendar(
+  calendar: Pick<GoogleCalendarMetadata, 'summary' | 'selected'>,
+  filter: CalendarScopeFilter,
+): boolean {
+  if (!calendar.selected) {
+    return false;
+  }
+
+  const summary = calendar.summary.trim().toLowerCase();
+  if (!summary) {
+    return false;
+  }
+
+  return filter.terms.some((term) => summary.includes(term.toLowerCase()));
+}
+
+async function applyScopeFilter(
+  events: CalendarEvent[],
+  statuses: CalendarProviderStatus[],
+  plan: PlannedCalendarLookup,
+  deps: CalendarAssistantDeps,
+): Promise<{
+  events: CalendarEvent[];
+  scopeResolutionMessage: string | null;
+  matchedScopeCalendars: string[];
+}> {
+  if (!plan.scopeFilter) {
+    return {
+      events,
+      scopeResolutionMessage: null,
+      matchedScopeCalendars: [],
+    };
+  }
+
+  const googleStatus = statuses.find(
+    (status) => status.id === 'google_calendar',
+  );
+  if (!googleStatus || googleStatus.state !== 'ready') {
+    return {
+      events: [],
+      scopeResolutionMessage:
+        "I can't confirm that shared Google calendar right now.",
+      matchedScopeCalendars: [],
+    };
+  }
+
+  try {
+    const googleCalendars = await listGoogleCalendars(
+      resolveGoogleCalendarConfig(deps.env),
+      deps.fetchImpl,
+    );
+    const matchedCalendars = googleCalendars.filter((calendar) =>
+      matchesScopeCalendar(calendar, plan.scopeFilter!),
+    );
+    if (matchedCalendars.length === 0) {
+      return {
+        events: [],
+        scopeResolutionMessage:
+          plan.scopeFilter.kind === 'family_shared'
+            ? "I couldn't tell which selected shared calendar is your family calendar."
+            : `I couldn't tell which selected shared calendar matches ${plan.scopeFilter.label}.`,
+        matchedScopeCalendars: [],
+      };
+    }
+
+    const matchedIds = new Set(matchedCalendars.map((calendar) => calendar.id));
+    return {
+      events: events.filter(
+        (event) =>
+          event.providerId === 'google_calendar' &&
+          !!event.calendarId &&
+          matchedIds.has(event.calendarId),
+      ),
+      scopeResolutionMessage: null,
+      matchedScopeCalendars: matchedCalendars.map(
+        (calendar) => calendar.summary,
+      ),
+    };
+  } catch {
+    return {
+      events: [],
+      scopeResolutionMessage:
+        "I couldn't confirm which shared Google calendar matches that request right now.",
+      matchedScopeCalendars: [],
+    };
+  }
 }
 
 async function defaultAppleCalendarScriptRunner(
@@ -1563,13 +1847,24 @@ export async function lookupCalendarAssistantEvents(
     loadOutlookEvents(plan, config, resolvedDeps),
   ]);
 
+  const statuses = providerResults.map((result) => result.status);
+  const filteredEvents = filterEventsForPlan(
+    dedupeEvents(providerResults.flatMap((result) => result.events)),
+    plan,
+  );
+  const scoped = await applyScopeFilter(
+    filteredEvents,
+    statuses,
+    plan,
+    resolvedDeps,
+  );
+
   return {
     plan,
-    events: filterEventsForPlan(
-      dedupeEvents(providerResults.flatMap((result) => result.events)),
-      plan,
-    ),
-    statuses: providerResults.map((result) => result.status),
+    events: scoped.events,
+    statuses,
+    scopeResolutionMessage: scoped.scopeResolutionMessage,
+    matchedScopeCalendars: scoped.matchedScopeCalendars,
   };
 }
 
@@ -1608,6 +1903,7 @@ function formatEventLine(
 function formatGroupedEvents(
   events: CalendarEvent[],
   timeZone: string,
+  forceIncludeCalendarName = false,
 ): string[] {
   if (events.length === 0) {
     return [];
@@ -1622,6 +1918,7 @@ function formatGroupedEvents(
   const includeProvider =
     new Set(events.map((event) => event.providerLabel)).size > 1;
   const includeCalendarName =
+    forceIncludeCalendarName ||
     new Set(events.map((event) => event.calendarName).filter(Boolean)).size > 1;
   const grouped = new Map<string, CalendarEvent[]>();
 
@@ -1671,6 +1968,77 @@ function formatStatusDetailList(statuses: CalendarProviderStatus[]): string {
   return statuses
     .map((status) => `- ${status.label}: ${status.detail}`)
     .join('\n');
+}
+
+interface CalendarReplyStatusContext {
+  configuredStatuses: CalendarProviderStatus[];
+  readyStatuses: CalendarProviderStatus[];
+  incompleteStatuses: CalendarProviderStatus[];
+  configuredReady: boolean;
+  hasConfiguredProviders: boolean;
+  fullyConfirmed: boolean;
+  incompleteNote: string;
+  incompleteNoteBody: string;
+}
+
+function buildReplyStatusContext(
+  result: CalendarLookupResult,
+): CalendarReplyStatusContext {
+  const configuredStatuses = result.statuses.filter(
+    (status) => status.configured,
+  );
+  const readyStatuses = configuredStatuses.filter(
+    (status) => status.state === 'ready',
+  );
+  const incompleteStatuses = configuredStatuses.filter(
+    (status) => status.state !== 'ready' || !status.complete,
+  );
+  const configuredReady = readyStatuses.length > 0;
+  const hasConfiguredProviders = configuredStatuses.length > 0;
+  const fullyConfirmed =
+    hasConfiguredProviders &&
+    configuredStatuses.every(
+      (status) => status.state === 'ready' && status.complete,
+    );
+  const incompleteNote =
+    incompleteStatuses.length > 0
+      ? `\n\nI couldn't confirm every configured calendar right now.\n${formatStatusDetailList(
+          incompleteStatuses,
+        )}`
+      : '';
+
+  return {
+    configuredStatuses,
+    readyStatuses,
+    incompleteStatuses,
+    configuredReady,
+    hasConfiguredProviders,
+    fullyConfirmed,
+    incompleteNote,
+    incompleteNoteBody: incompleteNote.replace(/^\n+/, ''),
+  };
+}
+
+function formatSubjectLabel(plan: PlannedCalendarLookup): string {
+  return plan.subjectLabel || 'your calendar';
+}
+
+function capitalizeLabel(value: string): string {
+  return value ? value[0]!.toUpperCase() + value.slice(1) : value;
+}
+
+function formatCountLabel(count: number, singular: string): string {
+  return `${count} ${singular}${count === 1 ? '' : 's'}`;
+}
+
+function formatListWithAnd(parts: string[]): string {
+  if (parts.length <= 1) {
+    return parts[0] || '';
+  }
+  if (parts.length === 2) {
+    return `${parts[0]} and ${parts[1]}`;
+  }
+  return `${parts.slice(0, -1).join(', ')}, and ${parts.at(-1)}`;
 }
 
 function formatWindowRange(start: Date, end: Date, timeZone: string): string {
@@ -1756,6 +2124,31 @@ function formatOpenWindows(
   );
 }
 
+function formatEventSummary(
+  event: CalendarEvent,
+  timeZone: string,
+  forceIncludeCalendarName: boolean,
+): string {
+  return formatEventLine(
+    event,
+    timeZone,
+    false,
+    forceIncludeCalendarName,
+  ).replace(/^- /, '');
+}
+
+function countDistinctDays(events: CalendarEvent[], timeZone: string): number {
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+  return new Set(
+    events.map((event) => formatter.format(new Date(event.startIso))),
+  ).size;
+}
+
 function buildAdjacencyClusters(events: CalendarEvent[]): CalendarEvent[][] {
   const timedEvents = getTimedEvents(events).sort(
     (left, right) =>
@@ -1791,30 +2184,102 @@ function buildAdjacencyClusters(events: CalendarEvent[]): CalendarEvent[][] {
   return clusters;
 }
 
-function buildAvailabilityReply(result: CalendarLookupResult): string {
-  const configuredStatuses = result.statuses.filter(
-    (status) => status.configured,
+function buildConflictGroups(events: CalendarEvent[]): CalendarEvent[][] {
+  const timedEvents = getTimedEvents(events).sort(
+    (left, right) =>
+      new Date(left.startIso).getTime() - new Date(right.startIso).getTime(),
   );
-  const readyStatuses = configuredStatuses.filter(
-    (status) => status.state === 'ready',
-  );
-  const incompleteStatuses = configuredStatuses.filter(
-    (status) => status.state !== 'ready' || !status.complete,
-  );
-  const configuredReady = readyStatuses.length > 0;
-  const hasConfiguredProviders = configuredStatuses.length > 0;
-  const fullyConfirmed =
-    hasConfiguredProviders &&
-    configuredStatuses.every(
-      (status) => status.state === 'ready' && status.complete,
+  const groups: CalendarEvent[][] = [];
+  let current: CalendarEvent[] = [];
+  let currentEndMs = 0;
+
+  for (const event of timedEvents) {
+    const eventStartMs = new Date(event.startIso).getTime();
+    const eventEndMs = new Date(event.endIso).getTime();
+
+    if (current.length === 0) {
+      current = [event];
+      currentEndMs = eventEndMs;
+      continue;
+    }
+
+    if (eventStartMs < currentEndMs) {
+      current.push(event);
+      currentEndMs = Math.max(currentEndMs, eventEndMs);
+      continue;
+    }
+
+    if (current.length > 1) {
+      groups.push(current);
+    }
+    current = [event];
+    currentEndMs = eventEndMs;
+  }
+
+  if (current.length > 1) {
+    groups.push(current);
+  }
+
+  return groups;
+}
+
+function formatConflictLines(
+  groups: CalendarEvent[][],
+  timeZone: string,
+  forceIncludeCalendarName: boolean,
+): string[] {
+  return groups.map((group) => {
+    if (group.length === 2) {
+      return `- Conflict: ${formatEventSummary(
+        group[0]!,
+        timeZone,
+        forceIncludeCalendarName,
+      )} overlaps ${formatEventSummary(
+        group[1]!,
+        timeZone,
+        forceIncludeCalendarName,
+      )}`;
+    }
+
+    const start = new Date(group[0]!.startIso);
+    const end = new Date(
+      Math.max(...group.map((event) => new Date(event.endIso).getTime())),
     );
-  const incompleteNote =
-    incompleteStatuses.length > 0
-      ? `\n\nI couldn't confirm every configured calendar right now.\n${formatStatusDetailList(
-          incompleteStatuses,
-        )}`
-      : '';
-  const incompleteNoteBody = incompleteNote.replace(/^\n+/, '');
+    return `- Conflict: ${group.length} overlapping events around ${formatWindowRange(
+      start,
+      end,
+      timeZone,
+    )}`;
+  });
+}
+
+function formatTightStretchLine(
+  clusters: CalendarEvent[][],
+  timeZone: string,
+  forceIncludeCalendarName: boolean,
+): string | null {
+  const cluster = clusters[0];
+  if (!cluster || cluster.length < 2) {
+    return null;
+  }
+
+  return `- Tight stretch: ${cluster
+    .map((event) =>
+      formatEventSummary(event, timeZone, forceIncludeCalendarName),
+    )
+    .join(' -> ')}`;
+}
+
+function buildUnavailableCalendarReply(
+  result: CalendarLookupResult,
+  statusContext: CalendarReplyStatusContext,
+): string | null {
+  if (result.scopeResolutionMessage) {
+    return result.scopeResolutionMessage;
+  }
+
+  const { configuredStatuses, configuredReady, hasConfiguredProviders } =
+    statusContext;
 
   if (!hasConfiguredProviders) {
     return [
@@ -1838,9 +2303,249 @@ function buildAvailabilityReply(result: CalendarLookupResult): string {
     ].join('\n');
   }
 
-  if (result.plan.clarificationQuestion) {
-    return result.plan.clarificationQuestion;
+  return null;
+}
+
+function buildBriefingReply(
+  result: CalendarLookupResult,
+  statusContext: CalendarReplyStatusContext,
+): string {
+  const { fullyConfirmed, incompleteNoteBody } = statusContext;
+  const forceIncludeCalendarName = result.plan.forceIncludeCalendarNames;
+  const allDayEvents = getAllDayEvents(result.events);
+  const timedEvents = getTimedEvents(result.events);
+  const conflictGroups = buildConflictGroups(result.events);
+  const tightStretchLine = formatTightStretchLine(
+    buildAdjacencyClusters(result.events),
+    result.plan.timeZone,
+    forceIncludeCalendarName,
+  );
+
+  if (result.events.length === 0) {
+    if (!fullyConfirmed) {
+      return `I didn't find anything on ${formatSubjectLabel(
+        result.plan,
+      )} ${result.plan.label} in the calendars I could read.${statusContext.incompleteNote}`;
+    }
+    return `${capitalizeLabel(result.plan.label)} looks clear.`;
   }
+
+  const summaryBits: string[] = [];
+  if (allDayEvents.length > 0) {
+    summaryBits.push(formatCountLabel(allDayEvents.length, 'all-day event'));
+  }
+  if (timedEvents.length > 0) {
+    summaryBits.push(formatCountLabel(timedEvents.length, 'timed event'));
+  }
+  if (conflictGroups.length > 0) {
+    summaryBits.push(formatCountLabel(conflictGroups.length, 'conflict'));
+  } else if (result.plan.reasoningMode === 'agenda_briefing_week') {
+    summaryBits.push(
+      `${countDistinctDays(result.events, result.plan.timeZone)} day${
+        countDistinctDays(result.events, result.plan.timeZone) === 1 ? '' : 's'
+      } with events`,
+    );
+  }
+
+  const lines = [
+    `${capitalizeLabel(result.plan.label)} has ${formatListWithAnd(summaryBits)}.`,
+    ...formatGroupedEvents(
+      [...allDayEvents, ...timedEvents],
+      result.plan.timeZone,
+      forceIncludeCalendarName,
+    ),
+    ...formatConflictLines(
+      conflictGroups,
+      result.plan.timeZone,
+      forceIncludeCalendarName,
+    ),
+    ...(tightStretchLine ? [tightStretchLine] : []),
+    ...(fullyConfirmed ? [] : ['', incompleteNoteBody]),
+  ];
+
+  return lines.filter(Boolean).join('\n');
+}
+
+function buildNextReply(
+  result: CalendarLookupResult,
+  statusContext: CalendarReplyStatusContext,
+): string {
+  const { fullyConfirmed, incompleteNote, incompleteNoteBody } = statusContext;
+  const forceIncludeCalendarName = result.plan.forceIncludeCalendarNames;
+  const anchor = result.plan.start;
+  const activeAllDayEvents = getAllDayEvents(result.events).filter((event) =>
+    eventOverlapsPoint(event, anchor),
+  );
+  const timedEvents = getTimedEvents(result.events).filter(
+    (event) => new Date(event.endIso).getTime() > anchor.getTime(),
+  );
+  const shouldListMultiple =
+    /\b(?:morning|afternoon|evening|tonight)\b/.test(result.plan.label) ||
+    result.plan.label === 'coming up';
+
+  if (timedEvents.length === 0) {
+    if (activeAllDayEvents.length > 0 && !result.plan.nextTimedOnly) {
+      const lines = [
+        `The next thing on ${formatSubjectLabel(result.plan)} is an all-day event.`,
+        ...formatGroupedEvents(
+          activeAllDayEvents,
+          result.plan.timeZone,
+          forceIncludeCalendarName,
+        ),
+        ...(fullyConfirmed ? [] : ['', incompleteNoteBody]),
+      ];
+      return lines.filter(Boolean).join('\n');
+    }
+
+    if (!fullyConfirmed) {
+      return `I didn't find anything else coming up on ${formatSubjectLabel(
+        result.plan,
+      )} in the calendars I could read.${incompleteNote}`;
+    }
+
+    return result.plan.nextTimedOnly
+      ? `I don't see a timed event coming up ${result.plan.label === 'next' ? 'next' : result.plan.label}.`
+      : `I don't see anything else coming up ${result.plan.label === 'next' ? 'next' : result.plan.label}.`;
+  }
+
+  if (shouldListMultiple) {
+    const lines = [
+      `Coming up ${result.plan.label}:`,
+      ...formatGroupedEvents(
+        timedEvents.slice(0, 3),
+        result.plan.timeZone,
+        forceIncludeCalendarName,
+      ),
+      ...(timedEvents.length > 3 ? ['- And more later.'] : []),
+      ...(activeAllDayEvents.length > 0 && !result.plan.nextTimedOnly
+        ? [
+            '',
+            'All-day events:',
+            ...formatGroupedEvents(
+              activeAllDayEvents,
+              result.plan.timeZone,
+              forceIncludeCalendarName,
+            ),
+          ]
+        : []),
+      ...(fullyConfirmed ? [] : ['', incompleteNoteBody]),
+    ];
+    return lines.filter(Boolean).join('\n');
+  }
+
+  const nextEvent = timedEvents[0]!;
+  const isInProgress =
+    new Date(nextEvent.startIso).getTime() <= anchor.getTime() &&
+    new Date(nextEvent.endIso).getTime() > anchor.getTime();
+  const lines = [
+    `${
+      result.plan.label === 'after this'
+        ? 'After this:'
+        : isInProgress
+          ? 'Right now:'
+          : 'Next up:'
+    } ${formatEventSummary(nextEvent, result.plan.timeZone, forceIncludeCalendarName)}`,
+    ...(activeAllDayEvents.length > 0 && !result.plan.nextTimedOnly
+      ? [
+          `All day: ${activeAllDayEvents
+            .slice(0, 2)
+            .map((event) =>
+              formatEventSummary(
+                event,
+                result.plan.timeZone,
+                forceIncludeCalendarName,
+              ),
+            )
+            .join(' | ')}`,
+        ]
+      : []),
+    ...(fullyConfirmed ? [] : ['', incompleteNoteBody]),
+  ];
+  return lines.filter(Boolean).join('\n');
+}
+
+function buildOpenWindowsReply(
+  result: CalendarLookupResult,
+  statusContext: CalendarReplyStatusContext,
+): string {
+  const { fullyConfirmed, incompleteNote, incompleteNoteBody } = statusContext;
+  const timedEvents = getTimedEvents(result.events);
+  const allDayEvents = getAllDayEvents(result.events);
+  const minimumOpenMinutes = result.plan.minimumOpenMinutes || 30;
+  const openings = buildOpenWindows(
+    result.plan.start,
+    result.plan.end,
+    buildBusyWindows(timedEvents),
+  ).filter(
+    (window) =>
+      window.end.getTime() - window.start.getTime() >=
+      minimumOpenMinutes * 60 * 1000,
+  );
+
+  const openingLabel =
+    minimumOpenMinutes === 30
+      ? '30-minute openings'
+      : `${minimumOpenMinutes}-minute openings`;
+
+  if (openings.length === 0) {
+    if (!fullyConfirmed) {
+      return `I couldn't find any clear ${openingLabel} ${result.plan.label} in the calendars I could read.${incompleteNote}`;
+    }
+    return `I don't see any ${openingLabel} ${result.plan.label}.`;
+  }
+
+  const lines = [
+    `You have these ${openingLabel} ${result.plan.label}:`,
+    ...formatOpenWindows(openings.slice(0, 3), result.plan.timeZone),
+    ...(openings.length > 3 ? ['- And more later.'] : []),
+    ...(allDayEvents.length > 0
+      ? [
+          '',
+          'All-day events:',
+          ...formatGroupedEvents(
+            allDayEvents,
+            result.plan.timeZone,
+            result.plan.forceIncludeCalendarNames,
+          ),
+        ]
+      : []),
+    ...(fullyConfirmed ? [] : ['', incompleteNoteBody]),
+  ];
+  return lines.filter(Boolean).join('\n');
+}
+
+function buildConflictSummaryReply(
+  result: CalendarLookupResult,
+  statusContext: CalendarReplyStatusContext,
+): string {
+  const { fullyConfirmed, incompleteNote, incompleteNoteBody } = statusContext;
+  const groups = buildConflictGroups(result.events);
+
+  if (groups.length === 0) {
+    if (!fullyConfirmed) {
+      return `I didn't find any conflicts ${result.plan.label} in the calendars I could read.${incompleteNote}`;
+    }
+    return `I don't see any conflicts ${result.plan.label}.`;
+  }
+
+  return [
+    `You do have conflicts ${result.plan.label}:`,
+    ...formatConflictLines(
+      groups,
+      result.plan.timeZone,
+      result.plan.forceIncludeCalendarNames,
+    ),
+    ...(fullyConfirmed ? [] : ['', incompleteNoteBody]),
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+function buildDefaultCalendarReply(
+  result: CalendarLookupResult,
+  statusContext: CalendarReplyStatusContext,
+): string {
+  const { fullyConfirmed, incompleteNote, incompleteNoteBody } = statusContext;
 
   if (result.plan.reasoningMode === 'availability_back_to_back') {
     const clusters = buildAdjacencyClusters(result.events);
@@ -1885,6 +2590,7 @@ function buildAvailabilityReply(result: CalendarLookupResult): string {
             ? `\n\nAll-day events:\n${formatGroupedEvents(
                 allDayEvents,
                 result.plan.timeZone,
+                result.plan.forceIncludeCalendarNames,
               ).join('\n')}`
             : '';
         return `You look free ${result.plan.label}.${allDayNote}`;
@@ -1892,12 +2598,20 @@ function buildAvailabilityReply(result: CalendarLookupResult): string {
 
       return [
         `You're not free ${result.plan.label}.`,
-        ...formatGroupedEvents(timedEvents, result.plan.timeZone),
+        ...formatGroupedEvents(
+          timedEvents,
+          result.plan.timeZone,
+          result.plan.forceIncludeCalendarNames,
+        ),
         ...(allDayEvents.length > 0
           ? [
               '',
               'All-day events:',
-              ...formatGroupedEvents(allDayEvents, result.plan.timeZone),
+              ...formatGroupedEvents(
+                allDayEvents,
+                result.plan.timeZone,
+                result.plan.forceIncludeCalendarNames,
+              ),
             ]
           : []),
         ...(fullyConfirmed ? [] : ['', incompleteNoteBody]),
@@ -1920,7 +2634,11 @@ function buildAvailabilityReply(result: CalendarLookupResult): string {
 
       return [
         `No, you don't have a full ${result.plan.durationLabel || `${result.plan.durationMinutes} minutes`} ${result.plan.label}.`,
-        ...formatGroupedEvents(timedEvents, result.plan.timeZone),
+        ...formatGroupedEvents(
+          timedEvents,
+          result.plan.timeZone,
+          result.plan.forceIncludeCalendarNames,
+        ),
         ...(fullyConfirmed ? [] : ['', incompleteNoteBody]),
       ]
         .filter(Boolean)
@@ -1933,13 +2651,21 @@ function buildAvailabilityReply(result: CalendarLookupResult): string {
       result.plan.end,
       busyWindows,
     );
-    const rangeEvents = formatGroupedEvents(timedEvents, result.plan.timeZone);
+    const rangeEvents = formatGroupedEvents(
+      timedEvents,
+      result.plan.timeZone,
+      result.plan.forceIncludeCalendarNames,
+    );
     const allDayLines =
       allDayEvents.length > 0
         ? [
             '',
             'All-day events:',
-            ...formatGroupedEvents(allDayEvents, result.plan.timeZone),
+            ...formatGroupedEvents(
+              allDayEvents,
+              result.plan.timeZone,
+              result.plan.forceIncludeCalendarNames,
+            ),
           ]
         : [];
 
@@ -1980,28 +2706,135 @@ function buildAvailabilityReply(result: CalendarLookupResult): string {
       const inspected =
         result.plan.intent === 'availability'
           ? `I didn't find anything blocking ${result.plan.label} in the calendars I could read.`
-          : `I didn't find anything on your calendar ${result.plan.label} in the calendars I could read.`;
+          : `I didn't find anything on ${formatSubjectLabel(result.plan)} ${result.plan.label} in the calendars I could read.`;
       return `${inspected}${incompleteNote}`;
     }
 
     if (result.plan.intent === 'availability') {
       return `You look free ${result.plan.label}.`;
     }
-    return `I don't see anything on your calendar ${result.plan.label}.`;
+    return `I don't see anything on ${formatSubjectLabel(result.plan)} ${result.plan.label}.`;
   }
 
   const header =
     result.plan.intent === 'availability'
       ? `You're not free ${result.plan.label}.`
-      : `Here's what's on your calendar ${result.plan.label}:`;
-  const lines = formatGroupedEvents(result.events, result.plan.timeZone);
-  return `${header}\n${lines.join('\n')}${!fullyConfirmed ? `\n\nI found these events, but I couldn't read every configured calendar right now.\n${formatStatusDetailList(incompleteStatuses)}` : ''}`;
+      : `Here's what's on ${formatSubjectLabel(result.plan)} ${result.plan.label}:`;
+  const lines = formatGroupedEvents(
+    result.events,
+    result.plan.timeZone,
+    result.plan.forceIncludeCalendarNames,
+  );
+  return `${header}\n${lines.join('\n')}${!fullyConfirmed ? `\n\nI found these events, but I couldn't read every configured calendar right now.\n${formatStatusDetailList(statusContext.incompleteStatuses)}` : ''}`;
 }
 
 export function formatCalendarAssistantReply(
   result: CalendarLookupResult,
 ): string {
-  return buildAvailabilityReply(result);
+  const statusContext = buildReplyStatusContext(result);
+  const unavailableReply = buildUnavailableCalendarReply(result, statusContext);
+  if (unavailableReply) {
+    return unavailableReply;
+  }
+
+  if (
+    result.plan.reasoningMode === 'agenda_briefing_day' ||
+    result.plan.reasoningMode === 'agenda_briefing_week'
+  ) {
+    return buildBriefingReply(result, statusContext);
+  }
+
+  if (result.plan.reasoningMode === 'agenda_next') {
+    return buildNextReply(result, statusContext);
+  }
+
+  if (result.plan.reasoningMode === 'availability_open_windows') {
+    return buildOpenWindowsReply(result, statusContext);
+  }
+
+  if (result.plan.reasoningMode === 'availability_conflicts') {
+    return buildConflictSummaryReply(result, statusContext);
+  }
+
+  return buildDefaultCalendarReply(result, statusContext);
+}
+
+function toActiveEventContext(
+  event: CalendarEvent | null | undefined,
+): CalendarActiveEventContext | null {
+  if (!event || event.providerId !== 'google_calendar' || !event.calendarId) {
+    return null;
+  }
+
+  return {
+    providerId: event.providerId,
+    id: event.id,
+    title: event.title,
+    startIso: event.startIso,
+    endIso: event.endIso,
+    allDay: event.allDay,
+    calendarId: event.calendarId || null,
+    calendarName: event.calendarName || null,
+    htmlLink: event.htmlLink || null,
+  };
+}
+
+function selectAgendaNextActiveEvent(
+  result: CalendarLookupResult,
+): CalendarEvent | null {
+  const shouldListMultiple =
+    /\b(?:morning|afternoon|evening|tonight)\b/.test(result.plan.label) ||
+    result.plan.label === 'coming up';
+  if (shouldListMultiple) {
+    return null;
+  }
+
+  const anchor = result.plan.start;
+  const timedEvents = getTimedEvents(result.events).filter(
+    (event) => new Date(event.endIso).getTime() > anchor.getTime(),
+  );
+  if (timedEvents.length > 0) {
+    return timedEvents[0]!;
+  }
+
+  if (result.plan.nextTimedOnly) {
+    return null;
+  }
+
+  const activeAllDayEvents = getAllDayEvents(result.events).filter((event) =>
+    eventOverlapsPoint(event, anchor),
+  );
+  return activeAllDayEvents.length === 1 ? activeAllDayEvents[0]! : null;
+}
+
+function selectActiveEventContext(
+  result: CalendarLookupResult,
+): CalendarActiveEventContext | null {
+  if (
+    result.plan.reasoningMode === 'agenda_briefing_day' ||
+    result.plan.reasoningMode === 'agenda_briefing_week' ||
+    result.plan.reasoningMode === 'availability_range' ||
+    result.plan.reasoningMode === 'availability_duration' ||
+    result.plan.reasoningMode === 'availability_back_to_back' ||
+    result.plan.reasoningMode === 'availability_open_windows' ||
+    result.plan.reasoningMode === 'availability_conflicts'
+  ) {
+    return null;
+  }
+
+  if (result.plan.reasoningMode === 'agenda_next') {
+    return toActiveEventContext(selectAgendaNextActiveEvent(result));
+  }
+
+  if (
+    (result.plan.reasoningMode === 'agenda' ||
+      result.plan.reasoningMode === 'availability_point') &&
+    result.events.length === 1
+  ) {
+    return toActiveEventContext(result.events[0]);
+  }
+
+  return null;
 }
 
 export async function buildCalendarAssistantResponse(
@@ -2015,6 +2848,7 @@ export async function buildCalendarAssistantResponse(
     message,
     deps.now || new Date(),
     deps.timeZone || TIMEZONE,
+    deps.activeEventContext || null,
   );
   if (!plan) return null;
   if (plan.clarificationQuestion) {
@@ -2032,22 +2866,6 @@ export async function buildCalendarAssistantResponse(
     };
   }
   const result = await lookupCalendarAssistantEvents(plan, deps);
-  const activeEventContext =
-    result.events.length === 1 &&
-    result.events[0]?.providerId === 'google_calendar' &&
-    result.events[0]?.calendarId
-      ? {
-          providerId: result.events[0].providerId,
-          id: result.events[0].id,
-          title: result.events[0].title,
-          startIso: result.events[0].startIso,
-          endIso: result.events[0].endIso,
-          allDay: result.events[0].allDay,
-          calendarId: result.events[0].calendarId || null,
-          calendarName: result.events[0].calendarName || null,
-          htmlLink: result.events[0].htmlLink || null,
-        }
-      : null;
   return {
     reply: formatCalendarAssistantReply(result),
     schedulingContext:
@@ -2058,7 +2876,7 @@ export async function buildCalendarAssistantResponse(
             timeZone: plan.timeZone,
           }
         : null,
-    activeEventContext,
+    activeEventContext: selectActiveEventContext(result),
   };
 }
 

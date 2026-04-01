@@ -6,6 +6,64 @@ import {
   planCalendarAssistantLookup,
 } from './calendar-assistant.js';
 
+function createGoogleCalendarFetchMock(input: {
+  calendarList?: Array<{
+    id: string;
+    summary: string;
+    selected?: boolean;
+    primary?: boolean;
+  }>;
+  eventsByCalendar: Record<
+    string,
+    {
+      status?: number;
+      summary?: string;
+      items?: unknown[];
+      body?: unknown;
+    }
+  >;
+}) {
+  return vi.fn(async (request: string | URL | Request) => {
+    const url = String(request);
+    if (url.includes('/users/me/calendarList')) {
+      return new Response(
+        JSON.stringify({
+          items:
+            input.calendarList?.map((calendar) => ({
+              ...calendar,
+              selected: calendar.selected ?? true,
+              primary: calendar.primary ?? false,
+            })) || [],
+        }),
+        { status: 200 },
+      );
+    }
+
+    for (const [calendarId, response] of Object.entries(
+      input.eventsByCalendar,
+    )) {
+      if (url.includes(`/calendars/${encodeURIComponent(calendarId)}/events`)) {
+        return new Response(
+          JSON.stringify(
+            response.body ?? {
+              summary: response.summary || calendarId,
+              items: response.items || [],
+            },
+          ),
+          { status: response.status ?? 200 },
+        );
+      }
+    }
+
+    return new Response(
+      JSON.stringify({
+        error: { message: `Unexpected URL: ${url}` },
+      }),
+      { status: 404 },
+    );
+  });
+}
+
 describe('planCalendarAssistantLookup', () => {
   it('parses schedule asks for tomorrow', () => {
     const plan = planCalendarAssistantLookup(
@@ -86,9 +144,446 @@ describe('planCalendarAssistantLookup', () => {
     expect(plan?.requestedTitle).toBe('meeting');
     expect(plan?.pointInTime?.toISOString()).toBe('2026-04-01T21:00:00.000Z');
   });
+
+  it('parses daily and weekly briefing asks', () => {
+    const tomorrowPlan = planCalendarAssistantLookup(
+      "What's my day look like tomorrow?",
+      new Date('2026-04-01T10:00:00-05:00'),
+      'America/Chicago',
+    );
+    const weekPlan = planCalendarAssistantLookup(
+      "What's coming up this week?",
+      new Date('2026-04-01T10:00:00-05:00'),
+      'America/Chicago',
+    );
+
+    expect(tomorrowPlan?.reasoningMode).toBe('agenda_briefing_day');
+    expect(tomorrowPlan?.label).toBe('tomorrow');
+    expect(weekPlan?.reasoningMode).toBe('agenda_briefing_week');
+    expect(weekPlan?.label).toBe('this week');
+  });
+
+  it('parses next-event, open-window, conflict, and family-calendar asks', () => {
+    const nextPlan = planCalendarAssistantLookup(
+      "What's my next meeting?",
+      new Date('2026-04-01T10:00:00-05:00'),
+      'America/Chicago',
+    );
+    const openingsPlan = planCalendarAssistantLookup(
+      'When am I free for an hour tomorrow?',
+      new Date('2026-04-01T10:00:00-05:00'),
+      'America/Chicago',
+    );
+    const conflictsPlan = planCalendarAssistantLookup(
+      'Do I have any conflicts this week?',
+      new Date('2026-04-01T10:00:00-05:00'),
+      'America/Chicago',
+    );
+    const familyPlan = planCalendarAssistantLookup(
+      "What's on the family calendar this week?",
+      new Date('2026-04-01T10:00:00-05:00'),
+      'America/Chicago',
+    );
+
+    expect(nextPlan?.reasoningMode).toBe('agenda_next');
+    expect(nextPlan?.nextTimedOnly).toBe(true);
+    expect(openingsPlan?.reasoningMode).toBe('availability_open_windows');
+    expect(openingsPlan?.minimumOpenMinutes).toBe(60);
+    expect(conflictsPlan?.reasoningMode).toBe('availability_conflicts');
+    expect(familyPlan?.scopeFilter?.kind).toBe('family_shared');
+    expect(familyPlan?.forceIncludeCalendarNames).toBe(true);
+  });
 });
 
 describe('buildCalendarAssistantReply', () => {
+  it('formats daily briefings with all-day events and conflicts', async () => {
+    const fetchImpl = createGoogleCalendarFetchMock({
+      eventsByCalendar: {
+        primary: {
+          summary: 'Jeff',
+          items: [
+            {
+              id: 'all-day-1',
+              summary: 'Spring break',
+              start: { date: '2026-04-02' },
+              end: { date: '2026-04-03' },
+            },
+            {
+              id: 'evt-1',
+              summary: 'Overlap A',
+              start: { dateTime: '2026-04-02T15:00:00Z' },
+              end: { dateTime: '2026-04-02T16:00:00Z' },
+            },
+            {
+              id: 'evt-2',
+              summary: 'Overlap B',
+              start: { dateTime: '2026-04-02T15:30:00Z' },
+              end: { dateTime: '2026-04-02T16:30:00Z' },
+            },
+          ],
+        },
+      },
+    });
+
+    const reply = await buildCalendarAssistantReply(
+      "What's my day look like tomorrow?",
+      {
+        now: new Date('2026-04-01T10:00:00-05:00'),
+        timeZone: 'America/Chicago',
+        env: {
+          GOOGLE_CALENDAR_ACCESS_TOKEN: 'token',
+        },
+        fetchImpl,
+      },
+    );
+
+    expect(reply).toContain('Tomorrow has 1 all-day event');
+    expect(reply).toContain('2 timed events');
+    expect(reply).toContain('1 conflict');
+    expect(reply).toContain('All day Spring break');
+    expect(reply).toContain('Conflict:');
+  });
+
+  it('answers next-event asks and records a single active Google event context', async () => {
+    const fetchImpl = createGoogleCalendarFetchMock({
+      eventsByCalendar: {
+        primary: {
+          summary: 'Jeff',
+          items: [
+            {
+              id: 'evt-1',
+              summary: 'Dentist',
+              start: { dateTime: '2026-04-02T14:00:00Z' },
+              end: { dateTime: '2026-04-02T15:00:00Z' },
+            },
+            {
+              id: 'evt-2',
+              summary: 'Project sync',
+              start: { dateTime: '2026-04-02T18:00:00Z' },
+              end: { dateTime: '2026-04-02T19:00:00Z' },
+            },
+          ],
+        },
+      },
+    });
+
+    const response = await buildCalendarAssistantResponse(
+      "What's next on my calendar?",
+      {
+        now: new Date('2026-04-01T10:00:00-05:00'),
+        timeZone: 'America/Chicago',
+        env: {
+          GOOGLE_CALENDAR_ACCESS_TOKEN: 'token',
+        },
+        fetchImpl,
+      },
+    );
+
+    expect(response?.reply).toContain('Next up: 9:00 AM-10:00 AM Dentist');
+    expect(response?.activeEventContext?.id).toBe('evt-1');
+  });
+
+  it('uses active event context for after-this next-event questions', async () => {
+    const fetchImpl = createGoogleCalendarFetchMock({
+      eventsByCalendar: {
+        primary: {
+          summary: 'Jeff',
+          items: [
+            {
+              id: 'evt-1',
+              summary: 'Current meeting',
+              start: { dateTime: '2026-04-01T14:30:00Z' },
+              end: { dateTime: '2026-04-01T15:30:00Z' },
+            },
+            {
+              id: 'evt-2',
+              summary: 'Next meeting',
+              start: { dateTime: '2026-04-01T16:00:00Z' },
+              end: { dateTime: '2026-04-01T17:00:00Z' },
+            },
+          ],
+        },
+      },
+    });
+
+    const reply = await buildCalendarAssistantReply(
+      'What do I have after this?',
+      {
+        now: new Date('2026-04-01T10:00:00-05:00'),
+        timeZone: 'America/Chicago',
+        env: {
+          GOOGLE_CALENDAR_ACCESS_TOKEN: 'token',
+        },
+        fetchImpl,
+        activeEventContext: {
+          providerId: 'google_calendar',
+          id: 'evt-1',
+          title: 'Current meeting',
+          startIso: '2026-04-01T14:30:00.000Z',
+          endIso: '2026-04-01T15:30:00.000Z',
+          allDay: false,
+          calendarId: 'primary',
+          calendarName: 'Jeff',
+          htmlLink: null,
+        },
+      },
+    );
+
+    expect(reply).toContain('After this: 11:00 AM-12:00 PM Next meeting');
+  });
+
+  it('summarizes open windows without setting active event context', async () => {
+    const fetchImpl = createGoogleCalendarFetchMock({
+      eventsByCalendar: {
+        primary: {
+          summary: 'Jeff',
+          items: [
+            {
+              id: 'evt-1',
+              summary: 'Dentist',
+              start: { dateTime: '2026-04-02T14:00:00Z' },
+              end: { dateTime: '2026-04-02T15:00:00Z' },
+            },
+            {
+              id: 'evt-2',
+              summary: 'Project sync',
+              start: { dateTime: '2026-04-02T18:00:00Z' },
+              end: { dateTime: '2026-04-02T19:00:00Z' },
+            },
+          ],
+        },
+      },
+    });
+
+    const response = await buildCalendarAssistantResponse(
+      'When am I free for an hour tomorrow?',
+      {
+        now: new Date('2026-04-01T10:00:00-05:00'),
+        timeZone: 'America/Chicago',
+        env: {
+          GOOGLE_CALENDAR_ACCESS_TOKEN: 'token',
+        },
+        fetchImpl,
+      },
+    );
+
+    expect(response?.reply).toContain(
+      'You have these 60-minute openings tomorrow:',
+    );
+    expect(response?.reply).toContain('Open: 10:00 AM-1:00 PM');
+    expect(response?.activeEventContext).toBeNull();
+  });
+
+  it('summarizes conflicts this week without calling tight stretches conflicts', async () => {
+    const fetchImpl = createGoogleCalendarFetchMock({
+      eventsByCalendar: {
+        primary: {
+          summary: 'Jeff',
+          items: [
+            {
+              id: 'evt-1',
+              summary: 'Overlap A',
+              start: { dateTime: '2026-04-03T15:00:00Z' },
+              end: { dateTime: '2026-04-03T16:00:00Z' },
+            },
+            {
+              id: 'evt-2',
+              summary: 'Overlap B',
+              start: { dateTime: '2026-04-03T15:30:00Z' },
+              end: { dateTime: '2026-04-03T16:30:00Z' },
+            },
+            {
+              id: 'evt-3',
+              summary: 'Tight but separate',
+              start: { dateTime: '2026-04-03T16:40:00Z' },
+              end: { dateTime: '2026-04-03T17:10:00Z' },
+            },
+          ],
+        },
+      },
+    });
+
+    const reply = await buildCalendarAssistantReply(
+      'Do I have any conflicts this week?',
+      {
+        now: new Date('2026-04-01T10:00:00-05:00'),
+        timeZone: 'America/Chicago',
+        env: {
+          GOOGLE_CALENDAR_ACCESS_TOKEN: 'token',
+        },
+        fetchImpl,
+      },
+    );
+
+    expect(reply).toContain('You do have conflicts this week:');
+    expect(reply).toContain('Overlap A overlaps 10:30 AM-11:30 AM Overlap B');
+    expect(reply).not.toContain('Tight but separate');
+  });
+
+  it('filters weekly summaries to configured family and shared calendars', async () => {
+    const fetchImpl = createGoogleCalendarFetchMock({
+      calendarList: [
+        { id: 'primary', summary: 'Jeff', primary: true },
+        {
+          id: 'family@group.calendar.google.com',
+          summary: 'Family',
+        },
+        {
+          id: 'candace-story',
+          summary: 'Jeff & Candace Story',
+        },
+      ],
+      eventsByCalendar: {
+        primary: {
+          summary: 'Jeff',
+          items: [
+            {
+              id: 'evt-1',
+              summary: 'Dentist',
+              start: { dateTime: '2026-04-02T14:00:00Z' },
+              end: { dateTime: '2026-04-02T15:00:00Z' },
+            },
+          ],
+        },
+        'family@group.calendar.google.com': {
+          summary: 'Family',
+          items: [
+            {
+              id: 'fam-1',
+              summary: 'Soccer practice',
+              start: { dateTime: '2026-04-02T22:00:00Z' },
+              end: { dateTime: '2026-04-02T23:00:00Z' },
+            },
+          ],
+        },
+        'candace-story': {
+          summary: 'Jeff & Candace Story',
+          items: [
+            {
+              id: 'shared-1',
+              summary: 'Date night',
+              start: { dateTime: '2026-04-03T00:00:00Z' },
+              end: { dateTime: '2026-04-03T02:00:00Z' },
+            },
+          ],
+        },
+      },
+    });
+
+    const reply = await buildCalendarAssistantReply(
+      'What do Candace and I have coming up?',
+      {
+        now: new Date('2026-04-01T10:00:00-05:00'),
+        timeZone: 'America/Chicago',
+        env: {
+          GOOGLE_CALENDAR_ACCESS_TOKEN: 'token',
+          GOOGLE_CALENDAR_IDS:
+            'primary,family@group.calendar.google.com,candace-story',
+        },
+        fetchImpl,
+      },
+    );
+
+    expect(reply).toContain('Coming up has 2 timed events');
+    expect(reply).toContain('Soccer practice [Family]');
+    expect(reply).toContain('Date night [Jeff & Candace Story]');
+    expect(reply).not.toContain('Dentist [Jeff]');
+  });
+
+  it('keeps partial-read honesty for next-event and open-window answers', async () => {
+    const fetchImpl = createGoogleCalendarFetchMock({
+      eventsByCalendar: {
+        primary: {
+          summary: 'Jeff',
+          items: [
+            {
+              id: 'evt-1',
+              summary: 'Dentist',
+              start: { dateTime: '2026-04-02T14:00:00Z' },
+              end: { dateTime: '2026-04-02T15:00:00Z' },
+            },
+          ],
+        },
+        'missing@group.calendar.google.com': {
+          status: 404,
+          body: {
+            error: {
+              message: 'Calendar not found.',
+            },
+          },
+        },
+      },
+    });
+
+    const nextReply = await buildCalendarAssistantReply(
+      "What's next on my calendar?",
+      {
+        now: new Date('2026-04-01T10:00:00-05:00'),
+        timeZone: 'America/Chicago',
+        env: {
+          GOOGLE_CALENDAR_ACCESS_TOKEN: 'token',
+          GOOGLE_CALENDAR_IDS: 'primary,missing@group.calendar.google.com',
+        },
+        fetchImpl,
+      },
+    );
+    const openingsReply = await buildCalendarAssistantReply(
+      'When am I free for an hour tomorrow?',
+      {
+        now: new Date('2026-04-01T10:00:00-05:00'),
+        timeZone: 'America/Chicago',
+        env: {
+          GOOGLE_CALENDAR_ACCESS_TOKEN: 'token',
+          GOOGLE_CALENDAR_IDS: 'primary,missing@group.calendar.google.com',
+        },
+        fetchImpl,
+      },
+    );
+
+    expect(nextReply).toContain('Next up: 9:00 AM-10:00 AM Dentist');
+    expect(nextReply).toContain(
+      "I couldn't confirm every configured calendar right now.",
+    );
+    expect(openingsReply).toContain(
+      'You have these 60-minute openings tomorrow:',
+    );
+    expect(openingsReply).toContain(
+      "I couldn't confirm every configured calendar right now.",
+    );
+  });
+
+  it('stays timezone-correct around late-night next-event boundaries', async () => {
+    const fetchImpl = createGoogleCalendarFetchMock({
+      eventsByCalendar: {
+        primary: {
+          summary: 'Jeff',
+          items: [
+            {
+              id: 'evt-1',
+              summary: 'Late movie',
+              start: { dateTime: '2026-04-02T05:15:00Z' },
+              end: { dateTime: '2026-04-02T06:00:00Z' },
+            },
+          ],
+        },
+      },
+    });
+
+    const reply = await buildCalendarAssistantReply(
+      "What's next on my calendar?",
+      {
+        now: new Date('2026-04-01T22:30:00-05:00'),
+        timeZone: 'America/Chicago',
+        env: {
+          GOOGLE_CALENDAR_ACCESS_TOKEN: 'token',
+        },
+        fetchImpl,
+      },
+    );
+
+    expect(reply).toContain('Next up: 12:15 AM-1:00 AM Late movie');
+  });
+
   it('returns a truthful setup reply when no providers are ready', async () => {
     const reply = await buildCalendarAssistantReply(
       "What's on my calendar tomorrow?",

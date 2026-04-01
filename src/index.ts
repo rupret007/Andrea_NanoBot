@@ -2615,9 +2615,23 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   const tryHandleLocalCalendarReply = async (
     fastPathKind: 'direct' | 'protected',
   ): Promise<boolean> => {
+    const activeEventContext = getActiveGoogleCalendarEventContext(chatJid);
     const calendarResponse = await buildCalendarAssistantResponse(lastContent, {
       now,
       timeZone: TIMEZONE,
+      activeEventContext: activeEventContext
+        ? {
+            providerId: 'google_calendar',
+            id: activeEventContext.event.id,
+            title: activeEventContext.event.title,
+            startIso: activeEventContext.event.startIso,
+            endIso: activeEventContext.event.endIso,
+            allDay: activeEventContext.event.allDay,
+            calendarId: activeEventContext.event.calendarId || null,
+            calendarName: activeEventContext.event.calendarName || null,
+            htmlLink: activeEventContext.event.htmlLink || null,
+          }
+        : null,
     });
     if (!calendarResponse) {
       return false;
