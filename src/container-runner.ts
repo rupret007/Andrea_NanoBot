@@ -53,6 +53,7 @@ const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
 export interface ContainerInput {
   prompt: string;
   sessionId?: string;
+  freshSessionHome?: boolean;
   preferredRuntime?: AgentRuntimeName;
   fallbackRuntime?: AgentRuntimeName;
   runtimeRoute?: RuntimeRoute;
@@ -614,15 +615,60 @@ function syncSkillsForGroup(
   }
 }
 
+const DIRECT_ASSISTANT_WORKSPACE_CLAUDE = `# Andrea
+
+You are Andrea, a personal assistant.
+
+Andrea is the only public assistant identity. Keep replies direct, natural, and grounded in the user's visible message context.
+
+## Direct Assistant Mode
+
+- This lane is for stable plain-language replies.
+- Answer directly from the visible prompt and chat context when you can.
+- Do not inspect workspace files, run commands, browse the web, or claim that you did unless the user explicitly asks for that kind of help.
+- Do not invent hidden context or say you checked files you did not read.
+- If the user gives a vague refinement like "make it shorter" or "fix that", apply a safe general rewrite of the latest visible answer instead of asking unnecessary clarification.
+
+## Communication
+
+- Keep normal conversation plain and natural.
+- Do not mention internal lanes, runtimes, or orchestration unless the user asks.
+- Do not present helper layers as separate assistants.
+`;
+
+function ensureDirectAssistantWorkspace(groupFolder: string): string {
+  const workspaceDir = path.join(
+    DATA_DIR,
+    'sessions',
+    groupFolder,
+    'direct-assistant-workspace',
+  );
+  fs.mkdirSync(workspaceDir, { recursive: true });
+  const claudeFile = path.join(workspaceDir, 'CLAUDE.md');
+  if (
+    !fs.existsSync(claudeFile) ||
+    tryReadTextFile(claudeFile) !== DIRECT_ASSISTANT_WORKSPACE_CLAUDE
+  ) {
+    fs.writeFileSync(claudeFile, DIRECT_ASSISTANT_WORKSPACE_CLAUDE, 'utf8');
+  }
+  return workspaceDir;
+}
+
 function buildVolumeMounts(
   group: RegisteredGroup,
   isMain: boolean,
+  route?: AssistantRequestPolicy['route'],
+  freshSessionHome = false,
 ): VolumeMount[] {
   const mounts: VolumeMount[] = [];
   const projectRoot = process.cwd();
-  const groupDir = resolveGroupFolderPath(group.folder);
+  const groupDir =
+    route === 'direct_assistant'
+      ? ensureDirectAssistantWorkspace(group.folder)
+      : resolveGroupFolderPath(group.folder);
+  const shouldMountMainProject = isMain && route !== 'direct_assistant';
 
-  if (isMain) {
+  if (shouldMountMainProject) {
     // Main gets the project root read-only. Writable paths the agent needs
     // (group folder, IPC, .claude/) are mounted separately below.
     // Read-only prevents the agent from modifying host application code
@@ -652,14 +698,16 @@ function buildVolumeMounts(
       readonly: false,
     });
   } else {
-    // Other groups only get their own folder
+    // Direct assistant uses the lighter non-project mount profile even in the
+    // main group so normal chat does not inherit the heavier repo work mount.
+    // Other groups also only get their own folder.
     mounts.push({
       hostPath: groupDir,
       containerPath: '/workspace/group',
       readonly: false,
     });
 
-    // Global memory directory (read-only for non-main)
+    // Global memory directory (read-only for non-main style mounts)
     // Only directory mounts are supported, not file mounts
     const globalDir = path.join(GROUPS_DIR, 'global');
     if (fs.existsSync(globalDir)) {
@@ -672,13 +720,19 @@ function buildVolumeMounts(
   }
 
   // Per-group Claude sessions directory (isolated from other groups)
-  // Each group gets their own .claude/ to prevent cross-group session access
+  // Direct assistant gets its own session home so casual chat continuity does not
+  // share persisted Claude state with heavier operator/work lanes in the same group.
+  const claudeHomeDirName =
+    route === 'direct_assistant' ? '.claude-direct-assistant' : '.claude';
   const groupSessionsDir = path.join(
     DATA_DIR,
     'sessions',
     group.folder,
-    '.claude',
+    claudeHomeDirName,
   );
+  if (route === 'direct_assistant' && freshSessionHome) {
+    fs.rmSync(groupSessionsDir, { recursive: true, force: true });
+  }
   fs.mkdirSync(groupSessionsDir, { recursive: true });
   const settingsFile = path.join(groupSessionsDir, 'settings.json');
   if (!fs.existsSync(settingsFile)) {
@@ -1023,7 +1077,12 @@ export async function runContainerAgent(
   const groupDir = resolveGroupFolderPath(group.folder);
   fs.mkdirSync(groupDir, { recursive: true });
 
-  const mounts = buildVolumeMounts(group, input.isMain);
+  const mounts = buildVolumeMounts(
+    group,
+    input.isMain,
+    input.requestPolicy?.route,
+    input.freshSessionHome === true,
+  );
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}-${Date.now()}`;
   // Main group uses the default OneCLI agent; others use their own agent.
@@ -1465,8 +1524,10 @@ export async function runContainerAgent(
       ];
 
       const isError = code !== 0;
+      const shouldPersistFullLog =
+        isVerbose || isError || Boolean(terminalDirectAssistantErrorOutput);
 
-      if (isVerbose || isError) {
+      if (shouldPersistFullLog) {
         // On error, log input metadata only — not the full prompt.
         // Full input is only included at verbose level to avoid
         // persisting user conversation content on every non-zero exit.
@@ -1570,7 +1631,11 @@ export async function runContainerAgent(
                 ...logContext,
                 group: group.name,
                 duration,
+                logFile,
                 route: input.requestPolicy?.route,
+                error: terminalDirectAssistantErrorOutput.error,
+                diagnosticHint:
+                  terminalDirectAssistantErrorOutput.diagnosticHint,
                 recoveryAttempted,
                 sawLifecycleOnlyOutput: hadLifecycleOnlyOutput,
                 firstResultSubtype,
@@ -1579,6 +1644,7 @@ export async function runContainerAgent(
             );
             resolve({
               ...terminalDirectAssistantErrorOutput,
+              logFile,
               recoveryAttempted:
                 terminalDirectAssistantErrorOutput.recoveryAttempted ||
                 recoveryAttempted ||

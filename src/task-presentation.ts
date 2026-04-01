@@ -103,6 +103,51 @@ export function formatTaskOutputHeading(
   return 'Current output';
 }
 
+export function stripLeadingMarkdownTitle(message: string): string {
+  const trimmed = message.trim();
+  if (!trimmed) return '';
+
+  const lines = trimmed.split('\n');
+  const firstLine = lines[0]?.trim() || '';
+  if (/^\*[^*].*[^*]\*$/.test(firstLine)) {
+    return lines.slice(1).join('\n').trim();
+  }
+  return trimmed;
+}
+
+export function formatWorkPanel(params: {
+  title: string;
+  lines?: Array<string | null | undefined>;
+  sections?: Array<string | null | undefined>;
+  next?: string | null;
+}): string {
+  const rendered: string[] = [params.title];
+  const lines = (params.lines || []).filter((line): line is string =>
+    Boolean(line),
+  );
+  const sections = (params.sections || []).filter(
+    (section): section is string => Boolean(section),
+  );
+
+  if (lines.length > 0) {
+    rendered.push(...lines);
+  }
+
+  if (sections.length > 0) {
+    rendered.push('');
+    sections.forEach((section, index) => {
+      if (index > 0) rendered.push('');
+      rendered.push(section);
+    });
+  }
+
+  if (params.next) {
+    rendered.push('', params.next);
+  }
+
+  return rendered.join('\n');
+}
+
 export function formatTaskNextStepMessage(params: {
   primaryActions: string;
   canReplyContinue?: boolean;

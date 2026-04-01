@@ -668,6 +668,27 @@ export function buildCursorListSelectionActions(
   return actions;
 }
 
+export function buildCursorCloudTaskActions(
+  targetUrl?: string | null,
+): ChannelInlineAction[] {
+  return [
+    { label: 'Refresh', actionId: '/cursor-sync' },
+    { label: 'View Output', actionId: '/cursor-conversation' },
+    { label: 'Results', actionId: '/cursor-results' },
+    ...(targetUrl ? [{ label: 'Open in Cursor', url: targetUrl }] : []),
+    { label: 'Stop Run', actionId: '/cursor-stop' },
+  ];
+}
+
+export function buildCursorTerminalCardActions(): ChannelInlineAction[] {
+  return [
+    { label: 'Refresh', actionId: '/cursor-sync' },
+    { label: 'Terminal Status', actionId: '/cursor-terminal-status' },
+    { label: 'Terminal Log', actionId: '/cursor-terminal-log' },
+    { label: 'Terminal Help', actionId: '/cursor-terminal-help' },
+  ];
+}
+
 export function buildCursorJobCardActions(
   record: CursorAgentView,
 ): ChannelInlineAction[] {
@@ -680,13 +701,5 @@ export function buildCursorJobCardActions(
     ];
   }
 
-  return [
-    { label: 'Refresh', actionId: '/cursor-sync' },
-    { label: 'View Output', actionId: '/cursor-conversation' },
-    { label: 'Results', actionId: '/cursor-results' },
-    ...(record.targetUrl
-      ? [{ label: 'Open in Cursor', url: record.targetUrl }]
-      : []),
-    { label: 'Stop Run', actionId: '/cursor-stop' },
-  ];
+  return buildCursorCloudTaskActions(record.targetUrl);
 }

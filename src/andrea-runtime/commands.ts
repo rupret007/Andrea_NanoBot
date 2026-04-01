@@ -78,7 +78,11 @@ export interface RuntimeCommandContext {
 }
 
 export interface RuntimeCommandDependencies {
-  sendToChat(chatJid: string, text: string): Promise<string | undefined>;
+  sendToChat(
+    chatJid: string,
+    text: string,
+    extra?: Pick<SendMessageOptions, 'inlineActions'>,
+  ): Promise<string | undefined>;
   sendRuntimeJobMessage(args: {
     operatorChatJid: string;
     text: string;
@@ -241,6 +245,16 @@ export function buildRuntimeJobInlineActions(params: {
   return actions;
 }
 
+export function buildRuntimeStatusInlineActions(): NonNullable<
+  SendMessageOptions['inlineActions']
+> {
+  return [
+    { label: 'Refresh', actionId: '/runtime-status' },
+    { label: 'Recent Work', actionId: '/runtime-jobs' },
+    { label: 'Open /cursor', actionId: '/cursor' },
+  ];
+}
+
 function buildRuntimeTaskPayload(
   job: Pick<BackendJobDetails, 'handle' | 'summary' | 'metadata'>,
   contextType: TaskContextType,
@@ -344,6 +358,9 @@ async function handleRuntimeFollowup(
     await deps.sendToChat(
       context.operatorChatJid,
       deps.getExecutionDisabledMessage(),
+      {
+        inlineActions: buildRuntimeStatusInlineActions(),
+      },
     );
     return;
   }
@@ -846,7 +863,9 @@ export async function dispatchRuntimeCommand(
   context: RuntimeCommandContext,
 ): Promise<boolean> {
   if (RUNTIME_STATUS_COMMANDS.has(context.commandToken)) {
-    await deps.sendToChat(context.operatorChatJid, deps.getStatusMessage());
+    await deps.sendToChat(context.operatorChatJid, deps.getStatusMessage(), {
+      inlineActions: buildRuntimeStatusInlineActions(),
+    });
     return true;
   }
 

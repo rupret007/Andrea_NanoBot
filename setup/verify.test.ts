@@ -198,9 +198,8 @@ describe('probeCredentialRuntime', () => {
 });
 
 describe('probeAssistantExecution', () => {
-  it('reports failure when the assistant runtime times out before first output', async () => {
+  it('reports failure when the exact assistant probe times out before first output', async () => {
     const result = await probeAssistantExecution({
-      requestClose: () => {},
       runProbe: async () => ({
         status: 'error',
         result: null,
@@ -212,49 +211,224 @@ describe('probeAssistantExecution', () => {
       }),
     });
 
-    expect(result).toEqual({
-      status: 'failed',
-      reason: 'initial_output_timeout',
-      detail: 'container did not emit first structured result before timeout',
-    });
+    expect(result.status).toBe('failed');
+    expect(result.reason).toBe('initial_output_timeout');
+    expect(result.detail).toContain('exact probe failed');
+    expect(result.detail).toContain(
+      'container did not emit first structured result before timeout',
+    );
+    expect(result.detail).toContain(
+      'verify retried the subprobe once in a fresh container',
+    );
   });
 
-  it('reports success when structured assistant output is observed', async () => {
+  it('reports success when exact, summary, and refinement probes all return assistant text', async () => {
+    const prompts: string[] = [];
+    const freshSessionHomeFlags: boolean[] = [];
     const result = await probeAssistantExecution({
-      requestClose: () => {},
-      runProbe: async (_group, _input, _onProcess, onOutput) => {
+      runProbe: async (_group, input, _onProcess, onOutput) => {
+        prompts.push(input.prompt);
+        freshSessionHomeFlags.push(input.freshSessionHome === true);
         await onOutput?.({
           status: 'success',
-          result: 'assistant execution probe ok.',
-          newSessionId: 'probe-session',
+          result:
+            prompts.length === 1
+              ? 'assistant execution probe ok.'
+              : prompts.length === 2
+                ? 'Andrea_NanoBot is Andrea’s Telegram-first orchestration shell for practical automation across multiple backend lanes.'
+                : 'Andrea_NanoBot is Andrea’s Telegram-first automation shell.',
+          newSessionId: `probe-session-${prompts.length}`,
         });
         return {
           status: 'success',
           result: null,
-          newSessionId: 'probe-session',
+          newSessionId: `probe-session-${prompts.length}`,
         };
       },
     });
 
     expect(result.status).toBe('ok');
     expect(result.reason).toBe('ok');
-    expect(result.detail).toContain('assistant execution produced a real assistant answer');
+    expect(result.detail).toContain('exact session=probe-session-1');
+    expect(result.detail).toContain('summary session=probe-session-2');
+    expect(result.detail).toContain('refinement session=probe-session-3');
+    expect(prompts[0]).toContain('<context timezone="America/Chicago" />');
+    expect(prompts[0]).toContain(
+      'Reply with exactly: assistant execution probe ok.',
+    );
+    expect(prompts[1]).toContain('<context timezone="America/Chicago" />');
+    expect(prompts[1]).toContain(
+      "Summarize Andrea_NanoBot's role in one sentence. Do not modify files, branches, or PRs.",
+    );
+    expect(prompts[2]).toContain(
+      'Rewrite this sentence in a shorter way while preserving the meaning.',
+    );
+    expect(prompts[2]).toContain('<context timezone="America/Chicago" />');
+    expect(freshSessionHomeFlags).toEqual([true, true, true]);
   });
 
-  it('fails when the probe only sees lifecycle output', async () => {
+  it('retries the refinement probe with the alternate rewrite prompt when the first attempt fails', async () => {
+    const prompts: string[] = [];
     const result = await probeAssistantExecution({
-      requestClose: () => {},
+      runProbe: async (_group, input, _onProcess, onOutput) => {
+        prompts.push(input.prompt);
+        if (prompts.length === 1) {
+          await onOutput?.({
+            status: 'success',
+            result: 'assistant execution probe ok.',
+            newSessionId: 'probe-session-1',
+          });
+          return {
+            status: 'success',
+            result: null,
+            newSessionId: 'probe-session-1',
+          };
+        }
+        if (prompts.length === 2) {
+          await onOutput?.({
+            status: 'success',
+            result:
+              'Andrea_NanoBot is Andrea’s Telegram-first orchestration shell for practical automation across multiple backend lanes.',
+            newSessionId: 'probe-session-2',
+          });
+          return {
+            status: 'success',
+            result: null,
+            newSessionId: 'probe-session-2',
+          };
+        }
+        if (prompts.length === 3 || prompts.length === 4) {
+          return {
+            status: 'error',
+            result: null,
+            error: 'Container exited with code 1.',
+            failureKind: 'runtime_bootstrap_failed',
+            failureStage: 'runtime',
+            diagnosticHint:
+              'assistant runtime hit a transient execution failure before producing a stable answer',
+            recoveryAttempted: true,
+          };
+        }
+        await onOutput?.({
+          status: 'success',
+          result: 'Andrea_NanoBot is Andrea’s Telegram-first automation shell.',
+          newSessionId: 'probe-session-4',
+        });
+        return {
+          status: 'success',
+          result: null,
+          newSessionId: 'probe-session-4',
+        };
+      },
+    });
+
+    expect(result.status).toBe('ok');
+    expect(prompts).toHaveLength(5);
+    expect(prompts[2]).toContain(
+      'Rewrite this sentence in a shorter way while preserving the meaning.',
+    );
+    expect(prompts[3]).toContain(
+      'Rewrite this sentence in a shorter way while preserving the meaning.',
+    );
+    expect(prompts[4]).toContain('Return a shorter version of this sentence:');
+  });
+
+  it('retries the summary probe once in a fresh container when the first attempt fails', async () => {
+    const prompts: string[] = [];
+    const result = await probeAssistantExecution({
+      runProbe: async (_group, input, _onProcess, onOutput) => {
+        prompts.push(input.prompt);
+        if (prompts.length === 1) {
+          await onOutput?.({
+            status: 'success',
+            result: 'assistant execution probe ok.',
+            newSessionId: 'probe-session-1',
+          });
+          return {
+            status: 'success',
+            result: null,
+            newSessionId: 'probe-session-1',
+          };
+        }
+        if (prompts.length === 2) {
+          return {
+            status: 'error',
+            result: null,
+            error: 'Container exited with code 1.',
+            failureKind: 'runtime_bootstrap_failed',
+            failureStage: 'runtime',
+            diagnosticHint:
+              'assistant runtime hit a transient execution failure before producing a stable answer',
+            recoveryAttempted: true,
+          };
+        }
+        if (prompts.length === 3) {
+          await onOutput?.({
+            status: 'success',
+            result:
+              'Andrea_NanoBot is Andrea’s Telegram-first orchestration shell for practical automation across multiple backend lanes.',
+            newSessionId: 'probe-session-3',
+          });
+          return {
+            status: 'success',
+            result: null,
+            newSessionId: 'probe-session-3',
+          };
+        }
+        await onOutput?.({
+          status: 'success',
+          result: 'Andrea_NanoBot is Andrea’s Telegram-first automation shell.',
+          newSessionId: 'probe-session-4',
+        });
+        return {
+          status: 'success',
+          result: null,
+          newSessionId: 'probe-session-4',
+        };
+      },
+    });
+
+    expect(result.status).toBe('ok');
+    expect(result.detail).toContain('summary session=probe-session-3');
+    expect(result.detail).toContain(
+      'verify retried the subprobe once in a fresh container',
+    );
+    expect(prompts).toHaveLength(4);
+    expect(prompts[1]).toContain(
+      "Summarize Andrea_NanoBot's role in one sentence. Do not modify files, branches, or PRs.",
+    );
+    expect(prompts[2]).toContain(
+      "Summarize Andrea_NanoBot's role in one sentence. Do not modify files, branches, or PRs.",
+    );
+  });
+
+  it('fails when the summary probe only sees lifecycle output', async () => {
+    let callCount = 0;
+    const result = await probeAssistantExecution({
       runProbe: async (_group, _input, _onProcess, onOutput) => {
+        callCount += 1;
+        if (callCount === 1) {
+          await onOutput?.({
+            status: 'success',
+            result: 'assistant execution probe ok.',
+            newSessionId: 'probe-session-1',
+          });
+          return {
+            status: 'success',
+            result: null,
+            newSessionId: 'probe-session-1',
+          };
+        }
         await onOutput?.({
           status: 'success',
           result: null,
-          newSessionId: 'probe-session',
+          newSessionId: 'probe-session-2',
           sawLifecycleOnlyOutput: true,
         });
         return {
           status: 'success',
           result: null,
-          newSessionId: 'probe-session',
+          newSessionId: 'probe-session-2',
           sawLifecycleOnlyOutput: true,
         };
       },
@@ -262,25 +436,45 @@ describe('probeAssistantExecution', () => {
 
     expect(result.status).toBe('failed');
     expect(result.reason).toBe('runtime_bootstrap_failed');
+    expect(result.detail).toContain('summary probe failed');
     expect(result.detail).toContain('lifecycle output');
   });
 
-  it('includes retry detail when the probe exhausted one recovery retry', async () => {
+  it('includes retry detail when the refinement probe exhausted one recovery retry', async () => {
+    let callCount = 0;
     const result = await probeAssistantExecution({
-      requestClose: () => {},
-      runProbe: async () => ({
-        status: 'error',
-        result: null,
-        error: 'Container exited with code 1.',
-        failureKind: 'runtime_bootstrap_failed',
-        failureStage: 'runtime',
-        diagnosticHint:
-          'assistant runtime hit a transient execution failure before producing a stable answer',
-        recoveryAttempted: true,
-      }),
+      runProbe: async (_group, _input, _onProcess, onOutput) => {
+        callCount += 1;
+        if (callCount < 3) {
+          await onOutput?.({
+            status: 'success',
+            result:
+              callCount === 1
+                ? 'assistant execution probe ok.'
+                : 'Andrea_NanoBot is Andrea’s Telegram-first orchestration shell.',
+            newSessionId: `probe-session-${callCount}`,
+          });
+          return {
+            status: 'success',
+            result: null,
+            newSessionId: `probe-session-${callCount}`,
+          };
+        }
+        return {
+          status: 'error',
+          result: null,
+          error: 'Container exited with code 1.',
+          failureKind: 'runtime_bootstrap_failed',
+          failureStage: 'runtime',
+          diagnosticHint:
+            'assistant runtime hit a transient execution failure before producing a stable answer',
+          recoveryAttempted: true,
+        };
+      },
     });
 
     expect(result.status).toBe('failed');
+    expect(result.detail).toContain('refinement probe failed');
     expect(result.detail).toContain('recovery retry');
   });
 });

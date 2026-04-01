@@ -11,6 +11,7 @@ import path from 'path';
 import Database from 'better-sqlite3';
 import { OneCLI } from '@onecli-sh/sdk';
 
+import { createDirectAssistantRequestPolicy } from '../src/assistant-routing.js';
 import { ONECLI_URL, RUNTIME_STATE_DIR, STORE_DIR } from '../src/config.js';
 import { runContainerAgent } from '../src/container-runner.js';
 import {
@@ -19,9 +20,10 @@ import {
 } from '../src/container-runtime.js';
 import { setAssistantExecutionProbeState } from '../src/debug-control.js';
 import { initDatabase } from '../src/db.js';
+import { buildDirectAssistantContinuationPrompt } from '../src/direct-assistant-continuation.js';
 import { readEnvFile } from '../src/env.js';
-import { resolveGroupIpcPath } from '../src/group-folder.js';
 import { logger } from '../src/logger.js';
+import { formatMessages } from '../src/router.js';
 import type { RegisteredGroup } from '../src/types.js';
 import {
   getNodeMajorVersion,
@@ -469,53 +471,83 @@ export async function probeCredentialRuntime(input: {
   }
 }
 
-function requestContainerProbeClose(groupFolder: string): void {
-  const inputDir = path.join(resolveGroupIpcPath(groupFolder), 'input');
-  fs.mkdirSync(inputDir, { recursive: true });
-  fs.writeFileSync(path.join(inputDir, '_close'), '');
+type AssistantExecutionProbeKind = 'exact' | 'summary' | 'refinement';
+
+interface AssistantExecutionSubprobeResult {
+  status: 'ok' | 'failed';
+  reason: string;
+  detail: string;
+  assistantText?: string;
+  sessionId?: string;
+  recoveryAttempted: boolean;
 }
 
-export async function probeAssistantExecution(
-  input: {
-    requestTimeoutMs?: number;
-    runProbe?: typeof runContainerAgent;
-    requestClose?: (groupFolder: string) => void;
-  } = {},
-): Promise<AssistantExecutionProbeResult> {
-  const probeGroup: RegisteredGroup = {
-    name: 'Verify Runtime Probe',
-    folder: 'verify_runtime_probe',
-    trigger: '@andrea',
-    added_at: new Date().toISOString(),
-    containerConfig: {
-      timeout: input.requestTimeoutMs ?? 20_000,
-    },
-  };
+function formatAssistantExecutionSubprobeLabel(
+  promptKind: AssistantExecutionProbeKind,
+): string {
+  switch (promptKind) {
+    case 'exact':
+      return 'exact probe';
+    case 'summary':
+      return 'summary probe';
+    case 'refinement':
+      return 'refinement probe';
+  }
+}
 
-  const runProbe = input.runProbe || runContainerAgent;
+function buildDirectAssistantProbePrompt(input: {
+  promptText: string;
+  promptKind: AssistantExecutionProbeKind;
+}): string {
+  return formatMessages(
+    [
+      {
+        id: `verify-${input.promptKind}`,
+        chat_jid: `verify:assistant-execution:${input.promptKind}`,
+        sender: 'Jeff',
+        sender_name: 'Jeff',
+        content: input.promptText,
+        timestamp: new Date('2026-03-31T20:00:00.000Z').toISOString(),
+        is_from_me: false,
+      },
+    ],
+    'America/Chicago',
+  );
+}
+
+async function runAssistantExecutionSubprobe(input: {
+  probeGroup: RegisteredGroup;
+  promptText: string;
+  promptKind: AssistantExecutionProbeKind;
+  requestTimeoutMs?: number;
+  runProbe: typeof runContainerAgent;
+  sessionId?: string;
+}): Promise<AssistantExecutionSubprobeResult> {
+  const requestPolicy = createDirectAssistantRequestPolicy(
+    `verify assistant execution probe (${input.promptKind})`,
+  );
   let sawStructuredOutput = false;
-  let sawAssistantText = false;
   let sawLifecycleOnlyOutput = false;
   let sawRecoveryAttempt = false;
-  let closeRequested = false;
+  let assistantText: string | undefined;
+  const liveStylePrompt = buildDirectAssistantProbePrompt({
+    promptText: input.promptText,
+    promptKind: input.promptKind,
+  });
 
   try {
-    const output = await runProbe(
-      probeGroup,
+    const output = await input.runProbe(
+      input.probeGroup,
       {
-        prompt: 'Reply with exactly: assistant execution probe ok.',
-        groupFolder: probeGroup.folder,
-        chatJid: 'verify:assistant-execution',
+        prompt: liveStylePrompt,
+        sessionId: input.sessionId,
+        freshSessionHome: true,
+        groupFolder: input.probeGroup.folder,
+        chatJid: `verify:assistant-execution:${input.promptKind}`,
         isMain: false,
         assistantName: 'Andrea',
         idleTimeoutMs: 5_000,
-        requestPolicy: {
-          route: 'direct_assistant',
-          reason: 'verify assistant execution probe',
-          builtinTools: ['Read'],
-          mcpTools: [],
-          guidance: 'Reply with exactly: assistant execution probe ok.',
-        },
+        requestPolicy,
       },
       () => {},
       async (streamedOutput) => {
@@ -528,22 +560,13 @@ export async function probeAssistantExecution(
           typeof streamedOutput.result === 'string' &&
           streamedOutput.result.trim()
         ) {
-          sawAssistantText = true;
+          assistantText = streamedOutput.result.trim();
         } else if (
           streamedOutput.status === 'success' &&
           !streamedOutput.result?.trim()
         ) {
           sawLifecycleOnlyOutput =
             streamedOutput.sawLifecycleOnlyOutput !== false;
-        }
-        if (closeRequested) return;
-        if (
-          sawAssistantText ||
-          streamedOutput.status === 'error' ||
-          sawLifecycleOnlyOutput
-        ) {
-          closeRequested = true;
-          (input.requestClose || requestContainerProbeClose)(probeGroup.folder);
         }
       },
     );
@@ -554,7 +577,9 @@ export async function probeAssistantExecution(
         reason: output.failureKind || 'runtime_bootstrap_failed',
         detail: truncateDetail(
           [
-            output.diagnosticHint || output.error || 'Assistant execution failed.',
+            output.diagnosticHint ||
+              output.error ||
+              'Assistant execution failed.',
             output.recoveryAttempted
               ? 'probe exhausted one recovery retry before failing'
               : '',
@@ -562,6 +587,8 @@ export async function probeAssistantExecution(
             .filter(Boolean)
             .join(' | '),
         ),
+        recoveryAttempted:
+          sawRecoveryAttempt || output.recoveryAttempted === true,
       };
     }
 
@@ -571,10 +598,12 @@ export async function probeAssistantExecution(
         reason: 'initial_output_timeout',
         detail:
           'Execution probe completed without any structured assistant output.',
+        recoveryAttempted:
+          sawRecoveryAttempt || output.recoveryAttempted === true,
       };
     }
 
-    if (!sawAssistantText) {
+    if (!assistantText) {
       return {
         status: 'failed',
         reason: 'runtime_bootstrap_failed',
@@ -590,6 +619,8 @@ export async function probeAssistantExecution(
             .filter(Boolean)
             .join(' | '),
         ),
+        recoveryAttempted:
+          sawRecoveryAttempt || output.recoveryAttempted === true,
       };
     }
 
@@ -602,6 +633,167 @@ export async function probeAssistantExecution(
           sawRecoveryAttempt || output.recoveryAttempted
             ? 'assistant execution recovered after one retry'
             : 'assistant execution produced a real assistant answer',
+        ]
+          .filter(Boolean)
+          .join(' | '),
+      ),
+      assistantText,
+      sessionId: output.newSessionId,
+      recoveryAttempted:
+        sawRecoveryAttempt || output.recoveryAttempted === true,
+    };
+  } catch (err) {
+    return {
+      status: 'failed',
+      reason: 'runtime_bootstrap_failed',
+      detail: truncateDetail(err instanceof Error ? err.message : String(err)),
+      recoveryAttempted: sawRecoveryAttempt,
+    };
+  }
+}
+
+function shouldRetryAssistantExecutionSubprobe(
+  result: AssistantExecutionSubprobeResult,
+): boolean {
+  return (
+    result.status === 'failed' &&
+    (result.reason === 'runtime_bootstrap_failed' ||
+      result.reason === 'initial_output_timeout')
+  );
+}
+
+async function runAssistantExecutionSubprobeWithRetry(input: {
+  probeGroup: RegisteredGroup;
+  promptText: string;
+  promptKind: AssistantExecutionProbeKind;
+  requestTimeoutMs?: number;
+  runProbe: typeof runContainerAgent;
+  sessionId?: string;
+}): Promise<AssistantExecutionSubprobeResult> {
+  const firstAttempt = await runAssistantExecutionSubprobe(input);
+  if (!shouldRetryAssistantExecutionSubprobe(firstAttempt)) {
+    return firstAttempt;
+  }
+
+  const secondAttempt = await runAssistantExecutionSubprobe({
+    ...input,
+    sessionId: undefined,
+  });
+  const retryNote = 'verify retried the subprobe once in a fresh container';
+
+  return {
+    ...secondAttempt,
+    detail: truncateDetail(
+      secondAttempt.status === 'ok'
+        ? [secondAttempt.detail, retryNote].filter(Boolean).join(' | ')
+        : [firstAttempt.detail, retryNote, secondAttempt.detail]
+            .filter(Boolean)
+            .join(' | '),
+    ),
+  };
+}
+
+export async function probeAssistantExecution(
+  input: {
+    requestTimeoutMs?: number;
+    runProbe?: typeof runContainerAgent;
+  } = {},
+): Promise<AssistantExecutionProbeResult> {
+  const buildProbeGroup = (
+    promptKind: AssistantExecutionProbeKind,
+  ): RegisteredGroup => ({
+    name: 'Verify Runtime Probe',
+    folder: `verify_runtime_probe_${promptKind}`,
+    trigger: '@andrea',
+    added_at: new Date().toISOString(),
+    containerConfig: {
+      timeout: input.requestTimeoutMs ?? 20_000,
+    },
+  });
+
+  const runProbe = input.runProbe || runContainerAgent;
+
+  try {
+    const exactProbe = await runAssistantExecutionSubprobeWithRetry({
+      probeGroup: buildProbeGroup('exact'),
+      promptText: 'Reply with exactly: assistant execution probe ok.',
+      promptKind: 'exact',
+      requestTimeoutMs: input.requestTimeoutMs,
+      runProbe,
+    });
+    if (exactProbe.status === 'failed') {
+      return {
+        status: 'failed',
+        reason: exactProbe.reason,
+        detail: truncateDetail(
+          `${formatAssistantExecutionSubprobeLabel('exact')} failed: ${exactProbe.detail}`,
+        ),
+      };
+    }
+
+    const summaryProbe = await runAssistantExecutionSubprobeWithRetry({
+      probeGroup: buildProbeGroup('summary'),
+      promptText:
+        "Summarize Andrea_NanoBot's role in one sentence. Do not modify files, branches, or PRs.",
+      promptKind: 'summary',
+      requestTimeoutMs: input.requestTimeoutMs,
+      runProbe,
+    });
+    if (summaryProbe.status === 'failed') {
+      return {
+        status: 'failed',
+        reason: summaryProbe.reason,
+        detail: truncateDetail(
+          `${formatAssistantExecutionSubprobeLabel('summary')} failed: ${summaryProbe.detail}`,
+        ),
+      };
+    }
+
+    const refinementRewrite = buildDirectAssistantContinuationPrompt({
+      rawPrompt: 'make it shorter',
+      previousAssistantText: summaryProbe.assistantText || null,
+    });
+    let refinementProbe = await runAssistantExecutionSubprobeWithRetry({
+      probeGroup: buildProbeGroup('refinement'),
+      promptText: refinementRewrite.normalizedPromptText,
+      promptKind: 'refinement',
+      requestTimeoutMs: input.requestTimeoutMs,
+      runProbe,
+      sessionId: refinementRewrite.shouldStartFreshSession
+        ? undefined
+        : summaryProbe.sessionId,
+    });
+    if (
+      refinementProbe.status === 'failed' &&
+      refinementRewrite.fallbackPromptText
+    ) {
+      refinementProbe = await runAssistantExecutionSubprobeWithRetry({
+        probeGroup: buildProbeGroup('refinement'),
+        promptText: refinementRewrite.fallbackPromptText,
+        promptKind: 'refinement',
+        requestTimeoutMs: input.requestTimeoutMs,
+        runProbe,
+      });
+    }
+    if (refinementProbe.status === 'failed') {
+      return {
+        status: 'failed',
+        reason: refinementProbe.reason,
+        detail: truncateDetail(
+          `${formatAssistantExecutionSubprobeLabel('refinement')} failed: ${refinementProbe.detail}`,
+        ),
+      };
+    }
+
+    return {
+      status: 'ok',
+      reason: 'ok',
+      detail: truncateDetail(
+        [
+          `exact ${exactProbe.detail}`,
+          `summary ${summaryProbe.detail}`,
+          `refinement ${refinementProbe.detail}`,
+          'assistant execution produced real assistant answers for exact, summary, and refinement turns',
         ]
           .filter(Boolean)
           .join(' | '),

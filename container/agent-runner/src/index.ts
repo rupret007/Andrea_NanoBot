@@ -142,10 +142,14 @@ function normalizeRequestPolicy(
   policy: ContainerInput['requestPolicy'],
 ): NonNullable<ContainerInput['requestPolicy']> {
   if (policy) {
+    const builtinTools =
+      policy.route === 'direct_assistant'
+        ? dedupeTools(policy.builtinTools)
+        : dedupeTools([...policy.builtinTools, 'ToolSearch']);
     return {
       route: policy.route,
       reason: policy.reason,
-      builtinTools: dedupeTools([...policy.builtinTools, 'ToolSearch']),
+      builtinTools,
       mcpTools: dedupeTools(policy.mcpTools),
       guidance: policy.guidance,
     };
@@ -579,13 +583,18 @@ async function runQuery(
     log(`Using SDK model override: ${selectedModel}`);
   }
 
+  const directAssistantMinimalMode = requestPolicy.route === 'direct_assistant';
   const recoveryGuidance = options.fallbackMode
-    ? 'Recovery mode: previous attempt hit a transient execution failure. Answer directly and concisely without relying on MCP helper orchestration unless absolutely necessary.'
+    ? directAssistantMinimalMode
+      ? 'Recovery mode: previous attempt hit a transient execution failure. Answer directly and concisely from the user prompt without helper orchestration.'
+      : 'Recovery mode: previous attempt hit a transient execution failure. Answer directly and concisely without relying on MCP helper orchestration unless absolutely necessary.'
     : null;
-  const useMcpServer = options.disableMcpServer !== true;
-  const allowedTools = options.fallbackMode
-    ? dedupeTools(['WebSearch', 'WebFetch', 'TodoWrite'])
-    : dedupeTools([...requestPolicy.builtinTools, ...requestPolicy.mcpTools]);
+  const useMcpServer =
+    !directAssistantMinimalMode && options.disableMcpServer !== true;
+  const allowedTools =
+    options.fallbackMode || directAssistantMinimalMode
+      ? dedupeTools(requestPolicy.builtinTools)
+      : dedupeTools([...requestPolicy.builtinTools, ...requestPolicy.mcpTools]);
   log(
     `Tool mode: ${options.fallbackMode ? 'recovery' : 'standard'} | MCP ${useMcpServer ? 'enabled' : 'disabled'} | allowedTools=${allowedTools.join(', ')}`,
   );
@@ -709,6 +718,11 @@ async function runQuery(
       log(
         `Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}${combinedErrorText ? ` errors=${combinedErrorText.slice(0, 200)}` : ''}`,
       );
+      if (treatAsErrorResult && !textResult && !combinedErrorText) {
+        log(
+          `Structured error payload: ${JSON.stringify(message).slice(0, 1200)}`,
+        );
+      }
       const directAssistantError =
         requestPolicy.route === 'direct_assistant' && treatAsErrorResult
           ? classifyDirectAssistantError(

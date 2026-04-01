@@ -11,6 +11,7 @@ import {
   setLogControlConfig,
   type RuntimeLogLevel,
 } from './logger.js';
+import type { SendMessageOptions } from './types.js';
 
 export const LOG_CONTROL_ROUTER_STATE_KEY = 'log_control_config';
 export const ASSISTANT_EXECUTION_PROBE_ROUTER_STATE_KEY =
@@ -387,6 +388,43 @@ export function formatDebugStatus(): string {
       : '- Active scoped overrides: none',
     ...scopes.map((scope) => formatOverrideLine(scope, config)).filter(Boolean),
   ].join('\n');
+}
+
+export function buildDebugStatusInlineActions(): NonNullable<
+  SendMessageOptions['inlineActions']
+> {
+  return [
+    { label: 'Refresh', actionId: '/debug-status' },
+    { label: 'Current Logs', actionId: '/debug-logs current 120' },
+    { label: 'Debug Chat 10m', actionId: '/debug-level debug chat 10m' },
+    { label: 'Reset All', actionId: '/debug-reset all' },
+  ];
+}
+
+export function buildDebugMutationInlineActions(): NonNullable<
+  SendMessageOptions['inlineActions']
+> {
+  return [
+    { label: 'Debug Status', actionId: '/debug-status' },
+    { label: 'Current Logs', actionId: '/debug-logs current 120' },
+    { label: 'Reset All', actionId: '/debug-reset all' },
+  ];
+}
+
+export function buildDebugLogsInlineActions(
+  target = 'current',
+  lines = 120,
+): NonNullable<SendMessageOptions['inlineActions']> {
+  const safeTarget = (target || 'current').trim() || 'current';
+  const safeLines = Math.max(1, Math.min(MAX_DEBUG_LOG_LINES, lines));
+  return [
+    {
+      label: 'Refresh Logs',
+      actionId: `/debug-logs ${safeTarget} ${safeLines}`,
+    },
+    { label: 'Debug Status', actionId: '/debug-status' },
+    { label: 'Reset All', actionId: '/debug-reset all' },
+  ];
 }
 
 function tailLines(lines: string[], maxLines: number): string[] {

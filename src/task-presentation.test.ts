@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest';
 
 import {
   formatCurrentFocusLabel,
+  formatWorkPanel,
   formatTaskContinuationGuidance,
   formatTaskLaneLabel,
   formatTaskOutputHeading,
   formatTaskReplyPrompt,
+  stripLeadingMarkdownTitle,
 } from './task-presentation.js';
 
 describe('task presentation helpers', () => {
@@ -46,6 +48,19 @@ describe('task presentation helpers', () => {
       }),
     ).toContain(
       'Reply here with what Andrea should change next for this task.',
+    );
+  });
+
+  it('formats compact work panels and can strip nested titles', () => {
+    expect(
+      formatWorkPanel({
+        title: '*Debug Status*',
+        lines: ['Probe: ok'],
+        sections: ['- Global log level: info'],
+      }),
+    ).toContain('*Debug Status*');
+    expect(stripLeadingMarkdownTitle('*Nested Title*\n- value')).toBe(
+      '- value',
     );
   });
 });

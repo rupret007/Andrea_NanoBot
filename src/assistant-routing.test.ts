@@ -13,8 +13,15 @@ describe('assistant request routing', () => {
 
     expect(policy.route).toBe('direct_assistant');
     expect(policy.mcpTools).toEqual([]);
+    expect(policy.builtinTools).toEqual(['Read']);
     expect(policy.builtinTools).not.toContain('Bash');
+    expect(policy.builtinTools).not.toContain('Write');
+    expect(policy.builtinTools).not.toContain('Edit');
+    expect(policy.builtinTools).toContain('Read');
     expect(policy.guidance).toContain('lightly witty tone');
+    expect(policy.guidance).toContain(
+      'Do not use tools unless the user explicitly asks',
+    );
   });
 
   it('keeps playful meaning-of-life asks on the direct assistant route', () => {

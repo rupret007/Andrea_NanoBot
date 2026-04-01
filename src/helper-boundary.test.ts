@@ -43,6 +43,12 @@ describe('helper boundary wiring', () => {
     expect(source).toContain('suppressFirstErrorForRetry');
     expect(source).toContain('suppressedTransientError');
     expect(source).toContain(
+      '!directAssistantMinimalMode && options.disableMcpServer !== true',
+    );
+    expect(source).toContain(
+      'options.fallbackMode || directAssistantMinimalMode',
+    );
+    expect(source).toContain(
       'End the prompt stream and exit this query immediately so the outer',
     );
     expect(source).toContain('stream.end();');
@@ -51,7 +57,7 @@ describe('helper boundary wiring', () => {
     );
     expect(source).toContain('disableMcpServer');
     expect(source).toContain(
-      'Recovery mode: previous attempt hit a transient execution failure',
+      'Answer directly and concisely from the user prompt without helper orchestration.',
     );
   });
 

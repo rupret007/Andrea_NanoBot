@@ -2,8 +2,10 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { _initTestDatabase, upsertCursorOperatorContext } from './db.js';
 import {
+  buildCursorCloudTaskActions,
   buildCursorJobCardActions,
   buildCursorListSelectionActions,
+  buildCursorTerminalCardActions,
   flattenCursorJobInventory,
   formatCursorDisplayId,
   getBackendContextGuidance,
@@ -332,6 +334,23 @@ describe('operator context helpers', () => {
     ]);
     expect(actions[0].actionId).toBe('/cursor-sync');
     expect(actions[1].actionId).toBe('/cursor-conversation');
+  });
+
+  it('builds cloud and terminal task action families for panel-first replies', () => {
+    expect(
+      buildCursorCloudTaskActions('https://cursor.example/task').map(
+        (action) => action.label,
+      ),
+    ).toEqual([
+      'Refresh',
+      'View Output',
+      'Results',
+      'Open in Cursor',
+      'Stop Run',
+    ]);
+    expect(
+      buildCursorTerminalCardActions().map((action) => action.label),
+    ).toEqual(['Refresh', 'Terminal Status', 'Terminal Log', 'Terminal Help']);
   });
 
   it('builds numbered selector buttons plus refresh', () => {

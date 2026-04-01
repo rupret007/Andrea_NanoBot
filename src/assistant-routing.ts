@@ -32,6 +32,8 @@ const STANDARD_ASSISTANT_TOOLS = [
   'NotebookEdit',
 ] as const;
 
+const DIRECT_ASSISTANT_TOOLS = ['Read'] as const;
+
 const ADVANCED_EXECUTION_TOOLS = [
   'Bash',
   'Task',
@@ -248,6 +250,7 @@ function buildGuidance(route: AssistantRequestRoute): string {
     direct_assistant: [
       'Treat this as a direct assistant request. Answer clearly and directly.',
       'Use a concise, confident, and lightly witty tone when appropriate. For classic jokes or pop-culture prompts (like meaning of life), prefer the expected punchline first.',
+      'Do not use tools unless the user explicitly asks you to inspect local files, search the web, or fetch external content.',
       'Do not escalate into heavy orchestration, background jobs, or community skill management unless the user explicitly asks for that kind of workflow.',
     ],
     protected_assistant: [
@@ -311,7 +314,7 @@ function createPolicy(
       return {
         route,
         reason,
-        builtinTools: dedupe(STANDARD_ASSISTANT_TOOLS),
+        builtinTools: dedupe(DIRECT_ASSISTANT_TOOLS),
         mcpTools: [],
         guidance: buildGuidance(route),
       };
@@ -363,6 +366,12 @@ function createPolicy(
         guidance: buildGuidance(route),
       };
   }
+}
+
+export function createDirectAssistantRequestPolicy(
+  reason: string,
+): AssistantRequestPolicy {
+  return createPolicy('direct_assistant', reason);
 }
 
 export function createCompatibilityRequestPolicy(): AssistantRequestPolicy {

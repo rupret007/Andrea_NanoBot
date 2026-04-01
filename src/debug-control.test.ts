@@ -5,6 +5,9 @@ import path from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
+  buildDebugLogsInlineActions,
+  buildDebugMutationInlineActions,
+  buildDebugStatusInlineActions,
   formatDebugStatus,
   getAssistantExecutionProbeState,
   parseDebugDurationMs,
@@ -90,6 +93,19 @@ describe('debug control', () => {
     expect(getAssistantExecutionProbeState().reason).toBe(
       'initial_output_timeout',
     );
+  });
+
+  it('builds actionable debug panel buttons', () => {
+    expect(
+      buildDebugStatusInlineActions().map((action) => action.label),
+    ).toEqual(['Refresh', 'Current Logs', 'Debug Chat 10m', 'Reset All']);
+    expect(
+      buildDebugMutationInlineActions().map((action) => action.label),
+    ).toEqual(['Debug Status', 'Current Logs', 'Reset All']);
+    expect(buildDebugLogsInlineActions('runtime', 40)[0]).toEqual({
+      label: 'Refresh Logs',
+      actionId: '/debug-logs runtime 40',
+    });
   });
 });
 

@@ -120,6 +120,9 @@ import {
 } from './types.js';
 import { logger } from './logger.js';
 import {
+  buildDebugLogsInlineActions,
+  buildDebugMutationInlineActions,
+  buildDebugStatusInlineActions,
   formatDebugStatus,
   loadLogControlFromPersistence,
   readDebugLogs,
@@ -174,6 +177,7 @@ import {
   maybeBuildDirectQuickReply,
   maybeBuildDirectRescueReply,
 } from './direct-quick-reply.js';
+import { buildDirectAssistantContinuationPrompt } from './direct-assistant-continuation.js';
 import {
   decideMainChatRouting,
   shouldAvoidCombinedContextForMainChat,
@@ -181,7 +185,9 @@ import {
 } from './main-chat-routing.js';
 import { buildSilentSuccessFallback } from './user-facing-fallback.js';
 import {
+  buildCursorCloudTaskActions,
   buildCursorJobCardActions,
+  buildCursorTerminalCardActions,
   flattenCursorJobInventory,
   formatCursorJobCard,
   type FlattenedCursorJobEntry,
@@ -220,8 +226,10 @@ import {
   type CursorDashboardState,
 } from './cursor-dashboard.js';
 import {
+  formatWorkPanel,
   formatHumanTaskStatus,
   formatOpaqueTaskId,
+  stripLeadingMarkdownTitle,
   formatTaskNextStepMessage,
   formatTaskReplyPrompt,
 } from './task-presentation.js';
@@ -288,6 +296,39 @@ const lastNonRetriableErrorNotice: Record<
   string,
   { code: string; at: number }
 > = {};
+const lastDirectAssistantTextByChatJid: Record<string, string> = {};
+
+function getSessionStorageKey(
+  groupFolder: string,
+  route?: ReturnType<typeof classifyAssistantRequest>['route'],
+): string {
+  return route === 'direct_assistant'
+    ? `${groupFolder}::direct_assistant`
+    : groupFolder;
+}
+
+function classifyDirectAssistantPromptKind(input: {
+  rawPrompt: string;
+  rewriteApplied: boolean;
+}): 'exact' | 'summary' | 'refinement' | 'other' {
+  if (input.rewriteApplied) return 'refinement';
+
+  const normalized = input.rawPrompt.trim().toLowerCase();
+  if (!normalized) return 'other';
+
+  if (
+    normalized.startsWith('reply with exactly:') ||
+    normalized.startsWith('say exactly:')
+  ) {
+    return 'exact';
+  }
+
+  if (normalized.includes('summarize') || normalized.includes('summarise')) {
+    return 'summary';
+  }
+
+  return 'other';
+}
 
 const channels: Channel[] = [];
 const queue = new GroupQueue();
@@ -562,11 +603,14 @@ export function getAvailableGroups(): import('./container-runner.js').AvailableG
 }
 
 function buildAndreaRuntimeDisabledMessage(): string {
-  return [
-    "Andrea's Codex/OpenAI runtime lane is integrated, but execution is still turned off on this host.",
-    'Keep using /cursor as the main operator shell today. You can still review existing runtime work where it is available.',
-    'Enable ANDREA_RUNTIME_EXECUTION_ENABLED=true only after validating the Codex/OpenAI runtime container and credentials on this machine.',
-  ].join('\n');
+  return formatWorkPanel({
+    title: '*Codex/OpenAI Runtime*',
+    lines: [
+      "Andrea's Codex/OpenAI runtime lane is integrated, but execution is still turned off on this host.",
+      'Keep using /cursor as the main operator shell today. You can still review existing runtime work where it is available.',
+      'Enable ANDREA_RUNTIME_EXECUTION_ENABLED=true only after validating the Codex/OpenAI runtime container and credentials on this machine.',
+    ],
+  });
 }
 
 function buildAndreaRuntimeStatusMessage(): string {
@@ -579,13 +623,17 @@ function buildAndreaRuntimeStatusMessage(): string {
     containerRuntimeStatus: getContainerRuntimeStatus(CONTAINER_RUNTIME_NAME),
   });
 
-  return [
-    formatAgentRuntimeStatusMessage(snapshot),
-    '',
-    `- Runtime execution enabled on this host: ${andreaRuntimeExecutionEnabled ? 'yes' : 'no'}`,
-    "- This is Andrea's integrated Codex/OpenAI runtime lane inside the same shell.",
-    '- /cursor is still the cleaner operator surface today. Use /runtime-* only when you want explicit runtime controls.',
-  ].join('\n');
+  return formatWorkPanel({
+    title: '*Codex/OpenAI Runtime Status*',
+    sections: [
+      stripLeadingMarkdownTitle(formatAgentRuntimeStatusMessage(snapshot)),
+    ],
+    lines: [
+      `Runtime execution enabled on this host: ${andreaRuntimeExecutionEnabled ? 'yes' : 'no'}`,
+      "This is Andrea's integrated Codex/OpenAI runtime lane inside the same shell.",
+      '/cursor is still the cleaner operator surface today. Use /runtime-* only when you want explicit runtime controls.',
+    ],
+  });
 }
 
 function getAndreaRuntimeLane(): AndreaRuntimeBackendLane {
@@ -723,11 +771,71 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (!hasTrigger) return true;
   }
 
-  const prompt = formatMessages(missedMessages, TIMEZONE);
   const requestPolicy = classifyAssistantRequest(missedMessages, {
     allowCombinedContext:
       !isMainGroup || !shouldAvoidCombinedContextForMainChat(missedMessages),
   });
+  let promptMessages = missedMessages;
+  const isStandaloneMainDirectAssistantTurn =
+    requestPolicy.route === 'direct_assistant' &&
+    isMainGroup &&
+    shouldAvoidCombinedContextForMainChat(missedMessages);
+  let forceFreshDirectAssistantSession = isStandaloneMainDirectAssistantTurn;
+  let directAssistantRewriteApplied = false;
+  let directAssistantFallbackPromptText: string | null = null;
+
+  if (
+    requestPolicy.route === 'direct_assistant' &&
+    missedMessages.length === 1
+  ) {
+    const rewritten = buildDirectAssistantContinuationPrompt({
+      rawPrompt: missedMessages[0]?.content || '',
+      previousAssistantText: lastDirectAssistantTextByChatJid[chatJid],
+    });
+    if (
+      rewritten.usedVisibleContext &&
+      rewritten.normalizedPromptText &&
+      rewritten.normalizedPromptText !== missedMessages[0]?.content.trim()
+    ) {
+      directAssistantRewriteApplied = true;
+      directAssistantFallbackPromptText = rewritten.fallbackPromptText || null;
+      promptMessages = [
+        {
+          ...missedMessages[0],
+          content: rewritten.normalizedPromptText,
+        },
+      ];
+      forceFreshDirectAssistantSession =
+        forceFreshDirectAssistantSession || rewritten.shouldStartFreshSession;
+      logger.info(
+        {
+          component: 'assistant',
+          chatJid,
+          groupFolder: group.folder,
+          group: group.name,
+          directAssistantProfile: 'minimal_read_only',
+          promptKind: 'refinement',
+          forceFreshDirectAssistantSession,
+          rewriteApplied: true,
+        },
+        'Rewrote terse direct assistant continuation using recent visible context',
+      );
+    }
+  }
+
+  const directAssistantPromptKind =
+    requestPolicy.route === 'direct_assistant'
+      ? classifyDirectAssistantPromptKind({
+          rawPrompt: missedMessages.at(-1)?.content || '',
+          rewriteApplied: directAssistantRewriteApplied,
+        })
+      : null;
+  const quickReply =
+    requestPolicy.route === 'direct_assistant'
+      ? maybeBuildDirectQuickReply(missedMessages)
+      : null;
+
+  const prompt = formatMessages(promptMessages, TIMEZONE);
 
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
   // these messages. Save the old cursor so we can roll back on error.
@@ -745,12 +853,24 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       messageCount: missedMessages.length,
       requestRoute: requestPolicy.route,
       requestReason: requestPolicy.reason,
+      directAssistantProfile:
+        requestPolicy.route === 'direct_assistant' ? 'minimal_read_only' : null,
+      promptKind: directAssistantPromptKind,
+      freshSession:
+        requestPolicy.route === 'direct_assistant'
+          ? forceFreshDirectAssistantSession
+          : null,
+      rewriteApplied:
+        requestPolicy.route === 'direct_assistant'
+          ? directAssistantRewriteApplied
+          : null,
+      quickReply:
+        requestPolicy.route === 'direct_assistant' ? Boolean(quickReply) : null,
     },
     'Processing messages',
   );
 
   if (requestPolicy.route === 'direct_assistant') {
-    const quickReply = maybeBuildDirectQuickReply(missedMessages);
     if (quickReply) {
       try {
         await channel.sendMessage(chatJid, quickReply);
@@ -761,6 +881,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             groupFolder: group.folder,
             group: group.name,
             requestRoute: requestPolicy.route,
+            directAssistantProfile: 'minimal_read_only',
+            promptKind: directAssistantPromptKind,
+            freshSession: forceFreshDirectAssistantSession,
+            rewriteApplied: directAssistantRewriteApplied,
+            quickReply: true,
           },
           'Handled message via direct quick reply path',
         );
@@ -854,50 +979,128 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   await channel.setTyping?.(chatJid, true);
   let hadError = false;
   let outputSentToUser = false;
-
-  const output = await runAgent(
-    group,
-    prompt,
-    chatJid,
-    requestPolicy,
-    effectiveIdleTimeout,
-    async (result) => {
-      // Streaming output callback — called for each agent result
-      if (result.result) {
-        const raw =
-          typeof result.result === 'string'
-            ? result.result
-            : JSON.stringify(result.result);
-        // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
-        const text = formatOutbound(raw);
-        logger.info(
-          {
-            component: 'assistant',
-            chatJid,
-            groupFolder: group.folder,
-            group: group.name,
-            outputChars: raw.length,
-            requestRoute: requestPolicy.route,
-          },
-          'Agent output chunk received',
-        );
-        if (text) {
-          await channel.sendMessage(chatJid, text);
-          outputSentToUser = true;
+  const handleAgentOutput = async (result: ContainerOutput) => {
+    if (result.result) {
+      const raw =
+        typeof result.result === 'string'
+          ? result.result
+          : JSON.stringify(result.result);
+      const text = formatOutbound(raw);
+      logger.info(
+        {
+          component: 'assistant',
+          chatJid,
+          groupFolder: group.folder,
+          group: group.name,
+          outputChars: raw.length,
+          requestRoute: requestPolicy.route,
+        },
+        'Agent output chunk received',
+      );
+      if (text) {
+        await channel.sendMessage(chatJid, text);
+        outputSentToUser = true;
+        if (requestPolicy.route === 'direct_assistant') {
+          lastDirectAssistantTextByChatJid[chatJid] = text;
         }
-        // Only reset idle timer on actual results, not session-update markers (result: null)
-        resetIdleTimer();
       }
+      resetIdleTimer();
+    }
 
-      if (result.status === 'success') {
+    if (result.status === 'success') {
+      if (requestPolicy.route === 'direct_assistant') {
+        queue.closeStdin(chatJid);
+      } else {
         queue.notifyIdle(chatJid);
       }
+    }
 
-      if (result.status === 'error') {
-        hadError = true;
-      }
-    },
+    if (result.status === 'error') {
+      hadError = true;
+    }
+  };
+
+  const executeAgentPrompt = async (
+    promptText: string,
+    freshSession: boolean,
+  ) => {
+    hadError = false;
+    return runAgent(
+      group,
+      promptText,
+      chatJid,
+      requestPolicy,
+      effectiveIdleTimeout,
+      freshSession,
+      handleAgentOutput,
+    );
+  };
+
+  let lastDirectAssistantAttemptPrompt = prompt;
+  let output = await executeAgentPrompt(
+    prompt,
+    forceFreshDirectAssistantSession,
   );
+
+  if (
+    !outputSentToUser &&
+    requestPolicy.route === 'direct_assistant' &&
+    directAssistantRewriteApplied &&
+    directAssistantFallbackPromptText &&
+    (output.status === 'error' || hadError) &&
+    !output.nonRetriable
+  ) {
+    const fallbackPrompt = formatMessages(
+      [
+        {
+          ...promptMessages[0],
+          content: directAssistantFallbackPromptText,
+        },
+      ],
+      TIMEZONE,
+    );
+    logger.warn(
+      {
+        component: 'assistant',
+        chatJid,
+        groupFolder: group.folder,
+        group: group.name,
+        code: output.code,
+        directAssistantProfile: 'minimal_read_only',
+        promptKind: directAssistantPromptKind,
+        freshSession: true,
+        rewriteApplied: true,
+        recoveryAttempted: output.recoveryAttempted,
+      },
+      'Retrying rewritten direct assistant continuation with alternate prompt',
+    );
+    output = await executeAgentPrompt(fallbackPrompt, true);
+    lastDirectAssistantAttemptPrompt = fallbackPrompt;
+  }
+
+  if (
+    !outputSentToUser &&
+    requestPolicy.route === 'direct_assistant' &&
+    (output.status === 'error' || hadError) &&
+    !output.nonRetriable
+  ) {
+    logger.warn(
+      {
+        component: 'assistant',
+        chatJid,
+        groupFolder: group.folder,
+        group: group.name,
+        code: output.code,
+        directAssistantProfile: 'minimal_read_only',
+        promptKind: directAssistantPromptKind,
+        freshSession: true,
+        rewriteApplied: directAssistantRewriteApplied,
+        recoveryAttempted: output.recoveryAttempted,
+      },
+      'Retrying direct assistant request in a fresh outer container after terminal runtime failure',
+    );
+    output = await executeAgentPrompt(lastDirectAssistantAttemptPrompt, true);
+  }
 
   await channel.setTyping?.(chatJid, false);
   if (idleTimer) clearTimeout(idleTimer);
@@ -948,6 +1151,23 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           group: group.name,
           code: output.code,
           notified: shouldNotify,
+          directAssistantProfile:
+            requestPolicy.route === 'direct_assistant'
+              ? 'minimal_read_only'
+              : null,
+          promptKind: directAssistantPromptKind,
+          freshSession:
+            requestPolicy.route === 'direct_assistant'
+              ? forceFreshDirectAssistantSession
+              : null,
+          rewriteApplied:
+            requestPolicy.route === 'direct_assistant'
+              ? directAssistantRewriteApplied
+              : null,
+          quickReply:
+            requestPolicy.route === 'direct_assistant'
+              ? Boolean(quickReply)
+              : null,
         },
         'Non-retriable agent error detected, skipping retry loop',
       );
@@ -968,6 +1188,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           groupFolder: group.folder,
           group: group.name,
           code: output.code,
+          directAssistantProfile: 'minimal_read_only',
+          promptKind: directAssistantPromptKind,
+          freshSession: forceFreshDirectAssistantSession,
+          rewriteApplied: directAssistantRewriteApplied,
+          quickReply: Boolean(quickReply),
           recoveryAttempted: output.recoveryAttempted,
         },
         'Surfaced direct assistant runtime failure to user without queue retry',
@@ -985,6 +1210,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             chatJid,
             groupFolder: group.folder,
             group: group.name,
+            directAssistantProfile: 'minimal_read_only',
+            promptKind: directAssistantPromptKind,
+            freshSession: forceFreshDirectAssistantSession,
+            rewriteApplied: directAssistantRewriteApplied,
+            quickReply: Boolean(quickReply),
           },
           'Recovered direct assistant error with local rescue reply',
         );
@@ -1034,6 +1264,7 @@ async function runAgent(
   chatJid: string,
   requestPolicy: ReturnType<typeof classifyAssistantRequest>,
   idleTimeoutMs: number,
+  forceFreshSession = false,
   onOutput?: (output: ContainerOutput) => Promise<void>,
 ): Promise<{
   status: 'success' | 'error';
@@ -1052,7 +1283,11 @@ async function runAgent(
   recoveryAttempted: boolean;
 }> {
   const isMain = group.isMain === true;
-  const sessionId = sessions[group.folder];
+  const sessionStorageKey = getSessionStorageKey(
+    group.folder,
+    requestPolicy.route,
+  );
+  const sessionId = forceFreshSession ? undefined : sessions[sessionStorageKey];
 
   // Update tasks snapshot for container to read (filtered by group)
   const tasks = getAllTasks();
@@ -1090,8 +1325,8 @@ async function runAgent(
   const wrappedOnOutput = onOutput
     ? async (output: ContainerOutput) => {
         if (output.newSessionId) {
-          sessions[group.folder] = output.newSessionId;
-          setSession(group.folder, output.newSessionId);
+          sessions[sessionStorageKey] = output.newSessionId;
+          setSession(sessionStorageKey, output.newSessionId);
         }
         await onOutput(output);
       }
@@ -1103,6 +1338,8 @@ async function runAgent(
       {
         prompt,
         sessionId,
+        freshSessionHome:
+          requestPolicy.route === 'direct_assistant' && forceFreshSession,
         groupFolder: group.folder,
         chatJid,
         isMain,
@@ -1116,8 +1353,8 @@ async function runAgent(
     );
 
     if (output.newSessionId) {
-      sessions[group.folder] = output.newSessionId;
-      setSession(group.folder, output.newSessionId);
+      sessions[sessionStorageKey] = output.newSessionId;
+      setSession(sessionStorageKey, output.newSessionId);
     }
 
     if (output.status === 'error') {
@@ -1600,12 +1837,33 @@ async function main(): Promise<void> {
       .find((job) => job.groupJid === chatJid && job.active);
   }
 
+  function buildCursorStatusInlineActions(
+    chatJid: string,
+  ): SendMessageOptions['inlineActions'] {
+    const actions: NonNullable<SendMessageOptions['inlineActions']> = [
+      { label: 'Refresh', actionId: '/cursor_status' },
+    ];
+    if (registeredGroups[chatJid]?.isMain) {
+      actions.push({ label: 'Open /cursor', actionId: '/cursor' });
+    }
+    return actions;
+  }
+
+  function buildDebugStatusPanelText(): string {
+    return formatWorkPanel({
+      title: '*Debug Status*',
+      sections: [stripLeadingMarkdownTitle(formatDebugStatus())],
+    });
+  }
+
   async function handleDebugStatus(
     chatJid: string,
     message?: NewMessage,
   ): Promise<void> {
     refreshLogControlFromPersistence();
-    await sendCursorMessage(chatJid, formatDebugStatus(), message);
+    await sendCursorMessage(chatJid, buildDebugStatusPanelText(), message, {
+      inlineActions: buildDebugStatusInlineActions(),
+    });
   }
 
   async function handleDebugLevel(
@@ -1641,13 +1899,18 @@ async function main(): Promise<void> {
             : 'normal';
       await sendCursorMessage(
         chatJid,
-        [
-          '*Debug Level Updated*',
-          `- Scope: ${result.resolvedScope.label}`,
-          `- Level: ${aliasLabel}`,
-          `- Expires: ${result.expiresAt || 'persistent'}`,
-        ].join('\n'),
+        formatWorkPanel({
+          title: '*Debug Level Updated*',
+          lines: [
+            `Scope: ${result.resolvedScope.label}`,
+            `Level: ${aliasLabel}`,
+            `Expires: ${result.expiresAt || 'persistent'}`,
+          ],
+        }),
         message,
+        {
+          inlineActions: buildDebugMutationInlineActions(),
+        },
       );
     } catch (err) {
       await sendCursorMessage(
@@ -1673,8 +1936,14 @@ async function main(): Promise<void> {
 
       await sendCursorMessage(
         chatJid,
-        `Debug logging reset for ${result.resetScope}.`,
+        formatWorkPanel({
+          title: '*Debug Logging Reset*',
+          lines: [`Scope: ${result.resetScope}`],
+        }),
         message,
+        {
+          inlineActions: buildDebugMutationInlineActions(),
+        },
       );
     } catch (err) {
       await sendCursorMessage(
@@ -1706,8 +1975,18 @@ async function main(): Promise<void> {
 
       await sendCursorMessage(
         chatJid,
-        `Debug Logs: ${logPayload.title}\n${logPayload.body}`,
+        formatWorkPanel({
+          title: '*Debug Logs*',
+          lines: [`Target: ${logPayload.title}`],
+          sections: [logPayload.body],
+        }),
         message,
+        {
+          inlineActions: buildDebugLogsInlineActions(
+            target,
+            Number.isFinite(parsedLines) ? parsedLines : 80,
+          ),
+        },
       );
     } catch (err) {
       await sendCursorMessage(
@@ -1866,6 +2145,24 @@ async function main(): Promise<void> {
         ? flattened.find((entry) => entry.id === selectedAgentId) || null
         : null,
     };
+  }
+
+  async function getCursorAgentRecord(
+    chatJid: string,
+    agentId: string,
+  ): Promise<FlattenedCursorJobEntry | null> {
+    const group = registeredGroups[chatJid];
+    if (!group) return null;
+    const inventory = await cursorBackendLane.getInventory({
+      groupFolder: group.folder,
+      chatJid,
+      limit: 50,
+    });
+    return (
+      flattenCursorJobInventory(inventory).find(
+        (entry) => entry.id === agentId,
+      ) || null
+    );
   }
 
   async function getRuntimeSelectedJobRecord(
@@ -2440,13 +2737,19 @@ async function main(): Promise<void> {
     });
     await sendCursorMessage(
       chatJid,
-      [
-        formatCursorCapabilitySummaryMessage(capabilitySummary),
-        formatCursorDesktopStatusMessage(desktopStatus),
-        formatCursorGatewayStatusMessage(gatewayStatus),
-        formatCursorCloudStatusMessage(cloudStatus),
-      ].join('\n\n'),
+      formatWorkPanel({
+        title: '*Cursor Status*',
+        sections: [
+          formatCursorCapabilitySummaryMessage(capabilitySummary),
+          formatCursorDesktopStatusMessage(desktopStatus),
+          formatCursorGatewayStatusMessage(gatewayStatus),
+          formatCursorCloudStatusMessage(cloudStatus),
+        ],
+      }),
       sourceMessage,
+      {
+        inlineActions: buildCursorStatusInlineActions(chatJid),
+      },
     );
   }
 
@@ -3419,10 +3722,19 @@ async function main(): Promise<void> {
         chatJid,
         limit,
       });
+      const provider = isDesktopCursorRecord(normalizedAgentId)
+        ? 'desktop'
+        : 'cloud';
+      const actionRecord =
+        provider === 'cloud'
+          ? await getCursorAgentRecord(chatJid, normalizedAgentId)
+          : null;
+      const inlineActions =
+        provider === 'desktop'
+          ? buildCursorTerminalCardActions()
+          : buildCursorCloudTaskActions(actionRecord?.targetUrl || null);
+
       if (messages.length === 0) {
-        const provider = isDesktopCursorRecord(normalizedAgentId)
-          ? 'desktop'
-          : 'cloud';
         await sendCursorAgentMessage({
           chatJid,
           agentId: normalizedAgentId,
@@ -3435,6 +3747,7 @@ async function main(): Promise<void> {
             contextType: 'output',
             outputSource: 'none',
           }),
+          inlineActions,
           text: `No output is available yet for this task.\nTask: ${labelCursorRecord(normalizedAgentId)} ${formatOpaqueTaskId(normalizedAgentId)}.\n\n${buildCursorNextStepMessage(normalizedAgentId)}`,
         });
         return;
@@ -3449,9 +3762,6 @@ async function main(): Promise<void> {
           return `${index + 1}. [${message.role}]${createdAt}\n${preview}`;
         })
         .join('\n\n');
-      const provider = isDesktopCursorRecord(normalizedAgentId)
-        ? 'desktop'
-        : 'cloud';
       const outputSuggestion = buildTaskOutputSuggestion({
         laneId: 'cursor',
         contextKind: 'output',
@@ -3471,6 +3781,7 @@ async function main(): Promise<void> {
           outputPreview: messages.at(-1)?.content || formatted,
           outputSource: 'conversation',
         }),
+        inlineActions,
         text: `Current output for this task\nTask: ${labelCursorRecord(normalizedAgentId)} ${formatOpaqueTaskId(normalizedAgentId)} (latest ${messages.length} messages)\n\n${formatted}${outputSuggestion ? `\n\n${outputSuggestion}` : ''}\n\n${buildCursorNextStepMessage(normalizedAgentId)}`,
       });
     } catch (err) {
@@ -3515,6 +3826,13 @@ async function main(): Promise<void> {
         groupFolder: group.folder,
         chatJid,
       });
+      const actionRecord = await getCursorAgentRecord(
+        chatJid,
+        normalizedAgentId,
+      );
+      const inlineActions = buildCursorCloudTaskActions(
+        actionRecord?.targetUrl || null,
+      );
 
       if (artifacts.length === 0) {
         await sendCursorAgentMessage({
@@ -3523,6 +3841,7 @@ async function main(): Promise<void> {
           provider: 'cloud',
           sourceMessage,
           contextKind: 'cursor_job_message',
+          inlineActions,
           text: `This task does not have results yet.\nTask: Cursor Cloud ${formatOpaqueTaskId(normalizedAgentId)}.\n\nView output first, then check Results again if you expect files from this task.`,
         });
         return;
@@ -3545,6 +3864,7 @@ async function main(): Promise<void> {
           contextType: 'results',
           summary: lines.slice(0, 3).join('\n'),
         }),
+        inlineActions,
         text: `Results for this task\nTask: Cursor Cloud ${formatOpaqueTaskId(normalizedAgentId)}\n\n${lines.join('\n')}\n\nReply to this result card with \`/cursor-download ABSOLUTE_PATH\` when you want one file. \`/cursor-download ${normalizedAgentId} ABSOLUTE_PATH\` still works anywhere as an explicit fallback.`,
       });
     } catch (err) {
@@ -3657,6 +3977,7 @@ async function main(): Promise<void> {
         provider: 'desktop',
         sourceMessage,
         contextKind: 'cursor_job_message',
+        inlineActions: buildCursorTerminalCardActions(),
         text: lines.join('\n\n'),
       });
     } catch (err) {
@@ -3707,6 +4028,7 @@ async function main(): Promise<void> {
         provider: 'desktop',
         sourceMessage,
         contextKind: 'cursor_job_message',
+        inlineActions: buildCursorTerminalCardActions(),
         text: formatCursorTerminalStatusMessage(normalizedAgentId, terminal),
       });
     } catch (err) {
@@ -3766,6 +4088,7 @@ async function main(): Promise<void> {
         provider: 'desktop',
         sourceMessage,
         contextKind: 'cursor_job_message',
+        inlineActions: buildCursorTerminalCardActions(),
         text: [
           formatCursorTerminalStatusMessage(normalizedAgentId, terminal),
           'Recent output:',
@@ -3820,6 +4143,7 @@ async function main(): Promise<void> {
         provider: 'desktop',
         sourceMessage,
         contextKind: 'cursor_job_message',
+        inlineActions: buildCursorTerminalCardActions(),
         text: `Stopped desktop bridge terminal command for ${normalizedAgentId}.\n\n${formatCursorTerminalStatusMessage(normalizedAgentId, terminal)}`,
       });
     } catch (err) {
@@ -3881,6 +4205,7 @@ async function main(): Promise<void> {
       provider: 'desktop',
       sourceMessage,
       contextKind: 'cursor_job_message',
+      inlineActions: buildCursorTerminalCardActions(),
       text: `Desktop bridge terminal control is available for ${formatOpaqueTaskId(normalizedAgentId)}.\n\nUse \`/cursor-terminal ${normalizedAgentId} <command>\` when you want Andrea to run a new machine-side command. Reply to this card with \`/cursor-terminal-status\` or \`/cursor-terminal-log\` when you want the latest state or output without retyping the id.`,
     });
   }
@@ -4137,11 +4462,11 @@ async function main(): Promise<void> {
 
     await dispatchRuntimeCommand(
       {
-        async sendToChat(targetChatJid, text) {
+        async sendToChat(targetChatJid, text, extra = {}) {
           const sent = await channel.sendMessage(
             targetChatJid,
             text,
-            buildOperatorSendOptions(sourceMessage),
+            buildOperatorSendOptions(sourceMessage, extra),
           );
           return sent.platformMessageId;
         },

@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { EventEmitter } from 'events';
+import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { PassThrough } from 'stream';
@@ -408,6 +409,55 @@ describe('container-runner timeout behavior', () => {
 
     const result = await resultPromise;
     expect(result.status).toBe('success');
+  });
+
+  it('isolates direct assistant Claude home from heavier group lanes', async () => {
+    const onOutput = vi.fn(async () => {});
+    const resultPromise = runContainerAgent(
+      testGroup,
+      {
+        ...testInput,
+        requestPolicy: {
+          route: 'direct_assistant',
+          reason: 'defaulted to direct assistant handling',
+          builtinTools: ['Read'],
+          mcpTools: [],
+          guidance: 'Answer clearly and directly.',
+        },
+      },
+      () => {},
+      onOutput,
+    );
+
+    await vi.advanceTimersByTimeAsync(10);
+
+    const spawnCalls = vi.mocked(spawn).mock.calls;
+    const lastArgs = spawnCalls.at(-1)?.[1] as string[] | undefined;
+    const normalizedArgs = (lastArgs || []).join(' ').replace(/\\/g, '/');
+    expect(lastArgs).toContain('-v');
+    expect(normalizedArgs).toContain(
+      '/tmp/nanoclaw-test-data/sessions/test-group/.claude-direct-assistant:/home/node/.claude',
+    );
+    expect(normalizedArgs).toContain(
+      '/tmp/nanoclaw-test-data/sessions/test-group/direct-assistant-workspace:/workspace/group',
+    );
+    expect(normalizedArgs).not.toContain(
+      '/tmp/nanoclaw-test-groups/test-group:/workspace/group',
+    );
+    expect(normalizedArgs).not.toContain('/workspace/project');
+
+    emitOutputMarker(fakeProc, {
+      status: 'success',
+      result: 'Done',
+      newSessionId: 'session-direct-home',
+    });
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+
+    await expect(resultPromise).resolves.toMatchObject({
+      status: 'success',
+    });
   });
 
   it('refreshes stale per-group agent-runner cache even when cached file mtime is newer', async () => {

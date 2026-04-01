@@ -31,6 +31,15 @@ function escapeRegExp(input: string): string {
   return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function escapeTelegramMarkdownText(text: string): string {
+  return text
+    .split(/(`[^`\n]+`)/g)
+    .map((part) =>
+      /^`[^`\n]+`$/.test(part) ? part : part.replace(/(?<!\\)_/g, '\\_'),
+    )
+    .join('');
+}
+
 export function extractTelegramLeadingCommand(
   text: string,
   botUsername?: string,
@@ -195,8 +204,9 @@ async function sendTelegramMessage(
     reply_markup?: InlineKeyboard;
   } = {},
 ): Promise<SendMessageResult> {
+  const markdownText = escapeTelegramMarkdownText(text);
   try {
-    const sent = await api.sendMessage(chatId, text, {
+    const sent = await api.sendMessage(chatId, markdownText, {
       ...options,
       parse_mode: 'Markdown',
     });
@@ -220,8 +230,9 @@ async function editTelegramMessage(
     reply_markup?: InlineKeyboard;
   } = {},
 ): Promise<SendMessageResult> {
+  const markdownText = escapeTelegramMarkdownText(text);
   try {
-    await api.editMessageText(chatId, messageId, text, {
+    await api.editMessageText(chatId, messageId, markdownText, {
       ...options,
       parse_mode: 'Markdown',
     });

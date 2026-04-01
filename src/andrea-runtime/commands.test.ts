@@ -9,6 +9,7 @@ import type {
   BackendJobSummary,
 } from '../backend-lanes/types.js';
 import {
+  buildRuntimeStatusInlineActions,
   buildRuntimeJobInlineActions,
   dispatchRuntimeCommand,
   formatRuntimeJobsMessage,
@@ -63,7 +64,10 @@ function makeDetails(
 }
 
 describe('runtime commands', () => {
-  let sentMessages: string[];
+  let sentMessages: Array<{
+    text: string;
+    inlineActionLabels: string[];
+  }>;
   let runtimeMessages: Array<{
     jobId: string;
     text: string;
@@ -89,8 +93,12 @@ describe('runtime commands', () => {
       replyToMessageId: undefined,
     };
     deps = {
-      async sendToChat(_chatJid, text) {
-        sentMessages.push(text);
+      async sendToChat(_chatJid, text, extra) {
+        sentMessages.push({
+          text,
+          inlineActionLabels:
+            extra?.inlineActions?.map((action) => action.label) || [],
+        });
         return 'msg-1';
       },
       async sendRuntimeJobMessage(args) {
@@ -201,8 +209,11 @@ describe('runtime commands', () => {
     const handled = await dispatchRuntimeCommand(deps, context);
 
     expect(handled).toBe(true);
-    expect(sentMessages).toEqual([
-      '*Codex/OpenAI Runtime Status*\n- Container runtime: podman (running)',
+    expect(sentMessages[0]?.text).toContain('*Codex/OpenAI Runtime Status*');
+    expect(sentMessages[0]?.inlineActionLabels).toEqual([
+      'Refresh',
+      'Recent Work',
+      'Open /cursor',
     ]);
   });
 
@@ -346,7 +357,7 @@ describe('runtime commands', () => {
     await dispatchRuntimeCommand(deps, context);
 
     expect(followUpJob).not.toHaveBeenCalled();
-    expect(sentMessages[0]).toContain(
+    expect(sentMessages[0]?.text).toContain(
       'Reply with what Andrea should change next for this task',
     );
   });
@@ -553,9 +564,9 @@ describe('runtime commands', () => {
 
     await dispatchRuntimeCommand(deps, context);
 
-    expect(sentMessages[0]).toContain('Latest log: latest.log');
-    expect(sentMessages[0]).toContain('line2');
-    expect(sentMessages[0]).toContain('line3');
+    expect(sentMessages[0]?.text).toContain('Latest log: latest.log');
+    expect(sentMessages[0]?.text).toContain('line2');
+    expect(sentMessages[0]?.text).toContain('line3');
 
     resolveSpy.mockRestore();
     fs.rmSync(tempDir, { recursive: true, force: true });
@@ -571,8 +582,13 @@ describe('runtime commands', () => {
 
     await dispatchRuntimeCommand(deps, context);
 
-    expect(sentMessages).toEqual([
-      "Andrea's Codex/OpenAI runtime lane is integrated, but execution is still turned off on this host.\nKeep using /cursor as the main operator shell today. You can still review existing runtime work where it is available.\nEnable ANDREA_RUNTIME_EXECUTION_ENABLED=true only after validating the Codex/OpenAI runtime container and credentials on this machine.",
+    expect(sentMessages[0]?.text).toContain(
+      "Andrea's Codex/OpenAI runtime lane is integrated",
+    );
+    expect(sentMessages[0]?.inlineActionLabels).toEqual([
+      'Refresh',
+      'Recent Work',
+      'Open /cursor',
     ]);
   });
 });
@@ -599,6 +615,16 @@ describe('buildRuntimeJobInlineActions', () => {
         canExecute: true,
       }),
     ).toEqual([{ label: 'Refresh', actionId: '/runtime-logs' }]);
+  });
+});
+
+describe('buildRuntimeStatusInlineActions', () => {
+  it('keeps runtime status panels actionable', () => {
+    expect(buildRuntimeStatusInlineActions()).toEqual([
+      { label: 'Refresh', actionId: '/runtime-status' },
+      { label: 'Recent Work', actionId: '/runtime-jobs' },
+      { label: 'Open /cursor', actionId: '/cursor' },
+    ]);
   });
 });
 

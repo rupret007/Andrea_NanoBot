@@ -241,6 +241,66 @@ describe('TelegramChannel.sendMessage', () => {
     expect(replyMarkup.inline_keyboard[0]).toHaveLength(2);
     expect(replyMarkup.inline_keyboard[1]).toHaveLength(1);
   });
+
+  it('escapes markdown-sensitive underscores before sending', async () => {
+    const sendMessage = vi.fn().mockResolvedValue({ message_id: 777 });
+    const channel = new TelegramChannel('test-token', {
+      onMessage: () => undefined,
+      onChatMetadata: () => undefined,
+      registeredGroups: () => ({}),
+    });
+
+    (
+      channel as unknown as {
+        bot: { api: { sendMessage: typeof sendMessage } };
+      }
+    ).bot = {
+      api: { sendMessage },
+    };
+
+    await channel.sendMessage(
+      'tg:123',
+      'Runtime: codex_local\nRepo: Andrea_NanoBot',
+    );
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      '123',
+      'Runtime: codex\\_local\nRepo: Andrea\\_NanoBot',
+      expect.objectContaining({
+        parse_mode: 'Markdown',
+      }),
+    );
+  });
+
+  it('preserves inline code spans while escaping other underscores', async () => {
+    const sendMessage = vi.fn().mockResolvedValue({ message_id: 778 });
+    const channel = new TelegramChannel('test-token', {
+      onMessage: () => undefined,
+      onChatMetadata: () => undefined,
+      registeredGroups: () => ({}),
+    });
+
+    (
+      channel as unknown as {
+        bot: { api: { sendMessage: typeof sendMessage } };
+      }
+    ).bot = {
+      api: { sendMessage },
+    };
+
+    await channel.sendMessage(
+      'tg:123',
+      'Task: Andrea_NanoBot\nUse `/runtime-followup runtime-job-follow_up <text>` now.',
+    );
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      '123',
+      'Task: Andrea\\_NanoBot\nUse `/runtime-followup runtime-job-follow_up <text>` now.',
+      expect.objectContaining({
+        parse_mode: 'Markdown',
+      }),
+    );
+  });
 });
 
 describe('TelegramChannel.editMessage', () => {
@@ -282,6 +342,38 @@ describe('TelegramChannel.editMessage', () => {
       expect.objectContaining({
         parse_mode: 'Markdown',
         reply_markup: expect.any(Object),
+      }),
+    );
+  });
+
+  it('escapes markdown-sensitive underscores before editing', async () => {
+    const editMessageText = vi.fn().mockResolvedValue({});
+    const channel = new TelegramChannel('test-token', {
+      onMessage: () => undefined,
+      onChatMetadata: () => undefined,
+      registeredGroups: () => ({}),
+    });
+
+    (
+      channel as unknown as {
+        bot: { api: { editMessageText: typeof editMessageText } };
+      }
+    ).bot = {
+      api: { editMessageText },
+    };
+
+    await channel.editMessage?.(
+      'tg:123',
+      '9001',
+      'Task: Andrea_NanoBot\nRuntime: codex_local',
+    );
+
+    expect(editMessageText).toHaveBeenCalledWith(
+      '123',
+      9001,
+      'Task: Andrea\\_NanoBot\nRuntime: codex\\_local',
+      expect.objectContaining({
+        parse_mode: 'Markdown',
       }),
     );
   });
