@@ -80,8 +80,10 @@ export interface CalendarEvent {
   startIso: string;
   endIso: string;
   allDay: boolean;
+  calendarId?: string | null;
   calendarName?: string | null;
   location?: string | null;
+  htmlLink?: string | null;
 }
 
 export interface CalendarProviderStatus {
@@ -108,6 +110,17 @@ export interface CalendarSchedulingContext {
 export interface CalendarAssistantResponse {
   reply: string;
   schedulingContext: CalendarSchedulingContext | null;
+  activeEventContext: {
+    providerId: CalendarProviderId;
+    id: string;
+    title: string;
+    startIso: string;
+    endIso: string;
+    allDay: boolean;
+    calendarId?: string | null;
+    calendarName?: string | null;
+    htmlLink?: string | null;
+  } | null;
 }
 
 interface CalendarAssistantConfig {
@@ -1310,8 +1323,10 @@ async function loadGoogleCalendarEvents(
         startIso: event.startIso,
         endIso: event.endIso,
         allDay: event.allDay,
+        calendarId: event.calendarId,
         location: event.location || null,
         calendarName: event.calendarName,
+        htmlLink: event.htmlLink || null,
       })),
     );
     if (successCount === 0 && failures.length > 0) {
@@ -2013,9 +2028,26 @@ export async function buildCalendarAssistantResponse(
               timeZone: plan.timeZone,
             }
           : null,
+      activeEventContext: null,
     };
   }
   const result = await lookupCalendarAssistantEvents(plan, deps);
+  const activeEventContext =
+    result.events.length === 1 &&
+    result.events[0]?.providerId === 'google_calendar' &&
+    result.events[0]?.calendarId
+      ? {
+          providerId: result.events[0].providerId,
+          id: result.events[0].id,
+          title: result.events[0].title,
+          startIso: result.events[0].startIso,
+          endIso: result.events[0].endIso,
+          allDay: result.events[0].allDay,
+          calendarId: result.events[0].calendarId || null,
+          calendarName: result.events[0].calendarName || null,
+          htmlLink: result.events[0].htmlLink || null,
+        }
+      : null;
   return {
     reply: formatCalendarAssistantReply(result),
     schedulingContext:
@@ -2026,6 +2058,7 @@ export async function buildCalendarAssistantResponse(
             timeZone: plan.timeZone,
           }
         : null,
+    activeEventContext,
   };
 }
 

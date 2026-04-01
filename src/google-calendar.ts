@@ -50,6 +50,15 @@ export interface GoogleCalendarEventCreateInput {
   description?: string | null;
 }
 
+export interface GoogleCalendarEventUpdateInput {
+  calendarId: string;
+  eventId: string;
+  start: Date;
+  end: Date;
+  timeZone: string;
+  allDay: boolean;
+}
+
 export interface GoogleCalendarValidationResult {
   discoveredCalendars: GoogleCalendarMetadata[];
   validatedCalendars: GoogleCalendarMetadata[];
@@ -476,6 +485,43 @@ export async function listGoogleCalendarEvents(
   };
 }
 
+function mapGoogleCalendarEventPayload(
+  payload: {
+    id?: string;
+    summary?: string;
+    location?: string;
+    htmlLink?: string;
+    start?: { date?: string; dateTime?: string };
+    end?: { date?: string; dateTime?: string };
+    organizer?: { displayName?: string; email?: string };
+  },
+  fallback: {
+    calendarId: string;
+    title: string;
+    location?: string | null;
+  },
+): GoogleCalendarEventRecord {
+  const parsedStart = parseGoogleDate(payload.start);
+  const parsedEnd = parseGoogleDate(payload.end);
+  if (!parsedStart.iso || !parsedEnd.iso) {
+    throw new Error('Google Calendar returned an invalid event payload.');
+  }
+
+  return {
+    id:
+      payload.id ||
+      `google_calendar:${fallback.calendarId}:${parsedStart.iso}:${payload.summary || fallback.title}`,
+    title: payload.summary || fallback.title,
+    startIso: parsedStart.iso,
+    endIso: parsedEnd.iso,
+    allDay: parsedStart.allDay,
+    location: payload.location || fallback.location || null,
+    calendarId: fallback.calendarId,
+    calendarName: payload.organizer?.displayName || fallback.calendarId,
+    htmlLink: payload.htmlLink || null,
+  };
+}
+
 export async function createGoogleCalendarEvent(
   input: GoogleCalendarEventCreateInput,
   config: GoogleCalendarConfig,
@@ -539,25 +585,138 @@ export async function createGoogleCalendarEvent(
     end?: { date?: string; dateTime?: string };
     organizer?: { displayName?: string; email?: string };
   };
-  const parsedStart = parseGoogleDate(payload.start);
-  const parsedEnd = parseGoogleDate(payload.end);
-  if (!parsedStart.iso || !parsedEnd.iso) {
+  return mapGoogleCalendarEventPayload(payload, {
+    calendarId: input.calendarId,
+    title: input.title,
+    location: input.location || null,
+  });
+}
+
+export async function updateGoogleCalendarEvent(
+  input: GoogleCalendarEventUpdateInput,
+  config: GoogleCalendarConfig,
+  fetchImpl: FetchLike = globalThis.fetch,
+): Promise<GoogleCalendarEventRecord> {
+  const accessToken = await getGoogleCalendarAccessToken(config, fetchImpl);
+  const body = input.allDay
+    ? {
+        start: {
+          date: formatDateOnly(input.start),
+        },
+        end: {
+          date: formatDateOnly(input.end),
+        },
+      }
+    : {
+        start: {
+          dateTime: input.start.toISOString(),
+          timeZone: input.timeZone,
+        },
+        end: {
+          dateTime: input.end.toISOString(),
+          timeZone: input.timeZone,
+        },
+      };
+
+  const response = await fetchImpl(
+    `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(input.calendarId)}/events/${encodeURIComponent(input.eventId)}`,
+    {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    },
+  );
+  const text = await response.text();
+  if (!response.ok) {
     throw new Error(
-      'Google Calendar returned an invalid create response payload.',
+      extractJsonErrorDetail(
+        text,
+        'Google Calendar event update',
+        response.status,
+      ),
     );
   }
 
-  return {
-    id:
-      payload.id ||
-      `google_calendar:${input.calendarId}:${parsedStart.iso}:${payload.summary || input.title}`,
-    title: payload.summary || input.title,
-    startIso: parsedStart.iso,
-    endIso: parsedEnd.iso,
-    allDay: parsedStart.allDay,
-    location: payload.location || input.location || null,
+  const payload = JSON.parse(text) as Parameters<
+    typeof mapGoogleCalendarEventPayload
+  >[0];
+  return mapGoogleCalendarEventPayload(payload, {
     calendarId: input.calendarId,
-    calendarName: payload.organizer?.displayName || input.calendarId,
-    htmlLink: payload.htmlLink || null,
-  };
+    title: 'Updated event',
+  });
+}
+
+export async function moveGoogleCalendarEvent(
+  input: {
+    sourceCalendarId: string;
+    destinationCalendarId: string;
+    eventId: string;
+  },
+  config: GoogleCalendarConfig,
+  fetchImpl: FetchLike = globalThis.fetch,
+): Promise<GoogleCalendarEventRecord> {
+  const accessToken = await getGoogleCalendarAccessToken(config, fetchImpl);
+  const url = new URL(
+    `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(input.sourceCalendarId)}/events/${encodeURIComponent(input.eventId)}/move`,
+  );
+  url.searchParams.set('destination', input.destinationCalendarId);
+
+  const response = await fetchImpl(url.toString(), {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(
+      extractJsonErrorDetail(
+        text,
+        'Google Calendar event move',
+        response.status,
+      ),
+    );
+  }
+
+  const payload = JSON.parse(text) as Parameters<
+    typeof mapGoogleCalendarEventPayload
+  >[0];
+  return mapGoogleCalendarEventPayload(payload, {
+    calendarId: input.destinationCalendarId,
+    title: 'Moved event',
+  });
+}
+
+export async function deleteGoogleCalendarEvent(
+  input: {
+    calendarId: string;
+    eventId: string;
+  },
+  config: GoogleCalendarConfig,
+  fetchImpl: FetchLike = globalThis.fetch,
+): Promise<void> {
+  const accessToken = await getGoogleCalendarAccessToken(config, fetchImpl);
+  const response = await fetchImpl(
+    `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(input.calendarId)}/events/${encodeURIComponent(input.eventId)}`,
+    {
+      method: 'DELETE',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    },
+  );
+  if (response.ok || response.status === 204) {
+    return;
+  }
+  const text = await response.text();
+  throw new Error(
+    extractJsonErrorDetail(
+      text,
+      'Google Calendar event delete',
+      response.status,
+    ),
+  );
 }

@@ -538,6 +538,92 @@ END:VCALENDAR</c:calendar-data>
     expect(response?.reply).toBe('What time should I treat as after work?');
   });
 
+  it('records active event context only for a single Google event', async () => {
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            summary: 'Jeff',
+            items: [
+              {
+                id: 'evt-1',
+                summary: 'Dentist appointment',
+                htmlLink: 'https://calendar.google.com/calendar/event?eid=abc',
+                start: {
+                  dateTime: '2026-04-02T19:00:00Z',
+                },
+                end: {
+                  dateTime: '2026-04-02T20:00:00Z',
+                },
+              },
+            ],
+          }),
+        ),
+    );
+
+    const response = await buildCalendarAssistantResponse(
+      'Do I have anything at 2pm tomorrow?',
+      {
+        now: new Date('2026-04-01T10:00:00-05:00'),
+        timeZone: 'America/Chicago',
+        env: {
+          GOOGLE_CALENDAR_ACCESS_TOKEN: 'token',
+        },
+        fetchImpl,
+      },
+    );
+
+    expect(response?.activeEventContext?.id).toBe('evt-1');
+    expect(response?.activeEventContext?.calendarId).toBe('primary');
+  });
+
+  it('does not record active event context for multi-event agenda replies', async () => {
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            summary: 'Jeff',
+            items: [
+              {
+                id: 'evt-1',
+                summary: 'Dentist appointment',
+                start: {
+                  dateTime: '2026-04-02T19:00:00Z',
+                },
+                end: {
+                  dateTime: '2026-04-02T20:00:00Z',
+                },
+              },
+              {
+                id: 'evt-2',
+                summary: 'Soccer practice',
+                start: {
+                  dateTime: '2026-04-02T22:00:00Z',
+                },
+                end: {
+                  dateTime: '2026-04-02T23:00:00Z',
+                },
+              },
+            ],
+          }),
+        ),
+    );
+
+    const response = await buildCalendarAssistantResponse(
+      "What's on my calendar tomorrow?",
+      {
+        now: new Date('2026-04-01T10:00:00-05:00'),
+        timeZone: 'America/Chicago',
+        env: {
+          GOOGLE_CALENDAR_ACCESS_TOKEN: 'token',
+        },
+        fetchImpl,
+      },
+    );
+
+    expect(response?.activeEventContext).toBeNull();
+  });
+
   it('checks exact-time overlap conservatively for Google availability', async () => {
     const fetchImpl = vi.fn(
       async () =>
