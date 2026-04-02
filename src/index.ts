@@ -81,6 +81,10 @@ import {
   type SelectedWorkContext,
 } from './daily-command-center.js';
 import {
+  clearAssistantReadyState,
+  writeAssistantReadyState,
+} from './host-control.js';
+import {
   advancePendingActionDraft,
   advancePendingActionReminder,
   planActionLayerIntent,
@@ -4455,7 +4459,21 @@ function ensureContainerSystemRunning(): void {
   cleanupOrphans();
 }
 
+function resolveAppVersion(): string {
+  try {
+    const raw = fs.readFileSync(
+      path.join(process.cwd(), 'package.json'),
+      'utf-8',
+    );
+    const parsed = JSON.parse(raw) as { version?: string };
+    return parsed.version || 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
 async function main(): Promise<void> {
+  clearAssistantReadyState();
   ensureContainerSystemRunning();
   initDatabase();
   loadLogControlFromPersistence();
@@ -4474,6 +4492,7 @@ async function main(): Promise<void> {
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
+    clearAssistantReadyState();
     await queue.shutdown(10000);
     if (alexaRuntime) {
       await alexaRuntime
@@ -4487,6 +4506,7 @@ async function main(): Promise<void> {
   };
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('exit', () => clearAssistantReadyState());
 
   const CURSOR_STATUS_COMMANDS = new Set(['/cursor-status', '/cursor_status']);
   const CURSOR_CREATE_USAGE =
@@ -8315,8 +8335,10 @@ async function main(): Promise<void> {
     writeCursorAgentsSnapshot(group.folder, group.isMain === true, cursorRows);
   }
   queue.setProcessMessagesFn(processGroupMessages);
+  writeAssistantReadyState(resolveAppVersion());
   recoverPendingMessages();
   startMessageLoop().catch((err) => {
+    clearAssistantReadyState();
     logger.fatal({ err }, 'Message loop crashed unexpectedly');
     process.exit(1);
   });

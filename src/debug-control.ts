@@ -4,6 +4,14 @@ import path from 'path';
 import { getRouterState, setRouterState } from './db.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import {
+  detectWindowsInstallArtifacts,
+  detectWindowsInstallMode,
+  determineWindowsHostServiceState,
+  formatInstallModeLabel,
+  readHostControlSnapshot,
+  reconcileWindowsHostState,
+} from './host-control.js';
+import {
   getLogControlConfig,
   type LogControlConfig,
   type OperatorLogLevel,
@@ -376,6 +384,22 @@ export function formatDebugStatus(): string {
   const config = readPersistedLogControlConfig();
   const probe = getAssistantExecutionProbeState();
   const scopes = Object.keys(config.scopedOverrides).sort();
+  const hostSnapshot = readHostControlSnapshot();
+  const windowsHost =
+    process.platform === 'win32' ? reconcileWindowsHostState() : null;
+  const installedMode =
+    process.platform === 'win32'
+      ? formatInstallModeLabel(
+          detectWindowsInstallMode(detectWindowsInstallArtifacts()),
+        )
+      : formatInstallModeLabel(hostSnapshot.hostState?.installMode);
+  const hostServiceState =
+    windowsHost?.serviceState ||
+    determineWindowsHostServiceState({
+      hostState: hostSnapshot.hostState,
+      readyState: hostSnapshot.readyState,
+      processRunning: false,
+    });
 
   return [
     '*Debug Status*',
@@ -383,6 +407,25 @@ export function formatDebugStatus(): string {
     `- Assistant execution probe: ${probe.status}${probe.reason ? ` (${probe.reason})` : ''}`,
     ...(probe.checkedAt ? [`- Last execution probe: ${probe.checkedAt}`] : []),
     ...(probe.detail ? [`- Probe detail: ${probe.detail}`] : []),
+    `- Host state: ${hostServiceState}`,
+    `- Install mode: ${installedMode}`,
+    `- Active launch mode: ${formatInstallModeLabel(
+      windowsHost?.activeLaunchMode || hostSnapshot.hostState?.installMode,
+    )}`,
+    `- Host dependency: ${windowsHost?.dependencyState || hostSnapshot.hostState?.dependencyState || 'unknown'}`,
+    ...(windowsHost?.dependencyError
+      ? [`- Host dependency detail: ${windowsHost.dependencyError}`]
+      : []),
+    ...(hostSnapshot.nodeRuntime
+      ? [
+          `- Pinned Node: ${hostSnapshot.nodeRuntime.version}`,
+          `- Pinned Node path: ${hostSnapshot.nodeRuntime.nodePath}`,
+        ]
+      : []),
+    ...(windowsHost?.launcherError
+      ? [`- Host failure: ${windowsHost.launcherError}`]
+      : []),
+    `- Host log path: ${hostSnapshot.paths.hostLogPath}`,
     scopes.length > 0
       ? '- Active scoped overrides:'
       : '- Active scoped overrides: none',
@@ -396,6 +439,7 @@ export function buildDebugStatusInlineActions(): NonNullable<
   return [
     { label: 'Refresh', actionId: '/debug-status' },
     { label: 'Current Logs', actionId: '/debug-logs current 120' },
+    { label: 'Host Logs', actionId: '/debug-logs host 120' },
     { label: 'Debug Chat 10m', actionId: '/debug-level debug chat 10m' },
     { label: 'Reset All', actionId: '/debug-reset all' },
   ];
@@ -407,6 +451,7 @@ export function buildDebugMutationInlineActions(): NonNullable<
   return [
     { label: 'Debug Status', actionId: '/debug-status' },
     { label: 'Current Logs', actionId: '/debug-logs current 120' },
+    { label: 'Host Logs', actionId: '/debug-logs host 120' },
     { label: 'Reset All', actionId: '/debug-reset all' },
   ];
 }
@@ -520,8 +565,11 @@ export function readDebugLogs(params: {
   }
 
   if (target === 'stderr') {
+    const preferredPath = path.join(getLogsDir(), 'nanoclaw.error.log');
+    const legacyPath = path.join(getLogsDir(), 'nanoclaw.stderr.log');
+    const stderrLines = readLogLines(preferredPath);
     const lines = tailLines(
-      readLogLines(path.join(getLogsDir(), 'nanoclaw.stderr.log')),
+      stderrLines.length > 0 ? stderrLines : readLogLines(legacyPath),
       lineCount,
     );
     return {
@@ -530,6 +578,20 @@ export function readDebugLogs(params: {
         lines.length > 0
           ? truncateForTelegram(lines.join('\n'))
           : 'No stderr log lines found.',
+    };
+  }
+
+  if (target === 'host') {
+    const lines = tailLines(
+      readLogLines(path.join(getLogsDir(), 'nanoclaw.host.log')),
+      lineCount,
+    );
+    return {
+      title: 'host',
+      body:
+        lines.length > 0
+          ? truncateForTelegram(lines.join('\n'))
+          : 'No host-control log lines found.',
     };
   }
 
@@ -594,6 +656,6 @@ export function readDebugLogs(params: {
   }
 
   throw new Error(
-    'Log target must be service, stderr, current, cursor, or runtime.',
+    'Log target must be service, stderr, host, current, cursor, or runtime.',
   );
 }

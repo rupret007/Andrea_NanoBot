@@ -33,35 +33,41 @@ function runStep(step: Step): void {
 }
 
 function resolveSteps(includeLiveVerify: boolean): Step[] {
-  const npxCommand = process.platform === 'win32' ? 'npx.cmd' : 'npx';
-  const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+  const nodeCommand = process.execPath;
 
-  const runNode22 = (
+  const runNodeScript = (
     label: string,
     scriptPath: string,
     extraArgs: string[] = [],
   ): Step => ({
     name: label,
-    command: npxCommand,
-    args: ['-y', '-p', 'node@22', 'node', scriptPath, ...extraArgs],
+    command: nodeCommand,
+    args: [scriptPath, ...extraArgs],
   });
 
   const baseSteps: Step[] = [
-    runNode22('format-check', './node_modules/prettier/bin/prettier.cjs', [
+    runNodeScript('format-check', './node_modules/prettier/bin/prettier.cjs', [
       '--check',
       'src/**/*.ts',
     ]),
-    runNode22('typecheck', './node_modules/typescript/bin/tsc', ['--noEmit']),
-    runNode22('lint', './node_modules/eslint/bin/eslint.js', ['src/']),
-    runNode22('unit-tests', './node_modules/vitest/vitest.mjs', ['run']),
-    runNode22('build', './node_modules/typescript/bin/tsc'),
+    runNodeScript('typecheck', './node_modules/typescript/bin/tsc', [
+      '--noEmit',
+    ]),
+    runNodeScript('lint', './node_modules/eslint/bin/eslint.js', ['src/']),
+    runNodeScript('unit-tests', './node_modules/vitest/vitest.mjs', ['run']),
+    runNodeScript('build', './node_modules/typescript/bin/tsc'),
   ];
 
   if (includeLiveVerify) {
     baseSteps.push({
       name: 'live-verify',
-      command: npmCommand,
-      args: ['run', 'setup', '--', '--step', 'verify'],
+      command: nodeCommand,
+      args: [
+        './node_modules/tsx/dist/cli.mjs',
+        './setup/index.ts',
+        '--step',
+        'verify',
+      ],
     });
   }
 

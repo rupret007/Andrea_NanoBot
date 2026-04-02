@@ -1,4 +1,10 @@
-import { formatDebugStatus, loadLogControlFromPersistence, readDebugLogs, resetDebugLevel, setDebugLevel } from '../src/debug-control.js';
+import {
+  formatDebugStatus,
+  loadLogControlFromPersistence,
+  readDebugLogs,
+  resetDebugLevel,
+  setDebugLevel,
+} from '../src/debug-control.js';
 import { initDatabase } from '../src/db.js';
 
 function printUsage(): void {
@@ -8,7 +14,7 @@ function printUsage(): void {
       '  tsx scripts/debug-control.ts status',
       '  tsx scripts/debug-control.ts level <normal|debug|verbose> [scope] [duration]',
       '  tsx scripts/debug-control.ts reset [scope|all]',
-      '  tsx scripts/debug-control.ts logs [target] [lines]',
+      '  tsx scripts/debug-control.ts logs [service|stderr|host|current|cursor|runtime] [lines]',
     ].join('\n'),
   );
 }

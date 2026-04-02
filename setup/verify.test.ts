@@ -1,12 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  buildBlockedAssistantExecutionProbeResult,
   buildCredentialProbeMessagesUrl,
+  classifyLocalGatewayHealthPayload,
   classifyCredentialProbeFailure,
   determineCredentialStatus,
   isLikelyNativeOpenAiEndpoint,
   probeAssistantExecution,
   probeCredentialRuntime,
+  probeLocalGatewayHealth,
   resolveCredentialProbeEndpoints,
 } from './verify.js';
 
@@ -107,12 +110,50 @@ describe('classifyCredentialProbeFailure', () => {
     expect(result.reason).toBe('network_error');
   });
 
+  it('classifies aborted probes as network failures', () => {
+    const result = classifyCredentialProbeFailure({
+      errorMessage: 'This operation was aborted',
+    });
+    expect(result.reason).toBe('network_error');
+  });
+
   it('does not misclassify invalid max token errors as model alias failures', () => {
     const result = classifyCredentialProbeFailure({
       statusCode: 400,
       body: "Invalid 'max_output_tokens': integer below minimum value.",
     });
     expect(result.reason).toBe('http_400');
+  });
+});
+
+describe('classifyLocalGatewayHealthPayload', () => {
+  it('reports ok when the gateway has at least one healthy endpoint', () => {
+    const result = classifyLocalGatewayHealthPayload({
+      healthy_count: 1,
+      unhealthy_count: 0,
+    });
+
+    expect(result).toEqual({
+      status: 'ok',
+      reason: 'ok',
+    });
+  });
+
+  it('maps insufficient quota health errors to a clear failure', () => {
+    const result = classifyLocalGatewayHealthPayload({
+      healthy_count: 0,
+      unhealthy_count: 1,
+      unhealthy_endpoints: [
+        {
+          error:
+            'RateLimitError: OpenAIException - {"error":{"code":"insufficient_quota"}}',
+        },
+      ],
+    });
+
+    expect(result.status).toBe('failed');
+    expect(result.reason).toBe('insufficient_quota');
+    expect(result.detail).toContain('out of quota');
   });
 });
 
@@ -197,7 +238,54 @@ describe('probeCredentialRuntime', () => {
   });
 });
 
+describe('probeLocalGatewayHealth', () => {
+  it('returns the gateway health classification for unhealthy upstreams', async () => {
+    vi.stubGlobal(
+      'fetch',
+      async () =>
+        new Response(
+          JSON.stringify({
+            healthy_count: 0,
+            unhealthy_count: 1,
+            unhealthy_endpoints: [
+              {
+                error:
+                  'RateLimitError: OpenAIException - {"error":{"code":"insufficient_quota"}}',
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+    );
+
+    const result = await probeLocalGatewayHealth({
+      hostHealthUrl: 'http://127.0.0.1:4000/health',
+      requestTimeoutMs: 50,
+    });
+
+    expect(result.status).toBe('failed');
+    expect(result.reason).toBe('insufficient_quota');
+  });
+});
+
 describe('probeAssistantExecution', () => {
+  it('blocks the assistant execution probe when credential runtime already failed', () => {
+    const result = buildBlockedAssistantExecutionProbeResult({
+      credentialRuntimeProbe: {
+        status: 'failed',
+        reason: 'insufficient_quota',
+        detail: 'OpenAI key is reachable but out of quota/billing.',
+      },
+    });
+
+    expect(result).toEqual({
+      status: 'skipped',
+      reason: 'blocked_by_credential_runtime_failure',
+      detail:
+        'Skipped because the credential runtime probe already failed (insufficient_quota): OpenAI key is reachable but out of quota/billing.',
+    });
+  });
+
   it('reports failure when the exact assistant probe times out before first output', async () => {
     const result = await probeAssistantExecution({
       runProbe: async () => ({

@@ -10,6 +10,11 @@ import os from 'os';
 import path from 'path';
 
 import { readEnvFile } from '../src/env.js';
+import {
+  buildWindowsCompatibilityShim,
+  buildWindowsHostControlCommand,
+  buildWindowsStartupFolderScript,
+} from '../src/host-control.js';
 import { logger } from '../src/logger.js';
 import {
   getPlatform,
@@ -25,22 +30,14 @@ export async function run(_args: string[]): Promise<void> {
   const nodePath = getNodePath();
   const homeDir = os.homedir();
   const ephemeralNodePath = isEphemeralNodePath(nodePath);
-  const nodePathMajor = getNodeMajorForBinary(nodePath);
-  const nonBaselineNodeOnWindows =
-    platform === 'windows' && nodePathMajor !== null && nodePathMajor !== 22;
-  const useWindowsNpxLauncher =
-    platform === 'windows' && (ephemeralNodePath || nonBaselineNodeOnWindows);
   const channelAuthConfigured = hasConfiguredChannelAuth(projectRoot);
 
   logger.info(
     {
       platform,
       nodePath,
-      nodePathMajor,
       projectRoot,
       ephemeralNodePath,
-      nonBaselineNodeOnWindows,
-      useWindowsNpxLauncher,
       channelAuthConfigured,
     },
     'Setting up service',
@@ -64,13 +61,7 @@ export async function run(_args: string[]): Promise<void> {
   if (ephemeralNodePath && platform === 'windows') {
     logger.warn(
       { nodePath },
-      'Using Windows npx launcher fallback for service runtime',
-    );
-  }
-  if (nonBaselineNodeOnWindows) {
-    logger.warn(
-      { nodePath, nodePathMajor },
-      'Using Windows npx launcher fallback because node.exe is not Node 22',
+      'Windows service setup will use the repo-pinned Node 22 launcher instead of the host node path',
     );
   }
 
@@ -102,12 +93,7 @@ export async function run(_args: string[]): Promise<void> {
   } else if (platform === 'linux') {
     setupLinux(projectRoot, nodePath, homeDir);
   } else if (platform === 'windows') {
-    setupWindowsTask(
-      projectRoot,
-      nodePath,
-      useWindowsNpxLauncher,
-      channelAuthConfigured,
-    );
+    setupWindowsTask(projectRoot, nodePath, channelAuthConfigured);
   } else {
     emitStatus('SETUP_SERVICE', {
       SERVICE_TYPE: 'unknown',
@@ -164,10 +150,6 @@ function hasConfiguredChannelAuth(projectRoot: string): boolean {
     fs.existsSync(authDir) && fs.readdirSync(authDir).length > 0;
 
   return hasTokenChannel || hasWhatsAppAuth;
-}
-
-function psQuote(value: string): string {
-  return `'${value.replace(/'/g, "''")}'`;
 }
 
 function readPidFromFile(pidFile: string): number | null {
@@ -322,129 +304,71 @@ function setupLinux(
   }
 }
 
-function resolveWindowsNpxPath(): string | null {
-  const commands = ['npx.cmd', 'npx'];
-  for (const command of commands) {
-    try {
-      const output = execFileSync('where.exe', [command], {
-        encoding: 'utf-8',
-      }).trim();
-      const candidates = output
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter(Boolean);
-      const stableCandidate = candidates.find(
-        (candidate) => !isEphemeralNodePath(candidate),
-      );
-      if (stableCandidate) return stableCandidate;
-      if (candidates[0]) return candidates[0];
-    } catch {
-      // try next command
-    }
+function invokeWindowsHostControl(
+  projectRoot: string,
+  action: 'start' | 'stop' | 'restart' | 'status',
+  installMode?: 'manual_host_control' | 'scheduled_task' | 'startup_folder',
+): void {
+  const hostScriptPath = path.join(projectRoot, 'scripts', 'nanoclaw-host.ps1');
+  const args = [
+    '-NoProfile',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-File',
+    hostScriptPath,
+    action,
+  ];
+  if (installMode) {
+    args.push('-InstallMode', installMode);
   }
-  return null;
+  execFileSync('powershell.exe', args, {
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: 60_000,
+  });
+}
+
+function repairExistingWindowsStartupFallback(projectRoot: string): string | null {
+  const appData = process.env.APPDATA;
+  if (!appData) return null;
+
+  const startupScriptPath = path.join(
+    appData,
+    'Microsoft',
+    'Windows',
+    'Start Menu',
+    'Programs',
+    'Startup',
+    'nanoclaw-start.cmd',
+  );
+  if (!fs.existsSync(startupScriptPath)) return null;
+
+  fs.writeFileSync(startupScriptPath, buildWindowsStartupFolderScript(projectRoot));
+  logger.info(
+    { startupScriptPath },
+    'Repaired existing Windows startup-folder script to the canonical host launcher',
+  );
+  return startupScriptPath;
 }
 
 function setupWindowsTask(
   projectRoot: string,
   nodePath: string,
-  useNpxLauncher: boolean,
   channelAuthConfigured: boolean,
 ): void {
   const taskName = 'NanoClaw';
   const wrapperPath = path.join(projectRoot, 'start-nanoclaw.ps1');
-  const pidFile = path.join(projectRoot, 'nanoclaw.pid');
-  const logPath = path.join(projectRoot, 'logs', 'nanoclaw.log');
-  const errLogPath = path.join(projectRoot, 'logs', 'nanoclaw.error.log');
-  const entryPath = path.join(projectRoot, 'dist', 'index.js');
-  const npxPath = useNpxLauncher ? resolveWindowsNpxPath() : null;
-
-  if (useNpxLauncher && !npxPath) {
-    emitStatus('SETUP_SERVICE', {
-      SERVICE_TYPE: 'windows-task',
-      NODE_PATH: nodePath,
-      PROJECT_PATH: projectRoot,
-      STATUS: 'failed',
-      ERROR: 'npx_not_found',
-      LOG: 'stdout/stderr (no dedicated setup.log file)',
-    });
-    process.exit(1);
-  }
-
-  const wrapper = [
-    "$ErrorActionPreference = 'Stop'",
-    `$projectRoot = ${psQuote(projectRoot)}`,
-    `$nodePath = ${psQuote(nodePath)}`,
-    `$entryPath = ${psQuote(entryPath)}`,
-    `$pidFile = ${psQuote(pidFile)}`,
-    `$logPath = ${psQuote(logPath)}`,
-    `$errLogPath = ${psQuote(errLogPath)}`,
-    ...(useNpxLauncher && npxPath ? [`$npxPath = ${psQuote(npxPath)}`] : []),
-    '',
-    'Set-Location -LiteralPath $projectRoot',
-    '',
-    "$gatewayScript = Join-Path $projectRoot 'scripts\\start-openai-gateway.ps1'",
-    'if (Test-Path -LiteralPath $gatewayScript) {',
-    '  try {',
-    '    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $gatewayScript | Out-Null',
-    '  } catch {',
-    '    $gatewayErr = "OpenAI gateway start warning: $($_.Exception.Message)"',
-    '    Add-Content -LiteralPath $errLogPath -Value $gatewayErr',
-    '  }',
-    '}',
-    '',
-    'if (Test-Path -LiteralPath $pidFile) {',
-    '  try {',
-    '    $existing = Get-Content -LiteralPath $pidFile -ErrorAction Stop | Select-Object -First 1',
-    "    if ($existing -match '^[0-9]+$') {",
-    '      Stop-Process -Id ([int]$existing) -Force -ErrorAction SilentlyContinue',
-    '    }',
-    '  } catch {',
-    '    # ignore invalid pid content',
-    '  }',
-    '}',
-    '',
-    '# Kill any orphaned NanoClaw node processes for this project root.',
-    '# This prevents duplicate channel consumers after repeated setup runs.',
-    '$projectPattern = [Regex]::Escape($projectRoot)',
-    '$orphaned = Get-CimInstance Win32_Process -Filter "Name=\'node.exe\'" | Where-Object {',
-    '  $cmd = [string]$_.CommandLine',
-    "  $cmd -match $projectPattern -and $cmd -match 'dist[\\\\/]index\\.js'",
-    '}',
-    'foreach ($proc in $orphaned) {',
-    '  Stop-Process -Id $proc.ProcessId -Force -ErrorAction SilentlyContinue',
-    '}',
-    '',
-    ...(useNpxLauncher
-      ? [
-          'function Resolve-Node22Executable {',
-          '  try {',
-          `    $resolved = (& $npxPath -y -p node@22 -- node -p "process.execPath" 2>$null | Select-Object -Last 1).Trim()`,
-          '    if ($resolved -and (Test-Path -LiteralPath $resolved)) {',
-          '      return $resolved',
-          '    }',
-          '  } catch {',
-          '    # fall back to direct npx launch',
-          '  }',
-          '  return $null',
-          '}',
-          '',
-          '$resolvedNodePath = Resolve-Node22Executable',
-          'if ($resolvedNodePath) {',
-          '  $proc = Start-Process -FilePath $resolvedNodePath -ArgumentList @($entryPath) -WorkingDirectory $projectRoot -RedirectStandardOutput $logPath -RedirectStandardError $errLogPath -PassThru',
-          '} else {',
-          "  $proc = Start-Process -FilePath $npxPath -ArgumentList @('-y', '-p', 'node@22', '--', 'node', $entryPath) -WorkingDirectory $projectRoot -RedirectStandardOutput $logPath -RedirectStandardError $errLogPath -PassThru",
-          '}',
-        ]
-      : [
-          '$proc = Start-Process -FilePath $nodePath -ArgumentList @($entryPath) -WorkingDirectory $projectRoot -RedirectStandardOutput $logPath -RedirectStandardError $errLogPath -PassThru',
-        ]),
-    'Set-Content -LiteralPath $pidFile -Value $proc.Id -NoNewline',
-  ].join('\n');
-  fs.writeFileSync(wrapperPath, wrapper + '\n');
+  fs.writeFileSync(
+    wrapperPath,
+    buildWindowsCompatibilityShim() + '\n',
+  );
   logger.info({ wrapperPath }, 'Wrote Windows startup wrapper');
+  repairExistingWindowsStartupFallback(projectRoot);
 
-  const taskCommand = `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${wrapperPath}"`;
+  const taskCommand = buildWindowsHostControlCommand(
+    projectRoot,
+    'start',
+    'scheduled_task',
+  );
   try {
     execFileSync(
       'schtasks.exe',
@@ -467,7 +391,6 @@ function setupWindowsTask(
     }
     const fallback = setupWindowsStartupFallback(
       projectRoot,
-      wrapperPath,
       channelAuthConfigured,
     );
     if (!fallback.ok) {
@@ -496,7 +419,7 @@ function setupWindowsTask(
       INITIAL_RUN_OK: fallback.initialRunOk,
       INITIAL_RUN_SKIPPED: fallback.initialRunSkipped,
       FALLBACK: 'startup_folder',
-      NODE_LAUNCHER: useNpxLauncher ? 'npx-node22' : 'node-binary',
+      NODE_LAUNCHER: 'pinned-node22',
       STATUS: 'success',
       LOG: 'stdout/stderr (no dedicated setup.log file)',
     });
@@ -518,11 +441,8 @@ function setupWindowsTask(
   let initialRunOk = false;
   if (!initialRunSkipped) {
     try {
-      execFileSync('schtasks.exe', ['/Run', '/TN', taskName], {
-        stdio: ['ignore', 'pipe', 'pipe'],
-        timeout: 15000,
-      });
-      initialRunOk = waitForWindowsNanoclawStart(pidFile, projectRoot);
+      invokeWindowsHostControl(projectRoot, 'start', 'scheduled_task');
+      initialRunOk = true;
     } catch (err) {
       logger.warn({ err, taskName }, 'Task created but initial run failed');
     }
@@ -545,7 +465,7 @@ function setupWindowsTask(
     TASK_REGISTERED: taskRegistered,
     INITIAL_RUN_OK: initialRunOk,
     INITIAL_RUN_SKIPPED: initialRunSkipped,
-    NODE_LAUNCHER: useNpxLauncher ? 'npx-node22' : 'node-binary',
+    NODE_LAUNCHER: 'pinned-node22',
     STATUS: 'success',
     LOG: 'stdout/stderr (no dedicated setup.log file)',
   });
@@ -553,7 +473,6 @@ function setupWindowsTask(
 
 function setupWindowsStartupFallback(
   projectRoot: string,
-  wrapperPath: string,
   runInitial: boolean,
 ): {
   ok: boolean;
@@ -582,49 +501,20 @@ function setupWindowsStartupFallback(
   fs.mkdirSync(startupDir, { recursive: true });
   const startupScriptPath = path.join(startupDir, 'nanoclaw-start.cmd');
 
-  const scriptLines = [
-    '@echo off',
-    `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${wrapperPath}"`,
-  ];
-  fs.writeFileSync(startupScriptPath, scriptLines.join('\r\n') + '\r\n');
+  fs.writeFileSync(startupScriptPath, buildWindowsStartupFolderScript(projectRoot));
   logger.info({ startupScriptPath }, 'Wrote startup-folder fallback script');
 
   const initialRunSkipped = !runInitial;
   let initialRunOk = false;
   if (!initialRunSkipped) {
     try {
-      execFileSync(
-        'powershell.exe',
-        ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', wrapperPath],
-        { stdio: ['ignore', 'pipe', 'pipe'], timeout: 15000 },
-      );
-      const pidFile = path.join(projectRoot, 'nanoclaw.pid');
-      initialRunOk = waitForWindowsNanoclawStart(pidFile, projectRoot);
+      invokeWindowsHostControl(projectRoot, 'start', 'startup_folder');
+      initialRunOk = true;
     } catch (err) {
       logger.warn(
         { err },
         'Startup fallback configured, but initial run failed',
       );
-      try {
-        const launchScript = [
-          '$ErrorActionPreference = "Stop"',
-          `$wrapperPath = ${psQuote(wrapperPath)}`,
-          "Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',$wrapperPath) -WindowStyle Hidden | Out-Null",
-        ].join('; ');
-        execFileSync(
-          'powershell.exe',
-          ['-NoProfile', '-Command', launchScript],
-          {
-            stdio: 'ignore',
-            timeout: 5000,
-          },
-        );
-        const pidFile = path.join(projectRoot, 'nanoclaw.pid');
-        initialRunOk = waitForWindowsNanoclawStart(pidFile, projectRoot);
-        logger.info('Retried startup fallback launch asynchronously');
-      } catch (retryErr) {
-        logger.warn({ err: retryErr }, 'Startup fallback async retry failed');
-      }
     }
   } else {
     logger.info(

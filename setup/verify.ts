@@ -22,6 +22,12 @@ import { setAssistantExecutionProbeState } from '../src/debug-control.js';
 import { initDatabase } from '../src/db.js';
 import { buildDirectAssistantContinuationPrompt } from '../src/direct-assistant-continuation.js';
 import { readEnvFile } from '../src/env.js';
+import {
+  detectWindowsInstallArtifacts,
+  detectWindowsInstallMode,
+  formatInstallModeLabel,
+  reconcileWindowsHostState,
+} from '../src/host-control.js';
 import { logger } from '../src/logger.js';
 import { formatMessages } from '../src/router.js';
 import type { RegisteredGroup } from '../src/types.js';
@@ -72,6 +78,16 @@ interface LocalOpenAiGatewayState {
   network?: string;
   endpoint?: string;
   host_health?: string;
+}
+
+interface LocalGatewayHealthPayload {
+  healthy_count?: number;
+  unhealthy_count?: number;
+  healthy_endpoints?: Array<unknown>;
+  unhealthy_endpoints?: Array<{
+    error?: string;
+    model?: string;
+  }>;
 }
 
 const LOCAL_GATEWAY_STATE_PATH = path.join(
@@ -258,7 +274,11 @@ export function classifyCredentialProbeFailure(input: {
     body.includes('model_not_found') ||
     body.includes('unknown model');
 
-  if (body.includes('insufficient_quota')) {
+  if (
+    body.includes('insufficient_quota') ||
+    body.includes('exceeded your current quota') ||
+    body.includes('out of quota')
+  ) {
     return {
       reason: 'insufficient_quota',
       detail:
@@ -295,6 +315,7 @@ export function classifyCredentialProbeFailure(input: {
   if (
     errorMessage.includes('fetch failed') ||
     errorMessage.includes('timed out') ||
+    errorMessage.includes('aborted') ||
     errorMessage.includes('econnrefused') ||
     errorMessage.includes('enotfound')
   ) {
@@ -320,6 +341,147 @@ export function classifyCredentialProbeFailure(input: {
     reason: 'runtime_error',
     detail: 'Credential runtime probe failed for an unknown reason.',
   };
+}
+
+function countGatewayEndpoints(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.length;
+  }
+  return 0;
+}
+
+function classifyGatewayHealthErrorDetail(detail: string): {
+  reason: string;
+  detail: string;
+} {
+  return classifyCredentialProbeFailure({
+    statusCode: 502,
+    body: detail,
+  });
+}
+
+export function classifyLocalGatewayHealthPayload(
+  payload: LocalGatewayHealthPayload | null | undefined,
+): CredentialRuntimeProbeResult {
+  if (!payload || typeof payload !== 'object') {
+    return {
+      status: 'failed',
+      reason: 'runtime_error',
+      detail: 'Local gateway health response was missing or invalid.',
+    };
+  }
+
+  const healthyCount = Math.max(
+    countGatewayEndpoints(payload.healthy_count),
+    countGatewayEndpoints(payload.healthy_endpoints),
+  );
+  if (healthyCount > 0) {
+    return {
+      status: 'ok',
+      reason: 'ok',
+    };
+  }
+
+  const unhealthyEntries = Array.isArray(payload.unhealthy_endpoints)
+    ? payload.unhealthy_endpoints
+    : [];
+  const unhealthyCount = Math.max(
+    countGatewayEndpoints(payload.unhealthy_count),
+    unhealthyEntries.length,
+  );
+
+  const firstError = unhealthyEntries
+    .map((entry) => (entry?.error || '').trim())
+    .find(Boolean);
+
+  if (firstError) {
+    const classified = classifyGatewayHealthErrorDetail(firstError);
+    return {
+      status: 'failed',
+      reason: classified.reason,
+      detail: classified.detail,
+    };
+  }
+
+  if (unhealthyCount > 0) {
+    return {
+      status: 'failed',
+      reason: 'runtime_error',
+      detail:
+        'Local gateway is running but reported zero healthy upstream endpoints.',
+    };
+  }
+
+  return {
+    status: 'failed',
+    reason: 'runtime_error',
+    detail:
+      'Local gateway health did not report any healthy upstream endpoints.',
+  };
+}
+
+export async function probeLocalGatewayHealth(input: {
+  hostHealthUrl: string;
+  requestTimeoutMs?: number;
+}): Promise<CredentialRuntimeProbeResult> {
+  const normalized = normalizeProbeEndpoint(input.hostHealthUrl);
+  if (!normalized) {
+    return {
+      status: 'skipped',
+      reason: 'invalid_endpoint',
+      detail: 'Local gateway health URL is not a valid URL.',
+    };
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(
+      () => controller.abort(),
+      input.requestTimeoutMs ?? 4_000,
+    );
+    const response = await fetch(normalized, {
+      method: 'GET',
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+
+    if (!response.ok) {
+      const body = await response.text();
+      const classified = classifyCredentialProbeFailure({
+        statusCode: response.status,
+        body,
+      });
+      return {
+        status: 'failed',
+        reason: classified.reason,
+        detail: classified.detail,
+      };
+    }
+
+    const raw = await response.text();
+    try {
+      const payload = JSON.parse(raw) as LocalGatewayHealthPayload;
+      return classifyLocalGatewayHealthPayload(payload);
+    } catch {
+      return {
+        status: 'failed',
+        reason: 'runtime_error',
+        detail: 'Local gateway health returned invalid JSON.',
+      };
+    }
+  } catch (err) {
+    const classified = classifyCredentialProbeFailure({
+      errorMessage: err instanceof Error ? err.message : String(err),
+    });
+    return {
+      status: 'failed',
+      reason: classified.reason,
+      detail: classified.detail,
+    };
+  }
 }
 
 export async function probeCredentialRuntime(input: {
@@ -838,6 +1000,19 @@ async function tryStartLocalGatewayForVerify(projectRoot: string): Promise<{
         timeout: 120_000,
       },
     );
+    const gatewayState = readLocalOpenAiGatewayState();
+    const healthUrl = gatewayState?.host_health || '';
+    if (healthUrl) {
+      const health = await probeLocalGatewayHealth({
+        hostHealthUrl: healthUrl,
+      });
+      if (health.status === 'failed') {
+        return {
+          ok: false,
+          detail: health.detail || 'Local gateway health probe failed.',
+        };
+      }
+    }
     return {
       ok: true,
       detail: truncateDetail(output || ''),
@@ -876,6 +1051,7 @@ function buildVerifyNextSteps(input: {
   credentialRuntimeProbeReason?: string;
   assistantExecutionProbeReason?: string;
   configuredChannels?: string[];
+  hostLastError?: string;
 }): string {
   const steps: string[] = [];
 
@@ -912,6 +1088,13 @@ function buildVerifyNextSteps(input: {
   if (input.missingRequirements.includes('service_running')) {
     steps.push(
       'Start or repair the service with: npm run setup -- --step service',
+    );
+  }
+  if (input.missingRequirements.includes('service_config_failed')) {
+    steps.push(
+      input.hostLastError
+        ? `NanoClaw is running with an unhealthy runtime configuration: ${truncateDetail(input.hostLastError)}`
+        : 'NanoClaw is running with an unhealthy runtime configuration. Check /debug-status and nanoclaw.host.log.',
     );
   }
   if (input.missingRequirements.includes('credential_runtime_unusable')) {
@@ -1036,29 +1219,17 @@ async function detectOneCliCredentialKeys(): Promise<{
   }
 }
 
-async function isWindowsNanoclawPidRunning(
-  pid: number,
-  projectRoot: string,
-): Promise<boolean> {
-  const rootLiteral = projectRoot.replace(/'/g, "''");
-  const script = [
-    `$root = '${rootLiteral}'`,
-    `$p = Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}" -ErrorAction SilentlyContinue`,
-    'if ($null -eq $p) { exit 1 }',
-    '$cmd = [string]$p.CommandLine',
-    'if ($cmd -like "*$root*" -and $cmd -match \'dist[\\\\/]index\\.js\') { exit 0 }',
-    'exit 2',
-  ].join('; ');
-
-  try {
-    const { execFileSync } = await import('child_process');
-    execFileSync('powershell.exe', ['-NoProfile', '-Command', script], {
-      stdio: 'ignore',
-    });
-    return true;
-  } catch {
-    return false;
-  }
+export function buildBlockedAssistantExecutionProbeResult(input: {
+  credentialRuntimeProbe: CredentialRuntimeProbeResult;
+}): AssistantExecutionProbeResult {
+  const detail = input.credentialRuntimeProbe.detail
+    ? `Skipped because the credential runtime probe already failed (${input.credentialRuntimeProbe.reason}): ${input.credentialRuntimeProbe.detail}`
+    : `Skipped because the credential runtime probe already failed (${input.credentialRuntimeProbe.reason}).`;
+  return {
+    status: 'skipped',
+    reason: 'blocked_by_credential_runtime_failure',
+    detail,
+  };
 }
 
 export async function run(_args: string[]): Promise<void> {
@@ -1066,6 +1237,9 @@ export async function run(_args: string[]): Promise<void> {
   const platform = getPlatform();
   const nodeVersion = getNodeVersion() || process.version.replace(/^v/, '');
   const nodeMajor = getNodeMajorVersion();
+  const windowsHost =
+    platform === 'windows' ? reconcileWindowsHostState({ projectRoot }) : null;
+  const hostSnapshot = windowsHost?.snapshot || null;
   let nodeOk = nodeMajor === 22;
   const homeDir = os.homedir();
 
@@ -1074,21 +1248,17 @@ export async function run(_args: string[]): Promise<void> {
 
   // 1. Check service status
   let service = 'not_found';
+  let hostInstallMode = 'unknown';
+  let hostActiveLaunchMode = 'unknown';
+  let hostPinnedNodePath = '';
+  let hostPinnedNodeVersion = '';
+  let hostLastError = '';
+  let hostDependencyState = 'unknown';
+  let hostDependencyError = '';
   const mgr = getServiceManager();
 
-  // Windows fallback: allow service wrapper to pin Node 22 via npx launcher
-  if (!nodeOk && platform === 'windows') {
-    const wrapperPath = path.join(projectRoot, 'start-nanoclaw.ps1');
-    if (fs.existsSync(wrapperPath)) {
-      try {
-        const wrapper = fs.readFileSync(wrapperPath, 'utf-8');
-        if (wrapper.includes("'node@22'")) {
-          nodeOk = true;
-        }
-      } catch {
-        // wrapper unreadable
-      }
-    }
+  if (!nodeOk && platform === 'windows' && hostSnapshot?.nodeRuntime) {
+    nodeOk = hostSnapshot.nodeRuntime.version.startsWith('22.');
   }
 
   if (mgr === 'launchd') {
@@ -1127,54 +1297,49 @@ export async function run(_args: string[]): Promise<void> {
     }
   } else {
     if (platform === 'windows') {
-      try {
-        const { execFileSync } = await import('child_process');
-        execFileSync('schtasks.exe', ['/Query', '/TN', 'NanoClaw'], {
-          stdio: 'ignore',
-        });
-        service = 'stopped';
-      } catch {
-        // task not found
-      }
-
-      if (service === 'not_found') {
-        const appData = process.env.APPDATA;
-        if (appData) {
-          const startupScript = path.join(
-            appData,
-            'Microsoft',
-            'Windows',
-            'Start Menu',
-            'Programs',
-            'Startup',
-            'nanoclaw-start.cmd',
-          );
-          if (fs.existsSync(startupScript)) {
-            service = 'stopped';
+      const installArtifacts = detectWindowsInstallArtifacts({ projectRoot });
+      const installMode = detectWindowsInstallMode({
+        hasScheduledTask: installArtifacts.hasScheduledTask,
+        hasStartupFolder: installArtifacts.hasStartupFolder,
+      });
+      hostInstallMode = formatInstallModeLabel(installMode);
+      hostActiveLaunchMode = formatInstallModeLabel(
+        windowsHost?.activeLaunchMode,
+      );
+      hostPinnedNodePath = hostSnapshot?.nodeRuntime?.nodePath || '';
+      hostPinnedNodeVersion = hostSnapshot?.nodeRuntime?.version || '';
+      hostLastError = windowsHost?.launcherError || '';
+      hostDependencyState = windowsHost?.dependencyState || 'unknown';
+      hostDependencyError = windowsHost?.dependencyError || '';
+      service = windowsHost?.serviceState || 'stopped';
+    } else {
+      // Check for nohup PID file
+      const pidFile = path.join(projectRoot, 'nanoclaw.pid');
+      if (fs.existsSync(pidFile)) {
+        try {
+          const raw = fs.readFileSync(pidFile, 'utf-8').trim();
+          const pid = Number(raw);
+          if (raw && Number.isInteger(pid) && pid > 0) {
+            const running = isPidRunning(pid);
+            service = running ? 'running' : 'stopped';
           }
+        } catch {
+          service = 'stopped';
         }
-      }
-    }
-
-    // Check for nohup PID file
-    const pidFile = path.join(projectRoot, 'nanoclaw.pid');
-    if (fs.existsSync(pidFile)) {
-      try {
-        const raw = fs.readFileSync(pidFile, 'utf-8').trim();
-        const pid = Number(raw);
-        if (raw && Number.isInteger(pid) && pid > 0) {
-          const running =
-            platform === 'windows'
-              ? await isWindowsNanoclawPidRunning(pid, projectRoot)
-              : isPidRunning(pid);
-          service = running ? 'running' : 'stopped';
-        }
-      } catch {
-        service = 'stopped';
       }
     }
   }
-  logger.info({ service }, 'Service status');
+  logger.info(
+    {
+      service,
+      hostInstallMode,
+      hostActiveLaunchMode,
+      hostPinnedNodeVersion,
+      hostPinnedNodePath,
+      hostDependencyState,
+    },
+    'Service status',
+  );
 
   // 2. Check container runtime
   const containerRuntime = resolveContainerRuntimeName();
@@ -1252,6 +1417,15 @@ export async function run(_args: string[]): Promise<void> {
           status: 'skipped',
           reason: 'not_applicable',
         } as CredentialRuntimeProbeResult);
+  const localGatewayHealth =
+    localGatewayState?.host_health && hasOpenAiCompatibleCredential
+      ? await probeLocalGatewayHealth({
+          hostHealthUrl: localGatewayState.host_health,
+        })
+      : ({
+          status: 'skipped',
+          reason: 'not_applicable',
+        } as CredentialRuntimeProbeResult);
 
   if (
     credentialRuntimeProbe.status === 'failed' &&
@@ -1290,15 +1464,47 @@ export async function run(_args: string[]): Promise<void> {
       }
     }
   }
+  if (
+    credentialRuntimeProbe.status === 'failed' &&
+    localGatewayHealth.status === 'failed'
+  ) {
+    if (
+      credentialRuntimeProbe.reason === 'network_error' ||
+      credentialRuntimeProbe.reason === 'runtime_error'
+    ) {
+      credentialRuntimeProbe.reason = localGatewayHealth.reason;
+      credentialRuntimeProbe.detail = localGatewayHealth.detail;
+    } else if (localGatewayHealth.detail) {
+      credentialRuntimeProbe.detail = appendProbeDetail(
+        credentialRuntimeProbe.detail,
+        `Local gateway health: ${localGatewayHealth.detail}`,
+      );
+    }
+  }
 
   const assistantExecutionProbe =
     credentials !== 'missing'
-      ? await probeAssistantExecution()
+      ? credentialRuntimeProbe.status === 'failed'
+        ? buildBlockedAssistantExecutionProbeResult({
+            credentialRuntimeProbe,
+          })
+        : await probeAssistantExecution()
       : ({
           status: 'skipped',
           reason: 'missing_credentials',
           detail: 'Skipped because no usable credentials are configured.',
         } as AssistantExecutionProbeResult);
+  if (
+    assistantExecutionProbe.status === 'failed' &&
+    localGatewayHealth.status === 'failed'
+  ) {
+    assistantExecutionProbe.detail = truncateDetail(
+      appendProbeDetail(
+        assistantExecutionProbe.detail,
+        `Local gateway health: ${localGatewayHealth.detail}`,
+      ),
+    );
+  }
 
   setAssistantExecutionProbeState({
     status:
@@ -1371,8 +1577,9 @@ export async function run(_args: string[]): Promise<void> {
     mountAllowlist = 'configured';
   }
 
+  const serviceHealthy = service === 'running' || service === 'running_ready';
   const serviceExpectedStopped =
-    service !== 'running' &&
+    !serviceHealthy &&
     credentials === 'missing' &&
     !anyChannelConfigured &&
     registeredGroups === 0;
@@ -1382,7 +1589,9 @@ export async function run(_args: string[]): Promise<void> {
   if (credentials === 'missing') missingRequirements.push('credentials');
   if (!anyChannelConfigured) missingRequirements.push('channel_auth');
   if (registeredGroups === 0) missingRequirements.push('registered_groups');
-  if (service !== 'running' && !serviceExpectedStopped) {
+  if (service === 'config_failed') {
+    missingRequirements.push('service_config_failed');
+  } else if (!serviceHealthy && !serviceExpectedStopped) {
     missingRequirements.push('service_running');
   }
   if (credentialRuntimeProbe.status === 'failed') {
@@ -1398,12 +1607,13 @@ export async function run(_args: string[]): Promise<void> {
     credentialRuntimeProbeReason: credentialRuntimeProbe.reason,
     assistantExecutionProbeReason: assistantExecutionProbe.reason,
     configuredChannels,
+    hostLastError,
   });
 
   // Determine overall status
   const status =
     nodeOk &&
-    service === 'running' &&
+    serviceHealthy &&
     credentials !== 'missing' &&
     anyChannelConfigured &&
     registeredGroups > 0 &&
@@ -1420,6 +1630,20 @@ export async function run(_args: string[]): Promise<void> {
     NODE_MAJOR: nodeMajor ?? 'unknown',
     NODE_OK: nodeOk,
     SERVICE: service,
+    HOST_INSTALL_MODE: hostInstallMode,
+    HOST_ACTIVE_LAUNCH_MODE: hostActiveLaunchMode,
+    HOST_NODE_PATH: hostPinnedNodePath,
+    HOST_NODE_VERSION: hostPinnedNodeVersion,
+    HOST_LAST_ERROR: hostLastError,
+    HOST_DEPENDENCY_STATE: hostDependencyState,
+    HOST_DEPENDENCY_ERROR: hostDependencyError,
+    HOST_LOG_PATHS: hostSnapshot?.hostState
+      ? [
+          hostSnapshot.hostState.hostLogPath,
+          hostSnapshot.hostState.stdoutLogPath,
+          hostSnapshot.hostState.stderrLogPath,
+        ].join(',')
+      : '',
     CONTAINER_RUNTIME: containerRuntime,
     CONTAINER_RUNTIME_STATUS: containerRuntimeStatus,
     CREDENTIALS: credentials,
@@ -1436,6 +1660,9 @@ export async function run(_args: string[]): Promise<void> {
     CREDENTIAL_RUNTIME_PROBE_ENDPOINTS: probeEndpoints.join(','),
     CREDENTIAL_RUNTIME_PROBE_REASON: credentialRuntimeProbe.reason,
     CREDENTIAL_RUNTIME_PROBE_DETAIL: credentialRuntimeProbe.detail || '',
+    LOCAL_GATEWAY_HEALTH: localGatewayHealth.status,
+    LOCAL_GATEWAY_HEALTH_REASON: localGatewayHealth.reason,
+    LOCAL_GATEWAY_HEALTH_DETAIL: localGatewayHealth.detail || '',
     ASSISTANT_EXECUTION_PROBE: assistantExecutionProbe.status,
     ASSISTANT_EXECUTION_PROBE_REASON: assistantExecutionProbe.reason,
     ASSISTANT_EXECUTION_PROBE_DETAIL: assistantExecutionProbe.detail || '',

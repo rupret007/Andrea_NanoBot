@@ -18,6 +18,7 @@ import {
   setDebugLevel,
 } from './debug-control.js';
 import { _closeDatabase, _initTestDatabase } from './db.js';
+import { persistNanoclawHostState } from './host-control.js';
 import { getLogControlConfig, setLogControlConfig } from './logger.js';
 
 describe('debug control', () => {
@@ -90,6 +91,7 @@ describe('debug control', () => {
 
     const status = formatDebugStatus();
     expect(status).toContain('Assistant execution probe: failed');
+    expect(status).toContain('Host state:');
     expect(getAssistantExecutionProbeState().reason).toBe(
       'initial_output_timeout',
     );
@@ -98,10 +100,16 @@ describe('debug control', () => {
   it('builds actionable debug panel buttons', () => {
     expect(
       buildDebugStatusInlineActions().map((action) => action.label),
-    ).toEqual(['Refresh', 'Current Logs', 'Debug Chat 10m', 'Reset All']);
+    ).toEqual([
+      'Refresh',
+      'Current Logs',
+      'Host Logs',
+      'Debug Chat 10m',
+      'Reset All',
+    ]);
     expect(
       buildDebugMutationInlineActions().map((action) => action.label),
-    ).toEqual(['Debug Status', 'Current Logs', 'Reset All']);
+    ).toEqual(['Debug Status', 'Current Logs', 'Host Logs', 'Reset All']);
     expect(buildDebugLogsInlineActions('runtime', 40)[0]).toEqual({
       label: 'Refresh Logs',
       actionId: '/debug-logs runtime 40',
@@ -129,13 +137,52 @@ describe('debug log tails', () => {
 
   it('reads stderr tails with sanitization', () => {
     fs.writeFileSync(
-      path.join(tempDir, 'logs', 'nanoclaw.stderr.log'),
+      path.join(tempDir, 'logs', 'nanoclaw.error.log'),
       'line1\nOPENAI_API_KEY=sk-secret-token\nline3\n',
     );
 
     const payload = readDebugLogs({ target: 'stderr', lines: 5 });
     expect(payload.title).toBe('stderr');
     expect(payload.body).toContain('OPENAI_API_KEY=***');
+  });
+
+  it('reads host control logs separately', () => {
+    fs.writeFileSync(
+      path.join(tempDir, 'logs', 'nanoclaw.host.log'),
+      '[2026-04-02T00:00:00.000Z] HOST: starting\n',
+    );
+
+    const payload = readDebugLogs({ target: 'host', lines: 5 });
+    expect(payload.title).toBe('host');
+    expect(payload.body).toContain('HOST: starting');
+  });
+
+  it('includes host dependency and log path details in debug status', () => {
+    persistNanoclawHostState({
+      bootId: 'boot-debug',
+      phase: 'running_ready',
+      pid: process.pid,
+      installMode: 'manual_host_control',
+      nodePath: 'C:\\node.exe',
+      nodeVersion: '22.22.2',
+      startedAt: '2026-04-02T00:00:00.000Z',
+      readyAt: '2026-04-02T00:00:05.000Z',
+      lastError: '',
+      dependencyState: 'degraded',
+      dependencyError: 'OpenAI key is out of quota/billing.',
+      stdoutLogPath: path.join(tempDir, 'logs', 'nanoclaw.log'),
+      stderrLogPath: path.join(tempDir, 'logs', 'nanoclaw.error.log'),
+      hostLogPath: path.join(tempDir, 'logs', 'nanoclaw.host.log'),
+    });
+
+    const status = formatDebugStatus();
+    expect(status).toContain('Host dependency: degraded');
+    expect(status).toContain(
+      'Host dependency detail: OpenAI key is out of quota/billing.',
+    );
+    expect(status).toContain(
+      `Host log path: ${path.join(tempDir, 'logs', 'nanoclaw.host.log')}`,
+    );
   });
 
   it('prefers current chat service lines over stale group container logs', () => {

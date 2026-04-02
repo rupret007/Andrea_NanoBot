@@ -1,6 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import path from 'path';
 
+import {
+  buildWindowsCompatibilityShim,
+  buildWindowsHostControlCommand,
+  buildWindowsStartupFolderScript,
+} from '../src/host-control.js';
+
 /**
  * Tests for service configuration generation.
  *
@@ -187,49 +193,31 @@ echo $! > ${JSON.stringify(pidFile)}`;
 });
 
 describe('Windows scheduled task wrapper', () => {
-  it('generates a PowerShell wrapper that starts dist/index.js and writes pid', () => {
-    const projectRoot = 'C:\\NanoClaw';
-    const nodePath = 'C:\\Program Files\\nodejs\\node.exe';
+  it('generates a compatibility shim that delegates to the canonical host script', () => {
+    const wrapper = buildWindowsCompatibilityShim();
 
-    const wrapper = [
-      "$ErrorActionPreference = 'Stop'",
-      `$projectRoot = '${projectRoot}'`,
-      `$nodePath = '${nodePath}'`,
-      `$entryPath = '${projectRoot}\\dist\\index.js'`,
-      "$proc = Start-Process -FilePath $nodePath -ArgumentList @($entryPath) -WorkingDirectory $projectRoot -RedirectStandardOutput 'C:\\NanoClaw\\logs\\nanoclaw.log' -RedirectStandardError 'C:\\NanoClaw\\logs\\nanoclaw.error.log' -PassThru",
-      "Set-Content -LiteralPath 'C:\\NanoClaw\\nanoclaw.pid' -Value $proc.Id -NoNewline",
-    ].join('\n');
-
-    expect(wrapper).toContain('Start-Process -FilePath $nodePath');
-    expect(wrapper).toContain('dist\\index.js');
-    expect(wrapper).toContain('nanoclaw.pid');
+    expect(wrapper).toContain('nanoclaw-host.ps1');
+    expect(wrapper).toContain('ExecutionPolicy Bypass');
+    expect(wrapper).toContain('$MyInvocation.MyCommand.Path');
+    expect(wrapper).toContain('start');
   });
 
   it('creates a startup-folder fallback command script', () => {
-    const wrapperPath = 'C:\\NanoClaw\\start-nanoclaw.ps1';
-    const startupCmd = `@echo off\r\npowershell.exe -NoProfile -ExecutionPolicy Bypass -File "${wrapperPath}"\r\n`;
+    const startupCmd = buildWindowsStartupFolderScript('C:\\NanoClaw');
 
-    expect(startupCmd).toContain(
-      'powershell.exe -NoProfile -ExecutionPolicy Bypass -File',
-    );
-    expect(startupCmd).toContain('start-nanoclaw.ps1');
+    expect(startupCmd).toContain('nanoclaw-host.ps1');
+    expect(startupCmd).toContain('"startup_folder"');
+    expect(startupCmd).toContain('@echo off');
   });
 
-  it('can launch Node 22 via npx fallback arguments', () => {
-    const wrapper = [
-      'function Resolve-Node22Executable {',
-      `  $resolved = (& $npxPath -y -p node@22 -- node -p "process.execPath" 2>$null | Select-Object -Last 1).Trim()`,
-      '}',
-      '$resolvedNodePath = Resolve-Node22Executable',
-      'if ($resolvedNodePath) {',
-      '  $proc = Start-Process -FilePath $resolvedNodePath -ArgumentList @($entryPath)',
-      '} else {',
-      "  $proc = Start-Process -FilePath $npxPath -ArgumentList @('-y', '-p', 'node@22', '--', 'node', $entryPath)",
-      '}',
-    ].join('\n');
+  it('uses the canonical host control command for the scheduled task action', () => {
+    const taskCommand = buildWindowsHostControlCommand(
+      'C:\\NanoClaw',
+      'start',
+      'scheduled_task',
+    );
 
-    expect(wrapper).toContain('node -p "process.execPath"');
-    expect(wrapper).toContain('Start-Process -FilePath $resolvedNodePath');
-    expect(wrapper).toContain("'node@22'");
+    expect(taskCommand).toContain('nanoclaw-host.ps1');
+    expect(taskCommand).toContain('"scheduled_task"');
   });
 });
