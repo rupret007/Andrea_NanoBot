@@ -64,6 +64,15 @@ describe('assistant request routing', () => {
     expect(policy.mcpTools).toContain('mcp__nanoclaw__schedule_task');
   });
 
+  it('keeps natural task follow-up drafting prompts on the direct assistant route', () => {
+    const policy = classifyAssistantRequest([
+      { content: 'Help me follow up on this task' },
+    ]);
+
+    expect(policy.route).toBe('direct_assistant');
+    expect(policy.mcpTools).toEqual([]);
+  });
+
   it('routes operational status and stop asks to control plane handling', () => {
     const policy = classifyAssistantRequest([
       { content: 'List my active cursor jobs and stop the stuck one.' },

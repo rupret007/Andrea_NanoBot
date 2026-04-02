@@ -162,6 +162,14 @@ const EXPLICIT_PROTECTED_ASSISTANT_SIGNALS: RouteSignal[] = [
   },
 ];
 
+const DIRECT_ASSISTANT_SIGNALS: RouteSignal[] = [
+  {
+    pattern:
+      /\b(help me follow up on this task|help me follow up on this work|draft a follow[- ]?up(?: for this meeting)?|draft an email about this|draft a quick update about what's next|turn this into a short follow[- ]?up message|what should i send (?:after this meeting|before my next meeting))\b/i,
+    reason: 'matched natural follow-through drafting intent',
+  },
+];
+
 const CONTROL_PLANE_SIGNALS: RouteSignal[] = [
   {
     pattern:
@@ -419,6 +427,11 @@ export function classifyAssistantRequest(
   );
   if (explicitProtectedReason) {
     return createPolicy('protected_assistant', explicitProtectedReason);
+  }
+
+  const directReason = evaluateSignals(lastOnly, DIRECT_ASSISTANT_SIGNALS);
+  if (directReason) {
+    return createPolicy('direct_assistant', directReason);
   }
 
   const codeReason = evaluateSignals(candidates, CODE_PLANE_SIGNALS);

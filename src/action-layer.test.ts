@@ -319,6 +319,130 @@ describe('buildActionLayerResponse', () => {
     expect(response.message).toBe('Who is it for?');
   });
 
+  it('builds a grounded meeting follow-up draft when recipient and event context are clear', async () => {
+    const fetchImpl = createGoogleCalendarFetchMock({
+      eventsByCalendar: { primary: { items: [] } },
+    });
+    const activeEventContext: CalendarActiveEventContext = {
+      providerId: 'google_calendar',
+      id: 'evt-1',
+      title: 'Design review',
+      startIso: '2026-04-01T18:15:00.000Z',
+      endIso: '2026-04-01T19:00:00.000Z',
+      allDay: false,
+      calendarId: 'primary',
+      calendarName: 'Google Calendar',
+      htmlLink: null,
+    };
+
+    const response = await buildActionLayerResponse(
+      'Draft a follow-up for this meeting to Candace',
+      {
+        now: new Date('2026-04-01T14:10:00-05:00'),
+        timeZone: 'America/Chicago',
+        env: baseEnv,
+        fetchImpl,
+        activeEventContext,
+      },
+    );
+
+    expect(response.kind).toBe('reply');
+    if (response.kind !== 'reply') return;
+    expect(response.reply).toContain(
+      "Here's a grounded follow-up draft for Candace.",
+    );
+    expect(response.reply).toContain('Thanks for the time on Design review.');
+    expect(response.activeEventContext?.id).toBe('evt-1');
+    expect(response.actionContext?.suggestedReminderLabel).toContain(
+      'send note to Candace about Design review',
+    );
+  });
+
+  it('builds a short email draft for grounded work context', async () => {
+    const fetchImpl = createGoogleCalendarFetchMock({
+      eventsByCalendar: { primary: { items: [] } },
+    });
+
+    const response = await buildActionLayerResponse(
+      'Draft an email about this to Candace',
+      {
+        now: new Date('2026-04-01T12:00:00-05:00'),
+        timeZone: 'America/Chicago',
+        env: baseEnv,
+        fetchImpl,
+        selectedWork,
+      },
+    );
+
+    expect(response.kind).toBe('reply');
+    if (response.kind !== 'reply') return;
+    expect(response.reply).toContain("Here's a short email draft for Candace.");
+    expect(response.reply).toContain('Subject: Update on Ship docs');
+    expect(response.reply).toContain('Quick update on Ship docs');
+  });
+
+  it('builds a note draft for an explicit recipient from grounded task context', async () => {
+    const fetchImpl = createGoogleCalendarFetchMock({
+      eventsByCalendar: { primary: { items: [] } },
+    });
+
+    const response = await buildActionLayerResponse(
+      'Help me write a note to Candace about this',
+      {
+        now: new Date('2026-04-01T12:00:00-05:00'),
+        timeZone: 'America/Chicago',
+        env: baseEnv,
+        fetchImpl,
+        selectedWork,
+      },
+    );
+
+    expect(response.kind).toBe('reply');
+    if (response.kind !== 'reply') return;
+    expect(response.reply).toContain('draft for Candace');
+    expect(response.reply).toContain('Quick update on Ship docs');
+  });
+
+  it('asks which meeting the user means when meeting follow-up context is weak', async () => {
+    const fetchImpl = createGoogleCalendarFetchMock({
+      eventsByCalendar: { primary: { items: [] } },
+    });
+
+    const response = await buildActionLayerResponse(
+      'What should I send after this meeting?',
+      {
+        now: new Date('2026-04-01T12:00:00-05:00'),
+        timeZone: 'America/Chicago',
+        env: baseEnv,
+        fetchImpl,
+      },
+    );
+
+    expect(response.kind).toBe('awaiting_draft_input');
+    if (response.kind !== 'awaiting_draft_input') return;
+    expect(response.message).toBe('Which meeting do you mean?');
+  });
+
+  it('asks what task the user means when a task follow-up prompt has weak work context', async () => {
+    const fetchImpl = createGoogleCalendarFetchMock({
+      eventsByCalendar: { primary: { items: [] } },
+    });
+
+    const response = await buildActionLayerResponse(
+      "Draft a quick update about what's next",
+      {
+        now: new Date('2026-04-01T12:00:00-05:00'),
+        timeZone: 'America/Chicago',
+        env: baseEnv,
+        fetchImpl,
+      },
+    );
+
+    expect(response.kind).toBe('awaiting_draft_input');
+    if (response.kind !== 'awaiting_draft_input') return;
+    expect(response.message).toBe('What task do you mean?');
+  });
+
   it('falls back honestly when there is no strong work or schedule context', async () => {
     const fetchImpl = createGoogleCalendarFetchMock({
       eventsByCalendar: { primary: { items: [] } },
@@ -337,6 +461,42 @@ describe('buildActionLayerResponse', () => {
       "I don't have enough grounded work context",
     );
     expect(response.activeEventContext).toBeNull();
+  });
+  it('reuses a communication draft context when turning it into a reminder later', async () => {
+    const fetchImpl = createGoogleCalendarFetchMock({
+      eventsByCalendar: { primary: { items: [] } },
+    });
+
+    const drafted = await buildActionLayerResponse(
+      'Help me write a note to Candace about this',
+      {
+        now: new Date('2026-04-01T12:00:00-05:00'),
+        timeZone: 'America/Chicago',
+        env: baseEnv,
+        fetchImpl,
+        selectedWork,
+      },
+    );
+
+    expect(drafted.kind).toBe('reply');
+    if (drafted.kind !== 'reply') return;
+
+    const reminder = await buildActionLayerResponse(
+      'Turn this draft into a reminder for later',
+      {
+        now: new Date('2026-04-01T12:01:00-05:00'),
+        timeZone: 'America/Chicago',
+        env: baseEnv,
+        fetchImpl,
+        actionContext: drafted.actionContext,
+        groupFolder: 'main',
+        chatJid: 'tg:1',
+      },
+    );
+
+    expect(reminder.kind).toBe('awaiting_reminder_time');
+    if (reminder.kind !== 'awaiting_reminder_time') return;
+    expect(reminder.message).toContain('send note to Candace about Ship docs');
   });
 });
 
@@ -422,7 +582,7 @@ describe('action-layer pending flows', () => {
 
     expect(result.kind).toBe('reply');
     if (result.kind !== 'reply') return;
-    expect(result.reply).toContain('Here’s a draft for Candace.');
+    expect(result.reply).toContain('draft for Candace');
     expect(result.reply).toContain('Quick update on Ship docs');
   });
 });

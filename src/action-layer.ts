@@ -30,12 +30,17 @@ type ActionLayerIntentKind =
   | 'meeting_prep'
   | 'capture_reminder'
   | 'draft_message'
+  | 'draft_follow_up'
+  | 'draft_email'
+  | 'draft_status_update'
+  | 'draft_pre_meeting_note'
   | 'summary_today';
 
 export interface ActionLayerIntent {
   kind: ActionLayerIntentKind;
   reminderTimeHint: string | null;
   explicitRecipient: string | null;
+  explicitTopic: string | null;
 }
 
 export interface ActionLayerContextState {
@@ -52,6 +57,8 @@ export interface ActionLayerContextState {
   reminder: UpcomingReminderSummary | null;
   suggestedReminderLabel: string | null;
   suggestedDraftTopic: string | null;
+  recipient?: string | null;
+  draftKind?: PendingActionDraftState['draftKind'] | null;
 }
 
 export interface PendingActionReminderState {
@@ -64,12 +71,20 @@ export interface PendingActionDraftState {
   version: 1;
   createdAt: string;
   step: 'clarify_topic' | 'clarify_recipient';
-  draftKind: 'message' | 'follow_up' | 'note';
+  draftKind:
+    | 'message'
+    | 'follow_up'
+    | 'note'
+    | 'email'
+    | 'status_update'
+    | 'pre_meeting_note';
   topicLabel: string | null;
   recipient: string | null;
   selectedWork: SelectedWorkContext | null;
   event: CalendarActiveEventContext | null;
   sourceLabel: string | null;
+  timeZone?: string | null;
+  topicPrompt?: string | null;
 }
 
 interface ActionLayerDeps extends DailyCommandCenterDeps {
@@ -127,6 +142,32 @@ function trimTrailingPunctuation(value: string): string {
     .trim();
 }
 
+function isContextPlaceholder(value: string | null | undefined): boolean {
+  const normalized = trimTrailingPunctuation(value || '').toLowerCase();
+  if (!normalized) return true;
+  return (
+    normalized === 'this' ||
+    normalized === 'that' ||
+    normalized === 'it' ||
+    normalized === 'this meeting' ||
+    normalized === 'that meeting' ||
+    normalized === 'this event' ||
+    normalized === 'that event' ||
+    normalized === 'this task' ||
+    normalized === 'that task' ||
+    normalized === "what's next" ||
+    normalized === 'whats next'
+  );
+}
+
+function parseTopicTail(value: string | null | undefined): string | null {
+  const normalized = trimTrailingPunctuation(value || '');
+  if (!normalized || isContextPlaceholder(normalized)) {
+    return null;
+  }
+  return normalized;
+}
+
 function extractRecipient(message: string): {
   message: string;
   recipient: string | null;
@@ -155,6 +196,7 @@ export function planActionLayerIntent(
       kind: 'what_next',
       reminderTimeHint: null,
       explicitRecipient: null,
+      explicitTopic: null,
     };
   }
   if (/^what should i handle before my next meeting\??$/i.test(normalized)) {
@@ -162,6 +204,7 @@ export function planActionLayerIntent(
       kind: 'before_next_meeting',
       reminderTimeHint: null,
       explicitRecipient: null,
+      explicitTopic: null,
     };
   }
   if (/^what can i knock out in my next free window\??$/i.test(normalized)) {
@@ -169,6 +212,7 @@ export function planActionLayerIntent(
       kind: 'next_free_window',
       reminderTimeHint: null,
       explicitRecipient: null,
+      explicitTopic: null,
     };
   }
   if (
@@ -180,6 +224,7 @@ export function planActionLayerIntent(
       kind: 'meeting_prep',
       reminderTimeHint: null,
       explicitRecipient: null,
+      explicitTopic: null,
     };
   }
   if (/^summarize the actions i should take today\??$/i.test(normalized)) {
@@ -187,33 +232,110 @@ export function planActionLayerIntent(
       kind: 'summary_today',
       reminderTimeHint: null,
       explicitRecipient: null,
+      explicitTopic: null,
     };
   }
 
-  const captureMatch = normalized.match(
+  const capturePatterns = [
     /^(turn that into a reminder|remind me about that|save that for later|capture this for later today|remind me to come back to this)(?:\s+(.+))?$/i,
-  );
-  if (captureMatch) {
+    /^save this as something i need to send(?:\s+(.+))?$/i,
+    /^turn this draft into a reminder(?:\s+(.+))?$/i,
+    /^remind me to send this(?:\s+(.+))?$/i,
+  ];
+  for (const pattern of capturePatterns) {
+    const captureMatch = normalized.match(pattern);
+    if (!captureMatch) continue;
     return {
       kind: 'capture_reminder',
       reminderTimeHint: trimTrailingPunctuation(captureMatch[2] || '') || null,
       explicitRecipient: null,
+      explicitTopic: null,
     };
   }
 
-  const draftPatterns = [
-    /^draft a message about this(?:\s+(.+))?$/i,
-    /^draft a follow-up for this (?:meeting|event)(?:\s+(.+))?$/i,
-    /^help me write a quick note about that(?:\s+(.+))?$/i,
-  ];
-  for (const pattern of draftPatterns) {
-    const match = normalized.match(pattern);
-    if (!match) continue;
-    const recipientInfo = extractRecipient(match[1] || '');
+  const noteToMatch = normalized.match(
+    /^help me write a note (?:to|for)\s+(.+?)\s+about\s+(.+)$/i,
+  );
+  if (noteToMatch) {
     return {
       kind: 'draft_message',
       reminderTimeHint: null,
+      explicitRecipient: trimTrailingPunctuation(noteToMatch[1] || '') || null,
+      explicitTopic: parseTopicTail(noteToMatch[2] || ''),
+    };
+  }
+
+  const aboutTailDrafts: Array<{
+    pattern: RegExp;
+    kind: ActionLayerIntentKind;
+  }> = [
+    {
+      pattern: /^draft a message about(?:\s+(.+))?$/i,
+      kind: 'draft_message',
+    },
+    {
+      pattern: /^draft an email about(?:\s+(.+))?$/i,
+      kind: 'draft_email',
+    },
+    {
+      pattern: /^help me write a quick note about(?:\s+(.+))?$/i,
+      kind: 'draft_message',
+    },
+    {
+      pattern: /^draft a quick update about(?:\s+(.+))?$/i,
+      kind: 'draft_status_update',
+    },
+  ];
+  for (const entry of aboutTailDrafts) {
+    const match = normalized.match(entry.pattern);
+    if (!match) continue;
+    const recipientInfo = extractRecipient(match[1] || '');
+    return {
+      kind: entry.kind,
+      reminderTimeHint: null,
       explicitRecipient: recipientInfo.recipient,
+      explicitTopic: parseTopicTail(recipientInfo.message),
+    };
+  }
+
+  const simpleDraftPatterns: Array<{
+    pattern: RegExp;
+    kind: ActionLayerIntentKind;
+  }> = [
+    {
+      pattern: /^draft a follow-up for this (?:meeting|event)(?:\s+(.+))?$/i,
+      kind: 'draft_follow_up',
+    },
+    {
+      pattern: /^what should i send after this meeting\??$/i,
+      kind: 'draft_follow_up',
+    },
+    {
+      pattern: /^help me follow up on this task\??$/i,
+      kind: 'draft_status_update',
+    },
+    {
+      pattern: /^turn this into a short follow-up message\??$/i,
+      kind: 'draft_message',
+    },
+    {
+      pattern: /^what should i send before my next meeting\??$/i,
+      kind: 'draft_pre_meeting_note',
+    },
+    {
+      pattern: /^draft a reminder message for me to send later\??$/i,
+      kind: 'draft_message',
+    },
+  ];
+  for (const entry of simpleDraftPatterns) {
+    const match = normalized.match(entry.pattern);
+    if (!match) continue;
+    const recipientInfo = extractRecipient(match[1] || '');
+    return {
+      kind: entry.kind,
+      reminderTimeHint: null,
+      explicitRecipient: recipientInfo.recipient,
+      explicitTopic: parseTopicTail(recipientInfo.message),
     };
   }
 
@@ -255,6 +377,8 @@ function buildCalendarEventContext(
     reminder: null,
     suggestedReminderLabel: reminderLabel,
     suggestedDraftTopic: title,
+    recipient: null,
+    draftKind: null,
   };
 }
 
@@ -273,6 +397,8 @@ function buildSelectedWorkContext(
     reminder: null,
     suggestedReminderLabel: `come back to ${selectedWork.title}`,
     suggestedDraftTopic: selectedWork.title,
+    recipient: null,
+    draftKind: null,
   };
 }
 
@@ -290,6 +416,8 @@ function buildReminderContext(
     reminder,
     suggestedReminderLabel: reminder.label,
     suggestedDraftTopic: reminder.label,
+    recipient: null,
+    draftKind: null,
   };
 }
 
@@ -307,6 +435,8 @@ function buildActionSuggestionContext(
     reminder: null,
     suggestedReminderLabel: label,
     suggestedDraftTopic: label,
+    recipient: null,
+    draftKind: null,
   };
 }
 
@@ -755,7 +885,7 @@ function buildCaptureReminderLabel(
   return context.label;
 }
 
-function buildDraftFromState(state: PendingActionDraftState): string {
+function _buildDraftFromState(state: PendingActionDraftState): string {
   const recipient = state.recipient || '[recipient]';
   const topic = state.topicLabel || state.sourceLabel || 'this';
   const referenceNow = new Date(state.createdAt).getTime();
@@ -776,6 +906,143 @@ function buildDraftFromState(state: PendingActionDraftState): string {
   return `Here’s a draft for ${recipient}.\nDraft: ${topic}\n\n${body}`;
 }
 
+function formatDraftClock(iso: string, timeZone?: string | null): string {
+  try {
+    return new Intl.DateTimeFormat('en-US', {
+      timeZone: timeZone || undefined,
+      hour: 'numeric',
+      minute: '2-digit',
+    }).format(new Date(iso));
+  } catch {
+    return new Intl.DateTimeFormat('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+    }).format(new Date(iso));
+  }
+}
+
+function buildEmailSubject(state: PendingActionDraftState): string {
+  const topic = state.topicLabel || state.sourceLabel || 'this';
+  if (state.draftKind === 'follow_up' || (state.event && !state.selectedWork)) {
+    return `Follow-up on ${topic}`;
+  }
+  if (state.draftKind === 'status_update' || state.selectedWork) {
+    return `Update on ${topic}`;
+  }
+  return `Quick note about ${topic}`;
+}
+
+function buildCommunicationDraftFromState(
+  state: PendingActionDraftState,
+): string {
+  const recipient = state.recipient || '[recipient]';
+  const topic = state.topicLabel || state.sourceLabel || 'this';
+  const referenceNow = new Date(state.createdAt).getTime();
+  const eventTime = state.event
+    ? formatDraftClock(state.event.startIso, state.timeZone)
+    : null;
+
+  let intro: string;
+  let body: string;
+  switch (state.draftKind) {
+    case 'email': {
+      intro = `Here's a short email draft for ${recipient}.`;
+      body = state.event
+        ? `Hi ${recipient},\n\n${new Date(state.event.startIso).getTime() > referenceNow ? `Before ${topic}${eventTime ? ` at ${eventTime}` : ''}, I wanted to share [detail] and flag [question].` : `Thanks for the time on ${topic}. My next step is [next step], and I'll follow up once I have [detail].`}\n\nThanks,`
+        : state.selectedWork
+          ? `Hi ${recipient},\n\nQuick update on ${topic}: I'm working through it now. My next step is [next step], and I'll follow up once I have [detail].\n\nThanks,`
+          : `Hi ${recipient},\n\nQuick note about ${topic}: [detail]. My next step is [next step].\n\nThanks,`;
+      return `${intro}\nSubject: ${buildEmailSubject(state)}\n\n${body}`;
+    }
+    case 'follow_up': {
+      intro = `Here's a grounded follow-up draft for ${recipient}.`;
+      if (state.event) {
+        body = `Hi ${recipient},\n\nThanks for the time on ${topic}. My next step is [next step], and I wanted to send a quick follow-up while it is still fresh. Let me know if you need anything else from me.\n\nThanks,`;
+      } else if (state.selectedWork) {
+        body = `Hi ${recipient},\n\nQuick follow-up on ${topic}: I'm working through it now. My next step is [next step], and I'll follow up once I have [detail].\n\nThanks,`;
+      } else {
+        body = `Hi ${recipient},\n\nFollowing up on ${topic}: [detail]. My next step is [next step].\n\nThanks,`;
+      }
+      break;
+    }
+    case 'status_update': {
+      intro = `Here's a short update draft for ${recipient}.`;
+      body = state.selectedWork
+        ? `Hi ${recipient},\n\nQuick update on ${topic}: I'm working through it now. My next step is [next step], and I'll follow up once I have [detail].\n\nThanks,`
+        : `Hi ${recipient},\n\nQuick update on ${topic}: [detail]. My next step is [next step].\n\nThanks,`;
+      break;
+    }
+    case 'pre_meeting_note': {
+      const eventStart = state.event
+        ? new Date(state.event.startIso).getTime()
+        : 0;
+      const minutes = state.event
+        ? Math.max(0, Math.round((eventStart - referenceNow) / 60000))
+        : null;
+      intro =
+        minutes !== null && minutes <= 15
+          ? `You only have ${summarizeDuration(minutes)} before ${topic}, so keep this note short.`
+          : `Here's a short note you could send before ${topic}.`;
+      body = `Hi ${recipient},\n\nBefore ${topic}${eventTime ? ` at ${eventTime}` : ''}, I wanted to send over [detail] and flag [question]. Let me know if there is anything else you'd like me to bring or cover.\n\nThanks,`;
+      break;
+    }
+    case 'note':
+    case 'message':
+    default: {
+      intro = `Here's a draft for ${recipient}.`;
+      if (state.event) {
+        const eventStart = new Date(state.event.startIso).getTime();
+        body =
+          eventStart > referenceNow
+            ? `Hi ${recipient},\n\nLooking ahead to ${topic}, I wanted to send a quick note about [detail]. Let me know if there is anything you want me to prepare in advance.\n\nThanks,`
+            : `Hi ${recipient},\n\nQuick note about ${topic}: [detail]. My next step is [next step], and I wanted to send a short follow-up while it is still fresh.\n\nThanks,`;
+      } else if (state.selectedWork) {
+        body = `Hi ${recipient},\n\nQuick update on ${topic}: I'm working through it now. My next step is [next step], and I'll follow up once I have [detail].\n\nThanks,`;
+      } else {
+        body = `Hi ${recipient},\n\nQuick note about ${topic}: [detail]. My next step is [next step].\n\nThanks,`;
+      }
+      break;
+    }
+  }
+
+  return `${intro}\nDraft: ${topic}\n\n${body}`;
+}
+
+function buildCommunicationDraftActionContext(
+  state: PendingActionDraftState,
+  now: Date,
+): ActionLayerContextState {
+  const topic = state.topicLabel || state.sourceLabel || 'this';
+  let suggestedReminderLabel: string;
+  if (state.recipient) {
+    suggestedReminderLabel = `send note to ${state.recipient} about ${topic}`;
+  } else if (state.draftKind === 'follow_up' && state.event) {
+    suggestedReminderLabel = `send follow-up for ${topic}`;
+  } else if (state.draftKind === 'status_update') {
+    suggestedReminderLabel = `send update about ${topic}`;
+  } else {
+    suggestedReminderLabel = `send message about ${topic}`;
+  }
+
+  return {
+    version: 1,
+    createdAt: now.toISOString(),
+    sourceKind: state.event
+      ? 'calendar_event'
+      : state.selectedWork
+        ? 'selected_work'
+        : 'action_suggestion',
+    label: topic,
+    selectedWork: state.selectedWork,
+    event: state.event,
+    reminder: null,
+    suggestedReminderLabel,
+    suggestedDraftTopic: topic,
+    recipient: state.recipient,
+    draftKind: state.draftKind,
+  };
+}
+
 function buildDraftState(params: {
   now: Date;
   draftKind: PendingActionDraftState['draftKind'];
@@ -785,6 +1052,8 @@ function buildDraftState(params: {
   event: CalendarActiveEventContext | null;
   sourceLabel: string | null;
   step: PendingActionDraftState['step'];
+  timeZone?: string | null;
+  topicPrompt?: string | null;
 }): PendingActionDraftState {
   return {
     version: 1,
@@ -796,6 +1065,8 @@ function buildDraftState(params: {
     selectedWork: params.selectedWork,
     event: params.event,
     sourceLabel: params.sourceLabel,
+    timeZone: params.timeZone || null,
+    topicPrompt: params.topicPrompt || null,
   };
 }
 
@@ -818,6 +1089,29 @@ function extractExplicitDraftTopic(
     return context.suggestedDraftTopic;
   }
   return context?.label || null;
+}
+
+function resolveExplicitDraftTopic(
+  intent: ActionLayerIntent,
+  normalizedMessage: string,
+  context: ActionLayerContextState | null,
+): string | null {
+  if (intent.explicitTopic) {
+    return intent.explicitTopic;
+  }
+
+  const topicMatch = normalizedMessage.match(
+    /^(?:draft a message about|draft an email about|help me write a quick note about|draft a quick update about)\s+(.+)$/i,
+  );
+  if (topicMatch) {
+    const recipientInfo = extractRecipient(topicMatch[1] || '');
+    const topic = parseTopicTail(recipientInfo.message);
+    if (topic) {
+      return topic;
+    }
+  }
+
+  return extractExplicitDraftTopic(normalizedMessage, context);
 }
 
 export function buildActionLayerContextFromDailyCommandCenter(params: {
@@ -939,7 +1233,7 @@ export function advancePendingActionDraft(
       kind: 'awaiting_draft_input',
       message:
         state.step === 'clarify_topic'
-          ? 'What should the message be about?'
+          ? state.topicPrompt || 'What should the message be about?'
           : 'Who is it for?',
       state,
       actionContext: null,
@@ -960,7 +1254,7 @@ export function advancePendingActionDraft(
     if (!topic) {
       return {
         kind: 'awaiting_draft_input',
-        message: 'What should the message be about?',
+        message: state.topicPrompt || 'What should the message be about?',
         state,
         actionContext: null,
       };
@@ -973,12 +1267,8 @@ export function advancePendingActionDraft(
       };
       return {
         kind: 'reply',
-        reply: buildDraftFromState(resolvedState),
-        actionContext: resolvedState.event
-          ? buildCalendarEventContext(resolvedState.event, now)
-          : resolvedState.selectedWork
-            ? buildSelectedWorkContext(resolvedState.selectedWork, now)
-            : buildActionSuggestionContext(topic, now),
+        reply: buildCommunicationDraftFromState(resolvedState),
+        actionContext: buildCommunicationDraftActionContext(resolvedState, now),
         activeEventContext: resolvedState.event,
       };
     }
@@ -1011,16 +1301,34 @@ export function advancePendingActionDraft(
   };
   return {
     kind: 'reply',
-    reply: buildDraftFromState(resolvedState),
-    actionContext: resolvedState.event
-      ? buildCalendarEventContext(resolvedState.event, now)
-      : resolvedState.selectedWork
-        ? buildSelectedWorkContext(resolvedState.selectedWork, now)
-        : buildActionSuggestionContext(
-            resolvedState.topicLabel || 'that note',
-            now,
-          ),
+    reply: buildCommunicationDraftFromState(resolvedState),
+    actionContext: buildCommunicationDraftActionContext(resolvedState, now),
     activeEventContext: resolvedState.event,
+  };
+}
+
+function buildWeakContextDraftReply(input: {
+  question: string;
+  draftKind: PendingActionDraftState['draftKind'];
+  now: Date;
+  timeZone: string;
+}): ActionLayerResult {
+  return {
+    kind: 'awaiting_draft_input',
+    message: input.question,
+    state: buildDraftState({
+      now: input.now,
+      draftKind: input.draftKind,
+      topicLabel: null,
+      recipient: null,
+      selectedWork: null,
+      event: null,
+      sourceLabel: null,
+      step: 'clarify_topic',
+      timeZone: input.timeZone,
+      topicPrompt: input.question,
+    }),
+    actionContext: null,
   };
 }
 
@@ -1129,30 +1437,87 @@ export async function buildActionLayerResponse(
         },
       };
     }
-    case 'draft_message': {
-      const explicitTopic = extractExplicitDraftTopic(
+    case 'draft_message':
+    case 'draft_follow_up':
+    case 'draft_email':
+    case 'draft_status_update':
+    case 'draft_pre_meeting_note': {
+      const selectedWork =
+        actionReference?.selectedWork || grounded.selectedWork || null;
+      const event =
+        actionReference?.event ||
+        deps.activeEventContext ||
+        (intent.kind === 'draft_follow_up' ||
+        intent.kind === 'draft_pre_meeting_note'
+          ? eventContextFromGroundedSnapshot(grounded)
+          : null);
+      const sourceLabel = actionReference?.label || null;
+      const explicitTopic = resolveExplicitDraftTopic(
+        intent,
         normalized,
         actionReference,
       );
-      const selectedWork =
-        actionReference?.selectedWork || grounded.selectedWork;
-      const event = actionReference?.event || deps.activeEventContext || null;
-      const sourceLabel = actionReference?.label || null;
+      const draftKind: PendingActionDraftState['draftKind'] =
+        intent.kind === 'draft_follow_up'
+          ? 'follow_up'
+          : intent.kind === 'draft_email'
+            ? 'email'
+            : intent.kind === 'draft_status_update'
+              ? 'status_update'
+              : intent.kind === 'draft_pre_meeting_note'
+                ? 'pre_meeting_note'
+                : 'message';
+
+      if (intent.kind === 'draft_follow_up' && !event) {
+        return buildWeakContextDraftReply({
+          question: 'Which meeting do you mean?',
+          draftKind,
+          now,
+          timeZone: deps.timeZone || grounded.timeZone,
+        });
+      }
+
+      if (intent.kind === 'draft_pre_meeting_note' && !event) {
+        return buildWeakContextDraftReply({
+          question: 'Which meeting do you mean?',
+          draftKind,
+          now,
+          timeZone: deps.timeZone || grounded.timeZone,
+        });
+      }
+
+      if (intent.kind === 'draft_status_update' && !selectedWork) {
+        return buildWeakContextDraftReply({
+          question: 'What task do you mean?',
+          draftKind,
+          now,
+          timeZone: deps.timeZone || grounded.timeZone,
+        });
+      }
+
+      const topicPrompt =
+        intent.kind === 'draft_follow_up' ||
+        intent.kind === 'draft_pre_meeting_note'
+          ? 'Which meeting do you mean?'
+          : intent.kind === 'draft_status_update'
+            ? 'What task do you mean?'
+            : 'What should the message be about?';
+
       if (!explicitTopic) {
         return {
           kind: 'awaiting_draft_input',
-          message: 'What should the message be about?',
+          message: topicPrompt,
           state: buildDraftState({
             now,
-            draftKind: /\bfollow-up\b/i.test(normalized)
-              ? 'follow_up'
-              : 'message',
+            draftKind,
             topicLabel: null,
             recipient: intent.explicitRecipient,
             selectedWork,
             event,
             sourceLabel,
             step: 'clarify_topic',
+            timeZone: deps.timeZone || grounded.timeZone,
+            topicPrompt,
           }),
           actionContext: actionReference,
         };
@@ -1163,15 +1528,14 @@ export async function buildActionLayerResponse(
           message: 'Who is it for?',
           state: buildDraftState({
             now,
-            draftKind: /\bfollow-up\b/i.test(normalized)
-              ? 'follow_up'
-              : 'message',
+            draftKind,
             topicLabel: explicitTopic,
             recipient: null,
             selectedWork,
             event,
             sourceLabel,
             step: 'clarify_recipient',
+            timeZone: deps.timeZone || grounded.timeZone,
           }),
           actionContext: actionReference,
         };
@@ -1179,24 +1543,19 @@ export async function buildActionLayerResponse(
 
       const readyState = buildDraftState({
         now,
-        draftKind: /\bfollow-up\b/i.test(normalized) ? 'follow_up' : 'message',
+        draftKind,
         topicLabel: explicitTopic,
         recipient: intent.explicitRecipient,
         selectedWork,
         event,
         sourceLabel,
         step: 'clarify_recipient',
+        timeZone: deps.timeZone || grounded.timeZone,
       });
       return {
         kind: 'reply',
-        reply: buildDraftFromState(readyState),
-        actionContext:
-          actionReference ||
-          (event
-            ? buildCalendarEventContext(event, now)
-            : selectedWork
-              ? buildSelectedWorkContext(selectedWork, now)
-              : buildActionSuggestionContext(explicitTopic, now)),
+        reply: buildCommunicationDraftFromState(readyState),
+        actionContext: buildCommunicationDraftActionContext(readyState, now),
         activeEventContext: event,
       };
     }
