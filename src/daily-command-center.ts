@@ -62,9 +62,10 @@ export interface DailyCommandCenterResponse {
   reply: string;
   activeEventContext: null;
   currentFocus: CurrentFocusSnapshot;
+  grounded: GroundedDaySnapshot;
 }
 
-interface DailyCommandCenterDeps {
+export interface DailyCommandCenterDeps {
   now?: Date;
   timeZone?: string;
   tasks?: ScheduledTask[];
@@ -81,7 +82,18 @@ interface DailyCommandCenterDeps {
 
 const REST_OF_TODAY_QUERY = 'What should I know about today?';
 const GIVE_ME_MY_DAY_QUERY = 'Give me my day';
-const MIN_MEANINGFUL_WINDOW_MINUTES = 20;
+export const MIN_MEANINGFUL_WINDOW_MINUTES = 20;
+
+export interface GroundedDaySnapshot {
+  now: Date;
+  timeZone: string;
+  calendar: CalendarLookupSnapshot;
+  selectedWork: SelectedWorkContext | null;
+  reminders: UpcomingReminderSummary[];
+  todayReminders: UpcomingReminderSummary[];
+  meaningfulOpenWindows: CalendarTimeWindow[];
+  currentFocus: CurrentFocusSnapshot;
+}
 
 function normalizeMessage(message: string): string {
   return message
@@ -223,7 +235,7 @@ export function planDailyCommandCenterIntent(
   return null;
 }
 
-function formatClock(date: Date, timeZone: string): string {
+export function formatClock(date: Date, timeZone: string): string {
   return new Intl.DateTimeFormat('en-US', {
     timeZone,
     hour: 'numeric',
@@ -231,7 +243,10 @@ function formatClock(date: Date, timeZone: string): string {
   }).format(date);
 }
 
-function formatWindow(window: CalendarTimeWindow, timeZone: string): string {
+export function formatWindow(
+  window: CalendarTimeWindow,
+  timeZone: string,
+): string {
   return `${formatClock(window.start, timeZone)}-${formatClock(window.end, timeZone)}`;
 }
 
@@ -243,7 +258,10 @@ function maybeCalendarSuffix(event: CalendarEvent): string {
   return ` [${event.calendarName}]`;
 }
 
-function formatEventSummary(event: CalendarEvent, timeZone: string): string {
+export function formatEventSummary(
+  event: CalendarEvent,
+  timeZone: string,
+): string {
   if (event.allDay) {
     return `All day ${event.title}${maybeCalendarSuffix(event)}`;
   }
@@ -271,7 +289,7 @@ function parseReminderLabel(prompt: string): string {
   return 'upcoming reminder';
 }
 
-function getUpcomingReminders(
+export function getUpcomingReminders(
   tasks: ScheduledTask[],
   now: Date,
 ): UpcomingReminderSummary[] {
@@ -296,17 +314,17 @@ function getUpcomingReminders(
     );
 }
 
-function minutesBetween(start: Date, end: Date): number {
+export function minutesBetween(start: Date, end: Date): number {
   return Math.max(0, Math.floor((end.getTime() - start.getTime()) / 60000));
 }
 
-function endOfLocalDay(date: Date): Date {
+export function endOfLocalDay(date: Date): Date {
   const next = new Date(date);
   next.setHours(24, 0, 0, 0);
   return next;
 }
 
-function summarizeDuration(minutes: number): string {
+export function summarizeDuration(minutes: number): string {
   if (minutes < 60) {
     return `about ${minutes} minute${minutes === 1 ? '' : 's'}`;
   }
@@ -320,7 +338,7 @@ function summarizeDuration(minutes: number): string {
   }`;
 }
 
-function describeWindowCapacity(minutes: number): string {
+export function describeWindowCapacity(minutes: number): string {
   const duration = summarizeDuration(minutes);
   if (minutes < 20) {
     return `${duration}, so this is only enough for a quick check.`;
@@ -331,7 +349,7 @@ function describeWindowCapacity(minutes: number): string {
   return `${duration}, so this is a meaningful work block.`;
 }
 
-function describeWindowForSelectedWork(
+export function describeWindowForSelectedWork(
   minutes: number,
   selectedWork: SelectedWorkContext,
 ): string {
@@ -345,7 +363,7 @@ function describeWindowForSelectedWork(
   return `${duration}, so you could make meaningful progress on ${selectedWork.title}.`;
 }
 
-function filterMeaningfulOpenWindows(
+export function filterMeaningfulOpenWindows(
   windows: CalendarTimeWindow[],
   minimumMinutes = MIN_MEANINGFUL_WINDOW_MINUTES,
 ): CalendarTimeWindow[] {
@@ -389,7 +407,7 @@ async function loadCalendarSnapshot(
   };
 }
 
-function buildCurrentFocusSnapshot(params: {
+export function buildCurrentFocusSnapshot(params: {
   now: Date;
   nextReminder: UpcomingReminderSummary | null;
   nextEvent: CalendarEvent | null;
@@ -425,6 +443,44 @@ function buildCurrentFocusSnapshot(params: {
     nextEvent: params.nextEvent,
     nextReminder: params.nextReminder,
     nextMeaningfulOpenWindow: params.nextMeaningfulOpenWindow,
+  };
+}
+
+export async function buildGroundedDaySnapshot(
+  deps: DailyCommandCenterDeps = {},
+): Promise<GroundedDaySnapshot> {
+  const now = deps.now || new Date();
+  const timeZone = deps.timeZone || TIMEZONE;
+  const calendar = await loadCalendarSnapshot(REST_OF_TODAY_QUERY, {
+    ...deps,
+    now,
+    timeZone,
+  });
+  const reminders = getUpcomingReminders(deps.tasks || [], now);
+  const todayReminders = reminders.filter(
+    (reminder) =>
+      new Date(reminder.nextRunIso).getTime() < endOfLocalDay(now).getTime(),
+  );
+  const meaningfulOpenWindows = filterMeaningfulOpenWindows(
+    calendar.openWindows,
+  );
+  const currentFocus = buildCurrentFocusSnapshot({
+    now,
+    nextReminder: reminders[0] || null,
+    nextEvent: calendar.nextTimedEvent,
+    nextMeaningfulOpenWindow: meaningfulOpenWindows[0] || null,
+    selectedWork: deps.selectedWork || null,
+  });
+
+  return {
+    now,
+    timeZone,
+    calendar,
+    selectedWork: deps.selectedWork || null,
+    reminders,
+    todayReminders,
+    meaningfulOpenWindows,
+    currentFocus,
   };
 }
 
@@ -1145,37 +1201,26 @@ export async function buildDailyCommandCenterResponse(
   deps: DailyCommandCenterDeps = {},
 ): Promise<DailyCommandCenterResponse | null> {
   const now = deps.now || new Date();
-  const timeZone = deps.timeZone || TIMEZONE;
   const intent = planDailyCommandCenterIntent(message, now);
   if (!intent) {
     return null;
   }
 
-  const snapshot = await loadCalendarSnapshot(REST_OF_TODAY_QUERY, {
-    ...deps,
-    now,
+  const grounded = await buildGroundedDaySnapshot(deps);
+  const {
     timeZone,
-  });
-  const reminders = getUpcomingReminders(deps.tasks || [], now);
-  const todayReminders = reminders.filter(
-    (reminder) =>
-      new Date(reminder.nextRunIso).getTime() < endOfLocalDay(now).getTime(),
-  );
-  const meaningfulWindows = filterMeaningfulOpenWindows(snapshot.openWindows);
-  const currentFocus = buildCurrentFocusSnapshot({
-    now,
-    nextReminder: reminders[0] || null,
-    nextEvent: snapshot.nextTimedEvent,
-    nextMeaningfulOpenWindow: meaningfulWindows[0] || null,
-    selectedWork: deps.selectedWork || null,
-  });
+    calendar: snapshot,
+    todayReminders,
+    currentFocus,
+    selectedWork,
+  } = grounded;
 
   let reply: string;
   switch (intent.kind) {
     case 'day_overview':
       reply = buildDayOverviewReply({
         snapshot,
-        selectedWork: deps.selectedWork || null,
+        selectedWork,
         reminders: todayReminders,
         currentFocus,
         timeZone,
@@ -1185,7 +1230,7 @@ export async function buildDailyCommandCenterResponse(
       reply = buildComingUpAndOpenReply({
         snapshot,
         reminders: todayReminders,
-        selectedWork: deps.selectedWork || null,
+        selectedWork,
         timeZone,
       });
       break;
@@ -1204,7 +1249,7 @@ export async function buildDailyCommandCenterResponse(
     case 'fit_before_next_meeting':
       reply = buildFitBeforeNextMeetingReply({
         snapshot,
-        selectedWork: deps.selectedWork || null,
+        selectedWork,
         timeZone,
         now,
       });
@@ -1212,7 +1257,7 @@ export async function buildDailyCommandCenterResponse(
     case 'fit_next_free_window':
       reply = buildFitNextFreeWindowReply({
         snapshot,
-        selectedWork: deps.selectedWork || null,
+        selectedWork,
         timeZone,
       });
       break;
@@ -1222,7 +1267,7 @@ export async function buildDailyCommandCenterResponse(
     case 'fit_before_anchor':
       reply = buildFitBeforeAnchorReply({
         snapshot,
-        selectedWork: deps.selectedWork || null,
+        selectedWork,
         anchorDate: intent.anchorDate,
         anchorTimeLabel: intent.anchorTimeLabel,
         timeZone,
@@ -1232,7 +1277,7 @@ export async function buildDailyCommandCenterResponse(
     case 'next_and_before_then':
       reply = buildNextAndBeforeThenReply({
         snapshot,
-        selectedWork: deps.selectedWork || null,
+        selectedWork,
         timeZone,
         now,
       });
@@ -1245,5 +1290,6 @@ export async function buildDailyCommandCenterResponse(
     reply,
     activeEventContext: null,
     currentFocus,
+    grounded,
   };
 }

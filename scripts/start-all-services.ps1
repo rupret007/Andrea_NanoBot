@@ -13,6 +13,33 @@ function Write-Step {
   Write-Output "SERVICES_START: $Message"
 }
 
+function Is-EphemeralNodePath {
+  param([string] $Candidate)
+
+  if ([string]::IsNullOrWhiteSpace($Candidate)) { return $false }
+  $normalized = $Candidate.Replace('\', '/').ToLowerInvariant()
+  return $normalized.Contains('/.npm/_npx/') -or
+    $normalized.Contains('/npm-cache/_npx/') -or
+    $normalized.Contains('/appdata/local/npm-cache/_npx/')
+}
+
+function Resolve-StableNpxExecutable {
+  $commands = @('npx.cmd', 'npx')
+  foreach ($command in $commands) {
+    try {
+      $output = (& where.exe $command 2>$null)
+      $candidates = @($output | Where-Object { $_ -and $_.Trim() } | ForEach-Object { $_.Trim() })
+      $stable = $candidates | Where-Object { -not (Is-EphemeralNodePath $_) } | Select-Object -First 1
+      if ($stable) { return $stable }
+      if ($candidates.Count -gt 0) { return $candidates[0] }
+    } catch {
+      # try next command
+    }
+  }
+
+  return 'npx.cmd'
+}
+
 function Read-Pid {
   param([string] $Path)
   if (!(Test-Path -LiteralPath $Path)) { return $null }
@@ -64,7 +91,8 @@ function Ensure-BuildArtifacts {
 
     if ($useNode22Npx) {
       Write-Step 'node v22 not found on PATH, using npx node@22 build fallback'
-      & 'npx.cmd' -y -p node@22 node .\node_modules\typescript\bin\tsc | Out-Host
+      $npxExe = Resolve-StableNpxExecutable
+      & $npxExe -y -p node@22 -- node .\node_modules\typescript\bin\tsc | Out-Host
     } else {
       & 'C:\Program Files\nodejs\npm.cmd' run build | Out-Host
     }
@@ -99,6 +127,7 @@ function Start-NanoClawFallback {
 
   New-Item -ItemType Directory -Path $logDir -Force | Out-Null
   Set-Location -LiteralPath $Root
+  $npxExe = Resolve-StableNpxExecutable
 
   function Resolve-NodeExecutable {
     # Prefer an already-installed Node 22 on PATH
@@ -116,7 +145,7 @@ function Start-NanoClawFallback {
 
     # Resolve a temporary Node 22 runtime path without keeping npx as the parent process.
     try {
-      $resolved = (& 'npx.cmd' -y -p node@22 node -p "process.execPath" 2>$null | Select-Object -Last 1).Trim()
+      $resolved = (& $npxExe -y -p node@22 -- node -p "process.execPath" 2>$null | Select-Object -Last 1).Trim()
       if ($resolved -and (Test-Path -LiteralPath $resolved)) {
         return $resolved
       }
@@ -139,7 +168,7 @@ function Start-NanoClawFallback {
       $proc = Start-Process -FilePath $nodeExe -ArgumentList @($entryPath) -WorkingDirectory $Root -WindowStyle Hidden -RedirectStandardOutput $logPath -RedirectStandardError $stderrLogPath -PassThru
     } else {
       # Last-resort fallback: long-running npx launcher.
-      $proc = Start-Process -FilePath 'npx.cmd' -ArgumentList @('-y', '-p', 'node@22', 'node', $entryPath) -WorkingDirectory $Root -WindowStyle Hidden -RedirectStandardOutput $logPath -RedirectStandardError $stderrLogPath -PassThru
+      $proc = Start-Process -FilePath $npxExe -ArgumentList @('-y', '-p', 'node@22', '--', 'node', $entryPath) -WorkingDirectory $Root -WindowStyle Hidden -RedirectStandardOutput $logPath -RedirectStandardError $stderrLogPath -PassThru
     }
   } finally {
     if ($null -eq $previousNoWarnings) {

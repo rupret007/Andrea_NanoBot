@@ -209,15 +209,27 @@ describe('Windows scheduled task wrapper', () => {
     const wrapperPath = 'C:\\NanoClaw\\start-nanoclaw.ps1';
     const startupCmd = `@echo off\r\npowershell.exe -NoProfile -ExecutionPolicy Bypass -File "${wrapperPath}"\r\n`;
 
-    expect(startupCmd).toContain('powershell.exe -NoProfile -ExecutionPolicy Bypass -File');
+    expect(startupCmd).toContain(
+      'powershell.exe -NoProfile -ExecutionPolicy Bypass -File',
+    );
     expect(startupCmd).toContain('start-nanoclaw.ps1');
   });
 
   it('can launch Node 22 via npx fallback arguments', () => {
-    const line =
-      "$proc = Start-Process -FilePath $npxPath -ArgumentList @('-y', '-p', 'node@22', 'node', $entryPath)";
+    const wrapper = [
+      'function Resolve-Node22Executable {',
+      `  $resolved = (& $npxPath -y -p node@22 -- node -p "process.execPath" 2>$null | Select-Object -Last 1).Trim()`,
+      '}',
+      '$resolvedNodePath = Resolve-Node22Executable',
+      'if ($resolvedNodePath) {',
+      '  $proc = Start-Process -FilePath $resolvedNodePath -ArgumentList @($entryPath)',
+      '} else {',
+      "  $proc = Start-Process -FilePath $npxPath -ArgumentList @('-y', '-p', 'node@22', '--', 'node', $entryPath)",
+      '}',
+    ].join('\n');
 
-    expect(line).toContain("'node@22'");
-    expect(line).toContain('Start-Process -FilePath $npxPath');
+    expect(wrapper).toContain('node -p "process.execPath"');
+    expect(wrapper).toContain('Start-Process -FilePath $resolvedNodePath');
+    expect(wrapper).toContain("'node@22'");
   });
 });

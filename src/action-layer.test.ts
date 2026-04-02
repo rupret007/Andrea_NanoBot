@@ -1,0 +1,428 @@
+import { describe, expect, it, vi } from 'vitest';
+
+import {
+  advancePendingActionDraft,
+  advancePendingActionReminder,
+  buildActionLayerResponse,
+  type PendingActionDraftState,
+} from './action-layer.js';
+import type { CalendarActiveEventContext } from './calendar-assistant.js';
+import type { SelectedWorkContext } from './daily-command-center.js';
+import type { ScheduledTask } from './types.js';
+
+function createGoogleCalendarFetchMock(input: {
+  calendarList?: Array<{
+    id: string;
+    summary: string;
+    selected?: boolean;
+    primary?: boolean;
+  }>;
+  eventsByCalendar: Record<
+    string,
+    {
+      status?: number;
+      summary?: string;
+      items?: unknown[];
+      body?: unknown;
+    }
+  >;
+}) {
+  return vi.fn(async (request: string | URL | Request) => {
+    const url = String(request);
+    if (url.includes('/users/me/calendarList')) {
+      return new Response(
+        JSON.stringify({
+          items:
+            input.calendarList?.map((calendar) => ({
+              ...calendar,
+              selected: calendar.selected ?? true,
+              primary: calendar.primary ?? false,
+            })) || [],
+        }),
+        { status: 200 },
+      );
+    }
+
+    for (const [calendarId, response] of Object.entries(
+      input.eventsByCalendar,
+    )) {
+      if (url.includes(`/calendars/${encodeURIComponent(calendarId)}/events`)) {
+        return new Response(
+          JSON.stringify(
+            response.body ?? {
+              summary: response.summary || calendarId,
+              items: response.items || [],
+            },
+          ),
+          { status: response.status ?? 200 },
+        );
+      }
+    }
+
+    return new Response(
+      JSON.stringify({
+        error: { message: `Unexpected URL: ${url}` },
+      }),
+      { status: 404 },
+    );
+  });
+}
+
+function createReminderTask(
+  label: string,
+  nextRunIso: string,
+  id = `task-${label.replace(/\s+/g, '-').toLowerCase()}`,
+): ScheduledTask {
+  return {
+    id,
+    group_folder: 'main',
+    chat_jid: 'tg:1',
+    prompt: `Send a concise reminder telling the user to ${label}.`,
+    script: null,
+    schedule_type: 'once',
+    schedule_value: nextRunIso,
+    context_mode: 'isolated',
+    next_run: nextRunIso,
+    last_run: null,
+    last_result: null,
+    status: 'active',
+    created_at: '2026-04-01T12:00:00.000Z',
+  };
+}
+
+const selectedWork: SelectedWorkContext = {
+  laneLabel: 'Cursor',
+  title: 'Ship docs',
+  statusLabel: 'Running',
+  summary: 'Polish the rollout docs',
+};
+
+const baseEnv = {
+  GOOGLE_CALENDAR_ACCESS_TOKEN: 'token',
+  GOOGLE_CALENDAR_IDS: 'primary',
+};
+
+describe('buildActionLayerResponse', () => {
+  it('gives a grounded next-step reply from selected work and open time', async () => {
+    const fetchImpl = createGoogleCalendarFetchMock({
+      eventsByCalendar: {
+        primary: {
+          items: [
+            {
+              id: 'evt-1',
+              summary: 'Team sync',
+              start: { dateTime: '2026-04-01T21:00:00Z' },
+              end: { dateTime: '2026-04-01T22:00:00Z' },
+            },
+          ],
+        },
+      },
+    });
+
+    const response = await buildActionLayerResponse('What should I do next?', {
+      now: new Date('2026-04-01T12:00:00-05:00'),
+      timeZone: 'America/Chicago',
+      env: baseEnv,
+      fetchImpl,
+      selectedWork,
+    });
+
+    expect(response.kind).toBe('reply');
+    if (response.kind !== 'reply') return;
+    expect(response.reply).toContain(
+      'Resuming Ship docs is the strongest grounded next step right now.',
+    );
+    expect(response.actionContext?.sourceKind).toBe('selected_work');
+    expect(response.activeEventContext).toBeNull();
+  });
+
+  it('answers honestly before the next meeting when work context is weak', async () => {
+    const fetchImpl = createGoogleCalendarFetchMock({
+      eventsByCalendar: {
+        primary: {
+          items: [
+            {
+              id: 'evt-1',
+              summary: 'Design review',
+              start: { dateTime: '2026-04-01T18:45:00Z' },
+              end: { dateTime: '2026-04-01T19:30:00Z' },
+            },
+          ],
+        },
+      },
+    });
+
+    const response = await buildActionLayerResponse(
+      'What should I handle before my next meeting?',
+      {
+        now: new Date('2026-04-01T12:00:00-05:00'),
+        timeZone: 'America/Chicago',
+        env: baseEnv,
+        fetchImpl,
+      },
+    );
+
+    expect(response.kind).toBe('reply');
+    if (response.kind !== 'reply') return;
+    expect(response.reply).toContain('schedule-based guidance only');
+    expect(response.reply).toContain('Design review');
+  });
+
+  it('sizes the next free window as a knock-out block for selected work', async () => {
+    const fetchImpl = createGoogleCalendarFetchMock({
+      eventsByCalendar: {
+        primary: {
+          items: [
+            {
+              id: 'evt-1',
+              summary: 'Late sync',
+              start: { dateTime: '2026-04-02T02:00:00Z' },
+              end: { dateTime: '2026-04-02T03:00:00Z' },
+            },
+          ],
+        },
+      },
+    });
+
+    const response = await buildActionLayerResponse(
+      'What can I knock out in my next free window?',
+      {
+        now: new Date('2026-04-01T12:00:00-05:00'),
+        timeZone: 'America/Chicago',
+        env: baseEnv,
+        fetchImpl,
+        selectedWork,
+      },
+    );
+
+    expect(response.kind).toBe('reply');
+    if (response.kind !== 'reply') return;
+    expect(response.reply).toContain('Your next free window is');
+    expect(response.reply).toContain('Ship docs');
+  });
+
+  it('builds a concise meeting prep reply from the active event context', async () => {
+    const fetchImpl = createGoogleCalendarFetchMock({
+      eventsByCalendar: {
+        primary: { items: [] },
+      },
+    });
+    const activeEventContext: CalendarActiveEventContext = {
+      providerId: 'google_calendar',
+      id: 'evt-1',
+      title: 'Design review',
+      startIso: '2026-04-01T18:15:00.000Z',
+      endIso: '2026-04-01T19:00:00.000Z',
+      allDay: false,
+      calendarId: 'primary',
+      calendarName: 'Google Calendar',
+      htmlLink: null,
+    };
+
+    const response = await buildActionLayerResponse(
+      'Help me prepare for this meeting',
+      {
+        now: new Date('2026-04-01T12:05:00-05:00'),
+        timeZone: 'America/Chicago',
+        env: baseEnv,
+        fetchImpl,
+        activeEventContext,
+      },
+    );
+
+    expect(response.kind).toBe('reply');
+    if (response.kind !== 'reply') return;
+    expect(response.reply).toContain('grounded prep pass');
+    expect(response.reply).toContain('Prep: review the event details');
+    expect(response.activeEventContext?.id).toBe('evt-1');
+  });
+
+  it('asks for a time when turning current work into a reminder', async () => {
+    const fetchImpl = createGoogleCalendarFetchMock({
+      eventsByCalendar: { primary: { items: [] } },
+    });
+
+    const response = await buildActionLayerResponse(
+      'Turn that into a reminder',
+      {
+        now: new Date('2026-04-01T12:00:00-05:00'),
+        timeZone: 'America/Chicago',
+        env: baseEnv,
+        fetchImpl,
+        selectedWork,
+        groupFolder: 'main',
+        chatJid: 'tg:1',
+      },
+    );
+
+    expect(response.kind).toBe('awaiting_reminder_time');
+    if (response.kind !== 'awaiting_reminder_time') return;
+    expect(response.message).toContain('come back to Ship docs');
+  });
+
+  it('summarizes action items for today from reminders and work context', async () => {
+    const fetchImpl = createGoogleCalendarFetchMock({
+      eventsByCalendar: {
+        primary: {
+          items: [
+            {
+              id: 'evt-1',
+              summary: 'Team sync',
+              start: { dateTime: '2026-04-01T21:00:00Z' },
+              end: { dateTime: '2026-04-01T22:00:00Z' },
+            },
+          ],
+        },
+      },
+    });
+
+    const response = await buildActionLayerResponse(
+      'Summarize the actions I should take today',
+      {
+        now: new Date('2026-04-01T12:00:00-05:00'),
+        timeZone: 'America/Chicago',
+        env: baseEnv,
+        fetchImpl,
+        selectedWork,
+        tasks: [
+          createReminderTask('check on the demo', '2026-04-01T18:30:00.000Z'),
+        ],
+      },
+    );
+
+    expect(response.kind).toBe('reply');
+    if (response.kind !== 'reply') return;
+    expect(response.reply).toContain('First handle the reminder');
+    expect(response.reply).toContain(
+      'Then use the open block to resume Ship docs',
+    );
+  });
+
+  it('asks who the draft is for instead of inventing a recipient', async () => {
+    const fetchImpl = createGoogleCalendarFetchMock({
+      eventsByCalendar: { primary: { items: [] } },
+    });
+
+    const response = await buildActionLayerResponse(
+      'Draft a message about this',
+      {
+        now: new Date('2026-04-01T12:00:00-05:00'),
+        timeZone: 'America/Chicago',
+        env: baseEnv,
+        fetchImpl,
+        selectedWork,
+      },
+    );
+
+    expect(response.kind).toBe('awaiting_draft_input');
+    if (response.kind !== 'awaiting_draft_input') return;
+    expect(response.message).toBe('Who is it for?');
+  });
+
+  it('falls back honestly when there is no strong work or schedule context', async () => {
+    const fetchImpl = createGoogleCalendarFetchMock({
+      eventsByCalendar: { primary: { items: [] } },
+    });
+
+    const response = await buildActionLayerResponse('What should I do next?', {
+      now: new Date('2026-04-01T23:45:00-05:00'),
+      timeZone: 'America/Chicago',
+      env: baseEnv,
+      fetchImpl,
+    });
+
+    expect(response.kind).toBe('reply');
+    if (response.kind !== 'reply') return;
+    expect(response.reply).toContain(
+      "I don't have enough grounded work context",
+    );
+    expect(response.activeEventContext).toBeNull();
+  });
+});
+
+describe('action-layer pending flows', () => {
+  it('turns a pending follow-through reminder into a plain reminder task from a timing-only reply', () => {
+    const result = advancePendingActionReminder(
+      'at 4',
+      {
+        version: 1,
+        createdAt: '2026-04-01T17:00:00.000Z',
+        label: 'come back to Ship docs',
+      },
+      {
+        groupFolder: 'main',
+        chatJid: 'tg:1',
+        now: new Date('2026-04-01T12:00:00-05:00'),
+      },
+    );
+
+    expect(result.kind).toBe('created_reminder');
+    if (result.kind !== 'created_reminder') return;
+    expect(result.confirmation).toContain('come back to Ship docs');
+    expect(result.task.prompt).toContain('come back to Ship docs');
+  });
+
+  it('turns a pending follow-through reminder into a plain reminder task from a today-at reply', () => {
+    const result = advancePendingActionReminder(
+      'today at 5',
+      {
+        version: 1,
+        createdAt: '2026-04-01T17:00:00.000Z',
+        label: 'prepare for Google timed proof',
+      },
+      {
+        groupFolder: 'main',
+        chatJid: 'tg:1',
+        now: new Date('2026-04-01T12:00:00-05:00'),
+      },
+    );
+
+    expect(result.kind).toBe('created_reminder');
+    if (result.kind !== 'created_reminder') return;
+    expect(result.confirmation).toContain(
+      'today at 5pm to prepare for Google timed proof',
+    );
+    expect(result.task.schedule_value).toBe('2026-04-01T17:00:00');
+  });
+
+  it('keeps asking when the timing reply is still incomplete', () => {
+    const result = advancePendingActionReminder(
+      'later today',
+      {
+        version: 1,
+        createdAt: '2026-04-01T17:00:00.000Z',
+        label: 'follow up on Design review',
+      },
+      {
+        groupFolder: 'main',
+        chatJid: 'tg:1',
+        now: new Date('2026-04-01T12:00:00-05:00'),
+      },
+    );
+
+    expect(result.kind).toBe('awaiting_reminder_time');
+    if (result.kind !== 'awaiting_reminder_time') return;
+    expect(result.message).toContain('Tell me a time like');
+  });
+
+  it('turns a pending draft into text once the recipient is supplied', () => {
+    const draftState: PendingActionDraftState = {
+      version: 1,
+      createdAt: '2026-04-01T17:00:00.000Z',
+      step: 'clarify_recipient',
+      draftKind: 'message',
+      topicLabel: 'Ship docs',
+      recipient: null,
+      selectedWork,
+      event: null,
+      sourceLabel: 'Ship docs',
+    };
+
+    const result = advancePendingActionDraft('Candace', draftState);
+
+    expect(result.kind).toBe('reply');
+    if (result.kind !== 'reply') return;
+    expect(result.reply).toContain('Here’s a draft for Candace.');
+    expect(result.reply).toContain('Quick update on Ship docs');
+  });
+});

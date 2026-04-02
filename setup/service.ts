@@ -329,8 +329,15 @@ function resolveWindowsNpxPath(): string | null {
       const output = execFileSync('where.exe', [command], {
         encoding: 'utf-8',
       }).trim();
-      const resolved = output.split(/\r?\n/).find(Boolean);
-      if (resolved) return resolved;
+      const candidates = output
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+      const stableCandidate = candidates.find(
+        (candidate) => !isEphemeralNodePath(candidate),
+      );
+      if (stableCandidate) return stableCandidate;
+      if (candidates[0]) return candidates[0];
     } catch {
       // try next command
     }
@@ -410,7 +417,24 @@ function setupWindowsTask(
     '',
     ...(useNpxLauncher
       ? [
-          "$proc = Start-Process -FilePath $npxPath -ArgumentList @('-y', '-p', 'node@22', 'node', $entryPath) -WorkingDirectory $projectRoot -RedirectStandardOutput $logPath -RedirectStandardError $errLogPath -PassThru",
+          'function Resolve-Node22Executable {',
+          '  try {',
+          `    $resolved = (& $npxPath -y -p node@22 -- node -p "process.execPath" 2>$null | Select-Object -Last 1).Trim()`,
+          '    if ($resolved -and (Test-Path -LiteralPath $resolved)) {',
+          '      return $resolved',
+          '    }',
+          '  } catch {',
+          '    # fall back to direct npx launch',
+          '  }',
+          '  return $null',
+          '}',
+          '',
+          '$resolvedNodePath = Resolve-Node22Executable',
+          'if ($resolvedNodePath) {',
+          '  $proc = Start-Process -FilePath $resolvedNodePath -ArgumentList @($entryPath) -WorkingDirectory $projectRoot -RedirectStandardOutput $logPath -RedirectStandardError $errLogPath -PassThru',
+          '} else {',
+          "  $proc = Start-Process -FilePath $npxPath -ArgumentList @('-y', '-p', 'node@22', '--', 'node', $entryPath) -WorkingDirectory $projectRoot -RedirectStandardOutput $logPath -RedirectStandardError $errLogPath -PassThru",
+          '}',
         ]
       : [
           '$proc = Start-Process -FilePath $nodePath -ArgumentList @($entryPath) -WorkingDirectory $projectRoot -RedirectStandardOutput $logPath -RedirectStandardError $errLogPath -PassThru',

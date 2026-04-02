@@ -72,12 +72,27 @@ import { startIpcWatcher } from './ipc.js';
 import { planSimpleReminder } from './local-reminder.js';
 import {
   buildCalendarAssistantResponse,
+  planCalendarAssistantLookup,
   type CalendarSchedulingContext,
 } from './calendar-assistant.js';
 import {
   buildDailyCommandCenterResponse,
+  planDailyCommandCenterIntent,
   type SelectedWorkContext,
 } from './daily-command-center.js';
+import {
+  advancePendingActionDraft,
+  advancePendingActionReminder,
+  planActionLayerIntent,
+  buildActionLayerContextFromDailyCommandCenter,
+  buildActionLayerResponse,
+  isActionLayerContextExpired,
+  isPendingActionDraftExpired,
+  isPendingActionReminderExpired,
+  type ActionLayerContextState,
+  type PendingActionDraftState,
+  type PendingActionReminderState,
+} from './action-layer.js';
 import {
   advancePendingCalendarAutomation,
   buildCalendarAutomationPersistInput,
@@ -374,6 +389,9 @@ const GOOGLE_CALENDAR_PENDING_EVENT_ACTION_PREFIX =
   'google_calendar_pending_event_action:';
 const GOOGLE_CALENDAR_PENDING_AUTOMATION_PREFIX =
   'google_calendar_pending_automation:';
+const ACTION_LAYER_CONTEXT_PREFIX = 'action_layer_context:';
+const ACTION_LAYER_PENDING_REMINDER_PREFIX = 'action_layer_pending_reminder:';
+const ACTION_LAYER_PENDING_DRAFT_PREFIX = 'action_layer_pending_draft:';
 
 function getGoogleCalendarPendingStateKey(chatJid: string): string {
   return `${GOOGLE_CALENDAR_PENDING_STATE_PREFIX}${chatJid}`;
@@ -397,6 +415,18 @@ function getGoogleCalendarPendingEventActionKey(chatJid: string): string {
 
 function getGoogleCalendarPendingAutomationKey(chatJid: string): string {
   return `${GOOGLE_CALENDAR_PENDING_AUTOMATION_PREFIX}${chatJid}`;
+}
+
+function getActionLayerContextKey(chatJid: string): string {
+  return `${ACTION_LAYER_CONTEXT_PREFIX}${chatJid}`;
+}
+
+function getActionLayerPendingReminderKey(chatJid: string): string {
+  return `${ACTION_LAYER_PENDING_REMINDER_PREFIX}${chatJid}`;
+}
+
+function getActionLayerPendingDraftKey(chatJid: string): string {
+  return `${ACTION_LAYER_PENDING_DRAFT_PREFIX}${chatJid}`;
 }
 
 function getPendingGoogleCalendarCreateState(
@@ -599,6 +629,98 @@ function setPendingCalendarAutomationState(
 
 function clearPendingCalendarAutomationState(chatJid: string): void {
   deleteRouterState(getGoogleCalendarPendingAutomationKey(chatJid));
+}
+
+function getActionLayerContext(
+  chatJid: string,
+): ActionLayerContextState | null {
+  const raw = getRouterState(getActionLayerContextKey(chatJid));
+  if (!raw) return null;
+
+  try {
+    const parsed = JSON.parse(raw) as ActionLayerContextState;
+    if (
+      !parsed ||
+      parsed.version !== 1 ||
+      !parsed.label ||
+      !parsed.sourceKind
+    ) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function setActionLayerContext(
+  chatJid: string,
+  state: ActionLayerContextState,
+): void {
+  setRouterState(getActionLayerContextKey(chatJid), JSON.stringify(state));
+}
+
+function clearActionLayerContext(chatJid: string): void {
+  deleteRouterState(getActionLayerContextKey(chatJid));
+}
+
+function getPendingActionReminderState(
+  chatJid: string,
+): PendingActionReminderState | null {
+  const raw = getRouterState(getActionLayerPendingReminderKey(chatJid));
+  if (!raw) return null;
+
+  try {
+    const parsed = JSON.parse(raw) as PendingActionReminderState;
+    if (!parsed || parsed.version !== 1 || !parsed.label) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function setPendingActionReminderState(
+  chatJid: string,
+  state: PendingActionReminderState,
+): void {
+  setRouterState(
+    getActionLayerPendingReminderKey(chatJid),
+    JSON.stringify(state),
+  );
+}
+
+function clearPendingActionReminderState(chatJid: string): void {
+  deleteRouterState(getActionLayerPendingReminderKey(chatJid));
+}
+
+function getPendingActionDraftState(
+  chatJid: string,
+): PendingActionDraftState | null {
+  const raw = getRouterState(getActionLayerPendingDraftKey(chatJid));
+  if (!raw) return null;
+
+  try {
+    const parsed = JSON.parse(raw) as PendingActionDraftState;
+    if (!parsed || parsed.version !== 1 || !parsed.step || !parsed.draftKind) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function setPendingActionDraftState(
+  chatJid: string,
+  state: PendingActionDraftState,
+): void {
+  setRouterState(getActionLayerPendingDraftKey(chatJid), JSON.stringify(state));
+}
+
+function clearPendingActionDraftState(chatJid: string): void {
+  deleteRouterState(getActionLayerPendingDraftKey(chatJid));
 }
 
 function formatCreatedGoogleCalendarEventReply(input: {
@@ -1491,6 +1613,21 @@ async function getSelectedDailyWorkContext(
   chatJid: string,
   threadId?: string,
 ): Promise<SelectedWorkContext | null> {
+  const isTerminalWorkStatus = (status: string | null | undefined): boolean => {
+    const normalized = (status || '').trim().toLowerCase();
+    return (
+      normalized === 'succeeded' ||
+      normalized === 'success' ||
+      normalized === 'completed' ||
+      normalized === 'complete' ||
+      normalized === 'done' ||
+      normalized === 'failed' ||
+      normalized === 'error' ||
+      normalized === 'cancelled' ||
+      normalized === 'canceled'
+    );
+  };
+
   const activeContext = getActiveCursorOperatorContext(chatJid, threadId);
   if (!activeContext?.selectedLaneId) {
     return null;
@@ -1516,6 +1653,9 @@ async function getSelectedDailyWorkContext(
         (entry) => entry.id === selectedAgentId,
       ) || null;
     if (!selected) {
+      return null;
+    }
+    if (isTerminalWorkStatus(selected.status)) {
       return null;
     }
     const title =
@@ -1548,6 +1688,9 @@ async function getSelectedDailyWorkContext(
     chatJid,
   });
   if (!selected) {
+    return null;
+  }
+  if (isTerminalWorkStatus(selected.status)) {
     return null;
   }
   const runtimeTitle =
@@ -3077,27 +3220,320 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       }
     }
   };
+  const getCurrentActiveGoogleCalendarActionContext = () => {
+    const activeEventContextState =
+      getActiveGoogleCalendarEventContext(chatJid);
+    return activeEventContextState &&
+      !isActiveGoogleCalendarEventContextExpired(activeEventContextState, now)
+      ? {
+          providerId: 'google_calendar' as const,
+          id: activeEventContextState.event.id,
+          title: activeEventContextState.event.title,
+          startIso: activeEventContextState.event.startIso,
+          endIso: activeEventContextState.event.endIso,
+          allDay: activeEventContextState.event.allDay,
+          calendarId: activeEventContextState.event.calendarId || null,
+          calendarName: activeEventContextState.event.calendarName || null,
+          htmlLink: activeEventContextState.event.htmlLink || null,
+        }
+      : null;
+  };
+  const tryHandleLocalActionLayer = async (
+    fastPathKind: 'direct' | 'protected',
+  ): Promise<boolean> => {
+    try {
+      const actionContextState = getActionLayerContext(chatJid);
+      if (
+        actionContextState &&
+        isActionLayerContextExpired(actionContextState, now)
+      ) {
+        clearActionLayerContext(chatJid);
+      }
+
+      const pendingActionReminder = getPendingActionReminderState(chatJid);
+      if (
+        pendingActionReminder &&
+        isPendingActionReminderExpired(pendingActionReminder, now)
+      ) {
+        clearPendingActionReminderState(chatJid);
+      }
+
+      const pendingActionDraft = getPendingActionDraftState(chatJid);
+      if (
+        pendingActionDraft &&
+        isPendingActionDraftExpired(pendingActionDraft, now)
+      ) {
+        clearPendingActionDraftState(chatJid);
+      }
+
+      const freshIntent = planActionLayerIntent(lastContent);
+      const shouldInterruptPendingActionFlow = Boolean(
+        !freshIntent &&
+        (lastContent.trim().startsWith('/') ||
+          planDailyCommandCenterIntent(lastContent, now) ||
+          planCalendarAssistantLookup(lastContent, now, TIMEZONE) ||
+          planSimpleReminder(lastContent, group.folder, chatJid, now)),
+      );
+      const activeActionReminder = getPendingActionReminderState(chatJid);
+      if (activeActionReminder) {
+        if (freshIntent) {
+          clearPendingActionReminderState(chatJid);
+        } else if (shouldInterruptPendingActionFlow) {
+          clearPendingActionReminderState(chatJid);
+          return false;
+        } else {
+          const continued = advancePendingActionReminder(
+            lastContent,
+            activeActionReminder,
+            {
+              groupFolder: group.folder,
+              chatJid,
+              now,
+            },
+          );
+          if (continued.kind === 'awaiting_reminder_time') {
+            setPendingActionReminderState(chatJid, continued.state);
+            await channel.sendMessage(
+              chatJid,
+              formatCalendarPanelText('*Next Step*', continued.message),
+              {
+                inlineActionRows:
+                  buildCalendarLookupInlineActionRows(lastContent),
+              },
+            );
+            return true;
+          }
+          clearPendingActionReminderState(chatJid);
+          if (continued.kind === 'created_reminder') {
+            createTask(continued.task);
+            refreshTaskSnapshots(registeredGroups);
+            if (continued.actionContext) {
+              setActionLayerContext(chatJid, continued.actionContext);
+            }
+            await channel.sendMessage(
+              chatJid,
+              formatCalendarPanelText('*Next Step*', continued.confirmation),
+              {
+                inlineActionRows:
+                  buildCalendarLookupInlineActionRows(lastContent),
+              },
+            );
+            return true;
+          }
+          if (continued.kind === 'reply') {
+            await channel.sendMessage(
+              chatJid,
+              formatCalendarPanelText('*Next Step*', continued.reply),
+              {
+                inlineActionRows:
+                  buildCalendarLookupInlineActionRows(lastContent),
+              },
+            );
+            return true;
+          }
+          return false;
+        }
+      }
+
+      const activeActionDraft = getPendingActionDraftState(chatJid);
+      if (activeActionDraft) {
+        if (freshIntent) {
+          clearPendingActionDraftState(chatJid);
+        } else if (shouldInterruptPendingActionFlow) {
+          clearPendingActionDraftState(chatJid);
+          return false;
+        } else {
+          const continued = advancePendingActionDraft(
+            lastContent,
+            activeActionDraft,
+            now,
+          );
+          if (continued.kind === 'awaiting_draft_input') {
+            setPendingActionDraftState(chatJid, continued.state);
+            await channel.sendMessage(
+              chatJid,
+              formatCalendarPanelText('*Next Step*', continued.message),
+              {
+                inlineActionRows:
+                  buildCalendarLookupInlineActionRows(lastContent),
+              },
+            );
+            return true;
+          }
+          clearPendingActionDraftState(chatJid);
+          if (continued.kind === 'reply') {
+            if (continued.actionContext) {
+              setActionLayerContext(chatJid, continued.actionContext);
+            }
+            if (
+              continued.activeEventContext?.providerId === 'google_calendar' &&
+              continued.activeEventContext.calendarId
+            ) {
+              setActiveGoogleCalendarEventContext(
+                chatJid,
+                buildActiveGoogleCalendarEventContextState(
+                  {
+                    id: continued.activeEventContext.id,
+                    title: continued.activeEventContext.title,
+                    startIso: continued.activeEventContext.startIso,
+                    endIso: continued.activeEventContext.endIso,
+                    allDay: continued.activeEventContext.allDay,
+                    calendarId: continued.activeEventContext.calendarId,
+                    calendarName:
+                      continued.activeEventContext.calendarName ||
+                      'Google Calendar',
+                    htmlLink: continued.activeEventContext.htmlLink || null,
+                  },
+                  now,
+                ),
+              );
+            }
+            await channel.sendMessage(
+              chatJid,
+              formatCalendarPanelText('*Next Step*', continued.reply),
+              {
+                inlineActionRows:
+                  buildCalendarLookupInlineActionRows(lastContent),
+              },
+            );
+            return true;
+          }
+        }
+      }
+
+      const selectedWork = await getSelectedDailyWorkContext(
+        chatJid,
+        missedMessages.at(-1)?.thread_id,
+      );
+      const actionResult = await buildActionLayerResponse(lastContent, {
+        now,
+        timeZone: TIMEZONE,
+        activeEventContext: getCurrentActiveGoogleCalendarActionContext(),
+        actionContext: getActionLayerContext(chatJid),
+        selectedWork,
+        tasks: getAllTasks().filter((task) => task.chat_jid === chatJid),
+        groupFolder: group.folder,
+        chatJid,
+      });
+      if (actionResult.kind === 'none') {
+        return false;
+      }
+
+      if (actionResult.kind === 'awaiting_reminder_time') {
+        setPendingActionReminderState(chatJid, actionResult.state);
+        await channel.sendMessage(
+          chatJid,
+          formatCalendarPanelText('*Next Step*', actionResult.message),
+          {
+            inlineActionRows: buildCalendarLookupInlineActionRows(lastContent),
+          },
+        );
+        return true;
+      }
+
+      if (actionResult.kind === 'awaiting_draft_input') {
+        setPendingActionDraftState(chatJid, actionResult.state);
+        if (actionResult.actionContext) {
+          setActionLayerContext(chatJid, actionResult.actionContext);
+        }
+        await channel.sendMessage(
+          chatJid,
+          formatCalendarPanelText('*Next Step*', actionResult.message),
+          {
+            inlineActionRows: buildCalendarLookupInlineActionRows(lastContent),
+          },
+        );
+        return true;
+      }
+
+      if (actionResult.kind === 'created_reminder') {
+        createTask(actionResult.task);
+        refreshTaskSnapshots(registeredGroups);
+        if (actionResult.actionContext) {
+          setActionLayerContext(chatJid, actionResult.actionContext);
+        }
+        await channel.sendMessage(
+          chatJid,
+          formatCalendarPanelText('*Next Step*', actionResult.confirmation),
+          {
+            inlineActionRows: buildCalendarLookupInlineActionRows(lastContent),
+          },
+        );
+        logger.info(
+          {
+            component: 'assistant',
+            chatJid,
+            groupFolder: group.folder,
+            group: group.name,
+            requestRoute: requestPolicy.route,
+            actionLayerFastPath: fastPathKind,
+            reminderTaskId: actionResult.task.id,
+          },
+          'Handled action-layer reminder via local fast path',
+        );
+        return true;
+      }
+
+      if (actionResult.actionContext) {
+        setActionLayerContext(chatJid, actionResult.actionContext);
+      } else {
+        clearActionLayerContext(chatJid);
+      }
+      if (
+        actionResult.activeEventContext?.providerId === 'google_calendar' &&
+        actionResult.activeEventContext.calendarId
+      ) {
+        setActiveGoogleCalendarEventContext(
+          chatJid,
+          buildActiveGoogleCalendarEventContextState(
+            {
+              id: actionResult.activeEventContext.id,
+              title: actionResult.activeEventContext.title,
+              startIso: actionResult.activeEventContext.startIso,
+              endIso: actionResult.activeEventContext.endIso,
+              allDay: actionResult.activeEventContext.allDay,
+              calendarId: actionResult.activeEventContext.calendarId,
+              calendarName:
+                actionResult.activeEventContext.calendarName ||
+                'Google Calendar',
+              htmlLink: actionResult.activeEventContext.htmlLink || null,
+            },
+            now,
+          ),
+        );
+      }
+      await channel.sendMessage(
+        chatJid,
+        formatCalendarPanelText('*Next Step*', actionResult.reply),
+        {
+          inlineActionRows: buildCalendarLookupInlineActionRows(lastContent),
+        },
+      );
+      logger.info(
+        {
+          component: 'assistant',
+          chatJid,
+          groupFolder: group.folder,
+          group: group.name,
+          requestRoute: requestPolicy.route,
+          actionLayerFastPath: fastPathKind,
+        },
+        'Handled action layer via local fast path',
+      );
+      return true;
+    } catch (err) {
+      lastAgentTimestamp[chatJid] = previousCursor;
+      saveState();
+      logger.warn(
+        { group: group.name, err, requestRoute: requestPolicy.route },
+        'Local action layer path failed, rolled back cursor for retry',
+      );
+      return false;
+    }
+  };
   const tryHandleLocalDailyCommandCenter = async (
     fastPathKind: 'direct' | 'protected',
   ): Promise<boolean> => {
-    const activeEventContextState =
-      getActiveGoogleCalendarEventContext(chatJid);
-    const activeEventContext =
-      activeEventContextState &&
-      !isActiveGoogleCalendarEventContextExpired(activeEventContextState, now)
-        ? {
-            providerId: 'google_calendar' as const,
-            id: activeEventContextState.event.id,
-            title: activeEventContextState.event.title,
-            startIso: activeEventContextState.event.startIso,
-            endIso: activeEventContextState.event.endIso,
-            allDay: activeEventContextState.event.allDay,
-            calendarId: activeEventContextState.event.calendarId || null,
-            calendarName: activeEventContextState.event.calendarName || null,
-            htmlLink: activeEventContextState.event.htmlLink || null,
-          }
-        : null;
-
     const selectedWork = await getSelectedDailyWorkContext(
       chatJid,
       missedMessages.at(-1)?.thread_id,
@@ -3105,7 +3541,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     const dailyResponse = await buildDailyCommandCenterResponse(lastContent, {
       now,
       timeZone: TIMEZONE,
-      activeEventContext,
+      activeEventContext: getCurrentActiveGoogleCalendarActionContext(),
       selectedWork,
       tasks: getAllTasks().filter((task) => task.chat_jid === chatJid),
     });
@@ -3114,6 +3550,14 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     }
 
     try {
+      const actionContext = buildActionLayerContextFromDailyCommandCenter({
+        grounded: dailyResponse.grounded,
+      });
+      if (actionContext) {
+        setActionLayerContext(chatJid, actionContext);
+      } else {
+        clearActionLayerContext(chatJid);
+      }
       await channel.sendMessage(
         chatJid,
         formatCalendarPanelText('*Today*', dailyResponse.reply),
@@ -3245,6 +3689,21 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     return true;
   }
 
+  const hasPendingActionLayerContinuation = Boolean(
+    getPendingActionReminderState(chatJid) ||
+    getPendingActionDraftState(chatJid),
+  );
+
+  if (hasPendingActionLayerContinuation) {
+    if (
+      await tryHandleLocalActionLayer(
+        requestPolicy.route === 'direct_assistant' ? 'direct' : 'protected',
+      )
+    ) {
+      return true;
+    }
+  }
+
   if (requestPolicy.route === 'direct_assistant') {
     if (quickReply) {
       try {
@@ -3276,6 +3735,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       }
     }
 
+    if (await tryHandleLocalActionLayer('direct')) {
+      return true;
+    }
+
     if (await tryHandleLocalDailyCommandCenter('direct')) {
       return true;
     }
@@ -3286,6 +3749,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   }
 
   if (requestPolicy.route === 'protected_assistant') {
+    if (await tryHandleLocalActionLayer('protected')) {
+      return true;
+    }
+
     const plannedReminder = planSimpleReminder(
       lastContent,
       group.folder,
@@ -3588,6 +4055,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         'Surfaced direct assistant runtime failure to user without queue retry',
       );
       return true;
+    }
+
+    if (hasPendingActionLayerContinuation) {
+      if (await tryHandleLocalActionLayer('protected')) {
+        return true;
+      }
     }
 
     if (requestPolicy.route === 'direct_assistant') {

@@ -69,4 +69,35 @@ describe('helper boundary wiring', () => {
     );
     expect(source).not.toContain('dedicated bot in Telegram');
   });
+
+  it('prioritizes pending action-layer continuations ahead of direct quick replies', () => {
+    const source = readRepoFile('src/index.ts');
+    const continuationIndex = source.indexOf(
+      'const hasPendingActionLayerContinuation = Boolean(',
+    );
+    const directQuickReplyMatch = source.match(
+      /if \(requestPolicy\.route === 'direct_assistant'\) \{\s+if \(quickReply\)/,
+    );
+    const directQuickReplyIndex = directQuickReplyMatch?.index ?? -1;
+
+    expect(continuationIndex).toBeGreaterThan(-1);
+    expect(directQuickReplyIndex).toBeGreaterThan(-1);
+    expect(continuationIndex).toBeLessThan(directQuickReplyIndex);
+  });
+
+  it('lets fresh day, calendar, reminder, and slash-command prompts interrupt pending action continuations', () => {
+    const source = readRepoFile('src/index.ts');
+
+    expect(source).toContain(
+      'const shouldInterruptPendingActionFlow = Boolean(',
+    );
+    expect(source).toContain("lastContent.trim().startsWith('/')");
+    expect(source).toContain('planDailyCommandCenterIntent(lastContent, now)');
+    expect(source).toContain(
+      'planCalendarAssistantLookup(lastContent, now, TIMEZONE)',
+    );
+    expect(source).toContain(
+      'planSimpleReminder(lastContent, group.folder, chatJid, now)',
+    );
+  });
 });
