@@ -281,6 +281,54 @@ describe('calendar follow-through reminders', () => {
     expect(result.selectorMode).toBe('single_in_window');
     expect(result.scopeFilter?.kind).toBe('family_shared');
   });
+
+  it('keeps tomorrow family reminder lookups inside the requested day window', () => {
+    const plan = planCalendarEventReminder(
+      'remind me 30 minutes before the family calendar event tomorrow',
+      new Date('2026-04-01T10:00:00-05:00'),
+    );
+
+    expect(plan.kind).toBe('lookup');
+    if (plan.kind !== 'lookup') return;
+
+    const result = resolveCalendarReminderLookup({
+      events: [
+        {
+          id: 'evt-family-tomorrow',
+          title: 'Family closeout proof',
+          startIso: '2026-04-02T16:00:00.000Z',
+          endIso: '2026-04-02T17:00:00.000Z',
+          allDay: false,
+          calendarId: 'family@group.calendar.google.com',
+          calendarName: 'Family',
+        },
+        {
+          id: 'evt-family-friday',
+          title: 'Google all-day proof',
+          startIso: '2026-04-03T05:00:00.000Z',
+          endIso: '2026-04-04T05:00:00.000Z',
+          allDay: true,
+          calendarId: 'family@group.calendar.google.com',
+          calendarName: 'Family',
+        },
+      ],
+      offset: plan.offset,
+      targetLabel: plan.targetLabel,
+      selectorMode: plan.selectorMode,
+      queryText: plan.queryText,
+      scopeFilter: plan.scopeFilter,
+      searchStart: plan.searchStart,
+      searchEnd: plan.searchEnd,
+      now: new Date('2026-04-01T10:00:00-05:00'),
+    });
+
+    expect(result.kind).toBe('awaiting_input');
+    if (result.kind !== 'awaiting_input') return;
+    expect(result.state.step).toBe('confirm');
+    expect(result.state.targetEvent?.id).toBe('evt-family-tomorrow');
+    expect(result.message).toContain('Family closeout proof');
+    expect(result.message).not.toContain('Google all-day proof');
+  });
 });
 
 describe('calendar follow-through event actions', () => {

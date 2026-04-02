@@ -2361,6 +2361,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               selectorMode: reminderPlan.selectorMode,
               queryText: reminderPlan.queryText,
               scopeFilter: reminderPlan.scopeFilter,
+              searchStart: reminderPlan.searchStart,
+              searchEnd: reminderPlan.searchEnd,
               now,
             });
             if (resolved.kind === 'awaiting_input') {

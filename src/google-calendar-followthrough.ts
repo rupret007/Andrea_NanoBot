@@ -1115,11 +1115,31 @@ export function resolveCalendarReminderLookup(input: {
   selectorMode: ReminderSelectorMode;
   queryText: string | null;
   scopeFilter: ReminderScopeFilter | null;
+  searchStart?: Date;
+  searchEnd?: Date;
   now?: Date;
 }): PendingCalendarReminderResult {
   const now = input.now || new Date();
+  const searchStartTime = input.searchStart?.getTime() ?? null;
+  const searchEndTime = input.searchEnd?.getTime() ?? null;
   const trackedEvents = input.events
     .map(toTrackedGoogleCalendarEvent)
+    .filter((event) => {
+      if (searchStartTime === null && searchEndTime === null) {
+        return true;
+      }
+      const eventStart = new Date(event.startIso).getTime();
+      if (Number.isNaN(eventStart)) {
+        return false;
+      }
+      if (searchStartTime !== null && eventStart < searchStartTime) {
+        return false;
+      }
+      if (searchEndTime !== null && eventStart >= searchEndTime) {
+        return false;
+      }
+      return true;
+    })
     .filter((event) => eventMatchesReminderScope(event, input.scopeFilter))
     .sort(
       (left, right) =>
