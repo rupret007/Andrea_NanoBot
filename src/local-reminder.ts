@@ -1,5 +1,6 @@
 import type { ScheduledTask } from './types.js';
 import { buildQuickMathReply } from './direct-quick-reply.js';
+import { normalizeVoicePrompt } from './voice-ready.js';
 
 const WEEKDAY_INDEX: Record<string, number> = {
   sunday: 0,
@@ -23,13 +24,7 @@ const DAYPART_HOURS: Record<string, number> = {
 };
 
 function normalizeReminderInput(message: string): string {
-  return message
-    .trim()
-    .replace(
-      /^(?:(?:hi|hello|hey|thanks|thank you|ok|okay|please)[,!. ]+)*(?:andrea[,!. ]+)?/i,
-      '',
-    )
-    .trim();
+  return normalizeVoicePrompt(message);
 }
 
 export interface PlannedReminder {
@@ -156,7 +151,7 @@ function buildPlannedReminder(
 
   return {
     confirmation: [
-      `Your reminder is set:\nI'll prompt you ${whenLabel} to ${reminderBody}.`,
+      `Okay. I'll remind you ${whenLabel} to ${reminderBody}.`,
       mathReply,
     ]
       .filter(Boolean)

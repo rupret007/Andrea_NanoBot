@@ -8,6 +8,11 @@ import type {
   GoogleCalendarMetadata,
 } from './google-calendar.js';
 import type { ScheduledTask } from './types.js';
+import {
+  buildVoiceReply,
+  formatVoiceChoicePrompt,
+  normalizeVoicePrompt,
+} from './voice-ready.js';
 
 const DEFAULT_CONFIRMATION_TTL_MS = 30 * 60 * 1000;
 const CANCEL_PATTERN = /^(?:cancel|never mind|nevermind|stop|no)\b/i;
@@ -296,14 +301,6 @@ function formatEventWhen(
   )}-${timeFormatter.format(new Date(event.endIso))}`;
 }
 
-function formatEventChoice(
-  event: GoogleCalendarTrackedEvent,
-  index: number,
-  timeZone = TIMEZONE,
-): string {
-  return `${index}. ${event.title} (${formatEventWhen(event, timeZone)})`;
-}
-
 function formatReminderOffsetMinutes(minutes: number): string {
   if (minutes % 60 === 0) {
     const hours = minutes / 60;
@@ -575,7 +572,7 @@ function parseReminderOffset(message: string): {
   offset: ReminderOffset;
   targetText: string;
 } | null {
-  const normalized = normalizeMessage(message);
+  const normalized = normalizeVoicePrompt(normalizeMessage(message));
   if (!normalized) return null;
 
   const nightBefore = normalized.match(
@@ -644,7 +641,7 @@ function parseReminderOffset(message: string): {
 }
 
 function parseReminderOffsetReply(message: string): ReminderOffset | null {
-  const normalized = normalizeMessage(message);
+  const normalized = normalizeVoicePrompt(normalizeMessage(message));
   if (!normalized) return null;
 
   if (/^(?:the\s+)?night before\b/i.test(normalized)) {
@@ -1328,32 +1325,25 @@ export function formatPendingCalendarReminderPrompt(
   timeZone = TIMEZONE,
 ): string {
   if (state.step === 'clarify_event') {
-    const lines = [
-      `I found more than one event matching "${state.targetLabel}".`,
-      '',
-      ...state.candidates.map(
-        (event, index) => `- ${formatEventChoice(event, index + 1, timeZone)}`,
+    return formatVoiceChoicePrompt({
+      question: 'Which event do you mean?',
+      choices: state.candidates.map(
+        (event) => `${event.title} (${formatEventWhen(event, timeZone)})`,
       ),
-      '',
-      'Which one should I use?',
-    ];
-    if (state.incompleteNote) {
-      lines.push('', state.incompleteNote);
-    }
-    return lines.join('\n');
+      replyHint: state.incompleteNote || null,
+    });
   }
 
   if (state.step === 'clarify_offset') {
     const targetEvents = getReminderTargetEvents(state);
     if (targetEvents.length > 1) {
-      return [
-        'How far before should I remind you about these events?',
-        '',
-        ...targetEvents.map(
+      return buildVoiceReply({
+        summary: 'How far before should I remind you?',
+        details: targetEvents.map(
           (event, index) =>
-            `- ${formatEventChoice(event, index + 1, timeZone)}`,
+            `${index + 1}. ${event.title} (${formatEventWhen(event, timeZone)})`,
         ),
-      ].join('\n');
+      });
     }
     return state.targetEvent
       ? `How far before should I remind you about ${state.targetEvent.title}?`
@@ -1370,10 +1360,10 @@ export function formatPendingCalendarReminderPrompt(
           : 'What time should I use the night before that event?';
     }
     return targetEvents.length > 1
-      ? 'Those events are all day. What time should I use for the reminders?'
+      ? 'Those events are all day. What time should I use?'
       : state.targetEvent
         ? `That event is all day. What time should I use for ${state.targetEvent.title}?`
-        : 'That event is all day. What time should I use for the reminder?';
+        : 'That event is all day. What time should I use?';
   }
 
   const targetEvents = getReminderTargetEvents(state);
@@ -1405,34 +1395,32 @@ export function formatPendingCalendarReminderPrompt(
     const event = targetEvents[0]!;
     const reminderIso =
       state.remindAtIso || state.remindAtByEventId?.[event.id] || null;
-    return [
-      event.allDay && state.offset.kind !== 'night_before'
-        ? `I can remind you about ${event.title}.`
-        : `I can remind you ${state.offset.label} ${event.title}.`,
-      `- Reminder: ${reminderIso ? remindFormatter.format(new Date(reminderIso)) : 'pending'}`,
-      `- Event: ${
-        event.allDay
-          ? formatEventWhen(event, timeZone)
-          : eventFormatter.format(new Date(event.startIso))
-      }`,
-      ...(state.incompleteNote ? ['', state.incompleteNote] : []),
-      '',
-      'Reply "yes" to save it or "cancel" to stop.',
-    ].join('\n');
+    return buildVoiceReply({
+      summary:
+        event.allDay && state.offset.kind !== 'night_before'
+          ? `I can remind you about ${event.title}. Want me to save it?`
+          : `I can remind you ${state.offset.label} ${event.title}, at ${reminderIso ? remindFormatter.format(new Date(reminderIso)) : 'the planned time'}. Want me to save it?`,
+      details: [
+        `Event: ${
+          event.allDay
+            ? formatEventWhen(event, timeZone)
+            : eventFormatter.format(new Date(event.startIso))
+        }`,
+      ],
+      honesty: state.incompleteNote,
+    });
   }
 
-  return [
-    `I can set ${targetEvents.length} reminders for these events:`,
-    ...targetEvents.map((event) => {
+  return buildVoiceReply({
+    summary: `I can set ${targetEvents.length} reminders for those events. Want me to save them?`,
+    details: targetEvents.map((event) => {
       const reminderIso = state.remindAtByEventId?.[event.id];
-      return `- ${event.title}: ${
+      return `${event.title}: ${
         reminderIso ? remindFormatter.format(new Date(reminderIso)) : 'pending'
       } for ${formatEventWhen(event, timeZone)}`;
     }),
-    ...(state.incompleteNote ? ['', state.incompleteNote] : []),
-    '',
-    'Reply "yes" to save them or "cancel" to stop.',
-  ].join('\n');
+    honesty: state.incompleteNote,
+  });
 }
 
 export function buildEventReminderTaskPlan(input: {
@@ -1493,19 +1481,19 @@ export function buildEventReminderTaskPlan(input: {
 
   const confirmation =
     targetEvents.length === 1
-      ? `Okay, I'll remind you ${
+      ? `Okay. I'll remind you ${
           targetEvents[0]!.allDay && input.state.offset.kind !== 'night_before'
             ? `about ${targetEvents[0]!.title}`
             : `${input.state.offset.label} ${targetEvents[0]!.title}`
-        }.\n\nReminder: ${reminderFormatter.format(
+        } at ${reminderFormatter.format(
           new Date(
             input.state.remindAtIso ||
               input.state.remindAtByEventId?.[targetEvents[0]!.id] ||
               '',
           ),
-        )}`
+        )}.`
       : [
-          `Okay, I'll set reminders for these ${targetEvents.length} events:`,
+          `Okay. I'll set ${targetEvents.length} reminders:`,
           ...targetEvents.map((event) => {
             const remindAt = input.state.remindAtByEventId?.[event.id];
             return `- ${event.title}: ${
@@ -1858,16 +1846,19 @@ export function formatPendingGoogleCalendarEventActionPrompt(
   timeZone = TIMEZONE,
 ): string {
   if (state.step === 'choose_calendar') {
-    return [
-      `Which calendar should I move "${state.sourceEvent.title}" to?`,
-      '',
-      ...state.calendars.map((calendar, index) => {
+    return formatVoiceChoicePrompt({
+      question: 'Which calendar should I use?',
+      choices: state.calendars.map((calendar) => {
         const suffix = calendar.primary ? ' (primary)' : '';
-        return `- ${index + 1}. ${calendar.summary}${suffix}`;
+        return `${calendar.summary}${suffix}`;
       }),
-      '',
-      'Reply with a number or calendar name.',
-    ].join('\n');
+      directForTwo: state.calendars.length === 2,
+      prefixForTwo: `Should I move "${state.sourceEvent.title}" to`,
+      replyHint:
+        state.calendars.length === 2
+          ? null
+          : 'Say the number or calendar name.',
+    });
   }
 
   const selectedCalendar = state.calendars.find(

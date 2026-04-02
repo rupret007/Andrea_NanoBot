@@ -19,6 +19,7 @@ import {
   planContextualReminder,
   type PlannedReminder,
 } from './local-reminder.js';
+import { buildVoiceReply, normalizeVoicePrompt } from './voice-ready.js';
 
 const DEFAULT_PENDING_TTL_MS = 30 * 60 * 1000;
 const CANCEL_PATTERN = /^(?:cancel|never mind|nevermind|stop|no)\b/i;
@@ -188,7 +189,7 @@ function extractRecipient(message: string): {
 export function planActionLayerIntent(
   message: string,
 ): ActionLayerIntent | null {
-  const normalized = normalizeMessage(message);
+  const normalized = normalizeVoicePrompt(message);
   if (!normalized) return null;
 
   if (/^what should i do next\??$/i.test(normalized)) {
@@ -528,7 +529,16 @@ function buildWhatNextReply(grounded: GroundedDaySnapshot): {
 
   if (calendar.unavailableReply) {
     return {
-      reply: `I can give you a next step from the current work context, but I can't fully ground it in calendar data right now.\nCalendar: ${calendar.unavailableReply}`,
+      reply: buildVoiceReply({
+        summary:
+          "I can't fully ground your next step in calendar data right now.",
+        details: [
+          grounded.selectedWork
+            ? `Work: ${grounded.selectedWork.title} (${grounded.selectedWork.statusLabel})`
+            : null,
+        ],
+        honesty: `Calendar: ${calendar.unavailableReply}`,
+      }),
       actionContext: grounded.selectedWork
         ? buildSelectedWorkContext(grounded.selectedWork, now)
         : null,
@@ -543,7 +553,7 @@ function buildWhatNextReply(grounded: GroundedDaySnapshot): {
     currentFocus.nextReminder
   ) {
     lines.push(
-      `Start with the reminder at ${formatClock(
+      `Start with your reminder at ${formatClock(
         new Date(currentFocus.nextReminder.nextRunIso),
         timeZone,
       )}.`,
@@ -564,7 +574,7 @@ function buildWhatNextReply(grounded: GroundedDaySnapshot): {
       new Date(currentFocus.nextEvent.startIso),
     );
     lines.push(
-      `You have ${summarizeDuration(minutes)} before ${currentFocus.nextEvent.title}, so a quick prep or reminder check is the most realistic next step.`,
+      `You have ${summarizeDuration(minutes)} before ${currentFocus.nextEvent.title}, so a quick prep or reminder check is most realistic.`,
     );
     lines.push(formatEventLineFromContext(currentFocus.nextEvent, timeZone));
     actionContext = buildCalendarEventContext(currentFocus.nextEvent, now);
@@ -574,7 +584,7 @@ function buildWhatNextReply(grounded: GroundedDaySnapshot): {
     currentFocus.nextMeaningfulOpenWindow
   ) {
     lines.push(
-      `Resuming ${currentFocus.selectedWork.title} is the strongest grounded next step right now.`,
+      `Resuming ${currentFocus.selectedWork.title} is the best grounded next step right now.`,
     );
     lines.push(
       `Open: ${formatWindow(
@@ -593,7 +603,7 @@ function buildWhatNextReply(grounded: GroundedDaySnapshot): {
     actionContext = buildSelectedWorkContext(currentFocus.selectedWork, now);
   } else if (currentFocus.nextEvent) {
     lines.push(
-      `I don't have a selected work item to rank, so the next grounded thing is ${currentFocus.nextEvent.title} at ${formatClock(
+      `I don't have a selected work item, so the next grounded thing is ${currentFocus.nextEvent.title} at ${formatClock(
         new Date(currentFocus.nextEvent.startIso),
         timeZone,
       )}.`,
@@ -606,7 +616,7 @@ function buildWhatNextReply(grounded: GroundedDaySnapshot): {
   } else if (meaningfulOpenWindows[0]) {
     const window = meaningfulOpenWindows[0];
     lines.push(
-      `I don't have a selected work item to point at, but you do have ${summarizeDuration(
+      `I don't have a selected work item, but you do have ${summarizeDuration(
         minutesBetween(window.start, window.end),
       )} open right now.`,
     );
@@ -621,12 +631,16 @@ function buildWhatNextReply(grounded: GroundedDaySnapshot): {
     );
   }
 
-  if (calendar.incompleteNoteBody) {
-    lines.push(`Calendar: ${calendar.incompleteNoteBody}`);
-  }
-
   return {
-    reply: lines.slice(0, 4).join('\n'),
+    reply: buildVoiceReply({
+      summary:
+        lines[0] ||
+        "I don't have enough grounded work context to pick the next task, and I don't see a meaningful free block right now.",
+      details: lines.slice(1),
+      honesty: calendar.incompleteNoteBody
+        ? `Calendar: ${calendar.incompleteNoteBody}`
+        : null,
+    }),
     actionContext,
   };
 }
@@ -639,7 +653,11 @@ function buildBeforeNextMeetingReply(grounded: GroundedDaySnapshot): {
   const { timeZone, now, selectedWork, calendar } = grounded;
   if (calendar.unavailableReply) {
     return {
-      reply: `I can't safely size the time before your next meeting because calendar data is unavailable.\nCalendar: ${calendar.unavailableReply}`,
+      reply: buildVoiceReply({
+        summary:
+          "I can't safely size the time before your next meeting right now.",
+        honesty: `Calendar: ${calendar.unavailableReply}`,
+      }),
       actionContext: selectedWork
         ? buildSelectedWorkContext(selectedWork, now)
         : null,
@@ -649,8 +667,8 @@ function buildBeforeNextMeetingReply(grounded: GroundedDaySnapshot): {
   if (!nextEvent) {
     return {
       reply: selectedWork
-        ? `I don't see another meeting today, so you can keep moving on ${selectedWork.title}.`
-        : "I don't see another meeting today, and I don't have a selected work item to point at.",
+        ? `You don't have another meeting today, so you can keep moving on ${selectedWork.title}.`
+        : "You don't have another meeting today, and I don't have a selected work item.",
       actionContext: selectedWork
         ? buildSelectedWorkContext(selectedWork, now)
         : null,
@@ -658,26 +676,26 @@ function buildBeforeNextMeetingReply(grounded: GroundedDaySnapshot): {
   }
 
   const minutes = minutesBetween(now, new Date(nextEvent.startIso));
-  const lines = [
-    selectedWork
-      ? `Before ${nextEvent.title}, you have ${describeWindowForSelectedWork(
-          minutes,
-          selectedWork,
-        )}`
-      : `Before ${nextEvent.title}, you have ${describeWindowCapacity(
-          minutes,
-        )} I don't have a selected work item, so this is schedule-based guidance only.`,
-    formatEventLineFromContext(nextEvent, timeZone),
-  ];
-  if (selectedWork) {
-    lines.push(`Work: ${selectedWork.title} (${selectedWork.statusLabel})`);
-  }
-  if (calendar.incompleteNoteBody) {
-    lines.push(`Calendar: ${calendar.incompleteNoteBody}`);
-  }
-
   return {
-    reply: lines.slice(0, 4).join('\n'),
+    reply: buildVoiceReply({
+      summary: selectedWork
+        ? `You have ${describeWindowForSelectedWork(
+            minutes,
+            selectedWork,
+          )} before ${nextEvent.title}.`
+        : `Before ${nextEvent.title}, you have ${describeWindowCapacity(
+            minutes,
+          )} This is schedule-based guidance only.`,
+      details: [
+        formatEventLineFromContext(nextEvent, timeZone),
+        selectedWork
+          ? `Work: ${selectedWork.title} (${selectedWork.statusLabel})`
+          : null,
+      ],
+      honesty: calendar.incompleteNoteBody
+        ? `Calendar: ${calendar.incompleteNoteBody}`
+        : null,
+    }),
     actionContext: selectedWork
       ? buildSelectedWorkContext(selectedWork, now)
       : buildCalendarEventContext(nextEvent, now, 'action_suggestion'),
@@ -692,7 +710,10 @@ function buildNextFreeWindowReply(grounded: GroundedDaySnapshot): {
   const { selectedWork, timeZone, now, calendar } = grounded;
   if (calendar.unavailableReply) {
     return {
-      reply: `I can't safely size your next free window because calendar data is unavailable.\nCalendar: ${calendar.unavailableReply}`,
+      reply: buildVoiceReply({
+        summary: "I can't safely size your next free window right now.",
+        honesty: `Calendar: ${calendar.unavailableReply}`,
+      }),
       actionContext: selectedWork
         ? buildSelectedWorkContext(selectedWork, now)
         : null,
@@ -701,35 +722,38 @@ function buildNextFreeWindowReply(grounded: GroundedDaySnapshot): {
 
   if (!nextWindow) {
     return {
-      reply: calendar.incompleteNoteBody
-        ? `I don't see a meaningful free window left today in the calendars I could read.\nCalendar: ${calendar.incompleteNoteBody}`
-        : "I don't see a meaningful free window left today.",
+      reply: buildVoiceReply({
+        summary: "I don't see a meaningful free window left today.",
+        honesty: calendar.incompleteNoteBody
+          ? `Calendar: ${calendar.incompleteNoteBody}`
+          : null,
+      }),
       actionContext: null,
     };
   }
 
   const minutes = minutesBetween(nextWindow.start, nextWindow.end);
-  const lines = [
-    selectedWork
-      ? `Your next free window is ${formatWindow(
-          nextWindow,
-          timeZone,
-        )}. ${describeWindowForSelectedWork(minutes, selectedWork)}`
-      : `Your next free window is ${formatWindow(
-          nextWindow,
-          timeZone,
-        )}. ${describeWindowCapacity(minutes)} I don't have a selected work item, though.`,
-    `Open: ${formatWindow(nextWindow, timeZone)}`,
-  ];
-  if (selectedWork) {
-    lines.push(`Work: ${selectedWork.title} (${selectedWork.statusLabel})`);
-  }
-  if (calendar.incompleteNoteBody) {
-    lines.push(`Calendar: ${calendar.incompleteNoteBody}`);
-  }
-
   return {
-    reply: lines.slice(0, 4).join('\n'),
+    reply: buildVoiceReply({
+      summary: selectedWork
+        ? `Your next free window is ${formatWindow(
+            nextWindow,
+            timeZone,
+          )}. ${describeWindowForSelectedWork(minutes, selectedWork)}`
+        : `Your next free window is ${formatWindow(
+            nextWindow,
+            timeZone,
+          )}. ${describeWindowCapacity(minutes)} This is schedule-based guidance only.`,
+      details: [
+        `Open: ${formatWindow(nextWindow, timeZone)}`,
+        selectedWork
+          ? `Work: ${selectedWork.title} (${selectedWork.statusLabel})`
+          : null,
+      ],
+      honesty: calendar.incompleteNoteBody
+        ? `Calendar: ${calendar.incompleteNoteBody}`
+        : null,
+    }),
     actionContext: selectedWork
       ? buildSelectedWorkContext(selectedWork, now)
       : buildActionSuggestionContext(
@@ -748,14 +772,20 @@ function buildSummaryTodayReply(grounded: GroundedDaySnapshot): {
   let actionContext: ActionLayerContextState | null = null;
 
   if (calendar.unavailableReply) {
-    lines.push(
-      'I can only summarize this from the work and reminder context because calendar data is unavailable right now.',
-    );
     if (selectedWork) {
-      lines.push(`Work: ${selectedWork.title} (${selectedWork.statusLabel})`);
       actionContext = buildSelectedWorkContext(selectedWork, now);
     }
-    return { reply: lines.join('\n'), actionContext };
+    return {
+      reply: buildVoiceReply({
+        summary:
+          'I can only summarize this from work and reminder context right now.',
+        details: selectedWork
+          ? [`Work: ${selectedWork.title} (${selectedWork.statusLabel})`]
+          : [],
+        honesty: `Calendar: ${calendar.unavailableReply}`,
+      }),
+      actionContext,
+    };
   }
 
   if (currentFocus.nextReminder) {
@@ -807,11 +837,18 @@ function buildSummaryTodayReply(grounded: GroundedDaySnapshot): {
     }
   }
 
-  if (calendar.incompleteNoteBody) {
-    lines.push(`Calendar: ${calendar.incompleteNoteBody}`);
-  }
-
-  return { reply: lines.slice(0, 4).join('\n'), actionContext };
+  return {
+    reply: buildVoiceReply({
+      summary:
+        lines[0] ||
+        'There is not much urgent today from the signals I can ground.',
+      details: lines.slice(1),
+      honesty: calendar.incompleteNoteBody
+        ? `Calendar: ${calendar.incompleteNoteBody}`
+        : null,
+    }),
+    actionContext,
+  };
 }
 
 function resolvePrepEvent(params: {
@@ -853,12 +890,15 @@ function buildMeetingPrepReply(params: {
   }
   lines.push(formatEventLineFromContext(event, timeZone));
   lines.push(
-    'Prep: review the event details and pull up any notes or materials you already have.',
+    'Prep: review the event details and pull up any notes you already have.',
   );
   lines.push('Prep: jot 1 or 2 questions or outcomes you want to cover.');
 
   return {
-    reply: lines.slice(0, 4).join('\n'),
+    reply: buildVoiceReply({
+      summary: lines[0]!,
+      details: lines.slice(1),
+    }),
     actionContext: buildCalendarEventContext(event, now),
     activeEventContext: event,
   };
@@ -955,7 +995,7 @@ function buildCommunicationDraftFromState(
       return `${intro}\nSubject: ${buildEmailSubject(state)}\n\n${body}`;
     }
     case 'follow_up': {
-      intro = `Here's a grounded follow-up draft for ${recipient}.`;
+      intro = `Here's a short follow-up for ${recipient}.`;
       if (state.event) {
         body = `Hi ${recipient},\n\nThanks for the time on ${topic}. My next step is [next step], and I wanted to send a quick follow-up while it is still fresh. Let me know if you need anything else from me.\n\nThanks,`;
       } else if (state.selectedWork) {
@@ -1175,14 +1215,14 @@ export function advancePendingActionReminder(
   if (!normalized) {
     return {
       kind: 'awaiting_reminder_time',
-      message: `When should I remind you about ${state.label}?`,
+      message: 'What time should I use?',
       state,
     };
   }
   if (CANCEL_PATTERN.test(normalized)) {
     return {
       kind: 'reply',
-      reply: 'Okay, I won’t turn that into a reminder.',
+      reply: "Okay, I won't turn that into a reminder.",
       actionContext: null,
       activeEventContext: null,
     };
@@ -1198,7 +1238,8 @@ export function advancePendingActionReminder(
   if (!plannedReminder) {
     return {
       kind: 'awaiting_reminder_time',
-      message: `Tell me a time like "at 4", "tomorrow morning", or "later today at 5" for ${state.label}.`,
+      message:
+        'What time should I use? You can say "at 4" or "tomorrow morning."',
       state,
     };
   }
@@ -1242,7 +1283,7 @@ export function advancePendingActionDraft(
   if (CANCEL_PATTERN.test(normalized)) {
     return {
       kind: 'reply',
-      reply: 'Okay, I won’t draft that message.',
+      reply: "Okay, I won't draft that message.",
       actionContext: null,
       activeEventContext: null,
     };
@@ -1429,7 +1470,7 @@ export async function buildActionLayerResponse(
       }
       return {
         kind: 'awaiting_reminder_time',
-        message: `When should I remind you about ${reminderLabel}?`,
+        message: `I can save a reminder for ${reminderLabel}. What time should I use?`,
         state: {
           version: 1,
           createdAt: now.toISOString(),

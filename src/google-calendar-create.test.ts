@@ -146,7 +146,7 @@ describe('google calendar create pending flow', () => {
 
     expect(pending.step).toBe('choose_calendar');
     expect(formatGoogleCalendarCreatePrompt(pending)).toContain(
-      'Which calendar should I use?',
+      'Should I create "project sync" on Jeff (primary) or Family?',
     );
   });
 

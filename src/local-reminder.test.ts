@@ -15,7 +15,9 @@ describe('planSimpleReminder', () => {
     );
 
     expect(planned).not.toBeNull();
-    expect(planned?.confirmation).toContain("I'll prompt you tomorrow at 3pm");
+    expect(planned?.confirmation).toContain(
+      "Okay. I'll remind you tomorrow at 3pm",
+    );
     expect(planned?.task.schedule_type).toBe('once');
     expect(planned?.task.schedule_value).toBe('2026-03-30T15:00:00');
     expect(planned?.task.prompt).toContain('call Sam');
@@ -57,7 +59,9 @@ describe('planSimpleReminder', () => {
     );
 
     expect(planned).not.toBeNull();
-    expect(planned?.confirmation).toContain("I'll prompt you tomorrow at 3pm");
+    expect(planned?.confirmation).toContain(
+      "Okay. I'll remind you tomorrow at 3pm",
+    );
     expect(planned?.task.prompt).toContain('call Sam');
   });
 
@@ -84,7 +88,7 @@ describe('planSimpleReminder', () => {
 
     expect(planned).not.toBeNull();
     expect(planned?.confirmation).toContain(
-      "I'll prompt you tomorrow at 3pm to call Sam.",
+      "Okay. I'll remind you tomorrow at 3pm to call Sam.",
     );
     expect(planned?.confirmation).toContain('Quick math: 5 + 7 = 12.');
     expect(planned?.task.prompt).toContain('call Sam');
@@ -114,7 +118,7 @@ describe('planContextualReminder', () => {
 
     expect(planned).not.toBeNull();
     expect(planned?.confirmation).toContain(
-      "I'll prompt you today at 5pm to prepare for Google timed proof.",
+      "Okay. I'll remind you today at 5pm to prepare for Google timed proof.",
     );
     expect(planned?.task.schedule_value).toBe('2026-04-01T17:00:00');
   });
@@ -130,7 +134,7 @@ describe('planContextualReminder', () => {
 
     expect(planned).not.toBeNull();
     expect(planned?.confirmation).toContain(
-      "I'll prompt you today at 5pm to come back to Ship docs.",
+      "Okay. I'll remind you today at 5pm to come back to Ship docs.",
     );
     expect(planned?.task.schedule_value).toBe('2026-04-01T17:00:00');
   });

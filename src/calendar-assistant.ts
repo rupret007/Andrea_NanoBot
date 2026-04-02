@@ -8,6 +8,7 @@ import {
   type GoogleCalendarMetadata,
   resolveGoogleCalendarConfig,
 } from './google-calendar.js';
+import { buildVoiceReply, normalizeVoicePrompt } from './voice-ready.js';
 
 const CALENDAR_ENV_KEYS = [
   'APPLE_CALENDAR_LOCAL_ENABLED',
@@ -223,7 +224,7 @@ interface ParsedDuration {
   requestedTitle: string | null;
 }
 
-function normalizeMessage(message: string): string {
+function _normalizeMessage(message: string): string {
   return message
     .replace(/[’‘]/g, "'")
     .replace(/[“”]/g, '"')
@@ -614,10 +615,10 @@ function looksLikeAvailabilityQuery(normalized: string): boolean {
 
 function detectClarificationQuestion(normalized: string): string | null {
   if (/\bafter work\b/.test(normalized)) {
-    return 'What time should I treat as after work?';
+    return 'What time counts as after work?';
   }
   if (/\bbefore lunch\b/.test(normalized)) {
-    return 'What time should I treat as before lunch?';
+    return 'What time counts as before lunch?';
   }
   return null;
 }
@@ -719,7 +720,7 @@ export function planCalendarAssistantLookup(
   timeZone = TIMEZONE,
   activeEventContext: CalendarActiveEventContext | null = null,
 ): PlannedCalendarLookup | null {
-  const normalized = normalizeMessage(message).toLowerCase();
+  const normalized = normalizeVoicePrompt(message).toLowerCase();
   if (!normalized) return null;
 
   const clarificationQuestion = detectClarificationQuestion(normalized);
@@ -2267,6 +2268,10 @@ function formatOpenWindows(
   );
 }
 
+function stripListPrefix(value: string): string {
+  return value.replace(/^- /, '').trim();
+}
+
 function formatEventSummary(
   event: CalendarEvent,
   timeZone: string,
@@ -2558,25 +2563,28 @@ function buildBriefingReply(
     );
   }
 
-  const lines = [
-    `${capitalizeLabel(result.plan.label)} has ${formatListWithAnd(summaryBits)}.`,
+  const detailLines = [
     ...(morningBriefLine ? [morningBriefLine] : []),
     ...(densityLine ? [densityLine] : []),
     ...formatGroupedEvents(
       [...allDayEvents, ...timedEvents],
       result.plan.timeZone,
       forceIncludeCalendarName,
-    ),
+    ).map(stripListPrefix),
     ...formatConflictLines(
       conflictGroups,
       result.plan.timeZone,
       forceIncludeCalendarName,
-    ),
+    ).map(stripListPrefix),
     ...(tightStretchLine ? [tightStretchLine] : []),
-    ...(fullyConfirmed ? [] : ['', incompleteNoteBody]),
   ];
 
-  return lines.filter(Boolean).join('\n');
+  return buildVoiceReply({
+    summary: `${capitalizeLabel(result.plan.label)} has ${formatListWithAnd(summaryBits)}.`,
+    details: detailLines,
+    honesty: fullyConfirmed ? null : incompleteNoteBody,
+    offerMore: detailLines.length > 2,
+  });
 }
 
 function buildNextReply(
@@ -2618,7 +2626,7 @@ function buildNextReply(
     }
 
     if (result.plan.awarenessKind === 'coming_up_soon') {
-      return `I don't see anything coming up in the next 2 hours.`;
+      return `Nothing is coming up in the next 2 hours.`;
     }
 
     return result.plan.nextTimedOnly
@@ -2627,61 +2635,66 @@ function buildNextReply(
   }
 
   if (shouldListMultiple) {
-    const lines = [
-      result.plan.awarenessKind === 'coming_up_soon'
-        ? 'Coming up in the next 2 hours:'
-        : `Coming up ${result.plan.label}:`,
-      ...formatGroupedEvents(
-        timedEvents.slice(0, 3),
-        result.plan.timeZone,
-        forceIncludeCalendarName,
-      ),
-      ...(timedEvents.length > 3 ? ['- And more later.'] : []),
-      ...(activeAllDayEvents.length > 0 && !result.plan.nextTimedOnly
-        ? [
-            '',
-            'All-day events:',
-            ...formatGroupedEvents(
-              activeAllDayEvents,
-              result.plan.timeZone,
-              forceIncludeCalendarName,
-            ),
-          ]
-        : []),
-      ...(fullyConfirmed ? [] : ['', incompleteNoteBody]),
-    ];
-    return lines.filter(Boolean).join('\n');
+    return buildVoiceReply({
+      summary:
+        result.plan.awarenessKind === 'coming_up_soon'
+          ? `In the next 2 hours, you have ${timedEvents.length === 1 ? 'one timed event' : `${timedEvents.length} timed events`}.`
+          : `${capitalizeLabel(result.plan.label)} has ${timedEvents.length === 1 ? 'one timed event' : `${timedEvents.length} timed events`}.`,
+      details: [
+        ...formatGroupedEvents(
+          timedEvents.slice(0, 2),
+          result.plan.timeZone,
+          forceIncludeCalendarName,
+        ).map(stripListPrefix),
+        ...(activeAllDayEvents.length > 0 && !result.plan.nextTimedOnly
+          ? [
+              `All day: ${activeAllDayEvents
+                .slice(0, 2)
+                .map((event) =>
+                  formatEventSummary(
+                    event,
+                    result.plan.timeZone,
+                    forceIncludeCalendarName,
+                  ),
+                )
+                .join(' | ')}`,
+            ]
+          : []),
+      ],
+      honesty: fullyConfirmed ? null : incompleteNoteBody,
+      offerMore: timedEvents.length > 2,
+    });
   }
 
   const nextEvent = timedEvents[0]!;
   const isInProgress =
     new Date(nextEvent.startIso).getTime() <= anchor.getTime() &&
     new Date(nextEvent.endIso).getTime() > anchor.getTime();
-  const lines = [
-    `${
+  return buildVoiceReply({
+    summary: `${
       result.plan.label === 'after this'
-        ? 'After this:'
+        ? 'After this'
         : isInProgress
-          ? 'Right now:'
-          : 'Next up:'
-    } ${formatEventSummary(nextEvent, result.plan.timeZone, forceIncludeCalendarName)}`,
-    ...(activeAllDayEvents.length > 0 && !result.plan.nextTimedOnly
-      ? [
-          `All day: ${activeAllDayEvents
-            .slice(0, 2)
-            .map((event) =>
-              formatEventSummary(
-                event,
-                result.plan.timeZone,
-                forceIncludeCalendarName,
-              ),
-            )
-            .join(' | ')}`,
-        ]
-      : []),
-    ...(fullyConfirmed ? [] : ['', incompleteNoteBody]),
-  ];
-  return lines.filter(Boolean).join('\n');
+          ? 'Right now'
+          : 'Next up'
+    }: ${formatEventSummary(nextEvent, result.plan.timeZone, forceIncludeCalendarName)}`,
+    details:
+      activeAllDayEvents.length > 0 && !result.plan.nextTimedOnly
+        ? [
+            `All day: ${activeAllDayEvents
+              .slice(0, 2)
+              .map((event) =>
+                formatEventSummary(
+                  event,
+                  result.plan.timeZone,
+                  forceIncludeCalendarName,
+                ),
+              )
+              .join(' | ')}`,
+          ]
+        : [],
+    honesty: fullyConfirmed ? null : incompleteNoteBody,
+  });
 }
 
 function buildOpenWindowsReply(
@@ -2714,24 +2727,27 @@ function buildOpenWindowsReply(
     return `I don't see any ${openingLabel} ${result.plan.label}.`;
   }
 
-  const lines = [
-    `You have these ${openingLabel} ${result.plan.label}:`,
-    ...formatOpenWindows(openings.slice(0, 3), result.plan.timeZone),
-    ...(openings.length > 3 ? ['- And more later.'] : []),
-    ...(allDayEvents.length > 0
-      ? [
-          '',
-          'All-day events:',
-          ...formatGroupedEvents(
-            allDayEvents,
-            result.plan.timeZone,
-            result.plan.forceIncludeCalendarNames,
-          ),
-        ]
-      : []),
-    ...(fullyConfirmed ? [] : ['', incompleteNoteBody]),
-  ];
-  return lines.filter(Boolean).join('\n');
+  return buildVoiceReply({
+    summary: `You have ${openings.length === 1 ? 'one' : openings.length} ${openingLabel} ${result.plan.label}.`,
+    details: [
+      ...formatOpenWindows(openings.slice(0, 2), result.plan.timeZone).map(
+        stripListPrefix,
+      ),
+      ...(allDayEvents.length > 0
+        ? [
+            `All day: ${formatGroupedEvents(
+              allDayEvents.slice(0, 2),
+              result.plan.timeZone,
+              result.plan.forceIncludeCalendarNames,
+            )
+              .map(stripListPrefix)
+              .join(' | ')}`,
+          ]
+        : []),
+    ],
+    honesty: fullyConfirmed ? null : incompleteNoteBody,
+    offerMore: openings.length > 2,
+  });
 }
 
 function buildConflictSummaryReply(
@@ -2934,6 +2950,46 @@ function buildDefaultCalendarReply(
       return `You look free ${result.plan.label}.`;
     }
     return `I don't see anything on ${formatSubjectLabel(result.plan)} ${result.plan.label}.`;
+  }
+
+  if (result.plan.intent !== 'availability') {
+    const timedEvents = getTimedEvents(result.events);
+    const allDayEvents = getAllDayEvents(result.events);
+    const summaryBits: string[] = [];
+    if (allDayEvents.length > 0) {
+      summaryBits.push(
+        allDayEvents.length === 1
+          ? 'one all-day event'
+          : `${allDayEvents.length} all-day events`,
+      );
+    }
+    if (timedEvents.length > 0) {
+      summaryBits.push(
+        timedEvents.length === 1
+          ? 'one timed event'
+          : `${timedEvents.length} timed events`,
+      );
+    }
+    const distinctDays = countDistinctDays(result.events, result.plan.timeZone);
+    if (distinctDays > 1) {
+      summaryBits.push(`${distinctDays} days with events`);
+    }
+
+    const detailLines = formatGroupedEvents(
+      result.events,
+      result.plan.timeZone,
+      result.plan.forceIncludeCalendarNames,
+    ).map(stripListPrefix);
+
+    return buildVoiceReply({
+      summary:
+        summaryBits.length > 0
+          ? `${capitalizeLabel(result.plan.label)} has ${formatListWithAnd(summaryBits)}.`
+          : `Here is ${formatSubjectLabel(result.plan)} ${result.plan.label}.`,
+      details: detailLines,
+      honesty: fullyConfirmed ? null : incompleteNoteBody,
+      offerMore: detailLines.length > 2,
+    });
   }
 
   const header =

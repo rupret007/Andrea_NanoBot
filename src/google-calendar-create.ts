@@ -1,5 +1,6 @@
 import { TIMEZONE } from './config.js';
 import type { GoogleCalendarMetadata } from './google-calendar.js';
+import { formatVoiceChoicePrompt } from './voice-ready.js';
 
 const WEEKDAY_INDEX: Record<string, number> = {
   sunday: 0,
@@ -736,19 +737,18 @@ export function formatGoogleCalendarCreatePrompt(
   state: PendingGoogleCalendarCreateState,
 ): string {
   if (state.step === 'choose_calendar') {
-    return [
-      `I'm ready to create "${state.draft.title}" for ${formatDraftWhen(
-        state.draft,
-        state.draft.timeZone,
-      )}.`,
-      '',
-      'Which calendar should I use?',
-      ...state.calendars.map(
-        (calendar, index) => `- ${formatCalendarChoice(calendar, index + 1)}`,
+    return formatVoiceChoicePrompt({
+      question: 'Which calendar should I use?',
+      choices: state.calendars.map((calendar) =>
+        formatCalendarChoice(calendar),
       ),
-      '',
-      'Reply with a number or calendar name.',
-    ].join('\n');
+      directForTwo: state.calendars.length === 2,
+      prefixForTwo: `Should I create "${state.draft.title}" on`,
+      replyHint:
+        state.calendars.length === 2
+          ? null
+          : 'Say the number or calendar name.',
+    });
   }
 
   const selectedCalendar = state.calendars.find(

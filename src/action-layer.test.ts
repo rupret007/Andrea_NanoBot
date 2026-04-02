@@ -130,7 +130,7 @@ describe('buildActionLayerResponse', () => {
     expect(response.kind).toBe('reply');
     if (response.kind !== 'reply') return;
     expect(response.reply).toContain(
-      'Resuming Ship docs is the strongest grounded next step right now.',
+      'Resuming Ship docs is the best grounded next step right now.',
     );
     expect(response.actionContext?.sourceKind).toBe('selected_work');
     expect(response.activeEventContext).toBeNull();
@@ -164,6 +164,7 @@ describe('buildActionLayerResponse', () => {
 
     expect(response.kind).toBe('reply');
     if (response.kind !== 'reply') return;
+    expect(response.reply).toContain('Before Design review, you have');
     expect(response.reply).toContain('schedule-based guidance only');
     expect(response.reply).toContain('Design review');
   });
@@ -348,9 +349,7 @@ describe('buildActionLayerResponse', () => {
 
     expect(response.kind).toBe('reply');
     if (response.kind !== 'reply') return;
-    expect(response.reply).toContain(
-      "Here's a grounded follow-up draft for Candace.",
-    );
+    expect(response.reply).toContain("Here's a short follow-up for Candace.");
     expect(response.reply).toContain('Thanks for the time on Design review.');
     expect(response.activeEventContext?.id).toBe('evt-1');
     expect(response.actionContext?.suggestedReminderLabel).toContain(
@@ -562,7 +561,7 @@ describe('action-layer pending flows', () => {
 
     expect(result.kind).toBe('awaiting_reminder_time');
     if (result.kind !== 'awaiting_reminder_time') return;
-    expect(result.message).toContain('Tell me a time like');
+    expect(result.message).toContain('What time should I use?');
   });
 
   it('turns a pending draft into text once the recipient is supplied', () => {

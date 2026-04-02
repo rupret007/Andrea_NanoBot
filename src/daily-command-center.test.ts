@@ -105,6 +105,9 @@ describe('planDailyCommandCenterIntent', () => {
       'day_overview',
     );
     expect(
+      planDailyCommandCenterIntent('Andrea, can you give me my day?')?.kind,
+    ).toBe('day_overview');
+    expect(
       planDailyCommandCenterIntent(
         'Do I have time to work on this before my next meeting?',
       )?.kind,
@@ -149,9 +152,7 @@ describe('buildDailyCommandCenterResponse', () => {
       ],
     });
 
-    expect(response?.reply).toContain(
-      'You have a usable work block right now for Ship docs.',
-    );
+    expect(response?.reply).toContain('You have time for Ship docs right now.');
     expect(response?.reply).toContain('Next: 4:00 PM-5:00 PM Team sync');
     expect(response?.reply).toContain('Reminder: 1:30 PM check on the demo');
     expect(response?.activeEventContext).toBeNull();
@@ -249,9 +250,7 @@ describe('buildDailyCommandCenterResponse', () => {
       },
     );
 
-    expect(response?.reply).toContain(
-      "I don't have a current work item selected",
-    );
+    expect(response?.reply).toContain('This is schedule-based guidance only.');
     expect(response?.reply).toContain('Next: 1:45 PM-2:30 PM Team sync');
   });
 

@@ -11,6 +11,7 @@ import {
   planCalendarAssistantLookup,
 } from './calendar-assistant.js';
 import type { ScheduledTask } from './types.js';
+import { buildVoiceReply, normalizeVoicePrompt } from './voice-ready.js';
 
 type DailyCommandCenterIntentKind =
   | 'day_overview'
@@ -95,7 +96,7 @@ export interface GroundedDaySnapshot {
   currentFocus: CurrentFocusSnapshot;
 }
 
-function normalizeMessage(message: string): string {
+function _normalizeMessage(message: string): string {
   return message
     .replace(/[’‘]/g, "'")
     .replace(/[“”]/g, '"')
@@ -138,7 +139,7 @@ export function planDailyCommandCenterIntent(
   message: string,
   now = new Date(),
 ): DailyCommandCenterIntent | null {
-  const normalized = normalizeMessage(message);
+  const normalized = normalizeVoicePrompt(message).toLowerCase();
   if (!normalized) return null;
 
   if (
@@ -184,6 +185,7 @@ export function planDailyCommandCenterIntent(
 
   if (
     normalized === GIVE_ME_MY_DAY_QUERY.toLowerCase() ||
+    normalized === `${GIVE_ME_MY_DAY_QUERY.toLowerCase()}?` ||
     normalized === 'what should i know about today?' ||
     normalized === "what's my day look like today?" ||
     normalized === 'whats my day look like today?'
@@ -518,34 +520,29 @@ function buildDayOverviewReply(params: {
   timeZone: string;
 }): string {
   if (params.snapshot.unavailableReply) {
-    const lines = [
-      'I can still see your reminders and current work context, but I could not ground this in calendar data right now.',
-    ];
-    pushLine(
-      lines,
-      params.reminders[0]
-        ? formatReminderLine(params.reminders[0], params.timeZone)
-        : null,
-    );
-    pushLine(
-      lines,
-      params.selectedWork ? formatWorkLine(params.selectedWork) : null,
-    );
-    return lines.join('\n');
+    return buildVoiceReply({
+      summary: "I can't fully ground your day in calendar data right now.",
+      details: [
+        params.reminders[0]
+          ? formatReminderLine(params.reminders[0], params.timeZone)
+          : null,
+        params.selectedWork ? formatWorkLine(params.selectedWork) : null,
+      ],
+    });
   }
 
   const nextReminder = params.reminders[0] || null;
   const nextEvent = params.snapshot.nextTimedEvent;
   const nextOpen = filterMeaningfulOpenWindows(params.snapshot.openWindows)[0];
 
-  let summary = 'Nothing urgent is crowding the calendar right now.';
+  let summary = 'Nothing urgent is on the calendar right now.';
   if (params.currentFocus.reason === 'reminder_due_soon' && nextReminder) {
-    summary = `The next thing that needs attention is your reminder at ${formatClock(
+    summary = `Your next reminder is at ${formatClock(
       new Date(nextReminder.nextRunIso),
       params.timeZone,
     )}.`;
   } else if (params.currentFocus.reason === 'meeting_soon' && nextEvent) {
-    summary = `Your next real time pressure is ${nextEvent.title} at ${formatClock(
+    summary = `Your next meeting is ${nextEvent.title} at ${formatClock(
       new Date(nextEvent.startIso),
       params.timeZone,
     )}.`;
@@ -554,50 +551,38 @@ function buildDayOverviewReply(params: {
     params.selectedWork &&
     nextOpen
   ) {
-    summary = `You have a usable work block right now for ${params.selectedWork.title}.`;
+    summary = `You have time for ${params.selectedWork.title} right now.`;
   } else if (nextEvent) {
-    summary = `Your next calendar anchor is ${nextEvent.title} at ${formatClock(
+    summary = `Next up is ${nextEvent.title} at ${formatClock(
       new Date(nextEvent.startIso),
       params.timeZone,
     )}.`;
   } else if (nextOpen) {
-    summary = 'Your calendar looks fairly open right now.';
+    summary = 'Your schedule looks open right now.';
   }
 
-  const lines = [summary];
-  pushLine(
-    lines,
-    nextEvent ? formatNextEventLine(nextEvent, params.timeZone) : null,
-  );
-  pushLine(
-    lines,
-    nextReminder ? formatReminderLine(nextReminder, params.timeZone) : null,
-  );
-  pushLine(
-    lines,
-    nextOpen ? formatOpenWindowLine(nextOpen, params.timeZone) : null,
-  );
-  if (params.selectedWork && params.currentFocus.reason === 'selected_work') {
-    pushLine(lines, formatFocusLine(params.selectedWork));
-  } else if (params.selectedWork && !nextReminder) {
-    pushLine(lines, formatWorkLine(params.selectedWork));
-  }
-
-  if (params.snapshot.activeAllDayEvents.length > 0 && lines.length < 4) {
-    pushLine(
-      lines,
-      `Next: ${formatEventSummary(
-        params.snapshot.activeAllDayEvents[0]!,
-        params.timeZone,
-      )}`,
-    );
-  }
-
-  if (params.snapshot.incompleteNoteBody) {
-    lines.push(`Calendar: ${params.snapshot.incompleteNoteBody}`);
-  }
-
-  return lines.join('\n');
+  return buildVoiceReply({
+    summary,
+    details: [
+      nextEvent ? formatNextEventLine(nextEvent, params.timeZone) : null,
+      nextReminder ? formatReminderLine(nextReminder, params.timeZone) : null,
+      nextOpen ? formatOpenWindowLine(nextOpen, params.timeZone) : null,
+      params.selectedWork && params.currentFocus.reason === 'selected_work'
+        ? formatFocusLine(params.selectedWork)
+        : params.selectedWork && !nextReminder
+          ? formatWorkLine(params.selectedWork)
+          : null,
+      params.snapshot.activeAllDayEvents.length > 0
+        ? `Next: ${formatEventSummary(
+            params.snapshot.activeAllDayEvents[0]!,
+            params.timeZone,
+          )}`
+        : null,
+    ],
+    honesty: params.snapshot.incompleteNoteBody
+      ? `Calendar: ${params.snapshot.incompleteNoteBody}`
+      : null,
+  });
 }
 
 function buildComingUpAndOpenReply(params: {
@@ -607,7 +592,10 @@ function buildComingUpAndOpenReply(params: {
   timeZone: string;
 }): string {
   if (params.snapshot.unavailableReply) {
-    return `I can't safely answer what's still open right now because calendar data is unavailable.\nCalendar: ${params.snapshot.unavailableReply}`;
+    return buildVoiceReply({
+      summary: "I can't safely answer what's coming up right now.",
+      honesty: `Calendar: ${params.snapshot.unavailableReply}`,
+    });
   }
 
   const upcomingEvents = params.snapshot.timedEvents.slice(0, 2);
@@ -621,23 +609,24 @@ function buildComingUpAndOpenReply(params: {
         ? 'There is not much coming up, and you still have open time today.'
         : 'There is not much coming up, but I do not see a meaningful open window left today.';
 
-  const lines = [summary];
-  for (const event of upcomingEvents) {
-    pushLine(lines, formatNextEventLine(event, params.timeZone));
-  }
-  for (const window of windows) {
-    pushLine(lines, formatOpenWindowLine(window, params.timeZone));
-  }
-  if (lines.length < 4 && params.reminders[0]) {
-    pushLine(lines, formatReminderLine(params.reminders[0], params.timeZone));
-  } else if (lines.length < 4 && params.selectedWork) {
-    pushLine(lines, formatWorkLine(params.selectedWork));
-  }
-
-  if (params.snapshot.incompleteNoteBody) {
-    lines.push(`Calendar: ${params.snapshot.incompleteNoteBody}`);
-  }
-  return lines.join('\n');
+  return buildVoiceReply({
+    summary,
+    details: [
+      ...upcomingEvents.map((event) =>
+        formatNextEventLine(event, params.timeZone),
+      ),
+      ...windows.map((window) => formatOpenWindowLine(window, params.timeZone)),
+      params.reminders[0]
+        ? formatReminderLine(params.reminders[0], params.timeZone)
+        : params.selectedWork
+          ? formatWorkLine(params.selectedWork)
+          : null,
+    ],
+    honesty: params.snapshot.incompleteNoteBody
+      ? `Calendar: ${params.snapshot.incompleteNoteBody}`
+      : null,
+    offerMore: upcomingEvents.length + windows.length > 2,
+  });
 }
 
 function buildRightNowReply(params: {
@@ -647,7 +636,10 @@ function buildRightNowReply(params: {
   now: Date;
 }): string {
   if (params.snapshot.unavailableReply) {
-    return `I can't fully ground this in calendar data right now.\nCalendar: ${params.snapshot.unavailableReply}`;
+    return buildVoiceReply({
+      summary: "I can't fully ground this in calendar data right now.",
+      honesty: `Calendar: ${params.snapshot.unavailableReply}`,
+    });
   }
 
   const lines: string[] = [];
@@ -715,10 +707,13 @@ function buildRightNowReply(params: {
     lines.push('Nothing urgent is on the calendar right now.');
   }
 
-  if (params.snapshot.incompleteNoteBody) {
-    lines.push(`Calendar: ${params.snapshot.incompleteNoteBody}`);
-  }
-  return lines.join('\n');
+  return buildVoiceReply({
+    summary: lines[0] || 'Nothing urgent is on the calendar right now.',
+    details: lines.slice(1),
+    honesty: params.snapshot.incompleteNoteBody
+      ? `Calendar: ${params.snapshot.incompleteNoteBody}`
+      : null,
+  });
 }
 
 function buildCurrentFocusReply(params: {
@@ -727,7 +722,10 @@ function buildCurrentFocusReply(params: {
   timeZone: string;
 }): string {
   if (params.snapshot.unavailableReply) {
-    return `I can't fully ground your current focus in calendar data right now.\nCalendar: ${params.snapshot.unavailableReply}`;
+    return buildVoiceReply({
+      summary: "I can't fully ground your current focus right now.",
+      honesty: `Calendar: ${params.snapshot.unavailableReply}`,
+    });
   }
 
   const lines: string[] = [];
@@ -798,10 +796,15 @@ function buildCurrentFocusReply(params: {
     }
   }
 
-  if (params.snapshot.incompleteNoteBody) {
-    lines.push(`Calendar: ${params.snapshot.incompleteNoteBody}`);
-  }
-  return lines.join('\n');
+  return buildVoiceReply({
+    summary:
+      lines[0] ||
+      "I don't have a current work focus selected, so your schedule is the best signal right now.",
+    details: lines.slice(1),
+    honesty: params.snapshot.incompleteNoteBody
+      ? `Calendar: ${params.snapshot.incompleteNoteBody}`
+      : null,
+  });
 }
 
 function buildFocusNowReply(params: {
@@ -811,7 +814,10 @@ function buildFocusNowReply(params: {
   now: Date;
 }): string {
   if (params.snapshot.unavailableReply) {
-    return `I can't safely tell you what to focus on from calendar data right now.\nCalendar: ${params.snapshot.unavailableReply}`;
+    return buildVoiceReply({
+      summary: "I can't safely tell you what to focus on right now.",
+      honesty: `Calendar: ${params.snapshot.unavailableReply}`,
+    });
   }
 
   const lines: string[] = [];
@@ -905,10 +911,15 @@ function buildFocusNowReply(params: {
     );
   }
 
-  if (params.snapshot.incompleteNoteBody) {
-    lines.push(`Calendar: ${params.snapshot.incompleteNoteBody}`);
-  }
-  return lines.join('\n');
+  return buildVoiceReply({
+    summary:
+      lines[0] ||
+      "I don't have enough work context to rank what matters next, and I don't see a meaningful free block right now.",
+    details: lines.slice(1),
+    honesty: params.snapshot.incompleteNoteBody
+      ? `Calendar: ${params.snapshot.incompleteNoteBody}`
+      : null,
+  });
 }
 
 function buildNextForTodayReply(params: {
@@ -917,49 +928,55 @@ function buildNextForTodayReply(params: {
   timeZone: string;
 }): string {
   if (params.snapshot.unavailableReply) {
-    return `I can't safely answer what's next for today because calendar data is unavailable.\nCalendar: ${params.snapshot.unavailableReply}`;
+    return buildVoiceReply({
+      summary: "I can't safely answer what's next for today right now.",
+      honesty: `Calendar: ${params.snapshot.unavailableReply}`,
+    });
   }
 
   if (params.snapshot.nextTimedEvent) {
-    const lines = [
-      `Next for today is ${params.snapshot.nextTimedEvent.title} at ${formatClock(
+    return buildVoiceReply({
+      summary: `Next for today is ${params.snapshot.nextTimedEvent.title} at ${formatClock(
         new Date(params.snapshot.nextTimedEvent.startIso),
         params.timeZone,
       )}.`,
-      formatNextEventLine(params.snapshot.nextTimedEvent, params.timeZone),
-    ];
-    if (params.currentFocus.nextMeaningfulOpenWindow) {
-      pushLine(
-        lines,
+      details: [
+        formatNextEventLine(params.snapshot.nextTimedEvent, params.timeZone),
+        params.currentFocus.nextMeaningfulOpenWindow
+          ? formatOpenWindowLine(
+              params.currentFocus.nextMeaningfulOpenWindow,
+              params.timeZone,
+            )
+          : null,
+      ],
+      honesty: params.snapshot.incompleteNoteBody
+        ? `Calendar: ${params.snapshot.incompleteNoteBody}`
+        : null,
+    });
+  }
+
+  if (params.currentFocus.nextMeaningfulOpenWindow) {
+    return buildVoiceReply({
+      summary:
+        'There is no later meeting on the calendar right now, so your next meaningful thing is the open block you have left today.',
+      details: [
         formatOpenWindowLine(
           params.currentFocus.nextMeaningfulOpenWindow,
           params.timeZone,
         ),
-      );
-    }
-    if (params.snapshot.incompleteNoteBody) {
-      lines.push(`Calendar: ${params.snapshot.incompleteNoteBody}`);
-    }
-    return lines.join('\n');
+      ],
+      honesty: params.snapshot.incompleteNoteBody
+        ? `Calendar: ${params.snapshot.incompleteNoteBody}`
+        : null,
+    });
   }
 
-  if (params.currentFocus.nextMeaningfulOpenWindow) {
-    const lines = [
-      'There is no later meeting on the calendar right now, so your next meaningful thing is the open block you have left today.',
-      formatOpenWindowLine(
-        params.currentFocus.nextMeaningfulOpenWindow,
-        params.timeZone,
-      ),
-    ];
-    if (params.snapshot.incompleteNoteBody) {
-      lines.push(`Calendar: ${params.snapshot.incompleteNoteBody}`);
-    }
-    return lines.join('\n');
-  }
-
-  return params.snapshot.incompleteNoteBody
-    ? `I don't see anything else scheduled today in the calendars I could read.\nCalendar: ${params.snapshot.incompleteNoteBody}`
-    : "I don't see anything else scheduled today.";
+  return buildVoiceReply({
+    summary: "I don't see anything else scheduled today.",
+    honesty: params.snapshot.incompleteNoteBody
+      ? `Calendar: ${params.snapshot.incompleteNoteBody}`
+      : null,
+  });
 }
 
 function buildFitBeforeNextMeetingReply(params: {
@@ -969,7 +986,10 @@ function buildFitBeforeNextMeetingReply(params: {
   now: Date;
 }): string {
   if (params.snapshot.unavailableReply) {
-    return `I can't safely size that window because calendar data is unavailable.\nCalendar: ${params.snapshot.unavailableReply}`;
+    return buildVoiceReply({
+      summary: "I can't safely size that window right now.",
+      honesty: `Calendar: ${params.snapshot.unavailableReply}`,
+    });
   }
 
   const nextEvent = params.snapshot.nextTimedEvent;
@@ -977,30 +997,33 @@ function buildFitBeforeNextMeetingReply(params: {
     if (params.snapshot.fullyConfirmed) {
       return params.selectedWork
         ? `I don't see another meeting today, so you have the rest of the day for ${params.selectedWork.title}.`
-        : "I don't see another meeting today, but I also don't have a current work item selected.";
+        : "I don't see another meeting today, and I don't have a current work item selected.";
     }
-    return `I don't see another meeting in the calendars I could read, but I couldn't confirm every configured calendar.\nCalendar: ${params.snapshot.incompleteNoteBody}`;
+    return buildVoiceReply({
+      summary:
+        "I don't see another meeting in the calendars I could read right now.",
+      honesty: `Calendar: ${params.snapshot.incompleteNoteBody}`,
+    });
   }
 
   const minutes = minutesBetween(params.now, new Date(nextEvent.startIso));
-  const lines = [
-    params.selectedWork
+  return buildVoiceReply({
+    summary: params.selectedWork
       ? `Before ${nextEvent.title}, you have ${describeWindowForSelectedWork(
           minutes,
           params.selectedWork,
         )}`
       : `Before ${nextEvent.title}, you have ${describeWindowCapacity(
           minutes,
-        )} I don't have a current work item selected, though.`,
-    formatNextEventLine(nextEvent, params.timeZone),
-  ];
-  if (params.selectedWork) {
-    pushLine(lines, formatWorkLine(params.selectedWork));
-  }
-  if (params.snapshot.incompleteNoteBody) {
-    lines.push(`Calendar: ${params.snapshot.incompleteNoteBody}`);
-  }
-  return lines.join('\n');
+        )} This is schedule-based guidance only.`,
+    details: [
+      formatNextEventLine(nextEvent, params.timeZone),
+      params.selectedWork ? formatWorkLine(params.selectedWork) : null,
+    ],
+    honesty: params.snapshot.incompleteNoteBody
+      ? `Calendar: ${params.snapshot.incompleteNoteBody}`
+      : null,
+  });
 }
 
 function buildFitNextFreeWindowReply(params: {
@@ -1009,21 +1032,27 @@ function buildFitNextFreeWindowReply(params: {
   timeZone: string;
 }): string {
   if (params.snapshot.unavailableReply) {
-    return `I can't safely size your next free window because calendar data is unavailable.\nCalendar: ${params.snapshot.unavailableReply}`;
+    return buildVoiceReply({
+      summary: "I can't safely size your next free window right now.",
+      honesty: `Calendar: ${params.snapshot.unavailableReply}`,
+    });
   }
 
   const nextWindow = filterMeaningfulOpenWindows(
     params.snapshot.openWindows,
   )[0];
   if (!nextWindow) {
-    return params.snapshot.incompleteNoteBody
-      ? `I don't see a meaningful free window left today in the calendars I could read.\nCalendar: ${params.snapshot.incompleteNoteBody}`
-      : "I don't see a meaningful free window left today.";
+    return buildVoiceReply({
+      summary: "I don't see a meaningful free window left today.",
+      honesty: params.snapshot.incompleteNoteBody
+        ? `Calendar: ${params.snapshot.incompleteNoteBody}`
+        : null,
+    });
   }
 
   const minutes = minutesBetween(nextWindow.start, nextWindow.end);
-  const lines = [
-    params.selectedWork
+  return buildVoiceReply({
+    summary: params.selectedWork
       ? `Your next free window is ${formatWindow(
           nextWindow,
           params.timeZone,
@@ -1031,16 +1060,15 @@ function buildFitNextFreeWindowReply(params: {
       : `Your next free window is ${formatWindow(
           nextWindow,
           params.timeZone,
-        )}. ${describeWindowCapacity(minutes)} I don't have a current work item selected, though.`,
-    formatOpenWindowLine(nextWindow, params.timeZone),
-  ];
-  if (params.selectedWork) {
-    pushLine(lines, formatWorkLine(params.selectedWork));
-  }
-  if (params.snapshot.incompleteNoteBody) {
-    lines.push(`Calendar: ${params.snapshot.incompleteNoteBody}`);
-  }
-  return lines.join('\n');
+        )}. ${describeWindowCapacity(minutes)} This is schedule-based guidance only.`,
+    details: [
+      formatOpenWindowLine(nextWindow, params.timeZone),
+      params.selectedWork ? formatWorkLine(params.selectedWork) : null,
+    ],
+    honesty: params.snapshot.incompleteNoteBody
+      ? `Calendar: ${params.snapshot.incompleteNoteBody}`
+      : null,
+  });
 }
 
 function buildOpenBeforeDayEndsReply(params: {
@@ -1048,28 +1076,34 @@ function buildOpenBeforeDayEndsReply(params: {
   timeZone: string;
 }): string {
   if (params.snapshot.unavailableReply) {
-    return `I can't safely tell you what's still open because calendar data is unavailable.\nCalendar: ${params.snapshot.unavailableReply}`;
+    return buildVoiceReply({
+      summary: "I can't safely tell you what's still open right now.",
+      honesty: `Calendar: ${params.snapshot.unavailableReply}`,
+    });
   }
 
   const windows = filterMeaningfulOpenWindows(
     params.snapshot.openWindows,
   ).slice(0, 3);
   if (windows.length === 0) {
-    return params.snapshot.incompleteNoteBody
-      ? `I don't see a meaningful open block before the day ends in the calendars I could read.\nCalendar: ${params.snapshot.incompleteNoteBody}`
-      : "I don't see a meaningful open block before the day ends.";
+    return buildVoiceReply({
+      summary: "I don't see a meaningful open block before the day ends.",
+      honesty: params.snapshot.incompleteNoteBody
+        ? `Calendar: ${params.snapshot.incompleteNoteBody}`
+        : null,
+    });
   }
 
-  const lines = [
-    `You still have ${windows.length === 1 ? 'one meaningful open block' : `${windows.length} meaningful open blocks`} before the day ends.`,
-  ];
-  for (const window of windows) {
-    pushLine(lines, formatOpenWindowLine(window, params.timeZone));
-  }
-  if (params.snapshot.incompleteNoteBody) {
-    lines.push(`Calendar: ${params.snapshot.incompleteNoteBody}`);
-  }
-  return lines.join('\n');
+  return buildVoiceReply({
+    summary: `You still have ${windows.length === 1 ? 'one meaningful open block' : `${windows.length} meaningful open blocks`} before the day ends.`,
+    details: windows.map((window) =>
+      formatOpenWindowLine(window, params.timeZone),
+    ),
+    honesty: params.snapshot.incompleteNoteBody
+      ? `Calendar: ${params.snapshot.incompleteNoteBody}`
+      : null,
+    offerMore: windows.length > 2,
+  });
 }
 
 function findAnchorEvent(
@@ -1146,7 +1180,11 @@ function buildNextAndBeforeThenReply(params: {
   now: Date;
 }): string {
   if (params.snapshot.unavailableReply) {
-    return `I can't safely combine your next event with a work window right now.\nCalendar: ${params.snapshot.unavailableReply}`;
+    return buildVoiceReply({
+      summary:
+        "I can't safely combine your next event with a work window right now.",
+      honesty: `Calendar: ${params.snapshot.unavailableReply}`,
+    });
   }
 
   const nextEvent = params.snapshot.nextTimedEvent;
@@ -1155,9 +1193,12 @@ function buildNextAndBeforeThenReply(params: {
       params.snapshot.openWindows,
     )[0];
     if (!nextWindow) {
-      return params.snapshot.incompleteNoteBody
-        ? `I don't see another event or a meaningful open block today in the calendars I could read.\nCalendar: ${params.snapshot.incompleteNoteBody}`
-        : "I don't see another event or a meaningful open block today.";
+      return buildVoiceReply({
+        summary: "I don't see another event or a meaningful open block today.",
+        honesty: params.snapshot.incompleteNoteBody
+          ? `Calendar: ${params.snapshot.incompleteNoteBody}`
+          : null,
+      });
     }
     const minutes = minutesBetween(nextWindow.start, nextWindow.end);
     return params.selectedWork
@@ -1168,32 +1209,31 @@ function buildNextAndBeforeThenReply(params: {
       : `There isn't another calendar event yet, and your next open block is ${formatWindow(
           nextWindow,
           params.timeZone,
-        )}. ${describeWindowCapacity(minutes)} I don't have a current work item selected, though.`;
+        )}. ${describeWindowCapacity(minutes)} This is schedule-based guidance only.`;
   }
 
   const minutes = minutesBetween(params.now, new Date(nextEvent.startIso));
-  const lines = [
-    `Next on your calendar is ${nextEvent.title} at ${formatClock(
+  return buildVoiceReply({
+    summary: `Next on your calendar is ${nextEvent.title} at ${formatClock(
       new Date(nextEvent.startIso),
       params.timeZone,
     )}.`,
-    params.selectedWork
-      ? `Before then, you have ${describeWindowForSelectedWork(
-          minutes,
-          params.selectedWork,
-        )}`
-      : `Before then, you have ${describeWindowCapacity(
-          minutes,
-        )} I don't have a current work item selected, though.`,
-    formatNextEventLine(nextEvent, params.timeZone),
-  ];
-  if (params.selectedWork) {
-    pushLine(lines, formatWorkLine(params.selectedWork));
-  }
-  if (params.snapshot.incompleteNoteBody) {
-    lines.push(`Calendar: ${params.snapshot.incompleteNoteBody}`);
-  }
-  return lines.join('\n');
+    details: [
+      params.selectedWork
+        ? `Before then, you have ${describeWindowForSelectedWork(
+            minutes,
+            params.selectedWork,
+          )}`
+        : `Before then, you have ${describeWindowCapacity(
+            minutes,
+          )} This is schedule-based guidance only.`,
+      formatNextEventLine(nextEvent, params.timeZone),
+      params.selectedWork ? formatWorkLine(params.selectedWork) : null,
+    ],
+    honesty: params.snapshot.incompleteNoteBody
+      ? `Calendar: ${params.snapshot.incompleteNoteBody}`
+      : null,
+  });
 }
 
 export async function buildDailyCommandCenterResponse(

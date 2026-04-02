@@ -127,9 +127,7 @@ describe('planCalendarAssistantLookup', () => {
       'America/Chicago',
     );
 
-    expect(plan?.clarificationQuestion).toBe(
-      'What time should I treat as after work?',
-    );
+    expect(plan?.clarificationQuestion).toBe('What time counts as after work?');
   });
 
   it('captures duration-fit availability requests', () => {
@@ -274,7 +272,7 @@ describe('buildCalendarAssistantReply', () => {
     expect(reply).toContain('2 timed events');
     expect(reply).toContain('1 conflict');
     expect(reply).toContain('All day Spring break');
-    expect(reply).toContain('Conflict:');
+    expect(reply).toContain('I can list the rest if you want.');
   });
 
   it('answers next-event asks and records a single active Google event context', async () => {
@@ -351,7 +349,9 @@ describe('buildCalendarAssistantReply', () => {
       },
     );
 
-    expect(response?.reply).toContain('Coming up in the next 2 hours:');
+    expect(response?.reply).toContain(
+      'In the next 2 hours, you have 2 timed events.',
+    );
     expect(response?.reply).toContain('11:00 AM-11:30 AM School pickup');
     expect(response?.reply).toContain('11:45 AM-12:15 PM Call Mom');
     expect(response?.activeEventContext).toBeNull();
@@ -483,7 +483,7 @@ describe('buildCalendarAssistantReply', () => {
     );
 
     expect(response?.reply).toContain(
-      'You have these 60-minute openings tomorrow:',
+      'You have 3 60-minute openings tomorrow.',
     );
     expect(response?.reply).toContain('Open: 10:00 AM-1:00 PM');
     expect(response?.activeEventContext).toBeNull();
@@ -659,9 +659,7 @@ describe('buildCalendarAssistantReply', () => {
     expect(nextReply).toContain(
       "I couldn't confirm every configured calendar right now.",
     );
-    expect(openingsReply).toContain(
-      'You have these 60-minute openings tomorrow:',
-    );
+    expect(openingsReply).toContain('You have 2 60-minute openings tomorrow.');
     expect(openingsReply).toContain(
       "I couldn't confirm every configured calendar right now.",
     );
@@ -778,7 +776,7 @@ describe('buildCalendarAssistantReply', () => {
       },
     );
 
-    expect(reply).toContain("Here's what's on your calendar tomorrow:");
+    expect(reply).toContain('Tomorrow has 2 timed events.');
     expect(reply).toContain('3:00 PM-3:30 PM School pickup');
     expect(reply).toContain('5:00 PM-6:00 PM Soccer practice @ Field 2');
     expect(reply).toContain('[Jeff]');
@@ -879,7 +877,7 @@ describe('buildCalendarAssistantReply', () => {
       },
     );
 
-    expect(reply).toContain("Here's what's on your calendar tomorrow:");
+    expect(reply).toContain('Tomorrow has one timed event.');
     expect(reply).toContain('10:00 AM-11:00 AM Product sync @ Zoom');
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
@@ -1145,7 +1143,7 @@ END:VCALENDAR</c:calendar-data>
       },
     );
 
-    expect(response?.reply).toBe('What time should I treat as after work?');
+    expect(response?.reply).toBe('What time counts as after work?');
   });
 
   it('records active event context only for a single Google event', async () => {
@@ -1433,7 +1431,7 @@ END:VCALENDAR</c:calendar-data>
 
     expect(reply).toContain('Doctor visit');
     expect(reply).toContain(
-      "I found these events, but I couldn't read every configured calendar right now.",
+      "I couldn't confirm every configured calendar right now.",
     );
     expect(reply).toContain('missing@group.calendar.google.com');
   });
