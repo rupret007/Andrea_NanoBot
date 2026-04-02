@@ -152,6 +152,25 @@ export interface CalendarAssistantResponse {
   activeEventContext: CalendarActiveEventContext | null;
 }
 
+export interface CalendarTimeWindow {
+  start: Date;
+  end: Date;
+}
+
+export interface CalendarLookupSnapshot {
+  unavailableReply: string | null;
+  fullyConfirmed: boolean;
+  incompleteNoteBody: string;
+  timedEvents: CalendarEvent[];
+  allDayEvents: CalendarEvent[];
+  nextTimedEvent: CalendarEvent | null;
+  activeAllDayEvents: CalendarEvent[];
+  openWindows: CalendarTimeWindow[];
+  conflictGroups: CalendarEvent[][];
+  adjacencyClusters: CalendarEvent[][];
+  densityLine: string | null;
+}
+
 interface CalendarAssistantConfig {
   appleLocalEnabled: boolean;
   appleCalDavUrl: string | null;
@@ -2094,6 +2113,52 @@ function buildReplyStatusContext(
     fullyConfirmed,
     incompleteNote,
     incompleteNoteBody: incompleteNote.replace(/^\n+/, ''),
+  };
+}
+
+function sortCalendarEventsChronologically(
+  events: CalendarEvent[],
+): CalendarEvent[] {
+  return [...events].sort(
+    (left, right) =>
+      new Date(left.startIso).getTime() - new Date(right.startIso).getTime(),
+  );
+}
+
+export function buildCalendarLookupSnapshot(
+  result: CalendarLookupResult,
+): CalendarLookupSnapshot {
+  const statusContext = buildReplyStatusContext(result);
+  const timedEvents = sortCalendarEventsChronologically(
+    getTimedEvents(result.events),
+  );
+  const allDayEvents = sortCalendarEventsChronologically(
+    getAllDayEvents(result.events),
+  );
+  const openWindows = buildOpenWindows(
+    result.plan.start,
+    result.plan.end,
+    buildBusyWindows(timedEvents),
+  );
+  const nextTimedEvent =
+    timedEvents.find(
+      (event) => new Date(event.endIso).getTime() > result.plan.start.getTime(),
+    ) || null;
+
+  return {
+    unavailableReply: buildUnavailableCalendarReply(result, statusContext),
+    fullyConfirmed: statusContext.fullyConfirmed,
+    incompleteNoteBody: statusContext.incompleteNoteBody,
+    timedEvents,
+    allDayEvents,
+    nextTimedEvent,
+    activeAllDayEvents: allDayEvents.filter((event) =>
+      eventOverlapsPoint(event, result.plan.start),
+    ),
+    openWindows,
+    conflictGroups: buildConflictGroups(result.events),
+    adjacencyClusters: buildAdjacencyClusters(result.events),
+    densityLine: formatBriefingDensityLine(result, timedEvents),
   };
 }
 

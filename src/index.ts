@@ -75,6 +75,10 @@ import {
   type CalendarSchedulingContext,
 } from './calendar-assistant.js';
 import {
+  buildDailyCommandCenterResponse,
+  type SelectedWorkContext,
+} from './daily-command-center.js';
+import {
   advancePendingCalendarAutomation,
   buildCalendarAutomationPersistInput,
   computeCalendarAutomationNextRun,
@@ -1481,6 +1485,84 @@ function buildAndreaRuntimeStatusMessage(): string {
 
 function getAndreaRuntimeLane(): AndreaRuntimeBackendLane {
   return backendLaneRegistry.get('andrea_runtime') as AndreaRuntimeBackendLane;
+}
+
+async function getSelectedDailyWorkContext(
+  chatJid: string,
+  threadId?: string,
+): Promise<SelectedWorkContext | null> {
+  const activeContext = getActiveCursorOperatorContext(chatJid, threadId);
+  if (!activeContext?.selectedLaneId) {
+    return null;
+  }
+
+  const group = registeredGroups[chatJid];
+  if (!group) {
+    return null;
+  }
+
+  if (activeContext.selectedLaneId === 'cursor') {
+    const selectedAgentId = getSelectedLaneJobId(chatJid, threadId, 'cursor');
+    if (!selectedAgentId) {
+      return null;
+    }
+    const inventory = await cursorBackendLane.getInventory({
+      groupFolder: group.folder,
+      chatJid,
+      limit: 50,
+    });
+    const selected =
+      flattenCursorJobInventory(inventory).find(
+        (entry) => entry.id === selectedAgentId,
+      ) || null;
+    if (!selected) {
+      return null;
+    }
+    const title =
+      selected.summary?.trim() ||
+      selected.promptText?.trim() ||
+      selected.sourceRepository?.trim() ||
+      'selected Cursor task';
+    return {
+      laneLabel: 'Cursor',
+      title,
+      statusLabel: formatHumanTaskStatus(selected.status),
+      summary:
+        selected.summary && selected.summary.trim() !== title
+          ? selected.summary.trim()
+          : null,
+    };
+  }
+
+  const selectedJobId = getSelectedLaneJobId(
+    chatJid,
+    threadId,
+    'andrea_runtime',
+  );
+  if (!selectedJobId) {
+    return null;
+  }
+  const selected = await getAndreaRuntimeLane().getJob({
+    handle: { laneId: 'andrea_runtime', jobId: selectedJobId },
+    groupFolder: group.folder,
+    chatJid,
+  });
+  if (!selected) {
+    return null;
+  }
+  const runtimeTitle =
+    selected.summary?.trim() ||
+    selected.title?.trim() ||
+    'selected runtime task';
+  return {
+    laneLabel: 'Codex/OpenAI runtime',
+    title: runtimeTitle,
+    statusLabel: formatHumanTaskStatus(selected.status),
+    summary:
+      selected.summary && selected.summary.trim() !== runtimeTitle
+        ? selected.summary.trim()
+        : null,
+  };
 }
 
 function getEnabledOpenClawSkillsSnapshot(): AvailableOpenClawSkill[] {
@@ -2995,6 +3077,72 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       }
     }
   };
+  const tryHandleLocalDailyCommandCenter = async (
+    fastPathKind: 'direct' | 'protected',
+  ): Promise<boolean> => {
+    const activeEventContextState =
+      getActiveGoogleCalendarEventContext(chatJid);
+    const activeEventContext =
+      activeEventContextState &&
+      !isActiveGoogleCalendarEventContextExpired(activeEventContextState, now)
+        ? {
+            providerId: 'google_calendar' as const,
+            id: activeEventContextState.event.id,
+            title: activeEventContextState.event.title,
+            startIso: activeEventContextState.event.startIso,
+            endIso: activeEventContextState.event.endIso,
+            allDay: activeEventContextState.event.allDay,
+            calendarId: activeEventContextState.event.calendarId || null,
+            calendarName: activeEventContextState.event.calendarName || null,
+            htmlLink: activeEventContextState.event.htmlLink || null,
+          }
+        : null;
+
+    const selectedWork = await getSelectedDailyWorkContext(
+      chatJid,
+      missedMessages.at(-1)?.thread_id,
+    );
+    const dailyResponse = await buildDailyCommandCenterResponse(lastContent, {
+      now,
+      timeZone: TIMEZONE,
+      activeEventContext,
+      selectedWork,
+      tasks: getAllTasks().filter((task) => task.chat_jid === chatJid),
+    });
+    if (!dailyResponse) {
+      return false;
+    }
+
+    try {
+      await channel.sendMessage(
+        chatJid,
+        formatCalendarPanelText('*Today*', dailyResponse.reply),
+        {
+          inlineActionRows: buildCalendarLookupInlineActionRows(lastContent),
+        },
+      );
+      logger.info(
+        {
+          component: 'assistant',
+          chatJid,
+          groupFolder: group.folder,
+          group: group.name,
+          requestRoute: requestPolicy.route,
+          dailyCommandCenterFastPath: fastPathKind,
+        },
+        'Handled daily command center via local fast path',
+      );
+      return true;
+    } catch (err) {
+      lastAgentTimestamp[chatJid] = previousCursor;
+      saveState();
+      logger.warn(
+        { group: group.name, err, requestRoute: requestPolicy.route },
+        'Local daily command center path failed, rolled back cursor for retry',
+      );
+      return false;
+    }
+  };
   const tryHandleLocalCalendarReply = async (
     fastPathKind: 'direct' | 'protected',
   ): Promise<boolean> => {
@@ -3128,6 +3276,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       }
     }
 
+    if (await tryHandleLocalDailyCommandCenter('direct')) {
+      return true;
+    }
+
     if (await tryHandleLocalCalendarReply('direct')) {
       return true;
     }
@@ -3164,6 +3316,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         );
         return false;
       }
+    }
+
+    if (await tryHandleLocalDailyCommandCenter('protected')) {
+      return true;
     }
 
     if (await tryHandleLocalCalendarReply('protected')) {
