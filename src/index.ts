@@ -125,7 +125,6 @@ import {
   NewMessage,
   RegisteredGroup,
   RuntimeBackendJob,
-  RuntimeBackendStatus,
 } from './types.js';
 import { logger } from './logger.js';
 import {
@@ -166,7 +165,6 @@ import {
 } from './direct-quick-reply.js';
 import { buildSilentSuccessFallback } from './user-facing-fallback.js';
 import {
-  AndreaOpenAiRuntimeError,
   createAndreaOpenAiRuntimeJob,
   followUpAndreaOpenAiRuntimeJob,
   getAndreaOpenAiBackendStatus,
@@ -175,6 +173,16 @@ import {
   listAndreaOpenAiRuntimeJobs,
   stopAndreaOpenAiRuntimeJob,
 } from './andrea-openai-runtime.js';
+import {
+  formatRuntimeBackendCreateAcceptedMessage,
+  formatRuntimeBackendFailure,
+  formatRuntimeBackendFollowupAcceptedMessage,
+  formatRuntimeBackendJobCard,
+  formatRuntimeBackendJobsMessage,
+  formatRuntimeBackendLogsMessage,
+  formatRuntimeBackendStatusSummary,
+  formatRuntimeBackendStopMessage,
+} from './runtime-shell.js';
 import {
   ALEXA_STATUS_COMMANDS,
   AMAZON_SEARCH_COMMANDS,
@@ -1244,101 +1252,6 @@ async function main(): Promise<void> {
     return null;
   }
 
-  function formatRuntimeThreadLabel(threadId: string): string {
-    return threadId.length > 24 ? `${threadId.slice(0, 24)}...` : threadId;
-  }
-
-  function clipRuntimeText(text: string, limit = 1200): string {
-    const trimmed = text.trim();
-    if (trimmed.length <= limit) return trimmed;
-    return `${trimmed.slice(0, limit - 3)}...`;
-  }
-
-  function formatRuntimeBackendStatusSummary(
-    status: RuntimeBackendStatus,
-    group: RegisteredGroup,
-  ): string {
-    return [
-      '*Andrea OpenAI Backend*',
-      `- State: ${status.state}`,
-      `- Backend: ${status.backend}`,
-      `- URL: ${ANDREA_OPENAI_BACKEND_URL}`,
-      `- Version: ${status.version || 'unknown'}`,
-      `- Current group folder: ${group.folder}`,
-      `- Transport: ${status.transport}`,
-      status.detail ? `- Detail: ${status.detail}` : null,
-      '- Commands: /runtime-create, /runtime-jobs, /runtime-job, /runtime-followup, /runtime-logs, /runtime-stop',
-    ]
-      .filter((line): line is string => Boolean(line))
-      .join('\n');
-  }
-
-  function formatRuntimeBackendJobCard(job: RuntimeBackendJob): string {
-    const summary =
-      job.errorText ||
-      job.finalOutputText ||
-      job.latestOutputText ||
-      'No backend output is available yet.';
-
-    return [
-      '*Andrea OpenAI Job*',
-      `- Backend: ${job.backend}`,
-      `- Job ID: ${job.jobId}`,
-      `- Group folder: ${job.groupFolder}`,
-      `- Status: ${job.status}${job.stopRequested ? ' (stop requested)' : ''}`,
-      job.threadId
-        ? `- Thread ID: ${formatRuntimeThreadLabel(job.threadId)}`
-        : null,
-      job.selectedRuntime ? `- Selected runtime: ${job.selectedRuntime}` : null,
-      `- Prompt: ${job.promptPreview}`,
-      `- Summary: ${clipRuntimeText(summary, 600)}`,
-    ]
-      .filter((line): line is string => Boolean(line))
-      .join('\n');
-  }
-
-  function formatRuntimeBackendListLine(
-    job: RuntimeBackendJob,
-    index: number,
-  ): string {
-    return `${index + 1}. ${job.jobId} [${job.status}] group=${job.groupFolder}${job.selectedRuntime ? ` runtime=${job.selectedRuntime}` : ''}${job.threadId ? ` thread=${formatRuntimeThreadLabel(job.threadId)}` : ''}`;
-  }
-
-  function formatRuntimeBackendFailure(
-    err: unknown,
-    chatJid: string,
-    group: RegisteredGroup | undefined,
-  ): string {
-    if (err instanceof AndreaOpenAiRuntimeError) {
-      if (
-        err.kind === 'bootstrap_required' ||
-        err.kind === 'bootstrap_failed'
-      ) {
-        return [
-          err.message,
-          `- Backend: andrea_openai`,
-          `- Source chat: ${chatJid}`,
-          `- Group folder: ${group?.folder || err.groupFolder || 'unknown'}`,
-          err.detail ? `- Detail: ${err.detail}` : null,
-        ]
-          .filter((line): line is string => Boolean(line))
-          .join('\n');
-      }
-
-      return [
-        err.message,
-        err.detail ? `- Detail: ${err.detail}` : null,
-      ]
-        .filter((line): line is string => Boolean(line))
-        .join('\n');
-    }
-
-    return formatUserFacingOperationFailure(
-      'Andrea OpenAI backend operation failed',
-      err,
-    );
-  }
-
   async function resolveRuntimeBackendContext(
     chatJid: string,
   ): Promise<{ channel: Channel; group: RegisteredGroup } | null> {
@@ -1411,7 +1324,11 @@ async function main(): Promise<void> {
     const status = await getAndreaOpenAiBackendStatus();
     await context.channel.sendMessage(
       chatJid,
-      formatRuntimeBackendStatusSummary(status, context.group),
+      formatRuntimeBackendStatusSummary(
+        status,
+        context.group,
+        ANDREA_OPENAI_BACKEND_URL,
+      ),
     );
   }
 
@@ -1432,7 +1349,7 @@ async function main(): Promise<void> {
       });
       await context.channel.sendMessage(
         chatJid,
-        `Created Andrea OpenAI job ${job.jobId}.\n\n${formatRuntimeBackendJobCard(job)}`,
+        formatRuntimeBackendCreateAcceptedMessage(job),
       );
     } catch (err) {
       await context.channel.sendMessage(
@@ -1464,17 +1381,15 @@ async function main(): Promise<void> {
         );
         return;
       }
-
-      const lines = [
-        `*Andrea OpenAI Jobs*`,
-        `- Group folder: ${context.group.folder}`,
-        ...result.jobs.map(formatRuntimeBackendListLine),
-        result.nextBeforeJobId
-          ? `- nextBeforeJobId: ${result.nextBeforeJobId}`
-          : null,
-      ].filter((line): line is string => Boolean(line));
-
-      await context.channel.sendMessage(chatJid, lines.join('\n'));
+      await context.channel.sendMessage(
+        chatJid,
+        formatRuntimeBackendJobsMessage({
+          group: context.group,
+          jobs: result.jobs,
+          nextBeforeJobId: result.nextBeforeJobId,
+          limit,
+        }),
+      );
     } catch (err) {
       await context.channel.sendMessage(
         chatJid,
@@ -1527,7 +1442,7 @@ async function main(): Promise<void> {
       });
       await context.channel.sendMessage(
         chatJid,
-        `Follow-up sent to Andrea OpenAI job ${job.jobId}.\n\n${formatRuntimeBackendJobCard(job)}`,
+        formatRuntimeBackendFollowupAcceptedMessage(job),
       );
     } catch (err) {
       await context.channel.sendMessage(
@@ -1554,9 +1469,7 @@ async function main(): Promise<void> {
       });
       await context.channel.sendMessage(
         chatJid,
-        result.liveStopAccepted
-          ? `Stop requested for Andrea OpenAI job ${result.job.jobId}.\n\n${formatRuntimeBackendJobCard(result.job)}`
-          : `Andrea OpenAI job ${result.job.jobId} is no longer active enough to accept a live stop.\n\n${formatRuntimeBackendJobCard(result.job)}`,
+        formatRuntimeBackendStopMessage(result),
       );
     } catch (err) {
       await context.channel.sendMessage(
@@ -1581,16 +1494,21 @@ async function main(): Promise<void> {
         jobId,
         lines: limit,
       });
+      let currentJob: RuntimeBackendJob | null = null;
       if (!result.logText?.trim()) {
-        await context.channel.sendMessage(
-          chatJid,
-          `No backend logs are available yet for Andrea OpenAI job ${jobId}.`,
-        );
-        return;
+        try {
+          currentJob = await getAndreaOpenAiRuntimeJob({
+            chatJid,
+            group: context.group,
+            jobId,
+          });
+        } catch {
+          currentJob = null;
+        }
       }
       await context.channel.sendMessage(
         chatJid,
-        `Andrea OpenAI logs for ${jobId}${result.logFile ? ` (${result.logFile})` : ''}:\n\n${clipRuntimeText(result.logText, 3200)}`,
+        formatRuntimeBackendLogsMessage(result, currentJob),
       );
     } catch (err) {
       await context.channel.sendMessage(

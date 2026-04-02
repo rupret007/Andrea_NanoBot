@@ -40,7 +40,8 @@
     "cursor:bridge": "tsx src/cursor-desktop-bridge.ts",
     "telegram:user:auth": "tsx src/telegram-user-session.ts auth",
     "telegram:user:send": "tsx src/telegram-user-session.ts send",
-    "telegram:user:batch": "tsx src/telegram-user-session.ts batch"
+    "telegram:user:batch": "tsx src/telegram-user-session.ts batch",
+    "telegram:user:runtime": "tsx src/telegram-user-session.ts runtime"
   },
   "dependencies": {
     "@onecli-sh/sdk": "^0.2.0",

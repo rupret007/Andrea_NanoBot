@@ -33,6 +33,11 @@ export const DEFAULT_TELEGRAM_LIVE_TEST_MESSAGES = [
   '/cursor_status',
 ] as const;
 
+export const DEFAULT_TELEGRAM_RUNTIME_CREATE_PROMPT =
+  'Create a file named telegram-runtime-proof.txt with exactly one line: telegram runtime proof.';
+export const DEFAULT_TELEGRAM_RUNTIME_FOLLOWUP_PROMPT =
+  'Append a second line to telegram-runtime-proof.txt that says runtime followup ok.';
+
 const TELEGRAM_USER_ENV_KEYS = [
   'TELEGRAM_USER_API_ID',
   'TELEGRAM_USER_API_HASH',
@@ -92,6 +97,54 @@ function normalizeAuthMode(
 
 function uniqueMessages(messages: string[]): string[] {
   return messages.map((message) => message.trim()).filter(Boolean);
+}
+
+export function extractRuntimeJobIdFromReplyText(text: string): string | null {
+  const cardMatch = text.match(/^- Job ID:\s*(\S+)/m);
+  if (cardMatch?.[1]) return cardMatch[1];
+
+  const acceptedMatch = text.match(
+    /Andrea OpenAI (?:job|follow-up) ([A-Za-z0-9_.:-]+)/
+  );
+  if (acceptedMatch?.[1]) return acceptedMatch[1];
+
+  return null;
+}
+
+export function extractRuntimeJobIdFromReplies(
+  replies: TelegramLiveReply[],
+): string | null {
+  for (let i = replies.length - 1; i >= 0; i -= 1) {
+    const match = extractRuntimeJobIdFromReplyText(replies[i]!.text);
+    if (match) return match;
+  }
+  return null;
+}
+
+export function buildTelegramRuntimeCreateMessages(
+  createPrompt = DEFAULT_TELEGRAM_RUNTIME_CREATE_PROMPT,
+): string[] {
+  return ['/runtime-status', `/runtime-create ${createPrompt}`];
+}
+
+export function buildTelegramRuntimeAfterCreateMessages(
+  jobId: string,
+  followUpPrompt = DEFAULT_TELEGRAM_RUNTIME_FOLLOWUP_PROMPT,
+): string[] {
+  return [
+    `/runtime-job ${jobId}`,
+    `/runtime-followup ${jobId} ${followUpPrompt}`,
+  ];
+}
+
+export function buildTelegramRuntimeAfterFollowupMessages(
+  jobId: string,
+): string[] {
+  return [
+    `/runtime-job ${jobId}`,
+    `/runtime-logs ${jobId} 40`,
+    `/runtime-stop ${jobId}`,
+  ];
 }
 
 function sleep(ms: number): Promise<void> {
@@ -628,6 +681,18 @@ export async function sendTelegramUserMessageAndCaptureReplies(
   };
 }
 
+function printTelegramSendResult(result: TelegramSendAndCaptureResult): void {
+  console.log(`\nSent: ${result.message}`);
+  if (result.replies.length === 0) {
+    console.log('Replies: none observed before timeout');
+    return;
+  }
+  console.log('Replies:');
+  for (const reply of result.replies) {
+    console.log(`- ${reply.text}`);
+  }
+}
+
 async function runAuthCommand(): Promise<void> {
   const config = resolveTelegramUserSessionConfig();
   await withTelegramUserSessionLock(config.sessionFile, async () => {
@@ -663,15 +728,7 @@ async function runSendCommand(messageArgs: string[]): Promise<void> {
         config.replyTimeoutMs,
         config.replySettleMs,
       );
-      console.log(`Sent: ${result.message}`);
-      if (result.replies.length === 0) {
-        console.log('Replies: none observed before timeout');
-        return;
-      }
-      console.log('Replies:');
-      for (const reply of result.replies) {
-        console.log(`- ${reply.text}`);
-      }
+      printTelegramSendResult(result);
     } finally {
       await client.disconnect();
     }
@@ -701,15 +758,75 @@ async function runBatchCommand(messageArgs: string[]): Promise<void> {
           config.replyTimeoutMs,
           config.replySettleMs,
         );
-        console.log(`\nSent: ${result.message}`);
-        if (result.replies.length === 0) {
-          console.log('Replies: none observed before timeout');
-          continue;
+        printTelegramSendResult(result);
+      }
+    } finally {
+      await client.disconnect();
+    }
+  });
+}
+
+async function runRuntimeCommand(): Promise<void> {
+  const config = resolveTelegramUserSessionConfig();
+  const target = await ensureTelegramTestTarget(config);
+
+  await withTelegramUserSessionLock(config.sessionFile, async () => {
+    const { client } = await connectTelegramUserSession(config, false);
+    try {
+      let createJobId: string | null = null;
+      let followUpJobId: string | null = null;
+
+      for (const message of buildTelegramRuntimeCreateMessages()) {
+        const result = await sendTelegramUserMessageAndCaptureReplies(
+          client,
+          target,
+          message,
+          config.replyTimeoutMs,
+          config.replySettleMs,
+        );
+        printTelegramSendResult(result);
+        if (message.startsWith('/runtime-create ')) {
+          createJobId = extractRuntimeJobIdFromReplies(result.replies);
+          if (!createJobId) {
+            throw new Error(
+              'Could not extract a runtime job ID from the /runtime-create reply. Check the current runtime shell output before continuing the scripted Telegram validation.',
+            );
+          }
         }
-        console.log('Replies:');
-        for (const reply of result.replies) {
-          console.log(`- ${reply.text}`);
+      }
+
+      for (const message of buildTelegramRuntimeAfterCreateMessages(
+        createJobId!,
+      )) {
+        const result = await sendTelegramUserMessageAndCaptureReplies(
+          client,
+          target,
+          message,
+          config.replyTimeoutMs,
+          config.replySettleMs,
+        );
+        printTelegramSendResult(result);
+        if (message.startsWith('/runtime-followup ')) {
+          followUpJobId = extractRuntimeJobIdFromReplies(result.replies);
+          if (!followUpJobId) {
+            throw new Error(
+              'Could not extract a runtime job ID from the /runtime-followup reply. Check the current runtime shell output before continuing the scripted Telegram validation.',
+            );
+          }
         }
+      }
+
+      for (const message of buildTelegramRuntimeAfterFollowupMessages(
+        followUpJobId!,
+      )) {
+        const result = await sendTelegramUserMessageAndCaptureReplies(
+          client,
+          target,
+          message,
+          config.replyTimeoutMs,
+          config.replySettleMs,
+        );
+        printTelegramSendResult(result);
       }
     } finally {
       await client.disconnect();
@@ -735,12 +852,18 @@ export async function runTelegramUserSessionCli(argv: string[]): Promise<void> {
     return;
   }
 
+  if (command === 'runtime') {
+    await runRuntimeCommand();
+    return;
+  }
+
   console.log(`Telegram user-session operator tool
 
 Commands:
 - npm run telegram:user:auth
 - npm run telegram:user:send -- <message>
 - npm run telegram:user:batch
+- npm run telegram:user:runtime
 
 Required env:
 - TELEGRAM_USER_API_ID

@@ -29,6 +29,7 @@ Current scripts:
 npm run telegram:user:auth
 npm run telegram:user:send -- "What's the meaning of life?"
 npm run telegram:user:batch
+npm run telegram:user:runtime
 ```
 
 ## Required Setup
@@ -132,6 +133,28 @@ Default batch:
 - `ok`
 - `Remind me tomorrow at 3pm to call Sam`
 - `/cursor_status`
+
+## Run The Runtime Lane Script
+
+```bash
+npm run telegram:user:runtime
+```
+
+This keeps the same real-message testing style, but drives the current Andrea OpenAI runtime lane end to end.
+
+Current scripted flow:
+
+- `/runtime-status`
+- `/runtime-create <default runtime proof prompt>`
+- capture the returned `jobId`
+- `/runtime-job <jobId>`
+- `/runtime-followup <jobId> <default follow-up prompt>`
+- capture the returned follow-up `jobId`
+- `/runtime-job <follow-up jobId>`
+- `/runtime-logs <follow-up jobId> 40`
+- `/runtime-stop <follow-up jobId>`
+
+The harness fails honestly if it cannot extract the backend `jobId` from Andrea's reply text.
 
 ## Security Notes
 

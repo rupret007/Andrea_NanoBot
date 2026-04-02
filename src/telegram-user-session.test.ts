@@ -6,6 +6,13 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   DEFAULT_TELEGRAM_LIVE_TEST_MESSAGES,
+  DEFAULT_TELEGRAM_RUNTIME_CREATE_PROMPT,
+  DEFAULT_TELEGRAM_RUNTIME_FOLLOWUP_PROMPT,
+  buildTelegramRuntimeAfterCreateMessages,
+  buildTelegramRuntimeAfterFollowupMessages,
+  buildTelegramRuntimeCreateMessages,
+  extractRuntimeJobIdFromReplies,
+  extractRuntimeJobIdFromReplyText,
   matchesExpectedTelegramSender,
   normalizeTelegramSenderId,
   normalizeTelegramTestTarget,
@@ -123,6 +130,50 @@ describe('DEFAULT_TELEGRAM_LIVE_TEST_MESSAGES', () => {
       'ok',
       'Remind me tomorrow at 3pm to call Sam',
       '/cursor_status',
+    ]);
+  });
+});
+
+describe('runtime Telegram live-test helpers', () => {
+  it('extracts a backend job id from the current runtime job card format', () => {
+    expect(
+      extractRuntimeJobIdFromReplyText(
+        'Andrea OpenAI job accepted.\n\n*Andrea OpenAI Job*\n- Job ID: runtime-job-create-12345-abcd\n- Status: queued',
+      ),
+    ).toBe('runtime-job-create-12345-abcd');
+  });
+
+  it('extracts the latest runtime job id from a reply set', () => {
+    expect(
+      extractRuntimeJobIdFromReplies([
+        { id: 1, text: 'intermediate text' },
+        {
+          id: 2,
+          text: '*Andrea OpenAI Job*\n- Job ID: runtime-job-follow_up-67890-wxyz\n- Status: running',
+        },
+      ]),
+    ).toBe('runtime-job-follow_up-67890-wxyz');
+  });
+
+  it('builds the create-stage runtime command sequence', () => {
+    expect(buildTelegramRuntimeCreateMessages()).toEqual([
+      '/runtime-status',
+      `/runtime-create ${DEFAULT_TELEGRAM_RUNTIME_CREATE_PROMPT}`,
+    ]);
+  });
+
+  it('builds the post-create runtime command sequence', () => {
+    expect(buildTelegramRuntimeAfterCreateMessages('job_123')).toEqual([
+      '/runtime-job job_123',
+      `/runtime-followup job_123 ${DEFAULT_TELEGRAM_RUNTIME_FOLLOWUP_PROMPT}`,
+    ]);
+  });
+
+  it('builds the post-followup runtime command sequence', () => {
+    expect(buildTelegramRuntimeAfterFollowupMessages('job_456')).toEqual([
+      '/runtime-job job_456',
+      '/runtime-logs job_456 40',
+      '/runtime-stop job_456',
     ]);
   });
 });

@@ -265,6 +265,7 @@ Recommended flow:
 1. `npm run telegram:user:auth`
 2. `npm run telegram:user:send -- "<message>"`
 3. `npm run telegram:user:batch`
+4. `npm run telegram:user:runtime`
 
 Keep this tooling operator-only and pointed at your own DM or a dedicated test chat only.
 
