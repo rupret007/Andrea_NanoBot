@@ -37,11 +37,14 @@ import {
   getContainerRuntimeStatus,
 } from './container-runtime.js';
 import {
+  createCalendarAutomation,
   createTask,
+  deleteTask,
   getAllAgentThreads,
   getAllChats,
   getAgentThread,
   listAllCursorAgents,
+  listCalendarAutomationsForChat,
   getAllRegisteredGroups,
   getAllSessions,
   getAllTasks,
@@ -60,6 +63,8 @@ import {
   setSession,
   storeChatMetadata,
   storeMessage,
+  updateCalendarAutomation,
+  updateTask,
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
@@ -69,6 +74,15 @@ import {
   buildCalendarAssistantResponse,
   type CalendarSchedulingContext,
 } from './calendar-assistant.js';
+import {
+  advancePendingCalendarAutomation,
+  buildCalendarAutomationPersistInput,
+  isPendingCalendarAutomationExpired,
+  parseCalendarAutomationRecord,
+  planCalendarAutomation,
+  type CalendarAutomationSummary,
+  type PendingCalendarAutomationState,
+} from './calendar-automations.js';
 import {
   advancePendingCalendarReminder,
   advancePendingGoogleCalendarEventAction,
@@ -353,6 +367,8 @@ const GOOGLE_CALENDAR_PENDING_REMINDER_PREFIX =
   'google_calendar_pending_reminder:';
 const GOOGLE_CALENDAR_PENDING_EVENT_ACTION_PREFIX =
   'google_calendar_pending_event_action:';
+const GOOGLE_CALENDAR_PENDING_AUTOMATION_PREFIX =
+  'google_calendar_pending_automation:';
 
 function getGoogleCalendarPendingStateKey(chatJid: string): string {
   return `${GOOGLE_CALENDAR_PENDING_STATE_PREFIX}${chatJid}`;
@@ -372,6 +388,10 @@ function getGoogleCalendarPendingReminderKey(chatJid: string): string {
 
 function getGoogleCalendarPendingEventActionKey(chatJid: string): string {
   return `${GOOGLE_CALENDAR_PENDING_EVENT_ACTION_PREFIX}${chatJid}`;
+}
+
+function getGoogleCalendarPendingAutomationKey(chatJid: string): string {
+  return `${GOOGLE_CALENDAR_PENDING_AUTOMATION_PREFIX}${chatJid}`;
 }
 
 function getPendingGoogleCalendarCreateState(
@@ -543,6 +563,37 @@ function setPendingGoogleCalendarEventActionState(
 
 function clearPendingGoogleCalendarEventActionState(chatJid: string): void {
   deleteRouterState(getGoogleCalendarPendingEventActionKey(chatJid));
+}
+
+function getPendingCalendarAutomationState(
+  chatJid: string,
+): PendingCalendarAutomationState | null {
+  const raw = getRouterState(getGoogleCalendarPendingAutomationKey(chatJid));
+  if (!raw) return null;
+
+  try {
+    const parsed = JSON.parse(raw) as PendingCalendarAutomationState;
+    if (!parsed || parsed.version !== 1 || !parsed.step) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function setPendingCalendarAutomationState(
+  chatJid: string,
+  state: PendingCalendarAutomationState,
+): void {
+  setRouterState(
+    getGoogleCalendarPendingAutomationKey(chatJid),
+    JSON.stringify(state),
+  );
+}
+
+function clearPendingCalendarAutomationState(chatJid: string): void {
+  deleteRouterState(getGoogleCalendarPendingAutomationKey(chatJid));
 }
 
 function formatCreatedGoogleCalendarEventReply(input: {
@@ -812,6 +863,28 @@ function buildGoogleCalendarEventActionInlineRows(
     { label: 'Cancel', actionId: 'cancel' },
   ]);
   return rows;
+}
+
+function getCalendarAutomationSummaries(
+  chatJid: string,
+): CalendarAutomationSummary[] {
+  return listCalendarAutomationsForChat(chatJid).map(
+    parseCalendarAutomationRecord,
+  );
+}
+
+function buildCalendarAutomationInlineActionRows(
+  state: PendingCalendarAutomationState,
+): SendMessageOptions['inlineActionRows'] {
+  if (state.step === 'clarify_time' || state.step === 'clarify_offset') {
+    return [[{ label: 'Cancel', actionId: 'cancel' }]];
+  }
+  return [
+    [
+      { label: 'Confirm', actionId: 'yes' },
+      { label: 'Cancel', actionId: 'cancel' },
+    ],
+  ];
 }
 
 function toGoogleCalendarSchedulingContextState(
@@ -1641,6 +1714,186 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   const lastContent = missedMessages.at(-1)?.content ?? '';
   const now = new Date();
+  const tryHandleLocalCalendarAutomation = async (): Promise<boolean> => {
+    try {
+      const pendingAutomation = getPendingCalendarAutomationState(chatJid);
+      if (
+        pendingAutomation &&
+        isPendingCalendarAutomationExpired(pendingAutomation, now)
+      ) {
+        clearPendingCalendarAutomationState(chatJid);
+      }
+
+      const activeState = getPendingCalendarAutomationState(chatJid);
+      const automations = getCalendarAutomationSummaries(chatJid);
+
+      if (activeState) {
+        const result = advancePendingCalendarAutomation(
+          lastContent,
+          activeState,
+          now,
+        );
+        if (result.kind === 'no_match') {
+          return false;
+        }
+        if (result.kind === 'cancelled') {
+          clearPendingCalendarAutomationState(chatJid);
+          await channel.sendMessage(
+            chatJid,
+            formatCalendarPanelText('*Calendar Automation*', result.message),
+            {
+              inlineActionRows: buildCalendarLookupInlineActionRows(
+                CALENDAR_LOOKUP_TOMORROW_PROMPT,
+              ),
+            },
+          );
+          return true;
+        }
+        if (result.kind === 'awaiting_input') {
+          setPendingCalendarAutomationState(chatJid, result.state);
+          await channel.sendMessage(
+            chatJid,
+            formatCalendarPanelText('*Calendar Automation*', result.message),
+            {
+              inlineActionRows: buildCalendarAutomationInlineActionRows(
+                result.state,
+              ),
+            },
+          );
+          return true;
+        }
+
+        clearPendingCalendarAutomationState(chatJid);
+        const confirmedState = result.state;
+        if (confirmedState.step !== 'confirm') {
+          return false;
+        }
+        if (confirmedState.mode === 'disable' && confirmedState.targetTaskId) {
+          updateTask(confirmedState.targetTaskId, { status: 'paused' });
+          updateCalendarAutomation(confirmedState.targetTaskId, {
+            updated_at: now.toISOString(),
+          });
+          refreshTaskSnapshots(registeredGroups);
+          await channel.sendMessage(
+            chatJid,
+            formatCalendarPanelText(
+              '*Calendar Automation*',
+              `Turned off "${confirmedState.draft.label}".`,
+            ),
+            {
+              inlineActionRows: buildCalendarLookupInlineActionRows(
+                CALENDAR_LOOKUP_TOMORROW_PROMPT,
+              ),
+            },
+          );
+          return true;
+        }
+
+        if (confirmedState.mode === 'delete' && confirmedState.targetTaskId) {
+          deleteTask(confirmedState.targetTaskId);
+          refreshTaskSnapshots(registeredGroups);
+          await channel.sendMessage(
+            chatJid,
+            formatCalendarPanelText(
+              '*Calendar Automation*',
+              `Deleted "${confirmedState.draft.label}".`,
+            ),
+            {
+              inlineActionRows: buildCalendarLookupInlineActionRows(
+                CALENDAR_LOOKUP_TOMORROW_PROMPT,
+              ),
+            },
+          );
+          return true;
+        }
+
+        const persistInput = buildCalendarAutomationPersistInput({
+          draft: confirmedState.draft,
+          chatJid,
+          groupFolder: group.folder,
+          now,
+          existingTaskId: confirmedState.targetTaskId,
+        });
+
+        if (persistInput.replaceTaskId) {
+          updateTask(persistInput.replaceTaskId, {
+            prompt: persistInput.task.prompt,
+            schedule_type: persistInput.task.schedule_type,
+            schedule_value: persistInput.task.schedule_value,
+            next_run: persistInput.task.next_run,
+            status: 'active',
+          });
+          updateCalendarAutomation(persistInput.replaceTaskId, {
+            label: persistInput.automation.label,
+            config_json: persistInput.automation.config_json,
+            dedupe_state_json: null,
+            updated_at: now.toISOString(),
+          });
+        } else {
+          createTask(persistInput.task);
+          createCalendarAutomation({
+            ...persistInput.automation,
+            created_at: now.toISOString(),
+            updated_at: now.toISOString(),
+          });
+        }
+
+        refreshTaskSnapshots(registeredGroups);
+        await channel.sendMessage(
+          chatJid,
+          formatCalendarPanelText(
+            '*Calendar Automation*',
+            persistInput.replaceTaskId
+              ? `Updated automation:\n- ${confirmedState.draft.label}`
+              : `Saved automation:\n- ${confirmedState.draft.label}`,
+          ),
+          {
+            inlineActionRows: buildCalendarLookupInlineActionRows(
+              CALENDAR_LOOKUP_TOMORROW_PROMPT,
+            ),
+          },
+        );
+        return true;
+      }
+
+      const plan = planCalendarAutomation(lastContent, now, automations);
+      if (plan.kind === 'none') {
+        return false;
+      }
+
+      if (plan.kind === 'list') {
+        await channel.sendMessage(
+          chatJid,
+          formatCalendarPanelText('*Calendar Automations*', plan.message),
+          {
+            inlineActionRows: buildCalendarLookupInlineActionRows(
+              CALENDAR_LOOKUP_TOMORROW_PROMPT,
+            ),
+          },
+        );
+        return true;
+      }
+
+      setPendingCalendarAutomationState(chatJid, plan.state);
+      await channel.sendMessage(
+        chatJid,
+        formatCalendarPanelText('*Calendar Automation*', plan.message),
+        {
+          inlineActionRows: buildCalendarAutomationInlineActionRows(plan.state),
+        },
+      );
+      return true;
+    } catch (err) {
+      lastAgentTimestamp[chatJid] = previousCursor;
+      saveState();
+      logger.warn(
+        { group: group.name, err },
+        'Local calendar automation path failed, rolled back cursor for retry',
+      );
+      return false;
+    }
+  };
+
   const tryHandleLocalGoogleCalendarFollowThrough =
     async (): Promise<boolean> => {
       try {
@@ -2766,6 +3019,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       return false;
     }
   };
+
+  if (await tryHandleLocalCalendarAutomation()) {
+    return true;
+  }
 
   if (await tryHandleLocalGoogleCalendarFollowThrough()) {
     return true;

@@ -17,6 +17,7 @@ import {
   ScheduledTask,
   TaskRunLog,
 } from './types.js';
+import type { CalendarAutomationRecordInput } from './calendar-automations.js';
 
 let db: Database.Database;
 
@@ -95,6 +96,22 @@ function createSchema(database: Database.Database): void {
       FOREIGN KEY (task_id) REFERENCES scheduled_tasks(id)
     );
     CREATE INDEX IF NOT EXISTS idx_task_run_logs ON task_run_logs(task_id, run_at);
+
+    CREATE TABLE IF NOT EXISTS calendar_automations (
+      task_id TEXT PRIMARY KEY,
+      chat_jid TEXT NOT NULL,
+      group_folder TEXT NOT NULL,
+      automation_type TEXT NOT NULL,
+      label TEXT NOT NULL,
+      config_json TEXT NOT NULL,
+      dedupe_state_json TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_calendar_automations_chat
+      ON calendar_automations(chat_jid, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_calendar_automations_group
+      ON calendar_automations(group_folder, updated_at DESC);
 
     CREATE TABLE IF NOT EXISTS router_state (
       key TEXT PRIMARY KEY,
@@ -896,7 +913,112 @@ export function updateTask(
 export function deleteTask(id: string): void {
   // Delete child records first (FK constraint)
   db.prepare('DELETE FROM task_run_logs WHERE task_id = ?').run(id);
+  db.prepare('DELETE FROM calendar_automations WHERE task_id = ?').run(id);
   db.prepare('DELETE FROM scheduled_tasks WHERE id = ?').run(id);
+}
+
+export function createCalendarAutomation(
+  input: Omit<CalendarAutomationRecordInput, 'status' | 'next_run'>,
+): void {
+  db.prepare(
+    `
+      INSERT INTO calendar_automations (
+        task_id,
+        chat_jid,
+        group_folder,
+        automation_type,
+        label,
+        config_json,
+        dedupe_state_json,
+        created_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+  ).run(
+    input.task_id,
+    input.chat_jid,
+    input.group_folder,
+    input.automation_type,
+    input.label,
+    input.config_json,
+    input.dedupe_state_json,
+    input.created_at,
+    input.updated_at,
+  );
+}
+
+export function getCalendarAutomationByTaskId(
+  taskId: string,
+): CalendarAutomationRecordInput | undefined {
+  return db
+    .prepare(
+      `
+        SELECT
+          calendar_automations.*,
+          scheduled_tasks.status,
+          scheduled_tasks.next_run
+        FROM calendar_automations
+        JOIN scheduled_tasks ON scheduled_tasks.id = calendar_automations.task_id
+        WHERE calendar_automations.task_id = ?
+      `,
+    )
+    .get(taskId) as CalendarAutomationRecordInput | undefined;
+}
+
+export function listCalendarAutomationsForChat(
+  chatJid: string,
+): CalendarAutomationRecordInput[] {
+  return db
+    .prepare(
+      `
+        SELECT
+          calendar_automations.*,
+          scheduled_tasks.status,
+          scheduled_tasks.next_run
+        FROM calendar_automations
+        JOIN scheduled_tasks ON scheduled_tasks.id = calendar_automations.task_id
+        WHERE calendar_automations.chat_jid = ?
+        ORDER BY calendar_automations.updated_at DESC
+      `,
+    )
+    .all(chatJid) as CalendarAutomationRecordInput[];
+}
+
+export function updateCalendarAutomation(
+  taskId: string,
+  updates: Partial<
+    Pick<
+      CalendarAutomationRecordInput,
+      'label' | 'config_json' | 'dedupe_state_json' | 'updated_at'
+    >
+  >,
+): void {
+  const fields: string[] = [];
+  const values: unknown[] = [];
+
+  if (updates.label !== undefined) {
+    fields.push('label = ?');
+    values.push(updates.label);
+  }
+  if (updates.config_json !== undefined) {
+    fields.push('config_json = ?');
+    values.push(updates.config_json);
+  }
+  if (updates.dedupe_state_json !== undefined) {
+    fields.push('dedupe_state_json = ?');
+    values.push(updates.dedupe_state_json);
+  }
+  if (updates.updated_at !== undefined) {
+    fields.push('updated_at = ?');
+    values.push(updates.updated_at);
+  }
+
+  if (fields.length === 0) return;
+
+  values.push(taskId);
+  db.prepare(
+    `UPDATE calendar_automations SET ${fields.join(', ')} WHERE task_id = ?`,
+  ).run(...values);
 }
 
 export function getDueTasks(): ScheduledTask[] {

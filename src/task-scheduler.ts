@@ -9,10 +9,12 @@ import {
   writeTasksSnapshot,
 } from './container-runner.js';
 import {
+  getCalendarAutomationByTaskId,
   getAllTasks,
   getDueTasks,
   getTaskById,
   logTaskRun,
+  updateCalendarAutomation,
   updateTask,
   updateTaskAfterRun,
 } from './db.js';
@@ -22,6 +24,10 @@ import { logger } from './logger.js';
 import { classifyScheduledTaskRequest } from './assistant-routing.js';
 import { formatOutbound } from './router.js';
 import { RegisteredGroup, ScheduledTask } from './types.js';
+import {
+  executeCalendarAutomation,
+  parseCalendarAutomationRecord,
+} from './calendar-automations.js';
 
 /**
  * Compute the next run time for a recurring task, anchored to the
@@ -128,6 +134,51 @@ async function runTask(
       result: null,
       error: `Group not found: ${task.group_folder}`,
     });
+    return;
+  }
+
+  const automationRecord = getCalendarAutomationByTaskId(task.id);
+  if (automationRecord) {
+    let resultSummary = 'Completed';
+    let error: string | null = null;
+    try {
+      const automation = parseCalendarAutomationRecord(automationRecord);
+      const execution = await executeCalendarAutomation(automation);
+      if (execution.message) {
+        await deps.sendMessage(task.chat_jid, execution.message);
+      }
+      resultSummary = execution.summary;
+      updateCalendarAutomation(task.id, {
+        dedupe_state_json: execution.dedupeState
+          ? JSON.stringify(execution.dedupeState)
+          : null,
+        updated_at: new Date().toISOString(),
+      });
+      logger.info(
+        { taskId: task.id, durationMs: Date.now() - startTime },
+        'Calendar automation task completed',
+      );
+    } catch (err) {
+      error = err instanceof Error ? err.message : String(err);
+      resultSummary = `Error: ${error}`;
+      logger.error(
+        { taskId: task.id, error },
+        'Calendar automation task failed',
+      );
+    }
+
+    const durationMs = Date.now() - startTime;
+    logTaskRun({
+      task_id: task.id,
+      run_at: new Date().toISOString(),
+      duration_ms: durationMs,
+      status: error ? 'error' : 'success',
+      result: error ? null : resultSummary,
+      error,
+    });
+
+    const nextRun = computeNextRun(task);
+    updateTaskAfterRun(task.id, nextRun, resultSummary);
     return;
   }
 
