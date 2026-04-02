@@ -86,16 +86,34 @@ NanoBot maps the backend into four local states:
 
 `/runtime-status` is the operator-facing check for this.
 
-## Current Bootstrap Limitation
+## First-Run Bootstrap
 
 If the backend reports:
 
 `No registered group found for folder "..."`
 
-NanoBot classifies that as `bootstrap_required`.
+NanoBot first treats that as a local bootstrap step, not an immediate hard failure.
 
-NanoBot is prepared to retry through a future backend bootstrap hook, but the current `Andrea_OpenAI_Bot` contract still needs one small local-only addition for true self-healing first-job setup:
+Current behavior:
 
-- preferred shape: `PUT /groups/:groupFolder`
+- NanoBot uses its own registered chat context as the source of truth for the backend payload
+- NanoBot calls local-only `PUT /groups/:groupFolder`
+- if registration succeeds, NanoBot retries the original `POST /jobs` or `GET /jobs` request once
+- if that retry succeeds, normal job flow continues with no extra setup step
 
-Until that exists, the operator must register the backend group separately before the first live job for that `groupFolder` can succeed.
+`bootstrap_required` is now the narrower legacy/degraded case:
+
+- the backend is reachable
+- the group is missing
+- but the backend does not expose or accept the local registration route
+
+`bootstrap_failed` is the registration-specific failure case:
+
+- NanoBot reached the backend
+- NanoBot attempted registration
+- the backend rejected the registration or the post-registration create retry still failed
+
+This keeps the ownership split clean:
+
+- NanoBot owns chat/group context truth
+- `Andrea_OpenAI_Bot` owns execution truth once the group is registered

@@ -1310,7 +1310,10 @@ async function main(): Promise<void> {
     group: RegisteredGroup | undefined,
   ): string {
     if (err instanceof AndreaOpenAiRuntimeError) {
-      if (err.kind === 'bootstrap_required') {
+      if (
+        err.kind === 'bootstrap_required' ||
+        err.kind === 'bootstrap_failed'
+      ) {
         return [
           err.message,
           `- Backend: andrea_openai`,

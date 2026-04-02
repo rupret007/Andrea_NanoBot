@@ -130,7 +130,7 @@ Andrea now documents Cursor as three separate surfaces:
   - `/runtime-logs`
   - `/runtime-stop`
 
-See [docs/ANDREA_OPENAI_BACKEND.md](docs/ANDREA_OPENAI_BACKEND.md) for the ownership split and current bootstrap limitation.
+See [docs/ANDREA_OPENAI_BACKEND.md](docs/ANDREA_OPENAI_BACKEND.md) for the ownership split and the one-time local bootstrap-and-retry flow.
 
 ## Two Command Surfaces
 

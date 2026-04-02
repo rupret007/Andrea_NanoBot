@@ -19,6 +19,7 @@ export const ANDREA_OPENAI_BACKEND_ID = 'andrea_openai';
 type ErrorCode =
   | 'validation_error'
   | 'not_found'
+  | 'conflict'
   | 'method_not_allowed'
   | 'internal_error';
 

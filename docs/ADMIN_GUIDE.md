@@ -118,8 +118,9 @@ Important truth:
 - `jobId` is the primary backend handle in NanoBot
 - `threadId` is metadata returned by the backend
 - NanoBot uses the current registered chat's `group.folder` as the backend `groupFolder`
-- if the backend says `No registered group found for folder "..."`, NanoBot reports `bootstrap_required`
-- a fully automatic first-job bootstrap still needs a small backend-side registration route in `Andrea_OpenAI_Bot`
+- if the backend says `No registered group found for folder "..."`, NanoBot now calls local `PUT /groups/:groupFolder` and retries the original request once
+- `bootstrap_required` now means the backend is reachable but does not support or accept the local bootstrap route
+- `bootstrap_failed` means NanoBot reached the backend, attempted registration, and the registration or immediate retry still failed
 
 ## First Deployment Checklist
 

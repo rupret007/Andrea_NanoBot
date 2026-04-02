@@ -205,6 +205,38 @@ describe('AndreaOpenAiBackendClient', () => {
     expect(stop.liveStopAccepted).toBe(true);
   });
 
+  it('registers backend groups with NanoBot group metadata', async () => {
+    const fetchImpl = vi.fn(async (input, init) => {
+      expect(String(input)).toContain('/groups/main');
+      expect(init?.method).toBe('PUT');
+      expect(String(init?.body)).toContain('"jid":"tg:1"');
+      expect(String(init?.body)).toContain('"name":"Andrea Main"');
+      expect(String(init?.body)).toContain('"trigger":"@andrea"');
+      expect(String(init?.body)).toContain('"addedAt":"2026-04-02T20:00:00.000Z"');
+      expect(String(init?.body)).toContain('"requiresTrigger":false');
+      expect(String(init?.body)).toContain('"isMain":true');
+      return new Response(JSON.stringify({ created: true }), { status: 201 });
+    });
+    const client = new AndreaOpenAiBackendClient({
+      enabled: true,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    await client.ensureGroupRegistration({
+      jid: 'tg:1',
+      group: {
+        name: 'Andrea Main',
+        folder: 'main',
+        trigger: '@andrea',
+        added_at: '2026-04-02T20:00:00.000Z',
+        requiresTrigger: false,
+        isMain: true,
+      },
+    });
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
   it('surfaces structured backend HTTP errors', async () => {
     const client = new AndreaOpenAiBackendClient({
       enabled: true,
@@ -225,6 +257,41 @@ describe('AndreaOpenAiBackendClient', () => {
       name: 'AndreaOpenAiBackendHttpError',
       status: 404,
       code: 'not_found',
+    } satisfies Partial<AndreaOpenAiBackendHttpError>);
+  });
+
+  it('preserves conflict error codes from backend registration failures', async () => {
+    const client = new AndreaOpenAiBackendClient({
+      enabled: true,
+      fetchImpl: vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            error: {
+              code: 'conflict',
+              message: 'Group "main" already exists with conflicting metadata.',
+            },
+          }),
+          { status: 409 },
+        ),
+      ) as unknown as typeof fetch,
+    });
+
+    await expect(
+      client.ensureGroupRegistration({
+        jid: 'tg:1',
+        group: {
+          name: 'Andrea Main',
+          folder: 'main',
+          trigger: '@andrea',
+          added_at: '2026-04-02T20:00:00.000Z',
+          requiresTrigger: false,
+          isMain: true,
+        },
+      }),
+    ).rejects.toMatchObject({
+      name: 'AndreaOpenAiBackendHttpError',
+      status: 409,
+      code: 'conflict',
     } satisfies Partial<AndreaOpenAiBackendHttpError>);
   });
 

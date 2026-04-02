@@ -165,6 +165,86 @@ describe('andrea-openai-runtime', () => {
     expect(job.jobId).toBe('job_retry');
     expect(client.ensureGroupRegistration).toHaveBeenCalledTimes(1);
     expect(client.createJob).toHaveBeenCalledTimes(2);
+    expect(client.ensureGroupRegistration).toHaveBeenCalledWith({
+      jid: 'tg:1',
+      group: MAIN_GROUP,
+    });
+  });
+
+  it('fails honestly when backend group registration conflicts', async () => {
+    const client = makeClient();
+    client.createJob.mockRejectedValue(
+      new AndreaOpenAiBackendHttpError({
+        message: 'No registered group found for folder "main".',
+        status: 404,
+        code: 'not_found',
+        route: '/jobs',
+      }),
+    );
+    client.ensureGroupRegistration.mockRejectedValue(
+      new AndreaOpenAiBackendHttpError({
+        message: 'Group "main" already exists with conflicting metadata.',
+        status: 409,
+        code: 'conflict',
+        route: '/groups/main',
+      }),
+    );
+
+    await expect(
+      createAndreaOpenAiRuntimeJob(
+        {
+          chatJid: 'tg:1',
+          group: MAIN_GROUP,
+          prompt: 'Ship it',
+        },
+        client as never,
+      ),
+    ).rejects.toMatchObject({
+      name: 'AndreaOpenAiRuntimeError',
+      kind: 'bootstrap_failed',
+      groupFolder: 'main',
+    } satisfies Partial<AndreaOpenAiRuntimeError>);
+    expect(client.createJob).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries create only once after backend registration succeeds', async () => {
+    const client = makeClient();
+    client.createJob
+      .mockRejectedValueOnce(
+        new AndreaOpenAiBackendHttpError({
+          message: 'No registered group found for folder "main".',
+          status: 404,
+          code: 'not_found',
+          route: '/jobs',
+        }),
+      )
+      .mockRejectedValueOnce(
+        new AndreaOpenAiBackendHttpError({
+          message: 'Prompt validation failed on retry.',
+          status: 400,
+          code: 'validation_error',
+          route: '/jobs',
+        }),
+      );
+    client.ensureGroupRegistration.mockResolvedValue(undefined);
+
+    await expect(
+      createAndreaOpenAiRuntimeJob(
+        {
+          chatJid: 'tg:1',
+          group: MAIN_GROUP,
+          prompt: 'Retry it',
+        },
+        client as never,
+      ),
+    ).rejects.toMatchObject({
+      name: 'AndreaOpenAiRuntimeError',
+      kind: 'bootstrap_failed',
+      groupFolder: 'main',
+    } satisfies Partial<AndreaOpenAiRuntimeError>);
+
+    expect(client.ensureGroupRegistration).toHaveBeenCalledTimes(1);
+    expect(client.createJob).toHaveBeenCalledTimes(2);
   });
 
   it('lists backend jobs and preserves pagination truth', async () => {
@@ -190,6 +270,40 @@ describe('andrea-openai-runtime', () => {
       beforeJobId: 'job_200',
     });
     expect(result.nextBeforeJobId).toBe('job_100');
+  });
+
+  it('retries list once after backend group bootstrap succeeds', async () => {
+    const client = makeClient();
+    client.listJobs
+      .mockRejectedValueOnce(
+        new AndreaOpenAiBackendHttpError({
+          message: 'No registered group found for folder "main".',
+          status: 404,
+          code: 'not_found',
+          route: '/jobs',
+        }),
+      )
+      .mockResolvedValueOnce({
+        jobs: [makeJob({ jobId: 'job_200' })],
+        nextBeforeJobId: 'job_200',
+      });
+    client.ensureGroupRegistration.mockResolvedValue(undefined);
+
+    const result = await listAndreaOpenAiRuntimeJobs(
+      {
+        chatJid: 'tg:1',
+        group: MAIN_GROUP,
+        limit: 5,
+      },
+      client as never,
+    );
+
+    expect(result.jobs[0]?.jobId).toBe('job_200');
+    expect(client.ensureGroupRegistration).toHaveBeenCalledWith({
+      jid: 'tg:1',
+      group: MAIN_GROUP,
+    });
+    expect(client.listJobs).toHaveBeenCalledTimes(2);
   });
 
   it('fetches a single job and enforces current-group context', async () => {

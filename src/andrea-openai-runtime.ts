@@ -24,6 +24,7 @@ export type AndreaOpenAiRuntimeErrorKind =
   | 'unavailable'
   | 'not_ready'
   | 'bootstrap_required'
+  | 'bootstrap_failed'
   | 'not_found'
   | 'validation'
   | 'context_mismatch';
@@ -197,15 +198,46 @@ async function ensureBackendGroup(
     await client.ensureGroupRegistration(request);
     return 'registered';
   } catch (err) {
-    if (
-      err instanceof AndreaOpenAiBackendHttpError &&
-      err.route.startsWith('/groups/') &&
-      (err.status === 404 || err.status === 405)
-    ) {
-      return 'unsupported';
+    if (err instanceof AndreaOpenAiBackendHttpError && err.route.startsWith('/groups/')) {
+      if (err.status === 404 || err.status === 405) {
+        return 'unsupported';
+      }
+
+      throw new AndreaOpenAiRuntimeError(
+        'bootstrap_failed',
+        `Andrea OpenAI backend could not register backend group "${request.group.folder}" automatically.`,
+        trimDetail(err.message),
+        request.group.folder,
+      );
     }
     throw classifyBackendError(err, request.group.folder);
   }
+}
+
+function buildBootstrapRequiredError(groupFolder: string): AndreaOpenAiRuntimeError {
+  return new AndreaOpenAiRuntimeError(
+    'bootstrap_required',
+    `Andrea OpenAI backend is reachable, but backend group "${groupFolder}" is not registered yet.`,
+    'This backend does not expose the local group registration route yet. Register the backend group first or enable PUT /groups/:groupFolder in Andrea_OpenAI_Bot.',
+    groupFolder,
+  );
+}
+
+function classifyCreateRetryFailure(
+  err: unknown,
+  groupFolder: string,
+): AndreaOpenAiRuntimeError {
+  const classified = classifyBackendError(err, groupFolder);
+  if (classified.kind === 'unavailable') {
+    return classified;
+  }
+
+  return new AndreaOpenAiRuntimeError(
+    'bootstrap_failed',
+    `Andrea OpenAI backend registered backend group "${groupFolder}", but job creation still failed on retry.`,
+    classified.detail || classified.message,
+    groupFolder,
+  );
 }
 
 export async function getAndreaOpenAiBackendStatus(
@@ -246,21 +278,20 @@ export async function createAndreaOpenAiRuntimeJob(
         group: input.group,
       });
       if (ensureResult === 'registered') {
-        const job = await client.createJob({
-          groupFolder: input.group.folder,
-          prompt: input.prompt,
-          source: buildSource(input),
-        });
-        cacheJob(input.chatJid, job);
-        return job;
+        try {
+          const job = await client.createJob({
+            groupFolder: input.group.folder,
+            prompt: input.prompt,
+            source: buildSource(input),
+          });
+          cacheJob(input.chatJid, job);
+          return job;
+        } catch (retryErr) {
+          throw classifyCreateRetryFailure(retryErr, input.group.folder);
+        }
       }
 
-      throw new AndreaOpenAiRuntimeError(
-        'bootstrap_required',
-        `Andrea OpenAI backend is reachable, but backend group "${input.group.folder}" is not registered yet.`,
-        'Backend group bootstrap is not supported through the current loopback contract yet. Register the group in Andrea_OpenAI_Bot first or add PUT /groups/:groupFolder there.',
-        input.group.folder,
-      );
+      throw buildBootstrapRequiredError(input.group.folder);
     }
 
     throw classifyBackendError(err, input.group.folder);
@@ -293,23 +324,22 @@ export async function listAndreaOpenAiRuntimeJobs(
         group: input.group,
       });
       if (ensureResult === 'registered') {
-        const result = await client.listJobs({
-          groupFolder: input.group.folder,
-          limit: input.limit,
-          beforeJobId: input.beforeJobId,
-        });
-        for (const job of result.jobs) {
-          cacheJob(input.chatJid, job);
+        try {
+          const result = await client.listJobs({
+            groupFolder: input.group.folder,
+            limit: input.limit,
+            beforeJobId: input.beforeJobId,
+          });
+          for (const job of result.jobs) {
+            cacheJob(input.chatJid, job);
+          }
+          return result;
+        } catch (retryErr) {
+          throw classifyBackendError(retryErr, input.group.folder);
         }
-        return result;
       }
 
-      throw new AndreaOpenAiRuntimeError(
-        'bootstrap_required',
-        `Andrea OpenAI backend is reachable, but backend group "${input.group.folder}" is not registered yet.`,
-        'Backend group bootstrap is not supported through the current loopback contract yet. Register the group in Andrea_OpenAI_Bot first or add PUT /groups/:groupFolder there.',
-        input.group.folder,
-      );
+      throw buildBootstrapRequiredError(input.group.folder);
     }
 
     throw classifyBackendError(err, input.group.folder);
