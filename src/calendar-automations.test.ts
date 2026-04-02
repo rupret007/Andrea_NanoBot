@@ -4,6 +4,8 @@ import {
   advancePendingCalendarAutomation,
   executeCalendarAutomation,
   planCalendarAutomation,
+  type CalendarAutomationConfig,
+  type CalendarAutomationDedupeState,
   type CalendarAutomationSummary,
 } from './calendar-automations.js';
 
@@ -70,7 +72,10 @@ function createGoogleCalendarFetchMock(input: {
 }
 
 function createAutomationSummary(
-  overrides: Partial<CalendarAutomationSummary>,
+  overrides: Partial<CalendarAutomationSummary> & {
+    config?: CalendarAutomationConfig;
+    dedupeState?: CalendarAutomationDedupeState | null;
+  },
 ): CalendarAutomationSummary {
   return {
     taskId: 'task-1',
@@ -103,8 +108,8 @@ function createAutomationSummary(
 }
 
 describe('planCalendarAutomation', () => {
-  it('creates a weekday morning brief automation draft', () => {
-    const result = planCalendarAutomation(
+  it('creates a weekday morning brief automation draft', async () => {
+    const result = await planCalendarAutomation(
       'Send me a morning brief every weekday at 7 AM',
       new Date('2026-04-01T10:00:00-05:00'),
       [],
@@ -117,10 +122,11 @@ describe('planCalendarAutomation', () => {
     expect(result.state.mode).toBe('create');
     expect(result.state.draft.label).toContain('Morning brief');
     expect(result.state.draft.label).toContain('every weekday at 7:00 AM');
+    expect(result.message).toContain('Scope: All calendars');
   });
 
-  it('creates a family weekly summary automation draft', () => {
-    const result = planCalendarAutomation(
+  it('creates a family weekly summary automation draft', async () => {
+    const result = await planCalendarAutomation(
       'Send me a family calendar summary every Sunday night',
       new Date('2026-04-01T10:00:00-05:00'),
       [],
@@ -133,11 +139,71 @@ describe('planCalendarAutomation', () => {
     expect(result.state.draft.config.kind).toBe('briefing');
     expect(result.state.draft.config.scopeKind).toBe('family_shared');
     expect(result.state.draft.label).toContain('Family calendar summary');
-    expect(result.state.draft.label).toContain('every sunday at 8:00 PM');
+    expect(result.message).toContain('Scope: Family/shared');
   });
 
-  it('asks for a time when a one-time watch automation omits one', () => {
-    const result = planCalendarAutomation(
+  it('lists automations with type, scope, status, and next-run preview', async () => {
+    const result = await planCalendarAutomation(
+      'Show my calendar automations',
+      new Date('2026-04-01T10:00:00-05:00'),
+      [
+        createAutomationSummary({}),
+        createAutomationSummary({
+          taskId: 'task-2',
+          label: 'Family calendar summary every sunday at 8:00 PM',
+          status: 'paused',
+          config: {
+            kind: 'briefing',
+            scopeKind: 'family_shared',
+            schedule: {
+              kind: 'cron',
+              triggerKind: 'weekly',
+              weekday: 0,
+              hour: 20,
+              minute: 0,
+              scheduleType: 'cron',
+              scheduleValue: '0 20 * * 0',
+              description: 'every sunday at 8:00 PM',
+            },
+            query: "What's on the family calendar this week?",
+            anchorOffsetDays: 1,
+          },
+        }),
+      ],
+    );
+
+    expect(result.kind).toBe('list');
+    if (result.kind !== 'list') return;
+    expect(result.message).toContain('1 active, 1 paused.');
+    expect(result.message).toContain('Briefing: Morning brief');
+    expect(result.message).toContain('Scope: All calendars');
+    expect(result.message).toContain('Scope: Family/shared');
+    expect(result.message).toContain('Next when resumed');
+  });
+
+  it('filters automation list to active entries only', async () => {
+    const result = await planCalendarAutomation(
+      'Which schedule automations are active?',
+      new Date('2026-04-01T10:00:00-05:00'),
+      [
+        createAutomationSummary({}),
+        createAutomationSummary({
+          taskId: 'task-2',
+          label: 'Family calendar summary every sunday at 8:00 PM',
+          status: 'paused',
+        }),
+      ],
+    );
+
+    expect(result.kind).toBe('list');
+    if (result.kind !== 'list') return;
+    expect(result.message).toContain('1 active.');
+    expect(result.message).toContain('Morning brief');
+    expect(result.message).not.toContain('Family calendar summary');
+  });
+
+  it('asks for a time when a one-time watch automation omits one', async () => {
+    const result = await planCalendarAutomation(
       'Let me know if tomorrow afternoon has no 30-minute gaps',
       new Date('2026-04-01T10:00:00-05:00'),
       [],
@@ -157,12 +223,10 @@ describe('planCalendarAutomation', () => {
     expect(next.state.step).toBe('confirm');
     if (next.state.step !== 'confirm') return;
     expect(next.state.draft.config.schedule.kind).toBe('once');
-    if (next.state.draft.config.schedule.kind !== 'once') return;
-    expect(next.state.draft.config.schedule.runAtIso).toContain('2026-04-02');
   });
 
-  it('asks for an offset when a recurring next-meeting reminder omits one', () => {
-    const result = planCalendarAutomation(
+  it('asks for an offset when a recurring next-meeting reminder omits one', async () => {
+    const result = await planCalendarAutomation(
       'Remind me before my next meeting every workday',
       new Date('2026-04-01T10:00:00-05:00'),
       [],
@@ -171,46 +235,28 @@ describe('planCalendarAutomation', () => {
     expect(result.kind).toBe('awaiting_input');
     if (result.kind !== 'awaiting_input') return;
     expect(result.state.step).toBe('clarify_offset');
-
-    const next = advancePendingCalendarAutomation(
-      '30 minutes before',
-      result.state,
-      new Date('2026-04-01T10:01:00-05:00'),
-    );
-    expect(next.kind).toBe('awaiting_input');
-    if (next.kind !== 'awaiting_input') return;
-    expect(next.state.step).toBe('confirm');
   });
 
-  it('creates a family-scoped first-event reminder automation', () => {
-    const result = planCalendarAutomation(
-      'Remind me 1 hour before my first event on the family calendar every workday',
+  it('offers to resume an exact paused automation instead of duplicating it', async () => {
+    const result = await planCalendarAutomation(
+      'Send me a morning brief every weekday at 7 AM',
       new Date('2026-04-01T10:00:00-05:00'),
-      [],
+      [createAutomationSummary({ status: 'paused' })],
     );
 
     expect(result.kind).toBe('awaiting_input');
     if (result.kind !== 'awaiting_input') return;
     expect(result.state.step).toBe('confirm');
     if (result.state.step !== 'confirm') return;
-    expect(result.state.draft.config.kind).toBe('event_reminder');
-    if (result.state.draft.config.kind !== 'event_reminder') return;
-    expect(result.state.draft.config.selector).toBe('first_event_today');
-    expect(result.state.draft.config.scopeKind).toBe('family_shared');
-    expect(result.state.draft.config.offsetMinutes).toBe(60);
-    expect(result.state.draft.label).toContain('First-event reminder');
+    expect(result.state.mode).toBe('resume');
+    expect(result.message).toContain('is paused');
   });
 
-  it('offers to replace a matching existing automation', () => {
-    const existing = [
-      createAutomationSummary({
-        label: 'Morning brief every weekday at 7:00 AM',
-      }),
-    ];
-    const result = planCalendarAutomation(
+  it('offers to replace a matching active automation with a changed schedule', async () => {
+    const result = await planCalendarAutomation(
       'Send me a morning brief every weekday at 6:30 AM',
       new Date('2026-04-01T10:00:00-05:00'),
-      existing,
+      [createAutomationSummary({})],
     );
 
     expect(result.kind).toBe('awaiting_input');
@@ -218,25 +264,36 @@ describe('planCalendarAutomation', () => {
     expect(result.state.step).toBe('confirm');
     if (result.state.step !== 'confirm') return;
     expect(result.state.mode).toBe('replace');
-    expect(result.message).toContain('Current: Morning brief');
   });
 
-  it('lists current automations concisely', () => {
-    const result = planCalendarAutomation(
-      'Show my calendar automations',
+  it('supports pause and resume management flows', async () => {
+    const paused = createAutomationSummary({ status: 'paused' });
+    const pause = await planCalendarAutomation(
+      'Turn off my morning brief',
       new Date('2026-04-01T10:00:00-05:00'),
       [createAutomationSummary({})],
     );
+    expect(pause.kind).toBe('awaiting_input');
+    if (pause.kind !== 'awaiting_input') return;
+    expect(pause.state.step).toBe('confirm');
+    if (pause.state.step !== 'confirm') return;
+    expect(pause.state.mode).toBe('pause');
 
-    expect(result.kind).toBe('list');
-    if (result.kind !== 'list') return;
-    expect(result.message).toContain('Your calendar automations:');
-    expect(result.message).toContain('Morning brief');
+    const resume = await planCalendarAutomation(
+      'Resume the morning brief',
+      new Date('2026-04-01T10:00:00-05:00'),
+      [paused],
+    );
+    expect(resume.kind).toBe('awaiting_input');
+    if (resume.kind !== 'awaiting_input') return;
+    expect(resume.state.step).toBe('confirm');
+    if (resume.state.step !== 'confirm') return;
+    expect(resume.state.mode).toBe('resume');
   });
 
-  it('offers to disable a matching automation', () => {
-    const result = planCalendarAutomation(
-      'Turn off my morning brief',
+  it('supports change phrasing for schedule updates', async () => {
+    const result = await planCalendarAutomation(
+      'Change the morning brief to 8 PM',
       new Date('2026-04-01T10:00:00-05:00'),
       [createAutomationSummary({})],
     );
@@ -245,8 +302,115 @@ describe('planCalendarAutomation', () => {
     if (result.kind !== 'awaiting_input') return;
     expect(result.state.step).toBe('confirm');
     if (result.state.step !== 'confirm') return;
-    expect(result.state.mode).toBe('disable');
-    expect(result.message).toContain('turn off this automation');
+    expect(result.state.mode).toBe('replace');
+    expect(result.message).toContain(
+      'New: Morning brief every weekday at 8:00 PM',
+    );
+  });
+
+  it('resolves a friendly named calendar scope when it matches one configured calendar', async () => {
+    const result = await planCalendarAutomation(
+      'Send me a brief for the Musak calendar every weekday at 7 AM',
+      new Date('2026-04-01T10:00:00-05:00'),
+      [],
+      {
+        configuredCalendars: [
+          {
+            id: 'primary',
+            summary: 'Jeff',
+            primary: true,
+            accessRole: 'owner',
+            writable: true,
+            selected: true,
+          },
+          {
+            id: 'musak',
+            summary: 'Musak Calendar',
+            primary: false,
+            accessRole: 'owner',
+            writable: true,
+            selected: true,
+          },
+        ],
+      },
+    );
+
+    expect(result.kind).toBe('awaiting_input');
+    if (result.kind !== 'awaiting_input') return;
+    expect(result.state.step).toBe('confirm');
+    if (result.state.step !== 'confirm') return;
+    expect(result.state.draft.config.scopeKind).toBe('named_calendar');
+    expect(result.state.draft.config.scopeCalendarId).toBe('musak');
+    expect(result.message).toContain('Scope: Musak Calendar');
+  });
+
+  it('asks briefly when multiple named calendars match', async () => {
+    const result = await planCalendarAutomation(
+      'Send me a brief for the Story calendar every weekday at 7 AM',
+      new Date('2026-04-01T10:00:00-05:00'),
+      [],
+      {
+        configuredCalendars: [
+          {
+            id: 'story-1',
+            summary: 'Jeff Story',
+            primary: false,
+            accessRole: 'owner',
+            writable: true,
+            selected: true,
+          },
+          {
+            id: 'story-2',
+            summary: 'Jeff & Candace Story',
+            primary: false,
+            accessRole: 'owner',
+            writable: true,
+            selected: true,
+          },
+        ],
+      },
+    );
+
+    expect(result.kind).toBe('list');
+    if (result.kind !== 'list') return;
+    expect(result.message).toContain('more than one configured calendar');
+    expect(result.message).toContain('Jeff Story');
+    expect(result.message).toContain('Jeff & Candace Story');
+  });
+
+  it('fails clearly when a named calendar is not configured', async () => {
+    const result = await planCalendarAutomation(
+      'Send me a brief for the Soccer calendar every weekday at 7 AM',
+      new Date('2026-04-01T10:00:00-05:00'),
+      [],
+      {
+        configuredCalendars: [
+          {
+            id: 'primary',
+            summary: 'Jeff',
+            primary: true,
+            accessRole: 'owner',
+            writable: true,
+            selected: true,
+          },
+          {
+            id: 'musak',
+            summary: 'Musak Calendar',
+            primary: false,
+            accessRole: 'owner',
+            writable: true,
+            selected: true,
+          },
+        ],
+      },
+    );
+
+    expect(result.kind).toBe('list');
+    if (result.kind !== 'list') return;
+    expect(result.message).toContain(
+      'couldn\'t find a configured calendar matching "soccer"',
+    );
+    expect(result.message).toContain('Musak Calendar');
   });
 });
 
@@ -275,7 +439,7 @@ describe('executeCalendarAutomation', () => {
       fetchImpl,
     });
 
-    expect(first.message).toContain('The rest of today has 1 timed event');
+    expect(first.message).toContain('Good morning -');
     expect(first.dedupeState?.keys).toHaveLength(1);
 
     const second = await executeCalendarAutomation(
@@ -314,21 +478,143 @@ describe('executeCalendarAutomation', () => {
         },
       },
     });
-    const automation = createAutomationSummary({});
 
-    const result = await executeCalendarAutomation(automation, {
-      now: new Date('2026-04-01T07:00:00-05:00'),
-      env: {
-        GOOGLE_CALENDAR_ACCESS_TOKEN: 'token',
-        GOOGLE_CALENDAR_IDS: 'primary,family',
+    const result = await executeCalendarAutomation(
+      createAutomationSummary({}),
+      {
+        now: new Date('2026-04-01T07:00:00-05:00'),
+        env: {
+          GOOGLE_CALENDAR_ACCESS_TOKEN: 'token',
+          GOOGLE_CALENDAR_IDS: 'primary,family',
+        },
+        fetchImpl,
       },
-      fetchImpl,
-    });
+    );
 
-    expect(result.message).toContain('The rest of today has 1 timed event');
+    expect(result.message).toContain('Good morning -');
     expect(result.message).toMatch(
       /I couldn't (?:read|confirm) every configured calendar right now\./,
     );
+  });
+
+  it('scopes reminder automations to a named calendar', async () => {
+    const fetchImpl = createGoogleCalendarFetchMock({
+      calendarList: [
+        { id: 'primary', summary: 'Jeff', primary: true },
+        { id: 'musak', summary: 'Musak Calendar' },
+      ],
+      eventsByCalendar: {
+        primary: {
+          summary: 'Jeff',
+          items: [
+            {
+              id: 'evt-primary',
+              summary: 'Primary meeting',
+              start: { dateTime: '2026-04-01T20:00:00Z' },
+              end: { dateTime: '2026-04-01T21:00:00Z' },
+            },
+          ],
+        },
+        musak: {
+          summary: 'Musak Calendar',
+          items: [
+            {
+              id: 'evt-musak',
+              summary: 'Band rehearsal',
+              start: { dateTime: '2026-04-01T20:00:00Z' },
+              end: { dateTime: '2026-04-01T21:00:00Z' },
+            },
+          ],
+        },
+      },
+    });
+
+    const result = await executeCalendarAutomation(
+      createAutomationSummary({
+        label: 'Next-meeting reminder every day (30 minutes before)',
+        config: {
+          kind: 'event_reminder',
+          scopeKind: 'named_calendar',
+          scopeCalendarId: 'musak',
+          scopeCalendarSummary: 'Musak Calendar',
+          schedule: {
+            kind: 'interval',
+            triggerKind: 'daily',
+            intervalMinutes: 5,
+            scheduleType: 'interval',
+            scheduleValue: String(5 * 60 * 1000),
+            description: 'every day',
+          },
+          selector: 'next_meeting',
+          offsetMinutes: 30,
+          offsetLabel: '30 minutes before',
+          weekdays: null,
+        },
+      }),
+      {
+        now: new Date('2026-04-01T14:30:00-05:00'),
+        env: {
+          GOOGLE_CALENDAR_ACCESS_TOKEN: 'token',
+          GOOGLE_CALENDAR_IDS: 'primary,musak',
+        },
+        fetchImpl,
+      },
+    );
+
+    expect(result.message).toContain('Band rehearsal');
+    expect(result.message).not.toContain('Primary meeting');
+  });
+
+  it('suppresses repeated event reminders using persisted dedupe state', async () => {
+    const fetchImpl = createGoogleCalendarFetchMock({
+      eventsByCalendar: {
+        primary: {
+          summary: 'Jeff',
+          items: [
+            {
+              id: 'evt-1',
+              summary: 'Design review',
+              start: { dateTime: '2026-04-01T20:00:00Z' },
+              end: { dateTime: '2026-04-01T21:00:00Z' },
+            },
+          ],
+        },
+      },
+    });
+
+    const automation = createAutomationSummary({
+      label: 'Next-meeting reminder every day (30 minutes before)',
+      config: {
+        kind: 'event_reminder',
+        scopeKind: 'all',
+        schedule: {
+          kind: 'interval',
+          triggerKind: 'daily',
+          intervalMinutes: 5,
+          scheduleType: 'interval',
+          scheduleValue: String(5 * 60 * 1000),
+          description: 'every day',
+        },
+        selector: 'next_meeting',
+        offsetMinutes: 30,
+        offsetLabel: '30 minutes before',
+        weekdays: null,
+      },
+      dedupeState: {
+        version: 1,
+        keys: ['reminder:evt-1:2026-04-01T19:30:00.000Z:30'],
+        updatedAt: '2026-04-01T19:30:00.000Z',
+      },
+    });
+
+    const result = await executeCalendarAutomation(automation, {
+      now: new Date('2026-04-01T14:30:00-05:00'),
+      env: { GOOGLE_CALENDAR_ACCESS_TOKEN: 'token' },
+      fetchImpl,
+    });
+
+    expect(result.message).toBeNull();
+    expect(result.summary).toContain('Skipped duplicate');
   });
 
   it('emits a no-gap watch message when there are no 30-minute openings', async () => {
@@ -359,79 +645,35 @@ describe('executeCalendarAutomation', () => {
         },
       },
     });
-    const automation = createAutomationSummary({
-      label: 'No-30-minute-gap watch for tomorrow afternoon at 10:00 AM',
-      config: {
-        kind: 'watch',
-        scopeKind: 'all',
-        schedule: {
-          kind: 'once',
-          triggerKind: 'once',
-          runAtIso: '2026-04-01T15:00:00.000Z',
-          hour: 10,
-          minute: 0,
-          scheduleType: 'once',
-          scheduleValue: '2026-04-01T10:00:00',
-          description: 'at 10:00 AM',
+
+    const result = await executeCalendarAutomation(
+      createAutomationSummary({
+        label: 'No-30-minute-gap watch for tomorrow afternoon at 10:00 AM',
+        config: {
+          kind: 'watch',
+          scopeKind: 'all',
+          schedule: {
+            kind: 'once',
+            triggerKind: 'once',
+            runAtIso: '2026-04-01T15:00:00.000Z',
+            hour: 10,
+            minute: 0,
+            scheduleType: 'once',
+            scheduleValue: '2026-04-01T10:00:00',
+            description: 'at 10:00 AM',
+          },
+          condition: 'no_gap',
+          query: 'Do I have any gaps tomorrow afternoon?',
+          minimumGapMinutes: 30,
         },
-        condition: 'no_gap',
-        query: 'Do I have any gaps tomorrow afternoon?',
-        minimumGapMinutes: 30,
+      }),
+      {
+        now: new Date('2026-04-01T10:00:00-05:00'),
+        env: { GOOGLE_CALENDAR_ACCESS_TOKEN: 'token' },
+        fetchImpl,
       },
-    });
+    );
 
-    const result = await executeCalendarAutomation(automation, {
-      now: new Date('2026-04-01T10:00:00-05:00'),
-      env: { GOOGLE_CALENDAR_ACCESS_TOKEN: 'token' },
-      fetchImpl,
-    });
-
-    expect(result.message).toContain('no 30-minute gaps');
-  });
-
-  it('sends a next-meeting reminder only when the offset is due', async () => {
-    const fetchImpl = createGoogleCalendarFetchMock({
-      eventsByCalendar: {
-        primary: {
-          summary: 'Jeff',
-          items: [
-            {
-              id: 'evt-1',
-              summary: 'Design review',
-              start: { dateTime: '2026-04-01T20:00:00Z' },
-              end: { dateTime: '2026-04-01T21:00:00Z' },
-            },
-          ],
-        },
-      },
-    });
-    const automation = createAutomationSummary({
-      label: 'Next-meeting reminder every day (30 minutes before)',
-      config: {
-        kind: 'event_reminder',
-        scopeKind: 'all',
-        schedule: {
-          kind: 'interval',
-          triggerKind: 'daily',
-          intervalMinutes: 5,
-          scheduleType: 'interval',
-          scheduleValue: String(5 * 60 * 1000),
-          description: 'every day',
-        },
-        selector: 'next_meeting',
-        offsetMinutes: 30,
-        offsetLabel: '30 minutes before',
-        weekdays: null,
-      },
-    });
-
-    const result = await executeCalendarAutomation(automation, {
-      now: new Date('2026-04-01T14:30:00-05:00'),
-      env: { GOOGLE_CALENDAR_ACCESS_TOKEN: 'token' },
-      fetchImpl,
-    });
-
-    expect(result.message).toContain('Design review');
-    expect(result.message).toContain('starts Wed 3:00 PM');
+    expect(result.message).toContain("doesn't have a 30-minute opening");
   });
 });

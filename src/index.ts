@@ -77,6 +77,7 @@ import {
 import {
   advancePendingCalendarAutomation,
   buildCalendarAutomationPersistInput,
+  computeCalendarAutomationNextRun,
   isPendingCalendarAutomationExpired,
   parseCalendarAutomationRecord,
   planCalendarAutomation,
@@ -1768,7 +1769,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         if (confirmedState.step !== 'confirm') {
           return false;
         }
-        if (confirmedState.mode === 'disable' && confirmedState.targetTaskId) {
+        const existingAutomation = confirmedState.targetTaskId
+          ? automations.find(
+              (item) => item.taskId === confirmedState.targetTaskId,
+            ) || null
+          : null;
+
+        if (confirmedState.mode === 'pause' && confirmedState.targetTaskId) {
           updateTask(confirmedState.targetTaskId, { status: 'paused' });
           updateCalendarAutomation(confirmedState.targetTaskId, {
             updated_at: now.toISOString(),
@@ -1778,7 +1785,56 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             chatJid,
             formatCalendarPanelText(
               '*Calendar Automation*',
-              `Turned off "${confirmedState.draft.label}".`,
+              `Paused "${confirmedState.draft.label}".`,
+            ),
+            {
+              inlineActionRows: buildCalendarLookupInlineActionRows(
+                CALENDAR_LOOKUP_TOMORROW_PROMPT,
+              ),
+            },
+          );
+          return true;
+        }
+
+        if (confirmedState.mode === 'resume' && confirmedState.targetTaskId) {
+          const configChanged =
+            !!existingAutomation &&
+            (existingAutomation.label !== confirmedState.draft.label ||
+              JSON.stringify(existingAutomation.config) !==
+                JSON.stringify(confirmedState.draft.config));
+          const nextRun = computeCalendarAutomationNextRun(
+            confirmedState.draft.config.schedule,
+            now,
+          );
+          updateTask(confirmedState.targetTaskId, {
+            prompt: `Calendar automation: ${confirmedState.draft.label}`,
+            schedule_type: confirmedState.draft.config.schedule.scheduleType,
+            schedule_value: confirmedState.draft.config.schedule.scheduleValue,
+            next_run: nextRun,
+            status: 'active',
+          });
+          updateCalendarAutomation(confirmedState.targetTaskId, {
+            label: confirmedState.draft.label,
+            config_json: JSON.stringify(confirmedState.draft.config),
+            dedupe_state_json: configChanged ? null : undefined,
+            updated_at: now.toISOString(),
+          });
+          refreshTaskSnapshots(registeredGroups);
+          await channel.sendMessage(
+            chatJid,
+            formatCalendarPanelText(
+              '*Calendar Automation*',
+              nextRun
+                ? `Resumed "${confirmedState.draft.label}".\nNext: ${new Intl.DateTimeFormat(
+                    'en-US',
+                    {
+                      timeZone: TIMEZONE,
+                      weekday: 'short',
+                      hour: 'numeric',
+                      minute: '2-digit',
+                    },
+                  ).format(new Date(nextRun))}`
+                : `Resumed "${confirmedState.draft.label}".`,
             ),
             {
               inlineActionRows: buildCalendarLookupInlineActionRows(
@@ -1813,6 +1869,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           groupFolder: group.folder,
           now,
           existingTaskId: confirmedState.targetTaskId,
+          status:
+            confirmedState.mode === 'replace' &&
+            confirmedState.targetStatus === 'paused'
+              ? 'paused'
+              : 'active',
         });
 
         if (persistInput.replaceTaskId) {
@@ -1821,7 +1882,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             schedule_type: persistInput.task.schedule_type,
             schedule_value: persistInput.task.schedule_value,
             next_run: persistInput.task.next_run,
-            status: 'active',
+            status: persistInput.task.status,
           });
           updateCalendarAutomation(persistInput.replaceTaskId, {
             label: persistInput.automation.label,
@@ -1844,7 +1905,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           formatCalendarPanelText(
             '*Calendar Automation*',
             persistInput.replaceTaskId
-              ? `Updated automation:\n- ${confirmedState.draft.label}`
+              ? persistInput.task.status === 'paused'
+                ? `Updated automation:\n- ${confirmedState.draft.label}\nIt will stay paused until you resume it.`
+                : `Updated automation:\n- ${confirmedState.draft.label}`
               : `Saved automation:\n- ${confirmedState.draft.label}`,
           ),
           {
@@ -1856,7 +1919,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         return true;
       }
 
-      const plan = planCalendarAutomation(lastContent, now, automations);
+      const plan = await planCalendarAutomation(lastContent, now, automations);
       if (plan.kind === 'none') {
         return false;
       }

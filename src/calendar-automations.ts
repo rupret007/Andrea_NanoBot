@@ -10,8 +10,10 @@ import {
   type CalendarLookupResult,
 } from './calendar-assistant.js';
 import {
+  listGoogleCalendars,
   listGoogleCalendarEvents,
   resolveGoogleCalendarConfig,
+  type GoogleCalendarMetadata,
   type GoogleCalendarEventRecord,
 } from './google-calendar.js';
 import type { ScheduledTask } from './types.js';
@@ -19,7 +21,7 @@ import type { ScheduledTask } from './types.js';
 const DEFAULT_CONFIRMATION_TTL_MS = 30 * 60 * 1000;
 const CANCEL_PATTERN = /^(?:cancel|never mind|nevermind|stop|no)\b/i;
 const CONFIRM_PATTERN =
-  /^(?:yes|yep|yeah|confirm|save it|save|replace it|replace|turn it off|disable it|delete it|remove it|go ahead|ok|okay)\b/i;
+  /^(?:yes|yep|yeah|confirm|save it|save|replace it|replace|turn it off|disable it|pause it|resume|resume it|turn it back on|enable it|delete it|remove it|go ahead|ok|okay)\b/i;
 const DEFAULT_BRIEFING_MORNING_HOUR = 7;
 const DEFAULT_BRIEFING_EVENING_HOUR = 19;
 const DEFAULT_BRIEFING_NIGHT_HOUR = 20;
@@ -38,10 +40,20 @@ const WEEKDAY_INDEX: Record<string, number> = {
 type FetchLike = typeof fetch;
 
 export type CalendarAutomationType = 'briefing' | 'event_reminder' | 'watch';
-export type CalendarAutomationScopeKind = 'all' | 'family_shared';
+export type CalendarAutomationScopeKind =
+  | 'all'
+  | 'family_shared'
+  | 'named_calendar';
 type CalendarAutomationTriggerKind = 'daily' | 'weekdays' | 'weekly' | 'once';
 type CalendarReminderSelector = 'next_meeting' | 'first_event_today';
 type CalendarWatchCondition = 'back_to_back' | 'no_gap' | 'packed_day';
+
+type CalendarAutomationMutationMode =
+  | 'create'
+  | 'replace'
+  | 'pause'
+  | 'resume'
+  | 'delete';
 
 export interface CalendarAutomationDedupeState {
   version: 1;
@@ -88,6 +100,8 @@ export type CalendarAutomationSchedule =
 interface BaseCalendarAutomationConfig {
   kind: CalendarAutomationType;
   scopeKind: CalendarAutomationScopeKind;
+  scopeCalendarId?: string | null;
+  scopeCalendarSummary?: string | null;
   schedule: CalendarAutomationSchedule;
 }
 
@@ -151,10 +165,23 @@ export interface CalendarAutomationDraft {
   replaceLabel: string | null;
 }
 
+interface CalendarAutomationScopeSelection {
+  scopeKind: CalendarAutomationScopeKind;
+  scopeCalendarId: string | null;
+  scopeCalendarSummary: string | null;
+}
+
+interface CalendarAutomationPlanDeps {
+  fetchImpl?: FetchLike;
+  env?: Record<string, string | undefined>;
+  configuredCalendars?: GoogleCalendarMetadata[];
+}
+
 interface PendingWatchAutomationTemplate {
   kind: 'watch';
   condition: CalendarWatchCondition;
-  scopeKind: CalendarAutomationScopeKind;
+  scope: CalendarAutomationScopeSelection;
+  resumeOnSave?: boolean;
   schedule:
     | Omit<
         CronCalendarAutomationSchedule,
@@ -173,7 +200,7 @@ interface PendingWatchAutomationTemplate {
 interface PendingEventReminderAutomationTemplate {
   kind: 'event_reminder';
   selector: CalendarReminderSelector;
-  scopeKind: CalendarAutomationScopeKind;
+  scope: CalendarAutomationScopeSelection;
   weekdays: number[] | null;
   labelPrefix: string;
 }
@@ -200,8 +227,9 @@ export type PendingCalendarAutomationState =
       createdAt: string;
       step: 'confirm';
       draft: CalendarAutomationDraft;
-      mode: 'create' | 'replace' | 'disable' | 'delete';
+      mode: CalendarAutomationMutationMode;
       targetTaskId: string | null;
+      targetStatus: ScheduledTask['status'] | null;
     };
 
 export type CalendarAutomationPlanResult =
@@ -510,18 +538,185 @@ function describeTrigger(
   return `every day at ${time}`;
 }
 
-function resolveBriefingScope(normalized: string): CalendarAutomationScopeKind {
+function createScopeSelection(
+  scopeKind: CalendarAutomationScopeKind,
+  calendar?: Pick<GoogleCalendarMetadata, 'id' | 'summary'> | null,
+): CalendarAutomationScopeSelection {
+  return {
+    scopeKind,
+    scopeCalendarId:
+      scopeKind === 'named_calendar' ? calendar?.id || null : null,
+    scopeCalendarSummary:
+      scopeKind === 'named_calendar' ? calendar?.summary || null : null,
+  };
+}
+
+function getScopeSelectionFromConfig(
+  config: CalendarAutomationConfig,
+): CalendarAutomationScopeSelection {
+  return {
+    scopeKind: config.scopeKind,
+    scopeCalendarId: config.scopeCalendarId || null,
+    scopeCalendarSummary: config.scopeCalendarSummary || null,
+  };
+}
+
+function resolveBriefingScopeKind(
+  normalized: string,
+): CalendarAutomationScopeKind {
   return /\bfamily calendar\b/.test(normalized) ? 'family_shared' : 'all';
+}
+
+function extractNamedCalendarHint(normalized: string): string | null {
+  if (/\bfamily calendar\b/.test(normalized)) {
+    return null;
+  }
+
+  const patterns = [
+    /\b(?:on|from|for)\s+(?:my\s+|the\s+)?(.+?)\s+calendar\b/i,
+    /\bbefore\s+(?:anything\s+on\s+)?(?:my\s+|the\s+)?(.+?)\s+calendar\b/i,
+    /\b([a-z0-9][a-z0-9 '&/-]+?)\s+calendar\s+(?:summary|brief)\b/i,
+  ];
+  for (const pattern of patterns) {
+    const match = normalized.match(pattern);
+    const hint = match?.[1]
+      ?.trim()
+      .replace(/^(?:my|the)\s+/i, '')
+      .replace(/\s+/g, ' ');
+    if (!hint) {
+      continue;
+    }
+    if (['my', 'the', 'your'].includes(hint.toLowerCase())) {
+      continue;
+    }
+    return hint;
+  }
+  return null;
+}
+
+function normalizeCalendarMatchText(value: string): string {
+  return collapseWhitespace(
+    value
+      .toLowerCase()
+      .replace(/[^\w\s&'/-]+/g, ' ')
+      .replace(/\bcalendar\b/g, ' '),
+  );
+}
+
+function scoreNamedCalendarMatch(summary: string, hint: string): number {
+  const normalizedSummary = normalizeCalendarMatchText(summary);
+  const normalizedHint = normalizeCalendarMatchText(hint);
+  if (!normalizedSummary || !normalizedHint) {
+    return 0;
+  }
+  if (normalizedSummary === normalizedHint) {
+    return 4;
+  }
+  if (normalizedSummary.includes(normalizedHint)) {
+    return 3;
+  }
+  const terms = normalizedHint.split(' ').filter((term) => term.length >= 2);
+  if (
+    terms.length > 0 &&
+    terms.every((term) => normalizedSummary.includes(term))
+  ) {
+    return 2;
+  }
+  return 0;
+}
+
+async function listConfiguredGoogleCalendars(
+  deps: CalendarAutomationPlanDeps,
+): Promise<GoogleCalendarMetadata[]> {
+  if (deps.configuredCalendars) {
+    return deps.configuredCalendars;
+  }
+  return listGoogleCalendars(
+    resolveGoogleCalendarConfig(deps.env),
+    deps.fetchImpl,
+  );
+}
+
+type ScopeResolutionResult =
+  | {
+      kind: 'resolved';
+      scope: CalendarAutomationScopeSelection;
+    }
+  | {
+      kind: 'ambiguous';
+      hint: string;
+      calendars: GoogleCalendarMetadata[];
+    }
+  | {
+      kind: 'missing';
+      hint: string;
+      calendars: GoogleCalendarMetadata[];
+    };
+
+async function resolveAutomationScopeSelection(
+  normalized: string,
+  deps: CalendarAutomationPlanDeps,
+): Promise<ScopeResolutionResult> {
+  if (/\bfamily calendar\b/.test(normalized)) {
+    return {
+      kind: 'resolved',
+      scope: createScopeSelection('family_shared'),
+    };
+  }
+
+  const hint = extractNamedCalendarHint(normalized);
+  if (!hint) {
+    return {
+      kind: 'resolved',
+      scope: createScopeSelection('all'),
+    };
+  }
+
+  const calendars = (await listConfiguredGoogleCalendars(deps)).filter(
+    (calendar) => calendar.selected,
+  );
+  const scored = calendars
+    .map((calendar) => ({
+      calendar,
+      score: scoreNamedCalendarMatch(calendar.summary, hint),
+    }))
+    .filter((item) => item.score > 0)
+    .sort((left, right) => right.score - left.score);
+
+  if (scored.length === 0) {
+    return {
+      kind: 'missing',
+      hint,
+      calendars,
+    };
+  }
+
+  const bestScore = scored[0]!.score;
+  const matches = scored
+    .filter((item) => item.score === bestScore)
+    .map((item) => item.calendar);
+
+  if (matches.length !== 1) {
+    return {
+      kind: 'ambiguous',
+      hint,
+      calendars: matches,
+    };
+  }
+
+  return {
+    kind: 'resolved',
+    scope: createScopeSelection('named_calendar', matches[0]!),
+  };
 }
 
 function resolveBriefingDefaults(normalized: string): {
   query: string;
   anchorOffsetDays: number;
-  scopeKind: CalendarAutomationScopeKind;
   labelPrefix: string;
 } | null {
-  const family = resolveBriefingScope(normalized);
-  if (family === 'family_shared') {
+  const scopeKind = resolveBriefingScopeKind(normalized);
+  if (scopeKind === 'family_shared') {
     return {
       query: "What's on the family calendar this week?",
       anchorOffsetDays:
@@ -529,7 +724,6 @@ function resolveBriefingDefaults(normalized: string): {
         /\bsunday night\b/.test(normalized)
           ? 1
           : 0,
-      scopeKind: family,
       labelPrefix: 'Family calendar summary',
     };
   }
@@ -538,7 +732,6 @@ function resolveBriefingDefaults(normalized: string): {
     return {
       query: 'Anything important this weekend?',
       anchorOffsetDays: 0,
-      scopeKind: family,
       labelPrefix: 'Weekend brief',
     };
   }
@@ -547,7 +740,6 @@ function resolveBriefingDefaults(normalized: string): {
     return {
       query: "What's my day look like tomorrow?",
       anchorOffsetDays: 0,
-      scopeKind: family,
       labelPrefix: 'Tomorrow brief',
     };
   }
@@ -555,7 +747,6 @@ function resolveBriefingDefaults(normalized: string): {
   return {
     query: 'What should I know about today?',
     anchorOffsetDays: 0,
-    scopeKind: family,
     labelPrefix: 'Morning brief',
   };
 }
@@ -631,7 +822,7 @@ function parseRecurringTrigger(
   return null;
 }
 
-function computeInitialNextRun(
+export function computeCalendarAutomationNextRun(
   schedule: CalendarAutomationSchedule,
   now: Date,
 ): string | null {
@@ -650,30 +841,89 @@ function computeInitialNextRun(
   return interval.next().toISOString();
 }
 
-function buildAutomationDuplicateKey(config: CalendarAutomationConfig): string {
+function buildAutomationSemanticKey(config: CalendarAutomationConfig): string {
+  const scopeIdentity = getAutomationScopeIdentity(config);
   if (config.kind === 'briefing') {
-    return `${config.kind}:${config.scopeKind}:${config.query}:${config.anchorOffsetDays}`;
+    return `${config.kind}:${scopeIdentity}:${config.query}:${config.anchorOffsetDays}`;
   }
   if (config.kind === 'event_reminder') {
-    return `${config.kind}:${config.scopeKind}:${config.selector}:${(
+    return `${config.kind}:${scopeIdentity}:${config.selector}:${(
       config.weekdays || []
     ).join(',')}`;
   }
-  return `${config.kind}:${config.scopeKind}:${config.condition}:${config.query}:${config.minimumGapMinutes || 0}`;
+  return `${config.kind}:${scopeIdentity}:${config.condition}:${config.query}:${config.minimumGapMinutes || 0}`;
+}
+
+function getAutomationScopeIdentity(config: CalendarAutomationConfig): string {
+  return config.scopeKind === 'named_calendar'
+    ? `${config.scopeKind}:${config.scopeCalendarId || config.scopeCalendarSummary || 'unknown'}`
+    : config.scopeKind;
+}
+
+function buildAutomationExactKey(config: CalendarAutomationConfig): string {
+  const base = {
+    kind: config.kind,
+    scopeKind: config.scopeKind,
+    scopeCalendarId: config.scopeCalendarId || null,
+    scopeCalendarSummary: config.scopeCalendarSummary || null,
+    scheduleKind: config.schedule.kind,
+    scheduleType: config.schedule.scheduleType,
+    scheduleValue: config.schedule.scheduleValue,
+    description: config.schedule.description,
+  };
+  if (config.kind === 'briefing') {
+    return JSON.stringify({
+      ...base,
+      query: config.query,
+      anchorOffsetDays: config.anchorOffsetDays,
+    });
+  }
+  if (config.kind === 'event_reminder') {
+    return JSON.stringify({
+      ...base,
+      selector: config.selector,
+      offsetMinutes: config.offsetMinutes,
+      offsetLabel: config.offsetLabel,
+      weekdays: config.weekdays || null,
+    });
+  }
+  return JSON.stringify({
+    ...base,
+    condition: config.condition,
+    query: config.query,
+    minimumGapMinutes: config.minimumGapMinutes || null,
+  });
 }
 
 function findDuplicateAutomation(
   draft: CalendarAutomationDraft,
   existing: CalendarAutomationSummary[],
-): CalendarAutomationSummary | null {
-  const key = buildAutomationDuplicateKey(draft.config);
-  return (
-    existing.find(
-      (item) =>
-        item.status !== 'completed' &&
-        buildAutomationDuplicateKey(item.config) === key,
-    ) || null
+):
+  | { kind: 'none' }
+  | { kind: 'exact_active'; automation: CalendarAutomationSummary }
+  | { kind: 'exact_paused'; automation: CalendarAutomationSummary }
+  | { kind: 'replace'; automation: CalendarAutomationSummary } {
+  const semanticKey = buildAutomationSemanticKey(draft.config);
+  const exactKey = buildAutomationExactKey(draft.config);
+  const matching = existing.filter(
+    (item) =>
+      item.status !== 'completed' &&
+      buildAutomationSemanticKey(item.config) === semanticKey,
   );
+  const exact = matching.find(
+    (item) => buildAutomationExactKey(item.config) === exactKey,
+  );
+  if (exact) {
+    if (exact.status === 'paused') {
+      return { kind: 'exact_paused', automation: exact };
+    }
+    return { kind: 'exact_active', automation: exact };
+  }
+  const replace = matching[0];
+  if (replace) {
+    return { kind: 'replace', automation: replace };
+  }
+  return { kind: 'none' };
 }
 
 function buildCreateAutomationResult(
@@ -682,39 +932,115 @@ function buildCreateAutomationResult(
   now: Date,
 ): CalendarAutomationPlanResult {
   const duplicate = findDuplicateAutomation(draft, existing);
-  const nextDraft = duplicate
-    ? {
-        ...draft,
-        replaceTaskId: duplicate.taskId,
-        replaceLabel: duplicate.label,
-      }
-    : draft;
+  if (duplicate.kind === 'exact_active') {
+    return {
+      kind: 'list',
+      message: `"${duplicate.automation.label}" is already active.`,
+    };
+  }
+
+  if (duplicate.kind === 'exact_paused') {
+    return {
+      kind: 'awaiting_input',
+      state: {
+        version: 1,
+        createdAt: now.toISOString(),
+        step: 'confirm',
+        draft: {
+          label: duplicate.automation.label,
+          config: duplicate.automation.config,
+          replaceTaskId: null,
+          replaceLabel: null,
+        },
+        mode: 'resume',
+        targetTaskId: duplicate.automation.taskId,
+        targetStatus: duplicate.automation.status,
+      },
+      message: `"${duplicate.automation.label}" is paused.\n\nReply "yes" to resume it or "cancel" to leave it paused.`,
+    };
+  }
+
+  const nextDraft =
+    duplicate.kind === 'replace'
+      ? {
+          ...draft,
+          replaceTaskId: duplicate.automation.taskId,
+          replaceLabel: duplicate.automation.label,
+        }
+      : draft;
 
   const state: PendingCalendarAutomationState = {
     version: 1,
     createdAt: now.toISOString(),
     step: 'confirm',
     draft: nextDraft,
-    mode: duplicate ? 'replace' : 'create',
-    targetTaskId: duplicate?.taskId || null,
+    mode: duplicate.kind === 'replace' ? 'replace' : 'create',
+    targetTaskId:
+      duplicate.kind === 'replace' ? duplicate.automation.taskId : null,
+    targetStatus:
+      duplicate.kind === 'replace' ? duplicate.automation.status : null,
   };
 
   return {
     kind: 'awaiting_input',
     state,
-    message: duplicate
-      ? `I found an existing automation that matches this setup.\n\nCurrent: ${duplicate.label}\nNew: ${nextDraft.label}\n\nReply "yes" to replace it or "cancel" to keep the current one.`
-      : `I can save this automation:\n\n- ${nextDraft.label}\n\nReply "yes" to save it or "cancel" to stop.`,
+    message:
+      duplicate.kind === 'replace'
+        ? `I found an existing automation that matches this setup.\n\nCurrent: ${duplicate.automation.label}\nNew: ${nextDraft.label}\nScope: ${formatAutomationScopeLabel(nextDraft.config)}\n\nReply "yes" to replace it or "cancel" to keep the current one.`
+        : `I can save this automation:\n\n- ${nextDraft.label}\n- Scope: ${formatAutomationScopeLabel(nextDraft.config)}\n\nReply "yes" to save it or "cancel" to stop.`,
   };
 }
 
-function buildBriefingDraft(
+function formatCalendarOptions(calendars: GoogleCalendarMetadata[]): string {
+  return calendars
+    .filter((calendar) => calendar.selected)
+    .map((calendar) => calendar.summary)
+    .slice(0, 6)
+    .join(', ');
+}
+
+function buildScopeResolutionResult(
+  resolution: ScopeResolutionResult,
+): CalendarAutomationPlanResult | null {
+  if (resolution.kind === 'resolved') {
+    return null;
+  }
+
+  if (resolution.kind === 'ambiguous') {
+    return {
+      kind: 'list',
+      message: `I found more than one configured calendar that matches "${resolution.hint}": ${resolution.calendars
+        .map((calendar) => calendar.summary)
+        .join(', ')}. Tell me which calendar you want.`,
+    };
+  }
+
+  const available = formatCalendarOptions(resolution.calendars);
+  return {
+    kind: 'list',
+    message: available
+      ? `I couldn't find a configured calendar matching "${resolution.hint}". I can currently use: ${available}.`
+      : `I couldn't find a configured calendar matching "${resolution.hint}".`,
+  };
+}
+
+async function buildBriefingDraft(
   normalized: string,
   now: Date,
   existing: CalendarAutomationSummary[],
-): CalendarAutomationPlanResult {
+  deps: CalendarAutomationPlanDeps,
+): Promise<CalendarAutomationPlanResult> {
   const defaults = resolveBriefingDefaults(normalized);
   if (!defaults) return { kind: 'none' };
+
+  const scopeResolution = await resolveAutomationScopeSelection(
+    normalized,
+    deps,
+  );
+  if (scopeResolution.kind !== 'resolved') {
+    return buildScopeResolutionResult(scopeResolution)!;
+  }
+  const scope = scopeResolution.scope;
 
   const explicitTime = parseExplicitClockTime(normalized);
   const schedule = parseRecurringTrigger(normalized, explicitTime, {
@@ -728,7 +1054,9 @@ function buildBriefingDraft(
 
   const config: BriefingCalendarAutomationConfig = {
     kind: 'briefing',
-    scopeKind: defaults.scopeKind,
+    scopeKind: scope.scopeKind,
+    scopeCalendarId: scope.scopeCalendarId,
+    scopeCalendarSummary: scope.scopeCalendarSummary,
     schedule,
     query: defaults.query,
     anchorOffsetDays: defaults.anchorOffsetDays,
@@ -822,20 +1150,32 @@ function extractOnceWatchTargetDate(
   return null;
 }
 
-function buildWatchDraft(
+async function buildWatchDraft(
   normalized: string,
   now: Date,
   existing: CalendarAutomationSummary[],
-): CalendarAutomationPlanResult {
+  deps: CalendarAutomationPlanDeps,
+): Promise<CalendarAutomationPlanResult> {
   const parsed = parseWatchCondition(normalized);
   if (!parsed) return { kind: 'none' };
+
+  const scopeResolution = await resolveAutomationScopeSelection(
+    normalized,
+    deps,
+  );
+  if (scopeResolution.kind !== 'resolved') {
+    return buildScopeResolutionResult(scopeResolution)!;
+  }
+  const scope = scopeResolution.scope;
 
   const explicitTime = parseExplicitClockTime(normalized);
   const recurringSchedule = parseRecurringTrigger(normalized, explicitTime);
   if (recurringSchedule) {
     const config: WatchCalendarAutomationConfig = {
       kind: 'watch',
-      scopeKind: resolveBriefingScope(normalized),
+      scopeKind: scope.scopeKind,
+      scopeCalendarId: scope.scopeCalendarId,
+      scopeCalendarSummary: scope.scopeCalendarSummary,
       schedule: recurringSchedule,
       condition: parsed.condition,
       query: parsed.query,
@@ -868,7 +1208,7 @@ function buildWatchDraft(
       template: {
         kind: 'watch',
         condition: parsed.condition,
-        scopeKind: resolveBriefingScope(normalized),
+        scope,
         schedule: {
           kind: 'once',
           triggerKind: 'once',
@@ -893,7 +1233,9 @@ function buildWatchDraft(
   });
   const config: WatchCalendarAutomationConfig = {
     kind: 'watch',
-    scopeKind: resolveBriefingScope(normalized),
+    scopeKind: scope.scopeKind,
+    scopeCalendarId: scope.scopeCalendarId,
+    scopeCalendarSummary: scope.scopeCalendarSummary,
     schedule,
     condition: parsed.condition,
     query: parsed.query,
@@ -923,15 +1265,25 @@ function resolveReminderAutomationWeekdays(
   return null;
 }
 
-function buildEventReminderDraft(
+async function buildEventReminderDraft(
   normalized: string,
   now: Date,
   existing: CalendarAutomationSummary[],
-): CalendarAutomationPlanResult {
+  deps: CalendarAutomationPlanDeps,
+): Promise<CalendarAutomationPlanResult> {
   const recurrence = resolveReminderAutomationWeekdays(normalized);
   if (!recurrence) {
     return { kind: 'none' };
   }
+
+  const scopeResolution = await resolveAutomationScopeSelection(
+    normalized,
+    deps,
+  );
+  if (scopeResolution.kind !== 'resolved') {
+    return buildScopeResolutionResult(scopeResolution)!;
+  }
+  const scope = scopeResolution.scope;
 
   let selector: CalendarReminderSelector | null = null;
   let labelPrefix = '';
@@ -957,7 +1309,7 @@ function buildEventReminderDraft(
       template: {
         kind: 'event_reminder',
         selector,
-        scopeKind: resolveBriefingScope(normalized),
+        scope,
         weekdays: recurrence.weekdays,
         labelPrefix: `${labelPrefix} ${recurrence.recurrenceLabel}`,
       },
@@ -971,7 +1323,9 @@ function buildEventReminderDraft(
 
   const config: EventReminderCalendarAutomationConfig = {
     kind: 'event_reminder',
-    scopeKind: resolveBriefingScope(normalized),
+    scopeKind: scope.scopeKind,
+    scopeCalendarId: scope.scopeCalendarId,
+    scopeCalendarSummary: scope.scopeCalendarSummary,
     schedule: buildIntervalSchedule({
       intervalMinutes: DEFAULT_AUTOMATION_INTERVAL_MINUTES,
       description: recurrence.recurrenceLabel,
@@ -995,23 +1349,101 @@ function buildEventReminderDraft(
   );
 }
 
-function listAutomationsMessage(
-  automations: CalendarAutomationSummary[],
+function formatAutomationTypeLabel(config: CalendarAutomationConfig): string {
+  if (config.kind === 'briefing') {
+    return 'Briefing';
+  }
+  if (config.kind === 'event_reminder') {
+    return 'Reminder';
+  }
+  return 'Watch';
+}
+
+function formatAutomationScopeLabel(config: CalendarAutomationConfig): string {
+  if (config.scopeKind === 'family_shared') {
+    return 'Family/shared';
+  }
+  if (config.scopeKind === 'named_calendar') {
+    return config.scopeCalendarSummary || 'Named calendar';
+  }
+  return 'All calendars';
+}
+
+function formatAutomationSchedulePreview(
+  automation: CalendarAutomationSummary,
+  now: Date,
 ): string {
-  const visible = automations.filter((item) => item.status !== 'completed');
-  if (visible.length === 0) {
-    return "You don't have any calendar automations set up.";
+  if (automation.status === 'active') {
+    return automation.nextRun
+      ? `Next ${formatAutomationNextRun(automation.nextRun)}`
+      : 'Runs on schedule';
   }
 
-  const lines = ['Your calendar automations:'];
+  if (automation.config.schedule.kind === 'once') {
+    const runAt = new Date(automation.config.schedule.runAtIso);
+    if (runAt.getTime() <= now.getTime()) {
+      return 'Needs a new time';
+    }
+    return `Next when resumed: ${formatAutomationNextRun(
+      automation.config.schedule.runAtIso,
+    )}`;
+  }
+
+  const preview = computeCalendarAutomationNextRun(
+    automation.config.schedule,
+    now,
+  );
+  return preview
+    ? `Next when resumed: ${formatAutomationNextRun(preview)}`
+    : 'Next when resumed';
+}
+
+function listAutomationsMessage(
+  automations: CalendarAutomationSummary[],
+  options: {
+    activeOnly?: boolean;
+    now?: Date;
+  } = {},
+): string {
+  const now = options.now || new Date();
+  const visible = automations
+    .filter((item) => item.status !== 'completed')
+    .filter((item) => !options.activeOnly || item.status === 'active')
+    .sort((left, right) => {
+      if (left.status !== right.status) {
+        return left.status === 'active' ? -1 : 1;
+      }
+      const leftKey = left.nextRun || left.updatedAt;
+      const rightKey = right.nextRun || right.updatedAt;
+      return leftKey.localeCompare(rightKey);
+    });
+  if (visible.length === 0) {
+    return options.activeOnly
+      ? "You don't have any active calendar automations."
+      : "You don't have any calendar automations set up.";
+  }
+
+  const activeCount = visible.filter((item) => item.status === 'active').length;
+  const pausedCount = visible.filter((item) => item.status === 'paused').length;
+  const lines = [
+    options.activeOnly
+      ? `${activeCount} active.`
+      : `${activeCount} active, ${pausedCount} paused.`,
+  ];
   for (const automation of visible.slice(0, 8)) {
     lines.push(
-      `- ${automation.label} (${automation.status}${
-        automation.nextRun
-          ? `, next ${formatAutomationNextRun(automation.nextRun)}`
-          : ''
-      })`,
+      `- ${formatAutomationTypeLabel(automation.config)}: ${automation.label}`,
     );
+    lines.push(
+      `  ${
+        automation.status === 'active' ? 'Active' : 'Paused'
+      } · Scope: ${formatAutomationScopeLabel(
+        automation.config,
+      )} · ${formatAutomationSchedulePreview(automation, now)}`,
+    );
+  }
+  if (visible.length > 8) {
+    lines.push(`...and ${visible.length - 8} more.`);
   }
   return lines.join('\n');
 }
@@ -1026,46 +1458,123 @@ function formatAutomationNextRun(nextRun: string): string {
   return formatter.format(new Date(nextRun));
 }
 
-function findAutomationByTarget(
+function findAutomationMatchesByTarget(
   automations: CalendarAutomationSummary[],
   targetText: string,
-): CalendarAutomationSummary | null {
+): CalendarAutomationSummary[] {
   const needle = normalizeAutomationMatchText(targetText);
   if (!needle) {
-    return automations.length === 1 ? automations[0]! : null;
+    return automations.length === 1 ? [automations[0]!] : [];
   }
 
-  const matches = automations.filter((automation) =>
+  const exactMatches = automations.filter(
+    (automation) => normalizeAutomationMatchText(automation.label) === needle,
+  );
+  if (exactMatches.length > 0) {
+    return exactMatches;
+  }
+
+  const prefixMatches = automations.filter((automation) =>
+    normalizeAutomationMatchText(automation.label).startsWith(needle),
+  );
+  if (prefixMatches.length > 0) {
+    return prefixMatches;
+  }
+
+  return automations.filter((automation) =>
     normalizeAutomationMatchText(automation.label).includes(needle),
   );
-  return matches.length === 1 ? matches[0]! : null;
 }
 
-function buildDisableOrDeleteResult(
+function buildTargetAutomationListResult(
+  automations: CalendarAutomationSummary[],
+  now: Date,
+  message: string,
+): CalendarAutomationPlanResult {
+  return {
+    kind: 'list',
+    message: `${message}\n\n${listAutomationsMessage(automations, { now })}`,
+  };
+}
+
+function buildPauseResumeOrDeleteResult(
   message: string,
   automations: CalendarAutomationSummary[],
   now: Date,
-  mode: 'disable' | 'delete',
+  mode: 'pause' | 'resume' | 'delete',
 ): CalendarAutomationPlanResult {
   const targetText = collapseWhitespace(
     normalizeMessage(message)
-      .replace(/\b(?:turn off|disable|pause|stop|delete|remove)\b/gi, ' ')
+      .replace(
+        /\b(?:turn off|disable|pause|stop|delete|remove|resume|turn back on|reactivate|enable)\b/gi,
+        ' ',
+      )
       .replace(/\b(?:my|the)\b/gi, ' ')
       .replace(/\b(?:calendar )?automations?\b/gi, ' '),
   );
-  const target = findAutomationByTarget(
+  const matches = findAutomationMatchesByTarget(
     automations.filter((item) => item.status !== 'completed'),
     targetText,
   );
-  if (!target) {
+  if (matches.length !== 1) {
+    return buildTargetAutomationListResult(
+      automations,
+      now,
+      matches.length > 1
+        ? 'I found more than one automation that matches that.'
+        : "I couldn't tell which automation you meant.",
+    );
+  }
+  const target = matches[0]!;
+
+  if (mode === 'pause' && target.status === 'paused') {
     return {
       kind: 'list',
-      message:
-        automations.length > 1
-          ? `I couldn't tell which automation you meant. Try naming it more specifically.\n\n${listAutomationsMessage(
-              automations,
-            )}`
-          : "I couldn't find that calendar automation.",
+      message: `"${target.label}" is already paused.`,
+    };
+  }
+  if (mode === 'resume' && target.status === 'active') {
+    return {
+      kind: 'list',
+      message: `"${target.label}" is already active.`,
+    };
+  }
+
+  if (
+    mode === 'resume' &&
+    target.config.schedule.kind === 'once' &&
+    new Date(target.config.schedule.runAtIso).getTime() <= now.getTime()
+  ) {
+    if (target.config.kind !== 'watch') {
+      return {
+        kind: 'list',
+        message: `I need a new time before I can resume "${target.label}".`,
+      };
+    }
+    return {
+      kind: 'awaiting_input',
+      state: {
+        version: 1,
+        createdAt: now.toISOString(),
+        step: 'clarify_time',
+        replaceTaskId: target.taskId,
+        replaceLabel: target.label,
+        template: {
+          kind: 'watch',
+          condition: target.config.condition,
+          scope: getScopeSelectionFromConfig(target.config),
+          schedule: {
+            kind: 'once',
+            triggerKind: 'once',
+            targetDayIso: startOfDay(now).toISOString(),
+          },
+          query: target.config.query,
+          minimumGapMinutes: target.config.minimumGapMinutes,
+          labelPrefix: target.label.replace(/\sat [\s\S]+$/i, '').trim(),
+          resumeOnSave: true,
+        },
+      },
+      message: `That check needs a new time before I can resume it. What time should I use for "${target.label}"?`,
     };
   }
 
@@ -1081,14 +1590,17 @@ function buildDisableOrDeleteResult(
     },
     mode,
     targetTaskId: target.taskId,
+    targetStatus: target.status,
   };
   return {
     kind: 'awaiting_input',
     state,
     message:
-      mode === 'disable'
-        ? `I can turn off this automation:\n\n- ${target.label}\n\nReply "yes" to turn it off or "cancel" to keep it running.`
-        : `I can delete this automation:\n\n- ${target.label}\n\nReply "yes" to delete it or "cancel" to keep it.`,
+      mode === 'pause'
+        ? `I can pause this automation:\n\n- ${target.label}\n\nReply "yes" to pause it or "cancel" to keep it running.`
+        : mode === 'resume'
+          ? `I can resume this automation:\n\n- ${target.label}\n\nReply "yes" to turn it back on or "cancel" to leave it paused.`
+          : `I can delete this automation:\n\n- ${target.label}\n\nReply "yes" to delete it or "cancel" to keep it.`,
   };
 }
 
@@ -1128,12 +1640,13 @@ function rebuildAutomationWithNewTime(
   }
 
   if (config.schedule.kind === 'once') {
-    const baseDay = startOfDay(new Date(config.schedule.runAtIso));
-    const runAt = setLocalTime(baseDay, hour, minute);
+    const candidate = setLocalTime(now, hour, minute);
+    const runAt =
+      candidate.getTime() > now.getTime() ? candidate : addDays(candidate, 1);
     return {
       ...config,
       schedule: buildOnceSchedule({
-        runAt: runAt > now ? runAt : addDays(runAt, 1),
+        runAt,
         description: `at ${formatClockLabel(hour, minute)}`,
       }),
     } as CalendarAutomationConfig;
@@ -1148,24 +1661,27 @@ function buildReplaceResult(
   now: Date,
 ): CalendarAutomationPlanResult {
   const match = normalizeMessage(message).match(
-    /\breplace\s+(.+?)\s+with\s+(.+)$/i,
+    /\b(?:replace\s+(.+?)\s+with|change\s+(.+?)\s+to)\s+(.+)$/i,
   );
   if (!match) {
     return { kind: 'none' };
   }
 
-  const target = findAutomationByTarget(
+  const targetText = match[1] || match[2] || '';
+  const matches = findAutomationMatchesByTarget(
     automations.filter((item) => item.status !== 'completed'),
-    match[1],
+    targetText,
   );
-  if (!target) {
-    return {
-      kind: 'list',
-      message: `I couldn't tell which automation to replace.\n\n${listAutomationsMessage(
-        automations,
-      )}`,
-    };
+  if (matches.length !== 1) {
+    return buildTargetAutomationListResult(
+      automations,
+      now,
+      matches.length > 1
+        ? 'I found more than one automation that matches that change.'
+        : "I couldn't tell which automation to change.",
+    );
   }
+  const target = matches[0]!;
 
   if (
     target.config.schedule.kind !== 'cron' &&
@@ -1178,7 +1694,7 @@ function buildReplaceResult(
     };
   }
 
-  const newTime = parseStandaloneClockReply(match[2]);
+  const newTime = parseStandaloneClockReply(match[3] || '');
   if (!newTime) {
     return {
       kind: 'list',
@@ -1216,58 +1732,70 @@ function buildReplaceResult(
     },
     mode: 'replace',
     targetTaskId: target.taskId,
+    targetStatus: target.status,
   };
 
   return {
     kind: 'awaiting_input',
     state,
-    message: `I can replace this automation:\n\nCurrent: ${target.label}\nNew: ${label}\n\nReply "yes" to save the new schedule or "cancel" to keep the current one.`,
+    message: `I can replace this automation:\n\nCurrent: ${target.label}\nNew: ${label}\nScope: ${formatAutomationScopeLabel(updatedConfig)}\n\nReply "yes" to save the new schedule or "cancel" to keep the current one.`,
   };
 }
 
-export function planCalendarAutomation(
+export async function planCalendarAutomation(
   message: string,
   now: Date,
   automations: CalendarAutomationSummary[],
-): CalendarAutomationPlanResult {
+  deps: CalendarAutomationPlanDeps = {},
+): Promise<CalendarAutomationPlanResult> {
   const normalized = normalizeMessage(message).toLowerCase();
   if (!normalized) {
     return { kind: 'none' };
   }
 
   if (
-    /\b(show|list|what are)\b/.test(normalized) &&
-    /\bcalendar automations?\b/.test(normalized)
+    /\b(show|list|what|which)\b/.test(normalized) &&
+    /\b(?:calendar|schedule) automations?\b/.test(normalized)
   ) {
+    const activeOnly = /\bactive\b/.test(normalized);
     return {
       kind: 'list',
-      message: listAutomationsMessage(automations),
+      message: listAutomationsMessage(automations, { activeOnly, now }),
     };
   }
 
   if (/^(?:turn off|disable|pause|stop)\b/.test(normalized)) {
-    return buildDisableOrDeleteResult(message, automations, now, 'disable');
+    return buildPauseResumeOrDeleteResult(message, automations, now, 'pause');
+  }
+
+  if (/^(?:resume|turn back on|reactivate|enable)\b/.test(normalized)) {
+    return buildPauseResumeOrDeleteResult(message, automations, now, 'resume');
   }
 
   if (/^(?:delete|remove)\b/.test(normalized)) {
-    return buildDisableOrDeleteResult(message, automations, now, 'delete');
+    return buildPauseResumeOrDeleteResult(message, automations, now, 'delete');
   }
 
-  if (/^replace\b/i.test(normalized)) {
+  if (/^(?:replace|change)\b/i.test(normalized)) {
     return buildReplaceResult(message, automations, now);
   }
 
-  const briefingResult = buildBriefingDraft(normalized, now, automations);
+  const briefingResult = await buildBriefingDraft(
+    normalized,
+    now,
+    automations,
+    deps,
+  );
   if (briefingResult.kind !== 'none') {
     return briefingResult;
   }
 
-  const watchResult = buildWatchDraft(normalized, now, automations);
+  const watchResult = await buildWatchDraft(normalized, now, automations, deps);
   if (watchResult.kind !== 'none') {
     return watchResult;
   }
 
-  return buildEventReminderDraft(normalized, now, automations);
+  return buildEventReminderDraft(normalized, now, automations, deps);
 }
 
 function buildDraftFromPendingTemplate(
@@ -1292,7 +1820,9 @@ function buildDraftFromPendingTemplate(
         label: `${state.template.labelPrefix} ${schedule.description}`,
         config: {
           kind: 'watch',
-          scopeKind: state.template.scopeKind,
+          scopeKind: state.template.scope.scopeKind,
+          scopeCalendarId: state.template.scope.scopeCalendarId,
+          scopeCalendarSummary: state.template.scope.scopeCalendarSummary,
           schedule,
           condition: state.template.condition,
           query: state.template.query,
@@ -1319,7 +1849,9 @@ function buildDraftFromPendingTemplate(
       label: `${state.template.labelPrefix} ${schedule.description}`,
       config: {
         kind: 'watch',
-        scopeKind: state.template.scopeKind,
+        scopeKind: state.template.scope.scopeKind,
+        scopeCalendarId: state.template.scope.scopeCalendarId,
+        scopeCalendarSummary: state.template.scope.scopeCalendarSummary,
         schedule,
         condition: state.template.condition,
         query: state.template.query,
@@ -1339,7 +1871,9 @@ function buildDraftFromPendingTemplate(
       )})`,
       config: {
         kind: 'event_reminder',
-        scopeKind: state.template.scopeKind,
+        scopeKind: state.template.scope.scopeKind,
+        scopeCalendarId: state.template.scope.scopeCalendarId,
+        scopeCalendarSummary: state.template.scope.scopeCalendarSummary,
         schedule: buildIntervalSchedule({
           intervalMinutes: DEFAULT_AUTOMATION_INTERVAL_MINUTES,
           description:
@@ -1387,15 +1921,24 @@ export function advancePendingCalendarAutomation(
       createdAt: now.toISOString(),
       step: 'confirm',
       draft,
-      mode: draft.replaceTaskId ? 'replace' : 'create',
+      mode:
+        state.step === 'clarify_time' && state.template.resumeOnSave
+          ? 'resume'
+          : draft.replaceTaskId
+            ? 'replace'
+            : 'create',
       targetTaskId: draft.replaceTaskId,
+      targetStatus: draft.replaceTaskId ? 'paused' : null,
     };
     return {
       kind: 'awaiting_input',
       state: nextState,
-      message: draft.replaceTaskId
-        ? `I can replace ${draft.replaceLabel || 'that automation'} with:\n\n- ${draft.label}\n\nReply "yes" to replace it or "cancel" to stop.`
-        : `I can save this automation:\n\n- ${draft.label}\n\nReply "yes" to save it or "cancel" to stop.`,
+      message:
+        nextState.mode === 'resume'
+          ? `I can resume this automation with:\n\n- ${draft.label}\n- Scope: ${formatAutomationScopeLabel(draft.config)}\n\nReply "yes" to resume it or "cancel" to stop.`
+          : draft.replaceTaskId
+            ? `I can replace ${draft.replaceLabel || 'that automation'} with:\n\n- ${draft.label}\n- Scope: ${formatAutomationScopeLabel(draft.config)}\n\nReply "yes" to replace it or "cancel" to stop.`
+            : `I can save this automation:\n\n- ${draft.label}\n- Scope: ${formatAutomationScopeLabel(draft.config)}\n\nReply "yes" to save it or "cancel" to stop.`,
     };
   }
 
@@ -1415,15 +1958,18 @@ export function formatPendingCalendarAutomationPrompt(
   if (state.step === 'clarify_offset') {
     return 'How far before should I remind you?';
   }
-  if (state.mode === 'disable') {
-    return `I can turn off this automation:\n\n- ${state.draft.label}\n\nReply "yes" to turn it off or "cancel" to keep it running.`;
+  if (state.mode === 'pause') {
+    return `I can pause this automation:\n\n- ${state.draft.label}\n\nReply "yes" to pause it or "cancel" to keep it running.`;
+  }
+  if (state.mode === 'resume') {
+    return `I can resume this automation:\n\n- ${state.draft.label}\n\nReply "yes" to turn it back on or "cancel" to leave it paused.`;
   }
   if (state.mode === 'delete') {
     return `I can delete this automation:\n\n- ${state.draft.label}\n\nReply "yes" to delete it or "cancel" to keep it.`;
   }
   return state.draft.replaceTaskId
-    ? `I can replace ${state.draft.replaceLabel || 'that automation'} with:\n\n- ${state.draft.label}\n\nReply "yes" to replace it or "cancel" to stop.`
-    : `I can save this automation:\n\n- ${state.draft.label}\n\nReply "yes" to save it or "cancel" to stop.`;
+    ? `I can replace ${state.draft.replaceLabel || 'that automation'} with:\n\n- ${state.draft.label}\n- Scope: ${formatAutomationScopeLabel(state.draft.config)}\n\nReply "yes" to replace it or "cancel" to stop.`
+    : `I can save this automation:\n\n- ${state.draft.label}\n- Scope: ${formatAutomationScopeLabel(state.draft.config)}\n\nReply "yes" to save it or "cancel" to stop.`;
 }
 
 export function buildCalendarAutomationPersistInput(input: {
@@ -1432,13 +1978,18 @@ export function buildCalendarAutomationPersistInput(input: {
   groupFolder: string;
   now?: Date;
   existingTaskId?: string | null;
+  status?: ScheduledTask['status'];
 }): CalendarAutomationPersistInput {
   const now = input.now || new Date();
   const taskId =
     input.existingTaskId ||
     input.draft.replaceTaskId ||
     `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const nextRun = computeInitialNextRun(input.draft.config.schedule, now);
+  const status = input.status || 'active';
+  const nextRun = computeCalendarAutomationNextRun(
+    input.draft.config.schedule,
+    now,
+  );
   return {
     task: {
       id: taskId,
@@ -1450,7 +2001,7 @@ export function buildCalendarAutomationPersistInput(input: {
       schedule_value: input.draft.config.schedule.scheduleValue,
       context_mode: 'isolated',
       next_run: nextRun,
-      status: 'active',
+      status,
       created_at: now.toISOString(),
     },
     automation: {
@@ -1609,21 +2160,123 @@ function formatEventStart(
   return formatter.format(new Date(event.startIso));
 }
 
-function matchesFamilyScope(
+async function resolveScopedGoogleCalendarIds(
+  config: CalendarAutomationConfig,
+  deps: CalendarAutomationExecutionDeps,
+): Promise<{
+  kind: 'all' | 'scoped' | 'missing';
+  calendarIds: string[];
+  calendarLabel: string | null;
+  errorMessage: string | null;
+}> {
+  if (config.scopeKind === 'all') {
+    return {
+      kind: 'all',
+      calendarIds: [],
+      calendarLabel: null,
+      errorMessage: null,
+    };
+  }
+
+  try {
+    const calendars = (
+      await listGoogleCalendars(
+        resolveGoogleCalendarConfig(deps.env),
+        deps.fetchImpl,
+      )
+    ).filter((calendar) => calendar.selected);
+
+    if (config.scopeKind === 'family_shared') {
+      const matches = calendars.filter((calendar) =>
+        normalizeCalendarMatchText(
+          `${calendar.summary} ${calendar.id}`,
+        ).includes('family'),
+      );
+      if (matches.length === 0) {
+        return {
+          kind: 'missing',
+          calendarIds: [],
+          calendarLabel: 'Family/shared',
+          errorMessage:
+            "I couldn't confirm which selected family calendar to use right now.",
+        };
+      }
+      return {
+        kind: 'scoped',
+        calendarIds: matches.map((calendar) => calendar.id),
+        calendarLabel: 'Family/shared',
+        errorMessage: null,
+      };
+    }
+
+    const namedCalendar = calendars.find(
+      (calendar) =>
+        calendar.id === config.scopeCalendarId ||
+        normalizeCalendarMatchText(calendar.summary) ===
+          normalizeCalendarMatchText(config.scopeCalendarSummary || ''),
+    );
+    if (!namedCalendar) {
+      return {
+        kind: 'missing',
+        calendarIds: [],
+        calendarLabel: config.scopeCalendarSummary || 'Named calendar',
+        errorMessage: `I couldn't confirm the ${config.scopeCalendarSummary || 'saved'} calendar for that automation right now.`,
+      };
+    }
+    return {
+      kind: 'scoped',
+      calendarIds: [namedCalendar.id],
+      calendarLabel: namedCalendar.summary,
+      errorMessage: null,
+    };
+  } catch {
+    return {
+      kind: 'missing',
+      calendarIds: [],
+      calendarLabel:
+        config.scopeKind === 'named_calendar'
+          ? config.scopeCalendarSummary || 'Named calendar'
+          : 'Family/shared',
+      errorMessage: "I couldn't confirm that Google calendar scope right now.",
+    };
+  }
+}
+
+function buildScopedGoogleEnv(
+  env: Record<string, string | undefined> | undefined,
+  calendarIds: string[],
+): Record<string, string | undefined> {
+  const config = resolveGoogleCalendarConfig(env);
+  return {
+    GOOGLE_CALENDAR_ACCESS_TOKEN: config.accessToken || undefined,
+    GOOGLE_CALENDAR_REFRESH_TOKEN: config.refreshToken || undefined,
+    GOOGLE_CALENDAR_CLIENT_ID: config.clientId || undefined,
+    GOOGLE_CALENDAR_CLIENT_SECRET: config.clientSecret || undefined,
+    GOOGLE_CALENDAR_IDS: calendarIds.join(','),
+  };
+}
+
+function matchesAutomationScope(
   event:
     | GoogleCalendarEventRecord
     | {
         calendarName?: string | null;
         calendarId?: string | null;
       },
-  scopeKind: CalendarAutomationScopeKind,
+  config: CalendarAutomationConfig,
 ): boolean {
-  if (scopeKind !== 'family_shared') {
+  if (config.scopeKind === 'all') {
     return true;
   }
   const haystack =
     `${event.calendarName || ''} ${event.calendarId || ''}`.toLowerCase();
-  return haystack.includes('family');
+  if (config.scopeKind === 'family_shared') {
+    return haystack.includes('family');
+  }
+  return (
+    Boolean(config.scopeCalendarId) &&
+    event.calendarId?.toLowerCase() === config.scopeCalendarId?.toLowerCase()
+  );
 }
 
 function selectReminderTargetEvents(
@@ -1633,8 +2286,7 @@ function selectReminderTargetEvents(
 ): GoogleCalendarEventRecord[] {
   const filtered = events
     .filter(
-      (event) =>
-        !event.allDay && matchesFamilyScope(event, automation.scopeKind),
+      (event) => !event.allDay && matchesAutomationScope(event, automation),
     )
     .sort(
       (left, right) =>
@@ -1650,6 +2302,39 @@ function selectReminderTargetEvents(
   return filtered;
 }
 
+function lowerCaseFirst(value: string): string {
+  return value ? `${value[0]!.toLowerCase()}${value.slice(1)}` : value;
+}
+
+function polishBriefingAutomationMessage(
+  automation: BriefingCalendarAutomationConfig,
+  reply: string,
+): string {
+  const trimmed = reply.trim();
+  if (!trimmed) {
+    return trimmed;
+  }
+  if (
+    automation.query === 'What should I know about today?' &&
+    !/^good morning\b/i.test(trimmed)
+  ) {
+    return `Good morning - ${lowerCaseFirst(trimmed)}`;
+  }
+  if (
+    automation.scopeKind === 'family_shared' &&
+    !/^family calendar\b/i.test(trimmed)
+  ) {
+    return `Family calendar update: ${lowerCaseFirst(trimmed)}`;
+  }
+  if (
+    automation.query === "What's my day look like tomorrow?" &&
+    !/^tomorrow\b/i.test(trimmed)
+  ) {
+    return `Tomorrow: ${lowerCaseFirst(trimmed)}`;
+  }
+  return trimmed;
+}
+
 async function executeBriefingAutomation(
   automation: CalendarAutomationSummary,
   now: Date,
@@ -1657,7 +2342,7 @@ async function executeBriefingAutomation(
 ): Promise<CalendarAutomationExecutionResult> {
   const config = automation.config as BriefingCalendarAutomationConfig;
   const anchorNow = addDays(now, config.anchorOffsetDays);
-  const dedupeKey = `briefing:${config.query}:${startOfDay(anchorNow).toISOString()}`;
+  const dedupeKey = `briefing:${getAutomationScopeIdentity(config)}:${config.query}:${startOfDay(anchorNow).toISOString()}`;
   if (getAutomationDedupeKeys(automation.dedupeState).includes(dedupeKey)) {
     return {
       message: null,
@@ -1666,10 +2351,35 @@ async function executeBriefingAutomation(
     };
   }
 
+  const scopedCalendars = await resolveScopedGoogleCalendarIds(config, deps);
+  if (scopedCalendars.kind === 'missing') {
+    const failureKey = `${dedupeKey}:scope-missing`;
+    if (getAutomationDedupeKeys(automation.dedupeState).includes(failureKey)) {
+      return {
+        message: null,
+        summary: 'Skipped duplicate briefing scope warning.',
+        dedupeState: automation.dedupeState,
+      };
+    }
+    return {
+      message: scopedCalendars.errorMessage,
+      summary: 'Sent briefing scope warning.',
+      dedupeState: rememberAutomationDedupeKey(
+        automation.dedupeState,
+        failureKey,
+        now,
+      ),
+    };
+  }
+
+  const scopedEnv =
+    scopedCalendars.kind === 'scoped'
+      ? buildScopedGoogleEnv(deps.env, scopedCalendars.calendarIds)
+      : deps.env;
   const response = await buildCalendarAssistantResponse(config.query, {
     now: anchorNow,
     timeZone: deps.timeZone || TIMEZONE,
-    env: deps.env,
+    env: scopedEnv,
     fetchImpl: deps.fetchImpl,
   });
   const nextDedupe = rememberAutomationDedupeKey(
@@ -1677,11 +2387,13 @@ async function executeBriefingAutomation(
     dedupeKey,
     now,
   );
+  const reply = response?.reply
+    ? polishBriefingAutomationMessage(config, response.reply)
+    : "I couldn't build that calendar briefing right now.";
   return {
-    message:
-      response?.reply || "I couldn't build that calendar briefing right now.",
+    message: reply,
     summary: response?.reply
-      ? `Sent briefing: ${response.reply.slice(0, 120)}`
+      ? `Sent briefing: ${reply.slice(0, 120)}`
       : 'Briefing unavailable.',
     dedupeState: nextDedupe,
   };
@@ -1707,11 +2419,36 @@ async function executeWatchAutomation(
     };
   }
 
+  const scopeIdentity = getAutomationScopeIdentity(config);
+  const scopedCalendars = await resolveScopedGoogleCalendarIds(config, deps);
+  if (scopedCalendars.kind === 'missing') {
+    const failureKey = `watch:${scopeIdentity}:${plan.label}:${startOfDay(plan.start).toISOString()}:scope-missing`;
+    if (getAutomationDedupeKeys(automation.dedupeState).includes(failureKey)) {
+      return {
+        message: null,
+        summary: 'Skipped duplicate watch scope warning.',
+        dedupeState: automation.dedupeState,
+      };
+    }
+    return {
+      message: scopedCalendars.errorMessage,
+      summary: 'Sent watch scope warning.',
+      dedupeState: rememberAutomationDedupeKey(
+        automation.dedupeState,
+        failureKey,
+        now,
+      ),
+    };
+  }
+
   const result = await lookupCalendarAssistantEvents(plan, {
-    env: deps.env,
+    env:
+      scopedCalendars.kind === 'scoped'
+        ? buildScopedGoogleEnv(deps.env, scopedCalendars.calendarIds)
+        : deps.env,
     fetchImpl: deps.fetchImpl,
   });
-  const dedupeKeyBase = `${config.condition}:${plan.label}:${startOfDay(plan.start).toISOString()}`;
+  const dedupeKeyBase = `${config.condition}:${scopeIdentity}:${plan.label}:${startOfDay(plan.start).toISOString()}`;
   if (hasConfiguredCalendarFailure(result)) {
     const failureKey = `${dedupeKeyBase}:incomplete`;
     if (getAutomationDedupeKeys(automation.dedupeState).includes(failureKey)) {
@@ -1798,9 +2535,9 @@ async function executeWatchAutomation(
       };
     }
     return {
-      message: `Heads up: ${plan.label} has no ${(
+      message: `Heads up: ${plan.label} doesn't have a ${(
         config.minimumGapMinutes || 30
-      ).toString()}-minute gaps.`,
+      ).toString()}-minute opening.`,
       summary: 'Sent no-gap watch notice.',
       dedupeState: rememberAutomationDedupeKey(
         automation.dedupeState,
@@ -1867,6 +2604,26 @@ async function executeEventReminderAutomation(
   }
 
   const googleConfig = resolveGoogleCalendarConfig(deps.env);
+  const scopedCalendars = await resolveScopedGoogleCalendarIds(config, deps);
+  if (scopedCalendars.kind === 'missing') {
+    const failureKey = `reminder-scope:${getAutomationScopeIdentity(config)}:${startOfDay(now).toISOString()}`;
+    if (getAutomationDedupeKeys(automation.dedupeState).includes(failureKey)) {
+      return {
+        message: null,
+        summary: 'Skipped duplicate reminder scope warning.',
+        dedupeState: automation.dedupeState,
+      };
+    }
+    return {
+      message: scopedCalendars.errorMessage,
+      summary: 'Sent reminder scope warning.',
+      dedupeState: rememberAutomationDedupeKey(
+        automation.dedupeState,
+        failureKey,
+        now,
+      ),
+    };
+  }
   const searchStart =
     config.selector === 'first_event_today' ? startOfDay(now) : now;
   const searchEnd =
@@ -1878,7 +2635,10 @@ async function executeEventReminderAutomation(
       {
         start: searchStart,
         end: searchEnd,
-        calendarIds: googleConfig.calendarIds,
+        calendarIds:
+          scopedCalendars.kind === 'scoped'
+            ? scopedCalendars.calendarIds
+            : googleConfig.calendarIds,
       },
       googleConfig,
       deps.fetchImpl,
