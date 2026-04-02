@@ -20,6 +20,10 @@ let mockEnvValues: Record<string, string> = {};
 
 // Mock config
 vi.mock('./config.js', () => ({
+  AGENT_RUNTIME_DEFAULT: 'codex_local',
+  AGENT_RUNTIME_FALLBACK: 'openai_cloud',
+  CODEX_LOCAL_ENABLED: true,
+  CODEX_LOCAL_MODEL: '',
   CONTAINER_IMAGE: 'nanoclaw-agent:latest',
   CONTAINER_INITIAL_OUTPUT_TIMEOUT: 300000,
   CONTAINER_MAX_OUTPUT_SIZE: 10485760,
@@ -28,6 +32,7 @@ vi.mock('./config.js', () => ({
   GROUPS_DIR: '/tmp/nanoclaw-test-groups',
   IDLE_TIMEOUT: 1800000,
   ONECLI_URL: 'http://localhost:10254',
+  OPENAI_MODEL_FALLBACK: 'gpt-5.4',
   RUNTIME_STATE_DIR: '/tmp/nanoclaw-test-runtime',
   TIMEZONE: 'America/Los_Angeles',
 }));

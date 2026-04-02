@@ -4,7 +4,16 @@ import path from 'path';
 import { OneCLI } from '@onecli-sh/sdk';
 
 import {
+  classifyRuntimeRoute,
+  formatAgentRuntimeStatusMessage,
+  getAgentRuntimeStatusSnapshot,
+  selectPreferredRuntime,
+  shouldReuseExistingThread,
+} from './agent-runtime.js';
+import {
   ASSISTANT_NAME,
+  AGENT_RUNTIME_FALLBACK,
+  ANDREA_OPENAI_BACKEND_URL,
   CONTAINER_TIMEOUT,
   DEFAULT_TRIGGER,
   getTriggerPattern,
@@ -33,10 +42,14 @@ import {
 import {
   cleanupOrphans,
   ensureContainerRuntimeRunning,
+  CONTAINER_RUNTIME_NAME,
+  getContainerRuntimeStatus,
 } from './container-runtime.js';
 import {
   createTask,
+  getAllAgentThreads,
   getAllChats,
+  getAgentThread,
   listAllCursorAgents,
   getAllRegisteredGroups,
   getAllSessions,
@@ -49,6 +62,7 @@ import {
   initDatabase,
   listAllEnabledCommunitySkills,
   setRegisteredGroup,
+  setAgentThread,
   setRouterState,
   setSession,
   storeChatMetadata,
@@ -105,7 +119,14 @@ import {
   shouldDropIncomingMessageBeforeCommands,
 } from './sender-allowlist.js';
 import { startSchedulerLoop } from './task-scheduler.js';
-import { Channel, NewMessage, RegisteredGroup } from './types.js';
+import {
+  AgentThreadState,
+  Channel,
+  NewMessage,
+  RegisteredGroup,
+  RuntimeBackendJob,
+  RuntimeBackendStatus,
+} from './types.js';
 import { logger } from './logger.js';
 import {
   disableOpenClawSkill,
@@ -145,6 +166,16 @@ import {
 } from './direct-quick-reply.js';
 import { buildSilentSuccessFallback } from './user-facing-fallback.js';
 import {
+  AndreaOpenAiRuntimeError,
+  createAndreaOpenAiRuntimeJob,
+  followUpAndreaOpenAiRuntimeJob,
+  getAndreaOpenAiBackendStatus,
+  getAndreaOpenAiRuntimeJob,
+  getAndreaOpenAiRuntimeJobLogs,
+  listAndreaOpenAiRuntimeJobs,
+  stopAndreaOpenAiRuntimeJob,
+} from './andrea-openai-runtime.js';
+import {
   ALEXA_STATUS_COMMANDS,
   AMAZON_SEARCH_COMMANDS,
   AMAZON_STATUS_COMMANDS,
@@ -168,6 +199,13 @@ import {
   PURCHASE_CANCEL_COMMANDS,
   PURCHASE_REQUEST_COMMANDS,
   PURCHASE_REQUESTS_COMMANDS,
+  RUNTIME_CREATE_COMMANDS,
+  RUNTIME_FOLLOWUP_COMMANDS,
+  RUNTIME_JOB_COMMANDS,
+  RUNTIME_JOBS_COMMANDS,
+  RUNTIME_LOGS_COMMANDS,
+  RUNTIME_STATUS_COMMANDS,
+  RUNTIME_STOP_COMMANDS,
   REMOTE_CONTROL_START_COMMANDS,
   REMOTE_CONTROL_STOP_COMMANDS,
 } from './operator-command-gate.js';
@@ -177,6 +215,7 @@ export { escapeXml, formatMessages } from './router.js';
 
 let lastTimestamp = '';
 let sessions: Record<string, string> = {};
+let agentThreads: Record<string, AgentThreadState> = {};
 let registeredGroups: Record<string, RegisteredGroup> = {};
 let lastAgentTimestamp: Record<string, string> = {};
 let messageLoopRunning = false;
@@ -237,6 +276,7 @@ function loadState(): void {
     lastAgentTimestamp = {};
   }
   sessions = getAllSessions();
+  agentThreads = getAllAgentThreads();
   registeredGroups = getAllRegisteredGroups();
   logger.info(
     { groupCount: Object.keys(registeredGroups).length },
@@ -268,6 +308,24 @@ function getOrRecoverCursor(chatJid: string): string {
 function saveState(): void {
   setRouterState('last_timestamp', lastTimestamp);
   setRouterState('last_agent_timestamp', JSON.stringify(lastAgentTimestamp));
+}
+
+function persistAgentThread(
+  groupFolder: string,
+  threadId: string,
+  runtime: AgentThreadState['runtime'],
+): void {
+  sessions[groupFolder] = threadId;
+  setSession(groupFolder, threadId);
+  const thread: AgentThreadState = {
+    group_folder: groupFolder,
+    runtime,
+    thread_id: threadId,
+    last_response_id: threadId,
+    updated_at: new Date().toISOString(),
+  };
+  agentThreads[groupFolder] = thread;
+  setAgentThread(thread);
 }
 
 function registerGroup(jid: string, group: RegisteredGroup): void {
@@ -758,7 +816,15 @@ async function runAgent(
   userMessage: string | null;
 }> {
   const isMain = group.isMain === true;
-  const sessionId = sessions[group.folder];
+  const runtimeRoute = classifyRuntimeRoute(requestPolicy, prompt);
+  const existingThread = agentThreads[group.folder] || getAgentThread(group.folder);
+  if (existingThread) {
+    agentThreads[group.folder] = existingThread;
+  }
+  const preferredRuntime = selectPreferredRuntime(existingThread, runtimeRoute);
+  const sessionId = shouldReuseExistingThread(existingThread, preferredRuntime)
+    ? existingThread.thread_id
+    : sessions[group.folder];
 
   // Update tasks snapshot for container to read (filtered by group)
   const tasks = getAllTasks();
@@ -796,8 +862,11 @@ async function runAgent(
   const wrappedOnOutput = onOutput
     ? async (output: ContainerOutput) => {
         if (output.newSessionId) {
-          sessions[group.folder] = output.newSessionId;
-          setSession(group.folder, output.newSessionId);
+          persistAgentThread(
+            group.folder,
+            output.newSessionId,
+            output.runtime || preferredRuntime,
+          );
         }
         await onOutput(output);
       }
@@ -809,6 +878,9 @@ async function runAgent(
       {
         prompt,
         sessionId,
+        preferredRuntime,
+        fallbackRuntime: AGENT_RUNTIME_FALLBACK,
+        runtimeRoute,
         groupFolder: group.folder,
         chatJid,
         isMain,
@@ -822,8 +894,11 @@ async function runAgent(
     );
 
     if (output.newSessionId) {
-      sessions[group.folder] = output.newSessionId;
-      setSession(group.folder, output.newSessionId);
+      persistAgentThread(
+        group.folder,
+        output.newSessionId,
+        output.runtime || preferredRuntime,
+      );
     }
 
     if (output.status === 'error') {
@@ -1032,6 +1107,12 @@ async function main(): Promise<void> {
     'Usage: /cursor-create [--model MODEL_ID] [--repo REPO_URL] [--ref GIT_REF] [--pr PR_URL] [--branch BRANCH_NAME] [--auto-pr] [--cursor-github-app] [--skip-reviewer] PROMPT';
   const CURSOR_ARTIFACT_LINK_USAGE =
     'Usage: /cursor-artifact-link AGENT_ID ABSOLUTE_PATH';
+  const RUNTIME_CREATE_USAGE = 'Usage: /runtime-create TEXT';
+  const RUNTIME_JOBS_USAGE = 'Usage: /runtime-jobs [LIMIT] [BEFORE_JOB_ID]';
+  const RUNTIME_JOB_USAGE = 'Usage: /runtime-job JOB_ID';
+  const RUNTIME_FOLLOWUP_USAGE = 'Usage: /runtime-followup JOB_ID TEXT';
+  const RUNTIME_STOP_USAGE = 'Usage: /runtime-stop JOB_ID';
+  const RUNTIME_LOGS_USAGE = 'Usage: /runtime-logs JOB_ID [LINES]';
   const CURSOR_TERMINAL_USAGE = 'Usage: /cursor-terminal AGENT_ID COMMAND';
   const CURSOR_TERMINAL_STATUS_USAGE =
     'Usage: /cursor-terminal-status AGENT_ID';
@@ -1140,6 +1221,380 @@ async function main(): Promise<void> {
       chatJid,
       'This experimental remote-control bridge is disabled in the demo runtime.',
     );
+  }
+
+  function resolveRuntimeGroupTarget(
+    token: string,
+  ): { chatJid: string; group: RegisteredGroup } | null {
+    const trimmed = token.trim();
+    if (!trimmed) return null;
+
+    const byJid = registeredGroups[trimmed];
+    if (byJid) {
+      return { chatJid: trimmed, group: byJid };
+    }
+
+    const byFolder = Object.entries(registeredGroups).find(
+      ([, group]) => group.folder === trimmed,
+    );
+    if (byFolder) {
+      return { chatJid: byFolder[0], group: byFolder[1] };
+    }
+
+    return null;
+  }
+
+  function formatRuntimeThreadLabel(threadId: string): string {
+    return threadId.length > 24 ? `${threadId.slice(0, 24)}...` : threadId;
+  }
+
+  function clipRuntimeText(text: string, limit = 1200): string {
+    const trimmed = text.trim();
+    if (trimmed.length <= limit) return trimmed;
+    return `${trimmed.slice(0, limit - 3)}...`;
+  }
+
+  function formatRuntimeBackendStatusSummary(
+    status: RuntimeBackendStatus,
+    group: RegisteredGroup,
+  ): string {
+    return [
+      '*Andrea OpenAI Backend*',
+      `- State: ${status.state}`,
+      `- Backend: ${status.backend}`,
+      `- URL: ${ANDREA_OPENAI_BACKEND_URL}`,
+      `- Version: ${status.version || 'unknown'}`,
+      `- Current group folder: ${group.folder}`,
+      `- Transport: ${status.transport}`,
+      status.detail ? `- Detail: ${status.detail}` : null,
+      '- Commands: /runtime-create, /runtime-jobs, /runtime-job, /runtime-followup, /runtime-logs, /runtime-stop',
+    ]
+      .filter((line): line is string => Boolean(line))
+      .join('\n');
+  }
+
+  function formatRuntimeBackendJobCard(job: RuntimeBackendJob): string {
+    const summary =
+      job.errorText ||
+      job.finalOutputText ||
+      job.latestOutputText ||
+      'No backend output is available yet.';
+
+    return [
+      '*Andrea OpenAI Job*',
+      `- Backend: ${job.backend}`,
+      `- Job ID: ${job.jobId}`,
+      `- Group folder: ${job.groupFolder}`,
+      `- Status: ${job.status}${job.stopRequested ? ' (stop requested)' : ''}`,
+      job.threadId
+        ? `- Thread ID: ${formatRuntimeThreadLabel(job.threadId)}`
+        : null,
+      job.selectedRuntime ? `- Selected runtime: ${job.selectedRuntime}` : null,
+      `- Prompt: ${job.promptPreview}`,
+      `- Summary: ${clipRuntimeText(summary, 600)}`,
+    ]
+      .filter((line): line is string => Boolean(line))
+      .join('\n');
+  }
+
+  function formatRuntimeBackendListLine(
+    job: RuntimeBackendJob,
+    index: number,
+  ): string {
+    return `${index + 1}. ${job.jobId} [${job.status}] group=${job.groupFolder}${job.selectedRuntime ? ` runtime=${job.selectedRuntime}` : ''}${job.threadId ? ` thread=${formatRuntimeThreadLabel(job.threadId)}` : ''}`;
+  }
+
+  function formatRuntimeBackendFailure(
+    err: unknown,
+    chatJid: string,
+    group: RegisteredGroup | undefined,
+  ): string {
+    if (err instanceof AndreaOpenAiRuntimeError) {
+      if (err.kind === 'bootstrap_required') {
+        return [
+          err.message,
+          `- Backend: andrea_openai`,
+          `- Source chat: ${chatJid}`,
+          `- Group folder: ${group?.folder || err.groupFolder || 'unknown'}`,
+          err.detail ? `- Detail: ${err.detail}` : null,
+        ]
+          .filter((line): line is string => Boolean(line))
+          .join('\n');
+      }
+
+      return [
+        err.message,
+        err.detail ? `- Detail: ${err.detail}` : null,
+      ]
+        .filter((line): line is string => Boolean(line))
+        .join('\n');
+    }
+
+    return formatUserFacingOperationFailure(
+      'Andrea OpenAI backend operation failed',
+      err,
+    );
+  }
+
+  async function resolveRuntimeBackendContext(
+    chatJid: string,
+  ): Promise<{ channel: Channel; group: RegisteredGroup } | null> {
+    const channel = findChannel(channels, chatJid);
+    if (!channel) return null;
+
+    const group = registeredGroups[chatJid];
+    if (!group) {
+      await channel.sendMessage(
+        chatJid,
+        'This chat is not registered yet. Run /registermain in a DM first.',
+      );
+      return null;
+    }
+
+    return { channel, group };
+  }
+
+  async function runOperatorRuntimeFollowup(
+    operatorChatJid: string,
+    targetChatJid: string,
+    targetGroup: RegisteredGroup,
+    promptText: string,
+  ): Promise<void> {
+    const channel = findChannel(channels, operatorChatJid);
+    if (!channel) return;
+
+    const requestPolicy = classifyAssistantRequest([{ content: promptText }]);
+    let hadVisibleOutput = false;
+
+    const result = await runAgent(
+      targetGroup,
+      promptText,
+      targetChatJid,
+      requestPolicy,
+      IDLE_TIMEOUT,
+      async (partial) => {
+        const text =
+          typeof partial.result === 'string' ? formatOutbound(partial.result) : '';
+        if (!text) return;
+        hadVisibleOutput = true;
+        await channel.sendMessage(
+          operatorChatJid,
+          `Runtime follow-up (${targetGroup.folder}):\n\n${text}`,
+        );
+      },
+    );
+
+    if (result.status === 'error') {
+      await channel.sendMessage(
+        operatorChatJid,
+        result.userMessage ||
+          `Runtime follow-up failed for ${targetGroup.folder}.`,
+      );
+      return;
+    }
+
+    if (!hadVisibleOutput) {
+      await channel.sendMessage(
+        operatorChatJid,
+        `Runtime follow-up for ${targetGroup.folder} completed without a user-visible reply.`,
+      );
+    }
+  }
+
+  async function handleRuntimeStatus(chatJid: string): Promise<void> {
+    const context = await resolveRuntimeBackendContext(chatJid);
+    if (!context) return;
+
+    const status = await getAndreaOpenAiBackendStatus();
+    await context.channel.sendMessage(
+      chatJid,
+      formatRuntimeBackendStatusSummary(status, context.group),
+    );
+  }
+
+  async function handleRuntimeCreate(
+    chatJid: string,
+    promptText: string,
+    actorId?: string,
+  ): Promise<void> {
+    const context = await resolveRuntimeBackendContext(chatJid);
+    if (!context) return;
+
+    try {
+      const job = await createAndreaOpenAiRuntimeJob({
+        chatJid,
+        group: context.group,
+        prompt: promptText,
+        actorId,
+      });
+      await context.channel.sendMessage(
+        chatJid,
+        `Created Andrea OpenAI job ${job.jobId}.\n\n${formatRuntimeBackendJobCard(job)}`,
+      );
+    } catch (err) {
+      await context.channel.sendMessage(
+        chatJid,
+        formatRuntimeBackendFailure(err, chatJid, context.group),
+      );
+    }
+  }
+
+  async function handleRuntimeJobs(
+    chatJid: string,
+    limit: number,
+    beforeJobId?: string,
+  ): Promise<void> {
+    const context = await resolveRuntimeBackendContext(chatJid);
+    if (!context) return;
+
+    try {
+      const result = await listAndreaOpenAiRuntimeJobs({
+        chatJid,
+        group: context.group,
+        limit,
+        beforeJobId,
+      });
+      if (result.jobs.length === 0) {
+        await context.channel.sendMessage(
+          chatJid,
+          `No Andrea OpenAI jobs are recorded yet for backend group "${context.group.folder}".`,
+        );
+        return;
+      }
+
+      const lines = [
+        `*Andrea OpenAI Jobs*`,
+        `- Group folder: ${context.group.folder}`,
+        ...result.jobs.map(formatRuntimeBackendListLine),
+        result.nextBeforeJobId
+          ? `- nextBeforeJobId: ${result.nextBeforeJobId}`
+          : null,
+      ].filter((line): line is string => Boolean(line));
+
+      await context.channel.sendMessage(chatJid, lines.join('\n'));
+    } catch (err) {
+      await context.channel.sendMessage(
+        chatJid,
+        formatRuntimeBackendFailure(err, chatJid, context.group),
+      );
+    }
+  }
+
+  async function handleRuntimeJob(
+    chatJid: string,
+    jobId: string,
+  ): Promise<void> {
+    const context = await resolveRuntimeBackendContext(chatJid);
+    if (!context) return;
+
+    try {
+      const job = await getAndreaOpenAiRuntimeJob({
+        chatJid,
+        group: context.group,
+        jobId,
+      });
+      await context.channel.sendMessage(
+        chatJid,
+        formatRuntimeBackendJobCard(job),
+      );
+    } catch (err) {
+      await context.channel.sendMessage(
+        chatJid,
+        formatRuntimeBackendFailure(err, chatJid, context.group),
+      );
+    }
+  }
+
+  async function handleRuntimeFollowup(
+    chatJid: string,
+    jobId: string,
+    promptText: string,
+    actorId?: string,
+  ): Promise<void> {
+    const context = await resolveRuntimeBackendContext(chatJid);
+    if (!context) return;
+
+    try {
+      const job = await followUpAndreaOpenAiRuntimeJob({
+        chatJid,
+        group: context.group,
+        jobId,
+        prompt: promptText,
+        actorId,
+      });
+      await context.channel.sendMessage(
+        chatJid,
+        `Follow-up sent to Andrea OpenAI job ${job.jobId}.\n\n${formatRuntimeBackendJobCard(job)}`,
+      );
+    } catch (err) {
+      await context.channel.sendMessage(
+        chatJid,
+        formatRuntimeBackendFailure(err, chatJid, context.group),
+      );
+    }
+  }
+
+  async function handleRuntimeStop(
+    chatJid: string,
+    jobId: string,
+    actorId?: string,
+  ): Promise<void> {
+    const context = await resolveRuntimeBackendContext(chatJid);
+    if (!context) return;
+
+    try {
+      const result = await stopAndreaOpenAiRuntimeJob({
+        chatJid,
+        group: context.group,
+        jobId,
+        actorId,
+      });
+      await context.channel.sendMessage(
+        chatJid,
+        result.liveStopAccepted
+          ? `Stop requested for Andrea OpenAI job ${result.job.jobId}.\n\n${formatRuntimeBackendJobCard(result.job)}`
+          : `Andrea OpenAI job ${result.job.jobId} is no longer active enough to accept a live stop.\n\n${formatRuntimeBackendJobCard(result.job)}`,
+      );
+    } catch (err) {
+      await context.channel.sendMessage(
+        chatJid,
+        formatRuntimeBackendFailure(err, chatJid, context.group),
+      );
+    }
+  }
+
+  async function handleRuntimeLogs(
+    chatJid: string,
+    jobId: string,
+    limit: number,
+  ): Promise<void> {
+    const context = await resolveRuntimeBackendContext(chatJid);
+    if (!context) return;
+
+    try {
+      const result = await getAndreaOpenAiRuntimeJobLogs({
+        chatJid,
+        group: context.group,
+        jobId,
+        lines: limit,
+      });
+      if (!result.logText?.trim()) {
+        await context.channel.sendMessage(
+          chatJid,
+          `No backend logs are available yet for Andrea OpenAI job ${jobId}.`,
+        );
+        return;
+      }
+      await context.channel.sendMessage(
+        chatJid,
+        `Andrea OpenAI logs for ${jobId}${result.logFile ? ` (${result.logFile})` : ''}:\n\n${clipRuntimeText(result.logText, 3200)}`,
+      );
+    } catch (err) {
+      await context.channel.sendMessage(
+        chatJid,
+        formatRuntimeBackendFailure(err, chatJid, context.group),
+      );
+    }
   }
 
   async function handleCursorStatus(chatJid: string): Promise<void> {
@@ -2157,6 +2612,136 @@ async function main(): Promise<void> {
         return;
       }
 
+      if (RUNTIME_STATUS_COMMANDS.has(commandToken)) {
+        handleRuntimeStatus(chatJid).catch((err) =>
+          logger.error({ err, chatJid }, 'Runtime status command error'),
+        );
+        return;
+      }
+
+      if (RUNTIME_CREATE_COMMANDS.has(commandToken)) {
+        const promptText = tokenizeCommandArguments(rawTrimmed)
+          .slice(1)
+          .join(' ')
+          .trim();
+        if (!promptText) {
+          const channel = findChannel(channels, chatJid);
+          channel
+            ?.sendMessage(chatJid, RUNTIME_CREATE_USAGE)
+            .catch((err) =>
+              logger.error({ err, chatJid }, 'Runtime create usage send failed'),
+            );
+          return;
+        }
+
+        handleRuntimeCreate(chatJid, promptText, msg.sender).catch((err) =>
+          logger.error({ err, chatJid }, 'Runtime create command error'),
+        );
+        return;
+      }
+
+      if (RUNTIME_JOBS_COMMANDS.has(commandToken)) {
+        const parts = tokenizeCommandArguments(rawTrimmed);
+        const parsedLimit = Number.parseInt(parts[1] || '', 10);
+        const limit =
+          Number.isFinite(parsedLimit) && parsedLimit > 0
+            ? Math.min(100, parsedLimit)
+            : 20;
+        const beforeJobId =
+          Number.isFinite(parsedLimit) && parsedLimit > 0 ? parts[2] : parts[1];
+        handleRuntimeJobs(chatJid, limit, beforeJobId || undefined).catch(
+          (err) =>
+            logger.error({ err, chatJid }, 'Runtime jobs command error'),
+        );
+        return;
+      }
+
+      if (RUNTIME_JOB_COMMANDS.has(commandToken)) {
+        const parts = tokenizeCommandArguments(rawTrimmed);
+        const jobId = parts[1];
+        if (!jobId) {
+          const channel = findChannel(channels, chatJid);
+          channel
+            ?.sendMessage(chatJid, RUNTIME_JOB_USAGE)
+            .catch((err) =>
+              logger.error({ err, chatJid }, 'Runtime job usage send failed'),
+            );
+          return;
+        }
+
+        handleRuntimeJob(chatJid, jobId).catch((err) =>
+          logger.error({ err, chatJid }, 'Runtime job command error'),
+        );
+        return;
+      }
+
+      if (RUNTIME_FOLLOWUP_COMMANDS.has(commandToken)) {
+        const parts = tokenizeCommandArguments(rawTrimmed);
+        const jobId = parts[1];
+        const promptText = parts.slice(2).join(' ').trim();
+        if (!jobId || !promptText) {
+          const channel = findChannel(channels, chatJid);
+          channel
+            ?.sendMessage(chatJid, RUNTIME_FOLLOWUP_USAGE)
+            .catch((err) =>
+              logger.error(
+                { err, chatJid },
+                'Runtime followup usage send failed',
+              ),
+            );
+          return;
+        }
+
+        handleRuntimeFollowup(chatJid, jobId, promptText, msg.sender).catch(
+          (err) =>
+            logger.error({ err, chatJid }, 'Runtime followup command error'),
+        );
+        return;
+      }
+
+      if (RUNTIME_STOP_COMMANDS.has(commandToken)) {
+        const parts = tokenizeCommandArguments(rawTrimmed);
+        const jobId = parts[1];
+        if (!jobId) {
+          const channel = findChannel(channels, chatJid);
+          channel
+            ?.sendMessage(chatJid, RUNTIME_STOP_USAGE)
+            .catch((err) =>
+              logger.error({ err, chatJid }, 'Runtime stop usage send failed'),
+            );
+          return;
+        }
+
+        handleRuntimeStop(chatJid, jobId, msg.sender).catch((err) =>
+          logger.error({ err, chatJid }, 'Runtime stop command error'),
+        );
+        return;
+      }
+
+      if (RUNTIME_LOGS_COMMANDS.has(commandToken)) {
+        const parts = tokenizeCommandArguments(rawTrimmed);
+        const jobId = parts[1];
+        if (!jobId) {
+          const channel = findChannel(channels, chatJid);
+          channel
+            ?.sendMessage(chatJid, RUNTIME_LOGS_USAGE)
+            .catch((err) =>
+              logger.error({ err, chatJid }, 'Runtime logs usage send failed'),
+            );
+          return;
+        }
+
+        const parsedLimit = Number.parseInt(parts[2] || '', 10);
+        const limit =
+          Number.isFinite(parsedLimit) && parsedLimit > 0
+            ? Math.min(120, parsedLimit)
+            : 40;
+        handleRuntimeLogs(chatJid, jobId, limit).catch((err) =>
+          logger.error({ err, chatJid }, 'Runtime logs command error'),
+        );
+        return;
+      }
+
       if (CURSOR_MODELS_COMMANDS.has(commandToken)) {
         const args = tokenizeCommandArguments(rawTrimmed);
         const filterText = args.slice(1).join(' ').trim();
@@ -2644,6 +3229,7 @@ async function main(): Promise<void> {
   startSchedulerLoop({
     registeredGroups: () => registeredGroups,
     getSessions: () => sessions,
+    getAgentThreads: () => agentThreads,
     queue,
     onProcess: (groupJid, proc, containerName, groupFolder) =>
       queue.registerProcess(groupJid, proc, containerName, groupFolder),

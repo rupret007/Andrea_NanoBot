@@ -26,6 +26,7 @@ Operators own:
 - service lifecycle
 - Cloud versus desktop bridge setup
 - deeper Cursor workflows
+- the local `Andrea_OpenAI_Bot` backend lane when Codex/OpenAI execution is delegated out of this repo
 - startup, restart, verify, and troubleshooting
 - release validation and docs accuracy
 
@@ -76,6 +77,7 @@ Use these meanings consistently:
 - one healthy container runtime
 - at least one configured channel
 - valid model credentials
+- optional local `Andrea_OpenAI_Bot` process if you want the loopback OpenAI/Codex backend lane
 
 Quick checks:
 
@@ -88,6 +90,36 @@ npm run setup -- --step verify
 ```
 
 On Windows PowerShell, use `npm.cmd` and `npx.cmd` if policy blocks `npm.ps1` or `npx.ps1`.
+
+## Andrea OpenAI Backend Lane
+
+This repo can call a local `Andrea_OpenAI_Bot` process over loopback HTTP.
+
+Required NanoBot env:
+
+```bash
+ANDREA_OPENAI_BACKEND_ENABLED=true
+ANDREA_OPENAI_BACKEND_URL=http://127.0.0.1:3210
+ANDREA_OPENAI_BACKEND_TIMEOUT_MS=15000
+```
+
+Operator commands for this lane:
+
+- `/runtime-status`
+- `/runtime-create TEXT`
+- `/runtime-jobs [LIMIT] [BEFORE_JOB_ID]`
+- `/runtime-job JOB_ID`
+- `/runtime-followup JOB_ID TEXT`
+- `/runtime-logs JOB_ID [LINES]`
+- `/runtime-stop JOB_ID`
+
+Important truth:
+
+- `jobId` is the primary backend handle in NanoBot
+- `threadId` is metadata returned by the backend
+- NanoBot uses the current registered chat's `group.folder` as the backend `groupFolder`
+- if the backend says `No registered group found for folder "..."`, NanoBot reports `bootstrap_required`
+- a fully automatic first-job bootstrap still needs a small backend-side registration route in `Andrea_OpenAI_Bot`
 
 ## First Deployment Checklist
 

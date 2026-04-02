@@ -27,6 +27,19 @@ interface GroupState {
   retryCount: number;
 }
 
+export interface RuntimeJobSnapshot {
+  groupJid: string;
+  active: boolean;
+  idleWaiting: boolean;
+  isTaskContainer: boolean;
+  runningTaskId: string | null;
+  pendingMessages: boolean;
+  pendingTaskCount: number;
+  containerName: string | null;
+  groupFolder: string | null;
+  retryCount: number;
+}
+
 export class GroupQueue {
   private groups = new Map<string, GroupState>();
   private activeCount = 0;
@@ -191,6 +204,36 @@ export class GroupQueue {
     } catch {
       // ignore
     }
+  }
+
+  requestStop(groupJid: string): boolean {
+    const state = this.getGroup(groupJid);
+    if (!state.active) return false;
+    this.closeStdin(groupJid);
+    return true;
+  }
+
+  getRuntimeJobs(): RuntimeJobSnapshot[] {
+    return [...this.groups.entries()]
+      .map(([groupJid, state]) => ({
+        groupJid,
+        active: state.active,
+        idleWaiting: state.idleWaiting,
+        isTaskContainer: state.isTaskContainer,
+        runningTaskId: state.runningTaskId,
+        pendingMessages: state.pendingMessages,
+        pendingTaskCount: state.pendingTasks.length,
+        containerName: state.containerName,
+        groupFolder: state.groupFolder,
+        retryCount: state.retryCount,
+      }))
+      .filter(
+        (job) =>
+          job.active ||
+          job.pendingMessages ||
+          job.pendingTaskCount > 0 ||
+          job.retryCount > 0,
+      );
   }
 
   private async runForGroup(

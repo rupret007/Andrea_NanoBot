@@ -13,6 +13,7 @@
 <p align="center">
   <a href="docs/USER_GUIDE.md">User Guide</a>&nbsp; | &nbsp;
   <a href="docs/ADMIN_GUIDE.md">Admin Guide</a>&nbsp; | &nbsp;
+  <a href="docs/ANDREA_OPENAI_BACKEND.md">OpenAI Backend</a>&nbsp; | &nbsp;
   <a href="docs/SETUP_AND_FEATURES_GUIDE.md">Setup Guide</a>&nbsp; | &nbsp;
   <a href="docs/CHANNEL_COMMANDS_AND_ONBOARDING.md">Chat Commands</a>&nbsp; | &nbsp;
   <a href="docs/DEMO_CHECKLIST.md">Demo Checklist</a>&nbsp; | &nbsp;
@@ -42,6 +43,7 @@ What operators should expect:
 - setup, restart, verify, and troubleshooting
 - Cursor Cloud job workflows
 - desktop bridge session and terminal workflows
+- the local `Andrea_OpenAI_Bot` loopback backend lane for Codex/OpenAI execution truth
 - optional integrations only after same-day validation
 
 The runtime is still based on NanoClaw, which means the security model matters:
@@ -112,6 +114,23 @@ Andrea now documents Cursor as three separate surfaces:
 - **Cursor-backed runtime route**
   - optional diagnostic/runtime-routing surface
   - separate from both Cloud jobs and desktop bridge readiness
+
+## OpenAI Backend Lane
+
+`Andrea_NanoBot` now has a separate local backend lane for `Andrea_OpenAI_Bot`.
+
+- NanoBot owns the operator shell, current control context, and job handle UX
+- `Andrea_OpenAI_Bot` owns execution truth, provider routing, thread reuse, logs, and stop behavior
+- the current fallback operator surface is:
+  - `/runtime-status`
+  - `/runtime-create`
+  - `/runtime-jobs`
+  - `/runtime-job`
+  - `/runtime-followup`
+  - `/runtime-logs`
+  - `/runtime-stop`
+
+See [docs/ANDREA_OPENAI_BACKEND.md](docs/ANDREA_OPENAI_BACKEND.md) for the ownership split and current bootstrap limitation.
 
 ## Two Command Surfaces
 

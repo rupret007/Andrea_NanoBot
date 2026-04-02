@@ -3,12 +3,21 @@ import path from 'path';
 
 import { readEnvFile } from './env.js';
 import { isValidTimezone } from './timezone.js';
+import type { AgentRuntimeName } from './types.js';
 
 // Read config values from .env (falls back to process.env).
 const envConfig = readEnvFile([
   'ASSISTANT_NAME',
   'ASSISTANT_HAS_OWN_NUMBER',
+  'AGENT_RUNTIME_DEFAULT',
+  'AGENT_RUNTIME_FALLBACK',
+  'ANDREA_OPENAI_BACKEND_ENABLED',
+  'ANDREA_OPENAI_BACKEND_URL',
+  'ANDREA_OPENAI_BACKEND_TIMEOUT_MS',
+  'CODEX_LOCAL_ENABLED',
+  'CODEX_LOCAL_MODEL',
   'CONTAINER_RUNTIME',
+  'OPENAI_MODEL_FALLBACK',
   'ONECLI_URL',
   'TZ',
 ]);
@@ -55,8 +64,51 @@ function normalizeConfiguredContainerRuntime(
   );
 }
 
+function normalizeConfiguredAgentRuntime(
+  value: string | undefined,
+): AgentRuntimeName | undefined {
+  if (!value) return undefined;
+  if (
+    value === 'codex_local' ||
+    value === 'openai_cloud' ||
+    value === 'claude_legacy'
+  ) {
+    return value;
+  }
+  throw new Error(
+    `Unsupported agent runtime "${value}". Expected codex_local, openai_cloud, or claude_legacy.`,
+  );
+}
+
 export const CONTAINER_IMAGE =
   process.env.CONTAINER_IMAGE || 'nanoclaw-agent:latest';
+export const AGENT_RUNTIME_DEFAULT =
+  normalizeConfiguredAgentRuntime(
+    process.env.AGENT_RUNTIME_DEFAULT || envConfig.AGENT_RUNTIME_DEFAULT,
+  ) || 'codex_local';
+export const AGENT_RUNTIME_FALLBACK =
+  normalizeConfiguredAgentRuntime(
+    process.env.AGENT_RUNTIME_FALLBACK || envConfig.AGENT_RUNTIME_FALLBACK,
+  ) || 'openai_cloud';
+export const ANDREA_OPENAI_BACKEND_ENABLED =
+  (process.env.ANDREA_OPENAI_BACKEND_ENABLED ||
+    envConfig.ANDREA_OPENAI_BACKEND_ENABLED ||
+    'false') === 'true';
+export const ANDREA_OPENAI_BACKEND_URL =
+  process.env.ANDREA_OPENAI_BACKEND_URL ||
+  envConfig.ANDREA_OPENAI_BACKEND_URL ||
+  'http://127.0.0.1:3210';
+export const ANDREA_OPENAI_BACKEND_TIMEOUT_MS = parseInt(
+  process.env.ANDREA_OPENAI_BACKEND_TIMEOUT_MS ||
+    envConfig.ANDREA_OPENAI_BACKEND_TIMEOUT_MS ||
+    '15000',
+  10,
+);
+export const CODEX_LOCAL_ENABLED =
+  (process.env.CODEX_LOCAL_ENABLED || envConfig.CODEX_LOCAL_ENABLED || 'true') !==
+  'false';
+export const CODEX_LOCAL_MODEL =
+  process.env.CODEX_LOCAL_MODEL || envConfig.CODEX_LOCAL_MODEL || '';
 export const CONTAINER_RUNTIME = normalizeConfiguredContainerRuntime(
   process.env.CONTAINER_RUNTIME || envConfig.CONTAINER_RUNTIME,
 );
@@ -74,6 +126,10 @@ export const CONTAINER_MAX_OUTPUT_SIZE = parseInt(
 ); // 10MB default
 export const ONECLI_URL =
   process.env.ONECLI_URL || envConfig.ONECLI_URL || 'http://localhost:10254';
+export const OPENAI_MODEL_FALLBACK =
+  process.env.OPENAI_MODEL_FALLBACK ||
+  envConfig.OPENAI_MODEL_FALLBACK ||
+  'gpt-5.4';
 export const MAX_MESSAGES_PER_PROMPT = Math.max(
   1,
   parseInt(process.env.MAX_MESSAGES_PER_PROMPT || '10', 10) || 10,

@@ -1,39 +1,25 @@
-/**
- * NanoClaw Agent Runner
- * Runs inside a container, receives config via stdin, outputs result to stdout
- *
- * Input protocol:
- *   Stdin: Full ContainerInput JSON (read until EOF, like before)
- *   IPC:   Follow-up messages written as JSON files to /workspace/ipc/input/
- *          Files: {type:"message", text:"..."}.json — polled and consumed
- *          Sentinel: /workspace/ipc/input/_close — signals session end
- *
- * Stdout protocol:
- *   Each result is wrapped in OUTPUT_START_MARKER / OUTPUT_END_MARKER pairs.
- *   Multiple results may be emitted (one per agent teams result).
- *   Final marker after loop ends signals completion.
- */
-
+import { execFile, spawn } from 'child_process';
 import fs from 'fs';
+import OpenAI from 'openai';
 import path from 'path';
-import { execFile } from 'child_process';
-import {
-  query,
-  HookCallback,
-  PreCompactHookInput,
-} from '@anthropic-ai/claude-agent-sdk';
+import { query } from '@anthropic-ai/claude-agent-sdk';
 import { fileURLToPath } from 'url';
+
+type AgentRuntimeName = 'codex_local' | 'openai_cloud' | 'claude_legacy';
+type RuntimeRoute = 'local_required' | 'cloud_allowed' | 'cloud_preferred';
 
 interface ContainerInput {
   prompt: string;
   sessionId?: string;
+  preferredRuntime?: AgentRuntimeName;
+  fallbackRuntime?: AgentRuntimeName;
+  runtimeRoute?: RuntimeRoute;
   groupFolder: string;
   chatJid: string;
   isMain: boolean;
   isScheduledTask?: boolean;
   assistantName?: string;
   script?: string;
-  idleTimeoutMs?: number;
   requestPolicy?: {
     route: string;
     reason: string;
@@ -47,18 +33,8 @@ interface ContainerOutput {
   status: 'success' | 'error';
   result: string | null;
   newSessionId?: string;
+  runtime?: AgentRuntimeName;
   error?: string;
-}
-
-interface SessionEntry {
-  sessionId: string;
-  fullPath: string;
-  summary: string;
-  firstPrompt: string;
-}
-
-interface SessionsIndex {
-  entries: SessionEntry[];
 }
 
 interface SDKUserMessage {
@@ -68,9 +44,17 @@ interface SDKUserMessage {
   session_id: string;
 }
 
+interface ScriptResult {
+  wakeAgent: boolean;
+  data?: unknown;
+}
+
 const IPC_INPUT_DIR = '/workspace/ipc/input';
 const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
 const IPC_POLL_MS = 500;
+const SCRIPT_TIMEOUT_MS = 30_000;
+const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
+const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
 const COMPATIBILITY_BUILTIN_TOOLS = [
   'Bash',
   'Read',
@@ -145,10 +129,6 @@ function normalizeRequestPolicy(
   };
 }
 
-/**
- * Push-based async iterable for streaming user messages to the SDK.
- * Keeps the iterable alive until end() is called, preventing isSingleUserTurn.
- */
 class MessageStream {
   private queue: SDKUserMessage[] = [];
   private waiting: (() => void) | null = null;
@@ -175,8 +155,8 @@ class MessageStream {
         yield this.queue.shift()!;
       }
       if (this.done) return;
-      await new Promise<void>((r) => {
-        this.waiting = r;
+      await new Promise<void>((resolve) => {
+        this.waiting = resolve;
       });
       this.waiting = null;
     }
@@ -195,9 +175,6 @@ async function readStdin(): Promise<string> {
   });
 }
 
-const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
-const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
-
 function writeOutput(output: ContainerOutput): void {
   console.log(OUTPUT_START_MARKER);
   console.log(JSON.stringify(output));
@@ -208,195 +185,32 @@ function log(message: string): void {
   console.error(`[agent-runner] ${message}`);
 }
 
-function getSessionSummary(
-  sessionId: string,
-  transcriptPath: string,
-): string | null {
-  const projectDir = path.dirname(transcriptPath);
-  const indexPath = path.join(projectDir, 'sessions-index.json');
-
-  if (!fs.existsSync(indexPath)) {
-    log(`Sessions index not found at ${indexPath}`);
+function tryReadTextFile(filePath: string): string | null {
+  try {
+    if (!fs.existsSync(filePath)) return null;
+    return fs.readFileSync(filePath, 'utf-8');
+  } catch {
     return null;
   }
-
-  try {
-    const index: SessionsIndex = JSON.parse(
-      fs.readFileSync(indexPath, 'utf-8'),
-    );
-    const entry = index.entries.find((e) => e.sessionId === sessionId);
-    if (entry?.summary) {
-      return entry.summary;
-    }
-  } catch (err) {
-    log(
-      `Failed to read sessions index: ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
-
-  return null;
 }
 
-/**
- * Archive the full transcript to conversations/ before compaction.
- */
-function createPreCompactHook(assistantName?: string): HookCallback {
-  return async (input, _toolUseId, _context) => {
-    const preCompact = input as PreCompactHookInput;
-    const transcriptPath = preCompact.transcript_path;
-    const sessionId = preCompact.session_id;
-
-    if (!transcriptPath || !fs.existsSync(transcriptPath)) {
-      log('No transcript found for archiving');
-      return {};
-    }
-
-    try {
-      const content = fs.readFileSync(transcriptPath, 'utf-8');
-      const messages = parseTranscript(content);
-
-      if (messages.length === 0) {
-        log('No messages to archive');
-        return {};
-      }
-
-      const summary = getSessionSummary(sessionId, transcriptPath);
-      const name = summary ? sanitizeFilename(summary) : generateFallbackName();
-
-      const conversationsDir = '/workspace/group/conversations';
-      fs.mkdirSync(conversationsDir, { recursive: true });
-
-      const date = new Date().toISOString().split('T')[0];
-      const filename = `${date}-${name}.md`;
-      const filePath = path.join(conversationsDir, filename);
-
-      const markdown = formatTranscriptMarkdown(
-        messages,
-        summary,
-        assistantName,
-      );
-      fs.writeFileSync(filePath, markdown);
-
-      log(`Archived conversation to ${filePath}`);
-    } catch (err) {
-      log(
-        `Failed to archive transcript: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-
-    return {};
-  };
-}
-
-function sanitizeFilename(summary: string): string {
-  return summary
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 50);
-}
-
-function generateFallbackName(): string {
-  const time = new Date();
-  return `conversation-${time.getHours().toString().padStart(2, '0')}${time.getMinutes().toString().padStart(2, '0')}`;
-}
-
-interface ParsedMessage {
-  role: 'user' | 'assistant';
-  content: string;
-}
-
-function parseTranscript(content: string): ParsedMessage[] {
-  const messages: ParsedMessage[] = [];
-
-  for (const line of content.split('\n')) {
-    if (!line.trim()) continue;
-    try {
-      const entry = JSON.parse(line);
-      if (entry.type === 'user' && entry.message?.content) {
-        const text =
-          typeof entry.message.content === 'string'
-            ? entry.message.content
-            : entry.message.content
-                .map((c: { text?: string }) => c.text || '')
-                .join('');
-        if (text) messages.push({ role: 'user', content: text });
-      } else if (entry.type === 'assistant' && entry.message?.content) {
-        const textParts = entry.message.content
-          .filter((c: { type: string }) => c.type === 'text')
-          .map((c: { text: string }) => c.text);
-        const text = textParts.join('');
-        if (text) messages.push({ role: 'assistant', content: text });
-      }
-    } catch {}
-  }
-
-  return messages;
-}
-
-function formatTranscriptMarkdown(
-  messages: ParsedMessage[],
-  title?: string | null,
-  assistantName?: string,
-): string {
-  const now = new Date();
-  const formatDateTime = (d: Date) =>
-    d.toLocaleString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true,
-    });
-
-  const lines: string[] = [];
-  lines.push(`# ${title || 'Conversation'}`);
-  lines.push('');
-  lines.push(`Archived: ${formatDateTime(now)}`);
-  lines.push('');
-  lines.push('---');
-  lines.push('');
-
-  for (const msg of messages) {
-    const sender = msg.role === 'user' ? 'User' : assistantName || 'Assistant';
-    const content =
-      msg.content.length > 2000
-        ? msg.content.slice(0, 2000) + '...'
-        : msg.content;
-    lines.push(`**${sender}**: ${content}`);
-    lines.push('');
-  }
-
-  return lines.join('\n');
-}
-
-/**
- * Check for _close sentinel.
- */
 function shouldClose(): boolean {
-  if (fs.existsSync(IPC_INPUT_CLOSE_SENTINEL)) {
-    try {
-      fs.unlinkSync(IPC_INPUT_CLOSE_SENTINEL);
-    } catch {
-      /* ignore */
-    }
-    return true;
+  if (!fs.existsSync(IPC_INPUT_CLOSE_SENTINEL)) return false;
+  try {
+    fs.unlinkSync(IPC_INPUT_CLOSE_SENTINEL);
+  } catch {
+    // ignore
   }
-  return false;
+  return true;
 }
 
-/**
- * Drain all pending IPC input messages.
- * Returns messages found, or empty array.
- */
 function drainIpcInput(): string[] {
   try {
     fs.mkdirSync(IPC_INPUT_DIR, { recursive: true });
     const files = fs
       .readdirSync(IPC_INPUT_DIR)
-      .filter((f) => f.endsWith('.json'))
+      .filter((entry) => entry.endsWith('.json'))
       .sort();
-
     const messages: string[] = [];
     for (const file of files) {
       const filePath = path.join(IPC_INPUT_DIR, file);
@@ -406,28 +220,20 @@ function drainIpcInput(): string[] {
         if (data.type === 'message' && data.text) {
           messages.push(data.text);
         }
-      } catch (err) {
-        log(
-          `Failed to process input file ${file}: ${err instanceof Error ? err.message : String(err)}`,
-        );
+      } catch {
         try {
           fs.unlinkSync(filePath);
         } catch {
-          /* ignore */
+          // ignore
         }
       }
     }
     return messages;
-  } catch (err) {
-    log(`IPC drain error: ${err instanceof Error ? err.message : String(err)}`);
+  } catch {
     return [];
   }
 }
 
-/**
- * Wait for a new IPC message or _close sentinel.
- * Returns the messages as a single string, or null if _close.
- */
 function waitForIpcMessage(): Promise<string | null> {
   return new Promise((resolve) => {
     const poll = () => {
@@ -453,9 +259,6 @@ function resolveSdkModel(): string | undefined {
     process.env.CLAUDE_MODEL;
   if (explicitModel) return explicitModel;
 
-  // OpenAI-compatible Anthropic gateway mode:
-  // Claude SDK defaults can move faster than gateway model validators.
-  // Pin a broadly-supported Claude alias unless explicitly overridden.
   const usingOpenAiCompatGateway = Boolean(
     process.env.ANTHROPIC_BASE_URL && process.env.OPENAI_API_KEY,
   );
@@ -466,250 +269,443 @@ function resolveSdkModel(): string | undefined {
   return undefined;
 }
 
-/**
- * Run a single query and stream results via writeOutput.
- * Uses MessageStream (AsyncIterable) to keep isSingleUserTurn=false,
- * allowing agent teams subagents to run to completion.
- * Also pipes IPC messages into the stream during the query.
- */
-async function runQuery(
+function resolveCodexModel(): string | undefined {
+  const explicit =
+    process.env.CODEX_LOCAL_MODEL ||
+    process.env.NANOCLAW_AGENT_MODEL ||
+    process.env.CLAUDE_CODE_MODEL;
+  return explicit?.trim() || undefined;
+}
+
+function resolveOpenAiCloudModel(): string {
+  return (process.env.OPENAI_MODEL_FALLBACK || 'gpt-5.4').trim() || 'gpt-5.4';
+}
+
+function resolvePreferredRuntime(containerInput: ContainerInput): AgentRuntimeName {
+  return (
+    containerInput.preferredRuntime ||
+    ((process.env.AGENT_RUNTIME_DEFAULT as AgentRuntimeName | undefined) ??
+      'codex_local')
+  );
+}
+
+function resolveFallbackRuntime(
+  containerInput: ContainerInput,
+): AgentRuntimeName | undefined {
+  return (
+    containerInput.fallbackRuntime ||
+    (process.env.AGENT_RUNTIME_FALLBACK as AgentRuntimeName | undefined)
+  );
+}
+
+function canRouteToCloud(route: RuntimeRoute | undefined): boolean {
+  return route !== 'local_required';
+}
+
+function shouldUseCodexLocal(): boolean {
+  return process.env.CODEX_LOCAL_ENABLED !== 'false';
+}
+
+function buildRuntimeInstructionBlock(containerInput: ContainerInput): string {
+  const requestPolicy = normalizeRequestPolicy(containerInput.requestPolicy);
+  return [
+    'Andrea is the only public assistant identity in this runtime.',
+    requestPolicy.guidance,
+    `Route classification: ${requestPolicy.route}.`,
+    `Runtime route: ${containerInput.runtimeRoute || 'local_required'}.`,
+    requestPolicy.builtinTools.length > 0
+      ? `Allowed builtin tool classes: ${requestPolicy.builtinTools.join(', ')}.`
+      : 'No builtin tool classes are allowed for this turn.',
+    requestPolicy.mcpTools.length > 0
+      ? `Allowed Andrea MCP tools: ${requestPolicy.mcpTools.join(', ')}.`
+      : 'No Andrea MCP tools are allowed for this turn.',
+  ].join('\n');
+}
+
+function syncCodexOverlay(containerInput: ContainerInput): void {
+  const overlayPath = '/workspace/group/AGENTS.md';
+  const sections = [
+    '# Andrea Runtime Overlay',
+    '',
+    buildRuntimeInstructionBlock(containerInput),
+  ];
+
+  const globalMemory = tryReadTextFile('/workspace/global/CLAUDE.md');
+  if (!containerInput.isMain && globalMemory?.trim()) {
+    sections.push('', '## Global CLAUDE.md', '', globalMemory.trim());
+  }
+
+  const groupMemory = tryReadTextFile('/workspace/group/CLAUDE.md');
+  if (groupMemory?.trim()) {
+    sections.push('', '## Group CLAUDE.md', '', groupMemory.trim());
+  }
+
+  const content = `${sections.join('\n')}\n`;
+  if (tryReadTextFile(overlayPath) === content) return;
+  fs.writeFileSync(overlayPath, content);
+}
+
+function buildCodexPrompt(containerInput: ContainerInput, prompt: string): string {
+  return [
+    'Follow AGENTS.md and CLAUDE.md files in the workspace as canonical memory.',
+    buildRuntimeInstructionBlock(containerInput),
+    'User request:',
+    prompt,
+  ].join('\n\n');
+}
+
+function buildOpenAiCloudPrompt(
+  containerInput: ContainerInput,
+  prompt: string,
+): string {
+  return [
+    'You are Andrea running in openai_cloud fallback mode.',
+    buildRuntimeInstructionBlock(containerInput),
+    'Cloud fallback limitations:',
+    '- Do not claim to edit local files or run local shell commands.',
+    '- Focus on research, summaries, planning, drafting, and other cloud-safe work.',
+    'User request:',
+    prompt,
+  ].join('\n\n');
+}
+
+function buildCodexConfigArgs(
+  containerInput: ContainerInput,
+  mcpServerPath: string,
+): string[] {
+  const requestPolicy = normalizeRequestPolicy(containerInput.requestPolicy);
+  if (requestPolicy.mcpTools.length === 0) {
+    return [];
+  }
+
+  return [
+    '-c',
+    `mcp_servers.nanoclaw.command=${JSON.stringify('node')}`,
+    '-c',
+    `mcp_servers.nanoclaw.args=${JSON.stringify([mcpServerPath])}`,
+    '-c',
+    `mcp_servers.nanoclaw.env.NANOCLAW_CHAT_JID=${JSON.stringify(containerInput.chatJid)}`,
+    '-c',
+    `mcp_servers.nanoclaw.env.NANOCLAW_GROUP_FOLDER=${JSON.stringify(containerInput.groupFolder)}`,
+    '-c',
+    `mcp_servers.nanoclaw.env.NANOCLAW_IS_MAIN=${JSON.stringify(containerInput.isMain ? '1' : '0')}`,
+    '-c',
+    `mcp_servers.nanoclaw.env.NANOCLAW_REQUEST_ROUTE=${JSON.stringify(requestPolicy.route)}`,
+    '-c',
+    `mcp_servers.nanoclaw.env.NANOCLAW_REQUEST_REASON=${JSON.stringify(requestPolicy.reason)}`,
+    '-c',
+    `mcp_servers.nanoclaw.env.NANOCLAW_ALLOWED_MCP_TOOLS=${JSON.stringify(JSON.stringify(requestPolicy.mcpTools))}`,
+  ];
+}
+
+async function ensureCodexAuthenticated(): Promise<void> {
+  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  if (!apiKey) return;
+
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn('codex', ['login', '--with-api-key'], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: {
+        ...process.env,
+        HOME: process.env.HOME || '/home/node',
+        CODEX_HOME: process.env.CODEX_HOME || '/home/node/.codex',
+      },
+    });
+    let stderr = '';
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(
+        new Error(
+          `codex login failed with exit code ${code}: ${stderr.trim() || 'unknown error'}`,
+        ),
+      );
+    });
+    child.stdin.write(`${apiKey}\n`);
+    child.stdin.end();
+  });
+}
+
+function extractCodexMessageText(item: unknown): string | null {
+  if (!item || typeof item !== 'object') return null;
+  const candidate = item as {
+    text?: string;
+    content?: Array<{ type?: string; text?: string }>;
+  };
+  if (typeof candidate.text === 'string' && candidate.text.trim()) {
+    return candidate.text.trim();
+  }
+  if (!Array.isArray(candidate.content)) return null;
+  const text = candidate.content
+    .filter((part) => part.type === 'output_text' || part.type === 'text')
+    .map((part) => part.text || '')
+    .join('')
+    .trim();
+  return text || null;
+}
+
+async function runCodexTurn(
   prompt: string,
   sessionId: string | undefined,
   mcpServerPath: string,
   containerInput: ContainerInput,
-  sdkEnv: Record<string, string | undefined>,
-  resumeAt?: string,
-  options: {
-    fallbackMode?: boolean;
-    suppressFirstErrorForRetry?: boolean;
-    disableMcpServer?: boolean;
-  } = {},
-): Promise<{
-  newSessionId?: string;
-  lastAssistantUuid?: string;
-  closedDuringQuery: boolean;
-  suppressedTransientError: boolean;
-}> {
+): Promise<{ output: ContainerOutput; closedDuringTurn: boolean }> {
+  syncCodexOverlay(containerInput);
+
+  const model = resolveCodexModel();
+  const configArgs = buildCodexConfigArgs(containerInput, mcpServerPath);
+  const commandArgs = sessionId
+    ? [
+        'exec',
+        'resume',
+        ...configArgs,
+        '--json',
+        '--skip-git-repo-check',
+        '--dangerously-bypass-approvals-and-sandbox',
+        ...(model ? ['--model', model] : []),
+        sessionId,
+        '-',
+      ]
+    : [
+        'exec',
+        ...configArgs,
+        '--json',
+        '--skip-git-repo-check',
+        '--dangerously-bypass-approvals-and-sandbox',
+        ...(model ? ['--model', model] : []),
+        '-',
+      ];
+
+  return new Promise((resolve, reject) => {
+    const child = spawn('codex', commandArgs, {
+      cwd: '/workspace/group',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: {
+        ...process.env,
+        HOME: process.env.HOME || '/home/node',
+        CODEX_HOME: process.env.CODEX_HOME || '/home/node/.codex',
+      },
+    });
+
+    let stdoutBuffer = '';
+    let stderr = '';
+    let threadId = sessionId;
+    let finalMessage: string | null = null;
+    let eventError: string | null = null;
+    let closedDuringTurn = false;
+
+    const poller = setInterval(() => {
+      if (!shouldClose()) return;
+      closedDuringTurn = true;
+      child.kill('SIGTERM');
+    }, IPC_POLL_MS);
+
+    const handleLine = (line: string) => {
+      if (!line.trim()) return;
+      try {
+        const event = JSON.parse(line) as {
+          type?: string;
+          thread_id?: string;
+          message?: string;
+          error?: string;
+          item?: { type?: string; text?: string; content?: unknown[] };
+        };
+
+        if (typeof event.thread_id === 'string' && event.thread_id) {
+          threadId = event.thread_id;
+        }
+        if (event.type === 'item.completed' && event.item?.type === 'agent_message') {
+          finalMessage = extractCodexMessageText(event.item) || finalMessage;
+        }
+        if (event.type === 'error') {
+          eventError = event.error || event.message || 'Codex emitted an error event';
+        }
+      } catch {
+        // ignore non-JSON lines
+      }
+    };
+
+    child.stdout.on('data', (chunk) => {
+      stdoutBuffer += chunk.toString();
+      let newlineIndex = stdoutBuffer.indexOf('\n');
+      while (newlineIndex !== -1) {
+        handleLine(stdoutBuffer.slice(0, newlineIndex));
+        stdoutBuffer = stdoutBuffer.slice(newlineIndex + 1);
+        newlineIndex = stdoutBuffer.indexOf('\n');
+      }
+    });
+
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+
+    child.on('error', (err) => {
+      clearInterval(poller);
+      reject(err);
+    });
+
+    child.on('close', (code) => {
+      clearInterval(poller);
+      if (stdoutBuffer.trim()) {
+        handleLine(stdoutBuffer.trim());
+      }
+
+      if (closedDuringTurn) {
+        resolve({
+          output: {
+            status: 'success',
+            result: null,
+            newSessionId: threadId,
+            runtime: 'codex_local',
+          },
+          closedDuringTurn: true,
+        });
+        return;
+      }
+
+      if (code !== 0) {
+        reject(
+          new Error(
+            eventError || stderr.trim() || `codex exec failed with exit code ${code}`,
+          ),
+        );
+        return;
+      }
+
+      resolve({
+        output: {
+          status: 'success',
+          result: finalMessage,
+          newSessionId: threadId,
+          runtime: 'codex_local',
+        },
+        closedDuringTurn: false,
+      });
+    });
+
+    child.stdin.write(buildCodexPrompt(containerInput, prompt));
+    child.stdin.end();
+  });
+}
+
+async function runOpenAiCloudTurn(
+  prompt: string,
+  sessionId: string | undefined,
+  containerInput: ContainerInput,
+): Promise<{ output: ContainerOutput; closedDuringTurn: boolean }> {
+  const client = new OpenAI({
+    apiKey:
+      process.env.OPENAI_API_KEY ||
+      process.env.ANTHROPIC_AUTH_TOKEN ||
+      'openai-placeholder',
+    baseURL: process.env.OPENAI_BASE_URL || process.env.ANTHROPIC_BASE_URL,
+  });
+
+  const response = await client.responses.create({
+    model: resolveOpenAiCloudModel(),
+    input: buildOpenAiCloudPrompt(containerInput, prompt),
+    ...(sessionId ? { previous_response_id: sessionId } : {}),
+  });
+
+  return {
+    output: {
+      status: 'success',
+      result: response.output_text || null,
+      newSessionId: response.id,
+      runtime: 'openai_cloud',
+    },
+    closedDuringTurn: false,
+  };
+}
+
+async function runClaudeTurn(
+  prompt: string,
+  sessionId: string | undefined,
+  mcpServerPath: string,
+  containerInput: ContainerInput,
+): Promise<{ output: ContainerOutput; closedDuringTurn: boolean }> {
   const stream = new MessageStream();
   stream.push(prompt);
 
-  // Poll IPC for follow-up messages and _close sentinel during the query
-  let ipcPolling = true;
-  let closedDuringQuery = false;
+  let closedDuringTurn = false;
   const pollIpcDuringQuery = () => {
-    if (!ipcPolling) return;
     if (shouldClose()) {
-      log('Close sentinel detected during query, ending stream');
-      closedDuringQuery = true;
+      closedDuringTurn = true;
       stream.end();
-      ipcPolling = false;
       return;
     }
     const messages = drainIpcInput();
     for (const text of messages) {
-      log(`Piping IPC message into active query (${text.length} chars)`);
       stream.push(text);
     }
     setTimeout(pollIpcDuringQuery, IPC_POLL_MS);
   };
   setTimeout(pollIpcDuringQuery, IPC_POLL_MS);
 
-  let newSessionId: string | undefined;
-  let lastAssistantUuid: string | undefined;
-  let messageCount = 0;
-  let resultCount = 0;
-  let successResultCount = 0;
-  let suppressedTransientError = false;
   const requestPolicy = normalizeRequestPolicy(containerInput.requestPolicy);
-
-  // Load global CLAUDE.md as additional system context (shared across all groups)
-  const globalClaudeMdPath = '/workspace/global/CLAUDE.md';
-  let globalClaudeMd: string | undefined;
-  if (!containerInput.isMain && fs.existsSync(globalClaudeMdPath)) {
-    globalClaudeMd = fs.readFileSync(globalClaudeMdPath, 'utf-8');
-  }
-
-  // Discover additional directories mounted at /workspace/extra/*
-  // These are passed to the SDK so their CLAUDE.md files are loaded automatically
-  const extraDirs: string[] = [];
-  const extraBase = '/workspace/extra';
-  if (fs.existsSync(extraBase)) {
-    for (const entry of fs.readdirSync(extraBase)) {
-      const fullPath = path.join(extraBase, entry);
-      if (fs.statSync(fullPath).isDirectory()) {
-        extraDirs.push(fullPath);
-      }
-    }
-  }
-  if (extraDirs.length > 0) {
-    log(`Additional directories: ${extraDirs.join(', ')}`);
-  }
-  const selectedModel = resolveSdkModel();
-  if (selectedModel) {
-    log(`Using SDK model override: ${selectedModel}`);
-  }
-
-  const recoveryGuidance = options.fallbackMode
-    ? 'Recovery mode: previous attempt hit a transient execution failure. Answer directly and concisely without relying on MCP helper orchestration unless absolutely necessary.'
-    : null;
-  const useMcpServer = options.disableMcpServer !== true;
-  const allowedTools = options.fallbackMode
-    ? dedupeTools(['WebSearch', 'WebFetch', 'TodoWrite'])
-    : dedupeTools([...requestPolicy.builtinTools, ...requestPolicy.mcpTools]);
+  let newSessionId = sessionId;
+  let finalMessage: string | null = null;
 
   for await (const message of query({
     prompt: stream,
     options: {
       cwd: '/workspace/group',
-      additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       resume: sessionId,
-      resumeSessionAt: resumeAt,
       systemPrompt: {
         type: 'preset' as const,
         preset: 'claude_code' as const,
-        append: [globalClaudeMd, requestPolicy.guidance, recoveryGuidance]
-          .filter((entry): entry is string => Boolean(entry?.trim()))
-          .join('\n\n'),
+        append: buildRuntimeInstructionBlock(containerInput),
       },
-      allowedTools,
-      env: sdkEnv,
+      env: process.env,
       permissionMode: 'bypassPermissions',
       allowDangerouslySkipPermissions: true,
-      settingSources: ['project', 'user'],
-      model: selectedModel,
-      mcpServers: useMcpServer
-        ? {
-            nanoclaw: {
-              command: 'node',
-              args: [mcpServerPath],
-              env: {
-                NANOCLAW_CHAT_JID: containerInput.chatJid,
-                NANOCLAW_GROUP_FOLDER: containerInput.groupFolder,
-                NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
-                NANOCLAW_REQUEST_ROUTE: requestPolicy.route,
-                NANOCLAW_REQUEST_REASON: requestPolicy.reason,
-                NANOCLAW_ALLOWED_MCP_TOOLS: JSON.stringify(
-                  requestPolicy.mcpTools,
-                ),
+      model: resolveSdkModel(),
+      mcpServers:
+        requestPolicy.mcpTools.length > 0
+          ? {
+              nanoclaw: {
+                command: 'node',
+                args: [mcpServerPath],
+                env: {
+                  NANOCLAW_CHAT_JID: containerInput.chatJid,
+                  NANOCLAW_GROUP_FOLDER: containerInput.groupFolder,
+                  NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
+                  NANOCLAW_REQUEST_ROUTE: requestPolicy.route,
+                  NANOCLAW_REQUEST_REASON: requestPolicy.reason,
+                  NANOCLAW_ALLOWED_MCP_TOOLS: JSON.stringify(
+                    requestPolicy.mcpTools,
+                  ),
+                },
               },
-            },
-          }
-        : undefined,
-      hooks: {
-        PreCompact: [
-          { hooks: [createPreCompactHook(containerInput.assistantName)] },
-        ],
-      },
+            }
+          : undefined,
     },
   })) {
-    messageCount++;
-    const msgType =
-      message.type === 'system'
-        ? `system/${(message as { subtype?: string }).subtype}`
-        : message.type;
-    log(`[msg #${messageCount}] type=${msgType}`);
-
-    if (message.type === 'assistant' && 'uuid' in message) {
-      lastAssistantUuid = (message as { uuid: string }).uuid;
-    }
-
     if (message.type === 'system' && message.subtype === 'init') {
       newSessionId = message.session_id;
-      log(`Session initialized: ${newSessionId}`);
     }
-
-    if (
-      message.type === 'system' &&
-      (message as { subtype?: string }).subtype === 'task_notification'
-    ) {
-      const tn = message as {
-        task_id: string;
-        status: string;
-        summary: string;
-      };
-      log(
-        `Task notification: task=${tn.task_id} status=${tn.status} summary=${tn.summary}`,
-      );
-    }
-
     if (message.type === 'result') {
-      resultCount++;
-      const textResult =
-        'result' in message ? (message as { result?: string }).result : null;
-      const isErrorSubtype =
-        typeof message.subtype === 'string' &&
-        message.subtype.startsWith('error');
-      const resultErrors =
-        'errors' in message &&
-        Array.isArray((message as { errors?: unknown }).errors)
-          ? ((message as { errors?: string[] }).errors || [])
-              .filter((entry): entry is string => Boolean(entry))
-              .map((entry) => entry.trim())
-          : [];
-      const combinedErrorText =
-        resultErrors.length > 0 ? resultErrors.join(' | ') : null;
-      const suppressUserVisibleErrorResult =
-        isErrorSubtype && requestPolicy.route === 'direct_assistant';
-      const fallbackErrorText = isErrorSubtype
-        ? suppressUserVisibleErrorResult
-          ? null
-          : combinedErrorText ||
-            textResult ||
-            'I hit a temporary execution issue while processing that request. Please try again.'
-        : null;
-      const debugErrorText = isErrorSubtype
-        ? combinedErrorText ||
-          textResult ||
-          `Agent execution failed (${message.subtype})`
-        : null;
-      log(
-        `Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}${combinedErrorText ? ` errors=${combinedErrorText.slice(0, 200)}` : ''}`,
-      );
-      const shouldSuppressForRetry =
-        options.suppressFirstErrorForRetry === true &&
-        !options.fallbackMode &&
-        isErrorSubtype &&
-        resultCount === 1 &&
-        successResultCount === 0;
-      if (shouldSuppressForRetry) {
-        suppressedTransientError = true;
-        log(
-          `Suppressing first transient error result for direct retry (subtype=${message.subtype})`,
-        );
-        continue;
-      }
-      writeOutput({
-        status: isErrorSubtype ? 'error' : 'success',
-        result: isErrorSubtype ? fallbackErrorText : (textResult ?? null),
-        newSessionId,
-        ...(isErrorSubtype
-          ? { error: debugErrorText || 'Agent execution failed' }
-          : {}),
-      });
-      if (!isErrorSubtype) {
-        successResultCount += 1;
-      }
+      finalMessage =
+        'result' in message ? (message as { result?: string }).result || null : null;
     }
   }
 
-  ipcPolling = false;
-  log(
-    `Query done. Messages: ${messageCount}, results: ${resultCount}, lastAssistantUuid: ${lastAssistantUuid || 'none'}, closedDuringQuery: ${closedDuringQuery}`,
-  );
   return {
-    newSessionId,
-    lastAssistantUuid,
-    closedDuringQuery,
-    suppressedTransientError,
+    output: {
+      status: 'success',
+      result: finalMessage,
+      newSessionId,
+      runtime: 'claude_legacy',
+    },
+    closedDuringTurn,
   };
 }
-
-interface ScriptResult {
-  wakeAgent: boolean;
-  data?: unknown;
-}
-
-const SCRIPT_TIMEOUT_MS = 30_000;
 
 async function runScript(script: string): Promise<ScriptResult | null> {
   const scriptPath = '/tmp/task-script.sh';
@@ -724,40 +720,112 @@ async function runScript(script: string): Promise<ScriptResult | null> {
         maxBuffer: 1024 * 1024,
         env: process.env,
       },
-      (error, stdout, stderr) => {
-        if (stderr) {
-          log(`Script stderr: ${stderr.slice(0, 500)}`);
-        }
-
+      (error, stdout) => {
         if (error) {
-          log(`Script error: ${error.message}`);
-          return resolve(null);
+          resolve(null);
+          return;
         }
-
-        // Parse last non-empty line of stdout as JSON
         const lines = stdout.trim().split('\n');
         const lastLine = lines[lines.length - 1];
         if (!lastLine) {
-          log('Script produced no output');
-          return resolve(null);
+          resolve(null);
+          return;
         }
-
         try {
           const result = JSON.parse(lastLine);
-          if (typeof result.wakeAgent !== 'boolean') {
-            log(
-              `Script output missing wakeAgent boolean: ${lastLine.slice(0, 200)}`,
-            );
-            return resolve(null);
-          }
-          resolve(result as ScriptResult);
+          resolve(
+            typeof result.wakeAgent === 'boolean'
+              ? (result as ScriptResult)
+              : null,
+          );
         } catch {
-          log(`Script output is not valid JSON: ${lastLine.slice(0, 200)}`);
           resolve(null);
         }
       },
     );
   });
+}
+
+function resolveFallbackForError(
+  currentRuntime: AgentRuntimeName,
+  containerInput: ContainerInput,
+): AgentRuntimeName | undefined {
+  const fallback = resolveFallbackRuntime(containerInput);
+  if (!fallback || fallback === currentRuntime) return undefined;
+  if (fallback === 'openai_cloud' && !canRouteToCloud(containerInput.runtimeRoute)) {
+    return undefined;
+  }
+  return fallback;
+}
+
+async function runRuntimeLoop(
+  initialPrompt: string,
+  initialSessionId: string | undefined,
+  containerInput: ContainerInput,
+  mcpServerPath: string,
+): Promise<void> {
+  let prompt = initialPrompt;
+  let sessionId = initialSessionId;
+  let currentRuntime = resolvePreferredRuntime(containerInput);
+  let codexAuthenticated = false;
+
+  while (true) {
+    try {
+      if (currentRuntime === 'codex_local') {
+        if (!shouldUseCodexLocal()) {
+          throw new Error('codex_local is disabled by CODEX_LOCAL_ENABLED=false');
+        }
+        if (!codexAuthenticated) {
+          await ensureCodexAuthenticated();
+          codexAuthenticated = true;
+        }
+      }
+
+      const turn =
+        currentRuntime === 'codex_local'
+          ? await runCodexTurn(prompt, sessionId, mcpServerPath, containerInput)
+          : currentRuntime === 'openai_cloud'
+            ? await runOpenAiCloudTurn(prompt, sessionId, containerInput)
+            : await runClaudeTurn(prompt, sessionId, mcpServerPath, containerInput);
+
+      const output: ContainerOutput = {
+        ...turn.output,
+        runtime: currentRuntime,
+      };
+
+      if (output.newSessionId) {
+        sessionId = output.newSessionId;
+      }
+
+      writeOutput(output);
+
+      if (output.status === 'error' || turn.closedDuringTurn) {
+        break;
+      }
+
+      writeOutput({
+        status: 'success',
+        result: null,
+        newSessionId: sessionId,
+        runtime: currentRuntime,
+      });
+
+      const nextMessage = await waitForIpcMessage();
+      if (nextMessage === null) {
+        break;
+      }
+      prompt = nextMessage;
+    } catch (err) {
+      const fallback = resolveFallbackForError(currentRuntime, containerInput);
+      if (!fallback) {
+        throw err;
+      }
+      log(
+        `Runtime ${currentRuntime} failed before completion, falling back to ${fallback}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      currentRuntime = fallback;
+    }
+  }
 }
 
 async function main(): Promise<void> {
@@ -769,9 +837,8 @@ async function main(): Promise<void> {
     try {
       fs.unlinkSync('/tmp/input.json');
     } catch {
-      /* may not exist */
+      // ignore
     }
-    log(`Received input for group: ${containerInput.groupFolder}`);
   } catch (err) {
     writeOutput({
       status: 'error',
@@ -779,47 +846,34 @@ async function main(): Promise<void> {
       error: `Failed to parse input: ${err instanceof Error ? err.message : String(err)}`,
     });
     process.exit(1);
+    return;
   }
-
-  // Credentials are injected by the host's credential proxy via ANTHROPIC_BASE_URL.
-  // No real secrets exist in the container environment.
-  const sdkEnv: Record<string, string | undefined> = { ...process.env };
 
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   const mcpServerPath = path.join(__dirname, 'ipc-mcp-stdio.js');
 
   let sessionId = containerInput.sessionId;
   fs.mkdirSync(IPC_INPUT_DIR, { recursive: true });
-  const directRetryEligible = containerInput.requestPolicy?.route === 'direct_assistant';
 
-  // Clean up stale _close sentinel from previous container runs
   try {
     fs.unlinkSync(IPC_INPUT_CLOSE_SENTINEL);
   } catch {
-    /* ignore */
+    // ignore
   }
 
-  // Build initial prompt (drain any pending IPC messages too)
   let prompt = containerInput.prompt;
   if (containerInput.isScheduledTask) {
     prompt = `[SCHEDULED TASK - The following message was sent automatically and is not coming directly from the user or group.]\n\n${prompt}`;
   }
+
   const pending = drainIpcInput();
   if (pending.length > 0) {
-    log(`Draining ${pending.length} pending IPC messages into initial prompt`);
-    prompt += '\n' + pending.join('\n');
+    prompt += `\n${pending.join('\n')}`;
   }
 
-  // Script phase: run script before waking agent
   if (containerInput.script && containerInput.isScheduledTask) {
-    log('Running task script...');
     const scriptResult = await runScript(containerInput.script);
-
     if (!scriptResult || !scriptResult.wakeAgent) {
-      const reason = scriptResult
-        ? 'wakeAgent=false'
-        : 'script error/no output';
-      log(`Script decided not to wake agent: ${reason}`);
       writeOutput({
         status: 'success',
         result: null,
@@ -827,86 +881,22 @@ async function main(): Promise<void> {
       return;
     }
 
-    // Script says wake agent — enrich prompt with script data
-    log(`Script wakeAgent=true, enriching prompt with data`);
-    prompt = `[SCHEDULED TASK]\n\nScript output:\n${JSON.stringify(scriptResult.data, null, 2)}\n\nInstructions:\n${containerInput.prompt}`;
+    prompt = `[SCHEDULED TASK]\n\nScript output:\n${JSON.stringify(
+      scriptResult.data,
+      null,
+      2,
+    )}\n\nInstructions:\n${containerInput.prompt}`;
   }
 
-  // Query loop: run query → wait for IPC message → run new query → repeat
-  let resumeAt: string | undefined;
   try {
-    let usedDirectRecoveryRetry = false;
-    while (true) {
-      log(
-        `Starting query (session: ${sessionId || 'new'}, resumeAt: ${resumeAt || 'latest'})...`,
-      );
-
-      const queryResult = await runQuery(
-        prompt,
-        sessionId,
-        mcpServerPath,
-        containerInput,
-        sdkEnv,
-        resumeAt,
-        {
-          fallbackMode: usedDirectRecoveryRetry,
-          suppressFirstErrorForRetry:
-            directRetryEligible && !usedDirectRecoveryRetry,
-          disableMcpServer: usedDirectRecoveryRetry,
-        },
-      );
-      if (queryResult.newSessionId) {
-        sessionId = queryResult.newSessionId;
-      }
-      if (queryResult.lastAssistantUuid) {
-        resumeAt = queryResult.lastAssistantUuid;
-      }
-
-      if (
-        queryResult.suppressedTransientError &&
-        directRetryEligible &&
-        !usedDirectRecoveryRetry
-      ) {
-        log(
-          'Retrying direct assistant request in recovery mode after transient execution error',
-        );
-        usedDirectRecoveryRetry = true;
-        resumeAt = undefined;
-        continue;
-      }
-      usedDirectRecoveryRetry = false;
-
-      // If _close was consumed during the query, exit immediately.
-      // Don't emit a session-update marker (it would reset the host's
-      // idle timer and cause a 30-min delay before the next _close).
-      if (queryResult.closedDuringQuery) {
-        log('Close sentinel consumed during query, exiting');
-        break;
-      }
-
-      // Emit session update so host can track it
-      writeOutput({ status: 'success', result: null, newSessionId: sessionId });
-
-      log('Query ended, waiting for next IPC message...');
-
-      // Wait for the next message or _close sentinel
-      const nextMessage = await waitForIpcMessage();
-      if (nextMessage === null) {
-        log('Close sentinel received, exiting');
-        break;
-      }
-
-      log(`Got new message (${nextMessage.length} chars), starting new query`);
-      prompt = nextMessage;
-    }
+    await runRuntimeLoop(prompt, sessionId, containerInput, mcpServerPath);
   } catch (err) {
-    const errorMessage = err instanceof Error ? err.message : String(err);
-    log(`Agent error: ${errorMessage}`);
     writeOutput({
       status: 'error',
       result: null,
       newSessionId: sessionId,
-      error: errorMessage,
+      runtime: resolvePreferredRuntime(containerInput),
+      error: err instanceof Error ? err.message : String(err),
     });
     process.exit(1);
   }

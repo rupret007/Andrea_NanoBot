@@ -8,6 +8,10 @@ import fs from 'fs';
 import path from 'path';
 
 import {
+  AGENT_RUNTIME_DEFAULT,
+  AGENT_RUNTIME_FALLBACK,
+  CODEX_LOCAL_ENABLED,
+  CODEX_LOCAL_MODEL,
   CONTAINER_IMAGE,
   CONTAINER_INITIAL_OUTPUT_TIMEOUT,
   CONTAINER_MAX_OUTPUT_SIZE,
@@ -16,6 +20,7 @@ import {
   GROUPS_DIR,
   IDLE_TIMEOUT,
   ONECLI_URL,
+  OPENAI_MODEL_FALLBACK,
   RUNTIME_STATE_DIR,
   TIMEZONE,
 } from './config.js';
@@ -36,7 +41,7 @@ import {
 import { OneCLI } from '@onecli-sh/sdk';
 import { validateAdditionalMounts } from './mount-security.js';
 import { OPENCLAW_MARKET_MANIFEST_FILENAME } from './openclaw-market.js';
-import { RegisteredGroup } from './types.js';
+import { AgentRuntimeName, RegisteredGroup, RuntimeRoute } from './types.js';
 import type { AssistantRequestPolicy } from './assistant-routing.js';
 import {
   CONTAINER_CLOSE_GRACE_PERIOD_MS,
@@ -52,6 +57,9 @@ const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
 export interface ContainerInput {
   prompt: string;
   sessionId?: string;
+  preferredRuntime?: AgentRuntimeName;
+  fallbackRuntime?: AgentRuntimeName;
+  runtimeRoute?: RuntimeRoute;
   groupFolder: string;
   chatJid: string;
   isMain: boolean;
@@ -66,6 +74,7 @@ export interface ContainerOutput {
   status: 'success' | 'error';
   result: string | null;
   newSessionId?: string;
+  runtime?: AgentRuntimeName;
   error?: string;
 }
 
@@ -122,6 +131,12 @@ const NINE_ROUTER_DEFAULT_PORT = '20128';
 const LOG_SAFE_ENV_KEYS = new Set([
   'TZ',
   'HOME',
+  'CODEX_HOME',
+  'AGENT_RUNTIME_DEFAULT',
+  'AGENT_RUNTIME_FALLBACK',
+  'CODEX_LOCAL_ENABLED',
+  'CODEX_LOCAL_MODEL',
+  'OPENAI_MODEL_FALLBACK',
   'NANOCLAW_CONTAINER_RUNTIME',
   'ANTHROPIC_BASE_URL',
   'OPENAI_BASE_URL',
@@ -646,6 +661,14 @@ function buildVolumeMounts(
     readonly: false,
   });
 
+  const groupCodexDir = path.join(DATA_DIR, 'sessions', group.folder, '.codex');
+  fs.mkdirSync(groupCodexDir, { recursive: true });
+  mounts.push({
+    hostPath: groupCodexDir,
+    containerPath: '/home/node/.codex',
+    readonly: false,
+  });
+
   // Per-group IPC namespace: each group gets its own IPC directory
   // This prevents cross-group privilege escalation via IPC
   const groupIpcDir = resolveGroupIpcPath(group.folder);
@@ -795,6 +818,14 @@ async function buildContainerArgs(
 
   // Pass host timezone so container's local time matches the user's
   args.push('-e', `TZ=${TIMEZONE}`);
+  args.push('-e', 'CODEX_HOME=/home/node/.codex');
+  args.push('-e', `AGENT_RUNTIME_DEFAULT=${AGENT_RUNTIME_DEFAULT}`);
+  args.push('-e', `AGENT_RUNTIME_FALLBACK=${AGENT_RUNTIME_FALLBACK}`);
+  args.push('-e', `CODEX_LOCAL_ENABLED=${CODEX_LOCAL_ENABLED ? 'true' : 'false'}`);
+  args.push('-e', `OPENAI_MODEL_FALLBACK=${OPENAI_MODEL_FALLBACK}`);
+  if (CODEX_LOCAL_MODEL) {
+    args.push('-e', `CODEX_LOCAL_MODEL=${CODEX_LOCAL_MODEL}`);
+  }
   args.push('-e', `NANOCLAW_CONTAINER_RUNTIME=${CONTAINER_RUNTIME_NAME}`);
 
   // OneCLI gateway handles credential injection — containers never see real secrets.

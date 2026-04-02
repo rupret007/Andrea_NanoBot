@@ -5,6 +5,11 @@ import path from 'path';
 import { analyzeAgentError } from './agent-error.js';
 import { classifyAssistantRequest } from './assistant-routing.js';
 import {
+  classifyRuntimeRoute,
+  selectPreferredRuntime,
+  shouldReuseExistingThread,
+} from './agent-runtime.js';
+import {
   ASSISTANT_NAME,
   DEFAULT_TRIGGER,
   GROUPS_DIR,
@@ -22,12 +27,15 @@ import {
 } from './container-runner.js';
 import {
   getAllChats,
+  getAllAgentThreads,
   getAllRegisteredGroups,
   getAllTasks,
+  getAgentThread,
   getSession,
   listAllCursorAgents,
   listAllEnabledCommunitySkills,
   listCursorAgentArtifacts,
+  setAgentThread,
   setRegisteredGroup,
   setSession,
   storeChatMetadata,
@@ -39,7 +47,11 @@ import {
 } from './group-folder.js';
 import { logger } from './logger.js';
 import { formatMessages, formatOutbound } from './router.js';
-import { type NewMessage, type RegisteredGroup } from './types.js';
+import {
+  type AgentThreadState,
+  type NewMessage,
+  type RegisteredGroup,
+} from './types.js';
 import { getUserFacingErrorDetail } from './user-facing-error.js';
 
 export interface AlexaPrincipal {
@@ -81,6 +93,9 @@ type RuntimeDeps = {
   setRegisteredGroup: typeof setRegisteredGroup;
   getSession: typeof getSession;
   setSession: typeof setSession;
+  getAgentThread?: typeof getAgentThread;
+  getAllAgentThreads?: typeof getAllAgentThreads;
+  setAgentThread?: typeof setAgentThread;
   storeChatMetadata: typeof storeChatMetadata;
   storeMessage: typeof storeMessage;
   runContainerAgent: typeof runContainerAgent;
@@ -98,6 +113,9 @@ const runtimeDeps: RuntimeDeps = {
   setRegisteredGroup,
   getSession,
   setSession,
+  getAgentThread,
+  getAllAgentThreads,
+  setAgentThread,
   storeChatMetadata,
   storeMessage,
   runContainerAgent,
@@ -420,8 +438,32 @@ export async function runAlexaAssistantTurn(
   const requestPolicy = classifyAssistantRequest([userMessage]);
   writeSnapshotsForGroup(deps, target.group, registeredGroups);
 
-  const sessionId = deps.getSession(target.group.folder);
+  const existingThread = deps.getAgentThread
+    ? deps.getAgentThread(target.group.folder)
+    : undefined;
+  const runtimeRoute = classifyRuntimeRoute(
+    requestPolicy,
+    request.utterance,
+  );
+  const preferredRuntime = selectPreferredRuntime(existingThread, runtimeRoute);
+  const sessionId = shouldReuseExistingThread(existingThread, preferredRuntime)
+    ? existingThread.thread_id
+    : deps.getSession(target.group.folder);
   const outputs: string[] = [];
+
+  const persistThread = (
+    runtime: AgentThreadState['runtime'] | undefined,
+    threadId: string,
+  ) => {
+    deps.setSession(target.group.folder, threadId);
+    deps.setAgentThread?.({
+      group_folder: target.group.folder,
+      runtime: runtime || preferredRuntime,
+      thread_id: threadId,
+      last_response_id: threadId,
+      updated_at: new Date().toISOString(),
+    });
+  };
 
   try {
     const output = await deps.runContainerAgent(
@@ -434,11 +476,13 @@ export async function runAlexaAssistantTurn(
         isMain: target.group.isMain === true,
         assistantName,
         requestPolicy,
+        preferredRuntime,
+        runtimeRoute,
       },
       () => {},
       async (partial) => {
         if (partial.newSessionId) {
-          deps.setSession(target.group.folder, partial.newSessionId);
+          persistThread(partial.runtime, partial.newSessionId);
         }
         const text =
           typeof partial.result === 'string'
@@ -449,7 +493,7 @@ export async function runAlexaAssistantTurn(
     );
 
     if (output.newSessionId) {
-      deps.setSession(target.group.folder, output.newSessionId);
+      persistThread(output.runtime, output.newSessionId);
     }
 
     if (output.status === 'error') {

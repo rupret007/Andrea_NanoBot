@@ -30,25 +30,22 @@ describe('helper boundary wiring', () => {
 
     expect(source).toContain('requestPolicy.guidance');
     expect(source).toContain('NANOCLAW_ALLOWED_MCP_TOOLS');
-    expect(source).toContain('...requestPolicy.mcpTools');
+    expect(source).toContain('requestPolicy.mcpTools');
     expect(source).toContain('mcp__nanoclaw__search_amazon_products');
     expect(source).toContain('mcp__nanoclaw__request_amazon_purchase');
     expect(source).toContain('mcp__nanoclaw__approve_amazon_purchase_request');
   });
 
-  it('retries one transient direct-assistant failure without exposing helper errors first', () => {
+  it('falls back between runtime lanes without dropping request-policy guardrails', () => {
     const source = readRepoFile('container/agent-runner/src/index.ts');
 
-    expect(source).toContain("route === 'direct_assistant'");
-    expect(source).toContain('suppressFirstErrorForRetry');
-    expect(source).toContain('suppressedTransientError');
+    expect(source).toContain('resolveFallbackForError');
+    expect(source).toContain('Runtime ${currentRuntime} failed before completion');
+    expect(source).toContain('currentRuntime = fallback');
     expect(source).toContain(
-      'Retrying direct assistant request in recovery mode',
+      "fallback === 'openai_cloud' && !canRouteToCloud",
     );
-    expect(source).toContain('disableMcpServer');
-    expect(source).toContain(
-      'Recovery mode: previous attempt hit a transient execution failure',
-    );
+    expect(source).toContain('requestPolicy.mcpTools.length > 0');
   });
 
   it('keeps send_message as Andrea-only instead of advertising a second bot identity', () => {

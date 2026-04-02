@@ -6,8 +6,10 @@ import { ASSISTANT_NAME, DATA_DIR, STORE_DIR } from './config.js';
 import { assertValidGroupFolder, isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
 import {
+  AgentThreadState,
   NewMessage,
   RegisteredGroup,
+  RuntimeBackendJobCacheRecord,
   ScheduledTask,
   TaskRunLog,
 } from './types.js';
@@ -73,6 +75,36 @@ function createSchema(database: Database.Database): void {
       group_folder TEXT PRIMARY KEY,
       session_id TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS agent_threads (
+      group_folder TEXT PRIMARY KEY,
+      runtime TEXT NOT NULL,
+      thread_id TEXT NOT NULL,
+      last_response_id TEXT,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_threads_updated
+      ON agent_threads(updated_at DESC);
+    CREATE TABLE IF NOT EXISTS runtime_backend_jobs (
+      backend_id TEXT NOT NULL,
+      job_id TEXT NOT NULL,
+      group_folder TEXT NOT NULL,
+      chat_jid TEXT NOT NULL,
+      thread_id TEXT,
+      status TEXT NOT NULL,
+      selected_runtime TEXT,
+      prompt_preview TEXT NOT NULL,
+      latest_output_text TEXT,
+      error_text TEXT,
+      log_file TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      raw_json TEXT NOT NULL,
+      PRIMARY KEY (backend_id, job_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_runtime_backend_jobs_group_created
+      ON runtime_backend_jobs(backend_id, group_folder, created_at DESC, job_id DESC);
+    CREATE INDEX IF NOT EXISTS idx_runtime_backend_jobs_chat_updated
+      ON runtime_backend_jobs(backend_id, chat_jid, updated_at DESC, job_id DESC);
     CREATE TABLE IF NOT EXISTS registered_groups (
       jid TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -695,6 +727,202 @@ export function getAllSessions(): Record<string, string> {
     result[row.group_folder] = row.session_id;
   }
   return result;
+}
+
+export function getAgentThread(
+  groupFolder: string,
+): AgentThreadState | undefined {
+  const row = db
+    .prepare(
+      `
+        SELECT group_folder, runtime, thread_id, last_response_id, updated_at
+        FROM agent_threads
+        WHERE group_folder = ?
+      `,
+    )
+    .get(groupFolder) as AgentThreadState | undefined;
+
+  if (row) {
+    return row;
+  }
+
+  const legacySessionId = getSession(groupFolder);
+  if (!legacySessionId) return undefined;
+
+  return {
+    group_folder: groupFolder,
+    runtime: 'claude_legacy',
+    thread_id: legacySessionId,
+    last_response_id: null,
+    updated_at: '',
+  };
+}
+
+export function setAgentThread(thread: AgentThreadState): void {
+  assertValidGroupFolder(thread.group_folder);
+  db.prepare(
+    `
+      INSERT OR REPLACE INTO agent_threads (
+        group_folder,
+        runtime,
+        thread_id,
+        last_response_id,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?)
+    `,
+  ).run(
+    thread.group_folder,
+    thread.runtime,
+    thread.thread_id,
+    thread.last_response_id || null,
+    thread.updated_at,
+  );
+  setSession(thread.group_folder, thread.thread_id);
+}
+
+export function getAllAgentThreads(): Record<string, AgentThreadState> {
+  const rows = db
+    .prepare(
+      `
+        SELECT group_folder, runtime, thread_id, last_response_id, updated_at
+        FROM agent_threads
+      `,
+    )
+    .all() as AgentThreadState[];
+  const result: Record<string, AgentThreadState> = {};
+  for (const row of rows) {
+    result[row.group_folder] = row;
+  }
+
+  const legacySessions = getAllSessions();
+  for (const [groupFolder, threadId] of Object.entries(legacySessions)) {
+    if (result[groupFolder]) continue;
+    result[groupFolder] = {
+      group_folder: groupFolder,
+      runtime: 'claude_legacy',
+      thread_id: threadId,
+      last_response_id: null,
+      updated_at: '',
+    };
+  }
+
+  return result;
+}
+
+export function upsertRuntimeBackendJob(
+  record: RuntimeBackendJobCacheRecord,
+): void {
+  assertValidGroupFolder(record.group_folder);
+  db.prepare(
+    `
+      INSERT INTO runtime_backend_jobs (
+        backend_id,
+        job_id,
+        group_folder,
+        chat_jid,
+        thread_id,
+        status,
+        selected_runtime,
+        prompt_preview,
+        latest_output_text,
+        error_text,
+        log_file,
+        created_at,
+        updated_at,
+        raw_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(backend_id, job_id) DO UPDATE SET
+        group_folder = excluded.group_folder,
+        chat_jid = excluded.chat_jid,
+        thread_id = excluded.thread_id,
+        status = excluded.status,
+        selected_runtime = excluded.selected_runtime,
+        prompt_preview = excluded.prompt_preview,
+        latest_output_text = excluded.latest_output_text,
+        error_text = excluded.error_text,
+        log_file = excluded.log_file,
+        created_at = excluded.created_at,
+        updated_at = excluded.updated_at,
+        raw_json = excluded.raw_json
+    `,
+  ).run(
+    record.backend_id,
+    record.job_id,
+    record.group_folder,
+    record.chat_jid,
+    record.thread_id,
+    record.status,
+    record.selected_runtime,
+    record.prompt_preview,
+    record.latest_output_text,
+    record.error_text,
+    record.log_file,
+    record.created_at,
+    record.updated_at,
+    record.raw_json,
+  );
+}
+
+export function getRuntimeBackendJob(
+  backendId: string,
+  jobId: string,
+): RuntimeBackendJobCacheRecord | undefined {
+  return db
+    .prepare(
+      `
+        SELECT
+          backend_id,
+          job_id,
+          group_folder,
+          chat_jid,
+          thread_id,
+          status,
+          selected_runtime,
+          prompt_preview,
+          latest_output_text,
+          error_text,
+          log_file,
+          created_at,
+          updated_at,
+          raw_json
+        FROM runtime_backend_jobs
+        WHERE backend_id = ? AND job_id = ?
+      `,
+    )
+    .get(backendId, jobId) as RuntimeBackendJobCacheRecord | undefined;
+}
+
+export function listRuntimeBackendJobsForGroup(
+  backendId: string,
+  groupFolder: string,
+  limit = 20,
+): RuntimeBackendJobCacheRecord[] {
+  assertValidGroupFolder(groupFolder);
+  return db
+    .prepare(
+      `
+        SELECT
+          backend_id,
+          job_id,
+          group_folder,
+          chat_jid,
+          thread_id,
+          status,
+          selected_runtime,
+          prompt_preview,
+          latest_output_text,
+          error_text,
+          log_file,
+          created_at,
+          updated_at,
+          raw_json
+        FROM runtime_backend_jobs
+        WHERE backend_id = ? AND group_folder = ?
+        ORDER BY created_at DESC, job_id DESC
+        LIMIT ?
+      `,
+    )
+    .all(backendId, groupFolder, limit) as RuntimeBackendJobCacheRecord[];
 }
 
 export interface CommunitySkillRecord {

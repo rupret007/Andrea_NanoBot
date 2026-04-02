@@ -111,10 +111,10 @@ function formatDockerLikeMount(
 export function getDefaultContainerRuntimeCandidates(
   platform = process.platform,
 ): ContainerRuntimeName[] {
-  if (platform === 'win32') return ['docker', 'podman'];
-  if (platform === 'darwin') return ['apple-container', 'docker'];
-  if (platform === 'linux') return ['docker', 'podman'];
-  return ['docker', 'podman', 'apple-container'];
+  if (platform === 'win32') return ['podman', 'docker'];
+  if (platform === 'darwin') return ['podman', 'apple-container', 'docker'];
+  if (platform === 'linux') return ['podman', 'docker'];
+  return ['podman', 'docker', 'apple-container'];
 }
 
 export function getAvailableContainerRuntimes(): ContainerRuntimeName[] {

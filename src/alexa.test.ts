@@ -10,6 +10,7 @@ import {
   type AlexaConfig,
 } from './alexa.js';
 import { runAlexaAssistantTurn } from './alexa-bridge.js';
+import { ASSISTANT_NAME } from './config.js';
 
 vi.mock('./alexa-bridge.js', () => ({
   runAlexaAssistantTurn: vi.fn(),
@@ -167,7 +168,7 @@ describe('createAlexaSkill', () => {
     const skill = createAlexaSkill(buildConfig());
     const response = await skill.invoke(buildBaseEnvelope());
 
-    expect(extractSpeechText(response)).toContain('Andrea is here');
+    expect(extractSpeechText(response)).toContain(`${ASSISTANT_NAME} is here`);
   });
 
   it('requests account linking when configured and missing', async () => {
@@ -195,7 +196,7 @@ describe('createAlexaSkill', () => {
 
   it('routes AskAndreaIntent through the bridge and normalizes speech output', async () => {
     mockedRunAlexaAssistantTurn.mockResolvedValue({
-      text: '<internal>planner</internal>Andrea found **three** strong options at https://example.com',
+      text: `<internal>planner</internal>${ASSISTANT_NAME} found **three** strong options at https://example.com`,
       route: 'direct_assistant',
       chatJid: 'alexa:main:abc',
       groupFolder: 'main',
@@ -214,12 +215,12 @@ describe('createAlexaSkill', () => {
         }),
       },
       {
-        assistantName: 'Andrea',
+        assistantName: ASSISTANT_NAME,
         targetGroupFolder: undefined,
       },
     );
     expect(extractSpeechText(response)).toContain(
-      'Andrea found three strong options',
+      `${ASSISTANT_NAME} found three strong options`,
     );
     expect(extractSpeechText(response)).not.toContain('https://');
   });

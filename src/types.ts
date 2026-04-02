@@ -79,6 +79,123 @@ export interface TaskRunLog {
   error: string | null;
 }
 
+export type AgentRuntimeName =
+  | 'codex_local'
+  | 'openai_cloud'
+  | 'claude_legacy';
+
+export type RuntimeRoute =
+  | 'local_required'
+  | 'cloud_allowed'
+  | 'cloud_preferred';
+
+export interface AgentThreadState {
+  group_folder: string;
+  runtime: AgentRuntimeName;
+  thread_id: string;
+  last_response_id?: string | null;
+  updated_at: string;
+}
+
+export interface OrchestrationSource {
+  system: string;
+  actorType?: string | null;
+  actorId?: string | null;
+  correlationId?: string | null;
+}
+
+export interface RuntimeJobCapabilities {
+  followUp: boolean;
+  logs: boolean;
+  stop: boolean;
+}
+
+export interface RuntimeBackendMeta {
+  backend: string;
+  transport: 'http';
+  enabled: true;
+  version: string | null;
+  ready: boolean;
+}
+
+export interface RuntimeBackendJob {
+  backend: string;
+  jobId: string;
+  kind: 'create' | 'follow_up';
+  status: 'queued' | 'running' | 'succeeded' | 'failed';
+  stopRequested: boolean;
+  groupFolder: string;
+  groupJid: string;
+  parentJobId?: string | null;
+  threadId?: string | null;
+  runtimeRoute: RuntimeRoute;
+  requestedRuntime?: AgentRuntimeName | null;
+  selectedRuntime?: AgentRuntimeName | null;
+  promptPreview: string;
+  latestOutputText?: string | null;
+  finalOutputText?: string | null;
+  errorText?: string | null;
+  logFile?: string | null;
+  sourceSystem: string;
+  actorType?: string | null;
+  actorId?: string | null;
+  correlationId?: string | null;
+  createdAt: string;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+  updatedAt: string;
+  capabilities: RuntimeJobCapabilities;
+}
+
+export interface RuntimeBackendJobList {
+  jobs: RuntimeBackendJob[];
+  nextBeforeJobId?: string | null;
+}
+
+export interface RuntimeBackendJobLogs {
+  jobId: string;
+  logFile: string | null;
+  logText: string | null;
+  lines: number;
+}
+
+export interface RuntimeBackendStopResult {
+  job: RuntimeBackendJob;
+  liveStopAccepted: boolean;
+}
+
+export type RuntimeBackendAvailability =
+  | 'not_enabled'
+  | 'unavailable'
+  | 'not_ready'
+  | 'available';
+
+export interface RuntimeBackendStatus {
+  state: RuntimeBackendAvailability;
+  backend: string;
+  version: string | null;
+  transport: 'http';
+  detail: string | null;
+  meta: RuntimeBackendMeta | null;
+}
+
+export interface RuntimeBackendJobCacheRecord {
+  backend_id: string;
+  job_id: string;
+  group_folder: string;
+  chat_jid: string;
+  thread_id: string | null;
+  status: string;
+  selected_runtime: string | null;
+  prompt_preview: string;
+  latest_output_text: string | null;
+  error_text: string | null;
+  log_file: string | null;
+  created_at: string;
+  updated_at: string;
+  raw_json: string;
+}
+
 // --- Channel abstraction ---
 
 export interface Channel {
