@@ -289,28 +289,31 @@ Alexa is only **live-ready** when all of these are true:
 - the Alexa listener is enabled locally
 - an HTTPS tunnel or reverse proxy is forwarding the public Alexa endpoint
 - the Alexa Developer Console skill is using that endpoint and the same skill ID
-- account linking is configured in the Alexa console
-- a local linked-account seed is configured:
-  - `ALEXA_LINKED_ACCOUNT_TOKEN`
-  - `ALEXA_LINKED_ACCOUNT_GROUP_FOLDER`
-- the seeded `groupFolder` already exists in Andrea
+- account linking is configured in the Alexa console for Authorization Code Grant
+- a local Andrea OAuth config is configured:
+  - `ALEXA_OAUTH_CLIENT_ID`
+  - `ALEXA_OAUTH_CLIENT_SECRET`
+  - `ALEXA_OAUTH_SCOPE`
+- the OAuth target `groupFolder` already exists in Andrea
 
 If any of those are missing, classify Alexa as **code-ready but setup-blocked** and do not present it as live-validated.
 
 Final live acceptance order:
 
 1. `/alexa_status`
-2. unlinked launch
-3. unlinked help
-4. one unlinked personal-data request that should return a link-account style response
-5. linked launch or direct invocation
-6. linked `my day`
-7. linked `what next`
-8. linked `tomorrow calendar`
-9. linked `Candace upcoming`
-10. linked reminder-before-next-meeting
-11. linked save-for-later
-12. linked follow-up draft
+2. local `GET /alexa/oauth/health`
+3. public `GET /alexa/oauth/health`
+4. unlinked launch
+5. unlinked help
+6. one unlinked personal-data request that should return a link-account style response
+7. linked launch or direct invocation
+8. linked `my day`
+9. linked `what next`
+10. linked `tomorrow calendar`
+11. linked `Candace upcoming`
+12. linked reminder-before-next-meeting
+13. linked save-for-later
+14. linked follow-up draft
 
 What to verify:
 

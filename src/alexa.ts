@@ -17,6 +17,11 @@ import {
 } from 'ask-sdk-express-adapter';
 
 import {
+  getAlexaOAuthStatus,
+  handleAlexaOAuthRequest,
+  resolveAlexaOAuthConfig,
+} from './alexa-oauth.js';
+import {
   AlexaTargetGroupMissingError,
   type AlexaBridgeConfig,
   type AlexaPrincipal,
@@ -90,6 +95,12 @@ export interface AlexaStatus {
   requireAccountLinking?: boolean;
   allowedUserIdsCount?: number;
   targetGroupFolder?: string;
+  oauthEnabled?: boolean;
+  oauthAuthorizationPath?: string;
+  oauthTokenPath?: string;
+  oauthHealthPath?: string;
+  oauthScope?: string;
+  oauthGroupFolder?: string;
 }
 
 type SkillLike = {
@@ -130,16 +141,19 @@ function healthPathFor(pathValue: string): string {
 }
 
 export function resolveAlexaConfig(env = process.env): AlexaConfig | null {
-  const envFile = readEnvFile([
-    'ALEXA_SKILL_ID',
-    'ALEXA_HOST',
-    'ALEXA_PORT',
-    'ALEXA_PATH',
-    'ALEXA_VERIFY_SIGNATURE',
-    'ALEXA_REQUIRE_ACCOUNT_LINKING',
-    'ALEXA_ALLOWED_USER_IDS',
-    'ALEXA_TARGET_GROUP_FOLDER',
-  ]);
+  const envFile =
+    env === process.env
+      ? readEnvFile([
+          'ALEXA_SKILL_ID',
+          'ALEXA_HOST',
+          'ALEXA_PORT',
+          'ALEXA_PATH',
+          'ALEXA_VERIFY_SIGNATURE',
+          'ALEXA_REQUIRE_ACCOUNT_LINKING',
+          'ALEXA_ALLOWED_USER_IDS',
+          'ALEXA_TARGET_GROUP_FOLDER',
+        ])
+      : {};
 
   const skillId = (env.ALEXA_SKILL_ID || envFile.ALEXA_SKILL_ID || '').trim();
   if (!skillId) return null;
@@ -202,11 +216,25 @@ export function getAlexaStatus(
   config = resolveAlexaConfig(),
   running = false,
   boundPort?: number,
+  oauthConfig = resolveAlexaOAuthConfig(process.env, config?.path || DEFAULT_ALEXA_PATH),
 ): AlexaStatus {
   if (!config) {
-    return { enabled: false, running: false };
+    const oauthStatus = getAlexaOAuthStatus(
+      resolveAlexaOAuthConfig(process.env, DEFAULT_ALEXA_PATH),
+    );
+    return {
+      enabled: false,
+      running: false,
+      oauthEnabled: oauthStatus.enabled,
+      oauthAuthorizationPath: oauthStatus.authorizationPath,
+      oauthTokenPath: oauthStatus.tokenPath,
+      oauthHealthPath: oauthStatus.healthPath,
+      oauthScope: oauthStatus.scope,
+      oauthGroupFolder: oauthStatus.groupFolder,
+    };
   }
 
+  const oauthStatus = getAlexaOAuthStatus(oauthConfig);
   return {
     enabled: true,
     running,
@@ -218,6 +246,12 @@ export function getAlexaStatus(
     requireAccountLinking: config.requireAccountLinking,
     allowedUserIdsCount: config.allowedUserIds.length,
     targetGroupFolder: config.targetGroupFolder,
+    oauthEnabled: oauthStatus.enabled,
+    oauthAuthorizationPath: oauthStatus.authorizationPath,
+    oauthTokenPath: oauthStatus.tokenPath,
+    oauthHealthPath: oauthStatus.healthPath,
+    oauthScope: oauthStatus.scope,
+    oauthGroupFolder: oauthStatus.groupFolder,
   };
 }
 
@@ -242,6 +276,22 @@ export function formatAlexaStatusMessage(status: AlexaStatus): string {
     status.targetGroupFolder
       ? `- Target group folder fallback: ${status.targetGroupFolder}`
       : '- Target group folder fallback: linked-account mapping',
+    `- OAuth account linking: ${status.oauthEnabled ? 'configured' : 'not configured'}`,
+    status.oauthAuthorizationPath
+      ? `- OAuth auth path: ${status.oauthAuthorizationPath}`
+      : '- OAuth auth path: unavailable',
+    status.oauthTokenPath
+      ? `- OAuth token path: ${status.oauthTokenPath}`
+      : '- OAuth token path: unavailable',
+    status.oauthHealthPath
+      ? `- OAuth health path: ${status.oauthHealthPath}`
+      : '- OAuth health path: unavailable',
+    status.oauthGroupFolder
+      ? `- OAuth target group: ${status.oauthGroupFolder}`
+      : '- OAuth target group: unavailable',
+    status.oauthScope
+      ? `- OAuth scope: ${status.oauthScope}`
+      : '- OAuth scope: unavailable',
     '- Tip: expose this endpoint through HTTPS and configure account linking before using personal Alexa intents.',
   ].join('\n');
 }
@@ -1000,6 +1050,7 @@ export async function startAlexaServer(
   if (!config) return null;
 
   const skill = createAlexaSkill(config);
+  const oauthConfig = resolveAlexaOAuthConfig(process.env, config.path);
   let running = false;
 
   const server = http.createServer(async (request, response) => {
@@ -1012,6 +1063,17 @@ export async function startAlexaServer(
       if (request.method === 'GET' && pathname === config.healthPath) {
         response.writeHead(200, { 'content-type': 'application/json' });
         response.end(JSON.stringify({ ok: true, assistant: ASSISTANT_NAME }));
+        return;
+      }
+
+      if (
+        await handleAlexaOAuthRequest(
+          request,
+          response,
+          config.path,
+          oauthConfig,
+        )
+      ) {
         return;
       }
 
@@ -1089,7 +1151,7 @@ export async function startAlexaServer(
       const address = server.address();
       const boundPort =
         address && typeof address !== 'string' ? address.port : config.port;
-      return getAlexaStatus(config, running, boundPort);
+      return getAlexaStatus(config, running, boundPort, oauthConfig);
     },
   };
 }

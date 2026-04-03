@@ -167,34 +167,37 @@ Only run a real Alexa acceptance pass if all of these are configured:
 - Node 22 on the host
 - `ALEXA_SKILL_ID`
 - local Alexa listener config
+- local Andrea OAuth config:
+  - `ALEXA_OAUTH_CLIENT_ID`
+  - `ALEXA_OAUTH_CLIENT_SECRET`
+  - `ALEXA_OAUTH_SCOPE`
 - HTTPS ingress or tunnel
 - Alexa console skill endpoint
-- Alexa console account linking
-- local linked-account seed:
-  - `ALEXA_LINKED_ACCOUNT_TOKEN`
-  - `ALEXA_LINKED_ACCOUNT_GROUP_FOLDER`
-- a valid Andrea group for that linked `groupFolder`
+- Alexa console Authorization Code Grant account linking
+- a valid Andrea group for the OAuth target `groupFolder`
 
 If any of those are missing, record Alexa as **code-ready but setup-blocked** instead of failing the release gate for missing external setup.
 
 Current operator-host blocker note:
 
-- if `ngrok http 4300` is already live and forwarding to `localhost:4300`, the next blocker is Alexa Developer Console configuration of the real custom skill endpoint and matching `ALEXA_SKILL_ID`
-- do not claim live Alexa acceptance until the console-side endpoint and skill/application ID are wired to the same local listener you validated through ngrok
+- if `ngrok http 4300` is already live and forwarding to `localhost:4300`, the next blocker is Alexa Developer Console configuration of the real custom skill endpoint, Authorization Code Grant settings, and matching `ALEXA_SKILL_ID`
+- do not claim live Alexa acceptance until the console-side endpoint, auth URI, token URI, client credentials, and skill/application ID are wired to the same local listener you validated through ngrok
 
 When configured, validate in this order:
 
 1. `/alexa_status`
-2. unlinked launch
-3. unlinked help
-4. one unlinked personal-data intent
-5. linked my day
-6. linked what next
-7. linked tomorrow calendar
-8. linked Candace upcoming
-9. linked remind-before-next-meeting
-10. linked save-for-later
-11. linked draft-follow-up
+2. local `GET /alexa/oauth/health`
+3. public `GET /alexa/oauth/health`
+4. unlinked launch
+5. unlinked help
+6. one unlinked personal-data intent
+7. linked my day
+8. linked what next
+9. linked tomorrow calendar
+10. linked Candace upcoming
+11. linked remind-before-next-meeting
+12. linked save-for-later
+13. linked draft-follow-up
 
 Check:
 

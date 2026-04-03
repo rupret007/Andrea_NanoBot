@@ -64,7 +64,8 @@ export function getAlexaPrincipalKey(
 export function resolveAlexaLinkedAccountSeed(
   env = process.env,
 ): AlexaLinkedAccountSeed | null {
-  const envFile = readEnvFile([...ALEXA_LINKED_ACCOUNT_ENV_KEYS]);
+  const envFile =
+    env === process.env ? readEnvFile([...ALEXA_LINKED_ACCOUNT_ENV_KEYS]) : {};
   const token = (
     env.ALEXA_LINKED_ACCOUNT_TOKEN ||
     envFile.ALEXA_LINKED_ACCOUNT_TOKEN ||
@@ -189,9 +190,34 @@ export function resolveAlexaLinkedAccount(
     };
   }
 
+  let resolvedAccount = account;
+  const nextAllowedUserId = account.allowedAlexaUserId || principal.userId;
+  const nextAllowedPersonId =
+    account.allowedAlexaPersonId || principal.personId || null;
+  if (
+    nextAllowedUserId !== account.allowedAlexaUserId ||
+    nextAllowedPersonId !== account.allowedAlexaPersonId
+  ) {
+    resolvedAccount = {
+      ...account,
+      allowedAlexaUserId: nextAllowedUserId,
+      allowedAlexaPersonId: nextAllowedPersonId,
+      updatedAt: new Date().toISOString(),
+    };
+    upsertAlexaLinkedAccount(resolvedAccount);
+    logger.info(
+      {
+        groupFolder: resolvedAccount.groupFolder,
+        boundAlexaUserId: Boolean(nextAllowedUserId),
+        boundAlexaPersonId: Boolean(nextAllowedPersonId),
+      },
+      'Bound Alexa linked account to the resolved Alexa principal',
+    );
+  }
+
   return {
     ok: true,
-    account,
+    account: resolvedAccount,
     principalKey: getAlexaPrincipalKey(principal),
   };
 }

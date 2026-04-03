@@ -7,6 +7,8 @@ import { assertValidGroupFolder, isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
 import {
   AlexaLinkedAccount,
+  AlexaOAuthAuthorizationCodeRecord,
+  AlexaOAuthRefreshTokenRecord,
   AlexaPendingSession,
   AgentThreadState,
   NewMessage,
@@ -129,6 +131,33 @@ function createSchema(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_alexa_sessions_expires
       ON alexa_sessions(expires_at);
+    CREATE TABLE IF NOT EXISTS alexa_oauth_authorization_codes (
+      code_hash TEXT PRIMARY KEY,
+      client_id TEXT NOT NULL,
+      redirect_uri TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      code_challenge TEXT,
+      code_challenge_method TEXT,
+      group_folder TEXT NOT NULL,
+      display_name TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      used_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_alexa_oauth_codes_expires
+      ON alexa_oauth_authorization_codes(expires_at, used_at);
+    CREATE TABLE IF NOT EXISTS alexa_oauth_refresh_tokens (
+      refresh_token_hash TEXT PRIMARY KEY,
+      client_id TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      group_folder TEXT NOT NULL,
+      display_name TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      disabled_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_alexa_oauth_refresh_expires
+      ON alexa_oauth_refresh_tokens(expires_at, disabled_at);
     CREATE TABLE IF NOT EXISTS registered_groups (
       jid TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -1066,6 +1095,232 @@ export function listAlexaLinkedAccounts(): AlexaLinkedAccount[] {
       updatedAt: row.updated_at,
       disabledAt: row.disabled_at,
     }));
+}
+
+export function insertAlexaOAuthAuthorizationCode(
+  record: AlexaOAuthAuthorizationCodeRecord,
+): void {
+  assertValidGroupFolder(record.groupFolder);
+  db.prepare(
+    `
+      INSERT INTO alexa_oauth_authorization_codes (
+        code_hash,
+        client_id,
+        redirect_uri,
+        scope,
+        code_challenge,
+        code_challenge_method,
+        group_folder,
+        display_name,
+        created_at,
+        expires_at,
+        used_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+  ).run(
+    record.codeHash,
+    record.clientId,
+    record.redirectUri,
+    record.scope,
+    record.codeChallenge || null,
+    record.codeChallengeMethod || null,
+    record.groupFolder,
+    record.displayName,
+    record.createdAt,
+    record.expiresAt,
+    record.usedAt || null,
+  );
+}
+
+export function getAlexaOAuthAuthorizationCode(
+  codeHash: string,
+): AlexaOAuthAuthorizationCodeRecord | undefined {
+  const row = db
+    .prepare(
+      `
+        SELECT *
+        FROM alexa_oauth_authorization_codes
+        WHERE code_hash = ?
+        LIMIT 1
+      `,
+    )
+    .get(codeHash) as
+    | {
+        code_hash: string;
+        client_id: string;
+        redirect_uri: string;
+        scope: string;
+        code_challenge: string | null;
+        code_challenge_method: 'plain' | 'S256' | null;
+        group_folder: string;
+        display_name: string;
+        created_at: string;
+        expires_at: string;
+        used_at: string | null;
+      }
+    | undefined;
+
+  if (!row) return undefined;
+  if (!isValidGroupFolder(row.group_folder)) {
+    logger.warn(
+      { codeHash, groupFolder: row.group_folder },
+      'Skipping Alexa OAuth authorization code with invalid group folder',
+    );
+    return undefined;
+  }
+
+  return {
+    codeHash: row.code_hash,
+    clientId: row.client_id,
+    redirectUri: row.redirect_uri,
+    scope: row.scope,
+    codeChallenge: row.code_challenge,
+    codeChallengeMethod: row.code_challenge_method,
+    groupFolder: row.group_folder,
+    displayName: row.display_name,
+    createdAt: row.created_at,
+    expiresAt: row.expires_at,
+    usedAt: row.used_at,
+  };
+}
+
+export function consumeAlexaOAuthAuthorizationCode(
+  codeHash: string,
+  usedAt: string,
+  now = new Date().toISOString(),
+): boolean {
+  const result = db
+    .prepare(
+      `
+        UPDATE alexa_oauth_authorization_codes
+        SET used_at = ?
+        WHERE code_hash = ?
+          AND used_at IS NULL
+          AND expires_at > ?
+      `,
+    )
+    .run(usedAt, codeHash, now);
+  return result.changes === 1;
+}
+
+export function purgeExpiredAlexaOAuthAuthorizationCodes(
+  now = new Date().toISOString(),
+): number {
+  const result = db
+    .prepare(
+      `
+        DELETE FROM alexa_oauth_authorization_codes
+        WHERE expires_at <= ?
+      `,
+    )
+    .run(now);
+  return result.changes;
+}
+
+export function insertAlexaOAuthRefreshToken(
+  record: AlexaOAuthRefreshTokenRecord,
+): void {
+  assertValidGroupFolder(record.groupFolder);
+  db.prepare(
+    `
+      INSERT INTO alexa_oauth_refresh_tokens (
+        refresh_token_hash,
+        client_id,
+        scope,
+        group_folder,
+        display_name,
+        created_at,
+        expires_at,
+        disabled_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+  ).run(
+    record.refreshTokenHash,
+    record.clientId,
+    record.scope,
+    record.groupFolder,
+    record.displayName,
+    record.createdAt,
+    record.expiresAt,
+    record.disabledAt || null,
+  );
+}
+
+export function getAlexaOAuthRefreshToken(
+  refreshTokenHash: string,
+): AlexaOAuthRefreshTokenRecord | undefined {
+  const row = db
+    .prepare(
+      `
+        SELECT *
+        FROM alexa_oauth_refresh_tokens
+        WHERE refresh_token_hash = ?
+        LIMIT 1
+      `,
+    )
+    .get(refreshTokenHash) as
+    | {
+        refresh_token_hash: string;
+        client_id: string;
+        scope: string;
+        group_folder: string;
+        display_name: string;
+        created_at: string;
+        expires_at: string;
+        disabled_at: string | null;
+      }
+    | undefined;
+
+  if (!row) return undefined;
+  if (!isValidGroupFolder(row.group_folder)) {
+    logger.warn(
+      { refreshTokenHash, groupFolder: row.group_folder },
+      'Skipping Alexa OAuth refresh token with invalid group folder',
+    );
+    return undefined;
+  }
+
+  return {
+    refreshTokenHash: row.refresh_token_hash,
+    clientId: row.client_id,
+    scope: row.scope,
+    groupFolder: row.group_folder,
+    displayName: row.display_name,
+    createdAt: row.created_at,
+    expiresAt: row.expires_at,
+    disabledAt: row.disabled_at,
+  };
+}
+
+export function disableAlexaOAuthRefreshToken(
+  refreshTokenHash: string,
+  disabledAt: string,
+): boolean {
+  const result = db
+    .prepare(
+      `
+        UPDATE alexa_oauth_refresh_tokens
+        SET disabled_at = ?
+        WHERE refresh_token_hash = ?
+          AND disabled_at IS NULL
+      `,
+    )
+    .run(disabledAt, refreshTokenHash);
+  return result.changes === 1;
+}
+
+export function purgeExpiredAlexaOAuthRefreshTokens(
+  now = new Date().toISOString(),
+): number {
+  const result = db
+    .prepare(
+      `
+        DELETE FROM alexa_oauth_refresh_tokens
+        WHERE expires_at <= ?
+      `,
+    )
+    .run(now);
+  return result.changes;
 }
 
 export function upsertAlexaSession(record: AlexaPendingSession): void {

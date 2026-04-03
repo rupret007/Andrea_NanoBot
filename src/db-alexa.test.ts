@@ -3,9 +3,17 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   _initTestDatabase,
   clearAlexaSession,
+  consumeAlexaOAuthAuthorizationCode,
+  disableAlexaOAuthRefreshToken,
   getAlexaLinkedAccountByAccessTokenHash,
+  getAlexaOAuthAuthorizationCode,
+  getAlexaOAuthRefreshToken,
   getAlexaSession,
+  insertAlexaOAuthAuthorizationCode,
+  insertAlexaOAuthRefreshToken,
   purgeExpiredAlexaSessions,
+  purgeExpiredAlexaOAuthAuthorizationCodes,
+  purgeExpiredAlexaOAuthRefreshTokens,
   upsertAlexaLinkedAccount,
   upsertAlexaSession,
 } from './db.js';
@@ -114,5 +122,111 @@ describe('alexa sessions', () => {
     expect(
       getAlexaSession('alexa:person-5', 'hash-5', '2026-04-03T00:30:00.000Z'),
     ).toBeUndefined();
+  });
+});
+
+describe('alexa oauth authorization codes', () => {
+  it('stores, loads, consumes, and purges authorization codes', () => {
+    insertAlexaOAuthAuthorizationCode({
+      codeHash: 'code-hash-1',
+      clientId: 'client-1',
+      redirectUri: 'https://layla.amazon.com/api/skill/link/test',
+      scope: 'andrea.alexa.link',
+      codeChallenge: 'challenge-1',
+      codeChallengeMethod: 'S256',
+      groupFolder: 'main',
+      displayName: 'Andrea Alexa',
+      createdAt: '2026-04-03T00:00:00.000Z',
+      expiresAt: '2026-04-03T00:10:00.000Z',
+      usedAt: null,
+    });
+
+    expect(getAlexaOAuthAuthorizationCode('code-hash-1')).toMatchObject({
+      clientId: 'client-1',
+      groupFolder: 'main',
+      codeChallengeMethod: 'S256',
+    });
+
+    expect(
+      consumeAlexaOAuthAuthorizationCode(
+        'code-hash-1',
+        '2026-04-03T00:05:00.000Z',
+        '2026-04-03T00:05:00.000Z',
+      ),
+    ).toBe(true);
+    expect(
+      consumeAlexaOAuthAuthorizationCode(
+        'code-hash-1',
+        '2026-04-03T00:06:00.000Z',
+        '2026-04-03T00:06:00.000Z',
+      ),
+    ).toBe(false);
+
+    insertAlexaOAuthAuthorizationCode({
+      codeHash: 'code-hash-2',
+      clientId: 'client-1',
+      redirectUri: 'https://layla.amazon.com/api/skill/link/test',
+      scope: 'andrea.alexa.link',
+      codeChallenge: null,
+      codeChallengeMethod: null,
+      groupFolder: 'main',
+      displayName: 'Andrea Alexa',
+      createdAt: '2026-04-03T00:00:00.000Z',
+      expiresAt: '2026-04-03T00:01:00.000Z',
+      usedAt: null,
+    });
+
+    expect(
+      purgeExpiredAlexaOAuthAuthorizationCodes('2026-04-03T00:02:00.000Z'),
+    ).toBe(1);
+    expect(getAlexaOAuthAuthorizationCode('code-hash-2')).toBeUndefined();
+  });
+});
+
+describe('alexa oauth refresh tokens', () => {
+  it('stores, disables, and purges refresh tokens', () => {
+    insertAlexaOAuthRefreshToken({
+      refreshTokenHash: 'refresh-hash-1',
+      clientId: 'client-1',
+      scope: 'andrea.alexa.link',
+      groupFolder: 'main',
+      displayName: 'Andrea Alexa',
+      createdAt: '2026-04-03T00:00:00.000Z',
+      expiresAt: '2026-04-03T01:00:00.000Z',
+      disabledAt: null,
+    });
+
+    expect(getAlexaOAuthRefreshToken('refresh-hash-1')).toMatchObject({
+      clientId: 'client-1',
+      groupFolder: 'main',
+    });
+    expect(
+      disableAlexaOAuthRefreshToken(
+        'refresh-hash-1',
+        '2026-04-03T00:30:00.000Z',
+      ),
+    ).toBe(true);
+    expect(
+      disableAlexaOAuthRefreshToken(
+        'refresh-hash-1',
+        '2026-04-03T00:31:00.000Z',
+      ),
+    ).toBe(false);
+
+    insertAlexaOAuthRefreshToken({
+      refreshTokenHash: 'refresh-hash-2',
+      clientId: 'client-1',
+      scope: 'andrea.alexa.link',
+      groupFolder: 'main',
+      displayName: 'Andrea Alexa',
+      createdAt: '2026-04-03T00:00:00.000Z',
+      expiresAt: '2026-04-03T00:10:00.000Z',
+      disabledAt: null,
+    });
+
+    expect(
+      purgeExpiredAlexaOAuthRefreshTokens('2026-04-03T00:11:00.000Z'),
+    ).toBe(1);
+    expect(getAlexaOAuthRefreshToken('refresh-hash-2')).toBeUndefined();
   });
 });

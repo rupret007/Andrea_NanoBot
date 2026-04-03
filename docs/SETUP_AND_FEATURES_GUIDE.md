@@ -303,7 +303,9 @@ ALEXA_PATH=/alexa
 ALEXA_VERIFY_SIGNATURE=true
 ALEXA_REQUIRE_ACCOUNT_LINKING=true
 ALEXA_ALLOWED_USER_IDS=amzn1.ask.account.your-user-id
-ALEXA_LINKED_ACCOUNT_TOKEN=replace-with-your-linked-access-token
+ALEXA_OAUTH_CLIENT_ID=andrea-alexa-poc-client
+ALEXA_OAUTH_CLIENT_SECRET=replace-with-a-local-client-secret
+ALEXA_OAUTH_SCOPE=andrea.alexa.link
 ALEXA_LINKED_ACCOUNT_GROUP_FOLDER=main
 ```
 
@@ -313,21 +315,28 @@ Practical notes:
 - Account linking is required for Alexa personal-data intents in v1.
 - unlinked Alexa is intentionally limited to launch/help/fallback style responses.
 - `ALEXA_ALLOWED_USER_IDS` is still the easiest coarse security rail for a private skill rollout.
-- The linked-account seed maps the Alexa account to one Andrea `groupFolder`.
-- that seeded `groupFolder` must already exist as a valid Andrea registered group.
+- The Andrea OAuth server now mints the linked access token and maps it to one Andrea `groupFolder`.
+- that OAuth target `groupFolder` must already exist as a valid Andrea registered group.
 - Use `/alexa_status` in Telegram to confirm that the listener actually started.
 
 Recommended setup order:
 
 1. switch to Node 22 on the host
 2. set `ALEXA_SKILL_ID` plus the local listener env
-3. seed the linked account locally
-4. make sure the seeded `groupFolder` already exists in Andrea
+3. set the Andrea OAuth client env:
+   - `ALEXA_OAUTH_CLIENT_ID`
+   - `ALEXA_OAUTH_CLIENT_SECRET`
+   - `ALEXA_OAUTH_SCOPE`
+4. make sure the OAuth target `groupFolder` already exists in Andrea
 5. expose the endpoint through HTTPS
    - default v1 dev path: `ngrok http 4300`
    - if ngrok returns `ERR_NGROK_4018`, finish ngrok account verification and install the local authtoken first
-6. configure the Alexa Developer Console skill and account linking
-   - once ngrok is already forwarding to `localhost:4300`, the next real blocker is the console-side endpoint + real `ALEXA_SKILL_ID`, not the local listener
+6. configure the Alexa Developer Console skill and Authorization Code Grant account linking
+   - auth URI: `https://patronymically-nonremedial-london.ngrok-free.dev/alexa/oauth/authorize`
+   - token URI: `https://patronymically-nonremedial-london.ngrok-free.dev/alexa/oauth/token`
+   - scope: `andrea.alexa.link`
+   - auth scheme: `HTTP Basic`
+   - once ngrok is already forwarding to `localhost:4300`, the next real blocker is the console-side account-link setup + real `ALEXA_SKILL_ID`, not the local listener
 7. run `/alexa_status`, then perform the linked and unlinked live checks from [ALEXA_VOICE_INTEGRATION.md](ALEXA_VOICE_INTEGRATION.md)
 
 Full details:

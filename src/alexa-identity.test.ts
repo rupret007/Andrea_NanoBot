@@ -123,4 +123,31 @@ describe('Alexa linked-account resolution', () => {
       kind: 'forbidden',
     });
   });
+
+  it('binds the Alexa user and person IDs on first successful resolution when they were unset', () => {
+    seedConfiguredAlexaLinkedAccount({
+      ALEXA_LINKED_ACCOUNT_TOKEN: 'secret-token',
+      ALEXA_LINKED_ACCOUNT_GROUP_FOLDER: 'main',
+    });
+
+    const resolution = resolveAlexaLinkedAccount(
+      {
+        userId: 'amzn1.ask.account.bound-user',
+        personId: 'amzn1.ask.person.bound-person',
+        accessToken: 'secret-token',
+      },
+      'Andrea',
+    );
+
+    expect(resolution).toMatchObject({
+      ok: true,
+    });
+    if (!resolution.ok) return;
+    expect(resolution.account.allowedAlexaUserId).toBe(
+      'amzn1.ask.account.bound-user',
+    );
+    expect(resolution.account.allowedAlexaPersonId).toBe(
+      'amzn1.ask.person.bound-person',
+    );
+  });
 });

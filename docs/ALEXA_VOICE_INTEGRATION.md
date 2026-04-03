@@ -29,7 +29,9 @@ Current operator-host closeout result on this machine:
 - `ngrok` is forwarding `https://patronymically-nonremedial-london.ngrok-free.dev` to `http://localhost:4300`
 - local `http://127.0.0.1:4300/alexa/health` responds successfully
 - public `https://patronymically-nonremedial-london.ngrok-free.dev/alexa/health` responds successfully when the ngrok browser-warning header is supplied during manual checks
-- the next exact blocker is Alexa Developer Console skill wiring: the real skill endpoint and real `ALEXA_SKILL_ID` are not configured on this machine yet
+- local and public OAuth health now respond on `/alexa/oauth/health`
+- a real authorization-code flow now works against the ngrok URL and mints access tokens that resolve to `groupFolder=main`
+- the next exact blocker is Alexa Developer Console account-link configuration plus the real `ALEXA_SKILL_ID`
 
 Important validation note:
 
@@ -113,22 +115,25 @@ Recommended private-user allowlist:
 ALEXA_ALLOWED_USER_IDS=amzn1.ask.account...,amzn1.ask.person...
 ```
 
-Local linked-account seed for v1:
+Local OAuth issuer config for v1:
 
 ```bash
-ALEXA_LINKED_ACCOUNT_TOKEN=replace-with-your-linked-access-token
+ALEXA_OAUTH_CLIENT_ID=andrea-alexa-poc-client
+ALEXA_OAUTH_CLIENT_SECRET=replace-with-a-local-client-secret
+ALEXA_OAUTH_SCOPE=andrea.alexa.link
+ALEXA_OAUTH_ALLOWED_REDIRECT_URIS=https://layla.amazon.com/api/skill/link/<vendor-id>
 ALEXA_LINKED_ACCOUNT_NAME=Andrea Alexa
 ALEXA_LINKED_ACCOUNT_GROUP_FOLDER=main
 ALEXA_LINKED_ACCOUNT_ALLOWED_USER_ID=amzn1.ask.account...
 ALEXA_LINKED_ACCOUNT_ALLOWED_PERSON_ID=amzn1.ask.person...
 ```
 
-Andrea seeds that linked-account mapping into the local DB on startup. Personal Alexa intents then bind directly to that `groupFolder`.
+Andrea issues real authorization codes and access tokens from the local OAuth endpoints. Issued access tokens are hashed into `alexa_linked_accounts`, and personal Alexa intents then bind directly to that `groupFolder`.
 
 Before you treat Alexa as live-ready, also confirm:
 
 1. the linked `groupFolder` already exists as a valid Andrea registered group
-2. the Alexa console account-linking flow returns the same access token you seeded locally
+2. the Alexa console Authorization Code Grant flow exchanges against Andrea's OAuth endpoints successfully
 3. the machine running Andrea is actually using Node 22 for validation and service startup
 
 ## 4) Interaction Model And Endpoint
@@ -154,7 +159,7 @@ The local Andrea listener can stay loopback-only:
 
 ## 5) Production Prerequisites
 
-This repo now supports a private/dev-safe linked-account path, but a real production Alexa rollout still needs:
+This repo now supports a private/dev-safe authorization-code OAuth path, but a real production Alexa rollout still needs:
 
 - HTTPS ingress with stable hostname
 - Alexa custom skill setup in the console
@@ -162,7 +167,7 @@ This repo now supports a private/dev-safe linked-account path, but a real produc
 - a real OAuth/token issuer for linked access tokens
 - a real way to mint, refresh, and revoke those tokens outside the static local seed
 
-Until that exists, the local linked-account seed is appropriate for private development and operator validation only.
+Until that exists, the local Andrea OAuth issuer is appropriate for private development and operator validation only.
 
 ## 6) Live Acceptance Prerequisites
 
@@ -172,11 +177,15 @@ Do not claim a real Alexa pass until all of these are true:
 2. the Alexa listener is enabled and reachable on the configured host/path
 3. an HTTPS tunnel or reverse proxy forwards the public Alexa endpoint to the local listener
 4. the Alexa Developer Console skill uses the same skill ID and endpoint
-5. account linking is configured in the Alexa console
-6. a local linked-account seed exists:
-   - `ALEXA_LINKED_ACCOUNT_TOKEN`
-   - `ALEXA_LINKED_ACCOUNT_GROUP_FOLDER`
-7. the seeded `groupFolder` is already registered in Andrea
+5. the Alexa Developer Console account-linking screen uses:
+   - Authorization Code Grant
+   - auth URI `https://patronymically-nonremedial-london.ngrok-free.dev/alexa/oauth/authorize`
+   - token URI `https://patronymically-nonremedial-london.ngrok-free.dev/alexa/oauth/token`
+   - client ID from `ALEXA_OAUTH_CLIENT_ID`
+   - client secret from `ALEXA_OAUTH_CLIENT_SECRET`
+   - scope `andrea.alexa.link`
+   - client authentication `HTTP Basic`
+6. the OAuth-linked `groupFolder` is already registered in Andrea
 
 If any of those are missing, Alexa is **setup-blocked**, not broken.
 
@@ -184,8 +193,9 @@ On the current operator host, the first concrete blocker is:
 
 1. open the Alexa Developer Console for the real custom skill
 2. set the skill endpoint to `https://patronymically-nonremedial-london.ngrok-free.dev/alexa`
-3. copy the real Alexa skill/application ID into local `ALEXA_SKILL_ID`
-4. rebuild or restart Andrea under Node 22 with that real skill ID
+3. set account linking to Authorization Code Grant using the Andrea OAuth endpoints above
+4. copy the real Alexa skill/application ID into local `ALEXA_SKILL_ID`
+5. rebuild or restart Andrea under Node 22 with that real skill ID
 
 Until that succeeds, real Alexa requests will fail skill/application trust checks even though the listener and HTTPS tunnel are both alive.
 
@@ -210,14 +220,17 @@ When the prerequisites are in place, run the final pass in this order:
    - `ngrok http 4300`
 4. confirm the public HTTPS endpoint reaches the local Alexa listener
    - manual health checks against ngrok may need the `ngrok-skip-browser-warning` header on the free plan
-5. configure the Alexa Developer Console skill endpoint and local `ALEXA_SKILL_ID`
-6. confirm the linked-access token used by account linking matches the locally seeded hash
-7. confirm the seeded `groupFolder` is a valid Andrea group
-8. test unlinked behavior:
+5. confirm the OAuth health endpoint:
+   - local `http://127.0.0.1:4300/alexa/oauth/health`
+   - public `https://patronymically-nonremedial-london.ngrok-free.dev/alexa/oauth/health`
+6. configure the Alexa Developer Console skill endpoint, Authorization Code Grant settings, and local `ALEXA_SKILL_ID`
+7. confirm the OAuth-issued access token resolves to the intended Andrea group
+8. confirm the seeded `groupFolder` is a valid Andrea group
+9. test unlinked behavior:
    - launch
    - help
    - one personal-data intent that should return a link-account style response
-9. test linked behavior:
+10. test linked behavior:
    - my day
    - what is next
    - what is on my calendar tomorrow
@@ -230,7 +243,7 @@ If the skill is reachable but personal answers fail, check these first:
 
 - skill ID mismatch
 - signature verification failure
-- missing or unknown linked access token
+- missing or unknown OAuth-issued access token
 - wrong Alexa user/person ID for the seeded linked account
 - linked `groupFolder` not present in Andrea
 

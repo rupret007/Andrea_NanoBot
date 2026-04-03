@@ -220,6 +220,31 @@ export interface AlexaPendingSession {
   updatedAt: string;
 }
 
+export interface AlexaOAuthAuthorizationCodeRecord {
+  codeHash: string;
+  clientId: string;
+  redirectUri: string;
+  scope: string;
+  codeChallenge?: string | null;
+  codeChallengeMethod?: 'plain' | 'S256' | null;
+  groupFolder: string;
+  displayName: string;
+  createdAt: string;
+  expiresAt: string;
+  usedAt?: string | null;
+}
+
+export interface AlexaOAuthRefreshTokenRecord {
+  refreshTokenHash: string;
+  clientId: string;
+  scope: string;
+  groupFolder: string;
+  displayName: string;
+  createdAt: string;
+  expiresAt: string;
+  disabledAt?: string | null;
+}
+
 // --- Channel abstraction ---
 
 export interface Channel {
