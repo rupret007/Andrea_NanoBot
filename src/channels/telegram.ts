@@ -6,9 +6,11 @@ import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
 import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
 import {
+  ChannelSendReceipt,
   Channel,
   OnChatMetadata,
   OnInboundMessage,
+  ReplyMessageRef,
   RegisteredGroup,
 } from '../types.js';
 import { ChannelOpts, registerChannel } from './registry.js';
@@ -187,16 +189,63 @@ async function sendTelegramMessage(
   chatId: string | number,
   text: string,
   options: { message_thread_id?: number } = {},
-): Promise<void> {
+): Promise<string> {
   try {
-    await api.sendMessage(chatId, text, {
+    const sent = await api.sendMessage(chatId, text, {
       ...options,
       parse_mode: 'Markdown',
     });
+    return sent.message_id.toString();
   } catch (err) {
     logger.debug({ err }, 'Markdown send failed, falling back to plain text');
-    await api.sendMessage(chatId, text, options);
+    const sent = await api.sendMessage(chatId, text, options);
+    return sent.message_id.toString();
   }
+}
+
+export function extractTelegramReplyRef(
+  message: {
+    reply_to_message?: {
+      message_id: number;
+      text?: string;
+      caption?: string;
+      date?: number;
+      from?: {
+        id?: number;
+        first_name?: string;
+        username?: string;
+        is_bot?: boolean;
+      };
+    };
+  },
+  selfId?: number,
+): ReplyMessageRef | undefined {
+  const replied = message.reply_to_message;
+  if (!replied) return undefined;
+
+  const senderId =
+    replied.from?.id === undefined ? undefined : replied.from.id.toString();
+  const senderName =
+    replied.from?.first_name ||
+    replied.from?.username ||
+    senderId ||
+    undefined;
+
+  return {
+    message_id: replied.message_id.toString(),
+    content: replied.text || replied.caption || '',
+    sender: senderId,
+    sender_name: senderName,
+    is_from_me: replied.from?.id !== undefined && selfId !== undefined
+      ? replied.from.id === selfId
+      : undefined,
+    is_bot_message:
+      replied.from?.is_bot === undefined ? undefined : replied.from.is_bot,
+    timestamp:
+      replied.date === undefined
+        ? undefined
+        : new Date(replied.date * 1000).toISOString(),
+  };
 }
 
 export class TelegramChannel implements Channel {
@@ -305,6 +354,7 @@ export class TelegramChannel implements Channel {
       const sender = ctx.from?.id.toString() || '';
       const msgId = ctx.message.message_id.toString();
       const threadId = ctx.message.message_thread_id;
+      const replyTo = extractTelegramReplyRef(ctx.message, ctx.me?.id);
 
       const chatName =
         ctx.chat.type === 'private'
@@ -358,6 +408,7 @@ export class TelegramChannel implements Channel {
         timestamp,
         is_from_me: false,
         thread_id: threadId ? threadId.toString() : undefined,
+        reply_to: replyTo,
       });
 
       logger.info(
@@ -498,9 +549,17 @@ export class TelegramChannel implements Channel {
     text: string,
     threadId?: string,
   ): Promise<void> {
+    await this.sendMessageWithReceipt(jid, text, threadId);
+  }
+
+  async sendMessageWithReceipt(
+    jid: string,
+    text: string,
+    threadId?: string,
+  ): Promise<ChannelSendReceipt | null> {
     if (!this.bot) {
       logger.warn('Telegram bot not initialized');
-      return;
+      return null;
     }
 
     try {
@@ -508,16 +567,28 @@ export class TelegramChannel implements Channel {
       const options = threadId
         ? { message_thread_id: parseInt(threadId, 10) }
         : {};
+      const platformMessageIds: string[] = [];
 
       for (const chunk of splitTelegramMessage(text)) {
-        await sendTelegramMessage(this.bot.api, numericId, chunk, options);
+        const messageId = await sendTelegramMessage(
+          this.bot.api,
+          numericId,
+          chunk,
+          options,
+        );
+        platformMessageIds.push(messageId);
       }
       logger.info(
         { jid, length: text.length, threadId },
         'Telegram message sent',
       );
+      return {
+        platformMessageIds,
+        threadId: threadId || null,
+      };
     } catch (err) {
       logger.error({ jid, err }, 'Failed to send Telegram message');
+      return null;
     }
   }
 

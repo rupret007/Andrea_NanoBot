@@ -47,6 +47,8 @@ import {
 } from './container-runtime.js';
 import {
   createTask,
+  deleteRuntimeBackendCardContext,
+  deleteRuntimeBackendChatSelection,
   getAllAgentThreads,
   getAllChats,
   getAgentThread,
@@ -59,14 +61,20 @@ import {
   getMessagesSince,
   getNewMessages,
   getRouterState,
+  getRuntimeBackendCardContext,
+  getRuntimeBackendChatSelection,
+  getRuntimeBackendJob,
   initDatabase,
   listAllEnabledCommunitySkills,
+  pruneExpiredRuntimeBackendCardContexts,
   setRegisteredGroup,
   setAgentThread,
   setRouterState,
   setSession,
   storeChatMetadata,
   storeMessage,
+  upsertRuntimeBackendCardContext,
+  upsertRuntimeBackendChatSelection,
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
@@ -166,6 +174,10 @@ import {
 } from './direct-quick-reply.js';
 import { buildSilentSuccessFallback } from './user-facing-fallback.js';
 import {
+  ANDREA_OPENAI_BACKEND_ID,
+} from './andrea-openai-backend.js';
+import {
+  AndreaOpenAiRuntimeError,
   createAndreaOpenAiRuntimeJob,
   followUpAndreaOpenAiRuntimeJob,
   getAndreaOpenAiBackendStatus,
@@ -176,6 +188,7 @@ import {
 } from './andrea-openai-runtime.js';
 import {
   formatRuntimeBackendCreateAcceptedMessage,
+  extractRuntimeBackendJobIdFromText,
   formatRuntimeBackendFailure,
   formatRuntimeBackendFollowupAcceptedMessage,
   formatRuntimeBackendJobCard,
@@ -184,6 +197,14 @@ import {
   formatRuntimeBackendStatusSummary,
   formatRuntimeBackendStopMessage,
 } from './runtime-shell.js';
+import {
+  buildRuntimeReplyContextMissingMessage,
+  buildRuntimeSelectionMissingMessage,
+  computeRuntimeCardContextExpiry,
+  resolveRuntimeJobTarget,
+  resolveRuntimeLogsTarget,
+  resolveRuntimeReplyContext,
+} from './runtime-chat-context.js';
 import {
   ALEXA_STATUS_COMMANDS,
   AMAZON_SEARCH_COMMANDS,
@@ -1125,10 +1146,10 @@ async function main(): Promise<void> {
     'Usage: /cursor-artifact-link AGENT_ID ABSOLUTE_PATH';
   const RUNTIME_CREATE_USAGE = 'Usage: /runtime-create TEXT';
   const RUNTIME_JOBS_USAGE = 'Usage: /runtime-jobs [LIMIT] [BEFORE_JOB_ID]';
-  const RUNTIME_JOB_USAGE = 'Usage: /runtime-job JOB_ID';
+  const RUNTIME_JOB_USAGE = 'Usage: /runtime-job [JOB_ID]';
   const RUNTIME_FOLLOWUP_USAGE = 'Usage: /runtime-followup JOB_ID TEXT';
-  const RUNTIME_STOP_USAGE = 'Usage: /runtime-stop JOB_ID';
-  const RUNTIME_LOGS_USAGE = 'Usage: /runtime-logs JOB_ID [LINES]';
+  const RUNTIME_STOP_USAGE = 'Usage: /runtime-stop [JOB_ID]';
+  const RUNTIME_LOGS_USAGE = 'Usage: /runtime-logs [JOB_ID] [LINES]';
   const CURSOR_TERMINAL_USAGE = 'Usage: /cursor-terminal AGENT_ID COMMAND';
   const CURSOR_TERMINAL_STATUS_USAGE =
     'Usage: /cursor-terminal-status AGENT_ID';
@@ -1278,6 +1299,197 @@ async function main(): Promise<void> {
     return { channel, group };
   }
 
+  function readCachedRuntimeJob(jobId: string): RuntimeBackendJob | null {
+    const cached = getRuntimeBackendJob(ANDREA_OPENAI_BACKEND_ID, jobId);
+    if (!cached?.raw_json) return null;
+    try {
+      return JSON.parse(cached.raw_json) as RuntimeBackendJob;
+    } catch (err) {
+      logger.warn(
+        { err, jobId },
+        'Failed to parse cached runtime backend job payload',
+      );
+      return null;
+    }
+  }
+
+  function getCurrentRuntimeSelection(
+    chatJid: string,
+    groupFolder: string,
+  ): string | null {
+    const selection = getRuntimeBackendChatSelection(
+      ANDREA_OPENAI_BACKEND_ID,
+      chatJid,
+    );
+    if (!selection) return null;
+
+    if (selection.group_folder !== groupFolder) {
+      deleteRuntimeBackendChatSelection(ANDREA_OPENAI_BACKEND_ID, chatJid);
+      return null;
+    }
+
+    return selection.job_id;
+  }
+
+  function updateCurrentRuntimeSelection(
+    chatJid: string,
+    groupFolder: string,
+    jobId: string,
+    updatedAt = new Date().toISOString(),
+  ): void {
+    upsertRuntimeBackendChatSelection({
+      backend_id: ANDREA_OPENAI_BACKEND_ID,
+      chat_jid: chatJid,
+      job_id: jobId,
+      group_folder: groupFolder,
+      updated_at: updatedAt,
+    });
+  }
+
+  function clearCurrentRuntimeSelection(chatJid: string): void {
+    deleteRuntimeBackendChatSelection(ANDREA_OPENAI_BACKEND_ID, chatJid);
+  }
+
+  function shouldClearRuntimeSelectionForError(err: unknown): boolean {
+    return (
+      err instanceof AndreaOpenAiRuntimeError &&
+      (err.kind === 'not_found' || err.kind === 'context_mismatch')
+    );
+  }
+
+  async function sendRuntimeBackendCardMessage(params: {
+    channel: Channel;
+    chatJid: string;
+    group: RegisteredGroup;
+    text: string;
+    job?: RuntimeBackendJob | null;
+    threadId?: string;
+    armReplyContext?: boolean;
+    updateSelection?: boolean;
+  }): Promise<void> {
+    const {
+      channel,
+      chatJid,
+      group,
+      text,
+      job,
+      threadId,
+      armReplyContext = false,
+      updateSelection = false,
+    } = params;
+
+    let receipt = null;
+    if (channel.sendMessageWithReceipt) {
+      receipt = await channel.sendMessageWithReceipt(chatJid, text, threadId);
+      if (!receipt) return;
+    } else {
+      await channel.sendMessage(chatJid, text, threadId);
+    }
+
+    if (!job) return;
+
+    const nowIso = new Date().toISOString();
+    if (updateSelection) {
+      updateCurrentRuntimeSelection(chatJid, group.folder, job.jobId, nowIso);
+    }
+
+    if (!armReplyContext || !receipt?.platformMessageIds.length) return;
+
+    const expiresAt = computeRuntimeCardContextExpiry(nowIso);
+    for (const messageId of receipt.platformMessageIds) {
+      upsertRuntimeBackendCardContext({
+        backend_id: ANDREA_OPENAI_BACKEND_ID,
+        chat_jid: chatJid,
+        message_id: messageId,
+        job_id: job.jobId,
+        group_folder: group.folder,
+        thread_id: threadId || job.threadId || null,
+        created_at: nowIso,
+        expires_at: expiresAt,
+      });
+    }
+  }
+
+  async function maybeHandleRuntimeReplyContext(
+    chatJid: string,
+    msg: NewMessage,
+  ): Promise<boolean> {
+    const replyTo = msg.reply_to;
+    const replyText = replyTo?.content?.trim() || '';
+    const replyMessageId = replyTo?.message_id?.trim() || '';
+    const promptText = msg.content.trim();
+
+    if (!replyText || !replyMessageId || !promptText) return false;
+
+    const context = await resolveRuntimeBackendContext(chatJid);
+    if (!context) return true;
+
+    pruneExpiredRuntimeBackendCardContexts(new Date().toISOString());
+    const runtimeCardContext = getRuntimeBackendCardContext(
+      ANDREA_OPENAI_BACKEND_ID,
+      chatJid,
+      replyMessageId,
+    );
+    const resolution = resolveRuntimeReplyContext({
+      replyMessageId,
+      replyText,
+      contextMessageId: runtimeCardContext?.message_id,
+      contextJobId: runtimeCardContext?.job_id,
+      contextGroupFolder: runtimeCardContext?.group_folder,
+      currentGroupFolder: context.group.folder,
+      expiresAt: runtimeCardContext?.expires_at,
+      nowIso: new Date().toISOString(),
+    });
+
+    if (resolution.kind === 'not_runtime_reply') {
+      return false;
+    }
+
+    if (resolution.kind === 'missing' || resolution.kind === 'expired') {
+      if (runtimeCardContext && resolution.kind === 'expired') {
+        deleteRuntimeBackendCardContext(
+          ANDREA_OPENAI_BACKEND_ID,
+          chatJid,
+          replyMessageId,
+        );
+      }
+      await context.channel.sendMessage(
+        chatJid,
+        buildRuntimeReplyContextMissingMessage(resolution.jobIdHint),
+        msg.thread_id,
+      );
+      return true;
+    }
+
+    try {
+      const job = await followUpAndreaOpenAiRuntimeJob({
+        chatJid,
+        group: context.group,
+        jobId: resolution.jobId!,
+        prompt: promptText,
+        actorId: msg.sender,
+      });
+      await sendRuntimeBackendCardMessage({
+        channel: context.channel,
+        chatJid,
+        group: context.group,
+        text: formatRuntimeBackendFollowupAcceptedMessage(job),
+        job,
+        threadId: msg.thread_id || runtimeCardContext?.thread_id || undefined,
+        armReplyContext: true,
+        updateSelection: true,
+      });
+    } catch (err) {
+      await context.channel.sendMessage(
+        chatJid,
+        formatRuntimeBackendFailure(err, chatJid, context.group),
+        msg.thread_id,
+      );
+    }
+
+    return true;
+  }
+
   async function runOperatorRuntimeFollowup(
     operatorChatJid: string,
     targetChatJid: string,
@@ -1357,10 +1569,15 @@ async function main(): Promise<void> {
         prompt: promptText,
         actorId,
       });
-      await context.channel.sendMessage(
+      await sendRuntimeBackendCardMessage({
+        channel: context.channel,
         chatJid,
-        formatRuntimeBackendCreateAcceptedMessage(job),
-      );
+        group: context.group,
+        text: formatRuntimeBackendCreateAcceptedMessage(job),
+        job,
+        armReplyContext: true,
+        updateSelection: true,
+      });
     } catch (err) {
       await context.channel.sendMessage(
         chatJid,
@@ -1411,6 +1628,7 @@ async function main(): Promise<void> {
   async function handleRuntimeJob(
     chatJid: string,
     jobId: string,
+    usedSelection = false,
   ): Promise<void> {
     const context = await resolveRuntimeBackendContext(chatJid);
     if (!context) return;
@@ -1421,14 +1639,29 @@ async function main(): Promise<void> {
         group: context.group,
         jobId,
       });
-      await context.channel.sendMessage(
+      await sendRuntimeBackendCardMessage({
+        channel: context.channel,
         chatJid,
-        formatRuntimeBackendJobCard(job),
-      );
+        group: context.group,
+        text: formatRuntimeBackendJobCard(job),
+        job,
+        armReplyContext: true,
+        updateSelection: true,
+      });
     } catch (err) {
+      if (usedSelection && shouldClearRuntimeSelectionForError(err)) {
+        clearCurrentRuntimeSelection(chatJid);
+      }
       await context.channel.sendMessage(
         chatJid,
-        formatRuntimeBackendFailure(err, chatJid, context.group),
+        [
+          formatRuntimeBackendFailure(err, chatJid, context.group),
+          usedSelection && shouldClearRuntimeSelectionForError(err)
+            ? '- Current runtime selection cleared for this chat.'
+            : null,
+        ]
+          .filter((line): line is string => Boolean(line))
+          .join('\n'),
       );
     }
   }
@@ -1450,10 +1683,15 @@ async function main(): Promise<void> {
         prompt: promptText,
         actorId,
       });
-      await context.channel.sendMessage(
+      await sendRuntimeBackendCardMessage({
+        channel: context.channel,
         chatJid,
-        formatRuntimeBackendFollowupAcceptedMessage(job),
-      );
+        group: context.group,
+        text: formatRuntimeBackendFollowupAcceptedMessage(job),
+        job,
+        armReplyContext: true,
+        updateSelection: true,
+      });
     } catch (err) {
       await context.channel.sendMessage(
         chatJid,
@@ -1466,6 +1704,7 @@ async function main(): Promise<void> {
     chatJid: string,
     jobId: string,
     actorId?: string,
+    usedSelection = false,
   ): Promise<void> {
     const context = await resolveRuntimeBackendContext(chatJid);
     if (!context) return;
@@ -1477,14 +1716,29 @@ async function main(): Promise<void> {
         jobId,
         actorId,
       });
-      await context.channel.sendMessage(
+      await sendRuntimeBackendCardMessage({
+        channel: context.channel,
         chatJid,
-        formatRuntimeBackendStopMessage(result),
-      );
+        group: context.group,
+        text: formatRuntimeBackendStopMessage(result),
+        job: result.job,
+        armReplyContext: true,
+        updateSelection: true,
+      });
     } catch (err) {
+      if (usedSelection && shouldClearRuntimeSelectionForError(err)) {
+        clearCurrentRuntimeSelection(chatJid);
+      }
       await context.channel.sendMessage(
         chatJid,
-        formatRuntimeBackendFailure(err, chatJid, context.group),
+        [
+          formatRuntimeBackendFailure(err, chatJid, context.group),
+          usedSelection && shouldClearRuntimeSelectionForError(err)
+            ? '- Current runtime selection cleared for this chat.'
+            : null,
+        ]
+          .filter((line): line is string => Boolean(line))
+          .join('\n'),
       );
     }
   }
@@ -1493,6 +1747,7 @@ async function main(): Promise<void> {
     chatJid: string,
     jobId: string,
     limit: number,
+    usedSelection = false,
   ): Promise<void> {
     const context = await resolveRuntimeBackendContext(chatJid);
     if (!context) return;
@@ -1504,8 +1759,8 @@ async function main(): Promise<void> {
         jobId,
         lines: limit,
       });
-      let currentJob: RuntimeBackendJob | null = null;
-      if (!result.logText?.trim()) {
+      let currentJob = readCachedRuntimeJob(jobId);
+      if (!currentJob && !result.logText?.trim()) {
         try {
           currentJob = await getAndreaOpenAiRuntimeJob({
             chatJid,
@@ -1516,14 +1771,29 @@ async function main(): Promise<void> {
           currentJob = null;
         }
       }
-      await context.channel.sendMessage(
+      await sendRuntimeBackendCardMessage({
+        channel: context.channel,
         chatJid,
-        formatRuntimeBackendLogsMessage(result, currentJob),
-      );
+        group: context.group,
+        text: formatRuntimeBackendLogsMessage(result, currentJob),
+        job: currentJob,
+        armReplyContext: Boolean(currentJob),
+        updateSelection: Boolean(currentJob),
+      });
     } catch (err) {
+      if (usedSelection && shouldClearRuntimeSelectionForError(err)) {
+        clearCurrentRuntimeSelection(chatJid);
+      }
       await context.channel.sendMessage(
         chatJid,
-        formatRuntimeBackendFailure(err, chatJid, context.group),
+        [
+          formatRuntimeBackendFailure(err, chatJid, context.group),
+          usedSelection && shouldClearRuntimeSelectionForError(err)
+            ? '- Current runtime selection cleared for this chat.'
+            : null,
+        ]
+          .filter((line): line is string => Boolean(line))
+          .join('\n'),
       );
     }
   }
@@ -2483,7 +2753,7 @@ async function main(): Promise<void> {
 
   // Channel callbacks (shared by all channels)
   const channelOpts = {
-    onMessage: (chatJid: string, msg: NewMessage) => {
+    onMessage: async (chatJid: string, msg: NewMessage) => {
       const rawTrimmed = msg.content.trim();
       const trimmed = rawTrimmed.toLowerCase();
       const rawCommandToken = trimmed.split(/\s+/)[0] || '';
@@ -2591,18 +2861,29 @@ async function main(): Promise<void> {
 
       if (RUNTIME_JOB_COMMANDS.has(commandToken)) {
         const parts = tokenizeCommandArguments(rawTrimmed);
-        const jobId = parts[1];
-        if (!jobId) {
+        const resolution = resolveRuntimeJobTarget(
+          parts[1],
+          getCurrentRuntimeSelection(
+            chatJid,
+            registeredGroups[chatJid]?.folder || '',
+          ),
+        );
+        if (!resolution.jobId) {
           const channel = findChannel(channels, chatJid);
           channel
-            ?.sendMessage(chatJid, RUNTIME_JOB_USAGE)
+            ?.sendMessage(
+              chatJid,
+              parts[1]
+                ? RUNTIME_JOB_USAGE
+                : buildRuntimeSelectionMissingMessage('view'),
+            )
             .catch((err) =>
               logger.error({ err, chatJid }, 'Runtime job usage send failed'),
             );
           return;
         }
 
-        handleRuntimeJob(chatJid, jobId).catch((err) =>
+        handleRuntimeJob(chatJid, resolution.jobId, resolution.usedSelection).catch((err) =>
           logger.error({ err, chatJid }, 'Runtime job command error'),
         );
         return;
@@ -2634,18 +2915,34 @@ async function main(): Promise<void> {
 
       if (RUNTIME_STOP_COMMANDS.has(commandToken)) {
         const parts = tokenizeCommandArguments(rawTrimmed);
-        const jobId = parts[1];
-        if (!jobId) {
+        const resolution = resolveRuntimeJobTarget(
+          parts[1],
+          getCurrentRuntimeSelection(
+            chatJid,
+            registeredGroups[chatJid]?.folder || '',
+          ),
+        );
+        if (!resolution.jobId) {
           const channel = findChannel(channels, chatJid);
           channel
-            ?.sendMessage(chatJid, RUNTIME_STOP_USAGE)
+            ?.sendMessage(
+              chatJid,
+              parts[1]
+                ? RUNTIME_STOP_USAGE
+                : buildRuntimeSelectionMissingMessage('stop'),
+            )
             .catch((err) =>
               logger.error({ err, chatJid }, 'Runtime stop usage send failed'),
             );
           return;
         }
 
-        handleRuntimeStop(chatJid, jobId, msg.sender).catch((err) =>
+        handleRuntimeStop(
+          chatJid,
+          resolution.jobId,
+          msg.sender,
+          resolution.usedSelection,
+        ).catch((err) =>
           logger.error({ err, chatJid }, 'Runtime stop command error'),
         );
         return;
@@ -2653,23 +2950,35 @@ async function main(): Promise<void> {
 
       if (RUNTIME_LOGS_COMMANDS.has(commandToken)) {
         const parts = tokenizeCommandArguments(rawTrimmed);
-        const jobId = parts[1];
-        if (!jobId) {
+        const resolution = resolveRuntimeLogsTarget(
+          parts[1],
+          parts[2],
+          getCurrentRuntimeSelection(
+            chatJid,
+            registeredGroups[chatJid]?.folder || '',
+          ),
+        );
+        if (!resolution.jobId) {
           const channel = findChannel(channels, chatJid);
           channel
-            ?.sendMessage(chatJid, RUNTIME_LOGS_USAGE)
+            ?.sendMessage(
+              chatJid,
+              parts[1]
+                ? RUNTIME_LOGS_USAGE
+                : buildRuntimeSelectionMissingMessage('logs'),
+            )
             .catch((err) =>
               logger.error({ err, chatJid }, 'Runtime logs usage send failed'),
             );
           return;
         }
 
-        const parsedLimit = Number.parseInt(parts[2] || '', 10);
-        const limit =
-          Number.isFinite(parsedLimit) && parsedLimit > 0
-            ? Math.min(120, parsedLimit)
-            : 40;
-        handleRuntimeLogs(chatJid, jobId, limit).catch((err) =>
+        handleRuntimeLogs(
+          chatJid,
+          resolution.jobId,
+          resolution.limit,
+          resolution.usedSelection,
+        ).catch((err) =>
           logger.error({ err, chatJid }, 'Runtime logs command error'),
         );
         return;
@@ -3114,6 +3423,15 @@ async function main(): Promise<void> {
         handleRemoteControl('stop', chatJid, msg).catch((err) =>
           logger.error({ err, chatJid }, 'Remote control command error'),
         );
+        return;
+      }
+
+      try {
+        if (await maybeHandleRuntimeReplyContext(chatJid, msg)) {
+          return;
+        }
+      } catch (err) {
+        logger.error({ err, chatJid }, 'Runtime reply-context routing error');
         return;
       }
 

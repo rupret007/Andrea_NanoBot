@@ -2,8 +2,15 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
   _initTestDatabase,
+  deleteRuntimeBackendCardContext,
+  deleteRuntimeBackendChatSelection,
+  getRuntimeBackendCardContext,
+  getRuntimeBackendChatSelection,
   getRuntimeBackendJob,
   listRuntimeBackendJobsForGroup,
+  pruneExpiredRuntimeBackendCardContexts,
+  upsertRuntimeBackendCardContext,
+  upsertRuntimeBackendChatSelection,
   upsertRuntimeBackendJob,
 } from './db.js';
 
@@ -74,5 +81,80 @@ describe('runtime backend job cache accessors', () => {
     expect(rows).toHaveLength(2);
     expect(rows[0].job_id).toBe('job_002');
     expect(rows[1].job_id).toBe('job_001');
+  });
+
+  it('stores and prunes runtime card reply contexts', () => {
+    upsertRuntimeBackendCardContext({
+      backend_id: 'andrea_openai',
+      chat_jid: 'tg:1',
+      message_id: '500',
+      job_id: 'job_001',
+      group_folder: 'main',
+      thread_id: 'topic_1',
+      created_at: '2026-04-03T10:00:00.000Z',
+      expires_at: '2026-04-04T10:00:00.000Z',
+    });
+
+    expect(
+      getRuntimeBackendCardContext('andrea_openai', 'tg:1', '500'),
+    ).toMatchObject({
+      job_id: 'job_001',
+      thread_id: 'topic_1',
+    });
+
+    expect(
+      pruneExpiredRuntimeBackendCardContexts('2026-04-04T10:00:00.000Z'),
+    ).toBe(1);
+    expect(
+      getRuntimeBackendCardContext('andrea_openai', 'tg:1', '500'),
+    ).toBeUndefined();
+  });
+
+  it('tracks current runtime selection per chat', () => {
+    upsertRuntimeBackendChatSelection({
+      backend_id: 'andrea_openai',
+      chat_jid: 'tg:1',
+      job_id: 'job_001',
+      group_folder: 'main',
+      updated_at: '2026-04-03T10:00:00.000Z',
+    });
+
+    expect(getRuntimeBackendChatSelection('andrea_openai', 'tg:1')).toMatchObject({
+      job_id: 'job_001',
+      group_folder: 'main',
+    });
+
+    upsertRuntimeBackendChatSelection({
+      backend_id: 'andrea_openai',
+      chat_jid: 'tg:1',
+      job_id: 'job_002',
+      group_folder: 'main',
+      updated_at: '2026-04-03T11:00:00.000Z',
+    });
+
+    expect(getRuntimeBackendChatSelection('andrea_openai', 'tg:1')?.job_id).toBe(
+      'job_002',
+    );
+
+    deleteRuntimeBackendChatSelection('andrea_openai', 'tg:1');
+    expect(getRuntimeBackendChatSelection('andrea_openai', 'tg:1')).toBeUndefined();
+  });
+
+  it('deletes individual runtime card contexts when a specific card becomes stale', () => {
+    upsertRuntimeBackendCardContext({
+      backend_id: 'andrea_openai',
+      chat_jid: 'tg:1',
+      message_id: '501',
+      job_id: 'job_003',
+      group_folder: 'main',
+      thread_id: null,
+      created_at: '2026-04-03T10:00:00.000Z',
+      expires_at: '2026-04-04T10:00:00.000Z',
+    });
+
+    deleteRuntimeBackendCardContext('andrea_openai', 'tg:1', '501');
+    expect(
+      getRuntimeBackendCardContext('andrea_openai', 'tg:1', '501'),
+    ).toBeUndefined();
   });
 });

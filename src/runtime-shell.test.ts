@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { AndreaOpenAiRuntimeError } from './andrea-openai-runtime.js';
 import {
+  extractRuntimeBackendJobIdFromText,
   formatRuntimeBackendCreateAcceptedMessage,
   formatRuntimeBackendFailure,
   formatRuntimeBackendJobCard,
@@ -125,6 +126,7 @@ describe('runtime-shell formatting', () => {
     expect(text).toContain('Andrea OpenAI job accepted.');
     expect(text).toContain('- Job ID: runtime-job-create-12345-abcd');
     expect(text).toContain('- Selected runtime: codex_local');
+    expect(text).toContain('- Reply: reply to this card to continue the same runtime job');
   });
 
   it('renders job cards with visible thread metadata and output summary', () => {
@@ -135,9 +137,12 @@ describe('runtime-shell formatting', () => {
       }),
     );
 
+    expect(text).toContain(
+      'Andrea OpenAI job runtime-job-create-12345-abcd is still running, and useful output is already available.',
+    );
     expect(text).toContain('- Status: running');
-    expect(text).toContain('- Thread ID: thread-12345678901234567...');
-    expect(text).toContain('- Output: Created the file already.');
+    expect(text).toContain('- Thread continuity: thread-12345678901234567...');
+    expect(text).toContain('- Latest useful output: Created the file already.');
   });
 
   it('renders honest empty-log messaging with live job state', () => {
@@ -157,10 +162,10 @@ describe('runtime-shell formatting', () => {
     );
 
     expect(text).toContain(
-      'Andrea OpenAI logs are not ready yet for job runtime-job-follow_up-999.',
+      'Andrea OpenAI logs are not ready yet for job runtime-job-follow_up-999, but useful output is already available.',
     );
     expect(text).toContain('- Current status: running');
-    expect(text).toContain('- Output: Useful output is already here.');
+    expect(text).toContain('- Latest useful output: Useful output is already here.');
   });
 
   it('renders real log text cleanly when terminal output exists', () => {
@@ -191,6 +196,14 @@ describe('runtime-shell formatting', () => {
     );
     expect(terminal).toContain(
       'Andrea OpenAI job runtime-job-create-12345-abcd is already finished.',
+    );
+  });
+
+  it('extracts backend job ids from the current runtime card text', () => {
+    const text = formatRuntimeBackendCreateAcceptedMessage(makeJob());
+
+    expect(extractRuntimeBackendJobIdFromText(text)).toBe(
+      'runtime-job-create-12345-abcd',
     );
   });
 

@@ -7,6 +7,7 @@ import {
   buildTelegramHelpText,
   buildTelegramUnregisteredDmText,
   buildTelegramWelcomeText,
+  extractTelegramReplyRef,
   extractTelegramLeadingCommand,
   splitTelegramMessage,
 } from './telegram.js';
@@ -70,6 +71,36 @@ describe('buildTelegramHelpText', () => {
     expect(help).not.toContain('/alexa_status');
     expect(help).not.toContain('/amazon_status');
     expect(help).not.toContain('/amazon_search');
+  });
+});
+
+describe('extractTelegramReplyRef', () => {
+  it('captures reply metadata from Telegram message payloads', () => {
+    expect(
+      extractTelegramReplyRef(
+        {
+          reply_to_message: {
+            message_id: 55,
+            text: 'Andrea OpenAI Runtime\n- Job ID: job_123',
+            date: 1_775_200_000,
+            from: {
+              id: 777,
+              first_name: 'Andrea',
+              is_bot: true,
+            },
+          },
+        },
+        777,
+      ),
+    ).toEqual({
+      message_id: '55',
+      content: 'Andrea OpenAI Runtime\n- Job ID: job_123',
+      sender: '777',
+      sender_name: 'Andrea',
+      is_from_me: true,
+      is_bot_message: true,
+      timestamp: '2026-04-03T07:06:40.000Z',
+    });
   });
 });
 

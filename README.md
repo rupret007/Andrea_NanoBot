@@ -129,6 +129,9 @@ Andrea now documents Cursor as three separate surfaces:
   - `/runtime-followup`
   - `/runtime-logs`
   - `/runtime-stop`
+- runtime job cards now also support:
+  - reply-linked follow-up on fresh runtime cards
+  - chat-scoped current selection for `/runtime-job`, `/runtime-logs`, and `/runtime-stop`
 
 See [docs/ANDREA_OPENAI_BACKEND.md](docs/ANDREA_OPENAI_BACKEND.md) for the ownership split and the one-time local bootstrap-and-retry flow.
 

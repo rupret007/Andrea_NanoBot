@@ -6,6 +6,7 @@ import type {
   RuntimeBackendStatus,
   RuntimeBackendStopResult,
 } from './types.js';
+import { extractRuntimeBackendJobIdFromText } from './runtime-chat-context.js';
 import { formatUserFacingOperationFailure } from './user-facing-error.js';
 
 export function formatRuntimeThreadLabel(threadId: string): string {
@@ -25,6 +26,49 @@ function summarizeRuntimeJob(job: RuntimeBackendJob): string {
     job.latestOutputText ||
     'No backend output is available yet.'
   );
+}
+
+function renderJobLead(job: RuntimeBackendJob): string {
+  if (job.status === 'failed') {
+    return `Andrea OpenAI job ${job.jobId} failed.`;
+  }
+
+  if (job.status === 'succeeded') {
+    return `Andrea OpenAI job ${job.jobId} finished.`;
+  }
+
+  if (job.stopRequested) {
+    return `Andrea OpenAI job ${job.jobId} is stopping.`;
+  }
+
+  if (job.status === 'running' && (job.finalOutputText || job.latestOutputText)) {
+    return `Andrea OpenAI job ${job.jobId} is still running, and useful output is already available.`;
+  }
+
+  if (job.status === 'running') {
+    return `Andrea OpenAI job ${job.jobId} is running.`;
+  }
+
+  return `Andrea OpenAI job ${job.jobId} is queued.`;
+}
+
+function renderJobOutputLabel(job: RuntimeBackendJob): string {
+  if (job.errorText) return 'Error summary';
+  if (job.finalOutputText) return 'Final output';
+  if (job.latestOutputText && (job.status === 'running' || job.status === 'queued')) {
+    return 'Latest useful output';
+  }
+  return 'Output';
+}
+
+function renderRuntimeActionHints(job: RuntimeBackendJob): string[] {
+  return [
+    '- Reply: reply to this card to continue the same runtime job',
+    '- Refresh: /runtime-job',
+    '- Logs: /runtime-logs [LINES]',
+    job.capabilities.stop ? '- Stop: /runtime-stop' : null,
+    `- Fallback: /runtime-followup ${job.jobId} TEXT`,
+  ].filter((line): line is string => Boolean(line));
 }
 
 function renderStatusVerdict(status: RuntimeBackendStatus): string {
@@ -64,17 +108,22 @@ export function formatRuntimeBackendStatusSummary(
 
 export function formatRuntimeBackendJobCard(job: RuntimeBackendJob): string {
   return [
-    '*Andrea OpenAI Job*',
+    renderJobLead(job),
+    '',
+    '*Andrea OpenAI Runtime*',
     `- Job ID: ${job.jobId}`,
     `- Status: ${job.status}${job.stopRequested ? ' (stop requested)' : ''}`,
     `- Backend: ${job.backend}`,
     `- Group folder: ${job.groupFolder}`,
     job.selectedRuntime ? `- Selected runtime: ${job.selectedRuntime}` : null,
     job.threadId
-      ? `- Thread ID: ${formatRuntimeThreadLabel(job.threadId)}`
+      ? `- Thread continuity: ${formatRuntimeThreadLabel(job.threadId)}`
       : null,
-    `- Prompt: ${job.promptPreview}`,
-    `- Output: ${clipRuntimeText(summarizeRuntimeJob(job), 600)}`,
+    `- Prompt preview: ${clipRuntimeText(job.promptPreview, 280)}`,
+    `- ${renderJobOutputLabel(job)}: ${clipRuntimeText(summarizeRuntimeJob(job), 600)}`,
+    '',
+    '*Current actions*',
+    ...renderRuntimeActionHints(job),
   ]
     .filter((line): line is string => Boolean(line))
     .join('\n');
@@ -151,7 +200,9 @@ export function formatRuntimeBackendLogsMessage(
 
   const lead =
     job.status === 'running' || job.status === 'queued'
-      ? `Andrea OpenAI logs are not ready yet for job ${result.jobId}.`
+      ? job.latestOutputText?.trim() || job.finalOutputText?.trim()
+        ? `Andrea OpenAI logs are not ready yet for job ${result.jobId}, but useful output is already available.`
+        : `Andrea OpenAI logs are not ready yet for job ${result.jobId}.`
       : `Andrea OpenAI log output is not available for job ${result.jobId}.`;
 
   return [
@@ -159,11 +210,19 @@ export function formatRuntimeBackendLogsMessage(
     `- Current status: ${job.status}${job.stopRequested ? ' (stop requested)' : ''}`,
     `- Group folder: ${job.groupFolder}`,
     job.selectedRuntime ? `- Selected runtime: ${job.selectedRuntime}` : null,
-    `- Output: ${clipRuntimeText(summarizeRuntimeJob(job), 600)}`,
+    job.threadId
+      ? `- Thread continuity: ${formatRuntimeThreadLabel(job.threadId)}`
+      : null,
+    `- ${renderJobOutputLabel(job)}: ${clipRuntimeText(summarizeRuntimeJob(job), 600)}`,
+    '',
+    '*Current actions*',
+    ...renderRuntimeActionHints(job),
   ]
     .filter((line): line is string => Boolean(line))
     .join('\n');
 }
+
+export { extractRuntimeBackendJobIdFromText };
 
 export function formatRuntimeBackendFailure(
   err: unknown,

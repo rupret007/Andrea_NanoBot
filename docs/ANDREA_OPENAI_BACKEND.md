@@ -9,7 +9,7 @@ This repo is the orchestration shell. The backend repo is the execution truth.
 `Andrea_NanoBot` owns:
 
 - Telegram and operator UX
-- text-card rendering and later reply/card/dashboard state
+- text-card rendering plus local reply-card and current-selection UX state
 - current control context
 - backend detection on loopback
 - operator command parsing
@@ -53,10 +53,10 @@ In the current checkout, NanoBot uses a command-first fallback surface for this 
 - `/runtime-status`
 - `/runtime-create TEXT`
 - `/runtime-jobs [LIMIT] [BEFORE_JOB_ID]`
-- `/runtime-job JOB_ID`
+- `/runtime-job [JOB_ID]`
 - `/runtime-followup JOB_ID TEXT`
-- `/runtime-logs JOB_ID [LINES]`
-- `/runtime-stop JOB_ID`
+- `/runtime-logs [JOB_ID] [LINES]`
+- `/runtime-stop [JOB_ID]`
 
 These commands are main-control-only.
 
@@ -77,17 +77,23 @@ NanoBot does not re-sort backend job lists. It uses the backend ordering directl
 - `/runtime-jobs [LIMIT] [BEFORE_JOB_ID]`
   - lists backend jobs for the current `group.folder`
   - preserves backend ordering and exposes `nextBeforeJobId` directly
-- `/runtime-job JOB_ID`
+- `/runtime-job [JOB_ID]`
   - refreshes one backend job
+  - with no `JOB_ID`, refreshes the current runtime selection for that chat
   - shows `jobId`, status, backend, group folder, selected runtime, thread id, prompt, and output summary
 - `/runtime-followup JOB_ID TEXT`
   - sends a follow-up against the backend `jobId`
   - preserves continuity through backend thread reuse when available
-- `/runtime-logs JOB_ID [LINES]`
+- reply-linked runtime card follow-up
+  - replying naturally to a fresh runtime card routes to backend `POST /jobs/:jobId/followup`
+  - stale or missing reply context fails honestly and points back to `/runtime-followup JOB_ID TEXT`
+- `/runtime-logs [JOB_ID] [LINES]`
   - reads backend logs for a job
+  - with no `JOB_ID`, uses the current runtime selection for that chat
   - stays honest when logs are not written yet by falling back to current job state and latest useful output
-- `/runtime-stop JOB_ID`
+- `/runtime-stop [JOB_ID]`
   - requests a live stop for the backend job when possible
+  - with no `JOB_ID`, uses the current runtime selection for that chat
   - distinguishes live stop accepted vs already finished vs no longer stoppable
 
 ## Group Folder Strategy
@@ -151,7 +157,9 @@ What is complete now:
 - local loopback backend detection
 - self-healing first-run backend group bootstrap
 - create, list, refresh, follow-up, logs, and stop through backend `jobId`
-- command-first Telegram operator flow
+- reply-linked runtime card follow-up from Telegram runtime cards
+- chat-scoped current runtime selection for refresh/logs/stop convenience
+- command-first Telegram operator flow with card-native shortcuts
 - scripted Telegram runtime validation via `npm run telegram:user:runtime`
 
 What is still conditional on this checkout:
@@ -168,7 +176,6 @@ Without those, Telegram acceptance is honestly blocked even though the runtime l
 
 This v1 closeout does not add:
 
-- reply-linked card-state plumbing
 - dashboard state or button-first menus
 - new backend routes
-- broader UI systems beyond the current `/runtime-*` shell
+- broader UI systems beyond the current runtime cards plus `/runtime-*` shell

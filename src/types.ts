@@ -52,6 +52,7 @@ export interface NewMessage {
   is_from_me?: boolean;
   is_bot_message?: boolean;
   thread_id?: string;
+  reply_to?: ReplyMessageRef;
 }
 
 export interface ScheduledTask {
@@ -193,6 +194,25 @@ export interface RuntimeBackendJobCacheRecord {
   raw_json: string;
 }
 
+export interface RuntimeBackendCardContextRecord {
+  backend_id: string;
+  chat_jid: string;
+  message_id: string;
+  job_id: string;
+  group_folder: string;
+  thread_id: string | null;
+  created_at: string;
+  expires_at: string;
+}
+
+export interface RuntimeBackendChatSelectionRecord {
+  backend_id: string;
+  chat_jid: string;
+  job_id: string;
+  group_folder: string;
+  updated_at: string;
+}
+
 export interface AlexaLinkedAccount {
   accessTokenHash: string;
   displayName: string;
@@ -247,10 +267,30 @@ export interface AlexaOAuthRefreshTokenRecord {
 
 // --- Channel abstraction ---
 
+export interface ReplyMessageRef {
+  message_id?: string;
+  content?: string;
+  sender?: string;
+  sender_name?: string;
+  is_from_me?: boolean;
+  is_bot_message?: boolean;
+  timestamp?: string;
+}
+
+export interface ChannelSendReceipt {
+  platformMessageIds: string[];
+  threadId?: string | null;
+}
+
 export interface Channel {
   name: string;
   connect(): Promise<void>;
-  sendMessage(jid: string, text: string): Promise<void>;
+  sendMessage(jid: string, text: string, threadId?: string): Promise<void>;
+  sendMessageWithReceipt?(
+    jid: string,
+    text: string,
+    threadId?: string,
+  ): Promise<ChannelSendReceipt | null>;
   isConnected(): boolean;
   ownsJid(jid: string): boolean;
   disconnect(): Promise<void>;
@@ -261,7 +301,10 @@ export interface Channel {
 }
 
 // Callback type that channels use to deliver inbound messages
-export type OnInboundMessage = (chatJid: string, message: NewMessage) => void;
+export type OnInboundMessage = (
+  chatJid: string,
+  message: NewMessage,
+) => void | Promise<void>;
 
 // Callback for chat metadata discovery.
 // name is optional — channels that deliver names inline (Telegram) pass it here;

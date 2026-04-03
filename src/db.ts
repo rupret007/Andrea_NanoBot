@@ -13,6 +13,8 @@ import {
   AgentThreadState,
   NewMessage,
   RegisteredGroup,
+  RuntimeBackendCardContextRecord,
+  RuntimeBackendChatSelectionRecord,
   RuntimeBackendJobCacheRecord,
   ScheduledTask,
   TaskRunLog,
@@ -109,6 +111,31 @@ function createSchema(database: Database.Database): void {
       ON runtime_backend_jobs(backend_id, group_folder, created_at DESC, job_id DESC);
     CREATE INDEX IF NOT EXISTS idx_runtime_backend_jobs_chat_updated
       ON runtime_backend_jobs(backend_id, chat_jid, updated_at DESC, job_id DESC);
+    CREATE TABLE IF NOT EXISTS runtime_backend_card_contexts (
+      backend_id TEXT NOT NULL,
+      chat_jid TEXT NOT NULL,
+      message_id TEXT NOT NULL,
+      job_id TEXT NOT NULL,
+      group_folder TEXT NOT NULL,
+      thread_id TEXT,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      PRIMARY KEY (backend_id, chat_jid, message_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_runtime_backend_card_contexts_job
+      ON runtime_backend_card_contexts(backend_id, chat_jid, job_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_runtime_backend_card_contexts_expires
+      ON runtime_backend_card_contexts(expires_at);
+    CREATE TABLE IF NOT EXISTS runtime_backend_chat_selection (
+      backend_id TEXT NOT NULL,
+      chat_jid TEXT NOT NULL,
+      job_id TEXT NOT NULL,
+      group_folder TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (backend_id, chat_jid)
+    );
+    CREATE INDEX IF NOT EXISTS idx_runtime_backend_chat_selection_updated
+      ON runtime_backend_chat_selection(updated_at DESC);
     CREATE TABLE IF NOT EXISTS alexa_linked_accounts (
       access_token_hash TEXT PRIMARY KEY,
       display_name TEXT NOT NULL,
@@ -976,6 +1003,153 @@ export function listRuntimeBackendJobsForGroup(
       `,
     )
     .all(backendId, groupFolder, limit) as RuntimeBackendJobCacheRecord[];
+}
+
+export function upsertRuntimeBackendCardContext(
+  record: RuntimeBackendCardContextRecord,
+): void {
+  assertValidGroupFolder(record.group_folder);
+  db.prepare(
+    `
+      INSERT INTO runtime_backend_card_contexts (
+        backend_id,
+        chat_jid,
+        message_id,
+        job_id,
+        group_folder,
+        thread_id,
+        created_at,
+        expires_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(backend_id, chat_jid, message_id) DO UPDATE SET
+        job_id = excluded.job_id,
+        group_folder = excluded.group_folder,
+        thread_id = excluded.thread_id,
+        created_at = excluded.created_at,
+        expires_at = excluded.expires_at
+    `,
+  ).run(
+    record.backend_id,
+    record.chat_jid,
+    record.message_id,
+    record.job_id,
+    record.group_folder,
+    record.thread_id,
+    record.created_at,
+    record.expires_at,
+  );
+}
+
+export function getRuntimeBackendCardContext(
+  backendId: string,
+  chatJid: string,
+  messageId: string,
+): RuntimeBackendCardContextRecord | undefined {
+  return db
+    .prepare(
+      `
+        SELECT
+          backend_id,
+          chat_jid,
+          message_id,
+          job_id,
+          group_folder,
+          thread_id,
+          created_at,
+          expires_at
+        FROM runtime_backend_card_contexts
+        WHERE backend_id = ? AND chat_jid = ? AND message_id = ?
+      `,
+    )
+    .get(backendId, chatJid, messageId) as
+    | RuntimeBackendCardContextRecord
+    | undefined;
+}
+
+export function deleteRuntimeBackendCardContext(
+  backendId: string,
+  chatJid: string,
+  messageId: string,
+): void {
+  db.prepare(
+    `
+      DELETE FROM runtime_backend_card_contexts
+      WHERE backend_id = ? AND chat_jid = ? AND message_id = ?
+    `,
+  ).run(backendId, chatJid, messageId);
+}
+
+export function pruneExpiredRuntimeBackendCardContexts(
+  nowIso: string,
+): number {
+  const result = db
+    .prepare(
+      `
+        DELETE FROM runtime_backend_card_contexts
+        WHERE expires_at <= ?
+      `,
+    )
+    .run(nowIso);
+  return result.changes;
+}
+
+export function upsertRuntimeBackendChatSelection(
+  record: RuntimeBackendChatSelectionRecord,
+): void {
+  assertValidGroupFolder(record.group_folder);
+  db.prepare(
+    `
+      INSERT INTO runtime_backend_chat_selection (
+        backend_id,
+        chat_jid,
+        job_id,
+        group_folder,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(backend_id, chat_jid) DO UPDATE SET
+        job_id = excluded.job_id,
+        group_folder = excluded.group_folder,
+        updated_at = excluded.updated_at
+    `,
+  ).run(
+    record.backend_id,
+    record.chat_jid,
+    record.job_id,
+    record.group_folder,
+    record.updated_at,
+  );
+}
+
+export function getRuntimeBackendChatSelection(
+  backendId: string,
+  chatJid: string,
+): RuntimeBackendChatSelectionRecord | undefined {
+  return db
+    .prepare(
+      `
+        SELECT
+          backend_id,
+          chat_jid,
+          job_id,
+          group_folder,
+          updated_at
+        FROM runtime_backend_chat_selection
+        WHERE backend_id = ? AND chat_jid = ?
+      `,
+    )
+    .get(backendId, chatJid) as RuntimeBackendChatSelectionRecord | undefined;
+}
+
+export function deleteRuntimeBackendChatSelection(
+  backendId: string,
+  chatJid: string,
+): void {
+  db.prepare(
+    `
+      DELETE FROM runtime_backend_chat_selection
+      WHERE backend_id = ? AND chat_jid = ?
+    `,
+  ).run(backendId, chatJid);
 }
 
 export function upsertAlexaLinkedAccount(record: AlexaLinkedAccount): void {
