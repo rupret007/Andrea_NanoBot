@@ -327,6 +327,7 @@ Recommended setup order:
    - default v1 dev path: `ngrok http 4300`
    - if ngrok returns `ERR_NGROK_4018`, finish ngrok account verification and install the local authtoken first
 6. configure the Alexa Developer Console skill and account linking
+   - once ngrok is already forwarding to `localhost:4300`, the next real blocker is the console-side endpoint + real `ALEXA_SKILL_ID`, not the local listener
 7. run `/alexa_status`, then perform the linked and unlinked live checks from [ALEXA_VOICE_INTEGRATION.md](ALEXA_VOICE_INTEGRATION.md)
 
 Full details:

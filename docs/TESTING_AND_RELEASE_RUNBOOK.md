@@ -179,8 +179,8 @@ If any of those are missing, record Alexa as **code-ready but setup-blocked** in
 
 Current operator-host blocker note:
 
-- if `ngrok http 4300` fails with `ERR_NGROK_4018`, the remaining blocker is a verified ngrok account plus local authtoken configuration for HTTPS ingress
-- do not advance to Alexa console acceptance until the tunnel is actually live
+- if `ngrok http 4300` is already live and forwarding to `localhost:4300`, the next blocker is Alexa Developer Console configuration of the real custom skill endpoint and matching `ALEXA_SKILL_ID`
+- do not claim live Alexa acceptance until the console-side endpoint and skill/application ID are wired to the same local listener you validated through ngrok
 
 When configured, validate in this order:
 

@@ -3147,15 +3147,19 @@ async function main(): Promise<void> {
     channels.push(channel);
     await channel.connect();
   }
-  if (channels.length === 0) {
-    logger.fatal('No channels connected');
-    process.exit(1);
-  }
-
   try {
     alexaRuntime = await startAlexaServer();
   } catch (err) {
     logger.error({ err }, 'Alexa voice ingress failed to start');
+  }
+
+  const hasAlexaIngress = alexaRuntime?.getStatus().running === true;
+  if (channels.length === 0 && !hasAlexaIngress) {
+    logger.fatal('No channels connected and Alexa voice ingress is not running');
+    process.exit(1);
+  }
+  if (channels.length === 0 && hasAlexaIngress) {
+    logger.info('No chat channels connected; Alexa voice ingress is serving locally');
   }
 
   // Start subsystems (independently of connection handler)

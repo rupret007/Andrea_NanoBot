@@ -24,9 +24,12 @@ Treat the channel as:
 
 Current operator-host closeout result on this machine:
 
-- the local Alexa listener can run under Node 22
+- the local Alexa listener can run under Node 22 even when no Telegram channel is connected
 - the linked target `groupFolder` is already valid (`main`)
-- live acceptance is currently blocked at the HTTPS ingress step because `ngrok` requires a verified account and authtoken before it will open the tunnel (`ERR_NGROK_4018`)
+- `ngrok` is forwarding `https://patronymically-nonremedial-london.ngrok-free.dev` to `http://localhost:4300`
+- local `http://127.0.0.1:4300/alexa/health` responds successfully
+- public `https://patronymically-nonremedial-london.ngrok-free.dev/alexa/health` responds successfully when the ngrok browser-warning header is supplied during manual checks
+- the next exact blocker is Alexa Developer Console skill wiring: the real skill endpoint and real `ALEXA_SKILL_ID` are not configured on this machine yet
 
 Important validation note:
 
@@ -179,12 +182,12 @@ If any of those are missing, Alexa is **setup-blocked**, not broken.
 
 On the current operator host, the first concrete blocker is:
 
-1. install or open `ngrok`
-2. sign in to a verified ngrok account
-3. add the authtoken locally
-4. rerun `ngrok http 4300`
+1. open the Alexa Developer Console for the real custom skill
+2. set the skill endpoint to `https://patronymically-nonremedial-london.ngrok-free.dev/alexa`
+3. copy the real Alexa skill/application ID into local `ALEXA_SKILL_ID`
+4. rebuild or restart Andrea under Node 22 with that real skill ID
 
-Until that succeeds, Alexa cannot reach the local listener from the Alexa console.
+Until that succeeds, real Alexa requests will fail skill/application trust checks even though the listener and HTTPS tunnel are both alive.
 
 ## 7) Voice Behavior
 
@@ -206,13 +209,15 @@ When the prerequisites are in place, run the final pass in this order:
 3. start HTTPS ingress:
    - `ngrok http 4300`
 4. confirm the public HTTPS endpoint reaches the local Alexa listener
-5. confirm the linked-access token used by account linking matches the locally seeded hash
-6. confirm the seeded `groupFolder` is a valid Andrea group
-7. test unlinked behavior:
+   - manual health checks against ngrok may need the `ngrok-skip-browser-warning` header on the free plan
+5. configure the Alexa Developer Console skill endpoint and local `ALEXA_SKILL_ID`
+6. confirm the linked-access token used by account linking matches the locally seeded hash
+7. confirm the seeded `groupFolder` is a valid Andrea group
+8. test unlinked behavior:
    - launch
    - help
    - one personal-data intent that should return a link-account style response
-8. test linked behavior:
+9. test linked behavior:
    - my day
    - what is next
    - what is on my calendar tomorrow
