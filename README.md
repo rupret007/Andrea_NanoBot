@@ -173,7 +173,7 @@ For a reliable demo, keep the story tight:
 - stable health checks, `/help`, and `/cursor_status`
 - secure per-chat isolation and clean user-facing replies
 
-Optional integrations such as Cursor Cloud job control, desktop bridge control, Alexa, shopping flows, marketplace skills, and calendar-oriented skills exist, but they should be treated as operator-enabled extras unless they were validated the same day.
+Optional integrations such as Cursor Cloud job control, desktop bridge control, Alexa, shopping flows, marketplace skills, and calendar-oriented skills exist, but they should be treated as operator-enabled extras unless they were validated the same day. Alexa in particular is now code-complete as a bounded personal-assistant channel, but live use still depends on Node 22, HTTPS ingress, Alexa console setup, and account linking being configured on that host.
 
 ## What Andrea Can Do
 
@@ -278,7 +278,7 @@ Use the docs based on what you are trying to do:
 - [docs/CURSOR_API_KEYS.md](docs/CURSOR_API_KEYS.md)
   for where `CURSOR_API_KEY` comes from, what it enables, and how it differs from the desktop bridge
 - [docs/ALEXA_VOICE_INTEGRATION.md](docs/ALEXA_VOICE_INTEGRATION.md)
-  for Alexa setup, signed endpoint behavior, and the ready-to-import interaction model
+  for Alexa v1 setup, account-linking rules, Node 22 validation requirements, and the final live-acceptance runbook
 - [docs/ADDONS_AND_FEATURE_MATRIX.md](docs/ADDONS_AND_FEATURE_MATRIX.md)
   for deciding which skills and add-ons to enable
 - [docs/TESTING_AND_RELEASE_RUNBOOK.md](docs/TESTING_AND_RELEASE_RUNBOOK.md)

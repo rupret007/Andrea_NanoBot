@@ -51,6 +51,7 @@ It includes:
 Implementation note:
 
 - `test:major` and `test:major:ci` already run with Node 22 through `npx -p node@22`
+- if the host default `node` is not 22, do not use that runtime for DB-backed Alexa checks; unsupported runtimes can fail `better-sqlite3` with ABI mismatch errors that are not Alexa feature failures
 
 ## 3. Stability Gate
 
@@ -159,7 +160,46 @@ Run:
 
 Do not confuse desktop bridge readiness with Cursor Cloud readiness.
 
-## 7. Restart And Verify
+## 7. Alexa Validation
+
+Only run a real Alexa acceptance pass if all of these are configured:
+
+- Node 22 on the host
+- `ALEXA_SKILL_ID`
+- local Alexa listener config
+- HTTPS ingress or tunnel
+- Alexa console skill endpoint
+- Alexa console account linking
+- local linked-account seed:
+  - `ALEXA_LINKED_ACCOUNT_TOKEN`
+  - `ALEXA_LINKED_ACCOUNT_GROUP_FOLDER`
+- a valid Andrea group for that linked `groupFolder`
+
+If any of those are missing, record Alexa as **code-ready but setup-blocked** instead of failing the release gate for missing external setup.
+
+When configured, validate in this order:
+
+1. `/alexa_status`
+2. unlinked launch
+3. unlinked help
+4. one unlinked personal-data intent
+5. linked my day
+6. linked what next
+7. linked tomorrow calendar
+8. linked Candace upcoming
+9. linked remind-before-next-meeting
+10. linked save-for-later
+11. linked draft-follow-up
+
+Check:
+
+- concise spoken output
+- one clarification at a time
+- no personal data without linking
+- no Telegram/operator wording leaks
+- no fake calendar or reminder content
+
+## 8. Restart And Verify
 
 After meaningful runtime or operator-surface changes:
 
@@ -178,7 +218,7 @@ Then rerun a small live smoke:
 - `/help`
 - `/cursor_status`
 
-## 8. Failure Handling
+## 9. Failure Handling
 
 ### `CREDENTIAL_RUNTIME_PROBE: failed`
 
@@ -206,7 +246,7 @@ Then rerun a small live smoke:
 - treat it as optional unless you specifically want Cursor-backed runtime routing
 - check 9router endpoint/auth/model settings separately from Cloud/desktop
 
-## 9. Release Gate
+## 10. Release Gate
 
 Before pushing a release:
 

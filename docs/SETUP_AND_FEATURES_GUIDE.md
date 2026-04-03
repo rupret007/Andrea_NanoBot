@@ -281,6 +281,13 @@ Full details:
 Andrea can expose a bounded custom Alexa skill endpoint so you can talk to the same assistant out loud.
 Treat this as an optional personal-assistant channel, not part of the default baseline or demo path unless it has been validated end to end in the current environment.
 
+Current closeout truth:
+
+- the Alexa v1 code path is ready in this repo
+- live Alexa use is still setup-dependent
+- if `ALEXA_*` env, HTTPS ingress, console setup, or account linking are missing, treat Alexa as **code-ready but setup-blocked**
+- validate Alexa on **Node 22.x**; unsupported host runtimes such as Node 24 can fail DB-backed Alexa checks without indicating an Alexa feature bug
+
 Minimum:
 
 ```bash
@@ -304,9 +311,21 @@ Practical notes:
 
 - Alexa requires an HTTPS endpoint, so local dev usually sits behind a tunnel or reverse proxy.
 - Account linking is required for Alexa personal-data intents in v1.
+- unlinked Alexa is intentionally limited to launch/help/fallback style responses.
 - `ALEXA_ALLOWED_USER_IDS` is still the easiest coarse security rail for a private skill rollout.
 - The linked-account seed maps the Alexa account to one Andrea `groupFolder`.
+- that seeded `groupFolder` must already exist as a valid Andrea registered group.
 - Use `/alexa_status` in Telegram to confirm that the listener actually started.
+
+Recommended setup order:
+
+1. switch to Node 22 on the host
+2. set `ALEXA_SKILL_ID` plus the local listener env
+3. seed the linked account locally
+4. make sure the seeded `groupFolder` already exists in Andrea
+5. expose the endpoint through HTTPS
+6. configure the Alexa Developer Console skill and account linking
+7. run `/alexa_status`, then perform the linked and unlinked live checks from [ALEXA_VOICE_INTEGRATION.md](ALEXA_VOICE_INTEGRATION.md)
 
 Full details:
 

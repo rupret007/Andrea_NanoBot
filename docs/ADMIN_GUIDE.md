@@ -278,6 +278,48 @@ If `npm run telegram:user:runtime` fails immediately, check these in order:
 3. `TELEGRAM_USER_API_HASH`
 4. authenticated `store/telegram-user.session`
 
+## Alexa Operator Validation
+
+Treat Alexa as an optional private channel, not part of the baseline rollout.
+
+Alexa is only **live-ready** when all of these are true:
+
+- Node 22 is the active runtime on the host
+- `ALEXA_SKILL_ID` is configured
+- the Alexa listener is enabled locally
+- an HTTPS tunnel or reverse proxy is forwarding the public Alexa endpoint
+- the Alexa Developer Console skill is using that endpoint and the same skill ID
+- account linking is configured in the Alexa console
+- a local linked-account seed is configured:
+  - `ALEXA_LINKED_ACCOUNT_TOKEN`
+  - `ALEXA_LINKED_ACCOUNT_GROUP_FOLDER`
+- the seeded `groupFolder` already exists in Andrea
+
+If any of those are missing, classify Alexa as **code-ready but setup-blocked** and do not present it as live-validated.
+
+Final live acceptance order:
+
+1. `/alexa_status`
+2. unlinked launch
+3. unlinked help
+4. one unlinked personal-data request that should return a link-account style response
+5. linked launch or direct invocation
+6. linked `my day`
+7. linked `what next`
+8. linked `tomorrow calendar`
+9. linked `Candace upcoming`
+10. linked reminder-before-next-meeting
+11. linked save-for-later
+12. linked follow-up draft
+
+What to verify:
+
+- concise spoken replies
+- one clarification at a time
+- no Telegram/operator wording
+- no personal data without linking
+- no fake calendar/reminder output
+
 ## Security Defaults To Keep
 
 - one public assistant identity only
