@@ -90,6 +90,7 @@ npm run setup -- --step verify
 ```
 
 On Windows PowerShell, use `npm.cmd` and `npx.cmd` if policy blocks `npm.ps1` or `npx.ps1`.
+For login-start repair on Windows, `npm run setup -- --step service` now bootstraps the pinned Node 22.22.2 runtime even when the host `node.exe` is newer.
 
 ## Andrea OpenAI Backend Lane
 
@@ -148,7 +149,22 @@ Important truth:
 npm run services:start
 npm run services:stop
 npm run services:restart
+npm run services:status
 ```
+
+Windows startup truth:
+
+- The canonical Windows launcher is `scripts/nanoclaw-host.ps1`.
+- `npm run setup -- --step service` installs the preferred user-logon Scheduled Task when allowed.
+- If Windows policy blocks task creation, the installer writes a repo-owned Startup-folder launcher instead.
+- On this machine, the validated login path is the Startup-folder launcher because Scheduled Task creation is denied.
+
+Quick recovery steps after a failed login bring-up:
+
+1. Run `npm run services:status`.
+2. Check `logs/nanoclaw.host.log`.
+3. If needed, run `npm run services:restart`.
+4. If the login hook itself needs repair, rerun `npm run setup -- --step service`.
 
 After restart:
 

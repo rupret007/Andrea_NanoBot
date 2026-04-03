@@ -494,14 +494,19 @@ Validation runner note:
 
 Windows service lifecycle helpers:
 
-- `npm run services:start` starts the OpenAI gateway (when configured) and NanoClaw runtime.
-- `npm run services:stop` stops NanoClaw runtime processes and the gateway container.
-- `npm run services:restart` runs stop then start in one command.
+- `npm run services:start` delegates to the canonical Windows host launcher, uses the pinned Node 22.22.2 runtime, and starts NanoClaw plus any configured companions.
+- `npm run services:stop` stops NanoClaw, the local gateway, and any repo-managed companions started through the host launcher.
+- `npm run services:restart` runs stop then start through the same host-controlled path.
+- `npm run services:status` reports the active repo root, pinned Node runtime, installed login-start mechanism, Alexa health, optional loopback backend health, ngrok state, and the last startup error if one occurred.
 
 Startup behavior:
 
 - `npm run setup -- --step service` configures platform-native startup.
-- On Windows this creates a scheduled task (`NanoClaw`) or Startup-folder fallback.
+- On Windows it prefers a Scheduled Task (`NanoClaw`) at user logon and falls back to the repo-owned Startup-folder launcher when task creation is denied by OS policy.
+- On this machine, Scheduled Task creation is denied, so the canonical validated login path is:
+  - `C:\Users\rupret\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup\nanoclaw-start.cmd`
+  - which delegates to `scripts\nanoclaw-host.ps1`
+- The Windows host launcher bootstraps and reuses the repo-local pinned runtime under `data\runtime\node-v22.22.2-win-x64`, so daily startup does not depend on host Node 24.
 - On macOS this uses launchd.
 - On Linux this uses systemd (or nohup fallback).
 - So startup is not only a container setting; it is handled by host service manager policy plus runtime startup wrapper logic.

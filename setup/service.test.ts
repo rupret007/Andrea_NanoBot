@@ -1,6 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import path from 'path';
 
+import {
+  buildWindowsHostScriptPath,
+  buildWindowsStartupScriptContent,
+  buildWindowsTaskCommand,
+} from './service.js';
+
 /**
  * Tests for service configuration generation.
  *
@@ -187,37 +193,29 @@ echo $! > ${JSON.stringify(pidFile)}`;
 });
 
 describe('Windows scheduled task wrapper', () => {
-  it('generates a PowerShell wrapper that starts dist/index.js and writes pid', () => {
-    const projectRoot = 'C:\\NanoClaw';
-    const nodePath = 'C:\\Program Files\\nodejs\\node.exe';
+  it('builds the host script path inside scripts/', () => {
+    expect(buildWindowsHostScriptPath('C:\\NanoClaw')).toBe(
+      'C:\\NanoClaw\\scripts\\nanoclaw-host.ps1',
+    );
+  });
 
-    const wrapper = [
-      "$ErrorActionPreference = 'Stop'",
-      `$projectRoot = '${projectRoot}'`,
-      `$nodePath = '${nodePath}'`,
-      `$entryPath = '${projectRoot}\\dist\\index.js'`,
-      "$proc = Start-Process -FilePath $nodePath -ArgumentList @($entryPath) -WorkingDirectory $projectRoot -RedirectStandardOutput 'C:\\NanoClaw\\logs\\nanoclaw.log' -RedirectStandardError 'C:\\NanoClaw\\logs\\nanoclaw.error.log' -PassThru",
-      "Set-Content -LiteralPath 'C:\\NanoClaw\\nanoclaw.pid' -Value $proc.Id -NoNewline",
-    ].join('\n');
+  it('creates a scheduled task command that delegates to the host script', () => {
+    const command = buildWindowsTaskCommand(
+      'C:\\NanoClaw\\scripts\\nanoclaw-host.ps1',
+    );
 
-    expect(wrapper).toContain('Start-Process -FilePath $nodePath');
-    expect(wrapper).toContain('dist\\index.js');
-    expect(wrapper).toContain('nanoclaw.pid');
+    expect(command).toContain('powershell.exe -NoProfile -ExecutionPolicy Bypass -File');
+    expect(command).toContain('nanoclaw-host.ps1');
+    expect(command).toContain('-InstallMode scheduled_task');
   });
 
   it('creates a startup-folder fallback command script', () => {
-    const wrapperPath = 'C:\\NanoClaw\\start-nanoclaw.ps1';
-    const startupCmd = `@echo off\r\npowershell.exe -NoProfile -ExecutionPolicy Bypass -File "${wrapperPath}"\r\n`;
+    const startupCmd = buildWindowsStartupScriptContent(
+      'C:\\NanoClaw\\scripts\\nanoclaw-host.ps1',
+    );
 
-    expect(startupCmd).toContain('powershell.exe -NoProfile -ExecutionPolicy Bypass -File');
-    expect(startupCmd).toContain('start-nanoclaw.ps1');
-  });
-
-  it('can launch Node 22 via npx fallback arguments', () => {
-    const line =
-      "$proc = Start-Process -FilePath $npxPath -ArgumentList @('-y', '-p', 'node@22', 'node', $entryPath)";
-
-    expect(line).toContain("'node@22'");
-    expect(line).toContain('Start-Process -FilePath $npxPath');
+    expect(startupCmd).toContain('powershell.exe');
+    expect(startupCmd).toContain('nanoclaw-host.ps1');
+    expect(startupCmd).toContain('startup_folder');
   });
 });
