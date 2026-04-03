@@ -431,6 +431,15 @@ export class TelegramChannel implements Channel {
       logger.error({ err: err.message }, 'Telegram bot error');
     });
 
+    try {
+      await this.bot.api.deleteWebhook({
+        drop_pending_updates: false,
+      });
+      logger.info('Cleared Telegram webhook before starting long polling');
+    } catch (err) {
+      logger.warn({ err }, 'Failed to clear Telegram webhook before polling');
+    }
+
     return new Promise<void>((resolve) => {
       this.bot!.start({
         onStart: (botInfo) => {
