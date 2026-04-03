@@ -22,6 +22,12 @@ Treat the channel as:
 - **live-ready** only when the Alexa skill, HTTPS ingress, account linking, linked token seed, and target `groupFolder` are all configured
 - **code-ready but setup-blocked** when the code/tests are green but those external prerequisites are still missing
 
+Current operator-host closeout result on this machine:
+
+- the local Alexa listener can run under Node 22
+- the linked target `groupFolder` is already valid (`main`)
+- live acceptance is currently blocked at the HTTPS ingress step because `ngrok` requires a verified account and authtoken before it will open the tunnel (`ERR_NGROK_4018`)
+
 Important validation note:
 
 - use **Node 22.x** for Alexa validation on this repo
@@ -171,6 +177,15 @@ Do not claim a real Alexa pass until all of these are true:
 
 If any of those are missing, Alexa is **setup-blocked**, not broken.
 
+On the current operator host, the first concrete blocker is:
+
+1. install or open `ngrok`
+2. sign in to a verified ngrok account
+3. add the authtoken locally
+4. rerun `ngrok http 4300`
+
+Until that succeeds, Alexa cannot reach the local listener from the Alexa console.
+
 ## 7) Voice Behavior
 
 Alexa responses are intentionally shorter than Telegram:
@@ -188,14 +203,16 @@ When the prerequisites are in place, run the final pass in this order:
 
 1. verify the local runtime on Node 22
 2. confirm `/alexa_status` shows the ingress is enabled and listening
-3. confirm the public HTTPS endpoint reaches the local Alexa listener
-4. confirm the linked-access token used by account linking matches the locally seeded hash
-5. confirm the seeded `groupFolder` is a valid Andrea group
-6. test unlinked behavior:
+3. start HTTPS ingress:
+   - `ngrok http 4300`
+4. confirm the public HTTPS endpoint reaches the local Alexa listener
+5. confirm the linked-access token used by account linking matches the locally seeded hash
+6. confirm the seeded `groupFolder` is a valid Andrea group
+7. test unlinked behavior:
    - launch
    - help
    - one personal-data intent that should return a link-account style response
-7. test linked behavior:
+8. test linked behavior:
    - my day
    - what is next
    - what is on my calendar tomorrow

@@ -324,6 +324,8 @@ Recommended setup order:
 3. seed the linked account locally
 4. make sure the seeded `groupFolder` already exists in Andrea
 5. expose the endpoint through HTTPS
+   - default v1 dev path: `ngrok http 4300`
+   - if ngrok returns `ERR_NGROK_4018`, finish ngrok account verification and install the local authtoken first
 6. configure the Alexa Developer Console skill and account linking
 7. run `/alexa_status`, then perform the linked and unlinked live checks from [ALEXA_VOICE_INTEGRATION.md](ALEXA_VOICE_INTEGRATION.md)
 

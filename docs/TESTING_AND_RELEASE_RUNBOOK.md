@@ -177,6 +177,11 @@ Only run a real Alexa acceptance pass if all of these are configured:
 
 If any of those are missing, record Alexa as **code-ready but setup-blocked** instead of failing the release gate for missing external setup.
 
+Current operator-host blocker note:
+
+- if `ngrok http 4300` fails with `ERR_NGROK_4018`, the remaining blocker is a verified ngrok account plus local authtoken configuration for HTTPS ingress
+- do not advance to Alexa console acceptance until the tunnel is actually live
+
 When configured, validate in this order:
 
 1. `/alexa_status`
