@@ -121,6 +121,8 @@ Important truth:
 - if the backend says `No registered group found for folder "..."`, NanoBot now calls local `PUT /groups/:groupFolder` and retries the original request once
 - `bootstrap_required` now means the backend is reachable but does not support or accept the local bootstrap route
 - `bootstrap_failed` means NanoBot reached the backend, attempted registration, and the registration or immediate retry still failed
+- this lane is currently a command-first v1 operator shell, not a reply-linked dashboard flow
+- richer reply-linked runtime UI remains out of scope for the current pass
 
 ## First Deployment Checklist
 
@@ -268,6 +270,13 @@ Recommended flow:
 4. `npm run telegram:user:runtime`
 
 Keep this tooling operator-only and pointed at your own DM or a dedicated test chat only.
+
+If `npm run telegram:user:runtime` fails immediately, check these in order:
+
+1. `TELEGRAM_TEST_TARGET` or `TELEGRAM_BOT_USERNAME`
+2. `TELEGRAM_USER_API_ID`
+3. `TELEGRAM_USER_API_HASH`
+4. authenticated `store/telegram-user.session`
 
 ## Security Defaults To Keep
 

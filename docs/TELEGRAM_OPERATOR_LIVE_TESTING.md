@@ -63,6 +63,15 @@ Notes:
 - `TELEGRAM_TEST_CHAT_ID` can be the stored jid form like `tg:123456789`
 - if both are missing, the harness tries `TELEGRAM_BOT_USERNAME` and then the live bot token
 
+Current closeout truth for this checkout:
+
+- if no target is configured, `npm run telegram:user:runtime` fails honestly with:
+  - `Telegram test target is not configured. Set TELEGRAM_TEST_TARGET, TELEGRAM_TEST_CHAT_ID, or TELEGRAM_BOT_USERNAME.`
+- if a target is configured but the Telegram API credentials are still missing, it then fails honestly with:
+  - `Telegram user-session is not configured. Set TELEGRAM_USER_API_ID and TELEGRAM_USER_API_HASH first.`
+- if those credentials are present but no authenticated session has been created yet, the next honest blocker is:
+  - `Run npm run telegram:user:auth and complete the login flow.`
+
 ## One-Time Login
 
 Recommended default:
@@ -156,6 +165,8 @@ Current scripted flow:
 
 The harness fails honestly if it cannot extract the backend `jobId` from Andrea's reply text.
 
+The scripted runtime flow is ready now, but real Telegram acceptance is still blocked until the target, API credentials, and authenticated user session exist locally.
+
 ## Security Notes
 
 Keep these rules:
@@ -173,6 +184,7 @@ What is real:
 
 - real inbound Telegram testing from this machine is possible once user-session auth is configured
 - this is useful for regression loops against the live bot
+- the current runtime-lane script is the intended real-message acceptance path for `/runtime-*`
 
 What is not real:
 

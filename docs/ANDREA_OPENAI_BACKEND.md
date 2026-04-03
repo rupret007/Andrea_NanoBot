@@ -66,6 +66,30 @@ NanoBot does not re-sort backend job lists. It uses the backend ordering directl
 - stable ordering
 - `beforeJobId` pagination
 
+## Runtime Lane V1 Inventory
+
+- `/runtime-status`
+  - reads backend readiness from `GET /meta`
+  - shows backend identity, state, version, transport, and current `group.folder`
+- `/runtime-create TEXT`
+  - submits a new backend job with the current chat's `group.folder`
+  - silently self-heals missing backend group registration when local bootstrap succeeds
+- `/runtime-jobs [LIMIT] [BEFORE_JOB_ID]`
+  - lists backend jobs for the current `group.folder`
+  - preserves backend ordering and exposes `nextBeforeJobId` directly
+- `/runtime-job JOB_ID`
+  - refreshes one backend job
+  - shows `jobId`, status, backend, group folder, selected runtime, thread id, prompt, and output summary
+- `/runtime-followup JOB_ID TEXT`
+  - sends a follow-up against the backend `jobId`
+  - preserves continuity through backend thread reuse when available
+- `/runtime-logs JOB_ID [LINES]`
+  - reads backend logs for a job
+  - stays honest when logs are not written yet by falling back to current job state and latest useful output
+- `/runtime-stop JOB_ID`
+  - requests a live stop for the backend job when possible
+  - distinguishes live stop accepted vs already finished vs no longer stoppable
+
 ## Group Folder Strategy
 
 For this pass, NanoBot uses the current registered chat context as the authoritative workspace mapping:
@@ -117,3 +141,34 @@ This keeps the ownership split clean:
 
 - NanoBot owns chat/group context truth
 - `Andrea_OpenAI_Bot` owns execution truth once the group is registered
+
+## Current Acceptance Status
+
+The runtime lane is complete enough for a command-first v1 operator shell.
+
+What is complete now:
+
+- local loopback backend detection
+- self-healing first-run backend group bootstrap
+- create, list, refresh, follow-up, logs, and stop through backend `jobId`
+- command-first Telegram operator flow
+- scripted Telegram runtime validation via `npm run telegram:user:runtime`
+
+What is still conditional on this checkout:
+
+- real Telegram acceptance requires:
+  - `TELEGRAM_TEST_TARGET` or `TELEGRAM_BOT_USERNAME`
+  - `TELEGRAM_USER_API_ID`
+  - `TELEGRAM_USER_API_HASH`
+  - an authenticated `store/telegram-user.session`
+
+Without those, Telegram acceptance is honestly blocked even though the runtime lane itself is wired.
+
+## Still Out Of Scope
+
+This v1 closeout does not add:
+
+- reply-linked card-state plumbing
+- dashboard state or button-first menus
+- new backend routes
+- broader UI systems beyond the current `/runtime-*` shell
