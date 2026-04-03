@@ -4,22 +4,103 @@
       "invocationName": "andrea assistant",
       "intents": [
         {
-          "name": "AskAndreaIntent",
+          "name": "MyDayIntent",
+          "samples": [
+            "give me my day",
+            "what should I know about today",
+            "how does today look",
+            "what is on my calendar today"
+          ]
+        },
+        {
+          "name": "UpcomingSoonIntent",
+          "samples": [
+            "what do I have coming up soon",
+            "what is coming up soon",
+            "what is next on my calendar soon"
+          ]
+        },
+        {
+          "name": "WhatNextIntent",
+          "samples": [
+            "what should I do next",
+            "what is next",
+            "what should I handle next"
+          ]
+        },
+        {
+          "name": "BeforeNextMeetingIntent",
+          "samples": [
+            "what should I handle before my next meeting",
+            "what do I need to do before my next meeting",
+            "what should I do before my next meeting"
+          ]
+        },
+        {
+          "name": "TomorrowCalendarIntent",
+          "samples": [
+            "what is on my calendar tomorrow",
+            "what do I have tomorrow",
+            "what is tomorrow looking like"
+          ]
+        },
+        {
+          "name": "CandaceUpcomingIntent",
+          "samples": [
+            "what do Candace and I have coming up",
+            "what do Candace and I have soon",
+            "what is coming up for Candace and me"
+          ]
+        },
+        {
+          "name": "RemindBeforeNextMeetingIntent",
           "slots": [
             {
-              "name": "utterance",
+              "name": "leadTime",
               "type": "AMAZON.SearchQuery"
             }
           ],
           "samples": [
-            "{utterance}",
-            "ask Andrea to {utterance}",
-            "tell Andrea to {utterance}",
-            "help me {utterance}",
-            "research {utterance}",
-            "remind me to {utterance}",
-            "look up {utterance}"
+            "remind me before my next meeting",
+            "remind me {leadTime} before my next meeting",
+            "set a reminder {leadTime} before my next meeting"
           ]
+        },
+        {
+          "name": "SaveForLaterIntent",
+          "slots": [
+            {
+              "name": "captureText",
+              "type": "AMAZON.SearchQuery"
+            }
+          ],
+          "samples": [
+            "save that for later",
+            "save {captureText} for later",
+            "remember {captureText} for later"
+          ]
+        },
+        {
+          "name": "DraftFollowUpIntent",
+          "slots": [
+            {
+              "name": "meetingReference",
+              "type": "AMAZON.SearchQuery"
+            }
+          ],
+          "samples": [
+            "draft a follow up",
+            "draft a follow up for this meeting",
+            "draft a follow up for {meetingReference}"
+          ]
+        },
+        {
+          "name": "AMAZON.YesIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.NoIntent",
+          "samples": []
         },
         {
           "name": "AMAZON.HelpIntent",
@@ -35,10 +116,6 @@
         },
         {
           "name": "AMAZON.FallbackIntent",
-          "samples": []
-        },
-        {
-          "name": "AMAZON.NavigateHomeIntent",
           "samples": []
         }
       ],

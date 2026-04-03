@@ -278,8 +278,8 @@ Full details:
 
 ### Option D: Alexa Voice
 
-Andrea can expose a custom Alexa skill endpoint so you can talk to the same assistant out loud.
-Treat this as an optional operator-enabled extra, not part of the default baseline or default demo path, unless it has been validated end to end in the current environment.
+Andrea can expose a bounded custom Alexa skill endpoint so you can talk to the same assistant out loud.
+Treat this as an optional personal-assistant channel, not part of the default baseline or demo path unless it has been validated end to end in the current environment.
 
 Minimum:
 
@@ -294,15 +294,18 @@ ALEXA_HOST=127.0.0.1
 ALEXA_PORT=4300
 ALEXA_PATH=/alexa
 ALEXA_VERIFY_SIGNATURE=true
+ALEXA_REQUIRE_ACCOUNT_LINKING=true
 ALEXA_ALLOWED_USER_IDS=amzn1.ask.account.your-user-id
-ALEXA_TARGET_GROUP_FOLDER=main
+ALEXA_LINKED_ACCOUNT_TOKEN=replace-with-your-linked-access-token
+ALEXA_LINKED_ACCOUNT_GROUP_FOLDER=main
 ```
 
 Practical notes:
 
 - Alexa requires an HTTPS endpoint, so local dev usually sits behind a tunnel or reverse proxy.
-- `ALEXA_ALLOWED_USER_IDS` is the easiest security rail for a private skill rollout.
-- `ALEXA_TARGET_GROUP_FOLDER=main` lets Alexa share the same core Andrea context as your Telegram main chat.
+- Account linking is required for Alexa personal-data intents in v1.
+- `ALEXA_ALLOWED_USER_IDS` is still the easiest coarse security rail for a private skill rollout.
+- The linked-account seed maps the Alexa account to one Andrea `groupFolder`.
 - Use `/alexa_status` in Telegram to confirm that the listener actually started.
 
 Full details:

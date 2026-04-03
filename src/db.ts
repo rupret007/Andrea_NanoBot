@@ -6,6 +6,8 @@ import { ASSISTANT_NAME, DATA_DIR, STORE_DIR } from './config.js';
 import { assertValidGroupFolder, isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
 import {
+  AlexaLinkedAccount,
+  AlexaPendingSession,
   AgentThreadState,
   NewMessage,
   RegisteredGroup,
@@ -105,6 +107,28 @@ function createSchema(database: Database.Database): void {
       ON runtime_backend_jobs(backend_id, group_folder, created_at DESC, job_id DESC);
     CREATE INDEX IF NOT EXISTS idx_runtime_backend_jobs_chat_updated
       ON runtime_backend_jobs(backend_id, chat_jid, updated_at DESC, job_id DESC);
+    CREATE TABLE IF NOT EXISTS alexa_linked_accounts (
+      access_token_hash TEXT PRIMARY KEY,
+      display_name TEXT NOT NULL,
+      group_folder TEXT NOT NULL,
+      allowed_alexa_user_id TEXT,
+      allowed_alexa_person_id TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      disabled_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_alexa_linked_accounts_group
+      ON alexa_linked_accounts(group_folder, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS alexa_sessions (
+      principal_key TEXT PRIMARY KEY,
+      access_token_hash TEXT NOT NULL,
+      pending_kind TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_alexa_sessions_expires
+      ON alexa_sessions(expires_at);
     CREATE TABLE IF NOT EXISTS registered_groups (
       jid TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -923,6 +947,213 @@ export function listRuntimeBackendJobsForGroup(
       `,
     )
     .all(backendId, groupFolder, limit) as RuntimeBackendJobCacheRecord[];
+}
+
+export function upsertAlexaLinkedAccount(record: AlexaLinkedAccount): void {
+  assertValidGroupFolder(record.groupFolder);
+  db.prepare(
+    `
+      INSERT INTO alexa_linked_accounts (
+        access_token_hash,
+        display_name,
+        group_folder,
+        allowed_alexa_user_id,
+        allowed_alexa_person_id,
+        created_at,
+        updated_at,
+        disabled_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(access_token_hash) DO UPDATE SET
+        display_name = excluded.display_name,
+        group_folder = excluded.group_folder,
+        allowed_alexa_user_id = excluded.allowed_alexa_user_id,
+        allowed_alexa_person_id = excluded.allowed_alexa_person_id,
+        created_at = excluded.created_at,
+        updated_at = excluded.updated_at,
+        disabled_at = excluded.disabled_at
+    `,
+  ).run(
+    record.accessTokenHash,
+    record.displayName,
+    record.groupFolder,
+    record.allowedAlexaUserId || null,
+    record.allowedAlexaPersonId || null,
+    record.createdAt,
+    record.updatedAt,
+    record.disabledAt || null,
+  );
+}
+
+export function getAlexaLinkedAccountByAccessTokenHash(
+  accessTokenHash: string,
+): AlexaLinkedAccount | undefined {
+  const row = db
+    .prepare(
+      `
+        SELECT *
+        FROM alexa_linked_accounts
+        WHERE access_token_hash = ? AND disabled_at IS NULL
+        LIMIT 1
+      `,
+    )
+    .get(accessTokenHash) as
+    | {
+        access_token_hash: string;
+        display_name: string;
+        group_folder: string;
+        allowed_alexa_user_id: string | null;
+        allowed_alexa_person_id: string | null;
+        created_at: string;
+        updated_at: string;
+        disabled_at: string | null;
+      }
+    | undefined;
+
+  if (!row) return undefined;
+  if (!isValidGroupFolder(row.group_folder)) {
+    logger.warn(
+      { accessTokenHash, groupFolder: row.group_folder },
+      'Skipping Alexa linked account with invalid group folder',
+    );
+    return undefined;
+  }
+
+  return {
+    accessTokenHash: row.access_token_hash,
+    displayName: row.display_name,
+    groupFolder: row.group_folder,
+    allowedAlexaUserId: row.allowed_alexa_user_id,
+    allowedAlexaPersonId: row.allowed_alexa_person_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    disabledAt: row.disabled_at,
+  };
+}
+
+export function listAlexaLinkedAccounts(): AlexaLinkedAccount[] {
+  const rows = db
+    .prepare('SELECT * FROM alexa_linked_accounts')
+    .all() as Array<{
+    access_token_hash: string;
+    display_name: string;
+    group_folder: string;
+    allowed_alexa_user_id: string | null;
+    allowed_alexa_person_id: string | null;
+    created_at: string;
+    updated_at: string;
+    disabled_at: string | null;
+  }>;
+
+  return rows
+    .filter((row) => {
+      if (isValidGroupFolder(row.group_folder)) return true;
+      logger.warn(
+        {
+          accessTokenHash: row.access_token_hash,
+          groupFolder: row.group_folder,
+        },
+        'Skipping Alexa linked account with invalid group folder',
+      );
+      return false;
+    })
+    .map((row) => ({
+      accessTokenHash: row.access_token_hash,
+      displayName: row.display_name,
+      groupFolder: row.group_folder,
+      allowedAlexaUserId: row.allowed_alexa_user_id,
+      allowedAlexaPersonId: row.allowed_alexa_person_id,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      disabledAt: row.disabled_at,
+    }));
+}
+
+export function upsertAlexaSession(record: AlexaPendingSession): void {
+  db.prepare(
+    `
+      INSERT INTO alexa_sessions (
+        principal_key,
+        access_token_hash,
+        pending_kind,
+        payload_json,
+        expires_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(principal_key) DO UPDATE SET
+        access_token_hash = excluded.access_token_hash,
+        pending_kind = excluded.pending_kind,
+        payload_json = excluded.payload_json,
+        expires_at = excluded.expires_at,
+        updated_at = excluded.updated_at
+    `,
+  ).run(
+    record.principalKey,
+    record.accessTokenHash,
+    record.pendingKind,
+    record.payloadJson,
+    record.expiresAt,
+    record.updatedAt,
+  );
+}
+
+export function getAlexaSession(
+  principalKey: string,
+  accessTokenHash?: string,
+  now = new Date().toISOString(),
+): AlexaPendingSession | undefined {
+  const row = db
+    .prepare(
+      `
+        SELECT *
+        FROM alexa_sessions
+        WHERE principal_key = ?
+        LIMIT 1
+      `,
+    )
+    .get(principalKey) as
+    | {
+        principal_key: string;
+        access_token_hash: string;
+        pending_kind: AlexaPendingSession['pendingKind'];
+        payload_json: string;
+        expires_at: string;
+        updated_at: string;
+      }
+    | undefined;
+
+  if (!row) return undefined;
+  if (row.expires_at <= now) {
+    clearAlexaSession(principalKey);
+    return undefined;
+  }
+  if (accessTokenHash && row.access_token_hash !== accessTokenHash) {
+    clearAlexaSession(principalKey);
+    return undefined;
+  }
+
+  return {
+    principalKey: row.principal_key,
+    accessTokenHash: row.access_token_hash,
+    pendingKind: row.pending_kind,
+    payloadJson: row.payload_json,
+    expiresAt: row.expires_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export function clearAlexaSession(principalKey: string): void {
+  db.prepare('DELETE FROM alexa_sessions WHERE principal_key = ?').run(
+    principalKey,
+  );
+}
+
+export function purgeExpiredAlexaSessions(
+  now = new Date().toISOString(),
+): number {
+  const result = db
+    .prepare('DELETE FROM alexa_sessions WHERE expires_at <= ?')
+    .run(now);
+  return result.changes;
 }
 
 export interface CommunitySkillRecord {

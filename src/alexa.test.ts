@@ -6,19 +6,32 @@ import {
   formatAlexaStatusMessage,
   normalizeAlexaSpeech,
   resolveAlexaConfig,
+  shapeAlexaSpeech,
   startAlexaServer,
   type AlexaConfig,
 } from './alexa.js';
-import { runAlexaAssistantTurn } from './alexa-bridge.js';
+import {
+  AlexaTargetGroupMissingError,
+  runAlexaAssistantTurn,
+} from './alexa-bridge.js';
+import { seedConfiguredAlexaLinkedAccount } from './alexa-identity.js';
+import { _initTestDatabase, setRegisteredGroup } from './db.js';
 import { ASSISTANT_NAME } from './config.js';
 
-vi.mock('./alexa-bridge.js', () => ({
-  runAlexaAssistantTurn: vi.fn(),
-}));
+vi.mock('./alexa-bridge.js', async () => {
+  const actual =
+    await vi.importActual<typeof import('./alexa-bridge.js')>(
+      './alexa-bridge.js',
+    );
+  return {
+    ...actual,
+    runAlexaAssistantTurn: vi.fn(),
+  };
+});
 
 const mockedRunAlexaAssistantTurn = vi.mocked(runAlexaAssistantTurn);
 
-function buildBaseEnvelope() {
+function buildBaseEnvelope(): RequestEnvelope {
   return {
     version: '1.0',
     session: {
@@ -29,6 +42,7 @@ function buildBaseEnvelope() {
       },
       user: {
         userId: 'amzn1.ask.account.test-user',
+        accessToken: 'linked-secret-token',
       },
     },
     context: {
@@ -38,6 +52,11 @@ function buildBaseEnvelope() {
         },
         user: {
           userId: 'amzn1.ask.account.test-user',
+          accessToken: 'linked-secret-token',
+        },
+        person: {
+          personId: 'amzn1.ask.person.test-person',
+          accessToken: 'linked-secret-token',
         },
         device: {
           deviceId: 'device-1',
@@ -50,47 +69,36 @@ function buildBaseEnvelope() {
     request: {
       requestId: 'EdwRequestId.123',
       locale: 'en-US',
-      timestamp: '2026-03-29T08:00:00Z',
+      timestamp: '2026-04-03T08:00:00Z',
       type: 'LaunchRequest',
     },
   } as unknown as RequestEnvelope;
 }
 
-function buildIntentEnvelope(utterance: string) {
+function buildIntentEnvelope(
+  intentName: string,
+  slots: Record<string, string> = {},
+): RequestEnvelope {
   return {
     ...buildBaseEnvelope(),
     request: {
-      requestId: 'EdwRequestId.234',
+      requestId: `EdwRequestId.${intentName}`,
       locale: 'en-US',
-      timestamp: '2026-03-29T08:00:00Z',
+      timestamp: '2026-04-03T08:00:00Z',
       type: 'IntentRequest',
       intent: {
-        name: 'AskAndreaIntent',
+        name: intentName,
         confirmationStatus: 'NONE',
-        slots: {
-          utterance: {
-            name: 'utterance',
-            value: utterance,
-            confirmationStatus: 'NONE',
-          },
-        },
-      },
-    },
-  } as unknown as RequestEnvelope;
-}
-
-function buildUnsupportedIntentEnvelope() {
-  return {
-    ...buildBaseEnvelope(),
-    request: {
-      requestId: 'EdwRequestId.999',
-      locale: 'en-US',
-      timestamp: '2026-03-29T08:00:00Z',
-      type: 'IntentRequest',
-      intent: {
-        name: 'UnsupportedIntent',
-        confirmationStatus: 'NONE',
-        slots: {},
+        slots: Object.fromEntries(
+          Object.entries(slots).map(([name, value]) => [
+            name,
+            {
+              name,
+              value,
+              confirmationStatus: 'NONE',
+            },
+          ]),
+        ),
       },
     },
   } as unknown as RequestEnvelope;
@@ -111,11 +119,21 @@ function buildConfig(overrides: Partial<AlexaConfig> = {}): AlexaConfig {
     path: '/alexa',
     healthPath: '/alexa/health',
     verifySignature: false,
-    requireAccountLinking: false,
+    requireAccountLinking: true,
     allowedUserIds: [],
     targetGroupFolder: undefined,
     ...overrides,
   };
+}
+
+function seedLinkedAccount(groupFolder = 'main') {
+  seedConfiguredAlexaLinkedAccount({
+    ALEXA_LINKED_ACCOUNT_TOKEN: 'linked-secret-token',
+    ALEXA_LINKED_ACCOUNT_NAME: 'Andrea Alexa',
+    ALEXA_LINKED_ACCOUNT_GROUP_FOLDER: groupFolder,
+    ALEXA_LINKED_ACCOUNT_ALLOWED_USER_ID: 'amzn1.ask.account.test-user',
+    ALEXA_LINKED_ACCOUNT_ALLOWED_PERSON_ID: 'amzn1.ask.person.test-person',
+  });
 }
 
 describe('resolveAlexaConfig', () => {
@@ -149,7 +167,7 @@ describe('resolveAlexaConfig', () => {
   });
 });
 
-describe('normalizeAlexaSpeech', () => {
+describe('Alexa speech shaping', () => {
   it('strips internal tags, markdown, and raw links from speech', () => {
     expect(
       normalizeAlexaSpeech(
@@ -157,30 +175,61 @@ describe('normalizeAlexaSpeech', () => {
       ),
     ).toBe('Here is Andrea with code and');
   });
+
+  it('keeps spoken output short and sentence-bounded', () => {
+    const shaped = shapeAlexaSpeech(
+      'First sentence. Second sentence. Third sentence. Fourth sentence.',
+    );
+    expect(shaped).toBe('First sentence. Second sentence. Third sentence.');
+  });
 });
 
 describe('createAlexaSkill', () => {
   beforeEach(() => {
+    _initTestDatabase();
     mockedRunAlexaAssistantTurn.mockReset();
+    setRegisteredGroup('tg:main', {
+      name: 'Main',
+      folder: 'main',
+      trigger: '@Andrea',
+      added_at: '2026-04-03T08:00:00Z',
+      requiresTrigger: false,
+      isMain: true,
+    });
+    seedLinkedAccount('main');
   });
 
-  it('responds to launch requests with a friendly welcome', async () => {
+  it('responds to launch requests with the bounded personal-assistant welcome', async () => {
     const skill = createAlexaSkill(buildConfig());
     const response = await skill.invoke(buildBaseEnvelope());
 
-    expect(extractSpeechText(response)).toContain(`${ASSISTANT_NAME} is here`);
+    expect(extractSpeechText(response)).toContain(`${ASSISTANT_NAME} is ready`);
   });
 
-  it('requests account linking when configured and missing', async () => {
-    const skill = createAlexaSkill(
-      buildConfig({ requireAccountLinking: true }),
-    );
-    const envelope = buildBaseEnvelope();
+  it('returns a link-account response for personal intents with no token', async () => {
+    const skill = createAlexaSkill(buildConfig());
+    const envelope = buildIntentEnvelope('MyDayIntent');
     delete envelope.context!.System.user!.accessToken;
+    delete envelope.context!.System.person!.accessToken;
+    delete envelope.session!.user!.accessToken;
 
     const response = await skill.invoke(envelope);
 
     expect(extractSpeechText(response)).toContain('needs account linking');
+    expect(response.response?.card?.type).toBe('LinkAccount');
+    expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
+  });
+
+  it('returns a link-account response for unknown linked tokens', async () => {
+    const skill = createAlexaSkill(buildConfig());
+    const envelope = buildIntentEnvelope('MyDayIntent');
+    envelope.context!.System.user!.accessToken = 'unknown-token';
+    envelope.context!.System.person!.accessToken = 'unknown-token';
+    envelope.session!.user!.accessToken = 'unknown-token';
+
+    const response = await skill.invoke(envelope);
+
+    expect(extractSpeechText(response)).toContain('does not recognize');
     expect(response.response?.card?.type).toBe('LinkAccount');
   });
 
@@ -194,35 +243,108 @@ describe('createAlexaSkill', () => {
     expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
   });
 
-  it('routes AskAndreaIntent through the bridge and normalizes speech output', async () => {
+  it('routes MyDayIntent through the bridge with linked group context', async () => {
     mockedRunAlexaAssistantTurn.mockResolvedValue({
-      text: `<internal>planner</internal>${ASSISTANT_NAME} found **three** strong options at https://example.com`,
-      route: 'direct_assistant',
+      text: 'Today is light. You have one afternoon meeting.',
+      route: 'protected_assistant',
       chatJid: 'alexa:main:abc',
       groupFolder: 'main',
     });
 
     const skill = createAlexaSkill(buildConfig());
-    const response = await skill.invoke(
-      buildIntentEnvelope('research espresso machines'),
-    );
+    const response = await skill.invoke(buildIntentEnvelope('MyDayIntent'));
 
     expect(mockedRunAlexaAssistantTurn).toHaveBeenCalledWith(
       {
-        utterance: 'research espresso machines',
+        utterance: expect.stringContaining('Give me my day'),
         principal: expect.objectContaining({
           userId: 'amzn1.ask.account.test-user',
+          displayName: 'Andrea Alexa',
         }),
       },
-      {
+      expect.objectContaining({
         assistantName: ASSISTANT_NAME,
-        targetGroupFolder: undefined,
-      },
+        targetGroupFolder: 'main',
+        requireExistingTargetGroup: true,
+      }),
     );
+    expect(extractSpeechText(response)).toContain('Today is light');
+  });
+
+  it('asks for reminder lead time before running the reminder action', async () => {
+    const skill = createAlexaSkill(buildConfig());
+    const response = await skill.invoke(
+      buildIntentEnvelope('RemindBeforeNextMeetingIntent'),
+    );
+
     expect(extractSpeechText(response)).toContain(
-      `${ASSISTANT_NAME} found three strong options`,
+      'How long before your next meeting',
     );
-    expect(extractSpeechText(response)).not.toContain('https://');
+    expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
+  });
+
+  it('confirms and then saves the reminder when the user answers yes', async () => {
+    mockedRunAlexaAssistantTurn.mockResolvedValue({
+      text: 'I saved that reminder.',
+      route: 'protected_assistant',
+      chatJid: 'alexa:main:abc',
+      groupFolder: 'main',
+    });
+
+    const skill = createAlexaSkill(buildConfig());
+    const confirm = await skill.invoke(
+      buildIntentEnvelope('RemindBeforeNextMeetingIntent', {
+        leadTime: '30 minutes',
+      }),
+    );
+    expect(extractSpeechText(confirm)).toContain('30 minutes');
+
+    const response = await skill.invoke(
+      buildIntentEnvelope('AMAZON.YesIntent'),
+    );
+
+    expect(mockedRunAlexaAssistantTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        utterance: expect.stringContaining(
+          'Set a reminder 30 minutes before my next meeting',
+        ),
+      }),
+      expect.any(Object),
+    );
+    expect(extractSpeechText(response)).toContain('I saved that reminder');
+  });
+
+  it('asks what to save when SaveForLaterIntent only has a bare reference', async () => {
+    const skill = createAlexaSkill(buildConfig());
+    const response = await skill.invoke(
+      buildIntentEnvelope('SaveForLaterIntent', {
+        captureText: 'that',
+      }),
+    );
+
+    expect(extractSpeechText(response)).toContain('save for later');
+    expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
+  });
+
+  it('asks which meeting when follow-up target is missing', async () => {
+    const skill = createAlexaSkill(buildConfig());
+    const response = await skill.invoke(
+      buildIntentEnvelope('DraftFollowUpIntent'),
+    );
+
+    expect(extractSpeechText(response)).toContain('Which meeting do you mean');
+    expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
+  });
+
+  it('renders a safe setup message when the linked group is missing', async () => {
+    mockedRunAlexaAssistantTurn.mockRejectedValue(
+      new AlexaTargetGroupMissingError('main'),
+    );
+
+    const skill = createAlexaSkill(buildConfig());
+    const response = await skill.invoke(buildIntentEnvelope('MyDayIntent'));
+
+    expect(extractSpeechText(response)).toContain('workspace is not ready');
   });
 
   it('sanitizes bridge failures into a safe Alexa response', async () => {
@@ -231,23 +353,39 @@ describe('createAlexaSkill', () => {
     );
 
     const skill = createAlexaSkill(buildConfig());
-    const response = await skill.invoke(buildIntentEnvelope('help'));
+    const response = await skill.invoke(buildIntentEnvelope('MyDayIntent'));
 
     expect(extractSpeechText(response)).toContain('voice-service snag');
     expect(extractSpeechText(response)).not.toContain('sk-test-secret');
   });
 
-  it('responds gracefully to unsupported intents without invoking the bridge', async () => {
+  it('responds gracefully to fallback without invoking the bridge', async () => {
     const skill = createAlexaSkill(buildConfig());
-    const response = await skill.invoke(buildUnsupportedIntentEnvelope());
+    const response = await skill.invoke(
+      buildIntentEnvelope('AMAZON.FallbackIntent'),
+    );
 
-    expect(extractSpeechText(response)).toContain('can help with research');
+    expect(extractSpeechText(response)).toContain('works best with short');
     expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
   });
 });
 
 describe('startAlexaServer', () => {
   let runtime: Awaited<ReturnType<typeof startAlexaServer>> = null;
+
+  beforeEach(() => {
+    _initTestDatabase();
+    mockedRunAlexaAssistantTurn.mockReset();
+    setRegisteredGroup('tg:main', {
+      name: 'Main',
+      folder: 'main',
+      trigger: '@Andrea',
+      added_at: '2026-04-03T08:00:00Z',
+      requiresTrigger: false,
+      isMain: true,
+    });
+    seedLinkedAccount('main');
+  });
 
   afterEach(async () => {
     if (runtime) {
@@ -258,8 +396,8 @@ describe('startAlexaServer', () => {
 
   it('serves a health endpoint and handles unsigned local requests when verification is disabled', async () => {
     mockedRunAlexaAssistantTurn.mockResolvedValue({
-      text: 'Andrea heard you loud and clear.',
-      route: 'direct_assistant',
+      text: 'Tomorrow has one timed event.',
+      route: 'protected_assistant',
       chatJid: 'alexa:main:abc',
       groupFolder: 'main',
     });
@@ -278,15 +416,35 @@ describe('startAlexaServer', () => {
       {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(buildIntentEnvelope('research office chairs')),
+        body: JSON.stringify(buildIntentEnvelope('TomorrowCalendarIntent')),
       },
     );
 
     expect(response.status).toBe(200);
     const payload = (await response.json()) as ResponseEnvelope;
     expect(extractSpeechText(payload)).toContain(
-      'Andrea heard you loud and clear',
+      'Tomorrow has one timed event',
     );
+  });
+
+  it('rejects requests with the wrong Alexa skill/application identity', async () => {
+    runtime = await startAlexaServer(buildConfig());
+    const status = runtime!.getStatus();
+    const envelope = buildIntentEnvelope('MyDayIntent');
+    envelope.context!.System.application!.applicationId =
+      'amzn1.ask.skill.wrong';
+    envelope.session!.application!.applicationId = 'amzn1.ask.skill.wrong';
+
+    const response = await fetch(
+      `http://127.0.0.1:${status.port}${status.path}`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(envelope),
+      },
+    );
+
+    expect(response.status).toBe(400);
   });
 });
 
@@ -304,9 +462,8 @@ describe('formatAlexaStatusMessage', () => {
         path: '/alexa',
         healthPath: '/alexa/health',
         verifySignature: true,
-        requireAccountLinking: false,
+        requireAccountLinking: true,
         allowedUserIdsCount: 1,
-        targetGroupFolder: 'main',
       }),
     ).toContain('Status: listening');
   });

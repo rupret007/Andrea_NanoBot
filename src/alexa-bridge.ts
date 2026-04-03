@@ -58,11 +58,13 @@ export interface AlexaPrincipal {
   userId: string;
   personId?: string;
   accessToken?: string;
+  displayName?: string;
 }
 
 export interface AlexaBridgeConfig {
   assistantName?: string;
   targetGroupFolder?: string;
+  requireExistingTargetGroup?: boolean;
 }
 
 export interface AlexaTurnRequest {
@@ -81,6 +83,16 @@ export interface AlexaBridgeTarget {
   chatJid: string;
   group: RegisteredGroup;
   shouldPersistGroup: boolean;
+}
+
+export class AlexaTargetGroupMissingError extends Error {
+  readonly groupFolder: string;
+
+  constructor(groupFolder: string) {
+    super(`Alexa target group "${groupFolder}" is not registered`);
+    this.name = 'AlexaTargetGroupMissingError';
+    this.groupFolder = groupFolder;
+  }
 }
 
 type RuntimeDeps = {
@@ -287,6 +299,9 @@ export function resolveAlexaBridgeTarget(
       registeredGroups,
       requestedFolder,
     );
+    if (!existing && config.requireExistingTargetGroup) {
+      throw new AlexaTargetGroupMissingError(requestedFolder);
+    }
     return {
       chatJid: buildAlexaChatJid(requestedFolder, principal),
       group: existing?.[1] ?? {
@@ -339,7 +354,7 @@ function buildUserMessage(
     id: `alexa-in-${crypto.randomUUID()}`,
     chat_jid: chatJid,
     sender: stableAlexaId(principal),
-    sender_name: 'Alexa User',
+    sender_name: principal.displayName || 'Alexa User',
     content: utterance,
     timestamp: new Date().toISOString(),
   };
@@ -441,10 +456,7 @@ export async function runAlexaAssistantTurn(
   const existingThread = deps.getAgentThread
     ? deps.getAgentThread(target.group.folder)
     : undefined;
-  const runtimeRoute = classifyRuntimeRoute(
-    requestPolicy,
-    request.utterance,
-  );
+  const runtimeRoute = classifyRuntimeRoute(requestPolicy, request.utterance);
   const preferredRuntime = selectPreferredRuntime(existingThread, runtimeRoute);
   const sessionId = shouldReuseExistingThread(existingThread, preferredRuntime)
     ? existingThread.thread_id

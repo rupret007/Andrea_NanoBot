@@ -79,10 +79,7 @@ export interface TaskRunLog {
   error: string | null;
 }
 
-export type AgentRuntimeName =
-  | 'codex_local'
-  | 'openai_cloud'
-  | 'claude_legacy';
+export type AgentRuntimeName = 'codex_local' | 'openai_cloud' | 'claude_legacy';
 
 export type RuntimeRoute =
   | 'local_required'
@@ -194,6 +191,33 @@ export interface RuntimeBackendJobCacheRecord {
   created_at: string;
   updated_at: string;
   raw_json: string;
+}
+
+export interface AlexaLinkedAccount {
+  accessTokenHash: string;
+  displayName: string;
+  groupFolder: string;
+  allowedAlexaUserId?: string | null;
+  allowedAlexaPersonId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  disabledAt?: string | null;
+}
+
+export type AlexaPendingSessionKind =
+  | 'capture_reminder_lead_time'
+  | 'confirm_reminder_before_next_meeting'
+  | 'capture_save_for_later_content'
+  | 'confirm_save_for_later'
+  | 'capture_follow_up_reference';
+
+export interface AlexaPendingSession {
+  principalKey: string;
+  accessTokenHash: string;
+  pendingKind: AlexaPendingSessionKind;
+  payloadJson: string;
+  expiresAt: string;
+  updatedAt: string;
 }
 
 // --- Channel abstraction ---

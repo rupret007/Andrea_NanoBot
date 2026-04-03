@@ -32,6 +32,7 @@ vi.mock('./logger.js', () => ({
 }));
 
 import {
+  AlexaTargetGroupMissingError,
   type AlexaBridgeDeps,
   resolveAlexaBridgeTarget,
   runAlexaAssistantTurn,
@@ -108,6 +109,19 @@ describe('resolveAlexaBridgeTarget', () => {
     expect(target.group.folder).toMatch(/^alexa_[a-f0-9]{12}$/);
     expect(target.chatJid).toMatch(/^alexa:[a-f0-9]{12}$/);
     expect(target.shouldPersistGroup).toBe(true);
+  });
+
+  it('requires an existing target group when linked Alexa identity points at one', () => {
+    expect(() =>
+      resolveAlexaBridgeTarget(
+        principal,
+        {
+          targetGroupFolder: 'main',
+          requireExistingTargetGroup: true,
+        },
+        {},
+      ),
+    ).toThrowError(new AlexaTargetGroupMissingError('main'));
   });
 });
 

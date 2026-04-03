@@ -104,6 +104,7 @@ import {
   getAlexaStatus,
   startAlexaServer,
 } from './alexa.js';
+import { seedConfiguredAlexaLinkedAccount } from './alexa-identity.js';
 import {
   approveAmazonPurchaseRequest,
   cancelAmazonPurchaseRequest,
@@ -825,7 +826,8 @@ async function runAgent(
 }> {
   const isMain = group.isMain === true;
   const runtimeRoute = classifyRuntimeRoute(requestPolicy, prompt);
-  const existingThread = agentThreads[group.folder] || getAgentThread(group.folder);
+  const existingThread =
+    agentThreads[group.folder] || getAgentThread(group.folder);
   if (existingThread) {
     agentThreads[group.folder] = existingThread;
   }
@@ -1081,6 +1083,12 @@ async function main(): Promise<void> {
   logger.info('Database initialized');
   loadState();
 
+  try {
+    seedConfiguredAlexaLinkedAccount();
+  } catch (err) {
+    logger.error({ err }, 'Alexa linked-account seed failed');
+  }
+
   // Ensure OneCLI agents exist for all registered groups.
   // Recovers from missed creates (e.g. OneCLI was down at registration time).
   for (const [jid, group] of Object.entries(registeredGroups)) {
@@ -1290,7 +1298,9 @@ async function main(): Promise<void> {
       IDLE_TIMEOUT,
       async (partial) => {
         const text =
-          typeof partial.result === 'string' ? formatOutbound(partial.result) : '';
+          typeof partial.result === 'string'
+            ? formatOutbound(partial.result)
+            : '';
         if (!text) return;
         hadVisibleOutput = true;
         await channel.sendMessage(
@@ -2550,7 +2560,10 @@ async function main(): Promise<void> {
           channel
             ?.sendMessage(chatJid, RUNTIME_CREATE_USAGE)
             .catch((err) =>
-              logger.error({ err, chatJid }, 'Runtime create usage send failed'),
+              logger.error(
+                { err, chatJid },
+                'Runtime create usage send failed',
+              ),
             );
           return;
         }
@@ -2571,8 +2584,7 @@ async function main(): Promise<void> {
         const beforeJobId =
           Number.isFinite(parsedLimit) && parsedLimit > 0 ? parts[2] : parts[1];
         handleRuntimeJobs(chatJid, limit, beforeJobId || undefined).catch(
-          (err) =>
-            logger.error({ err, chatJid }, 'Runtime jobs command error'),
+          (err) => logger.error({ err, chatJid }, 'Runtime jobs command error'),
         );
         return;
       }

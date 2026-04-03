@@ -6,17 +6,50 @@ import {
   SkillBuilders,
   type HandlerInput,
 } from 'ask-sdk-core';
-import { type RequestEnvelope, type ResponseEnvelope } from 'ask-sdk-model';
+import {
+  type Intent,
+  type RequestEnvelope,
+  type ResponseEnvelope,
+} from 'ask-sdk-model';
 import {
   SkillRequestSignatureVerifier,
   TimestampVerifier,
 } from 'ask-sdk-express-adapter';
 
 import {
+  AlexaTargetGroupMissingError,
   type AlexaBridgeConfig,
   type AlexaPrincipal,
   runAlexaAssistantTurn,
 } from './alexa-bridge.js';
+import { resolveAlexaLinkedAccount } from './alexa-identity.js';
+import {
+  clearAlexaPendingSession,
+  loadAlexaPendingSession,
+  parseAlexaSessionPayload,
+  saveAlexaPendingSession,
+} from './alexa-session.js';
+import {
+  ALEXA_BEFORE_NEXT_MEETING_INTENT,
+  ALEXA_CANDACE_UPCOMING_INTENT,
+  ALEXA_DRAFT_FOLLOW_UP_INTENT,
+  ALEXA_MY_DAY_INTENT,
+  ALEXA_REMIND_BEFORE_NEXT_MEETING_INTENT,
+  ALEXA_SAVE_FOR_LATER_INTENT,
+  ALEXA_TOMORROW_CALENDAR_INTENT,
+  ALEXA_UPCOMING_SOON_INTENT,
+  ALEXA_WHAT_NEXT_INTENT,
+  buildAlexaFallbackSpeech,
+  buildAlexaHelpSpeech,
+  buildAlexaPersonalPrompt,
+  buildAlexaWelcomeSpeech,
+  buildDraftFollowUpQuestion,
+  buildReminderConfirmationSpeech,
+  buildReminderLeadTimeQuestion,
+  buildSaveForLaterConfirmationSpeech,
+  buildSaveForLaterQuestion,
+  isAlexaPersonalIntent,
+} from './alexa-v1.js';
 import { ASSISTANT_NAME } from './config.js';
 import { readEnvFile } from './env.js';
 import { assertValidGroupFolder } from './group-folder.js';
@@ -28,9 +61,7 @@ const ALEXA_REQUEST_LIMIT_BYTES = 256 * 1024;
 const DEFAULT_ALEXA_HOST = '127.0.0.1';
 const DEFAULT_ALEXA_PORT = 4300;
 const DEFAULT_ALEXA_PATH = '/alexa';
-const DEFAULT_ALEXA_HELP =
-  'Try asking Andrea to research a topic, remind you about something important, or help with a shopping idea before she asks for any approvals.';
-const DEFAULT_ALEXA_REPROMPT = 'What would you like Andrea to do?';
+const DEFAULT_ALEXA_REPROMPT = 'What would you like to know?';
 
 export interface AlexaConfig extends AlexaBridgeConfig {
   skillId: string;
@@ -72,10 +103,16 @@ type AuthorizationResult =
   | { ok: true; principal: AlexaPrincipal }
   | {
       ok: false;
-      kind: 'link-account' | 'forbidden';
+      kind: 'forbidden';
       speech: string;
       reprompt?: string;
     };
+
+type AlexaBarrierResponse = {
+  kind: 'link-account' | 'forbidden' | 'setup';
+  speech: string;
+  reprompt?: string;
+};
 
 function parseBoolean(value: string | undefined, fallback: boolean): boolean {
   if (value == null || value.trim() === '') return fallback;
@@ -200,21 +237,13 @@ export function formatAlexaStatusMessage(status: AlexaStatus): string {
     `- Bind: ${status.host}:${status.port}${status.path}`,
     `- Health: ${status.healthPath}`,
     `- Request signature verification: ${status.verifySignature ? 'on' : 'off (dev only)'}`,
-    `- Account linking required: ${status.requireAccountLinking ? 'yes' : 'no'}`,
+    `- Personal-account linking gate: ${status.requireAccountLinking ? 'strict' : 'required by Alexa intents'}`,
     `- Allowed Alexa IDs: ${status.allowedUserIdsCount || 0}`,
     status.targetGroupFolder
-      ? `- Target group folder: ${status.targetGroupFolder}`
-      : '- Target group folder: auto (main when available, otherwise isolated voice workspace)',
-    '- Tip: expose this endpoint through HTTPS before connecting the skill in the Alexa developer console.',
+      ? `- Target group folder fallback: ${status.targetGroupFolder}`
+      : '- Target group folder fallback: linked-account mapping',
+    '- Tip: expose this endpoint through HTTPS and configure account linking before using personal Alexa intents.',
   ].join('\n');
-}
-
-function buildWelcomeSpeech(assistantName: string): string {
-  return [
-    `${assistantName} is here.`,
-    'You can ask for research, reminders, shopping prep, or a quick brainy assist.',
-    'She is charming, practical, and still refuses surprise invoices.',
-  ].join(' ');
 }
 
 export function normalizeAlexaSpeech(text: string): string {
@@ -232,13 +261,42 @@ export function normalizeAlexaSpeech(text: string): string {
   return normalized;
 }
 
+export function shapeAlexaSpeech(text: string): string {
+  const normalized = normalizeAlexaSpeech(text);
+  if (!normalized) return '';
+
+  const sentences =
+    normalized
+      .split(/(?<=[.!?])\s+/)
+      .map((sentence) => sentence.trim())
+      .filter(Boolean) || [];
+  const selected: string[] = [];
+  let totalLength = 0;
+
+  for (const sentence of sentences) {
+    const nextLength =
+      totalLength + sentence.length + (selected.length > 0 ? 1 : 0);
+    if (selected.length >= 3 || nextLength > 320) break;
+    selected.push(sentence);
+    totalLength = nextLength;
+  }
+
+  if (selected.length > 0) {
+    return selected.join(' ');
+  }
+
+  return normalized.length > 320
+    ? `${normalized.slice(0, 317).trim()}...`
+    : normalized;
+}
+
 function extractPrincipal(requestEnvelope: RequestEnvelope): AlexaPrincipal {
   const system = requestEnvelope.context?.System;
   const user = system?.user;
   const person = requestEnvelope.context?.System.person;
 
   return {
-    userId: person?.personId || user?.userId || 'anonymous-alexa-user',
+    userId: user?.userId || 'anonymous-alexa-user',
     personId: person?.personId || undefined,
     accessToken: person?.accessToken || user?.accessToken || undefined,
   };
@@ -270,45 +328,141 @@ function authorizeAlexaRequest(
     };
   }
 
-  if (config.requireAccountLinking && !principal.accessToken) {
-    logger.info('Alexa request rejected because account linking is required');
-    return {
-      ok: false,
-      kind: 'link-account',
-      speech: `${assistantName} needs account linking before handling this request. Please link the skill in the Alexa app and then try again.`,
-      reprompt: 'Link the skill in the Alexa app, then ask Andrea again.',
-    };
-  }
-
   return { ok: true, principal };
 }
 
-function buildAuthorizationResponse(
+function buildBarrierResponse(
   handlerInput: HandlerInput,
-  authorization: Extract<AuthorizationResult, { ok: false }>,
+  barrier: AlexaBarrierResponse,
 ) {
   const builder = handlerInput.responseBuilder
-    .speak(authorization.speech)
-    .reprompt(authorization.reprompt || DEFAULT_ALEXA_REPROMPT);
-  if (authorization.kind === 'link-account') {
+    .speak(barrier.speech)
+    .reprompt(barrier.reprompt || DEFAULT_ALEXA_REPROMPT);
+  if (barrier.kind === 'link-account') {
     builder.withLinkAccountCard();
   }
   return builder.getResponse();
 }
 
-function getIntentSlotValue(requestEnvelope: RequestEnvelope): string {
+function getIntentSlotValue(
+  requestEnvelope: RequestEnvelope,
+  slotName: string,
+): string {
   const request = requestEnvelope.request;
   if (request.type !== 'IntentRequest') return '';
-  const candidateSlots = ['utterance', 'query', 'request'];
-  for (const slotName of candidateSlots) {
-    const slot = request.intent.slots?.[slotName];
-    if (slot?.value?.trim()) return slot.value.trim();
+  const slot = request.intent.slots?.[slotName];
+  return slot?.value?.trim() || '';
+}
+
+function isBareReference(value: string): boolean {
+  return ['that', 'this', 'it', 'something'].includes(
+    value.trim().toLowerCase(),
+  );
+}
+
+function buildRequestIntent(requestEnvelope: RequestEnvelope): Intent | null {
+  const request = requestEnvelope.request;
+  return request.type === 'IntentRequest' ? request.intent : null;
+}
+
+function buildLinkAccountBarrier(
+  speech: string,
+  reprompt?: string,
+): AlexaBarrierResponse {
+  return {
+    kind: 'link-account',
+    speech,
+    reprompt,
+  };
+}
+
+function assertTrustedSkillRequest(
+  requestEnvelope: RequestEnvelope,
+  config: AlexaConfig,
+): void {
+  const candidates = [
+    requestEnvelope.context?.System?.application?.applicationId,
+    requestEnvelope.session?.application?.applicationId,
+  ].filter((value): value is string => Boolean(value));
+
+  if (candidates.length === 0) {
+    throw new Error('Alexa request rejected: application ID missing');
   }
-  return '';
+  if (!candidates.every((candidate) => candidate === config.skillId)) {
+    throw new Error('Alexa request rejected: skill ID mismatch');
+  }
+}
+
+function buildSetupBarrier(
+  assistantName: string,
+  groupFolder: string,
+): AlexaBarrierResponse {
+  return {
+    kind: 'setup',
+    speech: `${assistantName} is linked, but the ${groupFolder} workspace is not ready yet.`,
+    reprompt: 'Finish the Andrea workspace setup, then try again.',
+  };
+}
+
+async function runLinkedAlexaTurn(
+  handlerInput: HandlerInput,
+  config: AlexaConfig,
+  assistantName: string,
+  principal: AlexaPrincipal,
+  linked: Extract<ReturnType<typeof resolveAlexaLinkedAccount>, { ok: true }>,
+  utterance: string,
+) {
+  try {
+    const result = await runAlexaAssistantTurn(
+      {
+        utterance,
+        principal: {
+          ...principal,
+          displayName: linked.account.displayName,
+        },
+      },
+      {
+        assistantName,
+        targetGroupFolder: linked.account.groupFolder,
+        requireExistingTargetGroup: true,
+      },
+    );
+    const speech =
+      shapeAlexaSpeech(result.text) ||
+      `${assistantName} is thinking, but the answer came back empty. Please try again.`;
+
+    return handlerInput.responseBuilder
+      .speak(speech)
+      .reprompt(DEFAULT_ALEXA_REPROMPT)
+      .getResponse();
+  } catch (err) {
+    if (err instanceof AlexaTargetGroupMissingError) {
+      return buildBarrierResponse(
+        handlerInput,
+        buildSetupBarrier(assistantName, err.groupFolder),
+      );
+    }
+    throw err;
+  }
 }
 
 export function createAlexaSkill(config: AlexaConfig): SkillLike {
   const assistantName = ASSISTANT_NAME;
+  const helpSpeech = buildAlexaHelpSpeech(assistantName);
+
+  const resolveLinkedContext = (
+    handlerInput: HandlerInput,
+    principal: AlexaPrincipal,
+  ) => {
+    const linked = resolveAlexaLinkedAccount(principal, assistantName);
+    if (!linked.ok) {
+      return {
+        ok: false as const,
+        response: buildBarrierResponse(handlerInput, linked),
+      };
+    }
+    return { ok: true as const, linked };
+  };
 
   const LaunchRequestHandler = {
     canHandle(handlerInput: HandlerInput) {
@@ -321,21 +475,21 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
         assistantName,
       );
       if (!authorization.ok) {
-        return buildAuthorizationResponse(handlerInput, authorization);
+        return buildBarrierResponse(handlerInput, authorization);
       }
 
       return handlerInput.responseBuilder
-        .speak(buildWelcomeSpeech(assistantName))
+        .speak(buildAlexaWelcomeSpeech(assistantName))
         .reprompt(DEFAULT_ALEXA_REPROMPT)
         .getResponse();
     },
   };
 
-  const AskAndreaIntentHandler = {
+  const PersonalIntentHandler = {
     canHandle(handlerInput: HandlerInput) {
       return (
         getRequestType(handlerInput.requestEnvelope) === 'IntentRequest' &&
-        getIntentName(handlerInput.requestEnvelope) === 'AskAndreaIntent'
+        isAlexaPersonalIntent(getIntentName(handlerInput.requestEnvelope))
       );
     },
     async handle(handlerInput: HandlerInput) {
@@ -345,37 +499,337 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
         assistantName,
       );
       if (!authorization.ok) {
-        return buildAuthorizationResponse(handlerInput, authorization);
+        return buildBarrierResponse(handlerInput, authorization);
       }
 
-      const utterance = getIntentSlotValue(handlerInput.requestEnvelope);
-      if (!utterance) {
+      const linkedResolution = resolveLinkedContext(
+        handlerInput,
+        authorization.principal,
+      );
+      if (!linkedResolution.ok) {
+        return linkedResolution.response;
+      }
+
+      const linked = linkedResolution.linked;
+      const requestIntent = buildRequestIntent(handlerInput.requestEnvelope);
+      if (!requestIntent) {
         return handlerInput.responseBuilder
-          .speak(
-            `${assistantName} did not catch the request yet. Ask me to research something, help with a task, or prep a shopping idea.`,
-          )
+          .speak(`${assistantName} did not catch that request yet.`)
           .reprompt(DEFAULT_ALEXA_REPROMPT)
           .getResponse();
       }
 
-      const result = await runAlexaAssistantTurn(
-        {
-          utterance,
-          principal: authorization.principal,
-        },
-        {
-          assistantName,
-          targetGroupFolder: config.targetGroupFolder,
-        },
+      const intentName = requestIntent.name;
+      const pending = loadAlexaPendingSession(
+        linked.principalKey,
+        linked.account.accessTokenHash,
       );
-      const speech =
-        normalizeAlexaSpeech(result.text) ||
-        `${assistantName} is thinking, but the answer came back empty. Please try asking again.`;
+
+      if (
+        pending &&
+        !(
+          (pending.pendingKind === 'capture_reminder_lead_time' &&
+            intentName === ALEXA_REMIND_BEFORE_NEXT_MEETING_INTENT) ||
+          (pending.pendingKind === 'capture_save_for_later_content' &&
+            intentName === ALEXA_SAVE_FOR_LATER_INTENT) ||
+          (pending.pendingKind === 'capture_follow_up_reference' &&
+            intentName === ALEXA_DRAFT_FOLLOW_UP_INTENT)
+        )
+      ) {
+        clearAlexaPendingSession(linked.principalKey);
+      }
+
+      if (intentName === ALEXA_MY_DAY_INTENT) {
+        clearAlexaPendingSession(linked.principalKey);
+        return runLinkedAlexaTurn(
+          handlerInput,
+          config,
+          assistantName,
+          authorization.principal,
+          linked,
+          buildAlexaPersonalPrompt(ALEXA_MY_DAY_INTENT),
+        );
+      }
+
+      if (intentName === ALEXA_UPCOMING_SOON_INTENT) {
+        clearAlexaPendingSession(linked.principalKey);
+        return runLinkedAlexaTurn(
+          handlerInput,
+          config,
+          assistantName,
+          authorization.principal,
+          linked,
+          buildAlexaPersonalPrompt(ALEXA_UPCOMING_SOON_INTENT),
+        );
+      }
+
+      if (intentName === ALEXA_WHAT_NEXT_INTENT) {
+        clearAlexaPendingSession(linked.principalKey);
+        return runLinkedAlexaTurn(
+          handlerInput,
+          config,
+          assistantName,
+          authorization.principal,
+          linked,
+          buildAlexaPersonalPrompt(ALEXA_WHAT_NEXT_INTENT),
+        );
+      }
+
+      if (intentName === ALEXA_BEFORE_NEXT_MEETING_INTENT) {
+        clearAlexaPendingSession(linked.principalKey);
+        return runLinkedAlexaTurn(
+          handlerInput,
+          config,
+          assistantName,
+          authorization.principal,
+          linked,
+          buildAlexaPersonalPrompt(ALEXA_BEFORE_NEXT_MEETING_INTENT),
+        );
+      }
+
+      if (intentName === ALEXA_TOMORROW_CALENDAR_INTENT) {
+        clearAlexaPendingSession(linked.principalKey);
+        return runLinkedAlexaTurn(
+          handlerInput,
+          config,
+          assistantName,
+          authorization.principal,
+          linked,
+          buildAlexaPersonalPrompt(ALEXA_TOMORROW_CALENDAR_INTENT),
+        );
+      }
+
+      if (intentName === ALEXA_CANDACE_UPCOMING_INTENT) {
+        clearAlexaPendingSession(linked.principalKey);
+        return runLinkedAlexaTurn(
+          handlerInput,
+          config,
+          assistantName,
+          authorization.principal,
+          linked,
+          buildAlexaPersonalPrompt(ALEXA_CANDACE_UPCOMING_INTENT),
+        );
+      }
+
+      if (intentName === ALEXA_REMIND_BEFORE_NEXT_MEETING_INTENT) {
+        const leadTimeText = getIntentSlotValue(
+          handlerInput.requestEnvelope,
+          'leadTime',
+        );
+        if (!leadTimeText) {
+          saveAlexaPendingSession(
+            linked.principalKey,
+            linked.account.accessTokenHash,
+            'capture_reminder_lead_time',
+            {},
+          );
+          return handlerInput.responseBuilder
+            .speak(buildReminderLeadTimeQuestion(assistantName))
+            .reprompt(buildReminderLeadTimeQuestion(assistantName))
+            .addElicitSlotDirective('leadTime', requestIntent)
+            .getResponse();
+        }
+
+        saveAlexaPendingSession(
+          linked.principalKey,
+          linked.account.accessTokenHash,
+          'confirm_reminder_before_next_meeting',
+          { leadTimeText },
+        );
+        return handlerInput.responseBuilder
+          .speak(buildReminderConfirmationSpeech(assistantName, leadTimeText))
+          .reprompt('Say yes to save it, or no to cancel.')
+          .getResponse();
+      }
+
+      if (intentName === ALEXA_SAVE_FOR_LATER_INTENT) {
+        const captureText = getIntentSlotValue(
+          handlerInput.requestEnvelope,
+          'captureText',
+        );
+        if (!captureText || isBareReference(captureText)) {
+          saveAlexaPendingSession(
+            linked.principalKey,
+            linked.account.accessTokenHash,
+            'capture_save_for_later_content',
+            {},
+          );
+          return handlerInput.responseBuilder
+            .speak(buildSaveForLaterQuestion(assistantName))
+            .reprompt(buildSaveForLaterQuestion(assistantName))
+            .addElicitSlotDirective('captureText', requestIntent)
+            .getResponse();
+        }
+
+        saveAlexaPendingSession(
+          linked.principalKey,
+          linked.account.accessTokenHash,
+          'confirm_save_for_later',
+          { captureText },
+        );
+        return handlerInput.responseBuilder
+          .speak(
+            buildSaveForLaterConfirmationSpeech(assistantName, captureText),
+          )
+          .reprompt('Say yes to save it, or no to cancel.')
+          .getResponse();
+      }
+
+      if (intentName === ALEXA_DRAFT_FOLLOW_UP_INTENT) {
+        const meetingReference = getIntentSlotValue(
+          handlerInput.requestEnvelope,
+          'meetingReference',
+        );
+        if (!meetingReference) {
+          saveAlexaPendingSession(
+            linked.principalKey,
+            linked.account.accessTokenHash,
+            'capture_follow_up_reference',
+            {},
+          );
+          return handlerInput.responseBuilder
+            .speak(buildDraftFollowUpQuestion())
+            .reprompt(buildDraftFollowUpQuestion())
+            .addElicitSlotDirective('meetingReference', requestIntent)
+            .getResponse();
+        }
+
+        clearAlexaPendingSession(linked.principalKey);
+        return runLinkedAlexaTurn(
+          handlerInput,
+          config,
+          assistantName,
+          authorization.principal,
+          linked,
+          buildAlexaPersonalPrompt(ALEXA_DRAFT_FOLLOW_UP_INTENT, {
+            meetingReference,
+          }),
+        );
+      }
 
       return handlerInput.responseBuilder
-        .speak(speech)
+        .speak(buildAlexaFallbackSpeech(assistantName))
         .reprompt(DEFAULT_ALEXA_REPROMPT)
         .getResponse();
+    },
+  };
+
+  const YesIntentHandler = {
+    canHandle(handlerInput: HandlerInput) {
+      return (
+        getRequestType(handlerInput.requestEnvelope) === 'IntentRequest' &&
+        getIntentName(handlerInput.requestEnvelope) === 'AMAZON.YesIntent'
+      );
+    },
+    async handle(handlerInput: HandlerInput) {
+      const authorization = authorizeAlexaRequest(
+        handlerInput.requestEnvelope,
+        config,
+        assistantName,
+      );
+      if (!authorization.ok) {
+        return buildBarrierResponse(handlerInput, authorization);
+      }
+
+      const linkedResolution = resolveLinkedContext(
+        handlerInput,
+        authorization.principal,
+      );
+      if (!linkedResolution.ok) {
+        return linkedResolution.response;
+      }
+
+      const linked = linkedResolution.linked;
+      const pending = loadAlexaPendingSession(
+        linked.principalKey,
+        linked.account.accessTokenHash,
+      );
+      if (!pending) {
+        return handlerInput.responseBuilder
+          .speak(`There is nothing waiting for a yes right now.`)
+          .reprompt(DEFAULT_ALEXA_REPROMPT)
+          .getResponse();
+      }
+
+      const payload = parseAlexaSessionPayload(pending);
+      clearAlexaPendingSession(linked.principalKey);
+
+      if (pending.pendingKind === 'confirm_reminder_before_next_meeting') {
+        return runLinkedAlexaTurn(
+          handlerInput,
+          config,
+          assistantName,
+          authorization.principal,
+          linked,
+          buildAlexaPersonalPrompt(ALEXA_REMIND_BEFORE_NEXT_MEETING_INTENT, {
+            leadTimeText: payload.leadTimeText,
+          }),
+        );
+      }
+
+      if (pending.pendingKind === 'confirm_save_for_later') {
+        return runLinkedAlexaTurn(
+          handlerInput,
+          config,
+          assistantName,
+          authorization.principal,
+          linked,
+          buildAlexaPersonalPrompt(ALEXA_SAVE_FOR_LATER_INTENT, {
+            captureText: payload.captureText,
+          }),
+        );
+      }
+
+      return handlerInput.responseBuilder
+        .speak(`Please answer the question first.`)
+        .reprompt(DEFAULT_ALEXA_REPROMPT)
+        .getResponse();
+    },
+  };
+
+  const NoIntentHandler = {
+    canHandle(handlerInput: HandlerInput) {
+      return (
+        getRequestType(handlerInput.requestEnvelope) === 'IntentRequest' &&
+        getIntentName(handlerInput.requestEnvelope) === 'AMAZON.NoIntent'
+      );
+    },
+    async handle(handlerInput: HandlerInput) {
+      const authorization = authorizeAlexaRequest(
+        handlerInput.requestEnvelope,
+        config,
+        assistantName,
+      );
+      if (!authorization.ok) {
+        return buildBarrierResponse(handlerInput, authorization);
+      }
+
+      const linked = resolveAlexaLinkedAccount(
+        authorization.principal,
+        assistantName,
+      );
+      if (!linked.ok) {
+        return handlerInput.responseBuilder.speak('Okay.').getResponse();
+      }
+
+      const pending = loadAlexaPendingSession(
+        linked.principalKey,
+        linked.account.accessTokenHash,
+      );
+      clearAlexaPendingSession(linked.principalKey);
+
+      if (!pending) {
+        return handlerInput.responseBuilder.speak('Okay.').getResponse();
+      }
+
+      const speech =
+        pending.pendingKind === 'confirm_reminder_before_next_meeting'
+          ? `Okay, I will not save that reminder.`
+          : pending.pendingKind === 'confirm_save_for_later'
+            ? `Okay, I will not save that for later.`
+            : `Okay, never mind.`;
+
+      return handlerInput.responseBuilder.speak(speech).getResponse();
     },
   };
 
@@ -388,7 +842,7 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
     },
     handle(handlerInput: HandlerInput) {
       return handlerInput.responseBuilder
-        .speak(DEFAULT_ALEXA_HELP)
+        .speak(helpSpeech)
         .reprompt(DEFAULT_ALEXA_REPROMPT)
         .getResponse();
     },
@@ -404,6 +858,10 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
       );
     },
     handle(handlerInput: HandlerInput) {
+      const principal = extractPrincipal(handlerInput.requestEnvelope);
+      clearAlexaPendingSession(
+        `alexa:${principal.personId?.trim() || principal.userId.trim()}`,
+      );
       return handlerInput.responseBuilder
         .speak('Okay. Andrea will be right here when you need her again.')
         .getResponse();
@@ -419,9 +877,7 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
     },
     handle(handlerInput: HandlerInput) {
       return handlerInput.responseBuilder
-        .speak(
-          `${assistantName} can help with research, reminders, coding questions, and shopping prep. ${DEFAULT_ALEXA_HELP}`,
-        )
+        .speak(buildAlexaFallbackSpeech(assistantName))
         .reprompt(DEFAULT_ALEXA_REPROMPT)
         .getResponse();
     },
@@ -438,13 +894,11 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
         assistantName,
       );
       if (!authorization.ok) {
-        return buildAuthorizationResponse(handlerInput, authorization);
+        return buildBarrierResponse(handlerInput, authorization);
       }
 
       return handlerInput.responseBuilder
-        .speak(
-          `${assistantName} can help with research, reminders, shopping prep, and coding support. Try saying: ask Andrea to summarize my priorities for today.`,
-        )
+        .speak(buildAlexaFallbackSpeech(assistantName))
         .reprompt(DEFAULT_ALEXA_REPROMPT)
         .getResponse();
     },
@@ -469,7 +923,7 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
       logger.error({ err: error }, 'Alexa skill request failed');
       return handlerInput.responseBuilder
         .speak(
-          `Sorry, ${assistantName} hit a voice-service snag: ${normalizeAlexaSpeech(getUserFacingErrorDetail(error))}`,
+          `Sorry, ${assistantName} hit a voice-service snag: ${shapeAlexaSpeech(getUserFacingErrorDetail(error))}`,
         )
         .reprompt(DEFAULT_ALEXA_REPROMPT)
         .getResponse();
@@ -480,7 +934,9 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
     .withSkillId(config.skillId)
     .addRequestHandlers(
       LaunchRequestHandler,
-      AskAndreaIntentHandler,
+      PersonalIntentHandler,
+      YesIntentHandler,
+      NoIntentHandler,
       HelpHandler,
       ExitHandler,
       FallbackHandler,
@@ -534,6 +990,7 @@ async function invokeAlexaSkill(
 ): Promise<ResponseEnvelope> {
   await verifyAlexaRequest(rawBody, headers, config);
   const requestEnvelope = JSON.parse(rawBody) as RequestEnvelope;
+  assertTrustedSkillRequest(requestEnvelope, config);
   return skill.invoke(requestEnvelope);
 }
 
@@ -577,7 +1034,16 @@ export async function startAlexaServer(
     } catch (err) {
       logger.warn({ err }, 'Alexa HTTP request failed');
       const detail = getUserFacingErrorDetail(err);
+      const rawDetail =
+        err instanceof Error
+          ? err.message.toLowerCase()
+          : String(err).toLowerCase();
       const statusCode =
+        rawDetail.includes('verification') ||
+        rawDetail.includes('invalid') ||
+        rawDetail.includes('skill id') ||
+        rawDetail.includes('application id') ||
+        rawDetail.includes('request rejected') ||
         detail.toLowerCase().includes('verification') ||
         detail.toLowerCase().includes('invalid')
           ? 400
