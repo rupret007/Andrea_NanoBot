@@ -17,6 +17,15 @@ import {
 } from 'ask-sdk-express-adapter';
 
 import {
+  clearAlexaConversationState,
+  getAlexaConversationReferencedFactId,
+  loadAlexaConversationState,
+  resolveAlexaConversationFollowup,
+  saveAlexaConversationState,
+  type AlexaConversationState,
+  type AlexaConversationSubjectData,
+} from './alexa-conversation.js';
+import {
   getAlexaOAuthStatus,
   handleAlexaOAuthRequest,
   resolveAlexaOAuthConfig,
@@ -35,15 +44,25 @@ import {
   saveAlexaPendingSession,
 } from './alexa-session.js';
 import {
+  acceptProposedProfileFact,
+  handlePersonalizationCommand,
+  maybeCreateProactiveProfileCandidate,
+  rejectProposedProfileFact,
+} from './assistant-personalization.js';
+import {
+  ALEXA_ANYTHING_ELSE_INTENT,
   ALEXA_BEFORE_NEXT_MEETING_INTENT,
   ALEXA_CANDACE_UPCOMING_INTENT,
+  ALEXA_CONVERSATIONAL_FOLLOWUP_INTENT,
   ALEXA_DRAFT_FOLLOW_UP_INTENT,
+  ALEXA_MEMORY_CONTROL_INTENT,
   ALEXA_MY_DAY_INTENT,
   ALEXA_REMIND_BEFORE_NEXT_MEETING_INTENT,
   ALEXA_SAVE_FOR_LATER_INTENT,
   ALEXA_TOMORROW_CALENDAR_INTENT,
   ALEXA_UPCOMING_SOON_INTENT,
   ALEXA_WHAT_NEXT_INTENT,
+  buildAlexaConversationalFollowupPrompt,
   buildAlexaFallbackSpeech,
   buildAlexaHelpSpeech,
   buildAlexaPersonalPrompt,
@@ -454,6 +473,68 @@ function buildSetupBarrier(
   };
 }
 
+function buildAlexaConversationState(
+  flowKey: string,
+  subjectKind: AlexaConversationState['subjectKind'],
+  summaryText: string,
+  supportedFollowups: AlexaConversationState['supportedFollowups'],
+  subjectData: AlexaConversationSubjectData = {},
+  styleHints: AlexaConversationState['styleHints'] = {},
+): AlexaConversationState {
+  return {
+    flowKey,
+    subjectKind,
+    summaryText,
+    supportedFollowups,
+    subjectData,
+    styleHints,
+  };
+}
+
+function extractFollowupPersonName(text: string): string | undefined {
+  const match = text.match(/^what about ([a-z][a-z' -]+)$/i);
+  return match?.[1]?.trim();
+}
+
+function baseFollowupsForSubject(
+  subjectKind: AlexaConversationState['subjectKind'],
+) : import('./types.js').AlexaConversationFollowupAction[] {
+  const common: AlexaConversationState['supportedFollowups'] = [
+    'anything_else',
+    'shorter',
+    'memory_control',
+  ];
+
+  switch (subjectKind) {
+    case 'meeting':
+      return [
+        ...common,
+        'before_that',
+        'after_that',
+        'remind_before_that',
+        'draft_followup',
+        'save_that',
+      ] as import('./types.js').AlexaConversationFollowupAction[];
+    case 'person':
+    case 'household':
+      return [
+        ...common,
+        'anything_else',
+        'switch_person',
+      ] as import('./types.js').AlexaConversationFollowupAction[];
+    case 'saved_item':
+    case 'draft':
+      return [...common, 'save_that'] as import('./types.js').AlexaConversationFollowupAction[];
+    default:
+      return [
+        ...common,
+        'after_that',
+        'switch_person',
+        'save_that',
+      ] as import('./types.js').AlexaConversationFollowupAction[];
+  }
+}
+
 async function runLinkedAlexaTurn(
   handlerInput: HandlerInput,
   config: AlexaConfig,
@@ -461,6 +542,10 @@ async function runLinkedAlexaTurn(
   principal: AlexaPrincipal,
   linked: Extract<ReturnType<typeof resolveAlexaLinkedAccount>, { ok: true }>,
   utterance: string,
+  options: {
+    conversationState?: AlexaConversationState;
+    proactiveSignalText?: string;
+  } = {},
 ) {
   try {
     const result = await runAlexaAssistantTurn(
@@ -470,6 +555,13 @@ async function runLinkedAlexaTurn(
           ...principal,
           displayName: linked.account.displayName,
         },
+        promptContext: options.conversationState
+          ? {
+              conversationSummary: options.conversationState.summaryText,
+              conversationSubjectKind: options.conversationState.subjectKind,
+              supportedFollowups: options.conversationState.supportedFollowups,
+            }
+          : undefined,
       },
       {
         assistantName,
@@ -480,10 +572,50 @@ async function runLinkedAlexaTurn(
     const speech =
       shapeAlexaSpeech(result.text) ||
       `${assistantName} is thinking, but the answer came back empty. Please try again.`;
+    let finalSpeech = speech;
+    let reprompt = DEFAULT_ALEXA_REPROMPT;
+
+    if (options.conversationState) {
+      saveAlexaConversationState(
+        linked.principalKey,
+        linked.account.accessTokenHash,
+        linked.account.groupFolder,
+        {
+          ...options.conversationState,
+          summaryText:
+            options.conversationState.summaryText.trim() || speech,
+        },
+      );
+    } else {
+      clearAlexaConversationState(linked.principalKey);
+    }
+
+    const proactiveSignalText = options.proactiveSignalText?.trim() || '';
+    if (proactiveSignalText) {
+      const candidate = maybeCreateProactiveProfileCandidate({
+        groupFolder: linked.account.groupFolder,
+        chatJid: result.chatJid,
+        channel: 'alexa',
+        text: proactiveSignalText,
+      });
+      if (candidate) {
+        saveAlexaPendingSession(
+          linked.principalKey,
+          linked.account.accessTokenHash,
+          'confirm_profile_fact',
+          {
+            profileFactId: candidate.factId,
+            profileAskText: candidate.askText,
+          },
+        );
+        finalSpeech = `${speech} ${candidate.askText}`;
+        reprompt = 'Say yes to keep it, or no to skip it.';
+      }
+    }
 
     return handlerInput.responseBuilder
-      .speak(speech)
-      .reprompt(DEFAULT_ALEXA_REPROMPT)
+      .speak(finalSpeech)
+      .reprompt(reprompt)
       .getResponse();
   } catch (err) {
     if (err instanceof AlexaTargetGroupMissingError) {
@@ -574,6 +706,10 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
         linked.principalKey,
         linked.account.accessTokenHash,
       );
+      const conversationState = loadAlexaConversationState(
+        linked.principalKey,
+        linked.account.accessTokenHash,
+      );
 
       if (
         pending &&
@@ -598,6 +734,15 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
           authorization.principal,
           linked,
           buildAlexaPersonalPrompt(ALEXA_MY_DAY_INTENT),
+          {
+            conversationState: buildAlexaConversationState(
+              'my_day',
+              'day_brief',
+              'today and what matters most',
+              baseFollowupsForSubject('day_brief'),
+            ),
+            proactiveSignalText: 'what should I know about today',
+          },
         );
       }
 
@@ -610,6 +755,15 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
           authorization.principal,
           linked,
           buildAlexaPersonalPrompt(ALEXA_UPCOMING_SOON_INTENT),
+          {
+            conversationState: buildAlexaConversationState(
+              'upcoming_soon',
+              'event',
+              'what is coming up soon',
+              baseFollowupsForSubject('event'),
+            ),
+            proactiveSignalText: 'what do I have coming up soon',
+          },
         );
       }
 
@@ -622,6 +776,15 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
           authorization.principal,
           linked,
           buildAlexaPersonalPrompt(ALEXA_WHAT_NEXT_INTENT),
+          {
+            conversationState: buildAlexaConversationState(
+              'what_next',
+              'event',
+              'what should I do next',
+              baseFollowupsForSubject('event'),
+            ),
+            proactiveSignalText: 'what should I do next',
+          },
         );
       }
 
@@ -634,6 +797,15 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
           authorization.principal,
           linked,
           buildAlexaPersonalPrompt(ALEXA_BEFORE_NEXT_MEETING_INTENT),
+          {
+            conversationState: buildAlexaConversationState(
+              'before_next_meeting',
+              'meeting',
+              'your next meeting and what to handle before it',
+              baseFollowupsForSubject('meeting'),
+            ),
+            proactiveSignalText: 'what should I handle before my next meeting',
+          },
         );
       }
 
@@ -646,6 +818,15 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
           authorization.principal,
           linked,
           buildAlexaPersonalPrompt(ALEXA_TOMORROW_CALENDAR_INTENT),
+          {
+            conversationState: buildAlexaConversationState(
+              'tomorrow_calendar',
+              'day_brief',
+              'tomorrow and what it looks like',
+              baseFollowupsForSubject('day_brief'),
+            ),
+            proactiveSignalText: 'what is on my calendar tomorrow',
+          },
         );
       }
 
@@ -658,7 +839,207 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
           authorization.principal,
           linked,
           buildAlexaPersonalPrompt(ALEXA_CANDACE_UPCOMING_INTENT),
+          {
+            conversationState: buildAlexaConversationState(
+              'candace_upcoming',
+              'person',
+              'shared plans with Candace',
+              baseFollowupsForSubject('person'),
+              { personName: 'Candace' },
+            ),
+            proactiveSignalText: 'what do Candace and I have coming up',
+          },
         );
+      }
+
+      if (intentName === ALEXA_ANYTHING_ELSE_INTENT) {
+        if (!conversationState) {
+          return handlerInput.responseBuilder
+            .speak(
+              'I can do that once we have a little more context. Start with what you want to know first.',
+            )
+            .reprompt(DEFAULT_ALEXA_REPROMPT)
+            .getResponse();
+        }
+
+        const resolution = resolveAlexaConversationFollowup(
+          'anything else',
+          conversationState,
+        );
+        if (!resolution.ok || !resolution.action) {
+          return handlerInput.responseBuilder
+            .speak(resolution.speech || buildAlexaFallbackSpeech(assistantName))
+            .reprompt(DEFAULT_ALEXA_REPROMPT)
+            .getResponse();
+        }
+
+        return runLinkedAlexaTurn(
+          handlerInput,
+          config,
+          assistantName,
+          authorization.principal,
+          linked,
+          buildAlexaConversationalFollowupPrompt(resolution.action, {
+            conversationSummary: conversationState.summaryText,
+          }),
+          {
+            conversationState: buildAlexaConversationState(
+              conversationState.flowKey,
+              conversationState.subjectKind,
+              conversationState.summaryText,
+              conversationState.supportedFollowups,
+              conversationState.subjectData,
+            ),
+          },
+        );
+      }
+
+      if (intentName === ALEXA_CONVERSATIONAL_FOLLOWUP_INTENT) {
+        const followupText = getIntentSlotValue(
+          handlerInput.requestEnvelope,
+          'followupText',
+        );
+        if (!followupText) {
+          return handlerInput.responseBuilder
+            .speak('What would you like me to follow up on?')
+            .reprompt('Say the follow-up in a few words.')
+            .addElicitSlotDirective('followupText', requestIntent)
+            .getResponse();
+        }
+
+        const resolution = resolveAlexaConversationFollowup(
+          followupText,
+          conversationState,
+        );
+        if (!resolution.ok || !resolution.action) {
+          return handlerInput.responseBuilder
+            .speak(resolution.speech || buildAlexaFallbackSpeech(assistantName))
+            .reprompt(DEFAULT_ALEXA_REPROMPT)
+            .getResponse();
+        }
+
+        if (resolution.action === 'memory_control') {
+          const memoryResult = handlePersonalizationCommand({
+            groupFolder: linked.account.groupFolder,
+            channel: 'alexa',
+            text: followupText,
+            conversationSummary: conversationState?.summaryText,
+            factIdHint: getAlexaConversationReferencedFactId(conversationState),
+          });
+          if (memoryResult.handled) {
+            if (memoryResult.referencedFactId) {
+              saveAlexaConversationState(
+                linked.principalKey,
+                linked.account.accessTokenHash,
+                linked.account.groupFolder,
+                buildAlexaConversationState(
+                  'memory_control',
+                  'memory_fact',
+                  memoryResult.responseText || 'memory control',
+                  ['memory_control'],
+                  { profileFactId: memoryResult.referencedFactId },
+                ),
+              );
+            }
+            return handlerInput.responseBuilder
+              .speak(memoryResult.responseText || 'Okay.')
+              .reprompt(DEFAULT_ALEXA_REPROMPT)
+              .getResponse();
+          }
+        }
+
+        const personName =
+          extractFollowupPersonName(followupText) ||
+          conversationState?.subjectData.personName;
+
+        const nextState =
+          resolution.action === 'shorter'
+            ? buildAlexaConversationState(
+                conversationState?.flowKey || 'followup',
+                conversationState?.subjectKind || 'general',
+                conversationState?.summaryText || 'recent assistant context',
+                conversationState?.supportedFollowups ||
+                  baseFollowupsForSubject('general'),
+                conversationState?.subjectData || {},
+                { responseStyle: 'short_direct' },
+              )
+            : resolution.action === 'switch_person'
+              ? buildAlexaConversationState(
+                  'person_followup',
+                  'person',
+                  `follow-up about ${personName || 'that person'}`,
+                  baseFollowupsForSubject('person'),
+                  { personName },
+                )
+              : buildAlexaConversationState(
+                  conversationState?.flowKey || 'followup',
+                  conversationState?.subjectKind || 'general',
+                  conversationState?.summaryText || 'recent assistant context',
+                  conversationState?.supportedFollowups ||
+                    baseFollowupsForSubject('general'),
+                  conversationState?.subjectData || {},
+                );
+
+        return runLinkedAlexaTurn(
+          handlerInput,
+          config,
+          assistantName,
+          authorization.principal,
+          linked,
+          buildAlexaConversationalFollowupPrompt(resolution.action, {
+            conversationSummary: conversationState?.summaryText,
+            followupText,
+            personName,
+          }),
+          {
+            conversationState: nextState,
+            proactiveSignalText: followupText,
+          },
+        );
+      }
+
+      if (intentName === ALEXA_MEMORY_CONTROL_INTENT) {
+        const memoryCommand = getIntentSlotValue(
+          handlerInput.requestEnvelope,
+          'memoryCommand',
+        );
+        if (!memoryCommand) {
+          return handlerInput.responseBuilder
+            .speak(
+              'You can say remember this, what do you remember about me, or be more direct.',
+            )
+            .reprompt(DEFAULT_ALEXA_REPROMPT)
+            .addElicitSlotDirective('memoryCommand', requestIntent)
+            .getResponse();
+        }
+
+        const memoryResult = handlePersonalizationCommand({
+          groupFolder: linked.account.groupFolder,
+          channel: 'alexa',
+          text: memoryCommand,
+          conversationSummary: conversationState?.summaryText,
+          factIdHint: getAlexaConversationReferencedFactId(conversationState),
+        });
+        if (memoryResult.handled) {
+          if (memoryResult.referencedFactId) {
+            saveAlexaConversationState(
+              linked.principalKey,
+              linked.account.accessTokenHash,
+              linked.account.groupFolder,
+              buildAlexaConversationState(
+                'memory_control',
+                'memory_fact',
+                memoryResult.responseText || 'memory control',
+                ['memory_control'],
+                { profileFactId: memoryResult.referencedFactId },
+              ),
+            );
+          }
+          return handlerInput.responseBuilder
+            .speak(memoryResult.responseText || 'Okay.')
+            .reprompt(DEFAULT_ALEXA_REPROMPT)
+            .getResponse();
+        }
       }
 
       if (intentName === ALEXA_REMIND_BEFORE_NEXT_MEETING_INTENT) {
@@ -754,6 +1135,16 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
           buildAlexaPersonalPrompt(ALEXA_DRAFT_FOLLOW_UP_INTENT, {
             meetingReference,
           }),
+          {
+            conversationState: buildAlexaConversationState(
+              'draft_follow_up',
+              'draft',
+              `a follow-up draft for ${meetingReference}`,
+              baseFollowupsForSubject('draft'),
+              { meetingReference },
+            ),
+            proactiveSignalText: `draft a follow up for ${meetingReference}`,
+          },
         );
       }
 
@@ -814,6 +1205,14 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
           buildAlexaPersonalPrompt(ALEXA_REMIND_BEFORE_NEXT_MEETING_INTENT, {
             leadTimeText: payload.leadTimeText,
           }),
+          {
+            conversationState: buildAlexaConversationState(
+              'before_next_meeting',
+              'meeting',
+              'your next meeting and a reminder before it',
+              baseFollowupsForSubject('meeting'),
+            ),
+          },
         );
       }
 
@@ -827,7 +1226,39 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
           buildAlexaPersonalPrompt(ALEXA_SAVE_FOR_LATER_INTENT, {
             captureText: payload.captureText,
           }),
+          {
+            conversationState: buildAlexaConversationState(
+              'save_for_later',
+              'saved_item',
+              payload.captureText || 'saved follow-through',
+              baseFollowupsForSubject('saved_item'),
+              { savedText: payload.captureText },
+            ),
+          },
         );
+      }
+
+      if (
+        pending.pendingKind === 'confirm_profile_fact' &&
+        payload.profileFactId &&
+        acceptProposedProfileFact(payload.profileFactId)
+      ) {
+        saveAlexaConversationState(
+          linked.principalKey,
+          linked.account.accessTokenHash,
+          linked.account.groupFolder,
+          buildAlexaConversationState(
+            'memory_control',
+            'memory_fact',
+            payload.profileAskText || 'remembered preference',
+            ['memory_control'],
+            { profileFactId: payload.profileFactId },
+          ),
+        );
+        return handlerInput.responseBuilder
+          .speak('Okay. I will remember that.')
+          .reprompt(DEFAULT_ALEXA_REPROMPT)
+          .getResponse();
       }
 
       return handlerInput.responseBuilder
@@ -872,11 +1303,20 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
         return handlerInput.responseBuilder.speak('Okay.').getResponse();
       }
 
+      const payload = parseAlexaSessionPayload(pending);
+
       const speech =
         pending.pendingKind === 'confirm_reminder_before_next_meeting'
           ? `Okay, I will not save that reminder.`
           : pending.pendingKind === 'confirm_save_for_later'
             ? `Okay, I will not save that for later.`
+            : pending.pendingKind === 'confirm_profile_fact'
+              ? (() => {
+                  if (payload.profileFactId) {
+                    rejectProposedProfileFact(payload.profileFactId);
+                  }
+                  return `Okay, I will not keep that.`;
+                })()
             : `Okay, never mind.`;
 
       return handlerInput.responseBuilder.speak(speech).getResponse();
@@ -910,6 +1350,9 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
     handle(handlerInput: HandlerInput) {
       const principal = extractPrincipal(handlerInput.requestEnvelope);
       clearAlexaPendingSession(
+        `alexa:${principal.personId?.trim() || principal.userId.trim()}`,
+      );
+      clearAlexaConversationState(
         `alexa:${principal.personId?.trim() || principal.userId.trim()}`,
       );
       return handlerInput.responseBuilder

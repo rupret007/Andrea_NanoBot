@@ -335,6 +335,8 @@ What to verify:
 
 - concise spoken replies
 - one clarification at a time
+- short follow-ups such as `anything else` and `make that shorter` stay grounded in the immediate Alexa context
+- explicit personalization controls such as `remember this` and `what do you remember about me` stay consent-based and inspectable
 - no Telegram/operator wording
 - no personal data without linking
 - no fake calendar/reminder output

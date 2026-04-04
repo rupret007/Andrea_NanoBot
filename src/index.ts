@@ -82,6 +82,11 @@ import { startIpcWatcher } from './ipc.js';
 import { planSimpleReminder } from './local-reminder.js';
 import { findChannel, formatMessages, formatOutbound } from './router.js';
 import {
+  buildAssistantPromptWithPersonalization,
+  handlePersonalizationCommand,
+  maybeCreateProactiveProfileCandidate,
+} from './assistant-personalization.js';
+import {
   formatCursorGatewaySmokeTestMessage,
   formatCursorGatewayStatusMessage,
   getCursorGatewayStatus,
@@ -606,7 +611,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (!hasTrigger) return true;
   }
 
-  const prompt = formatMessages(missedMessages, TIMEZONE);
+  const prompt = buildAssistantPromptWithPersonalization(
+    formatMessages(missedMessages, TIMEZONE),
+    {
+      channel: 'telegram',
+      groupFolder: group.folder,
+    },
+  );
   const requestPolicy = classifyAssistantRequest(missedMessages);
 
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
@@ -674,6 +685,34 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         );
         return false;
       }
+    }
+  }
+
+  const personalizationTurn = handlePersonalizationCommand({
+    groupFolder: group.folder,
+    channel: 'telegram',
+    text: missedMessages.at(-1)?.content ?? '',
+    replyText: missedMessages.at(-1)?.reply_to?.content,
+  });
+  if (personalizationTurn.handled) {
+    try {
+      await channel.sendMessage(
+        chatJid,
+        personalizationTurn.responseText || 'Okay.',
+      );
+      logger.info(
+        { group: group.name },
+        'Handled personalization request via local assistant fast path',
+      );
+      return true;
+    } catch (err) {
+      lastAgentTimestamp[chatJid] = previousCursor;
+      saveState();
+      logger.warn(
+        { group: group.name, err },
+        'Personalization fast path failed, rolled back cursor for retry',
+      );
+      return false;
     }
   }
 
@@ -821,6 +860,23 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       { group: group.name, route: requestPolicy.route },
       'Recovered blank agent success with user-facing fallback',
     );
+  }
+
+  const proactiveCandidate = maybeCreateProactiveProfileCandidate({
+    groupFolder: group.folder,
+    chatJid,
+    channel: 'telegram',
+    text: missedMessages.at(-1)?.content ?? '',
+  });
+  if (proactiveCandidate) {
+    try {
+      await channel.sendMessage(chatJid, proactiveCandidate.askText);
+    } catch (err) {
+      logger.warn(
+        { group: group.name, err },
+        'Failed to send proactive personalization ask',
+      );
+    }
   }
 
   return true;
@@ -1042,7 +1098,13 @@ async function startMessageLoop(): Promise<void> {
           );
           const messagesToSend =
             allPending.length > 0 ? allPending : groupMessages;
-          const formatted = formatMessages(messagesToSend, TIMEZONE);
+          const formatted = buildAssistantPromptWithPersonalization(
+            formatMessages(messagesToSend, TIMEZONE),
+            {
+              channel: 'telegram',
+              groupFolder: group.folder,
+            },
+          );
 
           if (queue.sendMessage(chatJid, formatted)) {
             logger.debug(

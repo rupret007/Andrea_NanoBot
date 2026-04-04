@@ -9,7 +9,10 @@
             "give me my day",
             "what should I know about today",
             "how does today look",
-            "what is on my calendar today"
+            "what is on my calendar today",
+            "what matters today",
+            "give me a morning brief",
+            "walk me through today"
           ]
         },
         {
@@ -17,7 +20,10 @@
           "samples": [
             "what do I have coming up soon",
             "what is coming up soon",
-            "what is next on my calendar soon"
+            "what is next on my calendar soon",
+            "what do I have coming up",
+            "what should I know about the next few things",
+            "what is coming up for me"
           ]
         },
         {
@@ -25,7 +31,10 @@
           "samples": [
             "what should I do next",
             "what is next",
-            "what should I handle next"
+            "what should I handle next",
+            "what should I do after that",
+            "what is next after that",
+            "what matters next"
           ]
         },
         {
@@ -33,7 +42,10 @@
           "samples": [
             "what should I handle before my next meeting",
             "what do I need to do before my next meeting",
-            "what should I do before my next meeting"
+            "what should I do before my next meeting",
+            "what should I handle before that",
+            "what should I remember before my next meeting",
+            "what should I do before that"
           ]
         },
         {
@@ -41,7 +53,10 @@
           "samples": [
             "what is on my calendar tomorrow",
             "what do I have tomorrow",
-            "what is tomorrow looking like"
+            "what is tomorrow looking like",
+            "what should I know about tomorrow",
+            "walk me through tomorrow",
+            "how busy am I tomorrow"
           ]
         },
         {
@@ -49,7 +64,50 @@
           "samples": [
             "what do Candace and I have coming up",
             "what do Candace and I have soon",
-            "what is coming up for Candace and me"
+            "what is coming up for Candace and me",
+            "what about Candace",
+            "what do Candace and I have going on",
+            "what should Candace and I know about soon"
+          ]
+        },
+        {
+          "name": "AnythingElseIntent",
+          "samples": [
+            "anything else",
+            "what else",
+            "anything more",
+            "what else should I know"
+          ]
+        },
+        {
+          "name": "ConversationalFollowupIntent",
+          "slots": [
+            {
+              "name": "followupText",
+              "type": "AMAZON.SearchQuery"
+            }
+          ],
+          "samples": [
+            "{followupText}",
+            "what about {followupText}",
+            "make that {followupText}",
+            "tell me {followupText}",
+            "follow up with {followupText}"
+          ]
+        },
+        {
+          "name": "MemoryControlIntent",
+          "slots": [
+            {
+              "name": "memoryCommand",
+              "type": "AMAZON.SearchQuery"
+            }
+          ],
+          "samples": [
+            "{memoryCommand}",
+            "remember {memoryCommand}",
+            "forget {memoryCommand}",
+            "what do you remember about {memoryCommand}"
           ]
         },
         {

@@ -10,6 +10,8 @@ V1 keeps the scope intentionally small:
 - reminder-before-next-meeting
 - save-for-later capture
 - short follow-up drafting
+- short-lived conversational follow-ups
+- explicit, consent-based personalization controls
 
 Telegram remains the primary operator surface. Alexa reuses Andrea's existing routing, schedule intelligence, reminders, and follow-through logic.
 
@@ -48,6 +50,9 @@ The Alexa interaction model now exposes a narrow intent set:
 - `BeforeNextMeetingIntent`
 - `TomorrowCalendarIntent`
 - `CandaceUpcomingIntent`
+- `AnythingElseIntent`
+- `ConversationalFollowupIntent`
+- `MemoryControlIntent`
 - `RemindBeforeNextMeetingIntent`
 - `SaveForLaterIntent`
 - `DraftFollowUpIntent`
@@ -69,6 +74,7 @@ Out of scope for this pass:
 - operator-shell commands
 - dashboard concepts
 - rich multi-user household routing
+- hidden or automatic long-term memory
 
 ## 2) Trust And Account Linking
 
@@ -199,7 +205,7 @@ On the current operator host, the first concrete blocker is:
 
 Until that succeeds, real Alexa requests will fail skill/application trust checks even though the listener and HTTPS tunnel are both alive.
 
-## 7) Voice Behavior
+## 7) Conversational Alexa Behavior
 
 Alexa responses are intentionally shorter than Telegram:
 
@@ -208,9 +214,79 @@ Alexa responses are intentionally shorter than Telegram:
 - one clarification at a time
 - yes/no confirmations for reminder and save-for-later flows
 
-Alexa clarification state is stored separately from Telegram/operator state in a short-lived local `alexa_sessions` table.
+Alexa now also keeps a short-lived conversational context that is separate from Telegram/operator state.
 
-## 8) Final Live Acceptance Order
+The conversational layer is intentionally bounded:
+
+- Alexa-only
+- linked-account scoped
+- tied to the resolved Andrea `groupFolder`
+- expires after about 10 minutes
+- keeps only the current conversational subject plus allowed follow-up actions
+
+That enables natural follow-ups like:
+
+- `anything else`
+- `what about Candace`
+- `what's next after that`
+- `before that`
+- `remind me before that`
+- `make that shorter`
+- `save that for later`
+
+If the prior spoken context is too weak or already expired, Andrea falls back honestly with a short clarification instead of guessing.
+
+The short yes/no capture flow for reminders, save-for-later, and memory consent stays in the existing short-lived `alexa_sessions` table. Conversational subject memory is stored separately so it does not collide with those confirmation flows.
+
+## 8) Progressive Personalization And Consent
+
+Andrea now supports explicit, inspectable personalization across Alexa and Telegram.
+
+What Andrea may remember after consent:
+
+- people
+- relationships
+- preferences
+- routines
+- household context
+- conversational style
+- recurring priorities
+
+Important limits:
+
+- Andrea does **not** silently turn Alexa conversations into hidden memory
+- proposed memories are only activated after an explicit `yes` or a direct command such as `remember this`
+- only accepted facts are reused later
+- rejected or disabled facts are not treated as active preferences
+
+Examples of supported control phrases:
+
+- `remember this`
+- `forget that`
+- `what do you remember about me`
+- `what do you remember about Candace`
+- `stop using that`
+- `be less personal`
+- `be more direct`
+- `use less family context`
+- `reset my preferences`
+
+Alexa answers these briefly. Telegram can return a richer structured summary because it has more room.
+
+## 9) Family And Household Context
+
+Andrea can now carry a little more family context when it is explicit or remembered with consent.
+
+High-value examples:
+
+- `Candace and I`
+- `our family`
+- `what do we have going on`
+- `what should I remember for tonight`
+
+Immediate turn context can still shape a single answer, but persistent family or relationship facts only become part of Andrea's profile after consent.
+
+## 10) Final Live Acceptance Order
 
 When the prerequisites are in place, run the final pass in this order:
 

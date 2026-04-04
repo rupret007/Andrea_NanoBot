@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('fs', async () => {
   const actual = await vi.importActual<typeof import('fs')>('fs');
@@ -38,6 +38,7 @@ import {
   runAlexaAssistantTurn,
   type AlexaPrincipal,
 } from './alexa-bridge.js';
+import { _initTestDatabase } from './db.js';
 
 function buildDeps() {
   return {
@@ -80,6 +81,10 @@ function buildDeps() {
 const principal: AlexaPrincipal = {
   userId: 'amzn1.ask.account.test-user',
 };
+
+beforeEach(() => {
+  _initTestDatabase();
+});
 
 describe('resolveAlexaBridgeTarget', () => {
   it('defaults to the main group when one already exists', () => {

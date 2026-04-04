@@ -317,6 +317,9 @@ Practical notes:
 - `ALEXA_ALLOWED_USER_IDS` is still the easiest coarse security rail for a private skill rollout.
 - The Andrea OAuth server now mints the linked access token and maps it to one Andrea `groupFolder`.
 - that OAuth target `groupFolder` must already exist as a valid Andrea registered group.
+- Alexa now supports short-lived multi-turn follow-ups like `anything else`, `what about Candace`, `make that shorter`, and `remind me before that`.
+- Alexa can also handle explicit memory controls like `remember this`, `forget that`, and `what do you remember about me`.
+- remembered personalization stays structured and consent-based; Andrea does not silently store arbitrary conversation history as long-term memory.
 - Use `/alexa_status` in Telegram to confirm that the listener actually started.
 
 Recommended setup order:
@@ -336,6 +339,7 @@ Recommended setup order:
    - token URI: `https://patronymically-nonremedial-london.ngrok-free.dev/alexa/oauth/token`
    - scope: `andrea.alexa.link`
    - auth scheme: `HTTP Basic`
+   - import or rebuild the interaction model from `docs/alexa/interaction-model.en-US.json`
    - once ngrok is already forwarding to `localhost:4300`, the next real blocker is the console-side account-link setup + real `ALEXA_SKILL_ID`, not the local listener
 7. run `/alexa_status`, then perform the linked and unlinked live checks from [ALEXA_VOICE_INTEGRATION.md](ALEXA_VOICE_INTEGRATION.md)
 

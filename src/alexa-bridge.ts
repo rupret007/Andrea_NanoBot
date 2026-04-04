@@ -47,7 +47,10 @@ import {
 } from './group-folder.js';
 import { logger } from './logger.js';
 import { formatMessages, formatOutbound } from './router.js';
+import { buildAssistantPromptWithPersonalization } from './assistant-personalization.js';
 import {
+  type AlexaConversationFollowupAction,
+  type AlexaConversationSubjectKind,
   type AgentThreadState,
   type NewMessage,
   type RegisteredGroup,
@@ -70,6 +73,11 @@ export interface AlexaBridgeConfig {
 export interface AlexaTurnRequest {
   utterance: string;
   principal: AlexaPrincipal;
+  promptContext?: {
+    conversationSummary?: string;
+    conversationSubjectKind?: AlexaConversationSubjectKind;
+    supportedFollowups?: AlexaConversationFollowupAction[];
+  };
 }
 
 export interface AlexaTurnResult {
@@ -481,7 +489,17 @@ export async function runAlexaAssistantTurn(
     const output = await deps.runContainerAgent(
       target.group,
       {
-        prompt: formatMessages([userMessage], TIMEZONE),
+        prompt: buildAssistantPromptWithPersonalization(
+          formatMessages([userMessage], TIMEZONE),
+          {
+            channel: 'alexa',
+            groupFolder: target.group.folder,
+            conversationSummary: request.promptContext?.conversationSummary,
+            conversationSubjectKind:
+              request.promptContext?.conversationSubjectKind,
+            supportedFollowups: request.promptContext?.supportedFollowups,
+          },
+        ),
         sessionId,
         groupFolder: target.group.folder,
         chatJid: target.chatJid,

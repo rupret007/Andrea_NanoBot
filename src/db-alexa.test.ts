@@ -3,19 +3,29 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   _initTestDatabase,
   clearAlexaSession,
+  clearAlexaConversationContext,
   consumeAlexaOAuthAuthorizationCode,
   disableAlexaOAuthRefreshToken,
+  getAlexaConversationContext,
   getAlexaLinkedAccountByAccessTokenHash,
   getAlexaOAuthAuthorizationCode,
   getAlexaOAuthRefreshToken,
   getAlexaSession,
+  getProfileFact,
+  getProfileSubjectByKey,
   insertAlexaOAuthAuthorizationCode,
   insertAlexaOAuthRefreshToken,
+  listProfileFactsForGroup,
   purgeExpiredAlexaSessions,
+  purgeExpiredAlexaConversationContexts,
   purgeExpiredAlexaOAuthAuthorizationCodes,
   purgeExpiredAlexaOAuthRefreshTokens,
+  upsertAlexaConversationContext,
   upsertAlexaLinkedAccount,
+  upsertProfileFact,
+  upsertProfileSubject,
   upsertAlexaSession,
+  updateProfileFactState,
 } from './db.js';
 
 beforeEach(() => {
@@ -122,6 +132,116 @@ describe('alexa sessions', () => {
     expect(
       getAlexaSession('alexa:person-5', 'hash-5', '2026-04-03T00:30:00.000Z'),
     ).toBeUndefined();
+  });
+});
+
+describe('alexa conversation contexts', () => {
+  it('stores, loads, clears, and purges conversation state', () => {
+    upsertAlexaConversationContext({
+      principalKey: 'alexa:person-1',
+      accessTokenHash: 'hash-1',
+      groupFolder: 'main',
+      flowKey: 'my_day',
+      subjectKind: 'day_brief',
+      subjectJson: JSON.stringify({}),
+      summaryText: 'today and what matters most',
+      supportedFollowupsJson: JSON.stringify(['anything_else', 'shorter']),
+      styleJson: JSON.stringify({}),
+      createdAt: '2026-04-03T00:00:00.000Z',
+      expiresAt: '2026-04-03T01:00:00.000Z',
+      updatedAt: '2026-04-03T00:00:00.000Z',
+    });
+
+    expect(
+      getAlexaConversationContext(
+        'alexa:person-1',
+        'hash-1',
+        '2026-04-03T00:30:00.000Z',
+      ),
+    ).toMatchObject({
+      flowKey: 'my_day',
+      groupFolder: 'main',
+    });
+
+    clearAlexaConversationContext('alexa:person-1');
+    expect(
+      getAlexaConversationContext(
+        'alexa:person-1',
+        'hash-1',
+        '2026-04-03T00:30:00.000Z',
+      ),
+    ).toBeUndefined();
+
+    upsertAlexaConversationContext({
+      principalKey: 'alexa:person-2',
+      accessTokenHash: 'hash-2',
+      groupFolder: 'main',
+      flowKey: 'my_day',
+      subjectKind: 'day_brief',
+      subjectJson: JSON.stringify({}),
+      summaryText: 'today and what matters most',
+      supportedFollowupsJson: JSON.stringify(['anything_else']),
+      styleJson: JSON.stringify({}),
+      createdAt: '2026-04-03T00:00:00.000Z',
+      expiresAt: '2026-04-03T00:05:00.000Z',
+      updatedAt: '2026-04-03T00:00:00.000Z',
+    });
+
+    expect(
+      purgeExpiredAlexaConversationContexts('2026-04-03T00:06:00.000Z'),
+    ).toBe(1);
+  });
+});
+
+describe('profile subjects and facts', () => {
+  it('stores and updates structured profile facts', () => {
+    upsertProfileSubject({
+      id: 'main:self:self',
+      groupFolder: 'main',
+      kind: 'self',
+      canonicalName: 'self',
+      displayName: 'you',
+      createdAt: '2026-04-03T00:00:00.000Z',
+      updatedAt: '2026-04-03T00:00:00.000Z',
+      disabledAt: null,
+    });
+
+    const subject = getProfileSubjectByKey('main', 'self', 'self');
+    expect(subject?.displayName).toBe('you');
+
+    upsertProfileFact({
+      id: 'fact-1',
+      groupFolder: 'main',
+      subjectId: 'main:self:self',
+      category: 'conversational_style',
+      factKey: 'response_style',
+      valueJson: JSON.stringify({ mode: 'short_direct' }),
+      state: 'accepted',
+      sourceChannel: 'alexa',
+      sourceSummary: 'User prefers short direct answers.',
+      createdAt: '2026-04-03T00:00:00.000Z',
+      updatedAt: '2026-04-03T00:00:00.000Z',
+      decidedAt: '2026-04-03T00:00:00.000Z',
+    });
+
+    expect(getProfileFact('fact-1')).toMatchObject({
+      factKey: 'response_style',
+      state: 'accepted',
+    });
+
+    expect(
+      listProfileFactsForGroup('main', ['accepted']).map((fact) => fact.factKey),
+    ).toContain('response_style');
+
+    expect(
+      updateProfileFactState(
+        'fact-1',
+        'disabled',
+        '2026-04-03T01:00:00.000Z',
+        '2026-04-03T01:00:00.000Z',
+      ),
+    ).toBe(true);
+    expect(getProfileFact('fact-1')?.state).toBe('disabled');
   });
 });
 

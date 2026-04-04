@@ -8,6 +8,10 @@ export const ALEXA_REMIND_BEFORE_NEXT_MEETING_INTENT =
   'RemindBeforeNextMeetingIntent';
 export const ALEXA_SAVE_FOR_LATER_INTENT = 'SaveForLaterIntent';
 export const ALEXA_DRAFT_FOLLOW_UP_INTENT = 'DraftFollowUpIntent';
+export const ALEXA_ANYTHING_ELSE_INTENT = 'AnythingElseIntent';
+export const ALEXA_CONVERSATIONAL_FOLLOWUP_INTENT =
+  'ConversationalFollowupIntent';
+export const ALEXA_MEMORY_CONTROL_INTENT = 'MemoryControlIntent';
 
 export const ALEXA_V1_PERSONAL_INTENTS = new Set<string>([
   ALEXA_MY_DAY_INTENT,
@@ -19,10 +23,13 @@ export const ALEXA_V1_PERSONAL_INTENTS = new Set<string>([
   ALEXA_REMIND_BEFORE_NEXT_MEETING_INTENT,
   ALEXA_SAVE_FOR_LATER_INTENT,
   ALEXA_DRAFT_FOLLOW_UP_INTENT,
+  ALEXA_ANYTHING_ELSE_INTENT,
+  ALEXA_CONVERSATIONAL_FOLLOWUP_INTENT,
+  ALEXA_MEMORY_CONTROL_INTENT,
 ]);
 
 const SPOKEN_STYLE_SUFFIX =
-  ' Reply for Alexa with one short first sentence and at most two short supporting statements. No markdown. No bullet list.';
+  ' Reply for Alexa with one strong lead sentence and at most two short supporting statements. Keep the rhythm natural, warm, and spoken. No markdown. No bullet list.';
 
 function trimSingleLine(value: string | undefined): string | undefined {
   const normalized = value?.replace(/\s+/g, ' ').trim();
@@ -39,42 +46,85 @@ export function buildAlexaPersonalPrompt(
     leadTimeText?: string;
     captureText?: string;
     meetingReference?: string;
+    conversationSummary?: string;
+    personName?: string;
   } = {},
 ): string {
   switch (intentName) {
     case ALEXA_MY_DAY_INTENT:
-      return `Give me my day. Focus on today's calendar, obligations, reminders, and anything I should know.${SPOKEN_STYLE_SUFFIX}`;
+      return `Give me my day. Focus on today's calendar, obligations, reminders, and what matters most right now. Make it feel like a natural morning brief, not a list.${SPOKEN_STYLE_SUFFIX}`;
     case ALEXA_UPCOMING_SOON_INTENT:
-      return `What do I have coming up soon? Focus on the next few meaningful events or commitments.${SPOKEN_STYLE_SUFFIX}`;
+      return `What do I have coming up soon? Focus on the next few meaningful events or commitments and what I should be aware of around them.${SPOKEN_STYLE_SUFFIX}`;
     case ALEXA_WHAT_NEXT_INTENT:
-      return `What should I do next based on my schedule, reminders, and follow-through context?${SPOKEN_STYLE_SUFFIX}`;
+      return `What should I do next based on my schedule, reminders, and follow-through context? Prioritize the most useful next move.${SPOKEN_STYLE_SUFFIX}`;
     case ALEXA_BEFORE_NEXT_MEETING_INTENT:
-      return `What should I handle before my next meeting?${SPOKEN_STYLE_SUFFIX}`;
+      return `What should I handle before my next meeting? Focus on the most important prep or follow-through.${SPOKEN_STYLE_SUFFIX}`;
     case ALEXA_TOMORROW_CALENDAR_INTENT:
-      return `What's on my calendar tomorrow? Mention timed events and any notable free or busy guidance.${SPOKEN_STYLE_SUFFIX}`;
+      return `What's on my calendar tomorrow? Mention timed events, notable free or busy guidance, and anything important to remember.${SPOKEN_STYLE_SUFFIX}`;
     case ALEXA_CANDACE_UPCOMING_INTENT:
-      return `What do Candace and I have coming up?${SPOKEN_STYLE_SUFFIX}`;
+      return `What do Candace and I have coming up? Focus on shared plans, family logistics, and anything useful to keep in mind.${SPOKEN_STYLE_SUFFIX}`;
     case ALEXA_REMIND_BEFORE_NEXT_MEETING_INTENT:
       return `Set a reminder ${trimSingleLine(values.leadTimeText) || '30 minutes'} before my next meeting, then confirm briefly once it is saved.${SPOKEN_STYLE_SUFFIX}`;
     case ALEXA_SAVE_FOR_LATER_INTENT:
       return `Save this for later as personal follow-through: ${trimSingleLine(values.captureText) || 'unspecified note'}. Confirm briefly once it is captured.${SPOKEN_STYLE_SUFFIX}`;
     case ALEXA_DRAFT_FOLLOW_UP_INTENT:
       return `Draft a short follow-up for ${trimSingleLine(values.meetingReference) || 'my next meeting'}. Keep it concise and spoken so I can refine it later.${SPOKEN_STYLE_SUFFIX}`;
+    case ALEXA_ANYTHING_ELSE_INTENT:
+      return `Continue the current assistant conversation. Based on this context: ${trimSingleLine(values.conversationSummary) || 'recent personal assistant context'}. Tell me only the next most helpful thing, without repeating the same points.${SPOKEN_STYLE_SUFFIX}`;
+    case ALEXA_CONVERSATIONAL_FOLLOWUP_INTENT:
+      return `Continue the current assistant conversation using this follow-up: ${trimSingleLine(values.captureText) || 'unspecified follow up'}. Ground it in this context: ${trimSingleLine(values.conversationSummary) || 'recent personal assistant context'}.${SPOKEN_STYLE_SUFFIX}`;
+    case ALEXA_MEMORY_CONTROL_INTENT:
+      return `Handle this memory-control request briefly and clearly: ${trimSingleLine(values.captureText) || 'unspecified memory request'}.${SPOKEN_STYLE_SUFFIX}`;
     default:
       return `Help me with this request: ${trimSingleLine(values.captureText) || trimSingleLine(values.meetingReference) || trimSingleLine(values.leadTimeText) || 'unknown request'}.${SPOKEN_STYLE_SUFFIX}`;
   }
 }
 
+export function buildAlexaConversationalFollowupPrompt(
+  action: string,
+  values: {
+    conversationSummary?: string;
+    followupText?: string;
+    personName?: string;
+  } = {},
+): string {
+  const summary =
+    trimSingleLine(values.conversationSummary) ||
+    'recent personal assistant context';
+  const personName = trimSingleLine(values.personName) || 'that person';
+
+  switch (action) {
+    case 'anything_else':
+      return `Continue this Alexa conversation. Based on this context: ${summary}. Tell me only the next most useful thing I should know.${SPOKEN_STYLE_SUFFIX}`;
+    case 'shorter':
+      return `Say the last answer again, but shorter and more direct. Keep the meaning, remove repetition, and stay grounded in this context: ${summary}.${SPOKEN_STYLE_SUFFIX}`;
+    case 'before_that':
+      return `Based on this context: ${summary}. Tell me what I should handle before that.${SPOKEN_STYLE_SUFFIX}`;
+    case 'after_that':
+      return `Based on this context: ${summary}. Tell me what comes next after that.${SPOKEN_STYLE_SUFFIX}`;
+    case 'switch_person':
+      return `Stay in the same assistant conversation, but shift the focus to ${personName}. Use this context: ${summary}.${SPOKEN_STYLE_SUFFIX}`;
+    case 'remind_before_that':
+      return `Set a reminder before the meeting or event described here: ${summary}. Confirm briefly once it is saved.${SPOKEN_STYLE_SUFFIX}`;
+    case 'save_that':
+      return `Save the key follow-through item from this context for later: ${summary}. Confirm briefly once it is captured.${SPOKEN_STYLE_SUFFIX}`;
+    case 'draft_followup':
+      return `Draft a short follow-up for the meeting or topic described here: ${summary}. Keep it concise and spoken.${SPOKEN_STYLE_SUFFIX}`;
+    default:
+      return `Continue this Alexa conversation using this follow-up: ${trimSingleLine(values.followupText) || 'unspecified follow up'}. Ground it in this context: ${summary}.${SPOKEN_STYLE_SUFFIX}`;
+  }
+}
+
 export function buildAlexaHelpSpeech(assistantName: string): string {
-  return `${assistantName} can tell you about your day, what is next, what is on your calendar tomorrow, and help with a reminder before your next meeting.`;
+  return `${assistantName} can brief you on today, tell you what is next, talk through tomorrow, help with shared plans, and stay with short follow-up questions like anything else or remind me before that.`;
 }
 
 export function buildAlexaWelcomeSpeech(assistantName: string): string {
-  return `${assistantName} is ready. You can ask for your day, what is next, what is on your calendar tomorrow, or a reminder before your next meeting.`;
+  return `${assistantName} is ready. Ask about today, what is next, tomorrow, shared plans with Candace, or follow up naturally from there.`;
 }
 
 export function buildAlexaFallbackSpeech(assistantName: string): string {
-  return `${assistantName} works best with short personal assistant requests like what is next, what is on your calendar tomorrow, or remind me before my next meeting.`;
+  return `${assistantName} works best with short personal assistant requests like what matters today, what is next, what is on my calendar tomorrow, or remind me before that.`;
 }
 
 export function buildReminderLeadTimeQuestion(assistantName: string): string {

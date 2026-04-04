@@ -229,7 +229,8 @@ export type AlexaPendingSessionKind =
   | 'confirm_reminder_before_next_meeting'
   | 'capture_save_for_later_content'
   | 'confirm_save_for_later'
-  | 'capture_follow_up_reference';
+  | 'capture_follow_up_reference'
+  | 'confirm_profile_fact';
 
 export interface AlexaPendingSession {
   principalKey: string;
@@ -238,6 +239,92 @@ export interface AlexaPendingSession {
   payloadJson: string;
   expiresAt: string;
   updatedAt: string;
+}
+
+export type AlexaConversationSubjectKind =
+  | 'day_brief'
+  | 'meeting'
+  | 'event'
+  | 'person'
+  | 'household'
+  | 'saved_item'
+  | 'draft'
+  | 'memory_fact'
+  | 'general';
+
+export type AlexaConversationFollowupAction =
+  | 'anything_else'
+  | 'shorter'
+  | 'before_that'
+  | 'after_that'
+  | 'switch_person'
+  | 'remind_before_that'
+  | 'save_that'
+  | 'draft_followup'
+  | 'memory_control';
+
+export interface AlexaConversationContext {
+  principalKey: string;
+  accessTokenHash: string;
+  groupFolder: string;
+  flowKey: string;
+  subjectKind: AlexaConversationSubjectKind;
+  subjectJson: string;
+  summaryText: string;
+  supportedFollowupsJson: string;
+  styleJson: string;
+  createdAt: string;
+  expiresAt: string;
+  updatedAt: string;
+}
+
+export type ProfileSubjectKind = 'self' | 'person' | 'household';
+
+export interface ProfileSubject {
+  id: string;
+  groupFolder: string;
+  kind: ProfileSubjectKind;
+  canonicalName: string;
+  displayName: string;
+  createdAt: string;
+  updatedAt: string;
+  disabledAt?: string | null;
+}
+
+export type ProfileFactCategory =
+  | 'people'
+  | 'relationships'
+  | 'preferences'
+  | 'routines'
+  | 'household_context'
+  | 'conversational_style'
+  | 'recurring_priorities';
+
+export type ProfileFactState =
+  | 'proposed'
+  | 'accepted'
+  | 'rejected'
+  | 'disabled';
+
+export interface ProfileFact {
+  id: string;
+  groupFolder: string;
+  subjectId: string;
+  category: ProfileFactCategory;
+  factKey: string;
+  valueJson: string;
+  state: ProfileFactState;
+  sourceChannel: string;
+  sourceSummary: string;
+  createdAt: string;
+  updatedAt: string;
+  decidedAt?: string | null;
+}
+
+export interface ProfileFactWithSubject extends ProfileFact {
+  subjectKind: ProfileSubjectKind;
+  subjectCanonicalName: string;
+  subjectDisplayName: string;
 }
 
 export interface AlexaOAuthAuthorizationCodeRecord {
