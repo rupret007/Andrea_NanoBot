@@ -30,18 +30,19 @@ describe('helper boundary wiring', () => {
 
     expect(source).toContain('requestPolicy.guidance');
     expect(source).toContain('NANOCLAW_ALLOWED_MCP_TOOLS');
-    expect(source).toContain('...requestPolicy.mcpTools');
+    expect(source).toContain('requestPolicy.mcpTools');
     expect(source).toContain('mcp__nanoclaw__search_amazon_products');
     expect(source).toContain('mcp__nanoclaw__request_amazon_purchase');
     expect(source).toContain('mcp__nanoclaw__approve_amazon_purchase_request');
   });
 
-  it('retries one transient direct-assistant failure without exposing helper errors first', () => {
+  it('retries direct-assistant execution failures without dropping request-policy guardrails', () => {
     const source = readRepoFile('container/agent-runner/src/index.ts');
 
-    expect(source).toContain("route === 'direct_assistant'");
-    expect(source).toContain('suppressFirstErrorForRetry');
-    expect(source).toContain('suppressedTransientError');
+    expect(source).toContain('planDirectAssistantRecoveryRetry');
+    expect(source).toContain('classifyDirectAssistantError');
+    expect(source).toContain('retry_suppressed_first_error');
+    expect(source).toContain('retry_started');
     expect(source).toContain(
       '!directAssistantMinimalMode && options.disableMcpServer !== true',
     );
@@ -55,11 +56,11 @@ describe('helper boundary wiring', () => {
     expect(source).toContain(
       'Retrying direct assistant request in recovery mode',
     );
-    expect(source).toContain('disableMcpServer');
-    expect(source).toContain(
-      'Answer directly and concisely from the user prompt without helper orchestration.',
-    );
-  });
+      expect(source).toContain('disableMcpServer');
+      expect(source).toContain(
+        'Answer directly and concisely from the user prompt without helper orchestration.',
+      );
+    });
 
   it('keeps send_message as Andrea-only instead of advertising a second bot identity', () => {
     const source = readRepoFile('container/agent-runner/src/ipc-mcp-stdio.ts');

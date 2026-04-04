@@ -3,6 +3,7 @@ import path from 'path';
 
 import { readEnvFile } from './env.js';
 import { isValidTimezone } from './timezone.js';
+import type { AgentRuntimeName } from './types.js';
 
 // Read config values from .env (falls back to process.env).
 const envConfig = readEnvFile([
@@ -10,6 +11,9 @@ const envConfig = readEnvFile([
   'ASSISTANT_HAS_OWN_NUMBER',
   'AGENT_RUNTIME_DEFAULT',
   'AGENT_RUNTIME_FALLBACK',
+  'ANDREA_OPENAI_BACKEND_ENABLED',
+  'ANDREA_OPENAI_BACKEND_URL',
+  'ANDREA_OPENAI_BACKEND_TIMEOUT_MS',
   'CODEX_LOCAL_ENABLED',
   'CODEX_LOCAL_MODEL',
   'CONTAINER_RUNTIME',
@@ -62,7 +66,7 @@ function normalizeConfiguredContainerRuntime(
 
 function normalizeConfiguredAgentRuntime(
   value: string | undefined,
-): 'codex_local' | 'openai_cloud' | 'claude_legacy' | undefined {
+): AgentRuntimeName | undefined {
   if (!value) return undefined;
   if (
     value === 'codex_local' ||
@@ -86,10 +90,23 @@ export const AGENT_RUNTIME_FALLBACK =
   normalizeConfiguredAgentRuntime(
     process.env.AGENT_RUNTIME_FALLBACK || envConfig.AGENT_RUNTIME_FALLBACK,
   ) || 'openai_cloud';
+export const ANDREA_OPENAI_BACKEND_ENABLED =
+  (process.env.ANDREA_OPENAI_BACKEND_ENABLED ||
+    envConfig.ANDREA_OPENAI_BACKEND_ENABLED ||
+    'false') === 'true';
+export const ANDREA_OPENAI_BACKEND_URL =
+  process.env.ANDREA_OPENAI_BACKEND_URL ||
+  envConfig.ANDREA_OPENAI_BACKEND_URL ||
+  'http://127.0.0.1:3210';
+export const ANDREA_OPENAI_BACKEND_TIMEOUT_MS = parseInt(
+  process.env.ANDREA_OPENAI_BACKEND_TIMEOUT_MS ||
+    envConfig.ANDREA_OPENAI_BACKEND_TIMEOUT_MS ||
+    '15000',
+  10,
+);
 export const CODEX_LOCAL_ENABLED =
-  (process.env.CODEX_LOCAL_ENABLED ||
-    envConfig.CODEX_LOCAL_ENABLED ||
-    'true') !== 'false';
+  (process.env.CODEX_LOCAL_ENABLED || envConfig.CODEX_LOCAL_ENABLED || 'true') !==
+  'false';
 export const CODEX_LOCAL_MODEL =
   process.env.CODEX_LOCAL_MODEL || envConfig.CODEX_LOCAL_MODEL || '';
 export const CONTAINER_RUNTIME = normalizeConfiguredContainerRuntime(

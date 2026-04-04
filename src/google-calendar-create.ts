@@ -733,6 +733,17 @@ export function isPendingGoogleCalendarCreateExpired(
   return now.getTime() - createdAt > DEFAULT_CONFIRMATION_TTL_MS;
 }
 
+function resolvePendingGoogleCalendarCreateReferenceNow(
+  state: PendingGoogleCalendarCreateState,
+  now?: Date,
+): Date {
+  if (now) {
+    return now;
+  }
+  const createdAt = new Date(state.createdAt);
+  return Number.isNaN(createdAt.getTime()) ? new Date() : createdAt;
+}
+
 export function formatGoogleCalendarCreatePrompt(
   state: PendingGoogleCalendarCreateState,
 ): string {
@@ -950,6 +961,7 @@ export function advancePendingGoogleCalendarCreate(
   state: PendingGoogleCalendarCreateState,
 ): PendingGoogleCalendarCreateResult {
   const normalized = normalizeMessage(message);
+  const referenceNow = resolvePendingGoogleCalendarCreateReferenceNow(state);
   if (!normalized) {
     return { kind: 'no_match' };
   }
@@ -964,7 +976,11 @@ export function advancePendingGoogleCalendarCreate(
   if (state.step === 'choose_calendar') {
     const selection = matchCalendarSelection(normalized, state.calendars);
     if (!selection) {
-      const adjustedDraft = parsePendingDraftAdjustment(normalized, state);
+      const adjustedDraft = parsePendingDraftAdjustment(
+        normalized,
+        state,
+        referenceNow,
+      );
       if (!adjustedDraft) {
         return { kind: 'no_match' };
       }
@@ -1050,7 +1066,11 @@ export function advancePendingGoogleCalendarCreate(
     };
   }
 
-  const anchorRequest = parseAfterAnchorRequest(normalized, state);
+  const anchorRequest = parseAfterAnchorRequest(
+    normalized,
+    state,
+    referenceNow,
+  );
   if (anchorRequest) {
     return {
       kind: 'resolve_anchor',
@@ -1060,7 +1080,11 @@ export function advancePendingGoogleCalendarCreate(
     };
   }
 
-  const adjustedDraft = parsePendingDraftAdjustment(normalized, state);
+  const adjustedDraft = parsePendingDraftAdjustment(
+    normalized,
+    state,
+    referenceNow,
+  );
   if (adjustedDraft) {
     const nextState: PendingGoogleCalendarCreateState = {
       ...state,

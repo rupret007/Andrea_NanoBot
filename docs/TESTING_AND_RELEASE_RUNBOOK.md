@@ -51,6 +51,7 @@ It includes:
 Implementation note:
 
 - `test:major` and `test:major:ci` already run with Node 22 through `npx -p node@22`
+- if the host default `node` is not 22, do not use that runtime for DB-backed Alexa checks; unsupported runtimes can fail `better-sqlite3` with ABI mismatch errors that are not Alexa feature failures
 
 ## 3. Stability Gate
 
@@ -163,19 +164,51 @@ Run:
 
 Do not confuse desktop bridge readiness with Cursor Cloud readiness.
 
-### Optional Alexa Validation
+## 7. Alexa Validation
 
-Only run this if Alexa is configured and the HTTPS ingress is live.
+Only run a real Alexa acceptance pass if all of these are configured:
 
-Run:
+- Node `22.22.2` on the host
+- `ALEXA_SKILL_ID`
+- local Alexa listener config
+- local Andrea OAuth config:
+  - `ALEXA_OAUTH_CLIENT_ID`
+  - `ALEXA_OAUTH_CLIENT_SECRET`
+  - `ALEXA_OAUTH_SCOPE`
+- HTTPS ingress or tunnel
+- Alexa console skill endpoint
+- Alexa console Authorization Code Grant account linking
+- a valid Andrea group for the OAuth target `groupFolder`
 
-- `/alexa-status`
-- one Alexa console or device request against the currently configured skill
+If any of those are missing, record Alexa as **code-ready but setup-blocked** instead of failing the release gate for missing external setup.
 
-Confirm:
+Current truthful closeout note:
 
-- status says the listener is enabled and healthy
-- requests route into the intended Andrea group context
+- repo-side and near-live Alexa proof can be green without a live signed Alexa utterance
+- do not claim full live Alexa acceptance until one real signed Alexa request succeeds from the app, a device, or an authenticated simulator session
+
+When configured, validate in this order:
+
+1. `/alexa-status`
+2. local `GET /alexa/oauth/health`
+3. public `GET /alexa/oauth/health`
+4. unlinked launch
+5. unlinked help
+6. one unlinked personal-data intent
+7. linked my day
+8. linked `anything else`
+9. linked `what about Candace` or `what about Travis`
+10. linked `remind me before that`
+11. one preference or explainability turn
+
+Check:
+
+- concise spoken output
+- one clarification at a time
+- daily guidance sounds specific and useful, not generic
+- no personal data without linking
+- no Telegram/operator wording leaks
+- no fake calendar or reminder content
 
 ### Optional Amazon Validation
 
@@ -191,7 +224,7 @@ Optional if safe:
 - `/purchase-request <asin> <offer_id> 1`
 - `/purchase-approve <request_id> <approval_code>` only in trial mode or another intentionally disposable validation setup
 
-## 7. Restart And Verify
+## 8. Restart And Verify
 
 After meaningful runtime or operator-surface changes:
 
@@ -210,7 +243,7 @@ Then rerun a small live smoke:
 - `/help`
 - `/cursor_status`
 
-## 8. Failure Handling
+## 9. Failure Handling
 
 ### `CREDENTIAL_RUNTIME_PROBE: failed`
 
@@ -238,7 +271,7 @@ Then rerun a small live smoke:
 - treat it as optional unless you specifically want Cursor-backed runtime routing
 - check 9router endpoint/auth/model settings separately from Cloud/desktop
 
-## 9. Release Gate
+## 10. Release Gate
 
 Before pushing a release:
 

@@ -4,6 +4,13 @@ All notable changes to NanoClaw will be documented in this file.
 
 For detailed release notes, see the [full changelog on the documentation site](https://docs.nanoclaw.dev/changelog).
 
+## [Unreleased] - 2026-04-04
+
+- Landed Andrea Alexa Companion Mode on the mainline integration path, including daily guidance, stronger follow-ups, household-aware phrasing, and explicit consent-based personalization.
+- Aligned the Alexa voice runbooks around the truthful current state: Node `22.22.2`, real OAuth account linking, strong near-live proof, and one remaining real signed Alexa utterance for full live acceptance when it has not been reproven on the host.
+- Preserved the merged shared-shell model with `/cursor` as the primary operator surface, reply-linked runtime follow-up, and a clearer runtime/backend-lane ownership story.
+- Polished repo-facing docs and release guidance so startup, runtime, Telegram operator testing, and Alexa validation all describe the same current behavior.
+
 ## [1.2.35] - 2026-03-26
 
 - [BREAKING] OneCLI Agent Vault replaces the built-in credential proxy. Existing `.env` credentials must be migrated to the vault. Run `/init-onecli` to install OneCLI and migrate credentials.

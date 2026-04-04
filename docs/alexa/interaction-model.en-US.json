@@ -4,22 +4,218 @@
       "invocationName": "andrea assistant",
       "intents": [
         {
-          "name": "AskAndreaIntent",
+          "name": "MyDayIntent",
+          "samples": [
+            "give me my day",
+            "what should I know about today",
+            "how does today look",
+            "what is on my calendar today",
+            "what matters today",
+            "give me a morning brief",
+            "walk me through today",
+            "give me a quick brief for today"
+          ]
+        },
+        {
+          "name": "UpcomingSoonIntent",
+          "samples": [
+            "what do I have coming up soon",
+            "what is coming up soon",
+            "what is next on my calendar soon",
+            "what do I have coming up",
+            "what should I know about the next few things",
+            "what is coming up for me"
+          ]
+        },
+        {
+          "name": "WhatNextIntent",
+          "samples": [
+            "what should I do next",
+            "what is next",
+            "what should I handle next",
+            "what should I do after that",
+            "what is next after that",
+            "what matters next",
+            "what should I handle now"
+          ]
+        },
+        {
+          "name": "BeforeNextMeetingIntent",
+          "samples": [
+            "what should I handle before my next meeting",
+            "what do I need to do before my next meeting",
+            "what should I do before my next meeting",
+            "what should I handle before that",
+            "what should I remember before my next meeting",
+            "what should I do before that"
+          ]
+        },
+        {
+          "name": "WhatMattersMostTodayIntent",
+          "samples": [
+            "what matters most today",
+            "what is the main thing today",
+            "what should I prioritize today",
+            "what should I focus on first today",
+            "what is the biggest thing I should handle today"
+          ]
+        },
+        {
+          "name": "AnythingImportantIntent",
+          "samples": [
+            "anything I should know",
+            "anything important",
+            "is there anything important today",
+            "should I be worried about anything",
+            "what should I keep in mind"
+          ]
+        },
+        {
+          "name": "WhatAmIForgettingIntent",
+          "samples": [
+            "what am I forgetting",
+            "what am I missing",
+            "what am I overlooking",
+            "what have I not handled yet",
+            "what loose ends do I have"
+          ]
+        },
+        {
+          "name": "TomorrowCalendarIntent",
+          "samples": [
+            "what is on my calendar tomorrow",
+            "what do I have tomorrow",
+            "what is tomorrow looking like",
+            "what should I know about tomorrow",
+            "walk me through tomorrow",
+            "how busy am I tomorrow"
+          ]
+        },
+        {
+          "name": "EveningResetIntent",
+          "samples": [
+            "give me an evening reset",
+            "what should I remember tonight",
+            "what should I wrap up today",
+            "what should I handle before I leave",
+            "what should I tee up for tomorrow"
+          ]
+        },
+        {
+          "name": "CandaceUpcomingIntent",
+          "samples": [
+            "what do Candace and I have coming up",
+            "what do Candace and I have soon",
+            "what is coming up for Candace and me",
+            "what about Candace",
+            "what do Candace and I have going on",
+            "what should Candace and I know about soon",
+            "what do Candace and I have this weekend"
+          ]
+        },
+        {
+          "name": "FamilyUpcomingIntent",
+          "samples": [
+            "what does the family have going on",
+            "anything the family needs from me today",
+            "what do we have this weekend",
+            "what should I remember before tonight",
+            "what does our family have coming up"
+          ]
+        },
+        {
+          "name": "AnythingElseIntent",
+          "samples": [
+            "anything else",
+            "what else",
+            "anything more",
+            "what else should I know",
+            "say more"
+          ]
+        },
+        {
+          "name": "ConversationalFollowupIntent",
           "slots": [
             {
-              "name": "utterance",
+              "name": "followupText",
               "type": "AMAZON.SearchQuery"
             }
           ],
           "samples": [
-            "{utterance}",
-            "ask Andrea to {utterance}",
-            "tell Andrea to {utterance}",
-            "help me {utterance}",
-            "research {utterance}",
-            "remind me to {utterance}",
-            "look up {utterance}"
+            "{followupText}",
+            "what about {followupText}",
+            "make that {followupText}",
+            "tell me {followupText}",
+            "follow up with {followupText}",
+            "say more about {followupText}"
           ]
+        },
+        {
+          "name": "MemoryControlIntent",
+          "slots": [
+            {
+              "name": "memoryCommand",
+              "type": "AMAZON.SearchQuery"
+            }
+          ],
+          "samples": [
+            "{memoryCommand}",
+            "remember {memoryCommand}",
+            "forget {memoryCommand}",
+            "what do you remember about {memoryCommand}",
+            "why did you say {memoryCommand}",
+            "what are you using to personalize {memoryCommand}"
+          ]
+        },
+        {
+          "name": "RemindBeforeNextMeetingIntent",
+          "slots": [
+            {
+              "name": "leadTime",
+              "type": "AMAZON.SearchQuery"
+            }
+          ],
+          "samples": [
+            "remind me before my next meeting",
+            "remind me {leadTime} before my next meeting",
+            "set a reminder {leadTime} before my next meeting"
+          ]
+        },
+        {
+          "name": "SaveForLaterIntent",
+          "slots": [
+            {
+              "name": "captureText",
+              "type": "AMAZON.SearchQuery"
+            }
+          ],
+          "samples": [
+            "save that for later",
+            "save {captureText} for later",
+            "remember {captureText} for later"
+          ]
+        },
+        {
+          "name": "DraftFollowUpIntent",
+          "slots": [
+            {
+              "name": "meetingReference",
+              "type": "AMAZON.SearchQuery"
+            }
+          ],
+          "samples": [
+            "draft a follow up",
+            "draft a follow up for this meeting",
+            "draft a follow up for {meetingReference}"
+          ]
+        },
+        {
+          "name": "AMAZON.YesIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.NoIntent",
+          "samples": []
         },
         {
           "name": "AMAZON.HelpIntent",
@@ -35,10 +231,6 @@
         },
         {
           "name": "AMAZON.FallbackIntent",
-          "samples": []
-        },
-        {
-          "name": "AMAZON.NavigateHomeIntent",
           "samples": []
         }
       ],

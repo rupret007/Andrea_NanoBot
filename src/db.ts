@@ -6,14 +6,25 @@ import { ASSISTANT_NAME, DATA_DIR, STORE_DIR } from './config.js';
 import { assertValidGroupFolder, isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
 import type {
-  AgentThreadState,
   ListRuntimeJobsRequest,
   RuntimeOrchestrationJob,
   RuntimeOrchestrationJobList,
 } from './andrea-runtime/types.js';
 import {
+  AlexaConversationContext,
+  AlexaLinkedAccount,
+  AlexaOAuthAuthorizationCodeRecord,
+  AlexaOAuthRefreshTokenRecord,
+  AlexaPendingSession,
+  AgentThreadState,
   NewMessage,
+  ProfileFact,
+  ProfileFactWithSubject,
+  ProfileSubject,
   RegisteredGroup,
+  RuntimeBackendCardContextRecord,
+  RuntimeBackendChatSelectionRecord,
+  RuntimeBackendJobCacheRecord,
   ScheduledTask,
   TaskRunLog,
 } from './types.js';
@@ -130,6 +141,149 @@ function createSchema(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_agent_threads_updated
       ON agent_threads(updated_at DESC);
+    CREATE TABLE IF NOT EXISTS runtime_backend_jobs (
+      backend_id TEXT NOT NULL,
+      job_id TEXT NOT NULL,
+      group_folder TEXT NOT NULL,
+      chat_jid TEXT NOT NULL,
+      thread_id TEXT,
+      status TEXT NOT NULL,
+      selected_runtime TEXT,
+      prompt_preview TEXT NOT NULL,
+      latest_output_text TEXT,
+      error_text TEXT,
+      log_file TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      raw_json TEXT NOT NULL,
+      PRIMARY KEY (backend_id, job_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_runtime_backend_jobs_group_created
+      ON runtime_backend_jobs(backend_id, group_folder, created_at DESC, job_id DESC);
+    CREATE INDEX IF NOT EXISTS idx_runtime_backend_jobs_chat_updated
+      ON runtime_backend_jobs(backend_id, chat_jid, updated_at DESC, job_id DESC);
+    CREATE TABLE IF NOT EXISTS runtime_backend_card_contexts (
+      backend_id TEXT NOT NULL,
+      chat_jid TEXT NOT NULL,
+      message_id TEXT NOT NULL,
+      job_id TEXT NOT NULL,
+      group_folder TEXT NOT NULL,
+      thread_id TEXT,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      PRIMARY KEY (backend_id, chat_jid, message_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_runtime_backend_card_contexts_job
+      ON runtime_backend_card_contexts(backend_id, chat_jid, job_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_runtime_backend_card_contexts_expires
+      ON runtime_backend_card_contexts(expires_at);
+    CREATE TABLE IF NOT EXISTS runtime_backend_chat_selection (
+      backend_id TEXT NOT NULL,
+      chat_jid TEXT NOT NULL,
+      job_id TEXT NOT NULL,
+      group_folder TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (backend_id, chat_jid)
+    );
+    CREATE INDEX IF NOT EXISTS idx_runtime_backend_chat_selection_updated
+      ON runtime_backend_chat_selection(updated_at DESC);
+    CREATE TABLE IF NOT EXISTS alexa_linked_accounts (
+      access_token_hash TEXT PRIMARY KEY,
+      display_name TEXT NOT NULL,
+      group_folder TEXT NOT NULL,
+      allowed_alexa_user_id TEXT,
+      allowed_alexa_person_id TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      disabled_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_alexa_linked_accounts_group
+      ON alexa_linked_accounts(group_folder, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS alexa_sessions (
+      principal_key TEXT PRIMARY KEY,
+      access_token_hash TEXT NOT NULL,
+      pending_kind TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_alexa_sessions_expires
+      ON alexa_sessions(expires_at);
+    CREATE TABLE IF NOT EXISTS alexa_conversation_contexts (
+      principal_key TEXT PRIMARY KEY,
+      access_token_hash TEXT NOT NULL,
+      group_folder TEXT NOT NULL,
+      flow_key TEXT NOT NULL,
+      subject_kind TEXT NOT NULL,
+      subject_json TEXT NOT NULL,
+      summary_text TEXT NOT NULL,
+      supported_followups_json TEXT NOT NULL,
+      style_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_alexa_conversation_contexts_expires
+      ON alexa_conversation_contexts(expires_at);
+    CREATE TABLE IF NOT EXISTS alexa_oauth_authorization_codes (
+      code_hash TEXT PRIMARY KEY,
+      client_id TEXT NOT NULL,
+      redirect_uri TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      code_challenge TEXT,
+      code_challenge_method TEXT,
+      group_folder TEXT NOT NULL,
+      display_name TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      used_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_alexa_oauth_codes_expires
+      ON alexa_oauth_authorization_codes(expires_at, used_at);
+    CREATE TABLE IF NOT EXISTS alexa_oauth_refresh_tokens (
+      refresh_token_hash TEXT PRIMARY KEY,
+      client_id TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      group_folder TEXT NOT NULL,
+      display_name TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      disabled_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_alexa_oauth_refresh_expires
+      ON alexa_oauth_refresh_tokens(expires_at, disabled_at);
+    CREATE TABLE IF NOT EXISTS profile_subjects (
+      id TEXT PRIMARY KEY,
+      group_folder TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      canonical_name TEXT NOT NULL,
+      display_name TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      disabled_at TEXT
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_profile_subjects_unique
+      ON profile_subjects(group_folder, kind, canonical_name);
+    CREATE INDEX IF NOT EXISTS idx_profile_subjects_group
+      ON profile_subjects(group_folder, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS profile_facts (
+      id TEXT PRIMARY KEY,
+      group_folder TEXT NOT NULL,
+      subject_id TEXT NOT NULL,
+      category TEXT NOT NULL,
+      fact_key TEXT NOT NULL,
+      value_json TEXT NOT NULL,
+      state TEXT NOT NULL,
+      source_channel TEXT NOT NULL,
+      source_summary TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      decided_at TEXT
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_profile_facts_unique
+      ON profile_facts(group_folder, subject_id, category, fact_key);
+    CREATE INDEX IF NOT EXISTS idx_profile_facts_group
+      ON profile_facts(group_folder, state, updated_at DESC);
     CREATE TABLE IF NOT EXISTS registered_groups (
       jid TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -662,6 +816,24 @@ export function getMessagesSince(
   return db
     .prepare(sql)
     .all(chatJid, sinceTimestamp, `${botPrefix}:%`, limit) as NewMessage[];
+}
+
+export function listRecentMessagesForChat(
+  chatJid: string,
+  limit: number = 20,
+): NewMessage[] {
+  return db
+    .prepare(
+      `
+        SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, thread_id, reply_to_id
+        FROM messages
+        WHERE chat_jid = ?
+          AND content != '' AND content IS NOT NULL
+        ORDER BY timestamp DESC
+        LIMIT ?
+      `,
+    )
+    .all(chatJid, Math.max(1, limit)) as NewMessage[];
 }
 
 export function getLastBotMessageTimestamp(
@@ -1449,6 +1621,1220 @@ export function findLatestRuntimeJobByThread(
     .get(threadId) as RuntimeOrchestrationJobRow | undefined;
 
   return row ? mapRuntimeOrchestrationJobRow(row) : undefined;
+}
+
+export function upsertRuntimeBackendJob(
+  record: RuntimeBackendJobCacheRecord,
+): void {
+  assertValidGroupFolder(record.group_folder);
+  db.prepare(
+    `
+      INSERT INTO runtime_backend_jobs (
+        backend_id,
+        job_id,
+        group_folder,
+        chat_jid,
+        thread_id,
+        status,
+        selected_runtime,
+        prompt_preview,
+        latest_output_text,
+        error_text,
+        log_file,
+        created_at,
+        updated_at,
+        raw_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(backend_id, job_id) DO UPDATE SET
+        group_folder = excluded.group_folder,
+        chat_jid = excluded.chat_jid,
+        thread_id = excluded.thread_id,
+        status = excluded.status,
+        selected_runtime = excluded.selected_runtime,
+        prompt_preview = excluded.prompt_preview,
+        latest_output_text = excluded.latest_output_text,
+        error_text = excluded.error_text,
+        log_file = excluded.log_file,
+        created_at = excluded.created_at,
+        updated_at = excluded.updated_at,
+        raw_json = excluded.raw_json
+    `,
+  ).run(
+    record.backend_id,
+    record.job_id,
+    record.group_folder,
+    record.chat_jid,
+    record.thread_id,
+    record.status,
+    record.selected_runtime,
+    record.prompt_preview,
+    record.latest_output_text,
+    record.error_text,
+    record.log_file,
+    record.created_at,
+    record.updated_at,
+    record.raw_json,
+  );
+}
+
+export function getRuntimeBackendJob(
+  backendId: string,
+  jobId: string,
+): RuntimeBackendJobCacheRecord | undefined {
+  return db
+    .prepare(
+      `
+        SELECT
+          backend_id,
+          job_id,
+          group_folder,
+          chat_jid,
+          thread_id,
+          status,
+          selected_runtime,
+          prompt_preview,
+          latest_output_text,
+          error_text,
+          log_file,
+          created_at,
+          updated_at,
+          raw_json
+        FROM runtime_backend_jobs
+        WHERE backend_id = ? AND job_id = ?
+      `,
+    )
+    .get(backendId, jobId) as RuntimeBackendJobCacheRecord | undefined;
+}
+
+export function listRuntimeBackendJobsForGroup(
+  backendId: string,
+  groupFolder: string,
+  limit = 20,
+): RuntimeBackendJobCacheRecord[] {
+  assertValidGroupFolder(groupFolder);
+  return db
+    .prepare(
+      `
+        SELECT
+          backend_id,
+          job_id,
+          group_folder,
+          chat_jid,
+          thread_id,
+          status,
+          selected_runtime,
+          prompt_preview,
+          latest_output_text,
+          error_text,
+          log_file,
+          created_at,
+          updated_at,
+          raw_json
+        FROM runtime_backend_jobs
+        WHERE backend_id = ? AND group_folder = ?
+        ORDER BY created_at DESC, job_id DESC
+        LIMIT ?
+      `,
+    )
+    .all(backendId, groupFolder, limit) as RuntimeBackendJobCacheRecord[];
+}
+
+export function upsertRuntimeBackendCardContext(
+  record: RuntimeBackendCardContextRecord,
+): void {
+  assertValidGroupFolder(record.group_folder);
+  db.prepare(
+    `
+      INSERT INTO runtime_backend_card_contexts (
+        backend_id,
+        chat_jid,
+        message_id,
+        job_id,
+        group_folder,
+        thread_id,
+        created_at,
+        expires_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(backend_id, chat_jid, message_id) DO UPDATE SET
+        job_id = excluded.job_id,
+        group_folder = excluded.group_folder,
+        thread_id = excluded.thread_id,
+        created_at = excluded.created_at,
+        expires_at = excluded.expires_at
+    `,
+  ).run(
+    record.backend_id,
+    record.chat_jid,
+    record.message_id,
+    record.job_id,
+    record.group_folder,
+    record.thread_id,
+    record.created_at,
+    record.expires_at,
+  );
+}
+
+export function getRuntimeBackendCardContext(
+  backendId: string,
+  chatJid: string,
+  messageId: string,
+): RuntimeBackendCardContextRecord | undefined {
+  return db
+    .prepare(
+      `
+        SELECT
+          backend_id,
+          chat_jid,
+          message_id,
+          job_id,
+          group_folder,
+          thread_id,
+          created_at,
+          expires_at
+        FROM runtime_backend_card_contexts
+        WHERE backend_id = ? AND chat_jid = ? AND message_id = ?
+      `,
+    )
+    .get(backendId, chatJid, messageId) as
+    | RuntimeBackendCardContextRecord
+    | undefined;
+}
+
+export function deleteRuntimeBackendCardContext(
+  backendId: string,
+  chatJid: string,
+  messageId: string,
+): void {
+  db.prepare(
+    `
+      DELETE FROM runtime_backend_card_contexts
+      WHERE backend_id = ? AND chat_jid = ? AND message_id = ?
+    `,
+  ).run(backendId, chatJid, messageId);
+}
+
+export function pruneExpiredRuntimeBackendCardContexts(
+  nowIso: string,
+): number {
+  const result = db
+    .prepare(
+      `
+        DELETE FROM runtime_backend_card_contexts
+        WHERE expires_at <= ?
+      `,
+    )
+    .run(nowIso);
+  return result.changes;
+}
+
+export function upsertRuntimeBackendChatSelection(
+  record: RuntimeBackendChatSelectionRecord,
+): void {
+  assertValidGroupFolder(record.group_folder);
+  db.prepare(
+    `
+      INSERT INTO runtime_backend_chat_selection (
+        backend_id,
+        chat_jid,
+        job_id,
+        group_folder,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(backend_id, chat_jid) DO UPDATE SET
+        job_id = excluded.job_id,
+        group_folder = excluded.group_folder,
+        updated_at = excluded.updated_at
+    `,
+  ).run(
+    record.backend_id,
+    record.chat_jid,
+    record.job_id,
+    record.group_folder,
+    record.updated_at,
+  );
+}
+
+export function getRuntimeBackendChatSelection(
+  backendId: string,
+  chatJid: string,
+): RuntimeBackendChatSelectionRecord | undefined {
+  return db
+    .prepare(
+      `
+        SELECT
+          backend_id,
+          chat_jid,
+          job_id,
+          group_folder,
+          updated_at
+        FROM runtime_backend_chat_selection
+        WHERE backend_id = ? AND chat_jid = ?
+      `,
+    )
+    .get(backendId, chatJid) as RuntimeBackendChatSelectionRecord | undefined;
+}
+
+export function deleteRuntimeBackendChatSelection(
+  backendId: string,
+  chatJid: string,
+): void {
+  db.prepare(
+    `
+      DELETE FROM runtime_backend_chat_selection
+      WHERE backend_id = ? AND chat_jid = ?
+    `,
+  ).run(backendId, chatJid);
+}
+
+export function upsertAlexaLinkedAccount(record: AlexaLinkedAccount): void {
+  assertValidGroupFolder(record.groupFolder);
+  db.prepare(
+    `
+      INSERT INTO alexa_linked_accounts (
+        access_token_hash,
+        display_name,
+        group_folder,
+        allowed_alexa_user_id,
+        allowed_alexa_person_id,
+        created_at,
+        updated_at,
+        disabled_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(access_token_hash) DO UPDATE SET
+        display_name = excluded.display_name,
+        group_folder = excluded.group_folder,
+        allowed_alexa_user_id = excluded.allowed_alexa_user_id,
+        allowed_alexa_person_id = excluded.allowed_alexa_person_id,
+        created_at = excluded.created_at,
+        updated_at = excluded.updated_at,
+        disabled_at = excluded.disabled_at
+    `,
+  ).run(
+    record.accessTokenHash,
+    record.displayName,
+    record.groupFolder,
+    record.allowedAlexaUserId || null,
+    record.allowedAlexaPersonId || null,
+    record.createdAt,
+    record.updatedAt,
+    record.disabledAt || null,
+  );
+}
+
+export function getAlexaLinkedAccountByAccessTokenHash(
+  accessTokenHash: string,
+): AlexaLinkedAccount | undefined {
+  const row = db
+    .prepare(
+      `
+        SELECT *
+        FROM alexa_linked_accounts
+        WHERE access_token_hash = ? AND disabled_at IS NULL
+        LIMIT 1
+      `,
+    )
+    .get(accessTokenHash) as
+    | {
+        access_token_hash: string;
+        display_name: string;
+        group_folder: string;
+        allowed_alexa_user_id: string | null;
+        allowed_alexa_person_id: string | null;
+        created_at: string;
+        updated_at: string;
+        disabled_at: string | null;
+      }
+    | undefined;
+
+  if (!row) return undefined;
+  if (!isValidGroupFolder(row.group_folder)) {
+    logger.warn(
+      { accessTokenHash, groupFolder: row.group_folder },
+      'Skipping Alexa linked account with invalid group folder',
+    );
+    return undefined;
+  }
+
+  return {
+    accessTokenHash: row.access_token_hash,
+    displayName: row.display_name,
+    groupFolder: row.group_folder,
+    allowedAlexaUserId: row.allowed_alexa_user_id,
+    allowedAlexaPersonId: row.allowed_alexa_person_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    disabledAt: row.disabled_at,
+  };
+}
+
+export function listAlexaLinkedAccounts(): AlexaLinkedAccount[] {
+  const rows = db
+    .prepare('SELECT * FROM alexa_linked_accounts')
+    .all() as Array<{
+    access_token_hash: string;
+    display_name: string;
+    group_folder: string;
+    allowed_alexa_user_id: string | null;
+    allowed_alexa_person_id: string | null;
+    created_at: string;
+    updated_at: string;
+    disabled_at: string | null;
+  }>;
+
+  return rows
+    .filter((row) => {
+      if (isValidGroupFolder(row.group_folder)) return true;
+      logger.warn(
+        {
+          accessTokenHash: row.access_token_hash,
+          groupFolder: row.group_folder,
+        },
+        'Skipping Alexa linked account with invalid group folder',
+      );
+      return false;
+    })
+    .map((row) => ({
+      accessTokenHash: row.access_token_hash,
+      displayName: row.display_name,
+      groupFolder: row.group_folder,
+      allowedAlexaUserId: row.allowed_alexa_user_id,
+      allowedAlexaPersonId: row.allowed_alexa_person_id,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      disabledAt: row.disabled_at,
+    }));
+}
+
+export function insertAlexaOAuthAuthorizationCode(
+  record: AlexaOAuthAuthorizationCodeRecord,
+): void {
+  assertValidGroupFolder(record.groupFolder);
+  db.prepare(
+    `
+      INSERT INTO alexa_oauth_authorization_codes (
+        code_hash,
+        client_id,
+        redirect_uri,
+        scope,
+        code_challenge,
+        code_challenge_method,
+        group_folder,
+        display_name,
+        created_at,
+        expires_at,
+        used_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+  ).run(
+    record.codeHash,
+    record.clientId,
+    record.redirectUri,
+    record.scope,
+    record.codeChallenge || null,
+    record.codeChallengeMethod || null,
+    record.groupFolder,
+    record.displayName,
+    record.createdAt,
+    record.expiresAt,
+    record.usedAt || null,
+  );
+}
+
+export function getAlexaOAuthAuthorizationCode(
+  codeHash: string,
+): AlexaOAuthAuthorizationCodeRecord | undefined {
+  const row = db
+    .prepare(
+      `
+        SELECT *
+        FROM alexa_oauth_authorization_codes
+        WHERE code_hash = ?
+        LIMIT 1
+      `,
+    )
+    .get(codeHash) as
+    | {
+        code_hash: string;
+        client_id: string;
+        redirect_uri: string;
+        scope: string;
+        code_challenge: string | null;
+        code_challenge_method: 'plain' | 'S256' | null;
+        group_folder: string;
+        display_name: string;
+        created_at: string;
+        expires_at: string;
+        used_at: string | null;
+      }
+    | undefined;
+
+  if (!row) return undefined;
+  if (!isValidGroupFolder(row.group_folder)) {
+    logger.warn(
+      { codeHash, groupFolder: row.group_folder },
+      'Skipping Alexa OAuth authorization code with invalid group folder',
+    );
+    return undefined;
+  }
+
+  return {
+    codeHash: row.code_hash,
+    clientId: row.client_id,
+    redirectUri: row.redirect_uri,
+    scope: row.scope,
+    codeChallenge: row.code_challenge,
+    codeChallengeMethod: row.code_challenge_method,
+    groupFolder: row.group_folder,
+    displayName: row.display_name,
+    createdAt: row.created_at,
+    expiresAt: row.expires_at,
+    usedAt: row.used_at,
+  };
+}
+
+export function consumeAlexaOAuthAuthorizationCode(
+  codeHash: string,
+  usedAt: string,
+  now = new Date().toISOString(),
+): boolean {
+  const result = db
+    .prepare(
+      `
+        UPDATE alexa_oauth_authorization_codes
+        SET used_at = ?
+        WHERE code_hash = ?
+          AND used_at IS NULL
+          AND expires_at > ?
+      `,
+    )
+    .run(usedAt, codeHash, now);
+  return result.changes === 1;
+}
+
+export function purgeExpiredAlexaOAuthAuthorizationCodes(
+  now = new Date().toISOString(),
+): number {
+  const result = db
+    .prepare(
+      `
+        DELETE FROM alexa_oauth_authorization_codes
+        WHERE expires_at <= ?
+      `,
+    )
+    .run(now);
+  return result.changes;
+}
+
+export function insertAlexaOAuthRefreshToken(
+  record: AlexaOAuthRefreshTokenRecord,
+): void {
+  assertValidGroupFolder(record.groupFolder);
+  db.prepare(
+    `
+      INSERT INTO alexa_oauth_refresh_tokens (
+        refresh_token_hash,
+        client_id,
+        scope,
+        group_folder,
+        display_name,
+        created_at,
+        expires_at,
+        disabled_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+  ).run(
+    record.refreshTokenHash,
+    record.clientId,
+    record.scope,
+    record.groupFolder,
+    record.displayName,
+    record.createdAt,
+    record.expiresAt,
+    record.disabledAt || null,
+  );
+}
+
+export function getAlexaOAuthRefreshToken(
+  refreshTokenHash: string,
+): AlexaOAuthRefreshTokenRecord | undefined {
+  const row = db
+    .prepare(
+      `
+        SELECT *
+        FROM alexa_oauth_refresh_tokens
+        WHERE refresh_token_hash = ?
+        LIMIT 1
+      `,
+    )
+    .get(refreshTokenHash) as
+    | {
+        refresh_token_hash: string;
+        client_id: string;
+        scope: string;
+        group_folder: string;
+        display_name: string;
+        created_at: string;
+        expires_at: string;
+        disabled_at: string | null;
+      }
+    | undefined;
+
+  if (!row) return undefined;
+  if (!isValidGroupFolder(row.group_folder)) {
+    logger.warn(
+      { refreshTokenHash, groupFolder: row.group_folder },
+      'Skipping Alexa OAuth refresh token with invalid group folder',
+    );
+    return undefined;
+  }
+
+  return {
+    refreshTokenHash: row.refresh_token_hash,
+    clientId: row.client_id,
+    scope: row.scope,
+    groupFolder: row.group_folder,
+    displayName: row.display_name,
+    createdAt: row.created_at,
+    expiresAt: row.expires_at,
+    disabledAt: row.disabled_at,
+  };
+}
+
+export function disableAlexaOAuthRefreshToken(
+  refreshTokenHash: string,
+  disabledAt: string,
+): boolean {
+  const result = db
+    .prepare(
+      `
+        UPDATE alexa_oauth_refresh_tokens
+        SET disabled_at = ?
+        WHERE refresh_token_hash = ?
+          AND disabled_at IS NULL
+      `,
+    )
+    .run(disabledAt, refreshTokenHash);
+  return result.changes === 1;
+}
+
+export function purgeExpiredAlexaOAuthRefreshTokens(
+  now = new Date().toISOString(),
+): number {
+  const result = db
+    .prepare(
+      `
+        DELETE FROM alexa_oauth_refresh_tokens
+        WHERE expires_at <= ?
+      `,
+    )
+    .run(now);
+  return result.changes;
+}
+
+export function upsertAlexaSession(record: AlexaPendingSession): void {
+  db.prepare(
+    `
+      INSERT INTO alexa_sessions (
+        principal_key,
+        access_token_hash,
+        pending_kind,
+        payload_json,
+        expires_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(principal_key) DO UPDATE SET
+        access_token_hash = excluded.access_token_hash,
+        pending_kind = excluded.pending_kind,
+        payload_json = excluded.payload_json,
+        expires_at = excluded.expires_at,
+        updated_at = excluded.updated_at
+    `,
+  ).run(
+    record.principalKey,
+    record.accessTokenHash,
+    record.pendingKind,
+    record.payloadJson,
+    record.expiresAt,
+    record.updatedAt,
+  );
+}
+
+export function getAlexaSession(
+  principalKey: string,
+  accessTokenHash?: string,
+  now = new Date().toISOString(),
+): AlexaPendingSession | undefined {
+  const row = db
+    .prepare(
+      `
+        SELECT *
+        FROM alexa_sessions
+        WHERE principal_key = ?
+        LIMIT 1
+      `,
+    )
+    .get(principalKey) as
+    | {
+        principal_key: string;
+        access_token_hash: string;
+        pending_kind: AlexaPendingSession['pendingKind'];
+        payload_json: string;
+        expires_at: string;
+        updated_at: string;
+      }
+    | undefined;
+
+  if (!row) return undefined;
+  if (row.expires_at <= now) {
+    clearAlexaSession(principalKey);
+    return undefined;
+  }
+  if (accessTokenHash && row.access_token_hash !== accessTokenHash) {
+    clearAlexaSession(principalKey);
+    return undefined;
+  }
+
+  return {
+    principalKey: row.principal_key,
+    accessTokenHash: row.access_token_hash,
+    pendingKind: row.pending_kind,
+    payloadJson: row.payload_json,
+    expiresAt: row.expires_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export function clearAlexaSession(principalKey: string): void {
+  db.prepare('DELETE FROM alexa_sessions WHERE principal_key = ?').run(
+    principalKey,
+  );
+}
+
+export function purgeExpiredAlexaSessions(
+  now = new Date().toISOString(),
+): number {
+  const result = db
+    .prepare('DELETE FROM alexa_sessions WHERE expires_at <= ?')
+    .run(now);
+  return result.changes;
+}
+
+export function upsertAlexaConversationContext(
+  record: AlexaConversationContext,
+): void {
+  assertValidGroupFolder(record.groupFolder);
+  db.prepare(
+    `
+      INSERT INTO alexa_conversation_contexts (
+        principal_key,
+        access_token_hash,
+        group_folder,
+        flow_key,
+        subject_kind,
+        subject_json,
+        summary_text,
+        supported_followups_json,
+        style_json,
+        created_at,
+        expires_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(principal_key) DO UPDATE SET
+        access_token_hash = excluded.access_token_hash,
+        group_folder = excluded.group_folder,
+        flow_key = excluded.flow_key,
+        subject_kind = excluded.subject_kind,
+        subject_json = excluded.subject_json,
+        summary_text = excluded.summary_text,
+        supported_followups_json = excluded.supported_followups_json,
+        style_json = excluded.style_json,
+        created_at = excluded.created_at,
+        expires_at = excluded.expires_at,
+        updated_at = excluded.updated_at
+    `,
+  ).run(
+    record.principalKey,
+    record.accessTokenHash,
+    record.groupFolder,
+    record.flowKey,
+    record.subjectKind,
+    record.subjectJson,
+    record.summaryText,
+    record.supportedFollowupsJson,
+    record.styleJson,
+    record.createdAt,
+    record.expiresAt,
+    record.updatedAt,
+  );
+}
+
+export function getAlexaConversationContext(
+  principalKey: string,
+  accessTokenHash?: string,
+  now = new Date().toISOString(),
+): AlexaConversationContext | undefined {
+  const row = db
+    .prepare(
+      `
+        SELECT *
+        FROM alexa_conversation_contexts
+        WHERE principal_key = ?
+        LIMIT 1
+      `,
+    )
+    .get(principalKey) as
+    | {
+        principal_key: string;
+        access_token_hash: string;
+        group_folder: string;
+        flow_key: string;
+        subject_kind: AlexaConversationContext['subjectKind'];
+        subject_json: string;
+        summary_text: string;
+        supported_followups_json: string;
+        style_json: string;
+        created_at: string;
+        expires_at: string;
+        updated_at: string;
+      }
+    | undefined;
+
+  if (!row) return undefined;
+  if (row.expires_at <= now) {
+    clearAlexaConversationContext(principalKey);
+    return undefined;
+  }
+  if (accessTokenHash && row.access_token_hash !== accessTokenHash) {
+    clearAlexaConversationContext(principalKey);
+    return undefined;
+  }
+  if (!isValidGroupFolder(row.group_folder)) {
+    clearAlexaConversationContext(principalKey);
+    return undefined;
+  }
+
+  return {
+    principalKey: row.principal_key,
+    accessTokenHash: row.access_token_hash,
+    groupFolder: row.group_folder,
+    flowKey: row.flow_key,
+    subjectKind: row.subject_kind,
+    subjectJson: row.subject_json,
+    summaryText: row.summary_text,
+    supportedFollowupsJson: row.supported_followups_json,
+    styleJson: row.style_json,
+    createdAt: row.created_at,
+    expiresAt: row.expires_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export function clearAlexaConversationContext(principalKey: string): void {
+  db.prepare(
+    'DELETE FROM alexa_conversation_contexts WHERE principal_key = ?',
+  ).run(principalKey);
+}
+
+export function purgeExpiredAlexaConversationContexts(
+  now = new Date().toISOString(),
+): number {
+  const result = db
+    .prepare('DELETE FROM alexa_conversation_contexts WHERE expires_at <= ?')
+    .run(now);
+  return result.changes;
+}
+
+export function upsertProfileSubject(record: ProfileSubject): void {
+  assertValidGroupFolder(record.groupFolder);
+  db.prepare(
+    `
+      INSERT INTO profile_subjects (
+        id,
+        group_folder,
+        kind,
+        canonical_name,
+        display_name,
+        created_at,
+        updated_at,
+        disabled_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        group_folder = excluded.group_folder,
+        kind = excluded.kind,
+        canonical_name = excluded.canonical_name,
+        display_name = excluded.display_name,
+        created_at = excluded.created_at,
+        updated_at = excluded.updated_at,
+        disabled_at = excluded.disabled_at
+    `,
+  ).run(
+    record.id,
+    record.groupFolder,
+    record.kind,
+    record.canonicalName,
+    record.displayName,
+    record.createdAt,
+    record.updatedAt,
+    record.disabledAt || null,
+  );
+}
+
+export function getProfileSubject(id: string): ProfileSubject | undefined {
+  const row = db
+    .prepare(
+      `
+        SELECT *
+        FROM profile_subjects
+        WHERE id = ?
+        LIMIT 1
+      `,
+    )
+    .get(id) as
+    | {
+        id: string;
+        group_folder: string;
+        kind: ProfileSubject['kind'];
+        canonical_name: string;
+        display_name: string;
+        created_at: string;
+        updated_at: string;
+        disabled_at: string | null;
+      }
+    | undefined;
+  if (!row) return undefined;
+  if (!isValidGroupFolder(row.group_folder)) return undefined;
+  return {
+    id: row.id,
+    groupFolder: row.group_folder,
+    kind: row.kind,
+    canonicalName: row.canonical_name,
+    displayName: row.display_name,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    disabledAt: row.disabled_at,
+  };
+}
+
+export function getProfileSubjectByKey(
+  groupFolder: string,
+  kind: ProfileSubject['kind'],
+  canonicalName: string,
+): ProfileSubject | undefined {
+  assertValidGroupFolder(groupFolder);
+  const row = db
+    .prepare(
+      `
+        SELECT *
+        FROM profile_subjects
+        WHERE group_folder = ?
+          AND kind = ?
+          AND canonical_name = ?
+          AND disabled_at IS NULL
+        LIMIT 1
+      `,
+    )
+    .get(groupFolder, kind, canonicalName) as
+    | {
+        id: string;
+        group_folder: string;
+        kind: ProfileSubject['kind'];
+        canonical_name: string;
+        display_name: string;
+        created_at: string;
+        updated_at: string;
+        disabled_at: string | null;
+      }
+    | undefined;
+  if (!row) return undefined;
+  return {
+    id: row.id,
+    groupFolder: row.group_folder,
+    kind: row.kind,
+    canonicalName: row.canonical_name,
+    displayName: row.display_name,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    disabledAt: row.disabled_at,
+  };
+}
+
+export function listProfileSubjectsForGroup(
+  groupFolder: string,
+): ProfileSubject[] {
+  assertValidGroupFolder(groupFolder);
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM profile_subjects
+        WHERE group_folder = ? AND disabled_at IS NULL
+        ORDER BY kind ASC, display_name COLLATE NOCASE ASC
+      `,
+    )
+    .all(groupFolder) as Array<{
+      id: string;
+      group_folder: string;
+      kind: ProfileSubject['kind'];
+      canonical_name: string;
+      display_name: string;
+      created_at: string;
+      updated_at: string;
+      disabled_at: string | null;
+    }>;
+
+  return rows.map((row) => ({
+    id: row.id,
+    groupFolder: row.group_folder,
+    kind: row.kind,
+    canonicalName: row.canonical_name,
+    displayName: row.display_name,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    disabledAt: row.disabled_at,
+  }));
+}
+
+export function upsertProfileFact(record: ProfileFact): void {
+  assertValidGroupFolder(record.groupFolder);
+  db.prepare(
+    `
+      INSERT INTO profile_facts (
+        id,
+        group_folder,
+        subject_id,
+        category,
+        fact_key,
+        value_json,
+        state,
+        source_channel,
+        source_summary,
+        created_at,
+        updated_at,
+        decided_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(group_folder, subject_id, category, fact_key) DO UPDATE SET
+        id = excluded.id,
+        value_json = excluded.value_json,
+        state = excluded.state,
+        source_channel = excluded.source_channel,
+        source_summary = excluded.source_summary,
+        created_at = excluded.created_at,
+        updated_at = excluded.updated_at,
+        decided_at = excluded.decided_at
+    `,
+  ).run(
+    record.id,
+    record.groupFolder,
+    record.subjectId,
+    record.category,
+    record.factKey,
+    record.valueJson,
+    record.state,
+    record.sourceChannel,
+    record.sourceSummary,
+    record.createdAt,
+    record.updatedAt,
+    record.decidedAt || null,
+  );
+}
+
+export function getProfileFact(id: string): ProfileFact | undefined {
+  const row = db
+    .prepare(
+      `
+        SELECT *
+        FROM profile_facts
+        WHERE id = ?
+        LIMIT 1
+      `,
+    )
+    .get(id) as
+    | {
+        id: string;
+        group_folder: string;
+        subject_id: string;
+        category: ProfileFact['category'];
+        fact_key: string;
+        value_json: string;
+        state: ProfileFact['state'];
+        source_channel: string;
+        source_summary: string;
+        created_at: string;
+        updated_at: string;
+        decided_at: string | null;
+      }
+    | undefined;
+  if (!row) return undefined;
+  if (!isValidGroupFolder(row.group_folder)) return undefined;
+  return {
+    id: row.id,
+    groupFolder: row.group_folder,
+    subjectId: row.subject_id,
+    category: row.category,
+    factKey: row.fact_key,
+    valueJson: row.value_json,
+    state: row.state,
+    sourceChannel: row.source_channel,
+    sourceSummary: row.source_summary,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    decidedAt: row.decided_at,
+  };
+}
+
+export function getProfileFactByKey(
+  groupFolder: string,
+  subjectId: string,
+  category: ProfileFact['category'],
+  factKey: string,
+): ProfileFact | undefined {
+  assertValidGroupFolder(groupFolder);
+  const row = db
+    .prepare(
+      `
+        SELECT *
+        FROM profile_facts
+        WHERE group_folder = ?
+          AND subject_id = ?
+          AND category = ?
+          AND fact_key = ?
+        LIMIT 1
+      `,
+    )
+    .get(groupFolder, subjectId, category, factKey) as
+    | {
+        id: string;
+        group_folder: string;
+        subject_id: string;
+        category: ProfileFact['category'];
+        fact_key: string;
+        value_json: string;
+        state: ProfileFact['state'];
+        source_channel: string;
+        source_summary: string;
+        created_at: string;
+        updated_at: string;
+        decided_at: string | null;
+      }
+    | undefined;
+  if (!row) return undefined;
+  return {
+    id: row.id,
+    groupFolder: row.group_folder,
+    subjectId: row.subject_id,
+    category: row.category,
+    factKey: row.fact_key,
+    valueJson: row.value_json,
+    state: row.state,
+    sourceChannel: row.source_channel,
+    sourceSummary: row.source_summary,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    decidedAt: row.decided_at,
+  };
+}
+
+export function updateProfileFactState(
+  id: string,
+  state: ProfileFact['state'],
+  updatedAt: string,
+  decidedAt: string | null = updatedAt,
+): boolean {
+  const result = db
+    .prepare(
+      `
+        UPDATE profile_facts
+        SET state = ?, updated_at = ?, decided_at = ?
+        WHERE id = ?
+      `,
+    )
+    .run(state, updatedAt, decidedAt, id);
+  return result.changes === 1;
+}
+
+export function listProfileFactsForGroup(
+  groupFolder: string,
+  states?: ProfileFact['state'][],
+): ProfileFactWithSubject[] {
+  assertValidGroupFolder(groupFolder);
+  const args: unknown[] = [groupFolder];
+  const stateClause =
+    states && states.length > 0
+      ? `AND f.state IN (${states.map(() => '?').join(', ')})`
+      : '';
+  if (states) {
+    args.push(...states);
+  }
+
+  const rows = db
+    .prepare(
+      `
+        SELECT
+          f.id,
+          f.group_folder,
+          f.subject_id,
+          f.category,
+          f.fact_key,
+          f.value_json,
+          f.state,
+          f.source_channel,
+          f.source_summary,
+          f.created_at,
+          f.updated_at,
+          f.decided_at,
+          s.kind AS subject_kind,
+          s.canonical_name AS subject_canonical_name,
+          s.display_name AS subject_display_name
+        FROM profile_facts f
+        JOIN profile_subjects s ON s.id = f.subject_id
+        WHERE f.group_folder = ?
+          AND s.disabled_at IS NULL
+          ${stateClause}
+        ORDER BY
+          CASE f.state
+            WHEN 'accepted' THEN 0
+            WHEN 'proposed' THEN 1
+            WHEN 'rejected' THEN 2
+            ELSE 3
+          END,
+          f.updated_at DESC
+      `,
+    )
+    .all(...args) as Array<{
+      id: string;
+      group_folder: string;
+      subject_id: string;
+      category: ProfileFact['category'];
+      fact_key: string;
+      value_json: string;
+      state: ProfileFact['state'];
+      source_channel: string;
+      source_summary: string;
+      created_at: string;
+      updated_at: string;
+      decided_at: string | null;
+      subject_kind: ProfileFactWithSubject['subjectKind'];
+      subject_canonical_name: string;
+      subject_display_name: string;
+    }>;
+
+  return rows.map((row) => ({
+    id: row.id,
+    groupFolder: row.group_folder,
+    subjectId: row.subject_id,
+    category: row.category,
+    factKey: row.fact_key,
+    valueJson: row.value_json,
+    state: row.state,
+    sourceChannel: row.source_channel,
+    sourceSummary: row.source_summary,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    decidedAt: row.decided_at,
+    subjectKind: row.subject_kind,
+    subjectCanonicalName: row.subject_canonical_name,
+    subjectDisplayName: row.subject_display_name,
+  }));
 }
 
 export interface CommunitySkillRecord {

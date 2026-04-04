@@ -1,6 +1,8 @@
 import { EventEmitter } from 'events';
 import { PassThrough } from 'stream';
 import fs from 'fs';
+import os from 'os';
+import path from 'path';
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -20,6 +22,10 @@ let mockEnvValues: Record<string, string> = {};
 
 // Mock config
 vi.mock('./config.js', () => ({
+  AGENT_RUNTIME_DEFAULT: 'codex_local',
+  AGENT_RUNTIME_FALLBACK: 'openai_cloud',
+  CODEX_LOCAL_ENABLED: true,
+  CODEX_LOCAL_MODEL: '',
   CONTAINER_IMAGE: 'nanoclaw-agent:latest',
   CONTAINER_INITIAL_OUTPUT_TIMEOUT: 300000,
   CONTAINER_MAX_OUTPUT_SIZE: 10485760,
@@ -28,6 +34,7 @@ vi.mock('./config.js', () => ({
   GROUPS_DIR: '/tmp/nanoclaw-test-groups',
   IDLE_TIMEOUT: 1800000,
   ONECLI_URL: 'http://localhost:10254',
+  OPENAI_MODEL_FALLBACK: 'gpt-5.4',
   RUNTIME_STATE_DIR: '/tmp/nanoclaw-test-runtime',
   TIMEZONE: 'America/Los_Angeles',
 }));
@@ -488,6 +495,92 @@ describe('container-runner credential env wiring', () => {
     expect(args).not.toContain('--network');
     expect(args).not.toContain(
       'ANTHROPIC_BASE_URL=http://litellm-gateway:4000',
+    );
+  });
+
+  it('syncs shared Codex auth files into the per-group runtime mount', async () => {
+    const globalCodexDir = path.join(os.homedir(), '.codex');
+    const globalAuth = path.join(os.homedir(), '.codex', 'auth.json');
+    const globalCapSid = path.join(os.homedir(), '.codex', 'cap_sid');
+    const globalConfig = path.join(os.homedir(), '.codex', 'config.toml');
+    const groupCodexDir = path.join(
+      '/tmp/nanoclaw-test-data',
+      'sessions',
+      'test-group',
+      '.codex',
+    );
+
+    vi.mocked(fs.existsSync).mockImplementation((candidatePath) => {
+      const normalized = String(candidatePath).replace(/\\/g, '/');
+      return (
+        normalized === globalCodexDir.replace(/\\/g, '/') ||
+        normalized === globalAuth.replace(/\\/g, '/') ||
+        normalized === globalCapSid.replace(/\\/g, '/') ||
+        normalized === globalConfig.replace(/\\/g, '/')
+      );
+    });
+    vi.mocked(fs.readFileSync).mockImplementation((candidatePath) => {
+      const normalized = String(candidatePath).replace(/\\/g, '/');
+      if (normalized === globalAuth.replace(/\\/g, '/')) {
+        return '{"provider":"openai"}';
+      }
+      if (normalized === globalCapSid.replace(/\\/g, '/')) {
+        return 'cap-sid-value';
+      }
+      if (normalized === globalConfig.replace(/\\/g, '/')) {
+        return 'profile = "default"';
+      }
+      return '';
+    });
+
+    const resultPromise = runContainerAgent(testGroup, testInput, () => {});
+    await waitForSpawnCall();
+    emitSuccessfulExit(fakeProc);
+    await resultPromise;
+
+    expect(vi.mocked(fs.writeFileSync)).toHaveBeenCalledWith(
+      path.join(groupCodexDir, 'auth.json'),
+      '{"provider":"openai"}',
+    );
+    expect(vi.mocked(fs.writeFileSync)).toHaveBeenCalledWith(
+      path.join(groupCodexDir, 'cap_sid'),
+      'cap-sid-value',
+    );
+    expect(vi.mocked(fs.writeFileSync)).toHaveBeenCalledWith(
+      path.join(groupCodexDir, 'config.toml'),
+      'profile = "default"',
+    );
+  });
+
+  it('mounts the live host Codex home directly for direct-assistant routes', async () => {
+    const globalCodexDir = path.join(os.homedir(), '.codex');
+
+    vi.mocked(fs.existsSync).mockImplementation((candidatePath) => {
+      const normalized = String(candidatePath).replace(/\\/g, '/');
+      return normalized === globalCodexDir.replace(/\\/g, '/');
+    });
+
+    const resultPromise = runContainerAgent(
+      testGroup,
+      {
+        ...testInput,
+        requestPolicy: {
+          route: 'direct_assistant',
+          reason: 'defaulted to direct assistant handling',
+          builtinTools: ['Read'],
+          mcpTools: [],
+          guidance: 'Answer clearly and directly.',
+        },
+      },
+      () => {},
+    );
+    await waitForSpawnCall();
+    emitSuccessfulExit(fakeProc);
+    await resultPromise;
+
+    const args = spawnMock.mock.calls[0]?.[1] as string[];
+    expect(args).toEqual(
+      expect.arrayContaining(['-v', `${globalCodexDir}:/home/node/.codex`]),
     );
   });
 });

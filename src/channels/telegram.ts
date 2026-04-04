@@ -6,10 +6,12 @@ import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
 import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
 import {
+  ChannelSendReceipt,
   Channel,
   ChannelInlineAction,
   OnChatMetadata,
   OnInboundMessage,
+  ReplyMessageRef,
   RegisteredGroup,
   SendMessageOptions,
   SendMessageResult,
@@ -292,6 +294,52 @@ function buildInlineKeyboard(
   return keyboard.inline_keyboard.length > 0 ? keyboard : null;
 }
 
+export function extractTelegramReplyRef(
+  message: {
+    reply_to_message?: {
+      message_id: number;
+      text?: string;
+      caption?: string;
+      date?: number;
+      from?: {
+        id?: number;
+        first_name?: string;
+        username?: string;
+        is_bot?: boolean;
+      };
+    };
+  },
+  selfId?: number,
+): ReplyMessageRef | undefined {
+  const replied = message.reply_to_message;
+  if (!replied) return undefined;
+
+  const senderId =
+    replied.from?.id === undefined ? undefined : replied.from.id.toString();
+  const senderName =
+    replied.from?.first_name ||
+    replied.from?.username ||
+    senderId ||
+    undefined;
+
+  return {
+    message_id: replied.message_id.toString(),
+    content: replied.text || replied.caption || '',
+    sender: senderId,
+    sender_name: senderName,
+    is_from_me:
+      replied.from?.id !== undefined && selfId !== undefined
+        ? replied.from.id === selfId
+        : undefined,
+    is_bot_message:
+      replied.from?.is_bot === undefined ? undefined : replied.from.is_bot,
+    timestamp:
+      replied.date === undefined
+        ? undefined
+        : new Date(replied.date * 1000).toISOString(),
+  };
+}
+
 export class TelegramChannel implements Channel {
   name = 'telegram';
   private bot: Bot | null = null;
@@ -398,7 +446,8 @@ export class TelegramChannel implements Channel {
       const sender = ctx.from?.id.toString() || '';
       const msgId = ctx.message.message_id.toString();
       const threadId = ctx.message.message_thread_id;
-      const replyToId = ctx.message.reply_to_message?.message_id?.toString();
+      const replyTo = extractTelegramReplyRef(ctx.message, ctx.me?.id);
+      const replyToId = replyTo?.message_id;
 
       const chatName =
         ctx.chat.type === 'private'
@@ -453,6 +502,7 @@ export class TelegramChannel implements Channel {
         is_from_me: false,
         thread_id: threadId ? threadId.toString() : undefined,
         reply_to_id: replyToId,
+        reply_to: replyTo,
       });
 
       logger.info(
@@ -508,6 +558,7 @@ export class TelegramChannel implements Channel {
         is_from_me: false,
         thread_id: ctx.message.message_thread_id?.toString(),
         reply_to_id: ctx.message.reply_to_message?.message_id?.toString(),
+        reply_to: extractTelegramReplyRef(ctx.message),
       });
     };
 
@@ -566,6 +617,14 @@ export class TelegramChannel implements Channel {
         is_from_me: false,
         thread_id: callbackMessage.message_thread_id?.toString(),
         reply_to_id: callbackMessage.message_id.toString(),
+        reply_to: {
+          message_id: callbackMessage.message_id.toString(),
+          content: callbackMessage.text || '',
+          timestamp:
+            callbackMessage.date === undefined
+              ? undefined
+              : new Date(callbackMessage.date * 1000).toISOString(),
+        },
       });
     });
 
@@ -575,6 +634,15 @@ export class TelegramChannel implements Channel {
         'Telegram bot error',
       );
     });
+
+    try {
+      await this.bot.api.deleteWebhook({
+        drop_pending_updates: false,
+      });
+      logger.info('Cleared Telegram webhook before starting long polling');
+    } catch (err) {
+      logger.warn({ err }, 'Failed to clear Telegram webhook before polling');
+    }
 
     return new Promise<void>((resolve) => {
       this.bot!.start({
@@ -699,7 +767,11 @@ export class TelegramChannel implements Channel {
         },
         'Telegram message sent',
       );
-      return { platformMessageId: firstMessageId };
+      return {
+        platformMessageId: firstMessageId,
+        platformMessageIds: firstMessageId ? [firstMessageId] : [],
+        threadId: options.threadId || null,
+      };
     } catch (err) {
       logger.error(
         { component: 'telegram', jid, err },
@@ -707,6 +779,24 @@ export class TelegramChannel implements Channel {
       );
       return {};
     }
+  }
+
+  async sendMessageWithReceipt(
+    jid: string,
+    text: string,
+    options: SendMessageOptions = {},
+  ): Promise<ChannelSendReceipt | null> {
+    const result = await this.sendMessage(jid, text, options);
+    const platformMessageIds =
+      result.platformMessageIds ||
+      (result.platformMessageId ? [result.platformMessageId] : []);
+    if (platformMessageIds.length === 0) {
+      return null;
+    }
+    return {
+      platformMessageIds,
+      threadId: result.threadId || options.threadId || null,
+    };
   }
 
   async editMessage(

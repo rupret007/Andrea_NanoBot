@@ -4,6 +4,11 @@ import fs from 'fs';
 
 import { ASSISTANT_NAME, SCHEDULER_POLL_INTERVAL, TIMEZONE } from './config.js';
 import {
+  classifyRuntimeRoute,
+  selectPreferredRuntime,
+  shouldReuseExistingThread,
+} from './agent-runtime.js';
+import {
   ContainerOutput,
   runContainerAgent,
   writeTasksSnapshot,
@@ -23,11 +28,11 @@ import { resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './logger.js';
 import { classifyScheduledTaskRequest } from './assistant-routing.js';
 import { formatOutbound } from './router.js';
-import { RegisteredGroup, ScheduledTask } from './types.js';
 import {
   executeCalendarAutomation,
   parseCalendarAutomationRecord,
 } from './calendar-automations.js';
+import { AgentThreadState, RegisteredGroup, ScheduledTask } from './types.js';
 
 /**
  * Compute the next run time for a recurring task, anchored to the
@@ -73,6 +78,7 @@ export function computeNextRun(task: ScheduledTask): string | null {
 export interface SchedulerDependencies {
   registeredGroups: () => Record<string, RegisteredGroup>;
   getSessions: () => Record<string, string>;
+  getAgentThreads?: () => Record<string, AgentThreadState>;
   queue: GroupQueue;
   onProcess: (
     groupJid: string,
@@ -205,8 +211,21 @@ async function runTask(
 
   // For group context mode, use the group's current session
   const sessions = deps.getSessions();
+  const agentThreads = deps.getAgentThreads ? deps.getAgentThreads() : {};
+  const requestPolicy = classifyScheduledTaskRequest(task.prompt);
+  const runtimeRoute = classifyRuntimeRoute(requestPolicy, task.prompt, {
+    isScheduledTask: true,
+  });
+  const existingThread =
+    task.context_mode === 'group' ? agentThreads[task.group_folder] : undefined;
+  const preferredRuntime = selectPreferredRuntime(existingThread, runtimeRoute);
   const sessionId =
-    task.context_mode === 'group' ? sessions[task.group_folder] : undefined;
+    task.context_mode === 'group' &&
+    shouldReuseExistingThread(existingThread, preferredRuntime)
+      ? existingThread.thread_id
+      : task.context_mode === 'group'
+        ? sessions[task.group_folder]
+        : undefined;
 
   // After the task produces a result, close the container promptly.
   // Tasks are single-turn — no need to wait the normal idle timeout for the
@@ -234,7 +253,9 @@ async function runTask(
         isScheduledTask: true,
         assistantName: ASSISTANT_NAME,
         script: task.script || undefined,
-        requestPolicy: classifyScheduledTaskRequest(task.prompt),
+        requestPolicy,
+        preferredRuntime,
+        runtimeRoute,
       },
       (proc, containerName) =>
         deps.onProcess(task.chat_jid, proc, containerName, task.group_folder),

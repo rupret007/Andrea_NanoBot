@@ -1108,6 +1108,10 @@ async function main(): Promise<void> {
     });
     process.exit(1);
   }
+
+  // Some SDK flows can leave handles alive briefly even after a close sentinel
+  // or final streamed result. Exit explicitly so voice turns end promptly.
+  process.exit(0);
 }
 
 main();

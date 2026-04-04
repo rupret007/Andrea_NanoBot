@@ -1230,9 +1230,10 @@ function selectEventCandidate(
 export function advancePendingCalendarReminder(
   message: string,
   state: PendingCalendarReminderState,
-  now = new Date(),
+  now?: Date,
 ): PendingCalendarReminderResult {
   const normalized = normalizeMessage(message);
+  const referenceNow = resolvePendingCalendarReminderReferenceNow(state, now);
   if (!normalized) {
     return { kind: 'no_match' };
   }
@@ -1252,7 +1253,7 @@ export function advancePendingCalendarReminder(
           offset: state.offset,
           targetLabel: state.targetLabel,
           incompleteNote: state.incompleteNote,
-          now,
+          now: referenceNow,
         })
       : { kind: 'no_match' };
   }
@@ -1267,7 +1268,7 @@ export function advancePendingCalendarReminder(
       offset,
       targetLabel: state.targetLabel,
       incompleteNote: state.incompleteNote,
-      now,
+      now: referenceNow,
     });
   }
 
@@ -1284,7 +1285,7 @@ export function advancePendingCalendarReminder(
       events: targetEvents,
       offset: state.offset,
       explicitTime: time,
-      now,
+      now: referenceNow,
     });
     if (schedule.kind === 'invalid') {
       return {
@@ -1301,7 +1302,7 @@ export function advancePendingCalendarReminder(
       remindAtIso: schedule.remindAtIso,
       remindAtByEventId: schedule.remindAtByEventId,
       incompleteNote: state.incompleteNote,
-      now,
+      now: referenceNow,
     });
     return {
       kind: 'awaiting_input',
@@ -2111,6 +2112,17 @@ export function isPendingCalendarReminderExpired(
   const createdAt = new Date(state.createdAt).getTime();
   if (Number.isNaN(createdAt)) return true;
   return now.getTime() - createdAt > DEFAULT_CONFIRMATION_TTL_MS;
+}
+
+function resolvePendingCalendarReminderReferenceNow(
+  state: PendingCalendarReminderState,
+  now?: Date,
+): Date {
+  if (now) {
+    return now;
+  }
+  const createdAt = new Date(state.createdAt);
+  return Number.isNaN(createdAt.getTime()) ? new Date() : createdAt;
 }
 
 export function isPendingGoogleCalendarEventActionExpired(

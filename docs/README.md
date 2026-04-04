@@ -26,6 +26,7 @@ Andrea has two different documentation audiences on purpose:
   - setup, environment variables, startup/restart/verify
   - Cursor Cloud job workflows
   - desktop bridge terminal/session workflows
+  - Alexa Companion Mode setup and live validation
   - troubleshooting, validation, and release gates
 
 Cursor-specific docs also split into three surfaces:
@@ -48,11 +49,16 @@ Use these when you are enabling or validating specific capabilities:
 | Telegram operator live testing     | [TELEGRAM_OPERATOR_LIVE_TESTING.md](TELEGRAM_OPERATOR_LIVE_TESTING.md)   |
 | Cursor Cloud API keys              | [CURSOR_API_KEYS.md](CURSOR_API_KEYS.md)                                 |
 | Cursor desktop machine access      | [CURSOR_DESKTOP_BRIDGE.md](CURSOR_DESKTOP_BRIDGE.md)                     |
-| Alexa voice ingress                | [ALEXA_VOICE_INTEGRATION.md](ALEXA_VOICE_INTEGRATION.md)                 |
+| Alexa Companion Mode              | [ALEXA_VOICE_INTEGRATION.md](ALEXA_VOICE_INTEGRATION.md)                 |
 | Amazon shopping + approvals        | [AMAZON_SHOPPING_AND_APPROVALS.md](AMAZON_SHOPPING_AND_APPROVALS.md)     |
 | Optional add-ons and skills        | [ADDONS_AND_FEATURE_MATRIX.md](ADDONS_AND_FEATURE_MATRIX.md)             |
 
 For the default live demo, stay on Telegram conversation + direct replies + reminders/tasks + `/help` + `/cursor_status` unless you validated optional integrations that same day.
+
+Current Alexa truth:
+
+- repo-side and near-live proof are strong
+- full live acceptance still means one real signed Alexa utterance unless you already reproved that on the current host
 
 ## Operations, Security, And Release
 

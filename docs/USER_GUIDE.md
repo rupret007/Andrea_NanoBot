@@ -15,6 +15,7 @@ Andrea is strongest at:
 - summaries and light research
 - project help in normal language
 - fast direct replies for simple prompts, playful questions, and basic math
+- optional Alexa Companion Mode if your admin enabled the linked voice channel
 
 ## First Five Minutes In Telegram
 
@@ -70,6 +71,15 @@ For short greetings, playful prompts, and basic math, Andrea may answer immediat
 - summarize notes, chats, and lightweight research
 - help with project work in normal language
 - show `/cursor_status` as a safe readiness check when the coding/integration path matters
+
+If your admin enabled Alexa, Andrea can also answer short spoken questions like:
+
+- `what should I know about today`
+- `anything else`
+- `what about Candace`
+- `remind me before that`
+
+Those voice features stay linked-account only and use explicit personalization controls.
 
 ## What To Expect From `/cursor_status`
 

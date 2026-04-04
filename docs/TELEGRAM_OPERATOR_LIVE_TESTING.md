@@ -37,6 +37,7 @@ npm run telegram:user:send -- "What's the meaning of life?"
 npm run telegram:user:send -- --reply-to 1234 "/cursor-sync"
 npm run telegram:user:tap -- 1234 1
 npm run telegram:user:batch
+npm run telegram:user:runtime
 ```
 
 ## Required Setup
@@ -69,6 +70,15 @@ Notes:
 - `TELEGRAM_TEST_TARGET` can be a username like `@andrea_nanobot`
 - `TELEGRAM_TEST_CHAT_ID` can be the stored jid form like `tg:123456789`
 - if both are missing, the harness tries `TELEGRAM_BOT_USERNAME` and then the live bot token
+
+Current closeout truth for this checkout:
+
+- if no target is configured, `npm run telegram:user:runtime` fails honestly with:
+  - `Telegram test target is not configured. Set TELEGRAM_TEST_TARGET, TELEGRAM_TEST_CHAT_ID, or TELEGRAM_BOT_USERNAME.`
+- if a target is configured but the Telegram API credentials are still missing, it then fails honestly with:
+  - `Telegram user-session is not configured. Set TELEGRAM_USER_API_ID and TELEGRAM_USER_API_HASH first.`
+- if those credentials are present but no authenticated session has been created yet, the next honest blocker is:
+  - `Run npm run telegram:user:auth and complete the login flow.`
 
 ## One-Time Login
 
@@ -176,8 +186,8 @@ For Cursor-specific operator validation, prefer this live workflow:
 6. `npm run telegram:user:tap -- <dashboard_id> "View Output"`
 7. `npm run telegram:user:tap -- <dashboard_id> "Results"`
 8. `npm run telegram:user:tap -- <dashboard_id> "Continue"`
-9. `npm run telegram:user:send -- --reply-to <dashboard_id> "continue with ..."` for a Cloud follow-up
-10. `npm run telegram:user:tap -- <dashboard_id> "New Cloud Job"` when you want to exercise the create wizard
+9. `npm run telegram:user:send -- --reply-to <dashboard_id> "continue with ..."`
+10. `npm run telegram:user:tap -- <dashboard_id> "New Cloud Job"`
 
 Raw ids still work, but the normal Telegram operator path is now dashboard-, tile-, and reply-driven.
 
@@ -193,6 +203,28 @@ If you are validating the merged `andrea_runtime` lane instead of Cursor:
 - use `Recent Work` or `Current Task` there before falling back to `/runtime-*`
 - treat `/runtime-*` as secondary scaffolding, not the primary shell
 - only expect live execution when `ANDREA_RUNTIME_EXECUTION_ENABLED=true` and the Codex/OpenAI runtime has been validated on this host
+
+## Run The Runtime Lane Script
+
+```bash
+npm run telegram:user:runtime
+```
+
+This keeps the same real-message testing style, but drives the current runtime lane end to end.
+
+Current scripted flow:
+
+- `/runtime-status`
+- `/runtime-create <default runtime proof prompt>`
+- capture the returned `jobId`
+- `/runtime-job <jobId>`
+- `/runtime-followup <jobId> <default follow-up prompt>`
+- capture the returned follow-up `jobId`
+- `/runtime-job <follow-up jobId>`
+- `/runtime-logs <follow-up jobId> 40`
+- `/runtime-stop <follow-up jobId>`
+
+The harness fails honestly if it cannot extract the backend `jobId` from Andrea's reply text.
 
 ## Live Troubleshooting Loop
 
@@ -240,6 +272,7 @@ What is real:
 - real inbound Telegram testing from this machine is possible once user-session auth is configured
 - this is useful for regression loops against the live bot
 - the merged repo still teaches `/cursor` first; `/runtime-*` is only for secondary runtime-lane validation
+- the current runtime-lane script is the intended real-message acceptance path for `/runtime-*`
 
 What is not real:
 

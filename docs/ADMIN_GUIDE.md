@@ -33,6 +33,7 @@ Operators own:
 - service lifecycle
 - Cloud versus desktop bridge setup
 - deeper Cursor workflows
+- the integrated Codex/OpenAI runtime lane and its optional local loopback backend
 - startup, restart, verify, and troubleshooting
 - release validation and docs accuracy
 
@@ -99,6 +100,7 @@ Use these meanings consistently:
 - one healthy container runtime
 - at least one configured channel
 - valid model credentials
+- optional local `Andrea_OpenAI_Bot` process if you want the loopback OpenAI/Codex backend lane
 
 Quick checks:
 
@@ -111,6 +113,40 @@ npm run setup -- --step verify
 ```
 
 On Windows PowerShell, use `npm.cmd` and `npx.cmd` if policy blocks `npm.ps1` or `npx.ps1`.
+For login-start repair on Windows, `npm run setup -- --step service` now bootstraps the pinned Node 22.22.2 runtime even when the host `node.exe` is newer.
+
+## Andrea OpenAI Backend Lane
+
+This repo can call a local `Andrea_OpenAI_Bot` process over loopback HTTP.
+
+Required NanoBot env:
+
+```bash
+ANDREA_OPENAI_BACKEND_ENABLED=true
+ANDREA_OPENAI_BACKEND_URL=http://127.0.0.1:3210
+ANDREA_OPENAI_BACKEND_TIMEOUT_MS=15000
+```
+
+Operator commands for this lane:
+
+- `/runtime-status`
+- `/runtime-create TEXT`
+- `/runtime-jobs [LIMIT] [BEFORE_JOB_ID]`
+- `/runtime-job JOB_ID`
+- `/runtime-followup JOB_ID TEXT`
+- `/runtime-logs JOB_ID [LINES]`
+- `/runtime-stop JOB_ID`
+
+Important truth:
+
+- `jobId` is the primary backend handle in NanoBot
+- `threadId` is metadata returned by the backend
+- NanoBot uses the current registered chat's `group.folder` as the backend `groupFolder`
+- if the backend says `No registered group found for folder "..."`, NanoBot now calls local `PUT /groups/:groupFolder` and retries the original request once
+- `bootstrap_required` now means the backend is reachable but does not support or accept the local bootstrap route
+- `bootstrap_failed` means NanoBot reached the backend, attempted registration, and the registration or immediate retry still failed
+- `/runtime-*` remains the explicit fallback shell, but runtime cards now also support reply-linked follow-up when you reply to a real runtime card
+- the current selected runtime job is now chat-scoped convenience state for `/runtime-job`, `/runtime-logs`, and `/runtime-stop`
 
 ## First Deployment Checklist
 
@@ -136,7 +172,22 @@ On Windows PowerShell, use `npm.cmd` and `npx.cmd` if policy blocks `npm.ps1` or
 npm run services:start
 npm run services:stop
 npm run services:restart
+npm run services:status
 ```
+
+Windows startup truth:
+
+- The canonical Windows launcher is `scripts/nanoclaw-host.ps1`.
+- `npm run setup -- --step service` installs the preferred user-logon Scheduled Task when allowed.
+- If Windows policy blocks task creation, the installer writes a repo-owned Startup-folder launcher instead.
+- On this machine, the validated login path is the Startup-folder launcher because Scheduled Task creation is denied.
+
+Quick recovery steps after a failed login bring-up:
+
+1. Run `npm run services:status`.
+2. Check `logs/nanoclaw.host.log`.
+3. If needed, run `npm run services:restart`.
+4. If the login hook itself needs repair, rerun `npm run setup -- --step service`.
 
 After restart:
 
@@ -371,12 +422,70 @@ Recommended flow:
 3. `npm run telegram:user:tap -- <message_id> <button>`
 4. `npm run telegram:user:send -- --reply-to <message_id> "<message>"`
 5. `npm run telegram:user:batch`
+6. `npm run telegram:user:runtime`
 
 Keep this tooling operator-only and pointed at your own DM or a dedicated test chat only.
+
+If `npm run telegram:user:runtime` fails immediately, check these in order:
+
+1. `TELEGRAM_TEST_TARGET` or `TELEGRAM_BOT_USERNAME`
+2. `TELEGRAM_USER_API_ID`
+3. `TELEGRAM_USER_API_HASH`
+4. authenticated `store/telegram-user.session`
 
 For merged-shell architecture details, see:
 
 - [BACKEND_LANES_ARCHITECTURE.md](BACKEND_LANES_ARCHITECTURE.md)
+
+## Alexa Operator Validation
+
+Treat Alexa as an optional private channel, not part of the baseline rollout.
+
+Alexa is only **live-ready** when all of these are true:
+
+- Node `22.22.2` is the active runtime on the host
+- `ALEXA_SKILL_ID` is configured
+- the Alexa listener is enabled locally
+- an HTTPS tunnel or reverse proxy is forwarding the public Alexa endpoint
+- the Alexa Developer Console skill is using that endpoint and the same skill ID
+- account linking is configured in the Alexa console for Authorization Code Grant
+- the local Andrea OAuth config is present:
+  - `ALEXA_OAUTH_CLIENT_ID`
+  - `ALEXA_OAUTH_CLIENT_SECRET`
+  - `ALEXA_OAUTH_SCOPE`
+- the OAuth target `groupFolder` already exists in Andrea
+
+If any of those are missing, classify Alexa as **code-ready but setup-blocked** and do not present it as live-validated.
+
+Current truthful closeout language:
+
+- repo-side and near-live proof are strong
+- the remaining live gap is one real signed Alexa utterance unless you re-prove it on the current host today
+
+Final live acceptance order:
+
+1. `/alexa-status`
+2. local `GET /alexa/oauth/health`
+3. public `GET /alexa/oauth/health`
+4. unlinked launch
+5. unlinked help
+6. one unlinked personal-data request that should return a link-account style response
+7. linked `my day`
+8. linked `anything else`
+9. linked `what about Candace` or `what about Travis`
+10. linked `remind me before that`
+11. one preference or explainability turn
+
+What to verify:
+
+- concise spoken replies
+- one clarification at a time
+- short follow-ups stay grounded in the immediate Alexa context
+- daily guidance sounds measured and useful rather than generic
+- explicit personalization controls stay consent-based and inspectable
+- no Telegram/operator wording
+- no personal data without linking
+- no fake calendar/reminder output
 
 ## Security Defaults To Keep
 
@@ -390,7 +499,9 @@ Useful controls:
 
 - `CURSOR_MAX_ACTIVE_JOBS_PER_CHAT`
 - `ALEXA_VERIFY_SIGNATURE=true`
+- `ALEXA_REQUIRE_ACCOUNT_LINKING=true`
 - `ALEXA_ALLOWED_USER_IDS=...`
+- `ALEXA_LINKED_ACCOUNT_GROUP_FOLDER=main`
 - `AMAZON_BUSINESS_ORDER_MODE=trial`
 
 ## Incident Short Path

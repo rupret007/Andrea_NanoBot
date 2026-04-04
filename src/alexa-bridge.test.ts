@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import fs from 'fs';
 
 vi.mock('fs', async () => {
   const actual = await vi.importActual<typeof import('fs')>('fs');
@@ -34,11 +35,13 @@ vi.mock('./logger.js', () => ({
 }));
 
 import {
+  AlexaTargetGroupMissingError,
   type AlexaBridgeDeps,
   resolveAlexaBridgeTarget,
   runAlexaAssistantTurn,
   type AlexaPrincipal,
 } from './alexa-bridge.js';
+import { _initTestDatabase } from './db.js';
 
 function buildDeps() {
   return {
@@ -82,6 +85,10 @@ const principal: AlexaPrincipal = {
   userId: 'amzn1.ask.account.test-user',
 };
 
+beforeEach(() => {
+  _initTestDatabase();
+});
+
 describe('resolveAlexaBridgeTarget', () => {
   it('defaults to the main group when one already exists', () => {
     const target = resolveAlexaBridgeTarget(
@@ -110,6 +117,19 @@ describe('resolveAlexaBridgeTarget', () => {
     expect(target.group.folder).toMatch(/^alexa_[a-f0-9]{12}$/);
     expect(target.chatJid).toMatch(/^alexa:[a-f0-9]{12}$/);
     expect(target.shouldPersistGroup).toBe(true);
+  });
+
+  it('requires an existing target group when linked Alexa identity points at one', () => {
+    expect(() =>
+      resolveAlexaBridgeTarget(
+        principal,
+        {
+          targetGroupFolder: 'main',
+          requireExistingTargetGroup: true,
+        },
+        {},
+      ),
+    ).toThrowError(new AlexaTargetGroupMissingError('main'));
   });
 });
 
@@ -154,6 +174,10 @@ describe('runAlexaAssistantTurn', () => {
       }),
       expect.any(Function),
       expect.any(Function),
+    );
+    expect(vi.mocked(fs.writeFileSync)).toHaveBeenCalledWith(
+      expect.stringContaining('input'),
+      '',
     );
   });
 

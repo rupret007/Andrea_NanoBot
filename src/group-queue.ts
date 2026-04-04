@@ -33,10 +33,11 @@ export interface RuntimeJobSnapshot {
   active: boolean;
   idleWaiting: boolean;
   isTaskContainer: boolean;
-  runningTaskId?: string | null;
+  runningTaskId: string | null;
   pendingMessages: boolean;
   pendingTaskCount: number;
-  containerName?: string | null;
+  containerName: string | null;
+  retryCount: number;
 }
 
 export class GroupQueue {
@@ -259,17 +260,26 @@ export class GroupQueue {
   }
 
   getRuntimeJobs(): RuntimeJobSnapshot[] {
-    return [...this.groups.entries()].map(([groupJid, state]) => ({
-      groupFolder: state.groupFolder,
-      groupJid,
-      active: state.active,
-      idleWaiting: state.idleWaiting,
-      isTaskContainer: state.isTaskContainer,
-      runningTaskId: state.runningTaskId,
-      pendingMessages: state.pendingMessages,
-      pendingTaskCount: state.pendingTasks.length,
-      containerName: state.containerName,
-    }));
+    return [...this.groups.entries()]
+      .map(([groupJid, state]) => ({
+        groupFolder: state.groupFolder,
+        groupJid,
+        active: state.active,
+        idleWaiting: state.idleWaiting,
+        isTaskContainer: state.isTaskContainer,
+        runningTaskId: state.runningTaskId,
+        pendingMessages: state.pendingMessages,
+        pendingTaskCount: state.pendingTasks.length,
+        containerName: state.containerName,
+        retryCount: state.retryCount,
+      }))
+      .filter(
+        (job) =>
+          job.active ||
+          job.pendingMessages ||
+          job.pendingTaskCount > 0 ||
+          job.retryCount > 0,
+      );
   }
 
   private async runForGroup(

@@ -9,24 +9,25 @@ import {
 } from './container-runtime.js';
 
 describe('getDefaultContainerRuntimeCandidates', () => {
-  it('prefers docker first on Windows', () => {
+  it('prefers podman first on Windows', () => {
     expect(getDefaultContainerRuntimeCandidates('win32')).toEqual([
-      'docker',
       'podman',
+      'docker',
     ]);
   });
 
-  it('prefers apple-container first on macOS', () => {
+  it('prefers podman first on macOS', () => {
     expect(getDefaultContainerRuntimeCandidates('darwin')).toEqual([
+      'podman',
       'apple-container',
       'docker',
     ]);
   });
 
-  it('prefers docker first on Linux', () => {
+  it('prefers podman first on Linux', () => {
     expect(getDefaultContainerRuntimeCandidates('linux')).toEqual([
-      'docker',
       'podman',
+      'docker',
     ]);
   });
 });

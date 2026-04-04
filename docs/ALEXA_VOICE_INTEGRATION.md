@@ -1,164 +1,282 @@
 # Andrea Alexa Voice Integration
 
-This guide shows how to add Alexa as a voice front door to Andrea.
-Andrea stays the assistant identity. Alexa is only the transport.
+Alexa is a bounded channel for Andrea, not a second assistant and not a public control plane.
 
-Treat Alexa as an optional operator-enabled ingress, not part of Andrea's default public surface, until it has been validated end to end in the current environment.
+Andrea now uses an internal **Alexa Companion Mode**:
 
-## 1) What You Get
+- shorter, warmer, spoken-first replies
+- one main thing first
+- one or two short supporting lines
+- measured guidance for open-ended daily questions
+- short-lived conversational continuity
+- household-aware follow-ups when context is strong
+- explicit, consent-based personalization only
 
-With Alexa enabled:
+Telegram remains the primary operator surface. Alexa reuses the same trust boundaries, schedule intelligence, reminders, drafting, and follow-through logic.
 
-- users can speak requests instead of typing
-- requests route into the same Andrea runtime
-- response formatting still stays Andrea-first
-- internal helper machinery stays hidden
+## 0) Current Truth
 
-## 2) Required Inputs
+Treat Alexa as:
 
-Minimum env value:
+- **live-ready** only when the live skill, HTTPS ingress, account linking, and linked Andrea group are all configured and current
+- **code-ready but setup-blocked** when repo-side validation is green but one or more external Alexa steps are still missing
+
+Current repo-side and near-live proof on the operator host is strong:
+
+- Andrea runs under Node `22.22.2`
+- the local Alexa listener can run even when no Telegram channel is connected
+- `groupFolder=main` is valid
+- `ngrok` forwards `https://patronymically-nonremedial-london.ngrok-free.dev` to `http://localhost:4300`
+- local and public OAuth health respond on `/alexa/oauth/health`
+- the live authorization-code flow succeeds against the public ngrok URL
+- issued access tokens resolve to `groupFolder=main`
+- near-live conversational proof through the built skill handler and a real linked token is green
+
+If you have not re-proven it on the current host today, the one remaining external live step is:
+
+- one real signed Alexa utterance from the app, a device, or an authenticated simulator session
+
+Important validation note:
+
+- use **Node 22.22.2** for Alexa validation on this repo
+- do not rely on host Node 24 for truthful Alexa checks
+
+## 1) Alexa Surface
+
+The interaction model keeps the Alexa surface intentionally bounded:
+
+- `MyDayIntent`
+- `UpcomingSoonIntent`
+- `WhatNextIntent`
+- `BeforeNextMeetingIntent`
+- `WhatMattersMostTodayIntent`
+- `AnythingImportantIntent`
+- `WhatAmIForgettingIntent`
+- `TomorrowCalendarIntent`
+- `EveningResetIntent`
+- `CandaceUpcomingIntent`
+- `FamilyUpcomingIntent`
+- `AnythingElseIntent`
+- `ConversationalFollowupIntent`
+- `MemoryControlIntent`
+- `RemindBeforeNextMeetingIntent`
+- `SaveForLaterIntent`
+- `DraftFollowUpIntent`
+
+Standard Alexa intents still apply:
+
+- `LaunchRequest`
+- `AMAZON.HelpIntent`
+- `AMAZON.YesIntent`
+- `AMAZON.NoIntent`
+- `AMAZON.CancelIntent`
+- `AMAZON.StopIntent`
+- `AMAZON.FallbackIntent`
+
+Out of scope:
+
+- smart-home control
+- broad freeform chat
+- operator-shell commands
+- hidden long-term memory
+- multi-user household routing
+
+## 2) Trust And Account Linking
+
+Andrea only answers personal Alexa requests when the request resolves to a linked local Andrea context.
+
+The Alexa boundary enforces:
+
+- ASK request signature and timestamp verification when enabled
+- configured skill/application ID matching
+- optional coarse Alexa user/person allowlist
+- required linked-account lookup for personal-data intents
+
+The local link model is intentionally narrow:
+
+- Andrea stores hashed access tokens in `alexa_linked_accounts`
+- the hash maps to one Andrea `groupFolder`
+- optional stored Alexa user/person IDs can further lock that mapping down
+
+Linked versus unlinked behavior is strict:
+
+- unlinked requests may use launch/help/fallback safely
+- personal intents do not return calendar, reminder, or follow-through data unless linking resolves cleanly
+- if the token is missing, unknown, or bound to the wrong Alexa user/person, Andrea returns a concise barrier instead of a fake personal answer
+
+## 3) Required Local Config
+
+Minimum listener config:
 
 ```bash
 ALEXA_SKILL_ID=amzn1.ask.skill.xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-```
-
-Recommended secure private rollout:
-
-```bash
 ALEXA_HOST=127.0.0.1
 ALEXA_PORT=4300
 ALEXA_PATH=/alexa
 ALEXA_VERIFY_SIGNATURE=true
-ALEXA_ALLOWED_USER_IDS=amzn1.ask.account.your-account-id
-ALEXA_TARGET_GROUP_FOLDER=main
-```
-
-Optional:
-
-```bash
 ALEXA_REQUIRE_ACCOUNT_LINKING=true
 ```
 
-## 3) Meaning Of Each Setting
+Recommended private-user allowlist:
 
-- `ALEXA_SKILL_ID`: required skill identifier from Alexa developer console.
-- `ALEXA_HOST`: bind interface (default `127.0.0.1`).
-- `ALEXA_PORT`: bind port (default `4300`).
-- `ALEXA_PATH`: HTTP path for Alexa requests (default `/alexa`).
-- `ALEXA_VERIFY_SIGNATURE`: validates ASK request signatures; keep this `true` in real environments.
-- `ALEXA_ALLOWED_USER_IDS`: comma-separated allowlist for account/person IDs.
-- `ALEXA_REQUIRE_ACCOUNT_LINKING`: rejects requests until skill account is linked.
-- `ALEXA_TARGET_GROUP_FOLDER`: routes voice requests into a specific group context (`main` recommended).
+```bash
+ALEXA_ALLOWED_USER_IDS=amzn1.ask.account...,amzn1.ask.person...
+```
 
-## 4) Build The Alexa Skill
+OAuth config:
 
-In Alexa Developer Console:
+```bash
+ALEXA_OAUTH_CLIENT_ID=andrea-alexa-poc-client
+ALEXA_OAUTH_CLIENT_SECRET=replace-with-a-local-client-secret
+ALEXA_OAUTH_SCOPE=andrea.alexa.link
+ALEXA_OAUTH_ALLOWED_REDIRECT_URIS=https://layla.amazon.com/api/skill/link/<vendor-id>
+ALEXA_LINKED_ACCOUNT_NAME=Andrea Alexa
+ALEXA_LINKED_ACCOUNT_GROUP_FOLDER=main
+ALEXA_LINKED_ACCOUNT_ALLOWED_USER_ID=amzn1.ask.account...
+ALEXA_LINKED_ACCOUNT_ALLOWED_PERSON_ID=amzn1.ask.person...
+```
 
-1. Create a new **Custom** skill.
-2. Set invocation name (for example `andrea assistant`).
-3. Import interaction model from:
+The OAuth target `groupFolder` must already exist as a valid Andrea registered group.
+
+## 4) Developer Console Wiring
+
+In the Alexa Developer Console:
+
+1. Create or open the custom skill.
+2. Import the interaction model from:
    - `docs/alexa/interaction-model.en-US.json`
-4. Configure endpoint URL (HTTPS) to:
-   - `https://<your-public-host>/alexa` (or your configured `ALEXA_PATH`)
-5. Use the same `ALEXA_SKILL_ID` in `.env`.
+3. Set the HTTPS endpoint to:
+   - `https://patronymically-nonremedial-london.ngrok-free.dev/alexa`
+4. Configure account linking as **Authorization Code Grant**.
+5. Use:
+   - auth URI `https://patronymically-nonremedial-london.ngrok-free.dev/alexa/oauth/authorize`
+   - token URI `https://patronymically-nonremedial-london.ngrok-free.dev/alexa/oauth/token`
+   - client ID `andrea-alexa-poc-client`
+   - client secret from local `ALEXA_OAUTH_CLIENT_SECRET`
+   - scope `andrea.alexa.link`
+   - client authentication `HTTP Basic`
+6. Make sure the live skill/application ID matches local `ALEXA_SKILL_ID`.
 
-## 5) HTTPS Requirement
+If any of those are missing, Alexa is **setup-blocked**, not broken.
 
-Alexa custom skills require HTTPS endpoints.
+## 5) Conversational Companion Behavior
 
-Common patterns:
+Alexa replies are intentionally shorter than Telegram:
 
-- reverse proxy on your own host
-- Cloudflare Tunnel
-- ngrok
+- one strong first sentence
+- one or two short support lines
+- one clarification at a time
+- yes/no confirmations for reminder, save-for-later, and memory-consent flows
 
-Local runtime address can stay HTTP internally:
+Andrea keeps a short-lived Alexa conversation context that is:
 
-- `http://127.0.0.1:4300/alexa`
+- Alexa-only
+- linked-account scoped
+- tied to the resolved Andrea `groupFolder`
+- short-lived, roughly 10 minutes
+- limited to the current subject, guidance goal, and allowed follow-ups
 
-Expose that through HTTPS for Alexa console configuration.
+That enables bounded follow-ups like:
 
-## 6) Start And Verify
+- `anything else`
+- `what about Candace`
+- `what about Travis`
+- `what's next after that`
+- `before that`
+- `remind me before that`
+- `make that shorter`
+- `say more`
+- `what should I do about that`
+- `should I be worried about anything`
+- `save that for later`
 
-Start runtime:
+If context is weak or expired, Andrea falls back honestly with one short clarification.
 
-```bash
-npm run services:restart
-```
+## 6) Daily Guidance And Household Context
 
-Run verification:
+Alexa Companion Mode is built to answer practical daily-life questions, not just isolated commands.
 
-```bash
-npm run setup -- --step verify
-```
+High-value guidance flows:
 
-In Telegram main control chat:
+- morning brief
+- what should I know about today
+- what matters most today
+- what am I forgetting
+- anything important
+- what is next
+- evening reset
+- what does the family have going on
+- what do Candace and I have coming up
 
-```text
-/alexa-status
-```
+Household context remains bounded and explainable:
 
-Expected status traits:
+- immediate family phrasing can be used from the current turn
+- persistent family or relationship facts require consent
+- Andrea can use remembered people like Candace or Travis without turning Alexa into a freeform family-memory bot
 
-- enabled
-- listening
-- signature verification on
-- correct target group folder
+## 7) Personalization And Control
 
-## 7) Voice Test Script
+Andrea supports structured, inspectable personalization across Alexa and Telegram.
 
-In Alexa test console (or real device), try:
+What Andrea may remember after consent:
 
-- `Open Andrea assistant`
-- `Ask Andrea assistant to remind me tomorrow at 8am to call Sam`
-- `Ask Andrea assistant to research the best standing desks for small apartments`
+- people
+- relationships
+- preferences
+- routines
+- household context
+- conversational style
+- recurring priorities
 
-If this works, voice ingress is live for that environment.
+Important limits:
 
-## 8) Security Hardening Checklist
+- Alexa does not silently create hidden long-term memory
+- proposed memories only become active after explicit consent or a direct command like `remember this`
+- only accepted facts are reused later
+- rejected or disabled facts are not treated as active preferences
 
-Keep these on for production:
+Supported control questions include:
 
-- `ALEXA_VERIFY_SIGNATURE=true`
-- `ALEXA_ALLOWED_USER_IDS` populated
-- `ALEXA_TARGET_GROUP_FOLDER=main` (or another intentional folder)
+- `remember this`
+- `forget that`
+- `what do you remember about me`
+- `what do you remember about Candace`
+- `why did you say that`
+- `what are you using to personalize this`
+- `be more direct`
+- `be less personal`
+- `use less family context`
+- `reset my preferences`
 
-Add account linking when needed:
+Alexa answers these briefly. Telegram can return a richer structured summary.
 
-- set `ALEXA_REQUIRE_ACCOUNT_LINKING=true`
+## 8) Final Acceptance Order
 
-Avoid:
+When the environment is configured, use this order:
 
-- public endpoint without signature verification
-- empty allowlist for personal/private skills
-- changing target group folder without documenting behavior impact
+1. verify the host is on Node `22.22.2`
+2. confirm `/alexa-status`
+3. confirm local `GET /alexa/oauth/health`
+4. confirm public `GET /alexa/oauth/health`
+5. confirm the live skill endpoint and account-link settings in the Alexa console
+6. confirm the OAuth-issued token resolves to the intended Andrea group
+7. test one unlinked-safe request
+8. test one linked personal request
+9. test one linked follow-up such as `anything else`
+10. test one household-aware follow-up such as `what about Candace`
+11. test one action handoff such as `remind me before that`
+12. optionally test one preference or explainability turn
 
-## 9) Troubleshooting
+If you need one sentence for the current state, use this:
 
-If `/alexa-status` says disabled:
+- Alexa Companion Mode is repo-ready and near-live validated; the only remaining full-live step is one real signed Alexa utterance unless that has already been re-proven on the current host.
 
-- missing or wrong `ALEXA_SKILL_ID`
+## 9) Incident Notes
 
-If status says configured but not started:
+For incidents, use:
 
-- runtime not started, or listener failed to bind host/port
+- `/alexa-status`
+- `npm run setup -- --step verify`
+- `logs/nanoclaw.log`
 
-If Alexa says endpoint failure:
-
-- HTTPS endpoint mismatch
-- wrong path (`ALEXA_PATH` vs console endpoint path)
-- signature verification failing due to proxy/path rewriting
-
-If requests are denied:
-
-- `ALEXA_ALLOWED_USER_IDS` does not include caller identity
-- `ALEXA_REQUIRE_ACCOUNT_LINKING=true` but skill not linked
-
-## 10) Operational Notes
-
-- Alexa is additive. Telegram remains the primary operator control surface and the safer default front door.
-- For incidents, use:
-  - `/alexa-status`
-  - `npm run setup -- --step verify`
-  - `logs/nanoclaw.log`
-- Keep this guide aligned with any future Alexa intent-model changes.
+Alexa is additive. Telegram remains the primary operator control surface and the safer default front door.

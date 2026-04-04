@@ -32,6 +32,55 @@ export const CURSOR_DASHBOARD_COMMANDS = new Set(['/cursor']);
 
 export const CURSOR_JOBS_COMMANDS = new Set(['/cursor-jobs', '/cursor_jobs']);
 
+export const RUNTIME_STATUS_COMMANDS = new Set([
+  '/runtime-status',
+  '/runtime_status',
+  '/codex-status',
+  '/codex_status',
+]);
+
+export const RUNTIME_JOBS_COMMANDS = new Set([
+  '/runtime-jobs',
+  '/runtime_jobs',
+  '/codex-jobs',
+  '/codex_jobs',
+]);
+
+export const RUNTIME_CREATE_COMMANDS = new Set([
+  '/runtime-create',
+  '/runtime_create',
+  '/codex-create',
+  '/codex_create',
+]);
+
+export const RUNTIME_JOB_COMMANDS = new Set([
+  '/runtime-job',
+  '/runtime_job',
+  '/codex-job',
+  '/codex_job',
+]);
+
+export const RUNTIME_FOLLOWUP_COMMANDS = new Set([
+  '/runtime-followup',
+  '/runtime_followup',
+  '/codex-followup',
+  '/codex_followup',
+]);
+
+export const RUNTIME_STOP_COMMANDS = new Set([
+  '/runtime-stop',
+  '/runtime_stop',
+  '/codex-stop',
+  '/codex_stop',
+]);
+
+export const RUNTIME_LOGS_COMMANDS = new Set([
+  '/runtime-logs',
+  '/runtime_logs',
+  '/codex-logs',
+  '/codex_logs',
+]);
+
 export const CURSOR_CREATE_COMMANDS = new Set([
   '/cursor-create',
   '/cursor_create',
@@ -98,31 +147,6 @@ export const CURSOR_ARTIFACT_LINK_COMMANDS = new Set([
   '/cursor_artifact_link',
 ]);
 
-export const RUNTIME_STATUS_COMMANDS = new Set([
-  '/runtime-status',
-  '/runtime_status',
-]);
-
-export const RUNTIME_JOBS_COMMANDS = new Set([
-  '/runtime-jobs',
-  '/runtime_jobs',
-]);
-
-export const RUNTIME_FOLLOWUP_COMMANDS = new Set([
-  '/runtime-followup',
-  '/runtime_followup',
-]);
-
-export const RUNTIME_STOP_COMMANDS = new Set([
-  '/runtime-stop',
-  '/runtime_stop',
-]);
-
-export const RUNTIME_LOGS_COMMANDS = new Set([
-  '/runtime-logs',
-  '/runtime_logs',
-]);
-
 export const DEBUG_STATUS_COMMANDS = new Set([
   '/debug-status',
   '/debug_status',
@@ -176,6 +200,13 @@ const DISABLED_COMMANDS = new Set([
 ]);
 
 const MAIN_CONTROL_ONLY_COMMANDS = new Set([
+  ...RUNTIME_STATUS_COMMANDS,
+  ...RUNTIME_JOBS_COMMANDS,
+  ...RUNTIME_CREATE_COMMANDS,
+  ...RUNTIME_JOB_COMMANDS,
+  ...RUNTIME_FOLLOWUP_COMMANDS,
+  ...RUNTIME_STOP_COMMANDS,
+  ...RUNTIME_LOGS_COMMANDS,
   ...CURSOR_MODELS_COMMANDS,
   ...CURSOR_TEST_COMMANDS,
   ...CURSOR_DASHBOARD_COMMANDS,
@@ -194,11 +225,6 @@ const MAIN_CONTROL_ONLY_COMMANDS = new Set([
   ...CURSOR_CONVERSATION_COMMANDS,
   ...CURSOR_ARTIFACTS_COMMANDS,
   ...CURSOR_ARTIFACT_LINK_COMMANDS,
-  ...RUNTIME_STATUS_COMMANDS,
-  ...RUNTIME_JOBS_COMMANDS,
-  ...RUNTIME_FOLLOWUP_COMMANDS,
-  ...RUNTIME_STOP_COMMANDS,
-  ...RUNTIME_LOGS_COMMANDS,
   ...DEBUG_STATUS_COMMANDS,
   ...DEBUG_LEVEL_COMMANDS,
   ...DEBUG_RESET_COMMANDS,

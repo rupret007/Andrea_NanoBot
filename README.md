@@ -13,6 +13,7 @@
 <p align="center">
   <a href="docs/USER_GUIDE.md">User Guide</a>&nbsp; | &nbsp;
   <a href="docs/ADMIN_GUIDE.md">Admin Guide</a>&nbsp; | &nbsp;
+  <a href="docs/ANDREA_OPENAI_BACKEND.md">OpenAI Backend</a>&nbsp; | &nbsp;
   <a href="docs/SETUP_AND_FEATURES_GUIDE.md">Setup Guide</a>&nbsp; | &nbsp;
   <a href="docs/CHANNEL_COMMANDS_AND_ONBOARDING.md">Chat Commands</a>&nbsp; | &nbsp;
   <a href="docs/BACKEND_LANES_ARCHITECTURE.md">Backend Lanes</a>&nbsp; | &nbsp;
@@ -45,6 +46,7 @@ What operators should expect:
 - a secondary `andrea_runtime` lane for Codex/OpenAI execution truth
 - desktop bridge session and terminal workflows
 - live `/debug-*` troubleshooting controls plus host-side `npm run debug:*` fallbacks
+- a loopback-backed Codex/OpenAI runtime lane with reply-linked follow-up and current-task selection
 - optional integrations only after same-day validation
 
 The runtime is still based on NanoClaw, which means the security model matters:
@@ -137,6 +139,21 @@ Andrea_NanoBot now owns the shared shell while backend lanes own execution truth
 Shared shell handles now resolve as `{ laneId, jobId }`.
 The imported `imported/andrea_openai_bot` subtree is temporary staging plus history preservation, not the long-term runtime home.
 
+Under the hood, the current Codex/OpenAI lane can still delegate execution truth to the local `Andrea_OpenAI_Bot` loopback backend when that lane is enabled. See [docs/ANDREA_OPENAI_BACKEND.md](docs/ANDREA_OPENAI_BACKEND.md) for the ownership split and the one-time local bootstrap-and-retry flow.
+
+## Alexa Companion Mode
+
+Alexa is now a bounded companion channel for Andrea rather than a novelty skill.
+
+- it reuses the same Andrea core, account-linking, and trust boundaries
+- it is shorter, warmer, and more spoken-first than Telegram
+- it supports daily guidance like morning brief, what matters most today, anything important, what am I forgetting, evening reset, and family-upcoming flows
+- it keeps short-lived conversational continuity for turns like `anything else`, `what about Candace`, `what about Travis`, `make that shorter`, and `remind me before that`
+- personalization remains explicit and consent-based
+- use Node `22.22.2` for truthful Alexa validation on the operator host
+
+Repo-side and near-live Alexa proof are strong on this host. The one remaining live gap is still one exact external step unless you re-prove it during the current session: one real signed Alexa utterance from the app, a device, or an authenticated simulator session.
+
 ## Two Command Surfaces
 
 This is one of the easiest places for new users to get confused, so the split is important:
@@ -188,7 +205,7 @@ For a reliable demo, keep the story tight:
 - stable health checks, `/help`, and `/cursor_status`
 - secure per-chat isolation and clean user-facing replies
 
-Optional integrations such as Cursor Cloud job control, desktop bridge control, Alexa, shopping flows, marketplace skills, and calendar-oriented skills exist, but they should be treated as operator-enabled extras unless they were validated the same day.
+Optional integrations such as Cursor Cloud job control, desktop bridge control, Alexa, shopping flows, marketplace skills, and calendar-oriented skills exist, but they should be treated as operator-enabled extras unless they were validated the same day. Alexa in particular is now code-complete as a bounded personal-assistant channel, but live use still depends on Node 22, HTTPS ingress, Alexa console setup, and account linking being configured on that host.
 
 ## Calendar Integration
 
@@ -359,7 +376,7 @@ Use the docs based on what you are trying to do:
 - [docs/CURSOR_API_KEYS.md](docs/CURSOR_API_KEYS.md)
   for where `CURSOR_API_KEY` comes from, what it enables, and how it differs from the desktop bridge
 - [docs/ALEXA_VOICE_INTEGRATION.md](docs/ALEXA_VOICE_INTEGRATION.md)
-  for Alexa setup, signed endpoint behavior, and the ready-to-import interaction model
+  for Alexa v1 setup, account-linking rules, Node 22 validation requirements, and the final live-acceptance runbook
 - [docs/ADDONS_AND_FEATURE_MATRIX.md](docs/ADDONS_AND_FEATURE_MATRIX.md)
   for deciding which skills and add-ons to enable
 - [docs/TESTING_AND_RELEASE_RUNBOOK.md](docs/TESTING_AND_RELEASE_RUNBOOK.md)

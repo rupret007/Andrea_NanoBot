@@ -5,9 +5,14 @@
 import { ChildProcess, spawn } from 'child_process';
 import { createHash } from 'crypto';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 
 import {
+  AGENT_RUNTIME_DEFAULT,
+  AGENT_RUNTIME_FALLBACK,
+  CODEX_LOCAL_ENABLED,
+  CODEX_LOCAL_MODEL,
   CONTAINER_IMAGE,
   CONTAINER_INITIAL_OUTPUT_TIMEOUT,
   CONTAINER_MAX_OUTPUT_SIZE,
@@ -16,6 +21,7 @@ import {
   GROUPS_DIR,
   IDLE_TIMEOUT,
   ONECLI_URL,
+  OPENAI_MODEL_FALLBACK,
   RUNTIME_STATE_DIR,
   TIMEZONE,
 } from './config.js';
@@ -36,8 +42,7 @@ import {
 import { OneCLI } from '@onecli-sh/sdk';
 import { validateAdditionalMounts } from './mount-security.js';
 import { OPENCLAW_MARKET_MANIFEST_FILENAME } from './openclaw-market.js';
-import { RegisteredGroup } from './types.js';
-import type { AgentRuntimeName, RuntimeRoute } from './andrea-runtime/types.js';
+import { AgentRuntimeName, RegisteredGroup, RuntimeRoute } from './types.js';
 import type { AssistantRequestPolicy } from './assistant-routing.js';
 import {
   CONTAINER_CLOSE_GRACE_PERIOD_MS,
@@ -149,9 +154,16 @@ const CONTAINER_HOST_ALIAS_HOSTS = new Set([
   'host.docker.internal',
 ]);
 const NINE_ROUTER_DEFAULT_PORT = '20128';
+const CODEX_AUTH_SYNC_FILENAMES = ['auth.json', 'cap_sid', 'config.toml'] as const;
 const LOG_SAFE_ENV_KEYS = new Set([
   'TZ',
   'HOME',
+  'CODEX_HOME',
+  'AGENT_RUNTIME_DEFAULT',
+  'AGENT_RUNTIME_FALLBACK',
+  'CODEX_LOCAL_ENABLED',
+  'CODEX_LOCAL_MODEL',
+  'OPENAI_MODEL_FALLBACK',
   'NANOCLAW_CONTAINER_RUNTIME',
   'ANTHROPIC_BASE_URL',
   'OPENAI_BASE_URL',
@@ -654,6 +666,23 @@ function ensureDirectAssistantWorkspace(groupFolder: string): string {
   return workspaceDir;
 }
 
+function syncCodexAuthForGroup(groupCodexDir: string): void {
+  const globalCodexDir = path.join(os.homedir(), '.codex');
+  if (!fs.existsSync(globalCodexDir)) return;
+
+  for (const filename of CODEX_AUTH_SYNC_FILENAMES) {
+    const sourcePath = path.join(globalCodexDir, filename);
+    const sourceContent = tryReadTextFile(sourcePath);
+    if (sourceContent == null) continue;
+
+    const destinationPath = path.join(groupCodexDir, filename);
+    const existingContent = tryReadTextFile(destinationPath);
+    if (existingContent === sourceContent) continue;
+
+    fs.writeFileSync(destinationPath, sourceContent);
+  }
+}
+
 function buildVolumeMounts(
   group: RegisteredGroup,
   isMain: boolean,
@@ -764,6 +793,28 @@ function buildVolumeMounts(
     containerPath: '/home/node/.claude',
     readonly: false,
   });
+
+  const globalCodexDir = path.join(os.homedir(), '.codex');
+  if (route === 'direct_assistant' && fs.existsSync(globalCodexDir)) {
+    // Voice and other direct-assistant turns need the live host Codex home so
+    // runtime auth state stays valid inside the container on this machine.
+    mounts.push({
+      hostPath: globalCodexDir,
+      containerPath: '/home/node/.codex',
+      readonly: false,
+    });
+  } else {
+    const groupCodexDir = path.join(DATA_DIR, 'sessions', group.folder, '.codex');
+    fs.mkdirSync(groupCodexDir, { recursive: true });
+    // Shared runtime lanes that are not direct-assistant voice turns can stay
+    // on the lighter per-group Codex copy.
+    syncCodexAuthForGroup(groupCodexDir);
+    mounts.push({
+      hostPath: groupCodexDir,
+      containerPath: '/home/node/.codex',
+      readonly: false,
+    });
+  }
 
   // Per-group IPC namespace: each group gets its own IPC directory
   // This prevents cross-group privilege escalation via IPC
@@ -922,6 +973,14 @@ async function buildContainerArgs(
 
   // Pass host timezone so container's local time matches the user's
   args.push('-e', `TZ=${TIMEZONE}`);
+  args.push('-e', 'CODEX_HOME=/home/node/.codex');
+  args.push('-e', `AGENT_RUNTIME_DEFAULT=${AGENT_RUNTIME_DEFAULT}`);
+  args.push('-e', `AGENT_RUNTIME_FALLBACK=${AGENT_RUNTIME_FALLBACK}`);
+  args.push('-e', `CODEX_LOCAL_ENABLED=${CODEX_LOCAL_ENABLED ? 'true' : 'false'}`);
+  args.push('-e', `OPENAI_MODEL_FALLBACK=${OPENAI_MODEL_FALLBACK}`);
+  if (CODEX_LOCAL_MODEL) {
+    args.push('-e', `CODEX_LOCAL_MODEL=${CODEX_LOCAL_MODEL}`);
+  }
   args.push('-e', `NANOCLAW_CONTAINER_RUNTIME=${CONTAINER_RUNTIME_NAME}`);
 
   // OneCLI gateway handles credential injection — containers never see real secrets.

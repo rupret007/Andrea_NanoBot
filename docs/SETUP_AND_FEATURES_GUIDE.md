@@ -303,8 +303,15 @@ Full details:
 
 ### Option D: Alexa Voice
 
-Andrea can expose a custom Alexa skill endpoint so you can talk to the same assistant out loud.
-Treat this as an optional operator-enabled extra, not part of the default baseline or default demo path, unless it has been validated end to end in the current environment.
+Andrea can expose a bounded custom Alexa skill endpoint so you can talk to the same assistant out loud.
+Treat this as an optional personal-assistant channel, not part of the default baseline or demo path unless it has been validated end to end in the current environment.
+
+Current closeout truth:
+
+- the Alexa v1 code path is ready in this repo
+- live Alexa use is still setup-dependent
+- if `ALEXA_*` env, HTTPS ingress, console setup, or account linking are missing, treat Alexa as **code-ready but setup-blocked**
+- validate Alexa on **Node 22.22.2**; unsupported host runtimes such as Node 24 can fail DB-backed Alexa checks without indicating an Alexa feature bug
 
 Minimum:
 
@@ -319,16 +326,50 @@ ALEXA_HOST=127.0.0.1
 ALEXA_PORT=4300
 ALEXA_PATH=/alexa
 ALEXA_VERIFY_SIGNATURE=true
+ALEXA_REQUIRE_ACCOUNT_LINKING=true
 ALEXA_ALLOWED_USER_IDS=amzn1.ask.account.your-user-id
-ALEXA_TARGET_GROUP_FOLDER=main
+ALEXA_OAUTH_CLIENT_ID=andrea-alexa-poc-client
+ALEXA_OAUTH_CLIENT_SECRET=replace-with-a-local-client-secret
+ALEXA_OAUTH_SCOPE=andrea.alexa.link
+ALEXA_LINKED_ACCOUNT_GROUP_FOLDER=main
 ```
 
 Practical notes:
 
 - Alexa requires an HTTPS endpoint, so local dev usually sits behind a tunnel or reverse proxy.
 - `ALEXA_ALLOWED_USER_IDS` is the easiest security rail for a private skill rollout.
-- `ALEXA_TARGET_GROUP_FOLDER=main` lets Alexa share the same core Andrea context as your Telegram main chat.
 - Use `/alexa-status` in Telegram to confirm that the listener actually started.
+- Account linking is required for Alexa personal-data intents in v1.
+- unlinked Alexa is intentionally limited to launch/help/fallback style responses.
+- The Andrea OAuth server now mints the linked access token and maps it to one Andrea `groupFolder`.
+- that OAuth target `groupFolder` must already exist as a valid Andrea registered group
+- Alexa now supports short-lived multi-turn follow-ups like `anything else`, `what about Candace`, `make that shorter`, and `remind me before that`.
+- Alexa Companion Mode also supports broader daily-life guidance like `what matters most today`, `what am I forgetting`, `anything I should know`, `what should I remember tonight`, and family guidance such as `what does the family have going on`.
+- person follow-ups can now stay voice-natural with prompts like `what about Travis`, `say more`, `what should I do about that`, and `should I be worried about anything`.
+- Alexa can also handle explicit memory controls like `remember this`, `forget that`, and `what do you remember about me`.
+- remembered personalization stays structured and consent-based; Andrea does not silently store arbitrary conversation history as long-term memory.
+
+Recommended setup order:
+
+1. switch to Node 22 on the host
+2. set `ALEXA_SKILL_ID` plus the local listener env
+3. set the Andrea OAuth client env:
+   - `ALEXA_OAUTH_CLIENT_ID`
+   - `ALEXA_OAUTH_CLIENT_SECRET`
+   - `ALEXA_OAUTH_SCOPE`
+4. make sure the OAuth target `groupFolder` already exists in Andrea
+5. expose the endpoint through HTTPS
+   - default v1 dev path: `ngrok http 4300`
+   - if ngrok returns `ERR_NGROK_4018`, finish ngrok account verification and install the local authtoken first
+6. configure the Alexa Developer Console skill and Authorization Code Grant account linking
+   - auth URI: `https://patronymically-nonremedial-london.ngrok-free.dev/alexa/oauth/authorize`
+   - token URI: `https://patronymically-nonremedial-london.ngrok-free.dev/alexa/oauth/token`
+   - scope: `andrea.alexa.link`
+   - auth scheme: `HTTP Basic`
+   - import or rebuild the interaction model from `docs/alexa/interaction-model.en-US.json`
+   - use the same live skill/application ID as local `ALEXA_SKILL_ID`
+7. run `/alexa-status`, then perform the linked and unlinked live checks from [ALEXA_VOICE_INTEGRATION.md](ALEXA_VOICE_INTEGRATION.md)
+8. if repo-side and near-live proof are already green, treat one real signed Alexa utterance as the final live acceptance step
 
 Full details:
 
@@ -512,14 +553,19 @@ Validation runner note:
 
 Windows service lifecycle helpers:
 
-- `npm run services:start` starts the OpenAI gateway (when configured) and NanoClaw runtime.
-- `npm run services:stop` stops NanoClaw runtime processes and the gateway container.
-- `npm run services:restart` runs stop then start in one command.
+- `npm run services:start` delegates to the canonical Windows host launcher, uses the pinned Node 22.22.2 runtime, and starts NanoClaw plus any configured companions.
+- `npm run services:stop` stops NanoClaw, the local gateway, and any repo-managed companions started through the host launcher.
+- `npm run services:restart` runs stop then start through the same host-controlled path.
+- `npm run services:status` reports the active repo root, pinned Node runtime, installed login-start mechanism, Alexa health, optional loopback backend health, ngrok state, and the last startup error if one occurred.
 
 Startup behavior:
 
 - `npm run setup -- --step service` configures platform-native startup.
-- On Windows this creates a scheduled task (`NanoClaw`) or Startup-folder fallback.
+- On Windows it prefers a Scheduled Task (`NanoClaw`) at user logon and falls back to the repo-owned Startup-folder launcher when task creation is denied by OS policy.
+- On this machine, Scheduled Task creation is denied, so the canonical validated login path is:
+  - `C:\Users\rupret\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup\nanoclaw-start.cmd`
+  - which delegates to `scripts\nanoclaw-host.ps1`
+- The Windows host launcher bootstraps and reuses the repo-local pinned runtime under `data\runtime\node-v22.22.2-win-x64`, so daily startup does not depend on host Node 24.
 - On macOS this uses launchd.
 - On Linux this uses systemd (or nohup fallback).
 - So startup is not only a container setting; it is handled by host service manager policy plus runtime startup wrapper logic.

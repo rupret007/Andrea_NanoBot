@@ -66,7 +66,8 @@ function Write-JsonFile {
 
   Ensure-HostDirectories
   $json = $Value | ConvertTo-Json -Depth 8
-  Set-Content -LiteralPath $Path -Value $json -NoNewline
+  $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+  [System.IO.File]::WriteAllText($Path, $json, $utf8NoBom)
 }
 
 function Get-CanonicalCompatibilityShimContent {

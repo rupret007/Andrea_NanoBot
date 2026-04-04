@@ -192,4 +192,33 @@ describe('operator command gate', () => {
     expect(decision.allowed).toBe(false);
     expect(decision.reason).toBe('main_control_only');
   });
+
+  it('treats runtime operator commands as main-control-only', () => {
+    const decision = getCommandAccessDecision('/runtime-jobs', undefined);
+
+    expect(decision.allowed).toBe(false);
+    expect(decision.reason).toBe('main_control_only');
+  });
+
+  it('treats new backend runtime commands as main-control-only', () => {
+    expect(getCommandAccessDecision('/runtime-create', undefined).allowed).toBe(
+      false,
+    );
+    expect(getCommandAccessDecision('/runtime-job', undefined).allowed).toBe(
+      false,
+    );
+  });
+
+  it('allows runtime operator commands in the main control chat', () => {
+    const decision = getCommandAccessDecision('/runtime-status', {
+      name: 'Andrea Main',
+      folder: 'main',
+      trigger: '@andrea',
+      added_at: '2026-03-29T00:00:00.000Z',
+      isMain: true,
+    });
+
+    expect(decision.allowed).toBe(true);
+    expect(decision.reason).toBe('public');
+  });
 });

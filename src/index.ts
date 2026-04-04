@@ -4,7 +4,14 @@ import path from 'path';
 import { OneCLI } from '@onecli-sh/sdk';
 
 import {
+  classifyRuntimeRoute,
+  selectPreferredRuntime,
+  shouldReuseExistingThread,
+} from './agent-runtime.js';
+import {
   ASSISTANT_NAME,
+  AGENT_RUNTIME_FALLBACK,
+  ANDREA_OPENAI_BACKEND_URL,
   CONTAINER_TIMEOUT,
   DEFAULT_TRIGGER,
   getTriggerPattern,
@@ -40,6 +47,8 @@ import {
   createCalendarAutomation,
   createTask,
   deleteTask,
+  deleteRuntimeBackendCardContext,
+  deleteRuntimeBackendChatSelection,
   getAllAgentThreads,
   getAllChats,
   getAgentThread,
@@ -54,8 +63,12 @@ import {
   getMessagesSince,
   getNewMessages,
   getRouterState,
+  getRuntimeBackendCardContext,
+  getRuntimeBackendChatSelection,
+  getRuntimeBackendJob,
   initDatabase,
   listAllEnabledCommunitySkills,
+  pruneExpiredRuntimeBackendCardContexts,
   setRegisteredGroup,
   setAgentThread,
   setRouterState,
@@ -65,6 +78,8 @@ import {
   storeMessage,
   updateCalendarAutomation,
   updateTask,
+  upsertRuntimeBackendCardContext,
+  upsertRuntimeBackendChatSelection,
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
@@ -150,6 +165,11 @@ import {
 } from './google-calendar.js';
 import { findChannel, formatMessages, formatOutbound } from './router.js';
 import {
+  buildAssistantPromptWithPersonalization,
+  handlePersonalizationCommand,
+  maybeCreateProactiveProfileCandidate,
+} from './assistant-personalization.js';
+import {
   formatCursorGatewaySmokeTestMessage,
   formatCursorGatewayStatusMessage,
   getCursorGatewayStatus,
@@ -181,6 +201,7 @@ import {
   getAlexaStatus,
   startAlexaServer,
 } from './alexa.js';
+import { seedConfiguredAlexaLinkedAccount } from './alexa-identity.js';
 import {
   approveAmazonPurchaseRequest,
   cancelAmazonPurchaseRequest,
@@ -197,10 +218,12 @@ import {
 } from './sender-allowlist.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import {
+  AgentThreadState,
   Channel,
   NewMessage,
   RegisteredGroup,
   SendMessageOptions,
+  RuntimeBackendJob,
 } from './types.js';
 import { logger } from './logger.js';
 import {
@@ -328,6 +351,38 @@ import {
   type TaskContextType,
 } from './task-continuation.js';
 import {
+  ANDREA_OPENAI_BACKEND_ID,
+} from './andrea-openai-backend.js';
+import {
+  AndreaOpenAiRuntimeError,
+  createAndreaOpenAiRuntimeJob,
+  followUpAndreaOpenAiRuntimeJob,
+  getAndreaOpenAiBackendStatus,
+  getAndreaOpenAiRuntimeJob,
+  getAndreaOpenAiRuntimeJobLogs,
+  listAndreaOpenAiRuntimeJobs,
+  stopAndreaOpenAiRuntimeJob,
+} from './andrea-openai-runtime.js';
+import {
+  formatRuntimeBackendCreateAcceptedMessage,
+  extractRuntimeBackendJobIdFromText,
+  formatRuntimeBackendFailure,
+  formatRuntimeBackendFollowupAcceptedMessage,
+  formatRuntimeBackendJobCard,
+  formatRuntimeBackendJobsMessage,
+  formatRuntimeBackendLogsMessage,
+  formatRuntimeBackendStatusSummary,
+  formatRuntimeBackendStopMessage,
+} from './runtime-shell.js';
+import {
+  buildRuntimeReplyContextMissingMessage,
+  buildRuntimeSelectionMissingMessage,
+  computeRuntimeCardContextExpiry,
+  resolveRuntimeJobTarget,
+  resolveRuntimeLogsTarget,
+  resolveRuntimeReplyContext,
+} from './runtime-chat-context.js';
+import {
   ALEXA_STATUS_COMMANDS,
   AMAZON_SEARCH_COMMANDS,
   AMAZON_STATUS_COMMANDS,
@@ -353,17 +408,19 @@ import {
   DEBUG_LOGS_COMMANDS,
   DEBUG_RESET_COMMANDS,
   DEBUG_STATUS_COMMANDS,
-  RUNTIME_FOLLOWUP_COMMANDS,
-  RUNTIME_JOBS_COMMANDS,
-  RUNTIME_LOGS_COMMANDS,
-  RUNTIME_STATUS_COMMANDS,
-  RUNTIME_STOP_COMMANDS,
   getCommandAccessDecision,
   normalizeCommandToken,
   PURCHASE_APPROVE_COMMANDS,
   PURCHASE_CANCEL_COMMANDS,
   PURCHASE_REQUEST_COMMANDS,
   PURCHASE_REQUESTS_COMMANDS,
+  RUNTIME_CREATE_COMMANDS,
+  RUNTIME_FOLLOWUP_COMMANDS,
+  RUNTIME_JOB_COMMANDS,
+  RUNTIME_JOBS_COMMANDS,
+  RUNTIME_LOGS_COMMANDS,
+  RUNTIME_STATUS_COMMANDS,
+  RUNTIME_STOP_COMMANDS,
   REMOTE_CONTROL_START_COMMANDS,
   REMOTE_CONTROL_STOP_COMMANDS,
 } from './operator-command-gate.js';
@@ -373,6 +430,7 @@ export { escapeXml, formatMessages } from './router.js';
 
 let lastTimestamp = '';
 let sessions: Record<string, string> = {};
+let agentThreads: Record<string, AgentThreadState> = {};
 let registeredGroups: Record<string, RegisteredGroup> = {};
 let lastAgentTimestamp: Record<string, string> = {};
 let messageLoopRunning = false;
@@ -1416,6 +1474,7 @@ function loadState(): void {
     lastAgentTimestamp = {};
   }
   sessions = getAllSessions();
+  agentThreads = getAllAgentThreads();
   registeredGroups = getAllRegisteredGroups();
   logger.info(
     { groupCount: Object.keys(registeredGroups).length },
@@ -1447,6 +1506,24 @@ function getOrRecoverCursor(chatJid: string): string {
 function saveState(): void {
   setRouterState('last_timestamp', lastTimestamp);
   setRouterState('last_agent_timestamp', JSON.stringify(lastAgentTimestamp));
+}
+
+function persistAgentThread(
+  groupFolder: string,
+  threadId: string,
+  runtime: AgentThreadState['runtime'],
+): void {
+  sessions[groupFolder] = threadId;
+  setSession(groupFolder, threadId);
+  const thread: AgentThreadState = {
+    group_folder: groupFolder,
+    runtime,
+    thread_id: threadId,
+    last_response_id: threadId,
+    updated_at: new Date().toISOString(),
+  };
+  agentThreads[groupFolder] = thread;
+  setAgentThread(thread);
 }
 
 function registerGroup(jid: string, group: RegisteredGroup): void {
@@ -1907,7 +1984,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       ? maybeBuildDirectQuickReply(missedMessages)
       : null;
 
-  const prompt = formatMessages(promptMessages, TIMEZONE);
+  const prompt = buildAssistantPromptWithPersonalization(
+    formatMessages(promptMessages, TIMEZONE),
+    {
+      channel: 'telegram',
+      groupFolder: group.folder,
+    },
+  );
 
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
   // these messages. Save the old cursor so we can roll back on error.
@@ -3798,6 +3881,34 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     }
   }
 
+  const personalizationTurn = handlePersonalizationCommand({
+    groupFolder: group.folder,
+    channel: 'telegram',
+    text: missedMessages.at(-1)?.content ?? '',
+    replyText: missedMessages.at(-1)?.reply_to?.content,
+  });
+  if (personalizationTurn.handled) {
+    try {
+      await channel.sendMessage(
+        chatJid,
+        personalizationTurn.responseText || 'Okay.',
+      );
+      logger.info(
+        { group: group.name },
+        'Handled personalization request via local assistant fast path',
+      );
+      return true;
+    } catch (err) {
+      lastAgentTimestamp[chatJid] = previousCursor;
+      saveState();
+      logger.warn(
+        { group: group.name, err },
+        'Personalization fast path failed, rolled back cursor for retry',
+      );
+      return false;
+    }
+  }
+
   // Track idle timer for closing stdin when agent is idle
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
   const configuredTimeout = group.containerConfig?.timeout || CONTAINER_TIMEOUT;
@@ -4122,6 +4233,23 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     );
   }
 
+  const proactiveCandidate = maybeCreateProactiveProfileCandidate({
+    groupFolder: group.folder,
+    chatJid,
+    channel: 'telegram',
+    text: missedMessages.at(-1)?.content ?? '',
+  });
+  if (proactiveCandidate) {
+    try {
+      await channel.sendMessage(chatJid, proactiveCandidate.askText);
+    } catch (err) {
+      logger.warn(
+        { group: group.name, err },
+        'Failed to send proactive personalization ask',
+      );
+    }
+  }
+
   return true;
 }
 
@@ -4154,7 +4282,22 @@ async function runAgent(
     group.folder,
     requestPolicy.route,
   );
-  const sessionId = forceFreshSession ? undefined : sessions[sessionStorageKey];
+  const runtimeRoute = classifyRuntimeRoute(requestPolicy, prompt);
+  const existingThread =
+    agentThreads[group.folder] || getAgentThread(group.folder);
+  if (existingThread) {
+    agentThreads[group.folder] = existingThread;
+  }
+  const preferredRuntime = selectPreferredRuntime(existingThread, runtimeRoute);
+  const persistedSessionId =
+    requestPolicy.route === 'direct_assistant'
+      ? sessions[sessionStorageKey]
+      : sessions[group.folder];
+  const sessionId = forceFreshSession
+    ? undefined
+    : shouldReuseExistingThread(existingThread, preferredRuntime)
+      ? existingThread.thread_id
+      : persistedSessionId;
 
   // Update tasks snapshot for container to read (filtered by group)
   const tasks = getAllTasks();
@@ -4194,6 +4337,11 @@ async function runAgent(
         if (output.newSessionId) {
           sessions[sessionStorageKey] = output.newSessionId;
           setSession(sessionStorageKey, output.newSessionId);
+          persistAgentThread(
+            group.folder,
+            output.newSessionId,
+            output.runtime || preferredRuntime,
+          );
         }
         await onOutput(output);
       }
@@ -4207,6 +4355,9 @@ async function runAgent(
         sessionId,
         freshSessionHome:
           requestPolicy.route === 'direct_assistant' && forceFreshSession,
+        preferredRuntime,
+        fallbackRuntime: AGENT_RUNTIME_FALLBACK,
+        runtimeRoute,
         groupFolder: group.folder,
         chatJid,
         isMain,
@@ -4222,6 +4373,11 @@ async function runAgent(
     if (output.newSessionId) {
       sessions[sessionStorageKey] = output.newSessionId;
       setSession(sessionStorageKey, output.newSessionId);
+      persistAgentThread(
+        group.folder,
+        output.newSessionId,
+        output.runtime || preferredRuntime,
+      );
     }
 
     if (output.status === 'error') {
@@ -4403,7 +4559,13 @@ async function startMessageLoop(): Promise<void> {
             continue;
           }
 
-          const formatted = formatMessages(messagesToSend, TIMEZONE);
+          const formatted = buildAssistantPromptWithPersonalization(
+            formatMessages(messagesToSend, TIMEZONE),
+            {
+              channel: 'telegram',
+              groupFolder: group.folder,
+            },
+          );
 
           if (queue.sendMessage(chatJid, formatted)) {
             logger.debug(
@@ -4481,6 +4643,12 @@ async function main(): Promise<void> {
   logger.info({ component: 'assistant' }, 'Database initialized');
   loadState();
 
+  try {
+    seedConfiguredAlexaLinkedAccount();
+  } catch (err) {
+    logger.error({ err }, 'Alexa linked-account seed failed');
+  }
+
   // Ensure OneCLI agents exist for all registered groups.
   // Recovers from missed creates (e.g. OneCLI was down at registration time).
   for (const [jid, group] of Object.entries(registeredGroups)) {
@@ -4513,8 +4681,22 @@ async function main(): Promise<void> {
     'Usage: /cursor-create [--model MODEL_ID] [--repo REPO_URL] [--ref GIT_REF] [--pr PR_URL] [--branch BRANCH_NAME] [--auto-pr] [--cursor-github-app] [--skip-reviewer] PROMPT';
   const CURSOR_DOWNLOAD_USAGE =
     'Usage: /cursor-download [AGENT_ID|LIST_NUMBER|current] ABSOLUTE_PATH';
+  const CURSOR_ARTIFACT_LINK_USAGE =
+    'Usage: /cursor-artifact-link AGENT_ID ABSOLUTE_PATH';
+  const RUNTIME_CREATE_USAGE = 'Usage: /runtime-create TEXT';
+  const RUNTIME_JOBS_USAGE = 'Usage: /runtime-jobs [LIMIT] [BEFORE_JOB_ID]';
+  const RUNTIME_JOB_USAGE = 'Usage: /runtime-job [JOB_ID]';
+  const RUNTIME_FOLLOWUP_USAGE = 'Usage: /runtime-followup JOB_ID TEXT';
+  const RUNTIME_STOP_USAGE = 'Usage: /runtime-stop [JOB_ID]';
+  const RUNTIME_LOGS_USAGE = 'Usage: /runtime-logs [JOB_ID] [LINES]';
   const CURSOR_TERMINAL_USAGE =
     'Usage: /cursor-terminal [AGENT_ID|LIST_NUMBER|current] COMMAND';
+  const CURSOR_TERMINAL_STATUS_USAGE =
+    'Usage: /cursor-terminal-status [AGENT_ID|LIST_NUMBER|current]';
+  const CURSOR_TERMINAL_LOG_USAGE =
+    'Usage: /cursor-terminal-log [AGENT_ID|LIST_NUMBER|current] [LIMIT]';
+  const CURSOR_TERMINAL_STOP_USAGE =
+    'Usage: /cursor-terminal-stop [AGENT_ID|LIST_NUMBER|current]';
   const MAX_CURSOR_TERMINAL_REPLY_CHARS = 3000;
   const MAX_CURSOR_TERMINAL_LINES = 40;
 
@@ -5606,10 +5788,559 @@ async function main(): Promise<void> {
     );
   }
 
+  function resolveRuntimeGroupTarget(
+    token: string,
+  ): { chatJid: string; group: RegisteredGroup } | null {
+    const trimmed = token.trim();
+    if (!trimmed) return null;
+
+    const byJid = registeredGroups[trimmed];
+    if (byJid) {
+      return { chatJid: trimmed, group: byJid };
+    }
+
+    const byFolder = Object.entries(registeredGroups).find(
+      ([, group]) => group.folder === trimmed,
+    );
+    if (byFolder) {
+      return { chatJid: byFolder[0], group: byFolder[1] };
+    }
+
+    return null;
+  }
+
+  async function resolveRuntimeBackendContext(
+    chatJid: string,
+  ): Promise<{ channel: Channel; group: RegisteredGroup } | null> {
+    const channel = findChannel(channels, chatJid);
+    if (!channel) return null;
+
+    const group = registeredGroups[chatJid];
+    if (!group) {
+      await channel.sendMessage(
+        chatJid,
+        'This chat is not registered yet. Run /registermain in a DM first.',
+      );
+      return null;
+    }
+
+    return { channel, group };
+  }
+
+  function readCachedRuntimeJob(jobId: string): RuntimeBackendJob | null {
+    const cached = getRuntimeBackendJob(ANDREA_OPENAI_BACKEND_ID, jobId);
+    if (!cached?.raw_json) return null;
+    try {
+      return JSON.parse(cached.raw_json) as RuntimeBackendJob;
+    } catch (err) {
+      logger.warn(
+        { err, jobId },
+        'Failed to parse cached runtime backend job payload',
+      );
+      return null;
+    }
+  }
+
+  function getCurrentRuntimeSelection(
+    chatJid: string,
+    groupFolder: string,
+  ): string | null {
+    const selection = getRuntimeBackendChatSelection(
+      ANDREA_OPENAI_BACKEND_ID,
+      chatJid,
+    );
+    if (!selection) return null;
+
+    if (selection.group_folder !== groupFolder) {
+      deleteRuntimeBackendChatSelection(ANDREA_OPENAI_BACKEND_ID, chatJid);
+      return null;
+    }
+
+    return selection.job_id;
+  }
+
+  function updateCurrentRuntimeSelection(
+    chatJid: string,
+    groupFolder: string,
+    jobId: string,
+    updatedAt = new Date().toISOString(),
+  ): void {
+    upsertRuntimeBackendChatSelection({
+      backend_id: ANDREA_OPENAI_BACKEND_ID,
+      chat_jid: chatJid,
+      job_id: jobId,
+      group_folder: groupFolder,
+      updated_at: updatedAt,
+    });
+  }
+
+  function clearCurrentRuntimeSelection(chatJid: string): void {
+    deleteRuntimeBackendChatSelection(ANDREA_OPENAI_BACKEND_ID, chatJid);
+  }
+
+  function shouldClearRuntimeSelectionForError(err: unknown): boolean {
+    return (
+      err instanceof AndreaOpenAiRuntimeError &&
+      (err.kind === 'not_found' || err.kind === 'context_mismatch')
+    );
+  }
+
+  async function sendRuntimeBackendCardMessage(params: {
+    channel: Channel;
+    chatJid: string;
+    group: RegisteredGroup;
+    text: string;
+    job?: RuntimeBackendJob | null;
+    threadId?: string;
+    armReplyContext?: boolean;
+    updateSelection?: boolean;
+  }): Promise<void> {
+    const {
+      channel,
+      chatJid,
+      group,
+      text,
+      job,
+      threadId,
+      armReplyContext = false,
+      updateSelection = false,
+    } = params;
+
+    let receipt = null;
+    if (channel.sendMessageWithReceipt) {
+      receipt = await channel.sendMessageWithReceipt(chatJid, text, {
+        ...(threadId ? { threadId } : {}),
+      });
+      if (!receipt) return;
+    } else {
+      await channel.sendMessage(chatJid, text, {
+        ...(threadId ? { threadId } : {}),
+      });
+    }
+
+    if (!job) return;
+
+    const nowIso = new Date().toISOString();
+    if (updateSelection) {
+      updateCurrentRuntimeSelection(chatJid, group.folder, job.jobId, nowIso);
+    }
+
+    if (!armReplyContext || !receipt?.platformMessageIds.length) return;
+
+    const expiresAt = computeRuntimeCardContextExpiry(nowIso);
+    for (const messageId of receipt.platformMessageIds) {
+      upsertRuntimeBackendCardContext({
+        backend_id: ANDREA_OPENAI_BACKEND_ID,
+        chat_jid: chatJid,
+        message_id: messageId,
+        job_id: job.jobId,
+        group_folder: group.folder,
+        thread_id: threadId || job.threadId || null,
+        created_at: nowIso,
+        expires_at: expiresAt,
+      });
+    }
+  }
+
+  async function maybeHandleRuntimeReplyContext(
+    chatJid: string,
+    msg: NewMessage,
+  ): Promise<boolean> {
+    const replyTo = msg.reply_to;
+    const replyText = replyTo?.content?.trim() || '';
+    const replyMessageId = replyTo?.message_id?.trim() || '';
+    const promptText = msg.content.trim();
+
+    if (!replyText || !replyMessageId || !promptText) return false;
+
+    const context = await resolveRuntimeBackendContext(chatJid);
+    if (!context) return true;
+
+    pruneExpiredRuntimeBackendCardContexts(new Date().toISOString());
+    const runtimeCardContext = getRuntimeBackendCardContext(
+      ANDREA_OPENAI_BACKEND_ID,
+      chatJid,
+      replyMessageId,
+    );
+    const resolution = resolveRuntimeReplyContext({
+      replyMessageId,
+      replyText,
+      contextMessageId: runtimeCardContext?.message_id,
+      contextJobId: runtimeCardContext?.job_id,
+      contextGroupFolder: runtimeCardContext?.group_folder,
+      currentGroupFolder: context.group.folder,
+      expiresAt: runtimeCardContext?.expires_at,
+      nowIso: new Date().toISOString(),
+    });
+
+    if (resolution.kind === 'not_runtime_reply') {
+      return false;
+    }
+
+    if (resolution.kind === 'missing' || resolution.kind === 'expired') {
+      if (runtimeCardContext && resolution.kind === 'expired') {
+        deleteRuntimeBackendCardContext(
+          ANDREA_OPENAI_BACKEND_ID,
+          chatJid,
+          replyMessageId,
+        );
+      }
+      await context.channel.sendMessage(
+        chatJid,
+        buildRuntimeReplyContextMissingMessage(resolution.jobIdHint),
+        {
+          ...(msg.thread_id ? { threadId: msg.thread_id } : {}),
+        },
+      );
+      return true;
+    }
+
+    try {
+      const job = await followUpAndreaOpenAiRuntimeJob({
+        chatJid,
+        group: context.group,
+        jobId: resolution.jobId!,
+        prompt: promptText,
+        actorId: msg.sender,
+      });
+      await sendRuntimeBackendCardMessage({
+        channel: context.channel,
+        chatJid,
+        group: context.group,
+        text: formatRuntimeBackendFollowupAcceptedMessage(job),
+        job,
+        threadId: msg.thread_id || runtimeCardContext?.thread_id || undefined,
+        armReplyContext: true,
+        updateSelection: true,
+      });
+    } catch (err) {
+      await context.channel.sendMessage(
+        chatJid,
+        formatRuntimeBackendFailure(err, chatJid, context.group),
+        {
+          ...(msg.thread_id ? { threadId: msg.thread_id } : {}),
+        },
+      );
+    }
+
+    return true;
+  }
+
+  async function runOperatorRuntimeFollowup(
+    operatorChatJid: string,
+    targetChatJid: string,
+    targetGroup: RegisteredGroup,
+    promptText: string,
+  ): Promise<void> {
+    const channel = findChannel(channels, operatorChatJid);
+    if (!channel) return;
+
+    const requestPolicy = classifyAssistantRequest([{ content: promptText }]);
+    let hadVisibleOutput = false;
+
+    const result = await runAgent(
+      targetGroup,
+      promptText,
+      targetChatJid,
+      requestPolicy,
+      IDLE_TIMEOUT,
+      false,
+      async (partial) => {
+        const text =
+          typeof partial.result === 'string'
+            ? formatOutbound(partial.result)
+            : '';
+        if (!text) return;
+        hadVisibleOutput = true;
+        await channel.sendMessage(
+          operatorChatJid,
+          `Runtime follow-up (${targetGroup.folder}):\n\n${text}`,
+        );
+      },
+    );
+
+    if (result.status === 'error') {
+      await channel.sendMessage(
+        operatorChatJid,
+        result.userMessage ||
+          `Runtime follow-up failed for ${targetGroup.folder}.`,
+      );
+      return;
+    }
+
+    if (!hadVisibleOutput) {
+      await channel.sendMessage(
+        operatorChatJid,
+        `Runtime follow-up for ${targetGroup.folder} completed without a user-visible reply.`,
+      );
+    }
+  }
+
+  async function handleRuntimeStatus(chatJid: string): Promise<void> {
+    const context = await resolveRuntimeBackendContext(chatJid);
+    if (!context) return;
+
+    const status = await getAndreaOpenAiBackendStatus();
+    await context.channel.sendMessage(
+      chatJid,
+      formatRuntimeBackendStatusSummary(
+        status,
+        context.group,
+        ANDREA_OPENAI_BACKEND_URL,
+      ),
+    );
+  }
+
+  async function handleRuntimeCreate(
+    chatJid: string,
+    promptText: string,
+    actorId?: string,
+  ): Promise<void> {
+    const context = await resolveRuntimeBackendContext(chatJid);
+    if (!context) return;
+
+    try {
+      const job = await createAndreaOpenAiRuntimeJob({
+        chatJid,
+        group: context.group,
+        prompt: promptText,
+        actorId,
+      });
+      await sendRuntimeBackendCardMessage({
+        channel: context.channel,
+        chatJid,
+        group: context.group,
+        text: formatRuntimeBackendCreateAcceptedMessage(job),
+        job,
+        armReplyContext: true,
+        updateSelection: true,
+      });
+    } catch (err) {
+      await context.channel.sendMessage(
+        chatJid,
+        formatRuntimeBackendFailure(err, chatJid, context.group),
+      );
+    }
+  }
+
+  async function handleRuntimeJobs(
+    chatJid: string,
+    limit: number,
+    beforeJobId?: string,
+  ): Promise<void> {
+    const context = await resolveRuntimeBackendContext(chatJid);
+    if (!context) return;
+
+    try {
+      const result = await listAndreaOpenAiRuntimeJobs({
+        chatJid,
+        group: context.group,
+        limit,
+        beforeJobId,
+      });
+      if (result.jobs.length === 0) {
+        await context.channel.sendMessage(
+          chatJid,
+          `No Andrea OpenAI jobs are recorded yet for backend group "${context.group.folder}".`,
+        );
+        return;
+      }
+      await context.channel.sendMessage(
+        chatJid,
+        formatRuntimeBackendJobsMessage({
+          group: context.group,
+          jobs: result.jobs,
+          nextBeforeJobId: result.nextBeforeJobId,
+          limit,
+        }),
+      );
+    } catch (err) {
+      await context.channel.sendMessage(
+        chatJid,
+        formatRuntimeBackendFailure(err, chatJid, context.group),
+      );
+    }
+  }
+
+  async function handleRuntimeJob(
+    chatJid: string,
+    jobId: string,
+    usedSelection = false,
+  ): Promise<void> {
+    const context = await resolveRuntimeBackendContext(chatJid);
+    if (!context) return;
+
+    try {
+      const job = await getAndreaOpenAiRuntimeJob({
+        chatJid,
+        group: context.group,
+        jobId,
+      });
+      await sendRuntimeBackendCardMessage({
+        channel: context.channel,
+        chatJid,
+        group: context.group,
+        text: formatRuntimeBackendJobCard(job),
+        job,
+        armReplyContext: true,
+        updateSelection: true,
+      });
+    } catch (err) {
+      if (usedSelection && shouldClearRuntimeSelectionForError(err)) {
+        clearCurrentRuntimeSelection(chatJid);
+      }
+      await context.channel.sendMessage(
+        chatJid,
+        [
+          formatRuntimeBackendFailure(err, chatJid, context.group),
+          usedSelection && shouldClearRuntimeSelectionForError(err)
+            ? '- Current runtime selection cleared for this chat.'
+            : null,
+        ]
+          .filter((line): line is string => Boolean(line))
+          .join('\n'),
+      );
+    }
+  }
+
+  async function handleRuntimeFollowup(
+    chatJid: string,
+    jobId: string,
+    promptText: string,
+    actorId?: string,
+  ): Promise<void> {
+    const context = await resolveRuntimeBackendContext(chatJid);
+    if (!context) return;
+
+    try {
+      const job = await followUpAndreaOpenAiRuntimeJob({
+        chatJid,
+        group: context.group,
+        jobId,
+        prompt: promptText,
+        actorId,
+      });
+      await sendRuntimeBackendCardMessage({
+        channel: context.channel,
+        chatJid,
+        group: context.group,
+        text: formatRuntimeBackendFollowupAcceptedMessage(job),
+        job,
+        armReplyContext: true,
+        updateSelection: true,
+      });
+    } catch (err) {
+      await context.channel.sendMessage(
+        chatJid,
+        formatRuntimeBackendFailure(err, chatJid, context.group),
+      );
+    }
+  }
+
+  async function handleRuntimeStop(
+    chatJid: string,
+    jobId: string,
+    actorId?: string,
+    usedSelection = false,
+  ): Promise<void> {
+    const context = await resolveRuntimeBackendContext(chatJid);
+    if (!context) return;
+
+    try {
+      const result = await stopAndreaOpenAiRuntimeJob({
+        chatJid,
+        group: context.group,
+        jobId,
+        actorId,
+      });
+      await sendRuntimeBackendCardMessage({
+        channel: context.channel,
+        chatJid,
+        group: context.group,
+        text: formatRuntimeBackendStopMessage(result),
+        job: result.job,
+        armReplyContext: true,
+        updateSelection: true,
+      });
+    } catch (err) {
+      if (usedSelection && shouldClearRuntimeSelectionForError(err)) {
+        clearCurrentRuntimeSelection(chatJid);
+      }
+      await context.channel.sendMessage(
+        chatJid,
+        [
+          formatRuntimeBackendFailure(err, chatJid, context.group),
+          usedSelection && shouldClearRuntimeSelectionForError(err)
+            ? '- Current runtime selection cleared for this chat.'
+            : null,
+        ]
+          .filter((line): line is string => Boolean(line))
+          .join('\n'),
+      );
+    }
+  }
+
+  async function handleRuntimeLogs(
+    chatJid: string,
+    jobId: string,
+    limit: number,
+    usedSelection = false,
+  ): Promise<void> {
+    const context = await resolveRuntimeBackendContext(chatJid);
+    if (!context) return;
+
+    try {
+      const result = await getAndreaOpenAiRuntimeJobLogs({
+        chatJid,
+        group: context.group,
+        jobId,
+        lines: limit,
+      });
+      let currentJob = readCachedRuntimeJob(jobId);
+      if (!currentJob && !result.logText?.trim()) {
+        try {
+          currentJob = await getAndreaOpenAiRuntimeJob({
+            chatJid,
+            group: context.group,
+            jobId,
+          });
+        } catch {
+          currentJob = null;
+        }
+      }
+      await sendRuntimeBackendCardMessage({
+        channel: context.channel,
+        chatJid,
+        group: context.group,
+        text: formatRuntimeBackendLogsMessage(result, currentJob),
+        job: currentJob,
+        armReplyContext: Boolean(currentJob),
+        updateSelection: Boolean(currentJob),
+      });
+    } catch (err) {
+      if (usedSelection && shouldClearRuntimeSelectionForError(err)) {
+        clearCurrentRuntimeSelection(chatJid);
+      }
+      await context.channel.sendMessage(
+        chatJid,
+        [
+          formatRuntimeBackendFailure(err, chatJid, context.group),
+          usedSelection && shouldClearRuntimeSelectionForError(err)
+            ? '- Current runtime selection cleared for this chat.'
+            : null,
+        ]
+          .filter((line): line is string => Boolean(line))
+          .join('\n'),
+      );
+    }
+  }
+
   async function handleCursorStatus(
     chatJid: string,
     sourceMessage?: NewMessage,
   ): Promise<void> {
+    const channel = findChannel(channels, chatJid);
+    if (!channel) return;
     const desktopStatus = await getCursorDesktopStatus({ probe: true });
     const gatewayStatus = await getCursorGatewayStatus({ probe: true });
     const cloudStatus = getCursorCloudStatus();
@@ -7520,7 +8251,7 @@ async function main(): Promise<void> {
 
   // Channel callbacks (shared by all channels)
   const channelOpts = {
-    onMessage: (chatJid: string, msg: NewMessage) => {
+    onMessage: async (chatJid: string, msg: NewMessage) => {
       const rawTrimmed = msg.content.trim();
       const trimmed = rawTrimmed.toLowerCase();
       const isSlashCommand = rawTrimmed.startsWith('/');
@@ -7586,6 +8317,8 @@ async function main(): Promise<void> {
       }
 
       if (
+        RUNTIME_CREATE_COMMANDS.has(commandToken) ||
+        RUNTIME_JOB_COMMANDS.has(commandToken) ||
         RUNTIME_STATUS_COMMANDS.has(commandToken) ||
         RUNTIME_JOBS_COMMANDS.has(commandToken) ||
         RUNTIME_FOLLOWUP_COMMANDS.has(commandToken) ||
@@ -8028,6 +8761,15 @@ async function main(): Promise<void> {
         return;
       }
 
+      try {
+        if (await maybeHandleRuntimeReplyContext(chatJid, msg)) {
+          return;
+        }
+      } catch (err) {
+        logger.error({ err, chatJid }, 'Runtime reply-context routing error');
+        return;
+      }
+
       const repliedCursorDashboard =
         registeredGroups[chatJid]?.isMain === true &&
         !isSlashCommand &&
@@ -8255,21 +8997,26 @@ async function main(): Promise<void> {
     channels.push(channel);
     await channel.connect();
   }
-  if (channels.length === 0) {
-    logger.fatal('No channels connected');
-    process.exit(1);
-  }
-
   try {
     alexaRuntime = await startAlexaServer();
   } catch (err) {
     logger.error({ err }, 'Alexa voice ingress failed to start');
   }
 
+  const hasAlexaIngress = alexaRuntime?.getStatus().running === true;
+  if (channels.length === 0 && !hasAlexaIngress) {
+    logger.fatal('No channels connected and Alexa voice ingress is not running');
+    process.exit(1);
+  }
+  if (channels.length === 0 && hasAlexaIngress) {
+    logger.info('No chat channels connected; Alexa voice ingress is serving locally');
+  }
+
   // Start subsystems (independently of connection handler)
   startSchedulerLoop({
     registeredGroups: () => registeredGroups,
     getSessions: () => sessions,
+    getAgentThreads: () => agentThreads,
     queue,
     onProcess: (groupJid, proc, containerName, groupFolder) =>
       queue.registerProcess(groupJid, proc, containerName, groupFolder),
