@@ -195,6 +195,8 @@ When configured, validate in this order:
 1. `npm run services:status` and confirm `alexa_listener_health=healthy` plus `alexa_oauth_health=healthy`
 2. `/alexa-status`
 3. public `GET /alexa/oauth/health`
+   - if the live host is an `ngrok` `*.ngrok-free.dev` tunnel, use the `ngrok-skip-browser-warning: 1` header for browser-style checks
+   - if the skill endpoint uses that host, confirm the Alexa console SSL setting is the wildcard-certificate option
 4. unlinked launch
 5. unlinked help
 6. one unlinked personal-data intent

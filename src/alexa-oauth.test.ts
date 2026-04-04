@@ -243,6 +243,40 @@ describe('alexa oauth', () => {
     expect(rendered).toContain('/alexa/oauth/token');
   });
 
+  it('includes wildcard tunnel guidance for ngrok public ingress', () => {
+    const status = {
+      enabled: true,
+      running: true,
+      host: '127.0.0.1',
+      port: 4300,
+      path: '/alexa',
+      healthPath: '/alexa/health',
+      verifySignature: true,
+      requireAccountLinking: true,
+      allowedUserIdsCount: 0,
+      oauthEnabled: true,
+      oauthAuthorizationPath: '/alexa/oauth/authorize',
+      oauthTokenPath: '/alexa/oauth/token',
+      oauthHealthPath: '/alexa/oauth/health',
+      oauthScope: 'andrea.alexa.link',
+      oauthGroupFolder: 'main',
+      publicBaseUrl: 'https://example.ngrok-free.dev',
+      publicEndpointUrl: 'https://example.ngrok-free.dev/alexa',
+      publicOAuthHealthUrl: 'https://example.ngrok-free.dev/alexa/oauth/health',
+      publicIngressKind: 'wildcard_certificate_domain',
+      publicIngressHint:
+        'Alexa Developer Console endpoint SSL type must be set to the wildcard certificate option for *.ngrok-free.dev.',
+      publicBrowserHint:
+        'Browser health checks against ngrok free tunnels can show the ngrok warning page unless you send the ngrok-skip-browser-warning header.',
+    };
+
+    const rendered = formatAlexaStatusMessage(status);
+    expect(rendered).toContain('Public HTTPS base: https://example.ngrok-free.dev');
+    expect(rendered).toContain('Public ingress type: wildcard_certificate_domain');
+    expect(rendered).toContain('wildcard certificate option');
+    expect(rendered).toContain('ngrok-skip-browser-warning');
+  });
+
   it('rejects invalid authorization requests', async () => {
     runtime = await startAlexaServer(buildConfig());
     const baseUrl = `http://127.0.0.1:${runtime!.getStatus().port}`;

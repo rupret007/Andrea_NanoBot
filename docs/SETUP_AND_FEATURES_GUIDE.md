@@ -362,13 +362,16 @@ Recommended setup order:
 5. expose the endpoint through HTTPS
    - default v1 dev path: `ngrok http 4300`
    - if ngrok returns `ERR_NGROK_4018`, finish ngrok account verification and install the local authtoken first
+   - set `ALEXA_PUBLIC_BASE_URL` to the current live HTTPS base URL you are actually using
 6. configure the Alexa Developer Console skill and Authorization Code Grant account linking
-   - auth URI: `https://patronymically-nonremedial-london.ngrok-free.dev/alexa/oauth/authorize`
-   - token URI: `https://patronymically-nonremedial-london.ngrok-free.dev/alexa/oauth/token`
+   - endpoint URI: `${ALEXA_PUBLIC_BASE_URL}/alexa`
+   - auth URI: `${ALEXA_PUBLIC_BASE_URL}/alexa/oauth/authorize`
+   - token URI: `${ALEXA_PUBLIC_BASE_URL}/alexa/oauth/token`
    - scope: `andrea.alexa.link`
    - auth scheme: `HTTP Basic`
    - import or rebuild the interaction model from `docs/alexa/interaction-model.en-US.json`
    - use the same live skill/application ID as local `ALEXA_SKILL_ID`
+   - if `ALEXA_PUBLIC_BASE_URL` ends with `.ngrok-free.dev`, choose the wildcard-certificate endpoint option in the Alexa Developer Console
 7. run `/alexa-status`, then perform the linked and unlinked live checks from [ALEXA_VOICE_INTEGRATION.md](ALEXA_VOICE_INTEGRATION.md)
 8. if repo-side and near-live proof are already green, treat one real signed Alexa utterance as the final live acceptance step
 

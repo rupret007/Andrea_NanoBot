@@ -488,6 +488,8 @@ Final live acceptance order:
 1. `/alexa-status`
 2. local `GET /alexa/oauth/health`
 3. public `GET /alexa/oauth/health`
+   - if the public host is an `ngrok` `*.ngrok-free.dev` tunnel, use the `ngrok-skip-browser-warning: 1` header for browser-style checks
+   - if the skill endpoint uses that host, confirm the Alexa console SSL setting is the wildcard-certificate option
 4. unlinked launch
 5. unlinked help
 6. one unlinked personal-data request that should return a link-account style response

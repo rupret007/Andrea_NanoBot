@@ -26,9 +26,10 @@ Current repo-side and near-live proof on the operator host is strong:
 - Andrea runs under Node `22.22.2`
 - the local Alexa listener can run even when no Telegram channel is connected
 - `groupFolder=main` is valid
-- `ngrok` forwards `https://patronymically-nonremedial-london.ngrok-free.dev` to `http://localhost:4300`
-- local and public OAuth health respond on `/alexa/oauth/health`
-- the live authorization-code flow succeeds against the public ngrok URL
+- local Alexa health responds on `/alexa/health`
+- local OAuth health responds on `/alexa/oauth/health`
+- live HTTPS ingress must still be current, reachable, and correctly wired in the Alexa Developer Console
+- if the live HTTPS host is an `ngrok` `*.ngrok-free.dev` tunnel, the Alexa endpoint SSL type must be set to the wildcard certificate option
 - issued access tokens resolve to `groupFolder=main`
 - near-live conversational proof through the built skill handler and a real linked token is green
 
@@ -131,6 +132,7 @@ ALEXA_OAUTH_CLIENT_ID=andrea-alexa-poc-client
 ALEXA_OAUTH_CLIENT_SECRET=replace-with-a-local-client-secret
 ALEXA_OAUTH_SCOPE=andrea.alexa.link
 ALEXA_OAUTH_ALLOWED_REDIRECT_URIS=https://layla.amazon.com/api/skill/link/<vendor-id>
+ALEXA_PUBLIC_BASE_URL=https://your-current-public-host.example.com
 ALEXA_LINKED_ACCOUNT_NAME=Andrea Alexa
 ALEXA_LINKED_ACCOUNT_GROUP_FOLDER=main
 ALEXA_LINKED_ACCOUNT_ALLOWED_USER_ID=amzn1.ask.account...
@@ -146,17 +148,22 @@ In the Alexa Developer Console:
 1. Create or open the custom skill.
 2. Import the interaction model from:
    - `docs/alexa/interaction-model.en-US.json`
-3. Set the HTTPS endpoint to:
-   - `https://patronymically-nonremedial-london.ngrok-free.dev/alexa`
-4. Configure account linking as **Authorization Code Grant**.
-5. Use:
-   - auth URI `https://patronymically-nonremedial-london.ngrok-free.dev/alexa/oauth/authorize`
-   - token URI `https://patronymically-nonremedial-london.ngrok-free.dev/alexa/oauth/token`
+3. Set `ALEXA_PUBLIC_BASE_URL` locally to your current public HTTPS base URL.
+4. Set the HTTPS endpoint to:
+   - `${ALEXA_PUBLIC_BASE_URL}/alexa`
+5. If that public host is an `ngrok` `*.ngrok-free.dev` domain, choose:
+   - `My development endpoint is a sub-domain of a domain that has a wildcard certificate from a certificate authority`
+6. Configure account linking as **Authorization Code Grant**.
+7. Use:
+   - auth URI `${ALEXA_PUBLIC_BASE_URL}/alexa/oauth/authorize`
+   - token URI `${ALEXA_PUBLIC_BASE_URL}/alexa/oauth/token`
    - client ID `andrea-alexa-poc-client`
    - client secret from local `ALEXA_OAUTH_CLIENT_SECRET`
    - scope `andrea.alexa.link`
    - client authentication `HTTP Basic`
-6. Make sure the live skill/application ID matches local `ALEXA_SKILL_ID`.
+8. Make sure the live skill/application ID matches local `ALEXA_SKILL_ID`.
+
+If you see `SSL certificate verification failed` in the Alexa app for an `ngrok-free.dev` host, the usual cause is the Alexa console endpoint still being set to the standard trusted-certificate option instead of the wildcard-certificate option.
 
 If any of those are missing, Alexa is **setup-blocked**, not broken.
 
@@ -259,7 +266,9 @@ When the environment is configured, use this order:
 2. confirm `/alexa-status`
 3. confirm local `GET /alexa/oauth/health`
 4. confirm public `GET /alexa/oauth/health`
+   - if the host is an `ngrok` `*.ngrok-free.dev` tunnel, use the `ngrok-skip-browser-warning: 1` header for browser-style checks
 5. confirm the live skill endpoint and account-link settings in the Alexa console
+   - if the endpoint host is `*.ngrok-free.dev`, confirm the SSL certificate type is set to the wildcard-certificate option
 6. confirm the OAuth-issued token resolves to the intended Andrea group
 7. test one unlinked-safe request
 8. test one linked personal request

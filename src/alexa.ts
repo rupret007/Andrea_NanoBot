@@ -126,6 +126,12 @@ export interface AlexaStatus {
   oauthHealthPath?: string;
   oauthScope?: string;
   oauthGroupFolder?: string;
+  publicBaseUrl?: string;
+  publicEndpointUrl?: string;
+  publicOAuthHealthUrl?: string;
+  publicIngressKind?: string;
+  publicIngressHint?: string;
+  publicBrowserHint?: string;
 }
 
 type SkillLike = {
@@ -161,6 +167,45 @@ function normalizePath(value: string | undefined, fallback: string): string {
   return raw;
 }
 
+function normalizeBaseUrl(value: string | undefined): string | undefined {
+  const raw = value?.trim();
+  if (!raw) return undefined;
+  return raw.replace(/\/+$/, '');
+}
+
+function buildPublicUrl(
+  baseUrl: string | undefined,
+  pathValue: string | undefined,
+): string | undefined {
+  if (!baseUrl || !pathValue) return undefined;
+  return `${baseUrl}${pathValue.startsWith('/') ? pathValue : `/${pathValue}`}`;
+}
+
+function getAlexaPublicIngressMetadata(publicBaseUrl: string | undefined): {
+  kind?: string;
+  hint?: string;
+  browserHint?: string;
+} {
+  if (!publicBaseUrl) return {};
+  try {
+    const host = new URL(publicBaseUrl).hostname.toLowerCase();
+    if (host.endsWith('.ngrok-free.dev')) {
+      return {
+        kind: 'wildcard_certificate_domain',
+        hint: 'Alexa Developer Console endpoint SSL type must be set to the wildcard certificate option for *.ngrok-free.dev.',
+        browserHint:
+          'Browser health checks against ngrok free tunnels can show the ngrok warning page unless you send the ngrok-skip-browser-warning header.',
+      };
+    }
+  } catch {
+    return {};
+  }
+
+  return {
+    kind: 'standard_certificate_domain',
+  };
+}
+
 function healthPathFor(pathValue: string): string {
   return pathValue.endsWith('/') ? `${pathValue}health` : `${pathValue}/health`;
 }
@@ -173,6 +218,7 @@ export function resolveAlexaConfig(env = process.env): AlexaConfig | null {
           'ALEXA_HOST',
           'ALEXA_PORT',
           'ALEXA_PATH',
+          'ALEXA_PUBLIC_BASE_URL',
           'ALEXA_VERIFY_SIGNATURE',
           'ALEXA_REQUIRE_ACCOUNT_LINKING',
           'ALEXA_ALLOWED_USER_IDS',
@@ -243,6 +289,12 @@ export function getAlexaStatus(
   boundPort?: number,
   oauthConfig = resolveAlexaOAuthConfig(process.env, config?.path || DEFAULT_ALEXA_PATH),
 ): AlexaStatus {
+  const envFile = readEnvFile(['ALEXA_PUBLIC_BASE_URL']);
+  const publicBaseUrl = normalizeBaseUrl(
+    process.env.ALEXA_PUBLIC_BASE_URL || envFile.ALEXA_PUBLIC_BASE_URL,
+  );
+  const publicIngress = getAlexaPublicIngressMetadata(publicBaseUrl);
+
   if (!config) {
     const oauthStatus = getAlexaOAuthStatus(
       resolveAlexaOAuthConfig(process.env, DEFAULT_ALEXA_PATH),
@@ -256,6 +308,15 @@ export function getAlexaStatus(
       oauthHealthPath: oauthStatus.healthPath,
       oauthScope: oauthStatus.scope,
       oauthGroupFolder: oauthStatus.groupFolder,
+      publicBaseUrl,
+      publicEndpointUrl: buildPublicUrl(publicBaseUrl, DEFAULT_ALEXA_PATH),
+      publicOAuthHealthUrl: buildPublicUrl(
+        publicBaseUrl,
+        oauthStatus.healthPath,
+      ),
+      publicIngressKind: publicIngress.kind,
+      publicIngressHint: publicIngress.hint,
+      publicBrowserHint: publicIngress.browserHint,
     };
   }
 
@@ -277,6 +338,12 @@ export function getAlexaStatus(
     oauthHealthPath: oauthStatus.healthPath,
     oauthScope: oauthStatus.scope,
     oauthGroupFolder: oauthStatus.groupFolder,
+    publicBaseUrl,
+    publicEndpointUrl: buildPublicUrl(publicBaseUrl, config.path),
+    publicOAuthHealthUrl: buildPublicUrl(publicBaseUrl, oauthStatus.healthPath),
+    publicIngressKind: publicIngress.kind,
+    publicIngressHint: publicIngress.hint,
+    publicBrowserHint: publicIngress.browserHint,
   };
 }
 
@@ -317,6 +384,24 @@ export function formatAlexaStatusMessage(status: AlexaStatus): string {
     status.oauthScope
       ? `- OAuth scope: ${status.oauthScope}`
       : '- OAuth scope: unavailable',
+    status.publicBaseUrl
+      ? `- Public HTTPS base: ${status.publicBaseUrl}`
+      : '- Public HTTPS base: unavailable',
+    status.publicEndpointUrl
+      ? `- Public endpoint URL: ${status.publicEndpointUrl}`
+      : '- Public endpoint URL: unavailable',
+    status.publicOAuthHealthUrl
+      ? `- Public OAuth health URL: ${status.publicOAuthHealthUrl}`
+      : '- Public OAuth health URL: unavailable',
+    status.publicIngressKind
+      ? `- Public ingress type: ${status.publicIngressKind}`
+      : '- Public ingress type: unknown',
+    status.publicIngressHint
+      ? `- Public ingress note: ${status.publicIngressHint}`
+      : '- Public ingress note: make sure the Alexa console SSL certificate type matches the public endpoint certificate.',
+    status.publicBrowserHint
+      ? `- Browser check note: ${status.publicBrowserHint}`
+      : '- Browser check note: unavailable',
     '- Tip: expose this endpoint through HTTPS and configure account linking before using personal Alexa intents.',
   ].join('\n');
 }

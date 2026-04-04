@@ -230,6 +230,151 @@ function Get-AlexaLocalStatus {
   }
 }
 
+function Normalize-BaseUrl {
+  param([string] $Value)
+
+  if ([string]::IsNullOrWhiteSpace($Value)) {
+    return $null
+  }
+
+  return ([string] $Value).Trim().TrimEnd('/')
+}
+
+function Invoke-PublicHealthProbe {
+  param(
+    [string] $Url,
+    [hashtable] $Headers
+  )
+
+  try {
+    $params = @{
+      UseBasicParsing = $true
+      Uri = $Url
+      TimeoutSec = 6
+    }
+    if ($Headers -and $Headers.Count -gt 0) {
+      $params.Headers = $Headers
+    }
+
+    $response = Invoke-WebRequest @params
+    if ($response.StatusCode -lt 200 -or $response.StatusCode -ge 300) {
+      return [pscustomobject]@{
+        status = 'degraded'
+        detail = "HTTP $($response.StatusCode)"
+      }
+    }
+
+    return [pscustomobject]@{
+      status = 'healthy'
+      detail = "HTTP $($response.StatusCode)"
+    }
+  } catch {
+    $detail = [string] $_.Exception.Message
+    if ($detail -match 'ERR_NGROK_6024') {
+      $detail = 'ngrok browser warning page intercepted the request. Use the ngrok-skip-browser-warning header for browser-style checks.'
+    }
+    return [pscustomobject]@{
+      status = 'degraded'
+      detail = $detail
+    }
+  }
+}
+
+function Get-AlexaPublicStatus {
+  param(
+    [hashtable] $DotEnv,
+    [pscustomobject] $LocalStatus
+  )
+
+  $publicBaseUrl = Normalize-BaseUrl -Value (Get-EnvValue -DotEnv $DotEnv -Key 'ALEXA_PUBLIC_BASE_URL')
+  if ([string]::IsNullOrWhiteSpace($publicBaseUrl)) {
+    return [pscustomobject]@{
+      configured = $false
+      baseUrl = 'none'
+      endpointUrl = 'none'
+      healthUrl = 'none'
+      oauthHealthUrl = 'none'
+      ingressKind = 'unknown'
+      certificateHint = 'Set ALEXA_PUBLIC_BASE_URL after you choose the live HTTPS ingress.'
+      browserHint = 'none'
+      listenerHealth = 'unconfigured'
+      listenerDetail = 'ALEXA_PUBLIC_BASE_URL is not set.'
+      oauthHealth = 'unconfigured'
+      oauthDetail = 'ALEXA_PUBLIC_BASE_URL is not set.'
+    }
+  }
+
+  $headers = @{}
+  $ingressKind = 'standard_certificate_domain'
+  $certificateHint = 'Make sure the Alexa Developer Console SSL certificate type matches the public endpoint certificate.'
+  $browserHint = 'none'
+
+  try {
+    $publicUri = [Uri] $publicBaseUrl
+    $publicHost = ([string] $publicUri.Host).ToLowerInvariant()
+    if ($publicHost.EndsWith('.ngrok-free.dev')) {
+      $ingressKind = 'wildcard_certificate_domain'
+      $certificateHint = 'Alexa Developer Console endpoint SSL type must be set to the wildcard certificate option for *.ngrok-free.dev.'
+      $browserHint = 'ngrok free tunnels can show a browser warning page unless the request sends the ngrok-skip-browser-warning header.'
+      $headers['ngrok-skip-browser-warning'] = '1'
+    }
+  } catch {
+  }
+
+  $endpointUrl = 'none'
+  $healthUrl = 'none'
+  $oauthHealthUrl = 'none'
+  if ($LocalStatus -and $LocalStatus.configured) {
+    $basePath = [string] $LocalStatus.bind
+    $routePath = $null
+    if (-not [string]::IsNullOrWhiteSpace($basePath)) {
+      $lastSlash = $basePath.IndexOf('/')
+      if ($lastSlash -ge 0) {
+        $routePath = $basePath.Substring($lastSlash)
+      }
+    }
+    if ([string]::IsNullOrWhiteSpace($routePath)) {
+      $routePath = '/alexa'
+    }
+    $endpointUrl = "$publicBaseUrl$routePath"
+    $healthUrl = "$publicBaseUrl$($LocalStatus.healthPath)"
+    $oauthHealthUrl = "$publicBaseUrl$($LocalStatus.oauthHealthPath)"
+  }
+
+  $listenerProbe = if ($healthUrl -ne 'none') {
+    Invoke-PublicHealthProbe -Url $healthUrl -Headers $headers
+  } else {
+    [pscustomobject]@{
+      status = 'unconfigured'
+      detail = 'Alexa is not configured locally.'
+    }
+  }
+
+  $oauthProbe = if ($oauthHealthUrl -ne 'none') {
+    Invoke-PublicHealthProbe -Url $oauthHealthUrl -Headers $headers
+  } else {
+    [pscustomobject]@{
+      status = 'unconfigured'
+      detail = 'Alexa is not configured locally.'
+    }
+  }
+
+  return [pscustomobject]@{
+    configured = $true
+    baseUrl = $publicBaseUrl
+    endpointUrl = $endpointUrl
+    healthUrl = $healthUrl
+    oauthHealthUrl = $oauthHealthUrl
+    ingressKind = $ingressKind
+    certificateHint = $certificateHint
+    browserHint = $browserHint
+    listenerHealth = $listenerProbe.status
+    listenerDetail = $listenerProbe.detail
+    oauthHealth = $oauthProbe.status
+    oauthDetail = $oauthProbe.detail
+  }
+}
+
 function Get-CanonicalCompatibilityShimContent {
   return @(
     '$ErrorActionPreference = ''Stop'''
@@ -1396,6 +1541,7 @@ function Show-Status {
   $telegramRoundtrip = Get-TelegramRoundtripStatus -AssistantHealthMarker $assistantHealthMarker -HostState $hostState -ReadyState $readyState
   $telegramProbeConfig = Get-TelegramLiveProbeConfigStatus
   $alexaLocal = Get-AlexaLocalStatus -DotEnv (Read-DotEnv)
+  $alexaPublic = Get-AlexaPublicStatus -DotEnv (Read-DotEnv) -LocalStatus $alexaLocal
   $watchdog = Get-WatchdogSnapshot
   $activeRepoRoot = if ($runtimeAudit -and $runtimeAudit.activeRepoRoot) { [string] $runtimeAudit.activeRepoRoot } else { $projectRoot }
   $activeGitBranch = if ($runtimeAudit -and $runtimeAudit.activeGitBranch) { [string] $runtimeAudit.activeGitBranch } else { 'unknown' }
@@ -1435,6 +1581,17 @@ function Show-Status {
   Write-Output ("HOST_STATUS: alexa_oauth_health_path={0}" -f ([string] $alexaLocal.oauthHealthPath))
   Write-Output ("HOST_STATUS: alexa_oauth_health={0}" -f ([string] $alexaLocal.oauthHealth))
   Write-Output ("HOST_STATUS: alexa_oauth_detail={0}" -f ([string] $alexaLocal.oauthDetail))
+  Write-Output ("HOST_STATUS: alexa_public_base_url={0}" -f ([string] $alexaPublic.baseUrl))
+  Write-Output ("HOST_STATUS: alexa_public_endpoint_url={0}" -f ([string] $alexaPublic.endpointUrl))
+  Write-Output ("HOST_STATUS: alexa_public_health_url={0}" -f ([string] $alexaPublic.healthUrl))
+  Write-Output ("HOST_STATUS: alexa_public_oauth_health_url={0}" -f ([string] $alexaPublic.oauthHealthUrl))
+  Write-Output ("HOST_STATUS: alexa_public_ingress_kind={0}" -f ([string] $alexaPublic.ingressKind))
+  Write-Output ("HOST_STATUS: alexa_public_certificate_hint={0}" -f ([string] $alexaPublic.certificateHint))
+  Write-Output ("HOST_STATUS: alexa_public_browser_hint={0}" -f ([string] $alexaPublic.browserHint))
+  Write-Output ("HOST_STATUS: alexa_public_listener_health={0}" -f ([string] $alexaPublic.listenerHealth))
+  Write-Output ("HOST_STATUS: alexa_public_listener_detail={0}" -f ([string] $alexaPublic.listenerDetail))
+  Write-Output ("HOST_STATUS: alexa_public_oauth_health={0}" -f ([string] $alexaPublic.oauthHealth))
+  Write-Output ("HOST_STATUS: alexa_public_oauth_detail={0}" -f ([string] $alexaPublic.oauthDetail))
   Write-Output ("HOST_STATUS: telegram_transport_mode={0}" -f ([string] $telegramTransport.mode))
   Write-Output ("HOST_STATUS: telegram_transport_health={0}" -f ([string] $telegramTransport.status))
   Write-Output ("HOST_STATUS: telegram_transport_detail={0}" -f ([string] $telegramTransport.detail))
