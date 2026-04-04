@@ -11,6 +11,7 @@ import {
 } from './agent-runtime.js';
 import {
   ASSISTANT_NAME,
+  DATA_DIR,
   DEFAULT_TRIGGER,
   GROUPS_DIR,
   TIMEZONE,
@@ -385,6 +386,16 @@ function buildAssistantMessage(
   };
 }
 
+function requestAlexaContainerClose(groupFolder: string): void {
+  try {
+    const inputDir = path.join(DATA_DIR, 'ipc', groupFolder, 'input');
+    fs.mkdirSync(inputDir, { recursive: true });
+    fs.writeFileSync(path.join(inputDir, '_close'), '');
+  } catch {
+    // Best effort only. Alexa can still fall back to the idle timeout path.
+  }
+}
+
 function writeSnapshotsForGroup(
   deps: RuntimeDeps,
   group: RegisteredGroup,
@@ -486,6 +497,7 @@ export async function runAlexaAssistantTurn(
   };
 
   try {
+    let closeRequested = false;
     const output = await deps.runContainerAgent(
       target.group,
       {
@@ -513,6 +525,10 @@ export async function runAlexaAssistantTurn(
       async (partial) => {
         if (partial.newSessionId) {
           persistThread(partial.runtime, partial.newSessionId);
+        }
+        if (!closeRequested && partial.status === 'success') {
+          closeRequested = true;
+          requestAlexaContainerClose(target.group.folder);
         }
         const text =
           typeof partial.result === 'string'

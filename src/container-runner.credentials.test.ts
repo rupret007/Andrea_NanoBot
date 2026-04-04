@@ -1,6 +1,8 @@
 import { EventEmitter } from 'events';
 import { PassThrough } from 'stream';
 import fs from 'fs';
+import os from 'os';
+import path from 'path';
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -490,6 +492,60 @@ describe('container-runner credential env wiring', () => {
     expect(args).not.toContain('--network');
     expect(args).not.toContain(
       'ANTHROPIC_BASE_URL=http://litellm-gateway:4000',
+    );
+  });
+
+  it('syncs shared Codex auth files into the per-group runtime mount', async () => {
+    const globalCodexDir = path.join(os.homedir(), '.codex');
+    const globalAuth = path.join(os.homedir(), '.codex', 'auth.json');
+    const globalCapSid = path.join(os.homedir(), '.codex', 'cap_sid');
+    const globalConfig = path.join(os.homedir(), '.codex', 'config.toml');
+    const groupCodexDir = path.join(
+      '/tmp/nanoclaw-test-data',
+      'sessions',
+      'test-group',
+      '.codex',
+    );
+
+    vi.mocked(fs.existsSync).mockImplementation((candidatePath) => {
+      const normalized = String(candidatePath).replace(/\\/g, '/');
+      return (
+        normalized === globalCodexDir.replace(/\\/g, '/') ||
+        normalized === globalAuth.replace(/\\/g, '/') ||
+        normalized === globalCapSid.replace(/\\/g, '/') ||
+        normalized === globalConfig.replace(/\\/g, '/')
+      );
+    });
+    vi.mocked(fs.readFileSync).mockImplementation((candidatePath) => {
+      const normalized = String(candidatePath).replace(/\\/g, '/');
+      if (normalized === globalAuth.replace(/\\/g, '/')) {
+        return '{"provider":"openai"}';
+      }
+      if (normalized === globalCapSid.replace(/\\/g, '/')) {
+        return 'cap-sid-value';
+      }
+      if (normalized === globalConfig.replace(/\\/g, '/')) {
+        return 'profile = "default"';
+      }
+      return '';
+    });
+
+    const resultPromise = runContainerAgent(testGroup, testInput, () => {});
+    await waitForSpawnCall();
+    emitSuccessfulExit(fakeProc);
+    await resultPromise;
+
+    expect(vi.mocked(fs.writeFileSync)).toHaveBeenCalledWith(
+      path.join(groupCodexDir, 'auth.json'),
+      '{"provider":"openai"}',
+    );
+    expect(vi.mocked(fs.writeFileSync)).toHaveBeenCalledWith(
+      path.join(groupCodexDir, 'cap_sid'),
+      'cap-sid-value',
+    );
+    expect(vi.mocked(fs.writeFileSync)).toHaveBeenCalledWith(
+      path.join(groupCodexDir, 'config.toml'),
+      'profile = "default"',
     );
   });
 });

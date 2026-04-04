@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import fs from 'fs';
 
 vi.mock('fs', async () => {
   const actual = await vi.importActual<typeof import('fs')>('fs');
@@ -171,6 +172,10 @@ describe('runAlexaAssistantTurn', () => {
       }),
       expect.any(Function),
       expect.any(Function),
+    );
+    expect(vi.mocked(fs.writeFileSync)).toHaveBeenCalledWith(
+      expect.stringContaining('input'),
+      '',
     );
   });
 

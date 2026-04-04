@@ -5,6 +5,7 @@
 import { ChildProcess, spawn } from 'child_process';
 import { createHash } from 'crypto';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 
 import {
@@ -128,6 +129,7 @@ const CONTAINER_HOST_ALIAS_HOSTS = new Set([
   'host.docker.internal',
 ]);
 const NINE_ROUTER_DEFAULT_PORT = '20128';
+const CODEX_AUTH_SYNC_FILENAMES = ['auth.json', 'cap_sid', 'config.toml'] as const;
 const LOG_SAFE_ENV_KEYS = new Set([
   'TZ',
   'HOME',
@@ -564,6 +566,23 @@ function syncSkillsForGroup(
   }
 }
 
+function syncCodexAuthForGroup(groupCodexDir: string): void {
+  const globalCodexDir = path.join(os.homedir(), '.codex');
+  if (!fs.existsSync(globalCodexDir)) return;
+
+  for (const filename of CODEX_AUTH_SYNC_FILENAMES) {
+    const sourcePath = path.join(globalCodexDir, filename);
+    const sourceContent = tryReadTextFile(sourcePath);
+    if (sourceContent == null) continue;
+
+    const destinationPath = path.join(groupCodexDir, filename);
+    const existingContent = tryReadTextFile(destinationPath);
+    if (existingContent === sourceContent) continue;
+
+    fs.writeFileSync(destinationPath, sourceContent);
+  }
+}
+
 function buildVolumeMounts(
   group: RegisteredGroup,
   isMain: boolean,
@@ -663,6 +682,9 @@ function buildVolumeMounts(
 
   const groupCodexDir = path.join(DATA_DIR, 'sessions', group.folder, '.codex');
   fs.mkdirSync(groupCodexDir, { recursive: true });
+  // Share the host's authenticated Codex login with isolated group runtimes
+  // without copying broader per-group session/history state.
+  syncCodexAuthForGroup(groupCodexDir);
   mounts.push({
     hostPath: groupCodexDir,
     containerPath: '/home/node/.codex',
