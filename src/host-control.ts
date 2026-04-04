@@ -68,12 +68,56 @@ export interface AssistantHealthState {
 
 export type AssistantHealthStatus = 'healthy' | 'missing' | 'stale' | 'degraded';
 
+export type TelegramRoundtripSource =
+  | 'organic'
+  | 'scheduled_probe'
+  | 'live_smoke'
+  | 'startup';
+
+export type TelegramRoundtripStateStatus =
+  | 'healthy'
+  | 'failed'
+  | 'unconfigured'
+  | 'pending';
+
+export interface TelegramRoundtripState {
+  bootId: string;
+  pid: number | null;
+  status: TelegramRoundtripStateStatus;
+  source: TelegramRoundtripSource;
+  detail: string;
+  chatTarget: string | null;
+  expectedReply: string | null;
+  updatedAt: string;
+  lastSuccessAt: string | null;
+  lastProbeAt: string | null;
+  nextDueAt: string | null;
+  consecutiveFailures: number;
+}
+
+export type TelegramRoundtripHealthStatus =
+  | 'healthy'
+  | 'missing'
+  | 'degraded'
+  | 'unconfigured'
+  | 'pending';
+
 export interface AssistantHealthAssessment {
   status: AssistantHealthStatus;
   detail: string;
   updatedAt: string | null;
   degradedChannels: string[];
   staleAfterMs: number;
+}
+
+export interface TelegramRoundtripAssessment {
+  status: TelegramRoundtripHealthStatus;
+  detail: string;
+  updatedAt: string | null;
+  lastOkAt: string | null;
+  lastProbeAt: string | null;
+  nextDueAt: string | null;
+  due: boolean;
 }
 
 export interface HostControlPaths {
@@ -87,6 +131,7 @@ export interface HostControlPaths {
   hostStatePath: string;
   readyStatePath: string;
   assistantHealthStatePath: string;
+  telegramRoundtripStatePath: string;
   hostLockPath: string;
   nodeRuntimeMetadataPath: string;
   startupFolderScriptPath: string | null;
@@ -98,6 +143,7 @@ export interface HostControlSnapshot {
   hostState: NanoclawHostState | null;
   readyState: NanoclawReadyState | null;
   assistantHealthState: AssistantHealthState | null;
+  telegramRoundtripState: TelegramRoundtripState | null;
 }
 
 export interface WindowsInstallArtifacts {
@@ -137,6 +183,22 @@ const DEPENDENCY_STATES = new Set<NanoclawDependencyState>([
   'unknown',
 ]);
 export const DEFAULT_ASSISTANT_HEALTH_STALE_AFTER_MS = 3 * 60 * 1000;
+export const DEFAULT_TELEGRAM_ROUNDTRIP_PROBE_INTERVAL_MS = 30 * 60 * 1000;
+export const DEFAULT_TELEGRAM_ROUNDTRIP_STARTUP_GRACE_MS = 5 * 60 * 1000;
+
+const TELEGRAM_ROUNDTRIP_SOURCES = new Set<TelegramRoundtripSource>([
+  'organic',
+  'scheduled_probe',
+  'live_smoke',
+  'startup',
+]);
+
+const TELEGRAM_ROUNDTRIP_STATUSES = new Set<TelegramRoundtripStateStatus>([
+  'healthy',
+  'failed',
+  'unconfigured',
+  'pending',
+]);
 
 function resolveProjectRoot(projectRoot = process.cwd()): string {
   return path.resolve(projectRoot);
@@ -201,6 +263,10 @@ export function resolveHostControlPaths(
       runtimeStateDir,
       'assistant-health.json',
     ),
+    telegramRoundtripStatePath: path.join(
+      runtimeStateDir,
+      'telegram-roundtrip-health.json',
+    ),
     hostLockPath: path.join(runtimeStateDir, 'nanoclaw-host.lock'),
     nodeRuntimeMetadataPath: path.join(runtimeStateDir, 'node-runtime.json'),
     startupFolderScriptPath: appData
@@ -239,6 +305,12 @@ export function getReadyStatePath(projectRoot = process.cwd()): string {
 
 export function getAssistantHealthStatePath(projectRoot = process.cwd()): string {
   return resolveHostControlPaths(projectRoot).assistantHealthStatePath;
+}
+
+export function getTelegramRoundtripStatePath(
+  projectRoot = process.cwd(),
+): string {
+  return resolveHostControlPaths(projectRoot).telegramRoundtripStatePath;
 }
 
 export function getHostLockPath(projectRoot = process.cwd()): string {
@@ -361,6 +433,51 @@ function normalizeAssistantHealthState(
   };
 }
 
+function normalizeTelegramRoundtripState(
+  value: unknown,
+): TelegramRoundtripState | null {
+  if (!value || typeof value !== 'object') return null;
+  const input = value as Partial<TelegramRoundtripState>;
+  const pid = normalizePid(input.pid);
+  const status = TELEGRAM_ROUNDTRIP_STATUSES.has(
+    input.status as TelegramRoundtripStateStatus,
+  )
+    ? (input.status as TelegramRoundtripStateStatus)
+    : null;
+  const source = TELEGRAM_ROUNDTRIP_SOURCES.has(
+    input.source as TelegramRoundtripSource,
+  )
+    ? (input.source as TelegramRoundtripSource)
+    : null;
+  if (
+    !status ||
+    !source ||
+    !isNonEmptyString(input.updatedAt) ||
+    typeof input.consecutiveFailures !== 'number' ||
+    input.consecutiveFailures < 0
+  ) {
+    return null;
+  }
+  return {
+    bootId: isNonEmptyString(input.bootId) ? input.bootId : '',
+    pid,
+    status,
+    source,
+    detail: isNonEmptyString(input.detail) ? input.detail : '',
+    chatTarget: isNonEmptyString(input.chatTarget) ? input.chatTarget : null,
+    expectedReply: isNonEmptyString(input.expectedReply)
+      ? input.expectedReply
+      : null,
+    updatedAt: input.updatedAt,
+    lastSuccessAt: isNonEmptyString(input.lastSuccessAt)
+      ? input.lastSuccessAt
+      : null,
+    lastProbeAt: isNonEmptyString(input.lastProbeAt) ? input.lastProbeAt : null,
+    nextDueAt: isNonEmptyString(input.nextDueAt) ? input.nextDueAt : null,
+    consecutiveFailures: Math.trunc(input.consecutiveFailures),
+  };
+}
+
 function normalizeHostState(
   value: unknown,
   projectRoot = process.cwd(),
@@ -444,6 +561,14 @@ export function readAssistantHealthState(
   );
 }
 
+export function readTelegramRoundtripState(
+  projectRoot = process.cwd(),
+): TelegramRoundtripState | null {
+  return normalizeTelegramRoundtripState(
+    readJsonFile<unknown>(getTelegramRoundtripStatePath(projectRoot)),
+  );
+}
+
 export function readHostControlSnapshot(
   projectRoot = process.cwd(),
 ): HostControlSnapshot {
@@ -454,6 +579,7 @@ export function readHostControlSnapshot(
     hostState: readNanoclawHostState(projectRoot),
     readyState: readNanoclawReadyState(projectRoot),
     assistantHealthState: readAssistantHealthState(projectRoot),
+    telegramRoundtripState: readTelegramRoundtripState(projectRoot),
   };
 }
 
@@ -468,6 +594,14 @@ export function clearAssistantReadyState(projectRoot = process.cwd()): void {
 export function clearAssistantHealthState(projectRoot = process.cwd()): void {
   try {
     fs.rmSync(getAssistantHealthStatePath(projectRoot), { force: true });
+  } catch {
+    // Ignore best-effort cleanup failures during shutdown.
+  }
+}
+
+export function clearTelegramRoundtripState(projectRoot = process.cwd()): void {
+  try {
+    fs.rmSync(getTelegramRoundtripStatePath(projectRoot), { force: true });
   } catch {
     // Ignore best-effort cleanup failures during shutdown.
   }
@@ -508,6 +642,18 @@ export function writeAssistantHealthState(
   };
   writeJsonFile(getAssistantHealthStatePath(projectRoot), healthState);
   return healthState;
+}
+
+export function writeTelegramRoundtripState(
+  state: TelegramRoundtripState,
+  projectRoot = process.cwd(),
+): TelegramRoundtripState {
+  const normalized = normalizeTelegramRoundtripState(state);
+  if (!normalized) {
+    throw new Error('Cannot persist an invalid Telegram roundtrip state.');
+  }
+  writeJsonFile(getTelegramRoundtripStatePath(projectRoot), normalized);
+  return normalized;
 }
 
 export function assessAssistantHealthState(input: {
@@ -634,6 +780,156 @@ export function assessAssistantHealthState(input: {
     updatedAt: assistantHealthState.updatedAt,
     degradedChannels: [],
     staleAfterMs,
+  };
+}
+
+function parseTime(value: string | null | undefined): number | null {
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+export function assessTelegramRoundtripState(input: {
+  assistantHealthState: AssistantHealthState | null;
+  telegramRoundtripState: TelegramRoundtripState | null;
+  hostState?: NanoclawHostState | null;
+  readyState?: NanoclawReadyState | null;
+  now?: Date;
+  probeIntervalMs?: number;
+  startupGraceMs?: number;
+}): TelegramRoundtripAssessment {
+  const now = input.now ?? new Date();
+  const probeIntervalMs =
+    input.probeIntervalMs ?? DEFAULT_TELEGRAM_ROUNDTRIP_PROBE_INTERVAL_MS;
+  const startupGraceMs =
+    input.startupGraceMs ?? DEFAULT_TELEGRAM_ROUNDTRIP_STARTUP_GRACE_MS;
+  const assistantHealthState = input.assistantHealthState;
+  const roundtrip = input.telegramRoundtripState;
+  const readyState = input.readyState || null;
+  const hostState = input.hostState || null;
+  const telegramChannel = assistantHealthState?.channels.find(
+    (channel) => channel.name === 'telegram' && channel.configured,
+  );
+
+  if (!telegramChannel) {
+    return {
+      status: 'unconfigured',
+      detail: 'Telegram roundtrip checks are not configured for this runtime.',
+      updatedAt: roundtrip?.updatedAt || null,
+      lastOkAt: roundtrip?.lastSuccessAt || null,
+      lastProbeAt: roundtrip?.lastProbeAt || null,
+      nextDueAt: roundtrip?.nextDueAt || null,
+      due: false,
+    };
+  }
+
+  const readyAtMs = parseTime(readyState?.readyAt || hostState?.readyAt || null);
+  const inStartupGrace =
+    readyAtMs != null && now.getTime() - readyAtMs < startupGraceMs;
+
+  if (!roundtrip) {
+    return {
+      status: inStartupGrace ? 'pending' : 'missing',
+      detail: inStartupGrace
+        ? 'Waiting for the first Telegram roundtrip confirmation after startup.'
+        : 'Telegram roundtrip health marker is missing.',
+      updatedAt: null,
+      lastOkAt: null,
+      lastProbeAt: null,
+      nextDueAt: null,
+      due: !inStartupGrace,
+    };
+  }
+
+  if (roundtrip.status === 'unconfigured') {
+    return {
+      status: 'unconfigured',
+      detail:
+        roundtrip.detail ||
+        'Telegram user-session probe is not configured on this machine.',
+      updatedAt: roundtrip.updatedAt,
+      lastOkAt: roundtrip.lastSuccessAt,
+      lastProbeAt: roundtrip.lastProbeAt,
+      nextDueAt: roundtrip.nextDueAt,
+      due: false,
+    };
+  }
+
+  const bootIdMismatch =
+    Boolean(hostState?.bootId) &&
+    Boolean(roundtrip.bootId) &&
+    roundtrip.bootId !== hostState?.bootId;
+  if (bootIdMismatch) {
+    return {
+      status: inStartupGrace ? 'pending' : 'degraded',
+      detail: inStartupGrace
+        ? 'Telegram roundtrip is waiting for post-restart confirmation.'
+        : 'Telegram roundtrip health is from an older assistant boot.',
+      updatedAt: roundtrip.updatedAt,
+      lastOkAt: roundtrip.lastSuccessAt,
+      lastProbeAt: roundtrip.lastProbeAt,
+      nextDueAt: roundtrip.nextDueAt,
+      due: !inStartupGrace,
+    };
+  }
+
+  const nextDueAtMs = parseTime(roundtrip.nextDueAt);
+  const lastSuccessAtMs = parseTime(roundtrip.lastSuccessAt);
+  const computedNextDueAt =
+    nextDueAtMs != null
+      ? nextDueAtMs
+      : lastSuccessAtMs != null
+        ? lastSuccessAtMs + probeIntervalMs
+        : null;
+  const due =
+    computedNextDueAt == null ? roundtrip.status !== 'healthy' : now.getTime() >= computedNextDueAt;
+
+  if (roundtrip.status === 'healthy' && !due) {
+    return {
+      status: 'healthy',
+      detail:
+        roundtrip.detail || 'Telegram roundtrip is healthy and within cadence.',
+      updatedAt: roundtrip.updatedAt,
+      lastOkAt: roundtrip.lastSuccessAt,
+      lastProbeAt: roundtrip.lastProbeAt,
+      nextDueAt:
+        computedNextDueAt != null
+          ? new Date(computedNextDueAt).toISOString()
+          : roundtrip.nextDueAt,
+      due: false,
+    };
+  }
+
+  if (roundtrip.status === 'pending' && inStartupGrace) {
+    return {
+      status: 'pending',
+      detail:
+        roundtrip.detail ||
+        'Telegram roundtrip is pending during the startup grace window.',
+      updatedAt: roundtrip.updatedAt,
+      lastOkAt: roundtrip.lastSuccessAt,
+      lastProbeAt: roundtrip.lastProbeAt,
+      nextDueAt:
+        computedNextDueAt != null
+          ? new Date(computedNextDueAt).toISOString()
+          : roundtrip.nextDueAt,
+      due: false,
+    };
+  }
+
+  return {
+    status: 'degraded',
+    detail:
+      roundtrip.detail ||
+      'Telegram roundtrip has not succeeded recently enough to trust Telegram responsiveness.',
+    updatedAt: roundtrip.updatedAt,
+    lastOkAt: roundtrip.lastSuccessAt,
+    lastProbeAt: roundtrip.lastProbeAt,
+    nextDueAt:
+      computedNextDueAt != null
+        ? new Date(computedNextDueAt).toISOString()
+        : roundtrip.nextDueAt,
+    due,
   };
 }
 

@@ -101,6 +101,7 @@ import {
   writeAssistantHealthState,
   writeAssistantReadyState,
 } from './host-control.js';
+import { recordOrganicTelegramRoundtripSuccess } from './telegram-roundtrip.js';
 import {
   advancePendingActionDraft,
   advancePendingActionReminder,
@@ -8283,6 +8284,27 @@ async function main(): Promise<void> {
     onHealthUpdate: (snapshot: ChannelHealthSnapshot) => {
       channelHealthByName.set(snapshot.name, snapshot);
       writeCurrentAssistantHealth();
+    },
+    onRoundtripActivity: (event: {
+      kind: 'organic_success';
+      chatJid: string;
+      observedAt: string;
+      detail: string;
+    }) => {
+      const group = registeredGroups[event.chatJid];
+      if (!group || group.isMain !== true) return;
+      try {
+        recordOrganicTelegramRoundtripSuccess({
+          detail: event.detail,
+          target: event.chatJid,
+          observedAt: event.observedAt,
+        });
+      } catch (err) {
+        logger.warn(
+          { err, chatJid: event.chatJid },
+          'Failed to persist Telegram roundtrip success marker',
+        );
+      }
     },
     onMessage: async (chatJid: string, msg: NewMessage) => {
       const rawTrimmed = msg.content.trim();

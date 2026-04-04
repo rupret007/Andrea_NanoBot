@@ -106,6 +106,7 @@ Then validate the public-safe Telegram surface:
 
 - `/start`
 - `/help`
+- `npm run telegram:user:smoke`
 - `/commands`
 - simple quick reply prompt
 - reminder prompt
@@ -242,6 +243,13 @@ Then rerun a small live smoke:
 - `/ping`
 - `/help`
 - `/cursor_status`
+- `npm run telegram:user:smoke`
+
+Telegram live-testing truth:
+
+- the dedicated Telegram smoke command is explicit and credentialed on purpose
+- it is not part of the default unit/full suite
+- it is the canonical proof that Telegram is actually replying end to end rather than only polling successfully
 
 ## 9. Failure Handling
 

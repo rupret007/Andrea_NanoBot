@@ -183,14 +183,18 @@ Windows startup truth:
 - If Windows policy blocks task creation, the installer writes a repo-owned Startup-folder launcher instead.
 - On this machine, the validated login path is the Startup-folder launcher because Scheduled Task creation is denied.
 - The host launcher now keeps a repo-owned watchdog running in the background and calls `ensure` periodically so a stale or degraded assistant can be restarted without waiting for the next manual intervention.
-- `npm run services:status` now includes `assistant_health` and `watchdog_running`, so a live process that lost Telegram polling is visible immediately instead of looking falsely healthy.
+- Telegram is only considered truly responsive once a real round-trip succeeds. The watchdog now drives a real `/ping` roundtrip probe against the main operator chat every 30 minutes when there has not been a more recent successful Telegram exchange.
+- If the first due probe fails, the watchdog retries once after a short backoff and then restarts Andrea automatically if Telegram still does not reply.
+- If Telegram itself is degraded but the operator-side roundtrip harness is still unconfigured, `services:ensure` now reports `degraded` plus `telegram_roundtrip=unconfigured` instead of pretending Telegram is healthy or thrashing Andrea with blind restart loops.
+- `npm run services:status` now includes `assistant_health`, `telegram_roundtrip_health`, `telegram_roundtrip_last_ok_at`, `telegram_roundtrip_last_probe_at`, `telegram_roundtrip_next_due_at`, and `watchdog_running`, so a live process that lost Telegram responsiveness is visible immediately instead of looking falsely healthy.
 
 Quick recovery steps after a failed login bring-up:
 
 1. Run `npm run services:status`.
 2. Check `logs/nanoclaw.host.log`.
 3. If `assistant_health` is degraded or stale, run `npm run services:ensure` first, then `npm run services:restart` if it does not recover.
-4. If the login hook itself needs repair, rerun `npm run setup -- --step service`.
+4. If `telegram_roundtrip_health` is degraded, run `npm run telegram:user:smoke` to prove the real `/ping` path and capture the exact failing stage.
+5. If the login hook itself needs repair, rerun `npm run setup -- --step service`.
 
 After restart:
 
@@ -421,6 +425,7 @@ Use [TELEGRAM_OPERATOR_LIVE_TESTING.md](TELEGRAM_OPERATOR_LIVE_TESTING.md) when 
 Recommended flow:
 
 1. `npm run telegram:user:auth`
+2. `npm run telegram:user:smoke`
 2. `npm run telegram:user:send -- "<message>"`
 3. `npm run telegram:user:tap -- <message_id> <button>`
 4. `npm run telegram:user:send -- --reply-to <message_id> "<message>"`
@@ -429,12 +434,22 @@ Recommended flow:
 
 Keep this tooling operator-only and pointed at your own DM or a dedicated test chat only.
 
+Important truth:
+
+- `npm run telegram:user:smoke` is now the canonical operator proof that Telegram is actually working end to end.
+- It sends a real `/ping` from the operator Telegram user session, waits for the real bot reply, exits non-zero on failure, and writes the same roundtrip state the watchdog uses.
+- Normal unit tests and the default full test suite remain offline; the live Telegram smoke check is credentialed and explicit on purpose.
+
 If `npm run telegram:user:runtime` fails immediately, check these in order:
 
 1. `TELEGRAM_TEST_TARGET` or `TELEGRAM_BOT_USERNAME`
 2. `TELEGRAM_USER_API_ID`
 3. `TELEGRAM_USER_API_HASH`
 4. authenticated `store/telegram-user.session`
+
+Security note:
+
+- The current bot token was exposed in operator chat history during debugging. Rotate it before treating Telegram production validation as fully trustworthy again.
 
 For merged-shell architecture details, see:
 

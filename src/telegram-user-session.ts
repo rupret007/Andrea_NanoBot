@@ -10,6 +10,14 @@ import { StringSession } from 'telegram/sessions/index.js';
 
 import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
+import {
+  TELEGRAM_PING_PROBE_MESSAGE,
+  evaluateTelegramPingReplies,
+  getTelegramRoundtripAssessment,
+  recordTelegramProbeFailure,
+  recordTelegramProbeSuccess,
+  recordTelegramProbeUnconfigured,
+} from './telegram-roundtrip.js';
 
 const DEFAULT_REPLY_TIMEOUT_MS = 30_000;
 const DEFAULT_SETTLE_MS = 1_500;
@@ -86,6 +94,23 @@ export interface TelegramTapAndCaptureResult {
   tappedIndex: number;
   replies: TelegramLiveReply[];
   editedSource?: TelegramLiveReply;
+}
+
+export interface TelegramPingProbeResult {
+  ok: boolean;
+  status: 'healthy' | 'failed' | 'unconfigured' | 'skipped';
+  stage:
+    | 'success'
+    | 'config'
+    | 'auth'
+    | 'send'
+    | 'reply'
+    | 'match'
+    | 'not_due';
+  detail: string;
+  target: string | null;
+  sentId?: number;
+  replies: TelegramLiveReply[];
 }
 
 export interface TelegramSendCommandArgs {
@@ -1077,6 +1102,170 @@ function printTelegramSendResult(result: TelegramSendAndCaptureResult): void {
   }
 }
 
+async function runTelegramPingProbe(options?: {
+  mode?: 'scheduled_probe' | 'live_smoke';
+  projectRoot?: string;
+  force?: boolean;
+}): Promise<TelegramPingProbeResult> {
+  const mode = options?.mode || 'live_smoke';
+  const projectRoot = options?.projectRoot || process.cwd();
+
+  if (mode === 'scheduled_probe' && !options?.force) {
+    const assessment = getTelegramRoundtripAssessment(projectRoot);
+    if (assessment.status === 'unconfigured') {
+      recordTelegramProbeUnconfigured(assessment.detail, projectRoot, {
+        source: mode,
+      });
+      return {
+        ok: false,
+        status: 'unconfigured',
+        stage: 'config',
+        detail: assessment.detail,
+        target: null,
+        replies: [],
+      };
+    }
+    if (!assessment.due) {
+      return {
+        ok: assessment.status === 'healthy' || assessment.status === 'pending',
+        status: 'skipped',
+        stage: 'not_due',
+        detail: assessment.detail,
+        target: null,
+        replies: [],
+      };
+    }
+  }
+
+  const config = resolveTelegramUserSessionConfig(projectRoot);
+  let target = '';
+  try {
+    target = await ensureTelegramTestTarget(config);
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    recordTelegramProbeUnconfigured(detail, projectRoot, {
+      source: mode,
+    });
+    return {
+      ok: false,
+      status: 'unconfigured',
+      stage: 'config',
+      detail,
+      target: null,
+      replies: [],
+    };
+  }
+
+  try {
+    return await withTelegramUserSessionLock(config.sessionFile, async () => {
+      let client: TelegramClient | null = null;
+      try {
+        const connected = await connectTelegramUserSession(config, false);
+        client = connected.client;
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : String(err);
+        recordTelegramProbeUnconfigured(detail, projectRoot, {
+          source: mode,
+          target,
+        });
+        return {
+          ok: false,
+          status: 'unconfigured',
+          stage: 'auth',
+          detail,
+          target,
+          replies: [],
+        };
+      }
+
+      try {
+        const result = await sendTelegramUserMessageAndCaptureReplies(
+          client,
+          target,
+          TELEGRAM_PING_PROBE_MESSAGE,
+          config.replyTimeoutMs,
+          config.replySettleMs,
+        );
+        const evaluation = evaluateTelegramPingReplies(result.replies);
+        if (evaluation.ok) {
+          recordTelegramProbeSuccess(
+            {
+              source: mode,
+              target,
+            },
+            projectRoot,
+          );
+          return {
+            ok: true,
+            status: 'healthy',
+            stage: 'success',
+            detail: evaluation.detail,
+            target,
+            sentId: result.sentId,
+            replies: result.replies,
+          };
+        }
+
+        recordTelegramProbeFailure(
+          {
+            source: mode,
+            detail: evaluation.detail,
+            target,
+          },
+          projectRoot,
+        );
+        return {
+          ok: false,
+          status: 'failed',
+          stage: result.replies.length > 0 ? 'match' : 'reply',
+          detail: evaluation.detail,
+          target,
+          sentId: result.sentId,
+          replies: result.replies,
+        };
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : String(err);
+        recordTelegramProbeFailure(
+          {
+            source: mode,
+            detail,
+            target,
+          },
+          projectRoot,
+        );
+        return {
+          ok: false,
+          status: 'failed',
+          stage: 'send',
+          detail,
+          target,
+          replies: [],
+        };
+      } finally {
+        await client.disconnect();
+      }
+    });
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    recordTelegramProbeFailure(
+      {
+        source: mode,
+        detail,
+        target: target || null,
+      },
+      projectRoot,
+    );
+    return {
+      ok: false,
+      status: 'failed',
+      stage: 'send',
+      detail,
+      target: target || null,
+      replies: [],
+    };
+  }
+}
+
 async function runAuthCommand(): Promise<void> {
   const config = resolveTelegramUserSessionConfig();
   await withTelegramUserSessionLock(config.sessionFile, async () => {
@@ -1090,6 +1279,19 @@ async function runAuthCommand(): Promise<void> {
       await client.disconnect();
     }
   });
+}
+
+function printTelegramPingProbeResult(result: TelegramPingProbeResult): void {
+  console.log(`Telegram roundtrip status: ${result.status}`);
+  console.log(`Stage: ${result.stage}`);
+  console.log(`Detail: ${result.detail}`);
+  if (result.target) {
+    console.log(`Target: ${result.target}`);
+  }
+  if (typeof result.sentId === 'number') {
+    console.log(`Sent ID: ${result.sentId}`);
+  }
+  printTelegramCaptureReplies(result.replies);
 }
 
 function printTelegramCaptureReplies(
@@ -1255,6 +1457,36 @@ async function runRuntimeCommand(): Promise<void> {
   });
 }
 
+async function runProbeCommand(force: boolean): Promise<void> {
+  const result = await runTelegramPingProbe({
+    mode: 'scheduled_probe',
+    force,
+  });
+  printTelegramPingProbeResult(result);
+  if (result.status === 'unconfigured') {
+    process.exitCode = 2;
+    return;
+  }
+  if (!result.ok && result.status !== 'skipped') {
+    process.exitCode = 1;
+  }
+}
+
+async function runSmokeCommand(): Promise<void> {
+  const result = await runTelegramPingProbe({
+    mode: 'live_smoke',
+    force: true,
+  });
+  printTelegramPingProbeResult(result);
+  if (result.status === 'unconfigured') {
+    process.exitCode = 2;
+    return;
+  }
+  if (!result.ok) {
+    process.exitCode = 1;
+  }
+}
+
 async function runTapCommand(messageArgs: string[]): Promise<void> {
   const parsed = parseTelegramTapCommandArgs(messageArgs);
 
@@ -1308,6 +1540,16 @@ export async function runTelegramUserSessionCli(argv: string[]): Promise<void> {
     return;
   }
 
+  if (command === 'probe') {
+    await runProbeCommand(rest.includes('--force'));
+    return;
+  }
+
+  if (command === 'smoke') {
+    await runSmokeCommand();
+    return;
+  }
+
   console.log(`Telegram user-session operator tool
 
 Commands:
@@ -1316,6 +1558,7 @@ Commands:
 - npm run telegram:user:tap -- <messageId> <button label or 1-based index>
 - npm run telegram:user:batch
 - npm run telegram:user:runtime
+- npm run telegram:user:smoke
 
 Required env:
 - TELEGRAM_USER_API_ID

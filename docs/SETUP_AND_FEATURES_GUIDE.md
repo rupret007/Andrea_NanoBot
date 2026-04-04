@@ -60,7 +60,7 @@ npm install
 Windows PowerShell note:
 
 - If script execution policy blocks `npx.ps1`, use `npx.cmd`/`npm.cmd` in commands instead of `npx`/`npm`.
-- The same applies to the Telegram user-session test tooling: use `npm.cmd run telegram:user:auth` / `npm.cmd run telegram:user:batch` if needed.
+- The same applies to the Telegram user-session test tooling: use `npm.cmd run telegram:user:auth` / `npm.cmd run telegram:user:smoke` / `npm.cmd run telegram:user:batch` if needed.
 
 Create local env file:
 
@@ -557,7 +557,7 @@ Windows service lifecycle helpers:
 - `npm run services:stop` stops NanoClaw, the local gateway, and any repo-managed companions started through the host launcher.
 - `npm run services:restart` runs stop then start through the same host-controlled path.
 - `npm run services:ensure` runs one explicit health-enforcement pass through the same host launcher.
-- `npm run services:status` reports the active repo root, pinned Node runtime, installed login-start mechanism, Alexa health, optional loopback backend health, ngrok state, the current `assistant_health` view, whether the watchdog is running, and the last startup error if one occurred.
+- `npm run services:status` reports the active repo root, pinned Node runtime, installed login-start mechanism, Alexa health, optional loopback backend health, ngrok state, the current `assistant_health` view, `telegram_roundtrip_health`, whether the watchdog is running, and the last startup error if one occurred.
 
 Startup behavior:
 
@@ -568,6 +568,8 @@ Startup behavior:
   - which delegates to `scripts\nanoclaw-host.ps1`
 - The Windows host launcher bootstraps and reuses the repo-local pinned runtime under `data\runtime\node-v22.22.2-win-x64`, so daily startup does not depend on host Node 24.
 - The Windows host launcher also keeps a repo-owned watchdog running and periodically calls `ensure`, so a live process that loses Telegram polling or stops updating its health marker gets corrected automatically.
+- Telegram responsiveness is now enforced with a real `/ping` roundtrip probe every 30 minutes when no more recent successful Telegram exchange has already refreshed the same heartbeat.
+- `npm run telegram:user:smoke` is the canonical operator-side proof for that path and exits non-zero if the real reply does not come back.
 - On macOS this uses launchd.
 - On Linux this uses systemd (or nohup fallback).
 - So startup is not only a container setting; it is handled by host service manager policy plus runtime startup wrapper logic.

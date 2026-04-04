@@ -33,6 +33,7 @@ Current scripts:
 
 ```bash
 npm run telegram:user:auth
+npm run telegram:user:smoke
 npm run telegram:user:send -- "What's the meaning of life?"
 npm run telegram:user:send -- --reply-to 1234 "/cursor-sync"
 npm run telegram:user:tap -- 1234 1
@@ -144,6 +145,29 @@ npm run telegram:user:send -- --reply-to 1234 "/cursor-sync"
 
 Use this when you want to reply to a specific Cursor card without retyping a raw job id.
 
+## Canonical Roundtrip Smoke Check
+
+```bash
+npm run telegram:user:smoke
+```
+
+This is now the canonical proof that Telegram is actually working end to end.
+
+What it does:
+
+- sends a real `/ping` from the operator Telegram user session
+- waits for Andrea's real bot reply in the same chat
+- exits non-zero if no reply arrives, the wrong sender replies, or the reply text is not the expected `/ping` confirmation
+- writes the same roundtrip health state the Windows watchdog uses for periodic enforcement
+
+Current watchdog truth:
+
+- the watchdog only sends its own scheduled `/ping` when there has not been a more recent successful Telegram exchange
+- cadence is every 30 minutes
+- the first failed due probe retries once before Andrea is restarted automatically
+- if the operator session or target chat is missing, Telegram roundtrip health is reported as `unconfigured`, not healthy
+- when Telegram polling degrades but the live roundtrip harness is still unconfigured, `services:ensure` now reports `degraded` plus `telegram_roundtrip=unconfigured` instead of pretending Telegram is healthy or thrashing Andrea with blind restart loops
+
 ## Tap An Inline Button
 
 ```bash
@@ -175,6 +199,8 @@ Default batch:
 - `ok`
 - `Remind me tomorrow at 3pm to call Sam`
 - `/cursor_status`
+
+Use `npm run telegram:user:smoke` before the broader batch when you want a fast yes/no answer about Telegram responsiveness.
 
 For Cursor-specific operator validation, prefer this live workflow:
 
@@ -279,3 +305,7 @@ What is not real:
 - this is not a public feature for end users
 - this does not replace the bot runtime
 - this does not grant arbitrary Telegram account automation beyond the operator account you explicitly authenticate
+
+Operational warning:
+
+- if a bot token or Telegram user session secret was pasted into chat or tickets during debugging, rotate it before trusting future production Telegram validation.

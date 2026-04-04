@@ -21,6 +21,7 @@ $stderrLogPath = Join-Path $logsDir 'nanoclaw.error.log'
 $hostStatePath = Join-Path $runtimeDir 'nanoclaw-host-state.json'
 $readyStatePath = Join-Path $runtimeDir 'nanoclaw-ready.json'
 $assistantHealthPath = Join-Path $runtimeDir 'assistant-health.json'
+$telegramRoundtripPath = Join-Path $runtimeDir 'telegram-roundtrip-health.json'
 $lockPath = Join-Path $runtimeDir 'nanoclaw-host.lock'
 $nodeRuntimeMetadataPath = Join-Path $runtimeDir 'node-runtime.json'
 $watchdogPidPath = Join-Path $runtimeDir 'nanoclaw-watchdog.pid'
@@ -338,6 +339,202 @@ function Get-AssistantHealthStatus {
     status = 'healthy'
     detail = 'Assistant health marker is current.'
     updatedAt = $updatedAtText
+  }
+}
+
+function Get-TelegramRoundtripStatus {
+  param(
+    [object] $AssistantHealthMarker = $null,
+    [object] $HostState = $null,
+    [object] $ReadyState = $null,
+    [int] $ProbeIntervalSeconds = 1800,
+    [int] $StartupGraceSeconds = 300
+  )
+
+  $state = Read-JsonFile $telegramRoundtripPath
+  $lastOkAt = if ($state -and $state.lastSuccessAt) { [string] $state.lastSuccessAt } else { $null }
+  $lastProbeAt = if ($state -and $state.lastProbeAt) { [string] $state.lastProbeAt } else { $null }
+  $nextDueAt = if ($state -and $state.nextDueAt) { [string] $state.nextDueAt } else { $null }
+  $telegramChannel = $null
+  if ($AssistantHealthMarker -and $AssistantHealthMarker.channels) {
+    foreach ($channel in @($AssistantHealthMarker.channels)) {
+      if ($null -eq $channel) { continue }
+      if ([string] $channel.name -ne 'telegram') { continue }
+      $configured = $false
+      if ($channel.PSObject.Properties.Name -contains 'configured') {
+        $configured = [bool] $channel.configured
+      }
+      if ($configured) {
+        $telegramChannel = $channel
+        break
+      }
+    }
+  }
+
+  if ($null -eq $telegramChannel) {
+    return [pscustomobject]@{
+      status = 'unconfigured'
+      detail = 'Telegram roundtrip checks are not configured for this runtime.'
+      updatedAt = if ($state) { [string] $state.updatedAt } else { $null }
+      lastOkAt = $lastOkAt
+      lastProbeAt = $lastProbeAt
+      nextDueAt = $nextDueAt
+      due = $false
+    }
+  }
+
+  $now = [DateTime]::UtcNow
+  $readyAtText = if ($ReadyState -and $ReadyState.readyAt) {
+    [string] $ReadyState.readyAt
+  } elseif ($HostState -and $HostState.readyAt) {
+    [string] $HostState.readyAt
+  } else {
+    ''
+  }
+  $readyAt = [DateTime]::MinValue
+  $hasReadyAt = -not [string]::IsNullOrWhiteSpace($readyAtText) -and [DateTime]::TryParse($readyAtText, [ref] $readyAt)
+  $inStartupGrace = $hasReadyAt -and (($now - $readyAt.ToUniversalTime()).TotalSeconds -lt $StartupGraceSeconds)
+
+  if ($null -eq $state) {
+    return [pscustomobject]@{
+      status = if ($inStartupGrace) { 'pending' } else { 'missing' }
+      detail = if ($inStartupGrace) {
+        'Waiting for the first Telegram roundtrip confirmation after startup.'
+      } else {
+        'Telegram roundtrip health marker is missing.'
+      }
+      updatedAt = $null
+      lastOkAt = $null
+      lastProbeAt = $null
+      nextDueAt = $null
+      due = -not $inStartupGrace
+    }
+  }
+
+  if ([string] $state.status -eq 'unconfigured') {
+    return [pscustomobject]@{
+      status = 'unconfigured'
+      detail = if ([string]::IsNullOrWhiteSpace([string] $state.detail)) {
+        'Telegram user-session probe is not configured on this machine.'
+      } else {
+        [string] $state.detail
+      }
+      updatedAt = [string] $state.updatedAt
+      lastOkAt = $lastOkAt
+      lastProbeAt = $lastProbeAt
+      nextDueAt = $nextDueAt
+      due = $false
+    }
+  }
+
+  if (
+    $HostState -and
+    -not [string]::IsNullOrWhiteSpace([string] $HostState.bootId) -and
+    -not [string]::IsNullOrWhiteSpace([string] $state.bootId) -and
+    [string] $state.bootId -ne [string] $HostState.bootId
+  ) {
+    return [pscustomobject]@{
+      status = if ($inStartupGrace) { 'pending' } else { 'degraded' }
+      detail = if ($inStartupGrace) {
+        'Telegram roundtrip is waiting for post-restart confirmation.'
+      } else {
+        'Telegram roundtrip health is from an older assistant boot.'
+      }
+      updatedAt = [string] $state.updatedAt
+      lastOkAt = $lastOkAt
+      lastProbeAt = $lastProbeAt
+      nextDueAt = $nextDueAt
+      due = -not $inStartupGrace
+    }
+  }
+
+  $computedNextDue = [DateTime]::MinValue
+  $hasComputedNextDue = $false
+  if (-not [string]::IsNullOrWhiteSpace($nextDueAt) -and [DateTime]::TryParse($nextDueAt, [ref] $computedNextDue)) {
+    $hasComputedNextDue = $true
+  } elseif (-not [string]::IsNullOrWhiteSpace($lastOkAt)) {
+    $lastSuccess = [DateTime]::MinValue
+    if ([DateTime]::TryParse($lastOkAt, [ref] $lastSuccess)) {
+      $computedNextDue = $lastSuccess.ToUniversalTime().AddSeconds($ProbeIntervalSeconds)
+      $hasComputedNextDue = $true
+      $nextDueAt = $computedNextDue.ToString('o')
+    }
+  }
+
+  $due = $true
+  if ($hasComputedNextDue) {
+    $due = $now -ge $computedNextDue.ToUniversalTime()
+  }
+
+  if ([string] $state.status -eq 'healthy' -and -not $due) {
+    return [pscustomobject]@{
+      status = 'healthy'
+      detail = if ([string]::IsNullOrWhiteSpace([string] $state.detail)) {
+        'Telegram roundtrip is healthy and within cadence.'
+      } else {
+        [string] $state.detail
+      }
+      updatedAt = [string] $state.updatedAt
+      lastOkAt = $lastOkAt
+      lastProbeAt = $lastProbeAt
+      nextDueAt = $nextDueAt
+      due = $false
+    }
+  }
+
+  if ([string] $state.status -eq 'pending' -and $inStartupGrace) {
+    return [pscustomobject]@{
+      status = 'pending'
+      detail = if ([string]::IsNullOrWhiteSpace([string] $state.detail)) {
+        'Telegram roundtrip is pending during the startup grace window.'
+      } else {
+        [string] $state.detail
+      }
+      updatedAt = [string] $state.updatedAt
+      lastOkAt = $lastOkAt
+      lastProbeAt = $lastProbeAt
+      nextDueAt = $nextDueAt
+      due = $false
+    }
+  }
+
+  return [pscustomobject]@{
+    status = 'degraded'
+    detail = if ([string]::IsNullOrWhiteSpace([string] $state.detail)) {
+      'Telegram roundtrip has not succeeded recently enough to trust Telegram responsiveness.'
+    } else {
+      [string] $state.detail
+    }
+    updatedAt = [string] $state.updatedAt
+    lastOkAt = $lastOkAt
+    lastProbeAt = $lastProbeAt
+    nextDueAt = $nextDueAt
+    due = $due
+  }
+}
+
+function Invoke-TelegramRoundtripProbe {
+  param([switch] $Force)
+
+  $nodeExe = Resolve-PinnedNodeExecutable
+  $args = @(
+    '.\node_modules\tsx\dist\cli.mjs',
+    'src\telegram-user-session.ts',
+    'probe'
+  )
+  if ($Force) {
+    $args += '--force'
+  }
+
+  $output = & $nodeExe @args 2>&1 | Out-String
+  $exitCode = $LASTEXITCODE
+  $assistantHealthMarker = Read-JsonFile $assistantHealthPath
+  $assessment = Get-TelegramRoundtripStatus -AssistantHealthMarker $assistantHealthMarker -HostState (Read-JsonFile $hostStatePath) -ReadyState (Read-JsonFile $readyStatePath)
+
+  return [pscustomobject]@{
+    exitCode = $exitCode
+    output = $output.Trim()
+    assessment = $assessment
   }
 }
 
@@ -761,6 +958,7 @@ function Stop-NanoClaw {
 function Ensure-NanoClaw {
   $hostState = Read-JsonFile $hostStatePath
   $readyState = Read-JsonFile $readyStatePath
+  $assistantHealthMarker = Read-JsonFile $assistantHealthPath
   $runtimePid = Read-Pid
   $processRunning = $false
 
@@ -788,9 +986,47 @@ function Ensure-NanoClaw {
   }
 
   $assistantHealth = Get-AssistantHealthStatus -HostState $hostState -ReadyState $readyState -RuntimePid $runtimePid
+  $telegramRoundtrip = Get-TelegramRoundtripStatus -AssistantHealthMarker $assistantHealthMarker -HostState $hostState -ReadyState $readyState
   if ([string] $assistantHealth.status -eq 'healthy') {
+    if ($telegramRoundtrip.due) {
+      $probe = Invoke-TelegramRoundtripProbe
+      $telegramRoundtrip = $probe.assessment
+      if ([string] $telegramRoundtrip.status -eq 'degraded') {
+        Start-Sleep -Seconds 15
+        $retryProbe = Invoke-TelegramRoundtripProbe -Force
+        $telegramRoundtrip = $retryProbe.assessment
+        if ([string] $telegramRoundtrip.status -eq 'degraded') {
+          Write-HostStep ("Periodic ensure check detected Telegram roundtrip failure after retry: {0}" -f ([string] $telegramRoundtrip.detail))
+          Stop-NanoClaw
+          Start-Sleep -Milliseconds 700
+          Start-NanoClaw
+          Start-Sleep -Seconds 10
+          $confirmProbe = Invoke-TelegramRoundtripProbe -Force
+          $telegramRoundtrip = $confirmProbe.assessment
+        }
+      }
+    }
+
     Start-Watchdog
-    Write-Output ("HOST_ENSURE: status=healthy pid={0}" -f $runtimePid)
+    $ensureStatus = if ([string] $telegramRoundtrip.status -eq 'healthy') {
+      'healthy'
+    } else {
+      'degraded'
+    }
+    Write-Output ("HOST_ENSURE: status={0} pid={1} telegram_roundtrip={2}" -f $ensureStatus, $runtimePid, ([string] $telegramRoundtrip.status))
+    return
+  }
+
+  $assistantHealthDetail = [string] $assistantHealth.detail
+  $telegramOnlyIssue =
+    [string] $assistantHealth.status -eq 'degraded' -and
+    -not [string]::IsNullOrWhiteSpace($assistantHealthDetail) -and
+    $assistantHealthDetail.StartsWith('telegram:', [System.StringComparison]::OrdinalIgnoreCase)
+
+  if ($telegramOnlyIssue -and [string] $telegramRoundtrip.status -eq 'unconfigured') {
+    Write-HostStep 'Periodic ensure check detected Telegram degradation, but live roundtrip probing is unconfigured; leaving the current process running and reporting degraded truthfully'
+    Start-Watchdog
+    Write-Output ("HOST_ENSURE: status=degraded pid={0} telegram_roundtrip={1}" -f $runtimePid, ([string] $telegramRoundtrip.status))
     return
   }
 
@@ -803,6 +1039,7 @@ function Ensure-NanoClaw {
 function Show-Status {
   $hostState = Read-JsonFile $hostStatePath
   $readyState = Read-JsonFile $readyStatePath
+  $assistantHealthMarker = Read-JsonFile $assistantHealthPath
   $runtimeMetadata = Read-JsonFile $nodeRuntimeMetadataPath
   $runtimePid = Read-Pid
   $processRunning = $false
@@ -837,6 +1074,7 @@ function Show-Status {
     $InstallMode
   }
   $assistantHealth = Get-AssistantHealthStatus -HostState $hostState -ReadyState $readyState -RuntimePid $runtimePid
+  $telegramRoundtrip = Get-TelegramRoundtripStatus -AssistantHealthMarker $assistantHealthMarker -HostState $hostState -ReadyState $readyState
   $watchdog = Get-WatchdogSnapshot
 
   Write-Output ("HOST_STATUS: phase={0}" -f $phase)
@@ -852,6 +1090,11 @@ function Show-Status {
   Write-Output ("HOST_STATUS: assistant_health={0}" -f ([string] $assistantHealth.status))
   Write-Output ("HOST_STATUS: assistant_health_detail={0}" -f ([string] $assistantHealth.detail))
   Write-Output ("HOST_STATUS: assistant_health_updated_at={0}" -f ($(if ($assistantHealth.updatedAt) { [string] $assistantHealth.updatedAt } else { 'none' })))
+  Write-Output ("HOST_STATUS: telegram_roundtrip_health={0}" -f ([string] $telegramRoundtrip.status))
+  Write-Output ("HOST_STATUS: telegram_roundtrip_detail={0}" -f ([string] $telegramRoundtrip.detail))
+  Write-Output ("HOST_STATUS: telegram_roundtrip_last_ok_at={0}" -f ($(if ($telegramRoundtrip.lastOkAt) { [string] $telegramRoundtrip.lastOkAt } else { 'none' })))
+  Write-Output ("HOST_STATUS: telegram_roundtrip_last_probe_at={0}" -f ($(if ($telegramRoundtrip.lastProbeAt) { [string] $telegramRoundtrip.lastProbeAt } else { 'none' })))
+  Write-Output ("HOST_STATUS: telegram_roundtrip_next_due_at={0}" -f ($(if ($telegramRoundtrip.nextDueAt) { [string] $telegramRoundtrip.nextDueAt } else { 'none' })))
   Write-Output ("HOST_STATUS: watchdog_running={0}" -f ([string] $watchdog.running).ToLowerInvariant())
   Write-Output ("HOST_STATUS: watchdog_pid={0}" -f ($(if ($watchdog.pid) { [string] $watchdog.pid } else { 'none' })))
   Write-Output ("HOST_STATUS: host_log={0}" -f $hostLogPath)

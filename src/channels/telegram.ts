@@ -29,6 +29,12 @@ export interface TelegramChannelOpts {
     channel: string,
   ) => Promise<{ ok: boolean; message: string }>;
   onHealthUpdate?: (snapshot: ChannelHealthSnapshot) => void;
+  onRoundtripActivity?: (event: {
+    kind: 'organic_success';
+    chatJid: string;
+    observedAt: string;
+    detail: string;
+  }) => void;
 }
 
 function escapeRegExp(input: string): string {
@@ -350,6 +356,7 @@ export class TelegramChannel implements Channel {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private shuttingDown = false;
   private healthSnapshot: ChannelHealthSnapshot;
+  private recentInboundByChatJid = new Map<string, string>();
 
   constructor(botToken: string, opts: TelegramChannelOpts) {
     this.botToken = botToken;
@@ -386,6 +393,43 @@ export class TelegramChannel implements Channel {
       return 'Telegram long polling was interrupted by a webhook change.';
     }
     return raw || 'Telegram long polling failed unexpectedly.';
+  }
+
+  private rememberInbound(chatJid: string, observedAt: string): void {
+    this.recentInboundByChatJid.set(chatJid, observedAt);
+  }
+
+  private reportOrganicRoundtrip(
+    chatJid: string,
+    detail: string,
+    observedAt = new Date().toISOString(),
+  ): void {
+    this.recentInboundByChatJid.delete(chatJid);
+    this.opts.onRoundtripActivity?.({
+      kind: 'organic_success',
+      chatJid,
+      observedAt,
+      detail,
+    });
+  }
+
+  private maybeReportSendRoundtrip(jid: string): void {
+    const inboundAt = this.recentInboundByChatJid.get(jid);
+    if (!inboundAt) return;
+    const inboundMs = Date.parse(inboundAt);
+    if (!Number.isFinite(inboundMs)) {
+      this.recentInboundByChatJid.delete(jid);
+      return;
+    }
+    if (Date.now() - inboundMs > 10 * 60 * 1000) {
+      this.recentInboundByChatJid.delete(jid);
+      return;
+    }
+    this.reportOrganicRoundtrip(
+      jid,
+      'Observed a real Telegram request/response exchange.',
+      new Date().toISOString(),
+    );
   }
 
   private async clearWebhookBeforePolling(): Promise<void> {
@@ -561,6 +605,22 @@ export class TelegramChannel implements Channel {
       },
     });
 
+    const replyAndTrack = async (
+      ctx: {
+        chat: { id: number | string };
+        reply: (
+          text: string,
+          options?: Record<string, unknown>,
+        ) => Promise<unknown>;
+      },
+      text: string,
+      options?: Record<string, unknown>,
+      detail = 'Observed a Telegram command roundtrip.',
+    ): Promise<void> => {
+      await ctx.reply(text, options);
+      this.reportOrganicRoundtrip(`tg:${ctx.chat.id}`, detail);
+    };
+
     this.bot.command('chatid', (ctx) => {
       const chatId = ctx.chat.id;
       const chatType = ctx.chat.type;
@@ -569,23 +629,48 @@ export class TelegramChannel implements Channel {
           ? ctx.from?.first_name || 'Private'
           : ((ctx.chat as { title?: string }).title ?? 'Unknown');
 
-      ctx.reply(buildTelegramChatIdText(chatId, chatName, chatType));
+      return replyAndTrack(
+        ctx,
+        buildTelegramChatIdText(chatId, chatName, chatType),
+        undefined,
+        'Observed a Telegram /chatid roundtrip.',
+      );
     });
 
     this.bot.command('help', (ctx) => {
-      ctx.reply(buildTelegramHelpText(), { parse_mode: 'Markdown' });
+      return replyAndTrack(
+        ctx,
+        buildTelegramHelpText(),
+        { parse_mode: 'Markdown' },
+        'Observed a Telegram /help roundtrip.',
+      );
     });
 
     this.bot.command('commands', (ctx) => {
-      ctx.reply(buildTelegramCommandsText(), { parse_mode: 'Markdown' });
+      return replyAndTrack(
+        ctx,
+        buildTelegramCommandsText(),
+        { parse_mode: 'Markdown' },
+        'Observed a Telegram /commands roundtrip.',
+      );
     });
 
     this.bot.command('features', (ctx) => {
-      ctx.reply(buildTelegramFeaturesText(), { parse_mode: 'Markdown' });
+      return replyAndTrack(
+        ctx,
+        buildTelegramFeaturesText(),
+        { parse_mode: 'Markdown' },
+        'Observed a Telegram /features roundtrip.',
+      );
     });
 
     this.bot.command('start', (ctx) => {
-      ctx.reply(buildTelegramWelcomeText(), { parse_mode: 'Markdown' });
+      return replyAndTrack(
+        ctx,
+        buildTelegramWelcomeText(),
+        { parse_mode: 'Markdown' },
+        'Observed a Telegram /start roundtrip.',
+      );
     });
 
     this.bot.command('registermain', async (ctx) => {
@@ -613,11 +698,21 @@ export class TelegramChannel implements Channel {
         chatName,
         'telegram',
       );
-      await ctx.reply(result.message, { parse_mode: 'Markdown' });
+      await replyAndTrack(
+        ctx,
+        result.message,
+        { parse_mode: 'Markdown' },
+        'Observed a Telegram /registermain roundtrip.',
+      );
     });
 
     this.bot.command('ping', (ctx) => {
-      ctx.reply(`${ASSISTANT_NAME} is online.`);
+      return replyAndTrack(
+        ctx,
+        `${ASSISTANT_NAME} is online.`,
+        undefined,
+        'Observed a Telegram /ping roundtrip.',
+      );
     });
 
     const TELEGRAM_BOT_COMMANDS = new Set([
@@ -682,6 +777,7 @@ export class TelegramChannel implements Channel {
         'telegram',
         isGroup,
       );
+      this.rememberInbound(chatJid, timestamp);
 
       const group = this.opts.registeredGroups()[chatJid];
       if (!group) {
@@ -751,6 +847,7 @@ export class TelegramChannel implements Channel {
         'telegram',
         isGroup,
       );
+      this.rememberInbound(chatJid, timestamp);
       this.opts.onMessage(chatJid, {
         id: ctx.message.message_id.toString(),
         chat_jid: chatJid,
@@ -808,6 +905,7 @@ export class TelegramChannel implements Channel {
         'telegram',
         isGroup,
       );
+      this.rememberInbound(chatJid, timestamp);
 
       await ctx.answerCallbackQuery({ text: 'Working...' });
       this.opts.onMessage(chatJid, {
@@ -888,6 +986,7 @@ export class TelegramChannel implements Channel {
           firstMessageId = result.platformMessageId;
         }
       }
+      this.maybeReportSendRoundtrip(jid);
       logger.info(
         {
           component: 'telegram',

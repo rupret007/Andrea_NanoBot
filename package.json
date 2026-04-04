@@ -45,6 +45,7 @@
     "telegram:user:tap": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs src/telegram-user-session.ts tap",
     "telegram:user:batch": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs src/telegram-user-session.ts batch",
     "telegram:user:runtime": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs src/telegram-user-session.ts runtime",
+    "telegram:user:smoke": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs src/telegram-user-session.ts smoke",
     "debug:status": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-control.ts status",
     "debug:level": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-control.ts level",
     "debug:reset": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-control.ts reset",

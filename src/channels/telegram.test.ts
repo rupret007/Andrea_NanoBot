@@ -332,6 +332,35 @@ describe('TelegramChannel.sendMessage', () => {
       }),
     );
   });
+
+  it('reports organic roundtrip success after replying to a recent inbound Telegram message', async () => {
+    const sendMessage = vi.fn().mockResolvedValue({ message_id: 779 });
+    const onRoundtripActivity = vi.fn();
+    const channel = new TelegramChannel('test-token', {
+      onMessage: () => undefined,
+      onChatMetadata: () => undefined,
+      registeredGroups: () => ({}),
+      onRoundtripActivity,
+    });
+    const internals = channel as unknown as {
+      bot: { api: { sendMessage: typeof sendMessage } };
+      rememberInbound: (chatJid: string, observedAt: string) => void;
+    };
+
+    internals.bot = {
+      api: { sendMessage },
+    };
+    internals.rememberInbound('tg:123', new Date().toISOString());
+
+    await channel.sendMessage('tg:123', 'Hello again');
+
+    expect(onRoundtripActivity).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'organic_success',
+        chatJid: 'tg:123',
+      }),
+    );
+  });
 });
 
 describe('TelegramChannel.editMessage', () => {
