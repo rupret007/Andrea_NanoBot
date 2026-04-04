@@ -3605,6 +3605,54 @@ export function getRegisteredGroup(
   };
 }
 
+export function getRegisteredMainChat():
+  | (RegisteredGroup & { jid: string })
+  | undefined {
+  const row = db
+    .prepare(
+      `
+        SELECT *
+        FROM registered_groups
+        WHERE is_main = 1 OR folder = 'main'
+        ORDER BY is_main DESC, added_at ASC
+        LIMIT 1
+      `,
+    )
+    .get() as
+    | {
+        jid: string;
+        name: string;
+        folder: string;
+        trigger_pattern: string;
+        added_at: string;
+        container_config: string | null;
+        requires_trigger: number | null;
+        is_main: number | null;
+      }
+    | undefined;
+  if (!row) return undefined;
+  if (!isValidGroupFolder(row.folder)) {
+    logger.warn(
+      { jid: row.jid, folder: row.folder },
+      'Skipping registered main chat with invalid folder',
+    );
+    return undefined;
+  }
+  return {
+    jid: row.jid,
+    name: row.name,
+    folder: row.folder,
+    trigger: row.trigger_pattern,
+    added_at: row.added_at,
+    containerConfig: row.container_config
+      ? JSON.parse(row.container_config)
+      : undefined,
+    requiresTrigger:
+      row.requires_trigger === null ? undefined : row.requires_trigger === 1,
+    isMain: row.is_main === 1 ? true : undefined,
+  };
+}
+
 export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
   if (!isValidGroupFolder(group.folder)) {
     throw new Error(`Invalid group folder "${group.folder}" for JID ${jid}`);
@@ -3622,6 +3670,106 @@ export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
     group.requiresTrigger === undefined ? 1 : group.requiresTrigger ? 1 : 0,
     group.isMain ? 1 : 0,
   );
+}
+
+export function deleteRegisteredGroup(jid: string): void {
+  db.prepare('DELETE FROM registered_groups WHERE jid = ?').run(jid);
+}
+
+export function pruneChatBoundEphemeralContexts(chatJid: string): number {
+  const suffixPattern = `%:${chatJid}`;
+  const statements = [
+    db.prepare('DELETE FROM cursor_operator_contexts WHERE chat_jid = ?'),
+    db.prepare('DELETE FROM cursor_message_contexts WHERE chat_jid = ?'),
+    db.prepare('DELETE FROM runtime_backend_card_contexts WHERE chat_jid = ?'),
+    db.prepare('DELETE FROM runtime_backend_chat_selection WHERE chat_jid = ?'),
+    db.prepare('DELETE FROM router_state WHERE key LIKE ?'),
+  ];
+
+  let changes = 0;
+  changes += statements[0].run(chatJid).changes;
+  changes += statements[1].run(chatJid).changes;
+  changes += statements[2].run(chatJid).changes;
+  changes += statements[3].run(chatJid).changes;
+  changes += statements[4].run(suffixPattern).changes;
+
+  return changes;
+}
+
+export function repairRegisteredMainChat(params: {
+  fromJid: string;
+  toJid: string;
+  toName: string;
+}): (RegisteredGroup & { jid: string }) {
+  const tx = db.transaction((input: {
+    fromJid: string;
+    toJid: string;
+    toName: string;
+  }) => {
+    const existing = getRegisteredGroup(input.fromJid);
+    if (!existing) {
+      throw new Error(
+        `Cannot repair main chat registration because ${input.fromJid} is not registered.`,
+      );
+    }
+    if (existing.isMain !== true && existing.folder !== 'main') {
+      throw new Error(
+        `Cannot repair non-main registration ${input.fromJid} as the main chat.`,
+      );
+    }
+
+    const conflictingTarget = getRegisteredGroup(input.toJid);
+    if (
+      conflictingTarget &&
+      conflictingTarget.jid !== input.fromJid &&
+      conflictingTarget.folder !== existing.folder
+    ) {
+      throw new Error(
+        `Cannot repair main chat registration because ${input.toJid} is already registered to folder "${conflictingTarget.folder}".`,
+      );
+    }
+
+    if (input.fromJid !== input.toJid) {
+      pruneChatBoundEphemeralContexts(input.fromJid);
+    }
+
+    if (conflictingTarget && conflictingTarget.jid !== input.fromJid) {
+      deleteRegisteredGroup(conflictingTarget.jid);
+    }
+
+    db.prepare(
+      `
+        UPDATE registered_groups
+        SET jid = ?, name = ?, folder = ?, trigger_pattern = ?, added_at = ?,
+            container_config = ?, requires_trigger = ?, is_main = ?
+        WHERE jid = ?
+      `,
+    ).run(
+      input.toJid,
+      input.toName,
+      existing.folder,
+      existing.trigger,
+      existing.added_at,
+      existing.containerConfig ? JSON.stringify(existing.containerConfig) : null,
+      existing.requiresTrigger === undefined
+        ? 1
+        : existing.requiresTrigger
+          ? 1
+          : 0,
+      existing.isMain ? 1 : 0,
+      input.fromJid,
+    );
+
+    const repaired = getRegisteredGroup(input.toJid);
+    if (!repaired) {
+      throw new Error(
+        `Main chat repair failed to load the updated registration for ${input.toJid}.`,
+      );
+    }
+    return repaired;
+  });
+
+  return tx(params);
 }
 
 export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {

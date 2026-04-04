@@ -3,15 +3,20 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   _initTestDatabase,
   createTask,
+  deleteRegisteredGroup,
   deleteTask,
   getAllChats,
   getCursorMessageContext,
   getCursorOperatorContext,
   getAllRegisteredGroups,
+  getRegisteredMainChat,
   getLastBotMessageTimestamp,
   getMessagesSince,
   getNewMessages,
+  getRegisteredGroup,
   getTaskById,
+  pruneChatBoundEphemeralContexts,
+  repairRegisteredMainChat,
   setRegisteredGroup,
   storeCursorMessageContext,
   storeChatMetadata,
@@ -596,6 +601,117 @@ describe('registered group isMain', () => {
     const group = groups['group@g.us'];
     expect(group).toBeDefined();
     expect(group.isMain).toBeUndefined();
+  });
+});
+
+describe('registered main chat repair', () => {
+  it('returns the registered main chat record', () => {
+    setRegisteredGroup('tg:runtime-proof', {
+      name: 'Runtime Proof',
+      folder: 'main',
+      trigger: '@Andrea',
+      added_at: '2026-04-02T20:45:00.000Z',
+      requiresTrigger: false,
+      isMain: true,
+    });
+
+    expect(getRegisteredMainChat()).toEqual(
+      expect.objectContaining({
+        jid: 'tg:runtime-proof',
+        folder: 'main',
+        isMain: true,
+      }),
+    );
+  });
+
+  it('repairs a stale synthetic main registration to the live Telegram DM', () => {
+    setRegisteredGroup('tg:runtime-proof', {
+      name: 'Runtime Proof',
+      folder: 'main',
+      trigger: '@Andrea',
+      added_at: '2026-04-02T20:45:00.000Z',
+      requiresTrigger: false,
+      isMain: true,
+    });
+    storeChatMetadata(
+      'tg:8004355504',
+      '2026-04-04T18:37:12.000Z',
+      'Jeff',
+      'telegram',
+      false,
+    );
+    upsertCursorOperatorContext({
+      chatJid: 'tg:runtime-proof',
+      selectedLaneId: 'cursor',
+      selectedAgentId: 'bc_123',
+      updatedAt: '2026-04-04T18:37:12.000Z',
+    });
+    storeCursorMessageContext({
+      chatJid: 'tg:runtime-proof',
+      platformMessageId: '9001',
+      contextKind: 'cursor_job_card',
+      laneId: 'cursor',
+      agentId: 'bc_123',
+      createdAt: '2026-04-04T18:37:12.000Z',
+    });
+
+    const repaired = repairRegisteredMainChat({
+      fromJid: 'tg:runtime-proof',
+      toJid: 'tg:8004355504',
+      toName: 'Jeff',
+    });
+
+    expect(repaired.jid).toBe('tg:8004355504');
+    expect(repaired.name).toBe('Jeff');
+    expect(repaired.folder).toBe('main');
+    expect(getRegisteredGroup('tg:runtime-proof')).toBeUndefined();
+    expect(getRegisteredMainChat()?.jid).toBe('tg:8004355504');
+    expect(getCursorOperatorContext('tg:runtime-proof')).toBeUndefined();
+    expect(getCursorMessageContext('tg:runtime-proof', '9001')).toBeUndefined();
+  });
+
+  it('prunes chat-bound ephemeral contexts without touching registrations', () => {
+    setRegisteredGroup('tg:runtime-proof', {
+      name: 'Runtime Proof',
+      folder: 'main',
+      trigger: '@Andrea',
+      added_at: '2026-04-02T20:45:00.000Z',
+      requiresTrigger: false,
+      isMain: true,
+    });
+    upsertCursorOperatorContext({
+      chatJid: 'tg:runtime-proof',
+      selectedLaneId: 'cursor',
+      selectedAgentId: 'bc_123',
+      updatedAt: '2026-04-04T18:37:12.000Z',
+    });
+    storeCursorMessageContext({
+      chatJid: 'tg:runtime-proof',
+      platformMessageId: '9001',
+      contextKind: 'cursor_job_card',
+      laneId: 'cursor',
+      agentId: 'bc_123',
+      createdAt: '2026-04-04T18:37:12.000Z',
+    });
+
+    expect(pruneChatBoundEphemeralContexts('tg:runtime-proof')).toBeGreaterThan(0);
+    expect(getCursorOperatorContext('tg:runtime-proof')).toBeUndefined();
+    expect(getCursorMessageContext('tg:runtime-proof', '9001')).toBeUndefined();
+    expect(getRegisteredMainChat()?.jid).toBe('tg:runtime-proof');
+  });
+
+  it('allows deleting a stale registered group explicitly', () => {
+    setRegisteredGroup('tg:runtime-proof', {
+      name: 'Runtime Proof',
+      folder: 'main',
+      trigger: '@Andrea',
+      added_at: '2026-04-02T20:45:00.000Z',
+      requiresTrigger: false,
+      isMain: true,
+    });
+
+    deleteRegisteredGroup('tg:runtime-proof');
+    expect(getRegisteredMainChat()).toBeUndefined();
   });
 });
 

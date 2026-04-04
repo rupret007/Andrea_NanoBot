@@ -86,6 +86,7 @@ Run this on the real deployed host.
 - model credentials configured
 - at least one configured channel
 - at least one registered chat or `/registermain` completed
+- `npm run services:status` shows `assistant_name=Andrea` and the expected Telegram DM as `registered_main_chat_jid`
 
 ### Baseline Runtime Checks
 
@@ -244,6 +245,8 @@ Then rerun a small live smoke:
 - `/help`
 - `/cursor_status`
 - `npm run telegram:user:smoke`
+
+If `/cursor_status` still behaves like an unregistered shell, stop and compare the real DM against `registered_main_chat_jid`, `latest_telegram_chat_jid`, and `main_chat_audit_warning` in `npm run services:status` before assuming a code rollback.
 
 Telegram live-testing truth:
 

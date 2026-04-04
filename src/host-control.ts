@@ -139,6 +139,26 @@ export interface TelegramTransportState {
   consecutiveExternalConflicts: number;
 }
 
+export interface RuntimeAuditState {
+  updatedAt: string;
+  activeRepoRoot: string;
+  activeGitBranch: string;
+  activeGitCommit: string;
+  activeEntryPath: string;
+  activeEnvPath: string;
+  activeStoreDbPath: string;
+  activeRuntimeStateDir: string;
+  assistantName: string;
+  assistantNameSource: 'env' | 'default';
+  registeredMainChatJid: string | null;
+  registeredMainChatName: string | null;
+  registeredMainChatFolder: string | null;
+  registeredMainChatPresentInChats: boolean;
+  latestTelegramChatJid: string | null;
+  latestTelegramChatName: string | null;
+  mainChatAuditWarning: string | null;
+}
+
 export interface AssistantHealthAssessment {
   status: AssistantHealthStatus;
   detail: string;
@@ -170,6 +190,7 @@ export interface HostControlPaths {
   assistantHealthStatePath: string;
   telegramRoundtripStatePath: string;
   telegramTransportStatePath: string;
+  runtimeAuditStatePath: string;
   hostLockPath: string;
   nodeRuntimeMetadataPath: string;
   startupFolderScriptPath: string | null;
@@ -183,6 +204,7 @@ export interface HostControlSnapshot {
   assistantHealthState: AssistantHealthState | null;
   telegramRoundtripState: TelegramRoundtripState | null;
   telegramTransportState: TelegramTransportState | null;
+  runtimeAuditState: RuntimeAuditState | null;
 }
 
 export interface WindowsInstallArtifacts {
@@ -333,6 +355,7 @@ export function resolveHostControlPaths(
       runtimeStateDir,
       'telegram-transport-health.json',
     ),
+    runtimeAuditStatePath: path.join(runtimeStateDir, 'runtime-audit.json'),
     hostLockPath: path.join(runtimeStateDir, 'nanoclaw-host.lock'),
     nodeRuntimeMetadataPath: path.join(runtimeStateDir, 'node-runtime.json'),
     startupFolderScriptPath: appData
@@ -383,6 +406,10 @@ export function getTelegramTransportStatePath(
   projectRoot = process.cwd(),
 ): string {
   return resolveHostControlPaths(projectRoot).telegramTransportStatePath;
+}
+
+export function getRuntimeAuditStatePath(projectRoot = process.cwd()): string {
+  return resolveHostControlPaths(projectRoot).runtimeAuditStatePath;
 }
 
 export function getHostLockPath(projectRoot = process.cwd()): string {
@@ -605,6 +632,62 @@ function normalizeTelegramTransportState(
   };
 }
 
+function normalizeRuntimeAuditState(value: unknown): RuntimeAuditState | null {
+  if (!value || typeof value !== 'object') return null;
+  const input = value as Partial<RuntimeAuditState>;
+  const assistantNameSource =
+    input.assistantNameSource === 'env' || input.assistantNameSource === 'default'
+      ? input.assistantNameSource
+      : null;
+  if (
+    !isNonEmptyString(input.updatedAt) ||
+    !isNonEmptyString(input.activeRepoRoot) ||
+    !isNonEmptyString(input.activeGitBranch) ||
+    !isNonEmptyString(input.activeGitCommit) ||
+    !isNonEmptyString(input.activeEntryPath) ||
+    !isNonEmptyString(input.activeEnvPath) ||
+    !isNonEmptyString(input.activeStoreDbPath) ||
+    !isNonEmptyString(input.activeRuntimeStateDir) ||
+    !isNonEmptyString(input.assistantName) ||
+    !assistantNameSource ||
+    typeof input.registeredMainChatPresentInChats !== 'boolean'
+  ) {
+    return null;
+  }
+
+  return {
+    updatedAt: input.updatedAt,
+    activeRepoRoot: input.activeRepoRoot,
+    activeGitBranch: input.activeGitBranch,
+    activeGitCommit: input.activeGitCommit,
+    activeEntryPath: input.activeEntryPath,
+    activeEnvPath: input.activeEnvPath,
+    activeStoreDbPath: input.activeStoreDbPath,
+    activeRuntimeStateDir: input.activeRuntimeStateDir,
+    assistantName: input.assistantName,
+    assistantNameSource,
+    registeredMainChatJid: isNonEmptyString(input.registeredMainChatJid)
+      ? input.registeredMainChatJid
+      : null,
+    registeredMainChatName: isNonEmptyString(input.registeredMainChatName)
+      ? input.registeredMainChatName
+      : null,
+    registeredMainChatFolder: isNonEmptyString(input.registeredMainChatFolder)
+      ? input.registeredMainChatFolder
+      : null,
+    registeredMainChatPresentInChats: input.registeredMainChatPresentInChats,
+    latestTelegramChatJid: isNonEmptyString(input.latestTelegramChatJid)
+      ? input.latestTelegramChatJid
+      : null,
+    latestTelegramChatName: isNonEmptyString(input.latestTelegramChatName)
+      ? input.latestTelegramChatName
+      : null,
+    mainChatAuditWarning: isNonEmptyString(input.mainChatAuditWarning)
+      ? input.mainChatAuditWarning
+      : null,
+  };
+}
+
 function normalizeHostState(
   value: unknown,
   projectRoot = process.cwd(),
@@ -663,6 +746,14 @@ export function readNodeRuntimeMetadata(
   );
 }
 
+export function readRuntimeAuditState(
+  projectRoot = process.cwd(),
+): RuntimeAuditState | null {
+  return normalizeRuntimeAuditState(
+    readJsonFile<unknown>(getRuntimeAuditStatePath(projectRoot)),
+  );
+}
+
 export function readNanoclawHostState(
   projectRoot = process.cwd(),
 ): NanoclawHostState | null {
@@ -716,6 +807,7 @@ export function readHostControlSnapshot(
     assistantHealthState: readAssistantHealthState(projectRoot),
     telegramRoundtripState: readTelegramRoundtripState(projectRoot),
     telegramTransportState: readTelegramTransportState(projectRoot),
+    runtimeAuditState: readRuntimeAuditState(projectRoot),
   };
 }
 
@@ -746,6 +838,14 @@ export function clearTelegramRoundtripState(projectRoot = process.cwd()): void {
 export function clearTelegramTransportState(projectRoot = process.cwd()): void {
   try {
     fs.rmSync(getTelegramTransportStatePath(projectRoot), { force: true });
+  } catch {
+    // Ignore best-effort cleanup failures during shutdown.
+  }
+}
+
+export function clearRuntimeAuditState(projectRoot = process.cwd()): void {
+  try {
+    fs.rmSync(getRuntimeAuditStatePath(projectRoot), { force: true });
   } catch {
     // Ignore best-effort cleanup failures during shutdown.
   }
@@ -809,6 +909,18 @@ export function writeTelegramTransportState(
     throw new Error('Cannot persist an invalid Telegram transport state.');
   }
   writeJsonFile(getTelegramTransportStatePath(projectRoot), normalized);
+  return normalized;
+}
+
+export function writeRuntimeAuditState(
+  state: RuntimeAuditState,
+  projectRoot = process.cwd(),
+): RuntimeAuditState {
+  const normalized = normalizeRuntimeAuditState(state);
+  if (!normalized) {
+    throw new Error('Cannot persist an invalid runtime audit state.');
+  }
+  writeJsonFile(getRuntimeAuditStatePath(projectRoot), normalized);
   return normalized;
 }
 

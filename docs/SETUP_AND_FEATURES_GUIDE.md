@@ -78,7 +78,8 @@ Then inside Claude Code:
 
 1. Run `/setup`.
 2. Add at least one channel (`/add-whatsapp`, `/add-telegram`, `/add-discord`, `/add-slack`, or `/add-gmail`).
-3. For Telegram-first setups, send `/registermain` to the bot in your direct chat to bootstrap the main control chat.
+3. For Telegram-first setups, send `/registermain` to the bot in the exact direct chat you want to use as the main control chat.
+   - After registration, `npm run services:status` should show that DM as `registered_main_chat_jid`.
 4. If you want OneCLI vault mode, run `/init-onecli`.
 5. Verify install health:
    - `npm run setup -- --step verify`
@@ -557,7 +558,7 @@ Windows service lifecycle helpers:
 - `npm run services:stop` stops NanoClaw, the local gateway, and any repo-managed companions started through the host launcher.
 - `npm run services:restart` runs stop then start through the same host-controlled path.
 - `npm run services:ensure` runs one explicit health-enforcement pass through the same host launcher.
-- `npm run services:status` reports the active repo root, pinned Node runtime, installed login-start mechanism, Alexa health, optional loopback backend health, ngrok state, the current `assistant_health` view, `telegram_roundtrip_health`, whether the watchdog is running, and the last startup error if one occurred.
+- `npm run services:status` reports the active repo root, git branch and commit, pinned Node runtime, installed login-start mechanism, active `.env` and DB paths, Alexa health, optional loopback backend health, ngrok state, the current `assistant_health` view, `telegram_roundtrip_health`, the public assistant name/source, the registered main Telegram chat, whether the watchdog is running, and the last startup error if one occurred.
 
 Startup behavior:
 

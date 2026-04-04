@@ -153,6 +153,8 @@ npm run telegram:user:smoke
 
 This is now the canonical proof that Telegram is actually working end to end.
 
+Before you trust the result, run `npm run services:status` and confirm the DM you are testing matches `registered_main_chat_jid`. If the smoke runs against a different chat than the registered main control chat, richer `/cursor` and operator-tile behavior can look missing even when the code is fine.
+
 What it does:
 
 - sends a real `/ping` from the operator Telegram user session

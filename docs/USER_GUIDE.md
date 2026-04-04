@@ -25,6 +25,8 @@ Andrea is strongest at:
 4. Run `/help` or `/commands`.
 5. Send one plain-language request.
 
+`/registermain` should make that same DM Andrea's main control chat. If operator-style features still look unavailable after that, ask the operator to check `registered_main_chat_jid` in `npm run services:status`.
+
 Good first messages:
 
 - `What's the meaning of life?`
@@ -42,7 +44,7 @@ These are the commands normal users should rely on:
 - `/features` - short capability overview
 - `/ping` - basic health check
 - `/chatid` - show the current Telegram chat ID and type
-- `/registermain` - register your DM as Andrea's main control chat
+- `/registermain` - register this DM as Andrea's main control chat
 - `/cursor_status` - safe Cursor readiness check only
 
 Important Cursor rule:

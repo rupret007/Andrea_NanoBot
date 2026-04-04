@@ -156,7 +156,8 @@ Important truth:
 3. Run setup in Claude Code:
    - `/setup`
    - `/add-telegram`
-4. Register the main Telegram control chat with `/registermain` in DM.
+4. Register the main Telegram control chat with `/registermain` in the exact DM you want to use for operator work.
+   - After that, `npm run services:status` should show `assistant_name=Andrea` and `registered_main_chat_jid` set to that same Telegram DM.
 5. Run:
    - `npm run setup -- --step verify`
 6. Start services:
@@ -186,7 +187,7 @@ Windows startup truth:
 - Telegram is only considered truly responsive once a real round-trip succeeds. The watchdog now drives a real `/ping` roundtrip probe against the main operator chat every 30 minutes when there has not been a more recent successful Telegram exchange.
 - If the first due probe fails, the watchdog retries once after a short backoff and then restarts Andrea automatically if Telegram still does not reply.
 - If Telegram itself is degraded but the operator-side roundtrip harness is still unconfigured, `services:ensure` now reports `degraded` plus `telegram_roundtrip=unconfigured` instead of pretending Telegram is healthy or thrashing Andrea with blind restart loops.
-- `npm run services:status` now includes `assistant_health`, `telegram_roundtrip_health`, `telegram_roundtrip_last_ok_at`, `telegram_roundtrip_last_probe_at`, `telegram_roundtrip_next_due_at`, and `watchdog_running`, so a live process that lost Telegram responsiveness is visible immediately instead of looking falsely healthy.
+- `npm run services:status` now includes `assistant_health`, `telegram_roundtrip_health`, `telegram_roundtrip_last_ok_at`, `telegram_roundtrip_last_probe_at`, `telegram_roundtrip_next_due_at`, `watchdog_running`, plus the active repo root, branch, commit, DB path, assistant name source, and the currently registered main Telegram chat so runtime/state drift is visible immediately instead of looking falsely healthy.
 
 Quick recovery steps after a failed login bring-up:
 
@@ -302,7 +303,7 @@ If `/cursor_status` says `Cursor-backed runtime route: not configured`, that doe
 
 ## Operator-Only Commands
 
-Keep these in the registered main control chat:
+Keep these in the registered main control chat shown by `registered_main_chat_jid` in `npm run services:status`:
 
 - Readiness and reference:
   - `/cursor`

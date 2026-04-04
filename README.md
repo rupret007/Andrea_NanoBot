@@ -95,6 +95,10 @@ Then use this setup flow:
 6. In Telegram, run `/registermain`
 7. In Telegram, run `/help`
 
+After `/registermain`, that exact DM should become Andrea's main control chat.
+If operator-only surfaces later feel flat or unavailable, run `npm run services:status`
+and confirm `registered_main_chat_jid` matches the real Telegram DM you use.
+
 ## Pick Your Guide
 
 If you only read one doc, use the one that matches your role:
@@ -332,6 +336,7 @@ npm run test:major:ci
 npm run test:major
 npm run test:stability
 npm run services:restart
+npm run services:status
 npm run setup -- --step verify
 npm run debug:status
 npm run debug:level -- verbose component:container 30m
@@ -353,6 +358,7 @@ That distinction matters during incidents:
 - a passing credential probe does **not** guarantee the assistant lane can answer
 - an `initial_output_timeout` is a runtime-startup/output problem, not automatically a missing-key problem
 - `/debug-*` commands are operator-only and let you turn log volume up or down live without restarting the service
+- `npm run services:status` now shows the active repo root, branch, commit, DB path, assistant name source, and the registered main Telegram chat so state drift is visible immediately
 - when you need both restart and verify, run `npm run services:restart` first, wait for it to finish, then run `npm run setup -- --step verify`
 
 ## Documentation Map

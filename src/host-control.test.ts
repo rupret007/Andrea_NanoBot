@@ -8,6 +8,7 @@ import {
   assessAssistantHealthState,
   clearAssistantHealthState,
   clearAssistantReadyState,
+  clearRuntimeAuditState,
   clearTelegramTransportState,
   detectWindowsInstallArtifacts,
   detectWindowsInstallMode,
@@ -15,13 +16,16 @@ import {
   getAssistantHealthStatePath,
   getHostStatePath,
   getReadyStatePath,
+  getRuntimeAuditStatePath,
   getTelegramTransportStatePath,
   persistNanoclawHostState,
   readAssistantHealthState,
   readHostControlSnapshot,
+  readRuntimeAuditState,
   readTelegramTransportState,
   reconcileWindowsHostState,
   type NanoclawHostState,
+  writeRuntimeAuditState,
   writeAssistantHealthState,
   writeAssistantReadyState,
   writeTelegramTransportState,
@@ -42,6 +46,7 @@ describe('host control state', () => {
   afterEach(() => {
     clearAssistantHealthState();
     clearAssistantReadyState();
+    clearRuntimeAuditState();
     clearTelegramTransportState();
     process.chdir(previousCwd);
     fs.rmSync(tempDir, { recursive: true, force: true });
@@ -221,6 +226,43 @@ describe('host control state', () => {
       expect.objectContaining({
         status: 'blocked',
         lastErrorClass: 'token_rotation_required',
+      }),
+    );
+  });
+
+  it('writes and reads runtime audit markers', () => {
+    writeRuntimeAuditState({
+      updatedAt: '2026-04-04T20:00:00.000Z',
+      activeRepoRoot: tempDir,
+      activeGitBranch: 'main',
+      activeGitCommit: 'abc123',
+      activeEntryPath: path.join(tempDir, 'dist', 'index.js'),
+      activeEnvPath: path.join(tempDir, '.env'),
+      activeStoreDbPath: path.join(tempDir, 'store', 'messages.db'),
+      activeRuntimeStateDir: path.join(tempDir, 'data', 'runtime'),
+      assistantName: 'Andrea',
+      assistantNameSource: 'env',
+      registeredMainChatJid: 'tg:8004355504',
+      registeredMainChatName: 'Jeff',
+      registeredMainChatFolder: 'main',
+      registeredMainChatPresentInChats: true,
+      latestTelegramChatJid: 'tg:8004355504',
+      latestTelegramChatName: 'Jeff',
+      mainChatAuditWarning: null,
+    });
+
+    expect(fs.existsSync(getRuntimeAuditStatePath())).toBe(true);
+    expect(readRuntimeAuditState()).toEqual(
+      expect.objectContaining({
+        assistantName: 'Andrea',
+        assistantNameSource: 'env',
+        registeredMainChatJid: 'tg:8004355504',
+      }),
+    );
+    expect(readHostControlSnapshot().runtimeAuditState).toEqual(
+      expect.objectContaining({
+        activeGitBranch: 'main',
+        latestTelegramChatName: 'Jeff',
       }),
     );
   });

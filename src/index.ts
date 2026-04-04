@@ -1,3 +1,4 @@
+import { execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -10,6 +11,7 @@ import {
 } from './agent-runtime.js';
 import {
   ASSISTANT_NAME,
+  ASSISTANT_NAME_SOURCE,
   AGENT_RUNTIME_FALLBACK,
   ANDREA_OPENAI_BACKEND_URL,
   CONTAINER_TIMEOUT,
@@ -20,6 +22,8 @@ import {
   MAX_MESSAGES_PER_PROMPT,
   ONECLI_URL,
   POLL_INTERVAL,
+  RUNTIME_STATE_DIR,
+  STORE_DIR,
   TIMEZONE,
 } from './config.js';
 import './channels/index.js';
@@ -52,6 +56,7 @@ import {
   getAllAgentThreads,
   getAllChats,
   getAgentThread,
+  getRegisteredMainChat,
   listAllCursorAgents,
   listCalendarAutomationsForChat,
   getAllRegisteredGroups,
@@ -69,6 +74,7 @@ import {
   initDatabase,
   listAllEnabledCommunitySkills,
   pruneExpiredRuntimeBackendCardContexts,
+  repairRegisteredMainChat,
   setRegisteredGroup,
   setAgentThread,
   setRouterState,
@@ -99,6 +105,7 @@ import {
   clearAssistantHealthState,
   clearAssistantReadyState,
   clearTelegramTransportState,
+  writeRuntimeAuditState,
   writeAssistantHealthState,
   writeAssistantReadyState,
 } from './host-control.js';
@@ -429,6 +436,10 @@ import {
   REMOTE_CONTROL_START_COMMANDS,
   REMOTE_CONTROL_STOP_COMMANDS,
 } from './operator-command-gate.js';
+import {
+  auditRegisteredMainChat,
+  type RegisteredMainChatRecord,
+} from './main-chat-audit.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -494,6 +505,101 @@ function getActionLayerPendingReminderKey(chatJid: string): string {
 
 function getActionLayerPendingDraftKey(chatJid: string): string {
   return `${ACTION_LAYER_PENDING_DRAFT_PREFIX}${chatJid}`;
+}
+
+const ACTIVE_REPO_ROOT = process.cwd();
+const ACTIVE_ENTRY_PATH = path.resolve(ACTIVE_REPO_ROOT, 'dist', 'index.js');
+const ACTIVE_ENV_PATH = path.resolve(ACTIVE_REPO_ROOT, '.env');
+const ACTIVE_STORE_DB_PATH = path.join(STORE_DIR, 'messages.db');
+const ACTIVE_GIT_BRANCH = readGitRef(['rev-parse', '--abbrev-ref', 'HEAD']);
+const ACTIVE_GIT_COMMIT = readGitRef(['rev-parse', 'HEAD']);
+
+function readGitRef(args: string[]): string {
+  try {
+    return execFileSync('git', ['-C', ACTIVE_REPO_ROOT, ...args], {
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+  } catch {
+    return 'unknown';
+  }
+}
+
+function getCurrentMainChatAudit(): ReturnType<typeof auditRegisteredMainChat> {
+  const registeredMainChat =
+    (getRegisteredMainChat() as RegisteredMainChatRecord | undefined) || null;
+  return auditRegisteredMainChat({
+    registeredMainChat,
+    chats: getAllChats(),
+  });
+}
+
+function writeCurrentRuntimeAuditState(warningOverride?: string | null): void {
+  const audit = getCurrentMainChatAudit();
+  try {
+    writeRuntimeAuditState({
+      updatedAt: new Date().toISOString(),
+      activeRepoRoot: ACTIVE_REPO_ROOT,
+      activeGitBranch: ACTIVE_GIT_BRANCH,
+      activeGitCommit: ACTIVE_GIT_COMMIT,
+      activeEntryPath: ACTIVE_ENTRY_PATH,
+      activeEnvPath: ACTIVE_ENV_PATH,
+      activeStoreDbPath: ACTIVE_STORE_DB_PATH,
+      activeRuntimeStateDir: RUNTIME_STATE_DIR,
+      assistantName: ASSISTANT_NAME,
+      assistantNameSource: ASSISTANT_NAME_SOURCE,
+      registeredMainChatJid: audit.registeredMainChat?.jid || null,
+      registeredMainChatName: audit.registeredMainChat?.name || null,
+      registeredMainChatFolder: audit.registeredMainChat?.folder || null,
+      registeredMainChatPresentInChats:
+        audit.registeredMainChatPresentInChats,
+      latestTelegramChatJid: audit.latestTelegramChat?.jid || null,
+      latestTelegramChatName: audit.latestTelegramChat?.name || null,
+      mainChatAuditWarning: warningOverride ?? audit.warning,
+    });
+  } catch (err) {
+    logger.warn({ err }, 'Failed to persist runtime audit state');
+  }
+}
+
+function reconcileRegisteredMainChatState(): void {
+  const audit = getCurrentMainChatAudit();
+  if (audit.warning) {
+    logger.warn(
+      {
+        registeredMainChatJid: audit.registeredMainChat?.jid || null,
+        latestTelegramChatJid: audit.latestTelegramChat?.jid || null,
+      },
+      audit.warning,
+    );
+  }
+
+  if (
+    audit.registeredMainChat &&
+    audit.repairTargetChat &&
+    audit.repairTargetChat.jid !== audit.registeredMainChat.jid
+  ) {
+    const repaired = repairRegisteredMainChat({
+      fromJid: audit.registeredMainChat.jid,
+      toJid: audit.repairTargetChat.jid,
+      toName:
+        audit.repairTargetChat.name || audit.registeredMainChat.name || 'Main',
+    });
+    logger.warn(
+      {
+        previousMainChatJid: audit.registeredMainChat.jid,
+        repairedMainChatJid: repaired.jid,
+      },
+      'Repaired stale Telegram main chat registration',
+    );
+    loadState();
+    writeCurrentRuntimeAuditState(
+      `Main chat registration was repaired from ${audit.registeredMainChat.jid} to ${repaired.jid}.`,
+    );
+    return;
+  }
+
+  writeCurrentRuntimeAuditState();
 }
 
 function getPendingGoogleCalendarCreateState(
@@ -1576,6 +1682,7 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
     { jid, name: group.name, folder: group.folder },
     'Group registered',
   );
+  writeCurrentRuntimeAuditState();
 }
 
 async function bootstrapMainChatRegistration(
@@ -4671,6 +4778,7 @@ async function main(): Promise<void> {
   startLogControlAutoRefresh();
   logger.info({ component: 'assistant' }, 'Database initialized');
   loadState();
+  reconcileRegisteredMainChatState();
 
   try {
     seedConfiguredAlexaLinkedAccount();
@@ -9034,7 +9142,10 @@ async function main(): Promise<void> {
       name?: string,
       channel?: string,
       isGroup?: boolean,
-    ) => storeChatMetadata(chatJid, timestamp, name, channel, isGroup),
+    ) => {
+      storeChatMetadata(chatJid, timestamp, name, channel, isGroup);
+      writeCurrentRuntimeAuditState();
+    },
     registeredGroups: () => registeredGroups,
     onRegisterMainChat: bootstrapMainChatRegistration,
   };
