@@ -159,13 +159,18 @@ function uniqueMessages(messages: string[]): string[] {
 }
 
 export function extractRuntimeJobIdFromReplyText(text: string): string | null {
-  const cardMatch = text.match(/^- Job ID:\s*(\S+)/m);
+  const cardMatch = text.match(/^(?:- )?Job ID:\s*(\S+)/m);
   if (cardMatch?.[1]) return cardMatch[1];
 
   const acceptedMatch = text.match(
     /Andrea OpenAI (?:job|follow-up) ([A-Za-z0-9_.:-]+)/
   );
   if (acceptedMatch?.[1]) return acceptedMatch[1];
+
+  const commandFallbackMatch = text.match(
+    /\/(?:runtime|codex)-(?:job|followup|logs|stop)\s+([A-Za-z0-9_.:-]+)/i,
+  );
+  if (commandFallbackMatch?.[1]) return commandFallbackMatch[1];
 
   return null;
 }

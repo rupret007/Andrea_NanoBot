@@ -111,6 +111,7 @@ import {
   writeAssistantReadyState,
 } from './host-control.js';
 import { recordOrganicTelegramRoundtripSuccess } from './telegram-roundtrip.js';
+import { readEnvFile } from './env.js';
 import {
   advancePendingActionDraft,
   advancePendingActionReminder,
@@ -1481,8 +1482,13 @@ const channels: Channel[] = [];
 const queue = new GroupQueue();
 const backendLaneRegistry = createBackendLaneRegistry();
 const cursorBackendLane = createCursorBackendLane();
+const runtimeExecutionEnv = readEnvFile(['ANDREA_RUNTIME_EXECUTION_ENABLED']);
 const andreaRuntimeExecutionEnabled =
-  (process.env.ANDREA_RUNTIME_EXECUTION_ENABLED || '').toLowerCase() === 'true';
+  (
+    process.env.ANDREA_RUNTIME_EXECUTION_ENABLED ||
+    runtimeExecutionEnv.ANDREA_RUNTIME_EXECUTION_ENABLED ||
+    ''
+  ).toLowerCase() === 'true';
 const andreaRuntimeService = createRuntimeOrchestrationService({
   assistantName: ASSISTANT_NAME,
   enqueueJob(groupJid, jobId, fn) {
@@ -6268,6 +6274,14 @@ async function main(): Promise<void> {
 
     if (!replyText || !replyMessageId || !promptText) return false;
 
+    const unifiedRuntimeReplyContext = getActiveCursorMessageContext(
+      chatJid,
+      replyMessageId,
+    );
+    if (unifiedRuntimeReplyContext?.laneId === 'andrea_runtime') {
+      return false;
+    }
+
     const context = await resolveRuntimeBackendContext(chatJid);
     if (!context) return true;
 
@@ -8451,6 +8465,19 @@ async function main(): Promise<void> {
         canExecute: andreaRuntimeExecutionEnabled,
         getExecutionDisabledMessage() {
           return buildAndreaRuntimeDisabledMessage();
+        },
+        async createJob({
+          groupFolder,
+          chatJid: targetChatJid,
+          promptText,
+          requestedBy,
+        }) {
+          return runtimeLane.createJob({
+            groupFolder,
+            chatJid: targetChatJid,
+            promptText,
+            requestedBy,
+          });
         },
         getRuntimeJobs() {
           return queue.getRuntimeJobs();

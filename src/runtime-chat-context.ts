@@ -43,7 +43,7 @@ export function extractRuntimeBackendJobIdFromText(
   const trimmed = text.trim();
   if (!trimmed) return null;
 
-  const cardMatch = trimmed.match(/^- Job ID:\s*(\S+)/m);
+  const cardMatch = trimmed.match(/^(?:- )?Job ID:\s*(\S+)/m);
   if (cardMatch?.[1]) return cardMatch[1];
 
   const acceptedMatch = trimmed.match(
@@ -53,6 +53,11 @@ export function extractRuntimeBackendJobIdFromText(
 
   const logsMatch = trimmed.match(/Andrea OpenAI logs for ([A-Za-z0-9_.:-]+)/i);
   if (logsMatch?.[1]) return logsMatch[1];
+
+  const commandFallbackMatch = trimmed.match(
+    /\/(?:runtime|codex)-(?:job|followup|logs|stop)\s+([A-Za-z0-9_.:-]+)/i,
+  );
+  if (commandFallbackMatch?.[1]) return commandFallbackMatch[1];
 
   return null;
 }

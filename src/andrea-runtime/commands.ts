@@ -11,7 +11,9 @@ import type {
   BackendPrimaryOutputResult,
 } from '../backend-lanes/types.js';
 import {
+  RUNTIME_CREATE_COMMANDS,
   RUNTIME_FOLLOWUP_COMMANDS,
+  RUNTIME_JOB_COMMANDS,
   RUNTIME_JOBS_COMMANDS,
   RUNTIME_LOGS_COMMANDS,
   RUNTIME_STATUS_COMMANDS,
@@ -100,6 +102,12 @@ export interface RuntimeCommandDependencies {
   getStatusMessage(): string;
   canExecute: boolean;
   getExecutionDisabledMessage(): string;
+  createJob(args: {
+    groupFolder: string;
+    chatJid: string;
+    promptText: string;
+    requestedBy?: string;
+  }): Promise<BackendJobDetails>;
   getRuntimeJobs(): RuntimeJobSnapshot[];
   findGroupByFolder(folder: string): ResolvedRuntimeGroup | null;
   requestStop(groupJid: string): boolean;
@@ -210,6 +218,7 @@ export function formatRuntimeJobCard(job: BackendJobDetails): string {
     lane: 'codex_runtime',
     status: job.status,
     detailLines: [
+      `Job ID: ${job.handle.jobId}`,
       promptPreview ? `Prompt preview: ${promptPreview}` : null,
       typeof metadata.groupFolder === 'string'
         ? `Workspace: ${metadata.groupFolder}`
@@ -360,6 +369,66 @@ function readLegacyLogTail(
   return [`Latest log: ${latest}`, ...tail].join('\n');
 }
 
+async function handleRuntimeCreate(
+  deps: RuntimeCommandDependencies,
+  context: RuntimeCommandContext,
+): Promise<void> {
+  if (!deps.canExecute) {
+    await deps.sendToChat(
+      context.operatorChatJid,
+      deps.getExecutionDisabledMessage(),
+      {
+        inlineActions: buildRuntimeStatusInlineActions(),
+      },
+    );
+    return;
+  }
+
+  const promptText = context.rawTrimmed.split(/\s+/).slice(1).join(' ').trim();
+  if (!promptText) {
+    await deps.sendToChat(
+      context.operatorChatJid,
+      'Usage: /runtime-create TEXT',
+    );
+    return;
+  }
+
+  try {
+    const created = await deps.createJob({
+      groupFolder: context.groupFolder,
+      chatJid: context.operatorChatJid,
+      promptText,
+      requestedBy: context.operatorChatJid,
+    });
+    await deps.sendRuntimeJobMessage({
+      operatorChatJid: context.operatorChatJid,
+      jobId: created.handle.jobId,
+      contextKind: 'runtime_job_card',
+      payload: buildRuntimeTaskPayload(created, 'job_card'),
+      inlineActions: buildRuntimeJobInlineActions({
+        job: created,
+        contextKind: 'runtime_job_card',
+        canExecute: deps.canExecute,
+      }),
+      text: [
+        'Andrea queued this Codex/OpenAI task.',
+        '',
+        formatRuntimeJobCard(created),
+        '',
+        formatRuntimeNextStep(created.handle.jobId),
+      ].join('\n'),
+    });
+  } catch (err) {
+    await deps.sendToChat(
+      context.operatorChatJid,
+      deps.formatFailure({
+        operation: 'Andrea runtime create failed',
+        err,
+      }),
+    );
+  }
+}
+
 async function handleRuntimeJobs(
   deps: RuntimeCommandDependencies,
   context: RuntimeCommandContext,
@@ -378,6 +447,73 @@ async function handleRuntimeJobs(
     listMessageId: messageId,
     jobs,
   });
+}
+
+async function handleRuntimeJob(
+  deps: RuntimeCommandDependencies,
+  context: RuntimeCommandContext,
+): Promise<void> {
+  const parts = context.rawTrimmed.split(/\s+/);
+  const requestedTarget = parts[1] || null;
+  const resolution = buildLegacyFallbackContext({
+    deps,
+    context,
+    requestedTarget,
+  });
+
+  if (!resolution.target) {
+    await deps.sendToChat(
+      context.operatorChatJid,
+      resolution.failureMessage ||
+        'Usage: /runtime-job [JOB_ID|LIST_NUMBER|current]',
+    );
+    return;
+  }
+
+  try {
+    const job = await deps.refreshJob({
+      handle: resolution.target.handle,
+      groupFolder: context.groupFolder,
+      chatJid: context.operatorChatJid,
+    });
+    if (!job) {
+      await deps.sendToChat(
+        context.operatorChatJid,
+        [
+          `Andrea could not find Codex/OpenAI task ${resolution.target.jobId} anymore.`,
+          'Open `/cursor` -> `Current Work` or run `/runtime-jobs` to pick a fresh task.',
+        ].join('\n'),
+      );
+      return;
+    }
+    await deps.sendRuntimeJobMessage({
+      operatorChatJid: context.operatorChatJid,
+      jobId: job.handle.jobId,
+      contextKind: 'runtime_job_card',
+      payload: buildRuntimeTaskPayload(job, 'job_card'),
+      inlineActions: buildRuntimeJobInlineActions({
+        job,
+        contextKind: 'runtime_job_card',
+        canExecute: deps.canExecute,
+      }),
+      text: [
+        'Here is the latest state for this Codex/OpenAI task.',
+        '',
+        formatRuntimeJobCard(job),
+        '',
+        formatRuntimeNextStep(job.handle.jobId),
+      ].join('\n'),
+    });
+  } catch (err) {
+    await deps.sendToChat(
+      context.operatorChatJid,
+      deps.formatFailure({
+        operation: 'Andrea runtime task lookup failed',
+        err,
+        targetDisplay: resolution.target.jobId,
+      }),
+    );
+  }
 }
 
 async function handleRuntimeFollowup(
@@ -462,9 +598,11 @@ async function handleRuntimeFollowup(
         }),
         text: [
           'Andrea sent your next instruction to this task.',
-          `Task: Codex/OpenAI runtime ${formatOpaqueTaskId(followed.handle.jobId)}.`,
+          '',
+          formatRuntimeJobCard(followed),
+          '',
           formatRuntimeNextStep(followed.handle.jobId),
-        ].join('\n\n'),
+        ].join('\n'),
       });
       return;
     } catch (err) {
@@ -517,10 +655,11 @@ async function handleRuntimeFollowup(
       }),
       text: [
         `Andrea started this task in the Codex/OpenAI lane for workspace ${legacyTarget}.`,
-        `Task: Codex/OpenAI runtime ${formatOpaqueTaskId(followed.handle.jobId)}.`,
-        `Status: ${formatHumanTaskStatus(followed.status)}.`,
+        '',
+        formatRuntimeJobCard(followed),
+        '',
         formatRuntimeNextStep(followed.handle.jobId),
-      ].join('\n\n'),
+      ].join('\n'),
     });
   } catch (err) {
     await deps.sendToChat(
@@ -892,6 +1031,11 @@ export async function dispatchRuntimeCommand(
   deps: RuntimeCommandDependencies,
   context: RuntimeCommandContext,
 ): Promise<boolean> {
+  if (RUNTIME_CREATE_COMMANDS.has(context.commandToken)) {
+    await handleRuntimeCreate(deps, context);
+    return true;
+  }
+
   if (RUNTIME_STATUS_COMMANDS.has(context.commandToken)) {
     await deps.sendToChat(context.operatorChatJid, deps.getStatusMessage(), {
       inlineActions: buildRuntimeStatusInlineActions(),
@@ -901,6 +1045,11 @@ export async function dispatchRuntimeCommand(
 
   if (RUNTIME_JOBS_COMMANDS.has(context.commandToken)) {
     await handleRuntimeJobs(deps, context);
+    return true;
+  }
+
+  if (RUNTIME_JOB_COMMANDS.has(context.commandToken)) {
+    await handleRuntimeJob(deps, context);
     return true;
   }
 

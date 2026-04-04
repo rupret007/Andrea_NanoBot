@@ -20,6 +20,24 @@ describe('runtime-chat-context helpers', () => {
     ).toBe('runtime-job-follow_up-123');
   });
 
+  it('extracts runtime job ids from unified task cards and fallback commands', () => {
+    expect(
+      extractRuntimeBackendJobIdFromText(
+        [
+          'Here is the latest state for this Codex/OpenAI task.',
+          '',
+          'Task runtime-job-create-12345-abcd',
+          'Lane: Codex/OpenAI runtime',
+          'Status: Working',
+          'Job ID: runtime-job-create-12345-abcd',
+          '',
+          'Next:',
+          '- `/runtime-followup runtime-job-create-12345-abcd <text>` still works if you want an explicit fallback.',
+        ].join('\n'),
+      ),
+    ).toBe('runtime-job-create-12345-abcd');
+  });
+
   it('recognizes runtime cards and logs cards only', () => {
     expect(
       isRuntimeBackendCardText(

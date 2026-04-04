@@ -297,6 +297,24 @@ describe('runtime Telegram live-test helpers', () => {
     ).toBe('runtime-job-follow_up-67890-wxyz');
   });
 
+  it('extracts a runtime job id from unified cockpit fallback guidance', () => {
+    expect(
+      extractRuntimeJobIdFromReplyText(
+        [
+          'Andrea queued this Codex/OpenAI task.',
+          '',
+          'Task runtime-job-create-12345-abcd',
+          'Lane: Codex/OpenAI runtime',
+          'Status: Queued',
+          'Job ID: runtime-job-create-12345-abcd',
+          '',
+          'Next:',
+          '- `/runtime-followup runtime-job-create-12345-abcd <text>` still works if you want an explicit fallback.',
+        ].join('\n'),
+      ),
+    ).toBe('runtime-job-create-12345-abcd');
+  });
+
   it('builds the create-stage runtime command sequence', () => {
     expect(buildTelegramRuntimeCreateMessages()).toEqual([
       '/runtime-status',

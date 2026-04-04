@@ -124,6 +124,13 @@ describe('runtime commands', () => {
       getExecutionDisabledMessage() {
         return "Andrea's Codex/OpenAI runtime lane is integrated, but execution is still turned off on this host.\nKeep using /cursor as the main operator shell today. You can still review existing runtime work where it is available.\nEnable ANDREA_RUNTIME_EXECUTION_ENABLED=true only after validating the Codex/OpenAI runtime container and credentials on this machine.";
       },
+      async createJob() {
+        return makeDetails({
+          handle: { laneId: 'andrea_runtime', jobId: 'runtime-job-created' },
+          status: 'queued',
+          summary: 'Create the runtime proof file.',
+        });
+      },
       getRuntimeJobs() {
         return [];
       },
@@ -205,6 +212,7 @@ describe('runtime commands', () => {
     );
 
     expect(text).toContain('Prompt preview: Continue the long-running proof task');
+    expect(text).toContain('Job ID: runtime-job-1');
     expect(text).toContain('Workspace: main');
     expect(text).toContain('Runtime: codex_local');
     expect(text).toContain('Thread: thread-1');
@@ -261,6 +269,69 @@ describe('runtime commands', () => {
       'Recent Work',
       'Open /cursor',
     ]);
+  });
+
+  it('dispatches /runtime-create through the shared runtime lane', async () => {
+    const createJob = vi.fn(deps.createJob);
+    deps.createJob = createJob;
+    context = {
+      ...context,
+      rawTrimmed: '/runtime-create create the proof file',
+      commandToken: '/runtime-create',
+    };
+
+    const handled = await dispatchRuntimeCommand(deps, context);
+
+    expect(handled).toBe(true);
+    expect(createJob).toHaveBeenCalledWith({
+      groupFolder: 'main',
+      chatJid: 'tg:operator',
+      promptText: 'create the proof file',
+      requestedBy: 'tg:operator',
+    });
+    expect(runtimeMessages[0]?.jobId).toBe('runtime-job-created');
+    expect(runtimeMessages[0]?.text).toContain(
+      'Andrea queued this Codex/OpenAI task.',
+    );
+    expect(runtimeMessages[0]?.text).toContain('Job ID: runtime-job-created');
+  });
+
+  it('dispatches /runtime-job using the current selection resolver', async () => {
+    deps.resolveTarget = vi.fn(() => ({
+      target: {
+        handle: {
+          laneId: 'andrea_runtime' as const,
+          jobId: 'runtime-job-current',
+        },
+        jobId: 'runtime-job-current',
+        via: 'current' as const,
+      },
+      failureMessage: null,
+    }));
+    deps.refreshJob = vi.fn(async () =>
+      makeDetails({
+        handle: {
+          laneId: 'andrea_runtime',
+          jobId: 'runtime-job-current',
+        },
+        status: 'running',
+        summary: 'Continue the selected runtime task.',
+      }),
+    );
+    context = {
+      ...context,
+      rawTrimmed: '/runtime-job',
+      commandToken: '/runtime-job',
+    };
+
+    const handled = await dispatchRuntimeCommand(deps, context);
+
+    expect(handled).toBe(true);
+    expect(runtimeMessages[0]?.jobId).toBe('runtime-job-current');
+    expect(runtimeMessages[0]?.text).toContain(
+      'Here is the latest state for this Codex/OpenAI task.',
+    );
+    expect(runtimeMessages[0]?.text).toContain('Job ID: runtime-job-current');
   });
 
   it('stores a lane-aware runtime jobs snapshot', async () => {
@@ -321,9 +392,7 @@ describe('runtime commands', () => {
     expect(runtimeMessages[0].text).toContain(
       'Andrea sent your next instruction to this task.',
     );
-    expect(runtimeMessages[0].text).toContain(
-      'Task: Codex/OpenAI runtime runtime-job-2.',
-    );
+    expect(runtimeMessages[0].text).toContain('Job ID: runtime-job-2');
     expect(runtimeMessages[0].inlineActionLabels).toEqual([
       'View Output',
       'Stop Run',
