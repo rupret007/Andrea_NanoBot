@@ -103,6 +103,12 @@ function Get-EnvConfig {
   return Get-ParsedEnvFile -Path $envPath
 }
 
+function Command-Exists {
+  param([string] $Name)
+
+  return $null -ne (Get-Command $Name -ErrorAction SilentlyContinue)
+}
+
 function Get-CanonicalCompatibilityShimContent {
   return @(
     '$ErrorActionPreference = ''Stop'''
@@ -373,11 +379,225 @@ function Get-AlexaHealth {
   }
 }
 
+function Invoke-NativeCommand {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string] $FilePath,
+
+    [string[]] $Arguments = @()
+  )
+
+  $output = ''
+  $exitCode = 0
+
+  try {
+    $result = & $FilePath @Arguments 2>&1
+    $exitCode = if ($null -ne $LASTEXITCODE) { [int] $LASTEXITCODE } else { 0 }
+    $output = ($result | Out-String).Trim()
+  } catch {
+    $exitCode = if ($null -ne $LASTEXITCODE -and [int] $LASTEXITCODE -ne 0) {
+      [int] $LASTEXITCODE
+    } else {
+      1
+    }
+    $output = $_.Exception.Message
+  }
+
+  return [pscustomobject]@{
+    exitCode = $exitCode
+    output = $output
+  }
+}
+
+function Get-GatewayRequirement {
+  param([hashtable] $EnvMap)
+
+  $openAiApiKey = [string] ($EnvMap['OPENAI_API_KEY'])
+  $anthropicBaseUrl = [string] ($EnvMap['ANTHROPIC_BASE_URL'])
+  $openAiBaseUrl = [string] ($EnvMap['OPENAI_BASE_URL'])
+  $anthropicDirectCredentialConfigured = (
+    $EnvMap['CLAUDE_CODE_OAUTH_TOKEN'] -or
+    $EnvMap['ANTHROPIC_API_KEY'] -or
+    $EnvMap['ANTHROPIC_AUTH_TOKEN']
+  )
+
+  $openAiCompatEndpoint = $anthropicBaseUrl
+  if ([string]::IsNullOrWhiteSpace($openAiCompatEndpoint)) {
+    $openAiCompatEndpoint = $openAiBaseUrl
+  }
+
+  if ([string]::IsNullOrWhiteSpace($openAiApiKey)) {
+    return [pscustomobject]@{
+      required = $false
+      reason = 'no_openai_api_key'
+      detail = 'OpenAI gateway is not required because OPENAI_API_KEY is not configured.'
+    }
+  }
+
+  if ($anthropicDirectCredentialConfigured -and [string]::IsNullOrWhiteSpace($openAiCompatEndpoint)) {
+    return [pscustomobject]@{
+      required = $false
+      reason = 'anthropic_direct_credentials'
+      detail = 'OpenAI gateway is not required because Anthropic-direct credentials are configured.'
+    }
+  }
+
+  return [pscustomobject]@{
+    required = $true
+    reason = 'openai_gateway_required'
+    detail = 'OpenAI gateway is required for the current model runtime configuration.'
+  }
+}
+
+function Get-PreferredContainerRuntime {
+  param([hashtable] $EnvMap)
+
+  $preferred = [string] ($EnvMap['CONTAINER_RUNTIME'])
+  if ($preferred -eq 'docker' -or $preferred -eq 'podman') {
+    return [pscustomobject]@{
+      engine = $preferred
+      configured = $true
+      cliExists = [bool] (Command-Exists $preferred)
+    }
+  }
+
+  if (Command-Exists 'docker') {
+    return [pscustomobject]@{
+      engine = 'docker'
+      configured = $false
+      cliExists = $true
+    }
+  }
+
+  if (Command-Exists 'podman') {
+    return [pscustomobject]@{
+      engine = 'podman'
+      configured = $false
+      cliExists = $true
+    }
+  }
+
+  return [pscustomobject]@{
+    engine = 'none'
+    configured = $false
+    cliExists = $false
+  }
+}
+
+function Ensure-ContainerRuntimeReady {
+  param(
+    [hashtable] $EnvMap,
+    [bool] $Required,
+    [bool] $AutoStartIfRequired = $false
+  )
+
+  $runtime = Get-PreferredContainerRuntime -EnvMap $EnvMap
+  if (-not $Required) {
+    return [pscustomobject]@{
+      engine = [string] $runtime.engine
+      status = 'skipped_not_required'
+      detail = 'Container runtime is not required for the current Andrea configuration.'
+      autoStarted = $false
+    }
+  }
+
+  if ($runtime.engine -eq 'none') {
+    return [pscustomobject]@{
+      engine = 'none'
+      status = 'failed'
+      detail = 'No supported container runtime is installed.'
+      autoStarted = $false
+    }
+  }
+
+  if (-not $runtime.cliExists) {
+    return [pscustomobject]@{
+      engine = [string] $runtime.engine
+      status = 'failed'
+      detail = ("Configured container runtime '{0}' is not installed." -f $runtime.engine)
+      autoStarted = $false
+    }
+  }
+
+  $probeArgs = if ($runtime.engine -eq 'podman') {
+    @('info', '--format', 'json')
+  } else {
+    @('info')
+  }
+
+  $probe = Invoke-NativeCommand -FilePath $runtime.engine -Arguments $probeArgs
+  if ($probe.exitCode -eq 0) {
+    return [pscustomobject]@{
+      engine = [string] $runtime.engine
+      status = 'ready'
+      detail = ("{0} runtime is ready." -f $runtime.engine)
+      autoStarted = $false
+    }
+  }
+
+  if (
+    $AutoStartIfRequired -and
+    $runtime.engine -eq 'podman' -and
+    $IsWindows
+  ) {
+    $startAttempt = Invoke-NativeCommand -FilePath $runtime.engine -Arguments @('machine', 'start')
+    $retry = Invoke-NativeCommand -FilePath $runtime.engine -Arguments $probeArgs
+    if ($retry.exitCode -eq 0) {
+      return [pscustomobject]@{
+        engine = [string] $runtime.engine
+        status = 'ready'
+        detail = 'podman runtime was started automatically and is now ready.'
+        autoStarted = $true
+      }
+    }
+
+    return [pscustomobject]@{
+      engine = [string] $runtime.engine
+      status = 'failed'
+      detail = ("podman runtime is not ready. start_attempt={0}; probe={1}" -f $startAttempt.output, $retry.output)
+      autoStarted = $true
+    }
+  }
+
+  return [pscustomobject]@{
+    engine = [string] $runtime.engine
+    status = 'failed'
+    detail = ("{0} runtime is not ready. {1}" -f $runtime.engine, $probe.output)
+    autoStarted = $false
+  }
+}
+
 function Start-Gateway {
+  param([hashtable] $EnvMap)
+
+  $requirement = Get-GatewayRequirement -EnvMap $EnvMap
+  $runtimeStatus = Ensure-ContainerRuntimeReady -EnvMap $EnvMap -Required:$requirement.required -AutoStartIfRequired:$true
+
+  if (-not $requirement.required) {
+    return [pscustomobject]@{
+      status = 'skipped'
+      detail = $requirement.detail
+      reason = $requirement.reason
+      engine = [string] $runtimeStatus.engine
+      engineStatus = [string] $runtimeStatus.status
+    }
+  }
+
+  if ($runtimeStatus.status -ne 'ready') {
+    return [pscustomobject]@{
+      status = 'failed'
+      detail = ("Container runtime not ready for OpenAI gateway startup. {0}" -f $runtimeStatus.detail)
+      engine = [string] $runtimeStatus.engine
+      engineStatus = [string] $runtimeStatus.status
+    }
+  }
+
   if (!(Test-Path -LiteralPath $gatewayStartScript)) {
     return [pscustomobject]@{
       status = 'skipped'
       detail = 'OpenAI gateway start script not present.'
+      engine = [string] $runtimeStatus.engine
+      engineStatus = [string] $runtimeStatus.status
     }
   }
 
@@ -387,17 +607,33 @@ function Start-Gateway {
       return [pscustomobject]@{
         status = 'failed'
         detail = (($output | Out-String).Trim())
+        engine = [string] $runtimeStatus.engine
+        engineStatus = [string] $runtimeStatus.status
+      }
+    }
+
+    $detail = (($output | Out-String).Trim())
+    if ($detail -match '^OPENAI_GATEWAY_SKIPPED\b') {
+      return [pscustomobject]@{
+        status = 'skipped'
+        detail = $detail
+        engine = [string] $runtimeStatus.engine
+        engineStatus = [string] $runtimeStatus.status
       }
     }
 
     return [pscustomobject]@{
       status = 'ok'
-      detail = (($output | Out-String).Trim())
+      detail = $detail
+      engine = [string] $runtimeStatus.engine
+      engineStatus = [string] $runtimeStatus.status
     }
   } catch {
     return [pscustomobject]@{
       status = 'failed'
       detail = $_.Exception.Message
+      engine = [string] $runtimeStatus.engine
+      engineStatus = [string] $runtimeStatus.status
     }
   }
 }
@@ -627,59 +863,52 @@ function Resolve-NgrokConfigPath {
   return ($paths | Select-Object -First 1)
 }
 
-function Ensure-NgrokConfigHealthy {
+function Get-NgrokCommandConfigPath {
   param([string] $NgrokExe)
 
-  $configPath = Resolve-NgrokConfigPath
-  $args = @('config', 'check')
-  if ($configPath) {
-    $args += @('--config', $configPath)
+  $probe = Invoke-NativeCommand -FilePath $NgrokExe -Arguments @('config', 'upgrade', '--dry-run')
+  if ($probe.exitCode -eq 0 -and $probe.output -match "config file:\s*'([^']+)'") {
+    return $matches[1]
   }
 
-  $output = & $NgrokExe @args 2>&1
-  if ($LASTEXITCODE -eq 0) {
+  return Resolve-NgrokConfigPath
+}
+
+function Repair-NgrokConfigBestEffort {
+  param([string] $NgrokExe)
+
+  $configPath = Get-NgrokCommandConfigPath -NgrokExe $NgrokExe
+  if ([string]::IsNullOrWhiteSpace($configPath) -or !(Test-Path -LiteralPath $configPath)) {
     return [pscustomobject]@{
-      ok = $true
       configPath = $configPath
-      detail = (($output | Out-String).Trim())
+      repaired = $false
+      detail = 'No writable ngrok config file was discovered for best-effort repair.'
     }
   }
 
-  $raw = if ($configPath) {
-    Get-Content -LiteralPath $configPath -Raw -ErrorAction SilentlyContinue
-  } else {
-    ''
-  }
-  if ($configPath -and (($output | Out-String) -match 'update_channel')) {
-    $normalized = if ([string]::IsNullOrWhiteSpace($raw)) {
-      "version: `"3`"`r`nupdate_channel: stable`r`n"
-    } elseif ($raw -match '(?im)^\s*update_channel\s*:') {
-      [Regex]::Replace($raw, '(?im)^\s*update_channel\s*:.*$', 'update_channel: stable')
-    } else {
-      ($raw.TrimEnd() + "`r`nupdate_channel: stable`r`n")
+  $raw = Get-Content -LiteralPath $configPath -Raw -ErrorAction SilentlyContinue
+  if ([string]::IsNullOrWhiteSpace($raw)) {
+    return [pscustomobject]@{
+      configPath = $configPath
+      repaired = $false
+      detail = 'ngrok config file is empty or unreadable.'
     }
+  }
 
+  if ($raw -match '(?im)^\s*update_channel\s*:\s*$') {
+    $normalized = [Regex]::Replace($raw, '(?im)^\s*update_channel\s*:\s*$', 'update_channel: stable')
     Set-Content -LiteralPath $configPath -Value $normalized
-    $retry = & $NgrokExe @args 2>&1
-    if ($LASTEXITCODE -eq 0) {
-      return [pscustomobject]@{
-        ok = $true
-        configPath = $configPath
-        detail = 'ngrok config repaired by normalizing update_channel to stable.'
-      }
-    }
-
     return [pscustomobject]@{
-      ok = $false
       configPath = $configPath
-      detail = (($retry | Out-String).Trim())
+      repaired = $true
+      detail = 'ngrok config repaired by normalizing an empty update_channel value to stable.'
     }
   }
 
   return [pscustomobject]@{
-    ok = $false
     configPath = $configPath
-    detail = (($output | Out-String).Trim())
+    repaired = $false
+    detail = 'ngrok config did not contain an empty update_channel entry.'
   }
 }
 
@@ -721,6 +950,51 @@ function Stop-ManagedNgrok {
   Remove-FileIfExists $ngrokStatePath
 }
 
+function Start-NgrokProcessAndWait {
+  param(
+    [string] $NgrokExe,
+    [string] $Port,
+    [string] $PublicHint = ''
+  )
+
+  $ngrokLogPath = Join-Path $logsDir 'ngrok.log'
+  $ngrokErrLogPath = Join-Path $logsDir 'ngrok.error.log'
+  $proc = Start-Process -FilePath $NgrokExe -ArgumentList @('http', "localhost:$Port", '--log', 'stdout') -WorkingDirectory $projectRoot -WindowStyle Hidden -RedirectStandardOutput $ngrokLogPath -RedirectStandardError $ngrokErrLogPath -PassThru
+
+  for ($attempt = 0; $attempt -lt 20; $attempt++) {
+    Start-Sleep -Milliseconds 500
+    $tunnel = Find-NgrokTunnelForPort -Port $Port
+    if ($tunnel) {
+      return [pscustomobject]@{
+        ok = $true
+        proc = $proc
+        tunnel = $tunnel
+        detail = if ([string]::IsNullOrWhiteSpace($PublicHint)) { 'ngrok tunnel is ready.' } else { "ngrok tunnel is ready. $PublicHint" }
+      }
+    }
+  }
+
+  $logOutput = if (Test-Path -LiteralPath $ngrokErrLogPath) {
+    (Get-Content -LiteralPath $ngrokErrLogPath -Tail 20 -ErrorAction SilentlyContinue | Out-String).Trim()
+  } else {
+    ''
+  }
+  if ([string]::IsNullOrWhiteSpace($logOutput) -and (Test-Path -LiteralPath $ngrokLogPath)) {
+    $logOutput = (Get-Content -LiteralPath $ngrokLogPath -Tail 20 -ErrorAction SilentlyContinue | Out-String).Trim()
+  }
+
+  return [pscustomobject]@{
+    ok = $false
+    proc = $proc
+    logOutput = $logOutput
+    detail = if ([string]::IsNullOrWhiteSpace($logOutput)) {
+      'ngrok did not expose the Andrea Alexa port within the expected startup window.'
+    } else {
+      "ngrok did not expose the Andrea Alexa port within the expected startup window. $logOutput"
+    }
+  }
+}
+
 function Start-Ngrok {
   param([hashtable] $EnvMap)
 
@@ -751,54 +1025,197 @@ function Start-Ngrok {
         updatedAt = [DateTime]::UtcNow.ToString('o')
       })
     return [pscustomobject]@{
-      status = 'ok'
+      status = 'reused'
       detail = 'Reusing an existing ngrok tunnel.'
       publicUrl = [string] $existing.public_url
     }
   }
 
-  $config = Ensure-NgrokConfigHealthy -NgrokExe $ngrokExe
-  $configWarning = if (-not $config.ok) {
-    "ngrok config check warning: $($config.detail)"
-  } else {
-    ''
-  }
-
-  $allTunnels = Get-NgrokTunnelInfo
-  if ($allTunnels) {
-    return [pscustomobject]@{
-      status = 'failed'
-      detail = 'ngrok is already running, but not for the Andrea Alexa port.'
+  try {
+    $firstAttempt = Start-NgrokProcessAndWait -NgrokExe $ngrokExe -Port $alexa.port
+  } catch {
+    $firstAttempt = [pscustomobject]@{
+      ok = $false
+      proc = $null
+      logOutput = ''
+      detail = ("ngrok failed to start. {0}" -f $_.Exception.Message)
     }
   }
 
-  $ngrokLogPath = Join-Path $logsDir 'ngrok.log'
-  $ngrokErrLogPath = Join-Path $logsDir 'ngrok.error.log'
-  $proc = Start-Process -FilePath $ngrokExe -ArgumentList @('http', "localhost:$($alexa.port)", '--log', 'stdout') -WorkingDirectory $projectRoot -WindowStyle Hidden -RedirectStandardOutput $ngrokLogPath -RedirectStandardError $ngrokErrLogPath -PassThru
+  if ($firstAttempt.ok) {
+    Write-JsonFile $ngrokStatePath ([pscustomobject]@{
+        pid = $firstAttempt.proc.Id
+        publicUrl = [string] $firstAttempt.tunnel.public_url
+        localAddr = [string] $firstAttempt.tunnel.config.addr
+        configPath = Get-NgrokCommandConfigPath -NgrokExe $ngrokExe
+        managed = $true
+        updatedAt = [DateTime]::UtcNow.ToString('o')
+      })
+    return [pscustomobject]@{
+      status = 'ok'
+      detail = $firstAttempt.detail
+      publicUrl = [string] $firstAttempt.tunnel.public_url
+    }
+  }
 
-  for ($attempt = 0; $attempt -lt 20; $attempt++) {
-    Start-Sleep -Milliseconds 500
-    $tunnel = Find-NgrokTunnelForPort -Port $alexa.port
-    if ($tunnel) {
-      Write-JsonFile $ngrokStatePath ([pscustomobject]@{
-          pid = $proc.Id
-          publicUrl = [string] $tunnel.public_url
-          localAddr = [string] $tunnel.config.addr
-          configPath = $config.configPath
-          managed = $true
-          updatedAt = [DateTime]::UtcNow.ToString('o')
-        })
+  if ($firstAttempt.proc -and $firstAttempt.proc.Id) {
+    Stop-ProcessIfRunning -ProcessId $firstAttempt.proc.Id | Out-Null
+  }
+
+  if ($firstAttempt.detail -match 'update_channel' -or [string] $firstAttempt.logOutput -match 'update_channel') {
+    $repair = Repair-NgrokConfigBestEffort -NgrokExe $ngrokExe
+    if ($repair.repaired) {
+      try {
+        $secondAttempt = Start-NgrokProcessAndWait -NgrokExe $ngrokExe -Port $alexa.port -PublicHint $repair.detail
+      } catch {
+        return [pscustomobject]@{
+          status = 'failed'
+          detail = ("ngrok failed to start after config repair. {0}" -f $_.Exception.Message)
+        }
+      }
+
+      if ($secondAttempt.ok) {
+        Write-JsonFile $ngrokStatePath ([pscustomobject]@{
+            pid = $secondAttempt.proc.Id
+            publicUrl = [string] $secondAttempt.tunnel.public_url
+            localAddr = [string] $secondAttempt.tunnel.config.addr
+            configPath = $repair.configPath
+            managed = $true
+            updatedAt = [DateTime]::UtcNow.ToString('o')
+          })
+        return [pscustomobject]@{
+          status = 'ok'
+          detail = $secondAttempt.detail
+          publicUrl = [string] $secondAttempt.tunnel.public_url
+        }
+      }
+
+      if ($secondAttempt.proc -and $secondAttempt.proc.Id) {
+        Stop-ProcessIfRunning -ProcessId $secondAttempt.proc.Id | Out-Null
+      }
+
       return [pscustomobject]@{
-        status = 'ok'
-        detail = if ([string]::IsNullOrWhiteSpace($configWarning)) { 'ngrok tunnel is ready.' } else { "ngrok tunnel is ready. $configWarning" }
-        publicUrl = [string] $tunnel.public_url
+        status = 'failed'
+        detail = $secondAttempt.detail
       }
     }
   }
 
   return [pscustomobject]@{
     status = 'failed'
-    detail = if ([string]::IsNullOrWhiteSpace($configWarning)) { 'ngrok did not expose the Andrea Alexa port within the expected startup window.' } else { "ngrok did not expose the Andrea Alexa port within the expected startup window. $configWarning" }
+    detail = $firstAttempt.detail
+  }
+}
+
+function Get-GatewayStatus {
+  param(
+    [hashtable] $EnvMap,
+    [object] $RuntimeStatus,
+    [object] $HostState = $null
+  )
+
+  $requirement = Get-GatewayRequirement -EnvMap $EnvMap
+  if (-not $requirement.required) {
+    return [pscustomobject]@{
+      status = 'skipped'
+      detail = $requirement.detail
+    }
+  }
+
+  $gatewayState = Read-JsonFile $gatewayStatePath
+  if ($gatewayState -and -not [string]::IsNullOrWhiteSpace([string] $gatewayState.host_health)) {
+    $probe = Test-HealthJson -Url ([string] $gatewayState.host_health) -TimeoutSec 5
+    if ($probe.ok) {
+      return [pscustomobject]@{
+        status = 'ready'
+        detail = 'Local OpenAI gateway is healthy.'
+      }
+    }
+
+    return [pscustomobject]@{
+      status = 'failed'
+      detail = ("Local OpenAI gateway health probe failed: {0}" -f $probe.detail)
+    }
+  }
+
+  if ($HostState -and $HostState.companions -and $HostState.companions.gateway) {
+    $status = [string] $HostState.companions.gateway.status
+    $detail = [string] $HostState.companions.gateway.detail
+    if ($status -eq 'ok') {
+      return [pscustomobject]@{
+        status = 'ready'
+        detail = if ([string]::IsNullOrWhiteSpace($detail)) { 'Local OpenAI gateway is ready.' } else { $detail }
+      }
+    }
+    if ($status -eq 'skipped') {
+      return [pscustomobject]@{
+        status = 'skipped'
+        detail = $detail
+      }
+    }
+    if ($status -eq 'failed') {
+      return [pscustomobject]@{
+        status = 'failed'
+        detail = $detail
+      }
+    }
+  }
+
+  if ($RuntimeStatus.status -ne 'ready') {
+    return [pscustomobject]@{
+      status = 'failed'
+      detail = ("Container runtime not ready for OpenAI gateway use. {0}" -f $RuntimeStatus.detail)
+    }
+  }
+
+  return [pscustomobject]@{
+    status = 'failed'
+    detail = 'OpenAI gateway is required but not running.'
+  }
+}
+
+function Get-NgrokStatus {
+  param(
+    [hashtable] $EnvMap,
+    [object] $HostState = $null
+  )
+
+  $alexaConfig = Get-AlexaConfig -EnvMap $EnvMap
+  if (-not $alexaConfig.configured) {
+    return [pscustomobject]@{
+      status = 'skipped'
+      detail = 'Alexa is not configured, so public ngrok exposure is skipped.'
+      publicUrl = 'none'
+    }
+  }
+
+  $ngrokState = Read-JsonFile $ngrokStatePath
+  $liveTunnel = Find-NgrokTunnelForPort -Port $alexaConfig.port
+  if ($liveTunnel) {
+    $status = 'ready'
+    if (($ngrokState -and $ngrokState.managed -eq $false) -or ($HostState -and $HostState.companions -and [string] $HostState.companions.ngrok.status -eq 'reused')) {
+      $status = 'reused'
+    }
+
+    return [pscustomobject]@{
+      status = $status
+      detail = if ($status -eq 'reused') { 'Reusing an existing ngrok tunnel.' } else { 'ngrok tunnel is ready.' }
+      publicUrl = [string] $liveTunnel.public_url
+    }
+  }
+
+  if ($HostState -and $HostState.companions -and $HostState.companions.ngrok) {
+    return [pscustomobject]@{
+      status = [string] $HostState.companions.ngrok.status
+      detail = [string] $HostState.companions.ngrok.detail
+      publicUrl = if ($ngrokState -and $ngrokState.publicUrl) { [string] $ngrokState.publicUrl } else { 'none' }
+    }
+  }
+
+  return [pscustomobject]@{
+    status = 'failed'
+    detail = 'ngrok is not running for the Andrea Alexa port.'
+    publicUrl = 'none'
   }
 }
 
@@ -1029,7 +1446,7 @@ function Start-NanoClaw {
   Remove-FileIfExists $readyStatePath
   Remove-FileIfExists $pidFile
 
-  $gatewayStart = Start-Gateway
+  $gatewayStart = Start-Gateway -EnvMap $envMap
   $backendStart = Start-Backend -EnvMap $envMap -NodeExe $nodeExe
 
   $companions = [ordered]@{
@@ -1057,17 +1474,28 @@ function Start-NanoClaw {
     throw $lastError
   }
 
-  $ngrokStart = Start-Ngrok -EnvMap $envMap
+  try {
+    $ngrokStart = Start-Ngrok -EnvMap $envMap
+  } catch {
+    $ngrokStart = [pscustomobject]@{
+      status = 'failed'
+      detail = $_.Exception.Message
+    }
+  }
   $gatewayHealthError = Get-LocalGatewayHealthError
   if ($gatewayStart.status -eq 'ok' -and -not $gatewayHealthError) {
     $gatewayStart = [pscustomobject]@{
       status = 'ok'
       detail = 'Local OpenAI gateway is healthy.'
+      engine = $gatewayStart.engine
+      engineStatus = $gatewayStart.engineStatus
     }
   } elseif ($gatewayHealthError) {
     $gatewayStart = [pscustomobject]@{
       status = 'failed'
       detail = $gatewayHealthError
+      engine = $gatewayStart.engine
+      engineStatus = $gatewayStart.engineStatus
     }
   }
 
@@ -1143,6 +1571,9 @@ function Show-Status {
     $processRunning = Test-RepoProcess -ProcessId $runtimePid
   }
 
+  $runtimeStatus = Ensure-ContainerRuntimeReady -EnvMap $envMap -Required:(Get-GatewayRequirement -EnvMap $envMap).required -AutoStartIfRequired:$false
+  $gatewayStatus = Get-GatewayStatus -EnvMap $envMap -RuntimeStatus $runtimeStatus -HostState $hostState
+  $ngrokStatus = Get-NgrokStatus -EnvMap $envMap -HostState $hostState
   $phase = 'stopped'
   if (
     $hostState -and
@@ -1162,20 +1593,6 @@ function Show-Status {
 
   $alexaHealth = Get-AlexaHealth -EnvMap $envMap
   $backendHealth = Get-BackendHealth -EnvMap $envMap
-  $ngrokState = Read-JsonFile $ngrokStatePath
-  $alexaConfig = Get-AlexaConfig -EnvMap $envMap
-  $liveTunnel = if ($alexaConfig.configured) {
-    Find-NgrokTunnelForPort -Port $alexaConfig.port
-  } else {
-    $null
-  }
-  $ngrokPublicUrl = if ($liveTunnel) {
-    [string] $liveTunnel.public_url
-  } elseif ($ngrokState -and $ngrokState.publicUrl) {
-    [string] $ngrokState.publicUrl
-  } else {
-    'none'
-  }
 
   Write-Output ("HOST_STATUS: phase={0}" -f $phase)
   Write-Output ("HOST_STATUS: process_running={0}" -f $processRunning.ToString().ToLowerInvariant())
@@ -1188,9 +1605,16 @@ function Show-Status {
   Write-Output ("HOST_STATUS: startup_fallback_installed={0}" -f (Get-StartupFallbackInstalled).ToString().ToLowerInvariant())
   Write-Output ("HOST_STATUS: alexa_local={0}" -f $alexaHealth.local)
   Write-Output ("HOST_STATUS: alexa_oauth={0}" -f $alexaHealth.oauth)
+  Write-Output ("HOST_STATUS: runtime_engine={0}" -f $runtimeStatus.engine)
+  Write-Output ("HOST_STATUS: runtime_engine_status={0}" -f $runtimeStatus.status)
+  Write-Output ("HOST_STATUS: runtime_engine_detail={0}" -f $runtimeStatus.detail)
+  Write-Output ("HOST_STATUS: gateway={0}" -f $gatewayStatus.status)
+  Write-Output ("HOST_STATUS: gateway_detail={0}" -f $gatewayStatus.detail)
   Write-Output ("HOST_STATUS: backend={0}" -f $backendHealth.status)
-  Write-Output ("HOST_STATUS: ngrok={0}" -f $(if ($liveTunnel -or $ngrokState) { 'configured' } else { 'not_running' }))
-  Write-Output ("HOST_STATUS: ngrok_public_url={0}" -f $ngrokPublicUrl)
+  Write-Output ("HOST_STATUS: backend_detail={0}" -f $backendHealth.detail)
+  Write-Output ("HOST_STATUS: ngrok={0}" -f $ngrokStatus.status)
+  Write-Output ("HOST_STATUS: ngrok_detail={0}" -f $ngrokStatus.detail)
+  Write-Output ("HOST_STATUS: ngrok_public_url={0}" -f $ngrokStatus.publicUrl)
   Write-Output ("HOST_STATUS: last_error={0}" -f ($(if ($hostState -and $hostState.lastError) { [string] $hostState.lastError } else { 'none' })))
   Write-Output ("HOST_STATUS: host_log={0}" -f $hostLogPath)
 }
