@@ -172,6 +172,7 @@ Important truth:
 npm run services:start
 npm run services:stop
 npm run services:restart
+npm run services:ensure
 npm run services:status
 ```
 
@@ -181,12 +182,14 @@ Windows startup truth:
 - `npm run setup -- --step service` installs the preferred user-logon Scheduled Task when allowed.
 - If Windows policy blocks task creation, the installer writes a repo-owned Startup-folder launcher instead.
 - On this machine, the validated login path is the Startup-folder launcher because Scheduled Task creation is denied.
+- The host launcher now keeps a repo-owned watchdog running in the background and calls `ensure` periodically so a stale or degraded assistant can be restarted without waiting for the next manual intervention.
+- `npm run services:status` now includes `assistant_health` and `watchdog_running`, so a live process that lost Telegram polling is visible immediately instead of looking falsely healthy.
 
 Quick recovery steps after a failed login bring-up:
 
 1. Run `npm run services:status`.
 2. Check `logs/nanoclaw.host.log`.
-3. If needed, run `npm run services:restart`.
+3. If `assistant_health` is degraded or stale, run `npm run services:ensure` first, then `npm run services:restart` if it does not recover.
 4. If the login hook itself needs repair, rerun `npm run setup -- --step service`.
 
 After restart:

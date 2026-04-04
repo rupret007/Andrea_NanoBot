@@ -5,16 +5,21 @@ import path from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
+  assessAssistantHealthState,
+  clearAssistantHealthState,
   clearAssistantReadyState,
   detectWindowsInstallArtifacts,
   detectWindowsInstallMode,
   determineWindowsHostServiceState,
+  getAssistantHealthStatePath,
   getHostStatePath,
   getReadyStatePath,
   persistNanoclawHostState,
+  readAssistantHealthState,
   readHostControlSnapshot,
   reconcileWindowsHostState,
   type NanoclawHostState,
+  writeAssistantHealthState,
   writeAssistantReadyState,
 } from './host-control.js';
 
@@ -31,6 +36,7 @@ describe('host control state', () => {
   });
 
   afterEach(() => {
+    clearAssistantHealthState();
     clearAssistantReadyState();
     process.chdir(previousCwd);
     fs.rmSync(tempDir, { recursive: true, force: true });
@@ -115,6 +121,120 @@ describe('host control state', () => {
       path.join(tempDir, 'data', 'runtime', 'nanoclaw-host-state.json'),
     );
     expect(fs.existsSync(getHostStatePath())).toBe(true);
+  });
+
+  it('writes and reads assistant health markers', () => {
+    persistNanoclawHostState({
+      bootId: 'boot-health',
+      phase: 'running_ready',
+      pid: process.pid,
+      installMode: 'manual_host_control',
+      nodePath: 'C:\\node.exe',
+      nodeVersion: '22.22.2',
+      startedAt: '2026-04-02T00:00:00.000Z',
+      readyAt: '2026-04-02T00:00:05.000Z',
+      lastError: '',
+      dependencyState: 'ok',
+      dependencyError: '',
+      stdoutLogPath: path.join(tempDir, 'logs', 'nanoclaw.log'),
+      stderrLogPath: path.join(tempDir, 'logs', 'nanoclaw.error.log'),
+      hostLogPath: path.join(tempDir, 'logs', 'nanoclaw.host.log'),
+    });
+
+    const health = writeAssistantHealthState({
+      appVersion: '1.2.42',
+      channelHealth: [
+        {
+          name: 'telegram',
+          configured: true,
+          state: 'ready',
+          updatedAt: '2026-04-02T00:00:10.000Z',
+          lastReadyAt: '2026-04-02T00:00:10.000Z',
+          detail: 'Telegram polling connected.',
+        },
+      ],
+    });
+
+    expect(health.bootId).toBe('boot-health');
+    expect(fs.existsSync(getAssistantHealthStatePath())).toBe(true);
+    expect(readAssistantHealthState()?.channels).toEqual([
+      expect.objectContaining({
+        name: 'telegram',
+        configured: true,
+        state: 'ready',
+        detail: 'Telegram polling connected.',
+      }),
+    ]);
+  });
+});
+
+describe('assistant health assessment', () => {
+  it('reports degraded configured channels', () => {
+    const assessment = assessAssistantHealthState({
+      assistantHealthState: {
+        bootId: 'boot-1',
+        pid: 2000,
+        appVersion: '1.2.42',
+        updatedAt: '2026-04-02T00:00:30.000Z',
+        channels: [
+          {
+            name: 'telegram',
+            configured: true,
+            state: 'degraded',
+            updatedAt: '2026-04-02T00:00:30.000Z',
+            lastError:
+              'Telegram long polling was interrupted by a webhook change.',
+          },
+        ],
+      },
+      hostState: {
+        bootId: 'boot-1',
+        phase: 'running_ready',
+        pid: 2000,
+        installMode: 'manual_host_control',
+        nodePath: 'C:\\node.exe',
+        nodeVersion: '22.22.2',
+        startedAt: '2026-04-02T00:00:00.000Z',
+        readyAt: '2026-04-02T00:00:05.000Z',
+        lastError: '',
+        dependencyState: 'ok',
+        dependencyError: '',
+        stdoutLogPath: 'out',
+        stderrLogPath: 'err',
+        hostLogPath: 'host',
+      },
+      readyState: {
+        bootId: 'boot-1',
+        pid: 2000,
+        readyAt: '2026-04-02T00:00:05.000Z',
+        appVersion: '1.2.42',
+      },
+      processRunning: true,
+      runtimePid: 2000,
+      now: new Date('2026-04-02T00:01:00.000Z'),
+    });
+
+    expect(assessment.status).toBe('degraded');
+    expect(assessment.detail).toContain('telegram');
+  });
+
+  it('reports stale assistant heartbeats', () => {
+    const assessment = assessAssistantHealthState({
+      assistantHealthState: {
+        bootId: 'boot-2',
+        pid: 2001,
+        appVersion: '1.2.42',
+        updatedAt: '2026-04-02T00:00:00.000Z',
+        channels: [],
+      },
+      processRunning: true,
+      runtimePid: 2001,
+      now: new Date('2026-04-02T00:05:00.000Z'),
+      staleAfterMs: 60_000,
+    });
+
+    expect(assessment.status).toBe('stale');
+    expect(assessment.detail).toContain('stale');
   });
 });
 

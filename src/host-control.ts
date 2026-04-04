@@ -2,6 +2,8 @@ import { execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
+import type { ChannelHealthSnapshot } from './types.js';
+
 export type NanoclawInstallMode =
   | 'manual_host_control'
   | 'scheduled_task'
@@ -56,6 +58,24 @@ export interface NanoclawReadyState {
   appVersion: string;
 }
 
+export interface AssistantHealthState {
+  bootId: string;
+  pid: number;
+  appVersion: string;
+  updatedAt: string;
+  channels: ChannelHealthSnapshot[];
+}
+
+export type AssistantHealthStatus = 'healthy' | 'missing' | 'stale' | 'degraded';
+
+export interface AssistantHealthAssessment {
+  status: AssistantHealthStatus;
+  detail: string;
+  updatedAt: string | null;
+  degradedChannels: string[];
+  staleAfterMs: number;
+}
+
 export interface HostControlPaths {
   projectRoot: string;
   logsDir: string;
@@ -66,6 +86,7 @@ export interface HostControlPaths {
   assistantErrorLogPath: string;
   hostStatePath: string;
   readyStatePath: string;
+  assistantHealthStatePath: string;
   hostLockPath: string;
   nodeRuntimeMetadataPath: string;
   startupFolderScriptPath: string | null;
@@ -76,6 +97,7 @@ export interface HostControlSnapshot {
   nodeRuntime: NodeRuntimeMetadata | null;
   hostState: NanoclawHostState | null;
   readyState: NanoclawReadyState | null;
+  assistantHealthState: AssistantHealthState | null;
 }
 
 export interface WindowsInstallArtifacts {
@@ -114,6 +136,7 @@ const DEPENDENCY_STATES = new Set<NanoclawDependencyState>([
   'degraded',
   'unknown',
 ]);
+export const DEFAULT_ASSISTANT_HEALTH_STALE_AFTER_MS = 3 * 60 * 1000;
 
 function resolveProjectRoot(projectRoot = process.cwd()): string {
   return path.resolve(projectRoot);
@@ -174,6 +197,10 @@ export function resolveHostControlPaths(
     assistantErrorLogPath: path.join(logsDir, 'nanoclaw.error.log'),
     hostStatePath: path.join(runtimeStateDir, 'nanoclaw-host-state.json'),
     readyStatePath: path.join(runtimeStateDir, 'nanoclaw-ready.json'),
+    assistantHealthStatePath: path.join(
+      runtimeStateDir,
+      'assistant-health.json',
+    ),
     hostLockPath: path.join(runtimeStateDir, 'nanoclaw-host.lock'),
     nodeRuntimeMetadataPath: path.join(runtimeStateDir, 'node-runtime.json'),
     startupFolderScriptPath: appData
@@ -208,6 +235,10 @@ export function getHostStatePath(projectRoot = process.cwd()): string {
 
 export function getReadyStatePath(projectRoot = process.cwd()): string {
   return resolveHostControlPaths(projectRoot).readyStatePath;
+}
+
+export function getAssistantHealthStatePath(projectRoot = process.cwd()): string {
+  return resolveHostControlPaths(projectRoot).assistantHealthStatePath;
 }
 
 export function getHostLockPath(projectRoot = process.cwd()): string {
@@ -270,6 +301,63 @@ function normalizeReadyState(value: unknown): NanoclawReadyState | null {
     pid,
     readyAt: readyState.readyAt,
     appVersion: readyState.appVersion,
+  };
+}
+
+function normalizeChannelHealthSnapshot(
+  value: unknown,
+): ChannelHealthSnapshot | null {
+  if (!value || typeof value !== 'object') return null;
+  const snapshot = value as Partial<ChannelHealthSnapshot>;
+  const state = snapshot.state;
+  if (
+    !isNonEmptyString(snapshot.name) ||
+    typeof snapshot.configured !== 'boolean' ||
+    !['starting', 'ready', 'degraded', 'stopped'].includes(String(state)) ||
+    !isNonEmptyString(snapshot.updatedAt)
+  ) {
+    return null;
+  }
+  return {
+    name: snapshot.name,
+    configured: snapshot.configured,
+    state: state as ChannelHealthSnapshot['state'],
+    updatedAt: snapshot.updatedAt,
+    lastReadyAt: isNonEmptyString(snapshot.lastReadyAt)
+      ? snapshot.lastReadyAt
+      : null,
+    lastError: isNonEmptyString(snapshot.lastError) ? snapshot.lastError : null,
+    detail: isNonEmptyString(snapshot.detail) ? snapshot.detail : null,
+  };
+}
+
+function normalizeAssistantHealthState(
+  value: unknown,
+): AssistantHealthState | null {
+  if (!value || typeof value !== 'object') return null;
+  const input = value as Partial<AssistantHealthState> & {
+    channels?: unknown[];
+  };
+  const pid = normalizePid(input.pid);
+  if (
+    !isNonEmptyString(input.bootId) ||
+    pid == null ||
+    !isNonEmptyString(input.appVersion) ||
+    !isNonEmptyString(input.updatedAt)
+  ) {
+    return null;
+  }
+  const channels = Array.isArray(input.channels)
+    ? input.channels
+        .map((channel) => normalizeChannelHealthSnapshot(channel))
+        .filter((channel): channel is ChannelHealthSnapshot => channel != null)
+    : [];
+  return {
+    bootId: input.bootId,
+    pid,
+    appVersion: input.appVersion,
+    updatedAt: input.updatedAt,
+    channels,
   };
 }
 
@@ -348,6 +436,14 @@ export function readNanoclawReadyState(
   );
 }
 
+export function readAssistantHealthState(
+  projectRoot = process.cwd(),
+): AssistantHealthState | null {
+  return normalizeAssistantHealthState(
+    readJsonFile<unknown>(getAssistantHealthStatePath(projectRoot)),
+  );
+}
+
 export function readHostControlSnapshot(
   projectRoot = process.cwd(),
 ): HostControlSnapshot {
@@ -357,12 +453,21 @@ export function readHostControlSnapshot(
     nodeRuntime: readNodeRuntimeMetadata(projectRoot),
     hostState: readNanoclawHostState(projectRoot),
     readyState: readNanoclawReadyState(projectRoot),
+    assistantHealthState: readAssistantHealthState(projectRoot),
   };
 }
 
 export function clearAssistantReadyState(projectRoot = process.cwd()): void {
   try {
     fs.rmSync(getReadyStatePath(projectRoot), { force: true });
+  } catch {
+    // Ignore best-effort cleanup failures during shutdown.
+  }
+}
+
+export function clearAssistantHealthState(projectRoot = process.cwd()): void {
+  try {
+    fs.rmSync(getAssistantHealthStatePath(projectRoot), { force: true });
   } catch {
     // Ignore best-effort cleanup failures during shutdown.
   }
@@ -381,6 +486,155 @@ export function writeAssistantReadyState(
   };
   writeJsonFile(getReadyStatePath(projectRoot), readyState);
   return readyState;
+}
+
+export function writeAssistantHealthState(
+  params: {
+    appVersion: string;
+    channelHealth: ChannelHealthSnapshot[];
+    updatedAt?: string;
+  },
+  projectRoot = process.cwd(),
+): AssistantHealthState {
+  const hostState = readNanoclawHostState(projectRoot);
+  const healthState: AssistantHealthState = {
+    bootId: hostState?.bootId || '',
+    pid: process.pid,
+    appVersion: params.appVersion,
+    updatedAt: params.updatedAt || new Date().toISOString(),
+    channels: [...params.channelHealth]
+      .map((channel) => ({ ...channel }))
+      .sort((left, right) => left.name.localeCompare(right.name)),
+  };
+  writeJsonFile(getAssistantHealthStatePath(projectRoot), healthState);
+  return healthState;
+}
+
+export function assessAssistantHealthState(input: {
+  assistantHealthState: AssistantHealthState | null;
+  hostState?: NanoclawHostState | null;
+  readyState?: NanoclawReadyState | null;
+  processRunning?: boolean;
+  runtimePid?: number | null;
+  now?: Date;
+  staleAfterMs?: number;
+}): AssistantHealthAssessment {
+  const assistantHealthState = input.assistantHealthState;
+  const staleAfterMs =
+    input.staleAfterMs ?? DEFAULT_ASSISTANT_HEALTH_STALE_AFTER_MS;
+  if (!assistantHealthState) {
+    return {
+      status: 'missing',
+      detail: 'Assistant health marker is missing.',
+      updatedAt: null,
+      degradedChannels: [],
+      staleAfterMs,
+    };
+  }
+
+  const hostState = input.hostState || null;
+  const readyState = input.readyState || null;
+  const runtimePid = input.runtimePid ?? null;
+  const now = input.now ?? new Date();
+  const updatedAtMs = Date.parse(assistantHealthState.updatedAt);
+  if (!Number.isFinite(updatedAtMs)) {
+    return {
+      status: 'stale',
+      detail: 'Assistant health marker has an invalid timestamp.',
+      updatedAt: assistantHealthState.updatedAt,
+      degradedChannels: [],
+      staleAfterMs,
+    };
+  }
+
+  if (input.processRunning === false) {
+    return {
+      status: 'stale',
+      detail: 'Assistant process is not running.',
+      updatedAt: assistantHealthState.updatedAt,
+      degradedChannels: [],
+      staleAfterMs,
+    };
+  }
+
+  if (
+    runtimePid != null &&
+    assistantHealthState.pid > 0 &&
+    assistantHealthState.pid !== runtimePid
+  ) {
+    return {
+      status: 'degraded',
+      detail: 'Assistant health marker is reporting a different process id.',
+      updatedAt: assistantHealthState.updatedAt,
+      degradedChannels: [],
+      staleAfterMs,
+    };
+  }
+
+  if (
+    hostState?.bootId &&
+    assistantHealthState.bootId &&
+    assistantHealthState.bootId !== hostState.bootId
+  ) {
+    return {
+      status: 'degraded',
+      detail: 'Assistant health marker boot id does not match host state.',
+      updatedAt: assistantHealthState.updatedAt,
+      degradedChannels: [],
+      staleAfterMs,
+    };
+  }
+
+  if (
+    readyState?.bootId &&
+    assistantHealthState.bootId &&
+    assistantHealthState.bootId !== readyState.bootId
+  ) {
+    return {
+      status: 'degraded',
+      detail: 'Assistant health marker boot id does not match ready state.',
+      updatedAt: assistantHealthState.updatedAt,
+      degradedChannels: [],
+      staleAfterMs,
+    };
+  }
+
+  if (now.getTime() - updatedAtMs > staleAfterMs) {
+    return {
+      status: 'stale',
+      detail: 'Assistant health marker is stale.',
+      updatedAt: assistantHealthState.updatedAt,
+      degradedChannels: [],
+      staleAfterMs,
+    };
+  }
+
+  const degradedChannels = assistantHealthState.channels
+    .filter((channel) => channel.configured && channel.state !== 'ready')
+    .map((channel) => channel.name);
+  if (degradedChannels.length > 0) {
+    const details = assistantHealthState.channels
+      .filter((channel) => degradedChannels.includes(channel.name))
+      .map((channel) => {
+        const reason = channel.lastError || channel.detail || channel.state;
+        return `${channel.name}: ${reason}`;
+      });
+    return {
+      status: 'degraded',
+      detail: details.join('; '),
+      updatedAt: assistantHealthState.updatedAt,
+      degradedChannels,
+      staleAfterMs,
+    };
+  }
+
+  return {
+    status: 'healthy',
+    detail: 'Assistant health marker is current.',
+    updatedAt: assistantHealthState.updatedAt,
+    degradedChannels: [],
+    staleAfterMs,
+  };
 }
 
 export function determineWindowsHostServiceState(input: {

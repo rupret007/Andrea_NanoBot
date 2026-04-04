@@ -96,7 +96,9 @@ import {
   type SelectedWorkContext,
 } from './daily-command-center.js';
 import {
+  clearAssistantHealthState,
   clearAssistantReadyState,
+  writeAssistantHealthState,
   writeAssistantReadyState,
 } from './host-control.js';
 import {
@@ -220,6 +222,7 @@ import { startSchedulerLoop } from './task-scheduler.js';
 import {
   AgentThreadState,
   Channel,
+  ChannelHealthSnapshot,
   NewMessage,
   RegisteredGroup,
   SendMessageOptions,
@@ -4635,6 +4638,28 @@ function resolveAppVersion(): string {
 }
 
 async function main(): Promise<void> {
+  const appVersion = resolveAppVersion();
+  const channelHealthByName = new Map<string, ChannelHealthSnapshot>();
+  let assistantHealthInterval: ReturnType<typeof setInterval> | null = null;
+  const writeCurrentAssistantHealth = () => {
+    try {
+      writeAssistantHealthState({
+        appVersion,
+        channelHealth: [...channelHealthByName.values()],
+      });
+    } catch (err) {
+      logger.warn({ err }, 'Failed to persist assistant health marker');
+    }
+  };
+  const stopAssistantHealthLoop = () => {
+    if (assistantHealthInterval) {
+      clearInterval(assistantHealthInterval);
+      assistantHealthInterval = null;
+    }
+    clearAssistantHealthState();
+  };
+
+  clearAssistantHealthState();
   clearAssistantReadyState();
   ensureContainerSystemRunning();
   initDatabase();
@@ -4660,6 +4685,7 @@ async function main(): Promise<void> {
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
+    stopAssistantHealthLoop();
     clearAssistantReadyState();
     await queue.shutdown(10000);
     if (alexaRuntime) {
@@ -4674,7 +4700,10 @@ async function main(): Promise<void> {
   };
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
-  process.on('exit', () => clearAssistantReadyState());
+  process.on('exit', () => {
+    stopAssistantHealthLoop();
+    clearAssistantReadyState();
+  });
 
   const CURSOR_STATUS_COMMANDS = new Set(['/cursor-status', '/cursor_status']);
   const CURSOR_CREATE_USAGE =
@@ -8251,6 +8280,10 @@ async function main(): Promise<void> {
 
   // Channel callbacks (shared by all channels)
   const channelOpts = {
+    onHealthUpdate: (snapshot: ChannelHealthSnapshot) => {
+      channelHealthByName.set(snapshot.name, snapshot);
+      writeCurrentAssistantHealth();
+    },
     onMessage: async (chatJid: string, msg: NewMessage) => {
       const rawTrimmed = msg.content.trim();
       const trimmed = rawTrimmed.toLowerCase();
@@ -9082,9 +9115,15 @@ async function main(): Promise<void> {
     writeCursorAgentsSnapshot(group.folder, group.isMain === true, cursorRows);
   }
   queue.setProcessMessagesFn(processGroupMessages);
-  writeAssistantReadyState(resolveAppVersion());
+  writeAssistantReadyState(appVersion);
+  writeCurrentAssistantHealth();
+  assistantHealthInterval = setInterval(() => {
+    writeCurrentAssistantHealth();
+  }, 30_000);
+  assistantHealthInterval.unref?.();
   recoverPendingMessages();
   startMessageLoop().catch((err) => {
+    stopAssistantHealthLoop();
     clearAssistantReadyState();
     logger.fatal({ err }, 'Message loop crashed unexpectedly');
     process.exit(1);

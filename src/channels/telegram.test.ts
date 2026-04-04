@@ -409,3 +409,38 @@ describe('TelegramChannel.editMessage', () => {
     );
   });
 });
+
+describe('TelegramChannel health state', () => {
+  it('treats readiness as a health-driven signal instead of bot existence alone', () => {
+    const onHealthUpdate = vi.fn();
+    const channel = new TelegramChannel('test-token', {
+      onMessage: () => undefined,
+      onChatMetadata: () => undefined,
+      registeredGroups: () => ({}),
+      onHealthUpdate,
+    });
+    const internals = channel as unknown as {
+      bot: object | null;
+      updateHealth: (patch: Record<string, unknown>) => void;
+    };
+
+    internals.bot = {};
+    expect(channel.isConnected()).toBe(false);
+
+    internals.updateHealth({
+      state: 'ready',
+      detail: 'Telegram long polling connected.',
+      lastReadyAt: '2026-04-04T12:00:00.000Z',
+      lastError: null,
+    });
+    expect(channel.isConnected()).toBe(true);
+
+    internals.updateHealth({
+      state: 'degraded',
+      detail: 'Telegram long polling was interrupted by a webhook change.',
+      lastError: 'Telegram long polling was interrupted by a webhook change.',
+    });
+    expect(channel.isConnected()).toBe(false);
+    expect(onHealthUpdate).toHaveBeenCalled();
+  });
+});

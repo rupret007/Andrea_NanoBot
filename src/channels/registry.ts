@@ -1,5 +1,6 @@
 import {
   Channel,
+  ChannelHealthSnapshot,
   OnInboundMessage,
   OnChatMetadata,
   RegisteredGroup,
@@ -14,6 +15,7 @@ export interface ChannelOpts {
     chatName: string,
     channel: string,
   ) => Promise<{ ok: boolean; message: string }>;
+  onHealthUpdate?: (snapshot: ChannelHealthSnapshot) => void;
 }
 
 export type ChannelFactory = (opts: ChannelOpts) => Channel | null;

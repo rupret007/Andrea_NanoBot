@@ -37,6 +37,7 @@
     "services:start": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/nanoclaw-host.ps1 start",
     "services:stop": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/nanoclaw-host.ps1 stop",
     "services:restart": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/nanoclaw-host.ps1 restart",
+    "services:ensure": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/nanoclaw-host.ps1 ensure",
     "services:status": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/nanoclaw-host.ps1 status",
     "cursor:bridge": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs src/cursor-desktop-bridge.ts",
     "telegram:user:auth": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs src/telegram-user-session.ts auth",

@@ -556,7 +556,8 @@ Windows service lifecycle helpers:
 - `npm run services:start` delegates to the canonical Windows host launcher, uses the pinned Node 22.22.2 runtime, and starts NanoClaw plus any configured companions.
 - `npm run services:stop` stops NanoClaw, the local gateway, and any repo-managed companions started through the host launcher.
 - `npm run services:restart` runs stop then start through the same host-controlled path.
-- `npm run services:status` reports the active repo root, pinned Node runtime, installed login-start mechanism, Alexa health, optional loopback backend health, ngrok state, and the last startup error if one occurred.
+- `npm run services:ensure` runs one explicit health-enforcement pass through the same host launcher.
+- `npm run services:status` reports the active repo root, pinned Node runtime, installed login-start mechanism, Alexa health, optional loopback backend health, ngrok state, the current `assistant_health` view, whether the watchdog is running, and the last startup error if one occurred.
 
 Startup behavior:
 
@@ -566,6 +567,7 @@ Startup behavior:
   - `C:\Users\rupret\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup\nanoclaw-start.cmd`
   - which delegates to `scripts\nanoclaw-host.ps1`
 - The Windows host launcher bootstraps and reuses the repo-local pinned runtime under `data\runtime\node-v22.22.2-win-x64`, so daily startup does not depend on host Node 24.
+- The Windows host launcher also keeps a repo-owned watchdog running and periodically calls `ensure`, so a live process that loses Telegram polling or stops updating its health marker gets corrected automatically.
 - On macOS this uses launchd.
 - On Linux this uses systemd (or nohup fallback).
 - So startup is not only a container setting; it is handled by host service manager policy plus runtime startup wrapper logic.

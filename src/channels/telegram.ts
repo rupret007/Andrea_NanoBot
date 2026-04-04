@@ -8,6 +8,7 @@ import { logger } from '../logger.js';
 import {
   ChannelSendReceipt,
   Channel,
+  ChannelHealthSnapshot,
   ChannelInlineAction,
   OnChatMetadata,
   OnInboundMessage,
@@ -27,6 +28,7 @@ export interface TelegramChannelOpts {
     chatName: string,
     channel: string,
   ) => Promise<{ ok: boolean; message: string }>;
+  onHealthUpdate?: (snapshot: ChannelHealthSnapshot) => void;
 }
 
 function escapeRegExp(input: string): string {
@@ -345,13 +347,214 @@ export class TelegramChannel implements Channel {
   private bot: Bot | null = null;
   private opts: TelegramChannelOpts;
   private botToken: string;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private shuttingDown = false;
+  private healthSnapshot: ChannelHealthSnapshot;
 
   constructor(botToken: string, opts: TelegramChannelOpts) {
     this.botToken = botToken;
     this.opts = opts;
+    this.healthSnapshot = {
+      name: 'telegram',
+      configured: true,
+      state: 'stopped',
+      updatedAt: new Date().toISOString(),
+      lastReadyAt: null,
+      lastError: null,
+      detail: 'Telegram polling has not started yet.',
+    };
+  }
+
+  private updateHealth(
+    patch: Partial<Omit<ChannelHealthSnapshot, 'name' | 'configured'>>,
+  ): void {
+    this.healthSnapshot = {
+      ...this.healthSnapshot,
+      ...patch,
+      updatedAt: new Date().toISOString(),
+    };
+    this.opts.onHealthUpdate?.({ ...this.healthSnapshot });
+  }
+
+  private describePollingError(err: unknown): string {
+    const raw =
+      err instanceof Error ? err.message : typeof err === 'string' ? err : '';
+    if (
+      raw.includes('409') &&
+      raw.toLowerCase().includes('terminated by setwebhook request')
+    ) {
+      return 'Telegram long polling was interrupted by a webhook change.';
+    }
+    return raw || 'Telegram long polling failed unexpectedly.';
+  }
+
+  private async clearWebhookBeforePolling(): Promise<void> {
+    if (!this.bot) return;
+    try {
+      await this.bot.api.deleteWebhook({
+        drop_pending_updates: false,
+      });
+      logger.info('Cleared Telegram webhook before starting long polling');
+    } catch (err) {
+      logger.warn({ err }, 'Failed to clear Telegram webhook before polling');
+    }
+  }
+
+  private scheduleRecovery(reason: string): void {
+    if (this.shuttingDown || this.reconnectTimer || !this.bot) {
+      return;
+    }
+    logger.warn(
+      { component: 'telegram', reason },
+      'Telegram polling degraded; scheduling recovery attempt',
+    );
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      if (this.shuttingDown || !this.bot) return;
+      try {
+        this.bot.stop();
+      } catch (err) {
+        logger.debug(
+          { component: 'telegram', err },
+          'Telegram polling stop during recovery was not clean',
+        );
+      }
+      void this.startPollingSession(true).catch((err) => {
+        const detail = this.describePollingError(err);
+        this.updateHealth({
+          state: 'degraded',
+          lastError: detail,
+          detail,
+        });
+        this.scheduleRecovery(detail);
+      });
+    }, 5000);
+    this.reconnectTimer.unref?.();
+  }
+
+  private async startPollingSession(isRecovery = false): Promise<void> {
+    if (!this.bot) {
+      throw new Error('Telegram bot is not initialized.');
+    }
+
+    this.updateHealth({
+      state: 'starting',
+      lastError: null,
+      detail: isRecovery
+        ? 'Restarting Telegram long polling.'
+        : 'Starting Telegram long polling.',
+    });
+
+    await this.clearWebhookBeforePolling();
+
+    await new Promise<void>((resolve, reject) => {
+      let started = false;
+      const timeout = setTimeout(() => {
+        if (started) return;
+        reject(
+          new Error('Telegram long polling did not report ready in time.'),
+        );
+      }, 20000);
+      timeout.unref?.();
+
+      const settleReady = () => {
+        started = true;
+        clearTimeout(timeout);
+        resolve();
+      };
+      const settleFailure = (err: unknown) => {
+        clearTimeout(timeout);
+        if (!started) {
+          reject(err);
+          return;
+        }
+        const detail = this.describePollingError(err);
+        this.updateHealth({
+          state: 'degraded',
+          lastError: detail,
+          detail,
+        });
+        this.scheduleRecovery(detail);
+      };
+
+      this.bot!
+        .start({
+          onStart: (botInfo) => {
+            this.bot!.api
+              .setMyDescription(buildTelegramDescriptionText())
+              .catch((err) => {
+                logger.warn(
+                  { component: 'telegram', err },
+                  'Failed to set Telegram bot description',
+                );
+              });
+            this.bot!.api
+              .setMyShortDescription(buildTelegramShortDescriptionText())
+              .catch((err) => {
+                logger.warn(
+                  { component: 'telegram', err },
+                  'Failed to set Telegram bot short description',
+                );
+              });
+
+            this.bot!.api
+              .setMyCommands([
+                { command: 'start', description: 'Quick start for new users' },
+                {
+                  command: 'help',
+                  description: 'How Andrea works in this chat',
+                },
+                {
+                  command: 'commands',
+                  description: 'List the demo-safe command set',
+                },
+                { command: 'features', description: 'Show what Andrea can do' },
+                { command: 'ping', description: 'Check if the bot is online' },
+                { command: 'chatid', description: 'Show current chat ID/type' },
+                {
+                  command: 'cursor_status',
+                  description: 'Show Cursor integration status',
+                },
+                {
+                  command: 'registermain',
+                  description: 'Register this DM as main control chat',
+                },
+              ])
+              .catch((err) => {
+                logger.warn(
+                  { component: 'telegram', err },
+                  'Failed to register Telegram command menu',
+                );
+              });
+
+            const readyAt = new Date().toISOString();
+            this.updateHealth({
+              state: 'ready',
+              lastReadyAt: readyAt,
+              lastError: null,
+              detail: `Telegram long polling connected as @${botInfo.username}.`,
+            });
+            logger.info(
+              {
+                component: 'telegram',
+                username: botInfo.username,
+                id: botInfo.id,
+              },
+              'Telegram bot connected',
+            );
+            console.log(`\n  Telegram bot: @${botInfo.username}`);
+            console.log(
+              '  Send /help for usage, /chatid for chat ID, or /registermain in DM to bootstrap main chat\n',
+            );
+            settleReady();
+          },
+        })
+        .catch(settleFailure);
+    });
   }
 
   async connect(): Promise<void> {
+    this.shuttingDown = false;
     this.bot = new Bot(this.botToken, {
       client: {
         baseFetchConfig: { agent: https.globalAgent, compress: true },
@@ -634,77 +837,7 @@ export class TelegramChannel implements Channel {
         'Telegram bot error',
       );
     });
-
-    try {
-      await this.bot.api.deleteWebhook({
-        drop_pending_updates: false,
-      });
-      logger.info('Cleared Telegram webhook before starting long polling');
-    } catch (err) {
-      logger.warn({ err }, 'Failed to clear Telegram webhook before polling');
-    }
-
-    return new Promise<void>((resolve) => {
-      this.bot!.start({
-        onStart: (botInfo) => {
-          this.bot!.api.setMyDescription(buildTelegramDescriptionText()).catch(
-            (err) => {
-              logger.warn(
-                { component: 'telegram', err },
-                'Failed to set Telegram bot description',
-              );
-            },
-          );
-          this.bot!.api.setMyShortDescription(
-            buildTelegramShortDescriptionText(),
-          ).catch((err) => {
-            logger.warn(
-              { component: 'telegram', err },
-              'Failed to set Telegram bot short description',
-            );
-          });
-
-          this.bot!.api.setMyCommands([
-            { command: 'start', description: 'Quick start for new users' },
-            { command: 'help', description: 'How Andrea works in this chat' },
-            {
-              command: 'commands',
-              description: 'List the demo-safe command set',
-            },
-            { command: 'features', description: 'Show what Andrea can do' },
-            { command: 'ping', description: 'Check if the bot is online' },
-            { command: 'chatid', description: 'Show current chat ID/type' },
-            {
-              command: 'cursor_status',
-              description: 'Show Cursor integration status',
-            },
-            {
-              command: 'registermain',
-              description: 'Register this DM as main control chat',
-            },
-          ]).catch((err) => {
-            logger.warn(
-              { component: 'telegram', err },
-              'Failed to register Telegram command menu',
-            );
-          });
-
-          logger.info(
-            {
-              component: 'telegram',
-              username: botInfo.username,
-              id: botInfo.id,
-            },
-            'Telegram bot connected',
-          );
-          console.log(`\n  Telegram bot: @${botInfo.username}`);
-          console.log(
-            '  Send /help for usage, /chatid for chat ID, or /registermain in DM to bootstrap main chat\n',
-          );
-          resolve();
-        },
-      });
-    });
+    await this.startPollingSession(false);
   }
 
   async sendMessage(
@@ -847,7 +980,11 @@ export class TelegramChannel implements Channel {
   }
 
   isConnected(): boolean {
-    return this.bot !== null;
+    return this.bot !== null && this.healthSnapshot.state === 'ready';
+  }
+
+  getHealthSnapshot(): ChannelHealthSnapshot {
+    return { ...this.healthSnapshot };
   }
 
   ownsJid(jid: string): boolean {
@@ -855,9 +992,18 @@ export class TelegramChannel implements Channel {
   }
 
   async disconnect(): Promise<void> {
+    this.shuttingDown = true;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     if (this.bot) {
       this.bot.stop();
       this.bot = null;
+      this.updateHealth({
+        state: 'stopped',
+        detail: 'Telegram polling stopped.',
+      });
       logger.info('Telegram bot stopped');
     }
   }

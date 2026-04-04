@@ -1,6 +1,6 @@
 param(
   [Parameter(Position = 0)]
-  [ValidateSet('start', 'stop', 'restart', 'status')]
+  [ValidateSet('start', 'stop', 'restart', 'status', 'ensure')]
   [string] $Command = 'status',
 
   [Parameter()]
@@ -20,12 +20,18 @@ $stdoutLogPath = Join-Path $logsDir 'nanoclaw.log'
 $stderrLogPath = Join-Path $logsDir 'nanoclaw.error.log'
 $hostStatePath = Join-Path $runtimeDir 'nanoclaw-host-state.json'
 $readyStatePath = Join-Path $runtimeDir 'nanoclaw-ready.json'
+$assistantHealthPath = Join-Path $runtimeDir 'assistant-health.json'
 $lockPath = Join-Path $runtimeDir 'nanoclaw-host.lock'
 $nodeRuntimeMetadataPath = Join-Path $runtimeDir 'node-runtime.json'
+$watchdogPidPath = Join-Path $runtimeDir 'nanoclaw-watchdog.pid'
+$watchdogStatePath = Join-Path $runtimeDir 'nanoclaw-watchdog-state.json'
 $gatewayStatePath = Join-Path $runtimeDir 'openai-gateway-state.json'
 $gatewayStartScript = Join-Path $projectRoot 'scripts\start-openai-gateway.ps1'
 $gatewayStopScript = Join-Path $projectRoot 'scripts\stop-openai-gateway.ps1'
+$watchdogScriptPath = Join-Path $projectRoot 'scripts\nanoclaw-watchdog.ps1'
 $pinnedNodeLauncher = Join-Path $projectRoot 'scripts\run-with-pinned-node.mjs'
+$watchdogLogPath = Join-Path $logsDir 'nanoclaw.watchdog.log'
+$watchdogErrorLogPath = Join-Path $logsDir 'nanoclaw.watchdog.error.log'
 $compatibilityShimPath = Join-Path $projectRoot 'start-nanoclaw.ps1'
 $startupFolderScriptPath = if ($env:APPDATA) {
   Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup\nanoclaw-start.cmd'
@@ -121,6 +127,17 @@ function Read-Pid {
   return $null
 }
 
+function Read-WatchdogPid {
+  if (!(Test-Path -LiteralPath $watchdogPidPath)) { return $null }
+  try {
+    $raw = (Get-Content -LiteralPath $watchdogPidPath -ErrorAction Stop | Select-Object -First 1).Trim()
+    if ($raw -match '^[0-9]+$') { return [int] $raw }
+  } catch {
+    return $null
+  }
+  return $null
+}
+
 function Remove-FileIfExists {
   param([string] $Path)
   if (Test-Path -LiteralPath $Path) {
@@ -149,6 +166,178 @@ function Stop-ProcessIfRunning {
     return $true
   } catch {
     return $false
+  }
+}
+
+function Test-WatchdogProcess {
+  param([int] $ProcessId)
+
+  try {
+    $proc = Get-CimInstance Win32_Process -Filter "ProcessId = $ProcessId" -ErrorAction SilentlyContinue
+    if ($null -eq $proc) { return $false }
+    $cmd = [string] $proc.CommandLine
+    $projectPattern = [Regex]::Escape($projectRoot)
+    return $cmd -match $projectPattern -and $cmd -match 'nanoclaw-watchdog\.ps1'
+  } catch {
+    return $false
+  }
+}
+
+function Get-WatchdogSnapshot {
+  $watchdogPid = Read-WatchdogPid
+  $watchdogRunning = $false
+  if ($watchdogPid) {
+    $watchdogRunning = Test-WatchdogProcess -ProcessId $watchdogPid
+  }
+
+  return [pscustomobject]@{
+    pid = $watchdogPid
+    running = $watchdogRunning
+    state = Read-JsonFile $watchdogStatePath
+  }
+}
+
+function Start-Watchdog {
+  if (!(Test-Path -LiteralPath $watchdogScriptPath)) {
+    Write-HostStep ("Watchdog script missing at {0}" -f $watchdogScriptPath)
+    return
+  }
+
+  $watchdog = Get-WatchdogSnapshot
+  if ($watchdog.running) {
+    return
+  }
+
+  if ($watchdog.pid) {
+    Stop-ProcessIfRunning -ProcessId $watchdog.pid | Out-Null
+  }
+  Remove-FileIfExists $watchdogPidPath
+
+  $proc = Start-Process -FilePath 'powershell.exe' -ArgumentList @(
+      '-NoProfile',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-File',
+      $watchdogScriptPath,
+      '-IntervalSeconds',
+      '120'
+    ) -WorkingDirectory $projectRoot -WindowStyle Hidden -RedirectStandardOutput $watchdogLogPath -RedirectStandardError $watchdogErrorLogPath -PassThru
+  Set-Content -LiteralPath $watchdogPidPath -Value $proc.Id -NoNewline
+  Write-HostStep ("Started NanoClaw watchdog (pid={0})" -f $proc.Id)
+}
+
+function Stop-Watchdog {
+  $watchdogPid = Read-WatchdogPid
+  if ($watchdogPid) {
+    Stop-ProcessIfRunning -ProcessId $watchdogPid | Out-Null
+    Write-HostStep ("Stopped NanoClaw watchdog (pid={0})" -f $watchdogPid)
+  }
+  Remove-FileIfExists $watchdogPidPath
+  Remove-FileIfExists $watchdogStatePath
+}
+
+function Get-AssistantHealthStatus {
+  param(
+    [object] $HostState = $null,
+    [object] $ReadyState = $null,
+    [object] $RuntimePid = $null,
+    [int] $MaxAgeSeconds = 180
+  )
+
+  $health = Read-JsonFile $assistantHealthPath
+  if ($null -eq $health) {
+    return [pscustomobject]@{
+      status = 'missing'
+      detail = 'Assistant health marker is missing.'
+      updatedAt = $null
+    }
+  }
+
+  $updatedAtText = [string] $health.updatedAt
+  $updatedAt = [DateTime]::MinValue
+  if ([string]::IsNullOrWhiteSpace($updatedAtText) -or -not [DateTime]::TryParse($updatedAtText, [ref] $updatedAt)) {
+    return [pscustomobject]@{
+      status = 'stale'
+      detail = 'Assistant health marker has an invalid timestamp.'
+      updatedAt = $updatedAtText
+    }
+  }
+
+  if ($RuntimePid -and [string] $health.pid -match '^[0-9]+$' -and [int] $health.pid -ne [int] $RuntimePid) {
+    return [pscustomobject]@{
+      status = 'degraded'
+      detail = 'Assistant health marker is reporting a different process id.'
+      updatedAt = $updatedAtText
+    }
+  }
+
+  if (
+    $HostState -and
+    -not [string]::IsNullOrWhiteSpace([string] $HostState.bootId) -and
+    -not [string]::IsNullOrWhiteSpace([string] $health.bootId) -and
+    [string] $health.bootId -ne [string] $HostState.bootId
+  ) {
+    return [pscustomobject]@{
+      status = 'degraded'
+      detail = 'Assistant health marker boot id does not match host state.'
+      updatedAt = $updatedAtText
+    }
+  }
+
+  if (
+    $ReadyState -and
+    -not [string]::IsNullOrWhiteSpace([string] $ReadyState.bootId) -and
+    -not [string]::IsNullOrWhiteSpace([string] $health.bootId) -and
+    [string] $health.bootId -ne [string] $ReadyState.bootId
+  ) {
+    return [pscustomobject]@{
+      status = 'degraded'
+      detail = 'Assistant health marker boot id does not match ready state.'
+      updatedAt = $updatedAtText
+    }
+  }
+
+  $ageSeconds = ([DateTime]::UtcNow - $updatedAt.ToUniversalTime()).TotalSeconds
+  if ($ageSeconds -gt $MaxAgeSeconds) {
+    return [pscustomobject]@{
+      status = 'stale'
+      detail = ("Assistant health marker is stale ({0:N0}s old)." -f $ageSeconds)
+      updatedAt = $updatedAtText
+    }
+  }
+
+  $channelIssues = @()
+  foreach ($channel in @($health.channels)) {
+    if ($null -eq $channel) { continue }
+    $configured = $true
+    if ($channel.PSObject.Properties.Name -contains 'configured') {
+      $configured = [bool] $channel.configured
+    }
+    $state = [string] $channel.state
+    if ($configured -and $state -ne 'ready') {
+      $reason = [string] $channel.lastError
+      if ([string]::IsNullOrWhiteSpace($reason)) {
+        $reason = [string] $channel.detail
+      }
+      if ([string]::IsNullOrWhiteSpace($reason)) {
+        $reason = $state
+      }
+      $channelIssues += ('{0}: {1}' -f [string] $channel.name, $reason)
+    }
+  }
+
+  if ($channelIssues.Count -gt 0) {
+    return [pscustomobject]@{
+      status = 'degraded'
+      detail = ($channelIssues -join '; ')
+      updatedAt = $updatedAtText
+    }
+  }
+
+  return [pscustomobject]@{
+    status = 'healthy'
+    detail = 'Assistant health marker is current.'
+    updatedAt = $updatedAtText
   }
 }
 
@@ -469,6 +658,7 @@ function Start-NanoClaw {
   $healthy = Get-HealthyRunningSnapshot
   if ($healthy) {
     Write-HostStep ("NanoClaw already running and ready (pid={0})" -f $healthy.pid)
+    Start-Watchdog
     return
   }
 
@@ -480,6 +670,7 @@ function Start-NanoClaw {
   $startedAt = [DateTime]::UtcNow.ToString('o')
 
   Remove-FileIfExists $readyStatePath
+  Remove-FileIfExists $assistantHealthPath
   Stop-OrphanedRepoProcesses | Out-Null
   Stop-Gateway
   $gatewayStart = Start-Gateway
@@ -517,6 +708,7 @@ function Start-NanoClaw {
     }
 
     Write-HostState -Phase 'running_ready' -BootId $bootId -ProcessId $proc.Id -NodePath $nodeExe -NodeVersion $nodeVersion -StartedAt $startedAt -ReadyAt ([string] $readyState.readyAt) -DependencyState $dependencyState -DependencyError $dependencyError
+    Start-Watchdog
     if ($dependencyState -eq 'degraded') {
       Write-HostStep ("NanoClaw reached running_ready with degraded dependency (pid={0}): {1}" -f $proc.Id, $dependencyError)
     } else {
@@ -533,10 +725,13 @@ function Start-NanoClaw {
   Stop-ProcessIfRunning -ProcessId $proc.Id | Out-Null
   Remove-FileIfExists $pidFile
   Remove-FileIfExists $readyStatePath
+  Remove-FileIfExists $assistantHealthPath
   throw $lastError
 }
 
 function Stop-NanoClaw {
+  Stop-Watchdog
+
   if (Get-Command schtasks.exe -ErrorAction SilentlyContinue) {
     try {
       & schtasks.exe /End /TN 'NanoClaw' *> $null
@@ -559,7 +754,50 @@ function Stop-NanoClaw {
   Stop-Gateway
   Remove-FileIfExists $pidFile
   Remove-FileIfExists $readyStatePath
+  Remove-FileIfExists $assistantHealthPath
   Write-HostState -Phase 'stopped' -BootId '' -NodePath '' -NodeVersion '' -StartedAt '' -InstallModeValue $InstallMode
+}
+
+function Ensure-NanoClaw {
+  $hostState = Read-JsonFile $hostStatePath
+  $readyState = Read-JsonFile $readyStatePath
+  $runtimePid = Read-Pid
+  $processRunning = $false
+
+  if ($runtimePid) {
+    $processRunning = Test-RepoProcess -ProcessId $runtimePid
+  }
+
+  if (-not $processRunning) {
+    Write-HostStep 'Periodic ensure check detected no healthy NanoClaw process; starting a fresh instance'
+    Start-NanoClaw
+    return
+  }
+
+  if (
+    $null -eq $hostState -or
+    $null -eq $readyState -or
+    [string] $hostState.bootId -ne [string] $readyState.bootId -or
+    [int] $readyState.pid -ne [int] $runtimePid
+  ) {
+    Write-HostStep 'Periodic ensure check found a stale ready marker or host state; restarting NanoClaw'
+    Stop-NanoClaw
+    Start-Sleep -Milliseconds 700
+    Start-NanoClaw
+    return
+  }
+
+  $assistantHealth = Get-AssistantHealthStatus -HostState $hostState -ReadyState $readyState -RuntimePid $runtimePid
+  if ([string] $assistantHealth.status -eq 'healthy') {
+    Start-Watchdog
+    Write-Output ("HOST_ENSURE: status=healthy pid={0}" -f $runtimePid)
+    return
+  }
+
+  Write-HostStep ("Periodic ensure check detected assistant health {0}: {1}" -f ([string] $assistantHealth.status), ([string] $assistantHealth.detail))
+  Stop-NanoClaw
+  Start-Sleep -Milliseconds 700
+  Start-NanoClaw
 }
 
 function Show-Status {
@@ -598,6 +836,8 @@ function Show-Status {
   } else {
     $InstallMode
   }
+  $assistantHealth = Get-AssistantHealthStatus -HostState $hostState -ReadyState $readyState -RuntimePid $runtimePid
+  $watchdog = Get-WatchdogSnapshot
 
   Write-Output ("HOST_STATUS: phase={0}" -f $phase)
   Write-Output ("HOST_STATUS: process_running={0}" -f $processRunning.ToString().ToLowerInvariant())
@@ -609,6 +849,11 @@ function Show-Status {
   Write-Output ("HOST_STATUS: last_error={0}" -f ($(if ($hostState -and $hostState.lastError) { [string] $hostState.lastError } else { 'none' })))
   Write-Output ("HOST_STATUS: dependency_state={0}" -f ($(if ($hostState -and $hostState.dependencyState) { [string] $hostState.dependencyState } else { 'unknown' })))
   Write-Output ("HOST_STATUS: dependency_error={0}" -f ($(if ($hostState -and $hostState.dependencyError) { [string] $hostState.dependencyError } else { 'none' })))
+  Write-Output ("HOST_STATUS: assistant_health={0}" -f ([string] $assistantHealth.status))
+  Write-Output ("HOST_STATUS: assistant_health_detail={0}" -f ([string] $assistantHealth.detail))
+  Write-Output ("HOST_STATUS: assistant_health_updated_at={0}" -f ($(if ($assistantHealth.updatedAt) { [string] $assistantHealth.updatedAt } else { 'none' })))
+  Write-Output ("HOST_STATUS: watchdog_running={0}" -f ([string] $watchdog.running).ToLowerInvariant())
+  Write-Output ("HOST_STATUS: watchdog_pid={0}" -f ($(if ($watchdog.pid) { [string] $watchdog.pid } else { 'none' })))
   Write-Output ("HOST_STATUS: host_log={0}" -f $hostLogPath)
 }
 
@@ -632,13 +877,17 @@ try {
       Start-NanoClaw
       break
     }
+    'ensure' {
+      Ensure-NanoClaw
+      break
+    }
     'status' {
       Show-Status
       break
     }
   }
 } catch {
-  if ($Command -eq 'start' -or $Command -eq 'restart') {
+  if ($Command -eq 'start' -or $Command -eq 'restart' -or $Command -eq 'ensure') {
     $message = $_.Exception.Message
     $phase = if (
       $message -match 'pinned Node runtime' -or

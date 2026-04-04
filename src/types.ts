@@ -408,6 +408,22 @@ export interface ChannelSendReceipt {
   threadId?: string | null;
 }
 
+export type ChannelHealthState =
+  | 'starting'
+  | 'ready'
+  | 'degraded'
+  | 'stopped';
+
+export interface ChannelHealthSnapshot {
+  name: string;
+  configured: boolean;
+  state: ChannelHealthState;
+  updatedAt: string;
+  lastReadyAt?: string | null;
+  lastError?: string | null;
+  detail?: string | null;
+}
+
 export interface Channel {
   name: string;
   connect(): Promise<void>;
