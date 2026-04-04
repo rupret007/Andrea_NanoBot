@@ -140,6 +140,11 @@ Andrea_NanoBot now owns the shared shell while backend lanes own execution truth
   - does not replace Cursor or the `/cursor` dashboard
   - the shell now presents one chat-scoped current-work model with lane-specific capabilities, not two separate operator products
 
+On this host, the unified Telegram work cockpit is now live-proven across both first-class execution lanes:
+
+- Cursor Cloud task creation, refresh/output controls, explicit fallback commands, and reply-to-card continuation
+- Codex/OpenAI runtime creation, follow-up, logs, stop, and reply-to-card continuation
+
 Shared shell handles now resolve as `{ laneId, jobId }`.
 The imported `imported/andrea_openai_bot` subtree is temporary staging plus history preservation, not the long-term runtime home.
 

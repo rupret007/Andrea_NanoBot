@@ -9,6 +9,7 @@ For detailed release notes, see the [full changelog on the documentation site](h
 - Landed Andrea Alexa Companion Mode on the mainline integration path, including daily guidance, stronger follow-ups, household-aware phrasing, and explicit consent-based personalization.
 - Aligned the Alexa voice runbooks around the truthful current state: Node `22.22.2`, real OAuth account linking, strong near-live proof, and one remaining real signed Alexa utterance for full live acceptance when it has not been reproven on the host.
 - Preserved the merged shared-shell model with `/cursor` as the primary operator surface, reply-linked runtime follow-up, and a clearer runtime/backend-lane ownership story.
+- Closed the final live work-cockpit proof gap on the operator host: Telegram now has real end-to-end card proofs for both Cursor Cloud and Codex/OpenAI runtime, including reply-to-card continuation and shared current-work selection.
 - Polished repo-facing docs and release guidance so startup, runtime, Telegram operator testing, and Alexa validation all describe the same current behavior.
 - Hardened closeout diagnostics by exposing local Alexa listener and OAuth health in `npm run services:status`, tightening Alexa readiness wording, and making the default assistant identity stay explicitly Andrea in new `.env` setups and tests.
 - Marked the deeper NanoClaw requirements/spec docs as historical reference where they still describe older trigger examples, and aligned their core naming/runtime examples with current Andrea reality.

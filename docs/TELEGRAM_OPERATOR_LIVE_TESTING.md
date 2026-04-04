@@ -206,16 +206,16 @@ Use `npm run telegram:user:smoke` before the broader batch when you want a fast 
 
 For Cursor-specific operator validation, prefer this live workflow:
 
-1. `/cursor`
-2. note the dashboard message id from stdout
-3. `npm run telegram:user:tap -- <dashboard_id> "Jobs"`
-4. `npm run telegram:user:tap -- <dashboard_id> 1`
-5. `npm run telegram:user:tap -- <dashboard_id> "Refresh"`
-6. `npm run telegram:user:tap -- <dashboard_id> "View Output"`
-7. `npm run telegram:user:tap -- <dashboard_id> "Results"`
-8. `npm run telegram:user:tap -- <dashboard_id> "Continue"`
-9. `npm run telegram:user:send -- --reply-to <dashboard_id> "continue with ..."`
-10. `npm run telegram:user:tap -- <dashboard_id> "New Cloud Job"`
+1. `npm run telegram:user:send -- "/cursor-create --repo https://github.com/rupret007/Andrea_NanoBot --ref main Reply with exactly: live cloud smoke ok. Do not modify files, branches, or PRs."`
+2. note the returned Cursor task-card message id from stdout
+3. `npm run telegram:user:send -- --reply-to <task_card_id> "Also include one sentence about operator trust surfaces."`
+4. `npm run telegram:user:tap -- <latest_cursor_card_id> "Refresh"`
+5. `npm run telegram:user:tap -- <latest_cursor_card_id> "View Output"`
+6. `npm run telegram:user:send -- "/cursor"`
+7. note the `/cursor` dashboard message id from stdout
+8. `npm run telegram:user:tap -- <dashboard_id> "Current Work"`
+9. `npm run telegram:user:send -- "/cursor-conversation current 5"`
+10. if the job is disposable and still active, `npm run telegram:user:tap -- <latest_cursor_card_id> "Stop Run"`
 
 Raw ids still work, but the normal Telegram operator path is now dashboard-, tile-, and reply-driven.
 
@@ -224,6 +224,12 @@ Continuity rule:
 - replying to a task card always continues that task
 - otherwise Andrea uses the current work selected in the lane you opened
 - stale or missing work-card replies should fail honestly and point back to `Current Work` or the explicit lane command
+
+Live-proof note:
+
+- this host has now completed a real Telegram Cursor Cloud card proof using the exact flow above
+- the same host has also completed a real Telegram Codex/OpenAI runtime card proof
+- together, that means the unified `/cursor` work cockpit is now live-proven across both execution lanes on this machine
 
 If you are validating the merged `andrea_runtime` lane instead of Cursor:
 

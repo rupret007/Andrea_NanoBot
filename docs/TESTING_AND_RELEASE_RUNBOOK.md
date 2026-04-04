@@ -126,17 +126,18 @@ Expected meaning:
 Run:
 
 - `/cursor_status`
+- `/cursor-create --repo https://github.com/rupret007/Andrea_NanoBot --ref main Reply with exactly: live cloud smoke ok. Do not modify files, branches, or PRs.`
+- reply to the fresh Cursor task card with plain text
+- tap `Refresh`
+- tap `View Output`
 - `/cursor`
-- tap `Current Work` or `Jobs`
-- `/cursor-create --repo https://github.com/rupret007/Andrea_NanoBot Reply with exactly: live cloud smoke ok. Do not modify files, branches, or PRs.`
-- tap a job tile or use `Current Work` / `Current Job`
-- tap `Sync`
-- tap `Text`
-- tap `Files`
+- tap `Current Work`
+- `/cursor-conversation current 5`
+- tap `Results` when the provider has produced files
 
 Optional if safe:
 
-- `/cursor-followup <agent_id> ...`
+- `/cursor-followup <agent_id|current> ...`
 - `/cursor-stop <agent_id>` on a disposable job only
 
 ### Desktop Bridge Validation
