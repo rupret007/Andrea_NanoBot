@@ -12,6 +12,7 @@ import {
   buildRuntimeStatusInlineActions,
   buildRuntimeJobInlineActions,
   dispatchRuntimeCommand,
+  formatRuntimeJobCard,
   formatRuntimeJobsMessage,
   readLatestRuntimeLog,
   type RuntimeCommandContext,
@@ -184,6 +185,51 @@ describe('runtime commands', () => {
   it('formats the empty jobs state clearly', () => {
     expect(formatRuntimeJobsMessage([])).toBe(
       'Andrea has no recent Codex/OpenAI tasks in this workspace right now.',
+    );
+  });
+
+  it('renders runtime cards with prompt previews and concise output summaries', () => {
+    const text = formatRuntimeJobCard(
+      makeDetails({
+        status: 'running',
+        summary:
+          'Continue the long-running proof task with the strongest grounded next step and keep the operator updated.',
+        metadata: {
+          groupFolder: 'main',
+          threadId: 'thread-1',
+          selectedRuntime: 'codex_local',
+          latestOutputText:
+            'Verified the main path and wrote the next proof summary for the operator.',
+        },
+      }),
+    );
+
+    expect(text).toContain('Prompt preview: Continue the long-running proof task');
+    expect(text).toContain('Workspace: main');
+    expect(text).toContain('Runtime: codex_local');
+    expect(text).toContain('Thread: thread-1');
+    expect(text).toContain(
+      'Output summary: Verified the main path and wrote the next proof summary for the operator.',
+    );
+  });
+
+  it('surfaces runtime error summaries with a needs-attention verdict', () => {
+    const text = formatRuntimeJobCard(
+      makeDetails({
+        status: 'failed',
+        summary: 'Follow up on the broken runtime task.',
+        metadata: {
+          groupFolder: 'main',
+          threadId: 'thread-1',
+          selectedRuntime: 'codex_local',
+          errorText: 'Agent execution failed after the container reported an auth error.',
+        },
+      }),
+    );
+
+    expect(text).toContain('Needs attention');
+    expect(text).toContain(
+      'Error summary: Agent execution failed after the container reported an auth error.',
     );
   });
 

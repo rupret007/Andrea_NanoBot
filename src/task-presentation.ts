@@ -193,7 +193,7 @@ export function formatTaskReplyPrompt(params: {
 }
 
 export function formatTaskReplyRoutingGuidance(): string {
-  return 'Replying to a task card always continues that task. Otherwise Andrea uses the current task in the lane you opened.';
+  return 'Replying to a task card always continues that exact task. Otherwise Andrea uses the current work selected in the lane you opened.';
 }
 
 export function formatShellTaskCard(params: {

@@ -135,10 +135,10 @@ Andrea_NanoBot now owns the shared shell while backend lanes own execution truth
   - primary taught dashboard and job workflow
 - **`andrea_runtime` is now integrated as a secondary lane**
   - brings Codex/OpenAI runtime orchestration into this repo
-  - now has a small `Codex/OpenAI` surface inside the primary `/cursor` work panel
-  - `/runtime-*` remains secondary transitional scaffolding
+  - now has a `Codex/OpenAI` surface inside the primary `/cursor` work cockpit
+  - `/runtime-*` remains the explicit runtime fallback shell
   - does not replace Cursor or the `/cursor` dashboard
-  - the shell increasingly presents one task model with lane-specific capabilities, not two separate operator products
+  - the shell now presents one chat-scoped current-work model with lane-specific capabilities, not two separate operator products
 
 Shared shell handles now resolve as `{ laneId, jobId }`.
 The imported `imported/andrea_openai_bot` subtree is temporary staging plus history preservation, not the long-term runtime home.
@@ -197,8 +197,9 @@ Preferred operator command style:
 - public-safe commands stay documented exactly as shown above
 - deeper operator examples use hyphen aliases in Telegram, such as `/cursor`, `/cursor-jobs`, and `/cursor-create`
 - operator examples use `/cursor-results` for output files and `/cursor-download` for one-file retrieval
-- the normal Telegram operator flow is now `/cursor` -> `Jobs`/`Current Job`/`New Cloud Job` or `Codex/OpenAI` tiles -> tap a task/action -> reply with plain text only when you are supplying a follow-up prompt or a new-job prompt
-- replying to a task card always continues that task; otherwise Andrea uses the current task in the lane you opened
+- the normal Telegram operator flow is now `/cursor` -> `Current Work`/`Jobs`/`New Cloud Job` or `Codex/OpenAI` tiles -> tap a task/action -> reply with plain text only when you are supplying a follow-up prompt or a new-job prompt
+- replying to a fresh work card always continues that exact task; otherwise Andrea uses the current work selected in the lane you opened
+- if a work-card reply is stale or missing, Andrea now says so explicitly and points you back to `Current Work` or the lane-specific explicit command fallback
 - underscore aliases still work for compatibility, but the docs now standardize on the hyphen form for operator workflows
 - older `/cursor-artifacts` and `/cursor-artifact-link` aliases still work for compatibility, but they are no longer the preferred operator examples
 
@@ -273,7 +274,7 @@ Notes:
 - operators use `Refresh`, `View Output`, and `Results` in `/cursor`, while `/cursor-conversation`, `/cursor-results`, and `/cursor-download` stay available as explicit fallbacks
 - operators can sync and inspect **desktop bridge sessions**, then run line-oriented terminal commands against tracked bridge sessions on their own machine
 - operators can also open the integrated **Codex/OpenAI runtime** lane from `/cursor` to review or continue runtime tasks when that lane is enabled and validated on the host
-- `/runtime-*` remains available as secondary explicit scaffolding for direct runtime control
+- `/runtime-*` remains available as the explicit runtime fallback shell for direct control, logs, and stop actions
 - keep optional integrations behind explicit operator setup instead of treating them as default demo features
 
 Important Cursor rule:

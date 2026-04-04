@@ -38,8 +38,8 @@ Backend lanes own:
 ### `andrea_runtime`
 
 - integrated Codex/OpenAI backend lane
-- now has a small `Codex/OpenAI` surface inside the primary `/cursor` work shell
-- `/runtime-*` remains temporary secondary scaffolding
+- now has a `Codex/OpenAI` surface inside the primary `/cursor` work shell
+- `/runtime-*` remains the explicit runtime fallback shell
 - does not replace Cursor or the `/cursor` dashboard
 - prefers `codex_local`
 - keeps `openai_cloud` conditional on credentials and host validation
@@ -57,7 +57,7 @@ Rules:
 - `laneId` identifies the backend lane, such as `cursor` or `andrea_runtime`
 - `jobId` is the opaque per-lane execution handle
 - `threadId` or other continuity metadata stays lane-specific secondary metadata
-- replying to a task card always continues that specific task; otherwise the shell uses the current task in the opened lane
+- replying to a fresh task card always continues that specific task; otherwise the shell uses the current work selected in the opened lane
 
 ## Persistence
 
@@ -101,7 +101,7 @@ What is secondary today:
 - `/runtime-stop`
 - `/runtime-logs`
 
-Those `/runtime-*` commands are temporary secondary scaffolding for the `andrea_runtime` lane until that lane gets its own proper shell entry later.
+Those `/runtime-*` commands are the explicit runtime fallback shell for the `andrea_runtime` lane inside the shared cockpit.
 
 ## What Is Validated Today
 

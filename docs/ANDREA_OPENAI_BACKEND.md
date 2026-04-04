@@ -48,7 +48,7 @@ Live behavior note:
 
 ## NanoBot Command Surface
 
-In the current checkout, NanoBot uses a command-first fallback surface for this lane:
+In the current checkout, NanoBot uses an explicit fallback surface for this lane:
 
 - `/runtime-status`
 - `/runtime-create TEXT`
@@ -59,6 +59,12 @@ In the current checkout, NanoBot uses a command-first fallback surface for this 
 - `/runtime-stop [JOB_ID]`
 
 These commands are main-control-only.
+
+The shared `/cursor` cockpit is now the primary taught operator shell:
+
+- `Current Work` shows the selected work item for this chat, regardless of whether it lives in Cursor or the Codex/OpenAI runtime lane
+- explicit backend ids still win whenever you provide one
+- `/runtime-*` remains the lane-honest fallback when you want direct runtime control
 
 NanoBot does not re-sort backend job lists. It uses the backend ordering directly:
 
@@ -86,7 +92,7 @@ NanoBot does not re-sort backend job lists. It uses the backend ordering directl
   - preserves continuity through backend thread reuse when available
 - reply-linked runtime card follow-up
   - replying naturally to a fresh runtime card routes to backend `POST /jobs/:jobId/followup`
-  - stale or missing reply context fails honestly and points back to `/runtime-followup JOB_ID TEXT`
+  - stale or missing reply context fails honestly and points back to `Current Work` or `/runtime-followup JOB_ID TEXT`
 - `/runtime-logs [JOB_ID] [LINES]`
   - reads backend logs for a job
   - with no `JOB_ID`, uses the current runtime selection for that chat
@@ -158,8 +164,8 @@ What is complete now:
 - self-healing first-run backend group bootstrap
 - create, list, refresh, follow-up, logs, and stop through backend `jobId`
 - reply-linked runtime card follow-up from Telegram runtime cards
-- chat-scoped current runtime selection for refresh/logs/stop convenience
-- command-first Telegram operator flow with card-native shortcuts
+- chat-scoped current work selection through the shared Andrea shell, with runtime selection mirrored only for compatibility
+- unified `/cursor` cockpit plus direct `/runtime-*` fallback controls
 - scripted Telegram runtime validation via `npm run telegram:user:runtime`
 
 What is still conditional on this checkout:

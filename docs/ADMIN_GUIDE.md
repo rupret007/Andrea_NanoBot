@@ -74,12 +74,12 @@ Andrea now treats Cursor as three separate surfaces:
 - integrated Codex/OpenAI backend lane under the shared shell
 - execution truth lives in the lane, not in Telegram command handlers
 - surfaced through the `Codex/OpenAI` tile inside `/cursor`
-- `/runtime-*` remains temporary secondary scaffolding
+- `/runtime-*` remains the explicit runtime fallback shell
 - does **not** replace `/cursor` as the taught operator flow
 - `codex_local` is the intended primary runtime for this lane
 - `openai_cloud` remains conditional on `OPENAI_API_KEY` or a compatible gateway
 - host execution stays disabled until `ANDREA_RUNTIME_EXECUTION_ENABLED=true`
-- operators should increasingly think in terms of one current task with lane-specific capabilities, not two separate task systems
+- operators should think in terms of one chat-scoped current work item with lane-specific capabilities, not two separate task systems
 
 Read the architecture note when you need the ownership boundary:
 
@@ -146,7 +146,7 @@ Important truth:
 - `bootstrap_required` now means the backend is reachable but does not support or accept the local bootstrap route
 - `bootstrap_failed` means NanoBot reached the backend, attempted registration, and the registration or immediate retry still failed
 - `/runtime-*` remains the explicit fallback shell, but runtime cards now also support reply-linked follow-up when you reply to a real runtime card
-- the current selected runtime job is now chat-scoped convenience state for `/runtime-job`, `/runtime-logs`, and `/runtime-stop`
+- the current selected runtime job is now a compatibility mirror of the shared current-work selection used by `/cursor` and the runtime shell
 
 ## First Deployment Checklist
 
@@ -254,8 +254,9 @@ Use `/cursor-conversation` for the text trail and `/cursor-results` for output f
 
 Task continuity rule:
 
-- replying to a task card always continues that task
-- otherwise Andrea uses the current task in the lane you opened
+- replying to a fresh task card always continues that exact task
+- otherwise Andrea uses the current work selected in the lane you opened
+- stale or missing work-card replies now fail honestly and point back to the lane-specific explicit fallback command
 
 If `/cursor_status` says `Cloud coding jobs: unavailable`, treat `/cursor-create`, `/cursor-followup`, `/cursor-stop`, `/cursor-models`, `/cursor-results`, and `/cursor-download` as unavailable until `CURSOR_API_KEY` is fixed.
 
@@ -284,7 +285,7 @@ Validate:
 - tap/select a desktop session
 - tap `Refresh`
 - `/cursor-terminal <agent_id> echo operator smoke ok`
-- tap `Current Job`
+- tap `Current Work` or `Current Job`
 - tap `Terminal Status`
 - tap `Terminal Log`
 
@@ -358,7 +359,7 @@ Compatibility note:
 - operator docs use hyphen aliases in Telegram
 - underscore aliases are still accepted, but the hyphen form is the preferred operator-facing syntax
 - older `/cursor-artifacts` and `/cursor-artifact-link` aliases are still accepted, but `/cursor-results` and `/cursor-download` are the preferred workflow names now
-- `/runtime-*` is temporary secondary scaffolding for the `andrea_runtime` lane, not a second primary shell
+- `/runtime-*` is the explicit runtime fallback shell for the `andrea_runtime` lane, not a second primary shell
 - `/debug-*` is troubleshooting-only and operator-only; keep it out of the public command story
 
 ## Live Debug Controls
@@ -403,10 +404,10 @@ This is the normal operator flow now:
 
 1. Run `/cursor_status`
 2. Run `/cursor`
-3. Tap `Jobs`, `Current Job`, `New Cloud Job`, or `Codex/OpenAI`
+3. Tap `Current Work`, `Jobs`, `New Cloud Job`, or `Codex/OpenAI`
 4. Tap a task tile to make it current
 5. Tap `Refresh`, `View Output`, `Results`, or `Continue`, or reply with `/cursor-sync`, `/cursor-conversation`, or `/cursor-results` without repeating the id
-6. Reply with plain text to the **Current Job** dashboard when you want to continue a Cloud job
+6. Reply with plain text to **Current Work**, the **Current Job** dashboard, or a fresh stored Cloud card when you want to continue that exact Cloud job
 7. Use `/cursor-download <absolute_path>` as a reply to the current job dashboard or a result card when you want one file
 8. Use `/cursor-terminal*` only for desktop bridge sessions
 
@@ -414,9 +415,10 @@ Important behavior:
 
 - `/cursor` is now the main operator control panel
 - `/cursor-jobs` now opens the Jobs browser view inside that control panel
+- `Current Work` keeps the selected task visible across Cursor and runtime without hiding lane-specific backend truth
 - the `Codex/OpenAI` tile keeps the integrated runtime lane inside the same operator shell without turning `/runtime-*` into a second primary UX
 - Telegram inline buttons, in-place dashboard edits, and reply-linked output are operator UX improvements; explicit ids still work everywhere
-- plain-text replies only turn into follow-up prompts when you reply to the **Current Job** dashboard or a stored **Cloud** Cursor card in the main control chat
+- plain-text replies only turn into follow-up prompts when you reply to **Current Work**, the **Current Job** dashboard, or a stored **Cloud** Cursor card in the main control chat
 - plain-text replies do **not** continue desktop sessions; desktop sessions still use `/cursor-sync`, `/cursor-conversation`, and `/cursor-terminal*`
 
 ## Telegram Live Validation

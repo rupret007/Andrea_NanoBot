@@ -17,7 +17,7 @@ Andrea_NanoBot remains the shared Telegram-first shell in the merged repo:
 
 - `/cursor` stays the primary taught operator surface
 - Cursor remains the validated rich backend lane
-- `/runtime-*` is temporary secondary scaffolding for the integrated `andrea_runtime` lane
+- `/runtime-*` is the explicit runtime fallback shell for the integrated `andrea_runtime` lane
 
 ## What It Can Do
 
@@ -222,14 +222,15 @@ Raw ids still work, but the normal Telegram operator path is now dashboard-, til
 Continuity rule:
 
 - replying to a task card always continues that task
-- otherwise Andrea uses the current task in the lane you opened
+- otherwise Andrea uses the current work selected in the lane you opened
+- stale or missing work-card replies should fail honestly and point back to `Current Work` or the explicit lane command
 
 If you are validating the merged `andrea_runtime` lane instead of Cursor:
 
 - keep the test in the main control chat
 - start from `/cursor`, then tap `Codex/OpenAI`
-- use `Recent Work` or `Current Task` there before falling back to `/runtime-*`
-- treat `/runtime-*` as secondary scaffolding, not the primary shell
+- use `Current Work` or `Recent Work` there before falling back to `/runtime-*`
+- treat `/runtime-*` as the explicit runtime fallback shell, not the primary shell
 - only expect live execution when `ANDREA_RUNTIME_EXECUTION_ENABLED=true` and the Codex/OpenAI runtime has been validated on this host
 
 ## Run The Runtime Lane Script
@@ -299,7 +300,7 @@ What is real:
 
 - real inbound Telegram testing from this machine is possible once user-session auth is configured
 - this is useful for regression loops against the live bot
-- the merged repo still teaches `/cursor` first; `/runtime-*` is only for secondary runtime-lane validation
+- the merged repo still teaches `/cursor` first; `/runtime-*` is only the explicit runtime fallback path
 - the current runtime-lane script is the intended real-message acceptance path for `/runtime-*`
 
 What is not real:

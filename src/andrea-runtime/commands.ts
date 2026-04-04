@@ -180,13 +180,37 @@ function parsePositiveInt(raw: string | undefined, fallback: number): number {
   return Math.min(120, parsed);
 }
 
+function clipRuntimeTaskText(
+  text: string | null | undefined,
+  limit = 180,
+): string | null {
+  const trimmed = text?.trim() || '';
+  if (!trimmed) return null;
+  return trimmed.length <= limit ? trimmed : `${trimmed.slice(0, limit - 3)}...`;
+}
+
 export function formatRuntimeJobCard(job: BackendJobDetails): string {
   const metadata = (job.metadata || {}) as Record<string, unknown>;
+  const errorText =
+    typeof metadata.errorText === 'string' ? metadata.errorText.trim() : '';
+  const finalOutputText =
+    typeof metadata.finalOutputText === 'string'
+      ? metadata.finalOutputText.trim()
+      : '';
+  const latestOutputText =
+    typeof metadata.latestOutputText === 'string'
+      ? metadata.latestOutputText.trim()
+      : '';
+  const promptPreview = clipRuntimeTaskText(job.summary || job.title || null);
+  const outputSummary = clipRuntimeTaskText(
+    errorText || finalOutputText || latestOutputText || null,
+  );
   return formatShellTaskCard({
     title: `Task ${formatOpaqueTaskId(job.handle.jobId)}`,
     lane: 'codex_runtime',
     status: job.status,
     detailLines: [
+      promptPreview ? `Prompt preview: ${promptPreview}` : null,
       typeof metadata.groupFolder === 'string'
         ? `Workspace: ${metadata.groupFolder}`
         : null,
@@ -196,8 +220,14 @@ export function formatRuntimeJobCard(job: BackendJobDetails): string {
       typeof metadata.threadId === 'string'
         ? `Thread: ${metadata.threadId}`
         : null,
+      outputSummary
+        ? `${errorText ? 'Error summary' : 'Output summary'}: ${outputSummary}`
+        : null,
     ],
-    summary: job.summary,
+    summary:
+      errorText && outputSummary
+        ? 'Needs attention'
+        : job.summary,
     updatedAt: job.updatedAt,
   });
 }

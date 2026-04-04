@@ -2,10 +2,13 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { _initTestDatabase, upsertCursorOperatorContext } from './db.js';
 import {
+  buildCursorReplyContextMissingMessage,
   buildCursorCloudTaskActions,
   buildCursorJobCardActions,
   buildCursorListSelectionActions,
   buildCursorTerminalCardActions,
+  clearSelectedLaneJob,
+  detectCursorReplyProvider,
   flattenCursorJobInventory,
   formatCursorDisplayId,
   getBackendContextGuidance,
@@ -17,6 +20,7 @@ import {
   rememberCursorJobList,
   rememberCursorMessageContext,
   rememberCursorOperatorSelection,
+  resolveCursorReplyContext,
   resolveBackendTarget,
   resolveCursorTarget,
 } from './cursor-operator-context.js';
@@ -374,6 +378,25 @@ describe('operator context helpers', () => {
     expect(context?.selectedJobsByLane?.cursor).toBe('bc_123');
   });
 
+  it('can clear the selected job for one lane without inventing a replacement', () => {
+    rememberCursorOperatorSelection({
+      chatJid: 'tg:1',
+      threadId: '42',
+      laneId: 'cursor',
+      agentId: 'bc_123',
+    });
+
+    clearSelectedLaneJob({
+      chatJid: 'tg:1',
+      threadId: '42',
+      laneId: 'cursor',
+    });
+
+    const context = getActiveCursorOperatorContext('tg:1', '42');
+    expect(context?.selectedLaneId).toBeNull();
+    expect(context?.selectedJobsByLane?.cursor).toBeNull();
+  });
+
   it('returns dashboard-first lane guidance', () => {
     expect(getBackendContextGuidance('cursor')).toContain(
       'Open `/cursor`, then tap `Jobs` or `Current Job`',
@@ -394,5 +417,59 @@ describe('operator context helpers', () => {
     expect(
       formatCursorDisplayId('bc-11111111-2222-3333-4444-555555555555'),
     ).toMatch(/\.\.\./);
+  });
+
+  it('classifies fresh, missing, and expired cursor reply contexts', () => {
+    expect(
+      resolveCursorReplyContext({
+        replyMessageId: '500',
+        replyText: 'Task bc_123\nLane: Cursor Cloud',
+        contextMessageId: '500',
+        contextAgentId: 'bc_123',
+        contextCreatedAt: '2026-04-03T10:00:00.000Z',
+        nowIso: '2026-04-04T09:00:00.000Z',
+      }),
+    ).toEqual({
+      kind: 'ready',
+      provider: 'cloud',
+      agentId: 'bc_123',
+    });
+
+    expect(
+      resolveCursorReplyContext({
+        replyMessageId: '500',
+        replyText: 'Session desk_123\nLane: Cursor Desktop',
+        nowIso: '2026-04-04T09:00:00.000Z',
+      }),
+    ).toEqual({
+      kind: 'missing',
+      provider: 'desktop',
+      agentId: null,
+    });
+
+    expect(
+      resolveCursorReplyContext({
+        replyMessageId: '500',
+        replyText: 'Task bc_123\nLane: Cursor Cloud',
+        contextMessageId: '500',
+        contextAgentId: 'bc_123',
+        contextCreatedAt: '2026-03-20T10:00:00.000Z',
+        nowIso: '2026-04-04T09:00:00.000Z',
+      }),
+    ).toEqual({
+      kind: 'expired',
+      provider: 'cloud',
+      agentId: null,
+    });
+  });
+
+  it('renders lane-appropriate guidance for stale cursor replies', () => {
+    expect(detectCursorReplyProvider('Lane: Cursor Desktop')).toBe('desktop');
+    expect(buildCursorReplyContextMissingMessage('desktop')).toContain(
+      '/cursor-terminal-status',
+    );
+    expect(buildCursorReplyContextMissingMessage('cloud')).toContain(
+      '/cursor-followup [AGENT_ID|LIST_NUMBER|current] TEXT',
+    );
   });
 });

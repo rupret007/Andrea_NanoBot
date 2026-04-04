@@ -7,6 +7,7 @@ import {
   formatTaskLaneLabel,
   formatTaskOutputHeading,
   formatTaskReplyPrompt,
+  formatTaskReplyRoutingGuidance,
   stripLeadingMarkdownTitle,
 } from './task-presentation.js';
 
@@ -48,6 +49,9 @@ describe('task presentation helpers', () => {
       }),
     ).toContain(
       'Reply here with what Andrea should change next for this task.',
+    );
+    expect(formatTaskReplyRoutingGuidance()).toContain(
+      'current work selected in the lane you opened',
     );
   });
 

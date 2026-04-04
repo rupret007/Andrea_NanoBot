@@ -51,6 +51,7 @@ import {
   createCalendarAutomation,
   createTask,
   deleteTask,
+  getCursorMessageContext,
   deleteRuntimeBackendCardContext,
   deleteRuntimeBackendChatSelection,
   getAllAgentThreads,
@@ -305,9 +306,11 @@ import {
 } from './main-chat-routing.js';
 import { buildSilentSuccessFallback } from './user-facing-fallback.js';
 import {
+  buildCursorReplyContextMissingMessage,
   buildCursorCloudTaskActions,
   buildCursorJobCardActions,
   buildCursorTerminalCardActions,
+  clearSelectedLaneJob,
   flattenCursorJobInventory,
   formatCursorJobCard,
   type FlattenedCursorJobEntry,
@@ -322,6 +325,7 @@ import {
   rememberCursorMessageContext,
   rememberCursorOperatorSelection,
   resolveBackendTarget,
+  resolveCursorReplyContext,
   resolveCursorTarget,
 } from './cursor-operator-context.js';
 import {
@@ -331,6 +335,7 @@ import {
   buildCursorDashboardHelp,
   buildCursorDashboardHome,
   buildCursorDashboardJobs,
+  buildCursorDashboardWorkCurrent,
   buildCursorDashboardRuntime,
   buildCursorDashboardRuntimeCurrent,
   buildCursorDashboardRuntimeCurrentEmpty,
@@ -1793,7 +1798,7 @@ function buildAndreaRuntimeStatusMessage(): string {
     lines: [
       `Runtime execution enabled on this host: ${andreaRuntimeExecutionEnabled ? 'yes' : 'no'}`,
       "This is Andrea's integrated Codex/OpenAI runtime lane inside the same shell.",
-      '/cursor is still the cleaner operator surface today. Use /runtime-* only when you want explicit runtime controls.',
+      'Use `/cursor` when you want the unified work cockpit, or `/runtime-*` when you want explicit runtime controls.',
     ],
   });
 }
@@ -1802,40 +1807,123 @@ function getAndreaRuntimeLane(): AndreaRuntimeBackendLane {
   return backendLaneRegistry.get('andrea_runtime') as AndreaRuntimeBackendLane;
 }
 
+function isTerminalWorkStatus(status: string | null | undefined): boolean {
+  const normalized = (status || '').trim().toLowerCase();
+  return (
+    normalized === 'succeeded' ||
+    normalized === 'success' ||
+    normalized === 'completed' ||
+    normalized === 'complete' ||
+    normalized === 'done' ||
+    normalized === 'failed' ||
+    normalized === 'error' ||
+    normalized === 'cancelled' ||
+    normalized === 'canceled' ||
+    normalized === 'stopped'
+  );
+}
+
+interface CurrentWorkSelection {
+  laneId: 'cursor' | 'andrea_runtime';
+  jobId: string;
+  source: 'shared' | 'legacy_runtime_fallback';
+}
+
+function getLegacyRuntimeSelection(
+  chatJid: string,
+  groupFolder: string,
+): string | null {
+  const selection = getRuntimeBackendChatSelection(
+    ANDREA_OPENAI_BACKEND_ID,
+    chatJid,
+  );
+  if (!selection) return null;
+
+  if (selection.group_folder !== groupFolder) {
+    deleteRuntimeBackendChatSelection(ANDREA_OPENAI_BACKEND_ID, chatJid);
+    return null;
+  }
+
+  return selection.job_id;
+}
+
+function clearLegacyRuntimeSelection(chatJid: string): void {
+  deleteRuntimeBackendChatSelection(ANDREA_OPENAI_BACKEND_ID, chatJid);
+}
+
+function getCurrentWorkSelection(
+  chatJid: string,
+  groupFolder: string,
+  threadId?: string,
+): CurrentWorkSelection | null {
+  const activeContext = getActiveCursorOperatorContext(chatJid, threadId);
+  if (activeContext?.selectedLaneId) {
+    const selectedJobId = getSelectedLaneJobId(
+      chatJid,
+      threadId,
+      activeContext.selectedLaneId,
+    );
+    if (selectedJobId) {
+      return {
+        laneId: activeContext.selectedLaneId,
+        jobId: selectedJobId,
+        source: 'shared',
+      };
+    }
+  }
+
+  const legacyRuntimeSelection = getLegacyRuntimeSelection(chatJid, groupFolder);
+  if (!legacyRuntimeSelection) {
+    return null;
+  }
+
+  rememberCursorOperatorSelection({
+    chatJid,
+    threadId,
+    laneId: 'andrea_runtime',
+    agentId: legacyRuntimeSelection,
+  });
+
+  return {
+    laneId: 'andrea_runtime',
+    jobId: legacyRuntimeSelection,
+    source: 'legacy_runtime_fallback',
+  };
+}
+
+function clearCurrentWorkSelection(params: {
+  chatJid: string;
+  threadId?: string;
+  laneId: 'cursor' | 'andrea_runtime';
+  source?: CurrentWorkSelection['source'];
+}): void {
+  clearSelectedLaneJob({
+    chatJid: params.chatJid,
+    threadId: params.threadId,
+    laneId: params.laneId,
+  });
+  if (params.laneId === 'andrea_runtime' || params.source === 'legacy_runtime_fallback') {
+    clearLegacyRuntimeSelection(params.chatJid);
+  }
+}
+
 async function getSelectedDailyWorkContext(
   chatJid: string,
   threadId?: string,
 ): Promise<SelectedWorkContext | null> {
-  const isTerminalWorkStatus = (status: string | null | undefined): boolean => {
-    const normalized = (status || '').trim().toLowerCase();
-    return (
-      normalized === 'succeeded' ||
-      normalized === 'success' ||
-      normalized === 'completed' ||
-      normalized === 'complete' ||
-      normalized === 'done' ||
-      normalized === 'failed' ||
-      normalized === 'error' ||
-      normalized === 'cancelled' ||
-      normalized === 'canceled'
-    );
-  };
-
-  const activeContext = getActiveCursorOperatorContext(chatJid, threadId);
-  if (!activeContext?.selectedLaneId) {
-    return null;
-  }
-
   const group = registeredGroups[chatJid];
   if (!group) {
     return null;
   }
 
-  if (activeContext.selectedLaneId === 'cursor') {
-    const selectedAgentId = getSelectedLaneJobId(chatJid, threadId, 'cursor');
-    if (!selectedAgentId) {
-      return null;
-    }
+  const currentWorkSelection = getCurrentWorkSelection(
+    chatJid,
+    group.folder,
+    threadId,
+  );
+  if (!currentWorkSelection) return null;
+
+  if (currentWorkSelection.laneId === 'cursor') {
     const inventory = await cursorBackendLane.getInventory({
       groupFolder: group.folder,
       chatJid,
@@ -1843,12 +1931,24 @@ async function getSelectedDailyWorkContext(
     });
     const selected =
       flattenCursorJobInventory(inventory).find(
-        (entry) => entry.id === selectedAgentId,
+        (entry) => entry.id === currentWorkSelection.jobId,
       ) || null;
     if (!selected) {
+      clearCurrentWorkSelection({
+        chatJid,
+        threadId,
+        laneId: 'cursor',
+        source: currentWorkSelection.source,
+      });
       return null;
     }
     if (isTerminalWorkStatus(selected.status)) {
+      clearCurrentWorkSelection({
+        chatJid,
+        threadId,
+        laneId: 'cursor',
+        source: currentWorkSelection.source,
+      });
       return null;
     }
     const title =
@@ -1867,23 +1967,27 @@ async function getSelectedDailyWorkContext(
     };
   }
 
-  const selectedJobId = getSelectedLaneJobId(
-    chatJid,
-    threadId,
-    'andrea_runtime',
-  );
-  if (!selectedJobId) {
-    return null;
-  }
   const selected = await getAndreaRuntimeLane().getJob({
-    handle: { laneId: 'andrea_runtime', jobId: selectedJobId },
+    handle: { laneId: 'andrea_runtime', jobId: currentWorkSelection.jobId },
     groupFolder: group.folder,
     chatJid,
   });
   if (!selected) {
+    clearCurrentWorkSelection({
+      chatJid,
+      threadId,
+      laneId: 'andrea_runtime',
+      source: currentWorkSelection.source,
+    });
     return null;
   }
   if (isTerminalWorkStatus(selected.status)) {
+    clearCurrentWorkSelection({
+      chatJid,
+      threadId,
+      laneId: 'andrea_runtime',
+      source: currentWorkSelection.source,
+    });
     return null;
   }
   const runtimeTitle =
@@ -5277,6 +5381,7 @@ async function main(): Promise<void> {
   ): {
     platformMessageId: string;
     agentId: string | null;
+    laneId: 'cursor' | 'andrea_runtime';
     state: CursorDashboardState;
   } | null {
     const context = getActiveCursorMessageContext(chatJid, platformMessageId);
@@ -5288,6 +5393,7 @@ async function main(): Promise<void> {
     return {
       platformMessageId: context.platformMessageId,
       agentId: context.agentId,
+      laneId: context.laneId === 'andrea_runtime' ? 'andrea_runtime' : 'cursor',
       state,
     };
   }
@@ -5345,11 +5451,25 @@ async function main(): Promise<void> {
       limit: 50,
     });
     const flattened = flattenCursorJobInventory(inventory);
+    const selected =
+      selectedAgentId
+        ? flattened.find((entry) => entry.id === selectedAgentId) || null
+        : null;
+    if (selectedAgentId && (!selected || isTerminalWorkStatus(selected.status))) {
+      clearCurrentWorkSelection({
+        chatJid,
+        threadId,
+        laneId: 'cursor',
+        source: 'shared',
+      });
+      return {
+        inventory,
+        selected: null,
+      };
+    }
     return {
       inventory,
-      selected: selectedAgentId
-        ? flattened.find((entry) => entry.id === selectedAgentId) || null
-        : null,
+      selected,
     };
   }
 
@@ -5382,11 +5502,20 @@ async function main(): Promise<void> {
     if (!group) return null;
 
     const runtimeLane = getAndreaRuntimeLane();
-    const selectedJobId = getSelectedLaneJobId(
-      chatJid,
-      threadId,
-      'andrea_runtime',
-    );
+    const selectedJobId =
+      getSelectedLaneJobId(chatJid, threadId, 'andrea_runtime') ||
+      getLegacyRuntimeSelection(chatJid, group.folder);
+    if (
+      selectedJobId &&
+      !getSelectedLaneJobId(chatJid, threadId, 'andrea_runtime')
+    ) {
+      rememberCursorOperatorSelection({
+        chatJid,
+        threadId,
+        laneId: 'andrea_runtime',
+        agentId: selectedJobId,
+      });
+    }
     const jobs = await runtimeLane.listJobs({
       groupFolder: group.folder,
       chatJid,
@@ -5399,6 +5528,17 @@ async function main(): Promise<void> {
           chatJid,
         })
       : null;
+    if (selectedJobId && (!selected || isTerminalWorkStatus(selected.status))) {
+      clearCurrentWorkSelection({
+        chatJid,
+        threadId,
+        laneId: 'andrea_runtime',
+        source: getSelectedLaneJobId(chatJid, threadId, 'andrea_runtime')
+          ? 'shared'
+          : 'legacy_runtime_fallback',
+      });
+      return { jobs, selected: null };
+    }
 
     return { jobs, selected };
   }
@@ -5500,15 +5640,11 @@ async function main(): Promise<void> {
           params.sourceMessage?.thread_id,
         ),
       ]);
-      const activeContext = getActiveCursorOperatorContext(
+      const currentWorkSelection = getCurrentWorkSelection(
         params.chatJid,
+        group.folder,
         params.sourceMessage?.thread_id,
       );
-      const selectedLaneId = activeContext?.selectedLaneId || 'cursor';
-      const selectedAgentId =
-        selectedLaneId === 'andrea_runtime'
-          ? runtimeSelection?.selected?.handle.jobId || null
-          : selection?.selected?.id || null;
       const render = buildCursorDashboardHome({
         ...summarizeCursorDashboardLines({
           cloudStatus,
@@ -5517,7 +5653,7 @@ async function main(): Promise<void> {
         }),
         currentJob: selection?.selected || undefined,
         currentRuntimeTask: runtimeSelection?.selected || undefined,
-        currentFocusLaneId: activeContext?.selectedLaneId || null,
+        currentFocusLaneId: currentWorkSelection?.laneId || null,
       });
       return upsertCursorDashboardMessage({
         chatJid: params.chatJid,
@@ -5525,8 +5661,8 @@ async function main(): Promise<void> {
         state: params.state,
         text: render.text,
         inlineActionRows: render.inlineActionRows,
-        selectedAgentId,
-        selectedLaneId,
+        selectedAgentId: currentWorkSelection?.jobId || null,
+        selectedLaneId: currentWorkSelection?.laneId,
         forceNew: params.forceNew,
       });
     }
@@ -5619,6 +5755,44 @@ async function main(): Promise<void> {
         inlineActionRows: render.inlineActionRows,
         selectedAgentId: render.selectedAgentId,
         selectedLaneId: 'cursor',
+        forceNew: params.forceNew,
+      });
+    }
+
+    if (params.state.kind === 'work_current') {
+      const [selection, runtimeSelection] = await Promise.all([
+        getCursorSelectedAgentRecord(
+          params.chatJid,
+          params.sourceMessage?.thread_id,
+        ),
+        getRuntimeSelectedJobRecord(
+          params.chatJid,
+          params.sourceMessage?.thread_id,
+        ),
+      ]);
+      const currentWorkSelection = getCurrentWorkSelection(
+        params.chatJid,
+        group.folder,
+        params.sourceMessage?.thread_id,
+      );
+      const render = buildCursorDashboardWorkCurrent({
+        currentFocusLaneId: currentWorkSelection?.laneId || null,
+        currentJob: selection?.selected || undefined,
+        currentRuntimeTask: runtimeSelection?.selected || undefined,
+        executionEnabled: andreaRuntimeExecutionEnabled,
+        currentJobResultCount:
+          selection?.selected?.provider === 'cloud'
+            ? cursorBackendLane.getTrackedArtifactCount(selection.selected.id)
+            : 0,
+      });
+      return upsertCursorDashboardMessage({
+        chatJid: params.chatJid,
+        sourceMessage: params.sourceMessage,
+        state: params.state,
+        text: render.text,
+        inlineActionRows: render.inlineActionRows,
+        selectedAgentId: currentWorkSelection?.jobId || render.selectedAgentId,
+        selectedLaneId: currentWorkSelection?.laneId,
         forceNew: params.forceNew,
       });
     }
@@ -6888,6 +7062,15 @@ async function main(): Promise<void> {
       return;
     }
 
+    if (action === 'work-current') {
+      await openCursorDashboard({
+        chatJid,
+        sourceMessage,
+        state: { kind: 'work_current' },
+      });
+      return;
+    }
+
     if (action === 'desktop') {
       await openCursorDashboard({
         chatJid,
@@ -6994,7 +7177,7 @@ async function main(): Promise<void> {
       await openCursorDashboard({
         chatJid,
         sourceMessage,
-        state: { kind: 'current' },
+        state: { kind: 'work_current' },
       });
       return;
     }
@@ -7043,7 +7226,7 @@ async function main(): Promise<void> {
       await openCursorDashboard({
         chatJid,
         sourceMessage,
-        state: { kind: 'runtime_current' },
+        state: { kind: 'work_current' },
       });
       return;
     }
@@ -8295,6 +8478,31 @@ async function main(): Promise<void> {
               return /^runtime-job-/i.test(raw.trim()) ? raw.trim() : null;
             },
           });
+          if (!resolved.target) {
+            const legacySelection = getLegacyRuntimeSelection(
+              targetChatJid,
+              group.folder,
+            );
+            if (
+              legacySelection &&
+              (!requestedTarget || requestedTarget.trim().toLowerCase() === 'current')
+            ) {
+              rememberCursorOperatorSelection({
+                chatJid: targetChatJid,
+                threadId,
+                laneId: 'andrea_runtime',
+                agentId: legacySelection,
+              });
+              return {
+                target: {
+                  handle: { laneId: 'andrea_runtime', jobId: legacySelection },
+                  jobId: legacySelection,
+                  via: 'selected' as const,
+                },
+                failureMessage: null,
+              };
+            }
+          }
           return resolved.target
             ? {
                 target: {
@@ -8984,13 +9192,18 @@ async function main(): Promise<void> {
           return;
         }
 
-        if (repliedCursorDashboard.state.kind === 'current') {
+        if (
+          repliedCursorDashboard.state.kind === 'current' ||
+          repliedCursorDashboard.state.kind === 'work_current'
+        ) {
           if (!repliedCursorDashboard.agentId) {
             const channel = findChannel(channels, chatJid);
             channel
               ?.sendMessage(
                 chatJid,
-                'No current task is selected in the Cursor lane. Open `Jobs`, then tap a task before replying here. Slash commands and raw ids still work if you want an explicit fallback.',
+                repliedCursorDashboard.state.kind === 'work_current'
+                  ? 'No current work is selected in this chat. Open `Jobs` or `Codex/OpenAI` -> `Recent Work`, then tap a task before replying here. Explicit ids and lane-specific slash commands still work if you want an explicit fallback.'
+                  : 'No current task is selected in the Cursor lane. Open `Jobs`, then tap a task before replying here. Slash commands and raw ids still work if you want an explicit fallback.',
                 buildOperatorSendOptions(msg),
               )
               .catch((err) =>
@@ -8999,6 +9212,35 @@ async function main(): Promise<void> {
                   'Current dashboard empty guidance send failed',
                 ),
               );
+            return;
+          }
+
+          if (repliedCursorDashboard.laneId === 'andrea_runtime') {
+            if (!andreaRuntimeExecutionEnabled) {
+              const channel = findChannel(channels, chatJid);
+              channel
+                ?.sendMessage(
+                  chatJid,
+                  buildAndreaRuntimeDisabledMessage(),
+                  buildOperatorSendOptions(msg),
+                )
+                .catch((err) =>
+                  logger.error(
+                    { err, chatJid },
+                    'Current-work runtime disabled guidance send failed',
+                  ),
+                );
+              return;
+            }
+
+            handleAndreaRuntimeCommand(
+              chatJid,
+              `/runtime-followup ${repliedCursorDashboard.agentId} ${rawTrimmed}`,
+              '/runtime-followup',
+              msg,
+            ).catch((err) =>
+              logger.error({ err, chatJid }, 'Current-work runtime followup error'),
+            );
             return;
           }
 
@@ -9077,12 +9319,43 @@ async function main(): Promise<void> {
         }
       }
 
-      const repliedMessageContext =
+      const rawRepliedMessageContext =
         registeredGroups[chatJid]?.isMain === true &&
         !isSlashCommand &&
         rawTrimmed
+          ? getCursorMessageContext(chatJid, msg.reply_to_id || '')
+          : null;
+      const repliedMessageContext =
+        rawRepliedMessageContext && msg.reply_to_id
           ? getActiveCursorMessageContext(chatJid, msg.reply_to_id)
           : null;
+      const cursorReplyContext = resolveCursorReplyContext({
+        replyMessageId: msg.reply_to_id,
+        replyText: msg.reply_to?.content,
+        contextMessageId: rawRepliedMessageContext?.platform_message_id,
+        contextAgentId: rawRepliedMessageContext?.agent_id || null,
+        contextCreatedAt: rawRepliedMessageContext?.created_at || null,
+        nowIso: new Date().toISOString(),
+      });
+      if (
+        cursorReplyContext.kind === 'missing' ||
+        cursorReplyContext.kind === 'expired'
+      ) {
+        const channel = findChannel(channels, chatJid);
+        channel
+          ?.sendMessage(
+            chatJid,
+            buildCursorReplyContextMissingMessage(cursorReplyContext.provider),
+            buildOperatorSendOptions(msg),
+          )
+          .catch((err) =>
+            logger.error(
+              { err, chatJid },
+              'Cursor reply-context guidance send failed',
+            ),
+          );
+        return;
+      }
       if (
         repliedMessageContext?.agentId &&
         repliedMessageContext.contextKind !== 'cursor_dashboard'

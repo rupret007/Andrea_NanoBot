@@ -127,9 +127,9 @@ Run:
 
 - `/cursor_status`
 - `/cursor`
-- tap `Jobs`
+- tap `Current Work` or `Jobs`
 - `/cursor-create --repo https://github.com/rupret007/Andrea_NanoBot Reply with exactly: live cloud smoke ok. Do not modify files, branches, or PRs.`
-- tap a job tile or use `Current Job`
+- tap a job tile or use `Current Work` / `Current Job`
 - tap `Sync`
 - tap `Text`
 - tap `Files`
@@ -160,8 +160,8 @@ Run:
 - tap a desktop session
 - tap `Sync` if a recoverable session exists
 - `/cursor-terminal <agent_id> echo operator smoke ok`
-- tap `Current Job` -> `Terminal Status`
-- tap `Current Job` -> `Terminal Log`
+- tap `Current Work` or `Current Job` -> `Terminal Status`
+- tap `Current Work` or `Current Job` -> `Terminal Log`
 - `/cursor-terminal-stop <agent_id>` if appropriate
 
 Do not confuse desktop bridge readiness with Cursor Cloud readiness.

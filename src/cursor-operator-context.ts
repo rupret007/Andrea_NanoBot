@@ -72,7 +72,7 @@ export interface SelectedJobsByLane {
 export interface ActiveCursorOperatorContext {
   chatJid: string;
   threadId?: string;
-  selectedLaneId: BackendLaneId;
+  selectedLaneId: BackendLaneId | null;
   selectedAgentId: string | null;
   selectedJobsByLane: SelectedJobsByLane | null;
   lastListSnapshotsByLane: Partial<
@@ -85,10 +85,19 @@ export interface ActiveCursorOperatorContext {
 }
 
 function isFreshTimestamp(timestamp: string | null | undefined): boolean {
+  return isFreshTimestampAt(timestamp, new Date().toISOString());
+}
+
+function isFreshTimestampAt(
+  timestamp: string | null | undefined,
+  nowIso: string,
+): boolean {
   if (!timestamp) return false;
   const createdAt = Date.parse(timestamp);
   if (!Number.isFinite(createdAt)) return false;
-  return Date.now() - createdAt <= CURSOR_CONTEXT_TTL_MS;
+  const now = Date.parse(nowIso);
+  if (!Number.isFinite(now)) return false;
+  return now - createdAt <= CURSOR_CONTEXT_TTL_MS;
 }
 
 function parseSnapshotItems(parsed: unknown): CursorListSnapshotItem[] {
@@ -272,6 +281,38 @@ export function rememberCursorOperatorSelection(params: {
   });
 }
 
+export function clearSelectedLaneJob(params: {
+  chatJid: string;
+  threadId?: string;
+  laneId: BackendLaneId;
+}): void {
+  const existing = getCursorOperatorContext(params.chatJid, params.threadId);
+  const selectedJobs =
+    parseSelectedJobsByLaneJson(existing?.selected_jobs_by_lane_json || null) ||
+    {};
+  selectedJobs[params.laneId] = null;
+
+  const existingLaneId =
+    existing?.selected_lane_id === 'andrea_runtime'
+      ? 'andrea_runtime'
+      : existing?.selected_lane_id === CURSOR_LANE_ID
+        ? CURSOR_LANE_ID
+        : null;
+  const nextSelectedLaneId =
+    existingLaneId === params.laneId ? null : existingLaneId;
+  const nextSelectedAgentId = nextSelectedLaneId
+    ? (selectedJobs[nextSelectedLaneId] ?? null)
+    : null;
+
+  upsertCursorOperatorContext({
+    chatJid: params.chatJid,
+    threadId: params.threadId,
+    selectedLaneId: nextSelectedLaneId,
+    selectedAgentId: nextSelectedAgentId,
+    selectedJobsByLaneJson: JSON.stringify(selectedJobs),
+  });
+}
+
 export function rememberCursorDashboardMessage(params: {
   chatJid: string;
   threadId?: string;
@@ -389,22 +430,32 @@ export function getActiveCursorOperatorContext(
 ): ActiveCursorOperatorContext | null {
   const record = getCursorOperatorContext(chatJid, threadId);
   if (!record || !isFreshTimestamp(record.updated_at)) return null;
-  const selectedLaneId =
+  const requestedLaneId =
     record.selected_lane_id === 'andrea_runtime'
       ? 'andrea_runtime'
-      : CURSOR_LANE_ID;
+      : record.selected_lane_id === CURSOR_LANE_ID
+        ? CURSOR_LANE_ID
+        : null;
   const lastListSnapshotsByLane =
     parseSnapshotCollectionJson(record.last_list_snapshot_json) || null;
+  const selectedJobsByLane =
+    parseSelectedJobsByLaneJson(record.selected_jobs_by_lane_json) || null;
+  const selectedLaneId =
+    requestedLaneId &&
+    (requestedLaneId === 'andrea_runtime'
+      ? selectedJobsByLane?.andrea_runtime
+      : selectedJobsByLane?.cursor)
+      ? requestedLaneId
+      : null;
   return {
     chatJid: record.chat_jid,
     threadId: record.thread_id || undefined,
     selectedLaneId,
-    selectedAgentId: getSelectedJobId(record, selectedLaneId),
-    selectedJobsByLane:
-      parseSelectedJobsByLaneJson(record.selected_jobs_by_lane_json) || null,
+    selectedAgentId: selectedLaneId ? getSelectedJobId(record, selectedLaneId) : null,
+    selectedJobsByLane,
     lastListSnapshotsByLane,
     lastListSnapshot:
-      lastListSnapshotsByLane?.[selectedLaneId] ||
+      (selectedLaneId ? lastListSnapshotsByLane?.[selectedLaneId] : null) ||
       lastListSnapshotsByLane?.cursor ||
       null,
     lastListMessageId: record.last_list_message_id,
@@ -437,6 +488,108 @@ export function looksLikeCursorTargetToken(raw: string | undefined): boolean {
   } catch {
     return false;
   }
+}
+
+export type CursorReplyContextProvider = 'cloud' | 'desktop';
+
+export interface CursorReplyContextResolution {
+  kind: 'not_work_reply' | 'missing' | 'expired' | 'ready';
+  provider: CursorReplyContextProvider | null;
+  agentId: string | null;
+}
+
+export function detectCursorReplyProvider(
+  text: string | null | undefined,
+): CursorReplyContextProvider | null {
+  const trimmed = (text || '').trim();
+  if (!trimmed) return null;
+  if (
+    /Lane:\s*Cursor Desktop/i.test(trimmed) ||
+    /Task:\s*Cursor Desktop/i.test(trimmed) ||
+    /Desktop bridge/i.test(trimmed) ||
+    /Desktop session/i.test(trimmed)
+  ) {
+    return 'desktop';
+  }
+  if (
+    /Lane:\s*Cursor Cloud/i.test(trimmed) ||
+    /Task:\s*Cursor Cloud/i.test(trimmed) ||
+    /Cursor Cloud/i.test(trimmed) ||
+    /Current output for this task/i.test(trimmed) ||
+    /No output is available yet for this task/i.test(trimmed)
+  ) {
+    return 'cloud';
+  }
+  return null;
+}
+
+export function resolveCursorReplyContext(params: {
+  replyMessageId?: string;
+  replyText?: string;
+  contextMessageId?: string;
+  contextAgentId?: string | null;
+  contextCreatedAt?: string | null;
+  nowIso: string;
+  payload?: Record<string, unknown> | null;
+}): CursorReplyContextResolution {
+  const replyMessageId = params.replyMessageId?.trim() || '';
+  const replyText = params.replyText?.trim() || '';
+  const payloadProvider =
+    params.payload?.provider === 'desktop' || params.payload?.provider === 'cloud'
+      ? params.payload.provider
+      : null;
+  const detectedProvider = payloadProvider || detectCursorReplyProvider(replyText);
+
+  if (!replyMessageId || !detectedProvider) {
+    return {
+      kind: 'not_work_reply',
+      provider: null,
+      agentId: null,
+    };
+  }
+
+  if (
+    !params.contextMessageId ||
+    params.contextMessageId !== replyMessageId ||
+    !params.contextAgentId
+  ) {
+    return {
+      kind: 'missing',
+      provider: detectedProvider,
+      agentId: null,
+    };
+  }
+
+  if (!isFreshTimestampAt(params.contextCreatedAt, params.nowIso)) {
+    return {
+      kind: 'expired',
+      provider: detectedProvider,
+      agentId: null,
+    };
+  }
+
+  return {
+    kind: 'ready',
+    provider: detectedProvider,
+    agentId: params.contextAgentId,
+  };
+}
+
+export function buildCursorReplyContextMissingMessage(
+  provider: CursorReplyContextProvider | null,
+): string {
+  if (provider === 'desktop') {
+    return [
+      'I can only use a fresh reply-linked context for Cursor work cards.',
+      'This desktop session reply is missing or stale.',
+      'Open `/cursor` -> `Current Job` again, or use `/cursor-sync`, `/cursor-terminal-status`, or `/cursor-terminal-log` explicitly.',
+    ].join(' ');
+  }
+
+  return [
+    'I can only continue a Cursor task when that reply points to a fresh task card.',
+    'Open `/cursor` -> `Current Work` or `Jobs`, then reply to a fresh card, or use `/cursor-followup [AGENT_ID|LIST_NUMBER|current] TEXT` explicitly.',
+  ].join(' ');
 }
 
 function resolveFromOrdinal(
@@ -623,6 +776,12 @@ function summarizeCursorRecord(record: CursorAgentView): string | null {
   );
 }
 
+function clipCursorPromptPreview(text: string | null | undefined): string | null {
+  const trimmed = text?.trim() || '';
+  if (!trimmed) return null;
+  return trimmed.length <= 180 ? trimmed : `${trimmed.slice(0, 177)}...`;
+}
+
 export function formatCursorListEntry(record: FlattenedCursorJobEntry): string {
   const summary = summarizeCursorRecord(record);
   const updatedAt = record.updatedAt || record.lastSyncedAt || record.createdAt;
@@ -634,11 +793,13 @@ export function formatCursorJobCard(
   resultCount = 0,
 ): string {
   const isDesktop = record.provider === 'desktop';
+  const promptPreview = clipCursorPromptPreview(record.promptText);
   return formatShellTaskCard({
     title: `${isDesktop ? 'Session' : 'Task'} ${formatCursorDisplayId(record.id)}`,
     lane: isDesktop ? 'cursor_desktop' : 'cursor_cloud',
     status: record.status,
     detailLines: [
+      promptPreview ? `Prompt preview: ${promptPreview}` : null,
       record.model ? `Model: ${record.model}` : null,
       record.sourceRepository ? `Repo: ${record.sourceRepository}` : null,
       record.targetUrl ? `URL: ${record.targetUrl}` : null,
@@ -647,6 +808,7 @@ export function formatCursorJobCard(
         ? `Results: ${resultCount === 0 ? 'none yet' : `${resultCount} file${resultCount === 1 ? '' : 's'}`}`
         : null,
     ],
+    summary: record.summary || null,
     updatedAt: record.updatedAt,
   });
 }

@@ -18,6 +18,15 @@ describe('resolveAlexaLinkedAccountSeed', () => {
     expect(resolveAlexaLinkedAccountSeed({})).toBeNull();
   });
 
+  it('ignores partial display metadata when no seed token is configured', () => {
+    expect(
+      resolveAlexaLinkedAccountSeed({
+        ALEXA_LINKED_ACCOUNT_NAME: 'Andrea Alexa',
+        ALEXA_LINKED_ACCOUNT_GROUP_FOLDER: 'main',
+      }),
+    ).toBeNull();
+  });
+
   it('requires token and group folder together', () => {
     expect(() =>
       resolveAlexaLinkedAccountSeed({

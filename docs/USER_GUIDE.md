@@ -83,6 +83,8 @@ If your admin enabled Alexa, Andrea can also answer short spoken questions like:
 
 Those voice features stay linked-account only and use explicit personalization controls.
 
+If your admin enabled the work cockpit, Andrea can also keep one chat-scoped current work item across Cursor and Codex/OpenAI. That selection is operator-facing convenience only; explicit job or task ids still win whenever an admin uses them.
+
 ## What To Expect From `/cursor_status`
 
 `/cursor_status` is not a job launcher.

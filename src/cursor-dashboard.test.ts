@@ -6,6 +6,7 @@ import {
   buildCursorDashboardHelp,
   buildCursorDashboardHome,
   buildCursorDashboardJobs,
+  buildCursorDashboardWorkCurrent,
   buildCursorDashboardRuntime,
   buildCursorDashboardRuntimeCurrent,
   buildCursorDashboardRuntimeCurrentEmpty,
@@ -186,8 +187,18 @@ describe('cursor dashboard helpers', () => {
         currentFocusLaneId: 'andrea_runtime',
       }).text,
     ).toContain('Current focus: Codex/OpenAI runtime');
+    expect(
+      buildCursorDashboardHome({
+        cloudLine: 'ready',
+        desktopLine: 'optional and unavailable',
+        runtimeRouteLine: 'optional and off',
+        codexRuntimeLine: 'integrated and conditional',
+        currentRuntimeTask: runtimeJob,
+        currentFocusLaneId: 'andrea_runtime',
+      }).text,
+    ).toContain('Current work: Codex/OpenAI runtime');
     expect(buildCursorDashboardHelp().text).toContain(
-      'Replying to a task card always continues that task',
+      'Replying to a task card always continues that exact task',
     );
     expect(buildCursorDashboardHelp().text).toContain(
       'Slash commands still work',
@@ -227,6 +238,38 @@ describe('cursor dashboard helpers', () => {
     expect(buildCursorDashboardRuntimeCurrentEmpty().text).toContain(
       'No current task is selected in the Codex/OpenAI lane',
     );
+  });
+
+  it('renders a unified current-work view for whichever lane is selected', () => {
+    const cursorRender = buildCursorDashboardWorkCurrent({
+      currentFocusLaneId: 'cursor',
+      currentJob: cloudJob,
+      executionEnabled: true,
+      currentJobResultCount: 3,
+    });
+    const runtimeRender = buildCursorDashboardWorkCurrent({
+      currentFocusLaneId: 'andrea_runtime',
+      currentRuntimeTask: runtimeJob,
+      executionEnabled: true,
+    });
+    const emptyRender = buildCursorDashboardWorkCurrent({
+      currentFocusLaneId: null,
+      executionEnabled: false,
+    });
+
+    expect(cursorRender.text).toContain('*Current Work*');
+    expect(cursorRender.text).toContain('Lane: Cursor Cloud');
+    expect(cursorRender.inlineActionRows.flat().map((action) => action.label)).toContain(
+      'Continue',
+    );
+
+    expect(runtimeRender.text).toContain('*Current Work*');
+    expect(runtimeRender.text).toContain('Lane: Codex/OpenAI runtime');
+    expect(runtimeRender.inlineActionRows.flat().map((action) => action.label)).toContain(
+      'View Output',
+    );
+
+    expect(emptyRender.text).toContain('No current work is selected in this chat yet');
   });
 
   it('shows repo and prompt preview in the create confirmation view', () => {

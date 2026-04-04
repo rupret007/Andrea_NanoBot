@@ -92,16 +92,8 @@ export function resolveAlexaLinkedAccountSeed(
       envFile.ALEXA_LINKED_ACCOUNT_ALLOWED_PERSON_ID,
   );
 
-  const configuredValues = [
-    token,
-    displayName !== 'Andrea Alexa' ? displayName : '',
-    groupFolder,
-    allowedAlexaUserId || '',
-    allowedAlexaPersonId || '',
-  ].filter(Boolean);
-
-  if (configuredValues.length === 0) return null;
-  if (!token || !groupFolder) {
+  if (!token) return null;
+  if (!groupFolder) {
     throw new Error(
       'Alexa linked-account seeding requires both ALEXA_LINKED_ACCOUNT_TOKEN and ALEXA_LINKED_ACCOUNT_GROUP_FOLDER.',
     );

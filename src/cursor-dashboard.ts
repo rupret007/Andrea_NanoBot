@@ -27,6 +27,7 @@ export type CursorDashboardViewKind =
   | 'home'
   | 'status'
   | 'jobs'
+  | 'work_current'
   | 'current'
   | 'runtime'
   | 'runtime_jobs'
@@ -63,6 +64,7 @@ export function parseCursorDashboardState(
     kind !== 'home' &&
     kind !== 'status' &&
     kind !== 'jobs' &&
+    kind !== 'work_current' &&
     kind !== 'current' &&
     kind !== 'runtime' &&
     kind !== 'runtime_jobs' &&
@@ -127,14 +129,17 @@ function buildHomeRows(): ChannelInlineAction[][] {
       { label: 'Jobs', actionId: '/cursor-ui jobs' },
     ],
     [
+      { label: 'Current Work', actionId: '/cursor-ui work-current' },
       { label: 'New Cloud Job', actionId: '/cursor-ui new' },
+    ],
+    [
       { label: 'Current Job', actionId: '/cursor-ui current' },
+      { label: 'Codex/OpenAI', actionId: '/cursor-ui runtime' },
     ],
     [
       { label: 'Desktop', actionId: '/cursor-ui desktop' },
-      { label: 'Codex/OpenAI', actionId: '/cursor-ui runtime' },
+      { label: 'Help', actionId: '/cursor-ui help' },
     ],
-    [{ label: 'Help', actionId: '/cursor-ui help' }],
   ];
 }
 
@@ -159,6 +164,20 @@ function summarizeRuntimeTask(
       ? record.metadata.selectedRuntime
       : null;
   return `${formatOpaqueTaskId(record.handle.jobId)} [${formatHumanTaskStatus(record.status)}]${runtime ? ` via ${runtime}` : ''}`;
+}
+
+function summarizeCurrentWork(params: {
+  currentFocusLaneId?: BackendLaneId | null;
+  currentJob?: CursorAgentView | null;
+  currentRuntimeTask?: BackendJobDetails | null;
+}): string {
+  if (params.currentFocusLaneId === 'andrea_runtime' && params.currentRuntimeTask) {
+    return `Codex/OpenAI runtime ${summarizeRuntimeTask(params.currentRuntimeTask)}`;
+  }
+  if (params.currentFocusLaneId === 'cursor' && params.currentJob) {
+    return `Cursor ${summarizeCurrentJob(params.currentJob)}`;
+  }
+  return 'none selected yet';
 }
 
 function summarizeJobLine(record: FlattenedCursorJobEntry): string {
@@ -189,16 +208,17 @@ export function buildCursorDashboardHome(params: {
 }): CursorDashboardRender {
   return {
     text: [
-      '*Andrea Work Panel*',
+      '*Andrea Work Cockpit*',
       '',
-      '- Cursor is the primary rich work lane today.',
-      "- Codex/OpenAI runtime is Andrea's deeper runtime lane when it is enabled on this host.",
+      '- Cursor Cloud, Cursor Desktop, and Codex/OpenAI runtime share one work shell here.',
+      '- Lane-specific ids and controls stay authoritative even when Andrea shows one current-work view.',
       '- Desktop bridge stays operator-only for machine control.',
       '',
       `- Cursor Cloud: ${params.cloudLine}`,
       `- Desktop bridge: ${params.desktopLine}`,
       `- Codex/OpenAI runtime: ${params.codexRuntimeLine}`,
       `- Cursor-backed runtime route: ${params.runtimeRouteLine}`,
+      `- Current work: ${summarizeCurrentWork(params)}`,
       params.currentJob
         ? `- Current Cursor task: ${summarizeCurrentJob(params.currentJob)}`
         : '- Current Cursor task: none selected yet',
@@ -209,7 +229,7 @@ export function buildCursorDashboardHome(params: {
       '',
       formatTaskReplyRoutingGuidance(),
       '',
-      'Tap a tile to keep working on the current task, browse recent work, or start a new Cursor Cloud task.',
+      'Tap `Current Work` to stay with the selected item, or browse `Jobs` and `Codex/OpenAI` to switch lanes.',
     ].join('\n'),
     inlineActionRows: buildHomeRows(),
     selectedAgentId: params.currentJob?.id || null,
@@ -365,6 +385,118 @@ export function buildCursorDashboardCurrentJobEmpty(): CursorDashboardRender {
   };
 }
 
+export function buildCursorDashboardWorkCurrent(params: {
+  currentFocusLaneId?: BackendLaneId | null;
+  currentJob?: CursorAgentView | null;
+  currentRuntimeTask?: BackendJobDetails | null;
+  executionEnabled: boolean;
+  currentJobResultCount?: number;
+}): CursorDashboardRender {
+  if (params.currentFocusLaneId === 'andrea_runtime' && params.currentRuntimeTask) {
+    const rows: ChannelInlineAction[][] = [
+      [
+        { label: 'Refresh', actionId: '/cursor-ui runtime-refresh' },
+        { label: 'View Output', actionId: '/cursor-ui runtime-output' },
+      ],
+      [
+        ...(params.executionEnabled
+          ? [{ label: 'Continue', actionId: '/cursor-ui runtime-followup' }]
+          : []),
+        ...(params.executionEnabled &&
+        (params.currentRuntimeTask.status === 'queued' ||
+          params.currentRuntimeTask.status === 'running')
+          ? [{ label: 'Stop Run', actionId: '/cursor-ui runtime-stop' }]
+          : []),
+      ],
+      [{ label: 'Back', actionId: '/cursor-ui home' }],
+    ];
+
+    return {
+      text: [
+        '*Current Work*',
+        '',
+        formatRuntimeJobCard(params.currentRuntimeTask),
+        '',
+        formatTaskContinuationGuidance({
+          lane: 'codex_runtime',
+          canReplyContinue: params.executionEnabled,
+        }),
+      ]
+        .filter((line): line is string => Boolean(line))
+        .join('\n'),
+      inlineActionRows: rows.filter((row) => row.length > 0),
+      selectedAgentId: params.currentRuntimeTask.handle.jobId,
+    };
+  }
+
+  if (params.currentFocusLaneId === 'cursor' && params.currentJob) {
+    const isCloud = params.currentJob.provider === 'cloud';
+    const rows: ChannelInlineAction[][] = isCloud
+      ? [
+          [
+            { label: 'Refresh', actionId: '/cursor-ui sync' },
+            { label: 'View Output', actionId: '/cursor-ui text' },
+          ],
+          [
+            { label: 'Results', actionId: '/cursor-ui files' },
+            ...(params.currentJob.targetUrl
+              ? [{ label: 'Open in Cursor', url: params.currentJob.targetUrl }]
+              : []),
+          ],
+          [
+            { label: 'Continue', actionId: '/cursor-ui followup' },
+            { label: 'Stop Run', actionId: '/cursor-ui stop' },
+          ],
+          [{ label: 'Back', actionId: '/cursor-ui home' }],
+        ]
+      : [
+          [
+            { label: 'Refresh', actionId: '/cursor-ui sync' },
+            { label: 'View Output', actionId: '/cursor-ui text' },
+          ],
+          [
+            { label: 'Terminal Status', actionId: '/cursor-ui terminal-status' },
+            { label: 'Terminal Log', actionId: '/cursor-ui terminal-log' },
+          ],
+          [{ label: 'Terminal Help', actionId: '/cursor-ui terminal-help' }],
+          [{ label: 'Back', actionId: '/cursor-ui home' }],
+        ];
+
+    return {
+      text: [
+        '*Current Work*',
+        '',
+        formatCursorJobCard(params.currentJob, params.currentJobResultCount || 0),
+        '',
+        formatTaskContinuationGuidance({
+          lane: isCloud ? 'cursor_cloud' : 'cursor_desktop',
+        }),
+      ].join('\n'),
+      inlineActionRows: rows.map((row) =>
+        row.filter((action) => Boolean(action.label)),
+      ),
+      selectedAgentId: params.currentJob.id,
+    };
+  }
+
+  return {
+    text: [
+      '*Current Work*',
+      '',
+      'No current work is selected in this chat yet.',
+      '',
+      'Open `Jobs` or `Codex/OpenAI` -> `Recent Work`, then tap a task to make it current. Explicit ids, `current`, and lane-specific slash commands still work when you want an explicit fallback.',
+    ].join('\n'),
+    inlineActionRows: [
+      [
+        { label: 'Jobs', actionId: '/cursor-ui jobs' },
+        { label: 'Codex/OpenAI', actionId: '/cursor-ui runtime' },
+      ],
+      [{ label: 'Home', actionId: '/cursor-ui home' }],
+    ],
+  };
+}
+
 export function buildCursorDashboardDesktop(
   detailText: string,
 ): CursorDashboardRender {
@@ -385,10 +517,10 @@ export function buildCursorDashboardHelp(): CursorDashboardRender {
       '*Andrea Work Help*',
       '',
       '1. Check `/cursor_status` if you want a full readiness readout.',
-      '2. Open `Jobs` and tap a task to make it current.',
-      '3. Use `Refresh`, `View Output`, and `Results` from the current task view.',
-      '4. Reply with plain text when you want Andrea to continue the current task.',
-      '5. Open `Codex/OpenAI` when you want the integrated runtime lane.',
+      '2. Open `Current Work` when you want Andrea to stay with the selected item in this chat.',
+      '3. Open `Jobs` or `Codex/OpenAI` -> `Recent Work`, then tap a task to make it current.',
+      '4. Use `Refresh`, `View Output`, and lane-specific actions from the current-work view.',
+      '5. Reply with plain text when you want Andrea to continue a fresh task card.',
       '6. Use `Desktop` only for the operator-only machine-control lane.',
       '',
       formatTaskReplyRoutingGuidance(),
@@ -397,10 +529,13 @@ export function buildCursorDashboardHelp(): CursorDashboardRender {
     ].join('\n'),
     inlineActionRows: [
       [
+        { label: 'Current Work', actionId: '/cursor-ui work-current' },
         { label: 'Jobs', actionId: '/cursor-ui jobs' },
+      ],
+      [
+        { label: 'Codex/OpenAI', actionId: '/cursor-ui runtime' },
         { label: 'New Cloud Job', actionId: '/cursor-ui new' },
       ],
-      [{ label: 'Codex/OpenAI', actionId: '/cursor-ui runtime' }],
       [{ label: 'Home', actionId: '/cursor-ui home' }],
     ],
   };
@@ -426,23 +561,26 @@ export function buildCursorDashboardRuntime(params: {
     text: [
       '*Codex/OpenAI Runtime*',
       '',
-      "Andrea's Codex/OpenAI runtime lane lives inside the same shell as Cursor.",
-      `- Host execution: ${params.executionEnabled ? 'enabled' : 'disabled on this host'}`,
+      "Andrea's Codex/OpenAI runtime lane lives inside the same work cockpit as Cursor.",
+      `- Host execution: ${params.executionEnabled ? 'ready on this host' : 'disabled on this host'}`,
       `- Readiness: ${params.readinessLine}`,
       params.currentTask
         ? `- Current task: ${summarizeRuntimeTask(params.currentTask)}`
         : '- Current task: none selected yet',
       '',
       params.executionEnabled
-        ? 'Use this lane when you want Andrea to continue deeper Codex/OpenAI task work in the current workspace.'
-        : 'You can still review existing runtime work here. New runtime execution stays conditional until this host is validated.',
+        ? 'Use this lane when you want Andrea to continue deeper Codex/OpenAI work in the current workspace.'
+        : 'You can still review existing runtime work here. New runtime execution remains unavailable until this host is validated.',
     ].join('\n'),
     inlineActionRows: [
       [
         { label: 'Recent Work', actionId: '/cursor-ui runtime-jobs' },
         { label: 'Current Task', actionId: '/cursor-ui runtime-current' },
       ],
-      [{ label: 'Back', actionId: '/cursor-ui home' }],
+      [
+        { label: 'Current Work', actionId: '/cursor-ui work-current' },
+        { label: 'Back', actionId: '/cursor-ui home' },
+      ],
     ],
   };
 }
