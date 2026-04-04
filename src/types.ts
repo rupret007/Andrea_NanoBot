@@ -252,15 +252,34 @@ export type AlexaConversationSubjectKind =
   | 'memory_fact'
   | 'general';
 
+export type AlexaCompanionGuidanceGoal =
+  | 'daily_brief'
+  | 'upcoming_soon'
+  | 'next_action'
+  | 'meeting_prep'
+  | 'tomorrow_brief'
+  | 'what_matters_most'
+  | 'anything_important'
+  | 'what_am_i_forgetting'
+  | 'evening_reset'
+  | 'family_guidance'
+  | 'shared_plans'
+  | 'action_follow_through'
+  | 'risk_check'
+  | 'explainability';
+
 export type AlexaConversationFollowupAction =
   | 'anything_else'
   | 'shorter'
+  | 'say_more'
   | 'before_that'
   | 'after_that'
   | 'switch_person'
   | 'remind_before_that'
   | 'save_that'
   | 'draft_followup'
+  | 'action_guidance'
+  | 'risk_check'
   | 'memory_control';
 
 export interface AlexaConversationContext {

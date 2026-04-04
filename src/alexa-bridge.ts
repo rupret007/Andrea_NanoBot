@@ -48,8 +48,13 @@ import {
 } from './group-folder.js';
 import { logger } from './logger.js';
 import { formatMessages, formatOutbound } from './router.js';
-import { buildAssistantPromptWithPersonalization } from './assistant-personalization.js';
 import {
+  buildAssistantPromptWithPersonalization,
+  type AssistantChannelMode,
+  type AssistantInitiativeLevel,
+} from './assistant-personalization.js';
+import {
+  type AlexaCompanionGuidanceGoal,
   type AlexaConversationFollowupAction,
   type AlexaConversationSubjectKind,
   type AgentThreadState,
@@ -78,6 +83,9 @@ export interface AlexaTurnRequest {
     conversationSummary?: string;
     conversationSubjectKind?: AlexaConversationSubjectKind;
     supportedFollowups?: AlexaConversationFollowupAction[];
+    channelMode?: AssistantChannelMode;
+    guidanceGoal?: AlexaCompanionGuidanceGoal;
+    initiativeLevel?: AssistantInitiativeLevel;
   };
 }
 
@@ -506,6 +514,11 @@ export async function runAlexaAssistantTurn(
           {
             channel: 'alexa',
             groupFolder: target.group.folder,
+            channelMode:
+              request.promptContext?.channelMode || 'alexa_companion',
+            guidanceGoal: request.promptContext?.guidanceGoal,
+            initiativeLevel:
+              request.promptContext?.initiativeLevel || 'measured',
             conversationSummary: request.promptContext?.conversationSummary,
             conversationSubjectKind:
               request.promptContext?.conversationSubjectKind,

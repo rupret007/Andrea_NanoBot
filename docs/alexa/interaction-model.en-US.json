@@ -12,7 +12,8 @@
             "what is on my calendar today",
             "what matters today",
             "give me a morning brief",
-            "walk me through today"
+            "walk me through today",
+            "give me a quick brief for today"
           ]
         },
         {
@@ -34,7 +35,8 @@
             "what should I handle next",
             "what should I do after that",
             "what is next after that",
-            "what matters next"
+            "what matters next",
+            "what should I handle now"
           ]
         },
         {
@@ -49,6 +51,36 @@
           ]
         },
         {
+          "name": "WhatMattersMostTodayIntent",
+          "samples": [
+            "what matters most today",
+            "what is the main thing today",
+            "what should I prioritize today",
+            "what should I focus on first today",
+            "what is the biggest thing I should handle today"
+          ]
+        },
+        {
+          "name": "AnythingImportantIntent",
+          "samples": [
+            "anything I should know",
+            "anything important",
+            "is there anything important today",
+            "should I be worried about anything",
+            "what should I keep in mind"
+          ]
+        },
+        {
+          "name": "WhatAmIForgettingIntent",
+          "samples": [
+            "what am I forgetting",
+            "what am I missing",
+            "what am I overlooking",
+            "what have I not handled yet",
+            "what loose ends do I have"
+          ]
+        },
+        {
           "name": "TomorrowCalendarIntent",
           "samples": [
             "what is on my calendar tomorrow",
@@ -60,6 +92,16 @@
           ]
         },
         {
+          "name": "EveningResetIntent",
+          "samples": [
+            "give me an evening reset",
+            "what should I remember tonight",
+            "what should I wrap up today",
+            "what should I handle before I leave",
+            "what should I tee up for tomorrow"
+          ]
+        },
+        {
           "name": "CandaceUpcomingIntent",
           "samples": [
             "what do Candace and I have coming up",
@@ -67,7 +109,18 @@
             "what is coming up for Candace and me",
             "what about Candace",
             "what do Candace and I have going on",
-            "what should Candace and I know about soon"
+            "what should Candace and I know about soon",
+            "what do Candace and I have this weekend"
+          ]
+        },
+        {
+          "name": "FamilyUpcomingIntent",
+          "samples": [
+            "what does the family have going on",
+            "anything the family needs from me today",
+            "what do we have this weekend",
+            "what should I remember before tonight",
+            "what does our family have coming up"
           ]
         },
         {
@@ -76,7 +129,8 @@
             "anything else",
             "what else",
             "anything more",
-            "what else should I know"
+            "what else should I know",
+            "say more"
           ]
         },
         {
@@ -92,7 +146,8 @@
             "what about {followupText}",
             "make that {followupText}",
             "tell me {followupText}",
-            "follow up with {followupText}"
+            "follow up with {followupText}",
+            "say more about {followupText}"
           ]
         },
         {
@@ -107,7 +162,9 @@
             "{memoryCommand}",
             "remember {memoryCommand}",
             "forget {memoryCommand}",
-            "what do you remember about {memoryCommand}"
+            "what do you remember about {memoryCommand}",
+            "why did you say {memoryCommand}",
+            "what are you using to personalize {memoryCommand}"
           ]
         },
         {

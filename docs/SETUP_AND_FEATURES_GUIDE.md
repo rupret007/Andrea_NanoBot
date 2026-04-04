@@ -318,6 +318,8 @@ Practical notes:
 - The Andrea OAuth server now mints the linked access token and maps it to one Andrea `groupFolder`.
 - that OAuth target `groupFolder` must already exist as a valid Andrea registered group.
 - Alexa now supports short-lived multi-turn follow-ups like `anything else`, `what about Candace`, `make that shorter`, and `remind me before that`.
+- Alexa Companion Mode also supports broader daily-life guidance like `what matters most today`, `what am I forgetting`, `anything I should know`, `what should I remember tonight`, and family guidance such as `what does the family have going on`.
+- person follow-ups can now stay voice-natural with prompts like `what about Travis`, `say more`, `what should I do about that`, and `should I be worried about anything`.
 - Alexa can also handle explicit memory controls like `remember this`, `forget that`, and `what do you remember about me`.
 - remembered personalization stays structured and consent-based; Andrea does not silently store arbitrary conversation history as long-term memory.
 - Use `/alexa_status` in Telegram to confirm that the listener actually started.

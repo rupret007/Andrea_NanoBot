@@ -5,6 +5,7 @@ import {
   upsertAlexaConversationContext,
 } from './db.js';
 import {
+  type AlexaCompanionGuidanceGoal,
   type AlexaConversationContext,
   type AlexaConversationFollowupAction,
   type AlexaConversationSubjectKind,
@@ -12,6 +13,8 @@ import {
 
 export interface AlexaConversationSubjectData {
   personName?: string;
+  activePeople?: string[];
+  householdFocus?: boolean;
   meetingReference?: string;
   profileFactId?: string;
   savedText?: string;
@@ -24,7 +27,20 @@ export interface AlexaConversationState {
   summaryText: string;
   supportedFollowups: AlexaConversationFollowupAction[];
   styleHints: {
-    responseStyle?: 'default' | 'short_direct';
+    responseStyle?: 'default' | 'short_direct' | 'expanded';
+    channelMode?: 'alexa_companion';
+    guidanceGoal?: AlexaCompanionGuidanceGoal;
+    initiativeLevel?: 'measured';
+    prioritizationLens?:
+      | 'general'
+      | 'calendar'
+      | 'family'
+      | 'meeting'
+      | 'work'
+      | 'evening';
+    hasActionItem?: boolean;
+    hasRiskSignal?: boolean;
+    reminderCandidate?: boolean;
   };
 }
 
@@ -148,8 +164,11 @@ export function resolveAlexaConversationFollowup(
   if (/^(make that shorter|shorter|say that shorter)\b/i.test(normalized)) {
     return resolveSupported('shorter');
   }
+  if (/^(say more|tell me more|give me a little more detail)\b/i.test(normalized)) {
+    return resolveSupported('say_more');
+  }
   if (
-    /^(what('?s| is)? next after that|what next after that|after that)\b/i.test(
+    /^(what('?s| is)? next after that|what next after that|what comes after that|after that)\b/i.test(
       normalized,
     )
   ) {
@@ -165,11 +184,22 @@ export function resolveAlexaConversationFollowup(
   if (/^(remind me before that)\b/i.test(normalized)) {
     return resolveSupported('remind_before_that');
   }
-  if (/^(save that for later|save that)\b/i.test(normalized)) {
+  if (/^(save that for later|save that|help me remember that tonight)\b/i.test(normalized)) {
     return resolveSupported('save_that');
+  }
+  if (/^(what should i do about that|what should i handle about that)\b/i.test(normalized)) {
+    return resolveSupported('action_guidance');
+  }
+  if (/^(should i be worried about anything|is there anything i should worry about)\b/i.test(normalized)) {
+    return resolveSupported('risk_check');
   }
   if (/^(draft a follow up for this meeting|draft a follow up)\b/i.test(normalized)) {
     return resolveSupported('draft_followup');
+  }
+  if (/^(what should i message someone about|what should i follow up about)\b/i.test(normalized)) {
+    return supported.has('draft_followup')
+      ? resolveSupported('draft_followup')
+      : resolveSupported('action_guidance');
   }
   if (
     /^(what about [a-z][a-z' -]+)\b/i.test(normalized) ||
@@ -178,7 +208,7 @@ export function resolveAlexaConversationFollowup(
     return resolveSupported('switch_person');
   }
   if (
-    /^(remember this|remember that|forget that|stop using that|what do you remember\b)/i.test(
+    /^(remember this|remember that|forget that|stop using that|what do you remember\b|why did you say that|what are you using to personalize this|reset that preference)/i.test(
       normalized,
     )
   ) {

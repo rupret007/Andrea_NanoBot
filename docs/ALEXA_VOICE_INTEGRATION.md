@@ -6,7 +6,9 @@ V1 keeps the scope intentionally small:
 
 - account-linked personal assistant access
 - short spoken summaries
+- daily-life guidance and prioritization
 - calendar and meeting-aware questions
+- family and household-aware questions
 - reminder-before-next-meeting
 - save-for-later capture
 - short follow-up drafting
@@ -48,8 +50,13 @@ The Alexa interaction model now exposes a narrow intent set:
 - `UpcomingSoonIntent`
 - `WhatNextIntent`
 - `BeforeNextMeetingIntent`
+- `WhatMattersMostTodayIntent`
+- `AnythingImportantIntent`
+- `WhatAmIForgettingIntent`
 - `TomorrowCalendarIntent`
+- `EveningResetIntent`
 - `CandaceUpcomingIntent`
+- `FamilyUpcomingIntent`
 - `AnythingElseIntent`
 - `ConversationalFollowupIntent`
 - `MemoryControlIntent`
@@ -228,15 +235,28 @@ That enables natural follow-ups like:
 
 - `anything else`
 - `what about Candace`
+- `what about Travis`
 - `what's next after that`
 - `before that`
 - `remind me before that`
 - `make that shorter`
+- `say more`
+- `what should I do about that`
+- `should I be worried about anything`
 - `save that for later`
 
 If the prior spoken context is too weak or already expired, Andrea falls back honestly with a short clarification instead of guessing.
 
 The short yes/no capture flow for reminders, save-for-later, and memory consent stays in the existing short-lived `alexa_sessions` table. Conversational subject memory is stored separately so it does not collide with those confirmation flows.
+
+Andrea now also uses an internal **Alexa Companion Mode**. This is not a second assistant. It is the Alexa-specific operating style for the same Andrea core:
+
+- voice-first
+- warm but concise
+- one main thing first
+- one or two supporting follow-through points
+- measured guidance on open-ended questions
+- family context when clearly relevant and allowed by the user's preferences
 
 ## 8) Progressive Personalization And Consent
 
@@ -258,6 +278,15 @@ Important limits:
 - proposed memories are only activated after an explicit `yes` or a direct command such as `remember this`
 - only accepted facts are reused later
 - rejected or disabled facts are not treated as active preferences
+- Alexa can now also answer simple control questions like:
+  - `why did you say that`
+  - `what are you using to personalize this`
+  - `what do you remember about me`
+  - `what do you remember about Candace`
+  - `be more direct`
+  - `be less personal`
+  - `use less family context`
+  - `reset that preference`
 
 Examples of supported control phrases:
 

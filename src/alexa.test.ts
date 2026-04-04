@@ -256,7 +256,7 @@ describe('createAlexaSkill', () => {
 
     expect(mockedRunAlexaAssistantTurn).toHaveBeenCalledWith(
       expect.objectContaining({
-        utterance: expect.stringContaining('Give me my day'),
+        utterance: expect.stringContaining('practical morning brief'),
         principal: expect.objectContaining({
           userId: 'amzn1.ask.account.test-user',
           displayName: 'Andrea Alexa',
@@ -273,6 +273,134 @@ describe('createAlexaSkill', () => {
       }),
     );
     expect(extractSpeechText(response)).toContain('Today is light');
+  });
+
+  it('routes WhatMattersMostTodayIntent as measured Alexa companion guidance', async () => {
+    mockedRunAlexaAssistantTurn.mockResolvedValue({
+      text: 'The main thing today is your afternoon review.',
+      route: 'protected_assistant',
+      chatJid: 'alexa:main:abc',
+      groupFolder: 'main',
+    });
+
+    const skill = createAlexaSkill(buildConfig());
+    const response = await skill.invoke(
+      buildIntentEnvelope('WhatMattersMostTodayIntent'),
+    );
+
+    expect(mockedRunAlexaAssistantTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        utterance: expect.stringContaining('What matters most today'),
+        promptContext: expect.objectContaining({
+          conversationSummary: 'what matters most today',
+          conversationSubjectKind: 'day_brief',
+          channelMode: 'alexa_companion',
+          guidanceGoal: 'what_matters_most',
+          initiativeLevel: 'measured',
+        }),
+      }),
+      expect.any(Object),
+    );
+    expect(extractSpeechText(response)).toContain('main thing today');
+  });
+
+  it('routes FamilyUpcomingIntent with household-aware companion context', async () => {
+    mockedRunAlexaAssistantTurn.mockResolvedValue({
+      text: 'The family main thing is Travis has an early game this weekend.',
+      route: 'protected_assistant',
+      chatJid: 'alexa:main:abc',
+      groupFolder: 'main',
+    });
+
+    const skill = createAlexaSkill(buildConfig());
+    const response = await skill.invoke(buildIntentEnvelope('FamilyUpcomingIntent'));
+
+    expect(mockedRunAlexaAssistantTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        utterance: expect.stringContaining('What does the family have going on'),
+        promptContext: expect.objectContaining({
+          conversationSummary:
+            'family plans, household logistics, and what the family needs',
+          conversationSubjectKind: 'household',
+          guidanceGoal: 'family_guidance',
+        }),
+      }),
+      expect.any(Object),
+    );
+    expect(extractSpeechText(response)).toContain('family main thing');
+  });
+
+  it('routes AnythingImportantIntent as risk-aware guidance', async () => {
+    mockedRunAlexaAssistantTurn.mockResolvedValue({
+      text: 'Nothing urgent. The main thing is the late client call.',
+      route: 'protected_assistant',
+      chatJid: 'alexa:main:abc',
+      groupFolder: 'main',
+    });
+
+    const skill = createAlexaSkill(buildConfig());
+    const response = await skill.invoke(
+      buildIntentEnvelope('AnythingImportantIntent'),
+    );
+
+    expect(mockedRunAlexaAssistantTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        utterance: expect.stringContaining('Anything I should know'),
+        promptContext: expect.objectContaining({
+          guidanceGoal: 'anything_important',
+        }),
+      }),
+      expect.any(Object),
+    );
+    expect(extractSpeechText(response)).toContain('Nothing urgent');
+  });
+
+  it('routes WhatAmIForgettingIntent as loose-end guidance', async () => {
+    mockedRunAlexaAssistantTurn.mockResolvedValue({
+      text: 'The most likely thing you are forgetting is the follow-up note for tonight.',
+      route: 'protected_assistant',
+      chatJid: 'alexa:main:abc',
+      groupFolder: 'main',
+    });
+
+    const skill = createAlexaSkill(buildConfig());
+    const response = await skill.invoke(
+      buildIntentEnvelope('WhatAmIForgettingIntent'),
+    );
+
+    expect(mockedRunAlexaAssistantTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        utterance: expect.stringContaining('What am I forgetting'),
+        promptContext: expect.objectContaining({
+          guidanceGoal: 'what_am_i_forgetting',
+        }),
+      }),
+      expect.any(Object),
+    );
+    expect(extractSpeechText(response)).toContain('most likely thing');
+  });
+
+  it('routes EveningResetIntent through the companion guidance lane', async () => {
+    mockedRunAlexaAssistantTurn.mockResolvedValue({
+      text: 'Tonight looks manageable. The main thing is to send that follow-up before you leave.',
+      route: 'protected_assistant',
+      chatJid: 'alexa:main:abc',
+      groupFolder: 'main',
+    });
+
+    const skill = createAlexaSkill(buildConfig());
+    const response = await skill.invoke(buildIntentEnvelope('EveningResetIntent'));
+
+    expect(mockedRunAlexaAssistantTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        utterance: expect.stringContaining('Give me an evening reset'),
+        promptContext: expect.objectContaining({
+          guidanceGoal: 'evening_reset',
+        }),
+      }),
+      expect.any(Object),
+    );
+    expect(extractSpeechText(response)).toContain('Tonight looks manageable');
   });
 
   it('supports follow-up turns like anything else using short-lived Alexa context', async () => {
@@ -304,6 +432,38 @@ describe('createAlexaSkill', () => {
       expect.any(Object),
     );
     expect(extractSpeechText(response)).toContain('free stretch');
+  });
+
+  it('maps conversational follow-ups like say more onto the current Alexa context', async () => {
+    mockedRunAlexaAssistantTurn
+      .mockResolvedValueOnce({
+        text: 'Today is light. The main thing is your afternoon review.',
+        route: 'protected_assistant',
+        chatJid: 'alexa:main:abc',
+        groupFolder: 'main',
+      })
+      .mockResolvedValueOnce({
+        text: 'The review is the part that needs prep, because the agenda still looks thin.',
+        route: 'protected_assistant',
+        chatJid: 'alexa:main:abc',
+        groupFolder: 'main',
+      });
+
+    const skill = createAlexaSkill(buildConfig());
+    await skill.invoke(buildIntentEnvelope('MyDayIntent'));
+    const response = await skill.invoke(
+      buildIntentEnvelope('ConversationalFollowupIntent', {
+        followupText: 'say more',
+      }),
+    );
+
+    expect(mockedRunAlexaAssistantTurn).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        utterance: expect.stringContaining('say a little more'),
+      }),
+      expect.any(Object),
+    );
+    expect(extractSpeechText(response)).toContain('agenda still looks thin');
   });
 
   it('maps conversational follow-ups like make that shorter onto the current Alexa context', async () => {
@@ -338,6 +498,70 @@ describe('createAlexaSkill', () => {
     expect(extractSpeechText(response)).toContain('Review the agenda first');
   });
 
+  it('maps action-guidance follow-ups onto the active Alexa context', async () => {
+    mockedRunAlexaAssistantTurn
+      .mockResolvedValueOnce({
+        text: 'The main thing is your late client call.',
+        route: 'protected_assistant',
+        chatJid: 'alexa:main:abc',
+        groupFolder: 'main',
+      })
+      .mockResolvedValueOnce({
+        text: 'I would send the short client update now so it is off your plate.',
+        route: 'protected_assistant',
+        chatJid: 'alexa:main:abc',
+        groupFolder: 'main',
+      });
+
+    const skill = createAlexaSkill(buildConfig());
+    await skill.invoke(buildIntentEnvelope('AnythingImportantIntent'));
+    const response = await skill.invoke(
+      buildIntentEnvelope('ConversationalFollowupIntent', {
+        followupText: 'what should I do about that',
+      }),
+    );
+
+    expect(mockedRunAlexaAssistantTurn).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        utterance: expect.stringContaining('most useful thing to do about that next'),
+      }),
+      expect.any(Object),
+    );
+    expect(extractSpeechText(response)).toContain('client update now');
+  });
+
+  it('maps person follow-ups like what about Travis onto the current Alexa context', async () => {
+    mockedRunAlexaAssistantTurn
+      .mockResolvedValueOnce({
+        text: 'The family main thing is Candace has dinner plans and Travis has a game.',
+        route: 'protected_assistant',
+        chatJid: 'alexa:main:abc',
+        groupFolder: 'main',
+      })
+      .mockResolvedValueOnce({
+        text: 'For Travis, the main thing is the early game this weekend.',
+        route: 'protected_assistant',
+        chatJid: 'alexa:main:abc',
+        groupFolder: 'main',
+      });
+
+    const skill = createAlexaSkill(buildConfig());
+    await skill.invoke(buildIntentEnvelope('FamilyUpcomingIntent'));
+    const response = await skill.invoke(
+      buildIntentEnvelope('ConversationalFollowupIntent', {
+        followupText: 'what about Travis',
+      }),
+    );
+
+    expect(mockedRunAlexaAssistantTurn).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        utterance: expect.stringContaining('shift the focus to Travis'),
+      }),
+      expect.any(Object),
+    );
+    expect(extractSpeechText(response)).toContain('For Travis');
+  });
+
   it('handles memory-control voice turns without routing them through the bridge', async () => {
     const skill = createAlexaSkill(buildConfig());
     const response = await skill.invoke(
@@ -347,6 +571,18 @@ describe('createAlexaSkill', () => {
     );
 
     expect(extractSpeechText(response)).toContain('shorter and more direct');
+    expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
+  });
+
+  it('explains personalization briefly without routing explainability through the bridge', async () => {
+    const skill = createAlexaSkill(buildConfig());
+    const response = await skill.invoke(
+      buildIntentEnvelope('MemoryControlIntent', {
+        memoryCommand: 'why did you say that',
+      }),
+    );
+
+    expect(extractSpeechText(response)).toContain('current schedule');
     expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
   });
 

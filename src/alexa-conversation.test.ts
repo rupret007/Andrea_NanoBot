@@ -95,9 +95,12 @@ describe('alexa conversation state', () => {
       supportedFollowups: [
         'anything_else',
         'shorter',
+        'say_more',
         'before_that',
         'after_that',
         'remind_before_that',
+        'action_guidance',
+        'risk_check',
         'memory_control',
       ],
       styleHints: {},
@@ -110,11 +113,42 @@ describe('alexa conversation state', () => {
       resolveAlexaConversationFollowup('make that shorter', state),
     ).toMatchObject({ ok: true, action: 'shorter' });
     expect(
+      resolveAlexaConversationFollowup('say more', state),
+    ).toMatchObject({ ok: true, action: 'say_more' });
+    expect(
       resolveAlexaConversationFollowup('remind me before that', state),
     ).toMatchObject({ ok: true, action: 'remind_before_that' });
     expect(
+      resolveAlexaConversationFollowup('what should I do about that', state),
+    ).toMatchObject({ ok: true, action: 'action_guidance' });
+    expect(
+      resolveAlexaConversationFollowup('should I be worried about anything', state),
+    ).toMatchObject({ ok: true, action: 'risk_check' });
+    expect(
       resolveAlexaConversationFollowup('what is the weather', state),
     ).toMatchObject({ ok: false });
+  });
+
+  it('resolves generic person follow-ups and explainability prompts', () => {
+    const state: AlexaConversationState = {
+      flowKey: 'family_upcoming',
+      subjectKind: 'household',
+      subjectData: { activePeople: ['Candace', 'Travis'], householdFocus: true },
+      summaryText: 'family plans and household logistics',
+      supportedFollowups: [
+        'anything_else',
+        'switch_person',
+        'memory_control',
+      ],
+      styleHints: {},
+    };
+
+    expect(
+      resolveAlexaConversationFollowup('what about Travis', state),
+    ).toMatchObject({ ok: true, action: 'switch_person' });
+    expect(
+      resolveAlexaConversationFollowup('why did you say that', state),
+    ).toMatchObject({ ok: true, action: 'memory_control' });
   });
 
   it('exposes referenced fact ids for memory-control follow-ups', () => {

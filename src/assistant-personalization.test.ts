@@ -43,6 +43,37 @@ describe('assistant personalization', () => {
     expect(prompt).toContain('Channel: Telegram.');
   });
 
+  it('adds Alexa companion guidance rules and accepted work-context preferences to the prompt', () => {
+    handlePersonalizationCommand({
+      groupFolder: 'main',
+      channel: 'alexa',
+      text: 'use more work context',
+    });
+    handlePersonalizationCommand({
+      groupFolder: 'main',
+      channel: 'alexa',
+      text: 'lead with the main thing',
+    });
+
+    const prompt = buildAssistantPromptWithPersonalization(
+      '<messages><message>hello</message></messages>',
+      {
+        channel: 'alexa',
+        groupFolder: 'main',
+        channelMode: 'alexa_companion',
+        guidanceGoal: 'what_matters_most',
+        initiativeLevel: 'measured',
+        conversationSummary: 'today and what matters most',
+        conversationSubjectKind: 'day_brief',
+      },
+    );
+
+    expect(prompt).toContain('Alexa Companion Mode');
+    expect(prompt).toContain('main thing that matters most');
+    expect(prompt).toContain('foreground work context by default');
+    expect(prompt).toContain('Lead with the single main thing that matters');
+  });
+
   it('remembers explicit relationship facts and can summarize them', () => {
     const remember = handlePersonalizationCommand({
       groupFolder: 'main',
@@ -141,6 +172,60 @@ describe('assistant personalization', () => {
     expect(candidate).toBeTruthy();
     expect(rejectProposedProfileFact(candidate!.factId, new Date('2026-04-03T09:03:00.000Z'))).toBe(true);
     expect(getProfileFact(candidate!.factId)?.state).toBe('rejected');
+  });
+
+  it('explains which personalization signals are being used', () => {
+    handlePersonalizationCommand({
+      groupFolder: 'main',
+      channel: 'alexa',
+      text: 'be more direct',
+    });
+    handlePersonalizationCommand({
+      groupFolder: 'main',
+      channel: 'alexa',
+      text: 'use less family context',
+    });
+
+    const explanation = handlePersonalizationCommand({
+      groupFolder: 'main',
+      channel: 'alexa',
+      text: 'what are you using to personalize this',
+      conversationSummary: 'today and what matters most',
+    });
+
+    expect(explanation.handled).toBe(true);
+    expect(explanation.responseText).toContain('current schedule');
+    expect(explanation.responseText).toContain('short, direct answers');
+  });
+
+  it('creates a conservative guidance candidate for repeated open-ended planning requests', () => {
+    storeMessage({
+      id: 'm5',
+      chat_jid: 'tg:1',
+      sender: 'u1',
+      sender_name: 'User',
+      content: 'what matters most today',
+      timestamp: '2026-04-03T10:00:00.000Z',
+    });
+    storeMessage({
+      id: 'm6',
+      chat_jid: 'tg:1',
+      sender: 'u1',
+      sender_name: 'User',
+      content: 'what should I do next',
+      timestamp: '2026-04-03T10:01:00.000Z',
+    });
+
+    const candidate = maybeCreateProactiveProfileCandidate({
+      groupFolder: 'main',
+      chatJid: 'tg:1',
+      channel: 'alexa',
+      text: 'anything I should know',
+      now: new Date('2026-04-03T10:02:00.000Z'),
+    });
+
+    expect(candidate?.askText).toContain('main thing first');
+    expect(getProfileFact(candidate!.factId)?.state).toBe('proposed');
   });
 
   it('resets saved self preferences without deleting relationship facts', () => {
