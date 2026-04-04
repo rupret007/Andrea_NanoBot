@@ -102,6 +102,43 @@ export type TelegramRoundtripHealthStatus =
   | 'unconfigured'
   | 'pending';
 
+export type TelegramTransportMode = 'long_polling';
+
+export type TelegramTransportStatus =
+  | 'starting'
+  | 'ready'
+  | 'degraded'
+  | 'blocked'
+  | 'unconfigured'
+  | 'stopped';
+
+export type TelegramTransportErrorClass =
+  | 'none'
+  | 'webhook_active'
+  | 'setwebhook_conflict'
+  | 'getupdates_conflict'
+  | 'shared_token_suspected'
+  | 'token_rotation_required'
+  | 'local_start_failure';
+
+export interface TelegramTransportState {
+  bootId: string;
+  pid: number | null;
+  mode: TelegramTransportMode;
+  status: TelegramTransportStatus;
+  detail: string;
+  updatedAt: string;
+  lastError: string | null;
+  lastErrorClass: TelegramTransportErrorClass;
+  webhookPresent: boolean;
+  webhookUrl: string | null;
+  lastWebhookCheckAt: string | null;
+  lastPollConflictAt: string | null;
+  externalConsumerSuspected: boolean;
+  tokenRotationRequired: boolean;
+  consecutiveExternalConflicts: number;
+}
+
 export interface AssistantHealthAssessment {
   status: AssistantHealthStatus;
   detail: string;
@@ -132,6 +169,7 @@ export interface HostControlPaths {
   readyStatePath: string;
   assistantHealthStatePath: string;
   telegramRoundtripStatePath: string;
+  telegramTransportStatePath: string;
   hostLockPath: string;
   nodeRuntimeMetadataPath: string;
   startupFolderScriptPath: string | null;
@@ -144,6 +182,7 @@ export interface HostControlSnapshot {
   readyState: NanoclawReadyState | null;
   assistantHealthState: AssistantHealthState | null;
   telegramRoundtripState: TelegramRoundtripState | null;
+  telegramTransportState: TelegramTransportState | null;
 }
 
 export interface WindowsInstallArtifacts {
@@ -198,6 +237,29 @@ const TELEGRAM_ROUNDTRIP_STATUSES = new Set<TelegramRoundtripStateStatus>([
   'failed',
   'unconfigured',
   'pending',
+]);
+
+const TELEGRAM_TRANSPORT_MODES = new Set<TelegramTransportMode>([
+  'long_polling',
+]);
+
+const TELEGRAM_TRANSPORT_STATUSES = new Set<TelegramTransportStatus>([
+  'starting',
+  'ready',
+  'degraded',
+  'blocked',
+  'unconfigured',
+  'stopped',
+]);
+
+const TELEGRAM_TRANSPORT_ERROR_CLASSES = new Set<TelegramTransportErrorClass>([
+  'none',
+  'webhook_active',
+  'setwebhook_conflict',
+  'getupdates_conflict',
+  'shared_token_suspected',
+  'token_rotation_required',
+  'local_start_failure',
 ]);
 
 function resolveProjectRoot(projectRoot = process.cwd()): string {
@@ -267,6 +329,10 @@ export function resolveHostControlPaths(
       runtimeStateDir,
       'telegram-roundtrip-health.json',
     ),
+    telegramTransportStatePath: path.join(
+      runtimeStateDir,
+      'telegram-transport-health.json',
+    ),
     hostLockPath: path.join(runtimeStateDir, 'nanoclaw-host.lock'),
     nodeRuntimeMetadataPath: path.join(runtimeStateDir, 'node-runtime.json'),
     startupFolderScriptPath: appData
@@ -311,6 +377,12 @@ export function getTelegramRoundtripStatePath(
   projectRoot = process.cwd(),
 ): string {
   return resolveHostControlPaths(projectRoot).telegramRoundtripStatePath;
+}
+
+export function getTelegramTransportStatePath(
+  projectRoot = process.cwd(),
+): string {
+  return resolveHostControlPaths(projectRoot).telegramTransportStatePath;
 }
 
 export function getHostLockPath(projectRoot = process.cwd()): string {
@@ -478,6 +550,61 @@ function normalizeTelegramRoundtripState(
   };
 }
 
+function normalizeTelegramTransportState(
+  value: unknown,
+): TelegramTransportState | null {
+  if (!value || typeof value !== 'object') return null;
+  const input = value as Partial<TelegramTransportState>;
+  const pid = normalizePid(input.pid);
+  const mode = TELEGRAM_TRANSPORT_MODES.has(input.mode as TelegramTransportMode)
+    ? (input.mode as TelegramTransportMode)
+    : null;
+  const status = TELEGRAM_TRANSPORT_STATUSES.has(
+    input.status as TelegramTransportStatus,
+  )
+    ? (input.status as TelegramTransportStatus)
+    : null;
+  const lastErrorClass = TELEGRAM_TRANSPORT_ERROR_CLASSES.has(
+    input.lastErrorClass as TelegramTransportErrorClass,
+  )
+    ? (input.lastErrorClass as TelegramTransportErrorClass)
+    : null;
+  if (
+    !mode ||
+    !status ||
+    !lastErrorClass ||
+    !isNonEmptyString(input.updatedAt) ||
+    typeof input.webhookPresent !== 'boolean' ||
+    typeof input.externalConsumerSuspected !== 'boolean' ||
+    typeof input.tokenRotationRequired !== 'boolean' ||
+    typeof input.consecutiveExternalConflicts !== 'number' ||
+    input.consecutiveExternalConflicts < 0
+  ) {
+    return null;
+  }
+  return {
+    bootId: isNonEmptyString(input.bootId) ? input.bootId : '',
+    pid,
+    mode,
+    status,
+    detail: isNonEmptyString(input.detail) ? input.detail : '',
+    updatedAt: input.updatedAt,
+    lastError: isNonEmptyString(input.lastError) ? input.lastError : null,
+    lastErrorClass,
+    webhookPresent: input.webhookPresent,
+    webhookUrl: isNonEmptyString(input.webhookUrl) ? input.webhookUrl : null,
+    lastWebhookCheckAt: isNonEmptyString(input.lastWebhookCheckAt)
+      ? input.lastWebhookCheckAt
+      : null,
+    lastPollConflictAt: isNonEmptyString(input.lastPollConflictAt)
+      ? input.lastPollConflictAt
+      : null,
+    externalConsumerSuspected: input.externalConsumerSuspected,
+    tokenRotationRequired: input.tokenRotationRequired,
+    consecutiveExternalConflicts: Math.trunc(input.consecutiveExternalConflicts),
+  };
+}
+
 function normalizeHostState(
   value: unknown,
   projectRoot = process.cwd(),
@@ -569,6 +696,14 @@ export function readTelegramRoundtripState(
   );
 }
 
+export function readTelegramTransportState(
+  projectRoot = process.cwd(),
+): TelegramTransportState | null {
+  return normalizeTelegramTransportState(
+    readJsonFile<unknown>(getTelegramTransportStatePath(projectRoot)),
+  );
+}
+
 export function readHostControlSnapshot(
   projectRoot = process.cwd(),
 ): HostControlSnapshot {
@@ -580,6 +715,7 @@ export function readHostControlSnapshot(
     readyState: readNanoclawReadyState(projectRoot),
     assistantHealthState: readAssistantHealthState(projectRoot),
     telegramRoundtripState: readTelegramRoundtripState(projectRoot),
+    telegramTransportState: readTelegramTransportState(projectRoot),
   };
 }
 
@@ -602,6 +738,14 @@ export function clearAssistantHealthState(projectRoot = process.cwd()): void {
 export function clearTelegramRoundtripState(projectRoot = process.cwd()): void {
   try {
     fs.rmSync(getTelegramRoundtripStatePath(projectRoot), { force: true });
+  } catch {
+    // Ignore best-effort cleanup failures during shutdown.
+  }
+}
+
+export function clearTelegramTransportState(projectRoot = process.cwd()): void {
+  try {
+    fs.rmSync(getTelegramTransportStatePath(projectRoot), { force: true });
   } catch {
     // Ignore best-effort cleanup failures during shutdown.
   }
@@ -653,6 +797,18 @@ export function writeTelegramRoundtripState(
     throw new Error('Cannot persist an invalid Telegram roundtrip state.');
   }
   writeJsonFile(getTelegramRoundtripStatePath(projectRoot), normalized);
+  return normalized;
+}
+
+export function writeTelegramTransportState(
+  state: TelegramTransportState,
+  projectRoot = process.cwd(),
+): TelegramTransportState {
+  const normalized = normalizeTelegramTransportState(state);
+  if (!normalized) {
+    throw new Error('Cannot persist an invalid Telegram transport state.');
+  }
+  writeJsonFile(getTelegramTransportStatePath(projectRoot), normalized);
   return normalized;
 }
 

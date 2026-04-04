@@ -98,6 +98,7 @@ import {
 import {
   clearAssistantHealthState,
   clearAssistantReadyState,
+  clearTelegramTransportState,
   writeAssistantHealthState,
   writeAssistantReadyState,
 } from './host-control.js';
@@ -4658,10 +4659,12 @@ async function main(): Promise<void> {
       assistantHealthInterval = null;
     }
     clearAssistantHealthState();
+    clearTelegramTransportState();
   };
 
   clearAssistantHealthState();
   clearAssistantReadyState();
+  clearTelegramTransportState();
   ensureContainerSystemRunning();
   initDatabase();
   loadLogControlFromPersistence();

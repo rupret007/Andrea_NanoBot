@@ -5,6 +5,7 @@ import path from 'path';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  assessTelegramLiveProbeConfig,
   DEFAULT_TELEGRAM_LIVE_TEST_MESSAGES,
   didTelegramReplyChange,
   DEFAULT_TELEGRAM_RUNTIME_CREATE_PROMPT,
@@ -122,6 +123,55 @@ describe('resolveTelegramUserSessionConfig', () => {
 
     expect(config.testTarget).toBe('8004355504');
     expect(config.authMode).toBe('qr');
+  });
+});
+
+describe('assessTelegramLiveProbeConfig', () => {
+  it('reports missing API credentials separately from session state', () => {
+    const assessment = assessTelegramLiveProbeConfig(
+      resolveTelegramUserSessionConfig('/tmp/workspace', {}, {}),
+      { sessionFileExists: false },
+    );
+
+    expect(assessment.configured).toBe(false);
+    expect(assessment.detail).toContain('TELEGRAM_USER_API_ID');
+  });
+
+  it('reports a missing session file explicitly', () => {
+    const assessment = assessTelegramLiveProbeConfig(
+      resolveTelegramUserSessionConfig(
+        '/tmp/workspace',
+        {
+          TELEGRAM_USER_API_ID: '12345',
+          TELEGRAM_USER_API_HASH: 'hash-value',
+        },
+        {},
+      ),
+      { sessionFileExists: false },
+    );
+
+    expect(assessment.configured).toBe(false);
+    expect(assessment.detail).toContain('telegram:user:auth');
+    expect(assessment.detail).toContain('telegram-user.session');
+  });
+
+  it('accepts a present session file as configured probe auth', () => {
+    const assessment = assessTelegramLiveProbeConfig(
+      resolveTelegramUserSessionConfig(
+        '/tmp/workspace',
+        {
+          TELEGRAM_USER_API_ID: '12345',
+          TELEGRAM_USER_API_HASH: 'hash-value',
+        },
+        {},
+      ),
+      { sessionFileExists: true },
+    );
+
+    expect(assessment).toEqual({
+      configured: true,
+      detail: 'Telegram live /ping probe credentials are configured.',
+    });
   });
 });
 

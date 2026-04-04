@@ -113,6 +113,11 @@ export interface TelegramPingProbeResult {
   replies: TelegramLiveReply[];
 }
 
+export interface TelegramLiveProbeConfigAssessment {
+  configured: boolean;
+  detail: string;
+}
+
 export interface TelegramSendCommandArgs {
   message: string;
   replyToMessageId?: number;
@@ -286,6 +291,37 @@ export function resolveTelegramUserSessionConfig(
       get('TELEGRAM_LIVE_REPLY_SETTLE_MS'),
       DEFAULT_SETTLE_MS,
     ),
+  };
+}
+
+export function assessTelegramLiveProbeConfig(
+  config: TelegramUserSessionConfig,
+  options: {
+    sessionFileExists?: boolean;
+  } = {},
+): TelegramLiveProbeConfigAssessment {
+  if (!config.apiId || !config.apiHash) {
+    return {
+      configured: false,
+      detail:
+        'Telegram user-session credentials are missing. Set TELEGRAM_USER_API_ID and TELEGRAM_USER_API_HASH first.',
+    };
+  }
+
+  const sessionFileExists =
+    options.sessionFileExists ?? fs.existsSync(config.sessionFile);
+  const hasSession =
+    config.session.trim().length > 0 || Boolean(sessionFileExists);
+  if (!hasSession) {
+    return {
+      configured: false,
+      detail: `Telegram user-session is missing. Run \`npm run telegram:user:auth\` and complete the login flow. Session file: ${config.sessionFile}`,
+    };
+  }
+
+  return {
+    configured: true,
+    detail: 'Telegram live /ping probe credentials are configured.',
   };
 }
 
@@ -499,6 +535,11 @@ export async function connectTelegramUserSession(
 
   const initialSession =
     config.session || loadSessionFromFile(config.sessionFile);
+  if (!allowInteractiveAuth && !initialSession.trim()) {
+    throw new Error(
+      `Telegram user-session is missing. Run \`npm run telegram:user:auth\` and complete the login flow. Session file: ${config.sessionFile}`,
+    );
+  }
   const stringSession = new StringSession(initialSession);
   const client = new TelegramClient(
     stringSession,
@@ -516,7 +557,7 @@ export async function connectTelegramUserSession(
     if (!allowInteractiveAuth) {
       await client.disconnect();
       throw new Error(
-        `Telegram user-session is not authenticated. Run \`npm run telegram:user:auth\` and complete the login flow. Session file: ${config.sessionFile}`,
+        `Telegram user-session auth is incomplete. Run \`npm run telegram:user:auth\` and complete the login flow again. Session file: ${config.sessionFile}`,
       );
     }
 
@@ -1138,6 +1179,20 @@ async function runTelegramPingProbe(options?: {
   }
 
   const config = resolveTelegramUserSessionConfig(projectRoot);
+  const configAssessment = assessTelegramLiveProbeConfig(config);
+  if (!configAssessment.configured) {
+    recordTelegramProbeUnconfigured(configAssessment.detail, projectRoot, {
+      source: mode,
+    });
+    return {
+      ok: false,
+      status: 'unconfigured',
+      stage: 'config',
+      detail: configAssessment.detail,
+      target: null,
+      replies: [],
+    };
+  }
   let target = '';
   try {
     target = await ensureTelegramTestTarget(config);

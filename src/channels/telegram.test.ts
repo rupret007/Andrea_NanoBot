@@ -201,6 +201,53 @@ describe('splitTelegramMessage', () => {
   });
 });
 
+describe('TelegramChannel polling hardening', () => {
+  it('registers bot metadata only once per boot even if reconnect logic calls it twice', async () => {
+    const setMyDescription = vi.fn().mockResolvedValue(undefined);
+    const setMyShortDescription = vi.fn().mockResolvedValue(undefined);
+    const setMyCommands = vi.fn().mockResolvedValue(undefined);
+    const channel = new TelegramChannel('test-token', {
+      onMessage: () => undefined,
+      onChatMetadata: () => undefined,
+      registeredGroups: () => ({}),
+    });
+
+    (
+      channel as unknown as {
+        bot: {
+          api: {
+            setMyDescription: typeof setMyDescription;
+            setMyShortDescription: typeof setMyShortDescription;
+            setMyCommands: typeof setMyCommands;
+          };
+        };
+        configureBotMetadataOnce: () => Promise<void>;
+      }
+    ).bot = {
+      api: {
+        setMyDescription,
+        setMyShortDescription,
+        setMyCommands,
+      },
+    };
+
+    await (
+      channel as unknown as {
+        configureBotMetadataOnce: () => Promise<void>;
+      }
+    ).configureBotMetadataOnce();
+    await (
+      channel as unknown as {
+        configureBotMetadataOnce: () => Promise<void>;
+      }
+    ).configureBotMetadataOnce();
+
+    expect(setMyDescription).toHaveBeenCalledTimes(1);
+    expect(setMyShortDescription).toHaveBeenCalledTimes(1);
+    expect(setMyCommands).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('TelegramChannel.sendMessage', () => {
   it('passes reply targets and inline actions through to Telegram and returns the sent message id', async () => {
     const sendMessage = vi.fn().mockResolvedValue({ message_id: 321 });

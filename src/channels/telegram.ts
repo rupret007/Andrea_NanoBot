@@ -4,7 +4,18 @@ import { Api, Bot, InlineKeyboard } from 'grammy';
 
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
 import { readEnvFile } from '../env.js';
+import {
+  readNanoclawHostState,
+  readTelegramTransportState,
+  writeTelegramTransportState,
+  type TelegramTransportErrorClass,
+  type TelegramTransportState,
+} from '../host-control.js';
 import { logger } from '../logger.js';
+import {
+  classifyTelegramTransportFailure,
+  normalizeTelegramWebhookInfo,
+} from '../telegram-transport.js';
 import {
   ChannelSendReceipt,
   Channel,
@@ -357,6 +368,9 @@ export class TelegramChannel implements Channel {
   private shuttingDown = false;
   private healthSnapshot: ChannelHealthSnapshot;
   private recentInboundByChatJid = new Map<string, string>();
+  private metadataSetupAttempted = false;
+  private recoveryAttempts = 0;
+  private consecutiveExternalConflicts = 0;
 
   constructor(botToken: string, opts: TelegramChannelOpts) {
     this.botToken = botToken;
@@ -386,13 +400,79 @@ export class TelegramChannel implements Channel {
   private describePollingError(err: unknown): string {
     const raw =
       err instanceof Error ? err.message : typeof err === 'string' ? err : '';
-    if (
-      raw.includes('409') &&
-      raw.toLowerCase().includes('terminated by setwebhook request')
-    ) {
-      return 'Telegram long polling was interrupted by a webhook change.';
-    }
     return raw || 'Telegram long polling failed unexpectedly.';
+  }
+
+  private persistTransportState(
+    patch: Partial<Omit<TelegramTransportState, 'bootId' | 'pid' | 'mode'>> & {
+      status: TelegramTransportState['status'];
+    },
+  ): void {
+    try {
+      const previous = readTelegramTransportState();
+      const hostState = readNanoclawHostState();
+      writeTelegramTransportState({
+        bootId: hostState?.bootId || previous?.bootId || '',
+        pid: process.pid,
+        mode: 'long_polling',
+        status: patch.status,
+        detail: patch.detail ?? previous?.detail ?? '',
+        updatedAt: patch.updatedAt ?? new Date().toISOString(),
+        lastError:
+          patch.lastError !== undefined
+            ? patch.lastError
+            : previous?.lastError ?? null,
+        lastErrorClass:
+          patch.lastErrorClass ?? previous?.lastErrorClass ?? 'none',
+        webhookPresent:
+          patch.webhookPresent ?? previous?.webhookPresent ?? false,
+        webhookUrl: patch.webhookUrl ?? previous?.webhookUrl ?? null,
+        lastWebhookCheckAt:
+          patch.lastWebhookCheckAt ?? previous?.lastWebhookCheckAt ?? null,
+        lastPollConflictAt:
+          patch.lastPollConflictAt ?? previous?.lastPollConflictAt ?? null,
+        externalConsumerSuspected:
+          patch.externalConsumerSuspected ??
+          previous?.externalConsumerSuspected ??
+          false,
+        tokenRotationRequired:
+          patch.tokenRotationRequired ??
+          previous?.tokenRotationRequired ??
+          false,
+        consecutiveExternalConflicts:
+          patch.consecutiveExternalConflicts ??
+          previous?.consecutiveExternalConflicts ??
+          0,
+      });
+    } catch (err) {
+      logger.warn({ err }, 'Failed to persist Telegram transport state');
+    }
+  }
+
+  private async inspectWebhookState(): Promise<{
+    present: boolean;
+    url: string | null;
+    checkedAt: string;
+  }> {
+    const checkedAt = new Date().toISOString();
+    if (!this.bot) {
+      return { present: false, url: null, checkedAt };
+    }
+    try {
+      const info = await this.bot.api.getWebhookInfo();
+      const snapshot = normalizeTelegramWebhookInfo(info);
+      return {
+        present: snapshot.present,
+        url: snapshot.url,
+        checkedAt,
+      };
+    } catch (err) {
+      logger.warn(
+        { component: 'telegram', err },
+        'Failed to inspect Telegram webhook state',
+      );
+      return { present: false, url: null, checkedAt };
+    }
   }
 
   private rememberInbound(chatJid: string, observedAt: string): void {
@@ -445,9 +525,15 @@ export class TelegramChannel implements Channel {
   }
 
   private scheduleRecovery(reason: string): void {
-    if (this.shuttingDown || this.reconnectTimer || !this.bot) {
+    if (
+      this.shuttingDown ||
+      this.reconnectTimer ||
+      !this.bot ||
+      this.recoveryAttempts >= 1
+    ) {
       return;
     }
+    this.recoveryAttempts += 1;
     logger.warn(
       { component: 'telegram', reason },
       'Telegram polling degraded; scheduling recovery attempt',
@@ -464,16 +550,130 @@ export class TelegramChannel implements Channel {
         );
       }
       void this.startPollingSession(true).catch((err) => {
-        const detail = this.describePollingError(err);
-        this.updateHealth({
-          state: 'degraded',
-          lastError: detail,
-          detail,
-        });
-        this.scheduleRecovery(detail);
+        logger.warn(
+          { component: 'telegram', err },
+          'Telegram recovery attempt ended before polling became ready',
+        );
       });
     }, 5000);
     this.reconnectTimer.unref?.();
+  }
+
+  private async configureBotMetadataOnce(): Promise<void> {
+    if (!this.bot || this.metadataSetupAttempted) return;
+    this.metadataSetupAttempted = true;
+
+    this.bot.api
+      .setMyDescription(buildTelegramDescriptionText())
+      .catch((err) => {
+        logger.warn(
+          { component: 'telegram', err },
+          'Failed to set Telegram bot description',
+        );
+      });
+    this.bot.api
+      .setMyShortDescription(buildTelegramShortDescriptionText())
+      .catch((err) => {
+        logger.warn(
+          { component: 'telegram', err },
+          'Failed to set Telegram bot short description',
+        );
+      });
+
+    this.bot.api
+      .setMyCommands([
+        { command: 'start', description: 'Quick start for new users' },
+        {
+          command: 'help',
+          description: 'How Andrea works in this chat',
+        },
+        {
+          command: 'commands',
+          description: 'List the demo-safe command set',
+        },
+        { command: 'features', description: 'Show what Andrea can do' },
+        { command: 'ping', description: 'Check if the bot is online' },
+        { command: 'chatid', description: 'Show current chat ID/type' },
+        {
+          command: 'cursor_status',
+          description: 'Show Cursor integration status',
+        },
+        {
+          command: 'registermain',
+          description: 'Register this DM as main control chat',
+        },
+      ])
+      .catch((err) => {
+        logger.warn(
+          { component: 'telegram', err },
+          'Failed to register Telegram command menu',
+        );
+      });
+  }
+
+  private async handlePollingFailure(err: unknown): Promise<string> {
+    const webhook = await this.inspectWebhookState();
+    const conflictBefore = this.consecutiveExternalConflicts;
+    const classification = classifyTelegramTransportFailure({
+      error: err,
+      consecutiveExternalConflicts: conflictBefore,
+      webhookPresent: webhook.present,
+      webhookUrl: webhook.url,
+    });
+    const conflictNow =
+      classification.errorClass === 'setwebhook_conflict' ||
+      classification.errorClass === 'getupdates_conflict' ||
+      classification.errorClass === 'webhook_active' ||
+      classification.errorClass === 'shared_token_suspected' ||
+      classification.errorClass === 'token_rotation_required';
+    this.consecutiveExternalConflicts = conflictNow
+      ? conflictBefore + 1
+      : 0;
+
+    const now = new Date().toISOString();
+    const lastPollConflictAt =
+      classification.errorClass === 'setwebhook_conflict' ||
+      classification.errorClass === 'getupdates_conflict' ||
+      classification.errorClass === 'shared_token_suspected' ||
+      classification.errorClass === 'token_rotation_required'
+        ? now
+        : null;
+
+    this.updateHealth({
+      state: 'degraded',
+      lastError: classification.detail,
+      detail: classification.detail,
+    });
+    this.persistTransportState({
+      status: classification.status,
+      detail: classification.detail,
+      lastError: this.describePollingError(err),
+      lastErrorClass: classification.errorClass as TelegramTransportErrorClass,
+      webhookPresent: webhook.present,
+      webhookUrl: webhook.url,
+      lastWebhookCheckAt: webhook.checkedAt,
+      lastPollConflictAt:
+        lastPollConflictAt ?? readTelegramTransportState()?.lastPollConflictAt,
+      externalConsumerSuspected: classification.externalConsumerSuspected,
+      tokenRotationRequired: classification.tokenRotationRequired,
+      consecutiveExternalConflicts: this.consecutiveExternalConflicts,
+    });
+
+    if (classification.status === 'blocked') {
+      logger.error(
+        {
+          component: 'telegram',
+          detail: classification.detail,
+          errorClass: classification.errorClass,
+          webhookUrl: webhook.url,
+        },
+        'Telegram transport is blocked by an external consumer and needs token rotation',
+      );
+      return classification.detail;
+    }
+
+    this.scheduleRecovery(classification.detail);
+    return classification.detail;
   }
 
   private async startPollingSession(isRecovery = false): Promise<void> {
@@ -481,15 +681,56 @@ export class TelegramChannel implements Channel {
       throw new Error('Telegram bot is not initialized.');
     }
 
+    const startDetail = isRecovery
+      ? 'Restarting Telegram long polling.'
+      : 'Starting Telegram long polling.';
     this.updateHealth({
       state: 'starting',
       lastError: null,
-      detail: isRecovery
-        ? 'Restarting Telegram long polling.'
-        : 'Starting Telegram long polling.',
+      detail: startDetail,
+    });
+    this.persistTransportState({
+      status: 'starting',
+      detail: startDetail,
+      lastError: null,
+      lastErrorClass: 'none',
+      externalConsumerSuspected: false,
+      tokenRotationRequired: false,
+      consecutiveExternalConflicts: this.consecutiveExternalConflicts,
     });
 
-    await this.clearWebhookBeforePolling();
+    const webhookBefore = await this.inspectWebhookState();
+    this.persistTransportState({
+      status: 'starting',
+      detail: startDetail,
+      webhookPresent: webhookBefore.present,
+      webhookUrl: webhookBefore.url,
+      lastWebhookCheckAt: webhookBefore.checkedAt,
+      consecutiveExternalConflicts: this.consecutiveExternalConflicts,
+    });
+
+    if (webhookBefore.present) {
+      await this.clearWebhookBeforePolling();
+      const webhookAfter = await this.inspectWebhookState();
+      this.persistTransportState({
+        status: 'starting',
+        detail: startDetail,
+        webhookPresent: webhookAfter.present,
+        webhookUrl: webhookAfter.url,
+        lastWebhookCheckAt: webhookAfter.checkedAt,
+        consecutiveExternalConflicts: this.consecutiveExternalConflicts,
+      });
+      if (webhookAfter.present) {
+        const detail = await this.handlePollingFailure(
+          new Error(
+            webhookAfter.url
+              ? `Telegram webhook ${webhookAfter.url} is still active after local cleanup.`
+              : 'Telegram webhook is still active after local cleanup.',
+          ),
+        );
+        throw new Error(detail);
+      }
+    }
 
     await new Promise<void>((resolve, reject) => {
       let started = false;
@@ -506,77 +747,37 @@ export class TelegramChannel implements Channel {
         clearTimeout(timeout);
         resolve();
       };
-      const settleFailure = (err: unknown) => {
+      const settleFailure = async (err: unknown) => {
         clearTimeout(timeout);
+        const detail = await this.handlePollingFailure(err);
         if (!started) {
-          reject(err);
+          reject(new Error(detail));
           return;
         }
-        const detail = this.describePollingError(err);
-        this.updateHealth({
-          state: 'degraded',
-          lastError: detail,
-          detail,
-        });
-        this.scheduleRecovery(detail);
       };
 
       this.bot!
         .start({
-          onStart: (botInfo) => {
-            this.bot!.api
-              .setMyDescription(buildTelegramDescriptionText())
-              .catch((err) => {
-                logger.warn(
-                  { component: 'telegram', err },
-                  'Failed to set Telegram bot description',
-                );
-              });
-            this.bot!.api
-              .setMyShortDescription(buildTelegramShortDescriptionText())
-              .catch((err) => {
-                logger.warn(
-                  { component: 'telegram', err },
-                  'Failed to set Telegram bot short description',
-                );
-              });
-
-            this.bot!.api
-              .setMyCommands([
-                { command: 'start', description: 'Quick start for new users' },
-                {
-                  command: 'help',
-                  description: 'How Andrea works in this chat',
-                },
-                {
-                  command: 'commands',
-                  description: 'List the demo-safe command set',
-                },
-                { command: 'features', description: 'Show what Andrea can do' },
-                { command: 'ping', description: 'Check if the bot is online' },
-                { command: 'chatid', description: 'Show current chat ID/type' },
-                {
-                  command: 'cursor_status',
-                  description: 'Show Cursor integration status',
-                },
-                {
-                  command: 'registermain',
-                  description: 'Register this DM as main control chat',
-                },
-              ])
-              .catch((err) => {
-                logger.warn(
-                  { component: 'telegram', err },
-                  'Failed to register Telegram command menu',
-                );
-              });
-
+          onStart: async (botInfo) => {
+            await this.configureBotMetadataOnce();
             const readyAt = new Date().toISOString();
+            this.recoveryAttempts = 0;
             this.updateHealth({
               state: 'ready',
               lastReadyAt: readyAt,
               lastError: null,
               detail: `Telegram long polling connected as @${botInfo.username}.`,
+            });
+            this.persistTransportState({
+              status: 'ready',
+              detail: `Telegram long polling connected as @${botInfo.username}.`,
+              lastError: null,
+              lastErrorClass: 'none',
+              webhookPresent: false,
+              webhookUrl: null,
+              externalConsumerSuspected: false,
+              tokenRotationRequired: false,
+              consecutiveExternalConflicts: this.consecutiveExternalConflicts,
             });
             logger.info(
               {
@@ -599,6 +800,9 @@ export class TelegramChannel implements Channel {
 
   async connect(): Promise<void> {
     this.shuttingDown = false;
+    this.metadataSetupAttempted = false;
+    this.recoveryAttempts = 0;
+    this.consecutiveExternalConflicts = 0;
     this.bot = new Bot(this.botToken, {
       client: {
         baseFetchConfig: { agent: https.globalAgent, compress: true },
@@ -935,7 +1139,14 @@ export class TelegramChannel implements Channel {
         'Telegram bot error',
       );
     });
-    await this.startPollingSession(false);
+    try {
+      await this.startPollingSession(false);
+    } catch (err) {
+      logger.error(
+        { component: 'telegram', err },
+        'Telegram transport did not become ready during startup; keeping the runtime alive with degraded Telegram health',
+      );
+    }
   }
 
   async sendMessage(
@@ -1102,6 +1313,15 @@ export class TelegramChannel implements Channel {
       this.updateHealth({
         state: 'stopped',
         detail: 'Telegram polling stopped.',
+      });
+      this.persistTransportState({
+        status: 'stopped',
+        detail: 'Telegram long polling stopped.',
+        lastError: null,
+        lastErrorClass: 'none',
+        externalConsumerSuspected: false,
+        tokenRotationRequired: false,
+        consecutiveExternalConflicts: 0,
       });
       logger.info('Telegram bot stopped');
     }

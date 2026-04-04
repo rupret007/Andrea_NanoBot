@@ -22,6 +22,7 @@ $hostStatePath = Join-Path $runtimeDir 'nanoclaw-host-state.json'
 $readyStatePath = Join-Path $runtimeDir 'nanoclaw-ready.json'
 $assistantHealthPath = Join-Path $runtimeDir 'assistant-health.json'
 $telegramRoundtripPath = Join-Path $runtimeDir 'telegram-roundtrip-health.json'
+$telegramTransportPath = Join-Path $runtimeDir 'telegram-transport-health.json'
 $lockPath = Join-Path $runtimeDir 'nanoclaw-host.lock'
 $nodeRuntimeMetadataPath = Join-Path $runtimeDir 'node-runtime.json'
 $watchdogPidPath = Join-Path $runtimeDir 'nanoclaw-watchdog.pid'
@@ -75,6 +76,44 @@ function Write-JsonFile {
   $json = $Value | ConvertTo-Json -Depth 8
   $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
   [System.IO.File]::WriteAllText($Path, $json, $utf8NoBom)
+}
+
+function Read-DotEnv {
+  $result = @{}
+  $envPath = Join-Path $projectRoot '.env'
+  if (!(Test-Path -LiteralPath $envPath)) {
+    return $result
+  }
+
+  foreach ($line in Get-Content -LiteralPath $envPath -ErrorAction SilentlyContinue) {
+    $trimmed = [string] $line
+    if ([string]::IsNullOrWhiteSpace($trimmed)) { continue }
+    if ($trimmed.TrimStart().StartsWith('#')) { continue }
+    $parts = $trimmed -split '=', 2
+    if ($parts.Count -lt 2) { continue }
+    $key = $parts[0].Trim()
+    if ([string]::IsNullOrWhiteSpace($key)) { continue }
+    $value = $parts[1].Trim().Trim('"').Trim("'")
+    $result[$key] = $value
+  }
+
+  return $result
+}
+
+function Get-EnvValue {
+  param(
+    [hashtable] $DotEnv,
+    [string] $Key
+  )
+
+  $fromProcess = [Environment]::GetEnvironmentVariable($Key)
+  if (-not [string]::IsNullOrWhiteSpace($fromProcess)) {
+    return $fromProcess.Trim()
+  }
+  if ($DotEnv.ContainsKey($Key) -and -not [string]::IsNullOrWhiteSpace([string] $DotEnv[$Key])) {
+    return ([string] $DotEnv[$Key]).Trim()
+  }
+  return ''
 }
 
 function Get-CanonicalCompatibilityShimContent {
@@ -151,12 +190,18 @@ function Test-RepoProcess {
 
   try {
     $proc = Get-CimInstance Win32_Process -Filter "ProcessId = $ProcessId" -ErrorAction SilentlyContinue
-    if ($null -eq $proc) { return $false }
+    if ($null -eq $proc) {
+      return $null -ne (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)
+    }
     $cmd = [string] $proc.CommandLine
     $projectPattern = [Regex]::Escape($projectRoot)
     return $cmd -match $projectPattern -and $cmd -match 'dist[\\/]index\.js'
   } catch {
-    return $false
+    try {
+      return $null -ne (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)
+    } catch {
+      return $false
+    }
   }
 }
 
@@ -175,12 +220,18 @@ function Test-WatchdogProcess {
 
   try {
     $proc = Get-CimInstance Win32_Process -Filter "ProcessId = $ProcessId" -ErrorAction SilentlyContinue
-    if ($null -eq $proc) { return $false }
+    if ($null -eq $proc) {
+      return $null -ne (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)
+    }
     $cmd = [string] $proc.CommandLine
     $projectPattern = [Regex]::Escape($projectRoot)
     return $cmd -match $projectPattern -and $cmd -match 'nanoclaw-watchdog\.ps1'
   } catch {
-    return $false
+    try {
+      return $null -ne (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)
+    } catch {
+      return $false
+    }
   }
 }
 
@@ -510,6 +561,137 @@ function Get-TelegramRoundtripStatus {
     lastProbeAt = $lastProbeAt
     nextDueAt = $nextDueAt
     due = $due
+  }
+}
+
+function Get-TelegramTransportStatus {
+  param([object] $AssistantHealthMarker = $null)
+
+  $telegramChannel = $null
+  if ($AssistantHealthMarker -and $AssistantHealthMarker.channels) {
+    foreach ($channel in @($AssistantHealthMarker.channels)) {
+      if ($null -eq $channel) { continue }
+      if ([string] $channel.name -ne 'telegram') { continue }
+      $configured = $false
+      if ($channel.PSObject.Properties.Name -contains 'configured') {
+        $configured = [bool] $channel.configured
+      }
+      if ($configured) {
+        $telegramChannel = $channel
+        break
+      }
+    }
+  }
+
+  if ($null -eq $telegramChannel) {
+    return [pscustomobject]@{
+      mode = 'long_polling'
+      status = 'unconfigured'
+      detail = 'Telegram channel is not configured in this runtime.'
+      updatedAt = $null
+      lastError = $null
+      lastErrorClass = 'none'
+      webhookPresent = $false
+      webhookUrl = $null
+      lastWebhookCheckAt = $null
+      lastPollConflictAt = $null
+      externalConsumerSuspected = $false
+      tokenRotationRequired = $false
+      externalBlocker = 'none'
+    }
+  }
+
+  $state = Read-JsonFile $telegramTransportPath
+  if ($null -eq $state) {
+    return [pscustomobject]@{
+      mode = 'long_polling'
+      status = 'degraded'
+      detail = 'Telegram transport state marker is missing.'
+      updatedAt = $null
+      lastError = $null
+      lastErrorClass = 'none'
+      webhookPresent = $false
+      webhookUrl = $null
+      lastWebhookCheckAt = $null
+      lastPollConflictAt = $null
+      externalConsumerSuspected = $false
+      tokenRotationRequired = $false
+      externalBlocker = 'none'
+    }
+  }
+
+  $externalBlocker = 'none'
+  if ([bool] $state.tokenRotationRequired) {
+    $externalBlocker = 'rotate_bot_token_and_retire_competing_consumer'
+  } elseif ([bool] $state.externalConsumerSuspected) {
+    $externalBlocker = 'competing_consumer_suspected'
+  } elseif ([bool] $state.webhookPresent) {
+    $externalBlocker = 'active_webhook_present'
+  }
+
+  return [pscustomobject]@{
+    mode = if ([string]::IsNullOrWhiteSpace([string] $state.mode)) { 'long_polling' } else { [string] $state.mode }
+    status = if ([string]::IsNullOrWhiteSpace([string] $state.status)) { 'degraded' } else { [string] $state.status }
+    detail = if ([string]::IsNullOrWhiteSpace([string] $state.detail)) { 'Telegram transport state is missing detail.' } else { [string] $state.detail }
+    updatedAt = if ($state.updatedAt) { [string] $state.updatedAt } else { $null }
+    lastError = if ($state.lastError) { [string] $state.lastError } else { $null }
+    lastErrorClass = if ($state.lastErrorClass) { [string] $state.lastErrorClass } else { 'none' }
+    webhookPresent = [bool] $state.webhookPresent
+    webhookUrl = if ($state.webhookUrl) { [string] $state.webhookUrl } else { $null }
+    lastWebhookCheckAt = if ($state.lastWebhookCheckAt) { [string] $state.lastWebhookCheckAt } else { $null }
+    lastPollConflictAt = if ($state.lastPollConflictAt) { [string] $state.lastPollConflictAt } else { $null }
+    externalConsumerSuspected = [bool] $state.externalConsumerSuspected
+    tokenRotationRequired = [bool] $state.tokenRotationRequired
+    externalBlocker = $externalBlocker
+  }
+}
+
+function Get-TelegramLiveProbeConfigStatus {
+  $dotEnv = Read-DotEnv
+  $apiId = Get-EnvValue -DotEnv $dotEnv -Key 'TELEGRAM_USER_API_ID'
+  $apiHash = Get-EnvValue -DotEnv $dotEnv -Key 'TELEGRAM_USER_API_HASH'
+  $session = Get-EnvValue -DotEnv $dotEnv -Key 'TELEGRAM_USER_SESSION'
+  $sessionFile = Get-EnvValue -DotEnv $dotEnv -Key 'TELEGRAM_USER_SESSION_FILE'
+  if ([string]::IsNullOrWhiteSpace($sessionFile)) {
+    $sessionFile = Join-Path $projectRoot 'store\telegram-user.session'
+  }
+  $testTarget = Get-EnvValue -DotEnv $dotEnv -Key 'TELEGRAM_TEST_TARGET'
+  $testChatId = Get-EnvValue -DotEnv $dotEnv -Key 'TELEGRAM_TEST_CHAT_ID'
+  $botUsername = Get-EnvValue -DotEnv $dotEnv -Key 'TELEGRAM_BOT_USERNAME'
+  $sessionPresent = -not [string]::IsNullOrWhiteSpace($session)
+  if (-not $sessionPresent -and (Test-Path -LiteralPath $sessionFile)) {
+    try {
+      $sessionPresent = -not [string]::IsNullOrWhiteSpace((Get-Content -LiteralPath $sessionFile -Raw -ErrorAction Stop).Trim())
+    } catch {
+      $sessionPresent = $false
+    }
+  }
+  $targetPresent = -not [string]::IsNullOrWhiteSpace($testTarget) -or -not [string]::IsNullOrWhiteSpace($testChatId) -or -not [string]::IsNullOrWhiteSpace($botUsername)
+
+  if ([string]::IsNullOrWhiteSpace($apiId) -or [string]::IsNullOrWhiteSpace($apiHash)) {
+    return [pscustomobject]@{
+      configured = $false
+      detail = 'Telegram user-session credentials are missing. Set TELEGRAM_USER_API_ID and TELEGRAM_USER_API_HASH first.'
+    }
+  }
+
+  if (-not $sessionPresent) {
+    return [pscustomobject]@{
+      configured = $false
+      detail = ("Telegram user-session is missing. Run `npm run telegram:user:auth` and complete the login flow. Session file: {0}" -f $sessionFile)
+    }
+  }
+
+  if (-not $targetPresent) {
+    return [pscustomobject]@{
+      configured = $false
+      detail = 'Telegram test target is not configured. Set TELEGRAM_TEST_TARGET, TELEGRAM_TEST_CHAT_ID, or TELEGRAM_BOT_USERNAME.'
+    }
+  }
+
+  return [pscustomobject]@{
+    configured = $true
+    detail = 'Telegram live /ping probe credentials are configured.'
   }
 }
 
@@ -952,6 +1134,7 @@ function Stop-NanoClaw {
   Remove-FileIfExists $pidFile
   Remove-FileIfExists $readyStatePath
   Remove-FileIfExists $assistantHealthPath
+  Remove-FileIfExists $telegramTransportPath
   Write-HostState -Phase 'stopped' -BootId '' -NodePath '' -NodeVersion '' -StartedAt '' -InstallModeValue $InstallMode
 }
 
@@ -986,7 +1169,17 @@ function Ensure-NanoClaw {
   }
 
   $assistantHealth = Get-AssistantHealthStatus -HostState $hostState -ReadyState $readyState -RuntimePid $runtimePid
+  $telegramTransport = Get-TelegramTransportStatus -AssistantHealthMarker $assistantHealthMarker
   $telegramRoundtrip = Get-TelegramRoundtripStatus -AssistantHealthMarker $assistantHealthMarker -HostState $hostState -ReadyState $readyState
+  $telegramProbeConfig = Get-TelegramLiveProbeConfigStatus
+
+  if ([string] $telegramTransport.status -eq 'blocked') {
+    Write-HostStep ("Periodic ensure check detected an external Telegram blocker and will not restart blindly: {0}" -f ([string] $telegramTransport.detail))
+    Start-Watchdog
+    Write-Output ("HOST_ENSURE: status=degraded pid={0} telegram_transport={1} telegram_roundtrip={2} blocker={3}" -f $runtimePid, ([string] $telegramTransport.status), ([string] $telegramRoundtrip.status), ([string] $telegramTransport.externalBlocker))
+    return
+  }
+
   if ([string] $assistantHealth.status -eq 'healthy') {
     if ($telegramRoundtrip.due) {
       $probe = Invoke-TelegramRoundtripProbe
@@ -1008,12 +1201,15 @@ function Ensure-NanoClaw {
     }
 
     Start-Watchdog
-    $ensureStatus = if ([string] $telegramRoundtrip.status -eq 'healthy') {
+    $ensureStatus = if (
+      [string] $telegramTransport.status -eq 'ready' -and
+      ([string] $telegramRoundtrip.status -eq 'healthy' -or -not [bool] $telegramProbeConfig.configured)
+    ) {
       'healthy'
     } else {
       'degraded'
     }
-    Write-Output ("HOST_ENSURE: status={0} pid={1} telegram_roundtrip={2}" -f $ensureStatus, $runtimePid, ([string] $telegramRoundtrip.status))
+    Write-Output ("HOST_ENSURE: status={0} pid={1} telegram_transport={2} telegram_roundtrip={3}" -f $ensureStatus, $runtimePid, ([string] $telegramTransport.status), ([string] $telegramRoundtrip.status))
     return
   }
 
@@ -1026,7 +1222,14 @@ function Ensure-NanoClaw {
   if ($telegramOnlyIssue -and [string] $telegramRoundtrip.status -eq 'unconfigured') {
     Write-HostStep 'Periodic ensure check detected Telegram degradation, but live roundtrip probing is unconfigured; leaving the current process running and reporting degraded truthfully'
     Start-Watchdog
-    Write-Output ("HOST_ENSURE: status=degraded pid={0} telegram_roundtrip={1}" -f $runtimePid, ([string] $telegramRoundtrip.status))
+    Write-Output ("HOST_ENSURE: status=degraded pid={0} telegram_transport={1} telegram_roundtrip={2}" -f $runtimePid, ([string] $telegramTransport.status), ([string] $telegramRoundtrip.status))
+    return
+  }
+
+  if ($telegramOnlyIssue -and [string] $telegramTransport.status -eq 'blocked') {
+    Write-HostStep ("Periodic ensure check detected Telegram degradation caused by an external consumer; leaving the current process running. {0}" -f ([string] $telegramTransport.detail))
+    Start-Watchdog
+    Write-Output ("HOST_ENSURE: status=degraded pid={0} telegram_transport={1} telegram_roundtrip={2} blocker={3}" -f $runtimePid, ([string] $telegramTransport.status), ([string] $telegramRoundtrip.status), ([string] $telegramTransport.externalBlocker))
     return
   }
 
@@ -1074,7 +1277,9 @@ function Show-Status {
     $InstallMode
   }
   $assistantHealth = Get-AssistantHealthStatus -HostState $hostState -ReadyState $readyState -RuntimePid $runtimePid
+  $telegramTransport = Get-TelegramTransportStatus -AssistantHealthMarker $assistantHealthMarker
   $telegramRoundtrip = Get-TelegramRoundtripStatus -AssistantHealthMarker $assistantHealthMarker -HostState $hostState -ReadyState $readyState
+  $telegramProbeConfig = Get-TelegramLiveProbeConfigStatus
   $watchdog = Get-WatchdogSnapshot
 
   Write-Output ("HOST_STATUS: phase={0}" -f $phase)
@@ -1090,8 +1295,20 @@ function Show-Status {
   Write-Output ("HOST_STATUS: assistant_health={0}" -f ([string] $assistantHealth.status))
   Write-Output ("HOST_STATUS: assistant_health_detail={0}" -f ([string] $assistantHealth.detail))
   Write-Output ("HOST_STATUS: assistant_health_updated_at={0}" -f ($(if ($assistantHealth.updatedAt) { [string] $assistantHealth.updatedAt } else { 'none' })))
+  Write-Output ("HOST_STATUS: telegram_transport_mode={0}" -f ([string] $telegramTransport.mode))
+  Write-Output ("HOST_STATUS: telegram_transport_health={0}" -f ([string] $telegramTransport.status))
+  Write-Output ("HOST_STATUS: telegram_transport_detail={0}" -f ([string] $telegramTransport.detail))
+  Write-Output ("HOST_STATUS: telegram_external_blocker={0}" -f ([string] $telegramTransport.externalBlocker))
+  Write-Output ("HOST_STATUS: telegram_token_rotation_required={0}" -f ([string] $telegramTransport.tokenRotationRequired).ToLowerInvariant())
+  Write-Output ("HOST_STATUS: telegram_last_error={0}" -f ($(if ($telegramTransport.lastError) { [string] $telegramTransport.lastError } else { 'none' })))
+  Write-Output ("HOST_STATUS: telegram_last_error_class={0}" -f ([string] $telegramTransport.lastErrorClass))
+  Write-Output ("HOST_STATUS: telegram_transport_updated_at={0}" -f ($(if ($telegramTransport.updatedAt) { [string] $telegramTransport.updatedAt } else { 'none' })))
+  Write-Output ("HOST_STATUS: telegram_webhook_present={0}" -f ([string] $telegramTransport.webhookPresent).ToLowerInvariant())
+  Write-Output ("HOST_STATUS: telegram_webhook_url={0}" -f ($(if ($telegramTransport.webhookUrl) { [string] $telegramTransport.webhookUrl } else { 'none' })))
   Write-Output ("HOST_STATUS: telegram_roundtrip_health={0}" -f ([string] $telegramRoundtrip.status))
   Write-Output ("HOST_STATUS: telegram_roundtrip_detail={0}" -f ([string] $telegramRoundtrip.detail))
+  Write-Output ("HOST_STATUS: telegram_live_probe_configured={0}" -f ([string] $telegramProbeConfig.configured).ToLowerInvariant())
+  Write-Output ("HOST_STATUS: telegram_live_probe_detail={0}" -f ([string] $telegramProbeConfig.detail))
   Write-Output ("HOST_STATUS: telegram_roundtrip_last_ok_at={0}" -f ($(if ($telegramRoundtrip.lastOkAt) { [string] $telegramRoundtrip.lastOkAt } else { 'none' })))
   Write-Output ("HOST_STATUS: telegram_roundtrip_last_probe_at={0}" -f ($(if ($telegramRoundtrip.lastProbeAt) { [string] $telegramRoundtrip.lastProbeAt } else { 'none' })))
   Write-Output ("HOST_STATUS: telegram_roundtrip_next_due_at={0}" -f ($(if ($telegramRoundtrip.nextDueAt) { [string] $telegramRoundtrip.nextDueAt } else { 'none' })))

@@ -8,19 +8,23 @@ import {
   assessAssistantHealthState,
   clearAssistantHealthState,
   clearAssistantReadyState,
+  clearTelegramTransportState,
   detectWindowsInstallArtifacts,
   detectWindowsInstallMode,
   determineWindowsHostServiceState,
   getAssistantHealthStatePath,
   getHostStatePath,
   getReadyStatePath,
+  getTelegramTransportStatePath,
   persistNanoclawHostState,
   readAssistantHealthState,
   readHostControlSnapshot,
+  readTelegramTransportState,
   reconcileWindowsHostState,
   type NanoclawHostState,
   writeAssistantHealthState,
   writeAssistantReadyState,
+  writeTelegramTransportState,
 } from './host-control.js';
 
 describe('host control state', () => {
@@ -38,6 +42,7 @@ describe('host control state', () => {
   afterEach(() => {
     clearAssistantHealthState();
     clearAssistantReadyState();
+    clearTelegramTransportState();
     process.chdir(previousCwd);
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
@@ -165,6 +170,59 @@ describe('host control state', () => {
         detail: 'Telegram polling connected.',
       }),
     ]);
+  });
+
+  it('writes and reads Telegram transport markers', () => {
+    persistNanoclawHostState({
+      bootId: 'boot-transport',
+      phase: 'running_ready',
+      pid: process.pid,
+      installMode: 'manual_host_control',
+      nodePath: 'C:\\node.exe',
+      nodeVersion: '22.22.2',
+      startedAt: '2026-04-02T00:00:00.000Z',
+      readyAt: '2026-04-02T00:00:05.000Z',
+      lastError: '',
+      dependencyState: 'ok',
+      dependencyError: '',
+      stdoutLogPath: path.join(tempDir, 'logs', 'nanoclaw.log'),
+      stderrLogPath: path.join(tempDir, 'logs', 'nanoclaw.error.log'),
+      hostLogPath: path.join(tempDir, 'logs', 'nanoclaw.host.log'),
+    });
+
+    writeTelegramTransportState({
+      bootId: 'boot-transport',
+      pid: process.pid,
+      mode: 'long_polling',
+      status: 'blocked',
+      detail: 'Rotate the Telegram bot token and retire the competing consumer.',
+      updatedAt: '2026-04-04T12:00:00.000Z',
+      lastError:
+        "Call to 'getUpdates' failed! (409: Conflict: terminated by setWebhook request)",
+      lastErrorClass: 'token_rotation_required',
+      webhookPresent: true,
+      webhookUrl: 'https://example.com/tg',
+      lastWebhookCheckAt: '2026-04-04T12:00:00.000Z',
+      lastPollConflictAt: '2026-04-04T12:00:00.000Z',
+      externalConsumerSuspected: true,
+      tokenRotationRequired: true,
+      consecutiveExternalConflicts: 2,
+    });
+
+    expect(fs.existsSync(getTelegramTransportStatePath())).toBe(true);
+    expect(readTelegramTransportState()).toEqual(
+      expect.objectContaining({
+        mode: 'long_polling',
+        status: 'blocked',
+        tokenRotationRequired: true,
+      }),
+    );
+    expect(readHostControlSnapshot().telegramTransportState).toEqual(
+      expect.objectContaining({
+        status: 'blocked',
+        lastErrorClass: 'token_rotation_required',
+      }),
+    );
   });
 });
 
