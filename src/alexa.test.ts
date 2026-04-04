@@ -765,9 +765,10 @@ describe('startAlexaServer', () => {
 
 describe('formatAlexaStatusMessage', () => {
   it('renders both disabled and enabled status states clearly', () => {
-    expect(
-      formatAlexaStatusMessage({ enabled: false, running: false }),
-    ).toContain('Status: disabled');
+    const disabled = formatAlexaStatusMessage({ enabled: false, running: false });
+    expect(disabled).toContain('Status: disabled');
+    expect(disabled).toContain('configure the skill ID');
+    expect(disabled).not.toContain('serenades');
     expect(
       formatAlexaStatusMessage({
         enabled: true,

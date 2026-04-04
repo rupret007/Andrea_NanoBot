@@ -72,6 +72,8 @@ Use these during incidents, audits, or release preparation:
 | Release test gate        | [TESTING_AND_RELEASE_RUNBOOK.md](TESTING_AND_RELEASE_RUNBOOK.md) |
 | Public privacy policy    | [../PRIVACY.md](../PRIVACY.md)                                   |
 
+Current Andrea operator truth lives in the README, admin guide, setup guide, and Alexa guide. `REQUIREMENTS.md` remains useful background, but it is historical NanoClaw design reference rather than the day-to-day operations source of truth.
+
 ## Runtime Internals
 
 Only read these when changing core runtime behavior:
@@ -83,6 +85,8 @@ Only read these when changing core runtime behavior:
 | [skills-as-branches.md](skills-as-branches.md)                 | Skill and branch workflow internals       |
 | [APPLE-CONTAINER-NETWORKING.md](APPLE-CONTAINER-NETWORKING.md) | Apple Container network behavior on macOS |
 | [docker-sandboxes.md](docker-sandboxes.md)                     | Docker sandbox notes                      |
+
+`SPEC.md` is a historical runtime reference. When it disagrees with current operator docs or live host behavior, follow the current README, admin guide, setup guide, and Alexa guide.
 
 ## Quick Rule
 

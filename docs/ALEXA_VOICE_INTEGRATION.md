@@ -40,6 +40,7 @@ Important validation note:
 
 - use **Node 22.22.2** for Alexa validation on this repo
 - do not rely on host Node 24 for truthful Alexa checks
+- `npm run services:status` now exposes the local Alexa listener and OAuth health when Alexa is configured, but public HTTPS ingress and real signed Alexa requests still need their own checks
 
 ## 1) Alexa Surface
 

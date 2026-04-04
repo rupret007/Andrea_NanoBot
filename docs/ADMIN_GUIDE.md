@@ -187,7 +187,7 @@ Windows startup truth:
 - Telegram is only considered truly responsive once a real round-trip succeeds. The watchdog now drives a real `/ping` roundtrip probe against the main operator chat every 30 minutes when there has not been a more recent successful Telegram exchange.
 - If the first due probe fails, the watchdog retries once after a short backoff and then restarts Andrea automatically if Telegram still does not reply.
 - If Telegram itself is degraded but the operator-side roundtrip harness is still unconfigured, `services:ensure` now reports `degraded` plus `telegram_roundtrip=unconfigured` instead of pretending Telegram is healthy or thrashing Andrea with blind restart loops.
-- `npm run services:status` now includes `assistant_health`, `telegram_roundtrip_health`, `telegram_roundtrip_last_ok_at`, `telegram_roundtrip_last_probe_at`, `telegram_roundtrip_next_due_at`, `watchdog_running`, plus the active repo root, branch, commit, DB path, assistant name source, and the currently registered main Telegram chat so runtime/state drift is visible immediately instead of looking falsely healthy.
+- `npm run services:status` now includes `assistant_health`, local Alexa listener and OAuth health when Alexa is configured, `telegram_roundtrip_health`, `telegram_roundtrip_last_ok_at`, `telegram_roundtrip_last_probe_at`, `telegram_roundtrip_next_due_at`, `watchdog_running`, plus the active repo root, branch, commit, DB path, assistant name source, and the currently registered main Telegram chat so runtime/state drift is visible immediately instead of looking falsely healthy.
 
 Quick recovery steps after a failed login bring-up:
 

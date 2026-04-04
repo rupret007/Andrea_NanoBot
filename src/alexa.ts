@@ -286,7 +286,7 @@ export function formatAlexaStatusMessage(status: AlexaStatus): string {
       '*Alexa Voice*',
       '- Status: disabled',
       '- Detail: set `ALEXA_SKILL_ID` to enable the Alexa voice ingress.',
-      '- Andrea note: no skill ID means no Echo serenades tonight.',
+      '- Next step: configure the skill ID before expecting Alexa requests on this host.',
     ].join('\n');
   }
 

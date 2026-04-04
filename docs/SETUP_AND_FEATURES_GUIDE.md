@@ -339,7 +339,7 @@ Practical notes:
 
 - Alexa requires an HTTPS endpoint, so local dev usually sits behind a tunnel or reverse proxy.
 - `ALEXA_ALLOWED_USER_IDS` is the easiest security rail for a private skill rollout.
-- Use `/alexa-status` in Telegram to confirm that the listener actually started.
+- Use `/alexa-status` in Telegram to confirm that the listener actually started, and `npm run services:status` to confirm `alexa_listener_health` plus `alexa_oauth_health` on the host.
 - Account linking is required for Alexa personal-data intents in v1.
 - unlinked Alexa is intentionally limited to launch/help/fallback style responses.
 - The Andrea OAuth server now mints the linked access token and maps it to one Andrea `groupFolder`.
@@ -558,7 +558,7 @@ Windows service lifecycle helpers:
 - `npm run services:stop` stops NanoClaw, the local gateway, and any repo-managed companions started through the host launcher.
 - `npm run services:restart` runs stop then start through the same host-controlled path.
 - `npm run services:ensure` runs one explicit health-enforcement pass through the same host launcher.
-- `npm run services:status` reports the active repo root, git branch and commit, pinned Node runtime, installed login-start mechanism, active `.env` and DB paths, Alexa health, optional loopback backend health, ngrok state, the current `assistant_health` view, `telegram_roundtrip_health`, the public assistant name/source, the registered main Telegram chat, whether the watchdog is running, and the last startup error if one occurred.
+- `npm run services:status` reports the active repo root, git branch and commit, pinned Node runtime, installed login-start mechanism, active `.env` and DB paths, the local Alexa listener and OAuth health when Alexa is configured, the current `assistant_health` view, `telegram_roundtrip_health`, the public assistant name/source, the registered main Telegram chat, whether the watchdog is running, and the last startup error if one occurred.
 
 Startup behavior:
 

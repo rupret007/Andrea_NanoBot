@@ -1,5 +1,7 @@
 # NanoClaw Requirements
 
+> Historical NanoClaw design reference. Current Andrea_NanoBot operator truth lives in the root README, `docs/ADMIN_GUIDE.md`, `docs/SETUP_AND_FEATURES_GUIDE.md`, and `docs/ALEXA_VOICE_INTEGRATION.md`.
+
 Original requirements and design decisions from the project creator.
 
 ---
@@ -79,7 +81,7 @@ A personal Claude assistant accessible via messaging, with minimal custom code.
 ### Message Routing
 - A router listens to connected channels and routes messages based on configuration
 - Only messages from registered groups are processed
-- Trigger: `@Andy` prefix (case insensitive), configurable via `ASSISTANT_NAME` env var
+- Trigger: `@Andrea` prefix (case insensitive), configurable via `ASSISTANT_NAME` env var
 - Unregistered groups are ignored completely
 
 ### Memory System
@@ -175,8 +177,8 @@ A personal Claude assistant accessible via messaging, with minimal custom code.
 
 These are the creator's settings, stored here for reference:
 
-- **Trigger**: `@Andy` (case insensitive)
-- **Response prefix**: `Andy:`
+- **Trigger**: `@Andrea` (case insensitive)
+- **Response prefix**: `Andrea:`
 - **Persona**: Default Claude (no custom personality)
 - **Main channel**: Self-chat (messaging yourself in WhatsApp)
 

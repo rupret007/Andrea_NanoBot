@@ -191,8 +191,8 @@ Current truthful closeout note:
 
 When configured, validate in this order:
 
-1. `/alexa-status`
-2. local `GET /alexa/oauth/health`
+1. `npm run services:status` and confirm `alexa_listener_health=healthy` plus `alexa_oauth_health=healthy`
+2. `/alexa-status`
 3. public `GET /alexa/oauth/health`
 4. unlinked launch
 5. unlinked help

@@ -158,6 +158,8 @@ Alexa is now a bounded companion channel for Andrea rather than a novelty skill.
 
 Repo-side and near-live Alexa proof are strong on this host. The one remaining live gap is still one exact external step unless you re-prove it during the current session: one real signed Alexa utterance from the app, a device, or an authenticated simulator session.
 
+For day-to-day operator checks, use `/alexa-status` inside the registered main control chat and `npm run services:status` for the local Alexa listener and OAuth health on the host. Public HTTPS ingress and live signed utterances remain separate acceptance checks.
+
 ## Two Command Surfaces
 
 This is one of the easiest places for new users to get confused, so the split is important:
@@ -358,7 +360,7 @@ That distinction matters during incidents:
 - a passing credential probe does **not** guarantee the assistant lane can answer
 - an `initial_output_timeout` is a runtime-startup/output problem, not automatically a missing-key problem
 - `/debug-*` commands are operator-only and let you turn log volume up or down live without restarting the service
-- `npm run services:status` now shows the active repo root, branch, commit, DB path, assistant name source, and the registered main Telegram chat so state drift is visible immediately
+- `npm run services:status` now shows the active repo root, branch, commit, DB path, assistant name source, registered main Telegram chat, and the local Alexa listener/OAuth health when Alexa is configured so state drift is visible immediately
 - when you need both restart and verify, run `npm run services:restart` first, wait for it to finish, then run `npm run setup -- --step verify`
 
 ## Documentation Map

@@ -117,6 +117,119 @@ function Get-EnvValue {
   return ''
 }
 
+function Normalize-RoutePath {
+  param(
+    [string] $Value,
+    [string] $Fallback
+  )
+
+  $raw = if ([string]::IsNullOrWhiteSpace($Value)) {
+    $Fallback
+  } else {
+    $Value.Trim()
+  }
+
+  if ($raw.StartsWith('/')) {
+    return $raw
+  }
+
+  return "/$raw"
+}
+
+function Join-RoutePath {
+  param(
+    [string] $BasePath,
+    [string] $Suffix
+  )
+
+  if ($BasePath.EndsWith('/')) {
+    return "$BasePath$Suffix"
+  }
+
+  return "$BasePath/$Suffix"
+}
+
+function Get-LocalProbeHost {
+  param([string] $ConfiguredHost)
+
+  if ([string]::IsNullOrWhiteSpace($ConfiguredHost)) {
+    return '127.0.0.1'
+  }
+
+  $resolvedHost = $ConfiguredHost.Trim()
+  if ($resolvedHost -eq '0.0.0.0' -or $resolvedHost -eq '::' -or $resolvedHost -eq '[::]') {
+    return '127.0.0.1'
+  }
+
+  return $resolvedHost
+}
+
+function Invoke-LocalHealthProbe {
+  param([string] $Url)
+
+  try {
+    $response = Invoke-WebRequest -UseBasicParsing -Uri $Url -TimeoutSec 3 -ErrorAction Stop
+    return [pscustomobject]@{
+      status = 'healthy'
+      detail = ("HTTP {0}" -f [int] $response.StatusCode)
+      body = if ($response.Content) { [string] $response.Content } else { '' }
+    }
+  } catch {
+    return [pscustomobject]@{
+      status = 'unreachable'
+      detail = $_.Exception.Message
+      body = ''
+    }
+  }
+}
+
+function Get-AlexaLocalStatus {
+  param([hashtable] $DotEnv)
+
+  $skillId = Get-EnvValue -DotEnv $DotEnv -Key 'ALEXA_SKILL_ID'
+  if ([string]::IsNullOrWhiteSpace($skillId)) {
+    return [pscustomobject]@{
+      configured = $false
+      bind = 'none'
+      healthPath = 'none'
+      oauthHealthPath = 'none'
+      listenerHealth = 'disabled'
+      listenerDetail = 'ALEXA_SKILL_ID is not set.'
+      oauthHealth = 'disabled'
+      oauthDetail = 'Alexa OAuth is unavailable until Alexa is configured.'
+    }
+  }
+
+  $configuredHost = Get-EnvValue -DotEnv $DotEnv -Key 'ALEXA_HOST'
+  if ([string]::IsNullOrWhiteSpace($configuredHost)) {
+    $configuredHost = '127.0.0.1'
+  }
+  $probeHost = Get-LocalProbeHost -ConfiguredHost $configuredHost
+  $configuredPort = Get-EnvValue -DotEnv $DotEnv -Key 'ALEXA_PORT'
+  if ([string]::IsNullOrWhiteSpace($configuredPort)) {
+    $configuredPort = '4300'
+  }
+  $pathValue = Normalize-RoutePath -Value (Get-EnvValue -DotEnv $DotEnv -Key 'ALEXA_PATH') -Fallback '/alexa'
+  $healthPath = Join-RoutePath -BasePath $pathValue -Suffix 'health'
+  $oauthHealthPath = Join-RoutePath -BasePath $pathValue -Suffix 'oauth/health'
+
+  $listenerUrl = "http://$probeHost`:$configuredPort$healthPath"
+  $oauthUrl = "http://$probeHost`:$configuredPort$oauthHealthPath"
+  $listenerProbe = Invoke-LocalHealthProbe -Url $listenerUrl
+  $oauthProbe = Invoke-LocalHealthProbe -Url $oauthUrl
+
+  return [pscustomobject]@{
+    configured = $true
+    bind = "$configuredHost`:$configuredPort$pathValue"
+    healthPath = $healthPath
+    oauthHealthPath = $oauthHealthPath
+    listenerHealth = $listenerProbe.status
+    listenerDetail = $listenerProbe.detail
+    oauthHealth = $oauthProbe.status
+    oauthDetail = $oauthProbe.detail
+  }
+}
+
 function Get-CanonicalCompatibilityShimContent {
   return @(
     '$ErrorActionPreference = ''Stop'''
@@ -1282,6 +1395,7 @@ function Show-Status {
   $telegramTransport = Get-TelegramTransportStatus -AssistantHealthMarker $assistantHealthMarker
   $telegramRoundtrip = Get-TelegramRoundtripStatus -AssistantHealthMarker $assistantHealthMarker -HostState $hostState -ReadyState $readyState
   $telegramProbeConfig = Get-TelegramLiveProbeConfigStatus
+  $alexaLocal = Get-AlexaLocalStatus -DotEnv (Read-DotEnv)
   $watchdog = Get-WatchdogSnapshot
   $activeRepoRoot = if ($runtimeAudit -and $runtimeAudit.activeRepoRoot) { [string] $runtimeAudit.activeRepoRoot } else { $projectRoot }
   $activeGitBranch = if ($runtimeAudit -and $runtimeAudit.activeGitBranch) { [string] $runtimeAudit.activeGitBranch } else { 'unknown' }
@@ -1313,6 +1427,14 @@ function Show-Status {
   Write-Output ("HOST_STATUS: assistant_health={0}" -f ([string] $assistantHealth.status))
   Write-Output ("HOST_STATUS: assistant_health_detail={0}" -f ([string] $assistantHealth.detail))
   Write-Output ("HOST_STATUS: assistant_health_updated_at={0}" -f ($(if ($assistantHealth.updatedAt) { [string] $assistantHealth.updatedAt } else { 'none' })))
+  Write-Output ("HOST_STATUS: alexa_configured={0}" -f ([string] $alexaLocal.configured).ToLowerInvariant())
+  Write-Output ("HOST_STATUS: alexa_bind={0}" -f ([string] $alexaLocal.bind))
+  Write-Output ("HOST_STATUS: alexa_health_path={0}" -f ([string] $alexaLocal.healthPath))
+  Write-Output ("HOST_STATUS: alexa_listener_health={0}" -f ([string] $alexaLocal.listenerHealth))
+  Write-Output ("HOST_STATUS: alexa_listener_detail={0}" -f ([string] $alexaLocal.listenerDetail))
+  Write-Output ("HOST_STATUS: alexa_oauth_health_path={0}" -f ([string] $alexaLocal.oauthHealthPath))
+  Write-Output ("HOST_STATUS: alexa_oauth_health={0}" -f ([string] $alexaLocal.oauthHealth))
+  Write-Output ("HOST_STATUS: alexa_oauth_detail={0}" -f ([string] $alexaLocal.oauthDetail))
   Write-Output ("HOST_STATUS: telegram_transport_mode={0}" -f ([string] $telegramTransport.mode))
   Write-Output ("HOST_STATUS: telegram_transport_health={0}" -f ([string] $telegramTransport.status))
   Write-Output ("HOST_STATUS: telegram_transport_detail={0}" -f ([string] $telegramTransport.detail))
