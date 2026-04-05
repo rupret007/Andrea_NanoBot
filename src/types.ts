@@ -109,12 +109,27 @@ export interface RuntimeJobCapabilities {
   stop: boolean;
 }
 
+export type RuntimeBackendAuthState =
+  | 'authenticated'
+  | 'auth_required'
+  | 'unknown';
+
+export type RuntimeBackendLocalExecutionState =
+  | 'available_authenticated'
+  | 'available_auth_required'
+  | 'not_ready'
+  | 'unavailable';
+
 export interface RuntimeBackendMeta {
   backend: string;
   transport: 'http';
   enabled: true;
   version: string | null;
   ready: boolean;
+  localExecutionState: RuntimeBackendLocalExecutionState;
+  authState: RuntimeBackendAuthState;
+  localExecutionDetail: string | null;
+  operatorGuidance: string | null;
 }
 
 export interface RuntimeBackendJob {
@@ -167,6 +182,7 @@ export type RuntimeBackendAvailability =
   | 'not_enabled'
   | 'unavailable'
   | 'not_ready'
+  | 'auth_required'
   | 'available';
 
 export interface RuntimeBackendStatus {

@@ -63,6 +63,11 @@ describe('AndreaOpenAiBackendClient', () => {
           enabled: true,
           version: '1.2.3',
           ready: true,
+          localExecutionState: 'available_authenticated',
+          authState: 'authenticated',
+          localExecutionDetail:
+            'Codex local execution is authenticated and the container runtime is ready.',
+          operatorGuidance: null,
         }),
         { status: 200 },
       ),
@@ -87,6 +92,11 @@ describe('AndreaOpenAiBackendClient', () => {
           enabled: true,
           version: null,
           ready: false,
+          localExecutionState: 'not_ready',
+          authState: 'unknown',
+          localExecutionDetail:
+            'Codex local execution is not ready because podman is installed_not_running.',
+          operatorGuidance: 'Start or repair podman, then retry the Codex/OpenAI runtime lane.',
         }),
         { status: 200 },
       ),
@@ -99,6 +109,36 @@ describe('AndreaOpenAiBackendClient', () => {
     const status = await client.getStatus();
 
     expect(status.state).toBe('not_ready');
+  });
+
+  it('maps explicit auth-required meta into auth_required status', async () => {
+    const fetchImpl = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          backend: ANDREA_OPENAI_BACKEND_ID,
+          transport: 'http',
+          enabled: true,
+          version: '1.2.3',
+          ready: false,
+          localExecutionState: 'available_auth_required',
+          authState: 'auth_required',
+          localExecutionDetail:
+            'Codex local execution is reachable on this host, but no usable Codex login or OPENAI_API_KEY is available yet.',
+          operatorGuidance:
+            'Run codex login on the Andrea_OpenAI_Bot host, or provide OPENAI_API_KEY before retrying codex_local work.',
+        }),
+        { status: 200 },
+      ),
+    );
+    const client = new AndreaOpenAiBackendClient({
+      enabled: true,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    const status = await client.getStatus();
+
+    expect(status.state).toBe('auth_required');
+    expect(status.detail).toContain('no usable Codex login');
   });
 
   it('maps transport failures into unavailable status', async () => {
@@ -140,6 +180,29 @@ describe('AndreaOpenAiBackendClient', () => {
     });
 
     expect(job.jobId).toBe('job_777');
+  });
+
+  it('supports generic follow-up targets for group-folder continuity', async () => {
+    const fetchImpl = vi.fn(async (input, init) => {
+      expect(String(input)).toContain('/followups');
+      expect(init?.method).toBe('POST');
+      expect(String(init?.body)).toContain('"groupFolder":"main"');
+      return new Response(JSON.stringify({ job: makeJob('job_followup') }), {
+        status: 202,
+      });
+    });
+    const client = new AndreaOpenAiBackendClient({
+      enabled: true,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    const job = await client.followUpTarget({
+      groupFolder: 'main',
+      prompt: 'Keep going',
+      source: { system: 'andrea_nanobot' },
+    });
+
+    expect(job.jobId).toBe('job_followup');
   });
 
   it('passes list pagination through without reshaping it', async () => {

@@ -1,17 +1,28 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createAndreaRuntimeBackendLane } from './andrea-runtime-lane.js';
-import type { RuntimeOrchestrationService } from '../andrea-runtime/orchestration.js';
-import type {
-  RuntimeJobLogsResult,
-  RuntimeOrchestrationJob,
-  StopRuntimeJobResult,
-} from '../andrea-runtime/types.js';
+import {
+  createAndreaRuntimeBackendLane,
+  followUpAndreaRuntimeLaneGroup,
+} from './andrea-runtime-lane.js';
+import {
+  ANDREA_OPENAI_BACKEND_ID,
+  type AndreaOpenAiBackendClient,
+} from '../andrea-openai-backend.js';
+import { _initTestDatabase } from '../db.js';
+import type { RegisteredGroup, RuntimeBackendJob } from '../types.js';
 
-function buildJob(
-  overrides: Partial<RuntimeOrchestrationJob> = {},
-): RuntimeOrchestrationJob {
+const MAIN_GROUP: RegisteredGroup = {
+  name: 'Andrea Main',
+  folder: 'main',
+  trigger: '@andrea',
+  added_at: '2026-04-02T20:00:00.000Z',
+  requiresTrigger: false,
+  isMain: true,
+};
+
+function buildJob(overrides: Partial<RuntimeBackendJob> = {}): RuntimeBackendJob {
   return {
+    backend: ANDREA_OPENAI_BACKEND_ID,
     jobId: 'runtime-job-1',
     kind: 'create',
     status: 'queued',
@@ -22,100 +33,112 @@ function buildJob(
     threadId: null,
     runtimeRoute: 'cloud_allowed',
     requestedRuntime: 'codex_local',
-    selectedRuntime: null,
+    selectedRuntime: 'codex_local',
     promptPreview: 'Build it',
     latestOutputText: null,
     finalOutputText: null,
     errorText: null,
     logFile: null,
-    sourceSystem: 'test',
-    correlationId: null,
-    replyRef: null,
+    sourceSystem: 'andrea_nanobot',
+    actorType: 'chat',
+    actorId: 'tg:main',
+    correlationId: 'corr-1',
     createdAt: '2026-03-30T00:00:00.000Z',
     startedAt: null,
     finishedAt: null,
     updatedAt: '2026-03-30T00:00:00.000Z',
+    capabilities: {
+      followUp: true,
+      logs: true,
+      stop: true,
+    },
     ...overrides,
   };
 }
 
-function buildLogsResult(
-  overrides: Partial<RuntimeJobLogsResult> = {},
-): RuntimeJobLogsResult {
+function makeClient(): AndreaOpenAiBackendClient {
   return {
-    jobId: 'runtime-job-1',
-    logFile: 'C:\\logs\\runtime.log',
-    logText: 'tail',
-    lines: 1,
-    ...overrides,
-  };
-}
-
-function buildStopResult(
-  overrides: Partial<StopRuntimeJobResult> = {},
-): StopRuntimeJobResult {
-  return {
-    liveStopAccepted: true,
-    job: buildJob({
-      status: 'running',
-      stopRequested: true,
-      threadId: 'thread-123',
-      selectedRuntime: 'codex_local',
-      logFile: 'C:\\logs\\runtime.log',
-      latestOutputText: 'latest',
-      startedAt: '2026-03-30T00:00:01.000Z',
-      updatedAt: '2026-03-30T00:00:02.000Z',
-    }),
-    ...overrides,
-  };
-}
-
-function makeService(): RuntimeOrchestrationService {
-  return {
+    enabled: true,
+    getMeta: vi.fn(),
+    getStatus: vi.fn(),
     createJob: vi.fn(async () => buildJob()),
     followUp: vi.fn(async () =>
       buildJob({
         kind: 'follow_up',
-        parentJobId: 'runtime-job-0',
+        jobId: 'runtime-job-2',
+        parentJobId: 'runtime-job-1',
         threadId: 'thread-123',
-        requestedRuntime: null,
-        selectedRuntime: 'codex_local',
         promptPreview: 'Continue',
         logFile: 'C:\\logs\\runtime.log',
       }),
     ),
-    getJob: vi.fn((jobId: string) =>
+    followUpTarget: vi.fn(async () =>
+      buildJob({
+        kind: 'follow_up',
+        jobId: 'runtime-job-group',
+        parentJobId: 'runtime-job-1',
+        threadId: 'thread-123',
+        promptPreview: 'Continue from workspace',
+      }),
+    ),
+    getJob: vi.fn(async (jobId: string) =>
       buildJob({
         jobId,
         status: 'running',
         threadId: 'thread-123',
-        selectedRuntime: 'codex_local',
         latestOutputText: 'latest',
         logFile: 'C:\\logs\\runtime.log',
         startedAt: '2026-03-30T00:00:01.000Z',
         updatedAt: '2026-03-30T00:00:02.000Z',
       }),
     ),
-    listJobs: vi.fn(() => ({
-      jobs: [],
+    listJobs: vi.fn(async () => ({
+      jobs: [buildJob({ jobId: 'runtime-job-9' })],
       nextBeforeJobId: null,
     })),
-    getJobLogs: vi.fn(() => buildLogsResult()),
-    stopJob: vi.fn(async () => buildStopResult()),
-  };
+    getJobLogs: vi.fn(async () => ({
+      jobId: 'runtime-job-1',
+      logFile: 'C:\\logs\\runtime.log',
+      logText: 'tail',
+      lines: 1,
+    })),
+    stopJob: vi.fn(async () => ({
+      liveStopAccepted: true,
+      job: buildJob({
+        status: 'running',
+        stopRequested: true,
+        threadId: 'thread-123',
+        latestOutputText: 'latest',
+        logFile: 'C:\\logs\\runtime.log',
+        startedAt: '2026-03-30T00:00:01.000Z',
+        updatedAt: '2026-03-30T00:00:02.000Z',
+      }),
+    })),
+    ensureGroupRegistration: vi.fn(),
+  } as unknown as AndreaOpenAiBackendClient;
+}
+
+function resolveGroupByFolder(folder: string) {
+  return folder === 'main' ? { jid: 'tg:main', group: MAIN_GROUP } : null;
 }
 
 describe('createAndreaRuntimeBackendLane', () => {
-  it('maps runtime jobs onto the shared lane contract', async () => {
-    const service = makeService();
-    const lane = createAndreaRuntimeBackendLane(service);
+  beforeEach(() => {
+    _initTestDatabase();
+  });
+
+  it('maps backend runtime jobs onto the shared lane contract', async () => {
+    const client = makeClient();
+    const lane = createAndreaRuntimeBackendLane({
+      client,
+      resolveGroupByFolder,
+    });
 
     const created = await lane.createJob({
       groupFolder: 'main',
       chatJid: 'tg:main',
       promptText: 'Build it',
       requestedBy: 'tg:operator',
-      options: { requestedRuntime: 'codex_local' },
     });
     const logs = await lane.getJobLogs({
       handle: { laneId: 'andrea_runtime', jobId: 'runtime-job-1' },
@@ -143,9 +166,6 @@ describe('createAndreaRuntimeBackendLane', () => {
     expect(logs.logText).toBe('tail');
     expect(output.text).toBe('latest');
     expect(files.supported).toBe(false);
-    expect(lane.getCapabilities().canRefresh).toBe(true);
-    expect(lane.getCapabilities().canViewOutput).toBe(true);
-    expect(lane.getCapabilities().canViewFiles).toBe(false);
     expect(lane.getCapabilities().actionIds).toEqual([
       'job.refresh',
       'job.output',
@@ -160,5 +180,28 @@ describe('createAndreaRuntimeBackendLane', () => {
         })
         .map((action) => action.label),
     ).toEqual(['Refresh', 'View Output', 'Continue', 'Stop Run']);
+  });
+
+  it('preserves legacy group-folder follow-up continuity through the backend', async () => {
+    const client = makeClient();
+
+    const followed = await followUpAndreaRuntimeLaneGroup({
+      client,
+      resolveGroupByFolder,
+      groupFolder: 'main',
+      chatJid: 'tg:main',
+      promptText: 'Keep going',
+    });
+
+    expect(followed.handle).toEqual({
+      laneId: 'andrea_runtime',
+      jobId: 'runtime-job-group',
+    });
+    expect(client.followUpTarget).toHaveBeenCalledWith(
+      expect.objectContaining({
+        groupFolder: 'main',
+        prompt: 'Keep going',
+      }),
+    );
   });
 });

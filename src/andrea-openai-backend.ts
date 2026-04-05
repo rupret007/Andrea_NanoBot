@@ -197,6 +197,22 @@ export class AndreaOpenAiBackendClient {
           meta,
         };
       }
+      if (
+        meta.localExecutionState === 'available_auth_required' ||
+        meta.authState === 'auth_required'
+      ) {
+        return {
+          state: 'auth_required',
+          backend: meta.backend,
+          version: meta.version,
+          transport: 'http',
+          detail:
+            meta.localExecutionDetail ||
+            meta.operatorGuidance ||
+            'Codex local execution requires a real login on the backend host.',
+          meta,
+        };
+      }
       if (!meta.ready) {
         return {
           state: 'not_ready',
@@ -204,6 +220,8 @@ export class AndreaOpenAiBackendClient {
           version: meta.version,
           transport: 'http',
           detail:
+            meta.localExecutionDetail ||
+            meta.operatorGuidance ||
             'Andrea OpenAI backend is reachable but does not currently have a ready execution lane.',
           meta,
         };
@@ -262,6 +280,32 @@ export class AndreaOpenAiBackendClient {
         body: JSON.stringify({
           prompt: input.prompt,
           source: input.source,
+        }),
+      },
+    );
+    return response.job;
+  }
+
+  async followUpTarget(input: {
+    prompt: string;
+    source: OrchestrationSource;
+    jobId?: string;
+    threadId?: string;
+    groupFolder?: string;
+  }): Promise<RuntimeBackendJob> {
+    const response = await requestJson<{ job: RuntimeBackendJob }>(
+      this.fetchImpl,
+      this.baseUrl,
+      this.timeoutMs,
+      '/followups',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          prompt: input.prompt,
+          source: input.source,
+          ...(input.jobId ? { jobId: input.jobId } : {}),
+          ...(input.threadId ? { threadId: input.threadId } : {}),
+          ...(input.groupFolder ? { groupFolder: input.groupFolder } : {}),
         }),
       },
     );

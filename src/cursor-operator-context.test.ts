@@ -401,6 +401,27 @@ describe('operator context helpers', () => {
     expect(context?.selectedJobsByLane?.cursor).toBe('bc_123');
   });
 
+  it('does not clear an existing lane selection when a dashboard refresh omits selection fields', () => {
+    rememberCursorOperatorSelection({
+      chatJid: 'tg:1',
+      threadId: '42',
+      laneId: 'andrea_runtime',
+      agentId: 'runtime-job-1',
+    });
+
+    rememberCursorDashboardMessage({
+      chatJid: 'tg:1',
+      threadId: '42',
+      dashboardMessageId: '9002',
+    });
+
+    const context = getActiveCursorOperatorContext('tg:1', '42');
+    expect(context?.dashboardMessageId).toBe('9002');
+    expect(context?.selectedLaneId).toBe('andrea_runtime');
+    expect(context?.selectedAgentId).toBe('runtime-job-1');
+    expect(context?.selectedJobsByLane?.andrea_runtime).toBe('runtime-job-1');
+  });
+
   it('can clear the selected job for one lane without inventing a replacement', () => {
     rememberCursorOperatorSelection({
       chatJid: 'tg:1',

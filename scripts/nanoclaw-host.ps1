@@ -31,6 +31,9 @@ $watchdogStatePath = Join-Path $runtimeDir 'nanoclaw-watchdog-state.json'
 $gatewayStatePath = Join-Path $runtimeDir 'openai-gateway-state.json'
 $gatewayStartScript = Join-Path $projectRoot 'scripts\start-openai-gateway.ps1'
 $gatewayStopScript = Join-Path $projectRoot 'scripts\stop-openai-gateway.ps1'
+$backendPidPath = Join-Path $runtimeDir 'andrea-openai-backend.pid'
+$backendLogPath = Join-Path $logsDir 'andrea-openai-backend.log'
+$backendErrorLogPath = Join-Path $logsDir 'andrea-openai-backend.error.log'
 $watchdogScriptPath = Join-Path $projectRoot 'scripts\nanoclaw-watchdog.ps1'
 $pinnedNodeLauncher = Join-Path $projectRoot 'scripts\run-with-pinned-node.mjs'
 $watchdogLogPath = Join-Path $logsDir 'nanoclaw.watchdog.log'
@@ -437,6 +440,17 @@ function Read-WatchdogPid {
   return $null
 }
 
+function Read-BackendPid {
+  if (!(Test-Path -LiteralPath $backendPidPath)) { return $null }
+  try {
+    $raw = (Get-Content -LiteralPath $backendPidPath -ErrorAction Stop | Select-Object -First 1).Trim()
+    if ($raw -match '^[0-9]+$') { return [int] $raw }
+  } catch {
+    return $null
+  }
+  return $null
+}
+
 function Remove-FileIfExists {
   param([string] $Path)
   if (Test-Path -LiteralPath $Path) {
@@ -485,6 +499,33 @@ function Test-WatchdogProcess {
     $cmd = [string] $proc.CommandLine
     $projectPattern = [Regex]::Escape($projectRoot)
     return $cmd -match $projectPattern -and $cmd -match 'nanoclaw-watchdog\.ps1'
+  } catch {
+    try {
+      return $null -ne (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)
+    } catch {
+      return $false
+    }
+  }
+}
+
+function Test-BackendProcess {
+  param(
+    [int] $ProcessId,
+    [string] $BackendRepoRoot
+  )
+
+  if ([string]::IsNullOrWhiteSpace($BackendRepoRoot)) {
+    return $false
+  }
+
+  try {
+    $proc = Get-CimInstance Win32_Process -Filter "ProcessId = $ProcessId" -ErrorAction SilentlyContinue
+    if ($null -eq $proc) {
+      return $null -ne (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)
+    }
+    $cmd = [string] $proc.CommandLine
+    $rootPattern = [Regex]::Escape($BackendRepoRoot)
+    return $cmd -match $rootPattern -and $cmd -match 'dist[\\/]index\.js'
   } catch {
     try {
       return $null -ne (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)
@@ -1156,6 +1197,216 @@ function Get-LocalGatewayHealthError {
   return $lastProbeError
 }
 
+function Get-AndreaOpenAiBackendConfig {
+  param([hashtable] $DotEnv)
+
+  $enabledValue = Get-EnvValue -DotEnv $DotEnv -Key 'ANDREA_OPENAI_BACKEND_ENABLED'
+  if ([string]::IsNullOrWhiteSpace($enabledValue)) {
+    $enabledValue = Get-EnvValue -DotEnv $DotEnv -Key 'ANDREA_RUNTIME_EXECUTION_ENABLED'
+  }
+  $enabled = $enabledValue -eq 'true'
+
+  $baseUrl = Get-EnvValue -DotEnv $DotEnv -Key 'ANDREA_OPENAI_BACKEND_URL'
+  if ([string]::IsNullOrWhiteSpace($baseUrl)) {
+    $baseUrl = 'http://127.0.0.1:3210'
+  }
+
+  $repoRoot = Get-EnvValue -DotEnv $DotEnv -Key 'ANDREA_OPENAI_BACKEND_REPO_ROOT'
+  if ([string]::IsNullOrWhiteSpace($repoRoot)) {
+    $siblingRepo = Join-Path (Split-Path -Parent $projectRoot) 'Andrea_OpenAI_Bot'
+    if (Test-Path -LiteralPath $siblingRepo) {
+      $repoRoot = $siblingRepo
+    }
+  }
+
+  $uri = $null
+  try {
+    $uri = [Uri] $baseUrl
+  } catch {
+    $uri = $null
+  }
+  $backendHost = if ($uri) { [string] $uri.Host } else { '' }
+  $scheme = if ($uri) { [string] $uri.Scheme } else { '' }
+  $port = if ($uri -and $uri.Port -gt 0) { [int] $uri.Port } else { 3210 }
+  $loopbackHosts = @('127.0.0.1', 'localhost', '::1')
+  $isLocalLoopback = $uri -and $scheme -eq 'http' -and ($loopbackHosts -contains $backendHost.ToLowerInvariant())
+  $entryPath = if ([string]::IsNullOrWhiteSpace($repoRoot)) { '' } else { Join-Path $repoRoot 'dist\index.js' }
+
+  return [pscustomobject]@{
+    enabled = $enabled
+    baseUrl = $baseUrl
+    repoRoot = $repoRoot
+    entryPath = $entryPath
+    host = $backendHost
+    port = $port
+    isLocalLoopback = [bool] $isLocalLoopback
+    shouldManage = $enabled -and [bool] $isLocalLoopback
+  }
+}
+
+function Invoke-AndreaOpenAiBackendMetaProbe {
+  param([string] $BaseUrl)
+
+  $metaUrl = ("{0}/meta" -f $BaseUrl.TrimEnd('/'))
+  try {
+    $meta = Invoke-RestMethod -UseBasicParsing -Uri $metaUrl -TimeoutSec 3 -ErrorAction Stop
+    return [pscustomobject]@{
+      health = 'healthy'
+      detail = 'HTTP 200'
+      meta = $meta
+      url = $metaUrl
+    }
+  } catch {
+    return [pscustomobject]@{
+      health = 'unreachable'
+      detail = $_.Exception.Message
+      meta = $null
+      url = $metaUrl
+    }
+  }
+}
+
+function Get-AndreaOpenAiBackendSnapshot {
+  param([hashtable] $DotEnv)
+
+  $config = Get-AndreaOpenAiBackendConfig -DotEnv $DotEnv
+  $backendPid = Read-BackendPid
+  $running = $false
+  if ($backendPid) {
+    $running = Test-BackendProcess -ProcessId $backendPid -BackendRepoRoot ([string] $config.repoRoot)
+  }
+
+  $probe = $null
+  if ($config.enabled) {
+    $probe = Invoke-AndreaOpenAiBackendMetaProbe -BaseUrl ([string] $config.baseUrl)
+  }
+
+  $meta = if ($probe) { $probe.meta } else { $null }
+  $localExecutionState = if ($meta -and $meta.localExecutionState) { [string] $meta.localExecutionState } else { 'unknown' }
+  $authState = if ($meta -and $meta.authState) { [string] $meta.authState } else { 'unknown' }
+  $guidance = if ($meta -and $meta.operatorGuidance) { [string] $meta.operatorGuidance } else { 'none' }
+  $detail = if ($meta -and $meta.localExecutionDetail) {
+    [string] $meta.localExecutionDetail
+  } elseif ($probe) {
+    [string] $probe.detail
+  } else {
+    'Andrea OpenAI backend is disabled.'
+  }
+
+  return [pscustomobject]@{
+    enabled = [bool] $config.enabled
+    baseUrl = [string] $config.baseUrl
+    repoRoot = if ([string]::IsNullOrWhiteSpace([string] $config.repoRoot)) { 'none' } else { [string] $config.repoRoot }
+    entryPath = if ([string]::IsNullOrWhiteSpace([string] $config.entryPath)) { 'none' } else { [string] $config.entryPath }
+    isLocalLoopback = [bool] $config.isLocalLoopback
+    shouldManage = [bool] $config.shouldManage
+    pid = $backendPid
+    running = [bool] $running
+    health = if ($probe) { [string] $probe.health } else { 'disabled' }
+    url = if ($probe) { [string] $probe.url } else { ("{0}/meta" -f ([string] $config.baseUrl).TrimEnd('/')) }
+    detail = $detail
+    localExecutionState = $localExecutionState
+    authState = $authState
+    guidance = $guidance
+  }
+}
+
+function Start-AndreaOpenAiBackend {
+  param(
+    [hashtable] $DotEnv,
+    [string] $NodeExe
+  )
+
+  $config = Get-AndreaOpenAiBackendConfig -DotEnv $DotEnv
+  if (-not $config.enabled) {
+    return [pscustomobject]@{
+      status = 'skipped'
+      detail = 'Andrea OpenAI backend is disabled.'
+    }
+  }
+  if (-not $config.isLocalLoopback) {
+    return [pscustomobject]@{
+      status = 'skipped'
+      detail = ("Andrea OpenAI backend points at a non-loopback URL: {0}" -f [string] $config.baseUrl)
+    }
+  }
+  if ([string]::IsNullOrWhiteSpace([string] $config.repoRoot) -or -not (Test-Path -LiteralPath ([string] $config.repoRoot))) {
+    return [pscustomobject]@{
+      status = 'failed'
+      detail = 'Andrea_OpenAI_Bot repo root could not be resolved on this host.'
+    }
+  }
+  if (-not (Test-Path -LiteralPath ([string] $config.entryPath))) {
+    return [pscustomobject]@{
+      status = 'failed'
+      detail = ("Andrea OpenAI backend entry path is missing: {0}" -f [string] $config.entryPath)
+    }
+  }
+
+  $snapshot = Get-AndreaOpenAiBackendSnapshot -DotEnv $DotEnv
+  if ($snapshot.running -and [string] $snapshot.health -eq 'healthy') {
+    return [pscustomobject]@{
+      status = 'already_running'
+      detail = 'Andrea OpenAI backend loopback is already healthy.'
+    }
+  }
+
+  if ($snapshot.pid) {
+    Stop-ProcessIfRunning -ProcessId ([int] $snapshot.pid) | Out-Null
+    Start-Sleep -Milliseconds 500
+  }
+  Remove-FileIfExists $backendPidPath
+
+  $quotedRepoRoot = ([string] $config.repoRoot).Replace("'", "''")
+  $quotedNodeExe = ([string] $NodeExe).Replace("'", "''")
+  $command = @(
+    "& {"
+    "Set-Location -LiteralPath '$quotedRepoRoot';"
+    "`$env:ORCHESTRATION_HTTP_ENABLED='true';"
+    "`$env:ORCHESTRATION_HTTP_HOST='127.0.0.1';"
+    ("`$env:ORCHESTRATION_HTTP_PORT='{0}';" -f [string] $config.port)
+    "`$env:TZ='America/Chicago';"
+    "& '$quotedNodeExe' 'dist/index.js'"
+    "}"
+  ) -join ' '
+
+  $proc = Start-Process -FilePath 'powershell.exe' -ArgumentList @(
+    '-NoProfile',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-Command',
+    $command
+  ) -WorkingDirectory ([string] $config.repoRoot) -WindowStyle Hidden -RedirectStandardOutput $backendLogPath -RedirectStandardError $backendErrorLogPath -PassThru
+
+  Set-Content -LiteralPath $backendPidPath -Value $proc.Id -NoNewline
+
+  $deadline = (Get-Date).AddSeconds(15)
+  do {
+    Start-Sleep -Milliseconds 500
+    $probe = Invoke-AndreaOpenAiBackendMetaProbe -BaseUrl ([string] $config.baseUrl)
+    if ([string] $probe.health -eq 'healthy') {
+      return [pscustomobject]@{
+        status = 'started'
+        detail = 'Andrea OpenAI backend loopback is healthy.'
+      }
+    }
+  } while ((Get-Date) -lt $deadline -and (Test-BackendProcess -ProcessId $proc.Id -BackendRepoRoot ([string] $config.repoRoot)))
+
+  return [pscustomobject]@{
+    status = 'failed'
+    detail = ("Andrea OpenAI backend loopback did not become healthy within 15 seconds at {0}." -f [string] $config.baseUrl)
+  }
+}
+
+function Stop-AndreaOpenAiBackend {
+  $backendPid = Read-BackendPid
+  if ($backendPid) {
+    Stop-ProcessIfRunning -ProcessId $backendPid | Out-Null
+    Write-HostStep ("Stopped Andrea OpenAI backend loopback (pid={0})" -f $backendPid)
+  }
+  Remove-FileIfExists $backendPidPath
+}
+
 function Stop-OrphanedRepoProcesses {
   $projectPattern = [Regex]::Escape($projectRoot)
   $stopped = 0
@@ -1312,8 +1563,13 @@ function Start-NanoClaw {
   Stop-OrphanedRepoProcesses | Out-Null
   Stop-Gateway
   $gatewayStart = Start-Gateway
+  $dotEnv = Read-DotEnv
+  $backendStart = Start-AndreaOpenAiBackend -DotEnv $dotEnv -NodeExe $nodeExe
   if ($gatewayStart.status -eq 'failed') {
     Write-HostStep ("OpenAI gateway start warning: {0}" -f $gatewayStart.detail)
+  }
+  if ($backendStart.status -eq 'failed') {
+    Write-HostStep ("Andrea OpenAI backend loopback start warning: {0}" -f $backendStart.detail)
   }
 
   Write-HostState -Phase 'starting' -BootId $bootId -NodePath $nodeExe -NodeVersion $nodeVersion -StartedAt $startedAt
@@ -1336,14 +1592,32 @@ function Start-NanoClaw {
       $gatewayConfigError = [string] $gatewayStart.detail
     }
 
-    $dependencyState = 'unknown'
-    $dependencyError = ''
-    if (-not [string]::IsNullOrWhiteSpace([string] $gatewayConfigError)) {
-      $dependencyState = 'degraded'
-      $dependencyError = $gatewayConfigError
-    } elseif ($gatewayState -and -not [string]::IsNullOrWhiteSpace([string] $gatewayState.host_health)) {
-      $dependencyState = 'ok'
-    }
+      $dependencyMessages = New-Object System.Collections.Generic.List[string]
+      if (-not [string]::IsNullOrWhiteSpace([string] $gatewayConfigError)) {
+        $dependencyMessages.Add([string] $gatewayConfigError)
+      }
+      $backendSnapshot = Get-AndreaOpenAiBackendSnapshot -DotEnv $dotEnv
+      if ($backendSnapshot.enabled) {
+        if ([string] $backendSnapshot.health -ne 'healthy') {
+          $dependencyMessages.Add(("Andrea OpenAI backend loopback is unreachable: {0}" -f [string] $backendSnapshot.detail))
+        } elseif ([string] $backendSnapshot.localExecutionState -eq 'available_auth_required') {
+          $dependencyMessages.Add(("Andrea OpenAI backend requires Codex login: {0}" -f [string] $backendSnapshot.detail))
+        } elseif ([string] $backendSnapshot.localExecutionState -eq 'not_ready') {
+          $dependencyMessages.Add(("Andrea OpenAI backend is not ready: {0}" -f [string] $backendSnapshot.detail))
+        }
+      }
+
+      $dependencyState = 'unknown'
+      $dependencyError = ''
+      if ($dependencyMessages.Count -gt 0) {
+        $dependencyState = 'degraded'
+        $dependencyError = [string]::Join(' | ', $dependencyMessages)
+      } elseif (
+        ($gatewayState -and -not [string]::IsNullOrWhiteSpace([string] $gatewayState.host_health)) -or
+        ($backendSnapshot.enabled -and [string] $backendSnapshot.health -eq 'healthy')
+      ) {
+        $dependencyState = 'ok'
+      }
 
     Write-HostState -Phase 'running_ready' -BootId $bootId -ProcessId $proc.Id -NodePath $nodeExe -NodeVersion $nodeVersion -StartedAt $startedAt -ReadyAt ([string] $readyState.readyAt) -DependencyState $dependencyState -DependencyError $dependencyError
     Start-Watchdog
@@ -1389,6 +1663,7 @@ function Stop-NanoClaw {
     Write-HostStep ("Stopped orphaned repo-owned processes: {0}" -f $orphanedStopped)
   }
 
+  Stop-AndreaOpenAiBackend
   Stop-Gateway
   Remove-FileIfExists $pidFile
   Remove-FileIfExists $readyStatePath
@@ -1431,6 +1706,16 @@ function Ensure-NanoClaw {
   $telegramTransport = Get-TelegramTransportStatus -AssistantHealthMarker $assistantHealthMarker
   $telegramRoundtrip = Get-TelegramRoundtripStatus -AssistantHealthMarker $assistantHealthMarker -HostState $hostState -ReadyState $readyState
   $telegramProbeConfig = Get-TelegramLiveProbeConfigStatus
+  $dotEnv = Read-DotEnv
+  $backendSnapshot = Get-AndreaOpenAiBackendSnapshot -DotEnv $dotEnv
+  if ($backendSnapshot.shouldManage -and ([string] $backendSnapshot.health -ne 'healthy' -or -not [bool] $backendSnapshot.running)) {
+    $backendStart = Start-AndreaOpenAiBackend -DotEnv $dotEnv -NodeExe (Resolve-PinnedNodeExecutable)
+    if ($backendStart.status -eq 'failed') {
+      Write-HostStep ("Periodic ensure check could not recover the Andrea OpenAI backend loopback: {0}" -f $backendStart.detail)
+    } else {
+      $backendSnapshot = Get-AndreaOpenAiBackendSnapshot -DotEnv $dotEnv
+    }
+  }
 
   if ([string] $telegramTransport.status -eq 'blocked') {
     Write-HostStep ("Periodic ensure check detected an external Telegram blocker and will not restart blindly: {0}" -f ([string] $telegramTransport.detail))
@@ -1460,17 +1745,24 @@ function Ensure-NanoClaw {
     }
 
     Start-Watchdog
-    $ensureStatus = if (
-      [string] $telegramTransport.status -eq 'ready' -and
-      ([string] $telegramRoundtrip.status -eq 'healthy' -or -not [bool] $telegramProbeConfig.configured)
-    ) {
-      'healthy'
-    } else {
-      'degraded'
+      $ensureStatus = if (
+        [string] $telegramTransport.status -eq 'ready' -and
+        ([string] $telegramRoundtrip.status -eq 'healthy' -or -not [bool] $telegramProbeConfig.configured) -and
+        (
+          -not $backendSnapshot.enabled -or
+          (
+            [string] $backendSnapshot.health -eq 'healthy' -and
+            [string] $backendSnapshot.localExecutionState -eq 'available_authenticated'
+          )
+        )
+      ) {
+        'healthy'
+      } else {
+        'degraded'
+      }
+      Write-Output ("HOST_ENSURE: status={0} pid={1} telegram_transport={2} telegram_roundtrip={3} runtime_backend={4}" -f $ensureStatus, $runtimePid, ([string] $telegramTransport.status), ([string] $telegramRoundtrip.status), ([string] $backendSnapshot.localExecutionState))
+      return
     }
-    Write-Output ("HOST_ENSURE: status={0} pid={1} telegram_transport={2} telegram_roundtrip={3}" -f $ensureStatus, $runtimePid, ([string] $telegramTransport.status), ([string] $telegramRoundtrip.status))
-    return
-  }
 
   $assistantHealthDetail = [string] $assistantHealth.detail
   $telegramOnlyIssue =
@@ -1539,10 +1831,11 @@ function Show-Status {
   $assistantHealth = Get-AssistantHealthStatus -HostState $hostState -ReadyState $readyState -RuntimePid $runtimePid
   $telegramTransport = Get-TelegramTransportStatus -AssistantHealthMarker $assistantHealthMarker
   $telegramRoundtrip = Get-TelegramRoundtripStatus -AssistantHealthMarker $assistantHealthMarker -HostState $hostState -ReadyState $readyState
-  $telegramProbeConfig = Get-TelegramLiveProbeConfigStatus
-  $alexaLocal = Get-AlexaLocalStatus -DotEnv (Read-DotEnv)
-  $alexaPublic = Get-AlexaPublicStatus -DotEnv (Read-DotEnv) -LocalStatus $alexaLocal
-  $watchdog = Get-WatchdogSnapshot
+    $telegramProbeConfig = Get-TelegramLiveProbeConfigStatus
+    $alexaLocal = Get-AlexaLocalStatus -DotEnv (Read-DotEnv)
+    $alexaPublic = Get-AlexaPublicStatus -DotEnv (Read-DotEnv) -LocalStatus $alexaLocal
+    $backendSnapshot = Get-AndreaOpenAiBackendSnapshot -DotEnv (Read-DotEnv)
+    $watchdog = Get-WatchdogSnapshot
   $activeRepoRoot = if ($runtimeAudit -and $runtimeAudit.activeRepoRoot) { [string] $runtimeAudit.activeRepoRoot } else { $projectRoot }
   $activeGitBranch = if ($runtimeAudit -and $runtimeAudit.activeGitBranch) { [string] $runtimeAudit.activeGitBranch } else { 'unknown' }
   $activeGitCommit = if ($runtimeAudit -and $runtimeAudit.activeGitCommit) { [string] $runtimeAudit.activeGitCommit } else { 'unknown' }
@@ -1607,9 +1900,20 @@ function Show-Status {
   Write-Output ("HOST_STATUS: telegram_live_probe_configured={0}" -f ([string] $telegramProbeConfig.configured).ToLowerInvariant())
   Write-Output ("HOST_STATUS: telegram_live_probe_detail={0}" -f ([string] $telegramProbeConfig.detail))
   Write-Output ("HOST_STATUS: telegram_roundtrip_last_ok_at={0}" -f ($(if ($telegramRoundtrip.lastOkAt) { [string] $telegramRoundtrip.lastOkAt } else { 'none' })))
-  Write-Output ("HOST_STATUS: telegram_roundtrip_last_probe_at={0}" -f ($(if ($telegramRoundtrip.lastProbeAt) { [string] $telegramRoundtrip.lastProbeAt } else { 'none' })))
-  Write-Output ("HOST_STATUS: telegram_roundtrip_next_due_at={0}" -f ($(if ($telegramRoundtrip.nextDueAt) { [string] $telegramRoundtrip.nextDueAt } else { 'none' })))
-  Write-Output ("HOST_STATUS: active_repo_root={0}" -f $activeRepoRoot)
+    Write-Output ("HOST_STATUS: telegram_roundtrip_last_probe_at={0}" -f ($(if ($telegramRoundtrip.lastProbeAt) { [string] $telegramRoundtrip.lastProbeAt } else { 'none' })))
+    Write-Output ("HOST_STATUS: telegram_roundtrip_next_due_at={0}" -f ($(if ($telegramRoundtrip.nextDueAt) { [string] $telegramRoundtrip.nextDueAt } else { 'none' })))
+    Write-Output ("HOST_STATUS: runtime_backend_enabled={0}" -f ([string] $backendSnapshot.enabled).ToLowerInvariant())
+    Write-Output ("HOST_STATUS: runtime_backend_local_loopback={0}" -f ([string] $backendSnapshot.isLocalLoopback).ToLowerInvariant())
+    Write-Output ("HOST_STATUS: runtime_backend_process_running={0}" -f ([string] $backendSnapshot.running).ToLowerInvariant())
+    Write-Output ("HOST_STATUS: runtime_backend_pid={0}" -f ($(if ($backendSnapshot.pid) { [string] $backendSnapshot.pid } else { 'none' })))
+    Write-Output ("HOST_STATUS: runtime_backend_url={0}" -f ([string] $backendSnapshot.baseUrl))
+    Write-Output ("HOST_STATUS: runtime_backend_repo_root={0}" -f ([string] $backendSnapshot.repoRoot))
+    Write-Output ("HOST_STATUS: runtime_backend_health={0}" -f ([string] $backendSnapshot.health))
+    Write-Output ("HOST_STATUS: runtime_backend_detail={0}" -f ([string] $backendSnapshot.detail))
+    Write-Output ("HOST_STATUS: runtime_backend_local_execution_state={0}" -f ([string] $backendSnapshot.localExecutionState))
+    Write-Output ("HOST_STATUS: runtime_backend_auth_state={0}" -f ([string] $backendSnapshot.authState))
+    Write-Output ("HOST_STATUS: runtime_backend_guidance={0}" -f ([string] $backendSnapshot.guidance))
+    Write-Output ("HOST_STATUS: active_repo_root={0}" -f $activeRepoRoot)
   Write-Output ("HOST_STATUS: active_git_branch={0}" -f $activeGitBranch)
   Write-Output ("HOST_STATUS: active_git_commit={0}" -f $activeGitCommit)
   Write-Output ("HOST_STATUS: active_entry_path={0}" -f $activeEntryPath)

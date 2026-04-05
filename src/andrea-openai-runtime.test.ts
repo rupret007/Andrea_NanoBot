@@ -7,6 +7,7 @@ import {
 import {
   AndreaOpenAiRuntimeError,
   createAndreaOpenAiRuntimeJob,
+  followUpAndreaOpenAiRuntimeGroup,
   followUpAndreaOpenAiRuntimeJob,
   getAndreaOpenAiRuntimeJob,
   getAndreaOpenAiRuntimeJobLogs,
@@ -70,6 +71,7 @@ function makeClient() {
     followUp: vi.fn(),
     getJob: vi.fn(),
     listJobs: vi.fn(),
+    followUpTarget: vi.fn(),
     getJobLogs: vi.fn(),
     stopJob: vi.fn(),
     ensureGroupRegistration: vi.fn(),
@@ -270,6 +272,35 @@ describe('andrea-openai-runtime', () => {
       beforeJobId: 'job_200',
     });
     expect(result.nextBeforeJobId).toBe('job_100');
+  });
+
+  it('supports group-folder follow-up continuity through the backend', async () => {
+    const client = makeClient();
+    client.followUpTarget.mockResolvedValue(
+      makeJob({
+        jobId: 'job_group_followup',
+        kind: 'follow_up',
+        parentJobId: 'job_001',
+        threadId: 'thread-123',
+      }),
+    );
+
+    const job = await followUpAndreaOpenAiRuntimeGroup(
+      {
+        chatJid: 'tg:1',
+        group: MAIN_GROUP,
+        prompt: 'Keep going',
+      },
+      client as never,
+    );
+
+    expect(job.jobId).toBe('job_group_followup');
+    expect(client.followUpTarget).toHaveBeenCalledWith(
+      expect.objectContaining({
+        groupFolder: 'main',
+        prompt: 'Keep going',
+      }),
+    );
   });
 
   it('retries list once after backend group bootstrap succeeds', async () => {

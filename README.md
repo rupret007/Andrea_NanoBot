@@ -133,8 +133,8 @@ Andrea_NanoBot now owns the shared shell while backend lanes own execution truth
 - **Cursor lane stays first-class**
   - current rich operator lane
   - primary taught dashboard and job workflow
-- **`andrea_runtime` is now integrated as a secondary lane**
-  - brings Codex/OpenAI runtime orchestration into this repo
+- **`andrea_runtime` is now a backend-backed secondary lane**
+  - uses the local `Andrea_OpenAI_Bot` loopback backend for Codex/OpenAI execution truth
   - now has a `Codex/OpenAI` surface inside the primary `/cursor` work cockpit
   - `/runtime-*` remains the explicit runtime fallback shell
   - does not replace Cursor or the `/cursor` dashboard
@@ -149,7 +149,7 @@ On this host, the unified Telegram work cockpit is now live-proven across both f
 Shared shell handles now resolve as `{ laneId, jobId }`.
 The imported `imported/andrea_openai_bot` subtree is temporary staging plus history preservation, not the long-term runtime home.
 
-Under the hood, the current Codex/OpenAI lane can still delegate execution truth to the local `Andrea_OpenAI_Bot` loopback backend when that lane is enabled. See [docs/ANDREA_OPENAI_BACKEND.md](docs/ANDREA_OPENAI_BACKEND.md) for the ownership split and the one-time local bootstrap-and-retry flow.
+Under the hood, the current Codex/OpenAI lane now resolves through the local `Andrea_OpenAI_Bot` loopback backend when that lane is enabled. `npm run services:status` surfaces `runtime_backend_health`, `runtime_backend_local_execution_state`, and `runtime_backend_auth_state` so host truth matches `/runtime-status` and the `/cursor` cockpit. See [docs/ANDREA_OPENAI_BACKEND.md](docs/ANDREA_OPENAI_BACKEND.md) for the ownership split and the current auth/bootstrap flow.
 
 ## Alexa Companion Mode
 

@@ -99,7 +99,7 @@ export interface RuntimeCommandDependencies {
     listMessageId?: string;
     jobs: BackendJobSummary[];
   }): void;
-  getStatusMessage(): string;
+  getStatusMessage(): Promise<string> | string;
   canExecute: boolean;
   getExecutionDisabledMessage(): string;
   createJob(args: {
@@ -1119,9 +1119,13 @@ export async function dispatchRuntimeCommand(
   }
 
   if (RUNTIME_STATUS_COMMANDS.has(context.commandToken)) {
-    await deps.sendToChat(context.operatorChatJid, deps.getStatusMessage(), {
-      inlineActions: buildRuntimeStatusInlineActions(),
-    });
+    await deps.sendToChat(
+      context.operatorChatJid,
+      await deps.getStatusMessage(),
+      {
+        inlineActions: buildRuntimeStatusInlineActions(),
+      },
+    );
     return true;
   }
 

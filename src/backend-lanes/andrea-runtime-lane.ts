@@ -1,5 +1,18 @@
-import type { RuntimeOrchestrationService } from '../andrea-runtime/orchestration.js';
-import type { RuntimeOrchestrationJob } from '../andrea-runtime/types.js';
+import {
+  AndreaOpenAiBackendClient,
+  type AndreaOpenAiBackendClientOptions,
+} from '../andrea-openai-backend.js';
+import {
+  AndreaOpenAiRuntimeError,
+  createAndreaOpenAiRuntimeJob,
+  followUpAndreaOpenAiRuntimeGroup,
+  followUpAndreaOpenAiRuntimeJob,
+  getAndreaOpenAiRuntimeJob,
+  getAndreaOpenAiRuntimeJobLogs,
+  listAndreaOpenAiRuntimeJobs,
+  stopAndreaOpenAiRuntimeJob,
+} from '../andrea-openai-runtime.js';
+import type { RegisteredGroup, RuntimeBackendJob } from '../types.js';
 import type {
   BackendActionDescriptor,
   BackendCapabilitySet,
@@ -28,7 +41,7 @@ const ANDREA_RUNTIME_CAPABILITIES: BackendCapabilitySet = {
   actionIds: ['job.refresh', 'job.output', 'job.followup', 'job.stop'],
 };
 
-function toBackendJobSummary(job: RuntimeOrchestrationJob): BackendJobSummary {
+function toBackendJobSummary(job: RuntimeBackendJob): BackendJobSummary {
   return {
     handle: { laneId: 'andrea_runtime', jobId: job.jobId },
     title: 'Codex/OpenAI task',
@@ -43,7 +56,7 @@ function toBackendJobSummary(job: RuntimeOrchestrationJob): BackendJobSummary {
   };
 }
 
-function toBackendJobDetails(job: RuntimeOrchestrationJob): BackendJobDetails {
+function toBackendJobDetails(job: RuntimeBackendJob): BackendJobDetails {
   return {
     ...toBackendJobSummary(job),
     metadata: {
@@ -62,9 +75,10 @@ function toBackendJobDetails(job: RuntimeOrchestrationJob): BackendJobDetails {
       logFile: job.logFile,
       sourceSystem: job.sourceSystem,
       correlationId: job.correlationId,
-      replyRef: job.replyRef,
+      createdAt: job.createdAt,
       startedAt: job.startedAt,
       finishedAt: job.finishedAt,
+      updatedAt: job.updatedAt,
     },
   };
 }
@@ -79,10 +93,6 @@ function assertRuntimeHandle(handle: {
     );
   }
   return handle.jobId;
-}
-
-export interface AndreaRuntimeBackendLane extends BackendLane {
-  getService(): RuntimeOrchestrationService;
 }
 
 function buildRuntimeActionDescriptors(
@@ -101,107 +111,167 @@ function buildRuntimeActionDescriptors(
   return actions;
 }
 
+function summarizeRuntimeOutput(job: RuntimeBackendJob): string | null {
+  const text =
+    job.finalOutputText?.trim() ||
+    job.latestOutputText?.trim() ||
+    job.errorText?.trim() ||
+    null;
+  return text || null;
+}
+
+function resolveGroupContext(
+  resolveGroupByFolder: (folder: string) => { jid: string; group: RegisteredGroup } | null,
+  groupFolder: string,
+): { jid: string; group: RegisteredGroup } {
+  const resolved = resolveGroupByFolder(groupFolder);
+  if (!resolved) {
+    throw new Error(`No registered group found for folder "${groupFolder}".`);
+  }
+  return resolved;
+}
+
+export interface AndreaRuntimeBackendLane extends BackendLane {}
+
+export interface AndreaRuntimeBackendLaneOptions {
+  resolveGroupByFolder(
+    folder: string,
+  ): { jid: string; group: RegisteredGroup } | null;
+  client?: AndreaOpenAiBackendClient;
+  clientOptions?: AndreaOpenAiBackendClientOptions;
+}
+
 export function createAndreaRuntimeBackendLane(
-  service: RuntimeOrchestrationService,
+  options: AndreaRuntimeBackendLaneOptions,
 ): AndreaRuntimeBackendLane {
+  const client =
+    options.client || new AndreaOpenAiBackendClient(options.clientOptions);
+
   return {
     id: 'andrea_runtime',
     label: 'Codex/OpenAI Runtime',
-    getService() {
-      return service;
-    },
     getCapabilities() {
       return ANDREA_RUNTIME_CAPABILITIES;
     },
     async createJob(params: BackendCreateJobParams) {
-      const created = await service.createJob({
-        groupFolder: params.groupFolder,
-        prompt: params.promptText,
-        source: {
-          system: 'nanoclaw_shell',
-          actorRef: params.requestedBy || params.chatJid,
+      const { group } = resolveGroupContext(
+        options.resolveGroupByFolder,
+        params.groupFolder,
+      );
+      const created = await createAndreaOpenAiRuntimeJob(
+        {
+          chatJid: params.chatJid,
+          group,
+          prompt: params.promptText,
+          actorId: params.requestedBy || params.chatJid,
         },
-        routeHint:
-          typeof params.options?.routeHint === 'string'
-            ? (params.options.routeHint as
-                | 'local_required'
-                | 'cloud_allowed'
-                | 'cloud_preferred')
-            : undefined,
-        requestedRuntime:
-          typeof params.options?.requestedRuntime === 'string'
-            ? (params.options.requestedRuntime as
-                | 'codex_local'
-                | 'openai_cloud'
-                | 'claude_legacy')
-            : undefined,
-      });
+        client,
+      );
       return toBackendJobDetails(created);
     },
     async followUp(params: BackendFollowUpJobParams) {
-      const followed = await service.followUp({
-        jobId: assertRuntimeHandle(params.handle),
-        prompt: params.promptText,
-        source: {
-          system: 'nanoclaw_shell',
-          actorRef: params.chatJid,
+      const { group } = resolveGroupContext(
+        options.resolveGroupByFolder,
+        params.groupFolder,
+      );
+      const followed = await followUpAndreaOpenAiRuntimeJob(
+        {
+          chatJid: params.chatJid,
+          group,
+          jobId: assertRuntimeHandle(params.handle),
+          prompt: params.promptText,
+          actorId: params.chatJid,
         },
-      });
+        client,
+      );
       return toBackendJobDetails(followed);
     },
     async getJob(params: BackendGetJobParams) {
-      const job = service.getJob(assertRuntimeHandle(params.handle));
-      return job ? toBackendJobDetails(job) : null;
+      const { group } = resolveGroupContext(
+        options.resolveGroupByFolder,
+        params.groupFolder,
+      );
+      try {
+        const job = await getAndreaOpenAiRuntimeJob(
+          {
+            chatJid: params.chatJid,
+            group,
+            jobId: assertRuntimeHandle(params.handle),
+          },
+          client,
+        );
+        return toBackendJobDetails(job);
+      } catch (err) {
+        if (
+          err instanceof AndreaOpenAiRuntimeError &&
+          err.kind === 'not_found'
+        ) {
+          return null;
+        }
+        throw err;
+      }
     },
     async listJobs(params: BackendListJobsParams) {
-      return service
-        .listJobs({
-          groupFolder: params.groupFolder,
+      const groupFolder = params.groupFolder;
+      if (!groupFolder) {
+        throw new Error('Codex/OpenAI runtime requires a workspace selection.');
+      }
+      const { group } = resolveGroupContext(
+        options.resolveGroupByFolder,
+        groupFolder,
+      );
+      const result = await listAndreaOpenAiRuntimeJobs(
+        {
+          chatJid: params.chatJid,
+          group,
           limit: params.limit,
-        })
-        .jobs.map(toBackendJobSummary);
+        },
+        client,
+      );
+      return result.jobs.map(toBackendJobSummary);
     },
     async refreshJob(params) {
-      const job = service.getJob(assertRuntimeHandle(params.handle));
-      return job ? toBackendJobDetails(job) : null;
+      return this.getJob(params);
     },
     async getPrimaryOutput(
       params: BackendGetJobLogsParams,
     ): Promise<BackendPrimaryOutputResult> {
-      const job = service.getJob(assertRuntimeHandle(params.handle));
-      if (!job) {
+      const { group } = resolveGroupContext(
+        options.resolveGroupByFolder,
+        params.groupFolder,
+      );
+      const job = await getAndreaOpenAiRuntimeJob(
+        {
+          chatJid: params.chatJid,
+          group,
+          jobId: assertRuntimeHandle(params.handle),
+        },
+        client,
+      );
+
+      const primaryText = summarizeRuntimeOutput(job);
+      if (primaryText) {
         return {
           handle: params.handle,
-          text: null,
-          source: 'none',
-          lineCount: 0,
+          text: primaryText,
+          source: job.finalOutputText?.trim()
+            ? 'final_output'
+            : job.latestOutputText?.trim()
+              ? 'latest_output'
+              : 'none',
+          lineCount: primaryText.split(/\r?\n/).length,
         };
       }
 
-      if (job.finalOutputText?.trim()) {
-        const text = job.finalOutputText.trim();
-        return {
-          handle: params.handle,
-          text,
-          source: 'final_output',
-          lineCount: text.split(/\r?\n/).length,
-        };
-      }
-
-      if (job.latestOutputText?.trim()) {
-        const text = job.latestOutputText.trim();
-        return {
-          handle: params.handle,
-          text,
-          source: 'latest_output',
-          lineCount: text.split(/\r?\n/).length,
-        };
-      }
-
-      const logs = service.getJobLogs({
-        jobId: assertRuntimeHandle(params.handle),
-        lines: params.limit,
-      });
+      const logs = await getAndreaOpenAiRuntimeJobLogs(
+        {
+          chatJid: params.chatJid,
+          group,
+          jobId: assertRuntimeHandle(params.handle),
+          lines: params.limit,
+        },
+        client,
+      );
       return {
         handle: params.handle,
         text: logs.logText,
@@ -223,10 +293,19 @@ export function createAndreaRuntimeBackendLane(
     async getJobLogs(
       params: BackendGetJobLogsParams,
     ): Promise<BackendJobLogsResult> {
-      const logs = service.getJobLogs({
-        jobId: assertRuntimeHandle(params.handle),
-        lines: params.limit,
-      });
+      const { group } = resolveGroupContext(
+        options.resolveGroupByFolder,
+        params.groupFolder,
+      );
+      const logs = await getAndreaOpenAiRuntimeJobLogs(
+        {
+          chatJid: params.chatJid,
+          group,
+          jobId: assertRuntimeHandle(params.handle),
+          lines: params.limit,
+        },
+        client,
+      );
       return {
         handle: params.handle,
         logText: logs.logText,
@@ -235,14 +314,46 @@ export function createAndreaRuntimeBackendLane(
       };
     },
     async stopJob(params: BackendStopJobParams) {
-      const stopped = await service.stopJob({
-        jobId: assertRuntimeHandle(params.handle),
-        source: {
-          system: 'nanoclaw_shell',
-          actorRef: params.chatJid,
+      const { group } = resolveGroupContext(
+        options.resolveGroupByFolder,
+        params.groupFolder,
+      );
+      const stopped = await stopAndreaOpenAiRuntimeJob(
+        {
+          chatJid: params.chatJid,
+          group,
+          jobId: assertRuntimeHandle(params.handle),
+          actorId: params.chatJid,
         },
-      });
+        client,
+      );
       return toBackendJobDetails(stopped.job);
     },
   };
+}
+
+export async function followUpAndreaRuntimeLaneGroup(params: {
+  resolveGroupByFolder(
+    folder: string,
+  ): { jid: string; group: RegisteredGroup } | null;
+  groupFolder: string;
+  chatJid: string;
+  promptText: string;
+  actorId?: string | null;
+  client?: AndreaOpenAiBackendClient;
+}): Promise<BackendJobDetails> {
+  const resolved = resolveGroupContext(
+    params.resolveGroupByFolder,
+    params.groupFolder,
+  );
+  const followed = await followUpAndreaOpenAiRuntimeGroup(
+    {
+      chatJid: params.chatJid,
+      group: resolved.group,
+      prompt: params.promptText,
+      actorId: params.actorId || params.chatJid,
+    },
+    params.client,
+  );
+  return toBackendJobDetails(followed);
 }

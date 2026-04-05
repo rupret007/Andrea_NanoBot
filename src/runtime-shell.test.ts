@@ -41,6 +41,11 @@ function makeStatus(
       ready: true,
       transport: 'http',
       version: '1.2.42',
+      localExecutionState: 'available_authenticated',
+      authState: 'authenticated',
+      localExecutionDetail:
+        'Codex local execution is authenticated and the container runtime is ready.',
+      operatorGuidance: null,
     },
     ...overrides,
   };
@@ -97,10 +102,39 @@ describe('runtime-shell formatting', () => {
       'http://127.0.0.1:3210',
     );
 
-    expect(available).toContain('Andrea OpenAI backend is ready.');
+    expect(available).toContain(
+      'Andrea OpenAI backend is reachable and codex_local execution is authenticated.',
+    );
     expect(available).toContain('- Group folder: main');
+    expect(available).toContain('- Local execution state: available_authenticated');
     expect(notReady).toContain('Andrea OpenAI backend is not ready yet.');
     expect(notReady).toContain('No local execution lane is ready right now.');
+    expect(
+      formatRuntimeBackendStatusSummary(
+        makeStatus({
+          state: 'auth_required',
+          detail:
+            'Codex local execution is reachable on this host, but no usable Codex login or OPENAI_API_KEY is available yet.',
+          meta: {
+            backend: 'andrea_openai',
+            enabled: true,
+            ready: false,
+            transport: 'http',
+            version: '1.2.42',
+            localExecutionState: 'available_auth_required',
+            authState: 'auth_required',
+            localExecutionDetail:
+              'Codex local execution is reachable on this host, but no usable Codex login or OPENAI_API_KEY is available yet.',
+            operatorGuidance:
+              'Run codex login on the Andrea_OpenAI_Bot host, or provide OPENAI_API_KEY before retrying codex_local work.',
+          },
+        }),
+        MAIN_GROUP,
+        'http://127.0.0.1:3210',
+      ),
+    ).toContain(
+      'Andrea OpenAI backend is reachable, but codex_local still needs login on the backend host.',
+    );
     expect(
       formatRuntimeBackendStatusSummary(
         makeStatus({ state: 'unavailable', detail: 'connect ECONNREFUSED' }),

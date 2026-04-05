@@ -74,7 +74,9 @@ function renderRuntimeActionHints(job: RuntimeBackendJob): string[] {
 function renderStatusVerdict(status: RuntimeBackendStatus): string {
   switch (status.state) {
     case 'available':
-      return 'Andrea OpenAI backend is ready.';
+      return 'Andrea OpenAI backend is reachable and codex_local execution is authenticated.';
+    case 'auth_required':
+      return 'Andrea OpenAI backend is reachable, but codex_local still needs login on the backend host.';
     case 'not_ready':
       return 'Andrea OpenAI backend is not ready yet.';
     case 'unavailable':
@@ -99,7 +101,14 @@ export function formatRuntimeBackendStatusSummary(
     `- Version: ${status.version || 'unknown'}`,
     `- Transport: ${status.transport}`,
     `- URL: ${backendUrl}`,
+    status.meta
+      ? `- Local execution state: ${status.meta.localExecutionState}`
+      : null,
+    status.meta ? `- Auth state: ${status.meta.authState}` : null,
     status.detail ? `- Detail: ${status.detail}` : null,
+    status.meta?.operatorGuidance
+      ? `- Guidance: ${status.meta.operatorGuidance}`
+      : null,
     '- Commands: /runtime-create, /runtime-jobs, /runtime-job, /runtime-followup, /runtime-logs, /runtime-stop',
   ]
     .filter((line): line is string => Boolean(line))

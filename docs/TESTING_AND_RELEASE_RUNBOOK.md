@@ -174,7 +174,41 @@ Run:
 
 Do not confuse desktop bridge readiness with Cursor Cloud readiness.
 
-## 7. Alexa Validation
+## 7. Codex/OpenAI Runtime Validation
+
+Only run a live runtime acceptance pass if all of these are true:
+
+- `ANDREA_OPENAI_BACKEND_ENABLED=true` in NanoBot
+- `ANDREA_OPENAI_BACKEND_URL=http://127.0.0.1:3210`
+- `npm run services:status` shows:
+  - `runtime_backend_health=healthy`
+  - `runtime_backend_local_execution_state=available_authenticated`
+  - `runtime_backend_auth_state=authenticated`
+- the registered main chat is healthy in Telegram
+
+If the backend is reachable but `runtime_backend_local_execution_state=available_auth_required`, stop and do the real Codex login step on the host running `Andrea_OpenAI_Bot`. Do not treat that as a generic runtime failure.
+
+Run:
+
+- `/runtime-status`
+- `/runtime-create Append the exact text <PROOF_LINE> on a new line at the end of proof.txt in the current workspace. Do not change anything else.`
+- `/runtime-job <jobId>`
+- `/runtime-logs <jobId> 60`
+- reply directly to the fresh runtime card with one safe follow-up
+- `/cursor`
+- tap `Current Work`
+- tap `View Output`
+
+Check:
+
+- the runtime card keeps the authoritative backend `jobId` visible
+- no `Not logged in` failure appears
+- the proof file actually changes on disk
+- reply-to-card continuation stays on the same runtime thread when available
+- `/cursor` shows the live runtime task as `Current Work` while it is active
+- `Current Work -> View Output` still works even after the runtime task finishes
+
+## 8. Alexa Validation
 
 Only run a real Alexa acceptance pass if all of these are configured:
 

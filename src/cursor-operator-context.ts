@@ -322,17 +322,29 @@ export function rememberCursorDashboardMessage(params: {
   selectedLaneId?: BackendLaneId | null;
 }): void {
   const existing = getCursorOperatorContext(params.chatJid, params.threadId);
-  const selectedLaneId = params.selectedLaneId || CURSOR_LANE_ID;
+  const selectedLaneId =
+    params.selectedLaneId === undefined
+      ? params.selectedAgentId !== undefined
+        ? CURSOR_LANE_ID
+        : existing?.selected_lane_id === 'andrea_runtime'
+          ? 'andrea_runtime'
+          : existing?.selected_lane_id === CURSOR_LANE_ID
+            ? CURSOR_LANE_ID
+            : null
+      : params.selectedLaneId;
   upsertCursorOperatorContext({
     chatJid: params.chatJid,
     threadId: params.threadId,
     selectedLaneId,
-    selectedAgentId: params.selectedAgentId,
+    selectedAgentId:
+      params.selectedAgentId === undefined
+        ? existing?.selected_agent_id || null
+        : params.selectedAgentId,
     selectedJobsByLaneJson:
       params.selectedAgentId === undefined
         ? existing?.selected_jobs_by_lane_json || null
         : formatSelectedJobsByLaneJson(
-            selectedLaneId,
+            selectedLaneId || CURSOR_LANE_ID,
             params.selectedAgentId,
             existing?.selected_jobs_by_lane_json || null,
           ),

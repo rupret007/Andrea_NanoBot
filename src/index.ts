@@ -13,6 +13,7 @@ import {
   ASSISTANT_NAME,
   ASSISTANT_NAME_SOURCE,
   AGENT_RUNTIME_FALLBACK,
+  ANDREA_OPENAI_BACKEND_ENABLED,
   ANDREA_OPENAI_BACKEND_URL,
   CONTAINER_TIMEOUT,
   DEFAULT_TRIGGER,
@@ -65,7 +66,6 @@ import {
   getAllTasks,
   getLastBotMessageTimestamp,
   listCursorAgentArtifacts,
-  listRuntimeOrchestrationJobs,
   getMessagesSince,
   getNewMessages,
   getRouterState,
@@ -269,19 +269,15 @@ import {
 } from './agent-error.js';
 import { listCursorModels, type CursorAgentView } from './cursor-jobs.js';
 import {
-  formatAgentRuntimeStatusMessage,
-  getAgentRuntimeStatusSnapshot,
-} from './andrea-runtime/agent-runtime.js';
-import {
   buildRuntimeJobInlineActions,
   dispatchRuntimeCommand,
   formatRuntimeJobCard,
   formatRuntimeNextStep,
 } from './andrea-runtime/commands.js';
-import { createRuntimeOrchestrationService } from './andrea-runtime/orchestration.js';
 import { createBackendLaneRegistry } from './backend-lanes/registry.js';
 import {
   createAndreaRuntimeBackendLane,
+  followUpAndreaRuntimeLaneGroup,
   type AndreaRuntimeBackendLane,
 } from './backend-lanes/andrea-runtime-lane.js';
 import { createCursorBackendLane } from './backend-lanes/cursor-lane.js';
@@ -365,6 +361,7 @@ import {
   stripLeadingMarkdownTitle,
   formatTaskReplyPrompt,
 } from './task-presentation.js';
+import { resolveRuntimeDashboardJobId } from './work-cockpit-targets.js';
 import {
   buildTaskOutputSuggestion,
   getTaskContextType,
@@ -1550,55 +1547,8 @@ const channels: Channel[] = [];
 const queue = new GroupQueue();
 const backendLaneRegistry = createBackendLaneRegistry();
 const cursorBackendLane = createCursorBackendLane();
-const runtimeExecutionEnv = readEnvFile(['ANDREA_RUNTIME_EXECUTION_ENABLED']);
-const andreaRuntimeExecutionEnabled =
-  (
-    process.env.ANDREA_RUNTIME_EXECUTION_ENABLED ||
-    runtimeExecutionEnv.ANDREA_RUNTIME_EXECUTION_ENABLED ||
-    ''
-  ).toLowerCase() === 'true';
-const andreaRuntimeService = createRuntimeOrchestrationService({
-  assistantName: ASSISTANT_NAME,
-  enqueueJob(groupJid, jobId, fn) {
-    queue.enqueueTask(groupJid, jobId, fn);
-  },
-  getAvailableGroups() {
-    return getAvailableGroups();
-  },
-  getRegisteredGroupJids() {
-    return new Set(Object.keys(registeredGroups));
-  },
-  getRuntimeJobs() {
-    return queue.getRuntimeJobs();
-  },
-  getSession(groupFolder) {
-    return sessions[groupFolder];
-  },
-  getStoredThread(groupFolder) {
-    return getAgentThread(groupFolder);
-  },
-  notifyIdle(groupJid) {
-    queue.notifyIdle(groupJid);
-  },
-  persistAgentThread(groupFolder, threadId, runtime) {
-    sessions[groupFolder] = threadId;
-    setAgentThread({
-      group_folder: groupFolder,
-      runtime,
-      thread_id: threadId,
-      last_response_id: threadId,
-      updated_at: new Date().toISOString(),
-    });
-  },
-  refreshTaskSnapshots() {
-    refreshTaskSnapshots(registeredGroups);
-  },
-  registerProcess(groupJid, proc, containerName, groupFolder) {
-    queue.registerProcess(groupJid, proc, containerName, groupFolder);
-  },
-  requestStop(groupJid) {
-    return queue.requestStop(groupJid);
-  },
+const andreaRuntimeExecutionEnabled = ANDREA_OPENAI_BACKEND_ENABLED;
+const andreaRuntimeBackendLane = createAndreaRuntimeBackendLane({
   resolveGroupByFolder(folder) {
     const entry = Object.entries(registeredGroups).find(
       ([, group]) => group.folder === folder,
@@ -1607,11 +1557,7 @@ const andreaRuntimeService = createRuntimeOrchestrationService({
     const [jid, group] = entry;
     return { jid, group };
   },
-  runContainerAgent,
-  writeGroupsSnapshot,
 });
-const andreaRuntimeBackendLane =
-  createAndreaRuntimeBackendLane(andreaRuntimeService);
 
 backendLaneRegistry.register(cursorBackendLane);
 backendLaneRegistry.register(andreaRuntimeBackendLane);
@@ -1847,31 +1793,30 @@ function buildAndreaRuntimeDisabledMessage(): string {
   return formatWorkPanel({
     title: '*Codex/OpenAI Runtime*',
     lines: [
-      "Andrea's Codex/OpenAI runtime lane is integrated, but execution is still turned off on this host.",
-      'Keep using /cursor as the main operator shell today. You can still review existing runtime work where it is available.',
-      'Enable ANDREA_RUNTIME_EXECUTION_ENABLED=true only after validating the Codex/OpenAI runtime container and credentials on this machine.',
+      "Andrea's Codex/OpenAI runtime lane uses the Andrea_OpenAI_Bot loopback backend on this host.",
+      'That backend lane is currently disabled in this NanoBot runtime, so Andrea can only review existing runtime work.',
+      'Enable ANDREA_OPENAI_BACKEND_ENABLED=true (the legacy ANDREA_RUNTIME_EXECUTION_ENABLED=true flag also works), then restart Andrea to bring the runtime lane back online.',
     ],
   });
 }
 
-function buildAndreaRuntimeStatusMessage(): string {
-  const snapshot = getAgentRuntimeStatusSnapshot({
-    activeThreads: getAllAgentThreads(),
-    activeJobs: listRuntimeOrchestrationJobs({ limit: 100 }).jobs.filter(
-      (job) => job.status === 'queued' || job.status === 'running',
-    ).length,
-    containerRuntimeName: CONTAINER_RUNTIME_NAME,
-    containerRuntimeStatus: getContainerRuntimeStatus(CONTAINER_RUNTIME_NAME),
-  });
-
+async function buildAndreaRuntimeStatusMessage(
+  group: RegisteredGroup,
+): Promise<string> {
+  const status = await getAndreaOpenAiBackendStatus();
   return formatWorkPanel({
     title: '*Codex/OpenAI Runtime Status*',
     sections: [
-      stripLeadingMarkdownTitle(formatAgentRuntimeStatusMessage(snapshot)),
+      stripLeadingMarkdownTitle(
+        formatRuntimeBackendStatusSummary(
+          status,
+          group,
+          ANDREA_OPENAI_BACKEND_URL,
+        ),
+      ),
     ],
     lines: [
-      `Runtime execution enabled on this host: ${andreaRuntimeExecutionEnabled ? 'yes' : 'no'}`,
-      "This is Andrea's integrated Codex/OpenAI runtime lane inside the same shell.",
+      "Andrea's Codex/OpenAI lane now resolves through the Andrea_OpenAI_Bot loopback backend.",
       'Use `/cursor` when you want the unified work cockpit, or `/runtime-*` when you want explicit runtime controls.',
     ],
   });
@@ -5501,6 +5446,7 @@ async function main(): Promise<void> {
     cloudStatus: ReturnType<typeof getCursorCloudStatus>;
     desktopStatus: Awaited<ReturnType<typeof getCursorDesktopStatus>>;
     gatewayStatus: Awaited<ReturnType<typeof getCursorGatewayStatus>>;
+    runtimeBackendStatus: Awaited<ReturnType<typeof getAndreaOpenAiBackendStatus>>;
   }): {
     cloudLine: string;
     desktopLine: string;
@@ -5528,9 +5474,16 @@ async function main(): Promise<void> {
         : params.gatewayStatus.mode === 'partial'
           ? 'partial'
           : 'optional and off';
-    const codexRuntimeLine = andreaRuntimeExecutionEnabled
-      ? 'enabled on this host'
-      : 'integrated but off on this host';
+    const codexRuntimeLine =
+      params.runtimeBackendStatus.state === 'available'
+        ? 'available and authenticated'
+        : params.runtimeBackendStatus.state === 'auth_required'
+          ? 'available but needs codex login'
+          : params.runtimeBackendStatus.state === 'not_ready'
+            ? `degraded (${params.runtimeBackendStatus.detail || 'backend not ready'})`
+            : params.runtimeBackendStatus.state === 'not_enabled'
+              ? 'disabled in this NanoBot runtime'
+              : `unavailable (${params.runtimeBackendStatus.detail || 'loopback unreachable'})`;
     return { cloudLine, desktopLine, runtimeRouteLine, codexRuntimeLine };
   }
 
@@ -5724,9 +5677,10 @@ async function main(): Promise<void> {
     }
 
     if (params.state.kind === 'home') {
-      const [desktopStatus, gatewayStatus] = await Promise.all([
+      const [desktopStatus, gatewayStatus, runtimeBackendStatus] = await Promise.all([
         getCursorDesktopStatus({ probe: false }),
         getCursorGatewayStatus({ probe: false }),
+        getAndreaOpenAiBackendStatus(),
       ]);
       const cloudStatus = getCursorCloudStatus();
       const [selection, runtimeSelection] = await Promise.all([
@@ -5749,6 +5703,7 @@ async function main(): Promise<void> {
           cloudStatus,
           desktopStatus,
           gatewayStatus,
+          runtimeBackendStatus,
         }),
         currentJob: selection?.selected || undefined,
         currentRuntimeTask: runtimeSelection?.selected || undefined,
@@ -5859,7 +5814,7 @@ async function main(): Promise<void> {
     }
 
     if (params.state.kind === 'work_current') {
-      const [selection, runtimeSelection] = await Promise.all([
+      const [selection, runtimeSelection, runtimeBackendStatus] = await Promise.all([
         getCursorSelectedAgentRecord(
           params.chatJid,
           params.sourceMessage?.thread_id,
@@ -5868,6 +5823,7 @@ async function main(): Promise<void> {
           params.chatJid,
           params.sourceMessage?.thread_id,
         ),
+        getAndreaOpenAiBackendStatus(),
       ]);
       const currentWorkSelection = getCurrentWorkSelection(
         params.chatJid,
@@ -5878,7 +5834,7 @@ async function main(): Promise<void> {
         currentFocusLaneId: currentWorkSelection?.laneId || null,
         currentJob: selection?.selected || undefined,
         currentRuntimeTask: runtimeSelection?.selected || undefined,
-        executionEnabled: andreaRuntimeExecutionEnabled,
+        executionEnabled: runtimeBackendStatus.state === 'available',
         currentJobResultCount:
           selection?.selected?.provider === 'cloud'
             ? cursorBackendLane.getTrackedArtifactCount(selection.selected.id)
@@ -5897,15 +5853,24 @@ async function main(): Promise<void> {
     }
 
     if (params.state.kind === 'runtime') {
-      const runtimeSelection = await getRuntimeSelectedJobRecord(
-        params.chatJid,
-        params.sourceMessage?.thread_id,
-      );
+      const [runtimeSelection, runtimeBackendStatus] = await Promise.all([
+        getRuntimeSelectedJobRecord(
+          params.chatJid,
+          params.sourceMessage?.thread_id,
+        ),
+        getAndreaOpenAiBackendStatus(),
+      ]);
       const render = buildCursorDashboardRuntime({
-        executionEnabled: andreaRuntimeExecutionEnabled,
-        readinessLine: andreaRuntimeExecutionEnabled
-          ? 'ready on this host'
-          : 'historical review is available, but new runtime work is still off on this host',
+        executionEnabled: runtimeBackendStatus.state === 'available',
+        readinessLine:
+          runtimeBackendStatus.state === 'available'
+            ? 'authenticated and ready on this host'
+            : runtimeBackendStatus.state === 'auth_required'
+              ? runtimeBackendStatus.detail || 'codex_local needs login on the backend host'
+              : runtimeBackendStatus.state === 'not_enabled'
+                ? 'loopback backend is disabled in this NanoBot runtime'
+                : runtimeBackendStatus.detail ||
+                  'historical review is available, but live runtime execution is currently unavailable',
         currentTask: runtimeSelection?.selected || undefined,
       });
       return upsertCursorDashboardMessage({
@@ -5961,14 +5926,17 @@ async function main(): Promise<void> {
     }
 
     if (params.state.kind === 'runtime_current') {
-      const runtimeSelection = await getRuntimeSelectedJobRecord(
-        params.chatJid,
-        params.sourceMessage?.thread_id,
-      );
+      const [runtimeSelection, runtimeBackendStatus] = await Promise.all([
+        getRuntimeSelectedJobRecord(
+          params.chatJid,
+          params.sourceMessage?.thread_id,
+        ),
+        getAndreaOpenAiBackendStatus(),
+      ]);
       const render = runtimeSelection?.selected
         ? buildCursorDashboardRuntimeCurrent(
             runtimeSelection.selected,
-            andreaRuntimeExecutionEnabled,
+            runtimeBackendStatus.state === 'available',
           )
         : buildCursorDashboardRuntimeCurrentEmpty();
       return upsertCursorDashboardMessage({
@@ -7397,22 +7365,41 @@ async function main(): Promise<void> {
       action === 'runtime-followup' ||
       action === 'runtime-stop'
     ) {
-      const runtimeSelection = await getRuntimeSelectedJobRecord(
-        chatJid,
-        sourceMessage?.thread_id,
+      const runtimeLane = getAndreaRuntimeLane();
+      const dashboardRuntimeJobId = resolveRuntimeDashboardJobId(
+        dashboardContext
+          ? {
+              laneId: dashboardContext.laneId,
+              agentId: dashboardContext.agentId,
+              state: dashboardContext.state,
+            }
+          : null,
       );
-      const selectedRuntimeJob = runtimeSelection?.selected || null;
+      const runtimeSelection = dashboardRuntimeJobId
+        ? null
+        : await getRuntimeSelectedJobRecord(chatJid, sourceMessage?.thread_id);
+      const selectedRuntimeJob = dashboardRuntimeJobId
+        ? await runtimeLane.getJob({
+            handle: {
+              laneId: 'andrea_runtime',
+              jobId: dashboardRuntimeJobId,
+            },
+            groupFolder: registeredGroups[chatJid].folder,
+            chatJid,
+          })
+        : runtimeSelection?.selected || null;
       if (!selectedRuntimeJob) {
         await sendCursorMessage(
           chatJid,
-          'No Codex/OpenAI task is selected yet. Open `Codex/OpenAI`, then tap `Recent Work` to choose one.',
+          dashboardRuntimeJobId
+            ? `Codex/OpenAI task ${formatOpaqueTaskId(dashboardRuntimeJobId)} is no longer available in this workspace.`
+            : 'No Codex/OpenAI task is selected yet. Open `Codex/OpenAI`, then tap `Recent Work` to choose one.',
           sourceMessage,
         );
         return;
       }
 
       if (action === 'runtime-refresh') {
-        const runtimeLane = getAndreaRuntimeLane();
         const refreshed = await runtimeLane.refreshJob({
           handle: selectedRuntimeJob.handle,
           groupFolder: registeredGroups[chatJid].folder,
@@ -7459,7 +7446,7 @@ async function main(): Promise<void> {
       if (action === 'runtime-output') {
         await handleAndreaRuntimeCommand(
           chatJid,
-          '/runtime-logs current',
+          `/runtime-logs ${selectedRuntimeJob.handle.jobId}`,
           '/runtime-logs',
           sourceMessage,
         );
@@ -7486,7 +7473,7 @@ async function main(): Promise<void> {
 
       await handleAndreaRuntimeCommand(
         chatJid,
-        '/runtime-stop current',
+        `/runtime-stop ${selectedRuntimeJob.handle.jobId}`,
         '/runtime-stop',
         sourceMessage,
       );
@@ -8612,8 +8599,8 @@ async function main(): Promise<void> {
             selectedLaneId: 'andrea_runtime',
           });
         },
-        getStatusMessage() {
-          return buildAndreaRuntimeStatusMessage();
+        async getStatusMessage() {
+          return buildAndreaRuntimeStatusMessage(group);
         },
         canExecute: andreaRuntimeExecutionEnabled,
         getExecutionDisabledMessage() {
@@ -8719,25 +8706,20 @@ async function main(): Promise<void> {
           chatJid: targetChatJid,
           promptText,
         }) {
-          const created = await runtimeLane.getService().followUp({
-            groupFolder,
-            prompt: promptText,
-            source: {
-              system: 'operator_command',
-              actorRef: targetChatJid,
+          return followUpAndreaRuntimeLaneGroup({
+            resolveGroupByFolder(folder) {
+              const entry = Object.entries(registeredGroups).find(
+                ([, candidate]) => candidate.folder === folder,
+              );
+              if (!entry) return null;
+              const [jid, resolvedGroup] = entry;
+              return { jid, group: resolvedGroup };
             },
-          });
-          const details = await runtimeLane.getJob({
-            handle: { laneId: 'andrea_runtime', jobId: created.jobId },
             groupFolder,
             chatJid: targetChatJid,
+            promptText,
+            actorId: targetChatJid,
           });
-          if (!details) {
-            throw new Error(
-              `No runtime job found for "${created.jobId}" after follow-up queued.`,
-            );
-          }
-          return details;
         },
         findGroupByFolder(folder) {
           const entry = Object.entries(registeredGroups).find(

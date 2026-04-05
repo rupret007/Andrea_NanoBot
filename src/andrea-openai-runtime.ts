@@ -391,6 +391,26 @@ export async function followUpAndreaOpenAiRuntimeJob(
   }
 }
 
+export async function followUpAndreaOpenAiRuntimeGroup(
+  input: RuntimeCreateInput,
+  client = new AndreaOpenAiBackendClient(),
+): Promise<RuntimeBackendJob> {
+  ensureBackendEnabled(client);
+
+  try {
+    const job = await client.followUpTarget({
+      groupFolder: input.group.folder,
+      prompt: input.prompt,
+      source: buildSource(input),
+    });
+    ensureContextMatches(input.chatJid, input.group, job);
+    cacheJob(input.chatJid, job);
+    return job;
+  } catch (err) {
+    throw classifyBackendError(err, input.group.folder);
+  }
+}
+
 export async function getAndreaOpenAiRuntimeJobLogs(
   input: RuntimeLogsInput,
   client = new AndreaOpenAiBackendClient(),

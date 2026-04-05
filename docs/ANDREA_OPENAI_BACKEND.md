@@ -31,6 +31,7 @@ The current local backend contract is:
 
 - `GET /meta`
 - `POST /jobs`
+- `POST /followups`
 - `POST /jobs/:jobId/followup`
 - `GET /jobs`
 - `GET /jobs/:jobId`
@@ -125,9 +126,21 @@ NanoBot maps the backend into four local states:
 - `not_enabled`
 - `unavailable`
 - `not_ready`
+- `auth_required`
 - `available`
 
 `/runtime-status` is the operator-facing check for this.
+
+The backend now exposes auth-specific local execution truth through `GET /meta`:
+
+- `localExecutionState=available_authenticated`
+- `localExecutionState=available_auth_required`
+- `authState=authenticated`
+- `authState=auth_required`
+- `localExecutionDetail`
+- `operatorGuidance`
+
+NanoBot surfaces those directly in `/runtime-status`, `/cursor`, and `npm run services:status`.
 
 ## First-Run Bootstrap
 
@@ -163,18 +176,25 @@ This keeps the ownership split clean:
 
 ## Current Acceptance Status
 
-The runtime lane is complete enough for a command-first v1 operator shell.
+The runtime lane is now execution-proven on this host, not just shell-proven.
 
 What is complete now:
 
 - local loopback backend detection
 - self-healing first-run backend group bootstrap
+- explicit backend auth truth in `/meta`, `/runtime-status`, `/cursor`, and `services:status`
 - create, list, refresh, follow-up, logs, and stop through backend `jobId`
 - reply-linked runtime card follow-up from Telegram runtime cards
 - chat-scoped current work selection through the shared Andrea shell, with runtime selection mirrored only for compatibility
 - unified `/cursor` cockpit plus direct `/runtime-*` fallback controls
 - stale current runtime selections are cleared honestly when direct commands discover the selected task is gone
+- `Current Work` runtime actions now use the exact runtime card `jobId` even after shared selection clears a finished task
 - scripted Telegram runtime validation via `npm run telegram:user:runtime`
+- real Telegram content execution proof against `Andrea_OpenAI_Bot`, including:
+  - file mutation in the live workspace
+  - log/output retrieval
+  - reply-to-card follow-up continuity on the same runtime thread
+  - `/cursor` current-work proof while the runtime job is active
 
 What is still conditional on this checkout:
 

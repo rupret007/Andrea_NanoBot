@@ -33,7 +33,7 @@ Operators own:
 - service lifecycle
 - Cloud versus desktop bridge setup
 - deeper Cursor workflows
-- the integrated Codex/OpenAI runtime lane and its optional local loopback backend
+- the Codex/OpenAI runtime lane and its local `Andrea_OpenAI_Bot` loopback backend
 - startup, restart, verify, and troubleshooting
 - release validation and docs accuracy
 
@@ -71,14 +71,16 @@ Andrea now treats Cursor as three separate surfaces:
 
 ### 4. Andrea Runtime Lane
 
-- integrated Codex/OpenAI backend lane under the shared shell
-- execution truth lives in the lane, not in Telegram command handlers
+- Codex/OpenAI backend lane under the shared shell
+- execution truth lives in `Andrea_OpenAI_Bot`, not in Telegram command handlers
 - surfaced through the `Codex/OpenAI` tile inside `/cursor`
 - `/runtime-*` remains the explicit runtime fallback shell
 - does **not** replace `/cursor` as the taught operator flow
 - `codex_local` is the intended primary runtime for this lane
 - `openai_cloud` remains conditional on `OPENAI_API_KEY` or a compatible gateway
-- host execution stays disabled until `ANDREA_RUNTIME_EXECUTION_ENABLED=true`
+- NanoBot enables this lane with `ANDREA_OPENAI_BACKEND_ENABLED=true`
+- the legacy `ANDREA_RUNTIME_EXECUTION_ENABLED=true` flag still enables the same backend-backed lane
+- host execution is only truly ready when the loopback backend reports authenticated local execution
 - operators should think in terms of one chat-scoped current work item with lane-specific capabilities, not two separate task systems
 
 Read the architecture note when you need the ownership boundary:
@@ -138,6 +140,18 @@ Operator commands for this lane:
 - `/runtime-stop JOB_ID`
 
 Important truth:
+
+- `/runtime-status` is the authoritative operator readout for this lane
+- `services:status` now mirrors the same host truth with:
+  - `runtime_backend_health`
+  - `runtime_backend_local_execution_state`
+  - `runtime_backend_auth_state`
+  - `runtime_backend_guidance`
+- treat these states literally:
+  - `available_authenticated` = live Codex local execution is ready now
+  - `available_auth_required` = the backend is reachable but still needs a real Codex login on the backend host
+  - `not_ready` = the backend is reachable but execution cannot start yet
+  - `unavailable` = NanoBot cannot use the backend right now
 
 - `jobId` is the primary backend handle in NanoBot
 - `threadId` is metadata returned by the backend
