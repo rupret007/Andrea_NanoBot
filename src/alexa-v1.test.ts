@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  ALEXA_DEFAULT_REPROMPT,
   ALEXA_ANYTHING_IMPORTANT_INTENT,
   ALEXA_DRAFT_FOLLOW_UP_INTENT,
   ALEXA_EVENING_RESET_INTENT,
@@ -10,6 +11,7 @@ import {
   ALEXA_SAVE_FOR_LATER_INTENT,
   ALEXA_WHAT_AM_I_FORGETTING_INTENT,
   ALEXA_WHAT_MATTERS_MOST_TODAY_INTENT,
+  buildAlexaFallbackSpeech,
   buildAlexaHelpSpeech,
   buildAlexaPersonalPrompt,
   buildAlexaWelcomeSpeech,
@@ -69,9 +71,17 @@ describe('alexa v1 prompt mapping', () => {
 
 describe('alexa v1 speech helpers', () => {
   it('keeps help and welcome copy short and voice-first', () => {
-    expect(buildAlexaHelpSpeech('Andrea')).toContain('morning brief');
+    expect(buildAlexaHelpSpeech('Andrea')).toContain(
+      "what's still open with Candace",
+    );
     expect(buildAlexaWelcomeSpeech('Andrea')).toContain(
       'You are talking to Andrea.',
+    );
+    expect(buildAlexaFallbackSpeech('Andrea')).toContain(
+      'Try one exact phrase',
+    );
+    expect(ALEXA_DEFAULT_REPROMPT).toContain(
+      "what's still open with Candace",
     );
   });
 

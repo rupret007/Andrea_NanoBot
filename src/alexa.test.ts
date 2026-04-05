@@ -510,6 +510,41 @@ describe('createAlexaSkill', () => {
     expect(extractSpeechText(response)).toContain('most likely thing');
   });
 
+  it('routes CandaceUpcomingIntent through the thread-aware companion lane', async () => {
+    mockedBuildDailyCompanionResponse.mockResolvedValue(
+      buildCompanionResponse(
+        'With Candace, the main thing is dinner plans and what you still need to confirm.',
+        {
+          mode: 'household_guidance',
+          context: {
+            ...buildCompanionResponse('x').context,
+            subjectKind: 'person',
+            subjectData: { personName: 'Candace', activePeople: ['Candace'] },
+            usedThreadIds: ['thread-candace'],
+            usedThreadTitles: ['Candace'],
+            usedThreadReasons: ['it is an active household thread'],
+            threadSummaryLines: ['Dinner plans still need an answer.'],
+          },
+        },
+      ),
+    );
+
+    const skill = createAlexaSkill(buildConfig());
+    const response = await skill.invoke(
+      buildIntentEnvelope('CandaceUpcomingIntent'),
+    );
+
+    expect(mockedBuildDailyCompanionResponse).toHaveBeenCalledWith(
+      'what do Candace and I have coming up',
+      expect.objectContaining({
+        channel: 'alexa',
+        groupFolder: 'main',
+      }),
+    );
+    expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
+    expect(extractSpeechText(response)).toContain('With Candace');
+  });
+
   it('routes EveningResetIntent through the companion guidance lane', async () => {
     mockedBuildDailyCompanionResponse.mockResolvedValue(
       buildCompanionResponse(
@@ -845,6 +880,61 @@ describe('createAlexaSkill', () => {
     );
 
     expect(extractSpeechText(response)).toContain(`This is ${ASSISTANT_NAME}.`);
+    expect(extractSpeechText(response)).toContain('Try one exact phrase');
+    expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
+  });
+
+  it('uses thread-aware fallback suggestions when recent Alexa context is about Candace', async () => {
+    const linked = seedLinkedAccount('main');
+    saveAlexaConversationState(
+      getAlexaPrincipalKey({
+        userId: 'amzn1.ask.account.test-user',
+        personId: 'amzn1.ask.person.test-person',
+      }),
+      linked!.accessTokenHash,
+      'main',
+      {
+        flowKey: 'candace_upcoming',
+        subjectKind: 'person',
+        subjectData: {
+          personName: 'Candace',
+          activePeople: ['Candace'],
+          fallbackCount: 0,
+        },
+        summaryText: 'shared plans with Candace',
+        supportedFollowups: ['anything_else', 'switch_person'],
+        styleHints: {
+          channelMode: 'alexa_companion',
+          prioritizationLens: 'family',
+          responseSource: 'local_companion',
+        },
+      },
+    );
+
+    const skill = createAlexaSkill(buildConfig());
+    const response = await skill.invoke(
+      buildIntentEnvelope('AMAZON.FallbackIntent'),
+    );
+
+    expect(extractSpeechText(response)).toContain(
+      "what's still open with Candace",
+    );
+    expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
+  });
+
+  it('narrows repeated fallback guidance instead of repeating the full command list', async () => {
+    const skill = createAlexaSkill(buildConfig());
+
+    await skill.invoke(buildIntentEnvelope('AMAZON.FallbackIntent'));
+    const response = await skill.invoke(
+      buildIntentEnvelope('AMAZON.FallbackIntent'),
+    );
+
+    expect(extractSpeechText(response)).toContain('Try exactly');
+    expect(extractSpeechText(response)).toContain('what am I forgetting');
+    expect(extractSpeechText(response)).not.toContain(
+      "what's still open with Candace, or what should I remember tonight",
+    );
     expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
   });
 });

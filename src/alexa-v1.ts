@@ -18,6 +18,8 @@ export const ALEXA_ANYTHING_ELSE_INTENT = 'AnythingElseIntent';
 export const ALEXA_CONVERSATIONAL_FOLLOWUP_INTENT =
   'ConversationalFollowupIntent';
 export const ALEXA_MEMORY_CONTROL_INTENT = 'MemoryControlIntent';
+export const ALEXA_DEFAULT_REPROMPT =
+  "Try saying what am I forgetting, what's still open with Candace, or what should I remember tonight.";
 
 export const ALEXA_V1_PERSONAL_INTENTS = new Set<string>([
   ALEXA_MY_DAY_INTENT,
@@ -143,15 +145,15 @@ export function buildAlexaConversationalFollowupPrompt(
 }
 
 export function buildAlexaHelpSpeech(assistantName: string): string {
-  return `You are talking to ${assistantName}. Ask for a morning brief, what you are forgetting, what matters today, or what is still open with Candace.`;
+  return `You are talking to ${assistantName}. Try one exact phrase: what am I forgetting, what's still open with Candace, or what should I remember tonight.`;
 }
 
 export function buildAlexaWelcomeSpeech(assistantName: string): string {
-  return `You are talking to ${assistantName}. Start with what you are forgetting, what matters today, or what you should remember tonight.`;
+  return `You are talking to ${assistantName}. Start with one exact phrase: what am I forgetting, what's still open with Candace, or what should I remember tonight.`;
 }
 
 export function buildAlexaFallbackSpeech(assistantName: string): string {
-  return `This is ${assistantName}. Try a short request like what am I forgetting, what matters today, what is still open with Candace, or what should I remember tonight.`;
+  return `This is ${assistantName}. I did not catch that phrasing. Try one exact phrase: what am I forgetting, what's still open with Candace, or what should I remember tonight.`;
 }
 
 export function buildReminderLeadTimeQuestion(assistantName: string): string {

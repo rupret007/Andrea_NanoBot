@@ -51,6 +51,7 @@ import {
   rejectProposedProfileFact,
 } from './assistant-personalization.js';
 import {
+  ALEXA_DEFAULT_REPROMPT,
   ALEXA_ANYTHING_ELSE_INTENT,
   ALEXA_ANYTHING_IMPORTANT_INTENT,
   ALEXA_BEFORE_NEXT_MEETING_INTENT,
@@ -100,7 +101,7 @@ const ALEXA_REQUEST_LIMIT_BYTES = 256 * 1024;
 const DEFAULT_ALEXA_HOST = '127.0.0.1';
 const DEFAULT_ALEXA_PORT = 4300;
 const DEFAULT_ALEXA_PATH = '/alexa';
-const DEFAULT_ALEXA_REPROMPT = 'What would you like to know?';
+const DEFAULT_ALEXA_REPROMPT = ALEXA_DEFAULT_REPROMPT;
 
 export interface AlexaConfig extends AlexaBridgeConfig {
   skillId: string;
@@ -822,6 +823,7 @@ function buildAlexaStateFromDailyCompanion(
     subjectData: {
       ...baseState.subjectData,
       ...context.subjectData,
+      fallbackCount: 0,
       threadId: context.usedThreadIds?.[0],
       threadTitle: context.usedThreadTitles?.[0],
       threadSummaryLines: context.threadSummaryLines || [],
@@ -891,6 +893,80 @@ function baseFollowupsForSubject(
         'save_that',
       ] as import('./types.js').AlexaConversationFollowupAction[];
   }
+}
+
+function joinAlexaSuggestedPhrases(suggestions: string[]): string {
+  if (suggestions.length === 0) return '';
+  if (suggestions.length === 1) return suggestions[0]!;
+  if (suggestions.length === 2) {
+    return `${suggestions[0]} or ${suggestions[1]}`;
+  }
+  return `${suggestions.slice(0, -1).join(', ')}, or ${suggestions.at(-1)}`;
+}
+
+function buildAlexaFallbackSuggestions(
+  state: AlexaConversationState | undefined,
+): string[] {
+  const personName = state?.subjectData.personName?.trim().toLowerCase();
+  const activePeople =
+    state?.subjectData.activePeople?.map((value) => value.trim().toLowerCase()) ||
+    [];
+  const threadTitle = state?.subjectData.threadTitle?.trim().toLowerCase();
+
+  const candaceFocused =
+    personName === 'candace' ||
+    activePeople.includes('candace') ||
+    threadTitle?.includes('candace') === true ||
+    state?.styleHints.prioritizationLens === 'family' ||
+    state?.subjectKind === 'person' ||
+    state?.subjectKind === 'household' ||
+    state?.subjectKind === 'life_thread';
+
+  if (candaceFocused) {
+    return [
+      "what's still open with Candace",
+      'what should I remember tonight',
+      'what am I forgetting',
+    ];
+  }
+
+  if (
+    state?.styleHints.guidanceGoal === 'evening_reset' ||
+    state?.styleHints.prioritizationLens === 'evening'
+  ) {
+    return [
+      'what should I remember tonight',
+      'what am I forgetting',
+      "what's still open with Candace",
+    ];
+  }
+
+  return [
+    'what am I forgetting',
+    "what's still open with Candace",
+    'what should I remember tonight',
+  ];
+}
+
+function buildAlexaFallbackSpeechForState(
+  assistantName: string,
+  suggestions: string[],
+  fallbackCount: number,
+): string {
+  if (fallbackCount >= 2) {
+    return `This is ${assistantName}. Try exactly: ${suggestions[0]}.`;
+  }
+  return `This is ${assistantName}. I did not catch that phrasing. Try one exact phrase: ${joinAlexaSuggestedPhrases(suggestions.slice(0, 3))}.`;
+}
+
+function buildAlexaFallbackRepromptForState(
+  suggestions: string[],
+  fallbackCount: number,
+): string {
+  if (fallbackCount >= 2) {
+    return `Try saying ${suggestions[0]}.`;
+  }
+  return `Try saying ${joinAlexaSuggestedPhrases(suggestions.slice(0, 3))}.`;
 }
 
 async function runLinkedAlexaTurn(
@@ -1022,6 +1098,70 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
     return { ok: true as const, linked };
   };
 
+  const resolveOptionalLinkedContext = (principal: AlexaPrincipal) => {
+    if (!principal.accessToken?.trim()) {
+      return undefined;
+    }
+    const linked = resolveAlexaLinkedAccount(principal, assistantName);
+    return linked.ok ? linked : undefined;
+  };
+
+  const respondWithAlexaFallback = (handlerInput: HandlerInput) => {
+    const principal = extractPrincipal(handlerInput.requestEnvelope);
+    const linked = resolveOptionalLinkedContext(principal);
+    const conversationState = linked
+      ? loadAlexaConversationState(
+          linked.principalKey,
+          linked.account.accessTokenHash,
+        )
+      : undefined;
+    const nextFallbackCount =
+      Math.max(0, conversationState?.subjectData.fallbackCount || 0) + 1;
+    const suggestions = buildAlexaFallbackSuggestions(conversationState);
+    const speech = buildAlexaFallbackSpeechForState(
+      assistantName,
+      suggestions,
+      nextFallbackCount,
+    );
+    const reprompt = buildAlexaFallbackRepromptForState(
+      suggestions,
+      nextFallbackCount,
+    );
+
+    if (linked) {
+      const nextState =
+        conversationState ||
+        buildAlexaCompanionConversationState({
+          flowKey: 'launch_fallback',
+          subjectKind: 'general',
+          summaryText: 'the start of this Alexa conversation',
+          guidanceGoal: 'daily_brief',
+        });
+      saveAlexaConversationState(
+        linked.principalKey,
+        linked.account.accessTokenHash,
+        linked.account.groupFolder,
+        {
+          ...nextState,
+          subjectData: {
+            ...nextState.subjectData,
+            fallbackCount: nextFallbackCount,
+          },
+        },
+      );
+    }
+
+    recordHandledRequest(handlerInput.requestEnvelope, {
+      responseSource: 'fallback',
+      linked: Boolean(linked),
+      groupFolder: linked?.account.groupFolder,
+    });
+    return handlerInput.responseBuilder
+      .speak(linked ? speech : buildAlexaFallbackSpeech(assistantName))
+      .reprompt(linked ? reprompt : DEFAULT_ALEXA_REPROMPT)
+      .getResponse();
+  };
+
   const respondWithLocalCompanion = (
     handlerInput: HandlerInput,
     linked: Extract<ReturnType<typeof resolveAlexaLinkedAccount>, { ok: true }>,
@@ -1147,10 +1287,12 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
           summaryText: result.responseText || result.referencedThread.title,
           guidanceGoal: 'life_thread_guidance',
           subjectData: {
+            fallbackCount: 0,
             threadId: result.referencedThread.id,
             threadTitle: result.referencedThread.title,
             threadSummaryLines: [
-              result.referencedThread.nextAction || result.referencedThread.summary,
+              result.referencedThread.nextAction ||
+                result.referencedThread.summary,
             ],
             dailyCompanionContextJson: JSON.stringify({
               version: 1,
@@ -2264,13 +2406,7 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
       );
     },
     handle(handlerInput: HandlerInput) {
-      recordHandledRequest(handlerInput.requestEnvelope, {
-        responseSource: 'fallback',
-      });
-      return handlerInput.responseBuilder
-        .speak(buildAlexaFallbackSpeech(assistantName))
-        .reprompt(DEFAULT_ALEXA_REPROMPT)
-        .getResponse();
+      return respondWithAlexaFallback(handlerInput);
     },
   };
 
@@ -2291,13 +2427,7 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
         return buildBarrierResponse(handlerInput, authorization);
       }
 
-      recordHandledRequest(handlerInput.requestEnvelope, {
-        responseSource: 'fallback',
-      });
-      return handlerInput.responseBuilder
-        .speak(buildAlexaFallbackSpeech(assistantName))
-        .reprompt(DEFAULT_ALEXA_REPROMPT)
-        .getResponse();
+      return respondWithAlexaFallback(handlerInput);
     },
   };
 

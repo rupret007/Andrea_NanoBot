@@ -231,6 +231,7 @@ Current truthful closeout note:
 - repo-side and near-live Alexa proof can be green without a live signed Alexa utterance
 - do not claim full live Alexa acceptance until one real signed Alexa request succeeds from the app, a device, or an authenticated simulator session
 - typed Alexa+ app chat is not an authoritative proof surface unless Andrea logs a real signed follow-up `IntentRequest` after launch
+- interaction-model changes require a fresh import of `docs/alexa/interaction-model.en-US.json` plus `Build Model` in the Alexa Developer Console before live utterance failures count against the repo
 
 When configured, validate in this order:
 
@@ -241,13 +242,15 @@ When configured, validate in this order:
    - if the live host is an `ngrok` `*.ngrok-free.dev` tunnel, use the `ngrok-skip-browser-warning: 1` header for browser-style checks
    - if the skill endpoint uses that host, confirm the Alexa console SSL setting is the wildcard-certificate option
 4. authoritative voice launch
-   - preferred: `Alexa, open Andrea Assistant skill`
+    - preferred: `Alexa, open Andrea Assistant skill`
+    - if the repo interaction model changed recently, import `docs/alexa/interaction-model.en-US.json` and run `Build Model` before this step
 5. unlinked help
 6. one unlinked personal-data intent
 7. linked `what's still open with Candace`
 8. linked `anything else`
 9. linked `what should I remember tonight`
 10. confirm `alexa_last_signed_request_type=IntentRequest` and a resolved `groupFolder`
+    - if the launch works but follow-ups fall into generic fallback, treat that as a likely stale live model first
 11. one preference or explainability turn
 
 Check:

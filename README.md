@@ -166,6 +166,8 @@ Repo-side and near-live Alexa proof are strong on this host. The one remaining l
 
 Typed Alexa+ app chat is diagnosis-only right now. It may trigger a skill launch, but it does not count as live proof unless Andrea logs a real signed follow-up `IntentRequest` after launch.
 
+After any interaction-model change, re-import `docs/alexa/interaction-model.en-US.json` in the Alexa Developer Console and run `Build Model` before treating live fallback as a repo bug.
+
 For day-to-day operator checks, use `/alexa-status` inside the registered main control chat and `npm run services:status` for the local Alexa listener, OAuth health, public-ingress hinting, and the last signed Alexa request markers on the host. Public HTTPS ingress and live signed utterances remain separate acceptance checks. If the live host is an `ngrok` `*.ngrok-free.dev` tunnel, the Alexa console endpoint SSL setting must use the wildcard-certificate option.
 
 ## Two Command Surfaces

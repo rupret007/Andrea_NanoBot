@@ -45,6 +45,7 @@ Important validation note:
 - `npm run services:status` now exposes the local Alexa listener and OAuth health when Alexa is configured, plus the last signed Alexa request markers
 - public HTTPS ingress and real signed Alexa requests still need their own checks
 - typed Alexa+ app chat is **not** an authoritative proof surface unless it produces a real signed follow-up `IntentRequest` after launch
+- if you change the interaction model in `docs/alexa/interaction-model.en-US.json`, you must re-import it in the Alexa Developer Console and run `Build Model` before treating live voice fallback as a repo bug
 
 ## 1) Authoritative Proof Surfaces
 
@@ -182,6 +183,7 @@ In the Alexa Developer Console:
 1. Create or open the custom skill.
 2. Import the interaction model from:
    - `docs/alexa/interaction-model.en-US.json`
+   - any utterance change in that file requires `Build Model`
 3. Set `ALEXA_PUBLIC_BASE_URL` locally to your current public HTTPS base URL.
 4. Set the HTTPS endpoint to:
    - `${ALEXA_PUBLIC_BASE_URL}/alexa`
@@ -198,6 +200,8 @@ In the Alexa Developer Console:
 8. Make sure the live skill/application ID matches local `ALEXA_SKILL_ID`.
 
 If you see `SSL certificate verification failed` in the Alexa app for an `ngrok-free.dev` host, the usual cause is the Alexa console endpoint still being set to the standard trusted-certificate option instead of the wildcard-certificate option.
+
+If voice launch works but known-good phrases like `what's still open with Candace` or `what should I remember tonight` still fall into generic fallback, the most likely cause is a stale live interaction model. Import the current repo JSON again and rebuild the model before debugging Andrea itself.
 
 If any of those are missing, Alexa is **setup-blocked**, not broken.
 

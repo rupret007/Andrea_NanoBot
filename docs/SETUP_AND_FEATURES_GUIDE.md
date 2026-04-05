@@ -386,6 +386,7 @@ Practical notes:
 - remembered personalization stays structured and consent-based; Andrea does not silently store arbitrary conversation history as long-term memory.
 - typed Alexa+ app chat is diagnosis-only unless it produces a real signed follow-up `IntentRequest` after skill launch
 - authoritative live proof should use voice in the Alexa app, voice on device, or the authenticated Alexa simulator
+- if you change `docs/alexa/interaction-model.en-US.json`, you must re-import it in the Alexa Developer Console and run `Build Model`
 
 Recommended setup order:
 
@@ -406,12 +407,14 @@ Recommended setup order:
    - token URI: `${ALEXA_PUBLIC_BASE_URL}/alexa/oauth/token`
    - scope: `andrea.alexa.link`
    - auth scheme: `HTTP Basic`
-   - import or rebuild the interaction model from `docs/alexa/interaction-model.en-US.json`
+   - import the interaction model from `docs/alexa/interaction-model.en-US.json`
+   - run `Build Model` after any interaction-model change
    - use the same live skill/application ID as local `ALEXA_SKILL_ID`
    - if `ALEXA_PUBLIC_BASE_URL` ends with `.ngrok-free.dev`, choose the wildcard-certificate endpoint option in the Alexa Developer Console
 7. run `/alexa-status`, then perform the linked and unlinked live checks from [ALEXA_VOICE_INTEGRATION.md](ALEXA_VOICE_INTEGRATION.md)
 8. if repo-side and near-live proof are already green, treat one real signed Alexa voice conversation as the final live acceptance step
    - preferred launch phrase: `Alexa, open Andrea Assistant skill`
+   - if known-good phrases like `what's still open with Candace` still fall into generic fallback, treat the live model as stale first and rebuild it before debugging repo code
    - confirm `npm run services:status` shows the last signed request fields changing from `LaunchRequest` to a follow-up `IntentRequest`
 
 Full details:

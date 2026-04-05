@@ -22,6 +22,7 @@ export interface AlexaConversationSubjectData {
   threadTitle?: string;
   threadSummaryLines?: string[];
   dailyCompanionContextJson?: string;
+  fallbackCount?: number;
 }
 
 export interface AlexaConversationState {
