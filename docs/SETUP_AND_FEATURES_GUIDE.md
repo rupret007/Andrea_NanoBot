@@ -47,6 +47,8 @@ Use these meanings consistently when reading `/cursor_status` and the setup docs
 - A secondary integrated `andrea_runtime` lane for Codex/OpenAI execution truth, with a `Codex/OpenAI` view inside `/cursor`, a shared current-work model, and `/runtime-*` as the explicit fallback shell.
 - A bounded life-thread layer for ongoing people, household, and follow-up continuity across Telegram and Alexa.
 - A shared assistant capability graph so Telegram and Alexa can call the same daily, household, memory, thread, and research actions safely.
+- A small bounded personality layer plus request-driven Andrea Pulse.
+- A prepared BlueBubbles channel scaffold for future text-message expansion.
 
 For demo use, keep the default public surface smaller than the full operator feature set.
 The safest baseline is Telegram + direct assistance + fast quick replies for simple asks + reminders/tasks + `/cursor_status` + clean startup/health checks.
@@ -102,6 +104,7 @@ The shared capability registry records:
 - whether linking or confirmation is required
 - whether it is safe for Alexa
 - whether it is safe for Telegram
+- whether it is safe for BlueBubbles
 - whether it is operator-only
 - what output shape each channel should prefer
 
@@ -133,6 +136,55 @@ Helpful operator smoke paths:
 - `npm run debug:shared-capabilities`
 
 For the full architecture and the license-safe external patterns behind it, see [ASSISTANT_CAPABILITY_GRAPH.md](ASSISTANT_CAPABILITY_GRAPH.md).
+
+## Alexa Companion Productization And Andrea Pulse
+
+Alexa Companion Mode is now productized around a calmer daily-companion feel rather than a feature-list feel.
+
+What changed:
+
+- warmer launch, help, and fallback copy
+- stronger first sentences for daily guidance
+- smoother `anything else` continuity
+- better household phrasing for Candace and family flows
+- light personality texture in low-stakes moments only
+
+Andrea Pulse is the separate light-fun layer.
+
+Important truth:
+
+- `/ping` stays a pure operational health check
+- Pulse is request-only in this pass
+- Pulse uses a local curated catalog, not a new provider path
+- examples:
+  - `Andrea Pulse`
+  - `tell me something interesting`
+  - `give me a weird fact`
+  - `surprise me`
+
+Tone tuning is also explicit and bounded:
+
+- `be a little warmer`
+- `keep it plain`
+- `go back to balanced`
+
+These style controls affect phrasing. They do not change trust, linking, or capability safety.
+
+## BlueBubbles Channel Prep
+
+BlueBubbles is now prepared as a future first-class text channel through the same adapter architecture Andrea already uses elsewhere.
+
+Current implementation truth:
+
+- disabled by default
+- config parsing for base URL, password, webhook path, webhook secret, and outbound-send flag
+- normalized `bb:` chat and sender identifiers
+- webhook payload normalization into Andrea's shared `NewMessage` shape
+- outbound sending remains disabled by default and is not wired end to end yet
+
+This is intentionally scaffold-level work, not a claim of live production messaging.
+
+See [BLUEBUBBLES_CHANNEL_PREP.md](BLUEBUBBLES_CHANNEL_PREP.md) for the official API/webhook assumptions, current env knobs, and safe-boundary rules.
 
 ## 1) Quick Start (Recommended Path)
 

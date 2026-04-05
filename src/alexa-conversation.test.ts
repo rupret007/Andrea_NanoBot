@@ -140,7 +140,11 @@ describe('alexa conversation state', () => {
     const state: AlexaConversationState = {
       flowKey: 'family_upcoming',
       subjectKind: 'household',
-      subjectData: { activePeople: ['Candace', 'Travis'], householdFocus: true },
+      subjectData: {
+        personName: 'Candace',
+        activePeople: ['Candace', 'Travis'],
+        householdFocus: true,
+      },
       summaryText: 'family plans and household logistics',
       supportedFollowups: [
         'anything_else',
@@ -156,6 +160,9 @@ describe('alexa conversation state', () => {
     expect(
       resolveAlexaConversationFollowup('why did you say that', state),
     ).toMatchObject({ ok: true, action: 'memory_control' });
+    expect(
+      resolveAlexaConversationFollowup('what is the weather', state).speech,
+    ).toContain('say more');
   });
 
   it('exposes referenced fact ids for memory-control follow-ups', () => {

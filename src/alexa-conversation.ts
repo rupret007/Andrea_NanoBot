@@ -9,6 +9,8 @@ import {
   type AlexaConversationContext,
   type AlexaConversationFollowupAction,
   type AlexaConversationSubjectKind,
+  type CompanionToneProfile,
+  type PersonalityCooldownState,
 } from './types.js';
 import type { AssistantCapabilityId } from './assistant-capabilities.js';
 
@@ -54,6 +56,8 @@ export interface AlexaConversationState {
     hasRiskSignal?: boolean;
     reminderCandidate?: boolean;
     responseSource?: 'assistant_bridge' | 'local_companion';
+    toneProfile?: CompanionToneProfile;
+    personalityCooldown?: PersonalityCooldownState;
   };
 }
 
@@ -250,7 +254,7 @@ export function resolveAlexaConversationFollowup(
     ok: false,
     speech:
       state.subjectData.personName
-        ? `I am not quite sure which part you mean. You can ask what is still open with ${state.subjectData.personName}, say say more, or ask it a different way.`
+        ? `I am not quite sure which part you mean. You can ask what is still open with ${state.subjectData.personName}, say more, or ask it a different way.`
         : 'I did not quite get that follow-up. You can say anything else, say more, or ask it a different way.',
   };
 }

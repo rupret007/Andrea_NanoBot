@@ -772,6 +772,8 @@ function buildAlexaCompanionConversationState(params: {
   reminderCandidate?: boolean;
   responseStyle?: AlexaConversationState['styleHints']['responseStyle'];
   responseSource?: AlexaConversationState['styleHints']['responseSource'];
+  toneProfile?: AlexaConversationState['styleHints']['toneProfile'];
+  personalityCooldown?: AlexaConversationState['styleHints']['personalityCooldown'];
 }): AlexaConversationState {
   return buildAlexaConversationState(
     params.flowKey,
@@ -789,6 +791,8 @@ function buildAlexaCompanionConversationState(params: {
       reminderCandidate: params.reminderCandidate,
       responseStyle: params.responseStyle,
       responseSource: params.responseSource,
+      toneProfile: params.toneProfile,
+      personalityCooldown: params.personalityCooldown,
     },
   );
 }
@@ -859,6 +863,67 @@ function buildAlexaStateFromDailyCompanion(
       channelMode: 'alexa_companion',
       initiativeLevel: 'measured',
       responseSource: 'local_companion',
+      toneProfile: context.toneProfile,
+      personalityCooldown: context.personalityCooldown,
+    },
+  };
+}
+
+function preserveAlexaConversationFrameForStyleChange(
+  previousState: AlexaConversationState,
+  nextState: AlexaConversationState,
+): AlexaConversationState {
+  return {
+    ...nextState,
+    flowKey: previousState.flowKey,
+    subjectKind: previousState.subjectKind,
+    summaryText: nextState.summaryText || previousState.summaryText,
+    supportedFollowups:
+      previousState.supportedFollowups.length > 0
+        ? previousState.supportedFollowups
+        : nextState.supportedFollowups,
+    subjectData: {
+      ...previousState.subjectData,
+      ...nextState.subjectData,
+      fallbackCount: 0,
+      threadId:
+        nextState.subjectData.threadId || previousState.subjectData.threadId,
+      threadTitle:
+        nextState.subjectData.threadTitle ||
+        previousState.subjectData.threadTitle,
+      threadSummaryLines:
+        nextState.subjectData.threadSummaryLines &&
+        nextState.subjectData.threadSummaryLines.length > 0
+          ? nextState.subjectData.threadSummaryLines
+          : previousState.subjectData.threadSummaryLines,
+      lastAnswerSummary:
+        nextState.subjectData.lastAnswerSummary ||
+        previousState.subjectData.lastAnswerSummary ||
+        nextState.summaryText ||
+        previousState.summaryText,
+      lastRecommendation:
+        nextState.subjectData.lastRecommendation ||
+        previousState.subjectData.lastRecommendation,
+      pendingActionText:
+        nextState.subjectData.pendingActionText ||
+        previousState.subjectData.pendingActionText,
+      conversationFocus:
+        nextState.subjectData.conversationFocus ||
+        previousState.subjectData.conversationFocus ||
+        previousState.subjectData.personName ||
+        previousState.subjectData.threadTitle ||
+        previousState.subjectKind,
+      activeCapabilityId:
+        previousState.subjectData.activeCapabilityId ||
+        nextState.subjectData.activeCapabilityId,
+      researchHandoffEligible:
+        previousState.subjectData.researchHandoffEligible ??
+        nextState.subjectData.researchHandoffEligible,
+    },
+    styleHints: {
+      ...previousState.styleHints,
+      ...nextState.styleHints,
+      responseStyle: 'short_direct',
     },
   };
 }
@@ -879,6 +944,7 @@ function buildAlexaStateFromCapabilitySeed(
     reminderCandidate: seed.reminderCandidate,
     responseStyle: seed.responseStyle,
     responseSource: seed.responseSource,
+    toneProfile: seed.subjectData?.toneProfile,
   });
 }
 
@@ -988,6 +1054,67 @@ function buildAlexaFallbackSuggestions(
     "what's still open with Candace",
     'what should I remember tonight',
   ];
+}
+
+function buildAlexaContextualFallbackPhrases(
+  state: AlexaConversationState,
+): string[] {
+  const phrases: string[] = [];
+  const personName = state.subjectData.personName?.trim();
+
+  if (state.supportedFollowups.includes('say_more')) {
+    phrases.push('say more');
+  }
+  if (state.supportedFollowups.includes('memory_control')) {
+    phrases.push('ask why I said that');
+  }
+
+  if (personName) {
+    phrases.push(`ask what's still open with ${personName}`);
+  } else if (
+    state.styleHints.guidanceGoal === 'evening_reset' ||
+    state.styleHints.prioritizationLens === 'evening'
+  ) {
+    phrases.push('ask what you should remember tonight');
+  } else if (state.supportedFollowups.includes('save_that')) {
+    phrases.push('say save that for later');
+  } else if (state.supportedFollowups.includes('anything_else')) {
+    phrases.push('say anything else');
+  }
+
+  return [...new Set(phrases)];
+}
+
+function buildAlexaContextualFallbackRecovery(
+  state: AlexaConversationState | undefined,
+  fallbackCount: number,
+): { speech: string; reprompt: string } | undefined {
+  if (!state || fallbackCount > 1) return undefined;
+
+  const hasStrongContext = Boolean(
+    state.subjectData.personName?.trim() ||
+      state.subjectData.threadTitle?.trim() ||
+      state.subjectData.lastRecommendation?.trim() ||
+      state.subjectData.pendingActionText?.trim() ||
+      state.subjectData.lastAnswerSummary?.trim() ||
+      state.subjectData.conversationFocus?.trim(),
+  );
+  if (!hasStrongContext) return undefined;
+
+  const phrases = buildAlexaContextualFallbackPhrases(state);
+  if (phrases.length === 0) return undefined;
+
+  const anchor = state.subjectData.personName?.trim()
+    ? `I am still with ${state.subjectData.personName.trim()}.`
+    : state.styleHints.guidanceGoal === 'evening_reset' ||
+        state.styleHints.prioritizationLens === 'evening'
+      ? 'I am still on tonight.'
+      : 'I am still on that last answer.';
+
+  return {
+    speech: `${anchor} If you mean the same thing, ${joinAlexaSuggestedPhrases(phrases.slice(0, 3))}.`,
+    reprompt: `${joinAlexaSuggestedPhrases(phrases.slice(0, 2))}.`,
+  };
 }
 
 function buildAlexaFallbackSpeechForState(
@@ -1271,15 +1398,20 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
     const nextFallbackCount =
       Math.max(0, conversationState?.subjectData.fallbackCount || 0) + 1;
     const suggestions = buildAlexaFallbackSuggestions(conversationState);
-    const speech = buildAlexaFallbackSpeechForState(
-      assistantName,
-      suggestions,
+    const contextualRecovery = buildAlexaContextualFallbackRecovery(
+      conversationState,
       nextFallbackCount,
     );
-    const reprompt = buildAlexaFallbackRepromptForState(
-      suggestions,
-      nextFallbackCount,
-    );
+    const speech =
+      contextualRecovery?.speech ||
+      buildAlexaFallbackSpeechForState(
+        assistantName,
+        suggestions,
+        nextFallbackCount,
+      );
+    const reprompt =
+      contextualRecovery?.reprompt ||
+      buildAlexaFallbackRepromptForState(suggestions, nextFallbackCount);
 
     if (linked) {
       const nextState =
@@ -1483,6 +1615,7 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
               subjectKind: 'life_thread',
               supportedFollowups: ['anything_else', 'shorter', 'say_more', 'memory_control'],
               subjectData: {},
+              toneProfile: 'balanced',
               extraDetails: [],
               memoryLines: [],
               usedThreadIds: [result.referencedThread.id],
@@ -2338,15 +2471,18 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
             },
           );
           if (localResponse && conversationState) {
-            const nextState = buildAlexaStateFromDailyCompanion(
-              {
-                ...conversationState,
-                styleHints: {
-                  ...conversationState.styleHints,
-                  responseStyle: 'short_direct',
+            const nextState = preserveAlexaConversationFrameForStyleChange(
+              conversationState,
+              buildAlexaStateFromDailyCompanion(
+                {
+                  ...conversationState,
+                  styleHints: {
+                    ...conversationState.styleHints,
+                    responseStyle: 'short_direct',
+                  },
                 },
-              },
-              localResponse,
+                localResponse,
+              ),
             );
             saveAlexaConversationState(
               linked.principalKey,

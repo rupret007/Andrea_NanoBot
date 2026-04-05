@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 
+import { COMPANION_TONE_FACT_KEY } from './companion-personality.js';
 import {
   getProfileFact,
   getProfileFactByKey,
@@ -20,8 +21,11 @@ import {
   type ProfileSubject,
 } from './types.js';
 
-export type AssistantExpressionChannel = 'alexa' | 'telegram';
-export type AssistantChannelMode = 'alexa_companion' | 'telegram_default';
+export type AssistantExpressionChannel = 'alexa' | 'telegram' | 'bluebubbles';
+export type AssistantChannelMode =
+  | 'alexa_companion'
+  | 'telegram_default'
+  | 'bluebubbles_default';
 export type AssistantInitiativeLevel =
   | 'measured'
   | 'restrained'
@@ -234,6 +238,14 @@ function describeFact(fact: ProfileFactWithSubject): string {
   if (fact.factKey === GUIDANCE_FOCUS_FACT_KEY) {
     return 'you want the main thing first on open-ended guidance questions';
   }
+  if (fact.factKey === COMPANION_TONE_FACT_KEY) {
+    const mode = typeof value.mode === 'string' ? value.mode : 'balanced';
+    return mode === 'plain'
+      ? 'you want Andrea to keep the tone plain and low-flourish'
+      : mode === 'warmer'
+        ? 'you are okay with a little extra warmth when it fits'
+        : 'you prefer a balanced tone';
+  }
   if (fact.factKey === REMINDER_HELPFULNESS_FACT_KEY) {
     const enabled = value.enabled !== false;
     return enabled
@@ -340,6 +352,17 @@ function buildAcceptedProfileLines(
       );
       continue;
     }
+    if (fact.factKey === COMPANION_TONE_FACT_KEY) {
+      const mode = typeof value.mode === 'string' ? value.mode : 'balanced';
+      lines.push(
+        mode === 'plain'
+          ? 'Keep the tone plain and low-flourish unless the user asks for more warmth.'
+          : mode === 'warmer'
+            ? 'A little extra warmth is okay when the moment is low stakes.'
+            : 'Keep the tone balanced: warm enough to feel human, but still concise.',
+      );
+      continue;
+    }
     if (fact.factKey === REMINDER_HELPFULNESS_FACT_KEY) {
       if (value.enabled !== false) {
         lines.push(
@@ -400,7 +423,7 @@ function buildChannelExpressionLines(
   }
 
   return [
-    'Channel: Telegram.',
+    channel === 'bluebubbles' ? 'Channel: BlueBubbles.' : 'Channel: Telegram.',
     'Keep the tone human and helpful.',
     'You can be slightly richer and more actionable than Alexa.',
     'Stay concise unless the user clearly wants more detail.',
@@ -517,7 +540,14 @@ export function buildAssistantPromptWithPersonalization(
   const sections: string[] = [];
 
   sections.push(
-    `<assistant_channel channel="${escapeXml(options.channel)}" mode="${escapeXml(options.channelMode || (options.channel === 'alexa' ? 'alexa_companion' : 'telegram_default'))}">\n${channelLines
+      `<assistant_channel channel="${escapeXml(options.channel)}" mode="${escapeXml(
+        options.channelMode ||
+          (options.channel === 'alexa'
+            ? 'alexa_companion'
+            : options.channel === 'bluebubbles'
+              ? 'bluebubbles_default'
+              : 'telegram_default'),
+      )}">\n${channelLines
       .map((line) => `<rule>${escapeXml(line)}</rule>`)
       .join('\n')}\n</assistant_channel>`,
   );
@@ -586,6 +616,7 @@ function listAcceptedPreferenceDescriptions(groupFolder: string): string[] {
         WORK_CONTEXT_FACT_KEY,
         EXPLANATION_DEPTH_FACT_KEY,
         GUIDANCE_FOCUS_FACT_KEY,
+        COMPANION_TONE_FACT_KEY,
         REMINDER_HELPFULNESS_FACT_KEY,
       ].includes(fact.factKey),
     )
@@ -748,6 +779,78 @@ export function handlePersonalizationCommand(
       handled: true,
       responseText:
         'Okay. I will lead with the main thing first on open-ended guidance questions.',
+      referencedFactId: fact.id,
+    };
+  }
+
+  if (
+    /^(be a little warmer|sound a little warmer|be warmer|be a bit warmer)[.!?]*$/i.test(
+      raw,
+    )
+  ) {
+    const fact = upsertStructuredFact({
+      groupFolder: input.groupFolder,
+      subject: selfSubject,
+      category: 'conversational_style',
+      factKey: COMPANION_TONE_FACT_KEY,
+      value: { mode: 'warmer' },
+      state: 'accepted',
+      sourceChannel: input.channel,
+      sourceSummary: 'User asked Andrea to sound a little warmer.',
+      now,
+    });
+    return {
+      handled: true,
+      responseText:
+        'Okay. I can sound a little warmer when it fits, without getting chatty.',
+      referencedFactId: fact.id,
+    };
+  }
+
+  if (
+    /^(keep it plain|be plainer|be less warm|less warm please)[.!?]*$/i.test(
+      raw,
+    )
+  ) {
+    const fact = upsertStructuredFact({
+      groupFolder: input.groupFolder,
+      subject: selfSubject,
+      category: 'conversational_style',
+      factKey: COMPANION_TONE_FACT_KEY,
+      value: { mode: 'plain' },
+      state: 'accepted',
+      sourceChannel: input.channel,
+      sourceSummary: 'User asked Andrea to keep the tone plain.',
+      now,
+    });
+    return {
+      handled: true,
+      responseText:
+        'Okay. I will keep the tone plain and lower-flourish by default.',
+      referencedFactId: fact.id,
+    };
+  }
+
+  if (
+    /^(go back to balanced|back to balanced|normal tone|keep it balanced)[.!?]*$/i.test(
+      raw,
+    )
+  ) {
+    const fact = upsertStructuredFact({
+      groupFolder: input.groupFolder,
+      subject: selfSubject,
+      category: 'conversational_style',
+      factKey: COMPANION_TONE_FACT_KEY,
+      value: { mode: 'balanced' },
+      state: 'accepted',
+      sourceChannel: input.channel,
+      sourceSummary: 'User asked Andrea to return to a balanced tone.',
+      now,
+    });
+    return {
+      handled: true,
+      responseText:
+        'Sure. I will keep the tone balanced: natural, but still restrained.',
       referencedFactId: fact.id,
     };
   }

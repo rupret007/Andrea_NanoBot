@@ -302,6 +302,60 @@ export type AlexaConversationFollowupAction =
   | 'risk_check'
   | 'memory_control';
 
+export type CompanionToneProfile = 'plain' | 'balanced' | 'warmer';
+
+export interface PersonalityTexturePolicy {
+  channel: 'alexa' | 'telegram' | 'bluebubbles';
+  toneProfile: CompanionToneProfile;
+  allowWarmth: boolean;
+  allowHumor: boolean;
+  allowTexture: boolean;
+  maxTextureLines: number;
+}
+
+export interface PersonalityCooldownState {
+  lastTextureKind?: 'transition' | 'closer' | 'pulse' | null;
+  lastTexturedAt?: string | null;
+  cooldownTurnsRemaining?: number;
+}
+
+export type PulseMode = 'off' | 'request_only';
+
+export interface PulsePreference {
+  mode: PulseMode;
+  scheduledDeliveryEnabled: boolean;
+  updatedAt?: string | null;
+}
+
+export interface BlueBubblesConfig {
+  enabled: boolean;
+  baseUrl: string | null;
+  password: string | null;
+  webhookPath: string;
+  webhookSecret: string | null;
+  sendEnabled: boolean;
+}
+
+export interface BlueBubblesWebhookEvent {
+  type: string;
+  messageGuid?: string | null;
+  chatGuid?: string | null;
+  data?: Record<string, unknown> | null;
+}
+
+export interface BlueBubblesChatRef {
+  chatGuid: string;
+  displayName?: string | null;
+  isGroup?: boolean;
+  participants?: string[];
+}
+
+export interface BlueBubblesContactRef {
+  handle: string;
+  displayName?: string | null;
+  address?: string | null;
+}
+
 export interface AlexaConversationContext {
   principalKey: string;
   accessTokenHash: string;
@@ -403,7 +457,7 @@ export type LifeThreadSensitivity = 'normal' | 'sensitive';
 
 export type LifeThreadSurfaceMode = 'default' | 'manual_only';
 
-export type LifeThreadCommandChannel = 'telegram' | 'alexa';
+export type LifeThreadCommandChannel = 'telegram' | 'alexa' | 'bluebubbles';
 
 export interface LifeThread {
   id: string;

@@ -1,9 +1,13 @@
 import {
+  buildAndreaPulseReply,
+  getDefaultPulsePreference,
+} from './andrea-pulse.js';
+import {
   buildDailyCompanionResponse,
   type DailyCompanionContext,
   type DailyCompanionResponse,
 } from './daily-companion.js';
-import { getAllTasks } from './db.js';
+import { getAllTasks, listProfileFactsForGroup } from './db.js';
 import {
   handleLifeThreadCommand,
   type LifeThreadCommandResult,
@@ -12,6 +16,7 @@ import {
   handlePersonalizationCommand,
   type PersonalizationCommandResult,
 } from './assistant-personalization.js';
+import { resolveCompanionToneProfileFromFacts } from './companion-personality.js';
 import {
   isResearchPrompt,
   runResearchOrchestrator,
@@ -21,6 +26,7 @@ import type {
   AlexaCompanionGuidanceGoal,
   AlexaConversationFollowupAction,
   AlexaConversationSubjectKind,
+  CompanionToneProfile,
 } from './types.js';
 import { normalizeVoicePrompt } from './voice-ready.js';
 
@@ -40,6 +46,8 @@ export type AssistantCapabilityId =
   | 'memory.remember'
   | 'memory.forget'
   | 'memory.manual_only'
+  | 'pulse.interesting_thing'
+  | 'pulse.surprise_me'
   | 'research.topic'
   | 'research.compare'
   | 'research.summarize'
@@ -57,6 +65,7 @@ export type AssistantCapabilityCategory =
   | 'followthrough'
   | 'threads'
   | 'memory'
+  | 'pulse'
   | 'research'
   | 'work'
   | 'media';
@@ -75,7 +84,7 @@ export type AssistantCapabilityHandlerKind =
   | 'edge_only';
 
 export interface AssistantCapabilityContext {
-  channel: 'alexa' | 'telegram';
+  channel: 'alexa' | 'telegram' | 'bluebubbles';
   groupFolder?: string;
   chatJid?: string;
   now?: Date;
@@ -96,12 +105,13 @@ export interface AssistantCapabilityInput {
 
 export interface AssistantCapabilityTrace {
   capabilityId: AssistantCapabilityId;
-  channel: 'alexa' | 'telegram';
+  channel: 'alexa' | 'telegram' | 'bluebubbles';
   handlerKind: AssistantCapabilityHandlerKind;
   responseSource:
     | 'local_companion'
     | 'life_thread_local'
     | 'memory_local'
+    | 'pulse_local'
     | 'research_local'
     | 'research_openai'
     | 'research_handoff'
@@ -132,6 +142,7 @@ export interface AssistantCapabilityConversationSeed {
     profileFactId?: string;
     activeCapabilityId?: AssistantCapabilityId;
     researchHandoffEligible?: boolean;
+    toneProfile?: CompanionToneProfile;
   };
   supportedFollowups?: AlexaConversationFollowupAction[];
   prioritizationLens?: 'general' | 'calendar' | 'family' | 'meeting' | 'work' | 'evening';
@@ -167,10 +178,12 @@ export interface AssistantCapabilityDescriptor {
   requiresConfirmation: boolean;
   safeForAlexa: boolean;
   safeForTelegram: boolean;
+  safeForBlueBubbles: boolean;
   operatorOnly: boolean;
   preferredOutputShape: {
     alexa: AssistantCapabilityOutputShape;
     telegram: AssistantCapabilityOutputShape;
+    bluebubbles: AssistantCapabilityOutputShape;
   };
   followupActions: AlexaConversationFollowupAction[];
   handlerKind: AssistantCapabilityHandlerKind;
@@ -200,6 +213,15 @@ function buildCapabilityTrace(
     reason,
     notes,
   };
+}
+
+function getToneProfileForContext(
+  context: AssistantCapabilityContext,
+): CompanionToneProfile {
+  if (!context.groupFolder) return 'balanced';
+  return resolveCompanionToneProfileFromFacts(
+    listProfileFactsForGroup(context.groupFolder, ['accepted']),
+  );
 }
 
 function cloneContext(
@@ -409,7 +431,7 @@ async function runResearchCapability(
   if (!query.trim()) return { handled: false };
   const result = await runResearchOrchestrator({
     query,
-    channel: context.channel,
+    channel: context.channel === 'bluebubbles' ? 'telegram' : context.channel,
     groupFolder: context.groupFolder,
     now: context.now,
     conversationSummary: context.conversationSummary,
@@ -463,6 +485,52 @@ async function runResearchCapability(
   };
 }
 
+async function runPulseCapability(
+  descriptor: AssistantCapabilityDescriptor,
+  context: AssistantCapabilityContext,
+  input: AssistantCapabilityInput,
+): Promise<AssistantCapabilityResult> {
+  const preference = getDefaultPulsePreference();
+  const toneProfile = getToneProfileForContext(context);
+  const result = buildAndreaPulseReply({
+    channel: context.channel,
+    query: input.canonicalText || input.text || descriptor.label,
+    toneProfile,
+    now: context.now,
+    previousSummary: context.conversationSummary,
+  });
+  const notes = [`mode: ${preference.mode}`, `item: ${result.item.id}`];
+  return {
+    handled: true,
+    capabilityId: descriptor.id,
+    replyText: result.replyText,
+    outputShape: descriptor.preferredOutputShape[context.channel],
+    conversationSeed: {
+      flowKey: descriptor.id.replace(/\./g, '_'),
+      subjectKind: 'general',
+      summaryText: result.summaryText,
+      guidanceGoal: 'open_conversation',
+      subjectData: {
+        activeCapabilityId: descriptor.id,
+        lastAnswerSummary: result.summaryText,
+        conversationFocus: result.item.title,
+        toneProfile,
+      },
+      supportedFollowups: descriptor.followupActions,
+      responseStyle: 'default',
+      responseSource: 'local_companion',
+    },
+    trace: buildCapabilityTrace(
+      descriptor,
+      context,
+      'pulse_local',
+      'handled by local Andrea Pulse catalog',
+      notes,
+    ),
+    followupActions: descriptor.followupActions,
+  };
+}
+
 const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
   {
     id: 'daily.morning_brief',
@@ -474,8 +542,13 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     requiresConfirmation: false,
     safeForAlexa: true,
     safeForTelegram: true,
+    safeForBlueBubbles: true,
     operatorOnly: false,
-    preferredOutputShape: { alexa: 'voice_brief', telegram: 'chat_rich' },
+    preferredOutputShape: {
+      alexa: 'voice_brief',
+      telegram: 'chat_rich',
+      bluebubbles: 'chat_brief',
+    },
     followupActions: ['anything_else', 'shorter', 'say_more', 'memory_control'],
     handlerKind: 'local',
     execute: (context, input) =>
@@ -508,8 +581,13 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     requiresConfirmation: false,
     safeForAlexa: true,
     safeForTelegram: true,
+    safeForBlueBubbles: true,
     operatorOnly: false,
-    preferredOutputShape: { alexa: 'voice_brief', telegram: 'chat_rich' },
+    preferredOutputShape: {
+      alexa: 'voice_brief',
+      telegram: 'chat_rich',
+      bluebubbles: 'chat_brief',
+    },
     followupActions: ['anything_else', 'shorter', 'say_more', 'action_guidance', 'memory_control'],
     handlerKind: 'local',
     execute: (context, input) =>
@@ -541,8 +619,13 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     requiresConfirmation: false,
     safeForAlexa: true,
     safeForTelegram: true,
+    safeForBlueBubbles: true,
     operatorOnly: false,
-    preferredOutputShape: { alexa: 'voice_brief', telegram: 'chat_rich' },
+    preferredOutputShape: {
+      alexa: 'voice_brief',
+      telegram: 'chat_rich',
+      bluebubbles: 'chat_brief',
+    },
     followupActions: ['anything_else', 'shorter', 'say_more', 'action_guidance', 'memory_control'],
     handlerKind: 'local',
     execute: (context, input) =>
@@ -575,8 +658,13 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     requiresConfirmation: false,
     safeForAlexa: true,
     safeForTelegram: true,
+    safeForBlueBubbles: true,
     operatorOnly: false,
-    preferredOutputShape: { alexa: 'voice_brief', telegram: 'chat_rich' },
+    preferredOutputShape: {
+      alexa: 'voice_brief',
+      telegram: 'chat_rich',
+      bluebubbles: 'chat_brief',
+    },
     followupActions: ['anything_else', 'shorter', 'say_more', 'save_that', 'memory_control'],
     handlerKind: 'local',
     execute: (context, input) =>
@@ -609,8 +697,13 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     requiresConfirmation: false,
     safeForAlexa: true,
     safeForTelegram: true,
+    safeForBlueBubbles: true,
     operatorOnly: false,
-    preferredOutputShape: { alexa: 'voice_brief', telegram: 'chat_rich' },
+    preferredOutputShape: {
+      alexa: 'voice_brief',
+      telegram: 'chat_rich',
+      bluebubbles: 'chat_brief',
+    },
     followupActions: ['anything_else', 'shorter', 'say_more', 'switch_person', 'action_guidance', 'memory_control'],
     handlerKind: 'local',
     execute: (context, input) =>
@@ -651,8 +744,13 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     requiresConfirmation: false,
     safeForAlexa: true,
     safeForTelegram: true,
+    safeForBlueBubbles: true,
     operatorOnly: false,
-    preferredOutputShape: { alexa: 'voice_brief', telegram: 'chat_rich' },
+    preferredOutputShape: {
+      alexa: 'voice_brief',
+      telegram: 'chat_rich',
+      bluebubbles: 'chat_brief',
+    },
     followupActions: ['anything_else', 'shorter', 'say_more', 'action_guidance', 'memory_control'],
     handlerKind: 'local',
     execute: (context, input) =>
@@ -694,8 +792,13 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     requiresConfirmation: true,
     safeForAlexa: true,
     safeForTelegram: true,
+    safeForBlueBubbles: true,
     operatorOnly: false,
-    preferredOutputShape: { alexa: 'voice_brief', telegram: 'chat_brief' },
+    preferredOutputShape: {
+      alexa: 'voice_brief',
+      telegram: 'chat_brief',
+      bluebubbles: 'chat_brief',
+    },
     followupActions: ['memory_control'],
     handlerKind: 'edge_only',
     availabilityNote: 'implemented at the channel edge for confirmation safety',
@@ -710,8 +813,13 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     requiresConfirmation: true,
     safeForAlexa: true,
     safeForTelegram: true,
+    safeForBlueBubbles: true,
     operatorOnly: false,
-    preferredOutputShape: { alexa: 'voice_brief', telegram: 'chat_brief' },
+    preferredOutputShape: {
+      alexa: 'voice_brief',
+      telegram: 'chat_brief',
+      bluebubbles: 'chat_brief',
+    },
     followupActions: ['memory_control'],
     handlerKind: 'edge_only',
     availabilityNote: 'implemented at the channel edge for confirmation safety',
@@ -726,8 +834,13 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     requiresConfirmation: false,
     safeForAlexa: true,
     safeForTelegram: true,
+    safeForBlueBubbles: true,
     operatorOnly: false,
-    preferredOutputShape: { alexa: 'voice_brief', telegram: 'chat_brief' },
+    preferredOutputShape: {
+      alexa: 'voice_brief',
+      telegram: 'chat_brief',
+      bluebubbles: 'chat_brief',
+    },
     followupActions: ['memory_control'],
     handlerKind: 'edge_only',
     availabilityNote: 'implemented at the channel edge for shorter drafting workflows',
@@ -742,8 +855,13 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     requiresConfirmation: false,
     safeForAlexa: true,
     safeForTelegram: true,
+    safeForBlueBubbles: true,
     operatorOnly: false,
-    preferredOutputShape: { alexa: 'voice_brief', telegram: 'chat_brief' },
+    preferredOutputShape: {
+      alexa: 'voice_brief',
+      telegram: 'chat_brief',
+      bluebubbles: 'chat_brief',
+    },
     followupActions: ['anything_else', 'shorter', 'say_more', 'memory_control'],
     handlerKind: 'local',
     execute: (context, input) =>
@@ -763,8 +881,13 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     requiresConfirmation: false,
     safeForAlexa: true,
     safeForTelegram: true,
+    safeForBlueBubbles: true,
     operatorOnly: false,
-    preferredOutputShape: { alexa: 'voice_brief', telegram: 'chat_brief' },
+    preferredOutputShape: {
+      alexa: 'voice_brief',
+      telegram: 'chat_brief',
+      bluebubbles: 'chat_brief',
+    },
     followupActions: ['anything_else', 'shorter', 'say_more', 'memory_control'],
     handlerKind: 'local',
     execute: (context, input) =>
@@ -780,8 +903,13 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     requiresConfirmation: false,
     safeForAlexa: true,
     safeForTelegram: true,
+    safeForBlueBubbles: true,
     operatorOnly: false,
-    preferredOutputShape: { alexa: 'voice_brief', telegram: 'chat_brief' },
+    preferredOutputShape: {
+      alexa: 'voice_brief',
+      telegram: 'chat_brief',
+      bluebubbles: 'chat_brief',
+    },
     followupActions: ['memory_control'],
     handlerKind: 'local',
     execute: (context, input) =>
@@ -797,8 +925,13 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     requiresConfirmation: true,
     safeForAlexa: true,
     safeForTelegram: true,
+    safeForBlueBubbles: true,
     operatorOnly: false,
-    preferredOutputShape: { alexa: 'voice_brief', telegram: 'chat_brief' },
+    preferredOutputShape: {
+      alexa: 'voice_brief',
+      telegram: 'chat_brief',
+      bluebubbles: 'chat_brief',
+    },
     followupActions: ['memory_control'],
     handlerKind: 'local',
     execute: (context, input) =>
@@ -814,8 +947,13 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     requiresConfirmation: true,
     safeForAlexa: true,
     safeForTelegram: true,
+    safeForBlueBubbles: true,
     operatorOnly: false,
-    preferredOutputShape: { alexa: 'voice_brief', telegram: 'chat_brief' },
+    preferredOutputShape: {
+      alexa: 'voice_brief',
+      telegram: 'chat_brief',
+      bluebubbles: 'chat_brief',
+    },
     followupActions: ['memory_control'],
     handlerKind: 'local',
     execute: (context, input) =>
@@ -831,12 +969,61 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     requiresConfirmation: true,
     safeForAlexa: true,
     safeForTelegram: true,
+    safeForBlueBubbles: true,
     operatorOnly: false,
-    preferredOutputShape: { alexa: 'voice_brief', telegram: 'chat_brief' },
+    preferredOutputShape: {
+      alexa: 'voice_brief',
+      telegram: 'chat_brief',
+      bluebubbles: 'chat_brief',
+    },
     followupActions: ['memory_control'],
     handlerKind: 'local',
     execute: (context, input) =>
       runMemoryCapability(CAPABILITY_DESCRIPTORS[14]!, cloneContext(context), input),
+  },
+  {
+    id: 'pulse.interesting_thing',
+    label: 'Interesting Thing',
+    category: 'pulse',
+    requiredInputs: [],
+    optionalInputs: ['text'],
+    requiresLinkedAccount: false,
+    requiresConfirmation: false,
+    safeForAlexa: true,
+    safeForTelegram: true,
+    safeForBlueBubbles: true,
+    operatorOnly: false,
+    preferredOutputShape: {
+      alexa: 'voice_brief',
+      telegram: 'chat_brief',
+      bluebubbles: 'chat_brief',
+    },
+    followupActions: ['anything_else', 'shorter', 'say_more'],
+    handlerKind: 'local',
+    execute: (context, input) =>
+      runPulseCapability(CAPABILITY_DESCRIPTORS[15]!, cloneContext(context), input),
+  },
+  {
+    id: 'pulse.surprise_me',
+    label: 'Andrea Pulse',
+    category: 'pulse',
+    requiredInputs: [],
+    optionalInputs: ['text'],
+    requiresLinkedAccount: false,
+    requiresConfirmation: false,
+    safeForAlexa: true,
+    safeForTelegram: true,
+    safeForBlueBubbles: true,
+    operatorOnly: false,
+    preferredOutputShape: {
+      alexa: 'voice_brief',
+      telegram: 'chat_brief',
+      bluebubbles: 'chat_brief',
+    },
+    followupActions: ['anything_else', 'shorter', 'say_more'],
+    handlerKind: 'local',
+    execute: (context, input) =>
+      runPulseCapability(CAPABILITY_DESCRIPTORS[16]!, cloneContext(context), input),
   },
   {
     id: 'research.topic',
@@ -848,12 +1035,17 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     requiresConfirmation: false,
     safeForAlexa: true,
     safeForTelegram: true,
+    safeForBlueBubbles: true,
     operatorOnly: false,
-    preferredOutputShape: { alexa: 'handoff_offer', telegram: 'chat_rich' },
+    preferredOutputShape: {
+      alexa: 'handoff_offer',
+      telegram: 'chat_rich',
+      bluebubbles: 'chat_brief',
+    },
     followupActions: ['anything_else', 'shorter', 'say_more', 'memory_control'],
     handlerKind: 'research',
     execute: (context, input) =>
-      runResearchCapability(CAPABILITY_DESCRIPTORS[15]!, cloneContext(context), input),
+      runResearchCapability(CAPABILITY_DESCRIPTORS[17]!, cloneContext(context), input),
   },
   {
     id: 'research.compare',
@@ -865,12 +1057,17 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     requiresConfirmation: false,
     safeForAlexa: true,
     safeForTelegram: true,
+    safeForBlueBubbles: true,
     operatorOnly: false,
-    preferredOutputShape: { alexa: 'handoff_offer', telegram: 'chat_rich' },
+    preferredOutputShape: {
+      alexa: 'handoff_offer',
+      telegram: 'chat_rich',
+      bluebubbles: 'chat_brief',
+    },
     followupActions: ['anything_else', 'shorter', 'say_more', 'memory_control'],
     handlerKind: 'research',
     execute: (context, input) =>
-      runResearchCapability(CAPABILITY_DESCRIPTORS[16]!, cloneContext(context), input),
+      runResearchCapability(CAPABILITY_DESCRIPTORS[18]!, cloneContext(context), input),
   },
   {
     id: 'research.summarize',
@@ -882,12 +1079,17 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     requiresConfirmation: false,
     safeForAlexa: true,
     safeForTelegram: true,
+    safeForBlueBubbles: true,
     operatorOnly: false,
-    preferredOutputShape: { alexa: 'handoff_offer', telegram: 'chat_rich' },
+    preferredOutputShape: {
+      alexa: 'handoff_offer',
+      telegram: 'chat_rich',
+      bluebubbles: 'chat_brief',
+    },
     followupActions: ['anything_else', 'shorter', 'say_more', 'memory_control'],
     handlerKind: 'research',
     execute: (context, input) =>
-      runResearchCapability(CAPABILITY_DESCRIPTORS[17]!, cloneContext(context), input),
+      runResearchCapability(CAPABILITY_DESCRIPTORS[19]!, cloneContext(context), input),
   },
   {
     id: 'research.recommend',
@@ -899,12 +1101,17 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     requiresConfirmation: false,
     safeForAlexa: true,
     safeForTelegram: true,
+    safeForBlueBubbles: true,
     operatorOnly: false,
-    preferredOutputShape: { alexa: 'handoff_offer', telegram: 'chat_rich' },
+    preferredOutputShape: {
+      alexa: 'handoff_offer',
+      telegram: 'chat_rich',
+      bluebubbles: 'chat_brief',
+    },
     followupActions: ['anything_else', 'shorter', 'say_more', 'memory_control'],
     handlerKind: 'research',
     execute: (context, input) =>
-      runResearchCapability(CAPABILITY_DESCRIPTORS[18]!, cloneContext(context), input),
+      runResearchCapability(CAPABILITY_DESCRIPTORS[20]!, cloneContext(context), input),
   },
   {
     id: 'work.current_summary',
@@ -916,8 +1123,13 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     requiresConfirmation: false,
     safeForAlexa: false,
     safeForTelegram: true,
+    safeForBlueBubbles: false,
     operatorOnly: true,
-    preferredOutputShape: { alexa: 'voice_brief', telegram: 'chat_brief' },
+    preferredOutputShape: {
+      alexa: 'voice_brief',
+      telegram: 'chat_brief',
+      bluebubbles: 'chat_brief',
+    },
     followupActions: [],
     handlerKind: 'backend_lane',
     availabilityNote: 'kept on the operator/runtime lane',
@@ -932,8 +1144,13 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     requiresConfirmation: false,
     safeForAlexa: false,
     safeForTelegram: true,
+    safeForBlueBubbles: false,
     operatorOnly: true,
-    preferredOutputShape: { alexa: 'voice_brief', telegram: 'chat_brief' },
+    preferredOutputShape: {
+      alexa: 'voice_brief',
+      telegram: 'chat_brief',
+      bluebubbles: 'chat_brief',
+    },
     followupActions: [],
     handlerKind: 'backend_lane',
     availabilityNote: 'kept on the operator/runtime lane',
@@ -948,8 +1165,13 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     requiresConfirmation: false,
     safeForAlexa: false,
     safeForTelegram: true,
+    safeForBlueBubbles: false,
     operatorOnly: true,
-    preferredOutputShape: { alexa: 'voice_brief', telegram: 'chat_brief' },
+    preferredOutputShape: {
+      alexa: 'voice_brief',
+      telegram: 'chat_brief',
+      bluebubbles: 'chat_brief',
+    },
     followupActions: [],
     handlerKind: 'backend_lane',
     availabilityNote: 'kept on the operator/runtime lane',
@@ -964,8 +1186,13 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     requiresConfirmation: false,
     safeForAlexa: false,
     safeForTelegram: true,
+    safeForBlueBubbles: false,
     operatorOnly: false,
-    preferredOutputShape: { alexa: 'artifact_only', telegram: 'artifact_only' },
+    preferredOutputShape: {
+      alexa: 'artifact_only',
+      telegram: 'artifact_only',
+      bluebubbles: 'artifact_only',
+    },
     followupActions: [],
     handlerKind: 'edge_only',
     availabilityNote: 'capability prepared; no media provider is wired yet',
@@ -980,8 +1207,13 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     requiresConfirmation: false,
     safeForAlexa: false,
     safeForTelegram: true,
+    safeForBlueBubbles: false,
     operatorOnly: false,
-    preferredOutputShape: { alexa: 'artifact_only', telegram: 'artifact_only' },
+    preferredOutputShape: {
+      alexa: 'artifact_only',
+      telegram: 'artifact_only',
+      bluebubbles: 'artifact_only',
+    },
     followupActions: [],
     handlerKind: 'edge_only',
     availabilityNote: 'capability prepared; no media provider is wired yet',
@@ -996,8 +1228,13 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     requiresConfirmation: false,
     safeForAlexa: false,
     safeForTelegram: true,
+    safeForBlueBubbles: false,
     operatorOnly: false,
-    preferredOutputShape: { alexa: 'artifact_only', telegram: 'artifact_only' },
+    preferredOutputShape: {
+      alexa: 'artifact_only',
+      telegram: 'artifact_only',
+      bluebubbles: 'artifact_only',
+    },
     followupActions: [],
     handlerKind: 'edge_only',
     availabilityNote: 'future hook only; no video provider is wired yet',
@@ -1021,9 +1258,13 @@ export function isAssistantCapabilityAllowed(
   if (descriptor.operatorOnly) {
     return channel === 'telegram' && descriptor.safeForTelegram;
   }
-  return channel === 'alexa'
-    ? descriptor.safeForAlexa
-    : descriptor.safeForTelegram;
+  if (channel === 'alexa') {
+    return descriptor.safeForAlexa;
+  }
+  if (channel === 'bluebubbles') {
+    return descriptor.safeForBlueBubbles;
+  }
+  return descriptor.safeForTelegram;
 }
 
 export async function executeAssistantCapability(params: {
@@ -1042,7 +1283,9 @@ export async function executeAssistantCapability(params: {
       replyText:
         params.context.channel === 'alexa'
           ? 'I can help with that in Telegram, but not safely by voice here.'
-          : 'That action stays on the operator or Telegram side for safety.',
+          : params.context.channel === 'bluebubbles'
+            ? 'That one stays on the Telegram or operator side for safety.'
+            : 'That action stays on the operator or Telegram side for safety.',
       outputShape:
         params.context.channel === 'alexa' ? 'voice_brief' : 'chat_brief',
       trace: buildCapabilityTrace(

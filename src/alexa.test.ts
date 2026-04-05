@@ -12,7 +12,10 @@ import {
   startAlexaServer,
   type AlexaConfig,
 } from './alexa.js';
-import { saveAlexaConversationState } from './alexa-conversation.js';
+import {
+  loadAlexaConversationState,
+  saveAlexaConversationState,
+} from './alexa-conversation.js';
 import {
   AlexaTargetGroupMissingError,
   runAlexaAssistantTurn,
@@ -195,6 +198,7 @@ function buildCompanionResponse(
       subjectKind,
       supportedFollowups,
       subjectData: overrides.context?.subjectData ?? {},
+      toneProfile: overrides.context?.toneProfile ?? 'balanced',
       extraDetails:
         overrides.context?.extraDetails ?? ['A little more context.'],
       memoryLines: overrides.context?.memoryLines ?? [],
@@ -301,7 +305,7 @@ describe('createAlexaSkill', () => {
     const response = await skill.invoke(buildBaseEnvelope());
 
     expect(extractSpeechText(response)).toContain(
-      `You are talking to ${ASSISTANT_NAME}.`,
+      `This is ${ASSISTANT_NAME}.`,
     );
   });
 
@@ -775,6 +779,13 @@ describe('createAlexaSkill', () => {
             context: {
               ...buildCompanionResponse('x').context,
               summaryText: 'review the agenda before the call',
+              recommendationText:
+                'Review the agenda, then send the short update.',
+              usedThreadIds: ['thread-client-call'],
+              usedThreadTitles: ['Client call'],
+              threadSummaryLines: [
+                'Client call prep still needs a quick review.',
+              ],
               shortText: 'Review the agenda, then send the short update.',
             },
           },
@@ -786,6 +797,11 @@ describe('createAlexaSkill', () => {
           context: {
             ...buildCompanionResponse('x').context,
             summaryText: 'review the agenda before the call',
+            recommendationText: null,
+            supportedFollowups: ['memory_control'],
+            usedThreadIds: [],
+            usedThreadTitles: [],
+            threadSummaryLines: [],
             shortText: 'Review the agenda, then send the short update.',
           },
         }),
@@ -811,6 +827,22 @@ describe('createAlexaSkill', () => {
     );
     expect(extractSpeechText(response)).toContain(
       'Review the agenda, then send the short update.',
+    );
+    const linked = seedLinkedAccount('main');
+    const savedState = loadAlexaConversationState(
+      getAlexaPrincipalKey({
+        userId: 'amzn1.ask.account.test-user',
+        personId: 'amzn1.ask.person.test-person',
+      }),
+      linked!.accessTokenHash,
+    );
+    expect(savedState?.styleHints.responseStyle).toBe('short_direct');
+    expect(savedState?.subjectData.lastRecommendation).toBe(
+      'Review the agenda, then send the short update.',
+    );
+    expect(savedState?.subjectData.threadTitle).toBe('Client call');
+    expect(savedState?.supportedFollowups).toEqual(
+      expect.arrayContaining(['anything_else', 'say_more', 'memory_control']),
     );
     expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
   });
@@ -985,6 +1017,56 @@ describe('createAlexaSkill', () => {
     expect(extractSpeechText(response)).not.toContain(
       "what's still open with Candace, or what should I remember tonight",
     );
+    expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
+  });
+
+  it('uses a contextual fallback clarifier after a successful local companion turn', async () => {
+    const linked = seedLinkedAccount('main');
+    saveAlexaConversationState(
+      getAlexaPrincipalKey({
+        userId: 'amzn1.ask.account.test-user',
+        personId: 'amzn1.ask.person.test-person',
+      }),
+      linked!.accessTokenHash,
+      'main',
+      {
+        flowKey: 'evening_reset',
+        subjectKind: 'day_brief',
+        subjectData: {
+          fallbackCount: 0,
+          lastAnswerSummary:
+            'Tonight looks fairly clear, so this is mostly about closing the right loop.',
+          pendingActionText:
+            'Close the loop with Candace before the evening gets away from you.',
+          conversationFocus: 'tonight',
+        },
+        summaryText:
+          'Tonight looks fairly clear, so this is mostly about closing the right loop.',
+        supportedFollowups: [
+          'anything_else',
+          'say_more',
+          'save_that',
+          'memory_control',
+        ],
+        styleHints: {
+          channelMode: 'alexa_companion',
+          guidanceGoal: 'evening_reset',
+          prioritizationLens: 'evening',
+          responseSource: 'local_companion',
+          responseStyle: 'short_direct',
+        },
+      },
+    );
+
+    const skill = createAlexaSkill(buildConfig());
+    const response = await skill.invoke(
+      buildIntentEnvelope('AMAZON.FallbackIntent'),
+    );
+
+    expect(extractSpeechText(response)).toContain('I am still on tonight.');
+    expect(extractSpeechText(response)).toContain('say more');
+    expect(extractSpeechText(response)).toContain('ask why I said that');
+    expect(extractSpeechText(response)).not.toContain('what am I forgetting');
     expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
   });
 

@@ -17,13 +17,20 @@ import {
 } from './daily-command-center.js';
 import { listProfileFactsForGroup } from './db.js';
 import {
+  buildCompanionTextureLine,
+  COMPANION_TONE_FACT_KEY,
+  resolveCompanionToneProfileFromFacts,
+} from './companion-personality.js';
+import {
   buildLifeThreadSnapshot,
   findLifeThreadForExplicitLookup,
 } from './life-threads.js';
 import type {
   AlexaConversationFollowupAction,
   AlexaConversationSubjectKind,
+  CompanionToneProfile,
   LifeThread,
+  PersonalityCooldownState,
   ProfileFactWithSubject,
 } from './types.js';
 import { buildVoiceReply, normalizeVoicePrompt } from './voice-ready.js';
@@ -35,7 +42,7 @@ export type DailyCompanionMode =
   | 'open_guidance'
   | 'household_guidance';
 
-export type DailyCompanionChannel = 'telegram' | 'alexa';
+export type DailyCompanionChannel = 'telegram' | 'alexa' | 'bluebubbles';
 
 export type DailyCompanionRecommendationKind =
   | 'do_now'
@@ -78,6 +85,8 @@ export interface DailyCompanionContext {
     focus: string | null;
     thread: string | null;
   };
+  toneProfile: CompanionToneProfile;
+  personalityCooldown?: PersonalityCooldownState;
 }
 
 export interface DailyCompanionResponse {
@@ -104,6 +113,7 @@ interface CompanionPreferences {
   workContextEnabled: boolean;
   directMode: boolean;
   mainThingFirst: boolean;
+  toneProfile: CompanionToneProfile;
 }
 
 interface CompanionDraft {
@@ -420,6 +430,39 @@ function trimTerminalPunctuation(value: string | null): string | null {
   return value.replace(/[.!?]+$/, '').trim();
 }
 
+function normalizeHouseholdDetail(value: string | null): string | null {
+  const trimmed = trimTerminalPunctuation(value);
+  if (!trimmed) return null;
+  if (
+    /^[A-Z][a-z]/.test(trimmed) &&
+    /\b(still need|still needs|needs|need|is|are|has|have|waiting on|owed)\b/i.test(
+      trimmed,
+    )
+  ) {
+    return `${trimmed[0]!.toLowerCase()}${trimmed.slice(1)}`;
+  }
+  return trimmed;
+}
+
+function buildPersonRecommendationPhrase(detail: string | null): string | null {
+  const normalized = normalizeHouseholdDetail(detail);
+  if (!normalized) return null;
+  const unresolvedMatch = normalized.match(
+    /^(.+?)\s+(still need|still needs|needs|need)\b/i,
+  );
+  if (unresolvedMatch) {
+    return `about ${unresolvedMatch[1]!.trim()}`;
+  }
+  if (
+    /^(confirm|check|ask|review|send|decide|follow up on|talk through)\b/i.test(
+      normalized,
+    )
+  ) {
+    return `to ${normalized}`;
+  }
+  return `about ${normalized}`;
+}
+
 function findBestMatchingThread(
   threads: LifeThread[],
   query: string,
@@ -484,6 +527,7 @@ function parsePreferences(facts: ProfileFactWithSubject[]): CompanionPreferences
   let workContextEnabled = true;
   let directMode = false;
   let mainThingFirst = false;
+  const toneProfile = resolveCompanionToneProfileFromFacts(facts);
 
   for (const fact of facts) {
     let parsed: Record<string, unknown> = {};
@@ -511,6 +555,7 @@ function parsePreferences(facts: ProfileFactWithSubject[]): CompanionPreferences
     workContextEnabled,
     directMode,
     mainThingFirst,
+    toneProfile,
   };
 }
 
@@ -537,6 +582,12 @@ function describeMemoryFact(fact: ProfileFactWithSubject): string | null {
       return parsed.mode === 'short_direct'
         ? 'you prefer shorter, more direct answers'
         : null;
+    case COMPANION_TONE_FACT_KEY:
+      return parsed.mode === 'plain'
+        ? 'you want Andrea to keep the tone plain and low-flourish'
+        : parsed.mode === 'warmer'
+          ? 'you are okay with a little extra warmth when it fits'
+          : 'you prefer a balanced tone';
     default:
       break;
   }
@@ -712,8 +763,14 @@ function chooseRecommendation(
   };
 }
 
-function formatTelegramReply(lead: string, lines: string[]): string {
-  return [lead, ...lines.filter(Boolean).map((line) => `- ${line}`)].join('\n');
+function formatTextReply(
+  lead: string,
+  lines: string[],
+  personalityLine?: string | null,
+): string {
+  return [lead, personalityLine, ...lines.filter(Boolean).map((line) => `- ${line}`)]
+    .filter((line): line is string => Boolean(line))
+    .join('\n');
 }
 
 function ensureSentence(text: string): string {
@@ -757,14 +814,41 @@ function formatAlexaReply(
   lines: string[],
   recommendation: string | null,
   directMode = false,
+  personalityLine?: string | null,
 ): string {
   return buildVoiceReply({
     summary: ensureSentence(lead),
-    details: [...lines.slice(0, directMode ? 1 : 2), recommendation]
+    details: [personalityLine, ...lines.slice(0, directMode ? 1 : 2), recommendation]
       .filter((line): line is string => Boolean(line))
       .map((line) => humanizeAlexaDetailLine(line)),
     maxDetails: directMode ? 1 : 2,
   });
+}
+
+function isLowStakesLeadReason(leadReason: string): boolean {
+  return [
+    'nothing_urgent',
+    'weak_signal',
+    'selected_work',
+    'selected_work_open_block',
+    'household_scope',
+    'tomorrow_overview',
+    'tomorrow_clear',
+    'slipping_thread',
+    'current_work',
+  ].includes(leadReason);
+}
+
+function resolveTextureContext(
+  mode: DailyCompanionMode,
+): 'daily' | 'household' | 'evening' {
+  if (mode === 'household_guidance') {
+    return 'household';
+  }
+  if (mode === 'evening_reset') {
+    return 'evening';
+  }
+  return 'daily';
 }
 
 function finalizeDraft(
@@ -772,22 +856,31 @@ function finalizeDraft(
   channel: DailyCompanionChannel,
   now: Date,
   grounded: GroundedDaySnapshot | null,
-  directMode = false,
+  prefs: CompanionPreferences,
 ): DailyCompanionResponse {
+  const personalityLine = buildCompanionTextureLine({
+    channel,
+    context: resolveTextureContext(draft.mode),
+    toneProfile: prefs.toneProfile,
+    directMode: prefs.directMode,
+    lowStakes: isLowStakesLeadReason(draft.leadReason),
+    leadReason: draft.leadReason,
+  });
   const reply =
     channel === 'alexa'
       ? formatAlexaReply(
           draft.lead,
           draft.detailLines,
           draft.recommendationText,
-          directMode,
+          prefs.directMode,
+          personalityLine,
         )
-      : formatTelegramReply(draft.lead, [
+      : formatTextReply(draft.lead, [
           ...draft.detailLines,
           draft.recommendationText
             ? `Suggestion: ${draft.recommendationText}`
             : null,
-        ].filter(Boolean) as string[]);
+        ].filter(Boolean) as string[], personalityLine);
 
   const shortText =
     channel === 'alexa'
@@ -798,12 +891,12 @@ function finalizeDraft(
       : draft.lead;
   const extendedText =
     channel === 'alexa'
-      ? formatTelegramReply(draft.lead, [
+      ? formatTextReply(draft.lead, [
           ...draft.detailLines,
           draft.recommendationText
             ? `Suggestion: ${draft.recommendationText}`
             : null,
-        ].filter(Boolean) as string[])
+        ].filter(Boolean) as string[], personalityLine)
       : reply;
 
   const context: DailyCompanionContext = {
@@ -830,6 +923,23 @@ function finalizeDraft(
     usedThreadReasons: draft.usedThreadReasons,
     threadSummaryLines: draft.threadSummaryLines,
     comparisonKeys: draft.comparisonKeys,
+    toneProfile: prefs.toneProfile,
+    personalityCooldown: personalityLine
+      ? {
+          lastTextureKind:
+            draft.mode === 'household_guidance'
+              ? 'transition'
+              : draft.mode === 'evening_reset'
+                ? 'closer'
+                : 'transition',
+          lastTexturedAt: now.toISOString(),
+          cooldownTurnsRemaining: 2,
+        }
+      : {
+          lastTextureKind: null,
+          lastTexturedAt: null,
+          cooldownTurnsRemaining: 0,
+        },
   };
 
   return {
@@ -876,16 +986,16 @@ function buildMorningDraft(params: {
     recommendedThread: params.threadSnapshot.recommendedNextThread,
   });
 
-  let lead = 'Nothing urgent is pressing right now, so you can start from a clean read of the day.';
+  let lead = 'Today looks fairly open right now, so you can start from a clean read of it.';
   let leadReason = 'nothing_urgent';
   if (nextReminder) {
-    lead = `The first thing to watch is ${nextReminder.label} at ${formatClock(
+    lead = `The first thing I would keep in mind is ${nextReminder.label} at ${formatClock(
       new Date(nextReminder.nextRunIso),
       snapshot.timeZone,
     )}.`;
     leadReason = 'due_soon_reminder';
   } else if (nextEvent) {
-    lead = `The first fixed point is ${nextEvent.title} at ${formatClock(
+    lead = `The first fixed point in your day is ${nextEvent.title} at ${formatClock(
       new Date(nextEvent.startIso),
       snapshot.timeZone,
     )}.`;
@@ -897,7 +1007,7 @@ function buildMorningDraft(params: {
     lead = `One carryover to keep in sight is ${dueThread.title}.`;
     leadReason = 'thread_carryover';
   } else if (params.householdLines[0]) {
-    lead = `One family thing to keep in mind is ${params.householdLines[0]}.`;
+    lead = `One family thing worth keeping in mind is ${params.householdLines[0]}.`;
     leadReason = 'household_signal';
   }
 
@@ -983,13 +1093,13 @@ function buildMiddayDraft(params: {
     recommendedThread: params.threadSnapshot.recommendedNextThread,
   });
 
-  let lead = 'The next grounded thing is your schedule, because I do not have a better signal than that yet.';
+  let lead = 'The clearest next anchor is your schedule right now.';
   let leadReason = 'schedule_only';
   if (snapshot.selectedWork && recommendation.focusKey?.startsWith('work:')) {
-    lead = `The best next move is to stay with ${snapshot.selectedWork.title}.`;
+    lead = `The best next move is still ${snapshot.selectedWork.title}.`;
     leadReason = 'selected_work';
   } else if (dueThread) {
-    lead = `The main open thread is ${dueThread.title}.`;
+    lead = `The main loose end right now is ${dueThread.title}.`;
     leadReason = 'thread_followup';
   } else if (nextEvent) {
     lead = `The next fixed point is ${nextEvent.title} at ${formatClock(
@@ -1090,7 +1200,7 @@ function buildEveningDraft(params: {
     : dueThread
       ? `Close the loop on ${dueThread.title} tonight by ${dueThread.nextAction || dueThread.summary}.`
     : params.householdLines[0]
-      ? `Close the loop on ${params.householdLines[0]} before the night gets away from you.`
+      ? `Close the loop on ${params.householdLines[0]} before the evening gets away from you.`
       : householdThread
         ? `Close the loop on ${householdThread.title} before the night gets away from you.`
       : tomorrowPressure
@@ -1106,7 +1216,7 @@ function buildEveningDraft(params: {
           new Date(tomorrowPressure.startIso),
           params.snapshot.timeZone,
         )}.`
-      : 'Tonight looks fairly clear, so this is mostly about closing the right loop.';
+    : 'Tonight looks fairly calm, so this is mostly about closing the right loop.';
 
   const detailLines = [
     tonightReminder
@@ -1230,8 +1340,8 @@ function buildHouseholdDraft(params: {
     threadDetail,
     personDisplayName,
   );
-  const personLeadDetail = trimTerminalPunctuation(
-    relatedThread?.summary || humanizedThreadDetail || relatedThread?.title || null,
+  const personLeadDetail = normalizeHouseholdDetail(
+    humanizedThreadDetail || relatedThread?.summary || relatedThread?.title || null,
   );
   const lead = personName
     ? askStyle === 'talk_about'
@@ -1263,13 +1373,15 @@ function buildHouseholdDraft(params: {
           : householdLines[0]
             ? `At home, the main thing on deck is ${householdLines[0]}.`
             : 'I do not see one strong home follow-up right now.'
-        : summarizeThread(relatedThread) ||
-          householdLines[0] ||
-          'I do not see a strong shared-family signal in the calendars I could read right now.';
+        : summarizeThread(relatedThread)
+          ? `The main family thing coming up is ${summarizeThread(relatedThread)}.`
+          : householdLines[0]
+            ? `The main shared family thing coming up is ${householdLines[0]}.`
+            : 'I do not see a strong shared-family signal in the calendars I could read right now.';
   const recommendationText = relatedThread
     ? personName
-      ? personLeadDetail
-        ? `A quick check-in with ${personDisplayName} about ${personLeadDetail} would close that loop.`
+      ? buildPersonRecommendationPhrase(personLeadDetail)
+        ? `A quick check-in with ${personDisplayName} ${buildPersonRecommendationPhrase(personLeadDetail)} would close that loop.`
         : `A quick check-in with ${personDisplayName} would close that loop.`
       : `Bring up ${relatedThread.title} before it turns into a last-minute logistics problem.`
     : householdLines[0]
@@ -1292,7 +1404,7 @@ function buildHouseholdDraft(params: {
       'action_guidance',
       'memory_control',
     ],
-    lead: personDisplayName ? lead : `The main family thing coming up is ${lead}.`,
+    lead,
     leadReason: 'household_scope',
     detailLines: [
       personName ? null : relatedThread ? `Thread: ${summarizeThread(relatedThread)}` : null,
@@ -1355,7 +1467,7 @@ function buildLooseEndsDraft(params: {
   });
 
   let lead =
-    'Nothing is flashing red right now. If something still feels fuzzy, the safest move is to turn it into a reminder before it disappears again.';
+    'Nothing is flashing red right now. If something still feels fuzzy, the safest move is to pin it down before it disappears again.';
   let leadReason = 'weak_signal';
   if (dueReminder) {
     lead = `The easiest thing to forget right now is ${dueReminder.label}.`;
@@ -1388,7 +1500,7 @@ function buildLooseEndsDraft(params: {
           ? `Touch ${slippingThread.title} once tonight so it does not drift.`
           : currentWork
             ? `Either move ${currentWork.title} forward or save it as a reminder so it does not disappear.`
-            : 'If something is still nagging at you, save one reminder before you leave it behind.';
+          : 'If something is still nagging at you, save one reminder before you leave it behind.';
   const recommendationKind: DailyCompanionRecommendationKind =
     dueReminder || dueThread
       ? 'do_now'
@@ -1901,7 +2013,7 @@ export async function buildDailyCompanionResponse(
       deps.channel,
       now,
       snapshot,
-      prefs.directMode,
+      prefs,
     );
     if (isSameLocalDay(deps.priorContext.generatedAt, now)) {
       return {
@@ -1942,5 +2054,5 @@ export async function buildDailyCompanionResponse(
     return null;
   }
 
-  return finalizeDraft(draft, deps.channel, now, snapshot, prefs.directMode);
+  return finalizeDraft(draft, deps.channel, now, snapshot, prefs);
 }

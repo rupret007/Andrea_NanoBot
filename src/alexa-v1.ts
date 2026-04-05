@@ -19,7 +19,7 @@ export const ALEXA_CONVERSATIONAL_FOLLOWUP_INTENT =
   'ConversationalFollowupIntent';
 export const ALEXA_MEMORY_CONTROL_INTENT = 'MemoryControlIntent';
 export const ALEXA_DEFAULT_REPROMPT =
-  "You can ask what you're forgetting, what's still open with Candace, what you should remember tonight, or ask me to research something briefly.";
+  "Ask what matters today, what's still open with Candace, what you should remember tonight, or say Andrea Pulse.";
 
 export const ALEXA_V1_PERSONAL_INTENTS = new Set<string>([
   ALEXA_MY_DAY_INTENT,
@@ -158,15 +158,15 @@ export function buildAlexaOpenConversationPrompt(
 }
 
 export function buildAlexaHelpSpeech(assistantName: string): string {
-  return `You are talking to ${assistantName}. You can ask what you are forgetting, what is still open with Candace, what you should remember tonight, or ask me to compare or research something briefly.`;
+  return `This is ${assistantName}. Ask about today, Candace, tonight, or say Andrea Pulse if you want one interesting little thing.`;
 }
 
 export function buildAlexaWelcomeSpeech(assistantName: string): string {
-  return `You are talking to ${assistantName}. What do you want help with? You can ask what you are forgetting, what is still open with Candace, what you should remember tonight, or ask me to compare something briefly.`;
+  return `This is ${assistantName}. What do you want help with? We can look at today, what's still open with Candace, what you should remember tonight, or I can give you Andrea Pulse.`;
 }
 
 export function buildAlexaFallbackSpeech(assistantName: string): string {
-  return `This is ${assistantName}. I did not quite catch that. You can ask what you are forgetting, what is still open with Candace, what you should remember tonight, or ask me to compare something briefly.`;
+  return `This is ${assistantName}. I did not quite catch that. Try asking what matters today, what's still open with Candace, or say Andrea Pulse.`;
 }
 
 export function buildReminderLeadTimeQuestion(assistantName: string): string {

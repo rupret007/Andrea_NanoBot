@@ -184,7 +184,15 @@ function matchMemoryPrompt(normalized: string): AssistantCapabilityMatch | null 
     /^remember /.test(lower) ||
     /^remember that\b/.test(lower) ||
     /^be (a little |a bit )?more direct\b/.test(lower) ||
-    /^lead with the main thing\b/.test(lower)
+    /^lead with the main thing\b/.test(lower) ||
+    /^be (a little |a bit )?warmer\b/.test(lower) ||
+    /^sound (a little |a bit )?warmer\b/.test(lower) ||
+    /^keep it plain\b/.test(lower) ||
+    /^be plainer\b/.test(lower) ||
+    /^be less warm\b/.test(lower) ||
+    /^go back to balanced\b/.test(lower) ||
+    /^normal tone\b/.test(lower) ||
+    /^keep it balanced\b/.test(lower)
   ) {
     return {
       capabilityId: 'memory.remember',
@@ -216,6 +224,36 @@ function matchMemoryPrompt(normalized: string): AssistantCapabilityMatch | null 
   return null;
 }
 
+function matchPulsePrompt(normalized: string): AssistantCapabilityMatch | null {
+  const lower = normalized.toLowerCase();
+  if (
+    lower === 'andrea pulse' ||
+    lower === 'pulse' ||
+    lower === 'surprise me'
+  ) {
+    return {
+      capabilityId: 'pulse.surprise_me',
+      normalizedText: normalized,
+      canonicalText: normalized,
+      reason: 'matched Andrea Pulse surprise phrasing',
+    };
+  }
+  if (
+    lower === 'tell me something interesting' ||
+    lower === 'give me a weird fact' ||
+    lower === 'one little thing to know today' ||
+    lower === 'tell me a fun fact'
+  ) {
+    return {
+      capabilityId: 'pulse.interesting_thing',
+      normalizedText: normalized,
+      canonicalText: normalized,
+      reason: 'matched interesting-thing Pulse phrasing',
+    };
+  }
+  return null;
+}
+
 export function matchAssistantCapabilityRequest(
   text: string,
 ): AssistantCapabilityMatch | null {
@@ -227,6 +265,7 @@ export function matchAssistantCapabilityRequest(
     matchHouseholdPrompt(normalized) ||
     matchThreadPrompt(normalized) ||
     matchMemoryPrompt(normalized) ||
+    matchPulsePrompt(normalized) ||
     (isSharedResearchRequest(normalized)
       ? {
           capabilityId: inferResearchCapabilityId(normalized),
@@ -274,7 +313,11 @@ export function continueAssistantCapabilityFromAlexaState(
       lower,
     )
   ) {
-    if (activeCapabilityId && activeCapabilityId.startsWith('research.')) {
+    if (
+      activeCapabilityId &&
+      (activeCapabilityId.startsWith('research.') ||
+        activeCapabilityId.startsWith('pulse.'))
+    ) {
       return {
         capabilityId: activeCapabilityId,
         normalizedText: normalized,

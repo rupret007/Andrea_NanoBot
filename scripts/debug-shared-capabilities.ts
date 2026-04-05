@@ -100,6 +100,31 @@ async function main(): Promise<void> {
   });
 
   const workLogsCapability = getAssistantCapability('work.current_logs');
+  const bluebubblesPulse = await executeAssistantCapability({
+    capabilityId: 'pulse.interesting_thing',
+    context: {
+      channel: 'bluebubbles',
+      groupFolder,
+      chatJid: 'bb:debug',
+      now,
+    },
+    input: {
+      text: 'tell me something interesting',
+      canonicalText: 'tell me something interesting',
+    },
+  });
+  const alexaPulse = await executeAssistantCapability({
+    capabilityId: 'pulse.surprise_me',
+    context: {
+      channel: 'alexa',
+      groupFolder,
+      now,
+    },
+    input: {
+      text: 'Andrea Pulse',
+      canonicalText: 'Andrea Pulse',
+    },
+  });
 
   printBlock('TELEGRAM DAILY', [
     `handled: ${telegramLooseEnds.handled}`,
@@ -131,6 +156,20 @@ async function main(): Promise<void> {
     `shape: ${telegramResearch.outputShape || 'none'}`,
   ]);
 
+  printBlock('ALEXA PULSE', [
+    `handled: ${alexaPulse.handled}`,
+    `reply: ${alexaPulse.replyText || 'none'}`,
+    `source: ${alexaPulse.trace?.responseSource || 'none'}`,
+    `shape: ${alexaPulse.outputShape || 'none'}`,
+  ]);
+
+  printBlock('BLUEBUBBLES PULSE', [
+    `handled: ${bluebubblesPulse.handled}`,
+    `reply: ${bluebubblesPulse.replyText || 'none'}`,
+    `source: ${bluebubblesPulse.trace?.responseSource || 'none'}`,
+    `shape: ${bluebubblesPulse.outputShape || 'none'}`,
+  ]);
+
   printBlock('SAFETY GATE', [
     `work.current_logs allowed on Alexa: ${
       workLogsCapability
@@ -140,6 +179,11 @@ async function main(): Promise<void> {
     `work.current_logs allowed on Telegram: ${
       workLogsCapability
         ? isAssistantCapabilityAllowed(workLogsCapability, 'telegram')
+        : 'unknown'
+    }`,
+    `work.current_logs allowed on BlueBubbles: ${
+      workLogsCapability
+        ? isAssistantCapabilityAllowed(workLogsCapability, 'bluebubbles')
         : 'unknown'
     }`,
     `handlerKind: ${workLogsCapability?.handlerKind || 'unknown'}`,

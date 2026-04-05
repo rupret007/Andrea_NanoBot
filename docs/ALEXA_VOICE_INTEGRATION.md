@@ -11,9 +11,11 @@ Andrea now uses an internal **Alexa Companion Mode**:
 - measured guidance for open-ended daily questions
 - short-lived conversational continuity
 - calmer, more natural recovery when phrasing is imperfect
+- a small bounded personality layer for softer transitions in low-stakes replies
 - thread-aware continuity for active household, relationship, and follow-up topics
 - household-aware follow-ups when context is strong
 - explicit, consent-based personalization only
+- request-driven Andrea Pulse turns for light interesting facts or surprises
 
 Telegram remains the primary operator surface. Alexa reuses the same trust boundaries, schedule intelligence, reminders, drafting, and follow-through logic.
 
@@ -68,6 +70,7 @@ Current accepted live proof on the operator host is strong:
   - `What about Candace?`
   - `Be a little more direct.`
   - optional `What should I remember tonight?`
+- near-live Alexa proof now also covers `Andrea Pulse` / `tell me something interesting`
 - those accepted live turns resolved to `groupFolder=main` and stayed on `responseSource=local_companion`
 
 Important validation note:
@@ -128,6 +131,12 @@ Out of scope:
 - operator-shell commands
 - hidden long-term memory
 - multi-user household routing
+
+Pulse is intentionally separate from health and diagnostics:
+
+- `/ping` stays operational and non-personality-driven on Telegram
+- Alexa Pulse is request-driven only
+- there is no automatic fun-fact push behavior in this pass
 
 ## 1A) Life Threads In Alexa
 
@@ -271,6 +280,9 @@ That enables bounded follow-ups like:
 - `remind me before that`
 - `make that shorter`
 - `be a little more direct`
+- `be a little warmer`
+- `keep it plain`
+- `go back to balanced`
 - `say more`
 - `why`
 - `remember that`
@@ -304,6 +316,32 @@ Important limits:
 - Alexa is not a general long-form research reading surface
 - runtime-heavy or operator-like research requests still belong on the runtime/Telegram side
 - no hidden provider capability is assumed beyond what the repo actually configures
+
+## 5B) Andrea Pulse And Bounded Personality
+
+Alexa now has a very small personality layer, but it is intentionally restrained.
+
+What changed:
+
+- low-stakes daily and household replies can include one smoother transition or lightly warm line
+- not every turn gets texture
+- safety, trust, permission, fallback, and urgent reminder paths stay plain
+
+Andrea Pulse is the explicit light-fun surface:
+
+- `Andrea Pulse`
+- `tell me something interesting`
+- `give me a weird fact`
+- `surprise me`
+- `one little thing to know today`
+
+Current truth:
+
+- Pulse is request-only in this pass
+- it uses a local curated catalog
+- `say more` stays on the same item
+- `anything else` can move to another one
+- it does not replace `/ping`
 
 For operator-side conversation tuning, use:
 
@@ -363,6 +401,9 @@ Supported control questions include:
 - `why did you say that`
 - `what are you using to personalize this`
 - `be more direct`
+- `be a little warmer`
+- `keep it plain`
+- `go back to balanced`
 - `be less personal`
 - `use less family context`
 - `reset my preferences`

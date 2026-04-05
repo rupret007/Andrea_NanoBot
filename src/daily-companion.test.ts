@@ -159,7 +159,7 @@ describe('buildDailyCompanionResponse', () => {
     );
 
     expect(response?.mode).toBe('morning_brief');
-    expect(response?.reply).toContain('The first thing to watch is');
+    expect(response?.reply).toContain('The first thing I would keep in mind is');
     expect(response?.reply).toContain('Next: 4:00 PM-5:00 PM Team sync');
     expect(response?.reply).toContain('Reminder: 1:30 PM check on the demo');
     expect(response?.reply).toContain('Suggestion:');
@@ -194,7 +194,7 @@ describe('buildDailyCompanionResponse', () => {
     });
 
     expect(response?.mode).toBe('midday_reground');
-    expect(response?.reply).toContain('The best next move is to stay with Ship docs.');
+    expect(response?.reply).toContain('The best next move is still Ship docs.');
     expect(response?.reply).toContain('Current work: Ship docs (Running)');
     expect(response?.recommendationKind).toBe('do_now');
   });

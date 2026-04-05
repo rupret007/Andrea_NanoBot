@@ -75,12 +75,10 @@ describe('alexa v1 prompt mapping', () => {
 
 describe('alexa v1 speech helpers', () => {
   it('keeps help and welcome copy short and voice-first', () => {
-    expect(buildAlexaHelpSpeech('Andrea')).toContain(
-      'what is still open with Candace',
-    );
-    expect(buildAlexaHelpSpeech('Andrea')).toContain('compare or research');
+    expect(buildAlexaHelpSpeech('Andrea')).toContain('Ask about today, Candace');
+    expect(buildAlexaHelpSpeech('Andrea')).toContain('Andrea Pulse');
     expect(buildAlexaWelcomeSpeech('Andrea')).toContain(
-      'You are talking to Andrea.',
+      'This is Andrea.',
     );
     expect(buildAlexaFallbackSpeech('Andrea')).toContain(
       'did not quite catch that',

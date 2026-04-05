@@ -7,6 +7,9 @@
 
 // slack
 
+// bluebubbles
+import './bluebubbles.js';
+
 // telegram
 import './telegram.js';
 

@@ -23,6 +23,7 @@ Each capability descriptor records:
 - whether explicit confirmation is required
 - whether it is safe for Alexa
 - whether it is safe for Telegram
+- whether it is safe for BlueBubbles
 - whether it is operator-only
 - preferred output shape by channel
 - follow-up actions
@@ -57,6 +58,9 @@ Current seeded categories:
   - remember
   - forget
   - manual-only surfacing
+- `pulse`
+  - interesting thing
+  - surprise me / Andrea Pulse
 - `research`
   - research topic
   - compare options
@@ -77,6 +81,7 @@ The graph is explicit about channel safety.
 
 - Alexa-safe capabilities are voice-first, bounded, and safe to answer through a linked personal assistant surface.
 - Telegram-safe capabilities can return richer structure and fuller text.
+- BlueBubbles-safe capabilities are text-first, concise, and simpler than Telegram operator flows.
 - Operator-only capabilities remain excluded from Alexa even when they exist in the graph.
 
 Current intended split:
@@ -91,6 +96,13 @@ Current intended split:
   - the same shared assistant actions
   - richer formatting and longer research output
   - operator/runtime surfaces that are intentionally not exposed on Alexa
+- BlueBubbles-safe:
+  - daily guidance
+  - household guidance
+  - explicit thread lookup
+  - memory controls
+  - Andrea Pulse
+  - bounded research summaries
 - Operator-only:
   - current work summary/output/logs
   - runtime and work-cockpit execution controls
@@ -131,6 +143,7 @@ Examples now routed through the shared graph first:
 - household-aware prompts
 - open thread inspection
 - memory explain / remember / forget / manual-only controls
+- Andrea Pulse requests
 - bounded research prompts
 
 Channel shaping still happens at the edge:
@@ -143,6 +156,10 @@ Channel shaping still happens at the edge:
   - richer text
   - stronger explainability
   - operator-only follow-through where appropriate
+- BlueBubbles:
+  - concise text-first replies
+  - less markdown-heavy than Telegram
+  - no operator-only execution controls in this scaffold
 
 ## Bounded Research Orchestrator
 
@@ -221,6 +238,7 @@ Useful pinned-Node debug commands:
 
 - Telegram daily guidance through the shared graph
 - Alexa household guidance through the shared graph
+- Alexa and BlueBubbles Pulse behavior through the shared graph
 - Alexa and Telegram research shaping
 - operator-only safety gating
 
@@ -244,5 +262,13 @@ This architecture adapts patterns from permissively licensed or official sources
   - MIT
   - useful pattern: middleware/context layering and clean channel-edge adapters over shared core behavior
   - adapted as design only
+- [BlueBubbles API docs](https://docs.bluebubbles.app/server/api)
+  - official documentation
+  - useful pattern: REST plus webhook channel adapter with explicit auth/config boundaries
+  - adapted as design only
+- [BlueBubbles Server](https://github.com/BlueBubblesApp/bluebubbles-server)
+  - Apache-2.0
+  - useful pattern: server/channel separation and stable chat/message abstractions
+  - adapted conceptually only
 
 Andrea keeps the shared capability graph as its own product abstraction instead of adopting any third-party framework wholesale.

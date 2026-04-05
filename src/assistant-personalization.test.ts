@@ -43,6 +43,39 @@ describe('assistant personalization', () => {
     expect(prompt).toContain('Channel: Telegram.');
   });
 
+  it('supports tone tuning and the BlueBubbles prompt mode', () => {
+    const warmer = handlePersonalizationCommand({
+      groupFolder: 'main',
+      channel: 'bluebubbles',
+      text: 'be a little warmer',
+    });
+    const plain = handlePersonalizationCommand({
+      groupFolder: 'main',
+      channel: 'bluebubbles',
+      text: 'keep it plain',
+    });
+    const balanced = handlePersonalizationCommand({
+      groupFolder: 'main',
+      channel: 'bluebubbles',
+      text: 'go back to balanced',
+    });
+
+    expect(warmer.responseText).toContain('little warmer');
+    expect(plain.responseText).toContain('plain');
+    expect(balanced.responseText).toContain('balanced');
+
+    const prompt = buildAssistantPromptWithPersonalization(
+      '<messages><message>hello</message></messages>',
+      {
+        channel: 'bluebubbles',
+        groupFolder: 'main',
+      },
+    );
+
+    expect(prompt).toContain('mode="bluebubbles_default"');
+    expect(prompt).toContain('Channel: BlueBubbles.');
+  });
+
   it('adds Alexa companion guidance rules and accepted work-context preferences to the prompt', () => {
     handlePersonalizationCommand({
       groupFolder: 'main',

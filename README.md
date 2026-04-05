@@ -15,6 +15,7 @@
   <a href="docs/ADMIN_GUIDE.md">Admin Guide</a>&nbsp; | &nbsp;
   <a href="docs/ANDREA_OPENAI_BACKEND.md">OpenAI Backend</a>&nbsp; | &nbsp;
   <a href="docs/SETUP_AND_FEATURES_GUIDE.md">Setup Guide</a>&nbsp; | &nbsp;
+  <a href="docs/BLUEBUBBLES_CHANNEL_PREP.md">BlueBubbles Prep</a>&nbsp; | &nbsp;
   <a href="docs/CHANNEL_COMMANDS_AND_ONBOARDING.md">Chat Commands</a>&nbsp; | &nbsp;
   <a href="docs/BACKEND_LANES_ARCHITECTURE.md">Backend Lanes</a>&nbsp; | &nbsp;
   <a href="docs/ASSISTANT_CAPABILITY_GRAPH.md">Capability Graph</a>&nbsp; | &nbsp;
@@ -159,8 +160,10 @@ Alexa is now a bounded companion channel for Andrea rather than a novelty skill.
 - it reuses the same Andrea core, account-linking, and trust boundaries
 - it now maps core daily, household, memory, thread, and bounded research asks through the shared assistant capability graph
 - it is shorter, warmer, more spoken-first, and less menu-like than Telegram
+- it now has a small bounded personality layer for softer transitions in low-stakes moments
 - it supports daily guidance like morning brief, what matters most today, anything important, what am I forgetting, evening reset, and family-upcoming flows
 - it keeps short-lived conversational continuity for turns like `anything else`, `what about Candace`, `what about Travis`, `say more`, `why`, `remember that`, `make that shorter`, `be a little more direct`, and `remind me before that`
+- it supports request-driven Andrea Pulse asks such as `Andrea Pulse`, `tell me something interesting`, `give me a weird fact`, or `surprise me`
 - it can handle bounded research or comparison asks briefly by voice and keep longer follow-through on Telegram when needed
 - personalization remains explicit and consent-based
 - use Node `22.22.2` for truthful Alexa validation on the operator host
@@ -182,12 +185,35 @@ After any interaction-model change, re-import `docs/alexa/interaction-model.en-U
 
 For near-live conversation tuning on the operator host, use `npm run debug:alexa-conversation`.
 
+## Andrea Pulse
+
+Andrea Pulse is a separate request-driven personality feature. It is not a health check, not a replacement for `/ping`, and not a source of proactive spam.
+
+- `/ping` remains pure operational health
+- Pulse is currently request-only
+- examples: `Andrea Pulse`, `tell me something interesting`, `give me a weird fact`, `surprise me`
+- Pulse uses a small local curated catalog instead of adding a new provider dependency just for facts
+- `say more` stays on the same Pulse item, while `anything else` can move to a different one
+
+## BlueBubbles Prep
+
+BlueBubbles is now prepared as a future text-message channel through the same channel-adapter architecture Andrea already uses for Telegram and Alexa.
+
+- the current pass adds config parsing, webhook normalization, a channel scaffold, and capability-safety metadata
+- it does **not** claim end-to-end live messaging yet
+- outbound sends stay disabled by default
+- the current scaffold uses `bb:<chatGuid>` and `bb:<handle>` identifiers so BlueBubbles can plug into the shared capability graph cleanly later
+
+See [docs/BLUEBUBBLES_CHANNEL_PREP.md](docs/BLUEBUBBLES_CHANNEL_PREP.md) for the current implementation truth and the official API/webhook assumptions behind it.
+
 ## Shared Assistant Core
 
 Andrea now has a shared assistant capability graph so Alexa and Telegram feel like two expressions of the same assistant rather than separate route trees.
 
 - shared capabilities now cover daily guidance, household-aware answers, explicit thread lookup, memory controls, and bounded research
+- shared capabilities now also include explicit Andrea Pulse actions
 - Alexa keeps voice-safe shaping and bounded follow-ups
+- BlueBubbles is now represented as a prepared future channel with its own safety gate and output-shaping policy
 - Telegram keeps richer rendering and deeper operator-side actions
 - operator-only current-work controls stay out of Alexa even though they live in the same registry
 - bounded research can use local context, optional OpenAI-backed synthesis when configured, and runtime delegation only when the request is clearly execution-heavy
@@ -228,6 +254,8 @@ These run inside Telegram after the bot is live:
 - `/chatid`
 - `/registermain`
 - `/cursor_status`
+
+Andrea Pulse is deliberately separate from this command surface. It does not replace `/ping`, and it only runs when explicitly requested in conversation.
 
 Advanced operator workflows still exist, but they are operator-only, live in the admin guide, and should stay out of the default demo unless they were validated the same day.
 
@@ -440,6 +468,8 @@ Use the docs based on what you are trying to do:
   for where `CURSOR_API_KEY` comes from, what it enables, and how it differs from the desktop bridge
 - [docs/ALEXA_VOICE_INTEGRATION.md](docs/ALEXA_VOICE_INTEGRATION.md)
   for Alexa v1 setup, account-linking rules, Node 22 validation requirements, and the final live-acceptance runbook
+- [docs/BLUEBUBBLES_CHANNEL_PREP.md](docs/BLUEBUBBLES_CHANNEL_PREP.md)
+  for the prepared BlueBubbles channel adapter, safety model, and current non-live scope
 - [docs/ADDONS_AND_FEATURE_MATRIX.md](docs/ADDONS_AND_FEATURE_MATRIX.md)
   for deciding which skills and add-ons to enable
 - [docs/TESTING_AND_RELEASE_RUNBOOK.md](docs/TESTING_AND_RELEASE_RUNBOOK.md)

@@ -15,6 +15,9 @@ describe('assistant capabilities', () => {
   it('registers shared daily, research, work, and media capabilities with safety metadata', () => {
     const registry = getAssistantCapabilityRegistry();
     expect(registry.some((entry) => entry.id === 'daily.loose_ends')).toBe(true);
+    expect(registry.some((entry) => entry.id === 'pulse.interesting_thing')).toBe(
+      true,
+    );
     expect(registry.some((entry) => entry.id === 'research.compare')).toBe(true);
     expect(registry.some((entry) => entry.id === 'work.current_logs')).toBe(true);
     expect(registry.some((entry) => entry.id === 'media.video_generate')).toBe(
@@ -25,6 +28,13 @@ describe('assistant capabilities', () => {
       operatorOnly: true,
       safeForAlexa: false,
       safeForTelegram: true,
+      safeForBlueBubbles: false,
+    });
+    expect(getAssistantCapability('pulse.surprise_me')).toMatchObject({
+      category: 'pulse',
+      safeForAlexa: true,
+      safeForTelegram: true,
+      safeForBlueBubbles: true,
     });
     expect(getAssistantCapability('media.image_generate')?.availabilityNote).toContain(
       'capability prepared',
@@ -75,5 +85,31 @@ describe('assistant capabilities', () => {
     expect(result.handled).toBe(true);
     expect(result.replyText).toContain('Telegram');
     expect(result.trace?.responseSource).toBe('unavailable');
+  });
+
+  it('blocks operator-only capabilities on BlueBubbles while keeping pulse available', async () => {
+    const blocked = await executeAssistantCapability({
+      capabilityId: 'work.current_logs',
+      context: {
+        channel: 'bluebubbles',
+        groupFolder: 'main',
+      },
+    });
+    const pulse = await executeAssistantCapability({
+      capabilityId: 'pulse.interesting_thing',
+      context: {
+        channel: 'bluebubbles',
+        groupFolder: 'main',
+      },
+      input: {
+        canonicalText: 'tell me something interesting',
+      },
+    });
+
+    expect(blocked.handled).toBe(true);
+    expect(blocked.replyText).toContain('Telegram or operator side');
+    expect(pulse.handled).toBe(true);
+    expect(pulse.trace?.responseSource).toBe('pulse_local');
+    expect(pulse.replyText).toContain('\n');
   });
 });
