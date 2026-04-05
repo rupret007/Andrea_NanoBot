@@ -149,6 +149,13 @@ export interface RuntimeCommandDependencies {
     targetDisplay?: string | null;
     guidance?: string | null;
   }): string;
+  clearCurrentSelection?(args: {
+    chatJid: string;
+    threadId?: string;
+    jobId: string;
+    via: ResolvedRuntimeTarget['via'];
+  }): void;
+  shouldClearSelectionForError?(err: unknown): boolean;
 }
 
 function isExplicitRuntimeTargetToken(token: string | undefined): boolean {
@@ -244,9 +251,9 @@ export function formatRuntimeJobCard(job: BackendJobDetails): string {
 export function formatRuntimeNextStep(jobId: string): string {
   return formatTaskNextStepMessage({
     primaryActions:
-      'Use this task card or `/runtime-logs` to refresh this task or view output.',
+      `Use this task card, \`/runtime-job ${jobId}\`, or \`/runtime-logs ${jobId}\` to refresh this task or view output.`,
     canReplyContinue: true,
-    explicitFallback: `\`/runtime-followup ${jobId} <text>\` and \`/runtime-stop\` still work if you want explicit fallbacks.`,
+    explicitFallback: `\`/runtime-followup ${jobId} <text>\`, \`/runtime-logs ${jobId}\`, and \`/runtime-stop ${jobId}\` still work when you want exact-id fallbacks.`,
   });
 }
 
@@ -369,6 +376,33 @@ function readLegacyLogTail(
   return [`Latest log: ${latest}`, ...tail].join('\n');
 }
 
+function maybeClearRuntimeSelection(params: {
+  deps: RuntimeCommandDependencies;
+  context: RuntimeCommandContext;
+  target: ResolvedRuntimeTarget;
+}): boolean {
+  if (
+    params.target.via !== 'current' &&
+    params.target.via !== 'selected'
+  ) {
+    return false;
+  }
+  params.deps.clearCurrentSelection?.({
+    chatJid: params.context.operatorChatJid,
+    threadId: params.context.threadId,
+    jobId: params.target.jobId,
+    via: params.target.via,
+  });
+  return true;
+}
+
+function buildRuntimeSelectionClearedGuidance(cleared: boolean): string | null {
+  if (!cleared) {
+    return null;
+  }
+  return "Andrea cleared this chat's stale current Codex/OpenAI selection. Open `/cursor` -> `Current Work` or run `/runtime-jobs` to pick a fresh task.";
+}
+
 async function handleRuntimeCreate(
   deps: RuntimeCommandDependencies,
   context: RuntimeCommandContext,
@@ -477,12 +511,22 @@ async function handleRuntimeJob(
       chatJid: context.operatorChatJid,
     });
     if (!job) {
+      const clearedSelection = maybeClearRuntimeSelection({
+        deps,
+        context,
+        target: resolution.target,
+      });
       await deps.sendToChat(
         context.operatorChatJid,
         [
           `Andrea could not find Codex/OpenAI task ${resolution.target.jobId} anymore.`,
+          clearedSelection
+            ? "Andrea cleared this chat's stale current Codex/OpenAI selection."
+            : null,
           'Open `/cursor` -> `Current Work` or run `/runtime-jobs` to pick a fresh task.',
-        ].join('\n'),
+        ]
+          .filter((line): line is string => Boolean(line))
+          .join('\n'),
       );
       return;
     }
@@ -505,12 +549,20 @@ async function handleRuntimeJob(
       ].join('\n'),
     });
   } catch (err) {
+    const clearedSelection =
+      deps.shouldClearSelectionForError?.(err) &&
+      maybeClearRuntimeSelection({
+        deps,
+        context,
+        target: resolution.target,
+      });
     await deps.sendToChat(
       context.operatorChatJid,
       deps.formatFailure({
         operation: 'Andrea runtime task lookup failed',
         err,
         targetDisplay: resolution.target.jobId,
+        guidance: buildRuntimeSelectionClearedGuidance(Boolean(clearedSelection)),
       }),
     );
   }
@@ -606,12 +658,20 @@ async function handleRuntimeFollowup(
       });
       return;
     } catch (err) {
+      const clearedSelection =
+        deps.shouldClearSelectionForError?.(err) &&
+        maybeClearRuntimeSelection({
+          deps,
+          context,
+          target: resolution.target,
+        });
       await deps.sendToChat(
         context.operatorChatJid,
         deps.formatFailure({
           operation: 'Andrea runtime follow-up failed',
           err,
           targetDisplay: resolution.target.jobId,
+          guidance: buildRuntimeSelectionClearedGuidance(Boolean(clearedSelection)),
         }),
       );
       return;
@@ -702,16 +762,30 @@ async function handleRuntimeStop(
           contextKind: 'runtime_job_card',
           canExecute: deps.canExecute,
         }),
-        text: `Stop requested for this task.\nTask: Codex/OpenAI runtime ${formatOpaqueTaskId(stopped.handle.jobId)}.\nStatus: ${formatHumanTaskStatus(stopped.status)}.\n\nReply to this task card with \`/runtime-logs\` when you want to refresh its latest output or error state.`,
+        text: [
+          'Andrea asked Codex/OpenAI to stop this task.',
+          '',
+          formatRuntimeJobCard(stopped),
+          '',
+          formatRuntimeNextStep(stopped.handle.jobId),
+        ].join('\n'),
       });
       return;
     } catch (err) {
+      const clearedSelection =
+        deps.shouldClearSelectionForError?.(err) &&
+        maybeClearRuntimeSelection({
+          deps,
+          context,
+          target: resolution.target,
+        });
       await deps.sendToChat(
         context.operatorChatJid,
         deps.formatFailure({
           operation: 'Andrea runtime stop failed',
           err,
           targetDisplay: resolution.target.jobId,
+          guidance: buildRuntimeSelectionClearedGuidance(Boolean(clearedSelection)),
         }),
       );
       return;
@@ -891,12 +965,20 @@ async function handleRuntimeLogs(
       });
       return;
     } catch (err) {
+      const clearedSelection =
+        deps.shouldClearSelectionForError?.(err) &&
+        maybeClearRuntimeSelection({
+          deps,
+          context,
+          target: resolution.target,
+        });
       await deps.sendToChat(
         context.operatorChatJid,
         deps.formatFailure({
           operation: 'Andrea runtime output lookup failed',
           err,
           targetDisplay: resolution.target.jobId,
+          guidance: buildRuntimeSelectionClearedGuidance(Boolean(clearedSelection)),
         }),
       );
       return;

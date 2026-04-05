@@ -139,6 +139,7 @@ Andrea_NanoBot now owns the shared shell while backend lanes own execution truth
   - `/runtime-*` remains the explicit runtime fallback shell
   - does not replace Cursor or the `/cursor` dashboard
   - the shell now presents one chat-scoped current-work model with lane-specific capabilities, not two separate operator products
+  - direct `/cursor-*` and `/runtime-*` replies now mirror the cockpit more closely: they render richer single-task cards, keep exact backend ids visible, and point back to explicit fallback commands when you want to stay out of the dashboard
 
 On this host, the unified Telegram work cockpit is now live-proven across both first-class execution lanes:
 
@@ -280,6 +281,7 @@ Notes:
 - operators can sync and inspect **desktop bridge sessions**, then run line-oriented terminal commands against tracked bridge sessions on their own machine
 - operators can also open the integrated **Codex/OpenAI runtime** lane from `/cursor` to review or continue runtime tasks when that lane is enabled and validated on the host
 - `/runtime-*` remains available as the explicit runtime fallback shell for direct control, logs, and stop actions
+- when `current` or a lane selection points at a dead task, Andrea now clears the stale selection honestly and tells you to reopen `Current Work` or use the exact-id fallback command
 - keep optional integrations behind explicit operator setup instead of treating them as default demo features
 
 Important Cursor rule:

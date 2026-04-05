@@ -14,6 +14,7 @@ import {
   dispatchRuntimeCommand,
   formatRuntimeJobCard,
   formatRuntimeJobsMessage,
+  formatRuntimeNextStep,
   readLatestRuntimeLog,
   type RuntimeCommandContext,
   type RuntimeCommandDependencies,
@@ -78,6 +79,11 @@ describe('runtime commands', () => {
     jobs: BackendJobSummary[];
     listMessageId?: string;
   }>;
+  let clearedSelections: Array<{
+    jobId: string;
+    via: string;
+    threadId?: string;
+  }>;
   let deps: RuntimeCommandDependencies;
   let context: RuntimeCommandContext;
 
@@ -85,6 +91,7 @@ describe('runtime commands', () => {
     sentMessages = [];
     runtimeMessages = [];
     rememberedLists = [];
+    clearedSelections = [];
     context = {
       operatorChatJid: 'tg:operator',
       groupFolder: 'main',
@@ -186,6 +193,12 @@ describe('runtime commands', () => {
       formatFailure({ operation, targetDisplay }) {
         return `${operation}: ${targetDisplay || 'n/a'}`;
       },
+      clearCurrentSelection({ jobId, via, threadId }) {
+        clearedSelections.push({ jobId, via, threadId });
+      },
+      shouldClearSelectionForError() {
+        return false;
+      },
     };
   });
 
@@ -257,6 +270,18 @@ describe('runtime commands', () => {
       'Open `/cursor` -> `Codex/OpenAI` -> `Recent Work`',
     );
     expect(message).toContain('/runtime-followup');
+  });
+
+  it('gives exact-id runtime fallback commands in next-step guidance', () => {
+    expect(formatRuntimeNextStep('runtime-job-123')).toContain(
+      '/runtime-job runtime-job-123',
+    );
+    expect(formatRuntimeNextStep('runtime-job-123')).toContain(
+      '/runtime-logs runtime-job-123',
+    );
+    expect(formatRuntimeNextStep('runtime-job-123')).toContain(
+      '/runtime-stop runtime-job-123',
+    );
   });
 
   it('dispatches /runtime-status', async () => {
@@ -332,6 +357,39 @@ describe('runtime commands', () => {
       'Here is the latest state for this Codex/OpenAI task.',
     );
     expect(runtimeMessages[0]?.text).toContain('Job ID: runtime-job-current');
+  });
+
+  it('clears stale current selection when a selected runtime task no longer exists', async () => {
+    deps.resolveTarget = vi.fn(() => ({
+      target: {
+        handle: {
+          laneId: 'andrea_runtime' as const,
+          jobId: 'runtime-job-missing',
+        },
+        jobId: 'runtime-job-missing',
+        via: 'current' as const,
+      },
+      failureMessage: null,
+    }));
+    deps.refreshJob = vi.fn(async () => null);
+    context = {
+      ...context,
+      rawTrimmed: '/runtime-job current',
+      commandToken: '/runtime-job',
+    };
+
+    await dispatchRuntimeCommand(deps, context);
+
+    expect(clearedSelections).toEqual([
+      {
+        jobId: 'runtime-job-missing',
+        via: 'current',
+        threadId: '42',
+      },
+    ]);
+    expect(sentMessages[0]?.text).toContain(
+      "Andrea cleared this chat's stale current Codex/OpenAI selection.",
+    );
   });
 
   it('stores a lane-aware runtime jobs snapshot', async () => {

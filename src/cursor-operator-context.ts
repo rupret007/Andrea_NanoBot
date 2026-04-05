@@ -11,6 +11,7 @@ import {
   formatShellTaskCard,
   formatHumanTaskStatus,
   formatOpaqueTaskId,
+  formatTaskNextStepMessage,
 } from './task-presentation.js';
 import type { ChannelInlineAction } from './types.js';
 
@@ -810,6 +811,41 @@ export function formatCursorJobCard(
     ],
     summary: record.summary || null,
     updatedAt: record.updatedAt,
+  });
+}
+
+export function formatCursorTaskNextStepMessage(
+  record:
+    | {
+        provider?: 'cloud' | 'desktop';
+        id: string;
+      }
+    | string,
+): string {
+  const provider =
+    typeof record === 'string'
+      ? /^desk_/i.test(record)
+        ? 'desktop'
+        : 'cloud'
+      : record.provider ||
+        (/^desk_/i.test(record.id)
+          ? 'desktop'
+          : /^bc[-_]/i.test(record.id)
+            ? 'cloud'
+            : 'cloud');
+  const targetId = typeof record === 'string' ? record : record.id;
+  if (provider === 'desktop') {
+    return formatTaskNextStepMessage({
+      primaryActions: 'Use this card to refresh the session or view output.',
+      explicitFallback: `\`/cursor-sync ${targetId}\`, \`/cursor-conversation ${targetId}\`, \`/cursor-terminal-status ${targetId}\`, and \`/cursor-terminal-log ${targetId}\` still work as explicit fallbacks when you need machine-side control.`,
+    });
+  }
+
+  return formatTaskNextStepMessage({
+    primaryActions:
+      'Use this card to refresh the task, view output, or check results.',
+    canReplyContinue: true,
+    explicitFallback: `\`/cursor-sync ${targetId}\`, \`/cursor-conversation ${targetId}\`, \`/cursor-results ${targetId}\`, and \`/cursor-stop ${targetId}\` still work when you want explicit fallbacks.`,
   });
 }
 

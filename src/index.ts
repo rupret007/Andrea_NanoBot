@@ -205,6 +205,7 @@ import {
 import {
   formatCursorCapabilitySummaryMessage,
   formatCursorOperationFailure,
+  shouldClearCursorSelectionForError,
   summarizeCursorCapabilities,
 } from './cursor-capabilities.js';
 import { formatBackendOperationFailure } from './backend-lane-errors.js';
@@ -318,7 +319,9 @@ import {
   clearSelectedLaneJob,
   flattenCursorJobInventory,
   formatCursorJobCard,
+  formatCursorTaskNextStepMessage,
   type FlattenedCursorJobEntry,
+  type ResolvedCursorTarget,
   getActiveCursorOperatorContext,
   getActiveCursorMessageContext,
   getBackendContextGuidance,
@@ -360,7 +363,6 @@ import {
   formatHumanTaskStatus,
   formatOpaqueTaskId,
   stripLeadingMarkdownTitle,
-  formatTaskNextStepMessage,
   formatTaskReplyPrompt,
 } from './task-presentation.js';
 import {
@@ -5126,29 +5128,44 @@ async function main(): Promise<void> {
     return /^desk_/i.test(id);
   }
 
-  function buildCursorNextStepMessage(
-    record:
-      | {
-          provider?: 'cloud' | 'desktop';
-          id: string;
-        }
-      | string,
-  ): string {
-    if (isDesktopCursorRecord(record)) {
-      return formatTaskNextStepMessage({
-        primaryActions: 'Use this card to refresh the session or view output.',
-        explicitFallback:
-          '`/cursor-terminal` and `/cursor-terminal-log` still work as explicit fallbacks when you need machine-side control.',
-      });
+  function maybeClearCursorSelectionForCommandError(params: {
+    chatJid: string;
+    threadId?: string;
+    target: ResolvedCursorTarget;
+    err: unknown;
+  }): boolean {
+    if (
+      params.target.via !== 'current' &&
+      params.target.via !== 'selected'
+    ) {
+      return false;
     }
-
-    return formatTaskNextStepMessage({
-      primaryActions:
-        'Use this card to refresh the task, view output, or check results.',
-      canReplyContinue: true,
-      explicitFallback:
-        'Slash commands still work if you want an explicit fallback.',
+    if (!shouldClearCursorSelectionForError(params.err)) {
+      return false;
+    }
+    clearCurrentWorkSelection({
+      chatJid: params.chatJid,
+      threadId: params.threadId,
+      laneId: 'cursor',
+      source: 'shared',
     });
+    return true;
+  }
+
+  function formatCursorCommandFailure(params: {
+    prefix: string;
+    err: unknown;
+    clearedSelection?: boolean;
+  }): string {
+    const base = formatCursorOperationFailure(params.prefix, params.err);
+    if (!params.clearedSelection) {
+      return base;
+    }
+    return [
+      base,
+      '',
+      "Andrea cleared this chat's stale current Cursor selection. Open `/cursor` -> `Current Work` or `Jobs` to pick a fresh task.",
+    ].join('\n');
   }
 
   function buildCursorTaskContextPayload(params: {
@@ -6047,7 +6064,7 @@ async function main(): Promise<void> {
     chatJid: string;
     message?: NewMessage;
     requestedTarget?: string | null;
-  }): Promise<string | null> {
+  }): Promise<ResolvedCursorTarget | null> {
     const channel = findChannel(channels, params.chatJid);
     if (!channel) return null;
 
@@ -6059,7 +6076,7 @@ async function main(): Promise<void> {
         requestedTarget: params.requestedTarget,
       });
       if (resolved.target) {
-        return resolved.target.agentId;
+        return resolved.target;
       }
 
       await channel.sendMessage(
@@ -6143,7 +6160,7 @@ async function main(): Promise<void> {
       selected.provider === 'cloud'
         ? cursorBackendLane.getTrackedArtifactCount(selected.id)
         : 0;
-    const text = `${formatCursorJobCard(selected, resultCount)}\n\n${buildCursorNextStepMessage(selected.id)}`;
+    const text = `${formatCursorJobCard(selected, resultCount)}\n\n${formatCursorTaskNextStepMessage(selected)}`;
     const replyToMessageId =
       sourceMessage?.reply_to_id || getOperatorReplyToMessageId(sourceMessage);
     await sendCursorAgentMessage({
@@ -7675,12 +7692,6 @@ async function main(): Promise<void> {
         },
       });
       refreshCursorSnapshotsForAllGroups();
-      const targetBits = [
-        created.targetUrl ? `URL: ${created.targetUrl}` : null,
-        created.targetPrUrl ? `PR: ${created.targetPrUrl}` : null,
-      ]
-        .filter(Boolean)
-        .join('\n');
       await sendCursorAgentMessage({
         chatJid,
         agentId: created.id,
@@ -7699,10 +7710,11 @@ async function main(): Promise<void> {
         }),
         inlineActions: buildCursorJobCardActions(created),
         text: [
-          `Andrea started ${labelCursorRecord(created)} ${formatOpaqueTaskId(created.id)}.`,
-          `Status: ${formatHumanTaskStatus(created.status)}`,
-          targetBits || null,
-          buildCursorNextStepMessage(created),
+          'Andrea started this Cursor task.',
+          '',
+          formatCursorJobCard(created),
+          '',
+          formatCursorTaskNextStepMessage(created),
         ]
           .filter(Boolean)
           .join('\n'),
@@ -7734,14 +7746,15 @@ async function main(): Promise<void> {
       return;
     }
 
-    const normalizedAgentId = await resolveCursorTargetOrReply({
+    const resolvedCursorTarget = await resolveCursorTargetOrReply({
       chatJid,
       message: sourceMessage,
       requestedTarget,
     });
-    if (!normalizedAgentId) {
+    if (!resolvedCursorTarget) {
       return;
     }
+    const normalizedAgentId = resolvedCursorTarget.agentId;
 
     try {
       const messages = await cursorBackendLane.getConversation({
@@ -7776,7 +7789,7 @@ async function main(): Promise<void> {
             outputSource: 'none',
           }),
           inlineActions,
-          text: `No output is available yet for this task.\nTask: ${labelCursorRecord(normalizedAgentId)} ${formatOpaqueTaskId(normalizedAgentId)}.\n\n${buildCursorNextStepMessage(normalizedAgentId)}`,
+          text: `No output is available yet for this task.\nTask: ${labelCursorRecord(normalizedAgentId)} ${formatOpaqueTaskId(normalizedAgentId)}.\n\n${formatCursorTaskNextStepMessage({ provider, id: normalizedAgentId })}`,
         });
         return;
       }
@@ -7810,15 +7823,22 @@ async function main(): Promise<void> {
           outputSource: 'conversation',
         }),
         inlineActions,
-        text: `Current output for this task\nTask: ${labelCursorRecord(normalizedAgentId)} ${formatOpaqueTaskId(normalizedAgentId)} (latest ${messages.length} messages)\n\n${formatted}${outputSuggestion ? `\n\n${outputSuggestion}` : ''}\n\n${buildCursorNextStepMessage(normalizedAgentId)}`,
+        text: `Current output for this task\nTask: ${labelCursorRecord(normalizedAgentId)} ${formatOpaqueTaskId(normalizedAgentId)} (latest ${messages.length} messages)\n\n${formatted}${outputSuggestion ? `\n\n${outputSuggestion}` : ''}\n\n${formatCursorTaskNextStepMessage({ provider, id: normalizedAgentId })}`,
       });
     } catch (err) {
+      const clearedSelection = maybeClearCursorSelectionForCommandError({
+        chatJid,
+        threadId: sourceMessage?.thread_id,
+        target: resolvedCursorTarget,
+        err,
+      });
       await sendCursorMessage(
         chatJid,
-        formatCursorOperationFailure(
-          `Cursor conversation fetch failed for ${normalizedAgentId}`,
+        formatCursorCommandFailure({
+          prefix: `Cursor conversation fetch failed for ${normalizedAgentId}`,
           err,
-        ),
+          clearedSelection,
+        }),
         sourceMessage,
       );
     }
@@ -7839,14 +7859,15 @@ async function main(): Promise<void> {
       return;
     }
 
-    const normalizedAgentId = await resolveCursorTargetOrReply({
+    const resolvedCursorTarget = await resolveCursorTargetOrReply({
       chatJid,
       message: sourceMessage,
       requestedTarget,
     });
-    if (!normalizedAgentId) {
+    if (!resolvedCursorTarget) {
       return;
     }
+    const normalizedAgentId = resolvedCursorTarget.agentId;
 
     try {
       const artifacts = await cursorBackendLane.getCursorFiles({
@@ -7896,12 +7917,19 @@ async function main(): Promise<void> {
         text: `Results for this task\nTask: Cursor Cloud ${formatOpaqueTaskId(normalizedAgentId)}\n\n${lines.join('\n')}\n\nReply to this result card with \`/cursor-download ABSOLUTE_PATH\` when you want one file. \`/cursor-download ${normalizedAgentId} ABSOLUTE_PATH\` still works anywhere as an explicit fallback.`,
       });
     } catch (err) {
+      const clearedSelection = maybeClearCursorSelectionForCommandError({
+        chatJid,
+        threadId: sourceMessage?.thread_id,
+        target: resolvedCursorTarget,
+        err,
+      });
       await sendCursorMessage(
         chatJid,
-        formatCursorOperationFailure(
-          `Cursor results lookup failed for ${normalizedAgentId}`,
+        formatCursorCommandFailure({
+          prefix: `Cursor results lookup failed for ${normalizedAgentId}`,
           err,
-        ),
+          clearedSelection,
+        }),
         sourceMessage,
       );
     }
@@ -7923,14 +7951,15 @@ async function main(): Promise<void> {
       return;
     }
 
-    const normalizedAgentId = await resolveCursorTargetOrReply({
+    const resolvedCursorTarget = await resolveCursorTargetOrReply({
       chatJid,
       message: sourceMessage,
       requestedTarget,
     });
-    if (!normalizedAgentId) {
+    if (!resolvedCursorTarget) {
       return;
     }
+    const normalizedAgentId = resolvedCursorTarget.agentId;
 
     try {
       const link = await cursorBackendLane.getDownloadLink({
@@ -7949,12 +7978,19 @@ async function main(): Promise<void> {
         text: `Download link for ${link.agentId}\nPath: ${link.absolutePath}\nURL: ${link.url}${expiry}`,
       });
     } catch (err) {
+      const clearedSelection = maybeClearCursorSelectionForCommandError({
+        chatJid,
+        threadId: sourceMessage?.thread_id,
+        target: resolvedCursorTarget,
+        err,
+      });
       await sendCursorMessage(
         chatJid,
-        formatCursorOperationFailure(
-          `Cursor download failed for ${normalizedAgentId}`,
+        formatCursorCommandFailure({
+          prefix: `Cursor download failed for ${normalizedAgentId}`,
           err,
-        ),
+          clearedSelection,
+        }),
         sourceMessage,
       );
     }
@@ -7976,14 +8012,15 @@ async function main(): Promise<void> {
       return;
     }
 
-    const normalizedAgentId = await resolveCursorTargetOrReply({
+    const resolvedCursorTarget = await resolveCursorTargetOrReply({
       chatJid,
       message: sourceMessage,
       requestedTarget,
     });
-    if (!normalizedAgentId) {
+    if (!resolvedCursorTarget) {
       return;
     }
+    const normalizedAgentId = resolvedCursorTarget.agentId;
 
     try {
       const started = await cursorBackendLane.runTerminalCommand({
@@ -8035,14 +8072,15 @@ async function main(): Promise<void> {
       return;
     }
 
-    const normalizedAgentId = await resolveCursorTargetOrReply({
+    const resolvedCursorTarget = await resolveCursorTargetOrReply({
       chatJid,
       message: sourceMessage,
       requestedTarget,
     });
-    if (!normalizedAgentId) {
+    if (!resolvedCursorTarget) {
       return;
     }
+    const normalizedAgentId = resolvedCursorTarget.agentId;
 
     try {
       const terminal = await cursorBackendLane.getTerminalStatus({
@@ -8087,14 +8125,15 @@ async function main(): Promise<void> {
       return;
     }
 
-    const normalizedAgentId = await resolveCursorTargetOrReply({
+    const resolvedCursorTarget = await resolveCursorTargetOrReply({
       chatJid,
       message: sourceMessage,
       requestedTarget,
     });
-    if (!normalizedAgentId) {
+    if (!resolvedCursorTarget) {
       return;
     }
+    const normalizedAgentId = resolvedCursorTarget.agentId;
 
     try {
       const [terminal, output] = await Promise.all([
@@ -8150,14 +8189,15 @@ async function main(): Promise<void> {
       return;
     }
 
-    const normalizedAgentId = await resolveCursorTargetOrReply({
+    const resolvedCursorTarget = await resolveCursorTargetOrReply({
       chatJid,
       message: sourceMessage,
       requestedTarget,
     });
-    if (!normalizedAgentId) {
+    if (!resolvedCursorTarget) {
       return;
     }
+    const normalizedAgentId = resolvedCursorTarget.agentId;
 
     try {
       const terminal = await cursorBackendLane.stopTerminal({
@@ -8201,14 +8241,15 @@ async function main(): Promise<void> {
       return;
     }
 
-    const normalizedAgentId = await resolveCursorTargetOrReply({
+    const resolvedCursorTarget = await resolveCursorTargetOrReply({
       chatJid,
       message: sourceMessage,
       requestedTarget,
     });
-    if (!normalizedAgentId) {
+    if (!resolvedCursorTarget) {
       return;
     }
+    const normalizedAgentId = resolvedCursorTarget.agentId;
 
     await sendCursorSelectionCard(chatJid, normalizedAgentId, sourceMessage);
   }
@@ -8218,14 +8259,15 @@ async function main(): Promise<void> {
     requestedTarget: string | null,
     sourceMessage?: NewMessage,
   ): Promise<void> {
-    const normalizedAgentId = await resolveCursorTargetOrReply({
+    const resolvedCursorTarget = await resolveCursorTargetOrReply({
       chatJid,
       message: sourceMessage,
       requestedTarget,
     });
-    if (!normalizedAgentId) {
+    if (!resolvedCursorTarget) {
       return;
     }
+    const normalizedAgentId = resolvedCursorTarget.agentId;
 
     await sendCursorAgentMessage({
       chatJid,
@@ -8264,14 +8306,15 @@ async function main(): Promise<void> {
       return;
     }
 
-    const normalizedAgentId = await resolveCursorTargetOrReply({
+    const resolvedCursorTarget = await resolveCursorTargetOrReply({
       chatJid,
       message: sourceMessage,
       requestedTarget,
     });
-    if (!normalizedAgentId) {
+    if (!resolvedCursorTarget) {
       return;
     }
+    const normalizedAgentId = resolvedCursorTarget.agentId;
 
     try {
       const synced = await cursorBackendLane.syncJob({
@@ -8298,23 +8341,32 @@ async function main(): Promise<void> {
         }),
         inlineActions: buildCursorJobCardActions(synced.cursorJob),
         text: [
-          `Refreshed ${labelCursorRecord(synced.cursorJob)} ${formatOpaqueTaskId(synced.cursorJob.id)}.`,
-          `Status: ${formatHumanTaskStatus(synced.cursorJob.status)}`,
-          synced.cursorJob.provider === 'cloud'
-            ? `Results: ${synced.artifacts.length === 0 ? 'none yet' : `${synced.artifacts.length} file${synced.artifacts.length === 1 ? '' : 's'}`}`
-            : null,
-          buildCursorNextStepMessage(synced.cursorJob),
+          'Here is the latest state for this Cursor task.',
+          '',
+          formatCursorJobCard(
+            synced.cursorJob,
+            synced.cursorJob.provider === 'cloud' ? synced.artifacts.length : 0,
+          ),
+          '',
+          formatCursorTaskNextStepMessage(synced.cursorJob),
         ]
           .filter((line): line is string => Boolean(line))
           .join('\n\n'),
       });
     } catch (err) {
+      const clearedSelection = maybeClearCursorSelectionForCommandError({
+        chatJid,
+        threadId: sourceMessage?.thread_id,
+        target: resolvedCursorTarget,
+        err,
+      });
       await sendCursorMessage(
         chatJid,
-        formatCursorOperationFailure(
-          `Cursor sync failed for ${normalizedAgentId}`,
+        formatCursorCommandFailure({
+          prefix: `Cursor sync failed for ${normalizedAgentId}`,
           err,
-        ),
+          clearedSelection,
+        }),
         sourceMessage,
       );
     }
@@ -8335,14 +8387,15 @@ async function main(): Promise<void> {
       return;
     }
 
-    const normalizedAgentId = await resolveCursorTargetOrReply({
+    const resolvedCursorTarget = await resolveCursorTargetOrReply({
       chatJid,
       message: sourceMessage,
       requestedTarget,
     });
-    if (!normalizedAgentId) {
+    if (!resolvedCursorTarget) {
       return;
     }
+    const normalizedAgentId = resolvedCursorTarget.agentId;
 
     try {
       const stopped = await cursorBackendLane.stopCursorJob({
@@ -8358,15 +8411,28 @@ async function main(): Promise<void> {
         sourceMessage,
         contextKind: 'cursor_job_card',
         inlineActions: buildCursorJobCardActions(stopped),
-        text: `Andrea asked Cursor to stop ${labelCursorRecord(stopped)} ${formatOpaqueTaskId(stopped.id)}.\n\nStatus: ${formatHumanTaskStatus(stopped.status)}\n\nTap \`Refresh\` when you want the latest final state.`,
+        text: [
+          'Andrea asked Cursor to stop this task.',
+          '',
+          formatCursorJobCard(stopped),
+          '',
+          formatCursorTaskNextStepMessage(stopped),
+        ].join('\n'),
       });
     } catch (err) {
+      const clearedSelection = maybeClearCursorSelectionForCommandError({
+        chatJid,
+        threadId: sourceMessage?.thread_id,
+        target: resolvedCursorTarget,
+        err,
+      });
       await sendCursorMessage(
         chatJid,
-        formatCursorOperationFailure(
-          `Cursor stop failed for ${normalizedAgentId}`,
+        formatCursorCommandFailure({
+          prefix: `Cursor stop failed for ${normalizedAgentId}`,
           err,
-        ),
+          clearedSelection,
+        }),
         sourceMessage,
       );
     }
@@ -8388,14 +8454,15 @@ async function main(): Promise<void> {
       return;
     }
 
-    const normalizedAgentId = await resolveCursorTargetOrReply({
+    const resolvedCursorTarget = await resolveCursorTargetOrReply({
       chatJid,
       message: sourceMessage,
       requestedTarget,
     });
-    if (!normalizedAgentId) {
+    if (!resolvedCursorTarget) {
       return;
     }
+    const normalizedAgentId = resolvedCursorTarget.agentId;
 
     try {
       const replyMessageContext = getActiveCursorMessageContext(
@@ -8447,19 +8514,29 @@ async function main(): Promise<void> {
         }),
         inlineActions: buildCursorJobCardActions(followed),
         text: [
-          `Andrea sent your next instruction to ${labelCursorRecord(followed)} ${formatOpaqueTaskId(followed.id)}.`,
-          buildCursorNextStepMessage(followed),
+          'Andrea sent your next instruction to this Cursor task.',
+          '',
+          formatCursorJobCard(followed),
+          '',
+          formatCursorTaskNextStepMessage(followed),
         ]
           .filter((line): line is string => Boolean(line))
           .join('\n\n'),
       });
     } catch (err) {
+      const clearedSelection = maybeClearCursorSelectionForCommandError({
+        chatJid,
+        threadId: sourceMessage?.thread_id,
+        target: resolvedCursorTarget,
+        err,
+      });
       await sendCursorMessage(
         chatJid,
-        formatCursorOperationFailure(
-          `Cursor follow-up failed for ${normalizedAgentId}`,
+        formatCursorCommandFailure({
+          prefix: `Cursor follow-up failed for ${normalizedAgentId}`,
           err,
-        ),
+          clearedSelection,
+        }),
         sourceMessage,
       );
     }
@@ -8681,6 +8758,17 @@ async function main(): Promise<void> {
             targetDisplay,
             guidance,
           });
+        },
+        clearCurrentSelection({ chatJid: targetChatJid, threadId }) {
+          clearCurrentWorkSelection({
+            chatJid: targetChatJid,
+            threadId,
+            laneId: 'andrea_runtime',
+            source: 'shared',
+          });
+        },
+        shouldClearSelectionForError(err) {
+          return shouldClearRuntimeSelectionForError(err);
         },
       },
       {

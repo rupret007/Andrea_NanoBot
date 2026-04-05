@@ -135,6 +135,13 @@ Run:
 - `/cursor-conversation current 5`
 - tap `Results` when the provider has produced files
 
+Check:
+
+- the direct task card keeps the authoritative Cursor id visible
+- reply-to-card continuation stays on the same Cursor task
+- direct `/cursor-*` replies point back to exact-id fallbacks when needed
+- if `current` points at a stale Cursor task, Andrea clears that selection honestly instead of cross-routing the turn
+
 Optional if safe:
 
 - `/cursor-followup <agent_id|current> ...`
@@ -248,6 +255,11 @@ Then rerun a small live smoke:
 - `/help`
 - `/cursor_status`
 - `npm run telegram:user:smoke`
+
+If the change touched direct work-lane commands, also rerun one live lane-specific proof:
+
+- one `/cursor-*` proof that includes `current` plus one exact-id fallback
+- one `/runtime-*` proof that includes `current` plus one exact-id fallback
 
 If `/cursor_status` still behaves like an unregistered shell, stop and compare the real DM against `registered_main_chat_jid`, `latest_telegram_chat_jid`, and `main_chat_audit_warning` in `npm run services:status` before assuming a code rollback.
 

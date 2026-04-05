@@ -224,6 +224,8 @@ Continuity rule:
 - replying to a task card always continues that task
 - otherwise Andrea uses the current work selected in the lane you opened
 - stale or missing work-card replies should fail honestly and point back to `Current Work` or the explicit lane command
+- direct `/cursor-*` and `/runtime-*` replies should now also include the exact-id fallback commands you can paste anywhere if the richer path is inconvenient
+- if `current` resolves to a dead task, Andrea should say that explicitly and clear the stale selection instead of pretending the old task is still current
 
 Live-proof note:
 
@@ -238,6 +240,7 @@ If you are validating the merged `andrea_runtime` lane instead of Cursor:
 - use `Current Work` or `Recent Work` there before falling back to `/runtime-*`
 - treat `/runtime-*` as the explicit runtime fallback shell, not the primary shell
 - only expect live execution when `ANDREA_RUNTIME_EXECUTION_ENABLED=true` and the Codex/OpenAI runtime has been validated on this host
+- when testing `/runtime-*`, prefer at least one zero-arg or `current` command plus one exact-id fallback so you validate both the convenience pointer and the authoritative backend handle story
 
 ## Run The Runtime Lane Script
 

@@ -87,6 +87,7 @@ NanoBot does not re-sort backend job lists. It uses the backend ordering directl
   - refreshes one backend job
   - with no `JOB_ID`, refreshes the current runtime selection for that chat
   - shows `jobId`, status, backend, group folder, selected runtime, thread id, prompt, and output summary
+  - if `current` points at a dead task, Andrea clears the stale current-work selection and tells the operator exactly what happened
 - `/runtime-followup JOB_ID TEXT`
   - sends a follow-up against the backend `jobId`
   - preserves continuity through backend thread reuse when available
@@ -101,6 +102,12 @@ NanoBot does not re-sort backend job lists. It uses the backend ordering directl
   - requests a live stop for the backend job when possible
   - with no `JOB_ID`, uses the current runtime selection for that chat
   - distinguishes live stop accepted vs already finished vs no longer stoppable
+
+Direct-command parity note:
+
+- `/runtime-*` replies now use the same richer single-task structure as the shared cockpit
+- responses keep the authoritative backend `jobId` visible
+- next-step guidance always includes exact-id fallbacks such as `/runtime-job <jobId>`, `/runtime-logs <jobId>`, `/runtime-followup <jobId> <text>`, and `/runtime-stop <jobId>`
 
 ## Group Folder Strategy
 
@@ -166,6 +173,7 @@ What is complete now:
 - reply-linked runtime card follow-up from Telegram runtime cards
 - chat-scoped current work selection through the shared Andrea shell, with runtime selection mirrored only for compatibility
 - unified `/cursor` cockpit plus direct `/runtime-*` fallback controls
+- stale current runtime selections are cleared honestly when direct commands discover the selected task is gone
 - scripted Telegram runtime validation via `npm run telegram:user:runtime`
 
 What is still conditional on this checkout:

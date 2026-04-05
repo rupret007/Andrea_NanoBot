@@ -58,6 +58,8 @@ Rules:
 - `jobId` is the opaque per-lane execution handle
 - `threadId` or other continuity metadata stays lane-specific secondary metadata
 - replying to a fresh task card always continues that specific task; otherwise the shell uses the current work selected in the opened lane
+- explicit backend ids always win over the current-work pointer
+- if the shell discovers that a selected `current` target is gone, it clears that stale selection instead of pretending the old task still exists
 
 ## Persistence
 
@@ -103,6 +105,12 @@ What is secondary today:
 
 Those `/runtime-*` commands are the explicit runtime fallback shell for the `andrea_runtime` lane inside the shared cockpit.
 
+Direct-command parity is intentional:
+
+- `/cursor-*` and `/runtime-*` should feel like lane-honest fallbacks, not a second weaker product
+- direct command replies now mirror the cockpit card structure more closely
+- every important direct reply should keep the exact backend id visible and offer exact-id fallback commands
+
 ## What Is Validated Today
 
 - the merged shell still preserves the current Cursor dashboard UX
@@ -128,3 +136,19 @@ The shared lane layer should support:
 - one coherent task mental model in the shell, while preserving truthful lane differences underneath
 
 That is how Andrea can keep a clean shared shell while still preserving Cursor depth and leaving room for future `andrea_runtime` shell UX.
+
+## External Pattern Notes
+
+This pass stayed patterns-first. Andrea kept repo-native implementation code, but the shell rules were compared against permissively licensed projects that solve adjacent problems well:
+
+- `telegraf/telegraf` (MIT): explicit update routing and honest fallback handling
+- `grammyjs/grammY` (MIT): clean Telegram interaction ergonomics and middleware-style state discipline
+- `openai/openai-agents-python` (MIT) and `openai/openai-agents-js` (MIT): strict handle ownership, session continuity, and operator-visible tracing concepts
+- `yagop/node-telegram-bot-api` (MIT): practical Telegram command/button handling patterns
+
+Andrea adopted the patterns, not a copied second architecture:
+
+- reply-context is lane-bounded
+- current work is a convenience pointer, never the backend source of truth
+- exact backend ids stay visible and authoritative
+- stale selections fail honestly instead of silently leaking into other routes

@@ -211,6 +211,55 @@ function getCursorOperatorDetail(err: unknown): string | null {
   return safePatterns.some((pattern) => pattern.test(message)) ? message : null;
 }
 
+export function shouldClearCursorSelectionForError(err: unknown): boolean {
+  if (err instanceof CursorCloudApiError) {
+    const message = err.message.toLowerCase();
+    const body =
+      err.body && typeof err.body === 'object'
+        ? (err.body as Record<string, unknown>)
+        : null;
+    const detailText = Array.isArray(body?.details)
+      ? body.details
+          .map((entry) =>
+            entry &&
+            typeof entry === 'object' &&
+            typeof (entry as Record<string, unknown>).message === 'string'
+              ? ((entry as Record<string, unknown>).message as string)
+                  .trim()
+                  .toLowerCase()
+              : '',
+          )
+          .filter(Boolean)
+          .join(' ')
+      : '';
+    const combined = `${message} ${detailText}`.trim();
+    if (err.status === 404 && /\/v0\/agents\//i.test(err.message)) {
+      return true;
+    }
+    if (
+      err.status === 400 &&
+      /\/stop\b/i.test(err.message) &&
+      /cloud agent not running|no longer available|nothing left to stop/.test(
+        combined,
+      )
+    ) {
+      return true;
+    }
+  }
+
+  const operatorDetail = getCursorOperatorDetail(err)?.toLowerCase() || '';
+  const normalizedMessage =
+    err instanceof Error
+      ? err.message.trim().toLowerCase()
+      : typeof err === 'string'
+        ? err.trim().toLowerCase()
+        : '';
+  const combined = `${operatorDetail} ${normalizedMessage}`.trim();
+  return /cursor cloud could not find that agent id|that cursor cloud job is no longer running|cursor agent .* was not found| not found\b/.test(
+    combined,
+  );
+}
+
 export function formatCursorOperationFailure(
   prefix: string,
   err: unknown,

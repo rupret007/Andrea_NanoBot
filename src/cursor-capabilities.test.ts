@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   formatCursorCapabilitySummaryMessage,
   formatCursorOperationFailure,
+  shouldClearCursorSelectionForError,
   summarizeCursorCapabilities,
 } from './cursor-capabilities.js';
 import { CursorCloudApiError } from './cursor-cloud.js';
@@ -288,6 +289,15 @@ describe('cursor-capabilities', () => {
     ).toBe(
       'Cursor sync failed for bc-12345678-1234-1234-1234-123456789012. Cursor Cloud could not find that agent id.',
     );
+    expect(
+      shouldClearCursorSelectionForError(
+        new CursorCloudApiError(
+          'Cursor API GET /v0/agents/bc-12345678-1234-1234-1234-123456789012 failed with HTTP 404: Not found',
+          404,
+          { error: 'Not found' },
+        ),
+      ),
+    ).toBe(true);
   });
 
   it('explains when a Cursor Cloud job is already finished before stop', () => {
@@ -306,6 +316,39 @@ describe('cursor-capabilities', () => {
     ).toBe(
       'Cursor stop failed for bc-12345678-1234-1234-1234-123456789012. That Cursor Cloud job is no longer running, so there is nothing left to stop. Use /cursor-sync to refresh its final state.',
     );
+    expect(
+      shouldClearCursorSelectionForError(
+        new CursorCloudApiError(
+          'Cursor API POST /v0/agents/bc-12345678-1234-1234-1234-123456789012/stop failed with HTTP 400: Cloud Agent not running.: This Cloud Agent is no longer available.',
+          400,
+          {
+            error:
+              'Cloud Agent not running.: This Cloud Agent is no longer available.',
+          },
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it('does not clear current selection for malformed explicit Cursor ids', () => {
+    expect(
+      shouldClearCursorSelectionForError(
+        new CursorCloudApiError(
+          'Cursor API GET /v0/agents/not-a-real-agent-id failed with HTTP 400: Invalid agent ID',
+          400,
+          {
+            error: 'Invalid agent ID',
+            details: [
+              {
+                code: 'custom',
+                message: "Agent ID must be in the format 'bc-<uuid>'",
+                path: ['id'],
+              },
+            ],
+          },
+        ),
+      ),
+    ).toBe(false);
   });
 
   it('passes through Cloud-only queued follow-up guidance for desktop sessions', () => {
