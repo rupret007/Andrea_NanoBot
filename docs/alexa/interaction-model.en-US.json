@@ -148,8 +148,8 @@
             }
           ],
           "samples": [
-            "{followupText}",
             "what about {followupText}",
+            "about {followupText}",
             "make that {followupText}",
             "tell me {followupText}",
             "follow up with {followupText}",
@@ -165,7 +165,6 @@
             }
           ],
           "samples": [
-            "{memoryCommand}",
             "remember {memoryCommand}",
             "forget {memoryCommand}",
             "what do you remember about {memoryCommand}",
