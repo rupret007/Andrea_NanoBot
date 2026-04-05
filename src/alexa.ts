@@ -26,6 +26,7 @@ import {
   type AlexaConversationState,
   type AlexaConversationSubjectData,
 } from './alexa-conversation.js';
+import { planAlexaDialogueTurn } from './alexa-dialogue.js';
 import {
   getAlexaOAuthStatus,
   handleAlexaOAuthRequest,
@@ -72,6 +73,7 @@ import {
   buildAlexaConversationalFollowupPrompt,
   buildAlexaFallbackSpeech,
   buildAlexaHelpSpeech,
+  buildAlexaOpenConversationPrompt,
   buildAlexaPersonalPrompt,
   buildAlexaWelcomeSpeech,
   buildDraftFollowUpQuestion,
@@ -96,6 +98,7 @@ import { logger } from './logger.js';
 import { formatOutbound } from './router.js';
 import { type AlexaCompanionGuidanceGoal } from './types.js';
 import { getUserFacingErrorDetail } from './user-facing-error.js';
+import { normalizeVoicePrompt } from './voice-ready.js';
 
 const ALEXA_REQUEST_LIMIT_BYTES = 256 * 1024;
 const DEFAULT_ALEXA_HOST = '127.0.0.1';
@@ -681,6 +684,12 @@ function isBareReference(value: string): boolean {
   );
 }
 
+function isDirectnessMemoryCommand(value: string): boolean {
+  return /^(?:be )?(?:a little |a bit )?more direct[.!?]*$/i.test(
+    normalizeVoicePrompt(value).trim(),
+  );
+}
+
 function buildRequestIntent(requestEnvelope: RequestEnvelope): Intent | null {
   const request = requestEnvelope.request;
   return request.type === 'IntentRequest' ? request.intent : null;
@@ -827,6 +836,13 @@ function buildAlexaStateFromDailyCompanion(
       threadId: context.usedThreadIds?.[0],
       threadTitle: context.usedThreadTitles?.[0],
       threadSummaryLines: context.threadSummaryLines || [],
+      lastAnswerSummary: context.summaryText,
+      lastRecommendation: context.recommendationText || undefined,
+      pendingActionText: context.recommendationText || undefined,
+      conversationFocus:
+        context.usedThreadTitles?.[0] ||
+        context.subjectData.personName ||
+        context.subjectKind,
       dailyCompanionContextJson: JSON.stringify(context),
     },
     summaryText: context.summaryText,
@@ -954,9 +970,9 @@ function buildAlexaFallbackSpeechForState(
   fallbackCount: number,
 ): string {
   if (fallbackCount >= 2) {
-    return `This is ${assistantName}. Try exactly: ${suggestions[0]}.`;
+    return `This is ${assistantName}. I am still not quite getting it. Try asking ${suggestions[0]}.`;
   }
-  return `This is ${assistantName}. I did not catch that phrasing. Try one exact phrase: ${joinAlexaSuggestedPhrases(suggestions.slice(0, 3))}.`;
+  return `This is ${assistantName}. I did not quite catch that. You can ask ${joinAlexaSuggestedPhrases(suggestions.slice(0, 3))}.`;
 }
 
 function buildAlexaFallbackRepromptForState(
@@ -964,9 +980,99 @@ function buildAlexaFallbackRepromptForState(
   fallbackCount: number,
 ): string {
   if (fallbackCount >= 2) {
-    return `Try saying ${suggestions[0]}.`;
+    return `Try asking ${suggestions[0]}.`;
   }
-  return `Try saying ${joinAlexaSuggestedPhrases(suggestions.slice(0, 3))}.`;
+  return `You can ask ${joinAlexaSuggestedPhrases(suggestions.slice(0, 3))}.`;
+}
+
+function inferAlexaSubjectKindForUtterance(
+  utterance: string,
+  conversationState: AlexaConversationState | undefined,
+): AlexaConversationState['subjectKind'] {
+  const normalized = utterance.toLowerCase();
+  const personName = extractFollowupPersonName(utterance);
+  if (personName) return 'person';
+  if (
+    /\b(candace|travis|family|household|home)\b/.test(normalized) ||
+    conversationState?.subjectKind === 'household'
+  ) {
+    return /\b(candace|travis)\b/.test(normalized) ? 'person' : 'household';
+  }
+  if (/\b(meeting|calendar|schedule|next|today|tonight|tomorrow)\b/.test(normalized)) {
+    return 'day_brief';
+  }
+  return conversationState?.subjectKind || 'general';
+}
+
+function inferAlexaGuidanceGoalForUtterance(
+  utterance: string,
+  conversationState: AlexaConversationState | undefined,
+): AlexaCompanionGuidanceGoal {
+  const normalized = utterance.toLowerCase();
+  if (/\b(candace|family|household|home)\b/.test(normalized)) {
+    return /\b(candace)\b/.test(normalized) ? 'shared_plans' : 'family_guidance';
+  }
+  if (/\b(tonight|evening)\b/.test(normalized)) {
+    return 'evening_reset';
+  }
+  if (/\b(forgetting|loose ends|still open)\b/.test(normalized)) {
+    return 'what_am_i_forgetting';
+  }
+  if (/\b(next|after that|do about)\b/.test(normalized)) {
+    return 'next_action';
+  }
+  return conversationState?.styleHints.guidanceGoal || 'open_conversation';
+}
+
+function buildAlexaBridgeConversationState(
+  utterance: string,
+  conversationState: AlexaConversationState | undefined,
+): AlexaConversationState {
+  const personName =
+    extractFollowupPersonName(utterance) ||
+    conversationState?.subjectData.personName;
+  const subjectKind = inferAlexaSubjectKindForUtterance(
+    utterance,
+    conversationState,
+  );
+  return buildAlexaCompanionConversationState({
+    flowKey: conversationState?.flowKey || 'open_conversation',
+    subjectKind,
+    summaryText:
+      conversationState?.summaryText ||
+      normalizeVoicePrompt(utterance) ||
+      'the current Alexa conversation',
+    guidanceGoal: inferAlexaGuidanceGoalForUtterance(
+      utterance,
+      conversationState,
+    ),
+    subjectData: {
+      ...conversationState?.subjectData,
+      personName,
+      activePeople: personName
+        ? [personName]
+        : conversationState?.subjectData.activePeople,
+      fallbackCount: 0,
+      conversationFocus:
+        personName ||
+        conversationState?.subjectData.threadTitle ||
+        conversationState?.subjectData.conversationFocus ||
+        utterance,
+    },
+    supportedFollowups:
+      conversationState?.supportedFollowups ||
+      baseFollowupsForSubject(subjectKind),
+    prioritizationLens:
+      conversationState?.styleHints.prioritizationLens ||
+      (subjectKind === 'person' || subjectKind === 'household'
+        ? 'family'
+        : 'general'),
+    hasActionItem: true,
+    hasRiskSignal: conversationState?.styleHints.hasRiskSignal,
+    reminderCandidate: conversationState?.styleHints.reminderCandidate,
+    responseStyle: conversationState?.styleHints.responseStyle,
+    responseSource: 'assistant_bridge',
+  });
 }
 
 async function runLinkedAlexaTurn(
@@ -1017,14 +1123,35 @@ async function runLinkedAlexaTurn(
     let reprompt = DEFAULT_ALEXA_REPROMPT;
 
     if (options.conversationState) {
+      const summaryText =
+        speech.split(/(?<=[.!?])\s+/)[0]?.trim() ||
+        options.conversationState.summaryText.trim() ||
+        speech;
       saveAlexaConversationState(
         linked.principalKey,
         linked.account.accessTokenHash,
         linked.account.groupFolder,
         {
           ...options.conversationState,
-          summaryText:
-            options.conversationState.summaryText.trim() || speech,
+          summaryText,
+          subjectData: {
+            ...options.conversationState.subjectData,
+            fallbackCount: 0,
+            lastAnswerSummary: summaryText,
+            lastRecommendation:
+              options.conversationState.subjectData.lastRecommendation,
+            pendingActionText:
+              options.conversationState.subjectData.pendingActionText,
+            conversationFocus:
+              options.conversationState.subjectData.conversationFocus ||
+              options.conversationState.subjectData.personName ||
+              options.conversationState.subjectData.threadTitle ||
+              options.conversationState.subjectKind,
+          },
+          styleHints: {
+            ...options.conversationState.styleHints,
+            responseSource: 'assistant_bridge',
+          },
         },
       );
     } else {
@@ -1363,6 +1490,63 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
       .speak(result.responseText || 'Okay.')
       .reprompt(DEFAULT_ALEXA_REPROMPT)
       .getResponse();
+  };
+
+  const runOpenConversationTurn = async (
+    handlerInput: HandlerInput,
+    principal: AlexaPrincipal,
+    linked: Extract<ReturnType<typeof resolveAlexaLinkedAccount>, { ok: true }>,
+    utterance: string,
+    conversationState?: AlexaConversationState,
+  ) => {
+    const plan = planAlexaDialogueTurn(utterance, conversationState);
+    if (plan.route === 'clarify') {
+      recordHandledRequest(handlerInput.requestEnvelope, {
+        responseSource: 'fallback',
+        linked: true,
+        groupFolder: linked.account.groupFolder,
+      });
+      return handlerInput.responseBuilder
+        .speak(
+          plan.clarificationSpeech ||
+            'I need one quick anchor first. Ask about today, Candace, or what to remember tonight.',
+        )
+        .reprompt(DEFAULT_ALEXA_REPROMPT)
+        .getResponse();
+    }
+
+    if (plan.route === 'blocked') {
+      recordHandledRequest(handlerInput.requestEnvelope, {
+        responseSource: 'barrier',
+        linked: true,
+        groupFolder: linked.account.groupFolder,
+      });
+      return handlerInput.responseBuilder
+        .speak(
+          plan.blockedSpeech ||
+            'I can help with personal planning here, but heavier system controls are better in Telegram.',
+        )
+        .reprompt(DEFAULT_ALEXA_REPROMPT)
+        .getResponse();
+    }
+
+    return runLinkedAlexaTurn(
+      handlerInput,
+      config,
+      assistantName,
+      principal,
+      linked,
+      buildAlexaOpenConversationPrompt(plan.normalizedText, {
+        conversationSummary: conversationState?.summaryText,
+      }),
+      {
+        conversationState: buildAlexaBridgeConversationState(
+          plan.normalizedText,
+          conversationState,
+        ),
+        proactiveSignalText: plan.normalizedText,
+      },
+    );
   };
 
   const LaunchRequestHandler = {
@@ -1747,29 +1931,43 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
             .getResponse();
         }
 
-        if (priorCompanionContext) {
-          const localResponse = await buildDailyCompanionResponse(followupText, {
-            channel: 'alexa',
-            groupFolder: linked.account.groupFolder,
-            tasks: getAllTasks().filter(
-              (task) => task.group_folder === linked.account.groupFolder,
-            ),
-            priorContext: priorCompanionContext,
-          });
-          if (localResponse) {
-            return respondWithLocalCompanion(
-              handlerInput,
-              linked,
-              conversationState || buildAlexaCompanionConversationState({
+        const localResponse = await buildDailyCompanionResponse(followupText, {
+          channel: 'alexa',
+          groupFolder: linked.account.groupFolder,
+          tasks: getAllTasks().filter(
+            (task) => task.group_folder === linked.account.groupFolder,
+          ),
+          priorContext: priorCompanionContext || null,
+        });
+        if (localResponse) {
+          return respondWithLocalCompanion(
+            handlerInput,
+            linked,
+            conversationState ||
+              buildAlexaCompanionConversationState({
                 flowKey: 'daily_companion_followup',
-                subjectKind: 'day_brief',
+                subjectKind: localResponse.context.subjectKind,
                 summaryText: localResponse.context.summaryText,
-                guidanceGoal: 'daily_brief',
+                guidanceGoal: localResponse.context.subjectKind === 'person'
+                  ? 'shared_plans'
+                  : 'open_conversation',
+                subjectData: {
+                  ...localResponse.context.subjectData,
+                  threadId: localResponse.context.usedThreadIds?.[0],
+                  threadTitle: localResponse.context.usedThreadTitles?.[0],
+                  threadSummaryLines:
+                    localResponse.context.threadSummaryLines || [],
+                },
+                prioritizationLens:
+                  localResponse.context.subjectKind === 'person' ||
+                  localResponse.context.subjectKind === 'household'
+                    ? 'family'
+                    : 'general',
+                hasActionItem: Boolean(localResponse.context.recommendationText),
                 responseSource: 'local_companion',
               }),
-              localResponse,
-            );
-          }
+            localResponse,
+          );
         }
 
         const lifeThreadResponse = runLifeThreadCommand(
@@ -1787,15 +1985,13 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
           conversationState,
         );
         if (!resolution.ok || !resolution.action) {
-          recordHandledRequest(handlerInput.requestEnvelope, {
-            responseSource: 'fallback',
-            linked: true,
-            groupFolder: linked.account.groupFolder,
-          });
-          return handlerInput.responseBuilder
-            .speak(resolution.speech || buildAlexaFallbackSpeech(assistantName))
-            .reprompt(DEFAULT_ALEXA_REPROMPT)
-            .getResponse();
+          return runOpenConversationTurn(
+            handlerInput,
+            authorization.principal,
+            linked,
+            followupText,
+            conversationState,
+          );
         }
 
         if (resolution.action === 'memory_control') {
@@ -1973,6 +2169,89 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
             .getResponse();
         }
 
+        if (priorCompanionContext && isDirectnessMemoryCommand(memoryCommand)) {
+          const localResponse = await buildDailyCompanionResponse(
+            'be a little more direct',
+            {
+              channel: 'alexa',
+              groupFolder: linked.account.groupFolder,
+              tasks: getAllTasks().filter(
+                (task) => task.group_folder === linked.account.groupFolder,
+              ),
+              priorContext: priorCompanionContext,
+            },
+          );
+          if (localResponse && conversationState) {
+            const nextState = buildAlexaStateFromDailyCompanion(
+              {
+                ...conversationState,
+                styleHints: {
+                  ...conversationState.styleHints,
+                  responseStyle: 'short_direct',
+                },
+              },
+              localResponse,
+            );
+            saveAlexaConversationState(
+              linked.principalKey,
+              linked.account.accessTokenHash,
+              linked.account.groupFolder,
+              nextState,
+            );
+            logger.info(
+              {
+                requestId: handlerInput.requestEnvelope.request.requestId,
+                requestType: getRequestType(handlerInput.requestEnvelope),
+                intentName,
+                groupFolder: linked.account.groupFolder,
+                mode: localResponse.mode,
+                leadReason: localResponse.leadReason,
+                signalsUsed: localResponse.signalsUsed,
+                usedThreadTitles: localResponse.context.usedThreadTitles,
+                responseSource: 'local_companion',
+              },
+              'Alexa daily companion answered locally',
+            );
+            recordHandledRequest(handlerInput.requestEnvelope, {
+              responseSource: 'local_companion',
+              linked: true,
+              groupFolder: linked.account.groupFolder,
+            });
+            return handlerInput.responseBuilder
+              .speak(localResponse.reply)
+              .reprompt(DEFAULT_ALEXA_REPROMPT)
+              .getResponse();
+          }
+        }
+
+        if (
+          isBareReference(memoryCommand) &&
+          conversationState?.supportedFollowups.includes('save_that')
+        ) {
+          const personName = conversationState?.subjectData.personName;
+          return runLinkedAlexaTurn(
+            handlerInput,
+            config,
+            assistantName,
+            authorization.principal,
+            linked,
+            buildAlexaConversationalFollowupPrompt('save_that', {
+              conversationSummary:
+                conversationState?.subjectData.lastRecommendation ||
+                conversationState?.summaryText,
+              followupText: memoryCommand,
+              personName,
+            }),
+            {
+              conversationState: buildAlexaBridgeConversationState(
+                memoryCommand,
+                conversationState,
+              ),
+              proactiveSignalText: memoryCommand,
+            },
+          );
+        }
+
         const memoryResult = handlePersonalizationCommand({
           groupFolder: linked.account.groupFolder,
           channel: 'alexa',
@@ -2016,6 +2295,14 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
         if (lifeThreadResponse) {
           return lifeThreadResponse;
         }
+
+        return runOpenConversationTurn(
+          handlerInput,
+          authorization.principal,
+          linked,
+          memoryCommand,
+          conversationState,
+        );
       }
 
       if (intentName === ALEXA_REMIND_BEFORE_NEXT_MEETING_INTENT) {

@@ -381,12 +381,13 @@ Practical notes:
 - that OAuth target `groupFolder` must already exist as a valid Andrea registered group
 - Alexa now supports short-lived multi-turn follow-ups like `anything else`, `what about Candace`, `make that shorter`, and `remind me before that`.
 - Alexa Companion Mode also supports broader daily-life guidance like `what matters most today`, `what am I forgetting`, `anything I should know`, `what should I remember tonight`, and family guidance such as `what does the family have going on`.
-- person follow-ups can now stay voice-natural with prompts like `what about Travis`, `say more`, `what should I do about that`, and `should I be worried about anything`.
-- Alexa can also handle explicit memory controls like `remember this`, `forget that`, and `what do you remember about me`.
+- person follow-ups can now stay voice-natural with prompts like `what about Travis`, `say more`, `what should I do about that`, `why`, and `should I be worried about anything`.
+- Alexa can also handle explicit memory controls like `remember this`, `remember that`, `forget that`, `don't bring that up automatically`, `be a little more direct`, and `what do you remember about me`.
 - remembered personalization stays structured and consent-based; Andrea does not silently store arbitrary conversation history as long-term memory.
 - typed Alexa+ app chat is diagnosis-only unless it produces a real signed follow-up `IntentRequest` after skill launch
 - authoritative live proof should use voice in the Alexa app, voice on device, or the authenticated Alexa simulator
 - if you change `docs/alexa/interaction-model.en-US.json`, you must re-import it in the Alexa Developer Console and run `Build Model`
+- `npm run debug:alexa-conversation` is the near-live operator harness for tuning the multi-turn Alexa flow locally before or after a live voice attempt
 
 Recommended setup order:
 

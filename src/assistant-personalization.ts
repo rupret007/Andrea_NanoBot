@@ -378,19 +378,23 @@ function buildChannelExpressionLines(
     if (channelMode === 'alexa_companion') {
       return [
         'Channel: Alexa Companion Mode.',
-        'Sound natural, warm, and concise aloud.',
+        'Sound natural, warm, concise, and lightly personable aloud.',
         'Use one strong lead sentence and at most two short supporting sentences.',
         'Lead with the main thing that matters most, then one or two useful follow-through details.',
+        'Avoid sounding like a command menu, an intent router, or a status panel.',
         'Use soft prioritization language like main thing, one thing to keep in mind, or nothing urgent when it fits.',
         'If the day is light, say that plainly instead of stretching for urgency.',
+        'Let short follow-ups feel like the same conversation instead of a reset.',
+        'A subtle touch of warmth or wit is okay when the moment is low stakes.',
         'Ask only one short clarification when needed.',
       ];
     }
     return [
       'Channel: Alexa.',
-      'Sound natural, warm, and concise aloud.',
+      'Sound natural, warm, concise, and lightly personable aloud.',
       'Use one strong lead sentence and at most two short supporting sentences.',
       'Prefer brief transitions over robotic framing.',
+      'Avoid sounding like a menu or status panel.',
       'Ask only one short clarification when needed.',
     ];
   }
@@ -419,6 +423,9 @@ function buildGuidanceLines(
     case 'daily_brief':
       lines.push(
         'Rank what matters by urgency, obligations to other people, meeting prep, family impact, and breathing room.',
+      );
+      lines.push(
+        'Do not sound like a schedule dump; sound like a real assistant helping someone get their bearings.',
       );
       break;
     case 'upcoming_soon':
@@ -450,6 +457,14 @@ function buildGuidanceLines(
     case 'risk_check':
       lines.push(
         'Surface only the main thing to watch for, and if nothing seems urgent, say that clearly without filler.',
+      );
+      break;
+    case 'open_conversation':
+      lines.push(
+        'Treat this as an in-progress Alexa conversation. Use earlier context when it helps, but answer the actual request in front of you.',
+      );
+      lines.push(
+        'If the user sounds open-ended, be helpful and grounded instead of falling back to menu-like phrasing.',
       );
       break;
     case 'what_am_i_forgetting':
@@ -630,7 +645,7 @@ export function handlePersonalizationCommand(
   const raw = normalizeCommandText(input.text);
   const selfSubject = ensureProfileSubject(input.groupFolder, 'self', 'you', now);
 
-  if (/^be more direct[.!?]*$/i.test(raw)) {
+  if (/^(?:be )?(?:a little |a bit )?more direct[.!?]*$/i.test(raw)) {
     const fact = upsertStructuredFact({
       groupFolder: input.groupFolder,
       subject: selfSubject,
@@ -644,7 +659,8 @@ export function handlePersonalizationCommand(
     });
     return {
       handled: true,
-      responseText: 'Okay. I will keep my answers shorter and more direct by default.',
+      responseText:
+        'Sure. I can keep my answers shorter and more direct by default.',
       referencedFactId: fact.id,
     };
   }
@@ -929,7 +945,11 @@ export function handlePersonalizationCommand(
     };
   }
 
-  if (/^(forget that|stop using that)[.!?]*$/i.test(raw)) {
+  if (
+    /^(forget that|stop using that|don'?t bring that up automatically|stop bringing that up)[.!?]*$/i.test(
+      raw,
+    )
+  ) {
     if (disableReferencedFact(input.factIdHint, nowIso)) {
       return {
         handled: true,

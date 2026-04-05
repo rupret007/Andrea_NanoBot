@@ -234,6 +234,7 @@ Current truthful closeout note:
 - interaction-model changes require a fresh import of `docs/alexa/interaction-model.en-US.json` plus `Build Model` in the Alexa Developer Console before live utterance failures count against the repo
 - if live voice still falls into `AMAZON.FallbackIntent` after that rebuild, use the Alexa Developer Console Utterance Profiler or Intent History to capture the exact recognized phrase before changing repo code
 - `npm run debug:daily-companion` is the local pinned-Node smoke path for comparing canonical daily-companion prompts like `what am I forgetting` or `what's still open with Candace` against real `groupFolder=main` data
+- `npm run debug:alexa-conversation` is the near-live pinned-Node harness for checking Alexa-style follow-ups like `anything else`, `what about Candace`, `remember that`, `why`, or `be a little more direct` against the real local routing stack before blaming the live voice surface
 
 When configured, validate in this order:
 
@@ -253,7 +254,7 @@ When configured, validate in this order:
 9. linked `what should I remember tonight`
 10. confirm `alexa_last_signed_request_type=IntentRequest` and a resolved `groupFolder`
     - if the launch works but follow-ups fall into generic fallback, treat that as a likely stale live model first
-11. one preference or explainability turn
+11. one preference or explainability turn such as `why`, `remember that`, or `be a little more direct`
 
 Check:
 

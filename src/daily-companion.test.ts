@@ -508,6 +508,74 @@ describe('buildDailyCompanionResponse', () => {
     expect(response?.context.usedThreadTitles).toContain('Candace');
   });
 
+  it('answers what should I talk to Candace about with a natural household follow-up lead', async () => {
+    handleLifeThreadCommand({
+      groupFolder: 'main',
+      channel: 'telegram',
+      chatJid: 'tg:8004355504',
+      text: 'save this under the Candace thread',
+      replyText: 'Confirm dinner plans and pickup timing.',
+      now: new Date('2026-04-04T10:00:00-05:00'),
+    });
+
+    const fetchImpl = createGoogleCalendarFetchMock({
+      eventsByCalendar: {
+        primary: {
+          items: [],
+        },
+      },
+    });
+
+    const response = await buildDailyCompanionResponse(
+      'What should I talk to Candace about?',
+      {
+        channel: 'alexa',
+        groupFolder: 'main',
+        now: new Date('2026-04-04T12:30:00-05:00'),
+        timeZone: 'America/Chicago',
+        env: baseEnv,
+        fetchImpl,
+        tasks: [],
+      },
+    );
+
+    expect(response?.mode).toBe('household_guidance');
+    expect(response?.reply).toContain('talk to Candace about');
+    expect(response?.reply).toContain('Confirm dinner plans and pickup timing');
+  });
+
+  it('answers what about Candace by reusing the saved Candace thread naturally', async () => {
+    handleLifeThreadCommand({
+      groupFolder: 'main',
+      channel: 'telegram',
+      chatJid: 'tg:8004355504',
+      text: 'save this under the Candace thread',
+      replyText: 'Talk through dinner plans tonight.',
+      now: new Date('2026-04-04T10:00:00-05:00'),
+    });
+
+    const response = await buildDailyCompanionResponse('What about Candace', {
+      channel: 'alexa',
+      groupFolder: 'main',
+      now: new Date('2026-04-04T12:30:00-05:00'),
+      timeZone: 'America/Chicago',
+      env: baseEnv,
+      fetchImpl: createGoogleCalendarFetchMock({
+        eventsByCalendar: {
+          primary: {
+            items: [],
+          },
+        },
+      }),
+      tasks: [],
+    });
+
+    expect(response?.mode).toBe('household_guidance');
+    expect(response?.reply).toContain('Candace');
+    expect(response?.reply).toContain('dinner plans tonight');
+    expect(response?.context.usedThreadTitles).toContain('Candace');
+  });
+
   it('renders Alexa shorter than Telegram while using the same grounded snapshot', async () => {
     const fetchImpl = createGoogleCalendarFetchMock({
       eventsByCalendar: {
@@ -569,6 +637,8 @@ describe('buildDailyCompanionResponse', () => {
     expect(telegram?.reply).toContain('- ');
     expect(alexa?.reply).not.toContain('- ');
     expect((alexa?.reply.split('\n').length || 0) <= 3).toBe(true);
+    expect(alexa?.reply).not.toContain('Reminder:');
+    expect(alexa?.reply).not.toContain('Thread:');
   });
 
   it('supports explainability and remembered-context follow-ups from prior companion context', async () => {

@@ -72,6 +72,7 @@ describe('assistant personalization', () => {
     expect(prompt).toContain('main thing that matters most');
     expect(prompt).toContain('foreground work context by default');
     expect(prompt).toContain('Lead with the single main thing that matters');
+    expect(prompt).toContain('Avoid sounding like a command menu');
   });
 
   it('remembers explicit relationship facts and can summarize them', () => {

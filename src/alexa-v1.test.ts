@@ -13,6 +13,7 @@ import {
   ALEXA_WHAT_MATTERS_MOST_TODAY_INTENT,
   buildAlexaFallbackSpeech,
   buildAlexaHelpSpeech,
+  buildAlexaOpenConversationPrompt,
   buildAlexaPersonalPrompt,
   buildAlexaWelcomeSpeech,
   buildDraftFollowUpQuestion,
@@ -66,19 +67,22 @@ describe('alexa v1 prompt mapping', () => {
     expect(buildAlexaPersonalPrompt(ALEXA_MY_DAY_INTENT)).toContain(
       'Lead with the main thing first',
     );
+    expect(
+      buildAlexaOpenConversationPrompt('help me figure out dinner with Candace'),
+    ).toContain('Stay in the same Andrea Alexa conversation');
   });
 });
 
 describe('alexa v1 speech helpers', () => {
   it('keeps help and welcome copy short and voice-first', () => {
     expect(buildAlexaHelpSpeech('Andrea')).toContain(
-      "what's still open with Candace",
+      'what is still open with Candace',
     );
     expect(buildAlexaWelcomeSpeech('Andrea')).toContain(
       'You are talking to Andrea.',
     );
     expect(buildAlexaFallbackSpeech('Andrea')).toContain(
-      'Try one exact phrase',
+      'did not quite catch that',
     );
     expect(ALEXA_DEFAULT_REPROMPT).toContain(
       "what's still open with Candace",

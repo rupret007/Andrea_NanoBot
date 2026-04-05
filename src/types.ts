@@ -283,6 +283,7 @@ export type AlexaCompanionGuidanceGoal =
   | 'family_guidance'
   | 'shared_plans'
   | 'life_thread_guidance'
+  | 'open_conversation'
   | 'action_follow_through'
   | 'risk_check'
   | 'explainability';

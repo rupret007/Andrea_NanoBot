@@ -156,9 +156,9 @@ Under the hood, the current Codex/OpenAI lane now resolves through the local `An
 Alexa is now a bounded companion channel for Andrea rather than a novelty skill.
 
 - it reuses the same Andrea core, account-linking, and trust boundaries
-- it is shorter, warmer, and more spoken-first than Telegram
+- it is shorter, warmer, more spoken-first, and less menu-like than Telegram
 - it supports daily guidance like morning brief, what matters most today, anything important, what am I forgetting, evening reset, and family-upcoming flows
-- it keeps short-lived conversational continuity for turns like `anything else`, `what about Candace`, `what about Travis`, `make that shorter`, and `remind me before that`
+- it keeps short-lived conversational continuity for turns like `anything else`, `what about Candace`, `what about Travis`, `say more`, `why`, `remember that`, `make that shorter`, `be a little more direct`, and `remind me before that`
 - personalization remains explicit and consent-based
 - use Node `22.22.2` for truthful Alexa validation on the operator host
 
@@ -167,6 +167,8 @@ Repo-side and near-live Alexa proof are strong on this host. The one remaining l
 Typed Alexa+ app chat is diagnosis-only right now. It may trigger a skill launch, but it does not count as live proof unless Andrea logs a real signed follow-up `IntentRequest` after launch.
 
 After any interaction-model change, re-import `docs/alexa/interaction-model.en-US.json` in the Alexa Developer Console and run `Build Model` before treating live fallback as a repo bug.
+
+For near-live conversation tuning on the operator host, use `npm run debug:alexa-conversation`.
 
 For day-to-day operator checks, use `/alexa-status` inside the registered main control chat and `npm run services:status` for the local Alexa listener, OAuth health, public-ingress hinting, and the last signed Alexa request markers on the host. Public HTTPS ingress and live signed utterances remain separate acceptance checks. If the live host is an `ngrok` `*.ngrok-free.dev` tunnel, the Alexa console endpoint SSL setting must use the wildcard-certificate option.
 

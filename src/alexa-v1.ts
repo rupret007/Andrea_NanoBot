@@ -19,7 +19,7 @@ export const ALEXA_CONVERSATIONAL_FOLLOWUP_INTENT =
   'ConversationalFollowupIntent';
 export const ALEXA_MEMORY_CONTROL_INTENT = 'MemoryControlIntent';
 export const ALEXA_DEFAULT_REPROMPT =
-  "Try saying what am I forgetting, what's still open with Candace, or what should I remember tonight.";
+  "You can ask what you're forgetting, what's still open with Candace, or what you should remember tonight.";
 
 export const ALEXA_V1_PERSONAL_INTENTS = new Set<string>([
   ALEXA_MY_DAY_INTENT,
@@ -42,7 +42,7 @@ export const ALEXA_V1_PERSONAL_INTENTS = new Set<string>([
 ]);
 
 const SPOKEN_STYLE_SUFFIX =
-  ' Reply for Alexa Companion Mode with one strong lead sentence and at most two short supporting statements. Lead with the main thing first. Keep the rhythm natural, warm, practical, and spoken. If nothing is urgent, say that plainly. No markdown. No bullet list.';
+  ' Reply for Alexa Companion Mode with one strong lead sentence and at most two short supporting statements. Lead with the main thing first. Keep the rhythm natural, warm, practical, and lightly personable. Avoid menu-like phrasing, status-panel labels, or robotic transitions. If nothing is urgent, say that plainly. A light touch of humor is okay only when it fits naturally. No markdown. No bullet list.';
 
 function trimSingleLine(value: string | undefined): string | undefined {
   const normalized = value?.replace(/\s+/g, ' ').trim();
@@ -144,16 +144,29 @@ export function buildAlexaConversationalFollowupPrompt(
   }
 }
 
+export function buildAlexaOpenConversationPrompt(
+  utterance: string,
+  values: {
+    conversationSummary?: string;
+  } = {},
+): string {
+  const summary =
+    trimSingleLine(values.conversationSummary) ||
+    'the current Alexa conversation';
+  const prompt = trimSingleLine(utterance) || 'the user needs help';
+  return `Stay in the same Andrea Alexa conversation. The user just said: ${prompt}. Use this context when it genuinely helps: ${summary}. Answer naturally, briefly, and like a calm capable companion. If the request is actionable and already supported, help with it or ask one short clarification.${SPOKEN_STYLE_SUFFIX}`;
+}
+
 export function buildAlexaHelpSpeech(assistantName: string): string {
-  return `You are talking to ${assistantName}. Try one exact phrase: what am I forgetting, what's still open with Candace, or what should I remember tonight.`;
+  return `You are talking to ${assistantName}. You can ask what you are forgetting, what is still open with Candace, or what you should remember tonight.`;
 }
 
 export function buildAlexaWelcomeSpeech(assistantName: string): string {
-  return `You are talking to ${assistantName}. Start with one exact phrase: what am I forgetting, what's still open with Candace, or what should I remember tonight.`;
+  return `You are talking to ${assistantName}. What do you want help with? You can ask what you are forgetting, what is still open with Candace, or what you should remember tonight.`;
 }
 
 export function buildAlexaFallbackSpeech(assistantName: string): string {
-  return `This is ${assistantName}. I did not catch that phrasing. Try one exact phrase: what am I forgetting, what's still open with Candace, or what should I remember tonight.`;
+  return `This is ${assistantName}. I did not quite catch that. You can ask what you are forgetting, what is still open with Candace, or what you should remember tonight.`;
 }
 
 export function buildReminderLeadTimeQuestion(assistantName: string): string {

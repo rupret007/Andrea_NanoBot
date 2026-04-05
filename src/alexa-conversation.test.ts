@@ -99,6 +99,7 @@ describe('alexa conversation state', () => {
         'before_that',
         'after_that',
         'remind_before_that',
+        'save_that',
         'action_guidance',
         'risk_check',
         'memory_control',
@@ -116,6 +117,9 @@ describe('alexa conversation state', () => {
       resolveAlexaConversationFollowup('say more', state),
     ).toMatchObject({ ok: true, action: 'say_more' });
     expect(
+      resolveAlexaConversationFollowup('remember that', state),
+    ).toMatchObject({ ok: true, action: 'save_that' });
+    expect(
       resolveAlexaConversationFollowup('remind me before that', state),
     ).toMatchObject({ ok: true, action: 'remind_before_that' });
     expect(
@@ -124,6 +128,9 @@ describe('alexa conversation state', () => {
     expect(
       resolveAlexaConversationFollowup('should I be worried about anything', state),
     ).toMatchObject({ ok: true, action: 'risk_check' });
+    expect(
+      resolveAlexaConversationFollowup('be a little more direct', state),
+    ).toMatchObject({ ok: true, action: 'memory_control' });
     expect(
       resolveAlexaConversationFollowup('what is the weather', state),
     ).toMatchObject({ ok: false });

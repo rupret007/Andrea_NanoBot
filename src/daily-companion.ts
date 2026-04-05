@@ -232,6 +232,10 @@ function isHouseholdPrompt(normalized: string): boolean {
     /^what('?s| is)? still open with [a-z][a-z' -]+\??$/.test(normalized) ||
     /^what still open with [a-z][a-z' -]+\??$/.test(normalized) ||
     /^what about [a-z][a-z' -]+$/.test(normalized) ||
+    /^what should i talk to [a-z][a-z' -]+ about\??$/.test(normalized) ||
+    /^anything .*family.*forgetting\??$/.test(normalized) ||
+    /^what do i need to follow up on at home\??$/.test(normalized) ||
+    /^what do i need to follow up on with [a-z][a-z' -]+\??$/.test(normalized) ||
     /\bfamily\b/.test(normalized) ||
     /\bhousehold\b/.test(normalized)
   );
@@ -266,6 +270,18 @@ function extractExplicitHouseholdPerson(normalized: string): string | undefined 
   const whatAboutMatch = normalized.match(/^what about ([a-z][a-z' -]+)$/);
   if (whatAboutMatch?.[1]) {
     return whatAboutMatch[1].trim();
+  }
+  const talkToMatch = normalized.match(
+    /^what should i talk to ([a-z][a-z' -]+) about\??$/,
+  );
+  if (talkToMatch?.[1]) {
+    return talkToMatch[1].trim();
+  }
+  const followUpMatch = normalized.match(
+    /^what do i need to follow up on with ([a-z][a-z' -]+)\??$/,
+  );
+  if (followUpMatch?.[1]) {
+    return followUpMatch[1].trim();
   }
   const sharedMatch = normalized.match(
     /^what (?:do|does|should) ([a-z][a-z' -]+?) and i\b/,
@@ -309,11 +325,14 @@ function isSayMorePrompt(normalized: string): boolean {
 }
 
 function isShorterPrompt(normalized: string): boolean {
-  return /^(shorter|make that shorter|say that shorter)\b/.test(normalized);
+  return /^(shorter|make that shorter|say that shorter|be (?:a little |a bit )?more direct|more direct|keep it more direct)\b/.test(
+    normalized,
+  );
 }
 
 function isExplainabilityPrompt(normalized: string): boolean {
   return (
+    /^why[!?]*$/.test(normalized) ||
     /^(what are you using to answer this|what are you using to answer that)\b/.test(
       normalized,
     ) ||
@@ -379,6 +398,26 @@ function summarizeThread(thread: LifeThread | null): string | null {
 function summarizeThreadDetail(thread: LifeThread | null): string | null {
   if (!thread) return null;
   return thread.nextAction || thread.summary || null;
+}
+
+function humanizePersonThreadDetail(
+  detail: string | null,
+  personDisplayName: string | undefined,
+): string | null {
+  if (!detail) return null;
+  if (!personDisplayName) return detail;
+
+  const escapedName = personDisplayName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return detail
+    .replace(new RegExp(`^talk to ${escapedName} about\\s+`, 'i'), '')
+    .replace(new RegExp(`^talk with ${escapedName} about\\s+`, 'i'), '')
+    .replace(new RegExp(`^follow up with ${escapedName} about\\s+`, 'i'), '')
+    .trim();
+}
+
+function trimTerminalPunctuation(value: string | null): string | null {
+  if (!value) return null;
+  return value.replace(/[.!?]+$/, '').trim();
 }
 
 function findBestMatchingThread(
@@ -677,15 +716,54 @@ function formatTelegramReply(lead: string, lines: string[]): string {
   return [lead, ...lines.filter(Boolean).map((line) => `- ${line}`)].join('\n');
 }
 
+function ensureSentence(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) return trimmed;
+  return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
+}
+
+function humanizeAlexaDetailLine(line: string): string {
+  const trimmed = line.trim();
+  if (!trimmed) return trimmed;
+
+  const replacements: Array<[RegExp, (value: string) => string]> = [
+    [/^Next:\s+/i, (value) => `Next up is ${value}`],
+    [/^Reminder:\s+/i, (value) => `You have ${value}`],
+    [/^Open (?:window|block):\s+/i, (value) => `You also have an open stretch ${value}`],
+    [/^Thread(?: carryover| follow-up)?:\s+/i, (value) => `One loose end is ${value}`],
+    [/^Household(?: thread)?:\s+/i, (value) => `At home, ${value}`],
+    [/^Shared plan:\s+/i, (value) => `The shared plan is ${value}`],
+    [/^Also:\s+/i, (value) => `Also, ${value}`],
+    [/^Current work:\s+/i, (value) => `Workwise, ${value}`],
+    [/^Tomorrow pressure:\s+/i, (value) => `Tomorrow's pressure point is ${value}`],
+    [/^Tomorrow:\s+/i, (value) => `Tomorrow, ${value}`],
+    [/^Also tomorrow:\s+/i, (value) => `Also tomorrow, ${value}`],
+    [/^Tonight:\s+/i, (value) => `Tonight, ${value}`],
+    [/^Keep on deck:\s+/i, (value) => `Also keep in mind ${value}`],
+  ];
+
+  for (const [pattern, formatter] of replacements) {
+    const match = trimmed.match(pattern);
+    if (!match) continue;
+    const value = trimmed.replace(pattern, '').trim();
+    return ensureSentence(formatter(value));
+  }
+
+  return ensureSentence(trimmed);
+}
+
 function formatAlexaReply(
   lead: string,
   lines: string[],
   recommendation: string | null,
+  directMode = false,
 ): string {
   return buildVoiceReply({
-    summary: lead,
-    details: [...lines.slice(0, 2), recommendation].filter(Boolean),
-    maxDetails: 2,
+    summary: ensureSentence(lead),
+    details: [...lines.slice(0, directMode ? 1 : 2), recommendation]
+      .filter((line): line is string => Boolean(line))
+      .map((line) => humanizeAlexaDetailLine(line)),
+    maxDetails: directMode ? 1 : 2,
   });
 }
 
@@ -694,6 +772,7 @@ function finalizeDraft(
   channel: DailyCompanionChannel,
   now: Date,
   grounded: GroundedDaySnapshot | null,
+  directMode = false,
 ): DailyCompanionResponse {
   const reply =
     channel === 'alexa'
@@ -701,6 +780,7 @@ function finalizeDraft(
           draft.lead,
           draft.detailLines,
           draft.recommendationText,
+          directMode,
         )
       : formatTelegramReply(draft.lead, [
           ...draft.detailLines,
@@ -709,7 +789,13 @@ function finalizeDraft(
             : null,
         ].filter(Boolean) as string[]);
 
-  const shortText = channel === 'alexa' ? reply : draft.lead;
+  const shortText =
+    channel === 'alexa'
+      ? buildVoiceReply({
+          summary: ensureSentence(draft.recommendationText || draft.lead),
+          maxDetails: 0,
+        })
+      : draft.lead;
   const extendedText =
     channel === 'alexa'
       ? formatTelegramReply(draft.lead, [
@@ -1081,6 +1167,30 @@ function buildEveningDraft(params: {
   };
 }
 
+function detectHouseholdAskStyle(
+  normalized: string,
+): 'talk_about' | 'family_forgetting' | 'home_followup' | 'still_open' | 'shared_plans' {
+  if (/^what should i talk to [a-z][a-z' -]+ about\??$/.test(normalized)) {
+    return 'talk_about';
+  }
+  if (/^anything .*family.*forgetting\??$/.test(normalized)) {
+    return 'family_forgetting';
+  }
+  if (
+    /^what do i need to follow up on at home\??$/.test(normalized) ||
+    /^what do i need to follow up on with [a-z][a-z' -]+\??$/.test(normalized)
+  ) {
+    return 'home_followup';
+  }
+  if (
+    /^what('?s| is)? still open with [a-z][a-z' -]+\??$/.test(normalized) ||
+    /^what still open with [a-z][a-z' -]+\??$/.test(normalized)
+  ) {
+    return 'still_open';
+  }
+  return 'shared_plans';
+}
+
 function buildHouseholdDraft(params: {
   snapshot: GroundedDaySnapshot;
   scopedSnapshot: CalendarLookupSnapshot | null;
@@ -1114,21 +1224,53 @@ function buildHouseholdDraft(params: {
     householdThread: relatedThread,
     recommendedThread: relatedThread,
   });
+  const askStyle = detectHouseholdAskStyle(params.rawMessage);
   const threadDetail = summarizeThreadDetail(relatedThread);
-  const personLeadDetail =
-    relatedThread?.summary || threadDetail || relatedThread?.title || null;
+  const humanizedThreadDetail = humanizePersonThreadDetail(
+    threadDetail,
+    personDisplayName,
+  );
+  const personLeadDetail = trimTerminalPunctuation(
+    relatedThread?.summary || humanizedThreadDetail || relatedThread?.title || null,
+  );
   const lead = personName
-    ? personLeadDetail
-      ? `The main thing still open with ${personDisplayName} is ${personLeadDetail}.`
-      : householdLines[0]
-        ? `The main shared thing with ${personDisplayName} is ${householdLines[0]}.`
-        : `I do not see a strong shared signal with ${personDisplayName} right now.`
-    : summarizeThread(relatedThread) ||
-      householdLines[0] ||
-      'I do not see a strong shared-family signal in the calendars I could read right now.';
+    ? askStyle === 'talk_about'
+      ? personLeadDetail
+        ? `A good thing to talk to ${personDisplayName} about is ${personLeadDetail}.`
+        : householdLines[0]
+          ? `A good thing to talk to ${personDisplayName} about is ${householdLines[0]}.`
+          : `I do not see one strong thing to bring up with ${personDisplayName} right now.`
+      : askStyle === 'still_open' || askStyle === 'home_followup'
+        ? personLeadDetail
+          ? `With ${personDisplayName}, the main loose end is ${personLeadDetail}.`
+          : householdLines[0]
+            ? `With ${personDisplayName}, the main thing on deck is ${householdLines[0]}.`
+            : `I do not see a strong shared signal with ${personDisplayName} right now.`
+        : personLeadDetail
+          ? `The main thing still open with ${personDisplayName} is ${personLeadDetail}.`
+          : householdLines[0]
+            ? `The main shared thing with ${personDisplayName} is ${householdLines[0]}.`
+            : `I do not see a strong shared signal with ${personDisplayName} right now.`
+    : askStyle === 'family_forgetting'
+      ? summarizeThread(relatedThread)
+        ? `The main family thing to keep in mind is ${summarizeThread(relatedThread)}.`
+        : householdLines[0]
+          ? `The main family thing to keep in mind is ${householdLines[0]}.`
+          : 'I do not see one strong family loose end right now.'
+      : askStyle === 'home_followup'
+        ? summarizeThread(relatedThread)
+          ? `At home, the main loose end is ${summarizeThread(relatedThread)}.`
+          : householdLines[0]
+            ? `At home, the main thing on deck is ${householdLines[0]}.`
+            : 'I do not see one strong home follow-up right now.'
+        : summarizeThread(relatedThread) ||
+          householdLines[0] ||
+          'I do not see a strong shared-family signal in the calendars I could read right now.';
   const recommendationText = relatedThread
     ? personName
-      ? `Close the loop with ${personDisplayName} about ${relatedThread.summary || threadDetail || relatedThread.title}.`
+      ? personLeadDetail
+        ? `A quick check-in with ${personDisplayName} about ${personLeadDetail} would close that loop.`
+        : `A quick check-in with ${personDisplayName} would close that loop.`
       : `Bring up ${relatedThread.title} before it turns into a last-minute logistics problem.`
     : householdLines[0]
       ? 'Bring that up before it becomes a last-minute logistics problem.'
@@ -1153,7 +1295,7 @@ function buildHouseholdDraft(params: {
     lead: personDisplayName ? lead : `The main family thing coming up is ${lead}.`,
     leadReason: 'household_scope',
     detailLines: [
-      relatedThread ? `Thread: ${summarizeThread(relatedThread)}` : null,
+      personName ? null : relatedThread ? `Thread: ${summarizeThread(relatedThread)}` : null,
       ...householdLines.slice(0, 2).map((line, index) =>
         index === 0 ? `Shared plan: ${line}` : `Also: ${line}`,
       ),
@@ -1213,7 +1355,7 @@ function buildLooseEndsDraft(params: {
   });
 
   let lead =
-    'I am not seeing one specific missed reminder or overdue follow-up right now, so the safest move is to turn anything fuzzy into a reminder.';
+    'Nothing is flashing red right now. If something still feels fuzzy, the safest move is to turn it into a reminder before it disappears again.';
   let leadReason = 'weak_signal';
   if (dueReminder) {
     lead = `The easiest thing to forget right now is ${dueReminder.label}.`;
@@ -1440,14 +1582,14 @@ function buildExplainabilityReply(
   if (channel === 'alexa') {
     const memoryLead =
       context.memoryLines[0] != null
-        ? `I also remembered that ${context.memoryLines[0]}.`
+        ? `I was also keeping in mind that ${context.memoryLines[0]}.`
         : '';
     const threadLead =
       context.usedThreadTitles[0] != null
         ? `I was also leaning on ${context.usedThreadTitles[0]}.`
         : '';
     return buildVoiceReply({
-      summary: `I answered from ${signalText}.`,
+      summary: `I brought that up because I was weighing ${signalText}.`,
       details: [threadLead || memoryLead],
       maxDetails: 1,
     });
@@ -1478,13 +1620,13 @@ function buildMemoryReply(
       : null;
   if (context.memoryLines.length === 0) {
     return channel === 'alexa'
-      ? threadLead || 'I was mostly leaning on current thread context.'
+      ? threadLead || 'I was mostly leaning on the current thread of the conversation.'
       : threadLead || 'I was mostly leaning on current thread context.';
   }
   return channel === 'alexa'
-    ? `The remembered pieces affecting this are ${context.memoryLines
-        .slice(0, 2)
-        .join(', ')}.`
+    ? `What I was keeping in mind is ${context.memoryLines.slice(0, 2).join(
+        ', ',
+      )}.`
     : [
         'Remembered context affecting this:',
         ...context.memoryLines.map((line) => `- ${line}`),
@@ -1607,7 +1749,9 @@ export async function buildDailyCompanionResponse(
       const extra =
         deps.priorContext.extraDetails.length > 0
           ? deps.priorContext.extraDetails
-          : ['Nothing else feels especially pressing beyond the main read.'];
+          : deps.priorContext.recommendationText
+            ? [deps.priorContext.recommendationText]
+            : ['Nothing else feels especially pressing beyond the main read.'];
       const reply =
         deps.channel === 'alexa'
           ? buildVoiceReply({
@@ -1752,7 +1896,13 @@ export async function buildDailyCompanionResponse(
       memoryLines,
       threadSnapshot,
     });
-    const current = finalizeDraft(draft, deps.channel, now, snapshot);
+    const current = finalizeDraft(
+      draft,
+      deps.channel,
+      now,
+      snapshot,
+      prefs.directMode,
+    );
     if (isSameLocalDay(deps.priorContext.generatedAt, now)) {
       return {
         ...current,
@@ -1792,5 +1942,5 @@ export async function buildDailyCompanionResponse(
     return null;
   }
 
-  return finalizeDraft(draft, deps.channel, now, snapshot);
+  return finalizeDraft(draft, deps.channel, now, snapshot, prefs.directMode);
 }

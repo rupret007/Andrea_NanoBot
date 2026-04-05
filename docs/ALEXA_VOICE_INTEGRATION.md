@@ -9,6 +9,7 @@ Andrea now uses an internal **Alexa Companion Mode**:
 - one or two short supporting lines
 - measured guidance for open-ended daily questions
 - short-lived conversational continuity
+- calmer, more natural recovery when phrasing is imperfect
 - thread-aware continuity for active household, relationship, and follow-up topics
 - household-aware follow-ups when context is strong
 - explicit, consent-based personalization only
@@ -238,12 +239,21 @@ That enables bounded follow-ups like:
 - `before that`
 - `remind me before that`
 - `make that shorter`
+- `be a little more direct`
 - `say more`
+- `why`
+- `remember that`
+- `don't bring that up automatically`
 - `what should I do about that`
 - `should I be worried about anything`
 - `save that for later`
 
 If context is weak or expired, Andrea falls back honestly with one short clarification.
+
+For operator-side conversation tuning, use:
+
+- `npm run debug:alexa-conversation` for a near-live multi-turn Alexa walkthrough
+- `npm run debug:daily-companion` for grounded local comparison against real `groupFolder=main` data
 
 ## 6) Daily Guidance And Household Context
 

@@ -9,11 +9,14 @@
             "give me my day",
             "what should I know about today",
             "how does today look",
+            "how's my day looking",
+            "what's my day looking like",
             "what is on my calendar today",
             "what matters today",
             "give me a morning brief",
             "walk me through today",
-            "give me a quick brief for today"
+            "give me a quick brief for today",
+            "what's the shape of today"
           ]
         },
         {
@@ -32,11 +35,15 @@
           "samples": [
             "what should I do next",
             "what is next",
+            "what should I do now",
+            "what do I do next",
             "what should I handle next",
             "what should I do after that",
             "what is next after that",
             "what matters next",
-            "what should I handle now"
+            "what should I handle now",
+            "what should I tackle next",
+            "where should I put my attention next"
           ]
         },
         {
@@ -65,9 +72,12 @@
           "samples": [
             "anything I should know",
             "anything important",
+            "anything I need to know",
             "is there anything important today",
             "should I be worried about anything",
-            "what should I keep in mind"
+            "what should I keep in mind",
+            "what should be on my radar",
+            "anything else I should keep in mind"
           ]
         },
         {
@@ -99,9 +109,12 @@
           "samples": [
             "give me an evening reset",
             "what should I remember tonight",
+            "what do I need to remember tonight",
             "what should I wrap up today",
             "what should I handle before I leave",
-            "what should I tee up for tomorrow"
+            "what should I tee up for tomorrow",
+            "what should I remember before tonight",
+            "what should I wrap before tomorrow"
           ]
         },
         {
@@ -114,9 +127,12 @@
             "what's still open with Candace",
             "what is still open with Candace",
             "what still open with Candace",
+            "anything still open with Candace",
             "what do Candace and I have going on",
             "what should Candace and I know about soon",
-            "what do Candace and I have this weekend"
+            "what do Candace and I have this weekend",
+            "what should I talk to Candace about",
+            "what do I need to follow up on with Candace"
           ]
         },
         {
@@ -124,9 +140,11 @@
           "samples": [
             "what does the family have going on",
             "anything the family needs from me today",
+            "anything for the family I'm forgetting",
             "what do we have this weekend",
             "what should I remember before tonight",
-            "what does our family have coming up"
+            "what does our family have coming up",
+            "what do I need to follow up on at home"
           ]
         },
         {
@@ -136,7 +154,8 @@
             "what else",
             "anything more",
             "what else should I know",
-            "say more"
+            "say more",
+            "go on"
           ]
         },
         {
@@ -153,7 +172,18 @@
             "make that {followupText}",
             "tell me {followupText}",
             "follow up with {followupText}",
-            "say more about {followupText}"
+            "say more about {followupText}",
+            "help me with {followupText}",
+            "can you help with {followupText}",
+            "can you help me think through {followupText}",
+            "what should I do about {followupText}",
+            "what should I remember about {followupText}",
+            "what do I need to know about {followupText}",
+            "tell me about {followupText}",
+            "walk me through {followupText}",
+            "I need help with {followupText}",
+            "can you {followupText}",
+            "could you {followupText}"
           ]
         },
         {
@@ -167,9 +197,13 @@
           "samples": [
             "remember {memoryCommand}",
             "forget {memoryCommand}",
+            "be {memoryCommand}",
+            "keep {memoryCommand} in mind",
+            "stop bringing {memoryCommand} up",
             "what do you remember about {memoryCommand}",
             "why did you say {memoryCommand}",
-            "what are you using to personalize {memoryCommand}"
+            "what are you using to personalize {memoryCommand}",
+            "don't bring up {memoryCommand}"
           ]
         },
         {

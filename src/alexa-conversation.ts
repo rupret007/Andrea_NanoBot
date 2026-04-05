@@ -23,6 +23,10 @@ export interface AlexaConversationSubjectData {
   threadSummaryLines?: string[];
   dailyCompanionContextJson?: string;
   fallbackCount?: number;
+  lastAnswerSummary?: string;
+  lastRecommendation?: string;
+  pendingActionText?: string;
+  conversationFocus?: string;
 }
 
 export interface AlexaConversationState {
@@ -147,7 +151,7 @@ export function resolveAlexaConversationFollowup(
     return {
       ok: false,
       speech:
-        'I am not holding onto enough context for that yet. Please restate what you want.',
+        'I need one quick anchor first. Ask about today, Candace, or what to remember tonight.',
     };
   }
 
@@ -161,16 +165,26 @@ export function resolveAlexaConversationFollowup(
       : {
           ok: false,
           speech:
-            'I do not have a strong enough handle on that part yet. Please say it directly one more time.',
+            state.subjectData.personName
+              ? `I am not quite sure which part you mean. Was that still about ${state.subjectData.personName}, or something else?`
+              : 'I am not quite sure which part you mean yet. Please say it a little more directly.',
         };
 
   if (/^(anything else|anything more|what else)\b/i.test(normalized)) {
     return resolveSupported('anything_else');
   }
-  if (/^(make that shorter|shorter|say that shorter)\b/i.test(normalized)) {
+  if (
+    /^(make that shorter|shorter|say that shorter|keep it shorter|make it tighter)\b/i.test(
+      normalized,
+    )
+  ) {
     return resolveSupported('shorter');
   }
-  if (/^(say more|tell me more|give me a little more detail)\b/i.test(normalized)) {
+  if (
+    /^(say more|tell me more|give me a little more detail|go a little deeper|give me more detail)\b/i.test(
+      normalized,
+    )
+  ) {
     return resolveSupported('say_more');
   }
   if (
@@ -190,10 +204,18 @@ export function resolveAlexaConversationFollowup(
   if (/^(remind me before that)\b/i.test(normalized)) {
     return resolveSupported('remind_before_that');
   }
-  if (/^(save that for later|save that|help me remember that tonight)\b/i.test(normalized)) {
+  if (
+    /^(save that for later|save that|help me remember that tonight|remember that|remember this)\b/i.test(
+      normalized,
+    )
+  ) {
     return resolveSupported('save_that');
   }
-  if (/^(what should i do about that|what should i handle about that)\b/i.test(normalized)) {
+  if (
+    /^(what should i do about that|what should i handle about that|what do i do about that|what should i do with that)\b/i.test(
+      normalized,
+    )
+  ) {
     return resolveSupported('action_guidance');
   }
   if (/^(should i be worried about anything|is there anything i should worry about)\b/i.test(normalized)) {
@@ -214,7 +236,7 @@ export function resolveAlexaConversationFollowup(
     return resolveSupported('switch_person');
   }
   if (
-    /^(remember this|remember that|forget that|stop using that|what do you remember\b|why did you say that|what are you using to personalize this|reset that preference)/i.test(
+    /^(forget that|stop using that|what do you remember\b|why\b|why did you say that|what are you using to personalize this|reset that preference|be more direct|be a little more direct|be a bit more direct|don'?t bring that up automatically|stop bringing that up)/i.test(
       normalized,
     )
   ) {
@@ -224,6 +246,8 @@ export function resolveAlexaConversationFollowup(
   return {
     ok: false,
     speech:
-      'I am not confident about that follow-up yet. Please say it a little more directly.',
+      state.subjectData.personName
+        ? `I am not quite sure which part you mean. You can ask what is still open with ${state.subjectData.personName}, say say more, or ask it a different way.`
+        : 'I did not quite get that follow-up. You can say anything else, say more, or ask it a different way.',
   };
 }
