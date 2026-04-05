@@ -98,10 +98,14 @@ import {
   type CalendarSchedulingContext,
 } from './calendar-assistant.js';
 import {
-  buildDailyCommandCenterResponse,
-  planDailyCommandCenterIntent,
   type SelectedWorkContext,
 } from './daily-command-center.js';
+import {
+  buildDailyCompanionResponse,
+  isPotentialDailyCompanionPrompt,
+  type DailyCompanionContext,
+  type DailyCompanionMode,
+} from './daily-companion.js';
 import {
   clearAssistantHealthState,
   clearAssistantReadyState,
@@ -476,6 +480,8 @@ const GOOGLE_CALENDAR_PENDING_AUTOMATION_PREFIX =
 const ACTION_LAYER_CONTEXT_PREFIX = 'action_layer_context:';
 const ACTION_LAYER_PENDING_REMINDER_PREFIX = 'action_layer_pending_reminder:';
 const ACTION_LAYER_PENDING_DRAFT_PREFIX = 'action_layer_pending_draft:';
+const DAILY_COMPANION_CONTEXT_PREFIX = 'daily_companion_context:';
+const DAILY_COMPANION_CONTEXT_TTL_MS = 10 * 60 * 1000;
 
 function getGoogleCalendarPendingStateKey(chatJid: string): string {
   return `${GOOGLE_CALENDAR_PENDING_STATE_PREFIX}${chatJid}`;
@@ -511,6 +517,10 @@ function getActionLayerPendingReminderKey(chatJid: string): string {
 
 function getActionLayerPendingDraftKey(chatJid: string): string {
   return `${ACTION_LAYER_PENDING_DRAFT_PREFIX}${chatJid}`;
+}
+
+function getDailyCompanionContextKey(chatJid: string): string {
+  return `${DAILY_COMPANION_CONTEXT_PREFIX}${chatJid}`;
 }
 
 const ACTIVE_REPO_ROOT = process.cwd();
@@ -902,6 +912,47 @@ function clearPendingActionDraftState(chatJid: string): void {
   deleteRouterState(getActionLayerPendingDraftKey(chatJid));
 }
 
+function getDailyCompanionContext(
+  chatJid: string,
+  now = new Date(),
+): DailyCompanionContext | null {
+  const raw = getRouterState(getDailyCompanionContextKey(chatJid));
+  if (!raw) return null;
+
+  try {
+    const parsed = JSON.parse(raw) as DailyCompanionContext;
+    if (!parsed || parsed.version !== 1 || !parsed.generatedAt) {
+      clearDailyCompanionContext(chatJid);
+      return null;
+    }
+
+    const generatedAtMs = Date.parse(parsed.generatedAt);
+    if (
+      !Number.isFinite(generatedAtMs) ||
+      generatedAtMs + DAILY_COMPANION_CONTEXT_TTL_MS < now.getTime()
+    ) {
+      clearDailyCompanionContext(chatJid);
+      return null;
+    }
+
+    return parsed;
+  } catch {
+    clearDailyCompanionContext(chatJid);
+    return null;
+  }
+}
+
+function setDailyCompanionContext(
+  chatJid: string,
+  context: DailyCompanionContext,
+): void {
+  setRouterState(getDailyCompanionContextKey(chatJid), JSON.stringify(context));
+}
+
+function clearDailyCompanionContext(chatJid: string): void {
+  deleteRouterState(getDailyCompanionContextKey(chatJid));
+}
+
 function formatCreatedGoogleCalendarEventReply(input: {
   title: string;
   startIso: string;
@@ -1028,6 +1079,21 @@ function formatCalendarPanelText(title: string, body: string): string {
     title,
     sections: [stripLeadingMarkdownTitle(body)],
   });
+}
+
+function formatDailyCompanionPanelTitle(mode: DailyCompanionMode): string {
+  switch (mode) {
+    case 'morning_brief':
+      return '*Morning Brief*';
+    case 'midday_reground':
+      return '*Right Now*';
+    case 'evening_reset':
+      return '*Evening Reset*';
+    case 'household_guidance':
+      return '*Household*';
+    default:
+      return '*Daily Companion*';
+  }
 }
 
 function buildCalendarLookupInlineActionRows(
@@ -3579,7 +3645,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       const shouldInterruptPendingActionFlow = Boolean(
         !freshIntent &&
         (lastContent.trim().startsWith('/') ||
-          planDailyCommandCenterIntent(lastContent, now) ||
+          isPotentialDailyCompanionPrompt(lastContent) ||
           planCalendarAssistantLookup(lastContent, now, TIMEZONE) ||
           planSimpleReminder(lastContent, group.folder, chatJid, now)),
       );
@@ -3840,40 +3906,49 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       return false;
     }
   };
-  const tryHandleLocalDailyCommandCenter = async (
+  const tryHandleLocalDailyCompanion = async (
     fastPathKind: 'direct' | 'protected',
   ): Promise<boolean> => {
     const selectedWork = await getSelectedDailyWorkContext(
       chatJid,
       missedMessages.at(-1)?.thread_id,
     );
-    const dailyResponse = await buildDailyCommandCenterResponse(lastContent, {
+    const dailyResponse = await buildDailyCompanionResponse(lastContent, {
+      channel: 'telegram',
       now,
       timeZone: TIMEZONE,
+      groupFolder: group.folder,
       activeEventContext: getCurrentActiveGoogleCalendarActionContext(),
       selectedWork,
-      tasks: getAllTasks().filter((task) => task.chat_jid === chatJid),
+      tasks: getAllTasks().filter((task) => task.group_folder === group.folder),
+      priorContext: getDailyCompanionContext(chatJid, now),
     });
     if (!dailyResponse) {
       return false;
     }
 
     try {
-      const actionContext = buildActionLayerContextFromDailyCommandCenter({
-        grounded: dailyResponse.grounded,
-      });
+      const actionContext = dailyResponse.grounded
+        ? buildActionLayerContextFromDailyCommandCenter({
+            grounded: dailyResponse.grounded,
+          })
+        : null;
+      await channel.sendMessage(
+        chatJid,
+        formatCalendarPanelText(
+          formatDailyCompanionPanelTitle(dailyResponse.mode),
+          dailyResponse.reply,
+        ),
+        {
+          inlineActionRows: buildCalendarLookupInlineActionRows(lastContent),
+        },
+      );
       if (actionContext) {
         setActionLayerContext(chatJid, actionContext);
       } else {
         clearActionLayerContext(chatJid);
       }
-      await channel.sendMessage(
-        chatJid,
-        formatCalendarPanelText('*Today*', dailyResponse.reply),
-        {
-          inlineActionRows: buildCalendarLookupInlineActionRows(lastContent),
-        },
-      );
+      setDailyCompanionContext(chatJid, dailyResponse.context);
       logger.info(
         {
           component: 'assistant',
@@ -3881,9 +3956,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           groupFolder: group.folder,
           group: group.name,
           requestRoute: requestPolicy.route,
-          dailyCommandCenterFastPath: fastPathKind,
+          dailyCompanionFastPath: fastPathKind,
+          dailyCompanionMode: dailyResponse.mode,
         },
-        'Handled daily command center via local fast path',
+        'Handled daily companion via local fast path',
       );
       return true;
     } catch (err) {
@@ -3891,7 +3967,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       saveState();
       logger.warn(
         { group: group.name, err, requestRoute: requestPolicy.route },
-        'Local daily command center path failed, rolled back cursor for retry',
+        'Local daily companion path failed, rolled back cursor for retry',
       );
       return false;
     }
@@ -4048,7 +4124,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       return true;
     }
 
-    if (await tryHandleLocalDailyCommandCenter('direct')) {
+    if (await tryHandleLocalDailyCompanion('direct')) {
       return true;
     }
 
@@ -4094,7 +4170,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       }
     }
 
-    if (await tryHandleLocalDailyCommandCenter('protected')) {
+    if (await tryHandleLocalDailyCompanion('protected')) {
       return true;
     }
 

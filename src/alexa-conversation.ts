@@ -18,6 +18,7 @@ export interface AlexaConversationSubjectData {
   meetingReference?: string;
   profileFactId?: string;
   savedText?: string;
+  dailyCompanionContextJson?: string;
 }
 
 export interface AlexaConversationState {
@@ -41,6 +42,7 @@ export interface AlexaConversationState {
     hasActionItem?: boolean;
     hasRiskSignal?: boolean;
     reminderCandidate?: boolean;
+    responseSource?: 'assistant_bridge' | 'local_companion';
   };
 }
 

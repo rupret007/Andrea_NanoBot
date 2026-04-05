@@ -27,6 +27,8 @@ import {
   writeTasksSnapshot,
 } from './container-runner.js';
 import {
+  deleteAgentThread,
+  deleteSession,
   getAllChats,
   getAllAgentThreads,
   getAllRegisteredGroups,
@@ -122,9 +124,11 @@ type RuntimeDeps = {
   setRegisteredGroup: typeof setRegisteredGroup;
   getSession: typeof getSession;
   setSession: typeof setSession;
+  deleteSession?: typeof deleteSession;
   getAgentThread?: typeof getAgentThread;
   getAllAgentThreads?: typeof getAllAgentThreads;
   setAgentThread?: typeof setAgentThread;
+  deleteAgentThread?: typeof deleteAgentThread;
   storeChatMetadata: typeof storeChatMetadata;
   storeMessage: typeof storeMessage;
   runContainerAgent: typeof runContainerAgent;
@@ -142,9 +146,11 @@ const runtimeDeps: RuntimeDeps = {
   setRegisteredGroup,
   getSession,
   setSession,
+  deleteSession,
   getAgentThread,
   getAllAgentThreads,
   setAgentThread,
+  deleteAgentThread,
   storeChatMetadata,
   storeMessage,
   runContainerAgent,
@@ -404,6 +410,16 @@ function requestAlexaContainerClose(groupFolder: string): void {
   }
 }
 
+function isDeadAlexaConversationError(value: unknown): boolean {
+  const text =
+    typeof value === 'string'
+      ? value
+      : value && typeof value === 'object' && 'message' in value
+        ? String((value as { message?: unknown }).message || '')
+        : '';
+  return /no conversation found with session id/i.test(text);
+}
+
 function writeSnapshotsForGroup(
   deps: RuntimeDeps,
   group: RegisteredGroup,
@@ -485,7 +501,7 @@ export async function runAlexaAssistantTurn(
     : undefined;
   const runtimeRoute = classifyRuntimeRoute(requestPolicy, request.utterance);
   const preferredRuntime = selectPreferredRuntime(existingThread, runtimeRoute);
-  const sessionId = shouldReuseExistingThread(existingThread, preferredRuntime)
+  let sessionId = shouldReuseExistingThread(existingThread, preferredRuntime)
     ? existingThread.thread_id
     : deps.getSession(target.group.folder);
   const outputs: string[] = [];
@@ -504,8 +520,15 @@ export async function runAlexaAssistantTurn(
     });
   };
 
-  try {
-    const output = await deps.runContainerAgent(
+  const clearPersistedConversation = () => {
+    deps.deleteSession?.(target.group.folder);
+    deps.deleteAgentThread?.(target.group.folder);
+    sessionId = undefined;
+    outputs.length = 0;
+  };
+
+  const runAssistantOnce = async () =>
+    deps.runContainerAgent(
       target.group,
       {
         prompt: buildAssistantPromptWithPersonalization(
@@ -539,8 +562,6 @@ export async function runAlexaAssistantTurn(
           persistThread(partial.runtime, partial.newSessionId);
         }
         if (partial.status === 'success') {
-          // Retries can consume an earlier _close sentinel before the final
-          // successful query finishes, so keep rewriting it for each success.
           requestAlexaContainerClose(target.group.folder);
         }
         const text =
@@ -550,6 +571,25 @@ export async function runAlexaAssistantTurn(
         if (text) outputs.push(text);
       },
     );
+
+  try {
+    let output = await runAssistantOnce();
+
+    if (
+      output.status === 'error' &&
+      isDeadAlexaConversationError(output.error || output.result)
+    ) {
+      logger.warn(
+        {
+          chatJid: target.chatJid,
+          groupFolder: target.group.folder,
+          sessionId,
+        },
+        'Alexa bridge detected stale session, clearing stored state and retrying once',
+      );
+      clearPersistedConversation();
+      output = await runAssistantOnce();
+    }
 
     if (output.newSessionId) {
       persistThread(output.runtime, output.newSessionId);
@@ -600,6 +640,59 @@ export async function runAlexaAssistantTurn(
     };
     // eslint-disable-next-line no-catch-all/no-catch-all
   } catch (err) {
+    if (isDeadAlexaConversationError(err)) {
+      logger.warn(
+        {
+          err,
+          chatJid: target.chatJid,
+          groupFolder: target.group.folder,
+          sessionId,
+        },
+        'Alexa bridge saw dead session error, clearing stored state and retrying once',
+      );
+      clearPersistedConversation();
+      try {
+        const retryOutput = await runAssistantOnce();
+        if (retryOutput.newSessionId) {
+          persistThread(retryOutput.runtime, retryOutput.newSessionId);
+        }
+        if (retryOutput.status !== 'error') {
+          let text = outputs.join('\n\n').trim();
+          if (!text && typeof retryOutput.result === 'string') {
+            text = formatOutbound(retryOutput.result);
+          }
+          if (!text) {
+            text = `${assistantName} is here, but I did not get a finished answer back yet. Please ask again.`;
+          }
+          deps.storeMessage(
+            buildAssistantMessage(target.chatJid, assistantName, text),
+          );
+          logger.info(
+            {
+              chatJid: target.chatJid,
+              groupFolder: target.group.folder,
+              route: requestPolicy.route,
+            },
+            'Alexa turn completed after stale-session retry',
+          );
+          return {
+            text,
+            route: requestPolicy.route,
+            chatJid: target.chatJid,
+            groupFolder: target.group.folder,
+          };
+        }
+      } catch (retryErr) {
+        logger.error(
+          {
+            err: retryErr,
+            chatJid: target.chatJid,
+            groupFolder: target.group.folder,
+          },
+          'Alexa bridge stale-session retry failed',
+        );
+      }
+    }
     logger.error(
       {
         err,

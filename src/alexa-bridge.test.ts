@@ -75,6 +75,11 @@ function buildDeps() {
     setRegisteredGroup: vi.fn(),
     getSession: vi.fn(() => 'session-1'),
     setSession: vi.fn(),
+    deleteSession: vi.fn(),
+    getAgentThread: vi.fn(() => undefined),
+    getAllAgentThreads: vi.fn(() => ({})),
+    setAgentThread: vi.fn(),
+    deleteAgentThread: vi.fn(),
     storeChatMetadata: vi.fn(),
     storeMessage: vi.fn(),
     runContainerAgent: vi.fn(),
@@ -226,5 +231,36 @@ describe('runAlexaAssistantTurn', () => {
       'external integration credentials were rejected',
     );
     expect(result.text).not.toContain('sk-secret');
+  });
+
+  it('clears stale Alexa session state and retries once when the thread is gone', async () => {
+    const deps = buildDeps();
+    deps.runContainerAgent
+      .mockResolvedValueOnce({
+        status: 'error',
+        error: 'No conversation found with session ID dead-session',
+      })
+      .mockResolvedValueOnce({
+        status: 'success',
+        result: 'Fresh answer after resetting the stale session.',
+        newSessionId: 'session-2',
+      });
+
+    const result = await runAlexaAssistantTurn(
+      {
+        utterance: 'what is my day',
+        principal,
+      },
+      {
+        assistantName: 'Andrea',
+      },
+      deps,
+    );
+
+    expect(deps.deleteSession).toHaveBeenCalledWith('main');
+    expect(deps.deleteAgentThread).toHaveBeenCalledWith('main');
+    expect(deps.runContainerAgent).toHaveBeenCalledTimes(2);
+    expect(deps.setSession).toHaveBeenCalledWith('main', 'session-2');
+    expect(result.text).toContain('Fresh answer after resetting the stale session.');
   });
 });

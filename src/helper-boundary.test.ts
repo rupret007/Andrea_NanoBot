@@ -93,7 +93,7 @@ describe('helper boundary wiring', () => {
       'const shouldInterruptPendingActionFlow = Boolean(',
     );
     expect(source).toContain("lastContent.trim().startsWith('/')");
-    expect(source).toContain('planDailyCommandCenterIntent(lastContent, now)');
+    expect(source).toContain('isPotentialDailyCompanionPrompt(lastContent)');
     expect(source).toContain(
       'planCalendarAssistantLookup(lastContent, now, TIMEZONE)',
     );

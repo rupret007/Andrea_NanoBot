@@ -1271,6 +1271,11 @@ export function setSession(groupFolder: string, sessionId: string): void {
   ).run(groupFolder, sessionId);
 }
 
+export function deleteSession(groupFolder: string): void {
+  assertValidGroupFolder(groupFolder);
+  db.prepare('DELETE FROM sessions WHERE group_folder = ?').run(groupFolder);
+}
+
 export function getAllSessions(): Record<string, string> {
   const rows = db
     .prepare('SELECT group_folder, session_id FROM sessions')
@@ -1331,6 +1336,11 @@ export function setAgentThread(thread: AgentThreadState): void {
     thread.updated_at,
   );
   setSession(thread.group_folder, thread.thread_id);
+}
+
+export function deleteAgentThread(groupFolder: string): void {
+  assertValidGroupFolder(groupFolder);
+  db.prepare('DELETE FROM agent_threads WHERE group_folder = ?').run(groupFolder);
 }
 
 export function getAllAgentThreads(): Record<string, AgentThreadState> {

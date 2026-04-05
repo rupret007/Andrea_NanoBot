@@ -80,6 +80,11 @@ import {
   isAlexaPersonalIntent,
 } from './alexa-v1.js';
 import { ASSISTANT_NAME } from './config.js';
+import {
+  buildDailyCompanionResponse,
+  type DailyCompanionContext,
+} from './daily-companion.js';
+import { getAllTasks } from './db.js';
 import { readEnvFile } from './env.js';
 import { assertValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
@@ -594,6 +599,7 @@ function buildAlexaCompanionConversationState(params: {
   hasRiskSignal?: boolean;
   reminderCandidate?: boolean;
   responseStyle?: AlexaConversationState['styleHints']['responseStyle'];
+  responseSource?: AlexaConversationState['styleHints']['responseSource'];
 }): AlexaConversationState {
   return buildAlexaConversationState(
     params.flowKey,
@@ -610,8 +616,58 @@ function buildAlexaCompanionConversationState(params: {
       hasRiskSignal: params.hasRiskSignal,
       reminderCandidate: params.reminderCandidate,
       responseStyle: params.responseStyle,
+      responseSource: params.responseSource,
     },
   );
+}
+
+function parseDailyCompanionContext(
+  state: AlexaConversationState | undefined,
+): DailyCompanionContext | undefined {
+  const raw = state?.subjectData.dailyCompanionContextJson?.trim();
+  if (!raw) return undefined;
+  try {
+    const parsed = JSON.parse(raw) as DailyCompanionContext;
+    if (parsed && parsed.version === 1) {
+      return parsed;
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+function buildAlexaStateFromDailyCompanion(
+  baseState: AlexaConversationState,
+  response: Awaited<ReturnType<typeof buildDailyCompanionResponse>>,
+): AlexaConversationState {
+  const context = response?.context;
+  if (!context) {
+    return {
+      ...baseState,
+      styleHints: {
+        ...baseState.styleHints,
+        responseSource: 'local_companion',
+      },
+    };
+  }
+  return {
+    ...baseState,
+    subjectKind: context.subjectKind,
+    subjectData: {
+      ...baseState.subjectData,
+      ...context.subjectData,
+      dailyCompanionContextJson: JSON.stringify(context),
+    },
+    summaryText: context.summaryText,
+    supportedFollowups: context.supportedFollowups,
+    styleHints: {
+      ...baseState.styleHints,
+      channelMode: 'alexa_companion',
+      initiativeLevel: 'measured',
+      responseSource: 'local_companion',
+    },
+  };
 }
 
 function extractFollowupPersonName(text: string): string | undefined {
@@ -787,27 +843,70 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
     return { ok: true as const, linked };
   };
 
-  const runCompanionIntent = (
+  const respondWithLocalCompanion = (
     handlerInput: HandlerInput,
-    principal: AlexaPrincipal,
     linked: Extract<ReturnType<typeof resolveAlexaLinkedAccount>, { ok: true }>,
-    intentName: string,
     conversationState: AlexaConversationState,
-    options: Parameters<typeof buildAlexaPersonalPrompt>[1] = {},
-    proactiveSignalText?: string,
+    response: NonNullable<Awaited<ReturnType<typeof buildDailyCompanionResponse>>>,
+  ) => {
+    const nextState = buildAlexaStateFromDailyCompanion(
+      conversationState,
+      response,
+    );
+    saveAlexaConversationState(
+      linked.principalKey,
+      linked.account.accessTokenHash,
+      linked.account.groupFolder,
+      nextState,
+    );
+    logger.info(
+      {
+        groupFolder: linked.account.groupFolder,
+        mode: response.mode,
+        responseSource: 'local_companion',
+      },
+      'Alexa daily companion answered locally',
+    );
+    return handlerInput.responseBuilder
+      .speak(response.reply)
+      .reprompt(DEFAULT_ALEXA_REPROMPT)
+      .getResponse();
+  };
+
+  const runLocalCompanionIntent = async (
+    handlerInput: HandlerInput,
+    linked: Extract<ReturnType<typeof resolveAlexaLinkedAccount>, { ok: true }>,
+    utterance: string,
+    conversationState: AlexaConversationState,
+    priorContext?: DailyCompanionContext,
   ) => {
     clearAlexaPendingSession(linked.principalKey);
-    return runLinkedAlexaTurn(
+    const response = await buildDailyCompanionResponse(utterance, {
+      channel: 'alexa',
+      groupFolder: linked.account.groupFolder,
+      tasks: getAllTasks().filter(
+        (task) => task.group_folder === linked.account.groupFolder,
+      ),
+      priorContext: priorContext || null,
+    });
+    if (!response) {
+      logger.warn(
+        { groupFolder: linked.account.groupFolder, utterance },
+        'Alexa local companion could not classify request',
+      );
+      return handlerInput.responseBuilder
+        .speak(
+          `${assistantName} could not ground that daily read cleanly yet. Please ask it a different way.`,
+        )
+        .reprompt(DEFAULT_ALEXA_REPROMPT)
+        .getResponse();
+    }
+
+    return respondWithLocalCompanion(
       handlerInput,
-      config,
-      assistantName,
-      principal,
       linked,
-      buildAlexaPersonalPrompt(intentName, options),
-      {
-        conversationState,
-        proactiveSignalText,
-      },
+      conversationState,
+      response,
     );
   };
 
@@ -875,6 +974,7 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
         linked.principalKey,
         linked.account.accessTokenHash,
       );
+      const priorCompanionContext = parseDailyCompanionContext(conversationState);
 
       if (
         pending &&
@@ -891,11 +991,10 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
       }
 
       if (intentName === ALEXA_MY_DAY_INTENT) {
-        return runCompanionIntent(
+        return runLocalCompanionIntent(
           handlerInput,
-          authorization.principal,
           linked,
-          ALEXA_MY_DAY_INTENT,
+          'what should I know about today',
           buildAlexaCompanionConversationState({
             flowKey: 'my_day',
             subjectKind: 'day_brief',
@@ -904,18 +1003,16 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
             prioritizationLens: 'calendar',
             hasActionItem: true,
             reminderCandidate: true,
+            responseSource: 'local_companion',
           }),
-          {},
-          'what should I know about today',
         );
       }
 
       if (intentName === ALEXA_UPCOMING_SOON_INTENT) {
-        return runCompanionIntent(
+        return runLocalCompanionIntent(
           handlerInput,
-          authorization.principal,
           linked,
-          ALEXA_UPCOMING_SOON_INTENT,
+          'what do I have coming up soon',
           buildAlexaCompanionConversationState({
             flowKey: 'upcoming_soon',
             subjectKind: 'event',
@@ -924,18 +1021,16 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
             prioritizationLens: 'calendar',
             hasActionItem: true,
             reminderCandidate: true,
+            responseSource: 'local_companion',
           }),
-          {},
-          'what do I have coming up soon',
         );
       }
 
       if (intentName === ALEXA_WHAT_NEXT_INTENT) {
-        return runCompanionIntent(
+        return runLocalCompanionIntent(
           handlerInput,
-          authorization.principal,
           linked,
-          ALEXA_WHAT_NEXT_INTENT,
+          'what should I do next',
           buildAlexaCompanionConversationState({
             flowKey: 'what_next',
             subjectKind: 'event',
@@ -944,18 +1039,16 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
             prioritizationLens: 'general',
             hasActionItem: true,
             reminderCandidate: true,
+            responseSource: 'local_companion',
           }),
-          {},
-          'what should I do next',
         );
       }
 
       if (intentName === ALEXA_BEFORE_NEXT_MEETING_INTENT) {
-        return runCompanionIntent(
+        return runLocalCompanionIntent(
           handlerInput,
-          authorization.principal,
           linked,
-          ALEXA_BEFORE_NEXT_MEETING_INTENT,
+          'what should I handle before my next meeting',
           buildAlexaCompanionConversationState({
             flowKey: 'before_next_meeting',
             subjectKind: 'meeting',
@@ -965,18 +1058,16 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
             hasActionItem: true,
             hasRiskSignal: true,
             reminderCandidate: true,
+            responseSource: 'local_companion',
           }),
-          {},
-          'what should I handle before my next meeting',
         );
       }
 
       if (intentName === ALEXA_TOMORROW_CALENDAR_INTENT) {
-        return runCompanionIntent(
+        return runLocalCompanionIntent(
           handlerInput,
-          authorization.principal,
           linked,
-          ALEXA_TOMORROW_CALENDAR_INTENT,
+          'what is on my calendar tomorrow',
           buildAlexaCompanionConversationState({
             flowKey: 'tomorrow_calendar',
             subjectKind: 'day_brief',
@@ -985,18 +1076,16 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
             prioritizationLens: 'calendar',
             hasActionItem: true,
             reminderCandidate: true,
+            responseSource: 'local_companion',
           }),
-          {},
-          'what is on my calendar tomorrow',
         );
       }
 
       if (intentName === ALEXA_CANDACE_UPCOMING_INTENT) {
-        return runCompanionIntent(
+        return runLocalCompanionIntent(
           handlerInput,
-          authorization.principal,
           linked,
-          ALEXA_CANDACE_UPCOMING_INTENT,
+          'what do Candace and I have coming up',
           buildAlexaCompanionConversationState({
             flowKey: 'candace_upcoming',
             subjectKind: 'person',
@@ -1005,18 +1094,16 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
             subjectData: { personName: 'Candace', activePeople: ['Candace'] },
             prioritizationLens: 'family',
             hasActionItem: true,
+            responseSource: 'local_companion',
           }),
-          {},
-          'what do Candace and I have coming up',
         );
       }
 
       if (intentName === ALEXA_FAMILY_UPCOMING_INTENT) {
-        return runCompanionIntent(
+        return runLocalCompanionIntent(
           handlerInput,
-          authorization.principal,
           linked,
-          ALEXA_FAMILY_UPCOMING_INTENT,
+          'what does the family have going on',
           buildAlexaCompanionConversationState({
             flowKey: 'family_upcoming',
             subjectKind: 'household',
@@ -1029,18 +1116,16 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
             prioritizationLens: 'family',
             hasActionItem: true,
             reminderCandidate: true,
+            responseSource: 'local_companion',
           }),
-          {},
-          'what does the family have going on',
         );
       }
 
       if (intentName === ALEXA_WHAT_MATTERS_MOST_TODAY_INTENT) {
-        return runCompanionIntent(
+        return runLocalCompanionIntent(
           handlerInput,
-          authorization.principal,
           linked,
-          ALEXA_WHAT_MATTERS_MOST_TODAY_INTENT,
+          'what matters most today',
           buildAlexaCompanionConversationState({
             flowKey: 'what_matters_most_today',
             subjectKind: 'day_brief',
@@ -1049,18 +1134,16 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
             prioritizationLens: 'calendar',
             hasActionItem: true,
             hasRiskSignal: true,
+            responseSource: 'local_companion',
           }),
-          {},
-          'what matters most today',
         );
       }
 
       if (intentName === ALEXA_ANYTHING_IMPORTANT_INTENT) {
-        return runCompanionIntent(
+        return runLocalCompanionIntent(
           handlerInput,
-          authorization.principal,
           linked,
-          ALEXA_ANYTHING_IMPORTANT_INTENT,
+          'anything I should know',
           buildAlexaCompanionConversationState({
             flowKey: 'anything_important',
             subjectKind: 'day_brief',
@@ -1069,18 +1152,16 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
             prioritizationLens: 'general',
             hasRiskSignal: true,
             hasActionItem: true,
+            responseSource: 'local_companion',
           }),
-          {},
-          'anything I should know',
         );
       }
 
       if (intentName === ALEXA_WHAT_AM_I_FORGETTING_INTENT) {
-        return runCompanionIntent(
+        return runLocalCompanionIntent(
           handlerInput,
-          authorization.principal,
           linked,
-          ALEXA_WHAT_AM_I_FORGETTING_INTENT,
+          'what am I forgetting',
           buildAlexaCompanionConversationState({
             flowKey: 'what_am_i_forgetting',
             subjectKind: 'day_brief',
@@ -1090,18 +1171,16 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
             hasActionItem: true,
             hasRiskSignal: true,
             reminderCandidate: true,
+            responseSource: 'local_companion',
           }),
-          {},
-          'what am I forgetting',
         );
       }
 
       if (intentName === ALEXA_EVENING_RESET_INTENT) {
-        return runCompanionIntent(
+        return runLocalCompanionIntent(
           handlerInput,
-          authorization.principal,
           linked,
-          ALEXA_EVENING_RESET_INTENT,
+          'give me an evening reset',
           buildAlexaCompanionConversationState({
             flowKey: 'evening_reset',
             subjectKind: 'day_brief',
@@ -1110,9 +1189,8 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
             prioritizationLens: 'evening',
             hasActionItem: true,
             reminderCandidate: true,
+            responseSource: 'local_companion',
           }),
-          {},
-          'give me an evening reset',
         );
       }
 
@@ -1124,6 +1202,16 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
             )
             .reprompt(DEFAULT_ALEXA_REPROMPT)
             .getResponse();
+        }
+
+        if (priorCompanionContext) {
+          return runLocalCompanionIntent(
+            handlerInput,
+            linked,
+            'anything else',
+            conversationState,
+            priorCompanionContext,
+          );
         }
 
         const resolution = resolveAlexaConversationFollowup(
@@ -1170,6 +1258,31 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
             .reprompt('Say the follow-up in a few words.')
             .addElicitSlotDirective('followupText', requestIntent)
             .getResponse();
+        }
+
+        if (priorCompanionContext) {
+          const localResponse = await buildDailyCompanionResponse(followupText, {
+            channel: 'alexa',
+            groupFolder: linked.account.groupFolder,
+            tasks: getAllTasks().filter(
+              (task) => task.group_folder === linked.account.groupFolder,
+            ),
+            priorContext: priorCompanionContext,
+          });
+          if (localResponse) {
+            return respondWithLocalCompanion(
+              handlerInput,
+              linked,
+              conversationState || buildAlexaCompanionConversationState({
+                flowKey: 'daily_companion_followup',
+                subjectKind: 'day_brief',
+                summaryText: localResponse.context.summaryText,
+                guidanceGoal: 'daily_brief',
+                responseSource: 'local_companion',
+              }),
+              localResponse,
+            );
+          }
         }
 
         const resolution = resolveAlexaConversationFollowup(
