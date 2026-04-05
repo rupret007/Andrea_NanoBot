@@ -45,9 +45,44 @@ Use these meanings consistently when reading `/cursor_status` and the setup docs
 - Anthropic-compatible model routing with OpenAI-key-backed gateway support.
 - Optional operator-enabled integrations such as Amazon Business shopping and Alexa voice.
 - A secondary integrated `andrea_runtime` lane for Codex/OpenAI execution truth, with a `Codex/OpenAI` view inside `/cursor`, a shared current-work model, and `/runtime-*` as the explicit fallback shell.
+- A bounded life-thread layer for ongoing people, household, and follow-up continuity across Telegram and Alexa.
 
 For demo use, keep the default public surface smaller than the full operator feature set.
 The safest baseline is Telegram + direct assistance + fast quick replies for simple asks + reminders/tasks + `/cursor_status` + clean startup/health checks.
+
+## Life Threads And Daily Continuity
+
+Andrea now has a compact **life thread** layer above reminders, calendar, current work, and accepted memory facts.
+
+Use it for active ongoing matters such as:
+
+- Candace or relationship follow-up
+- family or household logistics
+- band or community planning
+- work carryover that is not the same thing as `Current Work`
+
+Mental model:
+
+- memory facts describe stable facts or preferences
+- threads track open ongoing matters
+- reminders are specific future nudges
+- current work is the immediate execution focus
+- the daily companion synthesizes all of them
+
+Practical user prompts:
+
+- `What threads do I have open?`
+- `Save this under the family thread`
+- `What am I forgetting?`
+- `What's still open with Candace?`
+- `Don't bring this up automatically`
+
+Important limits:
+
+- no proactive nagging in this pass
+- explicit save/track phrasing creates or updates threads directly
+- inferred thread suggestions stay confirmation-first
+- sensitive topics are not silently persisted just because they were mentioned once
 
 ## 1) Quick Start (Recommended Path)
 

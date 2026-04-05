@@ -17,6 +17,8 @@ import {
   AlexaOAuthRefreshTokenRecord,
   AlexaPendingSession,
   AgentThreadState,
+  LifeThread,
+  LifeThreadSignal,
   NewMessage,
   ProfileFact,
   ProfileFactWithSubject,
@@ -284,6 +286,51 @@ function createSchema(database: Database.Database): void {
       ON profile_facts(group_folder, subject_id, category, fact_key);
     CREATE INDEX IF NOT EXISTS idx_profile_facts_group
       ON profile_facts(group_folder, state, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS life_threads (
+      id TEXT PRIMARY KEY,
+      group_folder TEXT NOT NULL,
+      title TEXT NOT NULL,
+      category TEXT NOT NULL,
+      status TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      related_subject_ids_json TEXT NOT NULL,
+      context_tags_json TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      next_action TEXT,
+      next_followup_at TEXT,
+      source_kind TEXT NOT NULL,
+      confidence_kind TEXT NOT NULL,
+      user_confirmed INTEGER NOT NULL DEFAULT 0,
+      sensitivity TEXT NOT NULL DEFAULT 'normal',
+      surface_mode TEXT NOT NULL DEFAULT 'default',
+      merged_into_thread_id TEXT,
+      created_at TEXT NOT NULL,
+      last_updated_at TEXT NOT NULL,
+      last_used_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_life_threads_group_status
+      ON life_threads(group_folder, status, last_updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_life_threads_group_followup
+      ON life_threads(group_folder, next_followup_at, status);
+    CREATE TABLE IF NOT EXISTS life_thread_signals (
+      id TEXT PRIMARY KEY,
+      thread_id TEXT NOT NULL,
+      group_folder TEXT NOT NULL,
+      source_kind TEXT NOT NULL,
+      summary_text TEXT NOT NULL,
+      chat_jid TEXT,
+      message_id TEXT,
+      task_id TEXT,
+      calendar_event_id TEXT,
+      profile_fact_id TEXT,
+      confidence_kind TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (thread_id) REFERENCES life_threads(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_life_thread_signals_thread
+      ON life_thread_signals(thread_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_life_thread_signals_group
+      ON life_thread_signals(group_folder, created_at DESC);
     CREATE TABLE IF NOT EXISTS registered_groups (
       jid TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -2845,6 +2892,446 @@ export function listProfileFactsForGroup(
     subjectCanonicalName: row.subject_canonical_name,
     subjectDisplayName: row.subject_display_name,
   }));
+}
+
+function parseStringArrayJson(value: string): string[] {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((item): item is string => typeof item === 'string');
+  } catch {
+    return [];
+  }
+}
+
+function mapLifeThreadRow(row: {
+  id: string;
+  group_folder: string;
+  title: string;
+  category: LifeThread['category'];
+  status: LifeThread['status'];
+  scope: LifeThread['scope'];
+  related_subject_ids_json: string;
+  context_tags_json: string;
+  summary: string;
+  next_action: string | null;
+  next_followup_at: string | null;
+  source_kind: LifeThread['sourceKind'];
+  confidence_kind: LifeThread['confidenceKind'];
+  user_confirmed: number;
+  sensitivity: LifeThread['sensitivity'];
+  surface_mode: LifeThread['surfaceMode'];
+  merged_into_thread_id: string | null;
+  created_at: string;
+  last_updated_at: string;
+  last_used_at: string | null;
+}): LifeThread {
+  return {
+    id: row.id,
+    groupFolder: row.group_folder,
+    title: row.title,
+    category: row.category,
+    status: row.status,
+    scope: row.scope,
+    relatedSubjectIds: parseStringArrayJson(row.related_subject_ids_json),
+    contextTags: parseStringArrayJson(row.context_tags_json),
+    summary: row.summary,
+    nextAction: row.next_action,
+    nextFollowupAt: row.next_followup_at,
+    sourceKind: row.source_kind,
+    confidenceKind: row.confidence_kind,
+    userConfirmed: row.user_confirmed === 1,
+    sensitivity: row.sensitivity,
+    surfaceMode: row.surface_mode,
+    mergedIntoThreadId: row.merged_into_thread_id,
+    createdAt: row.created_at,
+    lastUpdatedAt: row.last_updated_at,
+    lastUsedAt: row.last_used_at,
+  };
+}
+
+export function upsertLifeThread(record: LifeThread): void {
+  assertValidGroupFolder(record.groupFolder);
+  db.prepare(
+    `
+      INSERT INTO life_threads (
+        id,
+        group_folder,
+        title,
+        category,
+        status,
+        scope,
+        related_subject_ids_json,
+        context_tags_json,
+        summary,
+        next_action,
+        next_followup_at,
+        source_kind,
+        confidence_kind,
+        user_confirmed,
+        sensitivity,
+        surface_mode,
+        merged_into_thread_id,
+        created_at,
+        last_updated_at,
+        last_used_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        group_folder = excluded.group_folder,
+        title = excluded.title,
+        category = excluded.category,
+        status = excluded.status,
+        scope = excluded.scope,
+        related_subject_ids_json = excluded.related_subject_ids_json,
+        context_tags_json = excluded.context_tags_json,
+        summary = excluded.summary,
+        next_action = excluded.next_action,
+        next_followup_at = excluded.next_followup_at,
+        source_kind = excluded.source_kind,
+        confidence_kind = excluded.confidence_kind,
+        user_confirmed = excluded.user_confirmed,
+        sensitivity = excluded.sensitivity,
+        surface_mode = excluded.surface_mode,
+        merged_into_thread_id = excluded.merged_into_thread_id,
+        created_at = excluded.created_at,
+        last_updated_at = excluded.last_updated_at,
+        last_used_at = excluded.last_used_at
+    `,
+  ).run(
+    record.id,
+    record.groupFolder,
+    record.title,
+    record.category,
+    record.status,
+    record.scope,
+    JSON.stringify(record.relatedSubjectIds || []),
+    JSON.stringify(record.contextTags || []),
+    record.summary,
+    record.nextAction || null,
+    record.nextFollowupAt || null,
+    record.sourceKind,
+    record.confidenceKind,
+    record.userConfirmed ? 1 : 0,
+    record.sensitivity,
+    record.surfaceMode,
+    record.mergedIntoThreadId || null,
+    record.createdAt,
+    record.lastUpdatedAt,
+    record.lastUsedAt || null,
+  );
+}
+
+export function getLifeThread(id: string): LifeThread | undefined {
+  const row = db
+    .prepare(
+      `
+        SELECT *
+        FROM life_threads
+        WHERE id = ?
+        LIMIT 1
+      `,
+    )
+    .get(id) as
+    | {
+        id: string;
+        group_folder: string;
+        title: string;
+        category: LifeThread['category'];
+        status: LifeThread['status'];
+        scope: LifeThread['scope'];
+        related_subject_ids_json: string;
+        context_tags_json: string;
+        summary: string;
+        next_action: string | null;
+        next_followup_at: string | null;
+        source_kind: LifeThread['sourceKind'];
+        confidence_kind: LifeThread['confidenceKind'];
+        user_confirmed: number;
+        sensitivity: LifeThread['sensitivity'];
+        surface_mode: LifeThread['surfaceMode'];
+        merged_into_thread_id: string | null;
+        created_at: string;
+        last_updated_at: string;
+        last_used_at: string | null;
+      }
+    | undefined;
+  if (!row) return undefined;
+  if (!isValidGroupFolder(row.group_folder)) return undefined;
+  return mapLifeThreadRow(row);
+}
+
+export function listLifeThreadsForGroup(
+  groupFolder: string,
+  statuses?: LifeThread['status'][],
+): LifeThread[] {
+  assertValidGroupFolder(groupFolder);
+  const args: unknown[] = [groupFolder];
+  const statusClause =
+    statuses && statuses.length > 0
+      ? `AND status IN (${statuses.map(() => '?').join(', ')})`
+      : '';
+  if (statuses && statuses.length > 0) {
+    args.push(...statuses);
+  }
+
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM life_threads
+        WHERE group_folder = ?
+          ${statusClause}
+        ORDER BY
+          CASE status
+            WHEN 'active' THEN 0
+            WHEN 'paused' THEN 1
+            WHEN 'closed' THEN 2
+            ELSE 3
+          END,
+          last_updated_at DESC,
+          title COLLATE NOCASE ASC
+      `,
+    )
+    .all(...args) as Array<{
+      id: string;
+      group_folder: string;
+      title: string;
+      category: LifeThread['category'];
+      status: LifeThread['status'];
+      scope: LifeThread['scope'];
+      related_subject_ids_json: string;
+      context_tags_json: string;
+      summary: string;
+      next_action: string | null;
+      next_followup_at: string | null;
+      source_kind: LifeThread['sourceKind'];
+      confidence_kind: LifeThread['confidenceKind'];
+      user_confirmed: number;
+      sensitivity: LifeThread['sensitivity'];
+      surface_mode: LifeThread['surfaceMode'];
+      merged_into_thread_id: string | null;
+      created_at: string;
+      last_updated_at: string;
+      last_used_at: string | null;
+    }>;
+
+  return rows.map(mapLifeThreadRow);
+}
+
+export function updateLifeThread(
+  id: string,
+  updates: Partial<
+    Pick<
+      LifeThread,
+      | 'title'
+      | 'category'
+      | 'status'
+      | 'scope'
+      | 'relatedSubjectIds'
+      | 'contextTags'
+      | 'summary'
+      | 'nextAction'
+      | 'nextFollowupAt'
+      | 'sourceKind'
+      | 'confidenceKind'
+      | 'userConfirmed'
+      | 'sensitivity'
+      | 'surfaceMode'
+      | 'mergedIntoThreadId'
+      | 'lastUpdatedAt'
+      | 'lastUsedAt'
+    >
+  >,
+): boolean {
+  const fields: string[] = [];
+  const values: unknown[] = [];
+  if (updates.title !== undefined) {
+    fields.push('title = ?');
+    values.push(updates.title);
+  }
+  if (updates.category !== undefined) {
+    fields.push('category = ?');
+    values.push(updates.category);
+  }
+  if (updates.status !== undefined) {
+    fields.push('status = ?');
+    values.push(updates.status);
+  }
+  if (updates.scope !== undefined) {
+    fields.push('scope = ?');
+    values.push(updates.scope);
+  }
+  if (updates.relatedSubjectIds !== undefined) {
+    fields.push('related_subject_ids_json = ?');
+    values.push(JSON.stringify(updates.relatedSubjectIds));
+  }
+  if (updates.contextTags !== undefined) {
+    fields.push('context_tags_json = ?');
+    values.push(JSON.stringify(updates.contextTags));
+  }
+  if (updates.summary !== undefined) {
+    fields.push('summary = ?');
+    values.push(updates.summary);
+  }
+  if (updates.nextAction !== undefined) {
+    fields.push('next_action = ?');
+    values.push(updates.nextAction || null);
+  }
+  if (updates.nextFollowupAt !== undefined) {
+    fields.push('next_followup_at = ?');
+    values.push(updates.nextFollowupAt || null);
+  }
+  if (updates.sourceKind !== undefined) {
+    fields.push('source_kind = ?');
+    values.push(updates.sourceKind);
+  }
+  if (updates.confidenceKind !== undefined) {
+    fields.push('confidence_kind = ?');
+    values.push(updates.confidenceKind);
+  }
+  if (updates.userConfirmed !== undefined) {
+    fields.push('user_confirmed = ?');
+    values.push(updates.userConfirmed ? 1 : 0);
+  }
+  if (updates.sensitivity !== undefined) {
+    fields.push('sensitivity = ?');
+    values.push(updates.sensitivity);
+  }
+  if (updates.surfaceMode !== undefined) {
+    fields.push('surface_mode = ?');
+    values.push(updates.surfaceMode);
+  }
+  if (updates.mergedIntoThreadId !== undefined) {
+    fields.push('merged_into_thread_id = ?');
+    values.push(updates.mergedIntoThreadId || null);
+  }
+  if (updates.lastUpdatedAt !== undefined) {
+    fields.push('last_updated_at = ?');
+    values.push(updates.lastUpdatedAt);
+  }
+  if (updates.lastUsedAt !== undefined) {
+    fields.push('last_used_at = ?');
+    values.push(updates.lastUsedAt || null);
+  }
+  if (fields.length === 0) return false;
+  values.push(id);
+  const result = db
+    .prepare(`UPDATE life_threads SET ${fields.join(', ')} WHERE id = ?`)
+    .run(...values);
+  return result.changes === 1;
+}
+
+export function deleteLifeThread(id: string): boolean {
+  db.prepare('DELETE FROM life_thread_signals WHERE thread_id = ?').run(id);
+  const result = db.prepare('DELETE FROM life_threads WHERE id = ?').run(id);
+  return result.changes === 1;
+}
+
+export function upsertLifeThreadSignal(record: LifeThreadSignal): void {
+  assertValidGroupFolder(record.groupFolder);
+  db.prepare(
+    `
+      INSERT INTO life_thread_signals (
+        id,
+        thread_id,
+        group_folder,
+        source_kind,
+        summary_text,
+        chat_jid,
+        message_id,
+        task_id,
+        calendar_event_id,
+        profile_fact_id,
+        confidence_kind,
+        created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        thread_id = excluded.thread_id,
+        group_folder = excluded.group_folder,
+        source_kind = excluded.source_kind,
+        summary_text = excluded.summary_text,
+        chat_jid = excluded.chat_jid,
+        message_id = excluded.message_id,
+        task_id = excluded.task_id,
+        calendar_event_id = excluded.calendar_event_id,
+        profile_fact_id = excluded.profile_fact_id,
+        confidence_kind = excluded.confidence_kind,
+        created_at = excluded.created_at
+    `,
+  ).run(
+    record.id,
+    record.threadId,
+    record.groupFolder,
+    record.sourceKind,
+    record.summaryText,
+    record.chatJid || null,
+    record.messageId || null,
+    record.taskId || null,
+    record.calendarEventId || null,
+    record.profileFactId || null,
+    record.confidenceKind,
+    record.createdAt,
+  );
+}
+
+export function listLifeThreadSignals(
+  threadId: string,
+  limit = 10,
+): LifeThreadSignal[] {
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM life_thread_signals
+        WHERE thread_id = ?
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(threadId, Math.max(1, limit)) as Array<{
+      id: string;
+      thread_id: string;
+      group_folder: string;
+      source_kind: LifeThreadSignal['sourceKind'];
+      summary_text: string;
+      chat_jid: string | null;
+      message_id: string | null;
+      task_id: string | null;
+      calendar_event_id: string | null;
+      profile_fact_id: string | null;
+      confidence_kind: LifeThreadSignal['confidenceKind'];
+      created_at: string;
+    }>;
+  return rows.map((row) => ({
+    id: row.id,
+    threadId: row.thread_id,
+    groupFolder: row.group_folder,
+    sourceKind: row.source_kind,
+    summaryText: row.summary_text,
+    chatJid: row.chat_jid,
+    messageId: row.message_id,
+    taskId: row.task_id,
+    calendarEventId: row.calendar_event_id,
+    profileFactId: row.profile_fact_id,
+    confidenceKind: row.confidence_kind,
+    createdAt: row.created_at,
+  }));
+}
+
+export function reassignLifeThreadSignals(
+  fromThreadId: string,
+  toThreadId: string,
+): number {
+  const result = db
+    .prepare(
+      `
+        UPDATE life_thread_signals
+        SET thread_id = ?
+        WHERE thread_id = ?
+      `,
+    )
+    .run(toThreadId, fromThreadId);
+  return result.changes;
 }
 
 export interface CommunitySkillRecord {

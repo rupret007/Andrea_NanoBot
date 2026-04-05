@@ -87,6 +87,9 @@ import {
 import { getAllTasks } from './db.js';
 import { readEnvFile } from './env.js';
 import { assertValidGroupFolder } from './group-folder.js';
+import {
+  handleLifeThreadCommand,
+} from './life-threads.js';
 import { logger } from './logger.js';
 import { formatOutbound } from './router.js';
 import { type AlexaCompanionGuidanceGoal } from './types.js';
@@ -629,7 +632,17 @@ function parseDailyCompanionContext(
   try {
     const parsed = JSON.parse(raw) as DailyCompanionContext;
     if (parsed && parsed.version === 1) {
-      return parsed;
+      return {
+        ...parsed,
+        usedThreadIds: parsed.usedThreadIds || [],
+        usedThreadTitles: parsed.usedThreadTitles || [],
+        usedThreadReasons: parsed.usedThreadReasons || [],
+        threadSummaryLines: parsed.threadSummaryLines || [],
+        comparisonKeys: {
+          ...parsed.comparisonKeys,
+          thread: parsed.comparisonKeys?.thread || null,
+        },
+      };
     }
   } catch {
     return undefined;
@@ -657,6 +670,9 @@ function buildAlexaStateFromDailyCompanion(
     subjectData: {
       ...baseState.subjectData,
       ...context.subjectData,
+      threadId: context.usedThreadIds?.[0],
+      threadTitle: context.usedThreadTitles?.[0],
+      threadSummaryLines: context.threadSummaryLines || [],
       dailyCompanionContextJson: JSON.stringify(context),
     },
     summaryText: context.summaryText,
@@ -908,6 +924,100 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
       conversationState,
       response,
     );
+  };
+
+  const runLifeThreadCommand = (
+    handlerInput: HandlerInput,
+    linked: Extract<ReturnType<typeof resolveAlexaLinkedAccount>, { ok: true }>,
+    text: string,
+    conversationState?: AlexaConversationState,
+  ) => {
+    const priorCompanionContext =
+      parseDailyCompanionContext(conversationState) ||
+      (conversationState?.subjectData.threadId
+        ? {
+            summaryText: conversationState.summaryText,
+            usedThreadIds: [conversationState.subjectData.threadId],
+            usedThreadTitles: conversationState.subjectData.threadTitle
+              ? [conversationState.subjectData.threadTitle]
+              : [],
+            usedThreadReasons: ['it was the active thread in the last answer'],
+            threadSummaryLines:
+              conversationState.subjectData.threadSummaryLines || [],
+          }
+        : null);
+    const result = handleLifeThreadCommand({
+      groupFolder: linked.account.groupFolder,
+      channel: 'alexa',
+      text,
+      conversationSummary: conversationState?.summaryText,
+      priorContext: priorCompanionContext,
+    });
+    if (!result.handled) {
+      return null;
+    }
+
+    if (result.referencedThread) {
+      saveAlexaConversationState(
+        linked.principalKey,
+        linked.account.accessTokenHash,
+        linked.account.groupFolder,
+        buildAlexaCompanionConversationState({
+          flowKey: 'life_thread',
+          subjectKind: 'life_thread',
+          summaryText: result.responseText || result.referencedThread.title,
+          guidanceGoal: 'life_thread_guidance',
+          subjectData: {
+            threadId: result.referencedThread.id,
+            threadTitle: result.referencedThread.title,
+            threadSummaryLines: [
+              result.referencedThread.nextAction || result.referencedThread.summary,
+            ],
+            dailyCompanionContextJson: JSON.stringify({
+              version: 1,
+              mode: 'open_guidance',
+              channel: 'alexa',
+              generatedAt: new Date().toISOString(),
+              summaryText: result.responseText || result.referencedThread.title,
+              shortText: result.responseText || result.referencedThread.title,
+              extendedText: result.responseText || result.referencedThread.title,
+              leadReason: 'life_thread',
+              signalsUsed: ['life_threads'],
+              signalsOmitted: [],
+              householdSignals: [],
+              recommendationKind: 'none',
+              recommendationText: null,
+              subjectKind: 'life_thread',
+              supportedFollowups: ['anything_else', 'shorter', 'say_more', 'memory_control'],
+              subjectData: {},
+              extraDetails: [],
+              memoryLines: [],
+              usedThreadIds: [result.referencedThread.id],
+              usedThreadTitles: [result.referencedThread.title],
+              usedThreadReasons: ['it was the active thread in the last answer'],
+              threadSummaryLines: [
+                result.referencedThread.nextAction || result.referencedThread.summary,
+              ],
+              comparisonKeys: {
+                nextEvent: null,
+                nextReminder: null,
+                recommendation: null,
+                household: null,
+                focus: result.referencedThread.id,
+                thread:
+                  result.referencedThread.nextAction || result.referencedThread.summary,
+              },
+            } satisfies DailyCompanionContext),
+          },
+          supportedFollowups: ['anything_else', 'shorter', 'say_more', 'memory_control'],
+        }),
+      );
+    }
+
+    return handlerInput.responseBuilder
+      .speak(result.responseText || 'Okay.')
+      .reprompt(DEFAULT_ALEXA_REPROMPT)
+      .getResponse();
   };
 
   const LaunchRequestHandler = {
@@ -1285,6 +1395,16 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
           }
         }
 
+        const lifeThreadResponse = runLifeThreadCommand(
+          handlerInput,
+          linked,
+          followupText,
+          conversationState,
+        );
+        if (lifeThreadResponse) {
+          return lifeThreadResponse;
+        }
+
         const resolution = resolveAlexaConversationFollowup(
           followupText,
           conversationState,
@@ -1488,6 +1608,16 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
             .speak(memoryResult.responseText || 'Okay.')
             .reprompt(DEFAULT_ALEXA_REPROMPT)
             .getResponse();
+        }
+
+        const lifeThreadResponse = runLifeThreadCommand(
+          handlerInput,
+          linked,
+          memoryCommand,
+          conversationState,
+        );
+        if (lifeThreadResponse) {
+          return lifeThreadResponse;
         }
       }
 

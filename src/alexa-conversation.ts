@@ -18,6 +18,9 @@ export interface AlexaConversationSubjectData {
   meetingReference?: string;
   profileFactId?: string;
   savedText?: string;
+  threadId?: string;
+  threadTitle?: string;
+  threadSummaryLines?: string[];
   dailyCompanionContextJson?: string;
 }
 

@@ -10,6 +10,7 @@ import {
   startAlexaServer,
   type AlexaConfig,
 } from './alexa.js';
+import { saveAlexaConversationState } from './alexa-conversation.js';
 import {
   AlexaTargetGroupMissingError,
   runAlexaAssistantTurn,
@@ -18,7 +19,10 @@ import {
   buildDailyCompanionResponse,
   type DailyCompanionResponse,
 } from './daily-companion.js';
-import { seedConfiguredAlexaLinkedAccount } from './alexa-identity.js';
+import {
+  getAlexaPrincipalKey,
+  seedConfiguredAlexaLinkedAccount,
+} from './alexa-identity.js';
 import { _initTestDatabase, setRegisteredGroup } from './db.js';
 import { ASSISTANT_NAME } from './config.js';
 
@@ -187,19 +191,24 @@ function buildCompanionResponse(
       extraDetails:
         overrides.context?.extraDetails ?? ['A little more context.'],
       memoryLines: overrides.context?.memoryLines ?? [],
+      usedThreadIds: overrides.context?.usedThreadIds ?? [],
+      usedThreadTitles: overrides.context?.usedThreadTitles ?? [],
+      usedThreadReasons: overrides.context?.usedThreadReasons ?? [],
+      threadSummaryLines: overrides.context?.threadSummaryLines ?? [],
       comparisonKeys: overrides.context?.comparisonKeys ?? {
         nextEvent: null,
         nextReminder: null,
         recommendation: null,
         household: null,
         focus: null,
+        thread: null,
       },
     },
   };
 }
 
 function seedLinkedAccount(groupFolder = 'main') {
-  seedConfiguredAlexaLinkedAccount({
+  return seedConfiguredAlexaLinkedAccount({
     ALEXA_LINKED_ACCOUNT_TOKEN: 'linked-secret-token',
     ALEXA_LINKED_ACCOUNT_NAME: 'Andrea Alexa',
     ALEXA_LINKED_ACCOUNT_GROUP_FOLDER: groupFolder,
@@ -390,6 +399,51 @@ describe('createAlexaSkill', () => {
     );
     expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
     expect(extractSpeechText(response)).toContain('family main thing');
+  });
+
+  it('handles save-to-thread follow-ups locally without the assistant bridge', async () => {
+    const linked = seedLinkedAccount('main');
+    saveAlexaConversationState(
+      getAlexaPrincipalKey({
+        userId: 'amzn1.ask.account.test-user',
+        personId: 'amzn1.ask.person.test-person',
+      }),
+      linked!.accessTokenHash,
+      'main',
+      {
+        flowKey: 'my_day',
+        subjectKind: 'day_brief',
+        subjectData: {
+          dailyCompanionContextJson: JSON.stringify(
+            buildCompanionResponse('Candace still needs a dinner answer.', {
+              mode: 'household_guidance',
+              context: {
+                ...buildCompanionResponse('x').context,
+                usedThreadIds: [],
+                usedThreadTitles: [],
+                usedThreadReasons: [],
+                threadSummaryLines: [],
+              },
+            }).context,
+          ),
+        },
+        summaryText: 'Candace still needs a dinner answer.',
+        supportedFollowups: ['anything_else', 'memory_control', 'save_that'],
+        styleHints: { responseSource: 'local_companion' },
+      },
+    );
+
+    mockedBuildDailyCompanionResponse.mockResolvedValue(null);
+
+    const skill = createAlexaSkill(buildConfig());
+    const response = await skill.invoke(
+      buildIntentEnvelope('ConversationalFollowupIntent', {
+        followupText: 'save that under the family thread',
+      }),
+    );
+
+    expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
+    expect(extractSpeechText(response)).toContain('saved that under Family');
   });
 
   it('routes AnythingImportantIntent as risk-aware guidance', async () => {

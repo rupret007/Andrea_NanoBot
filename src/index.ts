@@ -107,6 +107,12 @@ import {
   type DailyCompanionMode,
 } from './daily-companion.js';
 import {
+  buildLifeThreadSuggestionAskText,
+  handleLifeThreadCommand,
+  maybeCreatePendingLifeThreadSuggestion,
+  setLastReferencedLifeThread,
+} from './life-threads.js';
+import {
   clearAssistantHealthState,
   clearAssistantReadyState,
   clearTelegramTransportState,
@@ -934,7 +940,17 @@ function getDailyCompanionContext(
       return null;
     }
 
-    return parsed;
+    return {
+      ...parsed,
+      usedThreadIds: parsed.usedThreadIds || [],
+      usedThreadTitles: parsed.usedThreadTitles || [],
+      usedThreadReasons: parsed.usedThreadReasons || [],
+      threadSummaryLines: parsed.threadSummaryLines || [],
+      comparisonKeys: {
+        ...parsed.comparisonKeys,
+        thread: parsed.comparisonKeys?.thread || null,
+      },
+    };
   } catch {
     clearDailyCompanionContext(chatJid);
     return null;
@@ -3896,6 +3912,24 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         clearActionLayerContext(chatJid);
       }
       setDailyCompanionContext(chatJid, dailyResponse.context);
+      const suggestedThread =
+        lastContent &&
+        group.folder
+          ? maybeCreatePendingLifeThreadSuggestion({
+              groupFolder: group.folder,
+              chatJid,
+              text: lastContent,
+              replyText: missedMessages.at(-1)?.reply_to?.content,
+              conversationSummary: dailyResponse.context.summaryText,
+              now,
+            })
+          : null;
+      if (suggestedThread) {
+        await channel.sendMessage(
+          chatJid,
+          buildLifeThreadSuggestionAskText(suggestedThread.title),
+        );
+      }
       logger.info(
         {
           component: 'assistant',
@@ -4123,6 +4157,38 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
     if (await tryHandleLocalCalendarReply('protected')) {
       return true;
+    }
+  }
+
+  const lifeThreadTurn = handleLifeThreadCommand({
+    groupFolder: group.folder,
+    channel: 'telegram',
+    chatJid,
+    text: missedMessages.at(-1)?.content ?? '',
+    replyText: missedMessages.at(-1)?.reply_to?.content,
+    conversationSummary: getDailyCompanionContext(chatJid, now)?.summaryText,
+    priorContext: getDailyCompanionContext(chatJid, now),
+    now,
+  });
+  if (lifeThreadTurn.handled) {
+    try {
+      if (lifeThreadTurn.referencedThread) {
+        setLastReferencedLifeThread(chatJid, lifeThreadTurn.referencedThread, now);
+      }
+      await channel.sendMessage(chatJid, lifeThreadTurn.responseText || 'Okay.');
+      logger.info(
+        { group: group.name },
+        'Handled life thread request via local assistant fast path',
+      );
+      return true;
+    } catch (err) {
+      lastAgentTimestamp[chatJid] = previousCursor;
+      saveState();
+      logger.warn(
+        { group: group.name, err },
+        'Life thread fast path failed, rolled back cursor for retry',
+      );
+      return false;
     }
   }
 

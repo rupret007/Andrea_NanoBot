@@ -16,9 +16,11 @@ import {
   type UpcomingReminderSummary,
 } from './daily-command-center.js';
 import { listProfileFactsForGroup } from './db.js';
+import { buildLifeThreadSnapshot } from './life-threads.js';
 import type {
   AlexaConversationFollowupAction,
   AlexaConversationSubjectKind,
+  LifeThread,
   ProfileFactWithSubject,
 } from './types.js';
 import { buildVoiceReply, normalizeVoicePrompt } from './voice-ready.js';
@@ -61,12 +63,17 @@ export interface DailyCompanionContext {
   };
   extraDetails: string[];
   memoryLines: string[];
+  usedThreadIds: string[];
+  usedThreadTitles: string[];
+  usedThreadReasons: string[];
+  threadSummaryLines: string[];
   comparisonKeys: {
     nextEvent: string | null;
     nextReminder: string | null;
     recommendation: string | null;
     household: string | null;
     focus: string | null;
+    thread: string | null;
   };
 }
 
@@ -111,6 +118,10 @@ interface CompanionDraft {
   signalsOmitted: string[];
   householdSignals: string[];
   memoryLines: string[];
+  usedThreadIds: string[];
+  usedThreadTitles: string[];
+  usedThreadReasons: string[];
+  threadSummaryLines: string[];
   comparisonKeys: DailyCompanionContext['comparisonKeys'];
 }
 
@@ -142,6 +153,10 @@ function isMiddayPrompt(normalized: string): boolean {
   return (
     normalized === 'what do i have coming up soon?' ||
     normalized === 'what do i have coming up soon' ||
+    normalized === "what's still open today?" ||
+    normalized === "what's still open today" ||
+    normalized === 'whats still open today?' ||
+    normalized === 'whats still open today' ||
     normalized === "what's next?" ||
     normalized === "what's next" ||
     normalized === 'whats next?' ||
@@ -179,12 +194,20 @@ function isOpenGuidancePrompt(normalized: string): boolean {
   return (
     normalized === 'what is on my calendar tomorrow?' ||
     normalized === 'what is on my calendar tomorrow' ||
+    normalized === "what's still open?" ||
+    normalized === "what's still open" ||
+    normalized === 'whats still open?' ||
+    normalized === 'whats still open' ||
     normalized === 'what am i forgetting?' ||
     normalized === 'what am i forgetting' ||
+    normalized === 'what should i follow up on?' ||
+    normalized === 'what should i follow up on' ||
     normalized === 'what matters most today?' ||
     normalized === 'what matters most today' ||
     normalized === 'what should i do next?' ||
     normalized === 'what should i do next' ||
+    normalized === 'what am i juggling right now?' ||
+    normalized === 'what am i juggling right now' ||
     normalized === 'anything i should know?' ||
     normalized === 'anything i should know' ||
     normalized === 'what should i handle before i leave?' ||
@@ -284,6 +307,61 @@ function summarizeWindow(
   return {
     label: formatWindow(nextWindow, snapshot.timeZone),
     minutes,
+  };
+}
+
+function summarizeThread(thread: LifeThread | null): string | null {
+  if (!thread) return null;
+  const detail = thread.nextAction || thread.summary;
+  return `${thread.title}: ${detail}`;
+}
+
+function findBestMatchingThread(
+  threads: LifeThread[],
+  query: string,
+): LifeThread | null {
+  const normalizedQuery = query.toLowerCase().trim();
+  return (
+    threads.find((thread) => thread.title.toLowerCase().includes(normalizedQuery)) ||
+    threads.find((thread) =>
+      thread.contextTags.some((tag) => tag.toLowerCase().includes(normalizedQuery)),
+    ) ||
+    null
+  );
+}
+
+function buildThreadContextDetails(params: {
+  dueThread: LifeThread | null;
+  householdThread: LifeThread | null;
+  recommendedThread: LifeThread | null;
+}): Pick<
+  CompanionDraft,
+  'usedThreadIds' | 'usedThreadTitles' | 'usedThreadReasons' | 'threadSummaryLines'
+> {
+  const seen = new Set<string>();
+  const usedThreadIds: string[] = [];
+  const usedThreadTitles: string[] = [];
+  const usedThreadReasons: string[] = [];
+  const threadSummaryLines: string[] = [];
+
+  const push = (thread: LifeThread | null, reason: string) => {
+    if (!thread || seen.has(thread.id)) return;
+    seen.add(thread.id);
+    usedThreadIds.push(thread.id);
+    usedThreadTitles.push(thread.title);
+    usedThreadReasons.push(reason);
+    threadSummaryLines.push(summarizeThread(thread) || thread.title);
+  };
+
+  push(params.dueThread, 'it still has an active follow-up');
+  push(params.householdThread, 'it is the main household carryover');
+  push(params.recommendedThread, 'it best fits the next open block');
+
+  return {
+    usedThreadIds,
+    usedThreadTitles,
+    usedThreadReasons,
+    threadSummaryLines,
   };
 }
 
@@ -453,6 +531,7 @@ function selectHouseholdLines(params: {
 function chooseRecommendation(
   snapshot: GroundedDaySnapshot,
   prefs: CompanionPreferences,
+  threadSnapshot: ReturnType<typeof buildLifeThreadSnapshot>,
 ): {
   text: string | null;
   kind: DailyCompanionRecommendationKind;
@@ -462,6 +541,8 @@ function chooseRecommendation(
   const nextEvent = snapshot.calendar.nextTimedEvent;
   const nextReminder = snapshot.todayReminders[0];
   const nextWindow = summarizeWindow(snapshot);
+  const dueThread = threadSnapshot.dueFollowups[0] || null;
+  const recommendedThread = threadSnapshot.recommendedNextThread;
 
   if (
     prefs.workContextEnabled &&
@@ -474,6 +555,14 @@ function chooseRecommendation(
       text: `Use the next open block to move ${work.title} forward.`,
       kind: 'do_now',
       focusKey: `work:${work.title}`,
+    };
+  }
+
+  if (dueThread && nextWindow && nextWindow.minutes >= 15) {
+    return {
+      text: `Use the next open block to move ${dueThread.title} forward by ${dueThread.nextAction || dueThread.summary}.`,
+      kind: 'do_now',
+      focusKey: `thread:${dueThread.id}`,
     };
   }
 
@@ -501,6 +590,14 @@ function chooseRecommendation(
       text: `Keep ${work.title} as the main thread when you get your next clean block.`,
       kind: 'save_for_tomorrow',
       focusKey: `work:${work.title}`,
+    };
+  }
+
+  if (recommendedThread) {
+    return {
+      text: `Keep ${recommendedThread.title} on deck so it does not slip past today.`,
+      kind: recommendedThread.nextFollowupAt ? 'do_now' : 'save_for_tomorrow',
+      focusKey: `thread:${recommendedThread.id}`,
     };
   }
 
@@ -577,6 +674,10 @@ function finalizeDraft(
     subjectData: draft.subjectData,
     extraDetails: draft.extraDetails,
     memoryLines: draft.memoryLines,
+    usedThreadIds: draft.usedThreadIds,
+    usedThreadTitles: draft.usedThreadTitles,
+    usedThreadReasons: draft.usedThreadReasons,
+    threadSummaryLines: draft.threadSummaryLines,
     comparisonKeys: draft.comparisonKeys,
   };
 
@@ -599,12 +700,30 @@ function buildMorningDraft(params: {
   householdLines: string[];
   prefs: CompanionPreferences;
   memoryLines: string[];
+  threadSnapshot: ReturnType<typeof buildLifeThreadSnapshot>;
 }): CompanionDraft {
   const { snapshot } = params;
   const nextEvent = snapshot.calendar.nextTimedEvent;
   const nextReminder = snapshot.todayReminders[0] || null;
   const window = summarizeWindow(snapshot);
-  const recommendation = chooseRecommendation(snapshot, params.prefs);
+  const dueThread = params.threadSnapshot.dueFollowups[0] || null;
+  const householdThread =
+    params.threadSnapshot.householdCarryover &&
+    !params.householdLines.some((line) =>
+      line.includes(params.threadSnapshot.householdCarryover?.title || ''),
+    )
+      ? params.threadSnapshot.householdCarryover
+      : null;
+  const recommendation = chooseRecommendation(
+    snapshot,
+    params.prefs,
+    params.threadSnapshot,
+  );
+  const threadContext = buildThreadContextDetails({
+    dueThread,
+    householdThread,
+    recommendedThread: params.threadSnapshot.recommendedNextThread,
+  });
 
   let lead = 'Nothing urgent is pressing right now, so you can start from a clean read of the day.';
   let leadReason = 'nothing_urgent';
@@ -623,6 +742,9 @@ function buildMorningDraft(params: {
   } else if (snapshot.selectedWork && window && params.prefs.workContextEnabled) {
     lead = `You have open room to make progress on ${snapshot.selectedWork.title}.`;
     leadReason = 'selected_work_open_block';
+  } else if (dueThread) {
+    lead = `One carryover to keep in sight is ${dueThread.title}.`;
+    leadReason = 'thread_carryover';
   } else if (params.householdLines[0]) {
     lead = `One family thing to keep in mind is ${params.householdLines[0]}.`;
     leadReason = 'household_signal';
@@ -632,7 +754,9 @@ function buildMorningDraft(params: {
     nextEvent ? `Next: ${summarizeEvent(nextEvent, snapshot.timeZone)}` : null,
     nextReminder ? `Reminder: ${formatReminderSummary(nextReminder, snapshot.timeZone)}` : null,
     window ? `Open window: ${window.label}` : null,
+    dueThread ? `Thread carryover: ${summarizeThread(dueThread)}` : null,
     params.householdLines[0] ? `Household: ${params.householdLines[0]}` : null,
+    householdThread ? `Household thread: ${summarizeThread(householdThread)}` : null,
   ].filter((line): line is string => Boolean(line));
 
   return {
@@ -660,6 +784,7 @@ function buildMorningDraft(params: {
       'calendar',
       nextReminder ? 'reminders' : null,
       snapshot.selectedWork && params.prefs.workContextEnabled ? 'current_work' : null,
+      dueThread || householdThread ? 'life_threads' : null,
       params.householdLines.length > 0 ? 'household_context' : null,
     ].filter((line): line is string => Boolean(line)),
     signalsOmitted: [
@@ -669,12 +794,17 @@ function buildMorningDraft(params: {
     ].filter((line): line is string => Boolean(line)),
     householdSignals: params.householdLines,
     memoryLines: params.memoryLines,
+    usedThreadIds: threadContext.usedThreadIds,
+    usedThreadTitles: threadContext.usedThreadTitles,
+    usedThreadReasons: threadContext.usedThreadReasons,
+    threadSummaryLines: threadContext.threadSummaryLines,
     comparisonKeys: {
       nextEvent: nextEvent ? `${nextEvent.id}:${nextEvent.startIso}` : null,
       nextReminder: nextReminder ? `${nextReminder.id}:${nextReminder.nextRunIso}` : null,
       recommendation: recommendation.text,
       household: params.householdLines[0] || null,
       focus: recommendation.focusKey,
+      thread: threadContext.threadSummaryLines[0] || null,
     },
   };
 }
@@ -684,18 +814,32 @@ function buildMiddayDraft(params: {
   householdLines: string[];
   prefs: CompanionPreferences;
   memoryLines: string[];
+  threadSnapshot: ReturnType<typeof buildLifeThreadSnapshot>;
 }): CompanionDraft {
   const { snapshot } = params;
   const nextEvent = snapshot.calendar.nextTimedEvent;
   const nextReminder = snapshot.todayReminders[0] || null;
   const window = summarizeWindow(snapshot);
-  const recommendation = chooseRecommendation(snapshot, params.prefs);
+  const dueThread = params.threadSnapshot.dueFollowups[0] || null;
+  const recommendation = chooseRecommendation(
+    snapshot,
+    params.prefs,
+    params.threadSnapshot,
+  );
+  const threadContext = buildThreadContextDetails({
+    dueThread,
+    householdThread: params.threadSnapshot.householdCarryover,
+    recommendedThread: params.threadSnapshot.recommendedNextThread,
+  });
 
   let lead = 'The next grounded thing is your schedule, because I do not have a better signal than that yet.';
   let leadReason = 'schedule_only';
   if (snapshot.selectedWork && recommendation.focusKey?.startsWith('work:')) {
     lead = `The best next move is to stay with ${snapshot.selectedWork.title}.`;
     leadReason = 'selected_work';
+  } else if (dueThread) {
+    lead = `The main open thread is ${dueThread.title}.`;
+    leadReason = 'thread_followup';
   } else if (nextEvent) {
     lead = `The next fixed point is ${nextEvent.title} at ${formatClock(
       new Date(nextEvent.startIso),
@@ -714,6 +858,7 @@ function buildMiddayDraft(params: {
     nextEvent ? `Next: ${summarizeEvent(nextEvent, snapshot.timeZone)}` : null,
     nextReminder ? `Reminder: ${formatReminderSummary(nextReminder, snapshot.timeZone)}` : null,
     window ? `Open block: ${window.label}` : null,
+    dueThread ? `Thread follow-up: ${summarizeThread(dueThread)}` : null,
     params.householdLines[0] ? `Household: ${params.householdLines[0]}` : null,
   ].filter((line): line is string => Boolean(line));
 
@@ -740,17 +885,23 @@ function buildMiddayDraft(params: {
       'calendar',
       nextReminder ? 'reminders' : null,
       snapshot.selectedWork && params.prefs.workContextEnabled ? 'current_work' : null,
+      threadContext.threadSummaryLines[0] ? 'life_threads' : null,
       params.householdLines.length > 0 ? 'household_context' : null,
     ].filter((line): line is string => Boolean(line)),
     signalsOmitted: [],
     householdSignals: params.householdLines,
     memoryLines: params.memoryLines,
+    usedThreadIds: threadContext.usedThreadIds,
+    usedThreadTitles: threadContext.usedThreadTitles,
+    usedThreadReasons: threadContext.usedThreadReasons,
+    threadSummaryLines: threadContext.threadSummaryLines,
     comparisonKeys: {
       nextEvent: nextEvent ? `${nextEvent.id}:${nextEvent.startIso}` : null,
       nextReminder: nextReminder ? `${nextReminder.id}:${nextReminder.nextRunIso}` : null,
       recommendation: recommendation.text,
       household: params.householdLines[0] || null,
       focus: recommendation.focusKey,
+      thread: threadContext.threadSummaryLines[0] || null,
     },
   };
 }
@@ -760,25 +911,45 @@ function buildEveningDraft(params: {
   tomorrowSnapshot: CalendarLookupSnapshot | null;
   householdLines: string[];
   memoryLines: string[];
+  threadSnapshot: ReturnType<typeof buildLifeThreadSnapshot>;
 }): CompanionDraft {
   const tonightReminder = params.snapshot.todayReminders[0] || null;
   const tomorrowPressure = params.tomorrowSnapshot?.nextTimedEvent || null;
+  const dueThread = params.threadSnapshot.dueFollowups[0] || null;
+  const householdThread =
+    params.threadSnapshot.householdCarryover &&
+    !params.householdLines.some((line) =>
+      line.includes(params.threadSnapshot.householdCarryover?.title || ''),
+    )
+      ? params.threadSnapshot.householdCarryover
+      : null;
+  const threadContext = buildThreadContextDetails({
+    dueThread,
+    householdThread,
+    recommendedThread: params.threadSnapshot.recommendedNextThread,
+  });
   const recommendationKind =
-    tonightReminder || params.householdLines[0]
+    tonightReminder || dueThread || params.householdLines[0] || householdThread
       ? 'do_now'
       : tomorrowPressure
         ? 'save_for_tomorrow'
         : 'remind_later';
   const recommendationText = tonightReminder
     ? `Handle ${tonightReminder.label} tonight so it is not hanging over tomorrow.`
+    : dueThread
+      ? `Close the loop on ${dueThread.title} tonight by ${dueThread.nextAction || dueThread.summary}.`
     : params.householdLines[0]
       ? `Close the loop on ${params.householdLines[0]} before the night gets away from you.`
+      : householdThread
+        ? `Close the loop on ${householdThread.title} before the night gets away from you.`
       : tomorrowPressure
         ? `Set yourself up for ${tomorrowPressure.title} before tomorrow starts.`
         : 'If nothing else moves tonight, leave yourself one clean reminder for tomorrow.';
 
   const lead = tonightReminder
     ? `Tonight's loose end is ${tonightReminder.label}.`
+    : dueThread
+      ? `The open thread to close tonight is ${dueThread.title}.`
     : tomorrowPressure
       ? `Tomorrow's first pressure point is ${tomorrowPressure.title} at ${formatClock(
           new Date(tomorrowPressure.startIso),
@@ -790,10 +961,12 @@ function buildEveningDraft(params: {
     tonightReminder
       ? `Tonight: ${formatReminderSummary(tonightReminder, params.snapshot.timeZone)}`
       : null,
+    dueThread ? `Thread: ${summarizeThread(dueThread)}` : null,
     tomorrowPressure
       ? `Tomorrow: ${summarizeEvent(tomorrowPressure, params.snapshot.timeZone)}`
       : null,
     params.householdLines[0] ? `Household: ${params.householdLines[0]}` : null,
+    householdThread ? `Household thread: ${summarizeThread(householdThread)}` : null,
   ].filter((line): line is string => Boolean(line));
 
   return {
@@ -818,11 +991,16 @@ function buildEveningDraft(params: {
     signalsUsed: [
       'calendar',
       tonightReminder ? 'reminders' : null,
+      threadContext.threadSummaryLines[0] ? 'life_threads' : null,
       params.householdLines.length > 0 ? 'household_context' : null,
     ].filter((line): line is string => Boolean(line)),
     signalsOmitted: [],
     householdSignals: params.householdLines,
     memoryLines: params.memoryLines,
+    usedThreadIds: threadContext.usedThreadIds,
+    usedThreadTitles: threadContext.usedThreadTitles,
+    usedThreadReasons: threadContext.usedThreadReasons,
+    threadSummaryLines: threadContext.threadSummaryLines,
     comparisonKeys: {
       nextEvent: tomorrowPressure
         ? `${tomorrowPressure.id}:${tomorrowPressure.startIso}`
@@ -833,6 +1011,7 @@ function buildEveningDraft(params: {
       recommendation: recommendationText,
       household: params.householdLines[0] || null,
       focus: recommendationKind,
+      thread: threadContext.threadSummaryLines[0] || null,
     },
   };
 }
@@ -842,6 +1021,7 @@ function buildHouseholdDraft(params: {
   scopedSnapshot: CalendarLookupSnapshot | null;
   rawMessage: string;
   memoryLines: string[];
+  threadSnapshot: ReturnType<typeof buildLifeThreadSnapshot>;
 }): CompanionDraft {
   const events = (
     params.scopedSnapshot?.timedEvents.length
@@ -858,7 +1038,16 @@ function buildHouseholdDraft(params: {
     .filter((line): line is string => Boolean(line));
   const personMatch = params.rawMessage.match(/candace|travis/i);
   const personName = personMatch ? personMatch[0] : undefined;
+  const relatedThread = personName
+    ? findBestMatchingThread(params.threadSnapshot.activeThreads, personName)
+    : params.threadSnapshot.householdCarryover;
+  const threadContext = buildThreadContextDetails({
+    dueThread: relatedThread,
+    householdThread: relatedThread,
+    recommendedThread: relatedThread,
+  });
   const lead =
+    summarizeThread(relatedThread) ||
     householdLines[0] ||
     'I do not see a strong shared-family signal in the calendars I could read right now.';
 
@@ -887,20 +1076,29 @@ function buildHouseholdDraft(params: {
     ),
     extraDetails: householdLines.slice(1),
     recommendationText:
-      householdLines[0]
+      relatedThread
+        ? `Bring up ${relatedThread.title} before it turns into a last-minute logistics problem.`
+        : householdLines[0]
         ? 'Bring that up before it becomes a last-minute logistics problem.'
         : null,
-    recommendationKind: householdLines[0] ? 'do_now' : 'none',
-    signalsUsed: ['calendar', 'household_context'],
+    recommendationKind: relatedThread || householdLines[0] ? 'do_now' : 'none',
+    signalsUsed: ['calendar', 'household_context', relatedThread ? 'life_threads' : null].filter(
+      (line): line is string => Boolean(line),
+    ),
     signalsOmitted: [],
     householdSignals: householdLines,
     memoryLines: params.memoryLines,
+    usedThreadIds: threadContext.usedThreadIds,
+    usedThreadTitles: threadContext.usedThreadTitles,
+    usedThreadReasons: threadContext.usedThreadReasons,
+    threadSummaryLines: threadContext.threadSummaryLines,
     comparisonKeys: {
       nextEvent: events[0] ? `${events[0].id}:${events[0].startIso}` : null,
       nextReminder: null,
       recommendation: householdLines[0] || null,
       household: householdLines[0] || null,
       focus: personName || 'household',
+      thread: threadContext.threadSummaryLines[0] || null,
     },
   };
 }
@@ -911,6 +1109,7 @@ function buildOpenGuidanceDraft(params: {
   householdLines: string[];
   prefs: CompanionPreferences;
   memoryLines: string[];
+  threadSnapshot: ReturnType<typeof buildLifeThreadSnapshot>;
 }): CompanionDraft {
   if (params.normalized.includes('remember tonight')) {
     return buildEveningDraft({
@@ -918,6 +1117,7 @@ function buildOpenGuidanceDraft(params: {
       tomorrowSnapshot: null,
       householdLines: params.householdLines,
       memoryLines: params.memoryLines,
+      threadSnapshot: params.threadSnapshot,
     });
   }
   return buildMiddayDraft({
@@ -925,6 +1125,7 @@ function buildOpenGuidanceDraft(params: {
     householdLines: params.householdLines,
     prefs: params.prefs,
     memoryLines: params.memoryLines,
+    threadSnapshot: params.threadSnapshot,
   });
 }
 
@@ -933,6 +1134,7 @@ function buildTomorrowDraft(params: {
   tomorrowSnapshot: CalendarLookupSnapshot | null;
   householdLines: string[];
   memoryLines: string[];
+  threadSnapshot: ReturnType<typeof buildLifeThreadSnapshot>;
 }): CompanionDraft {
   const tomorrowTimed = params.tomorrowSnapshot?.timedEvents.slice(0, 2) || [];
   const tomorrowAllDay = params.tomorrowSnapshot?.allDayEvents.slice(0, 1) || [];
@@ -942,6 +1144,11 @@ function buildTomorrowDraft(params: {
     .map((event) => summarizeEvent(event, params.snapshot.timeZone))
     .filter((line): line is string => Boolean(line));
   const householdLine = params.householdLines[0] || null;
+  const threadContext = buildThreadContextDetails({
+    dueThread: params.threadSnapshot.dueFollowups[0] || null,
+    householdThread: params.threadSnapshot.householdCarryover,
+    recommendedThread: params.threadSnapshot.recommendedNextThread,
+  });
 
   const lead = firstEvent
     ? `Tomorrow starts with ${firstEvent.title}${
@@ -979,11 +1186,16 @@ function buildTomorrowDraft(params: {
     recommendationKind: recommendationText ? 'save_for_tomorrow' : 'none',
     signalsUsed: [
       'calendar',
+      threadContext.threadSummaryLines[0] ? 'life_threads' : null,
       householdLine ? 'household_context' : null,
     ].filter((line): line is string => Boolean(line)),
     signalsOmitted: [],
     householdSignals: householdLine ? [householdLine] : [],
     memoryLines: params.memoryLines,
+    usedThreadIds: threadContext.usedThreadIds,
+    usedThreadTitles: threadContext.usedThreadTitles,
+    usedThreadReasons: threadContext.usedThreadReasons,
+    threadSummaryLines: threadContext.threadSummaryLines,
     comparisonKeys: {
       nextEvent: firstEvent
         ? `${firstEvent.id}:${firstEvent.allDay ? firstEvent.startIso : firstEvent.startIso}`
@@ -992,6 +1204,7 @@ function buildTomorrowDraft(params: {
       recommendation: recommendationText,
       household: householdLine,
       focus: firstEvent ? `tomorrow:${firstEvent.title}` : null,
+      thread: threadContext.threadSummaryLines[0] || null,
     },
   };
 }
@@ -1009,14 +1222,21 @@ function buildExplainabilityReply(
       context.memoryLines[0] != null
         ? `I also remembered that ${context.memoryLines[0]}.`
         : '';
+    const threadLead =
+      context.usedThreadTitles[0] != null
+        ? `I was also leaning on ${context.usedThreadTitles[0]}.`
+        : '';
     return buildVoiceReply({
       summary: `I answered from ${signalText}.`,
-      details: [memoryLead],
+      details: [threadLead || memoryLead],
       maxDetails: 1,
     });
   }
 
   const lines = [`I answered from ${signalText}.`];
+  if (context.usedThreadTitles.length > 0) {
+    lines.push(`Thread context in play: ${context.usedThreadTitles.join('; ')}.`);
+  }
   if (context.memoryLines.length > 0) {
     lines.push(`Remembered context in play: ${context.memoryLines.join('; ')}.`);
   }
@@ -1027,16 +1247,31 @@ function buildMemoryReply(
   channel: DailyCompanionChannel,
   context: DailyCompanionContext,
 ): string {
-  if (context.memoryLines.length === 0) {
+  if (context.memoryLines.length === 0 && context.threadSummaryLines.length === 0) {
     return channel === 'alexa'
       ? 'I am not leaning on any strong remembered preferences for this one yet.'
       : 'I am not leaning on any strong remembered preferences for this one yet.';
+  }
+  const threadLead =
+    context.threadSummaryLines.length > 0
+      ? `Active thread context in play: ${context.threadSummaryLines.join('; ')}.`
+      : null;
+  if (context.memoryLines.length === 0) {
+    return channel === 'alexa'
+      ? threadLead || 'I was mostly leaning on current thread context.'
+      : threadLead || 'I was mostly leaning on current thread context.';
   }
   return channel === 'alexa'
     ? `The remembered pieces affecting this are ${context.memoryLines
         .slice(0, 2)
         .join(', ')}.`
-    : `Remembered context affecting this:\n- ${context.memoryLines.join('\n- ')}`;
+    : [
+        'Remembered context affecting this:',
+        ...context.memoryLines.map((line) => `- ${line}`),
+        threadLead ? `- ${threadLead}` : null,
+      ]
+        .filter(Boolean)
+        .join('\n');
 }
 
 function buildChangedReply(
@@ -1060,6 +1295,9 @@ function buildChangedReply(
   }
   if (previous.comparisonKeys.household !== current.comparisonKeys.household) {
     changes.push('the family or household signal changed');
+  }
+  if (previous.comparisonKeys.thread !== current.comparisonKeys.thread) {
+    changes.push('the thread carryover changed');
   }
 
   if (changes.length === 0) {
@@ -1219,6 +1457,18 @@ export async function buildDailyCompanionResponse(
     householdExplicit || /before my next meeting|tomorrow/.test(normalized)
       ? await loadScopedSnapshot(message, deps)
       : null;
+  const threadSnapshot = deps.groupFolder
+    ? buildLifeThreadSnapshot({
+        groupFolder: deps.groupFolder,
+        now,
+        selectedWorkTitle: snapshot.selectedWork?.title || null,
+      })
+    : {
+        activeThreads: [],
+        dueFollowups: [],
+        householdCarryover: null,
+        recommendedNextThread: null,
+      };
   const householdLines =
     prefs.familyContextEnabled || householdExplicit
       ? selectHouseholdLines({
@@ -1236,6 +1486,7 @@ export async function buildDailyCompanionResponse(
       householdLines,
       prefs,
       memoryLines,
+      threadSnapshot,
     });
   } else if (isEveningPrompt(normalized)) {
     draft = buildEveningDraft({
@@ -1246,6 +1497,7 @@ export async function buildDailyCompanionResponse(
       ),
       householdLines,
       memoryLines,
+      threadSnapshot,
     });
   } else if (householdExplicit) {
     draft = buildHouseholdDraft({
@@ -1253,6 +1505,7 @@ export async function buildDailyCompanionResponse(
       scopedSnapshot,
       rawMessage: normalized,
       memoryLines,
+      threadSnapshot,
     });
   } else if (deps.priorContext && isWhatChangedPrompt(normalized)) {
     draft = buildMiddayDraft({
@@ -1260,6 +1513,7 @@ export async function buildDailyCompanionResponse(
       householdLines,
       prefs,
       memoryLines,
+      threadSnapshot,
     });
     const current = finalizeDraft(draft, deps.channel, now, snapshot);
     if (isSameLocalDay(deps.priorContext.generatedAt, now)) {
@@ -1275,6 +1529,7 @@ export async function buildDailyCompanionResponse(
       householdLines,
       prefs,
       memoryLines,
+      threadSnapshot,
     });
   } else if (isOpenGuidancePrompt(normalized)) {
     if (normalized.includes('calendar tomorrow')) {
@@ -1286,6 +1541,7 @@ export async function buildDailyCompanionResponse(
         ),
         householdLines,
         memoryLines,
+        threadSnapshot,
       });
     } else {
       draft = buildOpenGuidanceDraft({
@@ -1294,6 +1550,7 @@ export async function buildDailyCompanionResponse(
         householdLines,
         prefs,
         memoryLines,
+        threadSnapshot,
       });
     }
   } else {

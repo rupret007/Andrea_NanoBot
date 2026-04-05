@@ -263,8 +263,22 @@ Notes:
 
 - track tasks and simple to-do lists
 - set reminders and recurring follow-ups
+- keep compact ongoing life threads for people, household, and work continuity
 - summarize conversations and notes
 - run lightweight personal workflow automation
+
+## Life Threads And Ongoing Context
+
+Andrea now has a bounded **life thread** layer for ongoing matters like Candace, family logistics, band follow-ups, home errands, health routines, or work continuity.
+
+- threads track what is still open across days
+- threads are not the same thing as long-term memory facts
+- reminders are still the place for a specific future nudge
+- current work is still the immediate execution focus in the cockpit
+- explicit prompts like `save this under the band thread`, `remember I need to talk to Candace about dinner plans tonight`, `what's still open with Candace`, and `what threads do I have open` work in plain language
+- inferred continuity stays confirmation-first; Andrea does not silently turn every recurring topic into durable memory
+- `don't bring this up automatically` moves a thread into manual-only use without deleting it
+- `forget that thread` is the explicit hard-delete path
 
 ### Research And Knowledge Work
 

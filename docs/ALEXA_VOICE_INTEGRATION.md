@@ -9,6 +9,7 @@ Andrea now uses an internal **Alexa Companion Mode**:
 - one or two short supporting lines
 - measured guidance for open-ended daily questions
 - short-lived conversational continuity
+- thread-aware continuity for active household, relationship, and follow-up topics
 - household-aware follow-ups when context is strong
 - explicit, consent-based personalization only
 
@@ -82,6 +83,27 @@ Out of scope:
 - operator-shell commands
 - hidden long-term memory
 - multi-user household routing
+
+## 1A) Life Threads In Alexa
+
+Alexa can now use the same bounded life-thread layer as Telegram when that improves continuity.
+
+That means prompts like these can stay short, natural, and grounded:
+
+- `What's still open today`
+- `What am I forgetting`
+- `What should I follow up on`
+- `What's still open with Candace`
+- `Is there anything I still need to handle for the house`
+- `Save that under the family thread`
+
+Important limits:
+
+- Alexa uses thread context only when the linked account resolves cleanly
+- thread replies stay conversational, not database-like
+- threads are not hidden memory; they are compact active-topic records
+- sensitive relationship or family threads still need strong user intent or confirmation before becoming durable
+- `don't bring this up automatically` switches a thread to manual-only surfacing instead of deleting it
 
 ## 2) Trust And Account Linking
 

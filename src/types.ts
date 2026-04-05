@@ -264,6 +264,7 @@ export type AlexaConversationSubjectKind =
   | 'event'
   | 'person'
   | 'household'
+  | 'life_thread'
   | 'saved_item'
   | 'draft'
   | 'memory_fact'
@@ -281,6 +282,7 @@ export type AlexaCompanionGuidanceGoal =
   | 'evening_reset'
   | 'family_guidance'
   | 'shared_plans'
+  | 'life_thread_guidance'
   | 'action_follow_through'
   | 'risk_check'
   | 'explainability';
@@ -361,6 +363,113 @@ export interface ProfileFactWithSubject extends ProfileFact {
   subjectKind: ProfileSubjectKind;
   subjectCanonicalName: string;
   subjectDisplayName: string;
+}
+
+export type LifeThreadStatus = 'active' | 'paused' | 'closed' | 'archived';
+
+export type LifeThreadScope =
+  | 'personal'
+  | 'household'
+  | 'family'
+  | 'work'
+  | 'mixed';
+
+export type LifeThreadCategory =
+  | 'family'
+  | 'relationship'
+  | 'household'
+  | 'school'
+  | 'health'
+  | 'routine'
+  | 'work'
+  | 'project'
+  | 'community'
+  | 'personal';
+
+export type LifeThreadSourceKind =
+  | 'explicit'
+  | 'inferred'
+  | 'reminder'
+  | 'calendar'
+  | 'draft'
+  | 'action_layer'
+  | 'daily_companion'
+  | 'alexa_followup';
+
+export type LifeThreadConfidenceKind = 'explicit' | 'high' | 'medium' | 'low';
+
+export type LifeThreadSensitivity = 'normal' | 'sensitive';
+
+export type LifeThreadSurfaceMode = 'default' | 'manual_only';
+
+export type LifeThreadCommandChannel = 'telegram' | 'alexa';
+
+export interface LifeThread {
+  id: string;
+  groupFolder: string;
+  title: string;
+  category: LifeThreadCategory;
+  status: LifeThreadStatus;
+  scope: LifeThreadScope;
+  relatedSubjectIds: string[];
+  contextTags: string[];
+  summary: string;
+  nextAction?: string | null;
+  nextFollowupAt?: string | null;
+  sourceKind: LifeThreadSourceKind;
+  confidenceKind: LifeThreadConfidenceKind;
+  userConfirmed: boolean;
+  sensitivity: LifeThreadSensitivity;
+  surfaceMode: LifeThreadSurfaceMode;
+  mergedIntoThreadId?: string | null;
+  createdAt: string;
+  lastUpdatedAt: string;
+  lastUsedAt?: string | null;
+}
+
+export interface LifeThreadSignal {
+  id: string;
+  threadId: string;
+  groupFolder: string;
+  sourceKind: LifeThreadSourceKind;
+  summaryText: string;
+  chatJid?: string | null;
+  messageId?: string | null;
+  taskId?: string | null;
+  calendarEventId?: string | null;
+  profileFactId?: string | null;
+  confidenceKind: LifeThreadConfidenceKind;
+  createdAt: string;
+}
+
+export interface PendingLifeThreadSuggestionState {
+  version: 1;
+  title: string;
+  category: LifeThreadCategory;
+  scope: LifeThreadScope;
+  summary: string;
+  nextAction?: string | null;
+  sourceKind: 'inferred';
+  confidenceKind: 'high';
+  sensitivity: LifeThreadSensitivity;
+  relatedSubjectIds: string[];
+  contextTags: string[];
+  createdAt: string;
+  expiresAt: string;
+}
+
+export interface LastReferencedLifeThreadState {
+  version: 1;
+  threadId: string;
+  title: string;
+  createdAt: string;
+}
+
+export interface LifeThreadSnapshot {
+  activeThreads: LifeThread[];
+  dueFollowups: LifeThread[];
+  householdCarryover: LifeThread | null;
+  recommendedNextThread: LifeThread | null;
 }
 
 export interface AlexaOAuthAuthorizationCodeRecord {

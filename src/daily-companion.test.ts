@@ -7,6 +7,7 @@ import {
   type DailyCompanionContext,
 } from './daily-companion.js';
 import { _initTestDatabase } from './db.js';
+import { handleLifeThreadCommand } from './life-threads.js';
 import type { ScheduledTask } from './types.js';
 
 function createGoogleCalendarFetchMock(input: {
@@ -196,6 +197,39 @@ describe('buildDailyCompanionResponse', () => {
     expect(response?.reply).toContain('The best next move is to stay with Ship docs.');
     expect(response?.reply).toContain('Current work: Ship docs (Running)');
     expect(response?.recommendationKind).toBe('do_now');
+  });
+
+  it('surfaces thread carryover in daily guidance when an active thread would otherwise slip', async () => {
+    handleLifeThreadCommand({
+      groupFolder: 'main',
+      channel: 'telegram',
+      chatJid: 'tg:8004355504',
+      text: 'save this under the Candace thread',
+      replyText: 'Talk through dinner plans tonight.',
+      now: new Date('2026-04-04T11:00:00-05:00'),
+    });
+
+    const fetchImpl = createGoogleCalendarFetchMock({
+      eventsByCalendar: {
+        primary: {
+          items: [],
+        },
+      },
+    });
+
+    const response = await buildDailyCompanionResponse('What should I do next?', {
+      channel: 'telegram',
+      groupFolder: 'main',
+      now: new Date('2026-04-04T12:00:00-05:00'),
+      timeZone: 'America/Chicago',
+      env: baseEnv,
+      fetchImpl,
+      tasks: [],
+    });
+
+    expect(response?.reply).toContain('Candace');
+    expect(response?.signalsUsed).toContain('life_threads');
+    expect(response?.context.usedThreadTitles).toContain('Candace');
   });
 
   it('answers what changed from the prior companion context instead of falling back', async () => {
@@ -454,5 +488,60 @@ describe('buildDailyCompanionResponse', () => {
     expect(memory?.reply).toContain('Remembered context affecting this');
     expect(memory?.reply).toContain('shorter, more direct');
     expect(memory?.reply).toContain('family context should stay lighter');
+  });
+
+  it('includes active thread context in explainability and remembered-context follow-ups', async () => {
+    const fetchImpl = createGoogleCalendarFetchMock({
+      eventsByCalendar: {
+        primary: {
+          items: [],
+        },
+      },
+    });
+
+    handleLifeThreadCommand({
+      groupFolder: 'main',
+      channel: 'telegram',
+      chatJid: 'tg:8004355504',
+      text: 'save this under the band thread',
+      replyText: 'Confirm rehearsal time with the drummer.',
+      now: new Date('2026-04-04T08:30:00-05:00'),
+    });
+
+    const first = await buildDailyCompanionResponse('What am I forgetting?', {
+      channel: 'telegram',
+      groupFolder: 'main',
+      now: new Date('2026-04-04T09:00:00-05:00'),
+      timeZone: 'America/Chicago',
+      env: baseEnv,
+      fetchImpl,
+      tasks: [],
+    });
+
+    const explain = await buildDailyCompanionResponse('What are you using to answer this?', {
+      channel: 'telegram',
+      groupFolder: 'main',
+      now: new Date('2026-04-04T09:05:00-05:00'),
+      timeZone: 'America/Chicago',
+      env: baseEnv,
+      fetchImpl,
+      tasks: [],
+      priorContext: first?.context as DailyCompanionContext,
+    });
+    const memory = await buildDailyCompanionResponse('What do you remember that affects this?', {
+      channel: 'telegram',
+      groupFolder: 'main',
+      now: new Date('2026-04-04T09:05:00-05:00'),
+      timeZone: 'America/Chicago',
+      env: baseEnv,
+      fetchImpl,
+      tasks: [],
+      priorContext: first?.context as DailyCompanionContext,
+    });
+
+    expect(explain?.reply).toContain('Thread context in play');
+    expect(explain?.reply).toContain('Band');
+    expect(memory?.reply).toContain('Active thread context in play');
+    expect(memory?.reply).toContain('Band');
   });
 });

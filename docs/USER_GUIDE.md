@@ -12,6 +12,7 @@ Andrea is strongest at:
 
 - everyday questions and quick answers
 - reminders, follow-ups, and simple task help
+- ongoing life-thread continuity for people, household, and work topics
 - summaries and light research
 - project help in normal language
 - fast direct replies for simple prompts, playful questions, and basic math
@@ -84,6 +85,50 @@ If your admin enabled Alexa, Andrea can also answer short spoken questions like:
 Those voice features stay linked-account only and use explicit personalization controls.
 
 If your admin enabled the work cockpit, Andrea can also keep one chat-scoped current work item across Cursor and Codex/OpenAI. That selection is operator-facing convenience only; explicit job or task ids still win whenever an admin uses them.
+
+## Life Threads
+
+Andrea can keep a small set of active **life threads** so she can remember what is still open without turning every chat into a giant memory blob.
+
+Think of threads like:
+
+- Candace
+- family logistics
+- band
+- house stuff
+- school follow-up
+- health or routine carryover
+
+What threads are for:
+
+- active ongoing matters that may come back over several days
+- thread-aware daily guidance like `What am I forgetting?`
+- follow-up prompts like `What's still open with Candace?`
+- save-for-later continuity like `save this under the band thread`
+
+What threads are not:
+
+- not a full project manager
+- not hidden long-term memory
+- not a replacement for reminders
+
+Useful thread prompts:
+
+- `What threads do I have open?`
+- `What's active right now?`
+- `What's still open with Candace?`
+- `Save this under the family thread`
+- `What do you know about this thread?`
+- `Why do you think this is still open?`
+- `Don't bring this up automatically`
+- `Forget that thread`
+
+Important trust rules:
+
+- explicit save/track requests create or update a thread directly
+- sensitive topics are not silently persisted just because they came up in conversation
+- inferred thread suggestions are confirmation-first
+- `forget that thread` deletes the thread; `close` or `pause` keeps history without surfacing it as active
 
 ## What To Expect From `/cursor_status`
 
