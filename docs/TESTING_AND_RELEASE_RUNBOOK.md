@@ -230,21 +230,24 @@ Current truthful closeout note:
 
 - repo-side and near-live Alexa proof can be green without a live signed Alexa utterance
 - do not claim full live Alexa acceptance until one real signed Alexa request succeeds from the app, a device, or an authenticated simulator session
+- typed Alexa+ app chat is not an authoritative proof surface unless Andrea logs a real signed follow-up `IntentRequest` after launch
 
 When configured, validate in this order:
 
 1. `npm run services:status` and confirm `alexa_listener_health=healthy` plus `alexa_oauth_health=healthy`
+   - also note the `alexa_last_signed_request_*` fields before the attempt
 2. `/alexa-status`
 3. public `GET /alexa/oauth/health`
    - if the live host is an `ngrok` `*.ngrok-free.dev` tunnel, use the `ngrok-skip-browser-warning: 1` header for browser-style checks
    - if the skill endpoint uses that host, confirm the Alexa console SSL setting is the wildcard-certificate option
-4. unlinked launch
+4. authoritative voice launch
+   - preferred: `Alexa, open Andrea Assistant skill`
 5. unlinked help
 6. one unlinked personal-data intent
-7. linked my day
+7. linked `what's still open with Candace`
 8. linked `anything else`
-9. linked `what about Candace` or `what about Travis`
-10. linked `remind me before that`
+9. linked `what should I remember tonight`
+10. confirm `alexa_last_signed_request_type=IntentRequest` and a resolved `groupFolder`
 11. one preference or explainability turn
 
 Check:

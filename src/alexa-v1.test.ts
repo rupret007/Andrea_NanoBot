@@ -70,7 +70,9 @@ describe('alexa v1 prompt mapping', () => {
 describe('alexa v1 speech helpers', () => {
   it('keeps help and welcome copy short and voice-first', () => {
     expect(buildAlexaHelpSpeech('Andrea')).toContain('morning brief');
-    expect(buildAlexaWelcomeSpeech('Andrea')).toContain('Andrea is ready');
+    expect(buildAlexaWelcomeSpeech('Andrea')).toContain(
+      'You are talking to Andrea.',
+    );
   });
 
   it('builds short clarification and confirmation questions', () => {

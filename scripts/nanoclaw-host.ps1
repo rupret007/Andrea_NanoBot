@@ -21,6 +21,7 @@ $stderrLogPath = Join-Path $logsDir 'nanoclaw.error.log'
 $hostStatePath = Join-Path $runtimeDir 'nanoclaw-host-state.json'
 $readyStatePath = Join-Path $runtimeDir 'nanoclaw-ready.json'
 $assistantHealthPath = Join-Path $runtimeDir 'assistant-health.json'
+$alexaLastSignedRequestPath = Join-Path $runtimeDir 'alexa-last-signed-request.json'
 $telegramRoundtripPath = Join-Path $runtimeDir 'telegram-roundtrip-health.json'
 $telegramTransportPath = Join-Path $runtimeDir 'telegram-transport-health.json'
 $runtimeAuditPath = Join-Path $runtimeDir 'runtime-audit.json'
@@ -1560,6 +1561,7 @@ function Start-NanoClaw {
 
   Remove-FileIfExists $readyStatePath
   Remove-FileIfExists $assistantHealthPath
+  Remove-FileIfExists $alexaLastSignedRequestPath
   Stop-OrphanedRepoProcesses | Out-Null
   Stop-Gateway
   $gatewayStart = Start-Gateway
@@ -1638,6 +1640,7 @@ function Start-NanoClaw {
   Remove-FileIfExists $pidFile
   Remove-FileIfExists $readyStatePath
   Remove-FileIfExists $assistantHealthPath
+  Remove-FileIfExists $alexaLastSignedRequestPath
   throw $lastError
 }
 
@@ -1668,6 +1671,7 @@ function Stop-NanoClaw {
   Remove-FileIfExists $pidFile
   Remove-FileIfExists $readyStatePath
   Remove-FileIfExists $assistantHealthPath
+  Remove-FileIfExists $alexaLastSignedRequestPath
   Remove-FileIfExists $telegramTransportPath
   Write-HostState -Phase 'stopped' -BootId '' -NodePath '' -NodeVersion '' -StartedAt '' -InstallModeValue $InstallMode
 }
@@ -1794,6 +1798,7 @@ function Show-Status {
   $hostState = Read-JsonFile $hostStatePath
   $readyState = Read-JsonFile $readyStatePath
   $assistantHealthMarker = Read-JsonFile $assistantHealthPath
+  $alexaLastSignedRequest = Read-JsonFile $alexaLastSignedRequestPath
   $runtimeAudit = Read-JsonFile $runtimeAuditPath
   $runtimeMetadata = Read-JsonFile $nodeRuntimeMetadataPath
   $runtimePid = Read-Pid
@@ -1885,6 +1890,11 @@ function Show-Status {
   Write-Output ("HOST_STATUS: alexa_public_listener_detail={0}" -f ([string] $alexaPublic.listenerDetail))
   Write-Output ("HOST_STATUS: alexa_public_oauth_health={0}" -f ([string] $alexaPublic.oauthHealth))
   Write-Output ("HOST_STATUS: alexa_public_oauth_detail={0}" -f ([string] $alexaPublic.oauthDetail))
+  Write-Output ("HOST_STATUS: alexa_last_signed_request_at={0}" -f ($(if ($alexaLastSignedRequest -and $alexaLastSignedRequest.updatedAt) { [string] $alexaLastSignedRequest.updatedAt } else { 'none' })))
+  Write-Output ("HOST_STATUS: alexa_last_signed_request_type={0}" -f ($(if ($alexaLastSignedRequest -and $alexaLastSignedRequest.requestType) { [string] $alexaLastSignedRequest.requestType } else { 'none' })))
+  Write-Output ("HOST_STATUS: alexa_last_signed_intent={0}" -f ($(if ($alexaLastSignedRequest -and $alexaLastSignedRequest.intentName) { [string] $alexaLastSignedRequest.intentName } else { 'none' })))
+  Write-Output ("HOST_STATUS: alexa_last_signed_group_folder={0}" -f ($(if ($alexaLastSignedRequest -and $alexaLastSignedRequest.groupFolder) { [string] $alexaLastSignedRequest.groupFolder } else { 'none' })))
+  Write-Output ("HOST_STATUS: alexa_last_signed_response_source={0}" -f ($(if ($alexaLastSignedRequest -and $alexaLastSignedRequest.responseSource) { [string] $alexaLastSignedRequest.responseSource } else { 'none' })))
   Write-Output ("HOST_STATUS: telegram_transport_mode={0}" -f ([string] $telegramTransport.mode))
   Write-Output ("HOST_STATUS: telegram_transport_health={0}" -f ([string] $telegramTransport.status))
   Write-Output ("HOST_STATUS: telegram_transport_detail={0}" -f ([string] $telegramTransport.detail))

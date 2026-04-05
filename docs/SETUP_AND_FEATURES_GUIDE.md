@@ -384,6 +384,8 @@ Practical notes:
 - person follow-ups can now stay voice-natural with prompts like `what about Travis`, `say more`, `what should I do about that`, and `should I be worried about anything`.
 - Alexa can also handle explicit memory controls like `remember this`, `forget that`, and `what do you remember about me`.
 - remembered personalization stays structured and consent-based; Andrea does not silently store arbitrary conversation history as long-term memory.
+- typed Alexa+ app chat is diagnosis-only unless it produces a real signed follow-up `IntentRequest` after skill launch
+- authoritative live proof should use voice in the Alexa app, voice on device, or the authenticated Alexa simulator
 
 Recommended setup order:
 
@@ -408,7 +410,9 @@ Recommended setup order:
    - use the same live skill/application ID as local `ALEXA_SKILL_ID`
    - if `ALEXA_PUBLIC_BASE_URL` ends with `.ngrok-free.dev`, choose the wildcard-certificate endpoint option in the Alexa Developer Console
 7. run `/alexa-status`, then perform the linked and unlinked live checks from [ALEXA_VOICE_INTEGRATION.md](ALEXA_VOICE_INTEGRATION.md)
-8. if repo-side and near-live proof are already green, treat one real signed Alexa utterance as the final live acceptance step
+8. if repo-side and near-live proof are already green, treat one real signed Alexa voice conversation as the final live acceptance step
+   - preferred launch phrase: `Alexa, open Andrea Assistant skill`
+   - confirm `npm run services:status` shows the last signed request fields changing from `LaunchRequest` to a follow-up `IntentRequest`
 
 Full details:
 

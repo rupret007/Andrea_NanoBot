@@ -143,15 +143,15 @@ export function buildAlexaConversationalFollowupPrompt(
 }
 
 export function buildAlexaHelpSpeech(assistantName: string): string {
-  return `${assistantName} can give you a morning brief, tell you what matters today, talk through tomorrow, help with family plans, and stay with short follow-up questions like anything else or remind me before that.`;
+  return `You are talking to ${assistantName}. Ask for a morning brief, what you are forgetting, what matters today, or what is still open with Candace.`;
 }
 
 export function buildAlexaWelcomeSpeech(assistantName: string): string {
-  return `${assistantName} is ready. Ask for a morning brief, what matters today, tomorrow, family plans, or follow up naturally from there.`;
+  return `You are talking to ${assistantName}. Start with what you are forgetting, what matters today, or what you should remember tonight.`;
 }
 
 export function buildAlexaFallbackSpeech(assistantName: string): string {
-  return `${assistantName} works best with short personal assistant requests like what matters today, what am I forgetting, what is on my calendar tomorrow, or remind me before that.`;
+  return `This is ${assistantName}. Try a short request like what am I forgetting, what matters today, what is still open with Candace, or what should I remember tonight.`;
 }
 
 export function buildReminderLeadTimeQuestion(assistantName: string): string {

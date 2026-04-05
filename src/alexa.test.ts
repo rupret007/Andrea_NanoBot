@@ -1,3 +1,5 @@
+import fs from 'fs';
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type RequestEnvelope, type ResponseEnvelope } from 'ask-sdk-model';
 
@@ -43,6 +45,11 @@ vi.mock('./daily-companion.js', () => ({
 
 const mockedRunAlexaAssistantTurn = vi.mocked(runAlexaAssistantTurn);
 const mockedBuildDailyCompanionResponse = vi.mocked(buildDailyCompanionResponse);
+const ALEXA_LAST_SIGNED_REQUEST_STATE_SUFFIX = process.env.VITEST_WORKER_ID
+  ? `-${process.env.VITEST_WORKER_ID}`
+  : '';
+const ALEXA_LAST_SIGNED_REQUEST_STATE_PATH =
+  `C:/Users/rupret/Desktop/Andrea_NanoBot/data/runtime/alexa-last-signed-request${ALEXA_LAST_SIGNED_REQUEST_STATE_SUFFIX}.json`;
 
 function buildBaseEnvelope(): RequestEnvelope {
   return {
@@ -267,6 +274,9 @@ describe('Alexa speech shaping', () => {
 
 describe('createAlexaSkill', () => {
   beforeEach(() => {
+    try {
+      fs.unlinkSync(ALEXA_LAST_SIGNED_REQUEST_STATE_PATH);
+    } catch {}
     _initTestDatabase();
     mockedRunAlexaAssistantTurn.mockReset();
     mockedBuildDailyCompanionResponse.mockReset();
@@ -290,7 +300,9 @@ describe('createAlexaSkill', () => {
     const skill = createAlexaSkill(buildConfig());
     const response = await skill.invoke(buildBaseEnvelope());
 
-    expect(extractSpeechText(response)).toContain(`${ASSISTANT_NAME} is ready`);
+    expect(extractSpeechText(response)).toContain(
+      `You are talking to ${ASSISTANT_NAME}.`,
+    );
   });
 
   it('returns a link-account response for personal intents with no token', async () => {
@@ -832,7 +844,7 @@ describe('createAlexaSkill', () => {
       buildIntentEnvelope('AMAZON.FallbackIntent'),
     );
 
-    expect(extractSpeechText(response)).toContain('works best with short');
+    expect(extractSpeechText(response)).toContain(`This is ${ASSISTANT_NAME}.`);
     expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
   });
 });
@@ -865,6 +877,9 @@ describe('startAlexaServer', () => {
       await runtime.close();
       runtime = null;
     }
+    try {
+      fs.unlinkSync(ALEXA_LAST_SIGNED_REQUEST_STATE_PATH);
+    } catch {}
   });
 
   it('serves a health endpoint and handles unsigned local requests when verification is disabled', async () => {
@@ -895,6 +910,11 @@ describe('startAlexaServer', () => {
     expect(response.status).toBe(200);
     const payload = (await response.json()) as ResponseEnvelope;
     expect(extractSpeechText(payload)).toContain('Tomorrow has one timed event');
+    const updatedStatus = runtime!.getStatus();
+    expect(updatedStatus.lastSignedRequestType).toBe('IntentRequest');
+    expect(updatedStatus.lastSignedIntent).toBe('TomorrowCalendarIntent');
+    expect(updatedStatus.lastSignedGroupFolder).toBe('main');
+    expect(updatedStatus.lastSignedResponseSource).toBe('local_companion');
   });
 
   it('rejects requests with the wrong Alexa skill/application identity', async () => {
@@ -935,7 +955,30 @@ describe('formatAlexaStatusMessage', () => {
         verifySignature: true,
         requireAccountLinking: true,
         allowedUserIdsCount: 1,
+        lastSignedRequestAt: '2026-04-05T06:00:00.000Z',
+        lastSignedRequestType: 'IntentRequest',
+        lastSignedIntent: 'WhatAmIForgettingIntent',
+        lastSignedGroupFolder: 'main',
+        lastSignedResponseSource: 'local_companion',
       }),
     ).toContain('Status: listening');
+    expect(
+      formatAlexaStatusMessage({
+        enabled: true,
+        running: true,
+        host: '127.0.0.1',
+        port: 4300,
+        path: '/alexa',
+        healthPath: '/alexa/health',
+        verifySignature: true,
+        requireAccountLinking: true,
+        allowedUserIdsCount: 1,
+        lastSignedRequestAt: '2026-04-05T06:00:00.000Z',
+        lastSignedRequestType: 'IntentRequest',
+        lastSignedIntent: 'WhatAmIForgettingIntent',
+        lastSignedGroupFolder: 'main',
+        lastSignedResponseSource: 'local_companion',
+      }),
+    ).toContain('Last signed response source: local_companion');
   });
 });

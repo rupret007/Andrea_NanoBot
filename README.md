@@ -162,9 +162,11 @@ Alexa is now a bounded companion channel for Andrea rather than a novelty skill.
 - personalization remains explicit and consent-based
 - use Node `22.22.2` for truthful Alexa validation on the operator host
 
-Repo-side and near-live Alexa proof are strong on this host. The one remaining live gap is still one exact external step unless you re-prove it during the current session: one real signed Alexa utterance from the app, a device, or an authenticated simulator session.
+Repo-side and near-live Alexa proof are strong on this host. The one remaining live gap is still one exact external step unless you re-prove it during the current session: one real signed Alexa voice conversation from the Alexa app, a device, or an authenticated simulator session.
 
-For day-to-day operator checks, use `/alexa-status` inside the registered main control chat and `npm run services:status` for the local Alexa listener, OAuth health, and public-ingress hinting on the host. Public HTTPS ingress and live signed utterances remain separate acceptance checks. If the live host is an `ngrok` `*.ngrok-free.dev` tunnel, the Alexa console endpoint SSL setting must use the wildcard-certificate option.
+Typed Alexa+ app chat is diagnosis-only right now. It may trigger a skill launch, but it does not count as live proof unless Andrea logs a real signed follow-up `IntentRequest` after launch.
+
+For day-to-day operator checks, use `/alexa-status` inside the registered main control chat and `npm run services:status` for the local Alexa listener, OAuth health, public-ingress hinting, and the last signed Alexa request markers on the host. Public HTTPS ingress and live signed utterances remain separate acceptance checks. If the live host is an `ngrok` `*.ngrok-free.dev` tunnel, the Alexa console endpoint SSL setting must use the wildcard-certificate option.
 
 ## Two Command Surfaces
 

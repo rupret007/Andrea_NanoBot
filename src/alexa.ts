@@ -1,3 +1,4 @@
+import fs from 'fs';
 import http, { type IncomingHttpHeaders, type Server } from 'http';
 
 import {
@@ -79,7 +80,7 @@ import {
   buildSaveForLaterQuestion,
   isAlexaPersonalIntent,
 } from './alexa-v1.js';
-import { ASSISTANT_NAME } from './config.js';
+import { ASSISTANT_NAME, RUNTIME_STATE_DIR } from './config.js';
 import {
   buildDailyCompanionResponse,
   type DailyCompanionContext,
@@ -140,6 +141,22 @@ export interface AlexaStatus {
   publicIngressKind?: string;
   publicIngressHint?: string;
   publicBrowserHint?: string;
+  lastSignedRequestAt?: string;
+  lastSignedRequestType?: string;
+  lastSignedIntent?: string;
+  lastSignedGroupFolder?: string;
+  lastSignedResponseSource?: string;
+}
+
+interface AlexaSignedRequestState {
+  updatedAt: string;
+  requestId: string;
+  requestType: string;
+  intentName?: string;
+  applicationIdVerified: boolean;
+  linkingResolved: boolean;
+  groupFolder?: string;
+  responseSource: string;
 }
 
 type SkillLike = {
@@ -163,6 +180,115 @@ type AlexaBarrierResponse = {
   speech: string;
   reprompt?: string;
 };
+
+const ALEXA_LAST_SIGNED_REQUEST_STATE_SUFFIX = process.env.VITEST_WORKER_ID
+  ? `-${process.env.VITEST_WORKER_ID}`
+  : '';
+const ALEXA_LAST_SIGNED_REQUEST_STATE_PATH = `${RUNTIME_STATE_DIR}\\alexa-last-signed-request${ALEXA_LAST_SIGNED_REQUEST_STATE_SUFFIX}.json`;
+
+function readAlexaLastSignedRequestState():
+  | AlexaSignedRequestState
+  | undefined {
+  try {
+    if (!fs.existsSync(ALEXA_LAST_SIGNED_REQUEST_STATE_PATH)) {
+      return undefined;
+    }
+    const raw = fs
+      .readFileSync(ALEXA_LAST_SIGNED_REQUEST_STATE_PATH, 'utf8')
+      .trim();
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw) as Partial<AlexaSignedRequestState>;
+    if (
+      !parsed ||
+      typeof parsed.updatedAt !== 'string' ||
+      typeof parsed.requestId !== 'string' ||
+      typeof parsed.requestType !== 'string' ||
+      typeof parsed.responseSource !== 'string'
+    ) {
+      return undefined;
+    }
+    return {
+      updatedAt: parsed.updatedAt,
+      requestId: parsed.requestId,
+      requestType: parsed.requestType,
+      intentName:
+        typeof parsed.intentName === 'string' ? parsed.intentName : undefined,
+      applicationIdVerified: parsed.applicationIdVerified === true,
+      linkingResolved: parsed.linkingResolved === true,
+      groupFolder:
+        typeof parsed.groupFolder === 'string' ? parsed.groupFolder : undefined,
+      responseSource: parsed.responseSource,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function writeAlexaLastSignedRequestState(
+  state: AlexaSignedRequestState,
+): void {
+  try {
+    fs.mkdirSync(RUNTIME_STATE_DIR, { recursive: true });
+    fs.writeFileSync(
+      ALEXA_LAST_SIGNED_REQUEST_STATE_PATH,
+      `${JSON.stringify(state, null, 2)}\n`,
+      'utf8',
+    );
+  } catch (err) {
+    logger.warn({ err }, 'Failed to persist Alexa signed-request state');
+  }
+}
+
+function buildAlexaSignedRequestState(
+  requestEnvelope: RequestEnvelope,
+  overrides: Partial<AlexaSignedRequestState> = {},
+): AlexaSignedRequestState {
+  const requestType = getRequestType(requestEnvelope);
+  const requestId = requestEnvelope.request?.requestId || 'unknown';
+  const intentName =
+    requestType === 'IntentRequest'
+      ? getIntentName(requestEnvelope)
+      : undefined;
+  return {
+    updatedAt: new Date().toISOString(),
+    requestId,
+    requestType,
+    intentName,
+    applicationIdVerified: overrides.applicationIdVerified ?? true,
+    linkingResolved: overrides.linkingResolved ?? false,
+    groupFolder: overrides.groupFolder,
+    responseSource: overrides.responseSource || 'received_trusted_request',
+  };
+}
+
+function recordHandledRequest(
+  requestEnvelope: RequestEnvelope,
+  options: {
+    responseSource: string;
+    linked?: boolean;
+    groupFolder?: string;
+  },
+): void {
+  const state = buildAlexaSignedRequestState(requestEnvelope, {
+    applicationIdVerified: true,
+    linkingResolved: options.linked ?? false,
+    groupFolder: options.groupFolder,
+    responseSource: options.responseSource,
+  });
+  writeAlexaLastSignedRequestState(state);
+  logger.info(
+    {
+      requestId: state.requestId,
+      requestType: state.requestType,
+      intentName: state.intentName,
+      applicationIdVerified: true,
+      linkingResolved: state.linkingResolved,
+      groupFolder: state.groupFolder,
+      responseSource: state.responseSource,
+    },
+    'Alexa signed request handled',
+  );
+}
 
 function parseBoolean(value: string | undefined, fallback: boolean): boolean {
   if (value == null || value.trim() === '') return fallback;
@@ -297,6 +423,7 @@ export function getAlexaStatus(
   boundPort?: number,
   oauthConfig = resolveAlexaOAuthConfig(process.env, config?.path || DEFAULT_ALEXA_PATH),
 ): AlexaStatus {
+  const lastSignedRequest = readAlexaLastSignedRequestState();
   const envFile = readEnvFile(['ALEXA_PUBLIC_BASE_URL']);
   const publicBaseUrl = normalizeBaseUrl(
     process.env.ALEXA_PUBLIC_BASE_URL || envFile.ALEXA_PUBLIC_BASE_URL,
@@ -325,6 +452,11 @@ export function getAlexaStatus(
       publicIngressKind: publicIngress.kind,
       publicIngressHint: publicIngress.hint,
       publicBrowserHint: publicIngress.browserHint,
+      lastSignedRequestAt: lastSignedRequest?.updatedAt,
+      lastSignedRequestType: lastSignedRequest?.requestType,
+      lastSignedIntent: lastSignedRequest?.intentName,
+      lastSignedGroupFolder: lastSignedRequest?.groupFolder,
+      lastSignedResponseSource: lastSignedRequest?.responseSource,
     };
   }
 
@@ -352,6 +484,11 @@ export function getAlexaStatus(
     publicIngressKind: publicIngress.kind,
     publicIngressHint: publicIngress.hint,
     publicBrowserHint: publicIngress.browserHint,
+    lastSignedRequestAt: lastSignedRequest?.updatedAt,
+    lastSignedRequestType: lastSignedRequest?.requestType,
+    lastSignedIntent: lastSignedRequest?.intentName,
+    lastSignedGroupFolder: lastSignedRequest?.groupFolder,
+    lastSignedResponseSource: lastSignedRequest?.responseSource,
   };
 }
 
@@ -410,6 +547,21 @@ export function formatAlexaStatusMessage(status: AlexaStatus): string {
     status.publicBrowserHint
       ? `- Browser check note: ${status.publicBrowserHint}`
       : '- Browser check note: unavailable',
+    status.lastSignedRequestAt
+      ? `- Last signed request at: ${status.lastSignedRequestAt}`
+      : '- Last signed request at: none seen since startup',
+    status.lastSignedRequestType
+      ? `- Last signed request type: ${status.lastSignedRequestType}`
+      : '- Last signed request type: unavailable',
+    status.lastSignedIntent
+      ? `- Last signed intent: ${status.lastSignedIntent}`
+      : '- Last signed intent: unavailable',
+    status.lastSignedGroupFolder
+      ? `- Last signed group folder: ${status.lastSignedGroupFolder}`
+      : '- Last signed group folder: unavailable',
+    status.lastSignedResponseSource
+      ? `- Last signed response source: ${status.lastSignedResponseSource}`
+      : '- Last signed response source: unavailable',
     '- Tip: expose this endpoint through HTTPS and configure account linking before using personal Alexa intents.',
   ].join('\n');
 }
@@ -826,12 +978,22 @@ async function runLinkedAlexaTurn(
       }
     }
 
+    recordHandledRequest(handlerInput.requestEnvelope, {
+      responseSource: 'bridge',
+      linked: true,
+      groupFolder: linked.account.groupFolder,
+    });
     return handlerInput.responseBuilder
       .speak(finalSpeech)
       .reprompt(reprompt)
       .getResponse();
   } catch (err) {
     if (err instanceof AlexaTargetGroupMissingError) {
+      recordHandledRequest(handlerInput.requestEnvelope, {
+        responseSource: 'barrier',
+        linked: true,
+        groupFolder: err.groupFolder,
+      });
       return buildBarrierResponse(
         handlerInput,
         buildSetupBarrier(assistantName, err.groupFolder),
@@ -853,6 +1015,7 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
     if (!linked.ok) {
       return {
         ok: false as const,
+        barrier: linked,
         response: buildBarrierResponse(handlerInput, linked),
       };
     }
@@ -877,12 +1040,23 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
     );
     logger.info(
       {
+        requestId: handlerInput.requestEnvelope.request.requestId,
+        requestType: getRequestType(handlerInput.requestEnvelope),
+        intentName:
+          getRequestType(handlerInput.requestEnvelope) === 'IntentRequest'
+            ? getIntentName(handlerInput.requestEnvelope)
+            : undefined,
         groupFolder: linked.account.groupFolder,
         mode: response.mode,
         responseSource: 'local_companion',
       },
       'Alexa daily companion answered locally',
     );
+    recordHandledRequest(handlerInput.requestEnvelope, {
+      responseSource: 'local_companion',
+      linked: true,
+      groupFolder: linked.account.groupFolder,
+    });
     return handlerInput.responseBuilder
       .speak(response.reply)
       .reprompt(DEFAULT_ALEXA_REPROMPT)
@@ -910,6 +1084,11 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
         { groupFolder: linked.account.groupFolder, utterance },
         'Alexa local companion could not classify request',
       );
+      recordHandledRequest(handlerInput.requestEnvelope, {
+        responseSource: 'fallback',
+        linked: true,
+        groupFolder: linked.account.groupFolder,
+      });
       return handlerInput.responseBuilder
         .speak(
           `${assistantName} could not ground that daily read cleanly yet. Please ask it a different way.`,
@@ -1014,6 +1193,11 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
       );
     }
 
+    recordHandledRequest(handlerInput.requestEnvelope, {
+      responseSource: 'life_thread_local',
+      linked: true,
+      groupFolder: linked.account.groupFolder,
+    });
     return handlerInput.responseBuilder
       .speak(result.responseText || 'Okay.')
       .reprompt(DEFAULT_ALEXA_REPROMPT)
@@ -1031,9 +1215,15 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
         assistantName,
       );
       if (!authorization.ok) {
+        recordHandledRequest(handlerInput.requestEnvelope, {
+          responseSource: 'barrier',
+        });
         return buildBarrierResponse(handlerInput, authorization);
       }
 
+      recordHandledRequest(handlerInput.requestEnvelope, {
+        responseSource: 'launch',
+      });
       return handlerInput.responseBuilder
         .speak(buildAlexaWelcomeSpeech(assistantName))
         .reprompt(DEFAULT_ALEXA_REPROMPT)
@@ -1055,6 +1245,9 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
         assistantName,
       );
       if (!authorization.ok) {
+        recordHandledRequest(handlerInput.requestEnvelope, {
+          responseSource: 'barrier',
+        });
         return buildBarrierResponse(handlerInput, authorization);
       }
 
@@ -1063,12 +1256,20 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
         authorization.principal,
       );
       if (!linkedResolution.ok) {
+        recordHandledRequest(handlerInput.requestEnvelope, {
+          responseSource: 'barrier',
+        });
         return linkedResolution.response;
       }
 
       const linked = linkedResolution.linked;
       const requestIntent = buildRequestIntent(handlerInput.requestEnvelope);
       if (!requestIntent) {
+        recordHandledRequest(handlerInput.requestEnvelope, {
+          responseSource: 'fallback',
+          linked: true,
+          groupFolder: linked.account.groupFolder,
+        });
         return handlerInput.responseBuilder
           .speak(`${assistantName} did not catch that request yet.`)
           .reprompt(DEFAULT_ALEXA_REPROMPT)
@@ -1306,6 +1507,11 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
 
       if (intentName === ALEXA_ANYTHING_ELSE_INTENT) {
         if (!conversationState) {
+          recordHandledRequest(handlerInput.requestEnvelope, {
+            responseSource: 'fallback',
+            linked: true,
+            groupFolder: linked.account.groupFolder,
+          });
           return handlerInput.responseBuilder
             .speak(
               'I can do that once we have a little more context. Start with what you want to know first.',
@@ -1329,6 +1535,11 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
           conversationState,
         );
         if (!resolution.ok || !resolution.action) {
+          recordHandledRequest(handlerInput.requestEnvelope, {
+            responseSource: 'fallback',
+            linked: true,
+            groupFolder: linked.account.groupFolder,
+          });
           return handlerInput.responseBuilder
             .speak(resolution.speech || buildAlexaFallbackSpeech(assistantName))
             .reprompt(DEFAULT_ALEXA_REPROMPT)
@@ -1363,6 +1574,11 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
           'followupText',
         );
         if (!followupText) {
+          recordHandledRequest(handlerInput.requestEnvelope, {
+            responseSource: 'fallback',
+            linked: true,
+            groupFolder: linked.account.groupFolder,
+          });
           return handlerInput.responseBuilder
             .speak('What would you like me to follow up on?')
             .reprompt('Say the follow-up in a few words.')
@@ -1410,6 +1626,11 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
           conversationState,
         );
         if (!resolution.ok || !resolution.action) {
+          recordHandledRequest(handlerInput.requestEnvelope, {
+            responseSource: 'fallback',
+            linked: true,
+            groupFolder: linked.account.groupFolder,
+          });
           return handlerInput.responseBuilder
             .speak(resolution.speech || buildAlexaFallbackSpeech(assistantName))
             .reprompt(DEFAULT_ALEXA_REPROMPT)
@@ -1440,6 +1661,11 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
                 }),
               );
             }
+            recordHandledRequest(handlerInput.requestEnvelope, {
+              responseSource: 'barrier',
+              linked: true,
+              groupFolder: linked.account.groupFolder,
+            });
             return handlerInput.responseBuilder
               .speak(memoryResult.responseText || 'Okay.')
               .reprompt(DEFAULT_ALEXA_REPROMPT)
@@ -1572,6 +1798,11 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
           'memoryCommand',
         );
         if (!memoryCommand) {
+          recordHandledRequest(handlerInput.requestEnvelope, {
+            responseSource: 'fallback',
+            linked: true,
+            groupFolder: linked.account.groupFolder,
+          });
           return handlerInput.responseBuilder
             .speak(
               'You can say remember this, what do you remember about me, why did you say that, or be more direct.',
@@ -1604,6 +1835,11 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
               }),
             );
           }
+          recordHandledRequest(handlerInput.requestEnvelope, {
+            responseSource: 'barrier',
+            linked: true,
+            groupFolder: linked.account.groupFolder,
+          });
           return handlerInput.responseBuilder
             .speak(memoryResult.responseText || 'Okay.')
             .reprompt(DEFAULT_ALEXA_REPROMPT)
@@ -1633,6 +1869,11 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
             'capture_reminder_lead_time',
             {},
           );
+          recordHandledRequest(handlerInput.requestEnvelope, {
+            responseSource: 'barrier',
+            linked: true,
+            groupFolder: linked.account.groupFolder,
+          });
           return handlerInput.responseBuilder
             .speak(buildReminderLeadTimeQuestion(assistantName))
             .reprompt(buildReminderLeadTimeQuestion(assistantName))
@@ -1646,6 +1887,11 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
           'confirm_reminder_before_next_meeting',
           { leadTimeText },
         );
+        recordHandledRequest(handlerInput.requestEnvelope, {
+          responseSource: 'barrier',
+          linked: true,
+          groupFolder: linked.account.groupFolder,
+        });
         return handlerInput.responseBuilder
           .speak(buildReminderConfirmationSpeech(assistantName, leadTimeText))
           .reprompt('Say yes to save it, or no to cancel.')
@@ -1664,6 +1910,11 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
             'capture_save_for_later_content',
             {},
           );
+          recordHandledRequest(handlerInput.requestEnvelope, {
+            responseSource: 'barrier',
+            linked: true,
+            groupFolder: linked.account.groupFolder,
+          });
           return handlerInput.responseBuilder
             .speak(buildSaveForLaterQuestion(assistantName))
             .reprompt(buildSaveForLaterQuestion(assistantName))
@@ -1677,6 +1928,11 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
           'confirm_save_for_later',
           { captureText },
         );
+        recordHandledRequest(handlerInput.requestEnvelope, {
+          responseSource: 'barrier',
+          linked: true,
+          groupFolder: linked.account.groupFolder,
+        });
         return handlerInput.responseBuilder
           .speak(
             buildSaveForLaterConfirmationSpeech(assistantName, captureText),
@@ -1697,6 +1953,11 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
             'capture_follow_up_reference',
             {},
           );
+          recordHandledRequest(handlerInput.requestEnvelope, {
+            responseSource: 'barrier',
+            linked: true,
+            groupFolder: linked.account.groupFolder,
+          });
           return handlerInput.responseBuilder
             .speak(buildDraftFollowUpQuestion())
             .reprompt(buildDraftFollowUpQuestion())
@@ -1729,6 +1990,11 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
         );
       }
 
+      recordHandledRequest(handlerInput.requestEnvelope, {
+        responseSource: 'fallback',
+        linked: true,
+        groupFolder: linked.account.groupFolder,
+      });
       return handlerInput.responseBuilder
         .speak(buildAlexaFallbackSpeech(assistantName))
         .reprompt(DEFAULT_ALEXA_REPROMPT)
@@ -1750,6 +2016,9 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
         assistantName,
       );
       if (!authorization.ok) {
+        recordHandledRequest(handlerInput.requestEnvelope, {
+          responseSource: 'barrier',
+        });
         return buildBarrierResponse(handlerInput, authorization);
       }
 
@@ -1758,6 +2027,9 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
         authorization.principal,
       );
       if (!linkedResolution.ok) {
+        recordHandledRequest(handlerInput.requestEnvelope, {
+          responseSource: 'barrier',
+        });
         return linkedResolution.response;
       }
 
@@ -1767,6 +2039,11 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
         linked.account.accessTokenHash,
       );
       if (!pending) {
+        recordHandledRequest(handlerInput.requestEnvelope, {
+          responseSource: 'fallback',
+          linked: true,
+          groupFolder: linked.account.groupFolder,
+        });
         return handlerInput.responseBuilder
           .speak(`There is nothing waiting for a yes right now.`)
           .reprompt(DEFAULT_ALEXA_REPROMPT)
@@ -1841,12 +2118,22 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
             subjectData: { profileFactId: payload.profileFactId },
           }),
         );
+        recordHandledRequest(handlerInput.requestEnvelope, {
+          responseSource: 'barrier',
+          linked: true,
+          groupFolder: linked.account.groupFolder,
+        });
         return handlerInput.responseBuilder
           .speak('Okay. I will remember that.')
           .reprompt(DEFAULT_ALEXA_REPROMPT)
           .getResponse();
       }
 
+      recordHandledRequest(handlerInput.requestEnvelope, {
+        responseSource: 'fallback',
+        linked: true,
+        groupFolder: linked.account.groupFolder,
+      });
       return handlerInput.responseBuilder
         .speak(`Please answer the question first.`)
         .reprompt(DEFAULT_ALEXA_REPROMPT)
@@ -1868,6 +2155,9 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
         assistantName,
       );
       if (!authorization.ok) {
+        recordHandledRequest(handlerInput.requestEnvelope, {
+          responseSource: 'barrier',
+        });
         return buildBarrierResponse(handlerInput, authorization);
       }
 
@@ -1876,6 +2166,9 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
         assistantName,
       );
       if (!linked.ok) {
+        recordHandledRequest(handlerInput.requestEnvelope, {
+          responseSource: 'barrier',
+        });
         return handlerInput.responseBuilder.speak('Okay.').getResponse();
       }
 
@@ -1886,6 +2179,11 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
       clearAlexaPendingSession(linked.principalKey);
 
       if (!pending) {
+        recordHandledRequest(handlerInput.requestEnvelope, {
+          responseSource: 'fallback',
+          linked: true,
+          groupFolder: linked.account.groupFolder,
+        });
         return handlerInput.responseBuilder.speak('Okay.').getResponse();
       }
 
@@ -1905,6 +2203,11 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
                 })()
             : `Okay, never mind.`;
 
+      recordHandledRequest(handlerInput.requestEnvelope, {
+        responseSource: 'barrier',
+        linked: true,
+        groupFolder: linked.account.groupFolder,
+      });
       return handlerInput.responseBuilder.speak(speech).getResponse();
     },
   };
@@ -1917,6 +2220,9 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
       );
     },
     handle(handlerInput: HandlerInput) {
+      recordHandledRequest(handlerInput.requestEnvelope, {
+        responseSource: 'help',
+      });
       return handlerInput.responseBuilder
         .speak(helpSpeech)
         .reprompt(DEFAULT_ALEXA_REPROMPT)
@@ -1941,6 +2247,9 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
       clearAlexaConversationState(
         `alexa:${principal.personId?.trim() || principal.userId.trim()}`,
       );
+      recordHandledRequest(handlerInput.requestEnvelope, {
+        responseSource: 'fallback',
+      });
       return handlerInput.responseBuilder
         .speak('Okay. Andrea will be right here when you need her again.')
         .getResponse();
@@ -1955,6 +2264,9 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
       );
     },
     handle(handlerInput: HandlerInput) {
+      recordHandledRequest(handlerInput.requestEnvelope, {
+        responseSource: 'fallback',
+      });
       return handlerInput.responseBuilder
         .speak(buildAlexaFallbackSpeech(assistantName))
         .reprompt(DEFAULT_ALEXA_REPROMPT)
@@ -1973,9 +2285,15 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
         assistantName,
       );
       if (!authorization.ok) {
+        recordHandledRequest(handlerInput.requestEnvelope, {
+          responseSource: 'barrier',
+        });
         return buildBarrierResponse(handlerInput, authorization);
       }
 
+      recordHandledRequest(handlerInput.requestEnvelope, {
+        responseSource: 'fallback',
+      });
       return handlerInput.responseBuilder
         .speak(buildAlexaFallbackSpeech(assistantName))
         .reprompt(DEFAULT_ALEXA_REPROMPT)
@@ -1990,6 +2308,9 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
       );
     },
     handle(handlerInput: HandlerInput) {
+      recordHandledRequest(handlerInput.requestEnvelope, {
+        responseSource: 'fallback',
+      });
       return handlerInput.responseBuilder.getResponse();
     },
   };
@@ -2070,6 +2391,23 @@ async function invokeAlexaSkill(
   await verifyAlexaRequest(rawBody, headers, config);
   const requestEnvelope = JSON.parse(rawBody) as RequestEnvelope;
   assertTrustedSkillRequest(requestEnvelope, config);
+  const receivedState = buildAlexaSignedRequestState(requestEnvelope, {
+    applicationIdVerified: true,
+    responseSource: 'received_trusted_request',
+  });
+  writeAlexaLastSignedRequestState(receivedState);
+  logger.info(
+    {
+      requestId: receivedState.requestId,
+      requestType: receivedState.requestType,
+      intentName: receivedState.intentName,
+      applicationIdVerified: true,
+      linkingResolved: false,
+      groupFolder: undefined,
+      responseSource: receivedState.responseSource,
+    },
+    'Alexa signed request received',
+  );
   return skill.invoke(requestEnvelope);
 }
 

@@ -36,15 +36,27 @@ Current repo-side and near-live proof on the operator host is strong:
 
 If you have not re-proven it on the current host today, the one remaining external live step is:
 
-- one real signed Alexa utterance from the app, a device, or an authenticated simulator session
+- one real signed Alexa voice conversation from the Alexa app, a device, or an authenticated simulator session
 
 Important validation note:
 
 - use **Node 22.22.2** for Alexa validation on this repo
 - do not rely on host Node 24 for truthful Alexa checks
-- `npm run services:status` now exposes the local Alexa listener and OAuth health when Alexa is configured, but public HTTPS ingress and real signed Alexa requests still need their own checks
+- `npm run services:status` now exposes the local Alexa listener and OAuth health when Alexa is configured, plus the last signed Alexa request markers
+- public HTTPS ingress and real signed Alexa requests still need their own checks
+- typed Alexa+ app chat is **not** an authoritative proof surface unless it produces a real signed follow-up `IntentRequest` after launch
 
-## 1) Alexa Surface
+## 1) Authoritative Proof Surfaces
+
+Use these as the source of truth for live acceptance:
+
+- voice launch from the Alexa app
+- voice launch from a physical Alexa device
+- authenticated Alexa Developer Console simulator
+
+Treat typed Alexa+ app chat as diagnosis-only unless Andrea logs a real signed follow-up intent after launch.
+
+## 2) Alexa Surface
 
 The interaction model keeps the Alexa surface intentionally bounded:
 
@@ -292,6 +304,10 @@ When the environment is configured, use this order:
 5. confirm the live skill endpoint and account-link settings in the Alexa console
    - if the endpoint host is `*.ngrok-free.dev`, confirm the SSL certificate type is set to the wildcard-certificate option
 6. confirm the OAuth-issued token resolves to the intended Andrea group
+7. use an authoritative proof surface
+   - preferred phrase: `Alexa, open Andrea Assistant skill`
+   - then ask one thread-aware follow-up such as `What's still open with Candace?`
+   - confirm `npm run services:status` shows `alexa_last_signed_request_type=IntentRequest`
 7. test one unlinked-safe request
 8. test one linked personal request
 9. test one linked follow-up such as `anything else`
