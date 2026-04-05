@@ -162,7 +162,16 @@ Alexa is now a bounded companion channel for Andrea rather than a novelty skill.
 - personalization remains explicit and consent-based
 - use Node `22.22.2` for truthful Alexa validation on the operator host
 
-Repo-side and near-live Alexa proof are strong on this host. The one remaining live gap is still one exact external step unless you re-prove it during the current session: one real signed Alexa voice conversation from the Alexa app, a device, or an authenticated simulator session.
+Alexa is now live-accepted by voice on this host. The current accepted flow is:
+
+- `Open Andrea Assistant`
+- `What am I forgetting?`
+- `Anything else?`
+- `What about Candace?`
+- `Be a little more direct.`
+- optional `What should I remember tonight?`
+
+That acceptance was recorded with real signed Alexa requests resolving to `groupFolder=main` through the local companion path on Node `22.22.2`.
 
 Typed Alexa+ app chat is diagnosis-only right now. It may trigger a skill launch, but it does not count as live proof unless Andrea logs a real signed follow-up `IntentRequest` after launch.
 

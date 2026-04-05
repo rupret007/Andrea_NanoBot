@@ -23,7 +23,7 @@ Treat Alexa as:
 - **live-ready** only when the live skill, HTTPS ingress, account linking, and linked Andrea group are all configured and current
 - **code-ready but setup-blocked** when repo-side validation is green but one or more external Alexa steps are still missing
 
-Current repo-side and near-live proof on the operator host is strong:
+Current accepted live proof on the operator host is strong:
 
 - Andrea runs under Node `22.22.2`
 - the local Alexa listener can run even when no Telegram channel is connected
@@ -33,11 +33,15 @@ Current repo-side and near-live proof on the operator host is strong:
 - live HTTPS ingress must still be current, reachable, and correctly wired in the Alexa Developer Console
 - if the live HTTPS host is an `ngrok` `*.ngrok-free.dev` tunnel, the Alexa endpoint SSL type must be set to the wildcard certificate option
 - issued access tokens resolve to `groupFolder=main`
-- near-live conversational proof through the built skill handler and a real linked token is green
-
-If you have not re-proven it on the current host today, the one remaining external live step is:
-
-- one real signed Alexa voice conversation from the Alexa app, a device, or an authenticated simulator session
+- one real signed Alexa voice conversation is accepted on the current host
+- the accepted live flow was:
+  - `Open Andrea Assistant`
+  - `What am I forgetting?`
+  - `Anything else?`
+  - `What about Candace?`
+  - `Be a little more direct.`
+  - optional `What should I remember tonight?`
+- those accepted live turns resolved to `groupFolder=main` and stayed on `responseSource=local_companion`
 
 Important validation note:
 
