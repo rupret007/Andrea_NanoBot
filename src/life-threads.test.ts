@@ -9,8 +9,10 @@ import {
 } from './db.js';
 import {
   buildLifeThreadSnapshot,
+  findLifeThreadForExplicitLookup,
   getPendingLifeThreadSuggestion,
   handleLifeThreadCommand,
+  isAutomaticSurfaceWorthyLifeThread,
   maybeCreatePendingLifeThreadSuggestion,
 } from './life-threads.js';
 
@@ -264,5 +266,75 @@ describe('life threads', () => {
     expect(snapshot.activeThreads.length).toBe(2);
     expect(snapshot.householdCarryover?.title).toBe('Candace');
     expect(snapshot.recommendedNextThread?.title).toBeTruthy();
+  });
+
+  it('still allows explicit lookup for a manual-only thread while excluding it from the automatic snapshot', () => {
+    const created = handleLifeThreadCommand({
+      groupFolder: 'main',
+      channel: 'telegram',
+      chatJid: 'tg:8004355504',
+      text: 'save this under the Candace thread',
+      replyText: 'Talk through dinner plans tonight.',
+      now: new Date('2026-04-04T09:00:00.000Z'),
+    }).referencedThread!;
+
+    handleLifeThreadCommand({
+      groupFolder: 'main',
+      channel: 'telegram',
+      chatJid: 'tg:8004355504',
+      text: "don't bring this up automatically",
+      priorContext: {
+        summaryText: 'Candace dinner plans',
+        usedThreadIds: [created.id],
+        usedThreadTitles: ['Candace'],
+        usedThreadReasons: ['it was the active thread in the last answer'],
+        threadSummaryLines: ['Candace: Talk through dinner plans tonight.'],
+      },
+      now: new Date('2026-04-04T09:05:00.000Z'),
+    });
+
+    const explicit = findLifeThreadForExplicitLookup({
+      groupFolder: 'main',
+      query: 'Candace',
+    });
+    const snapshot = buildLifeThreadSnapshot({
+      groupFolder: 'main',
+      now: new Date('2026-04-04T18:00:00.000Z'),
+    });
+
+    expect(explicit?.title).toBe('Candace');
+    expect(snapshot.activeThreads.map((thread) => thread.title)).not.toContain('Candace');
+  });
+
+  it('keeps low-value placeholder threads out of automatic recommendations', () => {
+    handleLifeThreadCommand({
+      groupFolder: 'main',
+      channel: 'telegram',
+      chatJid: 'tg:8004355504',
+      text: 'save this under the band thread',
+      replyText:
+        'The next grounded thing is your schedule, because I do not have a better signal than that yet.',
+      now: new Date('2026-04-04T09:00:00.000Z'),
+    });
+    handleLifeThreadCommand({
+      groupFolder: 'main',
+      channel: 'telegram',
+      chatJid: 'tg:8004355504',
+      text: 'save this under the work thread',
+      replyText: 'Finish the rollout notes.',
+      now: new Date('2026-04-04T09:01:00.000Z'),
+    });
+
+    const threads = listLifeThreadsForGroup('main', ['active']);
+    const band = threads.find((thread) => thread.title === 'Band')!;
+    const work = threads.find((thread) => thread.title === 'Work')!;
+    const snapshot = buildLifeThreadSnapshot({
+      groupFolder: 'main',
+      now: new Date('2026-04-04T18:00:00.000Z'),
+    });
+
+    expect(isAutomaticSurfaceWorthyLifeThread(band)).toBe(false);
+    expect(isAutomaticSurfaceWorthyLifeThread(work)).toBe(true);
+    expect(snapshot.recommendedNextThread?.title).toBe('Work');
   });
 });

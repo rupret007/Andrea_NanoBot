@@ -74,6 +74,9 @@
           "name": "WhatAmIForgettingIntent",
           "samples": [
             "what am I forgetting",
+            "what exactly am I forgetting",
+            "exactly what am I forgetting",
+            "tell me what I'm forgetting",
             "what am I missing",
             "what am I overlooking",
             "what have I not handled yet",
@@ -110,6 +113,7 @@
             "what about Candace",
             "what's still open with Candace",
             "what is still open with Candace",
+            "what still open with Candace",
             "what do Candace and I have going on",
             "what should Candace and I know about soon",
             "what do Candace and I have this weekend"

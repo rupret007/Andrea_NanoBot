@@ -412,6 +412,60 @@ function findThreadByPersonName(
   });
 }
 
+function isGenericAutomaticThreadText(value: string | null | undefined): boolean {
+  const normalized = normalizeText(value || '').toLowerCase();
+  if (!normalized) return true;
+  return (
+    normalized.includes('the next grounded thing is your schedule') ||
+    normalized.includes('i do not have a better signal than that yet') ||
+    normalized.includes('nothing else feels especially pressing') ||
+    normalized.includes('keep this on deck so it does not slip past today')
+  );
+}
+
+export function isAutomaticSurfaceWorthyLifeThread(thread: LifeThread): boolean {
+  const summary = thread.summary || '';
+  const nextAction = thread.nextAction || '';
+  if (!summary.trim() && !nextAction.trim()) {
+    return false;
+  }
+  if (
+    isGenericAutomaticThreadText(summary) &&
+    (!nextAction.trim() || isGenericAutomaticThreadText(nextAction))
+  ) {
+    return false;
+  }
+  return true;
+}
+
+export function findLifeThreadForExplicitLookup(params: {
+  groupFolder: string;
+  query: string;
+  statuses?: LifeThread['status'][];
+}): LifeThread | null {
+  const queryKey = normalizeTitleKey(params.query);
+  if (!queryKey) return null;
+  const threads = listLifeThreadsForGroup(
+    params.groupFolder,
+    params.statuses || ['active', 'paused'],
+  );
+  return (
+    threads.find((thread) => normalizeTitleKey(thread.title) === queryKey) ||
+    threads.find((thread) => normalizeTitleKey(thread.title).includes(queryKey)) ||
+    threads.find((thread) => queryKey.includes(normalizeTitleKey(thread.title))) ||
+    threads.find((thread) =>
+      thread.contextTags.some((tag) => normalizeTitleKey(tag) === queryKey),
+    ) ||
+    threads.find((thread) =>
+      thread.contextTags.some((tag) =>
+        normalizeTitleKey(tag).includes(queryKey) || queryKey.includes(normalizeTitleKey(tag)),
+      ),
+    ) ||
+    findThreadByPersonName(params.groupFolder, params.query) ||
+    null
+  );
+}
+
 function resolveContextThread(params: {
   groupFolder: string;
   chatJid?: string;
@@ -644,14 +698,16 @@ export function buildLifeThreadSnapshot(params: {
       return Date.parse(right.lastUpdatedAt) - Date.parse(left.lastUpdatedAt);
     });
 
-  const dueFollowups = activeThreads.filter((thread) => {
+  const automaticThreads = activeThreads.filter(isAutomaticSurfaceWorthyLifeThread);
+
+  const dueFollowups = automaticThreads.filter((thread) => {
     if (!thread.nextFollowupAt) return false;
     const followupMs = Date.parse(thread.nextFollowupAt);
     return Number.isFinite(followupMs) && followupMs <= now.getTime() + 24 * 60 * 60 * 1000;
   });
 
   const householdCarryover =
-    activeThreads.find((thread) =>
+    automaticThreads.find((thread) =>
       ['household', 'family', 'mixed'].includes(thread.scope) ||
       thread.category === 'relationship' ||
       thread.contextTags.some((tag) =>
@@ -664,7 +720,7 @@ export function buildLifeThreadSnapshot(params: {
       if (!params.selectedWorkTitle) return true;
       return normalizeTitleKey(thread.title) !== normalizeTitleKey(params.selectedWorkTitle);
     }) ||
-    activeThreads.find((thread) => {
+    automaticThreads.find((thread) => {
       if (!thread.nextAction && !thread.summary) return false;
       if (!params.selectedWorkTitle) return true;
       return normalizeTitleKey(thread.title) !== normalizeTitleKey(params.selectedWorkTitle);

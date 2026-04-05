@@ -203,6 +203,13 @@ If you see `SSL certificate verification failed` in the Alexa app for an `ngrok-
 
 If voice launch works but known-good phrases like `what's still open with Candace` or `what should I remember tonight` still fall into generic fallback, the most likely cause is a stale live interaction model. Import the current repo JSON again and rebuild the model before debugging Andrea itself.
 
+If those phrases still fall into fallback after a fresh rebuild:
+
+- use the Alexa Developer Console Utterance Profiler or Intent History to capture the exact recognized phrase
+- compare that phrasing with `docs/alexa/interaction-model.en-US.json`
+- add the missing utterance variant, rebuild the model again, and retry live voice before treating it as a transport bug
+- use `npm run debug:daily-companion` locally to compare Andrea's grounded local reply for the same canonical prompt against the live Alexa result
+
 If any of those are missing, Alexa is **setup-blocked**, not broken.
 
 ## 5) Conversational Companion Behavior

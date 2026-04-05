@@ -1151,6 +1151,22 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
       );
     }
 
+    logger.info(
+      {
+        requestId: handlerInput.requestEnvelope.request.requestId,
+        requestType: getRequestType(handlerInput.requestEnvelope),
+        intentName:
+          getRequestType(handlerInput.requestEnvelope) === 'IntentRequest'
+            ? getIntentName(handlerInput.requestEnvelope)
+            : undefined,
+        groupFolder: linked?.account.groupFolder,
+        responseSource: 'fallback',
+        fallbackCount: nextFallbackCount,
+        suggestions,
+      },
+      'Alexa fallback answered with targeted suggestions',
+    );
+
     recordHandledRequest(handlerInput.requestEnvelope, {
       responseSource: 'fallback',
       linked: Boolean(linked),
@@ -1188,6 +1204,9 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
             : undefined,
         groupFolder: linked.account.groupFolder,
         mode: response.mode,
+        leadReason: response.leadReason,
+        signalsUsed: response.signalsUsed,
+        usedThreadTitles: response.context.usedThreadTitles,
         responseSource: 'local_companion',
       },
       'Alexa daily companion answered locally',

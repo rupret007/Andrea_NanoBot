@@ -49,7 +49,8 @@
     "debug:status": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-control.ts status",
     "debug:level": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-control.ts level",
     "debug:reset": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-control.ts reset",
-    "debug:logs": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-control.ts logs"
+    "debug:logs": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-control.ts logs",
+    "debug:daily-companion": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-daily-companion.ts"
   },
   "dependencies": {
     "@onecli-sh/sdk": "^0.2.0",
