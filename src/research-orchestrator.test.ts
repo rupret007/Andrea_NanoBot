@@ -35,6 +35,17 @@ describe('research orchestrator', () => {
     expect(plan.primarySource).toBe('runtime_delegate');
   });
 
+  it('plans outward-facing comparison prompts onto the OpenAI path even before config is present', () => {
+    const plan = planResearchRequest({
+      query: 'What are the pros and cons of meal delivery this week?',
+      channel: 'telegram',
+      groupFolder: 'main',
+    });
+
+    expect(plan.primarySource).toBe('openai_responses');
+    expect(plan.sources.webSearch).toBe(true);
+  });
+
   it('builds a grounded local-context answer when personal context is available', async () => {
     handleLifeThreadCommand({
       groupFolder: 'main',
@@ -66,8 +77,23 @@ describe('research orchestrator', () => {
 
     expect(result.handled).toBe(true);
     expect(result.providerUsed).toBe('local_context');
-    expect(result.fullText).toContain('grounded');
+    expect(result.routeExplanation).toContain('local context');
+    expect(result.structuredFindings[0]?.items[0]).toContain('Candace');
     expect(result.sourceNotes).toContain('life threads');
+    expect(result.followupSuggestions.length).toBeGreaterThan(0);
+  });
+
+  it('returns an exact blocker when an OpenAI-style research question has no configured provider or local fallback', async () => {
+    const result = await runResearchOrchestrator({
+      query: 'Compare the best standing desks for a small apartment',
+      channel: 'telegram',
+      now: new Date('2026-04-05T10:00:00.000Z'),
+    });
+
+    expect(result.handled).toBe(true);
+    expect(result.summaryText).toContain('cannot do that live yet');
+    expect(result.sourceNotes[0]).toContain('OPENAI_API_KEY');
+    expect(result.debugPath).toContain('openai.blocked=OPENAI_API_KEY');
   });
 
   it('uses OpenAI Responses when configured and returns a bounded research answer', async () => {
@@ -76,8 +102,15 @@ describe('research orchestrator', () => {
     globalThis.fetch = vi.fn(async () => {
       return new Response(
         JSON.stringify({
-          output_text:
-            'The strongest option is the one with the lower cost and simpler delivery window.',
+          output_text: [
+            'Summary: The strongest option is the one with the lower cost and simpler delivery window.',
+            'Findings:',
+            '- Lower cost',
+            '- Simpler delivery window',
+            'Recommendation: Pick the cheaper option if flexibility matters most.',
+            'Follow-ups:',
+            '- Want the tradeoffs in one line?',
+          ].join('\n'),
         }),
         {
           status: 200,
@@ -97,5 +130,7 @@ describe('research orchestrator', () => {
     expect(result.handled).toBe(true);
     expect(result.providerUsed).toBe('openai_responses');
     expect(result.summaryText).toContain('The strongest option');
+    expect(result.routeExplanation).toContain('OpenAI-backed');
+    expect(result.structuredFindings[0]?.items[0]).toContain('Lower cost');
   });
 });

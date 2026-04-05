@@ -37,7 +37,7 @@ describe('assistant capabilities', () => {
       safeForBlueBubbles: true,
     });
     expect(getAssistantCapability('media.image_generate')?.availabilityNote).toContain(
-      'capability prepared',
+      'Telegram image generation is wired',
     );
   });
 
@@ -111,5 +111,66 @@ describe('assistant capabilities', () => {
     expect(pulse.handled).toBe(true);
     expect(pulse.trace?.responseSource).toBe('pulse_local');
     expect(pulse.replyText).toContain('\n');
+  });
+
+  it('formats research answers richly for Telegram and briefly for Alexa', async () => {
+    createTask({
+      id: 'task-research-rich',
+      group_folder: 'main',
+      chat_jid: 'tg:8004355504',
+      prompt: 'Decide whether to switch dinner plans',
+      schedule_type: 'once',
+      schedule_value: '2026-04-05T19:00:00.000Z',
+      context_mode: 'group',
+      next_run: '2026-04-05T19:00:00.000Z',
+      status: 'active',
+      created_at: '2026-04-05T09:30:00.000Z',
+    });
+
+    const telegram = await executeAssistantCapability({
+      capabilityId: 'research.summarize',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:8004355504',
+      },
+      input: {
+        canonicalText: 'Summarize what matters from my current context',
+      },
+    });
+    const alexa = await executeAssistantCapability({
+      capabilityId: 'research.summarize',
+      context: {
+        channel: 'alexa',
+        groupFolder: 'main',
+      },
+      input: {
+        canonicalText: 'Summarize what matters from my current context',
+      },
+    });
+
+    expect(telegram.replyText).toContain('*Research Summary*');
+    expect(telegram.replyText).toContain('*Why this route*');
+    expect(alexa.replyText).toContain('Want');
+    expect(alexa.researchResult?.routeExplanation).toContain('local context');
+  });
+
+  it('keeps media image generation explicit and reports the config blocker honestly', async () => {
+    const result = await executeAssistantCapability({
+      capabilityId: 'media.image_generate',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:8004355504',
+      },
+      input: {
+        canonicalText: 'a poster for a spring dinner party',
+      },
+    });
+
+    expect(result.handled).toBe(true);
+    expect(result.mediaResult?.providerStatus.provider).toBe('openai_images');
+    expect(result.replyText).toContain('OPENAI_API_KEY');
+    expect(result.trace?.responseSource).toBe('unavailable');
   });
 });

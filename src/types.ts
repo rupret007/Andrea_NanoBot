@@ -356,6 +356,42 @@ export interface BlueBubblesContactRef {
   address?: string | null;
 }
 
+export interface ChannelArtifact {
+  kind: 'image';
+  filename: string;
+  mimeType: string;
+  bytesBase64: string;
+  altText?: string;
+}
+
+export interface MediaGenerationRequest {
+  prompt: string;
+  channel: 'alexa' | 'telegram' | 'bluebubbles';
+  groupFolder?: string;
+  size?: '1024x1024' | '1536x1024' | '1024x1536' | 'auto';
+  styleHint?: string;
+}
+
+export interface MediaProviderStatus {
+  provider: 'openai_images';
+  configured: boolean;
+  missing: string[];
+  baseUrl: string;
+  imageModel: string;
+}
+
+export interface MediaGenerationResult {
+  handled: boolean;
+  providerStatus: MediaProviderStatus;
+  routeExplanation: string;
+  debugPath: string[];
+  summaryText?: string;
+  replyText?: string;
+  blocker?: string;
+  providerUsed?: 'openai_images';
+  artifact?: ChannelArtifact;
+}
+
 export interface AlexaConversationContext {
   principalKey: string;
   accessTokenHash: string;
@@ -567,6 +603,10 @@ export interface SendMessageOptions {
   inlineActionRows?: ChannelInlineAction[][];
 }
 
+export interface SendArtifactOptions extends SendMessageOptions {
+  caption?: string;
+}
+
 export interface SendMessageResult {
   platformMessageId?: string;
   platformMessageIds?: string[];
@@ -623,6 +663,11 @@ export interface Channel {
     text: string,
     options?: SendMessageOptions,
   ): Promise<ChannelSendReceipt | null>;
+  sendArtifact?(
+    jid: string,
+    artifact: ChannelArtifact,
+    options?: SendArtifactOptions,
+  ): Promise<SendMessageResult>;
   isConnected(): boolean;
   ownsJid(jid: string): boolean;
   disconnect(): Promise<void>;

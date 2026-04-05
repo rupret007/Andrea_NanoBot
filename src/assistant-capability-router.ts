@@ -254,6 +254,21 @@ function matchPulsePrompt(normalized: string): AssistantCapabilityMatch | null {
   return null;
 }
 
+function matchMediaPrompt(normalized: string): AssistantCapabilityMatch | null {
+  const lower = normalized.toLowerCase();
+  const match = lower.match(
+    /^(?:generate|create|make) (?:an |a )?image of (.+)$|^draw (.+)$|^illustrate (.+)$/i,
+  );
+  const prompt = match?.[1] || match?.[2] || match?.[3];
+  if (!prompt) return null;
+  return {
+    capabilityId: 'media.image_generate',
+    normalizedText: normalized,
+    canonicalText: prompt.trim(),
+    reason: 'matched bounded image-generation phrasing',
+  };
+}
+
 export function matchAssistantCapabilityRequest(
   text: string,
 ): AssistantCapabilityMatch | null {
@@ -266,6 +281,7 @@ export function matchAssistantCapabilityRequest(
     matchThreadPrompt(normalized) ||
     matchMemoryPrompt(normalized) ||
     matchPulsePrompt(normalized) ||
+    matchMediaPrompt(normalized) ||
     (isSharedResearchRequest(normalized)
       ? {
           capabilityId: inferResearchCapabilityId(normalized),
@@ -309,7 +325,7 @@ export function continueAssistantCapabilityFromAlexaState(
   }
 
   if (
-    /^(why\b|say more\b|make that shorter\b|shorter\b|be (a little |a bit )?more direct\b)\b/.test(
+    /^(why\b|why did you choose that route\b|what path did you use\b|say more\b|make that shorter\b|shorter\b|be (a little |a bit )?more direct\b)\b/.test(
       lower,
     )
   ) {

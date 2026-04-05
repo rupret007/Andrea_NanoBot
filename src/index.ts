@@ -4123,12 +4123,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           );
         }
         await channel.sendMessage(chatJid, result.replyText || 'Okay.');
+      } else if (result.mediaResult?.artifact && channel.sendArtifact) {
+        await channel.sendArtifact(chatJid, result.mediaResult.artifact, {
+          caption: result.replyText || result.mediaResult.summaryText,
+        });
       } else {
-        const text =
-          result.researchResult && result.replyText
-            ? ['Research', result.replyText].join('\n\n')
-            : result.replyText || 'Okay.';
-        await channel.sendMessage(chatJid, text);
+        await channel.sendMessage(chatJid, result.replyText || 'Okay.');
       }
 
       logger.info(

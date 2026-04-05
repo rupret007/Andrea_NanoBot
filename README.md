@@ -216,12 +216,13 @@ Andrea now has a shared assistant capability graph so Alexa and Telegram feel li
 - BlueBubbles is now represented as a prepared future channel with its own safety gate and output-shaping policy
 - Telegram keeps richer rendering and deeper operator-side actions
 - operator-only current-work controls stay out of Alexa even though they live in the same registry
-- bounded research can use local context, optional OpenAI-backed synthesis when configured, and runtime delegation only when the request is clearly execution-heavy
-- media generation is capability-prepared only right now; no general media provider is promised from this pass
+- bounded research now returns a summary first, structured findings, route explanation, and exact blocker truth when web-backed OpenAI research is unavailable
+- bounded research can use local context, optional OpenAI-backed synthesis with `web_search` when configured, and runtime delegation only when the request is clearly execution-heavy
+- Telegram image generation is now wired through the shared media capability when OpenAI credentials are present; Alexa keeps media at the handoff layer
 
 See [docs/ASSISTANT_CAPABILITY_GRAPH.md](docs/ASSISTANT_CAPABILITY_GRAPH.md) for the descriptor model, safety rules, research provider boundaries, and license-safe pattern sources.
 
-For operator-side smoke testing of the shared core, use `npm run debug:shared-capabilities`.
+For operator-side smoke testing of the shared core, use `npm run debug:shared-capabilities` and `npm run debug:research-mode`.
 
 For day-to-day operator checks, use `/alexa-status` inside the registered main control chat and `npm run services:status` for the local Alexa listener, OAuth health, public-ingress hinting, and the last signed Alexa request markers on the host. Public HTTPS ingress and live signed utterances remain separate acceptance checks. If the live host is an `ngrok` `*.ngrok-free.dev` tunnel, the Alexa console endpoint SSL setting must use the wildcard-certificate option.
 
@@ -344,6 +345,8 @@ Andrea now has a bounded **life thread** layer for ongoing matters like Candace,
 ### Research And Knowledge Work
 
 - research a topic and summarize the result
+- compare options, explain tradeoffs, and recommend a choice with route explanation
+- keep Alexa concise while Telegram carries the richer structured research surface
 - monitor or re-check information through scheduled tasks
 - organize output per chat or group context
 

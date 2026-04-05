@@ -120,20 +120,37 @@ Current provider order:
 - `openai_responses`
   - only when concrete OpenAI credentials are configured
   - used for bounded synthesis and optional web-backed comparative answers
+  - route choice is now explicit and explainable in the result itself
 - `runtime_delegate`
   - reserved for execution-heavy or operator-like requests that belong on the runtime lane
 
 Current media truth:
 
 - image generation, image editing, and video generation are now capability-gated
-- they are architecturally prepared, not broadly enabled
-- no general media provider or Telegram delivery path is promised from this pass
+- Telegram now has a bounded outbound media-delivery primitive for shared capabilities
+- `media.image_generate` is wired for Telegram when OpenAI credentials are configured
+- Alexa keeps image generation at the request-and-deliver handoff layer
+- `media.image_edit` and `media.video_generate` remain prepared-only
+- if OpenAI is not configured, Andrea now reports the exact blocker honestly instead of pretending the provider is live
+
+Research output shape now differs intentionally by channel:
+
+- Telegram:
+  - concise summary first
+  - structured findings / tradeoffs
+  - recommendation when appropriate
+  - route explanation and next-step suggestions
+- Alexa:
+  - short spoken summary
+  - one short recommendation or tradeoff line when useful
+  - natural Telegram handoff when the fuller answer is too long for voice
 
 Helpful operator smoke paths:
 
 - `npm run debug:daily-companion`
 - `npm run debug:alexa-conversation`
 - `npm run debug:shared-capabilities`
+- `npm run debug:research-mode`
 
 For the full architecture and the license-safe external patterns behind it, see [ASSISTANT_CAPABILITY_GRAPH.md](ASSISTANT_CAPABILITY_GRAPH.md).
 
@@ -288,6 +305,8 @@ OpenAI key through an Anthropic-compatible gateway:
 ANTHROPIC_BASE_URL=https://your-anthropic-compatible-endpoint
 # or OPENAI_BASE_URL=https://your-anthropic-compatible-endpoint
 OPENAI_API_KEY=...
+# optional for Telegram image generation
+OPENAI_IMAGE_MODEL=gpt-image-1
 ```
 
 9Router (Cursor-backed routing path):

@@ -36,6 +36,7 @@ For the shared assistant core specifically, add these focused checks when Alexa,
 ```bash
 node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/assistant-capabilities.test.ts src/assistant-capability-router.test.ts src/research-orchestrator.test.ts
 npm run debug:shared-capabilities
+npm run debug:research-mode
 ```
 
 ## 2. Major Suite
@@ -259,6 +260,30 @@ When configured, validate in this order:
    - if the live host is an `ngrok` `*.ngrok-free.dev` tunnel, use the `ngrok-skip-browser-warning: 1` header for browser-style checks
    - if the skill endpoint uses that host, confirm the Alexa console SSL setting is the wildcard-certificate option
 4. authoritative voice launch
+
+## 9. Research And Media Validation
+
+Run this when research orchestration, Telegram research rendering, or media capability wiring changes.
+
+Pinned-Node smoke path:
+
+```bash
+npm run debug:research-mode
+```
+
+Expect:
+
+- one clearly local-context research result
+- one outward-facing research result that either uses OpenAI-backed synthesis or reports the exact blocker honestly
+- an explicit route explanation in the output
+- `media.image_generate` either returns a Telegram-deliverable artifact or reports the exact provider blocker honestly
+
+Important truth:
+
+- OpenAI-backed research is only live when `OPENAI_API_KEY` is configured
+- `web_search` is in scope for research; file search is not promised unless separate file-search plumbing is added
+- Telegram is the rich research and media surface
+- Alexa should stay concise and use handoffs when the result is too long or not voice-safe
     - preferred: `Alexa, open Andrea Assistant`
     - if the repo interaction model changed recently, import `docs/alexa/interaction-model.en-US.json` and run `Build Model` before this step
 5. linked `what am I forgetting`

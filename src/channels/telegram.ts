@@ -1,6 +1,6 @@
 import https from 'https';
 
-import { Api, Bot, InlineKeyboard } from 'grammy';
+import { Api, Bot, InlineKeyboard, InputFile } from 'grammy';
 
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
 import { readEnvFile } from '../env.js';
@@ -17,6 +17,7 @@ import {
   normalizeTelegramWebhookInfo,
 } from '../telegram-transport.js';
 import {
+  ChannelArtifact,
   ChannelSendReceipt,
   Channel,
   ChannelHealthSnapshot,
@@ -25,6 +26,7 @@ import {
   OnInboundMessage,
   ReplyMessageRef,
   RegisteredGroup,
+  SendArtifactOptions,
   SendMessageOptions,
   SendMessageResult,
 } from '../types.js';
@@ -240,6 +242,35 @@ async function sendTelegramMessage(
     const sent = await api.sendMessage(chatId, text, options);
     return { platformMessageId: sent.message_id.toString() };
   }
+}
+
+async function sendTelegramArtifact(
+  api: { sendPhoto: Api['sendPhoto'] },
+  chatId: string | number,
+  artifact: ChannelArtifact,
+  options: {
+    message_thread_id?: number;
+    reply_to_message_id?: number;
+    caption?: string;
+  } = {},
+): Promise<SendMessageResult> {
+  if (artifact.kind !== 'image') {
+    throw new Error(`Unsupported Telegram artifact kind: ${artifact.kind}`);
+  }
+  const sent = await api.sendPhoto(
+    chatId,
+    new InputFile(Buffer.from(artifact.bytesBase64, 'base64'), artifact.filename),
+    {
+      ...(options.message_thread_id
+        ? { message_thread_id: options.message_thread_id }
+        : {}),
+      ...(options.reply_to_message_id
+        ? { reply_to_message_id: options.reply_to_message_id }
+        : {}),
+      ...(options.caption ? { caption: options.caption.slice(0, 1024) } : {}),
+    },
+  );
+  return { platformMessageId: sent.message_id.toString() };
 }
 
 async function editTelegramMessage(
@@ -1240,6 +1271,52 @@ export class TelegramChannel implements Channel {
       platformMessageIds,
       threadId: result.threadId || options.threadId || null,
     };
+  }
+
+  async sendArtifact(
+    jid: string,
+    artifact: ChannelArtifact,
+    options: SendArtifactOptions = {},
+  ): Promise<SendMessageResult> {
+    if (!this.bot) {
+      logger.warn('Telegram bot not initialized');
+      return {};
+    }
+
+    try {
+      const numericId = jid.replace(/^tg:/, '');
+      const result = await sendTelegramArtifact(this.bot.api, numericId, artifact, {
+        ...(options.threadId
+          ? { message_thread_id: parseInt(options.threadId, 10) }
+          : {}),
+        ...(options.replyToMessageId
+          ? { reply_to_message_id: parseInt(options.replyToMessageId, 10) }
+          : {}),
+        caption: options.caption,
+      });
+      logger.info(
+        {
+          component: 'telegram',
+          jid,
+          artifactKind: artifact.kind,
+          filename: artifact.filename,
+          threadId: options.threadId,
+          replyToMessageId: options.replyToMessageId,
+        },
+        'Telegram artifact sent',
+      );
+      return {
+        platformMessageId: result.platformMessageId,
+        platformMessageIds: result.platformMessageId ? [result.platformMessageId] : [],
+        threadId: options.threadId || null,
+      };
+    } catch (err) {
+      logger.error(
+        { component: 'telegram', jid, artifactKind: artifact.kind, err },
+        'Failed to send Telegram artifact',
+      );
+      return {};
+    }
   }
 
   async editMessage(

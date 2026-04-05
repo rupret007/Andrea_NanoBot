@@ -1671,6 +1671,7 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
         groupFolder: linked.account.groupFolder,
         conversationSummary: conversationState?.summaryText,
         priorCompanionContext: priorCompanionContext || null,
+        priorSubjectData: conversationState?.subjectData,
         factIdHint: getAlexaConversationReferencedFactId(conversationState),
         now: new Date(),
       },

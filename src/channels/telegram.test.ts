@@ -410,6 +410,51 @@ describe('TelegramChannel.sendMessage', () => {
   });
 });
 
+describe('TelegramChannel.sendArtifact', () => {
+  it('sends image artifacts with a bounded caption through Telegram', async () => {
+    const sendPhoto = vi.fn().mockResolvedValue({ message_id: 880 });
+    const channel = new TelegramChannel('test-token', {
+      onMessage: () => undefined,
+      onChatMetadata: () => undefined,
+      registeredGroups: () => ({}),
+    });
+
+    (
+      channel as unknown as {
+        bot: { api: { sendPhoto: typeof sendPhoto } };
+      }
+    ).bot = {
+      api: { sendPhoto },
+    };
+
+    const result = await channel.sendArtifact?.(
+      'tg:123',
+      {
+        kind: 'image',
+        filename: 'andrea-image.png',
+        mimeType: 'image/png',
+        bytesBase64: Buffer.from('png-bytes').toString('base64'),
+      },
+      {
+        caption: 'Here is a first pass.',
+        threadId: '42',
+        replyToMessageId: '9001',
+      },
+    );
+
+    expect(result?.platformMessageId).toBe('880');
+    expect(sendPhoto).toHaveBeenCalledWith(
+      '123',
+      expect.anything(),
+      expect.objectContaining({
+        caption: 'Here is a first pass.',
+        message_thread_id: 42,
+        reply_to_message_id: 9001,
+      }),
+    );
+  });
+});
+
 describe('TelegramChannel.editMessage', () => {
   it('edits an existing Telegram message and preserves inline button rows', async () => {
     const editMessageText = vi.fn().mockResolvedValue({});

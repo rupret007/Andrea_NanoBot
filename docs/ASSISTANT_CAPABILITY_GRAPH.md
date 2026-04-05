@@ -195,12 +195,18 @@ Current behavior by channel:
 - Telegram:
   - fuller answer
   - richer synthesis text
+  - explicit route explanation and next-step suggestions
+- BlueBubbles:
+  - concise summary
+  - lighter route explanation
+  - no operator-only research surfaces
 
 Important truth:
 
-- if OpenAI credentials are not present, the orchestrator still works from local context where possible
+- if OpenAI credentials are not present, the orchestrator still works from local context where possible and returns the exact blocker when the web-backed path is unavailable
 - it does not invent hidden provider support
-- it does not promise web or file search unless those inputs are actually wired
+- it uses `web_search` only when the request is outward-facing or comparison-heavy
+- it does not promise file search unless that plumbing is actually wired
 
 ## Media Capability Preparation
 
@@ -214,11 +220,12 @@ Prepared capabilities:
 
 Current truth:
 
-- no general media provider is wired in NanoBot yet
-- no broad Telegram media-delivery workflow is promised from this pass
-- Alexa should treat future media requests as request-and-deliver workflows, not spoken output
+- `media.image_generate` now has a bounded Telegram delivery path when OpenAI credentials are configured
+- Alexa treats image requests as request-and-deliver handoffs, not spoken media output
+- `media.image_edit` and `media.video_generate` remain prepared-only
+- if OpenAI credentials are missing, Andrea reports the exact blocker instead of pretending the provider is live
 
-So media is **architecturally prepared, not broadly enabled**.
+So media is **partly real, but still intentionally narrow**.
 
 ## Testing And Debugging
 
@@ -233,6 +240,7 @@ Useful pinned-Node debug commands:
 - `npm run debug:daily-companion`
 - `npm run debug:alexa-conversation`
 - `npm run debug:shared-capabilities`
+- `npm run debug:research-mode`
 
 `debug:shared-capabilities` is the quickest operator-side smoke path for:
 

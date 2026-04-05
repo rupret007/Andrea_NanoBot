@@ -35,6 +35,11 @@ describe('assistant capability router', () => {
     ).toMatchObject({
       capabilityId: 'research.recommend',
     });
+    expect(
+      matchAssistantCapabilityRequest('What should I know before deciding on meal delivery?'),
+    ).toMatchObject({
+      capabilityId: 'research.recommend',
+    });
   });
 
   it('matches Andrea Pulse requests cleanly', () => {
@@ -45,6 +50,15 @@ describe('assistant capability router', () => {
       matchAssistantCapabilityRequest('tell me something interesting'),
     ).toMatchObject({
       capabilityId: 'pulse.interesting_thing',
+    });
+  });
+
+  it('matches bounded image-generation requests without widening the capability graph', () => {
+    expect(
+      matchAssistantCapabilityRequest('Generate an image of a cozy reading nook'),
+    ).toMatchObject({
+      capabilityId: 'media.image_generate',
+      canonicalText: 'a cozy reading nook',
     });
   });
 
@@ -110,6 +124,30 @@ describe('assistant capability router', () => {
       continueAssistantCapabilityFromAlexaState('be a little more direct', state),
     ).toMatchObject({
       capabilityId: 'pulse.surprise_me',
+      continuation: true,
+    });
+  });
+
+  it('keeps research explainability follow-ups on the active capability', () => {
+    const state: AlexaConversationState = {
+      flowKey: 'research_compare',
+      subjectKind: 'general',
+      subjectData: {
+        activeCapabilityId: 'research.compare',
+        lastAnswerSummary: 'Meal delivery looks cheaper but less flexible.',
+      },
+      summaryText: 'Meal delivery looks cheaper but less flexible.',
+      supportedFollowups: ['anything_else', 'shorter', 'say_more', 'memory_control'],
+      styleHints: {
+        channelMode: 'alexa_companion',
+        responseSource: 'local_companion',
+      },
+    };
+
+    expect(
+      continueAssistantCapabilityFromAlexaState('why did you choose that route', state),
+    ).toMatchObject({
+      capabilityId: 'research.compare',
       continuation: true,
     });
   });

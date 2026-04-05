@@ -22,11 +22,13 @@ import {
   runResearchOrchestrator,
   type ResearchResult,
 } from './research-orchestrator.js';
+import { runImageGeneration } from './media-generation.js';
 import type {
   AlexaCompanionGuidanceGoal,
   AlexaConversationFollowupAction,
   AlexaConversationSubjectKind,
   CompanionToneProfile,
+  MediaGenerationResult,
 } from './types.js';
 import { normalizeVoicePrompt } from './voice-ready.js';
 
@@ -93,6 +95,15 @@ export interface AssistantCapabilityContext {
   replyText?: string;
   factIdHint?: string;
   threadHint?: string;
+  priorSubjectData?: {
+    lastAnswerSummary?: string;
+    lastRecommendation?: string;
+    conversationFocus?: string;
+    researchRouteExplanation?: string;
+    researchProviderUsed?: ResearchResult['providerUsed'];
+    saveForLaterCandidate?: string;
+    activeCapabilityId?: AssistantCapabilityId;
+  };
 }
 
 export interface AssistantCapabilityInput {
@@ -115,6 +126,8 @@ export interface AssistantCapabilityTrace {
     | 'research_local'
     | 'research_openai'
     | 'research_handoff'
+    | 'media_openai'
+    | 'media_handoff'
     | 'edge_only'
     | 'unavailable';
   reason: string;
@@ -142,6 +155,9 @@ export interface AssistantCapabilityConversationSeed {
     profileFactId?: string;
     activeCapabilityId?: AssistantCapabilityId;
     researchHandoffEligible?: boolean;
+    researchRouteExplanation?: string;
+    researchProviderUsed?: ResearchResult['providerUsed'];
+    saveForLaterCandidate?: string;
     toneProfile?: CompanionToneProfile;
   };
   supportedFollowups?: AlexaConversationFollowupAction[];
@@ -163,6 +179,7 @@ export interface AssistantCapabilityResult {
   lifeThreadResult?: LifeThreadCommandResult;
   personalizationResult?: PersonalizationCommandResult;
   researchResult?: ResearchResult;
+  mediaResult?: MediaGenerationResult;
   conversationSeed?: AssistantCapabilityConversationSeed;
   handoffOffer?: string;
   followupActions?: AlexaConversationFollowupAction[];
@@ -422,6 +439,65 @@ async function runMemoryCapability(
   };
 }
 
+function isResearchExplainabilityTurn(query: string): boolean {
+  return /^(why\b|why did you choose that route\b|why research mode\b|why did you use research mode\b|what path did you use\b|what capability are you using\b)/i.test(
+    normalizeText(query),
+  );
+}
+
+function formatResearchTelegramReply(result: ResearchResult): string {
+  const lines = ['*Research Summary*', result.summaryText || result.fullText || ''];
+  for (const section of result.structuredFindings) {
+    if (!section.items.length) continue;
+    lines.push('', `*${section.title}*`);
+    for (const item of section.items) {
+      lines.push(`- ${item}`);
+    }
+  }
+  if (result.recommendationText) {
+    lines.push('', '*Recommendation*', result.recommendationText);
+  }
+  lines.push('', '*Why this route*', result.routeExplanation);
+  if (result.followupSuggestions.length) {
+    lines.push('', '*Next if useful*');
+    for (const suggestion of result.followupSuggestions.slice(0, 2)) {
+      lines.push(`- ${suggestion}`);
+    }
+  }
+  return lines.filter(Boolean).join('\n');
+}
+
+function formatResearchBlueBubblesReply(result: ResearchResult): string {
+  const lines = [result.summaryText || result.fullText || ''];
+  const firstSection = result.structuredFindings[0];
+  if (firstSection?.items.length) {
+    lines.push(...firstSection.items.slice(0, 2).map((item) => `- ${item}`));
+  }
+  lines.push(`Route: ${result.routeExplanation}`);
+  return lines.filter(Boolean).join('\n');
+}
+
+function formatResearchAlexaReply(result: ResearchResult): {
+  replyText: string;
+  handoffOffer?: string;
+} {
+  const lead = result.spokenText || result.summaryText || result.fullText || 'Okay.';
+  const followupPrompt =
+    result.handoffOption && result.plan.kind === 'compare'
+      ? ' Want the tradeoffs, or should I send the fuller version to Telegram?'
+      : result.handoffOption
+        ? ' I can send the fuller version to Telegram if you want.'
+        : result.followupSuggestions[0]
+          ? ` ${result.followupSuggestions[0]}`
+          : '';
+  return {
+    replyText: `${lead}${followupPrompt}`.trim(),
+    handoffOffer: result.handoffOption
+      ? 'I can send the fuller version to Telegram if you want.'
+      : undefined,
+  };
+}
+
 async function runResearchCapability(
   descriptor: AssistantCapabilityDescriptor,
   context: AssistantCapabilityContext,
@@ -429,6 +505,46 @@ async function runResearchCapability(
 ): Promise<AssistantCapabilityResult> {
   const query = input.canonicalText || input.text || '';
   if (!query.trim()) return { handled: false };
+  if (
+    isResearchExplainabilityTurn(query) &&
+    context.priorSubjectData?.researchRouteExplanation
+  ) {
+    return {
+      handled: true,
+      capabilityId: descriptor.id,
+      replyText:
+        context.channel === 'alexa'
+          ? context.priorSubjectData.researchRouteExplanation
+          : [
+              '*Why this route*',
+              context.priorSubjectData.researchRouteExplanation,
+              context.priorSubjectData.researchProviderUsed
+                ? `Provider: ${context.priorSubjectData.researchProviderUsed}`
+                : '',
+            ]
+              .filter(Boolean)
+              .join('\n'),
+      outputShape: descriptor.preferredOutputShape[context.channel],
+      conversationSeed: {
+        flowKey: descriptor.id.replace(/\./g, '_'),
+        subjectKind: 'general',
+        summaryText: context.priorSubjectData.researchRouteExplanation,
+        guidanceGoal: 'explainability',
+        subjectData: {
+          ...context.priorSubjectData,
+          activeCapabilityId: descriptor.id,
+        },
+        supportedFollowups: descriptor.followupActions,
+        responseSource: 'local_companion',
+      },
+      trace: buildCapabilityTrace(
+        descriptor,
+        context,
+        'research_local',
+        'explained the active research route',
+      ),
+    };
+  }
   const result = await runResearchOrchestrator({
     query,
     channel: context.channel === 'bluebubbles' ? 'telegram' : context.channel,
@@ -438,25 +554,24 @@ async function runResearchCapability(
     preferBrief: context.channel === 'alexa',
   });
   if (!result.handled) return { handled: false };
-  const voiceReply = result.spokenText || result.summaryText || result.fullText || '';
-  const telegramReply = result.fullText || result.summaryText || voiceReply;
-  const handoffOffer =
-    context.channel === 'alexa' && result.handoffOption
-      ? ' I can send the fuller version to Telegram if you want.'
-      : undefined;
+  const voice = formatResearchAlexaReply(result);
+  const telegramReply = formatResearchTelegramReply(result);
+  const bluebubblesReply = formatResearchBlueBubblesReply(result);
   return {
     handled: true,
     capabilityId: descriptor.id,
     replyText:
       context.channel === 'alexa'
-        ? `${voiceReply}${handoffOffer || ''}`.trim()
-        : telegramReply,
+        ? voice.replyText
+        : context.channel === 'bluebubbles'
+          ? bluebubblesReply
+          : telegramReply,
     outputShape:
       result.handoffOption && context.channel === 'alexa'
         ? 'handoff_offer'
         : descriptor.preferredOutputShape[context.channel],
     researchResult: result,
-    handoffOffer,
+    handoffOffer: voice.handoffOffer,
     conversationSeed: {
       flowKey: descriptor.id.replace(/\./g, '_'),
       subjectKind: 'general',
@@ -465,8 +580,12 @@ async function runResearchCapability(
       subjectData: {
         activeCapabilityId: descriptor.id,
         lastAnswerSummary: result.summaryText || query,
+        lastRecommendation: result.recommendationText,
         conversationFocus: query,
         researchHandoffEligible: Boolean(result.handoffOption),
+        researchRouteExplanation: result.routeExplanation,
+        researchProviderUsed: result.providerUsed,
+        saveForLaterCandidate: result.saveForLaterCandidate,
       },
       supportedFollowups: descriptor.followupActions,
       responseSource: 'local_companion',
@@ -481,6 +600,62 @@ async function runResearchCapability(
         : 'research_local',
       result.plan.reason,
       result.sourceNotes,
+    ),
+  };
+}
+
+async function runMediaCapability(
+  descriptor: AssistantCapabilityDescriptor,
+  context: AssistantCapabilityContext,
+  input: AssistantCapabilityInput,
+): Promise<AssistantCapabilityResult> {
+  const prompt = input.canonicalText || input.text || '';
+  if (!prompt.trim()) return { handled: false };
+
+  if (descriptor.id !== 'media.image_generate') {
+    return {
+      handled: true,
+      capabilityId: descriptor.id,
+      replyText:
+        context.channel === 'alexa'
+          ? 'That media workflow is still a future hook.'
+          : 'That media workflow is still prepared, but not implemented yet.',
+      outputShape:
+        context.channel === 'alexa' ? 'voice_brief' : descriptor.preferredOutputShape[context.channel],
+      trace: buildCapabilityTrace(
+        descriptor,
+        context,
+        'unavailable',
+        'media workflow is still a future hook',
+      ),
+    };
+  }
+
+  const mediaResult = await runImageGeneration({
+    prompt,
+    channel: context.channel,
+    groupFolder: context.groupFolder,
+  });
+
+  return {
+    handled: true,
+    capabilityId: descriptor.id,
+    replyText: mediaResult.replyText || mediaResult.summaryText || 'Okay.',
+    outputShape:
+      context.channel === 'alexa'
+        ? 'handoff_offer'
+        : descriptor.preferredOutputShape[context.channel],
+    mediaResult,
+    trace: buildCapabilityTrace(
+      descriptor,
+      context,
+      context.channel === 'alexa'
+        ? 'media_handoff'
+        : mediaResult.providerUsed === 'openai_images'
+          ? 'media_openai'
+          : 'unavailable',
+      mediaResult.routeExplanation,
+      mediaResult.debugPath,
     ),
   };
 }
@@ -1184,18 +1359,21 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: [],
     requiresLinkedAccount: false,
     requiresConfirmation: false,
-    safeForAlexa: false,
+    safeForAlexa: true,
     safeForTelegram: true,
     safeForBlueBubbles: false,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'artifact_only',
+      alexa: 'handoff_offer',
       telegram: 'artifact_only',
       bluebubbles: 'artifact_only',
     },
     followupActions: [],
     handlerKind: 'edge_only',
-    availabilityNote: 'capability prepared; no media provider is wired yet',
+    availabilityNote:
+      'Telegram image generation is wired when OpenAI credentials are configured; Alexa stays handoff-only',
+    execute: (context, input) =>
+      runMediaCapability(CAPABILITY_DESCRIPTORS[24]!, cloneContext(context), input),
   },
   {
     id: 'media.image_edit',
@@ -1216,7 +1394,9 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     },
     followupActions: [],
     handlerKind: 'edge_only',
-    availabilityNote: 'capability prepared; no media provider is wired yet',
+    availabilityNote: 'prepared only; image editing provider is not wired yet',
+    execute: (context, input) =>
+      runMediaCapability(CAPABILITY_DESCRIPTORS[25]!, cloneContext(context), input),
   },
   {
     id: 'media.video_generate',
@@ -1238,6 +1418,8 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     followupActions: [],
     handlerKind: 'edge_only',
     availabilityNote: 'future hook only; no video provider is wired yet',
+    execute: (context, input) =>
+      runMediaCapability(CAPABILITY_DESCRIPTORS[26]!, cloneContext(context), input),
   },
 ];
 
@@ -1308,10 +1490,14 @@ export function capabilitySupportsResearch(id: AssistantCapabilityId): boolean {
 
 export function inferResearchCapabilityId(text: string): AssistantCapabilityId {
   const normalized = normalizeText(text).toLowerCase();
-  if (/\b(compare|versus|vs\.?|tradeoffs?)\b/.test(normalized)) {
+  if (/\b(compare|versus|vs\.?|tradeoffs?|pros and cons|pros|cons)\b/.test(normalized)) {
     return 'research.compare';
   }
-  if (/\b(best choice|which should i|recommend|why)\b/.test(normalized)) {
+  if (
+    /\b(best choice|which should i|recommend|what should i know before deciding|before deciding|why)\b/.test(
+      normalized,
+    )
+  ) {
     return 'research.recommend';
   }
   if (/\b(summarize|summarise)\b/.test(normalized)) {
