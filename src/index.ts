@@ -113,6 +113,11 @@ import {
   setLastReferencedLifeThread,
 } from './life-threads.js';
 import {
+  executeAssistantCapability,
+  type AssistantCapabilityResult,
+} from './assistant-capabilities.js';
+import { matchAssistantCapabilityRequest } from './assistant-capability-router.js';
+import {
   clearAssistantHealthState,
   clearAssistantReadyState,
   clearTelegramTransportState,
@@ -4043,6 +4048,118 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     }
   };
 
+  const tryHandleSharedAssistantCapability = async (): Promise<boolean> => {
+    const capabilityMatch = matchAssistantCapabilityRequest(lastContent);
+    if (!capabilityMatch) {
+      return false;
+    }
+
+    const result = await executeAssistantCapability({
+      capabilityId: capabilityMatch.capabilityId,
+      context: {
+        channel: 'telegram',
+        groupFolder: group.folder,
+        chatJid,
+        now,
+        conversationSummary: getDailyCompanionContext(chatJid, now)?.summaryText,
+        priorCompanionContext: getDailyCompanionContext(chatJid, now),
+        replyText: missedMessages.at(-1)?.reply_to?.content,
+      },
+      input: {
+        text: lastContent,
+        canonicalText: capabilityMatch.canonicalText,
+      },
+    });
+    if (!result.handled) {
+      return false;
+    }
+
+    try {
+      if (result.dailyResponse) {
+        const actionContext = result.dailyResponse.grounded
+          ? buildActionLayerContextFromDailyCommandCenter({
+              grounded: result.dailyResponse.grounded,
+            })
+          : null;
+        await channel.sendMessage(
+          chatJid,
+          formatCalendarPanelText(
+            formatDailyCompanionPanelTitle(result.dailyResponse.mode),
+            result.dailyResponse.reply,
+          ),
+          {
+            inlineActionRows: buildCalendarLookupInlineActionRows(lastContent),
+          },
+        );
+        if (actionContext) {
+          setActionLayerContext(chatJid, actionContext);
+        } else {
+          clearActionLayerContext(chatJid);
+        }
+        setDailyCompanionContext(chatJid, result.dailyResponse.context);
+        const suggestedThread =
+          lastContent && group.folder
+            ? maybeCreatePendingLifeThreadSuggestion({
+                groupFolder: group.folder,
+                chatJid,
+                text: lastContent,
+                replyText: missedMessages.at(-1)?.reply_to?.content,
+                conversationSummary: result.dailyResponse.context.summaryText,
+                now,
+              })
+            : null;
+        if (suggestedThread) {
+          await channel.sendMessage(
+            chatJid,
+            buildLifeThreadSuggestionAskText(suggestedThread.title),
+          );
+        }
+      } else if (result.lifeThreadResult) {
+        if (result.lifeThreadResult.referencedThread) {
+          setLastReferencedLifeThread(
+            chatJid,
+            result.lifeThreadResult.referencedThread,
+            now,
+          );
+        }
+        await channel.sendMessage(chatJid, result.replyText || 'Okay.');
+      } else {
+        const text =
+          result.researchResult && result.replyText
+            ? ['Research', result.replyText].join('\n\n')
+            : result.replyText || 'Okay.';
+        await channel.sendMessage(chatJid, text);
+      }
+
+      logger.info(
+        {
+          component: 'assistant',
+          chatJid,
+          groupFolder: group.folder,
+          group: group.name,
+          requestRoute: requestPolicy.route,
+          capabilityId: result.capabilityId,
+          capabilityReason: capabilityMatch.reason,
+          capabilitySource: result.trace?.responseSource,
+        },
+        'Handled assistant request via shared capability fast path',
+      );
+      return true;
+    } catch (err) {
+      lastAgentTimestamp[chatJid] = previousCursor;
+      saveState();
+      logger.warn(
+        {
+          group: group.name,
+          err,
+          capabilityId: result.capabilityId,
+        },
+        'Shared capability fast path failed, rolled back cursor for retry',
+      );
+      return false;
+    }
+  };
+
   if (await tryHandleLocalCalendarAutomation()) {
     return true;
   }
@@ -4066,6 +4183,15 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         requestPolicy.route === 'direct_assistant' ? 'direct' : 'protected',
       )
     ) {
+      return true;
+    }
+  }
+
+  if (
+    requestPolicy.route === 'direct_assistant' ||
+    requestPolicy.route === 'protected_assistant'
+  ) {
+    if (await tryHandleSharedAssistantCapability()) {
       return true;
     }
   }

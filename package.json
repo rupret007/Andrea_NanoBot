@@ -51,7 +51,8 @@
     "debug:reset": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-control.ts reset",
     "debug:logs": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-control.ts logs",
     "debug:daily-companion": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-daily-companion.ts",
-    "debug:alexa-conversation": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-alexa-conversation.ts"
+    "debug:alexa-conversation": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-alexa-conversation.ts",
+    "debug:shared-capabilities": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-shared-capabilities.ts"
   },
   "dependencies": {
     "@onecli-sh/sdk": "^0.2.0",

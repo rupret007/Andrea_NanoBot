@@ -46,6 +46,7 @@ Use these meanings consistently when reading `/cursor_status` and the setup docs
 - Optional operator-enabled integrations such as Amazon Business shopping and Alexa voice.
 - A secondary integrated `andrea_runtime` lane for Codex/OpenAI execution truth, with a `Codex/OpenAI` view inside `/cursor`, a shared current-work model, and `/runtime-*` as the explicit fallback shell.
 - A bounded life-thread layer for ongoing people, household, and follow-up continuity across Telegram and Alexa.
+- A shared assistant capability graph so Telegram and Alexa can call the same daily, household, memory, thread, and research actions safely.
 
 For demo use, keep the default public surface smaller than the full operator feature set.
 The safest baseline is Telegram + direct assistance + fast quick replies for simple asks + reminders/tasks + `/cursor_status` + clean startup/health checks.
@@ -83,6 +84,55 @@ Important limits:
 - explicit save/track phrasing creates or updates threads directly
 - inferred thread suggestions stay confirmation-first
 - sensitive topics are not silently persisted just because they were mentioned once
+
+## Shared Capability Graph And Research Orchestrator
+
+Andrea now uses a shared assistant capability graph above the channel edges.
+
+Practical meaning:
+
+- Telegram and Alexa can now reuse the same assistant action for daily guidance, household questions, explicit thread lookup, memory controls, and bounded research
+- channel-specific shaping still happens at the edge
+- operator-only current-work controls stay on Telegram/runtime paths even though they exist in the same registry
+
+The shared capability registry records:
+
+- what the action is
+- what inputs it needs
+- whether linking or confirmation is required
+- whether it is safe for Alexa
+- whether it is safe for Telegram
+- whether it is operator-only
+- what output shape each channel should prefer
+
+The research orchestrator now sits behind the same shared assistant core.
+
+Current provider order:
+
+- `local_context`
+  - life threads
+  - reminders/tasks
+  - accepted profile facts
+  - optional calendar signal
+- `openai_responses`
+  - only when concrete OpenAI credentials are configured
+  - used for bounded synthesis and optional web-backed comparative answers
+- `runtime_delegate`
+  - reserved for execution-heavy or operator-like requests that belong on the runtime lane
+
+Current media truth:
+
+- image generation, image editing, and video generation are now capability-gated
+- they are architecturally prepared, not broadly enabled
+- no general media provider or Telegram delivery path is promised from this pass
+
+Helpful operator smoke paths:
+
+- `npm run debug:daily-companion`
+- `npm run debug:alexa-conversation`
+- `npm run debug:shared-capabilities`
+
+For the full architecture and the license-safe external patterns behind it, see [ASSISTANT_CAPABILITY_GRAPH.md](ASSISTANT_CAPABILITY_GRAPH.md).
 
 ## 1) Quick Start (Recommended Path)
 

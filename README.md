@@ -17,6 +17,7 @@
   <a href="docs/SETUP_AND_FEATURES_GUIDE.md">Setup Guide</a>&nbsp; | &nbsp;
   <a href="docs/CHANNEL_COMMANDS_AND_ONBOARDING.md">Chat Commands</a>&nbsp; | &nbsp;
   <a href="docs/BACKEND_LANES_ARCHITECTURE.md">Backend Lanes</a>&nbsp; | &nbsp;
+  <a href="docs/ASSISTANT_CAPABILITY_GRAPH.md">Capability Graph</a>&nbsp; | &nbsp;
   <a href="docs/DEMO_CHECKLIST.md">Demo Checklist</a>&nbsp; | &nbsp;
   <a href="docs/ADDONS_AND_FEATURE_MATRIX.md">Add-On Matrix</a>&nbsp; | &nbsp;
   <a href="docs/CURSOR_API_KEYS.md">Cursor API Keys</a>&nbsp; | &nbsp;
@@ -156,9 +157,11 @@ Under the hood, the current Codex/OpenAI lane now resolves through the local `An
 Alexa is now a bounded companion channel for Andrea rather than a novelty skill.
 
 - it reuses the same Andrea core, account-linking, and trust boundaries
+- it now maps core daily, household, memory, thread, and bounded research asks through the shared assistant capability graph
 - it is shorter, warmer, more spoken-first, and less menu-like than Telegram
 - it supports daily guidance like morning brief, what matters most today, anything important, what am I forgetting, evening reset, and family-upcoming flows
 - it keeps short-lived conversational continuity for turns like `anything else`, `what about Candace`, `what about Travis`, `say more`, `why`, `remember that`, `make that shorter`, `be a little more direct`, and `remind me before that`
+- it can handle bounded research or comparison asks briefly by voice and keep longer follow-through on Telegram when needed
 - personalization remains explicit and consent-based
 - use Node `22.22.2` for truthful Alexa validation on the operator host
 
@@ -178,6 +181,21 @@ Typed Alexa+ app chat is diagnosis-only right now. It may trigger a skill launch
 After any interaction-model change, re-import `docs/alexa/interaction-model.en-US.json` in the Alexa Developer Console and run `Build Model` before treating live fallback as a repo bug.
 
 For near-live conversation tuning on the operator host, use `npm run debug:alexa-conversation`.
+
+## Shared Assistant Core
+
+Andrea now has a shared assistant capability graph so Alexa and Telegram feel like two expressions of the same assistant rather than separate route trees.
+
+- shared capabilities now cover daily guidance, household-aware answers, explicit thread lookup, memory controls, and bounded research
+- Alexa keeps voice-safe shaping and bounded follow-ups
+- Telegram keeps richer rendering and deeper operator-side actions
+- operator-only current-work controls stay out of Alexa even though they live in the same registry
+- bounded research can use local context, optional OpenAI-backed synthesis when configured, and runtime delegation only when the request is clearly execution-heavy
+- media generation is capability-prepared only right now; no general media provider is promised from this pass
+
+See [docs/ASSISTANT_CAPABILITY_GRAPH.md](docs/ASSISTANT_CAPABILITY_GRAPH.md) for the descriptor model, safety rules, research provider boundaries, and license-safe pattern sources.
+
+For operator-side smoke testing of the shared core, use `npm run debug:shared-capabilities`.
 
 For day-to-day operator checks, use `/alexa-status` inside the registered main control chat and `npm run services:status` for the local Alexa listener, OAuth health, public-ingress hinting, and the last signed Alexa request markers on the host. Public HTTPS ingress and live signed utterances remain separate acceptance checks. If the live host is an `ngrok` `*.ngrok-free.dev` tunnel, the Alexa console endpoint SSL setting must use the wildcard-certificate option.
 

@@ -78,6 +78,7 @@ describe('alexa v1 speech helpers', () => {
     expect(buildAlexaHelpSpeech('Andrea')).toContain(
       'what is still open with Candace',
     );
+    expect(buildAlexaHelpSpeech('Andrea')).toContain('compare or research');
     expect(buildAlexaWelcomeSpeech('Andrea')).toContain(
       'You are talking to Andrea.',
     );

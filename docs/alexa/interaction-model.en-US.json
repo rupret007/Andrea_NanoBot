@@ -182,6 +182,13 @@
             "tell me about {followupText}",
             "walk me through {followupText}",
             "I need help with {followupText}",
+            "research {followupText}",
+            "look into {followupText}",
+            "compare {followupText}",
+            "summarize {followupText}",
+            "explain the tradeoffs around {followupText}",
+            "what's the best choice about {followupText}",
+            "what is the best choice about {followupText}",
             "can you {followupText}",
             "could you {followupText}"
           ]

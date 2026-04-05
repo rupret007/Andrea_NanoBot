@@ -10,6 +10,7 @@ import {
   type AlexaConversationFollowupAction,
   type AlexaConversationSubjectKind,
 } from './types.js';
+import type { AssistantCapabilityId } from './assistant-capabilities.js';
 
 export interface AlexaConversationSubjectData {
   personName?: string;
@@ -27,6 +28,8 @@ export interface AlexaConversationSubjectData {
   lastRecommendation?: string;
   pendingActionText?: string;
   conversationFocus?: string;
+  activeCapabilityId?: AssistantCapabilityId;
+  researchHandoffEligible?: boolean;
 }
 
 export interface AlexaConversationState {

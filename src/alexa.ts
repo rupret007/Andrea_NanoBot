@@ -28,6 +28,13 @@ import {
 } from './alexa-conversation.js';
 import { planAlexaDialogueTurn } from './alexa-dialogue.js';
 import {
+  resolveAlexaIntentToCapability,
+} from './assistant-capability-router.js';
+import {
+  executeAssistantCapability,
+  type AssistantCapabilityConversationSeed,
+} from './assistant-capabilities.js';
+import {
   getAlexaOAuthStatus,
   handleAlexaOAuthRequest,
   resolveAlexaOAuthConfig,
@@ -856,6 +863,25 @@ function buildAlexaStateFromDailyCompanion(
   };
 }
 
+function buildAlexaStateFromCapabilitySeed(
+  seed: AssistantCapabilityConversationSeed,
+): AlexaConversationState {
+  return buildAlexaCompanionConversationState({
+    flowKey: seed.flowKey,
+    subjectKind: seed.subjectKind,
+    summaryText: seed.summaryText,
+    guidanceGoal: seed.guidanceGoal,
+    subjectData: seed.subjectData,
+    supportedFollowups: seed.supportedFollowups,
+    prioritizationLens: seed.prioritizationLens,
+    hasActionItem: seed.hasActionItem,
+    hasRiskSignal: seed.hasRiskSignal,
+    reminderCandidate: seed.reminderCandidate,
+    responseStyle: seed.responseStyle,
+    responseSource: seed.responseSource,
+  });
+}
+
 function extractFollowupPersonName(text: string): string | undefined {
   const match = text.match(/^what about ([a-z][a-z' -]+)$/i);
   return match?.[1]?.trim();
@@ -1492,6 +1518,93 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
       .getResponse();
   };
 
+  const runSharedAlexaCapability = async (
+    handlerInput: HandlerInput,
+    linked: Extract<ReturnType<typeof resolveAlexaLinkedAccount>, { ok: true }>,
+    capability: {
+      capabilityId: import('./assistant-capabilities.js').AssistantCapabilityId;
+      canonicalText?: string;
+      normalizedText: string;
+      reason: string;
+    },
+    conversationState?: AlexaConversationState,
+  ) => {
+    clearAlexaPendingSession(linked.principalKey);
+    const priorCompanionContext = parseDailyCompanionContext(conversationState);
+    const result = await executeAssistantCapability({
+      capabilityId: capability.capabilityId,
+      context: {
+        channel: 'alexa',
+        groupFolder: linked.account.groupFolder,
+        conversationSummary: conversationState?.summaryText,
+        priorCompanionContext: priorCompanionContext || null,
+        factIdHint: getAlexaConversationReferencedFactId(conversationState),
+        now: new Date(),
+      },
+      input: {
+        text: capability.normalizedText,
+        canonicalText: capability.canonicalText,
+      },
+    });
+    if (!result.handled) {
+      return null;
+    }
+
+    if (result.dailyResponse) {
+      const nextState = result.conversationSeed
+        ? buildAlexaStateFromCapabilitySeed(result.conversationSeed)
+        : conversationState ||
+          buildAlexaCompanionConversationState({
+            flowKey: capability.capabilityId.replace(/\./g, '_'),
+            subjectKind: result.dailyResponse.context.subjectKind,
+            summaryText: result.dailyResponse.context.summaryText,
+            guidanceGoal: 'open_conversation',
+            responseSource: 'local_companion',
+          });
+      return respondWithLocalCompanion(
+        handlerInput,
+        linked,
+        nextState,
+        result.dailyResponse,
+      );
+    }
+
+    if (result.conversationSeed) {
+      saveAlexaConversationState(
+        linked.principalKey,
+        linked.account.accessTokenHash,
+        linked.account.groupFolder,
+        buildAlexaStateFromCapabilitySeed(result.conversationSeed),
+      );
+    }
+
+    logger.info(
+      {
+        requestId: handlerInput.requestEnvelope.request.requestId,
+        requestType: getRequestType(handlerInput.requestEnvelope),
+        intentName:
+          getRequestType(handlerInput.requestEnvelope) === 'IntentRequest'
+            ? getIntentName(handlerInput.requestEnvelope)
+            : undefined,
+        capabilityId: result.capabilityId,
+        capabilityReason: capability.reason,
+        traceReason: result.trace?.reason,
+        sourceNotes: result.trace?.notes || [],
+        responseSource: result.trace?.responseSource || 'local_companion',
+      },
+      'Alexa shared capability answered locally',
+    );
+    recordHandledRequest(handlerInput.requestEnvelope, {
+      responseSource: result.trace?.responseSource || 'local_companion',
+      linked: true,
+      groupFolder: linked.account.groupFolder,
+    });
+    return handlerInput.responseBuilder
+      .speak(result.replyText || 'Okay.')
+      .reprompt(DEFAULT_ALEXA_REPROMPT)
+      .getResponse();
+  };
+
   const runOpenConversationTurn = async (
     handlerInput: HandlerInput,
     principal: AlexaPrincipal,
@@ -1513,6 +1626,23 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
         )
         .reprompt(DEFAULT_ALEXA_REPROMPT)
         .getResponse();
+    }
+
+    if (plan.route === 'shared_capability' && plan.capabilityId) {
+      const capabilityResponse = await runSharedAlexaCapability(
+        handlerInput,
+        linked,
+        {
+          capabilityId: plan.capabilityId,
+          canonicalText: plan.capabilityText,
+          normalizedText: utterance,
+          reason: 'open conversation matched shared capability',
+        },
+        conversationState,
+      );
+      if (capabilityResponse) {
+        return capabilityResponse;
+      }
     }
 
     if (plan.route === 'blocked') {
@@ -1644,6 +1774,32 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
         )
       ) {
         clearAlexaPendingSession(linked.principalKey);
+      }
+
+      const sharedCapabilityMatch = resolveAlexaIntentToCapability(intentName, {
+        slotValue:
+          getIntentSlotValue(handlerInput.requestEnvelope, 'followupText') ||
+          getIntentSlotValue(handlerInput.requestEnvelope, 'memoryCommand'),
+        conversationState,
+      });
+      if (sharedCapabilityMatch) {
+        const capabilityResponse = await runSharedAlexaCapability(
+          handlerInput,
+          linked,
+          {
+            capabilityId: sharedCapabilityMatch.capabilityId,
+            canonicalText: sharedCapabilityMatch.canonicalText,
+            normalizedText:
+              sharedCapabilityMatch.normalizedText ||
+              sharedCapabilityMatch.canonicalText ||
+              intentName,
+            reason: sharedCapabilityMatch.reason,
+          },
+          conversationState,
+        );
+        if (capabilityResponse) {
+          return capabilityResponse;
+        }
       }
 
       if (intentName === ALEXA_MY_DAY_INTENT) {

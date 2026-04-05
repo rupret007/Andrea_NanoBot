@@ -7,6 +7,7 @@ Andrea now uses an internal **Alexa Companion Mode**:
 - shorter, warmer, spoken-first replies
 - one main thing first
 - one or two short supporting lines
+- shared assistant capabilities for daily guidance, household questions, memory controls, explicit thread lookup, and bounded research
 - measured guidance for open-ended daily questions
 - short-lived conversational continuity
 - calmer, more natural recovery when phrasing is imperfect
@@ -15,6 +16,32 @@ Andrea now uses an internal **Alexa Companion Mode**:
 - explicit, consent-based personalization only
 
 Telegram remains the primary operator surface. Alexa reuses the same trust boundaries, schedule intelligence, reminders, drafting, and follow-through logic.
+
+## 0A) Shared Capability Routing
+
+Alexa now sits on top of the same Andrea assistant capability graph used by Telegram where that is safe.
+
+In practice, that means:
+
+- explicit Alexa intents still exist where the interaction model needs them
+- those intents now map into shared Andrea capabilities first whenever possible
+- `ConversationalFollowupIntent` and `AnythingElseIntent` first try shared capability continuation before broader fallback paths
+- Alexa keeps voice-first shaping at the edge instead of letting internal capability labels leak into spoken output
+
+Examples of shared actions now routed this way:
+
+- `What am I forgetting?`
+- `What about Candace?`
+- `What's still open with Candace?`
+- `What should I remember tonight?`
+- `Why did you say that?`
+- bounded research turns like `Compare meal delivery options for this week`
+
+The shared capability graph does **not** make Alexa and Telegram identical.
+
+- Alexa stays short, bounded, and voice-safe
+- Telegram stays richer and more explicit
+- operator-only current-work controls remain blocked on Alexa even though they are present in the same registry
 
 ## 0) Current Truth
 
@@ -97,7 +124,7 @@ Standard Alexa intents still apply:
 Out of scope:
 
 - smart-home control
-- broad freeform chat
+- unbounded freeform chat
 - operator-shell commands
 - hidden long-term memory
 - multi-user household routing
@@ -254,10 +281,35 @@ That enables bounded follow-ups like:
 
 If context is weak or expired, Andrea falls back honestly with one short clarification.
 
+## 5A) Research In Alexa
+
+Alexa can now route bounded research asks into the shared Andrea research orchestrator.
+
+Current supported shape:
+
+- short spoken summary first
+- optional Telegram handoff when a comparison or synthesis is too long for voice
+- local personal context can be included when the request is about your own schedule, reminders, threads, or household context
+- optional OpenAI-backed synthesis is only used when concrete OpenAI credentials are configured locally
+
+Examples that should now map cleanly:
+
+- `research meal delivery options for this week`
+- `compare these options`
+- `summarize what matters`
+- `what's the best choice and why`
+
+Important limits:
+
+- Alexa is not a general long-form research reading surface
+- runtime-heavy or operator-like research requests still belong on the runtime/Telegram side
+- no hidden provider capability is assumed beyond what the repo actually configures
+
 For operator-side conversation tuning, use:
 
 - `npm run debug:alexa-conversation` for a near-live multi-turn Alexa walkthrough
 - `npm run debug:daily-companion` for grounded local comparison against real `groupFolder=main` data
+- `npm run debug:shared-capabilities` for a shared Telegram/Alexa capability and research smoke pass
 
 ## 6) Daily Guidance And Household Context
 

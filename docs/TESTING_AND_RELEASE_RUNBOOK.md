@@ -31,6 +31,13 @@ npm run test
 npm run build
 ```
 
+For the shared assistant core specifically, add these focused checks when Alexa, Telegram, or research orchestration changes:
+
+```bash
+node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/assistant-capabilities.test.ts src/assistant-capability-router.test.ts src/research-orchestrator.test.ts
+npm run debug:shared-capabilities
+```
+
 ## 2. Major Suite
 
 ```bash
@@ -258,6 +265,24 @@ When configured, validate in this order:
 6. linked `anything else`
 7. linked `what about Candace`
 8. one preference or explainability turn such as `why`, `remember that`, or `be a little more direct`
+9. one bounded research turn such as `compare meal delivery options for this week`
+   - accepted behavior is a brief spoken answer, plus Telegram handoff language if the result is too long for voice
+10. confirm an operator-only action stays blocked on Alexa even though it remains available on Telegram/runtime surfaces
+
+## 9. Shared Capability Graph Validation
+
+Use this when the shared assistant core changes:
+
+1. Run:
+   - `npm run debug:shared-capabilities`
+2. Confirm:
+   - Telegram daily guidance runs through the shared graph
+   - Alexa household guidance runs through the shared graph
+   - research returns a bounded voice-safe answer on Alexa
+   - Telegram gets the richer research shape
+   - `work.current_logs` remains blocked on Alexa and allowed only on the Telegram/operator side
+
+If `OPENAI_API_KEY` is configured, a comparative or outward-facing research prompt may use the OpenAI Responses path. If it is not configured, the shared research proof should still pass through grounded local context when available.
 9. optional linked `what should I remember tonight`
 10. confirm `alexa_last_signed_request_type=IntentRequest`, a resolved `groupFolder`, and `responseSource=local_companion`
     - if the launch works but follow-ups fall into generic fallback, treat that as a likely stale live model first

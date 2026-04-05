@@ -1,13 +1,20 @@
 import { classifyAssistantRequest } from './assistant-routing.js';
+import { matchAssistantCapabilityRequest } from './assistant-capability-router.js';
 import type { AlexaConversationState } from './alexa-conversation.js';
 import type { NewMessage } from './types.js';
 import { normalizeVoicePrompt } from './voice-ready.js';
 
-type AlexaDialogueRoute = 'assistant_bridge' | 'blocked' | 'clarify';
+type AlexaDialogueRoute =
+  | 'assistant_bridge'
+  | 'shared_capability'
+  | 'blocked'
+  | 'clarify';
 
 export interface AlexaDialoguePlan {
   normalizedText: string;
   route: AlexaDialogueRoute;
+  capabilityId?: import('./assistant-capabilities.js').AssistantCapabilityId;
+  capabilityText?: string;
   blockedSpeech?: string;
   clarificationSpeech?: string;
 }
@@ -70,6 +77,16 @@ export function planAlexaDialogueTurn(
     };
   }
 
+  const capabilityMatch = matchAssistantCapabilityRequest(normalizedText);
+  if (capabilityMatch) {
+    return {
+      normalizedText,
+      route: 'shared_capability',
+      capabilityId: capabilityMatch.capabilityId,
+      capabilityText: capabilityMatch.canonicalText || normalizedText,
+    };
+  }
+
   const policy = classifyAssistantRequest([buildSyntheticMessage(normalizedText)]);
   if (
     policy.route === 'control_plane' ||
@@ -88,4 +105,3 @@ export function planAlexaDialogueTurn(
     route: 'assistant_bridge',
   };
 }
-
