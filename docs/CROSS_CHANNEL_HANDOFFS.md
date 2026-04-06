@@ -22,6 +22,7 @@ Current handoff targets:
 - Knowledge Library summaries with richer source detail
 - image-generation delivery when the media path already has an artifact
 - daily and household companion answers when the user wants the fuller text in Telegram
+- communication-companion summaries, owed-reply views, and relationship-aware drafts when the user wants the richer text review on Telegram or BlueBubbles
 - bounded text continuations from Alexa into BlueBubbles messages when the user says `send that to my messages`
 
 Current voice-triggered completion actions:
@@ -68,6 +69,7 @@ The shared model stores:
 - status
 - creation and expiry timestamps
 - related thread / task / knowledge refs
+- related communication-thread / subject / life-thread refs when the handoff came from the communication companion
 - confirmation requirement
 - follow-up suggestions
 - delivery receipt or error text

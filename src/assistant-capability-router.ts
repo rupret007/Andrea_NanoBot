@@ -308,6 +308,68 @@ function matchRitualPrompt(
   return null;
 }
 
+function matchCommunicationPrompt(
+  normalized: string,
+): AssistantCapabilityMatch | null {
+  const lower = normalized.toLowerCase();
+  if (
+    /^summari[sz]e this message\b/.test(lower) ||
+    /^what did they mean\b/.test(lower) ||
+    /^what still needs a reply here\b/.test(lower)
+  ) {
+    return {
+      capabilityId: 'communication.understand_message',
+      normalizedText: normalized,
+      canonicalText: normalized,
+      reason: 'matched communication understanding phrasing',
+    };
+  }
+  if (
+    /^what should i say back\b/.test(lower) ||
+    /^draft a reply to\b/.test(lower) ||
+    /^give me a short reply\b/.test(lower) ||
+    /^make it warmer\b/.test(lower) ||
+    /^make it more direct\b/.test(lower) ||
+    /^make it sound like me\b/.test(lower)
+  ) {
+    return {
+      capabilityId: 'communication.draft_reply',
+      normalizedText: normalized,
+      canonicalText: normalized,
+      reason: 'matched relationship-aware draft phrasing',
+    };
+  }
+  if (
+    /^what do i owe people\b/.test(lower) ||
+    /^who am i forgetting to respond to\b/.test(lower) ||
+    /^anything i need to send tonight\b/.test(lower) ||
+    /^anything i need to reply to\b/.test(lower)
+  ) {
+    return {
+      capabilityId: 'communication.open_loops',
+      normalizedText: normalized,
+      canonicalText: normalized,
+      reason: 'matched communication open-loop phrasing',
+    };
+  }
+  if (
+    /^save this conversation under\b/.test(lower) ||
+    /^remind me to reply later\b/.test(lower) ||
+    /^don'?t surface this automatically\b/.test(lower) ||
+    /^stop tracking that\b/.test(lower) ||
+    /^forget this conversation thread\b/.test(lower) ||
+    /^mark that handled\b/.test(lower)
+  ) {
+    return {
+      capabilityId: 'communication.manage_tracking',
+      normalizedText: normalized,
+      canonicalText: normalized,
+      reason: 'matched communication tracking control phrasing',
+    };
+  }
+  return null;
+}
+
 function matchKnowledgePrompt(
   normalized: string,
 ): AssistantCapabilityMatch | null {
@@ -436,6 +498,7 @@ export function matchAssistantCapabilityRequest(
     matchMemoryPrompt(normalized) ||
     matchPulsePrompt(normalized) ||
     matchRitualPrompt(normalized) ||
+    matchCommunicationPrompt(normalized) ||
     matchKnowledgePrompt(normalized) ||
     matchMediaPrompt(normalized) ||
     (isSharedResearchRequest(normalized)
@@ -480,30 +543,61 @@ export function continueAssistantCapabilityFromAlexaState(
     };
   }
 
-  if (
-    /^(why\b|why did you choose that route\b|what path did you use\b|say more\b|make that shorter\b|shorter\b|be (a little |a bit )?more direct\b)\b/.test(
-      lower,
-    )
-  ) {
     if (
-      activeCapabilityId &&
-      (activeCapabilityId.startsWith('research.') ||
-        activeCapabilityId.startsWith('pulse.') ||
-        activeCapabilityId.startsWith('knowledge.'))
-    ) {
+      /^(why\b|why did you choose that route\b|what path did you use\b|say more\b|make that shorter\b|shorter\b|be (a little |a bit )?more direct\b)\b/.test(
+        lower,
+      )
+  ) {
+      if (
+        activeCapabilityId &&
+        (activeCapabilityId.startsWith('research.') ||
+          activeCapabilityId.startsWith('pulse.') ||
+          activeCapabilityId.startsWith('knowledge.') ||
+          activeCapabilityId.startsWith('communication.'))
+      ) {
       return {
         capabilityId: activeCapabilityId,
         normalizedText: normalized,
         canonicalText: normalized,
         reason: 'continuing research capability style or depth follow-up',
         continuation: true,
+        };
+      }
+    }
+
+    if (
+      /^(what should i say back|draft that for me|give me a short reply|make it warmer|make it more direct)\b/.test(
+        lower,
+      ) &&
+      activeCapabilityId?.startsWith('communication.')
+    ) {
+      return {
+        capabilityId: 'communication.draft_reply',
+        normalizedText: normalized,
+        canonicalText: normalized,
+        reason: 'continuing the active communication thread with a draft follow-up',
+        continuation: true,
       };
     }
-  }
 
-  if (
-    /^(send (?:me )?(?:the )?(?:details|full version|full comparison)(?: to telegram)?|send (?:that|it) to telegram|also send (?:that|it) to telegram|give me the deeper comparison in telegram|save (?:that|it|this) (?:in|to) my library|save (?:that|it|this) to the library|save (?:that|it|this) for later|remember (?:that|it|this) for later|track (?:that|it|this)(?: under .+)?|keep track of (?:that|it|this)(?: under .+| for tonight)?|turn (?:that|it|this) into a reminder|remind me about (?:that|it|this)|draft that for me|draft a message about (?:that|it|this))\b/.test(
-      lower,
+    if (
+      /^(what do i owe people|anything i need to reply to|what conversations are still open)\b/.test(
+        lower,
+      ) &&
+      activeCapabilityId?.startsWith('communication.')
+    ) {
+      return {
+        capabilityId: 'communication.open_loops',
+        normalizedText: normalized,
+        canonicalText: normalized,
+        reason: 'continuing the active communication thread with an open-loops follow-up',
+        continuation: true,
+      };
+    }
+
+    if (
+      /^(send (?:me )?(?:the )?(?:details|full version|full comparison)(?: to telegram)?|send (?:that|it) to telegram|also send (?:that|it) to telegram|give me the deeper comparison in telegram|save (?:that|it|this) (?:in|to) my library|save (?:that|it|this) to the library|save (?:that|it|this) for later|remember (?:that|it|this) for later|track (?:that|it|this)(?: under .+)?|keep track of (?:that|it|this)(?: under .+| for tonight)?|turn (?:that|it|this) into a reminder|remind me about (?:that|it|this)|draft that for me|draft a message about (?:that|it|this))\b/.test(
+        lower,
     )
   ) {
     return null;

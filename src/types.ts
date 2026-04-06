@@ -266,6 +266,7 @@ export type AlexaConversationSubjectKind =
   | 'person'
   | 'household'
   | 'life_thread'
+  | 'communication_thread'
   | 'saved_item'
   | 'draft'
   | 'memory_fact'
@@ -451,6 +452,82 @@ export interface RitualProfile {
   updatedAt: string;
 }
 
+export type CommunicationFollowupState =
+  | 'unknown'
+  | 'reply_needed'
+  | 'waiting_on_them'
+  | 'scheduled'
+  | 'resolved'
+  | 'ignored';
+
+export type CommunicationSuggestedAction =
+  | 'reply_now'
+  | 'draft_reply'
+  | 'save_for_later'
+  | 'create_reminder'
+  | 'link_thread'
+  | 'ignore';
+
+export type CommunicationUrgency =
+  | 'none'
+  | 'soon'
+  | 'tonight'
+  | 'tomorrow'
+  | 'overdue';
+
+export type CommunicationInferenceState =
+  | 'user_confirmed'
+  | 'assistant_inferred'
+  | 'mixed';
+
+export type CommunicationTrackingMode = 'default' | 'manual_only' | 'disabled';
+
+export interface CommunicationThreadRecord {
+  id: string;
+  groupFolder: string;
+  title: string;
+  linkedSubjectIds: string[];
+  linkedLifeThreadIds: string[];
+  channel: 'telegram' | 'bluebubbles' | 'alexa-originated handoff';
+  channelChatJid?: string | null;
+  lastInboundSummary?: string | null;
+  lastOutboundSummary?: string | null;
+  followupState: CommunicationFollowupState;
+  urgency: CommunicationUrgency;
+  followupDueAt?: string | null;
+  suggestedNextAction?: CommunicationSuggestedAction | null;
+  toneStyleHints: string[];
+  lastContactAt?: string | null;
+  lastMessageId?: string | null;
+  linkedTaskId?: string | null;
+  inferenceState: CommunicationInferenceState;
+  trackingMode: CommunicationTrackingMode;
+  createdAt: string;
+  updatedAt: string;
+  disabledAt?: string | null;
+}
+
+export type CommunicationSignalDirection =
+  | 'inbound'
+  | 'outbound'
+  | 'draft'
+  | 'handoff';
+
+export interface CommunicationSignalRecord {
+  id: string;
+  communicationThreadId: string;
+  groupFolder: string;
+  sourceChannel: 'telegram' | 'bluebubbles' | 'alexa-originated handoff';
+  chatJid?: string | null;
+  messageId?: string | null;
+  direction: CommunicationSignalDirection;
+  summaryText: string;
+  followupState: CommunicationFollowupState;
+  suggestedAction?: CommunicationSuggestedAction | null;
+  urgency: CommunicationUrgency;
+  createdAt: string;
+}
+
 export interface KnowledgeSourceRecord {
   sourceId: string;
   groupFolder: string;
@@ -555,6 +632,10 @@ export interface CompanionContinuationCandidate {
   completionText?: string;
   threadId?: string;
   threadTitle?: string;
+  communicationThreadId?: string;
+  communicationSubjectIds?: string[];
+  communicationLifeThreadIds?: string[];
+  lastCommunicationSummary?: string;
   knowledgeSourceIds?: string[];
   knowledgeSourceTitles?: string[];
   followupSuggestions?: string[];
@@ -576,6 +657,10 @@ export interface CompanionHandoffRecord {
   requiresConfirmation: boolean;
   threadId?: string | null;
   taskId?: string | null;
+  communicationThreadId?: string | null;
+  communicationSubjectIdsJson?: string | null;
+  communicationLifeThreadIdsJson?: string | null;
+  lastCommunicationSummary?: string | null;
   knowledgeSourceIdsJson?: string | null;
   workRef?: string | null;
   followupSuggestionsJson?: string | null;

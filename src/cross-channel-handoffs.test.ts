@@ -29,6 +29,10 @@ describe('cross-channel handoffs', () => {
           text: '*Research Summary*\n\nKindle is the safer battery pick.',
           followupSuggestions: ['Save it if useful.'],
         },
+        communicationThreadId: 'comm-1',
+        communicationSubjectIds: ['subject-candace'],
+        communicationLifeThreadIds: ['thread-candace'],
+        lastCommunicationSummary: 'Candace still needs a dinner answer tonight.',
         knowledgeSourceIds: ['source-1'],
         followupSuggestions: ['Save it if useful.'],
       },
@@ -52,6 +56,8 @@ describe('cross-channel handoffs', () => {
       targetChatJid: 'tg:main',
       deliveredMessageId: 'tg-msg-1',
       capabilityId: 'research.compare',
+      communicationThreadId: 'comm-1',
+      lastCommunicationSummary: 'Candace still needs a dinner answer tonight.',
     });
   });
 

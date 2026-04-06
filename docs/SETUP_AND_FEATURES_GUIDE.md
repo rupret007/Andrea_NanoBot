@@ -48,6 +48,7 @@ Use these meanings consistently when reading `/cursor_status` and the setup docs
 - A bounded life-thread layer for ongoing people, household, and follow-up continuity across Telegram and Alexa.
 - A shared assistant capability graph so Telegram and Alexa can call the same daily, household, memory, thread, and research actions safely.
 - A bounded Knowledge Library for explicit saved source material, source-grounded retrieval, and library-first research answers.
+- A bounded communication-companion layer for explicit conversation summaries, reply drafting, and owed-reply guidance.
 - A bounded rituals and follow-through layer for morning, midday, evening, and carryover guidance.
 - A bounded Alexa-to-Telegram cross-channel handoff layer for richer continuations and voice-triggered action completion.
 - A small bounded personality layer plus request-driven Andrea Pulse.
@@ -226,6 +227,32 @@ Typical voice follow-ups:
 - `turn that into a reminder`
 
 For the deeper operator view and proof harness, see [CROSS_CHANNEL_HANDOFFS.md](CROSS_CHANNEL_HANDOFFS.md).
+
+## Communication Companion
+
+Andrea now has a bounded communication-companion layer for real human conversations.
+
+Current product truth:
+
+- communication threads are explicit conversation-level tracking, not a second people database
+- Andrea can summarize a message, decide if it still needs a reply, suggest one or two next actions, and draft a reply in the user's tone
+- the layer reuses profile subjects, life threads, reminders, rituals, and handoffs instead of building a separate CRM or inbox product
+- Alexa is the orientation surface
+- Telegram and BlueBubbles are the richer communication surfaces
+- no passive inbox crawl, no passive BlueBubbles sync, and no auto-send
+
+Typical prompts:
+
+- `summarize this message`
+- `what should I say back`
+- `give me a short reply`
+- `make it warmer`
+- `what do I owe people`
+- `what's still open with Candace`
+- `remind me to reply later`
+- `save this conversation under the Candace thread`
+
+See [COMMUNICATION_COMPANION.md](COMMUNICATION_COMPANION.md) for the exact boundaries and testing flow.
 
 ## Knowledge Library
 

@@ -175,6 +175,43 @@ describe('alexa conversation state', () => {
     ).toMatchObject({ ok: false });
   });
 
+  it('preserves communication-thread continuity fields in stored Alexa state', () => {
+    saveAlexaConversationState(
+      'alexa:user',
+      'hash-communication',
+      'main',
+      {
+        flowKey: 'communication_understand_message',
+        subjectKind: 'communication_thread',
+        subjectData: {
+          communicationThreadId: 'comm-1',
+          communicationSubjectIds: ['subject-candace'],
+          communicationLifeThreadIds: ['thread-1'],
+          lastCommunicationSummary: 'Candace still needs a dinner answer.',
+        },
+        summaryText: 'Candace still needs a dinner answer.',
+        supportedFollowups: ['anything_else', 'send_details'],
+        styleHints: {},
+      },
+      10 * 60 * 1000,
+      new Date('2026-04-03T08:00:00.000Z'),
+    );
+
+    expect(
+      loadAlexaConversationState(
+        'alexa:user',
+        'hash-communication',
+        '2026-04-03T08:05:00.000Z',
+      ),
+    ).toMatchObject({
+      subjectKind: 'communication_thread',
+      subjectData: {
+        communicationThreadId: 'comm-1',
+        lastCommunicationSummary: 'Candace still needs a dinner answer.',
+      },
+    });
+  });
+
   it('resolves generic person follow-ups and explainability prompts', () => {
     const state: AlexaConversationState = {
       flowKey: 'family_upcoming',

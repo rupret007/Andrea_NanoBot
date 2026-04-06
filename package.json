@@ -57,7 +57,8 @@
     "debug:knowledge-library": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-knowledge-library.ts",
     "debug:rituals": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-rituals.ts",
     "debug:cross-channel-handoffs": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-cross-channel-handoffs.ts",
-    "debug:bluebubbles": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-bluebubbles.ts"
+    "debug:bluebubbles": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-bluebubbles.ts",
+    "debug:communication-companion": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-communication-companion.ts"
   },
   "dependencies": {
     "@onecli-sh/sdk": "^0.2.0",

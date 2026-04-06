@@ -16,6 +16,7 @@
   <a href="docs/ANDREA_OPENAI_BACKEND.md">OpenAI Backend</a>&nbsp; | &nbsp;
   <a href="docs/SETUP_AND_FEATURES_GUIDE.md">Setup Guide</a>&nbsp; | &nbsp;
   <a href="docs/KNOWLEDGE_LIBRARY.md">Knowledge Library</a>&nbsp; | &nbsp;
+  <a href="docs/COMMUNICATION_COMPANION.md">Communication Companion</a>&nbsp; | &nbsp;
   <a href="docs/PROACTIVE_RITUALS.md">Proactive Rituals</a>&nbsp; | &nbsp;
   <a href="docs/CROSS_CHANNEL_HANDOFFS.md">Cross-Channel Handoffs</a>&nbsp; | &nbsp;
   <a href="docs/BLUEBUBBLES_CHANNEL_PREP.md">BlueBubbles</a>&nbsp; | &nbsp;
@@ -168,6 +169,7 @@ Alexa is now a bounded companion channel for Andrea rather than a novelty skill.
 - it keeps short-lived conversational continuity for turns like `anything else`, `what about Candace`, `what about Travis`, `say more`, `why`, `remember that`, `make that shorter`, `be a little more direct`, and `remind me before that`
 - it supports request-driven Andrea Pulse asks such as `Andrea Pulse`, `tell me something interesting`, `give me a weird fact`, or `surprise me`
 - it can handle bounded research or comparison asks briefly by voice and keep longer follow-through on Telegram when needed
+- it can now orient you around open conversations, owed replies, and communication follow-through without turning Alexa into a full messaging client
 - personalization remains explicit and consent-based
 - use Node `22.22.2` for truthful Alexa validation on the operator host
 
@@ -209,6 +211,25 @@ BlueBubbles is now a real bounded Andrea messaging channel, not just prep work.
 - BlueBubbles does **not** become a main control chat and does not expose work-cockpit or admin/runtime controls
 
 See [docs/BLUEBUBBLES_CHANNEL_PREP.md](docs/BLUEBUBBLES_CHANNEL_PREP.md) for the live V1 scope, config, webhook/send model, and exact current limits.
+
+## Relationship-Centered Communication Companion
+
+Andrea now has a bounded communication-companion layer for real conversations and follow-through.
+
+- communication threads are explicit conversation-level state, not a CRM
+- Andrea can summarize a message, decide whether it still needs a reply, suggest next actions, and draft a reply in a warmer or more direct tone
+- Telegram and BlueBubbles are the richer communication surfaces
+- Alexa stays concise and can orient you around `what do I owe people`, `what's still open with Candace`, or `draft that for me`
+- open conversations can feed into daily guidance and evening carryover without creating passive inbox surveillance
+
+Communication threads stay distinct from:
+
+- memory facts
+- life threads
+- reminders
+- the Knowledge Library
+
+See [docs/COMMUNICATION_COMPANION.md](docs/COMMUNICATION_COMPANION.md) for the exact model, prompts, and testing flow.
 
 ## Shared Assistant Core
 

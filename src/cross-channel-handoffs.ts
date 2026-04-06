@@ -71,6 +71,10 @@ export interface QueueCompanionHandoffParams {
   expiresInMs?: number;
   threadId?: string;
   taskId?: string;
+  communicationThreadId?: string;
+  communicationSubjectIds?: string[];
+  communicationLifeThreadIds?: string[];
+  lastCommunicationSummary?: string;
   knowledgeSourceIds?: string[];
   workRef?: string;
   followupSuggestions?: string[];
@@ -204,6 +208,17 @@ function buildCompanionHandoffRecord(
     requiresConfirmation: params.requiresConfirmation === true,
     threadId: params.threadId || null,
     taskId: params.taskId || null,
+    communicationThreadId: params.communicationThreadId || null,
+    communicationSubjectIdsJson:
+      params.communicationSubjectIds && params.communicationSubjectIds.length > 0
+        ? JSON.stringify(params.communicationSubjectIds)
+        : null,
+    communicationLifeThreadIdsJson:
+      params.communicationLifeThreadIds &&
+      params.communicationLifeThreadIds.length > 0
+        ? JSON.stringify(params.communicationLifeThreadIds)
+        : null,
+    lastCommunicationSummary: params.lastCommunicationSummary || null,
     knowledgeSourceIdsJson:
       params.knowledgeSourceIds && params.knowledgeSourceIds.length > 0
         ? JSON.stringify(params.knowledgeSourceIds)

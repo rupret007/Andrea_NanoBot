@@ -25,6 +25,7 @@ import {
   buildLifeThreadSnapshot,
   findLifeThreadForExplicitLookup,
 } from './life-threads.js';
+import { getCommunicationCarryoverSignal } from './communication-companion.js';
 import { getResolvedRitualProfile } from './rituals.js';
 import type {
   AlexaConversationFollowupAction,
@@ -894,7 +895,34 @@ function applyRitualProfileToDraft(
       draft.recommendationText && draft.recommendationText.length > 140
         ? `${draft.recommendationText.slice(0, 137).trimEnd()}...`
         : draft.recommendationText,
-    signalsUsed: [...draft.signalsUsed, 'ritual_profile'],
+      signalsUsed: [...draft.signalsUsed, 'ritual_profile'],
+    };
+}
+
+function applyCommunicationCarryover(
+  draft: CompanionDraft,
+  signal:
+    | {
+        summaryText: string;
+        sourceLabel: string;
+      }
+    | null,
+): CompanionDraft {
+  if (!signal) return draft;
+  const detailLine = `Conversation carryover: ${signal.summaryText}`;
+  if (draft.detailLines.includes(detailLine)) return draft;
+  return {
+    ...draft,
+    detailLines: [...draft.detailLines, detailLine].slice(0, 5),
+    extraDetails: [...draft.extraDetails, detailLine].slice(0, 4),
+    recommendationText:
+      draft.recommendationText ||
+      `Keep ${signal.sourceLabel} in view so it does not slip.`,
+    recommendationKind:
+      draft.recommendationKind === 'none'
+        ? 'do_now'
+        : draft.recommendationKind,
+    signalsUsed: [...new Set([...draft.signalsUsed, 'communication_threads'])],
   };
 }
 
@@ -2100,9 +2128,22 @@ export async function buildDailyCompanionResponse(
           now,
         )
       : null;
+    const communicationDraft = applyCommunicationCarryover(
+      draft,
+      deps.groupFolder
+        ? getCommunicationCarryoverSignal({
+            groupFolder: deps.groupFolder,
+            now,
+          })
+        : null,
+    );
     const ritualizedDraft = ritualProfile
-      ? applyRitualProfileToDraft(draft, ritualProfile, deps.channel)
-      : draft;
+      ? applyRitualProfileToDraft(
+          communicationDraft,
+          ritualProfile,
+          deps.channel,
+        )
+      : communicationDraft;
     const current = finalizeDraft(
       ritualizedDraft,
       deps.channel,
@@ -2163,9 +2204,18 @@ export async function buildDailyCompanionResponse(
         now,
       )
     : null;
+  const communicationDraft = applyCommunicationCarryover(
+    draft,
+    deps.groupFolder
+      ? getCommunicationCarryoverSignal({
+          groupFolder: deps.groupFolder,
+          now,
+        })
+      : null,
+  );
   const ritualizedDraft = ritualProfile
-    ? applyRitualProfileToDraft(draft, ritualProfile, deps.channel)
-    : draft;
+    ? applyRitualProfileToDraft(communicationDraft, ritualProfile, deps.channel)
+    : communicationDraft;
 
   return finalizeDraft(
     ritualizedDraft,

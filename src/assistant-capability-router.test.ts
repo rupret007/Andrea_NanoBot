@@ -70,6 +70,31 @@ describe('assistant capability router', () => {
     });
   });
 
+  it('matches communication-companion prompts cleanly', () => {
+    expect(
+      matchAssistantCapabilityRequest(
+        'Summarize this message: Candace: can you let me know if dinner still works tonight?',
+      ),
+    ).toMatchObject({
+      capabilityId: 'communication.understand_message',
+    });
+    expect(
+      matchAssistantCapabilityRequest('What should I say back to Candace?'),
+    ).toMatchObject({
+      capabilityId: 'communication.draft_reply',
+    });
+    expect(
+      matchAssistantCapabilityRequest('What do I owe people right now?'),
+    ).toMatchObject({
+      capabilityId: 'communication.open_loops',
+    });
+    expect(
+      matchAssistantCapabilityRequest('Remind me to reply later'),
+    ).toMatchObject({
+      capabilityId: 'communication.manage_tracking',
+    });
+  });
+
   it('matches ritual status, control, and follow-through prompts cleanly', () => {
     expect(
       matchAssistantCapabilityRequest('What rituals do I have enabled?'),
@@ -245,6 +270,41 @@ describe('assistant capability router', () => {
       continueAssistantCapabilityFromAlexaState('say more', state),
     ).toMatchObject({
       capabilityId: 'knowledge.summarize_saved',
+      continuation: true,
+    });
+  });
+
+  it('keeps communication follow-ups on the shared communication capability family', () => {
+    const state: AlexaConversationState = {
+      flowKey: 'communication_understand_message',
+      subjectKind: 'communication_thread',
+      subjectData: {
+        activeCapabilityId: 'communication.understand_message',
+        lastCommunicationSummary:
+          'Candace still wants an answer about whether dinner works tonight.',
+      },
+      summaryText:
+        'Candace still wants an answer about whether dinner works tonight.',
+      supportedFollowups: ['anything_else', 'shorter', 'say_more'],
+      styleHints: {
+        channelMode: 'alexa_companion',
+        responseSource: 'local_companion',
+      },
+    };
+
+    expect(
+      continueAssistantCapabilityFromAlexaState('what should I say back', state),
+    ).toMatchObject({
+      capabilityId: 'communication.draft_reply',
+      continuation: true,
+    });
+    expect(
+      continueAssistantCapabilityFromAlexaState(
+        'what conversations are still open',
+        state,
+      ),
+    ).toMatchObject({
+      capabilityId: 'communication.open_loops',
       continuation: true,
     });
   });

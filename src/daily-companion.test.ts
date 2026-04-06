@@ -7,6 +7,7 @@ import {
   type DailyCompanionContext,
 } from './daily-companion.js';
 import { _initTestDatabase } from './db.js';
+import { analyzeCommunicationMessage } from './communication-companion.js';
 import { handleLifeThreadCommand } from './life-threads.js';
 import { handleRitualCommand } from './rituals.js';
 import type { ScheduledTask } from './types.js';
@@ -231,6 +232,37 @@ describe('buildDailyCompanionResponse', () => {
     expect(response?.reply).toContain('Candace');
     expect(response?.signalsUsed).toContain('life_threads');
     expect(response?.context.usedThreadTitles).toContain('Candace');
+  });
+
+  it('can include one open communication carryover in daily guidance', async () => {
+    analyzeCommunicationMessage({
+      channel: 'telegram',
+      groupFolder: 'main',
+      chatJid: 'tg:8004355504',
+      text: 'Candace: Can you let me know if dinner still works tonight?',
+      now: new Date('2026-04-04T11:00:00-05:00'),
+    });
+
+    const fetchImpl = createGoogleCalendarFetchMock({
+      eventsByCalendar: {
+        primary: {
+          items: [],
+        },
+      },
+    });
+
+    const response = await buildDailyCompanionResponse('What am I forgetting?', {
+      channel: 'telegram',
+      groupFolder: 'main',
+      now: new Date('2026-04-04T12:00:00-05:00'),
+      timeZone: 'America/Chicago',
+      env: baseEnv,
+      fetchImpl,
+      tasks: [],
+    });
+
+    expect(response?.reply).toContain('Conversation carryover');
+    expect(response?.signalsUsed).toContain('communication_threads');
   });
 
   it('answers what changed from the prior companion context instead of falling back', async () => {

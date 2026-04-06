@@ -17,6 +17,8 @@ import {
   AlexaOAuthRefreshTokenRecord,
   AlexaPendingSession,
   AgentThreadState,
+  CommunicationSignalRecord,
+  CommunicationThreadRecord,
   CompanionHandoffRecord,
   KnowledgeChunkRecord,
   KnowledgeIndexState,
@@ -361,6 +363,53 @@ function createSchema(database: Database.Database): void {
       ON ritual_profiles(group_folder, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_ritual_profiles_group_due
       ON ritual_profiles(group_folder, enabled, next_due_at);
+    CREATE TABLE IF NOT EXISTS communication_threads (
+      id TEXT PRIMARY KEY,
+      group_folder TEXT NOT NULL,
+      title TEXT NOT NULL,
+      linked_subject_ids_json TEXT NOT NULL,
+      linked_life_thread_ids_json TEXT NOT NULL,
+      channel TEXT NOT NULL,
+      channel_chat_jid TEXT,
+      last_inbound_summary TEXT,
+      last_outbound_summary TEXT,
+      followup_state TEXT NOT NULL,
+      urgency TEXT NOT NULL,
+      followup_due_at TEXT,
+      suggested_next_action TEXT,
+      tone_style_hints_json TEXT NOT NULL,
+      last_contact_at TEXT,
+      last_message_id TEXT,
+      linked_task_id TEXT,
+      inference_state TEXT NOT NULL,
+      tracking_mode TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      disabled_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_communication_threads_group_updated
+      ON communication_threads(group_folder, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_communication_threads_group_followup
+      ON communication_threads(group_folder, tracking_mode, followup_state, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS communication_signals (
+      id TEXT PRIMARY KEY,
+      communication_thread_id TEXT NOT NULL,
+      group_folder TEXT NOT NULL,
+      source_channel TEXT NOT NULL,
+      chat_jid TEXT,
+      message_id TEXT,
+      direction TEXT NOT NULL,
+      summary_text TEXT NOT NULL,
+      followup_state TEXT NOT NULL,
+      suggested_action TEXT,
+      urgency TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (communication_thread_id) REFERENCES communication_threads(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_communication_signals_thread
+      ON communication_signals(communication_thread_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_communication_signals_group
+      ON communication_signals(group_folder, created_at DESC);
     CREATE TABLE IF NOT EXISTS companion_handoffs (
       handoff_id TEXT PRIMARY KEY,
       group_folder TEXT NOT NULL,
@@ -374,6 +423,10 @@ function createSchema(database: Database.Database): void {
       requires_confirmation INTEGER NOT NULL DEFAULT 0,
       thread_id TEXT,
       task_id TEXT,
+      communication_thread_id TEXT,
+      communication_subject_ids_json TEXT,
+      communication_life_thread_ids_json TEXT,
+      last_communication_summary TEXT,
       knowledge_source_ids_json TEXT,
       work_ref TEXT,
       followup_suggestions_json TEXT,
@@ -716,6 +769,38 @@ function createSchema(database: Database.Database): void {
 
   try {
     database.exec(`ALTER TABLE life_threads ADD COLUMN linked_task_id TEXT`);
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(
+      `ALTER TABLE companion_handoffs ADD COLUMN communication_thread_id TEXT`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(
+      `ALTER TABLE companion_handoffs ADD COLUMN communication_subject_ids_json TEXT`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(
+      `ALTER TABLE companion_handoffs ADD COLUMN communication_life_thread_ids_json TEXT`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(
+      `ALTER TABLE companion_handoffs ADD COLUMN last_communication_summary TEXT`,
+    );
   } catch {
     /* column already exists */
   }
@@ -2663,6 +2748,10 @@ export function upsertCompanionHandoff(record: CompanionHandoffRecord): void {
         requires_confirmation,
         thread_id,
         task_id,
+        communication_thread_id,
+        communication_subject_ids_json,
+        communication_life_thread_ids_json,
+        last_communication_summary,
         knowledge_source_ids_json,
         work_ref,
         followup_suggestions_json,
@@ -2671,7 +2760,7 @@ export function upsertCompanionHandoff(record: CompanionHandoffRecord): void {
         created_at,
         expires_at,
         updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(handoff_id) DO UPDATE SET
         group_folder = excluded.group_folder,
         origin_channel = excluded.origin_channel,
@@ -2684,6 +2773,10 @@ export function upsertCompanionHandoff(record: CompanionHandoffRecord): void {
         requires_confirmation = excluded.requires_confirmation,
         thread_id = excluded.thread_id,
         task_id = excluded.task_id,
+        communication_thread_id = excluded.communication_thread_id,
+        communication_subject_ids_json = excluded.communication_subject_ids_json,
+        communication_life_thread_ids_json = excluded.communication_life_thread_ids_json,
+        last_communication_summary = excluded.last_communication_summary,
         knowledge_source_ids_json = excluded.knowledge_source_ids_json,
         work_ref = excluded.work_ref,
         followup_suggestions_json = excluded.followup_suggestions_json,
@@ -2706,6 +2799,10 @@ export function upsertCompanionHandoff(record: CompanionHandoffRecord): void {
     record.requiresConfirmation ? 1 : 0,
     record.threadId || null,
     record.taskId || null,
+    record.communicationThreadId || null,
+    record.communicationSubjectIdsJson || null,
+    record.communicationLifeThreadIdsJson || null,
+    record.lastCommunicationSummary || null,
     record.knowledgeSourceIdsJson || null,
     record.workRef || null,
     record.followupSuggestionsJson || null,
@@ -2743,6 +2840,10 @@ export function getCompanionHandoff(
         requires_confirmation: number;
         thread_id: string | null;
         task_id: string | null;
+        communication_thread_id: string | null;
+        communication_subject_ids_json: string | null;
+        communication_life_thread_ids_json: string | null;
+        last_communication_summary: string | null;
         knowledge_source_ids_json: string | null;
         work_ref: string | null;
         followup_suggestions_json: string | null;
@@ -2768,6 +2869,10 @@ export function getCompanionHandoff(
     requiresConfirmation: row.requires_confirmation === 1,
     threadId: row.thread_id,
     taskId: row.task_id,
+    communicationThreadId: row.communication_thread_id,
+    communicationSubjectIdsJson: row.communication_subject_ids_json,
+    communicationLifeThreadIdsJson: row.communication_life_thread_ids_json,
+    lastCommunicationSummary: row.last_communication_summary,
     knowledgeSourceIdsJson: row.knowledge_source_ids_json,
     workRef: row.work_ref,
     followupSuggestionsJson: row.followup_suggestions_json,
@@ -2828,6 +2933,389 @@ export function purgeExpiredCompanionHandoffs(
     )
     .run(now, now);
   return result.changes;
+}
+
+function parseCommunicationStringArray(value: string | null | undefined): string[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((item): item is string => typeof item === 'string');
+  } catch {
+    return [];
+  }
+}
+
+function mapCommunicationThreadRow(row: {
+  id: string;
+  group_folder: string;
+  title: string;
+  linked_subject_ids_json: string;
+  linked_life_thread_ids_json: string;
+  channel: CommunicationThreadRecord['channel'];
+  channel_chat_jid: string | null;
+  last_inbound_summary: string | null;
+  last_outbound_summary: string | null;
+  followup_state: CommunicationThreadRecord['followupState'];
+  urgency: CommunicationThreadRecord['urgency'];
+  followup_due_at: string | null;
+  suggested_next_action: CommunicationThreadRecord['suggestedNextAction'];
+  tone_style_hints_json: string;
+  last_contact_at: string | null;
+  last_message_id: string | null;
+  linked_task_id: string | null;
+  inference_state: CommunicationThreadRecord['inferenceState'];
+  tracking_mode: CommunicationThreadRecord['trackingMode'];
+  created_at: string;
+  updated_at: string;
+  disabled_at: string | null;
+}): CommunicationThreadRecord {
+  return {
+    id: row.id,
+    groupFolder: row.group_folder,
+    title: row.title,
+    linkedSubjectIds: parseCommunicationStringArray(row.linked_subject_ids_json),
+    linkedLifeThreadIds: parseCommunicationStringArray(
+      row.linked_life_thread_ids_json,
+    ),
+    channel: row.channel,
+    channelChatJid: row.channel_chat_jid,
+    lastInboundSummary: row.last_inbound_summary,
+    lastOutboundSummary: row.last_outbound_summary,
+    followupState: row.followup_state,
+    urgency: row.urgency,
+    followupDueAt: row.followup_due_at,
+    suggestedNextAction: row.suggested_next_action,
+    toneStyleHints: parseCommunicationStringArray(row.tone_style_hints_json),
+    lastContactAt: row.last_contact_at,
+    lastMessageId: row.last_message_id,
+    linkedTaskId: row.linked_task_id,
+    inferenceState: row.inference_state,
+    trackingMode: row.tracking_mode,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    disabledAt: row.disabled_at,
+  };
+}
+
+export function upsertCommunicationThread(
+  record: CommunicationThreadRecord,
+): void {
+  assertValidGroupFolder(record.groupFolder);
+  db.prepare(
+    `
+      INSERT INTO communication_threads (
+        id,
+        group_folder,
+        title,
+        linked_subject_ids_json,
+        linked_life_thread_ids_json,
+        channel,
+        channel_chat_jid,
+        last_inbound_summary,
+        last_outbound_summary,
+        followup_state,
+        urgency,
+        followup_due_at,
+        suggested_next_action,
+        tone_style_hints_json,
+        last_contact_at,
+        last_message_id,
+        linked_task_id,
+        inference_state,
+        tracking_mode,
+        created_at,
+        updated_at,
+        disabled_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        group_folder = excluded.group_folder,
+        title = excluded.title,
+        linked_subject_ids_json = excluded.linked_subject_ids_json,
+        linked_life_thread_ids_json = excluded.linked_life_thread_ids_json,
+        channel = excluded.channel,
+        channel_chat_jid = excluded.channel_chat_jid,
+        last_inbound_summary = excluded.last_inbound_summary,
+        last_outbound_summary = excluded.last_outbound_summary,
+        followup_state = excluded.followup_state,
+        urgency = excluded.urgency,
+        followup_due_at = excluded.followup_due_at,
+        suggested_next_action = excluded.suggested_next_action,
+        tone_style_hints_json = excluded.tone_style_hints_json,
+        last_contact_at = excluded.last_contact_at,
+        last_message_id = excluded.last_message_id,
+        linked_task_id = excluded.linked_task_id,
+        inference_state = excluded.inference_state,
+        tracking_mode = excluded.tracking_mode,
+        created_at = excluded.created_at,
+        updated_at = excluded.updated_at,
+        disabled_at = excluded.disabled_at
+    `,
+  ).run(
+    record.id,
+    record.groupFolder,
+    record.title,
+    JSON.stringify(record.linkedSubjectIds || []),
+    JSON.stringify(record.linkedLifeThreadIds || []),
+    record.channel,
+    record.channelChatJid || null,
+    record.lastInboundSummary || null,
+    record.lastOutboundSummary || null,
+    record.followupState,
+    record.urgency,
+    record.followupDueAt || null,
+    record.suggestedNextAction || null,
+    JSON.stringify(record.toneStyleHints || []),
+    record.lastContactAt || null,
+    record.lastMessageId || null,
+    record.linkedTaskId || null,
+    record.inferenceState,
+    record.trackingMode,
+    record.createdAt,
+    record.updatedAt,
+    record.disabledAt || null,
+  );
+}
+
+export function getCommunicationThread(
+  id: string,
+): CommunicationThreadRecord | undefined {
+  const row = db
+    .prepare(
+      `
+        SELECT *
+        FROM communication_threads
+        WHERE id = ?
+        LIMIT 1
+      `,
+    )
+    .get(id) as
+    | {
+        id: string;
+        group_folder: string;
+        title: string;
+        linked_subject_ids_json: string;
+        linked_life_thread_ids_json: string;
+        channel: CommunicationThreadRecord['channel'];
+        channel_chat_jid: string | null;
+        last_inbound_summary: string | null;
+        last_outbound_summary: string | null;
+        followup_state: CommunicationThreadRecord['followupState'];
+        urgency: CommunicationThreadRecord['urgency'];
+        followup_due_at: string | null;
+        suggested_next_action: CommunicationThreadRecord['suggestedNextAction'];
+        tone_style_hints_json: string;
+        last_contact_at: string | null;
+        last_message_id: string | null;
+        linked_task_id: string | null;
+        inference_state: CommunicationThreadRecord['inferenceState'];
+        tracking_mode: CommunicationThreadRecord['trackingMode'];
+        created_at: string;
+        updated_at: string;
+        disabled_at: string | null;
+      }
+    | undefined;
+  if (!row || !isValidGroupFolder(row.group_folder)) return undefined;
+  return mapCommunicationThreadRow(row);
+}
+
+export function listCommunicationThreadsForGroup(params: {
+  groupFolder: string;
+  includeDisabled?: boolean;
+  followupStates?: CommunicationThreadRecord['followupState'][];
+  subjectId?: string;
+  limit?: number;
+}): CommunicationThreadRecord[] {
+  assertValidGroupFolder(params.groupFolder);
+  const clauses = ['group_folder = ?'];
+  const args: unknown[] = [params.groupFolder];
+  if (!params.includeDisabled) {
+    clauses.push('disabled_at IS NULL');
+    clauses.push("tracking_mode != 'disabled'");
+  }
+  if (params.followupStates?.length) {
+    clauses.push(
+      `followup_state IN (${params.followupStates.map(() => '?').join(', ')})`,
+    );
+    args.push(...params.followupStates);
+  }
+  if (params.subjectId) {
+    clauses.push('linked_subject_ids_json LIKE ?');
+    args.push(`%${params.subjectId}%`);
+  }
+  const limit = Math.max(1, params.limit || 50);
+  args.push(limit);
+
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM communication_threads
+        WHERE ${clauses.join(' AND ')}
+        ORDER BY
+          CASE urgency
+            WHEN 'overdue' THEN 0
+            WHEN 'tonight' THEN 1
+            WHEN 'tomorrow' THEN 2
+            WHEN 'soon' THEN 3
+            ELSE 4
+          END,
+          CASE followup_state
+            WHEN 'reply_needed' THEN 0
+            WHEN 'scheduled' THEN 1
+            WHEN 'waiting_on_them' THEN 2
+            ELSE 3
+          END,
+          COALESCE(last_contact_at, updated_at) DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<{
+    id: string;
+    group_folder: string;
+    title: string;
+    linked_subject_ids_json: string;
+    linked_life_thread_ids_json: string;
+    channel: CommunicationThreadRecord['channel'];
+    channel_chat_jid: string | null;
+    last_inbound_summary: string | null;
+    last_outbound_summary: string | null;
+    followup_state: CommunicationThreadRecord['followupState'];
+    urgency: CommunicationThreadRecord['urgency'];
+    followup_due_at: string | null;
+    suggested_next_action: CommunicationThreadRecord['suggestedNextAction'];
+    tone_style_hints_json: string;
+    last_contact_at: string | null;
+    last_message_id: string | null;
+    linked_task_id: string | null;
+    inference_state: CommunicationThreadRecord['inferenceState'];
+    tracking_mode: CommunicationThreadRecord['trackingMode'];
+    created_at: string;
+    updated_at: string;
+    disabled_at: string | null;
+  }>;
+
+  return rows
+    .filter((row) => isValidGroupFolder(row.group_folder))
+    .map((row) => mapCommunicationThreadRow(row));
+}
+
+export function updateCommunicationThread(
+  id: string,
+  updates: Partial<Omit<CommunicationThreadRecord, 'id' | 'groupFolder' | 'createdAt'>>,
+): boolean {
+  const existing = getCommunicationThread(id);
+  if (!existing) return false;
+  upsertCommunicationThread({
+    ...existing,
+    ...updates,
+    updatedAt: updates.updatedAt || new Date().toISOString(),
+  });
+  return true;
+}
+
+export function deleteCommunicationThread(id: string): boolean {
+  db.prepare('DELETE FROM communication_signals WHERE communication_thread_id = ?').run(
+    id,
+  );
+  const result = db.prepare('DELETE FROM communication_threads WHERE id = ?').run(id);
+  return result.changes === 1;
+}
+
+export function upsertCommunicationSignal(
+  record: CommunicationSignalRecord,
+): void {
+  assertValidGroupFolder(record.groupFolder);
+  db.prepare(
+    `
+      INSERT INTO communication_signals (
+        id,
+        communication_thread_id,
+        group_folder,
+        source_channel,
+        chat_jid,
+        message_id,
+        direction,
+        summary_text,
+        followup_state,
+        suggested_action,
+        urgency,
+        created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        communication_thread_id = excluded.communication_thread_id,
+        group_folder = excluded.group_folder,
+        source_channel = excluded.source_channel,
+        chat_jid = excluded.chat_jid,
+        message_id = excluded.message_id,
+        direction = excluded.direction,
+        summary_text = excluded.summary_text,
+        followup_state = excluded.followup_state,
+        suggested_action = excluded.suggested_action,
+        urgency = excluded.urgency,
+        created_at = excluded.created_at
+    `,
+  ).run(
+    record.id,
+    record.communicationThreadId,
+    record.groupFolder,
+    record.sourceChannel,
+    record.chatJid || null,
+    record.messageId || null,
+    record.direction,
+    record.summaryText,
+    record.followupState,
+    record.suggestedAction || null,
+    record.urgency,
+    record.createdAt,
+  );
+}
+
+export function listCommunicationSignalsForThread(
+  communicationThreadId: string,
+  limit = 10,
+): CommunicationSignalRecord[] {
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM communication_signals
+        WHERE communication_thread_id = ?
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(communicationThreadId, Math.max(1, limit)) as Array<{
+    id: string;
+    communication_thread_id: string;
+    group_folder: string;
+    source_channel: CommunicationSignalRecord['sourceChannel'];
+    chat_jid: string | null;
+    message_id: string | null;
+    direction: CommunicationSignalRecord['direction'];
+    summary_text: string;
+    followup_state: CommunicationSignalRecord['followupState'];
+    suggested_action: CommunicationSignalRecord['suggestedAction'];
+    urgency: CommunicationSignalRecord['urgency'];
+    created_at: string;
+  }>;
+
+  return rows
+    .filter((row) => isValidGroupFolder(row.group_folder))
+    .map((row) => ({
+      id: row.id,
+      communicationThreadId: row.communication_thread_id,
+      groupFolder: row.group_folder,
+      sourceChannel: row.source_channel,
+      chatJid: row.chat_jid,
+      messageId: row.message_id,
+      direction: row.direction,
+      summaryText: row.summary_text,
+      followupState: row.followup_state,
+      suggestedAction: row.suggested_action,
+      urgency: row.urgency,
+      createdAt: row.created_at,
+    }));
 }
 
 export function upsertProfileSubject(record: ProfileSubject): void {

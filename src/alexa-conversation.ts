@@ -39,6 +39,10 @@ export interface AlexaConversationSubjectData {
   knowledgeSourceTitles?: string[];
   knowledgeSourceMatches?: string[];
   knowledgeLastQuery?: string;
+  communicationThreadId?: string;
+  communicationSubjectIds?: string[];
+  communicationLifeThreadIds?: string[];
+  lastCommunicationSummary?: string;
   companionContinuationJson?: string;
 }
 

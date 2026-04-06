@@ -72,6 +72,14 @@ describe('assistant capabilities', () => {
       safeForBlueBubbles: true,
     });
     expect(
+      getAssistantCapability('communication.understand_message'),
+    ).toMatchObject({
+      category: 'communication',
+      safeForAlexa: true,
+      safeForTelegram: true,
+      safeForBlueBubbles: true,
+    });
+    expect(
       getAssistantCapability('media.image_generate')?.availabilityNote,
     ).toContain('Telegram image generation is wired');
   });
@@ -289,6 +297,59 @@ describe('assistant capabilities', () => {
     expect(telegram.replyText).toContain('Candace');
     expect(alexa.replyText).toContain('saved material');
     expect(alexa.researchResult?.supportingSources?.[0]?.title).toBeTruthy();
+  });
+
+  it('runs shared communication capabilities with continuation context across channels', async () => {
+    const understand = await executeAssistantCapability({
+      capabilityId: 'communication.understand_message',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:8004355504',
+      },
+      input: {
+        canonicalText:
+          'Summarize this message: Candace: Can you let me know if dinner still works tonight?',
+      },
+    });
+
+    expect(understand.handled).toBe(true);
+    expect(understand.replyText).toContain('Summary:');
+    expect(understand.continuationCandidate?.communicationThreadId).toBeTruthy();
+    expect(
+      understand.conversationSeed?.subjectData?.lastCommunicationSummary,
+    ).toBeTruthy();
+
+    const draft = await executeAssistantCapability({
+      capabilityId: 'communication.draft_reply',
+      context: {
+        channel: 'bluebubbles',
+        groupFolder: 'main',
+        chatJid: 'bb:chat-1',
+        priorSubjectData: understand.conversationSeed?.subjectData,
+      },
+      input: {
+        canonicalText: 'make it warmer',
+      },
+    });
+
+    expect(draft.handled).toBe(true);
+    expect(draft.replyText).toContain('Draft:');
+    expect(draft.handoffPayload?.kind).toBe('message');
+
+    const openLoops = await executeAssistantCapability({
+      capabilityId: 'communication.open_loops',
+      context: {
+        channel: 'alexa',
+        groupFolder: 'main',
+      },
+      input: {
+        canonicalText: 'what do I owe people',
+      },
+    });
+
+    expect(openLoops.handled).toBe(true);
+    expect(openLoops.replyText).toContain('open conversation');
   });
 
   it('preserves explicit library titles and explains matched sources by topic', async () => {

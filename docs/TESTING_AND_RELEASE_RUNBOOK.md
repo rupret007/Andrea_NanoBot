@@ -61,6 +61,13 @@ node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/r
 npm run debug:rituals
 ```
 
+For communication-companion and relationship-follow-through changes, add:
+
+```bash
+node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/communication-companion.test.ts src/assistant-capabilities.test.ts src/assistant-capability-router.test.ts src/alexa-conversation.test.ts src/daily-companion.test.ts src/channels/bluebubbles.test.ts
+npm run debug:communication-companion
+```
+
 ## 2. Major Suite
 
 ```bash
@@ -149,6 +156,11 @@ If BlueBubbles is configured on that host, add:
 - one real reply back into the same linked BlueBubbles conversation
 - one safe companion flow such as `what am I forgetting`
 - one explicit BlueBubbles -> Telegram handoff if you are validating cross-channel continuity
+- one explicit communication-companion flow such as:
+  - `summarize this message`
+  - `what should I say back`
+  - `what do I owe people`
+  - `remind me to reply later`
 
 ## 6. Cursor Validation
 
