@@ -30,6 +30,7 @@ import {
   ProfileFactWithSubject,
   ProfileSubject,
   RegisteredGroup,
+  RitualProfile,
   RuntimeBackendCardContextRecord,
   RuntimeBackendChatSelectionRecord,
   RuntimeBackendJobCacheRecord,
@@ -336,6 +337,29 @@ function createSchema(database: Database.Database): void {
       tags,
       content
     );
+    CREATE TABLE IF NOT EXISTS ritual_profiles (
+      id TEXT PRIMARY KEY,
+      group_folder TEXT NOT NULL,
+      ritual_type TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 0,
+      trigger_style TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      timing_json TEXT NOT NULL,
+      tone_style TEXT NOT NULL,
+      source_inputs_json TEXT NOT NULL,
+      last_run_at TEXT,
+      next_due_at TEXT,
+      opt_in_state TEXT NOT NULL,
+      linked_task_id TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_ritual_profiles_group_type
+      ON ritual_profiles(group_folder, ritual_type);
+    CREATE INDEX IF NOT EXISTS idx_ritual_profiles_group_updated
+      ON ritual_profiles(group_folder, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_ritual_profiles_group_due
+      ON ritual_profiles(group_folder, enabled, next_due_at);
     CREATE TABLE IF NOT EXISTS life_threads (
       id TEXT PRIMARY KEY,
       group_folder TEXT NOT NULL,
@@ -353,6 +377,10 @@ function createSchema(database: Database.Database): void {
       user_confirmed INTEGER NOT NULL DEFAULT 0,
       sensitivity TEXT NOT NULL DEFAULT 'normal',
       surface_mode TEXT NOT NULL DEFAULT 'default',
+      followthrough_mode TEXT NOT NULL DEFAULT 'important_only',
+      last_surfaced_at TEXT,
+      snoozed_until TEXT,
+      linked_task_id TEXT,
       merged_into_thread_id TEXT,
       created_at TEXT NOT NULL,
       last_updated_at TEXT NOT NULL,
@@ -635,6 +663,32 @@ function createSchema(database: Database.Database): void {
     database.exec(
       `ALTER TABLE cursor_operator_contexts ADD COLUMN dashboard_message_id TEXT`,
     );
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(
+      `ALTER TABLE life_threads ADD COLUMN followthrough_mode TEXT DEFAULT 'important_only'`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(`ALTER TABLE life_threads ADD COLUMN last_surfaced_at TEXT`);
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(`ALTER TABLE life_threads ADD COLUMN snoozed_until TEXT`);
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(`ALTER TABLE life_threads ADD COLUMN linked_task_id TEXT`);
   } catch {
     /* column already exists */
   }
@@ -3476,6 +3530,183 @@ export function markKnowledgeSourceDeleted(
   return tx(sourceId, updatedAt);
 }
 
+function mapRitualProfileRow(row: {
+  id: string;
+  group_folder: string;
+  ritual_type: RitualProfile['ritualType'];
+  enabled: number;
+  trigger_style: RitualProfile['triggerStyle'];
+  scope: RitualProfile['scope'];
+  timing_json: string;
+  tone_style: RitualProfile['toneStyle'];
+  source_inputs_json: string;
+  last_run_at: string | null;
+  next_due_at: string | null;
+  opt_in_state: RitualProfile['optInState'];
+  linked_task_id: string | null;
+  created_at: string;
+  updated_at: string;
+}): RitualProfile {
+  return {
+    id: row.id,
+    groupFolder: row.group_folder,
+    ritualType: row.ritual_type,
+    enabled: row.enabled === 1,
+    triggerStyle: row.trigger_style,
+    scope: row.scope,
+    timing: parseJsonObject(row.timing_json),
+    toneStyle: row.tone_style,
+    sourceInputs: parseStringArrayJson(row.source_inputs_json) as RitualProfile['sourceInputs'],
+    lastRunAt: row.last_run_at,
+    nextDueAt: row.next_due_at,
+    optInState: row.opt_in_state,
+    linkedTaskId: row.linked_task_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export function upsertRitualProfile(record: RitualProfile): void {
+  assertValidGroupFolder(record.groupFolder);
+  db.prepare(
+    `
+      INSERT INTO ritual_profiles (
+        id,
+        group_folder,
+        ritual_type,
+        enabled,
+        trigger_style,
+        scope,
+        timing_json,
+        tone_style,
+        source_inputs_json,
+        last_run_at,
+        next_due_at,
+        opt_in_state,
+        linked_task_id,
+        created_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        group_folder = excluded.group_folder,
+        ritual_type = excluded.ritual_type,
+        enabled = excluded.enabled,
+        trigger_style = excluded.trigger_style,
+        scope = excluded.scope,
+        timing_json = excluded.timing_json,
+        tone_style = excluded.tone_style,
+        source_inputs_json = excluded.source_inputs_json,
+        last_run_at = excluded.last_run_at,
+        next_due_at = excluded.next_due_at,
+        opt_in_state = excluded.opt_in_state,
+        linked_task_id = excluded.linked_task_id,
+        created_at = excluded.created_at,
+        updated_at = excluded.updated_at
+    `,
+  ).run(
+    record.id,
+    record.groupFolder,
+    record.ritualType,
+    record.enabled ? 1 : 0,
+    record.triggerStyle,
+    record.scope,
+    JSON.stringify(record.timing || {}),
+    record.toneStyle,
+    JSON.stringify(record.sourceInputs || []),
+    record.lastRunAt || null,
+    record.nextDueAt || null,
+    record.optInState,
+    record.linkedTaskId || null,
+    record.createdAt,
+    record.updatedAt,
+  );
+}
+
+export function getRitualProfileByType(
+  groupFolder: string,
+  ritualType: RitualProfile['ritualType'],
+): RitualProfile | undefined {
+  assertValidGroupFolder(groupFolder);
+  const row = db
+    .prepare(
+      `
+        SELECT *
+        FROM ritual_profiles
+        WHERE group_folder = ?
+          AND ritual_type = ?
+        LIMIT 1
+      `,
+    )
+    .get(groupFolder, ritualType) as
+    | {
+        id: string;
+        group_folder: string;
+        ritual_type: RitualProfile['ritualType'];
+        enabled: number;
+        trigger_style: RitualProfile['triggerStyle'];
+        scope: RitualProfile['scope'];
+        timing_json: string;
+        tone_style: RitualProfile['toneStyle'];
+        source_inputs_json: string;
+        last_run_at: string | null;
+        next_due_at: string | null;
+        opt_in_state: RitualProfile['optInState'];
+        linked_task_id: string | null;
+        created_at: string;
+        updated_at: string;
+      }
+    | undefined;
+  if (!row || !isValidGroupFolder(row.group_folder)) return undefined;
+  return mapRitualProfileRow(row);
+}
+
+export function listRitualProfilesForGroup(
+  groupFolder: string,
+): RitualProfile[] {
+  assertValidGroupFolder(groupFolder);
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM ritual_profiles
+        WHERE group_folder = ?
+        ORDER BY updated_at DESC, ritual_type ASC
+      `,
+    )
+    .all(groupFolder) as Array<{
+    id: string;
+    group_folder: string;
+    ritual_type: RitualProfile['ritualType'];
+    enabled: number;
+    trigger_style: RitualProfile['triggerStyle'];
+    scope: RitualProfile['scope'];
+    timing_json: string;
+    tone_style: RitualProfile['toneStyle'];
+    source_inputs_json: string;
+    last_run_at: string | null;
+    next_due_at: string | null;
+    opt_in_state: RitualProfile['optInState'];
+    linked_task_id: string | null;
+    created_at: string;
+    updated_at: string;
+  }>;
+  return rows
+    .filter((row) => isValidGroupFolder(row.group_folder))
+    .map((row) => mapRitualProfileRow(row));
+}
+
+function parseJsonObject(value: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return {};
+    }
+    return parsed as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
 function parseStringArrayJson(value: string): string[] {
   try {
     const parsed = JSON.parse(value) as unknown;
@@ -3503,6 +3734,10 @@ function mapLifeThreadRow(row: {
   user_confirmed: number;
   sensitivity: LifeThread['sensitivity'];
   surface_mode: LifeThread['surfaceMode'];
+  followthrough_mode: LifeThread['followthroughMode'];
+  last_surfaced_at: string | null;
+  snoozed_until: string | null;
+  linked_task_id: string | null;
   merged_into_thread_id: string | null;
   created_at: string;
   last_updated_at: string;
@@ -3525,6 +3760,10 @@ function mapLifeThreadRow(row: {
     userConfirmed: row.user_confirmed === 1,
     sensitivity: row.sensitivity,
     surfaceMode: row.surface_mode,
+    followthroughMode: row.followthrough_mode,
+    lastSurfacedAt: row.last_surfaced_at,
+    snoozedUntil: row.snoozed_until,
+    linkedTaskId: row.linked_task_id,
     mergedIntoThreadId: row.merged_into_thread_id,
     createdAt: row.created_at,
     lastUpdatedAt: row.last_updated_at,
@@ -3553,11 +3792,15 @@ export function upsertLifeThread(record: LifeThread): void {
         user_confirmed,
         sensitivity,
         surface_mode,
+        followthrough_mode,
+        last_surfaced_at,
+        snoozed_until,
+        linked_task_id,
         merged_into_thread_id,
         created_at,
         last_updated_at,
         last_used_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         group_folder = excluded.group_folder,
         title = excluded.title,
@@ -3574,6 +3817,10 @@ export function upsertLifeThread(record: LifeThread): void {
         user_confirmed = excluded.user_confirmed,
         sensitivity = excluded.sensitivity,
         surface_mode = excluded.surface_mode,
+        followthrough_mode = excluded.followthrough_mode,
+        last_surfaced_at = excluded.last_surfaced_at,
+        snoozed_until = excluded.snoozed_until,
+        linked_task_id = excluded.linked_task_id,
         merged_into_thread_id = excluded.merged_into_thread_id,
         created_at = excluded.created_at,
         last_updated_at = excluded.last_updated_at,
@@ -3596,6 +3843,10 @@ export function upsertLifeThread(record: LifeThread): void {
     record.userConfirmed ? 1 : 0,
     record.sensitivity,
     record.surfaceMode,
+    record.followthroughMode,
+    record.lastSurfacedAt || null,
+    record.snoozedUntil || null,
+    record.linkedTaskId || null,
     record.mergedIntoThreadId || null,
     record.createdAt,
     record.lastUpdatedAt,
@@ -3631,6 +3882,10 @@ export function getLifeThread(id: string): LifeThread | undefined {
         user_confirmed: number;
         sensitivity: LifeThread['sensitivity'];
         surface_mode: LifeThread['surfaceMode'];
+        followthrough_mode: LifeThread['followthroughMode'];
+        last_surfaced_at: string | null;
+        snoozed_until: string | null;
+        linked_task_id: string | null;
         merged_into_thread_id: string | null;
         created_at: string;
         last_updated_at: string;
@@ -3691,6 +3946,10 @@ export function listLifeThreadsForGroup(
     user_confirmed: number;
     sensitivity: LifeThread['sensitivity'];
     surface_mode: LifeThread['surfaceMode'];
+    followthrough_mode: LifeThread['followthroughMode'];
+    last_surfaced_at: string | null;
+    snoozed_until: string | null;
+    linked_task_id: string | null;
     merged_into_thread_id: string | null;
     created_at: string;
     last_updated_at: string;
@@ -3719,6 +3978,10 @@ export function updateLifeThread(
       | 'userConfirmed'
       | 'sensitivity'
       | 'surfaceMode'
+      | 'followthroughMode'
+      | 'lastSurfacedAt'
+      | 'snoozedUntil'
+      | 'linkedTaskId'
       | 'mergedIntoThreadId'
       | 'lastUpdatedAt'
       | 'lastUsedAt'
@@ -3782,6 +4045,22 @@ export function updateLifeThread(
   if (updates.surfaceMode !== undefined) {
     fields.push('surface_mode = ?');
     values.push(updates.surfaceMode);
+  }
+  if (updates.followthroughMode !== undefined) {
+    fields.push('followthrough_mode = ?');
+    values.push(updates.followthroughMode);
+  }
+  if (updates.lastSurfacedAt !== undefined) {
+    fields.push('last_surfaced_at = ?');
+    values.push(updates.lastSurfacedAt || null);
+  }
+  if (updates.snoozedUntil !== undefined) {
+    fields.push('snoozed_until = ?');
+    values.push(updates.snoozedUntil || null);
+  }
+  if (updates.linkedTaskId !== undefined) {
+    fields.push('linked_task_id = ?');
+    values.push(updates.linkedTaskId || null);
   }
   if (updates.mergedIntoThreadId !== undefined) {
     fields.push('merged_into_thread_id = ?');

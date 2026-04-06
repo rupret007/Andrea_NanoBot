@@ -352,6 +352,32 @@ function formatThreadSummaryLine(thread: LifeThread): string {
   return `${thread.title}: ${main}`;
 }
 
+function inferFollowupAnchor(
+  rawText: string,
+  now: Date,
+): string | null {
+  const normalized = rawText.toLowerCase();
+  if (/\btonight\b/.test(normalized)) {
+    const target = new Date(now);
+    target.setHours(19, 0, 0, 0);
+    if (target.getTime() <= now.getTime()) {
+      target.setDate(target.getDate() + 1);
+    }
+    return target.toISOString();
+  }
+  if (/\btomorrow\b/.test(normalized)) {
+    const target = new Date(now);
+    target.setDate(target.getDate() + 1);
+    target.setHours(9, 0, 0, 0);
+    return target.toISOString();
+  }
+  if (/\bbefore i leave\b/.test(normalized)) {
+    const target = new Date(now.getTime() + 2 * 60 * 60 * 1000);
+    return target.toISOString();
+  }
+  return null;
+}
+
 function formatThreadReference(thread: LifeThread): string {
   const detail = thread.nextAction || thread.summary;
   return `${thread.title} is ${thread.status}, and the main thing in it is ${detail}.`;
@@ -546,6 +572,10 @@ function upsertExplicitLifeThread(params: {
         userConfirmed: true,
         sensitivity: inferred.sensitivity,
         surfaceMode: existing.surfaceMode || 'default',
+        followthroughMode: existing.followthroughMode || 'important_only',
+        lastSurfacedAt: existing.lastSurfacedAt || null,
+        snoozedUntil: existing.snoozedUntil || null,
+        linkedTaskId: existing.linkedTaskId || null,
         status: 'active',
         mergedIntoThreadId: null,
         lastUpdatedAt: params.now.toISOString(),
@@ -568,6 +598,10 @@ function upsertExplicitLifeThread(params: {
         userConfirmed: true,
         sensitivity: inferred.sensitivity,
         surfaceMode: 'default',
+        followthroughMode: 'important_only',
+        lastSurfacedAt: null,
+        snoozedUntil: null,
+        linkedTaskId: null,
         mergedIntoThreadId: null,
         createdAt: params.now.toISOString(),
         lastUpdatedAt: params.now.toISOString(),
@@ -685,9 +719,38 @@ export function buildLifeThreadSnapshot(params: {
   selectedWorkTitle?: string | null;
 }): LifeThreadSnapshot {
   const now = params.now || new Date();
+  const nowMs = now.getTime();
   const activeThreads = listLifeThreadsForGroup(params.groupFolder, ['active'])
-    .filter((thread) => thread.surfaceMode !== 'manual_only')
+    .filter((thread) => {
+      if (thread.surfaceMode === 'manual_only') return false;
+      if (
+        thread.followthroughMode === 'off' ||
+        thread.followthroughMode === 'manual_only'
+      ) {
+        return false;
+      }
+      if (thread.snoozedUntil) {
+        const snoozedMs = Date.parse(thread.snoozedUntil);
+        if (Number.isFinite(snoozedMs) && snoozedMs > nowMs) {
+          return false;
+        }
+      }
+      return true;
+    })
     .sort((left, right) => {
+      const followthroughPriority = (thread: LifeThread): number => {
+        switch (thread.followthroughMode) {
+          case 'scheduled':
+            return 0;
+          case 'important_only':
+            return 1;
+          default:
+            return 2;
+        }
+      };
+      const leftPriority = followthroughPriority(left);
+      const rightPriority = followthroughPriority(right);
+      if (leftPriority !== rightPriority) return leftPriority - rightPriority;
       const leftDue = left.nextFollowupAt
         ? Date.parse(left.nextFollowupAt)
         : Number.MAX_SAFE_INTEGER;
@@ -704,6 +767,12 @@ export function buildLifeThreadSnapshot(params: {
     if (!thread.nextFollowupAt) return false;
     const followupMs = Date.parse(thread.nextFollowupAt);
     return Number.isFinite(followupMs) && followupMs <= now.getTime() + 24 * 60 * 60 * 1000;
+  });
+
+  const slippingThreads = automaticThreads.filter((thread) => {
+    if (!thread.nextFollowupAt) return false;
+    const followupMs = Date.parse(thread.nextFollowupAt);
+    return Number.isFinite(followupMs) && followupMs < nowMs;
   });
 
   const householdCarryover =
@@ -730,6 +799,7 @@ export function buildLifeThreadSnapshot(params: {
   return {
     activeThreads,
     dueFollowups,
+    slippingThreads,
     householdCarryover,
     recommendedNextThread,
   };
@@ -1083,6 +1153,7 @@ export function handleLifeThreadCommand(
     }
     updateLifeThread(thread.id, {
       surfaceMode: 'manual_only',
+      followthroughMode: 'manual_only',
       lastUpdatedAt: now.toISOString(),
       lastUsedAt: now.toISOString(),
     });
@@ -1090,6 +1161,60 @@ export function handleLifeThreadCommand(
       handled: true,
       responseText: `Okay. I will stop bringing up ${thread.title} automatically.`,
       referencedThread: getLifeThread(thread.id) || thread,
+    };
+  }
+
+  if (
+    /^(what follow-?ups am i carrying right now|show me my carryover threads|what('?s| is) still open right now)\b/i.test(
+      normalized,
+    )
+  ) {
+    const snapshot = buildLifeThreadSnapshot({
+      groupFolder: input.groupFolder,
+      now,
+    });
+    const threads = snapshot.dueFollowups.length
+      ? snapshot.dueFollowups
+      : snapshot.activeThreads;
+    return {
+      handled: true,
+      responseText:
+        input.channel === 'alexa'
+          ? formatThreadListAlexa(threads.slice(0, 3))
+          : [
+              'Follow-through right now:',
+              ...(threads.slice(0, 5).map((candidate) => `- ${formatThreadSummaryLine(candidate)}`)),
+            ].join('\n'),
+      referencedThread: threads[0] || null,
+    };
+  }
+
+  if (/^what have i been putting off\b/i.test(normalized)) {
+    const snapshot = buildLifeThreadSnapshot({
+      groupFolder: input.groupFolder,
+      now,
+    });
+    const threads = snapshot.slippingThreads.length
+      ? snapshot.slippingThreads
+      : snapshot.dueFollowups;
+    return {
+      handled: true,
+      responseText:
+        threads.length === 0
+          ? 'Nothing is standing out as a neglected follow-up right now.'
+          : input.channel === 'alexa'
+            ? buildVoiceReply({
+                summary: `The thing most likely to be slipping is ${threads[0]!.title}.`,
+                details: [threads[0]!.nextAction || threads[0]!.summary],
+                maxDetails: 1,
+              })
+            : [
+                'The follow-through items most likely to be slipping:',
+                ...threads.slice(0, 4).map((candidate) =>
+                  `- ${formatThreadSummaryLine(candidate)}`,
+                ),
+              ].join('\n'),
+      referencedThread: threads[0] || null,
     };
   }
 
@@ -1166,6 +1291,80 @@ export function handleLifeThreadCommand(
       handled: true,
       responseText: buildSaveConfirmation(input.channel, savedThread, summary),
       referencedThread: savedThread,
+    };
+  }
+
+  const remindTalkMatch = raw.match(
+    /^remind me to talk to ([a-z][a-z' -]+) about (this|.+?)(?: (tonight|tomorrow|before i leave))?[.!?]*$/i,
+  );
+  if (remindTalkMatch) {
+    const personName = clipSummary(remindTalkMatch[1], 40);
+    const summaryBase =
+      /^this$/i.test(remindTalkMatch[2] || '')
+        ? getSummarySource(input)
+        : clipSummary(remindTalkMatch[2] || '');
+    if (!summaryBase) {
+      return { handled: true, responseText: 'Tell me what you want carried first.' };
+    }
+    const followupAt = inferFollowupAnchor(remindTalkMatch[3] || raw, now);
+    const savedThread = upsertExplicitLifeThread({
+      groupFolder: input.groupFolder,
+      title: personName,
+      summary: summaryBase,
+      channel: input.channel,
+      sourceKind: 'explicit',
+      nextAction: `Talk to ${personName} about ${summaryBase}`,
+      nextFollowupAt: followupAt,
+      chatJid: input.chatJid,
+      now,
+    });
+    updateLifeThread(savedThread.id, {
+      followthroughMode: 'scheduled',
+      nextFollowupAt: followupAt,
+      lastUpdatedAt: now.toISOString(),
+      lastUsedAt: now.toISOString(),
+    });
+    return {
+      handled: true,
+      responseText: `Okay. I will keep that in the ${savedThread.title} thread${followupAt ? ' and keep it in view for later.' : '.'}`,
+      referencedThread: getLifeThread(savedThread.id) || savedThread,
+    };
+  }
+
+  const dontForgetMatch = raw.match(
+    /^don'?t let me forget (this|that|.+?)(?: (tonight|tomorrow|before i leave))?[.!?]*$/i,
+  );
+  if (dontForgetMatch) {
+    const summaryBase =
+      /^(this|that)$/i.test(dontForgetMatch[1] || '')
+        ? getSummarySource(input)
+        : clipSummary(dontForgetMatch[1] || '');
+    if (!summaryBase) {
+      return { handled: true, responseText: 'Tell me what you do not want to lose first.' };
+    }
+    const followupAt = inferFollowupAnchor(dontForgetMatch[2] || raw, now);
+    const title = deriveTitleFromSummary(summaryBase);
+    const savedThread = upsertExplicitLifeThread({
+      groupFolder: input.groupFolder,
+      title,
+      summary: summaryBase,
+      channel: input.channel,
+      sourceKind: 'explicit',
+      nextAction: summaryBase,
+      nextFollowupAt: followupAt,
+      chatJid: input.chatJid,
+      now,
+    });
+    updateLifeThread(savedThread.id, {
+      followthroughMode: 'important_only',
+      nextFollowupAt: followupAt,
+      lastUpdatedAt: now.toISOString(),
+      lastUsedAt: now.toISOString(),
+    });
+    return {
+      handled: true,
+      responseText: `Okay. I will keep ${savedThread.title} in view so it does not slip.`,
+      referencedThread: getLifeThread(savedThread.id) || savedThread,
     };
   }
 

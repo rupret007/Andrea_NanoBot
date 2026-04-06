@@ -70,6 +70,22 @@ describe('assistant capability router', () => {
     });
   });
 
+  it('matches ritual status, control, and follow-through prompts cleanly', () => {
+    expect(
+      matchAssistantCapabilityRequest('What rituals do I have enabled?'),
+    ).toMatchObject({
+      capabilityId: 'rituals.status',
+    });
+    expect(
+      matchAssistantCapabilityRequest('What follow-ups am I carrying right now?'),
+    ).toMatchObject({
+      capabilityId: 'rituals.followthrough',
+    });
+    expect(matchAssistantCapabilityRequest('Stop doing that')).toMatchObject({
+      capabilityId: 'rituals.configure',
+    });
+  });
+
   it('matches Andrea Pulse requests cleanly', () => {
     expect(matchAssistantCapabilityRequest('Andrea Pulse')).toMatchObject({
       capabilityId: 'pulse.surprise_me',

@@ -20,6 +20,7 @@ Normal users should experience:
 
 - plain-language conversation
 - reminders, recurring follow-ups, and simple task help
+- bounded ritual guidance such as morning brief, evening reset, and follow-through orientation
 - fast direct replies for simple asks
 - summaries, research, and project help
 - the small public-safe Telegram command set
@@ -36,6 +37,36 @@ Operators own:
 - the Codex/OpenAI runtime lane and its local `Andrea_OpenAI_Bot` loopback backend
 - startup, restart, verify, and troubleshooting
 - release validation and docs accuracy
+
+## Rituals And Follow-Through
+
+Andrea now has a bounded rituals layer for day rhythm and carryover guidance.
+
+Operator truth:
+
+- rituals define assistant timing and surfacing behavior
+- life threads remain the canonical ongoing matters
+- reminders remain the concrete future nudges
+- Telegram is the only scheduled ritual surface in this pass
+- Alexa stays on-demand only
+- there is no hidden push behavior by default
+
+Current operator checks:
+
+- `npm run debug:rituals`
+- `node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/rituals.test.ts src/life-threads.test.ts src/daily-companion.test.ts src/assistant-capabilities.test.ts src/assistant-capability-router.test.ts`
+
+Useful user-facing control turns:
+
+- `what rituals do I have enabled`
+- `enable morning brief`
+- `stop doing that`
+- `don't remind me like that`
+- `make the morning brief shorter`
+- `stop surfacing family context automatically`
+- `reset my routine preferences`
+
+If ritual behavior feels noisy, narrow it before changing broader daily-companion logic.
 
 ## What The Cursor Surfaces Mean
 

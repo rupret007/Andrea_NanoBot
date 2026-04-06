@@ -9,6 +9,7 @@ import {
 } from './daily-companion.js';
 import { getAllTasks, listProfileFactsForGroup } from './db.js';
 import {
+  buildLifeThreadSnapshot,
   handleLifeThreadCommand,
   type LifeThreadCommandResult,
 } from './life-threads.js';
@@ -34,6 +35,7 @@ import {
   saveKnowledgeSource,
   searchKnowledgeLibrary,
 } from './knowledge-library.js';
+import { handleRitualCommand } from './rituals.js';
 import type {
   AlexaCompanionGuidanceGoal,
   AlexaConversationFollowupAction,
@@ -62,6 +64,9 @@ export type AssistantCapabilityId =
   | 'memory.manual_only'
   | 'pulse.interesting_thing'
   | 'pulse.surprise_me'
+  | 'rituals.status'
+  | 'rituals.configure'
+  | 'rituals.followthrough'
   | 'knowledge.save_source'
   | 'knowledge.list_sources'
   | 'knowledge.summarize_saved'
@@ -88,6 +93,7 @@ export type AssistantCapabilityCategory =
   | 'threads'
   | 'memory'
   | 'pulse'
+  | 'rituals'
   | 'knowledge'
   | 'research'
   | 'work'
@@ -474,6 +480,161 @@ async function runMemoryCapability(
       context,
       'memory_local',
       'handled by personalization layer',
+    ),
+  };
+}
+
+async function runRitualControlCapability(
+  descriptor: AssistantCapabilityDescriptor,
+  context: AssistantCapabilityContext,
+  input: AssistantCapabilityInput,
+): Promise<AssistantCapabilityResult> {
+  if (!context.groupFolder) return { handled: false };
+  const result = handleRitualCommand({
+    groupFolder: context.groupFolder,
+    channel: context.channel,
+    chatJid: context.chatJid,
+    text: input.canonicalText || input.text || '',
+    replyText: context.replyText,
+    conversationSummary: context.conversationSummary,
+    priorCompanionMode: context.priorCompanionContext?.mode,
+    priorContext: context.priorCompanionContext
+      ? {
+          usedThreadIds: context.priorCompanionContext.usedThreadIds,
+        }
+      : null,
+    now: context.now,
+  });
+  if (!result.handled) return { handled: false };
+  return {
+    handled: true,
+    capabilityId: descriptor.id,
+    replyText: result.responseText || 'Okay.',
+    outputShape: descriptor.preferredOutputShape[context.channel],
+    trace: buildCapabilityTrace(
+      descriptor,
+      context,
+      'local_companion',
+      'handled by ritual control layer',
+    ),
+    conversationSeed: {
+      flowKey: descriptor.id.replace(/\./g, '_'),
+      subjectKind: 'general',
+      summaryText: result.responseText || descriptor.label,
+      guidanceGoal: 'explainability',
+      subjectData: {
+        activeCapabilityId: descriptor.id,
+      },
+      supportedFollowups: descriptor.followupActions,
+      responseSource: 'local_companion',
+    },
+  };
+}
+
+async function runRitualFollowthroughCapability(
+  descriptor: AssistantCapabilityDescriptor,
+  context: AssistantCapabilityContext,
+  input: AssistantCapabilityInput,
+): Promise<AssistantCapabilityResult> {
+  if (!context.groupFolder) return { handled: false };
+  const canonicalText =
+    input.canonicalText || input.text || 'what should I follow up on';
+  const dailyResponse = await buildDailyCompanionResponse(canonicalText, {
+    channel: context.channel,
+    groupFolder: context.groupFolder,
+    tasks: getAllTasks().filter(
+      (task) => task.group_folder === context.groupFolder,
+    ),
+    priorContext: context.priorCompanionContext || null,
+    now: context.now,
+  });
+  const threadSnapshot = buildLifeThreadSnapshot({
+    groupFolder: context.groupFolder,
+    now: context.now,
+  });
+  const followthroughLines = (
+    threadSnapshot.dueFollowups.length
+      ? threadSnapshot.dueFollowups
+      : threadSnapshot.activeThreads
+  )
+    .slice(0, context.channel === 'telegram' ? 3 : 2)
+    .map((thread) => thread.nextAction || thread.summary || thread.title)
+    .filter((line): line is string => Boolean(line));
+
+  if (dailyResponse) {
+    const replyText =
+      context.channel === 'alexa'
+        ? dailyResponse.reply
+        : [
+            dailyResponse.reply,
+            followthroughLines.length > 1
+              ? '\nStill open right now:'
+              : followthroughLines.length === 1
+                ? '\nStill open right now:'
+                : null,
+            ...followthroughLines.map((line) => `- ${line}`),
+          ]
+            .filter(Boolean)
+            .join('\n');
+    return {
+      handled: true,
+      capabilityId: descriptor.id,
+      replyText,
+      outputShape: descriptor.preferredOutputShape[context.channel],
+      dailyResponse,
+      conversationSeed: {
+        flowKey: descriptor.id.replace(/\./g, '_'),
+        subjectKind: dailyResponse.context.subjectKind,
+        summaryText: dailyResponse.context.summaryText,
+        guidanceGoal: 'action_follow_through',
+        subjectData: {
+          ...dailyResponse.context.subjectData,
+          activeCapabilityId: descriptor.id,
+          threadId: dailyResponse.context.usedThreadIds?.[0],
+          threadTitle: dailyResponse.context.usedThreadTitles?.[0],
+          threadSummaryLines: dailyResponse.context.threadSummaryLines || [],
+          lastAnswerSummary: dailyResponse.context.summaryText,
+          lastRecommendation: dailyResponse.context.recommendationText || undefined,
+          conversationFocus:
+            dailyResponse.context.usedThreadTitles?.[0] ||
+            dailyResponse.context.subjectKind,
+          dailyCompanionContextJson: JSON.stringify(dailyResponse.context),
+        },
+        supportedFollowups: dailyResponse.context.supportedFollowups,
+        responseSource: 'local_companion',
+      },
+      trace: buildCapabilityTrace(
+        descriptor,
+        context,
+        'local_companion',
+        'handled by ritual follow-through layer',
+        followthroughLines.length
+          ? [`follow-through: ${followthroughLines.join(' | ')}`]
+          : [],
+      ),
+      followupActions: dailyResponse.context.supportedFollowups,
+    };
+  }
+
+  const fallbackText =
+    followthroughLines.length === 0
+      ? 'Nothing is standing out as an active follow-through risk right now.'
+      : context.channel === 'alexa'
+        ? followthroughLines[0]!
+        : [
+            'Follow-through right now:',
+            ...followthroughLines.map((line) => `- ${line}`),
+          ].join('\n');
+  return {
+    handled: true,
+    capabilityId: descriptor.id,
+    replyText: fallbackText,
+    outputShape: descriptor.preferredOutputShape[context.channel],
+    trace: buildCapabilityTrace(
+      descriptor,
+      context,
+      'life_thread_local',
+      'used life-thread follow-through snapshot',
     ),
   };
 }
@@ -2402,6 +2563,84 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     execute: (context, input) =>
       runKnowledgeMutationCapability(
         CAPABILITY_DESCRIPTORS[34]!,
+        cloneContext(context),
+        input,
+      ),
+  },
+  {
+    id: 'rituals.status',
+    label: 'Ritual Status',
+    category: 'rituals',
+    requiredInputs: ['text'],
+    optionalInputs: [],
+    requiresLinkedAccount: true,
+    requiresConfirmation: false,
+    safeForAlexa: true,
+    safeForTelegram: true,
+    safeForBlueBubbles: true,
+    operatorOnly: false,
+    preferredOutputShape: {
+      alexa: 'voice_brief',
+      telegram: 'chat_brief',
+      bluebubbles: 'chat_brief',
+    },
+    followupActions: ['shorter', 'say_more'],
+    handlerKind: 'local',
+    execute: (context, input) =>
+      runRitualControlCapability(
+        CAPABILITY_DESCRIPTORS[35]!,
+        cloneContext(context),
+        input,
+      ),
+  },
+  {
+    id: 'rituals.configure',
+    label: 'Configure Rituals',
+    category: 'rituals',
+    requiredInputs: ['text'],
+    optionalInputs: [],
+    requiresLinkedAccount: true,
+    requiresConfirmation: false,
+    safeForAlexa: true,
+    safeForTelegram: true,
+    safeForBlueBubbles: true,
+    operatorOnly: false,
+    preferredOutputShape: {
+      alexa: 'voice_brief',
+      telegram: 'chat_brief',
+      bluebubbles: 'chat_brief',
+    },
+    followupActions: ['memory_control'],
+    handlerKind: 'local',
+    execute: (context, input) =>
+      runRitualControlCapability(
+        CAPABILITY_DESCRIPTORS[36]!,
+        cloneContext(context),
+        input,
+      ),
+  },
+  {
+    id: 'rituals.followthrough',
+    label: 'Follow-through View',
+    category: 'rituals',
+    requiredInputs: ['text'],
+    optionalInputs: [],
+    requiresLinkedAccount: true,
+    requiresConfirmation: false,
+    safeForAlexa: true,
+    safeForTelegram: true,
+    safeForBlueBubbles: true,
+    operatorOnly: false,
+    preferredOutputShape: {
+      alexa: 'voice_brief',
+      telegram: 'chat_rich',
+      bluebubbles: 'chat_brief',
+    },
+    followupActions: ['anything_else', 'shorter', 'say_more', 'memory_control'],
+    handlerKind: 'local',
+    execute: (context, input) =>
+      runRitualFollowthroughCapability(
+        CAPABILITY_DESCRIPTORS[37]!,
         cloneContext(context),
         input,
       ),

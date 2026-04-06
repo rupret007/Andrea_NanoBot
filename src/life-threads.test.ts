@@ -2,10 +2,12 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
   _initTestDatabase,
+  getLifeThread,
   listLifeThreadSignals,
   listLifeThreadsForGroup,
   storeChatMetadata,
   storeMessage,
+  updateLifeThread,
 } from './db.js';
 import {
   buildLifeThreadSnapshot,
@@ -336,5 +338,81 @@ describe('life threads', () => {
     expect(isAutomaticSurfaceWorthyLifeThread(band)).toBe(false);
     expect(isAutomaticSurfaceWorthyLifeThread(work)).toBe(true);
     expect(snapshot.recommendedNextThread?.title).toBe('Work');
+  });
+
+  it('creates a scheduled follow-through loop from remind-me phrasing', () => {
+    const result = handleLifeThreadCommand({
+      groupFolder: 'main',
+      channel: 'telegram',
+      chatJid: 'tg:8004355504',
+      text: 'remind me to talk to Candace about dinner plans tonight',
+      now: new Date('2026-04-04T09:00:00.000Z'),
+    });
+
+    const thread = result.referencedThread
+      ? getLifeThread(result.referencedThread.id)
+      : null;
+
+    expect(result.handled).toBe(true);
+    expect(result.responseText).toContain('Candace');
+    expect(thread?.followthroughMode).toBe('scheduled');
+    expect(thread?.nextFollowupAt).toBeTruthy();
+    expect(thread?.nextAction).toContain('Talk to Candace');
+  });
+
+  it('keeps manual and snoozed threads out of automatic follow-through while surfacing slipping ones', () => {
+    const due = handleLifeThreadCommand({
+      groupFolder: 'main',
+      channel: 'telegram',
+      chatJid: 'tg:8004355504',
+      text: "don't let me forget this band thing tonight",
+      replyText: 'Confirm the rehearsal set list before tonight.',
+      now: new Date('2026-04-04T09:00:00-05:00'),
+    }).referencedThread!;
+
+    const manual = handleLifeThreadCommand({
+      groupFolder: 'main',
+      channel: 'telegram',
+      chatJid: 'tg:8004355504',
+      text: 'save this under the house thread',
+      replyText: 'Check the back porch light.',
+      now: new Date('2026-04-04T09:05:00.000Z'),
+    }).referencedThread!;
+
+    updateLifeThread(manual.id, {
+      surfaceMode: 'manual_only',
+      followthroughMode: 'manual_only',
+      lastUpdatedAt: '2026-04-04T09:06:00.000Z',
+      lastUsedAt: '2026-04-04T09:06:00.000Z',
+    });
+
+    const snoozed = handleLifeThreadCommand({
+      groupFolder: 'main',
+      channel: 'telegram',
+      chatJid: 'tg:8004355504',
+      text: 'save this under the work thread',
+      replyText: 'Finish the rollout notes.',
+      now: new Date('2026-04-04T09:10:00.000Z'),
+    }).referencedThread!;
+
+    updateLifeThread(snoozed.id, {
+      followthroughMode: 'important_only',
+      snoozedUntil: '2026-04-05T09:00:00.000Z',
+      lastUpdatedAt: '2026-04-04T09:11:00.000Z',
+      lastUsedAt: '2026-04-04T09:11:00.000Z',
+    });
+
+    const snapshot = buildLifeThreadSnapshot({
+      groupFolder: 'main',
+      now: new Date('2026-04-04T21:00:00-05:00'),
+    });
+
+    expect(snapshot.slippingThreads.map((thread) => thread.id)).toContain(due.id);
+    expect(snapshot.activeThreads.map((thread) => thread.id)).not.toContain(
+      manual.id,
+    );
+    expect(snapshot.activeThreads.map((thread) => thread.id)).not.toContain(
+      snoozed.id,
+    );
   });
 });

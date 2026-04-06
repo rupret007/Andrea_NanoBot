@@ -8,6 +8,7 @@ import {
 } from './daily-companion.js';
 import { _initTestDatabase } from './db.js';
 import { handleLifeThreadCommand } from './life-threads.js';
+import { handleRitualCommand } from './rituals.js';
 import type { ScheduledTask } from './types.js';
 
 function createGoogleCalendarFetchMock(input: {
@@ -639,6 +640,94 @@ describe('buildDailyCompanionResponse', () => {
     expect((alexa?.reply.split('\n').length || 0) <= 3).toBe(true);
     expect(alexa?.reply).not.toContain('Reminder:');
     expect(alexa?.reply).not.toContain('Thread:');
+  });
+
+  it('surfaces slipping thread pressure during midday re-grounding', async () => {
+    handleLifeThreadCommand({
+      groupFolder: 'main',
+      channel: 'telegram',
+      chatJid: 'tg:8004355504',
+      text: 'remind me to talk to Candace about dinner plans tonight',
+      now: new Date('2026-04-04T09:00:00-05:00'),
+    });
+
+    const response = await buildDailyCompanionResponse('Anything I should know?', {
+      channel: 'telegram',
+      groupFolder: 'main',
+      now: new Date('2026-04-04T21:00:00-05:00'),
+      timeZone: 'America/Chicago',
+      env: baseEnv,
+      fetchImpl: createGoogleCalendarFetchMock({
+        eventsByCalendar: {
+          primary: {
+            items: [],
+          },
+        },
+      }),
+      tasks: [],
+    });
+
+    expect(response?.mode).toBe('midday_reground');
+    expect(response?.leadReason).toBe('thread_followup');
+    expect(response?.reply).toContain('The main loose end right now is Candace');
+    expect(response?.reply).toContain('Thread follow-up: Candace');
+    expect(response?.context.usedThreadTitles).toContain('Candace');
+  });
+
+  it('carries ritual shaping into explainability after the morning brief is shortened', async () => {
+    handleRitualCommand({
+      groupFolder: 'main',
+      channel: 'telegram',
+      chatJid: 'tg:8004355504',
+      text: 'make the morning brief shorter',
+      now: new Date('2026-04-04T07:00:00-05:00'),
+    });
+
+    const brief = await buildDailyCompanionResponse('Good morning', {
+      channel: 'telegram',
+      groupFolder: 'main',
+      now: new Date('2026-04-04T07:15:00-05:00'),
+      timeZone: 'America/Chicago',
+      env: baseEnv,
+      fetchImpl: createGoogleCalendarFetchMock({
+        eventsByCalendar: {
+          primary: {
+            items: [],
+          },
+        },
+      }),
+      tasks: [
+        createReminderTask(
+          'check on the demo',
+          '2026-04-04T18:30:00.000Z',
+          'reminder-ritual-brief',
+        ),
+      ],
+    });
+
+    const explain = await buildDailyCompanionResponse(
+      'Why are you bringing that up?',
+      {
+        channel: 'telegram',
+        groupFolder: 'main',
+        now: new Date('2026-04-04T07:16:00-05:00'),
+        timeZone: 'America/Chicago',
+        env: baseEnv,
+        fetchImpl: createGoogleCalendarFetchMock({
+          eventsByCalendar: {
+            primary: {
+              items: [],
+            },
+          },
+        }),
+        tasks: [],
+        priorContext: brief?.context as DailyCompanionContext,
+      },
+    );
+
+    expect(brief?.context.ritualType).toBe('morning_brief');
+    expect(brief?.context.ritualToneStyle).toBe('brief');
+    expect(explain?.reply).toContain('Ritual shaping in play: morning brief');
   });
 
   it('supports explainability and remembered-context follow-ups from prior companion context', async () => {

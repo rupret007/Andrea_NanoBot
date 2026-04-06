@@ -34,6 +34,9 @@ describe('assistant capabilities', () => {
     expect(
       registry.some((entry) => entry.id === 'knowledge.summarize_saved'),
     ).toBe(true);
+    expect(registry.some((entry) => entry.id === 'rituals.followthrough')).toBe(
+      true,
+    );
     expect(registry.some((entry) => entry.id === 'research.compare')).toBe(
       true,
     );
@@ -58,6 +61,12 @@ describe('assistant capabilities', () => {
     });
     expect(getAssistantCapability('knowledge.save_source')).toMatchObject({
       category: 'knowledge',
+      safeForAlexa: true,
+      safeForTelegram: true,
+      safeForBlueBubbles: true,
+    });
+    expect(getAssistantCapability('rituals.configure')).toMatchObject({
+      category: 'rituals',
       safeForAlexa: true,
       safeForTelegram: true,
       safeForBlueBubbles: true,
@@ -329,5 +338,75 @@ describe('assistant capabilities', () => {
     expect(result.mediaResult?.providerStatus.provider).toBe('openai_images');
     expect(result.replyText).toContain('quota or billing limit');
     expect(result.trace?.responseSource).toBe('unavailable');
+  });
+
+  it('runs ritual status, configuration, and follow-through capabilities through the shared core', async () => {
+    const enabled = await executeAssistantCapability({
+      capabilityId: 'rituals.configure',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:8004355504',
+      },
+      input: {
+        canonicalText: 'enable morning brief',
+      },
+    });
+
+    expect(enabled.handled).toBe(true);
+    expect(enabled.replyText).toContain('Telegram');
+
+    await executeAssistantCapability({
+      capabilityId: 'threads.explicit_lookup',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:8004355504',
+      },
+      input: {
+        canonicalText: 'remind me to talk to Candace about dinner plans tonight',
+      },
+    });
+
+    const status = await executeAssistantCapability({
+      capabilityId: 'rituals.status',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:8004355504',
+      },
+      input: {
+        canonicalText: 'what rituals do I have enabled',
+      },
+    });
+    const followthrough = await executeAssistantCapability({
+      capabilityId: 'rituals.followthrough',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:8004355504',
+      },
+      input: {
+        canonicalText: 'what follow-ups am I carrying right now',
+      },
+    });
+    const alexaFollowthrough = await executeAssistantCapability({
+      capabilityId: 'rituals.followthrough',
+      context: {
+        channel: 'alexa',
+        groupFolder: 'main',
+      },
+      input: {
+        canonicalText: 'what should I follow up on',
+      },
+    });
+
+    expect(status.handled).toBe(true);
+    expect(status.replyText).toContain('Morning brief: scheduled');
+    expect(followthrough.handled).toBe(true);
+    expect(followthrough.replyText).toContain('Follow-through right now');
+    expect(followthrough.trace?.responseSource).toBe('life_thread_local');
+    expect(alexaFollowthrough.handled).toBe(true);
+    expect(alexaFollowthrough.replyText).not.toContain('- ');
   });
 });

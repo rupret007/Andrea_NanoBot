@@ -40,8 +40,10 @@ function normalizeText(value: string | undefined): string {
 function matchDailyPrompt(normalized: string): AssistantCapabilityMatch | null {
   const lower = normalized.toLowerCase();
   if (
+    lower === 'good morning' ||
     lower === 'what should i know about today' ||
     lower === 'what matters today' ||
+    lower === 'what should i know this morning' ||
     lower === 'give me my day' ||
     lower === "what's my day looking like" ||
     lower === 'how does today look'
@@ -68,6 +70,8 @@ function matchDailyPrompt(normalized: string): AssistantCapabilityMatch | null {
   }
   if (
     lower === 'what am i forgetting' ||
+    lower === 'anything i should know' ||
+    lower === 'what should i follow up on' ||
     lower === 'what exactly am i forgetting' ||
     lower === 'exactly what am i forgetting' ||
     lower === "tell me what i'm forgetting" ||
@@ -258,6 +262,52 @@ function matchPulsePrompt(normalized: string): AssistantCapabilityMatch | null {
   return null;
 }
 
+function matchRitualPrompt(
+  normalized: string,
+): AssistantCapabilityMatch | null {
+  const lower = normalized.toLowerCase();
+  if (/^what rituals do i have enabled\b/.test(lower)) {
+    return {
+      capabilityId: 'rituals.status',
+      normalizedText: normalized,
+      canonicalText: normalized,
+      reason: 'matched ritual status phrasing',
+    };
+  }
+  if (
+    /^what follow-?ups am i carrying right now\b/.test(lower) ||
+    /^what have i been putting off\b/.test(lower) ||
+    /^show me my carryover threads\b/.test(lower) ||
+    /^what('?s| is) still open right now\b/.test(lower)
+  ) {
+    return {
+      capabilityId: 'rituals.followthrough',
+      normalizedText: normalized,
+      canonicalText: normalized,
+      reason: 'matched follow-through ritual phrasing',
+    };
+  }
+  if (
+    /^stop doing that\b/.test(lower) ||
+    /^don'?t remind me like that\b/.test(lower) ||
+    /^make the morning brief shorter\b/.test(lower) ||
+    /^stop surfacing family context automatically\b/.test(lower) ||
+    /^reset my routine preferences\b/.test(lower) ||
+    /^make this part of my evening reset\b/.test(lower) ||
+    /^(enable|turn on|start) (the )?(morning brief|midday re-grounding|midday reground|evening reset|follow-through prompts|household check-ins|leave prompt)\b/.test(
+      lower,
+    )
+  ) {
+    return {
+      capabilityId: 'rituals.configure',
+      normalizedText: normalized,
+      canonicalText: normalized,
+      reason: 'matched ritual configuration phrasing',
+    };
+  }
+  return null;
+}
+
 function matchKnowledgePrompt(
   normalized: string,
 ): AssistantCapabilityMatch | null {
@@ -385,6 +435,7 @@ export function matchAssistantCapabilityRequest(
     matchThreadPrompt(normalized) ||
     matchMemoryPrompt(normalized) ||
     matchPulsePrompt(normalized) ||
+    matchRitualPrompt(normalized) ||
     matchKnowledgePrompt(normalized) ||
     matchMediaPrompt(normalized) ||
     (isSharedResearchRequest(normalized)

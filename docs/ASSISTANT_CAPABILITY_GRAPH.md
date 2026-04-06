@@ -61,6 +61,10 @@ Current seeded categories:
 - `pulse`
   - interesting thing
   - surprise me / Andrea Pulse
+- `rituals`
+  - ritual status
+  - ritual control
+  - follow-through guidance
 - `knowledge`
   - save source
   - list sources
@@ -148,6 +152,8 @@ Examples now routed through the shared graph first:
 
 - daily companion prompts
 - household-aware prompts
+- ritual inspection and opt-in control
+- follow-through prompts such as `what follow-ups am I carrying right now`
 - open thread inspection
 - memory explain / remember / forget / manual-only controls
 - Knowledge Library controls and source-grounded summaries
@@ -168,6 +174,27 @@ Channel shaping still happens at the edge:
   - concise text-first replies
   - less markdown-heavy than Telegram
   - no operator-only execution controls in this scaffold
+
+## Rituals And Follow-Through
+
+Andrea now has an explicit `rituals` category in the shared capability graph.
+
+This category exists to keep assistant behavior and timing separate from reminders, life threads, and memory.
+
+Current ritual capabilities:
+
+- `rituals.status`
+- `rituals.configure`
+- `rituals.followthrough`
+
+Practical meaning:
+
+- `rituals.status` answers things like `what rituals do I have enabled`
+- `rituals.configure` handles bounded control turns like `enable morning brief`, `make the morning brief shorter`, `stop doing that`, and `stop surfacing family context automatically`
+- `rituals.followthrough` gives richer carryover guidance without inventing a second task system
+
+The actual ongoing matters still live in life threads.
+The ritual layer only decides how and when Andrea should surface them.
 
 ## Bounded Research Orchestrator
 

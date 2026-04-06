@@ -40,6 +40,13 @@ npm run debug:research-mode
 npm run debug:knowledge-library
 ```
 
+For ritual and follow-through changes, add:
+
+```bash
+node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/rituals.test.ts src/life-threads.test.ts src/daily-companion.test.ts src/assistant-capabilities.test.ts src/assistant-capability-router.test.ts
+npm run debug:rituals
+```
+
 ## 2. Major Suite
 
 ```bash

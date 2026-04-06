@@ -16,6 +16,7 @@
   <a href="docs/ANDREA_OPENAI_BACKEND.md">OpenAI Backend</a>&nbsp; | &nbsp;
   <a href="docs/SETUP_AND_FEATURES_GUIDE.md">Setup Guide</a>&nbsp; | &nbsp;
   <a href="docs/KNOWLEDGE_LIBRARY.md">Knowledge Library</a>&nbsp; | &nbsp;
+  <a href="docs/PROACTIVE_RITUALS.md">Proactive Rituals</a>&nbsp; | &nbsp;
   <a href="docs/BLUEBUBBLES_CHANNEL_PREP.md">BlueBubbles Prep</a>&nbsp; | &nbsp;
   <a href="docs/CHANNEL_COMMANDS_AND_ONBOARDING.md">Chat Commands</a>&nbsp; | &nbsp;
   <a href="docs/BACKEND_LANES_ARCHITECTURE.md">Backend Lanes</a>&nbsp; | &nbsp;
@@ -213,11 +214,33 @@ Andrea now has a shared assistant capability graph so Alexa and Telegram feel li
 
 - shared capabilities now cover daily guidance, household-aware answers, explicit thread lookup, memory controls, and bounded research
 - shared capabilities now also cover explicit Knowledge Library controls such as saving sources, listing relevant sources, explaining source choice, and summarizing saved material
+- shared capabilities now also cover ritual status, ritual control, and follow-through guidance
 - shared capabilities now also include explicit Andrea Pulse actions
 - Alexa keeps voice-safe shaping and bounded follow-ups
 - BlueBubbles is now represented as a prepared future channel with its own safety gate and output-shaping policy
 - Telegram keeps richer rendering and deeper operator-side actions
 - operator-only current-work controls stay out of Alexa even though they live in the same registry
+
+## Proactive Rituals And Follow-Through
+
+Andrea now has a bounded rituals layer that sits above daily companion, reminders, life threads, calendar, personalization, and the Knowledge Library.
+
+- rituals define assistant behavior and timing, not a second task system
+- follow-through loops stay attached to life threads instead of spawning a parallel backlog
+- morning and evening rituals can be scheduled on Telegram, but stay off until you opt in
+- Alexa stays on-demand only and voice-first
+- family and household automatic surfacing stay conservative unless you explicitly enable them
+
+Typical prompts now include:
+
+- `What rituals do I have enabled?`
+- `Enable morning brief`
+- `What follow-ups am I carrying right now?`
+- `What have I been putting off?`
+- `Make this part of my evening reset`
+- `Stop doing that`
+
+See [docs/PROACTIVE_RITUALS.md](docs/PROACTIVE_RITUALS.md) for the model, controls, and limits.
 - bounded research now returns a summary first, structured findings, route explanation, and exact blocker truth when web-backed OpenAI research is unavailable
 - bounded research can now use local context, the Knowledge Library, optional OpenAI-backed synthesis with `web_search` when configured, and runtime delegation only when the request is clearly execution-heavy
 - Telegram image generation is now wired through the shared media capability when OpenAI credentials are present and the provider account is usable; Alexa keeps media at the handoff layer

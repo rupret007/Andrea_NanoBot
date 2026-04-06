@@ -380,6 +380,66 @@ export type KnowledgeIndexState =
   | 'disabled'
   | 'failed';
 
+export type RitualType =
+  | 'morning_brief'
+  | 'midday_reground'
+  | 'evening_reset'
+  | 'open_guidance'
+  | 'thread_followthrough'
+  | 'household_checkin'
+  | 'transition_prompt';
+
+export type RitualTriggerStyle =
+  | 'on_request'
+  | 'scheduled'
+  | 'context_triggered'
+  | 'suggested';
+
+export type RitualScope = 'personal' | 'household' | 'work' | 'mixed';
+
+export type RitualSourceInput =
+  | 'calendar'
+  | 'reminders'
+  | 'life_threads'
+  | 'knowledge_library'
+  | 'profile_facts'
+  | 'current_work';
+
+export type RitualToneStyle = 'brief' | 'balanced' | 'supportive';
+
+export type RitualOptInState = 'not_set' | 'opted_in' | 'opted_out';
+
+export interface RitualTiming {
+  localTime?: string | null;
+  weekdaysOnly?: boolean;
+  anchor?:
+    | 'morning'
+    | 'midday'
+    | 'evening'
+    | 'before_leave'
+    | 'tonight'
+    | 'tomorrow'
+    | null;
+}
+
+export interface RitualProfile {
+  id: string;
+  groupFolder: string;
+  ritualType: RitualType;
+  enabled: boolean;
+  triggerStyle: RitualTriggerStyle;
+  scope: RitualScope;
+  timing: RitualTiming;
+  toneStyle: RitualToneStyle;
+  sourceInputs: RitualSourceInput[];
+  lastRunAt?: string | null;
+  nextDueAt?: string | null;
+  optInState: RitualOptInState;
+  linkedTaskId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface KnowledgeSourceRecord {
   sourceId: string;
   groupFolder: string;
@@ -561,6 +621,12 @@ export type LifeThreadSensitivity = 'normal' | 'sensitive';
 
 export type LifeThreadSurfaceMode = 'default' | 'manual_only';
 
+export type LifeThreadFollowthroughMode =
+  | 'off'
+  | 'manual_only'
+  | 'important_only'
+  | 'scheduled';
+
 export type LifeThreadCommandChannel = 'telegram' | 'alexa' | 'bluebubbles';
 
 export interface LifeThread {
@@ -580,6 +646,10 @@ export interface LifeThread {
   userConfirmed: boolean;
   sensitivity: LifeThreadSensitivity;
   surfaceMode: LifeThreadSurfaceMode;
+  followthroughMode: LifeThreadFollowthroughMode;
+  lastSurfacedAt?: string | null;
+  snoozedUntil?: string | null;
+  linkedTaskId?: string | null;
   mergedIntoThreadId?: string | null;
   createdAt: string;
   lastUpdatedAt: string;
@@ -627,6 +697,7 @@ export interface LastReferencedLifeThreadState {
 export interface LifeThreadSnapshot {
   activeThreads: LifeThread[];
   dueFollowups: LifeThread[];
+  slippingThreads: LifeThread[];
   householdCarryover: LifeThread | null;
   recommendedNextThread: LifeThread | null;
 }

@@ -25,6 +25,7 @@ import {
   buildLifeThreadSnapshot,
   findLifeThreadForExplicitLookup,
 } from './life-threads.js';
+import { getResolvedRitualProfile } from './rituals.js';
 import type {
   AlexaConversationFollowupAction,
   AlexaConversationSubjectKind,
@@ -32,6 +33,9 @@ import type {
   LifeThread,
   PersonalityCooldownState,
   ProfileFactWithSubject,
+  RitualToneStyle,
+  RitualTriggerStyle,
+  RitualType,
 } from './types.js';
 import { buildVoiceReply, normalizeVoicePrompt } from './voice-ready.js';
 
@@ -86,6 +90,9 @@ export interface DailyCompanionContext {
     thread: string | null;
   };
   toneProfile: CompanionToneProfile;
+  ritualType?: RitualType | null;
+  ritualToneStyle?: RitualToneStyle | null;
+  ritualTriggerStyle?: RitualTriggerStyle | null;
   personalityCooldown?: PersonalityCooldownState;
 }
 
@@ -343,6 +350,7 @@ function isShorterPrompt(normalized: string): boolean {
 function isExplainabilityPrompt(normalized: string): boolean {
   return (
     /^why[!?]*$/.test(normalized) ||
+    /^(why are you bringing that up)\b/.test(normalized) ||
     /^(what are you using to answer this|what are you using to answer that)\b/.test(
       normalized,
     ) ||
@@ -851,12 +859,56 @@ function resolveTextureContext(
   return 'daily';
 }
 
+function ritualTypeForMode(mode: DailyCompanionMode): RitualType {
+  switch (mode) {
+    case 'morning_brief':
+      return 'morning_brief';
+    case 'midday_reground':
+      return 'midday_reground';
+    case 'evening_reset':
+      return 'evening_reset';
+    case 'household_guidance':
+      return 'household_checkin';
+    case 'open_guidance':
+      return 'open_guidance';
+  }
+}
+
+function applyRitualProfileToDraft(
+  draft: CompanionDraft,
+  ritualProfile: {
+    toneStyle: RitualToneStyle;
+    triggerStyle: RitualTriggerStyle;
+  },
+  channel: DailyCompanionChannel,
+): CompanionDraft {
+  if (ritualProfile.toneStyle !== 'brief') {
+    return draft;
+  }
+  const detailLimit = channel === 'alexa' ? 1 : 3;
+  return {
+    ...draft,
+    detailLines: draft.detailLines.slice(0, detailLimit),
+    extraDetails: draft.extraDetails.slice(0, Math.max(0, detailLimit - 1)),
+    recommendationText:
+      draft.recommendationText && draft.recommendationText.length > 140
+        ? `${draft.recommendationText.slice(0, 137).trimEnd()}...`
+        : draft.recommendationText,
+    signalsUsed: [...draft.signalsUsed, 'ritual_profile'],
+  };
+}
+
 function finalizeDraft(
   draft: CompanionDraft,
   channel: DailyCompanionChannel,
   now: Date,
   grounded: GroundedDaySnapshot | null,
   prefs: CompanionPreferences,
+  ritualProfile?: {
+    ritualType: RitualType;
+    toneStyle: RitualToneStyle;
+    triggerStyle: RitualTriggerStyle;
+  } | null,
 ): DailyCompanionResponse {
   const personalityLine = buildCompanionTextureLine({
     channel,
@@ -924,6 +976,9 @@ function finalizeDraft(
     threadSummaryLines: draft.threadSummaryLines,
     comparisonKeys: draft.comparisonKeys,
     toneProfile: prefs.toneProfile,
+    ritualType: ritualProfile?.ritualType || null,
+    ritualToneStyle: ritualProfile?.toneStyle || null,
+    ritualTriggerStyle: ritualProfile?.triggerStyle || null,
     personalityCooldown: personalityLine
       ? {
           lastTextureKind:
@@ -1082,6 +1137,10 @@ function buildMiddayDraft(params: {
   const nextReminder = snapshot.todayReminders[0] || null;
   const window = summarizeWindow(snapshot);
   const dueThread = params.threadSnapshot.dueFollowups[0] || null;
+  const slippingThread =
+    params.threadSnapshot.slippingThreads.find(
+      (thread) => thread.id !== dueThread?.id,
+    ) || null;
   const recommendation = chooseRecommendation(
     snapshot,
     params.prefs,
@@ -1101,6 +1160,9 @@ function buildMiddayDraft(params: {
   } else if (dueThread) {
     lead = `The main loose end right now is ${dueThread.title}.`;
     leadReason = 'thread_followup';
+  } else if (slippingThread) {
+    lead = `The thing most likely to slip is ${slippingThread.title}.`;
+    leadReason = 'slipping_thread';
   } else if (nextEvent) {
     lead = `The next fixed point is ${nextEvent.title} at ${formatClock(
       new Date(nextEvent.startIso),
@@ -1120,6 +1182,7 @@ function buildMiddayDraft(params: {
     nextReminder ? `Reminder: ${formatReminderSummary(nextReminder, snapshot.timeZone)}` : null,
     window ? `Open block: ${window.label}` : null,
     dueThread ? `Thread follow-up: ${summarizeThread(dueThread)}` : null,
+    slippingThread ? `Slipping: ${summarizeThread(slippingThread)}` : null,
     params.householdLines[0] ? `Household: ${params.householdLines[0]}` : null,
   ].filter((line): line is string => Boolean(line));
 
@@ -1177,6 +1240,10 @@ function buildEveningDraft(params: {
   const tonightReminder = params.snapshot.todayReminders[0] || null;
   const tomorrowPressure = params.tomorrowSnapshot?.nextTimedEvent || null;
   const dueThread = params.threadSnapshot.dueFollowups[0] || null;
+  const slippingThread =
+    params.threadSnapshot.slippingThreads.find(
+      (thread) => thread.id !== dueThread?.id,
+    ) || null;
   const householdThread =
     params.threadSnapshot.householdCarryover &&
     !params.householdLines.some((line) =>
@@ -1199,6 +1266,8 @@ function buildEveningDraft(params: {
     ? `Handle ${tonightReminder.label} tonight so it is not hanging over tomorrow.`
     : dueThread
       ? `Close the loop on ${dueThread.title} tonight by ${dueThread.nextAction || dueThread.summary}.`
+      : slippingThread
+        ? `Touch ${slippingThread.title} tonight so it does not drift into tomorrow.`
     : params.householdLines[0]
       ? `Close the loop on ${params.householdLines[0]} before the evening gets away from you.`
       : householdThread
@@ -1211,6 +1280,8 @@ function buildEveningDraft(params: {
     ? `Tonight's loose end is ${tonightReminder.label}.`
     : dueThread
       ? `The open thread to close tonight is ${dueThread.title}.`
+      : slippingThread
+        ? `The thing still most likely to slip tonight is ${slippingThread.title}.`
     : tomorrowPressure
       ? `Tomorrow's first pressure point is ${tomorrowPressure.title} at ${formatClock(
           new Date(tomorrowPressure.startIso),
@@ -1223,6 +1294,7 @@ function buildEveningDraft(params: {
       ? `Tonight: ${formatReminderSummary(tonightReminder, params.snapshot.timeZone)}`
       : null,
     dueThread ? `Thread: ${summarizeThread(dueThread)}` : null,
+    slippingThread ? `Still slipping: ${summarizeThread(slippingThread)}` : null,
     tomorrowPressure
       ? `Tomorrow: ${summarizeEvent(tomorrowPressure, params.snapshot.timeZone)}`
       : null,
@@ -1452,9 +1524,12 @@ function buildLooseEndsDraft(params: {
     params.tomorrowSnapshot?.allDayEvents[0] ||
     null;
   const slippingThread =
-    params.threadSnapshot.recommendedNextThread &&
-    params.threadSnapshot.recommendedNextThread.id !== dueThread?.id
-      ? params.threadSnapshot.recommendedNextThread
+    params.threadSnapshot.slippingThreads[0] &&
+    params.threadSnapshot.slippingThreads[0].id !== dueThread?.id
+      ? params.threadSnapshot.slippingThreads[0]
+      : params.threadSnapshot.recommendedNextThread &&
+          params.threadSnapshot.recommendedNextThread.id !== dueThread?.id
+        ? params.threadSnapshot.recommendedNextThread
       : null;
   const currentWork =
     params.snapshot.selectedWork && params.prefs.workContextEnabled
@@ -1700,9 +1775,13 @@ function buildExplainabilityReply(
       context.usedThreadTitles[0] != null
         ? `I was also leaning on ${context.usedThreadTitles[0]}.`
         : '';
+    const ritualLead =
+      context.ritualType && context.ritualToneStyle === 'brief'
+        ? `I was also keeping this ${context.ritualType.replace(/_/g, ' ')} tighter on purpose.`
+        : '';
     return buildVoiceReply({
       summary: `I brought that up because I was weighing ${signalText}.`,
-      details: [threadLead || memoryLead],
+      details: [threadLead || memoryLead || ritualLead],
       maxDetails: 1,
     });
   }
@@ -1713,6 +1792,11 @@ function buildExplainabilityReply(
   }
   if (context.memoryLines.length > 0) {
     lines.push(`Remembered context in play: ${context.memoryLines.join('; ')}.`);
+  }
+  if (context.ritualType) {
+    lines.push(
+      `Ritual shaping in play: ${context.ritualType.replace(/_/g, ' ')} (${context.ritualTriggerStyle || 'on_request'}, ${context.ritualToneStyle || 'balanced'}).`,
+    );
   }
   return lines.join('\n');
 }
@@ -1961,6 +2045,7 @@ export async function buildDailyCompanionResponse(
     : {
         activeThreads: [],
         dueFollowups: [],
+        slippingThreads: [],
         householdCarryover: null,
         recommendedNextThread: null,
       };
@@ -2008,12 +2093,29 @@ export async function buildDailyCompanionResponse(
       memoryLines,
       threadSnapshot,
     });
+    const ritualProfile = deps.groupFolder
+      ? getResolvedRitualProfile(
+          deps.groupFolder,
+          ritualTypeForMode(draft.mode),
+          now,
+        )
+      : null;
+    const ritualizedDraft = ritualProfile
+      ? applyRitualProfileToDraft(draft, ritualProfile, deps.channel)
+      : draft;
     const current = finalizeDraft(
-      draft,
+      ritualizedDraft,
       deps.channel,
       now,
       snapshot,
       prefs,
+      ritualProfile
+        ? {
+            ritualType: ritualProfile.ritualType,
+            toneStyle: ritualProfile.toneStyle,
+            triggerStyle: ritualProfile.triggerStyle,
+          }
+        : null,
     );
     if (isSameLocalDay(deps.priorContext.generatedAt, now)) {
       return {
@@ -2054,5 +2156,29 @@ export async function buildDailyCompanionResponse(
     return null;
   }
 
-  return finalizeDraft(draft, deps.channel, now, snapshot, prefs);
+  const ritualProfile = deps.groupFolder
+    ? getResolvedRitualProfile(
+        deps.groupFolder,
+        ritualTypeForMode(draft.mode),
+        now,
+      )
+    : null;
+  const ritualizedDraft = ritualProfile
+    ? applyRitualProfileToDraft(draft, ritualProfile, deps.channel)
+    : draft;
+
+  return finalizeDraft(
+    ritualizedDraft,
+    deps.channel,
+    now,
+    snapshot,
+    prefs,
+    ritualProfile
+      ? {
+          ritualType: ritualProfile.ritualType,
+          toneStyle: ritualProfile.toneStyle,
+          triggerStyle: ritualProfile.triggerStyle,
+        }
+      : null,
+  );
 }

@@ -48,6 +48,7 @@ Use these meanings consistently when reading `/cursor_status` and the setup docs
 - A bounded life-thread layer for ongoing people, household, and follow-up continuity across Telegram and Alexa.
 - A shared assistant capability graph so Telegram and Alexa can call the same daily, household, memory, thread, and research actions safely.
 - A bounded Knowledge Library for explicit saved source material, source-grounded retrieval, and library-first research answers.
+- A bounded rituals and follow-through layer for morning, midday, evening, and carryover guidance.
 - A small bounded personality layer plus request-driven Andrea Pulse.
 - A prepared BlueBubbles channel scaffold for future text-message expansion.
 
@@ -157,8 +158,50 @@ Helpful operator smoke paths:
 - `npm run debug:shared-capabilities`
 - `npm run debug:research-mode`
 - `npm run debug:knowledge-library`
+- `npm run debug:rituals`
 
 For the full architecture and the license-safe external patterns behind it, see [ASSISTANT_CAPABILITY_GRAPH.md](ASSISTANT_CAPABILITY_GRAPH.md).
+
+## Proactive Rituals And Follow-Through
+
+Andrea now has a bounded rituals layer above daily companion, reminders, life threads, knowledge library, and personalization.
+
+Key product truth:
+
+- rituals define assistant timing and surfacing behavior
+- life threads remain the canonical ongoing matters
+- reminders remain the concrete future nudges
+- Telegram is the scheduled and richer ritual surface
+- Alexa stays on-demand, concise, and voice-first
+
+Current ritual examples:
+
+- morning brief
+- midday re-grounding
+- evening reset
+- follow-through prompts
+- household check-ins
+- leave-transition prompts
+
+Current user controls:
+
+- `what rituals do I have enabled`
+- `enable morning brief`
+- `enable evening reset`
+- `make the morning brief shorter`
+- `stop doing that`
+- `stop surfacing family context automatically`
+- `make this part of my evening reset`
+- `reset my routine preferences`
+
+Default behavior stays conservative:
+
+- no surprise push behavior
+- no Alexa background push
+- midday and household automatic surfacing stay off or suggested until enabled
+- follow-through loops reuse life threads instead of creating a second task system
+
+See [PROACTIVE_RITUALS.md](PROACTIVE_RITUALS.md) for the full model and limits.
 
 ## Knowledge Library
 
