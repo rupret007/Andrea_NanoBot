@@ -938,53 +938,126 @@ function applyRitualProfileToDraft(
   };
 }
 
-function applyCommunicationCarryover(
+interface CarryoverFocusDecision {
+  priority: number;
+  kind: 'communication' | 'mission' | 'chief_of_staff';
+  lead: string;
+  leadReason: string;
+  detailLine: string;
+  recommendationText?: string | null;
+  signalsUsed: string[];
+}
+
+function isWeakOrGenericCarryoverLead(draft: CompanionDraft): boolean {
+  return (
+    draft.leadReason === 'weak_signal' ||
+    draft.leadReason === 'nothing_urgent' ||
+    draft.leadReason === 'schedule_only' ||
+    draft.leadReason === 'tomorrow_pressure' ||
+    draft.leadReason === 'current_work' ||
+    draft.leadReason === 'slipping_thread'
+  );
+}
+
+function shouldOverrideCarryoverLead(
   draft: CompanionDraft,
-  signal: {
-    summaryText: string;
-    sourceLabel: string;
-  } | null,
-): CompanionDraft {
-  if (!signal) return draft;
-  const detailLine = `Conversation carryover: ${signal.summaryText}`;
-  if (draft.detailLines.includes(detailLine)) return draft;
+  chosen: CarryoverFocusDecision,
+): boolean {
+  if (draft.mode === 'morning_brief' || draft.mode === 'household_guidance') {
+    return false;
+  }
+  if (draft.mode === 'midday_reground') {
+    return draft.leadReason === 'schedule_only';
+  }
+  if (draft.mode === 'evening_reset') {
+    return (
+      isWeakOrGenericCarryoverLead(draft) &&
+      chosen.kind !== 'mission'
+    );
+  }
+  if (draft.mode === 'open_guidance') {
+    return isWeakOrGenericCarryoverLead(draft);
+  }
+  return false;
+}
+
+function buildCommunicationCarryoverFocus(
+  signal: ReturnType<typeof getCommunicationCarryoverSignal>,
+): CarryoverFocusDecision | null {
+  if (!signal) return null;
+  const priority =
+    signal.urgency === 'tonight'
+      ? 98
+      : signal.urgency === 'soon'
+        ? 94
+        : signal.urgency === 'tomorrow'
+          ? 88
+          : 82;
+    return {
+      priority,
+      kind: 'communication',
+      lead: `The conversation most likely to slip is ${signal.sourceLabel}.`,
+      leadReason: 'communication_carryover',
+      detailLine: `Conversation carryover: ${signal.summaryText}`,
+      recommendationText: `Keep ${signal.sourceLabel} moving so it does not slip.`,
+      signalsUsed: ['communication_threads'],
+    };
+  }
+
+function buildMissionCarryoverFocus(
+  signal: ReturnType<typeof getMissionCarryoverSignal>,
+): CarryoverFocusDecision | null {
+  if (!signal) return null;
   return {
-    ...draft,
-    detailLines: [...draft.detailLines, detailLine].slice(0, 5),
-    extraDetails: [...draft.extraDetails, detailLine].slice(0, 4),
-    recommendationText:
-      draft.recommendationText ||
-      `Keep ${signal.sourceLabel} in view so it does not slip.`,
-    recommendationKind:
-      draft.recommendationKind === 'none' ? 'do_now' : draft.recommendationKind,
-    signalsUsed: [...new Set([...draft.signalsUsed, 'communication_threads'])],
+    priority: 84,
+    kind: 'mission',
+    lead: `The plan most likely to stall is ${signal.sourceLabel}.`,
+    leadReason: 'mission_carryover',
+    detailLine: `Plan carryover: ${signal.summaryText}`,
+    recommendationText: `Keep ${signal.sourceLabel} moving so it does not stall.`,
+    signalsUsed: ['missions'],
   };
 }
 
-function applyMissionCarryover(
-  draft: CompanionDraft,
-  signal: {
-    summaryText: string;
-    sourceLabel: string;
-  } | null,
-): CompanionDraft {
-  if (!signal) return draft;
-  const detailLine = `Mission carryover: ${signal.summaryText}`;
-  if (draft.detailLines.includes(detailLine)) return draft;
+function buildChiefOfStaffCarryoverFocus(params: {
+  draft: CompanionDraft;
+  staff: Awaited<ReturnType<typeof buildChiefOfStaffSnapshot>>;
+}): CarryoverFocusDecision | null {
+  if (!params.staff.snapshot.mainSignal && !params.staff.snapshot.bestNextAction) {
+    return null;
+  }
+  const mainSignal = params.staff.snapshot.mainSignal;
+  const priority =
+    mainSignal?.kind === 'deadline' || mainSignal?.kind === 'slip_risk'
+      ? 100
+      : mainSignal?.kind === 'open_loop' || mainSignal?.kind === 'pressure_point'
+        ? 96
+        : mainSignal?.kind === 'prep_needed'
+          ? 92
+          : mainSignal
+            ? 90
+            : 86;
   return {
-    ...draft,
-    detailLines: [...draft.detailLines, detailLine].slice(0, 5),
-    extraDetails: [...draft.extraDetails, detailLine].slice(0, 4),
-    recommendationText:
-      draft.recommendationText ||
-      `Keep ${signal.sourceLabel} moving so it does not stall.`,
-    recommendationKind:
-      draft.recommendationKind === 'none' ? 'do_now' : draft.recommendationKind,
-    signalsUsed: [...new Set([...draft.signalsUsed, 'missions'])],
-  };
-}
+    priority,
+    kind: 'chief_of_staff',
+    lead:
+      params.draft.leadReason === 'weak_signal' && params.staff.snapshot.mainSignal
+        ? params.staff.snapshot.summaryText
+        : params.staff.snapshot.mainSignal?.summaryText ||
+          params.staff.snapshot.summaryText,
+      leadReason:
+        params.draft.leadReason === 'weak_signal' && params.staff.snapshot.mainSignal
+          ? 'chief_of_staff'
+          : params.draft.leadReason,
+      detailLine: params.staff.snapshot.mainSignal
+        ? `Chief-of-staff read: ${params.staff.snapshot.mainSignal.summaryText}`
+        : `Chief-of-staff read: ${params.staff.snapshot.summaryText}`,
+      recommendationText: params.staff.snapshot.bestNextAction || null,
+      signalsUsed: ['chief_of_staff'],
+    };
+  }
 
-async function applyChiefOfStaffOverlay(params: {
+async function applyPrioritizedCarryoverFocus(params: {
   draft: CompanionDraft;
   channel: DailyCompanionChannel;
   groupFolder?: string;
@@ -995,44 +1068,90 @@ async function applyChiefOfStaffOverlay(params: {
   threadSnapshot: ReturnType<typeof buildLifeThreadSnapshot>;
 }): Promise<CompanionDraft> {
   if (!params.groupFolder) return params.draft;
-  const mode =
+  const staffMode =
     params.draft.mode === 'evening_reset' ? 'plan_horizon' : 'prioritize';
   const staff = await buildChiefOfStaffSnapshot({
     channel: params.channel,
     groupFolder: params.groupFolder,
     text: params.message,
-    mode,
+    mode: staffMode,
     now: params.now,
     tasks: params.tasks,
     selectedWork: params.groundedSnapshot.selectedWork,
     groundedSnapshot: params.groundedSnapshot,
     lifeThreadSnapshot: params.threadSnapshot,
   });
-  if (!staff.snapshot.mainSignal && !staff.snapshot.bestNextAction) {
-    return params.draft;
+  const focusCandidates = [
+    buildCommunicationCarryoverFocus(
+      getCommunicationCarryoverSignal({
+        groupFolder: params.groupFolder,
+        now: params.now,
+      }),
+    ),
+    buildMissionCarryoverFocus(
+      getMissionCarryoverSignal({
+        groupFolder: params.groupFolder,
+      }),
+    ),
+    buildChiefOfStaffCarryoverFocus({
+      draft: params.draft,
+      staff,
+    }),
+  ].filter((candidate): candidate is CarryoverFocusDecision => Boolean(candidate));
+
+  const chosen =
+    focusCandidates.sort((left, right) => right.priority - left.priority)[0] ||
+    null;
+  if (!chosen) {
+    if (staff.snapshot.omittedSignals.length === 0) {
+      return params.draft;
+    }
+    return {
+      ...params.draft,
+      signalsOmitted: [
+        ...new Set([
+          ...params.draft.signalsOmitted,
+          ...staff.snapshot.omittedSignals,
+        ]),
+      ].slice(0, 5),
+    };
   }
-  const overlayLine = staff.snapshot.mainSignal
-    ? `Chief-of-staff read: ${staff.snapshot.mainSignal.summaryText}`
-    : null;
+
+  const shouldOverrideLead = shouldOverrideCarryoverLead(params.draft, chosen);
+  const mergedDetailLines = [
+    chosen.detailLine,
+    ...params.draft.detailLines.filter(
+      (line) =>
+          !/^Conversation carryover: |^Mission carryover: |^Chief-of-staff read: |^Why this came up: |^Open conversation: |^Plan carryover: /i.test(
+            line,
+          ),
+      ),
+  ].slice(0, 5);
+  const mergedExtraDetails = [
+    chosen.detailLine,
+    ...params.draft.extraDetails.filter(
+      (line) =>
+        !/^Conversation carryover: |^Mission carryover: |^Chief-of-staff read: |^Why this came up: |^Open conversation: |^Plan carryover: /i.test(
+          line,
+        ),
+    ),
+  ].slice(0, 4);
+
   return {
     ...params.draft,
-    lead:
-      params.draft.leadReason === 'weak_signal' && staff.snapshot.mainSignal
-        ? staff.snapshot.summaryText
-        : params.draft.lead,
-    leadReason:
-      params.draft.leadReason === 'weak_signal' && staff.snapshot.mainSignal
-        ? 'chief_of_staff'
-        : params.draft.leadReason,
-    detailLines: overlayLine
-      ? [...params.draft.detailLines, overlayLine].slice(0, 5)
-      : params.draft.detailLines,
-    extraDetails: overlayLine
-      ? [...params.draft.extraDetails, overlayLine].slice(0, 4)
-      : params.draft.extraDetails,
+    lead: shouldOverrideLead ? chosen.lead : params.draft.lead,
+    leadReason: shouldOverrideLead
+      ? chosen.leadReason
+      : params.draft.leadReason,
+    detailLines: mergedDetailLines,
+    extraDetails: mergedExtraDetails,
     recommendationText:
-      params.draft.recommendationText || staff.snapshot.bestNextAction || null,
-    signalsUsed: [...new Set([...params.draft.signalsUsed, 'chief_of_staff'])],
+      chosen.recommendationText || params.draft.recommendationText,
+    recommendationKind:
+      params.draft.recommendationKind === 'none'
+        ? 'do_now'
+        : params.draft.recommendationKind,
+    signalsUsed: [...new Set([...params.draft.signalsUsed, ...chosen.signalsUsed])],
     signalsOmitted: [
       ...new Set([
         ...params.draft.signalsOmitted,
@@ -2309,25 +2428,8 @@ export async function buildDailyCompanionResponse(
           now,
         )
       : null;
-    const communicationDraft = applyCommunicationCarryover(
+    const staffedDraft = await applyPrioritizedCarryoverFocus({
       draft,
-      deps.groupFolder
-        ? getCommunicationCarryoverSignal({
-            groupFolder: deps.groupFolder,
-            now,
-          })
-        : null,
-    );
-    const missionDraft = applyMissionCarryover(
-      communicationDraft,
-      deps.groupFolder
-        ? getMissionCarryoverSignal({
-            groupFolder: deps.groupFolder,
-          })
-        : null,
-    );
-    const staffedDraft = await applyChiefOfStaffOverlay({
-      draft: missionDraft,
       channel: deps.channel,
       groupFolder: deps.groupFolder,
       message,
@@ -2403,25 +2505,8 @@ export async function buildDailyCompanionResponse(
         now,
       )
     : null;
-  const communicationDraft = applyCommunicationCarryover(
+  const staffedDraft = await applyPrioritizedCarryoverFocus({
     draft,
-    deps.groupFolder
-      ? getCommunicationCarryoverSignal({
-          groupFolder: deps.groupFolder,
-          now,
-        })
-      : null,
-  );
-  const missionDraft = applyMissionCarryover(
-    communicationDraft,
-    deps.groupFolder
-      ? getMissionCarryoverSignal({
-          groupFolder: deps.groupFolder,
-        })
-      : null,
-  );
-  const staffedDraft = await applyChiefOfStaffOverlay({
-    draft: missionDraft,
     channel: deps.channel,
     groupFolder: deps.groupFolder,
     message,

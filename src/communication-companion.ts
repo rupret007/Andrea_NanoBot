@@ -18,6 +18,10 @@ import {
 } from './db.js';
 import { findLifeThreadForExplicitLookup, handleLifeThreadCommand } from './life-threads.js';
 import { planContextualReminder } from './local-reminder.js';
+import {
+  buildSignatureFlowText,
+  buildSignaturePostActionConfirmation,
+} from './signature-flows.js';
 import type {
   CommunicationFollowupState,
   CommunicationInferenceState,
@@ -121,6 +125,16 @@ function clipText(value: string, max = 180): string {
   const normalized = value.trim().replace(/\s+/g, ' ');
   if (normalized.length <= max) return normalized;
   return `${normalized.slice(0, max - 3).trimEnd()}...`;
+}
+
+function normalizeDraftTopicSummary(value: string): string {
+  return value
+    .replace(/^[A-Z][a-z]+ wants a follow-up about\s+/i, '')
+    .replace(/^[A-Z][a-z]+ said\s+/i, '')
+    .replace(/\bplease reply about\s+/i, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\.$/, '');
 }
 
 function slugifyName(value: string): string {
@@ -617,10 +631,12 @@ function buildRelationshipAwareDraft(input: {
         ? `Hey ${personName},`
         : 'Hey,';
   const companionTone = resolveCompanionToneProfileFromFacts(input.profileFacts);
+  const draftTopic =
+    normalizeDraftTopicSummary(input.summaryText) || input.summaryText.replace(/\.$/, '');
   const baseBody =
     input.style === 'direct'
-      ? `On my side, ${input.summaryText.replace(/\.$/, '')}.`
-      : `I wanted to follow up about ${input.summaryText.replace(/\.$/, '')}.`;
+      ? `On my side, ${draftTopic}.`
+      : `I wanted to follow up about ${draftTopic}.`;
   const supportLine =
     input.linkedLifeThreads[0]?.nextAction ||
     input.linkedLifeThreads[0]?.summary ||
@@ -900,21 +916,47 @@ export function manageCommunicationTracking(
 
   if (/don't surface this automatically|dont surface this automatically/i.test(utterance)) {
     updateCommunicationThread(thread.id, { trackingMode: 'manual_only' });
-    return { ok: true, replyText: 'Okay. I will keep it available, but I will stop surfacing it automatically.', thread: getCommunicationThread(thread.id) };
+    return {
+      ok: true,
+      replyText: buildSignaturePostActionConfirmation({
+        channel: input.channel,
+        didWhat:
+          'Okay. I will keep it available, but I will stop surfacing it automatically.',
+        stillOpen: thread.lastInboundSummary || thread.lastOutboundSummary || null,
+        nextSuggestion: 'Ask what is still open here whenever you want it back.',
+      }),
+      thread: getCommunicationThread(thread.id),
+    };
   }
   if (/stop tracking that|forget this conversation thread/i.test(utterance)) {
     updateCommunicationThread(thread.id, {
       trackingMode: 'disabled',
       disabledAt: now.toISOString(),
     });
-    return { ok: true, replyText: 'Okay. I will stop tracking that conversation thread.', thread: getCommunicationThread(thread.id) };
+    return {
+      ok: true,
+      replyText: buildSignaturePostActionConfirmation({
+        channel: input.channel,
+        didWhat: 'Okay. I will stop tracking that conversation thread.',
+        nextSuggestion: 'Bring the message back if you want me to pick it up again.',
+      }),
+      thread: getCommunicationThread(thread.id),
+    };
   }
   if (/mark that handled/i.test(utterance)) {
     updateCommunicationThread(thread.id, {
       followupState: 'resolved',
       suggestedNextAction: 'ignore',
     });
-    return { ok: true, replyText: 'Okay. I marked that conversation as handled.', thread: getCommunicationThread(thread.id) };
+    return {
+      ok: true,
+      replyText: buildSignaturePostActionConfirmation({
+        channel: input.channel,
+        didWhat: 'Okay. I marked that conversation as handled.',
+        nextSuggestion: 'If anything changes, ask what is still open here.',
+      }),
+      thread: getCommunicationThread(thread.id),
+    };
   }
   if (/forget this conversation thread completely/i.test(utterance)) {
     deleteCommunicationThread(thread.id);
@@ -945,7 +987,14 @@ export function manageCommunicationTracking(
       });
       return {
         ok: true,
-        replyText: result.responseText || `Okay. I linked that under ${result.referencedThread.title}.`,
+        replyText: buildSignaturePostActionConfirmation({
+          channel: input.channel,
+          didWhat:
+            result.responseText ||
+            `Okay. I linked that under ${result.referencedThread.title}.`,
+          stillOpen: analysis.summaryText || thread.lastInboundSummary || null,
+          nextSuggestion: 'I can also remind you later or draft the reply.',
+        }),
         thread: getCommunicationThread(thread.id),
       };
     }
@@ -987,7 +1036,13 @@ export function manageCommunicationTracking(
     });
     return {
       ok: true,
-      replyText: planned.confirmation,
+      replyText: buildSignaturePostActionConfirmation({
+        channel: input.channel,
+        didWhat: planned.confirmation,
+        stillOpen:
+          analysis.summaryText || thread.lastInboundSummary || thread.title,
+        nextSuggestion: 'I can also draft the reply when you are ready.',
+      }),
       reminderTaskId: planned.task.id,
       thread: getCommunicationThread(thread.id),
     };
@@ -1041,16 +1096,22 @@ export function formatCommunicationAnalysisReply(
       offerMore: false,
     });
   }
-  const lines = [
-    `Summary: ${result.summaryText}`,
-    `Follow-up: ${result.followupState?.replace(/_/g, ' ') || 'unknown'}`,
-    result.urgency && result.urgency !== 'none' ? `Urgency: ${result.urgency}` : null,
-    result.explanation ? `Why: ${result.explanation}` : null,
-    result.suggestedActions.length
-      ? `Next actions: ${result.suggestedActions.slice(0, 2).map((action) => action.replace(/_/g, ' ')).join(', ')}`
+  return buildSignatureFlowText({
+    lead: result.summaryText || 'I looked at the conversation.',
+    detailLines: [
+      `Follow-up: ${result.followupState?.replace(/_/g, ' ') || 'unknown'}`,
+      result.urgency && result.urgency !== 'none'
+        ? `Urgency: ${result.urgency}`
+        : null,
+    ],
+    nextAction: result.suggestedActions.length
+      ? result.suggestedActions
+          .slice(0, 2)
+          .map((action) => action.replace(/_/g, ' '))
+          .join(', ')
       : null,
-  ];
-  return lines.filter(Boolean).join('\n');
+    whyLine: result.explanation,
+  });
 }
 
 export function formatCommunicationDraftReply(
@@ -1068,7 +1129,15 @@ export function formatCommunicationDraftReply(
       maxDetails: 1,
     });
   }
-  return [`Draft:`, result.draftText].filter(Boolean).join('\n');
+  return buildSignatureFlowText({
+    lead: result.summaryText || 'I drafted a reply.',
+    bodyText: [`Draft:`, result.draftText].filter(Boolean).join('\n'),
+    nextAction: 'Save it, send the fuller version, or remind yourself later.',
+    whyLine:
+      result.linkedSubjects[0]?.displayName
+        ? `This is shaped around ${result.linkedSubjects[0].displayName} and the current conversation.`
+        : 'This stays grounded in the conversation you brought in here.',
+  });
 }
 
 export function formatCommunicationOpenLoopsReply(
@@ -1082,11 +1151,13 @@ export function formatCommunicationOpenLoopsReply(
       offerMore: false,
     });
   }
-  return [
-    result.summaryText,
-    ...result.items.slice(0, 3).map((item) => `- ${formatOpenLoopLine(item)}`),
-    result.bestNextStep ? `Next: ${result.bestNextStep}` : null,
-  ]
-    .filter(Boolean)
-    .join('\n');
+  return buildSignatureFlowText({
+    lead: result.summaryText,
+    detailLines: result.items.slice(0, 3).map((item) => formatOpenLoopLine(item)),
+    nextAction: result.bestNextStep,
+    whyLine:
+      result.items[0]?.personName
+        ? `The lead open loop is with ${result.items[0].personName}.`
+        : undefined,
+  });
 }

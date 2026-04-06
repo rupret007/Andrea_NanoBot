@@ -24,6 +24,23 @@ Keep this split in mind while reading the rest of the setup guide:
 - Cursor-backed runtime routing is a separate optional diagnostic/runtime surface
 - the shell increasingly presents one task model with lane-specific capabilities, while keeping Cursor as the stronger validated lane
 
+## Signature Flows
+
+The current productization target is not more primitives. It is a short list of journeys Andrea should feel exceptional at:
+
+- Alexa daily orientation -> Telegram richer follow-through
+- `What am I forgetting?` -> one open loop -> reminder, save, or tracking
+- `What's still open with Candace?` -> draft reply -> save to thread or remind later
+- `Help me plan tonight / this weekend` -> mission -> blocker -> confirmed action
+- source-grounded research -> deeper answer -> save to library
+- BlueBubbles message help -> summarize -> draft -> remind later -> optional Telegram escalation
+
+The shared proof harness for those journeys is:
+
+```bash
+npm run debug:signature-flows
+```
+
 ## Status Terms
 
 Use these meanings consistently when reading `/cursor_status` and the setup docs:
@@ -166,6 +183,7 @@ Helpful operator smoke paths:
 - `npm run debug:rituals`
 - `npm run debug:cross-channel-handoffs`
 - `npm run debug:missions`
+- `npm run debug:signature-flows`
 
 For the full architecture and the license-safe external patterns behind it, see [ASSISTANT_CAPABILITY_GRAPH.md](ASSISTANT_CAPABILITY_GRAPH.md).
 

@@ -15,6 +15,7 @@ import {
 } from './life-threads.js';
 import { planContextualReminder } from './local-reminder.js';
 import { handleRitualCommand, type RitualCommandResult } from './rituals.js';
+import { buildSignaturePostActionConfirmation } from './signature-flows.js';
 import type {
   AlexaConversationFollowupAction,
   CompanionContinuationCandidate,
@@ -139,6 +140,42 @@ function resolveThreadHint(
   );
 }
 
+function resolveOpenLoopText(
+  params: AssistantActionCompletionParams,
+  candidate: CompanionContinuationCandidate | undefined,
+  completionText: string,
+): string | undefined {
+  return (
+    candidate?.missionSummary?.trim() ||
+    params.priorSubjectData?.missionSummary?.trim() ||
+    candidate?.lastCommunicationSummary?.trim() ||
+    params.priorSubjectData?.lastCommunicationSummary?.trim() ||
+    resolveThreadHint(params, candidate)?.trim() ||
+    (completionText ? clipReference(completionText, 120) : undefined)
+  );
+}
+
+function resolveNextSuggestion(
+  params: AssistantActionCompletionParams,
+  candidate: CompanionContinuationCandidate | undefined,
+): string | undefined {
+  if (candidate?.missionId || params.priorSubjectData?.missionId) {
+    return 'ask what happens next or have me turn the next step into a reminder';
+  }
+  if (
+    candidate?.communicationThreadId ||
+    candidate?.lastCommunicationSummary ||
+    params.priorSubjectData?.communicationThreadId ||
+    params.priorSubjectData?.lastCommunicationSummary
+  ) {
+    return 'draft the reply or remind yourself later';
+  }
+  if (candidate?.handoffPayload) {
+    return 'send the fuller version in text';
+  }
+  return 'save it for later or turn it into a reminder';
+}
+
 function resolveDraftReference(
   params: AssistantActionCompletionParams,
   candidate: CompanionContinuationCandidate | undefined,
@@ -197,17 +234,27 @@ function completeEveningCarryover(
       if (ritualResult.handled) {
         return {
           handled: true,
-          replyText:
-            ritualResult.responseText ||
-            lifeThreadResult.responseText ||
-            'Okay.',
+          replyText: buildSignaturePostActionConfirmation({
+            channel: 'alexa',
+            didWhat:
+              ritualResult.responseText ||
+              lifeThreadResult.responseText ||
+              'Okay.',
+            stillOpen: resolveOpenLoopText(params, candidate, completionText),
+            nextSuggestion: 'check your evening reset when you want the fuller list',
+          }),
           lifeThreadResult,
           ritualResult,
         };
       }
       return {
         handled: true,
-        replyText: lifeThreadResult.responseText || 'Okay.',
+        replyText: buildSignaturePostActionConfirmation({
+          channel: 'alexa',
+          didWhat: lifeThreadResult.responseText || 'Okay.',
+          stillOpen: resolveOpenLoopText(params, candidate, completionText),
+          nextSuggestion: 'check your evening reset when you want the fuller list',
+        }),
         lifeThreadResult,
       };
     }
@@ -224,7 +271,12 @@ function completeEveningCarryover(
   if (savedThread.handled) {
     return {
       handled: true,
-      replyText: savedThread.responseText || 'Okay.',
+      replyText: buildSignaturePostActionConfirmation({
+        channel: 'alexa',
+        didWhat: savedThread.responseText || 'Okay.',
+        stillOpen: resolveOpenLoopText(params, candidate, completionText),
+        nextSuggestion: 'turn it into a reminder if you want a time anchor',
+      }),
       lifeThreadResult: savedThread,
     };
   }
@@ -422,7 +474,12 @@ export async function completeAssistantActionFromAlexa(
     });
     return {
       handled: true,
-      replyText: result.replyText || 'Okay.',
+      replyText: buildSignaturePostActionConfirmation({
+        channel: 'alexa',
+        didWhat: result.replyText || 'Okay.',
+        stillOpen: resolveOpenLoopText(params, candidate, completionText),
+        nextSuggestion: resolveNextSuggestion(params, candidate),
+      }),
       capabilityResult: result,
     };
   }
@@ -464,7 +521,12 @@ export async function completeAssistantActionFromAlexa(
     });
     return {
       handled: true,
-      replyText: result.responseText || 'Okay.',
+      replyText: buildSignaturePostActionConfirmation({
+        channel: 'alexa',
+        didWhat: result.responseText || 'Okay.',
+        stillOpen: resolveOpenLoopText(params, candidate, completionText),
+        nextSuggestion: resolveNextSuggestion(params, candidate),
+      }),
       lifeThreadResult: result,
     };
   }
@@ -534,7 +596,12 @@ export async function completeAssistantActionFromAlexa(
     createTask(plannedReminder.task);
     return {
       handled: true,
-      replyText: plannedReminder.confirmation,
+      replyText: buildSignaturePostActionConfirmation({
+        channel: 'alexa',
+        didWhat: plannedReminder.confirmation,
+        stillOpen: resolveOpenLoopText(params, candidate, completionText),
+        nextSuggestion: resolveNextSuggestion(params, candidate),
+      }),
       reminderTaskId: plannedReminder.task.id,
     };
   }
@@ -550,7 +617,16 @@ export async function completeAssistantActionFromAlexa(
   if (ritualResult.handled) {
     return {
       handled: true,
-      replyText: ritualResult.responseText || 'Okay.',
+      replyText: buildSignaturePostActionConfirmation({
+        channel: 'alexa',
+        didWhat: ritualResult.responseText || 'Okay.',
+        stillOpen: resolveOpenLoopText(
+          params,
+          candidate,
+          completionText || params.replyText || '',
+        ),
+        nextSuggestion: resolveNextSuggestion(params, candidate),
+      }),
       ritualResult,
     };
   }

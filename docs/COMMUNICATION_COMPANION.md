@@ -2,6 +2,17 @@
 
 Andrea now has a bounded communication-companion layer for real people, replies, and follow-through.
 
+## Where This Shows Up In Signature Flows
+
+Communication companion is the core of journeys like:
+
+- `What's still open with Candace?`
+- `What do I owe people right now?`
+- `What should I say back?`
+- `Remind me to reply later tonight.`
+
+The flagship product goal is that Andrea can move from open loop -> draft -> save or remind without making the user restate the whole conversation.
+
 This is not a full inbox app, not a CRM, and not an auto-reply system.
 
 ## What Communication Threads Are

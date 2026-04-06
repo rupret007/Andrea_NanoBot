@@ -2,6 +2,17 @@
 
 Andrea now has a bounded **Rituals and Follow-Through** layer.
 
+## Where This Shows Up In Signature Flows
+
+Rituals are what make the flagship journeys stick instead of disappearing after one reply.
+
+They show up most in:
+
+- `what am I forgetting`
+- `what should I remember tonight`
+- open-loop recovery after Andrea identifies one thing likely to slip
+- mission and thread carryover into the evening reset
+
 The point is not to create a second task system or a noisy push engine.
 The point is to help Andrea keep the user's day oriented and stop important threads from quietly slipping.
 

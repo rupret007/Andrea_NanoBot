@@ -88,6 +88,26 @@ Important limits:
 - no hidden reprioritization
 - no work-cockpit controls leaking into Alexa
 
+## 0C) Signature Flow Role
+
+Alexa's job in the flagship journeys is orientation, not exhaustiveness.
+
+The strongest Alexa-first flows are:
+
+- `what matters most today`
+- `what am I forgetting`
+- `what should I remember tonight`
+- `what should I do next`
+- `what's still open with Candace`
+- `help me plan tonight`
+
+In those flows Alexa should:
+
+- give one lead read
+- mention one next step or blocker
+- keep the same context alive for `anything else`, `what happens next`, `remind me`, `save that`, or `send me the fuller plan`
+- hand richer detail to Telegram instead of trying to read the whole plan, research answer, or conversation aloud
+
 ## 0) Current Truth
 
 Treat Alexa as:

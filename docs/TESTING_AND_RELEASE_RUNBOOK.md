@@ -40,6 +40,15 @@ npm run debug:research-mode
 npm run debug:knowledge-library
 ```
 
+For the flagship end-to-end product journeys, add:
+
+```bash
+node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/signature-flows.test.ts
+npm run debug:signature-flows
+```
+
+This is the fastest proof that the best Alexa, Telegram, BlueBubbles, communication, mission, and research journeys still feel coherent end to end.
+
 For cross-channel handoff and action-completion changes, add:
 
 ```bash

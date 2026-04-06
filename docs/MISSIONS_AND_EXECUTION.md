@@ -2,6 +2,22 @@
 
 Andrea now has a bounded `missions.*` layer for turning an explicit goal into a stored plan that can move forward across Alexa, Telegram, and BlueBubbles.
 
+## Where This Shows Up In Signature Flows
+
+Missions are the core of flows like:
+
+- `help me plan tonight`
+- `help me prepare for the weekend`
+- `turn this into a plan`
+
+The productized journey should feel like:
+
+- Andrea proposes a readable plan
+- names the blocker
+- suggests one supporting action
+- executes that action only after the user says yes
+- keeps the same plan alive across Alexa, Telegram, and follow-through
+
 ## What Missions Are
 
 Missions are not a second task manager.

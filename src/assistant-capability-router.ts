@@ -770,7 +770,7 @@ export function continueAssistantCapabilityFromAlexaState(
 
   if (
     activeCapabilityId?.startsWith('missions.') &&
-    (/^(anything else|what('?s| is) the blocker|what('?s| is) blocking this|what('?s| is) the next step|what should i do first|what am i missing for this|break it down more|make it simpler)\b/.test(
+    (/^(anything else|what('?s| is) the blocker|what('?s| is) blocking this|what('?s| is) the next step|what happens next|what should i do first|what am i missing for this|break it down more|make it simpler)\b/.test(
       lower,
     ) ||
       /^save this plan\b/.test(lower) ||
@@ -780,11 +780,13 @@ export function continueAssistantCapabilityFromAlexaState(
       /^stop suggesting that\b/.test(lower) ||
       /^mark this handled\b/.test(lower) ||
       /^mark this done\b/.test(lower) ||
+      /^(okay )?do that\b/.test(lower) ||
       /^(do it|draft it|remind me|save that|track that|start (?:the )?research)\b/.test(
         lower,
       ))
   ) {
     const nextCapabilityId =
+      /^(okay )?do that\b/.test(lower) ||
       /^(do it|draft it|remind me|save that|track that|start (?:the )?research)\b/.test(
         lower,
       )
@@ -846,7 +848,7 @@ export function continueAssistantCapabilityFromAlexaState(
   }
 
   if (
-    /^(send (?:me )?(?:the )?(?:details|full version|full comparison|plan)(?: to telegram)?|send (?:that|it) to telegram|also send (?:that|it) to telegram|give me the deeper comparison in telegram|save (?:that|it|this) (?:in|to) my library|save (?:that|it|this) to the library|save (?:that|it|this) for later|remember (?:that|it|this) for later|track (?:that|it|this)(?: under .+)?|keep track of (?:that|it|this)(?: under .+| for tonight)?|turn (?:that|it|this) into a reminder|remind me about (?:that|it|this)|draft that for me|draft a message about (?:that|it|this)|send me the plan)\b/.test(
+    /^(send (?:me )?(?:the )?(?:details|fuller version|full version|full comparison|fuller plan|plan)(?: to telegram)?|send (?:that|it) to telegram|also send (?:that|it) to telegram|give me the deeper comparison in telegram|save (?:that|it|this) (?:in|to) my library|save (?:that|it|this) to the library|save (?:that|it|this) for later|remember (?:that|it|this) for later|save the draft|track (?:that|it|this)(?: under .+)?|keep track of (?:that|it|this)(?: under .+| for tonight)?|turn (?:that|it|this) into a reminder|remind me about (?:that|it|this)(?: tonight)?|draft that for me|draft a message about (?:that|it|this)|send me the plan|send me the fuller plan)\b/.test(
       lower,
     )
   ) {

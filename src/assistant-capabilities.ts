@@ -54,6 +54,11 @@ import {
   pickMissionActionFromUtterance,
   updateMissionAfterExecution,
 } from './missions.js';
+import {
+  buildSignatureFlowPayload,
+  buildSignaturePostActionConfirmation,
+  buildSignatureFlowText,
+} from './signature-flows.js';
 import type {
   AlexaCompanionGuidanceGoal,
   AlexaConversationFollowupAction,
@@ -384,22 +389,35 @@ function buildDailyContinuationCandidate(
     response.context.usedThreadTitles?.[0] ||
     response.context.subjectData.personName ||
     descriptor.label;
+  const followupSuggestions =
+    response.context.recommendationKind === 'do_now'
+      ? ['save that for later', 'remind me about that tonight']
+      : ['what happens next', 'save that for later'];
   return {
     capabilityId: descriptor.id,
     voiceSummary: response.context.summaryText,
-    handoffPayload: buildCompanionMessagePayload(
+    handoffPayload: buildSignatureFlowPayload({
       title,
-      response.context.extendedText || response.reply,
-      [],
-      `Using ${response.context.signalsUsed.join(', ')}`,
-    ),
+      lead: response.context.summaryText,
+      detailLines: response.context.extraDetails,
+      nextAction: response.context.recommendationText,
+      whyLine:
+        response.context.signalsUsed.length > 0
+          ? `I used ${response.context.signalsUsed.join(', ')}.`
+          : undefined,
+      followupSuggestions,
+      sourceSummary:
+        response.context.signalsUsed.length > 0
+          ? `Using ${response.context.signalsUsed.join(', ')}`
+          : undefined,
+    }),
     completionText:
       response.context.recommendationText ||
       response.context.extendedText ||
       response.context.summaryText,
     threadId: response.context.usedThreadIds?.[0],
     threadTitle: response.context.usedThreadTitles?.[0],
-    followupSuggestions: [],
+    followupSuggestions,
   };
 }
 
@@ -897,16 +915,25 @@ function buildResearchContinuationCandidate(
   voice: ReturnType<typeof formatResearchAlexaReply>,
   telegramReply: string,
 ): CompanionContinuationCandidate {
+  const followupSuggestions =
+    result.followupSuggestions && result.followupSuggestions.length > 0
+      ? result.followupSuggestions
+      : ['save this to my library', 'send me the fuller version'];
   return {
     capabilityId: descriptor.id,
     voiceSummary:
       result.spokenText || result.summaryText || voice.replyText || query,
-    handoffPayload: buildCompanionMessagePayload(
-      descriptor.label,
-      telegramReply,
-      result.followupSuggestions,
-      result.routeExplanation,
-    ),
+    handoffPayload: buildSignatureFlowPayload({
+      title: descriptor.label,
+      lead: result.summaryText || voice.replyText || query,
+      bodyText: telegramReply,
+      nextAction:
+        result.recommendationText ||
+        (followupSuggestions[0] ? `${followupSuggestions[0]}.` : undefined),
+      whyLine: result.routeExplanation,
+      followupSuggestions,
+      sourceSummary: result.routeExplanation,
+    }),
     completionText:
       result.saveForLaterCandidate ||
       result.recommendationText ||
@@ -918,7 +945,7 @@ function buildResearchContinuationCandidate(
     knowledgeSourceTitles: (result.supportingSources || []).map(
       (source) => source.title,
     ),
-    followupSuggestions: result.followupSuggestions,
+    followupSuggestions,
   };
 }
 
@@ -1337,15 +1364,19 @@ function buildCommunicationContinuationCandidate(input: {
   communicationSubjectIds?: string[];
   communicationLifeThreadIds?: string[];
 }): CompanionContinuationCandidate {
+  const followupSuggestions = ['what should I say back', 'remind me later'];
   return {
     capabilityId: input.descriptor.id,
     voiceSummary: input.summaryText,
-    handoffPayload: buildCompanionMessagePayload(
-      input.descriptor.label,
-      input.detailText,
-      ['draft that for me', 'remind me to answer later'],
-      'Using the conversation you explicitly brought in here.',
-    ),
+    handoffPayload: buildSignatureFlowPayload({
+      title: input.descriptor.label,
+      lead: input.summaryText,
+      bodyText: input.detailText,
+      nextAction: 'Draft the reply or remind yourself later.',
+      whyLine: 'This uses the conversation you explicitly brought in here.',
+      followupSuggestions,
+      sourceSummary: 'Using the conversation you explicitly brought in here.',
+    }),
     completionText: input.detailText,
     threadId: input.threadId,
     threadTitle: input.threadTitle,
@@ -1353,7 +1384,7 @@ function buildCommunicationContinuationCandidate(input: {
     communicationSubjectIds: input.communicationSubjectIds,
     communicationLifeThreadIds: input.communicationLifeThreadIds,
     lastCommunicationSummary: input.summaryText,
-    followupSuggestions: ['draft that for me', 'remind me to answer later'],
+    followupSuggestions,
   };
 }
 
@@ -1407,15 +1438,28 @@ function buildChiefOfStaffContinuationCandidate(input: {
   communicationSubjectIds?: string[];
   communicationLifeThreadIds?: string[];
 }): CompanionContinuationCandidate {
+  const followupSuggestions = [
+    'why are you prioritizing that',
+    'save that for later',
+  ];
   return {
     capabilityId: input.descriptor.id,
     voiceSummary: input.summaryText,
-    handoffPayload: buildCompanionMessagePayload(
-      input.descriptor.label,
-      input.detailText,
-      ['save that for later', 'turn that into a reminder'],
-      `Using ${input.chiefOfStaffContext.snapshot.signalsUsed.join(', ')}`,
-    ),
+    handoffPayload: buildSignatureFlowPayload({
+      title: input.descriptor.label,
+      lead: input.summaryText,
+      bodyText: input.detailText,
+      nextAction: input.chiefOfStaffContext.snapshot.bestNextAction,
+      whyLine:
+        input.chiefOfStaffContext.snapshot.signalsUsed.length > 0
+          ? `I used ${input.chiefOfStaffContext.snapshot.signalsUsed.join(', ')}.`
+          : undefined,
+      followupSuggestions,
+      sourceSummary:
+        input.chiefOfStaffContext.snapshot.signalsUsed.length > 0
+          ? `Using ${input.chiefOfStaffContext.snapshot.signalsUsed.join(', ')}`
+          : undefined,
+    }),
     completionText:
       input.chiefOfStaffContext.snapshot.bestNextAction || input.summaryText,
     chiefOfStaffContextJson: JSON.stringify(input.chiefOfStaffContext),
@@ -1424,10 +1468,7 @@ function buildChiefOfStaffContinuationCandidate(input: {
     communicationThreadId: input.communicationThreadId,
     communicationSubjectIds: input.communicationSubjectIds,
     communicationLifeThreadIds: input.communicationLifeThreadIds,
-    followupSuggestions: [
-      'why are you prioritizing that',
-      'save that for later',
-    ],
+    followupSuggestions,
   };
 }
 
@@ -1501,15 +1542,28 @@ function buildMissionContinuationCandidate(input: {
   knowledgeSourceIds?: string[];
   knowledgeSourceTitles?: string[];
 }): CompanionContinuationCandidate {
+  const nextAction =
+    input.stepFocus?.title ||
+    input.suggestedActions[0]?.label ||
+    input.missionSummary;
+  const followupSuggestions = [
+    'send me the fuller plan',
+    'remind me about that tonight',
+    'save this plan',
+  ];
   return {
     capabilityId: input.descriptor.id,
     voiceSummary: input.summaryText,
-    handoffPayload: buildCompanionMessagePayload(
-      input.descriptor.label,
-      input.detailText,
-      ['send me the plan', 'remind me', 'save this plan'],
-      'Using your current mission context.',
-    ),
+    handoffPayload: buildSignatureFlowPayload({
+      title: input.descriptor.label,
+      lead: input.summaryText,
+      bodyText: input.detailText,
+      nextAction,
+      whyLine:
+        input.blockers[0] || 'This is staying anchored to your current mission.',
+      followupSuggestions,
+      sourceSummary: 'Using your current mission context.',
+    }),
     completionText: input.stepFocus?.title || input.missionSummary,
     missionId: input.missionId,
     missionSummary: input.missionSummary,
@@ -1525,11 +1579,7 @@ function buildMissionContinuationCandidate(input: {
     communicationLifeThreadIds: input.communicationLifeThreadIds,
     knowledgeSourceIds: input.knowledgeSourceIds,
     knowledgeSourceTitles: input.knowledgeSourceTitles,
-    followupSuggestions: [
-      'what is the blocker',
-      'save this plan',
-      'send me the plan',
-    ],
+    followupSuggestions,
   };
 }
 
@@ -2626,21 +2676,57 @@ async function runMissionCapability(
   const refreshed = buildMissionExecutionContext(
     updatedMission?.missionId || executionContext.mission.missionId,
   );
+  const blockers = parseJsonSafe<string[]>(
+    updatedMission?.blockersJson || context.priorSubjectData?.missionBlockersJson,
+    [],
+  );
+  const nextSuggestion =
+    refreshed?.suggestedActions[0]?.label || refreshed?.stepFocus?.title || null;
+  const stillOpen =
+    refreshed?.stepFocus?.title ||
+    blockers[0] ||
+    (updatedMission?.status === 'completed' ? null : updatedMission?.summary) ||
+    executionContext.mission.summary;
+  const detailText = buildSignatureFlowText({
+    lead: updatedMission?.summary || executionContext.mission.summary,
+    detailLines: [
+      refreshed?.stepFocus
+        ? `Remaining step: ${refreshed.stepFocus.title}${
+            refreshed.stepFocus.detail ? ` - ${refreshed.stepFocus.detail}` : ''
+          }`
+        : null,
+      blockers[0] ? `Blocker: ${blockers[0]}` : null,
+    ],
+    nextAction: nextSuggestion,
+    whyLine:
+      refreshed?.stepFocus
+        ? 'This is the next open step on the plan.'
+        : blockers[0]
+          ? 'There is still one blocker worth clearing.'
+          : undefined,
+  });
+  const replyTextWithContinuity = buildSignaturePostActionConfirmation({
+    channel: context.channel,
+    didWhat: replyText,
+    stillOpen:
+      updatedMission?.status === 'completed'
+        ? null
+        : stillOpen,
+    nextSuggestion:
+      updatedMission?.status === 'completed'
+        ? 'Come back if you want me to turn the next goal into a plan.'
+        : nextSuggestion,
+  });
   return carryMissionIntoResult({
     summaryText: updatedMission?.summary || executionContext.mission.summary,
-    detailText:
-      updatedMission?.summary || executionContext.mission.summary || replyText,
+    detailText,
     missionId: executionContext.mission.missionId,
     missionSummary: updatedMission?.summary || executionContext.mission.summary,
-    blockers: parseJsonSafe<string[]>(
-      updatedMission?.blockersJson ||
-        context.priorSubjectData?.missionBlockersJson,
-      [],
-    ),
+    blockers,
     suggestedActions:
       refreshed?.suggestedActions || executionContext.suggestedActions,
     stepFocus: refreshed?.stepFocus || executionContext.stepFocus,
-    replyText,
+    replyText: replyTextWithContinuity,
   });
 }
 

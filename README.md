@@ -38,6 +38,23 @@
 
 ---
 
+## Signature Flows
+
+The best way to understand Andrea now is through the flagship journeys it should nail end to end:
+
+- Alexa daily orientation -> Telegram richer follow-through
+- `What am I forgetting?` -> one open loop -> reminder, save, or tracking action
+- `What's still open with Candace?` -> draft reply -> save to thread or remind later
+- `Help me plan tonight / this weekend` -> mission proposal -> blocker -> confirmed next action
+- source-grounded research -> richer detail -> save to library
+- BlueBubbles message help -> summarize -> draft -> remind later -> optional Telegram escalation
+
+These flows are now backed by one shared capability graph, one continuation/handoff layer, and one productized proof harness:
+
+```bash
+npm run debug:signature-flows
+```
+
 ## What Andrea Is
 
 Andrea is one public assistant identity built on a secure NanoClaw runtime.

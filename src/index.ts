@@ -2212,10 +2212,19 @@ function getMainChatSessionState(chatJid: string): MainChatSessionState {
   return snapshot.idleWaiting ? 'idle_assistant' : 'busy_assistant';
 }
 
-function isExplicitBlueBubblesTelegramHandoffRequest(text: string): boolean {
-  return /\b(send (?:me )?(?:the )?(?:details|fuller version|full version|full comparison)|send (?:that|it|this) (?:to|on) telegram|send me the fuller version on telegram)\b/i.test(
-    text,
-  );
+function resolveExplicitCompanionHandoffTarget(
+  text: string,
+  sourceChannel: 'telegram' | 'bluebubbles',
+): 'telegram' | 'bluebubbles' | null {
+  if (
+    sourceChannel === 'bluebubbles' &&
+    /\b(send (?:me )?(?:the )?(?:details|fuller version|full version|full comparison)|send (?:that|it|this) (?:to|on) telegram|send me the fuller version on telegram)\b/i.test(
+      text,
+    )
+  ) {
+    return 'telegram';
+  }
+  return null;
 }
 
 /**
@@ -4216,16 +4225,16 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         await channel.sendMessage(chatJid, result.replyText || 'Okay.');
       }
 
-      if (
-        conversationChannel === 'bluebubbles' &&
-        isExplicitBlueBubblesTelegramHandoffRequest(lastContent) &&
-        result.continuationCandidate?.handoffPayload
-      ) {
+      const explicitHandoffTarget = resolveExplicitCompanionHandoffTarget(
+        lastContent,
+        conversationChannel,
+      );
+      if (explicitHandoffTarget && result.continuationCandidate?.handoffPayload) {
         const handoff = await deliverCompanionHandoff(
           {
             groupFolder: group.folder,
-            originChannel: 'bluebubbles',
-            targetChannel: 'telegram',
+            originChannel: conversationChannel,
+            targetChannel: explicitHandoffTarget,
             capabilityId: result.capabilityId,
             voiceSummary:
               result.continuationCandidate.voiceSummary ||
@@ -4233,6 +4242,22 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               'Andrea follow-up',
             payload: result.continuationCandidate.handoffPayload,
             threadId: result.continuationCandidate.threadId,
+            communicationThreadId:
+              result.continuationCandidate.communicationThreadId,
+            communicationSubjectIds:
+              result.continuationCandidate.communicationSubjectIds,
+            communicationLifeThreadIds:
+              result.continuationCandidate.communicationLifeThreadIds,
+            lastCommunicationSummary:
+              result.continuationCandidate.lastCommunicationSummary,
+            missionId: result.continuationCandidate.missionId,
+            missionSummary: result.continuationCandidate.missionSummary,
+            missionSuggestedActionsJson:
+              result.continuationCandidate.missionSuggestedActionsJson,
+            missionBlockersJson:
+              result.continuationCandidate.missionBlockersJson,
+            missionStepFocusJson:
+              result.continuationCandidate.missionStepFocusJson,
             knowledgeSourceIds: result.continuationCandidate.knowledgeSourceIds,
             followupSuggestions:
               result.continuationCandidate.followupSuggestions,

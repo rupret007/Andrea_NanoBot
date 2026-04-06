@@ -16,6 +16,19 @@ Andrea can now:
 - turn a voice conversation into a concrete action using the existing reminder, thread, library, and ritual systems
 - keep the handoff explicit and honest if delivery fails
 
+## Flagship Handoff Journeys
+
+The current signature handoff journeys are:
+
+- Alexa daily orientation -> Telegram richer follow-through
+- Alexa planning or mission orientation -> Telegram fuller plan
+- Alexa research answer -> Telegram deeper detail -> save to library
+- Alexa open-loop or relationship follow-up -> reminder, thread, or draft completion
+- Alexa -> BlueBubbles bounded text continuation when the user asks for messages
+- BlueBubbles -> Telegram escalation when the fuller answer is better there
+
+In all of these, Andrea should feel like one assistant continuing the same thought, not two channels re-answering from scratch.
+
 Current handoff targets:
 
 - bounded research summaries and comparisons

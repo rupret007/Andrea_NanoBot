@@ -13,6 +13,7 @@ import { buildChiefOfStaffSnapshot } from './chief-of-staff.js';
 import { buildCommunicationOpenLoops } from './communication-companion.js';
 import { searchKnowledgeLibrary } from './knowledge-library.js';
 import { findLifeThreadForExplicitLookup } from './life-threads.js';
+import { buildSignatureFlowText } from './signature-flows.js';
 import type {
   ChiefOfStaffConfidence,
   ChiefOfStaffHorizon,
@@ -641,28 +642,22 @@ function buildMissionSuggestedActions(params: {
 }
 
 function buildMissionDetailText(snapshot: MissionPlanSnapshot): string {
-  const lines = [
-    snapshot.mission.summary,
-    '',
-    'Steps:',
-    ...snapshot.steps.map(
-      (step) =>
-        `${step.position}. ${step.title}${step.detail ? ` - ${step.detail}` : ''}`,
-    ),
-    snapshot.blockers.length > 0 ? '' : null,
-    snapshot.blockers.length > 0
-      ? `Blockers: ${snapshot.blockers.join(' ')}`
-      : null,
-    snapshot.suggestedActions.length > 0 ? '' : null,
-    snapshot.suggestedActions.length > 0
-      ? `Suggested actions: ${snapshot.suggestedActions
-          .map((action) => action.label)
-          .join('; ')}`
-      : null,
-    snapshot.explainabilityLines.length > 0 ? '' : null,
-    ...snapshot.explainabilityLines.map((line) => `Why: ${line}`),
-  ].filter((line): line is string => Boolean(line));
-  return lines.join('\n');
+  return buildSignatureFlowText({
+    lead: snapshot.mission.summary,
+    detailLines: [
+      ...snapshot.steps.map(
+        (step) =>
+          `${step.position}. ${step.title}${step.detail ? ` - ${step.detail}` : ''}`,
+      ),
+      snapshot.blockers[0] ? `Blocker: ${snapshot.blockers[0]}` : null,
+      ...snapshot.explainabilityLines.slice(1).map((line) => `Why: ${line}`),
+    ],
+    nextAction:
+      snapshot.suggestedActions[0]?.label ||
+      snapshot.steps.find((step) => step.stepStatus !== 'done')?.title ||
+      null,
+    whyLine: snapshot.explainabilityLines[0],
+  });
 }
 
 function formatMissionReply(
@@ -686,18 +681,15 @@ function formatMissionReply(
     }
     return parts.join(' ');
   }
-
-  const lines = [
-    snapshot.mission.summary,
-    '',
-    ...snapshot.steps.map(
+  return buildSignatureFlowText({
+    lead: snapshot.mission.summary,
+    detailLines: snapshot.steps.map(
       (step) =>
-        `${step.position}. ${step.title}${step.detail ? `\n   ${step.detail}` : ''}`,
+        `${step.position}. ${step.title}${step.detail ? ` - ${step.detail}` : ''}`,
     ),
-    blocker ? `\nBlocker: ${blocker}` : null,
-    action ? `\nSuggested action: ${action}` : null,
-  ].filter((line): line is string => Boolean(line));
-  return lines.join('\n');
+    nextAction: action || stepFocus?.title || null,
+    whyLine: blocker || snapshot.explainabilityLines[0],
+  });
 }
 
 function resolveExistingMission(

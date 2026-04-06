@@ -2,6 +2,16 @@
 
 Andrea now has a bounded **Knowledge Library** for saved source material.
 
+## Where This Shows Up In Signature Flows
+
+Knowledge Library is the core of the saveable research journey:
+
+- ask a research question
+- get the short answer on Alexa or the calmer answer on Telegram
+- ask for the fuller version
+- save the useful result to the library
+- come back later and ask what your saved material says
+
 This is not the same thing as memory, life threads, reminders, or current work.
 
 - **memory/profile** stores durable facts and preferences

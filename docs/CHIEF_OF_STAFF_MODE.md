@@ -2,6 +2,18 @@
 
 Andrea now has a bounded **Chief-of-Staff Mode** for prioritization, planning, preparation, and decision support.
 
+## Where This Shows Up In Signature Flows
+
+Chief-of-staff mode is the front door for journeys like:
+
+- `what matters most today`
+- `what am I forgetting`
+- `what should I remember tonight`
+- `what should I do next`
+
+Its job is to surface one clear read, one thing not to let slip, and one next move.
+When that answer needs richer detail or action, missions, reminders, communication follow-through, and handoffs take over without losing the thread.
+
 This is not a second task manager and not an autonomous planner.
 
 It is an on-demand synthesis layer that pulls together:

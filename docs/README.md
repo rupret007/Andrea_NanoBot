@@ -35,6 +35,20 @@ Cursor-specific docs also split into three surfaces:
 - **Cursor desktop bridge**: operator-only session recovery plus line-oriented terminal control, requires `CURSOR_DESKTOP_BRIDGE_URL` and `CURSOR_DESKTOP_BRIDGE_TOKEN`
 - **Cursor-backed runtime route**: optional diagnostic/runtime-routing surface, separate from both Cloud jobs and desktop bridge readiness
 
+## Signature Flows
+
+Andrea's current flagship journeys are:
+
+- Alexa daily orientation -> Telegram richer follow-through
+- `What am I forgetting?` -> one concrete open loop -> reminder, save, or tracking
+- `What's still open with Candace?` -> draft reply -> save to thread or remind later
+- `Help me plan tonight / this weekend` -> mission -> blocker -> confirmed action
+- source-grounded research -> richer detail -> save to library
+- BlueBubbles message help -> summarize -> draft -> remind later -> optional Telegram escalation
+
+Use these docs as the architecture behind those journeys, not as separate product silos.
+For repo-side proof, run `npm run debug:signature-flows`.
+
 Operator command examples in the docs use hyphen aliases in Telegram, such as `/cursor`, `/cursor-jobs`, `/cursor-create`, and `/purchase-request`.
 Underscore aliases remain accepted for compatibility, but they are not the preferred examples anymore.
 For Cursor output files specifically, the preferred operator examples are `/cursor-results` and `/cursor-download`. Older `/cursor-artifacts` and `/cursor-artifact-link` aliases still work.
@@ -53,6 +67,14 @@ Use these when you are enabling or validating specific capabilities:
 | Alexa Companion Mode               | [ALEXA_VOICE_INTEGRATION.md](ALEXA_VOICE_INTEGRATION.md)                 |
 | Amazon shopping + approvals        | [AMAZON_SHOPPING_AND_APPROVALS.md](AMAZON_SHOPPING_AND_APPROVALS.md)     |
 | Optional add-ons and skills        | [ADDONS_AND_FEATURE_MATRIX.md](ADDONS_AND_FEATURE_MATRIX.md)             |
+
+For the productized flagship-flow view specifically:
+
+- daily orientation and open-loops recovery: [CHIEF_OF_STAFF_MODE.md](CHIEF_OF_STAFF_MODE.md) + [PROACTIVE_RITUALS.md](PROACTIVE_RITUALS.md)
+- Candace / people follow-through: [COMMUNICATION_COMPANION.md](COMMUNICATION_COMPANION.md)
+- plan creation and execution: [MISSIONS_AND_EXECUTION.md](MISSIONS_AND_EXECUTION.md)
+- research -> saveable output: [KNOWLEDGE_LIBRARY.md](KNOWLEDGE_LIBRARY.md)
+- cross-surface continuity: [CROSS_CHANNEL_HANDOFFS.md](CROSS_CHANNEL_HANDOFFS.md) + [ALEXA_VOICE_INTEGRATION.md](ALEXA_VOICE_INTEGRATION.md)
 
 For the default live demo, stay on Telegram conversation + direct replies + reminders/tasks + `/help` + `/cursor_status` unless you validated optional integrations that same day.
 

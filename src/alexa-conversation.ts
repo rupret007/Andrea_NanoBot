@@ -228,7 +228,7 @@ export function resolveAlexaConversationFollowup(
     return resolveSupported('say_more');
   }
   if (
-    /^(what('?s| is)? next after that|what next after that|what comes after that|after that)\b/i.test(
+    /^(what('?s| is)? next after that|what next after that|what comes after that|what happens next|after that)\b/i.test(
       normalized,
     )
   ) {
@@ -245,14 +245,14 @@ export function resolveAlexaConversationFollowup(
     return resolveSupported('remind_before_that');
   }
   if (
-    /^(send (?:me )?(?:the )?(?:details|full version|full comparison|plan)(?: to telegram)?|send (?:that|it) to telegram|also send (?:that|it) to telegram|give me the deeper comparison in telegram|send (?:that|it|this|the details|the plan) to (?:my )?messages|save (?:that|it|this) to (?:my )?messages|send me the details in messages|send me the plan)\b/i.test(
+    /^(send (?:me )?(?:the )?(?:details|fuller version|full version|full comparison|fuller plan|plan)(?: to telegram)?|send (?:that|it) to telegram|also send (?:that|it) to telegram|give me the deeper comparison in telegram|send (?:that|it|this|the details|the plan) to (?:my )?messages|save (?:that|it|this) to (?:my )?messages|send me the details in messages|send me the plan|send me the fuller plan)\b/i.test(
       normalized,
     )
   ) {
     return resolveSupported('send_details');
   }
   if (
-    /^(save (?:that|it|this) for later|remember (?:that|it|this) for later|keep track of (?:that|it|this) for tonight)\b/i.test(
+    /^(save (?:that|it|this) for later|remember (?:that|it|this) for later|keep track of (?:that|it|this) for tonight|save the draft)\b/i.test(
       normalized,
     )
   ) {
@@ -280,7 +280,7 @@ export function resolveAlexaConversationFollowup(
     return resolveSupported('track_thread');
   }
   if (
-    /^(turn (?:that|it|this) into a reminder|remind me about (?:that|it|this)|save (?:that|it|this) for later tonight)\b/i.test(
+    /^(turn (?:that|it|this) into a reminder|remind me about (?:that|it|this)(?: tonight)?|save (?:that|it|this) for later tonight)\b/i.test(
       normalized,
     )
   ) {
