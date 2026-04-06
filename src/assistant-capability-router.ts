@@ -501,6 +501,14 @@ export function continueAssistantCapabilityFromAlexaState(
     }
   }
 
+  if (
+    /^(send (?:me )?(?:the )?(?:details|full version)(?: to telegram)?|send (?:that|it) to telegram|also send (?:that|it) to telegram|save (?:that|it|this) (?:in|to) my library|save (?:that|it|this) to the library|track (?:that|it|this)(?: under .+)?|keep track of (?:that|it|this)(?: under .+)?|turn (?:that|it|this) into a reminder|remind me about (?:that|it|this))\b/.test(
+      lower,
+    )
+  ) {
+    return null;
+  }
+
   return matchAssistantCapabilityRequest(normalized);
 }
 

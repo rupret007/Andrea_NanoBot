@@ -108,6 +108,45 @@ describe('assistant capabilities', () => {
     expect(result.dailyResponse?.context.subjectData).toBeDefined();
   });
 
+  it('adds companion continuation payloads to Alexa-safe daily answers', async () => {
+    createTask({
+      id: 'task-daily-handoff',
+      group_folder: 'main',
+      chat_jid: 'tg:8004355504',
+      prompt: 'Candace still needs a dinner answer',
+      schedule_type: 'once',
+      schedule_value: '2026-04-05T19:00:00.000Z',
+      context_mode: 'group',
+      next_run: '2026-04-05T19:00:00.000Z',
+      status: 'active',
+      created_at: '2026-04-05T09:00:00.000Z',
+    });
+
+    const result = await executeAssistantCapability({
+      capabilityId: 'daily.loose_ends',
+      context: {
+        channel: 'alexa',
+        groupFolder: 'main',
+      },
+      input: {
+        canonicalText: 'what am I forgetting',
+      },
+    });
+
+    expect(result.followupActions).toEqual(
+      expect.arrayContaining([
+        'send_details',
+        'save_to_library',
+        'track_thread',
+        'create_reminder',
+      ]),
+    );
+    expect(result.continuationCandidate?.handoffPayload?.kind).toBe('message');
+    expect(
+      result.conversationSeed?.subjectData?.companionContinuationJson,
+    ).toBeTruthy();
+  });
+
   it('blocks operator-only capabilities on Alexa while keeping them registered', async () => {
     const result = await executeAssistantCapability({
       capabilityId: 'work.current_logs',
@@ -188,6 +227,15 @@ describe('assistant capabilities', () => {
     expect(telegram.replyText).toContain('*Why this route*');
     expect(alexa.replyText).toContain('Want');
     expect(alexa.researchResult?.routeExplanation).toContain('local context');
+    expect(alexa.followupActions).toEqual(
+      expect.arrayContaining([
+        'send_details',
+        'save_to_library',
+        'track_thread',
+        'create_reminder',
+      ]),
+    );
+    expect(alexa.handoffPayload?.kind).toBe('message');
   });
 
   it('saves explicit library material and renders source-grounded answers differently by channel', async () => {

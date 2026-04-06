@@ -17,6 +17,7 @@
   <a href="docs/SETUP_AND_FEATURES_GUIDE.md">Setup Guide</a>&nbsp; | &nbsp;
   <a href="docs/KNOWLEDGE_LIBRARY.md">Knowledge Library</a>&nbsp; | &nbsp;
   <a href="docs/PROACTIVE_RITUALS.md">Proactive Rituals</a>&nbsp; | &nbsp;
+  <a href="docs/CROSS_CHANNEL_HANDOFFS.md">Cross-Channel Handoffs</a>&nbsp; | &nbsp;
   <a href="docs/BLUEBUBBLES_CHANNEL_PREP.md">BlueBubbles Prep</a>&nbsp; | &nbsp;
   <a href="docs/CHANNEL_COMMANDS_AND_ONBOARDING.md">Chat Commands</a>&nbsp; | &nbsp;
   <a href="docs/BACKEND_LANES_ARCHITECTURE.md">Backend Lanes</a>&nbsp; | &nbsp;
@@ -216,6 +217,8 @@ Andrea now has a shared assistant capability graph so Alexa and Telegram feel li
 - shared capabilities now also cover explicit Knowledge Library controls such as saving sources, listing relevant sources, explaining source choice, and summarizing saved material
 - shared capabilities now also cover ritual status, ritual control, and follow-through guidance
 - shared capabilities now also include explicit Andrea Pulse actions
+- Alexa can now hand richer results off to Telegram explicitly instead of pretending voice should carry everything
+- voice follow-ups like `send me the details`, `save that in my library`, and `turn that into a reminder` now map into the same shared completion layer
 - Alexa keeps voice-safe shaping and bounded follow-ups
 - BlueBubbles is now represented as a prepared future channel with its own safety gate and output-shaping policy
 - Telegram keeps richer rendering and deeper operator-side actions
@@ -248,6 +251,25 @@ See [docs/PROACTIVE_RITUALS.md](docs/PROACTIVE_RITUALS.md) for the model, contro
 See [docs/ASSISTANT_CAPABILITY_GRAPH.md](docs/ASSISTANT_CAPABILITY_GRAPH.md) for the descriptor model, safety rules, research provider boundaries, and license-safe pattern sources.
 
 For operator-side smoke testing of the shared core, use `npm run debug:shared-capabilities`, `npm run debug:research-mode`, and `npm run debug:knowledge-library`.
+
+## Cross-Channel Companion Handoffs
+
+Andrea now has a bounded Alexa-to-Telegram handoff layer so a conversation can start briefly on Alexa and finish with richer detail on Telegram.
+
+- handoffs are explicit and user-visible
+- only the registered main Telegram chat is used as the delivery target
+- no silent push behavior was added
+- voice-triggered completion actions reuse existing reminder, thread, ritual, and Knowledge Library systems instead of creating a second planner
+
+Typical follow-ups now include:
+
+- `send me the details`
+- `send the full version to Telegram`
+- `save that in my library`
+- `track that under Candace`
+- `turn that into a reminder`
+
+Use `npm run debug:cross-channel-handoffs` for the operator-side near-live proof harness, and see [docs/CROSS_CHANNEL_HANDOFFS.md](docs/CROSS_CHANNEL_HANDOFFS.md) for the delivery model and limits.
 
 ## Knowledge Library
 

@@ -290,8 +290,41 @@ That enables bounded follow-ups like:
 - `what should I do about that`
 - `should I be worried about anything`
 - `save that for later`
+- `send me the details`
+- `send the full version to Telegram`
+- `save that in my library`
+- `track that under Candace`
+- `turn that into a reminder`
 
 If context is weak or expired, Andrea falls back honestly with one short clarification.
+
+## 5C) Cross-Channel Handoffs
+
+Alexa can now start a conversation and hand the richer continuation to Telegram when the user asks for it explicitly.
+
+Current v1 truth:
+
+- handoffs are Alexa-to-Telegram only
+- the delivery target is the registered main Telegram chat for the linked Andrea group
+- no hidden push behavior was added
+- if no Telegram main chat exists for the linked account, Andrea says so plainly
+
+Typical voice phrasing:
+
+- `Want the fuller version in Telegram?`
+- `I can send the details to Telegram.`
+- `I can save that for tonight if you want.`
+
+Current action-completion phrases:
+
+- `send me the details`
+- `also send it to Telegram`
+- `save that in my library`
+- `track that under Candace`
+- `turn that into a reminder`
+
+The richer continuation stays on Telegram.
+Alexa remains the orientation and summary surface.
 
 ## 5A) Research In Alexa
 
@@ -432,6 +465,7 @@ When the environment is configured, use this order:
 10. test one household-aware follow-up such as `what about Candace`
 11. test one action handoff such as `remind me before that`
 12. optionally test one preference or explainability turn
+13. optionally test one cross-channel follow-up such as `send me the details`
 
 If you need one sentence for the current state, use this:
 

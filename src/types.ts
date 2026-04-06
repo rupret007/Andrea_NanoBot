@@ -247,7 +247,8 @@ export type AlexaPendingSessionKind =
   | 'capture_save_for_later_content'
   | 'confirm_save_for_later'
   | 'capture_follow_up_reference'
-  | 'confirm_profile_fact';
+  | 'confirm_profile_fact'
+  | 'confirm_companion_completion';
 
 export interface AlexaPendingSession {
   principalKey: string;
@@ -300,7 +301,11 @@ export type AlexaConversationFollowupAction =
   | 'draft_followup'
   | 'action_guidance'
   | 'risk_check'
-  | 'memory_control';
+  | 'memory_control'
+  | 'send_details'
+  | 'save_to_library'
+  | 'track_thread'
+  | 'create_reminder';
 
 export type CompanionToneProfile = 'plain' | 'balanced' | 'warmer';
 
@@ -518,6 +523,58 @@ export interface MediaGenerationResult {
   blocker?: string;
   providerUsed?: 'openai_images';
   artifact?: ChannelArtifact;
+}
+
+export type CompanionHandoffStatus =
+  | 'queued'
+  | 'delivered'
+  | 'failed'
+  | 'cancelled'
+  | 'expired';
+
+export interface CompanionHandoffPayload {
+  kind: 'message' | 'artifact' | 'action_confirmation';
+  title: string;
+  text: string;
+  artifact?: ChannelArtifact;
+  caption?: string;
+  sourceSummary?: string;
+  followupSuggestions: string[];
+}
+
+export interface CompanionContinuationCandidate {
+  capabilityId?: string;
+  voiceSummary: string;
+  handoffPayload?: CompanionHandoffPayload;
+  completionText?: string;
+  threadId?: string;
+  threadTitle?: string;
+  knowledgeSourceIds?: string[];
+  knowledgeSourceTitles?: string[];
+  followupSuggestions?: string[];
+}
+
+export interface CompanionHandoffRecord {
+  handoffId: string;
+  groupFolder: string;
+  originChannel: 'alexa' | 'telegram' | 'bluebubbles';
+  targetChannel: 'telegram';
+  targetChatJid?: string | null;
+  capabilityId?: string | null;
+  voiceSummary: string;
+  richPayloadJson: string;
+  status: CompanionHandoffStatus;
+  createdAt: string;
+  expiresAt: string;
+  updatedAt: string;
+  requiresConfirmation: boolean;
+  threadId?: string | null;
+  taskId?: string | null;
+  knowledgeSourceIdsJson?: string | null;
+  workRef?: string | null;
+  followupSuggestionsJson?: string | null;
+  deliveredMessageId?: string | null;
+  errorText?: string | null;
 }
 
 export interface AlexaConversationContext {

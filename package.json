@@ -55,7 +55,8 @@
     "debug:shared-capabilities": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-shared-capabilities.ts",
     "debug:research-mode": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-research-mode.ts",
     "debug:knowledge-library": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-knowledge-library.ts",
-    "debug:rituals": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-rituals.ts"
+    "debug:rituals": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-rituals.ts",
+    "debug:cross-channel-handoffs": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-cross-channel-handoffs.ts"
   },
   "dependencies": {
     "@onecli-sh/sdk": "^0.2.0",

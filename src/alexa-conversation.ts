@@ -39,6 +39,7 @@ export interface AlexaConversationSubjectData {
   knowledgeSourceTitles?: string[];
   knowledgeSourceMatches?: string[];
   knowledgeLastQuery?: string;
+  companionContinuationJson?: string;
 }
 
 export interface AlexaConversationState {
@@ -76,6 +77,12 @@ export interface AlexaConversationFollowupResolution {
 }
 
 const DEFAULT_ALEXA_CONVERSATION_TTL_MS = 10 * 60 * 1000;
+const COMPANION_COMPLETION_ACTIONS: AlexaConversationFollowupAction[] = [
+  'send_details',
+  'save_to_library',
+  'track_thread',
+  'create_reminder',
+];
 
 function parseJsonSafe<T>(value: string, fallback: T): T {
   try {
@@ -170,11 +177,19 @@ export function resolveAlexaConversationFollowup(
   }
 
   const supported = new Set(state.supportedFollowups);
+  const hasCompanionCompletionContext = Boolean(
+    state.subjectData.companionContinuationJson?.trim() ||
+      state.subjectData.pendingActionText?.trim() ||
+      state.subjectData.lastAnswerSummary?.trim() ||
+      state.summaryText?.trim(),
+  );
   const resolveSupported = (
     action: AlexaConversationFollowupAction,
     nextText = text,
   ): AlexaConversationFollowupResolution =>
-    supported.has(action)
+    supported.has(action) ||
+    (COMPANION_COMPLETION_ACTIONS.includes(action) &&
+      hasCompanionCompletionContext)
       ? { ok: true, action, text: nextText }
       : {
           ok: false,
@@ -218,11 +233,39 @@ export function resolveAlexaConversationFollowup(
     return resolveSupported('remind_before_that');
   }
   if (
+    /^(send (?:me )?(?:the )?(?:details|full version)(?: to telegram)?|send (?:that|it) to telegram|also send (?:that|it) to telegram)\b/i.test(
+      normalized,
+    )
+  ) {
+    return resolveSupported('send_details');
+  }
+  if (
+    /^(save (?:that|it|this) (?:in|to) my library|save (?:that|it|this) to the library)\b/i.test(
+      normalized,
+    )
+  ) {
+    return resolveSupported('save_to_library');
+  }
+  if (
     /^(save that for later|save that|help me remember that tonight|remember that|remember this)\b/i.test(
       normalized,
     )
   ) {
     return resolveSupported('save_that');
+  }
+  if (
+    /^(track (?:that|it|this)(?: under .+)?|keep track of (?:that|it|this)(?: under .+)?|save (?:that|it|this) under .+ thread)\b/i.test(
+      normalized,
+    )
+  ) {
+    return resolveSupported('track_thread');
+  }
+  if (
+    /^(turn (?:that|it|this) into a reminder|remind me about (?:that|it|this)|save (?:that|it|this) for later tonight)\b/i.test(
+      normalized,
+    )
+  ) {
+    return resolveSupported('create_reminder');
   }
   if (
     /^(what should i do about that|what should i handle about that|what do i do about that|what should i do with that)\b/i.test(

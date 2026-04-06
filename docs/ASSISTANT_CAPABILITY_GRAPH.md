@@ -175,6 +175,38 @@ Channel shaping still happens at the edge:
   - less markdown-heavy than Telegram
   - no operator-only execution controls in this scaffold
 
+## Cross-Channel Handoffs And Action Completion
+
+Andrea now has a bounded companion handoff layer on top of the shared capability graph.
+
+The current model is intentionally narrow:
+
+- only Alexa-to-Telegram handoffs are supported
+- only explicit user-visible handoffs are allowed
+- only the registered main Telegram chat for the linked account is used as the target
+- no speculative or background cross-channel push is performed
+
+High-value handoff targets in this pass:
+
+- research summaries that are too rich for voice
+- knowledge-library summaries with supporting source detail
+- image-generation delivery when an artifact is already available
+- daily or household follow-up detail when the user asks for it explicitly
+
+Voice-triggered completion flows reuse existing systems instead of inventing new ones:
+
+- `save that in my library` -> `knowledge.save_source`
+- `track that under Candace` -> life threads
+- `turn that into a reminder` -> reminders
+- `make that part of my evening reset` -> rituals
+
+The shared handoff/completion layer lives in:
+
+- [src/cross-channel-handoffs.ts](../src/cross-channel-handoffs.ts)
+- [src/assistant-action-completion.ts](../src/assistant-action-completion.ts)
+
+This keeps channel-specific delivery at the edge while shared action mapping stays in one place.
+
 ## Rituals And Follow-Through
 
 Andrea now has an explicit `rituals` category in the shared capability graph.
@@ -326,6 +358,7 @@ Useful pinned-Node debug commands:
 - `npm run debug:alexa-conversation`
 - `npm run debug:shared-capabilities`
 - `npm run debug:research-mode`
+- `npm run debug:cross-channel-handoffs`
 
 `debug:shared-capabilities` is the quickest operator-side smoke path for:
 

@@ -40,6 +40,13 @@ npm run debug:research-mode
 npm run debug:knowledge-library
 ```
 
+For cross-channel handoff and action-completion changes, add:
+
+```bash
+node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/cross-channel-handoffs.test.ts src/assistant-action-completion.test.ts src/alexa-conversation.test.ts src/alexa.test.ts src/assistant-capability-router.test.ts
+npm run debug:cross-channel-handoffs
+```
+
 For ritual and follow-through changes, add:
 
 ```bash
@@ -317,6 +324,31 @@ Check:
 - no Telegram/operator wording leaks
 - no fake calendar or reminder content
 
+## 11. Cross-Channel Handoff Validation
+
+Run this when Alexa-to-Telegram continuation, voice-triggered save flows, or companion action completion changes.
+
+Pinned-Node proof harness:
+
+```bash
+npm run debug:cross-channel-handoffs
+```
+
+Expected proof points:
+
+- one research handoff reaches Telegram
+- one knowledge-detail handoff reaches Telegram
+- one media handoff records artifact delivery
+- one voice-triggered save-to-library flow completes
+- one voice-triggered reminder completion creates a scheduled task
+
+Important truth:
+
+- handoffs are explicit, not background pushes
+- only the registered main Telegram chat is used as a handoff target
+- work cockpit and other operator-only flows stay out of Alexa
+- failed delivery must surface honest blocker text instead of pretending the continuation was sent
+
 ### Optional Amazon Validation
 
 Only run this if Amazon Business credentials are configured.
@@ -331,7 +363,7 @@ Optional if safe:
 - `/purchase-request <asin> <offer_id> 1`
 - `/purchase-approve <request_id> <approval_code>` only in trial mode or another intentionally disposable validation setup
 
-## 11. Knowledge Library Validation
+## 12. Knowledge Library Validation
 
 Run this when the Knowledge Library model, ingestion, retrieval, or source-grounded research behavior changes.
 
@@ -364,7 +396,7 @@ Important truth:
 - disabled or deleted sources must stop contributing to future answers
 - the library stays distinct from memory, life threads, reminders, and current work
 
-## 12. Restart And Verify
+## 13. Restart And Verify
 
 After meaningful runtime or operator-surface changes:
 
@@ -397,7 +429,7 @@ Telegram live-testing truth:
 - it is not part of the default unit/full suite
 - it is the canonical proof that Telegram is actually replying end to end rather than only polling successfully
 
-## 13. Failure Handling
+## 14. Failure Handling
 
 ### `CREDENTIAL_RUNTIME_PROBE: failed`
 
@@ -425,7 +457,7 @@ Telegram live-testing truth:
 - treat it as optional unless you specifically want Cursor-backed runtime routing
 - check 9router endpoint/auth/model settings separately from Cloud/desktop
 
-## 14. Release Gate
+## 15. Release Gate
 
 Before pushing a release:
 

@@ -35,6 +35,9 @@ import {
   type AssistantCapabilityConversationSeed,
 } from './assistant-capabilities.js';
 import {
+  completeAssistantActionFromAlexa,
+} from './assistant-action-completion.js';
+import {
   getAlexaOAuthStatus,
   handleAlexaOAuthRequest,
   resolveAlexaOAuthConfig,
@@ -103,9 +106,11 @@ import {
 } from './life-threads.js';
 import { logger } from './logger.js';
 import { formatOutbound } from './router.js';
+import { handleRitualCommand } from './rituals.js';
 import { type AlexaCompanionGuidanceGoal } from './types.js';
 import { getUserFacingErrorDetail } from './user-facing-error.js';
 import { normalizeVoicePrompt } from './voice-ready.js';
+import type { CompanionHandoffDeps } from './cross-channel-handoffs.js';
 
 const ALEXA_REQUEST_LIMIT_BYTES = 256 * 1024;
 const DEFAULT_ALEXA_HOST = '127.0.0.1';
@@ -158,6 +163,8 @@ export interface AlexaStatus {
   lastSignedGroupFolder?: string;
   lastSignedResponseSource?: string;
 }
+
+export interface AlexaCompanionDeps extends Partial<CompanionHandoffDeps> {}
 
 interface AlexaSignedRequestState {
   updatedAt: string;
@@ -685,6 +692,12 @@ function getIntentSlotValue(
   return slot?.value?.trim() || '';
 }
 
+function getRequestTimestampDate(requestEnvelope: RequestEnvelope): Date {
+  const raw = requestEnvelope.request.timestamp;
+  const parsed = raw ? new Date(raw) : null;
+  return parsed && Number.isFinite(parsed.getTime()) ? parsed : new Date();
+}
+
 function isBareReference(value: string): boolean {
   return ['that', 'this', 'it', 'something'].includes(
     value.trim().toLowerCase(),
@@ -837,6 +850,27 @@ function buildAlexaStateFromDailyCompanion(
       },
     };
   }
+  const continuationCandidate = {
+    voiceSummary: context.summaryText,
+    handoffPayload: {
+      kind: 'message' as const,
+      title:
+        context.usedThreadTitles?.[0] ||
+        context.subjectData.personName ||
+        'Andrea follow-up',
+      text: context.extendedText || response.reply,
+      sourceSummary:
+        context.signalsUsed.length > 0
+          ? `Using ${context.signalsUsed.join(', ')}`
+          : undefined,
+      followupSuggestions: [],
+    },
+    completionText:
+      context.recommendationText || context.extendedText || context.summaryText,
+    threadId: context.usedThreadIds?.[0],
+    threadTitle: context.usedThreadTitles?.[0],
+    followupSuggestions: [] as string[],
+  };
   return {
     ...baseState,
     subjectKind: context.subjectKind,
@@ -855,9 +889,18 @@ function buildAlexaStateFromDailyCompanion(
         context.subjectData.personName ||
         context.subjectKind,
       dailyCompanionContextJson: JSON.stringify(context),
+      companionContinuationJson: JSON.stringify(continuationCandidate),
     },
     summaryText: context.summaryText,
-    supportedFollowups: context.supportedFollowups,
+    supportedFollowups: Array.from(
+      new Set([
+        ...context.supportedFollowups,
+        'send_details',
+        'save_to_library',
+        'track_thread',
+        'create_reminder',
+      ]),
+    ),
     styleHints: {
       ...baseState.styleHints,
       channelMode: 'alexa_companion',
@@ -1359,9 +1402,14 @@ async function runLinkedAlexaTurn(
   }
 }
 
-export function createAlexaSkill(config: AlexaConfig): SkillLike {
+export function createAlexaSkill(
+  config: AlexaConfig,
+  deps: AlexaCompanionDeps = {},
+): SkillLike {
   const assistantName = ASSISTANT_NAME;
   const helpSpeech = buildAlexaHelpSpeech(assistantName);
+  const hasCompanionHandoffDeps = () =>
+    Boolean(deps.resolveTelegramMainChat && deps.sendTelegramMessage);
 
   const resolveLinkedContext = (
     handlerInput: HandlerInput,
@@ -1651,6 +1699,178 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
       .getResponse();
   };
 
+  const runRitualCommand = (
+    handlerInput: HandlerInput,
+    linked: Extract<ReturnType<typeof resolveAlexaLinkedAccount>, { ok: true }>,
+    text: string,
+    conversationState?: AlexaConversationState,
+  ) => {
+    const priorCompanionContext = parseDailyCompanionContext(conversationState);
+    const result = handleRitualCommand({
+      groupFolder: linked.account.groupFolder,
+      channel: 'alexa',
+      text,
+      replyText:
+        conversationState?.subjectData.pendingActionText ||
+        conversationState?.subjectData.lastAnswerSummary,
+      conversationSummary: conversationState?.summaryText,
+      priorCompanionMode: priorCompanionContext?.mode,
+      priorContext: priorCompanionContext
+        ? { usedThreadIds: priorCompanionContext.usedThreadIds }
+        : null,
+      now: new Date(),
+    });
+    if (!result.handled) {
+      return null;
+    }
+    saveAlexaConversationState(
+      linked.principalKey,
+      linked.account.accessTokenHash,
+      linked.account.groupFolder,
+      buildAlexaCompanionConversationState({
+        flowKey: 'ritual_control',
+        subjectKind: 'saved_item',
+        summaryText: result.responseText || 'ritual update',
+        guidanceGoal: 'action_follow_through',
+        subjectData: {
+          ...(conversationState?.subjectData || {}),
+          fallbackCount: 0,
+          lastAnswerSummary: result.responseText || 'ritual update',
+          pendingActionText: undefined,
+        },
+        responseSource: 'local_companion',
+        hasActionItem: true,
+      }),
+    );
+    recordHandledRequest(handlerInput.requestEnvelope, {
+      responseSource: 'local_companion',
+      linked: true,
+      groupFolder: linked.account.groupFolder,
+    });
+    return handlerInput.responseBuilder
+      .speak(result.responseText || 'Okay.')
+      .reprompt(DEFAULT_ALEXA_REPROMPT)
+      .getResponse();
+  };
+
+  const runCompanionActionCompletion = async (
+    handlerInput: HandlerInput,
+    linked: Extract<ReturnType<typeof resolveAlexaLinkedAccount>, { ok: true }>,
+    action: import('./types.js').AlexaConversationFollowupAction,
+    utterance: string,
+    conversationState?: AlexaConversationState,
+  ) => {
+    const result = await completeAssistantActionFromAlexa(
+      {
+        groupFolder: linked.account.groupFolder,
+        action,
+        utterance,
+        conversationSummary: conversationState?.summaryText,
+        priorSubjectData: conversationState?.subjectData,
+        replyText:
+          conversationState?.subjectData.pendingActionText ||
+          conversationState?.subjectData.lastAnswerSummary,
+        now: getRequestTimestampDate(handlerInput.requestEnvelope),
+      },
+      {
+        resolveTelegramMainChat: deps.resolveTelegramMainChat,
+        sendTelegramMessage: deps.sendTelegramMessage,
+        sendTelegramArtifact: deps.sendTelegramArtifact,
+      },
+    );
+    if (!result.handled) {
+      return null;
+    }
+
+    if (result.capabilityResult?.conversationSeed) {
+      saveAlexaConversationState(
+        linked.principalKey,
+        linked.account.accessTokenHash,
+        linked.account.groupFolder,
+        buildAlexaStateFromCapabilitySeed(result.capabilityResult.conversationSeed),
+      );
+    } else if (result.lifeThreadResult?.referencedThread) {
+      saveAlexaConversationState(
+        linked.principalKey,
+        linked.account.accessTokenHash,
+        linked.account.groupFolder,
+        buildAlexaCompanionConversationState({
+          flowKey: 'life_thread',
+          subjectKind: 'life_thread',
+          summaryText:
+            result.replyText || result.lifeThreadResult.referencedThread.title,
+          guidanceGoal: 'life_thread_guidance',
+          subjectData: {
+            ...(conversationState?.subjectData || {}),
+            fallbackCount: 0,
+            threadId: result.lifeThreadResult.referencedThread.id,
+            threadTitle: result.lifeThreadResult.referencedThread.title,
+            threadSummaryLines: [
+              result.lifeThreadResult.referencedThread.nextAction ||
+                result.lifeThreadResult.referencedThread.summary,
+            ],
+            lastAnswerSummary:
+              result.replyText || result.lifeThreadResult.referencedThread.title,
+          },
+          supportedFollowups: [
+            'anything_else',
+            'shorter',
+            'say_more',
+            'send_details',
+            'memory_control',
+          ],
+          responseSource: 'local_companion',
+          hasActionItem: true,
+        }),
+      );
+    } else {
+      saveAlexaConversationState(
+        linked.principalKey,
+        linked.account.accessTokenHash,
+        linked.account.groupFolder,
+        buildAlexaCompanionConversationState({
+          flowKey: conversationState?.flowKey || 'companion_completion',
+          subjectKind: conversationState?.subjectKind || 'saved_item',
+          summaryText: result.replyText || 'action complete',
+          guidanceGoal:
+            conversationState?.styleHints.guidanceGoal || 'action_follow_through',
+          subjectData: {
+            ...(conversationState?.subjectData || {}),
+            fallbackCount: 0,
+            lastAnswerSummary: result.replyText || 'action complete',
+          },
+          supportedFollowups:
+            conversationState?.supportedFollowups || [
+              'anything_else',
+              'shorter',
+              'say_more',
+              'memory_control',
+            ],
+          prioritizationLens:
+            conversationState?.styleHints.prioritizationLens || 'general',
+          responseSource: 'local_companion',
+          hasActionItem: true,
+        }),
+      );
+    }
+
+    recordHandledRequest(handlerInput.requestEnvelope, {
+      responseSource:
+        action === 'send_details'
+          ? conversationState?.subjectData.activeCapabilityId ===
+            'media.image_generate'
+            ? 'media_handoff'
+            : 'research_handoff'
+          : 'local_companion',
+      linked: true,
+      groupFolder: linked.account.groupFolder,
+    });
+    return handlerInput.responseBuilder
+      .speak(result.replyText || 'Okay.')
+      .reprompt(DEFAULT_ALEXA_REPROMPT)
+      .getResponse();
+  };
+
   const runSharedAlexaCapability = async (
     handlerInput: HandlerInput,
     linked: Extract<ReturnType<typeof resolveAlexaLinkedAccount>, { ok: true }>,
@@ -1709,6 +1929,25 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
         linked.account.accessTokenHash,
         linked.account.groupFolder,
         buildAlexaStateFromCapabilitySeed(result.conversationSeed),
+      );
+    }
+
+    if (
+      result.handoffOffer &&
+      result.continuationCandidate?.handoffPayload &&
+      hasCompanionHandoffDeps()
+    ) {
+      saveAlexaPendingSession(
+        linked.principalKey,
+        linked.account.accessTokenHash,
+        'confirm_companion_completion',
+        {
+          action: 'send_details',
+          companionContinuationJson: JSON.stringify(result.continuationCandidate),
+          replyText: result.replyText,
+          conversationSummary:
+            result.conversationSeed?.summaryText || conversationState?.summaryText,
+        },
       );
     }
 
@@ -2221,6 +2460,32 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
             .getResponse();
         }
 
+        const earlyResolution = resolveAlexaConversationFollowup(
+          followupText,
+          conversationState,
+        );
+        if (
+          earlyResolution.ok &&
+          (earlyResolution.action === 'send_details' ||
+            earlyResolution.action === 'save_to_library' ||
+            earlyResolution.action === 'track_thread' ||
+            earlyResolution.action === 'create_reminder')
+        ) {
+          return (
+            (await runCompanionActionCompletion(
+              handlerInput,
+              linked,
+              earlyResolution.action,
+              followupText,
+              conversationState,
+            )) ||
+            handlerInput.responseBuilder
+              .speak('I need a little more context before I do that.')
+              .reprompt(DEFAULT_ALEXA_REPROMPT)
+              .getResponse()
+          );
+        }
+
         const localResponse = await buildDailyCompanionResponse(followupText, {
           channel: 'alexa',
           groupFolder: linked.account.groupFolder,
@@ -2268,6 +2533,16 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
         );
         if (lifeThreadResponse) {
           return lifeThreadResponse;
+        }
+
+        const ritualResponse = runRitualCommand(
+          handlerInput,
+          linked,
+          followupText,
+          conversationState,
+        );
+        if (ritualResponse) {
+          return ritualResponse;
         }
 
         const resolution = resolveAlexaConversationFollowup(
@@ -2318,6 +2593,27 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
               .reprompt(DEFAULT_ALEXA_REPROMPT)
               .getResponse();
           }
+        }
+
+        if (
+          resolution.action === 'send_details' ||
+          resolution.action === 'save_to_library' ||
+          resolution.action === 'track_thread' ||
+          resolution.action === 'create_reminder'
+        ) {
+          return (
+            (await runCompanionActionCompletion(
+              handlerInput,
+              linked,
+              resolution.action,
+              followupText,
+              conversationState,
+            )) ||
+            handlerInput.responseBuilder
+              .speak('I need a little more context before I do that.')
+              .reprompt(DEFAULT_ALEXA_REPROMPT)
+              .getResponse()
+          );
         }
 
         const personName =
@@ -2775,6 +3071,10 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
       }
 
       const linked = linkedResolution.linked;
+      const conversationState = loadAlexaConversationState(
+        linked.principalKey,
+        linked.account.accessTokenHash,
+      );
       const pending = loadAlexaPendingSession(
         linked.principalKey,
         linked.account.accessTokenHash,
@@ -2839,6 +3139,43 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
             }),
           },
         );
+      }
+
+      if (pending.pendingKind === 'confirm_companion_completion') {
+        const completionResponse = await runCompanionActionCompletion(
+          handlerInput,
+          linked,
+          (payload.action as import('./types.js').AlexaConversationFollowupAction) ||
+            'send_details',
+          payload.originalUtterance || 'send me the details',
+          payload.companionContinuationJson
+            ? {
+                ...(conversationState ||
+                  buildAlexaCompanionConversationState({
+                    flowKey: 'companion_handoff',
+                    subjectKind: 'saved_item',
+                    summaryText:
+                      payload.conversationSummary || payload.replyText || 'recent context',
+                    guidanceGoal: 'action_follow_through',
+                  })),
+                subjectData: {
+                  ...(conversationState?.subjectData || {}),
+                  companionContinuationJson: payload.companionContinuationJson,
+                  lastAnswerSummary:
+                    payload.replyText ||
+                    conversationState?.subjectData.lastAnswerSummary,
+                },
+                summaryText:
+                  payload.conversationSummary ||
+                  conversationState?.summaryText ||
+                  payload.replyText ||
+                  'recent context',
+              }
+            : conversationState,
+        );
+        if (completionResponse) {
+          return completionResponse;
+        }
       }
 
       if (
@@ -2935,6 +3272,8 @@ export function createAlexaSkill(config: AlexaConfig): SkillLike {
           ? `Okay, I will not save that reminder.`
           : pending.pendingKind === 'confirm_save_for_later'
             ? `Okay, I will not save that for later.`
+            : pending.pendingKind === 'confirm_companion_completion'
+              ? `Okay, I will not send that to Telegram.`
             : pending.pendingKind === 'confirm_profile_fact'
               ? (() => {
                   if (payload.profileFactId) {
@@ -3142,10 +3481,11 @@ async function invokeAlexaSkill(
 
 export async function startAlexaServer(
   config = resolveAlexaConfig(),
+  deps: AlexaCompanionDeps = {},
 ): Promise<AlexaRuntime | null> {
   if (!config) return null;
 
-  const skill = createAlexaSkill(config);
+  const skill = createAlexaSkill(config, deps);
   const oauthConfig = resolveAlexaOAuthConfig(process.env, config.path);
   let running = false;
 

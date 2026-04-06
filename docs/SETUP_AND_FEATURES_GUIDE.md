@@ -49,6 +49,7 @@ Use these meanings consistently when reading `/cursor_status` and the setup docs
 - A shared assistant capability graph so Telegram and Alexa can call the same daily, household, memory, thread, and research actions safely.
 - A bounded Knowledge Library for explicit saved source material, source-grounded retrieval, and library-first research answers.
 - A bounded rituals and follow-through layer for morning, midday, evening, and carryover guidance.
+- A bounded Alexa-to-Telegram cross-channel handoff layer for richer continuations and voice-triggered action completion.
 - A small bounded personality layer plus request-driven Andrea Pulse.
 - A prepared BlueBubbles channel scaffold for future text-message expansion.
 
@@ -159,6 +160,7 @@ Helpful operator smoke paths:
 - `npm run debug:research-mode`
 - `npm run debug:knowledge-library`
 - `npm run debug:rituals`
+- `npm run debug:cross-channel-handoffs`
 
 For the full architecture and the license-safe external patterns behind it, see [ASSISTANT_CAPABILITY_GRAPH.md](ASSISTANT_CAPABILITY_GRAPH.md).
 
@@ -202,6 +204,28 @@ Default behavior stays conservative:
 - follow-through loops reuse life threads instead of creating a second task system
 
 See [PROACTIVE_RITUALS.md](PROACTIVE_RITUALS.md) for the full model and limits.
+
+## Cross-Channel Handoffs
+
+Andrea now has a bounded cross-channel layer so Alexa can start a conversation and Telegram can finish the richer part.
+
+Current product truth:
+
+- handoffs are explicit and user-visible
+- only Alexa-to-Telegram handoffs are in scope for v1
+- only the registered main Telegram chat is used as the delivery target
+- voice-triggered actions reuse existing reminders, life threads, rituals, drafts, and Knowledge Library flows
+- no background push or generic automation layer was added
+
+Typical voice follow-ups:
+
+- `send me the details`
+- `send the full version to Telegram`
+- `save that in my library`
+- `track that under Candace`
+- `turn that into a reminder`
+
+For the deeper operator view and proof harness, see [CROSS_CHANNEL_HANDOFFS.md](CROSS_CHANNEL_HANDOFFS.md).
 
 ## Knowledge Library
 

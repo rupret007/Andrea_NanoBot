@@ -9804,8 +9804,48 @@ async function main(): Promise<void> {
     channels.push(channel);
     await channel.connect();
   }
+  const resolveTelegramMainChatForAlexa = (groupFolder: string) => {
+    const telegramEntries = Object.entries(registeredGroups).filter(([jid]) => {
+      const channel = findChannel(channels, jid);
+      return channel?.name === 'telegram';
+    });
+    const exactMain = telegramEntries.find(
+      ([, group]) =>
+        group.folder === groupFolder && (group.isMain === true || groupFolder === 'main'),
+    );
+    if (exactMain) {
+      return { chatJid: exactMain[0] };
+    }
+    const exact = telegramEntries.find(([, group]) => group.folder === groupFolder);
+    if (exact) {
+      return { chatJid: exact[0] };
+    }
+    if (groupFolder === 'main') {
+      const fallbackMain = telegramEntries.find(([, group]) => group.isMain === true);
+      if (fallbackMain) {
+        return { chatJid: fallbackMain[0] };
+      }
+    }
+    return undefined;
+  };
   try {
-    alexaRuntime = await startAlexaServer();
+    alexaRuntime = await startAlexaServer(undefined, {
+      resolveTelegramMainChat: resolveTelegramMainChatForAlexa,
+      sendTelegramMessage: async (chatJid, text, options) => {
+        const channel = findChannel(channels, chatJid);
+        if (!channel) {
+          throw new Error(`No channel found for ${chatJid}`);
+        }
+        return channel.sendMessage(chatJid, text, options);
+      },
+      sendTelegramArtifact: async (chatJid, artifact, options) => {
+        const channel = findChannel(channels, chatJid);
+        if (!channel?.sendArtifact) {
+          throw new Error(`Telegram artifact delivery is unavailable for ${chatJid}`);
+        }
+        return channel.sendArtifact(chatJid, artifact, options);
+      },
+    });
   } catch (err) {
     logger.error({ err }, 'Alexa voice ingress failed to start');
   }

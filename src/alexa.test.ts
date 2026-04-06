@@ -28,7 +28,12 @@ import {
   getAlexaPrincipalKey,
   seedConfiguredAlexaLinkedAccount,
 } from './alexa-identity.js';
-import { _initTestDatabase, setRegisteredGroup } from './db.js';
+import {
+  _initTestDatabase,
+  getAllTasks,
+  listKnowledgeSourcesForGroup,
+  setRegisteredGroup,
+} from './db.js';
 import { ASSISTANT_NAME } from './config.js';
 
 vi.mock('./alexa-bridge.js', async () => {
@@ -165,6 +170,10 @@ function buildCompanionResponse(
       'risk_check',
       'switch_person',
       'memory_control',
+      'send_details',
+      'save_to_library',
+      'track_thread',
+      'create_reminder',
     ];
 
   return {
@@ -1095,6 +1104,106 @@ describe('createAlexaSkill', () => {
       expect.any(Object),
     );
     expect(extractSpeechText(response)).toContain('send Candace a short note');
+  });
+
+  it('hands daily companion detail over to Telegram from an Alexa follow-up', async () => {
+    const sendTelegramMessage = vi.fn(async () => ({
+      platformMessageId: 'tg-msg-1',
+    }));
+    mockedBuildDailyCompanionResponse.mockResolvedValue(
+      buildCompanionResponse('Candace still needs a dinner answer.', {
+        context: {
+          ...buildCompanionResponse('x').context,
+          summaryText: 'Candace still needs a dinner answer.',
+          extendedText:
+            'Candace still needs a dinner answer tonight, and pickup works better after rehearsal.',
+          usedThreadIds: ['thread-candace'],
+          usedThreadTitles: ['Candace'],
+        },
+      }),
+    );
+
+    const skill = createAlexaSkill(buildConfig(), {
+      resolveTelegramMainChat: () => ({ chatJid: 'tg:main' }),
+      sendTelegramMessage,
+    });
+
+    await skill.invoke(buildIntentEnvelope('WhatAmIForgettingIntent'));
+    const response = await skill.invoke(
+      buildIntentEnvelope('ConversationalFollowupIntent', {
+        followupText: 'send me the details',
+      }),
+    );
+
+    expect(sendTelegramMessage).toHaveBeenCalledWith(
+      'tg:main',
+      expect.stringContaining('pickup works better after rehearsal'),
+    );
+    expect(extractSpeechText(response)).toContain('sent the details to Telegram');
+    expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
+  });
+
+  it('saves the prior Alexa answer to the library from a follow-up turn', async () => {
+    mockedBuildDailyCompanionResponse.mockResolvedValue(
+      buildCompanionResponse('Candace still needs a dinner answer.', {
+        context: {
+          ...buildCompanionResponse('x').context,
+          summaryText: 'Candace still needs a dinner answer.',
+          extendedText:
+            'Candace still needs a dinner answer tonight, and pickup works better after rehearsal.',
+        },
+      }),
+    );
+
+    const skill = createAlexaSkill(buildConfig());
+
+    await skill.invoke(buildIntentEnvelope('WhatAmIForgettingIntent'));
+    const response = await skill.invoke(
+      buildIntentEnvelope('ConversationalFollowupIntent', {
+        followupText: 'save that in my library',
+      }),
+    );
+
+    expect(extractSpeechText(response)).toContain('Saved');
+    expect(listKnowledgeSourcesForGroup('main')).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sourceType: 'generated_note',
+        }),
+      ]),
+    );
+    expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
+  });
+
+  it('creates a reminder from a voice follow-up when timing is explicit', async () => {
+    mockedBuildDailyCompanionResponse.mockResolvedValue(
+      buildCompanionResponse('Do not forget the band thing.', {
+        context: {
+          ...buildCompanionResponse('x').context,
+          summaryText: 'Do not forget the band thing.',
+          extendedText:
+            'Do not forget the band thing before tonight so you can lock the details in.',
+        },
+      }),
+    );
+
+    const skill = createAlexaSkill(buildConfig(), {
+      resolveTelegramMainChat: () => ({ chatJid: 'tg:main' }),
+      sendTelegramMessage: vi.fn(async () => ({ platformMessageId: 'tg-msg-2' })),
+    });
+
+    await skill.invoke(buildIntentEnvelope('WhatAmIForgettingIntent'));
+    const response = await skill.invoke(
+      buildIntentEnvelope('ConversationalFollowupIntent', {
+        followupText: 'turn that into a reminder tonight',
+      }),
+    );
+
+    expect(extractSpeechText(response)).toContain('remind you');
+    expect(getAllTasks().some((task) => task.prompt.includes('band thing'))).toBe(
+      true,
+    );
+    expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
   });
 
   it('keeps work-cockpit style requests out of the broad Alexa conversation path', async () => {

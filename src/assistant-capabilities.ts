@@ -40,6 +40,8 @@ import type {
   AlexaCompanionGuidanceGoal,
   AlexaConversationFollowupAction,
   AlexaConversationSubjectKind,
+  CompanionContinuationCandidate,
+  CompanionHandoffPayload,
   CompanionToneProfile,
   KnowledgeSourceRecord,
   MediaGenerationResult,
@@ -134,6 +136,7 @@ export interface AssistantCapabilityContext {
     knowledgeSourceMatches?: string[];
     knowledgeLastQuery?: string;
     activeCapabilityId?: AssistantCapabilityId;
+    companionContinuationJson?: string;
   };
 }
 
@@ -195,6 +198,7 @@ export interface AssistantCapabilityConversationSeed {
     knowledgeSourceMatches?: string[];
     knowledgeLastQuery?: string;
     toneProfile?: CompanionToneProfile;
+    companionContinuationJson?: string;
   };
   supportedFollowups?: AlexaConversationFollowupAction[];
   prioritizationLens?:
@@ -225,6 +229,8 @@ export interface AssistantCapabilityResult {
   conversationSeed?: AssistantCapabilityConversationSeed;
   handoffOffer?: string;
   followupActions?: AlexaConversationFollowupAction[];
+  handoffPayload?: CompanionHandoffPayload;
+  continuationCandidate?: CompanionContinuationCandidate;
 }
 
 export interface AssistantCapabilityDescriptor {
@@ -274,6 +280,70 @@ function buildCapabilityTrace(
     reason,
     notes,
   };
+}
+
+function buildCompanionMessagePayload(
+  title: string,
+  text: string,
+  followupSuggestions: string[] = [],
+  sourceSummary?: string,
+): CompanionHandoffPayload {
+  return {
+    kind: 'message',
+    title: normalizeText(title) || 'Andrea follow-up',
+    text: text.trim(),
+    sourceSummary: sourceSummary?.trim() || undefined,
+    followupSuggestions: followupSuggestions.filter(Boolean).slice(0, 3),
+  };
+}
+
+function serializeCompanionContinuation(
+  candidate: CompanionContinuationCandidate | undefined,
+): string | undefined {
+  return candidate ? JSON.stringify(candidate) : undefined;
+}
+
+function buildDailyContinuationCandidate(
+  descriptor: AssistantCapabilityDescriptor,
+  response: DailyCompanionResponse,
+): CompanionContinuationCandidate {
+  const title =
+    response.context.usedThreadTitles?.[0] ||
+    response.context.subjectData.personName ||
+    descriptor.label;
+  return {
+    capabilityId: descriptor.id,
+    voiceSummary: response.context.summaryText,
+    handoffPayload: buildCompanionMessagePayload(
+      title,
+      response.context.extendedText || response.reply,
+      [],
+      `Using ${response.context.signalsUsed.join(', ')}`,
+    ),
+    completionText:
+      response.context.recommendationText ||
+      response.context.extendedText ||
+      response.context.summaryText,
+    threadId: response.context.usedThreadIds?.[0],
+    threadTitle: response.context.usedThreadTitles?.[0],
+    followupSuggestions: [],
+  };
+}
+
+function extendCompanionFollowups(
+  followups: AlexaConversationFollowupAction[] | undefined,
+  candidate: CompanionContinuationCandidate | undefined,
+): AlexaConversationFollowupAction[] {
+  const next = new Set<AlexaConversationFollowupAction>(followups || []);
+  if (candidate?.handoffPayload) {
+    next.add('send_details');
+  }
+  if (candidate?.completionText?.trim()) {
+    next.add('save_to_library');
+    next.add('track_thread');
+    next.add('create_reminder');
+  }
+  return [...next];
 }
 
 function getToneProfileForContext(
@@ -341,6 +411,14 @@ async function runDailyCapability(
     },
   );
   if (!response) return { handled: false };
+  const continuationCandidate = buildDailyContinuationCandidate(
+    descriptor,
+    response,
+  );
+  const supportedFollowups = extendCompanionFollowups(
+    response.context.supportedFollowups,
+    continuationCandidate,
+  );
   return {
     handled: true,
     capabilityId: descriptor.id,
@@ -351,7 +429,7 @@ async function runDailyCapability(
       ...seed,
       subjectKind: response.context.subjectKind,
       summaryText: response.context.summaryText,
-      supportedFollowups: response.context.supportedFollowups,
+      supportedFollowups,
       subjectData: {
         ...seed.subjectData,
         ...response.context.subjectData,
@@ -367,6 +445,9 @@ async function runDailyCapability(
           response.context.subjectData.personName ||
           response.context.subjectKind,
         dailyCompanionContextJson: JSON.stringify(response.context),
+        companionContinuationJson: serializeCompanionContinuation(
+          continuationCandidate,
+        ),
       },
     },
     trace: buildCapabilityTrace(
@@ -378,7 +459,9 @@ async function runDailyCapability(
         ? [`threads: ${response.context.usedThreadTitles.join(', ')}`]
         : [],
     ),
-    followupActions: response.context.supportedFollowups,
+    followupActions: supportedFollowups,
+    handoffPayload: continuationCandidate.handoffPayload,
+    continuationCandidate,
   };
 }
 
@@ -562,6 +645,14 @@ async function runRitualFollowthroughCapability(
     .filter((line): line is string => Boolean(line));
 
   if (dailyResponse) {
+    const continuationCandidate = buildDailyContinuationCandidate(
+      descriptor,
+      dailyResponse,
+    );
+    const supportedFollowups = extendCompanionFollowups(
+      dailyResponse.context.supportedFollowups,
+      continuationCandidate,
+    );
     const replyText =
       context.channel === 'alexa'
         ? dailyResponse.reply
@@ -599,8 +690,11 @@ async function runRitualFollowthroughCapability(
             dailyResponse.context.usedThreadTitles?.[0] ||
             dailyResponse.context.subjectKind,
           dailyCompanionContextJson: JSON.stringify(dailyResponse.context),
+          companionContinuationJson: serializeCompanionContinuation(
+            continuationCandidate,
+          ),
         },
-        supportedFollowups: dailyResponse.context.supportedFollowups,
+        supportedFollowups,
         responseSource: 'local_companion',
       },
       trace: buildCapabilityTrace(
@@ -612,7 +706,9 @@ async function runRitualFollowthroughCapability(
           ? [`follow-through: ${followthroughLines.join(' | ')}`]
           : [],
       ),
-      followupActions: dailyResponse.context.supportedFollowups,
+      followupActions: supportedFollowups,
+      handoffPayload: continuationCandidate.handoffPayload,
+      continuationCandidate,
     };
   }
 
@@ -715,6 +811,61 @@ function formatResearchAlexaReply(result: ResearchResult): {
     handoffOffer: result.handoffOption
       ? 'I can send the fuller version to Telegram if you want.'
       : undefined,
+  };
+}
+
+function buildResearchContinuationCandidate(
+  descriptor: AssistantCapabilityDescriptor,
+  query: string,
+  result: ResearchResult,
+  voice: ReturnType<typeof formatResearchAlexaReply>,
+  telegramReply: string,
+): CompanionContinuationCandidate {
+  return {
+    capabilityId: descriptor.id,
+    voiceSummary:
+      result.spokenText || result.summaryText || voice.replyText || query,
+    handoffPayload: buildCompanionMessagePayload(
+      descriptor.label,
+      telegramReply,
+      result.followupSuggestions,
+      result.routeExplanation,
+    ),
+    completionText:
+      result.saveForLaterCandidate ||
+      result.recommendationText ||
+      result.summaryText ||
+      query,
+    knowledgeSourceIds: (result.supportingSources || [])
+      .map((source) => source.sourceId)
+      .filter((sourceId): sourceId is string => Boolean(sourceId)),
+    knowledgeSourceTitles: (result.supportingSources || []).map(
+      (source) => source.title,
+    ),
+    followupSuggestions: result.followupSuggestions,
+  };
+}
+
+function buildMediaContinuationCandidate(
+  descriptor: AssistantCapabilityDescriptor,
+  prompt: string,
+  mediaResult: MediaGenerationResult,
+): CompanionContinuationCandidate {
+  const normalizedPrompt = normalizeText(prompt);
+  const summary = mediaResult.summaryText || mediaResult.replyText || normalizedPrompt;
+  return {
+    capabilityId: descriptor.id,
+    voiceSummary: summary,
+    handoffPayload: {
+      kind: mediaResult.artifact ? 'artifact' : 'message',
+      title: descriptor.label,
+      text: mediaResult.replyText || summary,
+      artifact: mediaResult.artifact,
+      caption: mediaResult.replyText || summary,
+      followupSuggestions: [],
+    },
+    completionText: normalizedPrompt,
+    followupSuggestions: [],
   };
 }
 
@@ -933,6 +1084,17 @@ async function runResearchCapability(
   const voice = formatResearchAlexaReply(result);
   const telegramReply = formatResearchTelegramReply(result);
   const bluebubblesReply = formatResearchBlueBubblesReply(result);
+  const continuationCandidate = buildResearchContinuationCandidate(
+    descriptor,
+    query,
+    result,
+    voice,
+    telegramReply,
+  );
+  const supportedFollowups = extendCompanionFollowups(
+    descriptor.followupActions,
+    continuationCandidate,
+  );
   return {
     handled: true,
     capabilityId: descriptor.id,
@@ -948,6 +1110,8 @@ async function runResearchCapability(
         : descriptor.preferredOutputShape[context.channel],
     researchResult: result,
     handoffOffer: voice.handoffOffer,
+    handoffPayload: continuationCandidate.handoffPayload,
+    continuationCandidate,
     conversationSeed: {
       flowKey: descriptor.id.replace(/\./g, '_'),
       subjectKind: 'general',
@@ -962,8 +1126,11 @@ async function runResearchCapability(
         researchRouteExplanation: result.routeExplanation,
         researchProviderUsed: result.providerUsed,
         saveForLaterCandidate: result.saveForLaterCandidate,
+        companionContinuationJson: serializeCompanionContinuation(
+          continuationCandidate,
+        ),
       },
-      supportedFollowups: descriptor.followupActions,
+      supportedFollowups,
       responseSource: 'local_companion',
     },
     trace: buildCapabilityTrace(
@@ -978,6 +1145,7 @@ async function runResearchCapability(
       result.plan.reason,
       result.sourceNotes,
     ),
+    followupActions: supportedFollowups,
   };
 }
 
@@ -1346,6 +1514,33 @@ async function runKnowledgeResearchCapability(
   const knowledgeMatches = describeKnowledgeMatches(
     researchResult.supportingSources,
   );
+  const telegramReply = formatResearchTelegramReply(researchResult);
+  const continuationCandidate = buildResearchContinuationCandidate(
+    descriptor,
+    query,
+    researchResult,
+    voice,
+    telegramReply,
+  );
+  const supportedFollowups = extendCompanionFollowups(
+    descriptor.followupActions,
+    continuationCandidate,
+  );
+  const conversationSeed = buildKnowledgeConversationSeed(
+    descriptor,
+    researchResult.summaryText || query,
+    query,
+    supportingSourceIds,
+    supportingSourceTitles,
+    knowledgeMatches,
+  );
+  conversationSeed.subjectData = {
+    ...(conversationSeed.subjectData || {}),
+    companionContinuationJson: serializeCompanionContinuation(
+      continuationCandidate,
+    ),
+  };
+  conversationSeed.supportedFollowups = supportedFollowups;
 
   return {
     handled: true,
@@ -1355,21 +1550,16 @@ async function runKnowledgeResearchCapability(
         ? voice.replyText
         : context.channel === 'bluebubbles'
           ? formatResearchBlueBubblesReply(researchResult)
-          : formatResearchTelegramReply(researchResult),
+          : telegramReply,
     outputShape:
       researchResult.handoffOption && context.channel === 'alexa'
         ? 'handoff_offer'
         : descriptor.preferredOutputShape[context.channel],
     researchResult,
     handoffOffer: voice.handoffOffer,
-    conversationSeed: buildKnowledgeConversationSeed(
-      descriptor,
-      researchResult.summaryText || query,
-      query,
-      supportingSourceIds,
-      supportingSourceTitles,
-      knowledgeMatches,
-    ),
+    handoffPayload: continuationCandidate.handoffPayload,
+    continuationCandidate,
+    conversationSeed,
     trace: buildCapabilityTrace(
       descriptor,
       context,
@@ -1377,6 +1567,7 @@ async function runKnowledgeResearchCapability(
       researchResult.routeExplanation,
       researchResult.debugPath,
     ),
+    followupActions: supportedFollowups,
   };
 }
 
@@ -1482,6 +1673,15 @@ async function runMediaCapability(
     channel: context.channel,
     groupFolder: context.groupFolder,
   });
+  const continuationCandidate = buildMediaContinuationCandidate(
+    descriptor,
+    prompt,
+    mediaResult,
+  );
+  const supportedFollowups = extendCompanionFollowups(
+    descriptor.followupActions,
+    continuationCandidate,
+  );
 
   return {
     handled: true,
@@ -1492,6 +1692,32 @@ async function runMediaCapability(
         ? 'handoff_offer'
         : descriptor.preferredOutputShape[context.channel],
     mediaResult,
+    handoffOffer:
+      context.channel === 'alexa'
+        ? 'I can generate that and send it to Telegram.'
+        : undefined,
+    handoffPayload: continuationCandidate.handoffPayload,
+    continuationCandidate,
+    conversationSeed: {
+      flowKey: descriptor.id.replace(/\./g, '_'),
+      subjectKind: 'saved_item',
+      summaryText:
+        mediaResult.summaryText || mediaResult.replyText || normalizeText(prompt),
+      guidanceGoal: 'action_follow_through',
+      subjectData: {
+        activeCapabilityId: descriptor.id,
+        lastAnswerSummary:
+          mediaResult.summaryText ||
+          mediaResult.replyText ||
+          normalizeText(prompt),
+        conversationFocus: normalizeText(prompt),
+        companionContinuationJson: serializeCompanionContinuation(
+          continuationCandidate,
+        ),
+      },
+      supportedFollowups,
+      responseSource: 'local_companion',
+    },
     trace: buildCapabilityTrace(
       descriptor,
       context,
@@ -1503,6 +1729,7 @@ async function runMediaCapability(
       mediaResult.routeExplanation,
       mediaResult.debugPath,
     ),
+    followupActions: supportedFollowups,
   };
 }
 

@@ -15,6 +15,11 @@ export interface AlexaPendingSessionPayload {
   meetingReference?: string;
   profileFactId?: string;
   profileAskText?: string;
+  action?: string;
+  originalUtterance?: string;
+  companionContinuationJson?: string;
+  replyText?: string;
+  conversationSummary?: string;
 }
 
 const DEFAULT_ALEXA_SESSION_TTL_MS = 10 * 60 * 1000;

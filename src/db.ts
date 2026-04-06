@@ -17,6 +17,7 @@ import {
   AlexaOAuthRefreshTokenRecord,
   AlexaPendingSession,
   AgentThreadState,
+  CompanionHandoffRecord,
   KnowledgeChunkRecord,
   KnowledgeIndexState,
   KnowledgeRetrievalHit,
@@ -360,6 +361,32 @@ function createSchema(database: Database.Database): void {
       ON ritual_profiles(group_folder, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_ritual_profiles_group_due
       ON ritual_profiles(group_folder, enabled, next_due_at);
+    CREATE TABLE IF NOT EXISTS companion_handoffs (
+      handoff_id TEXT PRIMARY KEY,
+      group_folder TEXT NOT NULL,
+      origin_channel TEXT NOT NULL,
+      target_channel TEXT NOT NULL,
+      target_chat_jid TEXT,
+      capability_id TEXT,
+      voice_summary TEXT NOT NULL,
+      rich_payload_json TEXT NOT NULL,
+      status TEXT NOT NULL,
+      requires_confirmation INTEGER NOT NULL DEFAULT 0,
+      thread_id TEXT,
+      task_id TEXT,
+      knowledge_source_ids_json TEXT,
+      work_ref TEXT,
+      followup_suggestions_json TEXT,
+      delivered_message_id TEXT,
+      error_text TEXT,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_companion_handoffs_group_created
+      ON companion_handoffs(group_folder, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_companion_handoffs_status_expires
+      ON companion_handoffs(status, expires_at ASC);
     CREATE TABLE IF NOT EXISTS life_threads (
       id TEXT PRIMARY KEY,
       group_folder TEXT NOT NULL,
@@ -2602,6 +2629,190 @@ export function purgeExpiredAlexaConversationContexts(
   const result = db
     .prepare('DELETE FROM alexa_conversation_contexts WHERE expires_at <= ?')
     .run(now);
+  return result.changes;
+}
+
+export function upsertCompanionHandoff(record: CompanionHandoffRecord): void {
+  assertValidGroupFolder(record.groupFolder);
+  db.prepare(
+    `
+      INSERT INTO companion_handoffs (
+        handoff_id,
+        group_folder,
+        origin_channel,
+        target_channel,
+        target_chat_jid,
+        capability_id,
+        voice_summary,
+        rich_payload_json,
+        status,
+        requires_confirmation,
+        thread_id,
+        task_id,
+        knowledge_source_ids_json,
+        work_ref,
+        followup_suggestions_json,
+        delivered_message_id,
+        error_text,
+        created_at,
+        expires_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(handoff_id) DO UPDATE SET
+        group_folder = excluded.group_folder,
+        origin_channel = excluded.origin_channel,
+        target_channel = excluded.target_channel,
+        target_chat_jid = excluded.target_chat_jid,
+        capability_id = excluded.capability_id,
+        voice_summary = excluded.voice_summary,
+        rich_payload_json = excluded.rich_payload_json,
+        status = excluded.status,
+        requires_confirmation = excluded.requires_confirmation,
+        thread_id = excluded.thread_id,
+        task_id = excluded.task_id,
+        knowledge_source_ids_json = excluded.knowledge_source_ids_json,
+        work_ref = excluded.work_ref,
+        followup_suggestions_json = excluded.followup_suggestions_json,
+        delivered_message_id = excluded.delivered_message_id,
+        error_text = excluded.error_text,
+        created_at = excluded.created_at,
+        expires_at = excluded.expires_at,
+        updated_at = excluded.updated_at
+    `,
+  ).run(
+    record.handoffId,
+    record.groupFolder,
+    record.originChannel,
+    record.targetChannel,
+    record.targetChatJid || null,
+    record.capabilityId || null,
+    record.voiceSummary,
+    record.richPayloadJson,
+    record.status,
+    record.requiresConfirmation ? 1 : 0,
+    record.threadId || null,
+    record.taskId || null,
+    record.knowledgeSourceIdsJson || null,
+    record.workRef || null,
+    record.followupSuggestionsJson || null,
+    record.deliveredMessageId || null,
+    record.errorText || null,
+    record.createdAt,
+    record.expiresAt,
+    record.updatedAt,
+  );
+}
+
+export function getCompanionHandoff(
+  handoffId: string,
+): CompanionHandoffRecord | undefined {
+  const row = db
+    .prepare(
+      `
+        SELECT *
+        FROM companion_handoffs
+        WHERE handoff_id = ?
+        LIMIT 1
+      `,
+    )
+    .get(handoffId) as
+    | {
+        handoff_id: string;
+        group_folder: string;
+        origin_channel: CompanionHandoffRecord['originChannel'];
+        target_channel: CompanionHandoffRecord['targetChannel'];
+        target_chat_jid: string | null;
+        capability_id: string | null;
+        voice_summary: string;
+        rich_payload_json: string;
+        status: CompanionHandoffRecord['status'];
+        requires_confirmation: number;
+        thread_id: string | null;
+        task_id: string | null;
+        knowledge_source_ids_json: string | null;
+        work_ref: string | null;
+        followup_suggestions_json: string | null;
+        delivered_message_id: string | null;
+        error_text: string | null;
+        created_at: string;
+        expires_at: string;
+        updated_at: string;
+      }
+    | undefined;
+  if (!row) return undefined;
+  if (!isValidGroupFolder(row.group_folder)) return undefined;
+  return {
+    handoffId: row.handoff_id,
+    groupFolder: row.group_folder,
+    originChannel: row.origin_channel,
+    targetChannel: row.target_channel,
+    targetChatJid: row.target_chat_jid,
+    capabilityId: row.capability_id,
+    voiceSummary: row.voice_summary,
+    richPayloadJson: row.rich_payload_json,
+    status: row.status,
+    requiresConfirmation: row.requires_confirmation === 1,
+    threadId: row.thread_id,
+    taskId: row.task_id,
+    knowledgeSourceIdsJson: row.knowledge_source_ids_json,
+    workRef: row.work_ref,
+    followupSuggestionsJson: row.followup_suggestions_json,
+    deliveredMessageId: row.delivered_message_id,
+    errorText: row.error_text,
+    createdAt: row.created_at,
+    expiresAt: row.expires_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export function updateCompanionHandoff(
+  handoffId: string,
+  updates: Partial<
+    Pick<
+      CompanionHandoffRecord,
+      | 'targetChatJid'
+      | 'status'
+      | 'deliveredMessageId'
+      | 'errorText'
+      | 'updatedAt'
+      | 'expiresAt'
+    >
+  >,
+): void {
+  const existing = getCompanionHandoff(handoffId);
+  if (!existing) return;
+  upsertCompanionHandoff({
+    ...existing,
+    targetChatJid:
+      updates.targetChatJid !== undefined
+        ? updates.targetChatJid
+        : existing.targetChatJid,
+    status: updates.status || existing.status,
+    deliveredMessageId:
+      updates.deliveredMessageId !== undefined
+        ? updates.deliveredMessageId
+        : existing.deliveredMessageId,
+    errorText:
+      updates.errorText !== undefined ? updates.errorText : existing.errorText,
+    updatedAt: updates.updatedAt || new Date().toISOString(),
+    expiresAt: updates.expiresAt || existing.expiresAt,
+  });
+}
+
+export function purgeExpiredCompanionHandoffs(
+  now = new Date().toISOString(),
+): number {
+  const result = db
+    .prepare(
+      `
+        UPDATE companion_handoffs
+        SET status = 'expired',
+            updated_at = ?
+        WHERE expires_at <= ?
+          AND status IN ('queued', 'failed')
+      `,
+    )
+    .run(now, now);
   return result.changes;
 }
 

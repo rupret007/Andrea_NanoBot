@@ -248,4 +248,43 @@ describe('assistant capability router', () => {
       continuation: true,
     });
   });
+
+  it('leaves explicit handoff and completion follow-ups to the Alexa action layer', () => {
+    const state: AlexaConversationState = {
+      flowKey: 'daily_loose_ends',
+      subjectKind: 'day_brief',
+      subjectData: {
+        activeCapabilityId: 'daily.loose_ends',
+        lastAnswerSummary: 'Candace still needs a dinner answer.',
+        companionContinuationJson: JSON.stringify({
+          capabilityId: 'daily.loose_ends',
+          voiceSummary: 'Candace still needs a dinner answer.',
+          completionText:
+            'Candace still needs a dinner answer tonight, and pickup works better after rehearsal.',
+        }),
+      },
+      summaryText: 'Candace still needs a dinner answer.',
+      supportedFollowups: ['send_details', 'save_to_library', 'create_reminder'],
+      styleHints: {
+        channelMode: 'alexa_companion',
+        responseSource: 'local_companion',
+      },
+    };
+
+    expect(
+      continueAssistantCapabilityFromAlexaState('send me the details', state),
+    ).toBeNull();
+    expect(
+      continueAssistantCapabilityFromAlexaState(
+        'save that in my library',
+        state,
+      ),
+    ).toBeNull();
+    expect(
+      continueAssistantCapabilityFromAlexaState(
+        'turn that into a reminder tonight',
+        state,
+      ),
+    ).toBeNull();
+  });
 });
