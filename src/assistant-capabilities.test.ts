@@ -79,9 +79,57 @@ describe('assistant capabilities', () => {
       safeForTelegram: true,
       safeForBlueBubbles: true,
     });
+    expect(getAssistantCapability('staff.prioritize')).toMatchObject({
+      category: 'staff',
+      safeForAlexa: true,
+      safeForTelegram: true,
+      safeForBlueBubbles: true,
+    });
     expect(
       getAssistantCapability('media.image_generate')?.availabilityNote,
     ).toContain('Telegram image generation is wired');
+  });
+
+  it('runs chief-of-staff capability execution and carries continuation context forward', async () => {
+    createTask({
+      id: 'task-chief-of-staff',
+      group_folder: 'main',
+      chat_jid: 'tg:8004355504',
+      prompt: 'Reply to Candace about dinner tonight',
+      schedule_type: 'once',
+      schedule_value: '2026-04-05T19:00:00.000Z',
+      context_mode: 'group',
+      next_run: '2026-04-05T19:00:00.000Z',
+      status: 'active',
+      created_at: '2026-04-05T09:00:00.000Z',
+    });
+
+    const result = await executeAssistantCapability({
+      capabilityId: 'staff.prioritize',
+      context: {
+        channel: 'alexa',
+        groupFolder: 'main',
+        selectedWork: {
+          laneLabel: 'Cursor',
+          title: 'Ship docs',
+          statusLabel: 'Running',
+          summary: 'Polish the rollout docs',
+        },
+      },
+      input: {
+        canonicalText: 'what matters most today',
+      },
+    });
+
+    expect(result.handled).toBe(true);
+    expect(result.replyText).toBeTruthy();
+    expect(result.trace?.responseSource).toBe('local_companion');
+    expect(
+      result.conversationSeed?.subjectData?.chiefOfStaffContextJson,
+    ).toBeTruthy();
+    expect(
+      result.continuationCandidate?.chiefOfStaffContextJson,
+    ).toBeTruthy();
   });
 
   it('runs shared daily capability execution against the existing daily companion logic', async () => {

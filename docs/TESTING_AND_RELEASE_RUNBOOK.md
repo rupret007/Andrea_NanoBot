@@ -68,6 +68,13 @@ node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/c
 npm run debug:communication-companion
 ```
 
+For chief-of-staff and decision-engine changes, add:
+
+```bash
+node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/chief-of-staff.test.ts src/assistant-capability-router.test.ts src/assistant-capabilities.test.ts src/daily-companion.test.ts
+npm run debug:chief-of-staff
+```
+
 ## 2. Major Suite
 
 ```bash
@@ -161,6 +168,21 @@ If BlueBubbles is configured on that host, add:
   - `what should I say back`
   - `what do I owe people`
   - `remind me to reply later`
+
+If you are validating chief-of-staff behavior on the live host, add:
+
+- `what matters most today`
+- `what am I forgetting`
+- `what should I remember tonight`
+- `what should I do next`
+- `why are you bringing that up`
+
+Preferred proof shape:
+
+- one concise Alexa chief-of-staff answer
+- one richer Telegram chief-of-staff answer
+- one explainability turn
+- one daily-companion answer that still shows the shared chief-of-staff read
 
 ## 6. Cursor Validation
 

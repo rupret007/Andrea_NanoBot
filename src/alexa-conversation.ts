@@ -39,12 +39,13 @@ export interface AlexaConversationSubjectData {
   knowledgeSourceTitles?: string[];
   knowledgeSourceMatches?: string[];
   knowledgeLastQuery?: string;
-  communicationThreadId?: string;
-  communicationSubjectIds?: string[];
-  communicationLifeThreadIds?: string[];
-  lastCommunicationSummary?: string;
-  companionContinuationJson?: string;
-}
+    communicationThreadId?: string;
+    communicationSubjectIds?: string[];
+    communicationLifeThreadIds?: string[];
+    lastCommunicationSummary?: string;
+    chiefOfStaffContextJson?: string;
+    companionContinuationJson?: string;
+  }
 
 export interface AlexaConversationState {
   flowKey: string;

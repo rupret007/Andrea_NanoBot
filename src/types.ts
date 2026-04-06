@@ -482,6 +482,102 @@ export type CommunicationInferenceState =
 
 export type CommunicationTrackingMode = 'default' | 'manual_only' | 'disabled';
 
+export type ChiefOfStaffScope =
+  | 'personal'
+  | 'household'
+  | 'family'
+  | 'work'
+  | 'mixed';
+
+export type ChiefOfStaffHorizon =
+  | 'today'
+  | 'tonight'
+  | 'tomorrow'
+  | 'this_week'
+  | 'weekend'
+  | 'next_few_days';
+
+export type ChiefOfStaffSignalKind =
+  | 'commitment'
+  | 'waiting_on'
+  | 'open_loop'
+  | 'deadline'
+  | 'pressure_point'
+  | 'slip_risk'
+  | 'prep_needed'
+  | 'opportunity'
+  | 'focus_candidate';
+
+export type ChiefOfStaffRecommendedAction =
+  | 'do_now'
+  | 'prepare'
+  | 'follow_up'
+  | 'remind'
+  | 'delay'
+  | 'delegate'
+  | 'pause'
+  | 'drop'
+  | 'watch';
+
+export type ChiefOfStaffConfidence = 'low' | 'medium' | 'high';
+
+export type ChiefOfStaffSignalStrength = 'low' | 'medium' | 'high';
+
+export interface ChiefOfStaffSignal {
+  kind: ChiefOfStaffSignalKind;
+  title: string;
+  summaryText: string;
+  scope: ChiefOfStaffScope;
+  urgency: ChiefOfStaffSignalStrength;
+  importance: ChiefOfStaffSignalStrength;
+  recommendedAction: ChiefOfStaffRecommendedAction;
+  reasons: string[];
+  dueLabel?: string | null;
+  relatedThreadId?: string | null;
+  relatedCommunicationThreadId?: string | null;
+}
+
+export interface ChiefOfStaffSnapshot {
+  horizon: ChiefOfStaffHorizon;
+  scope: ChiefOfStaffScope;
+  summaryText: string;
+  mainSignal?: ChiefOfStaffSignal | null;
+  supportingSignals: ChiefOfStaffSignal[];
+  bestNextAction?: string | null;
+  prepChecklist: string[];
+  pressurePoints: string[];
+  opportunities: string[];
+  confidence: ChiefOfStaffConfidence;
+  explainabilityLines: string[];
+  signalsUsed: string[];
+  omittedSignals: string[];
+}
+
+export interface ChiefOfStaffPreferences {
+  familyAggressiveness: 'normal' | 'lighter';
+  workSuggestionsEnabled: boolean;
+  toneStyle: 'balanced' | 'direct' | 'calm';
+  mainThingFirst: boolean;
+}
+
+export interface ChiefOfStaffContext {
+  version: 1;
+  mode:
+    | 'prioritize'
+    | 'plan_horizon'
+    | 'prepare'
+    | 'decision_support'
+    | 'explain'
+    | 'configure';
+  snapshot: ChiefOfStaffSnapshot;
+  preferences: ChiefOfStaffPreferences;
+  sessionOverrides?: {
+    suppressWorkSuggestions?: boolean;
+  };
+  focusTopic?: string | null;
+  generatedAt: string;
+}
+
 export interface CommunicationThreadRecord {
   id: string;
   groupFolder: string;
@@ -630,6 +726,7 @@ export interface CompanionContinuationCandidate {
   voiceSummary: string;
   handoffPayload?: CompanionHandoffPayload;
   completionText?: string;
+  chiefOfStaffContextJson?: string;
   threadId?: string;
   threadTitle?: string;
   communicationThreadId?: string;

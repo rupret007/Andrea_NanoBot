@@ -4133,6 +4133,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (!capabilityMatch) {
       return false;
     }
+    const selectedWork = await getSelectedDailyWorkContext(
+      chatJid,
+      missedMessages.at(-1)?.thread_id,
+    );
 
     const result = await executeAssistantCapability({
       capabilityId: capabilityMatch.capabilityId,
@@ -4141,6 +4145,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         groupFolder: group.folder,
         chatJid,
         now,
+        selectedWork,
         conversationSummary: getDailyCompanionContext(chatJid, now)?.summaryText,
         priorCompanionContext: getDailyCompanionContext(chatJid, now),
         replyText: missedMessages.at(-1)?.reply_to?.content,

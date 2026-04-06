@@ -370,6 +370,101 @@ function matchCommunicationPrompt(
   return null;
 }
 
+function matchStaffPrompt(
+  normalized: string,
+): AssistantCapabilityMatch | null {
+  const lower = normalized.toLowerCase();
+  if (
+    /^what matters most today\b/.test(lower) ||
+    /^what matters today\b/.test(lower) ||
+    /^what should i do next\b/.test(lower) ||
+    /^what is slipping\b/.test(lower) ||
+    /^what should i not let slip\b/.test(lower) ||
+    /^summari[sz]e the actions i should take today\b/.test(lower) ||
+    /^what should i handle before tonight\b/.test(lower)
+  ) {
+    return {
+      capabilityId: 'staff.prioritize',
+      normalizedText: normalized,
+      canonicalText: normalized,
+      reason: 'matched chief-of-staff prioritization phrasing',
+    };
+  }
+  if (
+    /^what matters this week\b/.test(lower) ||
+    /^what should i not let slip this week\b/.test(lower) ||
+    /^what('?s| is) the smart plan for tomorrow\b/.test(lower) ||
+    /^what should i line up this weekend\b/.test(lower) ||
+    /^what are the biggest open loops right now\b/.test(lower)
+  ) {
+    return {
+      capabilityId: 'staff.plan_horizon',
+      normalizedText: normalized,
+      canonicalText: normalized,
+      reason: 'matched chief-of-staff horizon planning phrasing',
+    };
+  }
+  if (
+    /^what should i prepare before tonight\b/.test(lower) ||
+    /^what should i remember before i leave\b/.test(lower) ||
+    /^what should i handle before my next meeting\b/.test(lower) ||
+    /^help me prepare for this meeting\b/.test(lower) ||
+    /^what should i do before my next meeting\b/.test(lower) ||
+    /^what do i need before that event\b/.test(lower) ||
+    /^what should i prep for\b/.test(lower) ||
+    /^what do i need before this weekend\b/.test(lower) ||
+    /^what should i have ready for\b/.test(lower)
+  ) {
+    return {
+      capabilityId: 'staff.prepare',
+      normalizedText: normalized,
+      canonicalText: normalized,
+      reason: 'matched chief-of-staff prep phrasing',
+    };
+  }
+  if (
+    /^what('?s| is) the tradeoff here\b/.test(lower) ||
+    /^what('?s| is) the best next move\b/.test(lower) ||
+    /^should i handle this tonight or tomorrow\b/.test(lower) ||
+    /^what('?s| is) the best order to do these things\b/.test(lower) ||
+    /^what should i push off\b/.test(lower) ||
+    /^what should i stop worrying about\b/.test(lower)
+  ) {
+    return {
+      capabilityId: 'staff.decision_support',
+      normalizedText: normalized,
+      canonicalText: normalized,
+      reason: 'matched chief-of-staff decision-support phrasing',
+    };
+  }
+  if (
+    /^why are you prioritizing that\b/.test(lower) ||
+    /^what are you using to decide this\b/.test(lower)
+  ) {
+    return {
+      capabilityId: 'staff.explain',
+      normalizedText: normalized,
+      canonicalText: normalized,
+      reason: 'matched chief-of-staff explainability phrasing',
+    };
+  }
+  if (
+    /^be less aggressive about surfacing family stuff\b/.test(lower) ||
+    /^don'?t suggest work right now\b/.test(lower) ||
+    /^be more direct\b/.test(lower) ||
+    /^be calmer\b/.test(lower) ||
+    /^reset my planning preferences\b/.test(lower)
+  ) {
+    return {
+      capabilityId: 'staff.configure',
+      normalizedText: normalized,
+      canonicalText: normalized,
+      reason: 'matched chief-of-staff configuration phrasing',
+    };
+  }
+  return null;
+}
+
 function matchKnowledgePrompt(
   normalized: string,
 ): AssistantCapabilityMatch | null {
@@ -492,6 +587,7 @@ export function matchAssistantCapabilityRequest(
   if (!normalized) return null;
 
   return (
+    matchStaffPrompt(normalized) ||
     matchDailyPrompt(normalized) ||
     matchHouseholdPrompt(normalized) ||
     matchThreadPrompt(normalized) ||
@@ -548,21 +644,59 @@ export function continueAssistantCapabilityFromAlexaState(
         lower,
       )
   ) {
-      if (
-        activeCapabilityId &&
-        (activeCapabilityId.startsWith('research.') ||
-          activeCapabilityId.startsWith('pulse.') ||
-          activeCapabilityId.startsWith('knowledge.') ||
-          activeCapabilityId.startsWith('communication.'))
-      ) {
-      return {
-        capabilityId: activeCapabilityId,
+        if (
+          activeCapabilityId &&
+          (activeCapabilityId.startsWith('research.') ||
+            activeCapabilityId.startsWith('pulse.') ||
+            activeCapabilityId.startsWith('knowledge.') ||
+            activeCapabilityId.startsWith('communication.'))
+        ) {
+        return {
+          capabilityId: activeCapabilityId,
         normalizedText: normalized,
         canonicalText: normalized,
         reason: 'continuing research capability style or depth follow-up',
         continuation: true,
         };
-      }
+        }
+    }
+
+    if (
+      activeCapabilityId?.startsWith('staff.') &&
+      (/^(what matters today|what should i do next|what is slipping)\b/.test(lower) ||
+        /^say more\b/.test(lower) ||
+        /^make that shorter\b/.test(lower) ||
+        /^shorter\b/.test(lower) ||
+        /^why are you prioritizing that\b/.test(lower) ||
+        /^what are you using to decide this\b/.test(lower) ||
+        /^be less aggressive about surfacing family stuff\b/.test(lower) ||
+        /^don'?t suggest work right now\b/.test(lower) ||
+        /^be more direct\b/.test(lower) ||
+        /^be calmer\b/.test(lower) ||
+        /^reset my planning preferences\b/.test(lower))
+    ) {
+      const nextCapabilityId =
+        /^say more\b/.test(lower) ||
+        /^make that shorter\b/.test(lower) ||
+        /^shorter\b/.test(lower)
+          ? activeCapabilityId
+          : /^why are you prioritizing that\b/.test(lower) ||
+              /^what are you using to decide this\b/.test(lower)
+            ? 'staff.explain'
+            : /^be less aggressive about surfacing family stuff\b/.test(lower) ||
+                /^don'?t suggest work right now\b/.test(lower) ||
+                /^be more direct\b/.test(lower) ||
+                /^be calmer\b/.test(lower) ||
+                /^reset my planning preferences\b/.test(lower)
+              ? 'staff.configure'
+              : 'staff.prioritize';
+      return {
+        capabilityId: nextCapabilityId,
+        normalizedText: normalized,
+        canonicalText: normalized,
+        reason: 'continuing chief-of-staff guidance from the active context',
+        continuation: true,
+      };
     }
 
     if (

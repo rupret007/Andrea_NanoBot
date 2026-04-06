@@ -7,6 +7,7 @@ import {
   type DailyCompanionContext,
   type DailyCompanionResponse,
 } from './daily-companion.js';
+import type { SelectedWorkContext } from './daily-command-center.js';
 import { getAllTasks, listProfileFactsForGroup } from './db.js';
 import {
   buildLifeThreadSnapshot,
@@ -45,10 +46,12 @@ import {
   formatCommunicationOpenLoopsReply,
   manageCommunicationTracking,
 } from './communication-companion.js';
+import { buildChiefOfStaffTurn } from './chief-of-staff.js';
 import type {
   AlexaCompanionGuidanceGoal,
   AlexaConversationFollowupAction,
   AlexaConversationSubjectKind,
+  ChiefOfStaffContext,
   CompanionContinuationCandidate,
   CompanionHandoffPayload,
   CompanionToneProfile,
@@ -90,6 +93,12 @@ export type AssistantCapabilityId =
   | 'communication.draft_reply'
   | 'communication.open_loops'
   | 'communication.manage_tracking'
+  | 'staff.prioritize'
+  | 'staff.plan_horizon'
+  | 'staff.prepare'
+  | 'staff.decision_support'
+  | 'staff.explain'
+  | 'staff.configure'
   | 'research.topic'
   | 'research.compare'
   | 'research.summarize'
@@ -111,6 +120,7 @@ export type AssistantCapabilityCategory =
   | 'rituals'
   | 'knowledge'
   | 'communication'
+  | 'staff'
   | 'research'
   | 'work'
   | 'media';
@@ -133,6 +143,7 @@ export interface AssistantCapabilityContext {
   groupFolder?: string;
   chatJid?: string;
   now?: Date;
+  selectedWork?: SelectedWorkContext | null;
   conversationSummary?: string;
   priorCompanionContext?: DailyCompanionContext | null;
   replyText?: string;
@@ -155,6 +166,7 @@ export interface AssistantCapabilityContext {
     communicationSubjectIds?: string[];
     communicationLifeThreadIds?: string[];
     lastCommunicationSummary?: string;
+    chiefOfStaffContextJson?: string;
     activeCapabilityId?: AssistantCapabilityId;
     companionContinuationJson?: string;
   };
@@ -221,6 +233,7 @@ export interface AssistantCapabilityConversationSeed {
     communicationSubjectIds?: string[];
     communicationLifeThreadIds?: string[];
     lastCommunicationSummary?: string;
+    chiefOfStaffContextJson?: string;
     toneProfile?: CompanionToneProfile;
     companionContinuationJson?: string;
   };
@@ -1345,6 +1358,92 @@ function buildCommunicationConversationSeed(input: {
   };
 }
 
+function buildChiefOfStaffContinuationCandidate(input: {
+  descriptor: AssistantCapabilityDescriptor;
+  summaryText: string;
+  detailText: string;
+  chiefOfStaffContext: ChiefOfStaffContext;
+  threadId?: string;
+  threadTitle?: string;
+  communicationThreadId?: string;
+  communicationSubjectIds?: string[];
+  communicationLifeThreadIds?: string[];
+}): CompanionContinuationCandidate {
+  return {
+    capabilityId: input.descriptor.id,
+    voiceSummary: input.summaryText,
+    handoffPayload: buildCompanionMessagePayload(
+      input.descriptor.label,
+      input.detailText,
+      ['save that for later', 'turn that into a reminder'],
+      `Using ${input.chiefOfStaffContext.snapshot.signalsUsed.join(', ')}`,
+    ),
+    completionText:
+      input.chiefOfStaffContext.snapshot.bestNextAction ||
+      input.summaryText,
+    chiefOfStaffContextJson: JSON.stringify(input.chiefOfStaffContext),
+    threadId: input.threadId,
+    threadTitle: input.threadTitle,
+    communicationThreadId: input.communicationThreadId,
+    communicationSubjectIds: input.communicationSubjectIds,
+    communicationLifeThreadIds: input.communicationLifeThreadIds,
+    followupSuggestions: ['why are you prioritizing that', 'save that for later'],
+  };
+}
+
+function getChiefOfStaffGuidanceGoal(
+  mode:
+    | 'prioritize'
+    | 'plan_horizon'
+    | 'prepare'
+    | 'decision_support'
+    | 'explain'
+    | 'configure',
+): AlexaCompanionGuidanceGoal {
+  switch (mode) {
+    case 'prepare':
+      return 'meeting_prep';
+    case 'decision_support':
+      return 'next_action';
+    case 'explain':
+      return 'explainability';
+    case 'plan_horizon':
+      return 'shared_plans';
+    default:
+      return 'what_matters_most';
+  }
+}
+
+function buildChiefOfStaffConversationSeed(input: {
+  descriptor: AssistantCapabilityDescriptor;
+  summaryText: string;
+  conversationFocus: string;
+  chiefOfStaffContext: ChiefOfStaffContext;
+  continuationCandidate?: CompanionContinuationCandidate;
+  supportedFollowups?: AlexaConversationFollowupAction[];
+}): AssistantCapabilityConversationSeed {
+  return {
+    flowKey: input.descriptor.id.replace(/\./g, '_'),
+    subjectKind: 'general',
+    summaryText: input.summaryText,
+    guidanceGoal: getChiefOfStaffGuidanceGoal(input.chiefOfStaffContext.mode),
+    subjectData: {
+      activeCapabilityId: input.descriptor.id,
+      conversationFocus: input.conversationFocus,
+      lastAnswerSummary: input.summaryText,
+      lastRecommendation:
+        input.chiefOfStaffContext.snapshot.bestNextAction || undefined,
+      chiefOfStaffContextJson: JSON.stringify(input.chiefOfStaffContext),
+      companionContinuationJson: serializeCompanionContinuation(
+        input.continuationCandidate,
+      ),
+      toneProfile: undefined,
+    },
+    supportedFollowups: input.supportedFollowups,
+    responseSource: 'local_companion',
+  };
+}
+
 async function runKnowledgeSaveCapability(
   descriptor: AssistantCapabilityDescriptor,
   context: AssistantCapabilityContext,
@@ -1999,6 +2098,77 @@ async function runCommunicationManageCapability(
       'updated communication tracking state',
     ),
     followupActions: descriptor.followupActions,
+  };
+}
+
+async function runChiefOfStaffCapability(
+  descriptor: AssistantCapabilityDescriptor,
+  context: AssistantCapabilityContext,
+  input: AssistantCapabilityInput,
+  mode:
+    | 'prioritize'
+    | 'plan_horizon'
+    | 'prepare'
+    | 'decision_support'
+    | 'explain'
+    | 'configure',
+): Promise<AssistantCapabilityResult> {
+  if (!context.groupFolder) return { handled: false };
+  const text = input.canonicalText || input.text || '';
+  const tasks = getAllTasks().filter(
+    (task) => task.group_folder === context.groupFolder,
+  );
+  const result = await buildChiefOfStaffTurn({
+    channel: context.channel,
+    groupFolder: context.groupFolder,
+    chatJid: context.chatJid,
+    text,
+    mode,
+    now: context.now,
+    tasks,
+    selectedWork: context.selectedWork || null,
+    priorChiefOfStaffContextJson: context.priorSubjectData?.chiefOfStaffContextJson,
+    priorCommunicationSubjectIds: context.priorSubjectData?.communicationSubjectIds,
+    priorKnowledgeSourceIds: context.priorSubjectData?.knowledgeSourceIds,
+  });
+  const continuationCandidate = buildChiefOfStaffContinuationCandidate({
+    descriptor,
+    summaryText: result.summaryText,
+    detailText: result.detailText,
+    chiefOfStaffContext: result.context,
+    threadId: result.snapshot.mainSignal?.relatedThreadId || undefined,
+    threadTitle: result.snapshot.mainSignal?.title,
+    communicationThreadId:
+      result.snapshot.mainSignal?.relatedCommunicationThreadId || undefined,
+  });
+  const supportedFollowups = extendCompanionFollowups(
+    descriptor.followupActions,
+    continuationCandidate,
+  );
+
+  return {
+    handled: true,
+    capabilityId: descriptor.id,
+    replyText: result.replyText,
+    outputShape: descriptor.preferredOutputShape[context.channel],
+    conversationSeed: buildChiefOfStaffConversationSeed({
+      descriptor,
+      summaryText: result.summaryText,
+      conversationFocus: text || result.summaryText,
+      chiefOfStaffContext: result.context,
+      continuationCandidate,
+      supportedFollowups,
+    }),
+    trace: buildCapabilityTrace(
+      descriptor,
+      context,
+      'local_companion',
+      `handled by chief-of-staff in ${mode} mode`,
+      result.snapshot.signalsUsed,
+    ),
+    followupActions: supportedFollowups,
+    handoffPayload: continuationCandidate.handoffPayload,
+    continuationCandidate,
   };
 }
 
@@ -3353,6 +3523,194 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
           CAPABILITY_DESCRIPTORS[41]!,
           cloneContext(context),
           input,
+        ),
+    },
+    {
+      id: 'staff.prioritize',
+      label: 'Chief-of-Staff Priorities',
+      category: 'staff',
+      requiredInputs: ['text'],
+      optionalInputs: [],
+      requiresLinkedAccount: true,
+      requiresConfirmation: false,
+      safeForAlexa: true,
+      safeForTelegram: true,
+      safeForBlueBubbles: true,
+      operatorOnly: false,
+      preferredOutputShape: {
+        alexa: 'voice_brief',
+        telegram: 'chat_rich',
+        bluebubbles: 'chat_brief',
+      },
+      followupActions: [
+        'anything_else',
+        'shorter',
+        'say_more',
+        'send_details',
+        'save_for_later',
+        'create_reminder',
+      ],
+      handlerKind: 'local',
+      execute: (context, input) =>
+        runChiefOfStaffCapability(
+          CAPABILITY_DESCRIPTORS[42]!,
+          cloneContext(context),
+          input,
+          'prioritize',
+        ),
+    },
+    {
+      id: 'staff.plan_horizon',
+      label: 'Chief-of-Staff Planning',
+      category: 'staff',
+      requiredInputs: ['text'],
+      optionalInputs: [],
+      requiresLinkedAccount: true,
+      requiresConfirmation: false,
+      safeForAlexa: true,
+      safeForTelegram: true,
+      safeForBlueBubbles: true,
+      operatorOnly: false,
+      preferredOutputShape: {
+        alexa: 'voice_brief',
+        telegram: 'chat_rich',
+        bluebubbles: 'chat_brief',
+      },
+      followupActions: [
+        'anything_else',
+        'shorter',
+        'say_more',
+        'send_details',
+        'save_for_later',
+      ],
+      handlerKind: 'local',
+      execute: (context, input) =>
+        runChiefOfStaffCapability(
+          CAPABILITY_DESCRIPTORS[43]!,
+          cloneContext(context),
+          input,
+          'plan_horizon',
+        ),
+    },
+    {
+      id: 'staff.prepare',
+      label: 'Chief-of-Staff Prep',
+      category: 'staff',
+      requiredInputs: ['text'],
+      optionalInputs: [],
+      requiresLinkedAccount: true,
+      requiresConfirmation: false,
+      safeForAlexa: true,
+      safeForTelegram: true,
+      safeForBlueBubbles: true,
+      operatorOnly: false,
+      preferredOutputShape: {
+        alexa: 'voice_brief',
+        telegram: 'chat_rich',
+        bluebubbles: 'chat_brief',
+      },
+      followupActions: [
+        'anything_else',
+        'shorter',
+        'say_more',
+        'send_details',
+        'save_for_later',
+        'create_reminder',
+      ],
+      handlerKind: 'local',
+      execute: (context, input) =>
+        runChiefOfStaffCapability(
+          CAPABILITY_DESCRIPTORS[44]!,
+          cloneContext(context),
+          input,
+          'prepare',
+        ),
+    },
+    {
+      id: 'staff.decision_support',
+      label: 'Chief-of-Staff Decision Support',
+      category: 'staff',
+      requiredInputs: ['text'],
+      optionalInputs: [],
+      requiresLinkedAccount: true,
+      requiresConfirmation: false,
+      safeForAlexa: true,
+      safeForTelegram: true,
+      safeForBlueBubbles: true,
+      operatorOnly: false,
+      preferredOutputShape: {
+        alexa: 'voice_brief',
+        telegram: 'chat_rich',
+        bluebubbles: 'chat_brief',
+      },
+      followupActions: [
+        'anything_else',
+        'shorter',
+        'say_more',
+        'send_details',
+        'save_for_later',
+      ],
+      handlerKind: 'local',
+      execute: (context, input) =>
+        runChiefOfStaffCapability(
+          CAPABILITY_DESCRIPTORS[45]!,
+          cloneContext(context),
+          input,
+          'decision_support',
+        ),
+    },
+    {
+      id: 'staff.explain',
+      label: 'Chief-of-Staff Explain',
+      category: 'staff',
+      requiredInputs: ['text'],
+      optionalInputs: [],
+      requiresLinkedAccount: true,
+      requiresConfirmation: false,
+      safeForAlexa: true,
+      safeForTelegram: true,
+      safeForBlueBubbles: true,
+      operatorOnly: false,
+      preferredOutputShape: {
+        alexa: 'voice_brief',
+        telegram: 'chat_rich',
+        bluebubbles: 'chat_brief',
+      },
+      followupActions: ['anything_else', 'shorter', 'say_more'],
+      handlerKind: 'local',
+      execute: (context, input) =>
+        runChiefOfStaffCapability(
+          CAPABILITY_DESCRIPTORS[46]!,
+          cloneContext(context),
+          input,
+          'explain',
+        ),
+    },
+    {
+      id: 'staff.configure',
+      label: 'Configure Chief-of-Staff',
+      category: 'staff',
+      requiredInputs: ['text'],
+      optionalInputs: [],
+      requiresLinkedAccount: true,
+      requiresConfirmation: false,
+      safeForAlexa: true,
+      safeForTelegram: true,
+      safeForBlueBubbles: true,
+      operatorOnly: false,
+      preferredOutputShape: {
+        alexa: 'voice_brief',
+        telegram: 'chat_brief',
+        bluebubbles: 'chat_brief',
+      },
+      followupActions: ['anything_else', 'say_more'],
+      handlerKind: 'local',
+      execute: (context, input) =>
+        runChiefOfStaffCapability(
+          CAPABILITY_DESCRIPTORS[47]!,
+          cloneContext(context),
+          input,
+          'configure',
         ),
     },
   ];

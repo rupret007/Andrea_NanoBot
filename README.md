@@ -11,12 +11,17 @@
 </p>
 
 <p align="center">
+  Andrea now also has a bounded chief-of-staff layer for priorities, prep, and explainable decision support across Alexa, Telegram, and BlueBubbles.
+</p>
+
+<p align="center">
   <a href="docs/USER_GUIDE.md">User Guide</a>&nbsp; | &nbsp;
   <a href="docs/ADMIN_GUIDE.md">Admin Guide</a>&nbsp; | &nbsp;
   <a href="docs/ANDREA_OPENAI_BACKEND.md">OpenAI Backend</a>&nbsp; | &nbsp;
   <a href="docs/SETUP_AND_FEATURES_GUIDE.md">Setup Guide</a>&nbsp; | &nbsp;
   <a href="docs/KNOWLEDGE_LIBRARY.md">Knowledge Library</a>&nbsp; | &nbsp;
   <a href="docs/COMMUNICATION_COMPANION.md">Communication Companion</a>&nbsp; | &nbsp;
+  <a href="docs/CHIEF_OF_STAFF_MODE.md">Chief-of-Staff Mode</a>&nbsp; | &nbsp;
   <a href="docs/PROACTIVE_RITUALS.md">Proactive Rituals</a>&nbsp; | &nbsp;
   <a href="docs/CROSS_CHANNEL_HANDOFFS.md">Cross-Channel Handoffs</a>&nbsp; | &nbsp;
   <a href="docs/BLUEBUBBLES_CHANNEL_PREP.md">BlueBubbles</a>&nbsp; | &nbsp;

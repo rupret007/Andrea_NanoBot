@@ -65,15 +65,27 @@ Current seeded categories:
   - ritual status
   - ritual control
   - follow-through guidance
-- `knowledge`
-  - save source
-  - list sources
-  - summarize saved material
-  - compare saved sources
-  - explain source usage
-  - disable, delete, and reindex saved sources
-- `research`
-  - research topic
+  - `knowledge`
+    - save source
+    - list sources
+    - summarize saved material
+    - compare saved sources
+    - explain source usage
+    - disable, delete, and reindex saved sources
+  - `communication`
+    - understand message
+    - draft reply
+    - open communication loops
+    - manage communication tracking
+  - `staff`
+    - prioritize
+    - plan horizon
+    - prepare
+    - decision support
+    - explain prioritization
+    - configure planning defaults
+  - `research`
+    - research topic
   - compare options
   - summarize findings
   - recommend best choice
@@ -154,6 +166,7 @@ Instead, they now share the same underlying assistant action when the action is 
 Examples now routed through the shared graph first:
 
 - daily companion prompts
+- chief-of-staff priorities, prep, and planning prompts
 - household-aware prompts
 - ritual inspection and opt-in control
 - follow-through prompts such as `what follow-ups am I carrying right now`
@@ -168,15 +181,40 @@ Channel shaping still happens at the edge:
 - Alexa:
   - one lead sentence
   - one or two short support lines
+  - chief-of-staff reads stay orienting instead of list-heavy
   - optional Telegram handoff when a research answer is too long
 - Telegram:
   - richer text
   - stronger explainability
+  - richer chief-of-staff planning and prep detail
   - operator-only follow-through where appropriate
 - BlueBubbles:
   - concise text-first replies
   - less markdown-heavy than Telegram
+  - safe text-first chief-of-staff parity
   - no operator-only execution controls in this scaffold
+
+## Chief-of-Staff Mode
+
+Andrea now has a dedicated `staff.*` capability family for bounded prioritization, preparation, and decision support.
+
+This layer is request-driven and derived:
+
+- no second planner database
+- no hidden scoring system
+- no autonomous reprioritization
+
+It synthesizes the current read from:
+
+- calendar timing
+- reminders
+- life threads
+- communication loops
+- current work
+- household and profile preferences
+- optional saved material when prep or decision context clearly calls for it
+
+Direct people or reply questions stay on their existing authoritative paths and are fed into chief-of-staff mode as inputs rather than being replaced by it.
 
 ## Cross-Channel Handoffs And Action Completion
 

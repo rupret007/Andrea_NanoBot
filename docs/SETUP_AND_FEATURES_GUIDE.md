@@ -49,6 +49,7 @@ Use these meanings consistently when reading `/cursor_status` and the setup docs
 - A shared assistant capability graph so Telegram and Alexa can call the same daily, household, memory, thread, and research actions safely.
 - A bounded Knowledge Library for explicit saved source material, source-grounded retrieval, and library-first research answers.
 - A bounded communication-companion layer for explicit conversation summaries, reply drafting, and owed-reply guidance.
+- A bounded chief-of-staff and decision layer for priorities, slip-risk reads, prep guidance, and explainable planning.
 - A bounded rituals and follow-through layer for morning, midday, evening, and carryover guidance.
 - A bounded Alexa-to-Telegram cross-channel handoff layer for richer continuations and voice-triggered action completion.
 - A small bounded personality layer plus request-driven Andrea Pulse.
@@ -156,6 +157,7 @@ Research output shape now differs intentionally by channel:
 Helpful operator smoke paths:
 
 - `npm run debug:daily-companion`
+- `npm run debug:chief-of-staff`
 - `npm run debug:alexa-conversation`
 - `npm run debug:shared-capabilities`
 - `npm run debug:research-mode`
@@ -164,6 +166,33 @@ Helpful operator smoke paths:
 - `npm run debug:cross-channel-handoffs`
 
 For the full architecture and the license-safe external patterns behind it, see [ASSISTANT_CAPABILITY_GRAPH.md](ASSISTANT_CAPABILITY_GRAPH.md).
+
+## Chief-of-Staff Mode
+
+Andrea now has a bounded chief-of-staff layer on top of the existing daily companion, life threads, reminders, communication companion, current work, and Knowledge Library.
+
+Use it for:
+
+- what matters most today
+- what should I do next
+- what is slipping
+- what should I prepare before tonight
+- what matters this week
+- why are you prioritizing that
+
+Keep the product model clear:
+
+- chief-of-staff mode is synthesis, not storage
+- life threads stay the ongoing-matters model
+- communication threads stay the people and reply model
+- reminders stay the concrete nudge model
+- rituals stay the timing and surfacing model
+- current work stays the execution-focus model
+
+Alexa uses this layer as a short orientation surface.
+Telegram uses it as the richer planning and decision surface.
+
+See [CHIEF_OF_STAFF_MODE.md](CHIEF_OF_STAFF_MODE.md) for the focused model and limits.
 
 ## Proactive Rituals And Follow-Through
 

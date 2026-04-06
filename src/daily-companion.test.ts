@@ -234,6 +234,36 @@ describe('buildDailyCompanionResponse', () => {
     expect(response?.context.usedThreadTitles).toContain('Candace');
   });
 
+  it('layers chief-of-staff synthesis into loose-ends guidance without replacing the daily renderer', async () => {
+    const fetchImpl = createGoogleCalendarFetchMock({
+      eventsByCalendar: {
+        primary: {
+          items: [],
+        },
+      },
+    });
+
+    const response = await buildDailyCompanionResponse('What am I forgetting?', {
+      channel: 'telegram',
+      groupFolder: 'main',
+      now: new Date('2026-04-04T12:00:00-05:00'),
+      timeZone: 'America/Chicago',
+      env: baseEnv,
+      fetchImpl,
+      selectedWork,
+      tasks: [
+        createReminderTask(
+          'reply to Candace about dinner',
+          '2026-04-04T18:30:00.000Z',
+          'reminder-chief-of-staff',
+        ),
+      ],
+    });
+
+    expect(response?.mode).toBe('open_guidance');
+    expect(response?.signalsUsed).toContain('chief_of_staff');
+  });
+
   it('can include one open communication carryover in daily guidance', async () => {
     analyzeCommunicationMessage({
       channel: 'telegram',

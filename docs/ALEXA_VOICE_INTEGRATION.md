@@ -33,6 +33,9 @@ In practice, that means:
 Examples of shared actions now routed this way:
 
 - `What am I forgetting?`
+- `What matters most today?`
+- `What should I do next?`
+- `What should I prepare before tonight?`
 - `What about Candace?`
 - `What's still open with Candace?`
 - `What should I remember tonight?`
@@ -44,6 +47,32 @@ The shared capability graph does **not** make Alexa and Telegram identical.
 - Alexa stays short, bounded, and voice-safe
 - Telegram stays richer and more explicit
 - operator-only current-work controls remain blocked on Alexa even though they are present in the same registry
+
+## 0B) Chief-of-Staff Orientation
+
+Alexa is now a bounded chief-of-staff orientation surface.
+
+Good Alexa asks in this layer:
+
+- `What matters most today?`
+- `What am I forgetting?`
+- `What should I remember tonight?`
+- `What should I do next?`
+- `What should I prepare before tonight?`
+- `Why are you prioritizing that?`
+
+Expected Alexa behavior:
+
+- one main thing first
+- one or two short support lines
+- explainable reasoning when asked
+- optional Telegram handoff when a richer breakdown is more useful than voice
+
+Important limits:
+
+- no long spoken list of every open loop
+- no hidden reprioritization
+- no work-cockpit controls leaking into Alexa
 
 ## 0) Current Truth
 

@@ -192,45 +192,9 @@ export function planActionLayerIntent(
   const normalized = normalizeVoicePrompt(message);
   if (!normalized) return null;
 
-  if (/^what should i do next\??$/i.test(normalized)) {
-    return {
-      kind: 'what_next',
-      reminderTimeHint: null,
-      explicitRecipient: null,
-      explicitTopic: null,
-    };
-  }
-  if (/^what should i handle before my next meeting\??$/i.test(normalized)) {
-    return {
-      kind: 'before_next_meeting',
-      reminderTimeHint: null,
-      explicitRecipient: null,
-      explicitTopic: null,
-    };
-  }
   if (/^what can i knock out in my next free window\??$/i.test(normalized)) {
     return {
       kind: 'next_free_window',
-      reminderTimeHint: null,
-      explicitRecipient: null,
-      explicitTopic: null,
-    };
-  }
-  if (
-    /^help me prepare for this meeting\??$/i.test(normalized) ||
-    /^what should i do before my next meeting\??$/i.test(normalized) ||
-    /^what do i need before that event\??$/i.test(normalized)
-  ) {
-    return {
-      kind: 'meeting_prep',
-      reminderTimeHint: null,
-      explicitRecipient: null,
-      explicitTopic: null,
-    };
-  }
-  if (/^summarize the actions i should take today\??$/i.test(normalized)) {
-    return {
-      kind: 'summary_today',
       reminderTimeHint: null,
       explicitRecipient: null,
       explicitTopic: null,

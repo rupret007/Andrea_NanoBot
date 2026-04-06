@@ -95,6 +95,29 @@ describe('assistant capability router', () => {
     });
   });
 
+  it('matches chief-of-staff prioritization, prep, decision, and explainability prompts cleanly', () => {
+    expect(
+      matchAssistantCapabilityRequest('What matters most today?'),
+    ).toMatchObject({
+      capabilityId: 'staff.prioritize',
+    });
+    expect(
+      matchAssistantCapabilityRequest('What should I prepare before tonight?'),
+    ).toMatchObject({
+      capabilityId: 'staff.prepare',
+    });
+    expect(
+      matchAssistantCapabilityRequest('Should I handle this tonight or tomorrow?'),
+    ).toMatchObject({
+      capabilityId: 'staff.decision_support',
+    });
+    expect(
+      matchAssistantCapabilityRequest('Why are you prioritizing that?'),
+    ).toMatchObject({
+      capabilityId: 'staff.explain',
+    });
+  });
+
   it('matches ritual status, control, and follow-through prompts cleanly', () => {
     expect(
       matchAssistantCapabilityRequest('What rituals do I have enabled?'),
@@ -237,6 +260,39 @@ describe('assistant capability router', () => {
       ),
     ).toMatchObject({
       capabilityId: 'research.compare',
+      continuation: true,
+    });
+  });
+
+  it('keeps chief-of-staff follow-ups on the active planning capability', () => {
+    const state: AlexaConversationState = {
+      flowKey: 'staff_prioritize',
+      subjectKind: 'general',
+      subjectData: {
+        activeCapabilityId: 'staff.prioritize',
+        lastAnswerSummary: 'Dinner reply and one work pressure are the main things in view.',
+      },
+      summaryText: 'Dinner reply and one work pressure are the main things in view.',
+      supportedFollowups: ['anything_else', 'shorter', 'say_more'],
+      styleHints: {
+        channelMode: 'alexa_companion',
+        responseSource: 'local_companion',
+      },
+    };
+
+    expect(
+      continueAssistantCapabilityFromAlexaState(
+        'why are you prioritizing that',
+        state,
+      ),
+    ).toMatchObject({
+      capabilityId: 'staff.explain',
+      continuation: true,
+    });
+    expect(
+      continueAssistantCapabilityFromAlexaState('be calmer', state),
+    ).toMatchObject({
+      capabilityId: 'staff.configure',
       continuation: true,
     });
   });

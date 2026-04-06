@@ -26,6 +26,7 @@ import {
   findLifeThreadForExplicitLookup,
 } from './life-threads.js';
 import { getCommunicationCarryoverSignal } from './communication-companion.js';
+import { buildChiefOfStaffSnapshot } from './chief-of-staff.js';
 import { getResolvedRitualProfile } from './rituals.js';
 import type {
   AlexaConversationFollowupAction,
@@ -922,12 +923,70 @@ function applyCommunicationCarryover(
       draft.recommendationKind === 'none'
         ? 'do_now'
         : draft.recommendationKind,
-    signalsUsed: [...new Set([...draft.signalsUsed, 'communication_threads'])],
+      signalsUsed: [...new Set([...draft.signalsUsed, 'communication_threads'])],
+    };
+  }
+
+async function applyChiefOfStaffOverlay(params: {
+  draft: CompanionDraft;
+  channel: DailyCompanionChannel;
+  groupFolder?: string;
+  message: string;
+  now: Date;
+  tasks?: DailyCommandCenterDeps['tasks'];
+  groundedSnapshot: GroundedDaySnapshot;
+  threadSnapshot: ReturnType<typeof buildLifeThreadSnapshot>;
+}): Promise<CompanionDraft> {
+  if (!params.groupFolder) return params.draft;
+  const mode =
+    params.draft.mode === 'evening_reset' ? 'plan_horizon' : 'prioritize';
+  const staff = await buildChiefOfStaffSnapshot({
+    channel: params.channel,
+    groupFolder: params.groupFolder,
+    text: params.message,
+    mode,
+    now: params.now,
+    tasks: params.tasks,
+    selectedWork: params.groundedSnapshot.selectedWork,
+    groundedSnapshot: params.groundedSnapshot,
+    lifeThreadSnapshot: params.threadSnapshot,
+  });
+  if (!staff.snapshot.mainSignal && !staff.snapshot.bestNextAction) {
+    return params.draft;
+  }
+  const overlayLine = staff.snapshot.mainSignal
+    ? `Chief-of-staff read: ${staff.snapshot.mainSignal.summaryText}`
+    : null;
+  return {
+    ...params.draft,
+    lead:
+      params.draft.leadReason === 'weak_signal' && staff.snapshot.mainSignal
+        ? staff.snapshot.summaryText
+        : params.draft.lead,
+    leadReason:
+      params.draft.leadReason === 'weak_signal' && staff.snapshot.mainSignal
+        ? 'chief_of_staff'
+        : params.draft.leadReason,
+    detailLines: overlayLine
+      ? [...params.draft.detailLines, overlayLine].slice(0, 5)
+      : params.draft.detailLines,
+    extraDetails: overlayLine
+      ? [...params.draft.extraDetails, overlayLine].slice(0, 4)
+      : params.draft.extraDetails,
+    recommendationText:
+      params.draft.recommendationText || staff.snapshot.bestNextAction || null,
+    signalsUsed: [...new Set([...params.draft.signalsUsed, 'chief_of_staff'])],
+    signalsOmitted: [
+      ...new Set([
+        ...params.draft.signalsOmitted,
+        ...staff.snapshot.omittedSignals,
+      ]),
+    ].slice(0, 5),
   };
 }
-
-function finalizeDraft(
-  draft: CompanionDraft,
+  
+  function finalizeDraft(
+    draft: CompanionDraft,
   channel: DailyCompanionChannel,
   now: Date,
   grounded: GroundedDaySnapshot | null,
@@ -2137,13 +2196,23 @@ export async function buildDailyCompanionResponse(
           })
         : null,
     );
+    const staffedDraft = await applyChiefOfStaffOverlay({
+      draft: communicationDraft,
+      channel: deps.channel,
+      groupFolder: deps.groupFolder,
+      message,
+      now,
+      tasks: deps.tasks,
+      groundedSnapshot: snapshot,
+      threadSnapshot,
+    });
     const ritualizedDraft = ritualProfile
       ? applyRitualProfileToDraft(
-          communicationDraft,
+          staffedDraft,
           ritualProfile,
           deps.channel,
         )
-      : communicationDraft;
+      : staffedDraft;
     const current = finalizeDraft(
       ritualizedDraft,
       deps.channel,
@@ -2213,9 +2282,19 @@ export async function buildDailyCompanionResponse(
         })
       : null,
   );
+  const staffedDraft = await applyChiefOfStaffOverlay({
+    draft: communicationDraft,
+    channel: deps.channel,
+    groupFolder: deps.groupFolder,
+    message,
+    now,
+    tasks: deps.tasks,
+    groundedSnapshot: snapshot,
+    threadSnapshot,
+  });
   const ritualizedDraft = ritualProfile
-    ? applyRitualProfileToDraft(communicationDraft, ritualProfile, deps.channel)
-    : communicationDraft;
+    ? applyRitualProfileToDraft(staffedDraft, ritualProfile, deps.channel)
+    : staffedDraft;
 
   return finalizeDraft(
     ritualizedDraft,

@@ -103,7 +103,7 @@ const baseEnv = {
 };
 
 describe('buildActionLayerResponse', () => {
-  it('gives a grounded next-step reply from selected work and open time', async () => {
+  it('leaves broad next-step planning to the shared chief-of-staff layer', async () => {
     const fetchImpl = createGoogleCalendarFetchMock({
       eventsByCalendar: {
         primary: {
@@ -127,16 +127,10 @@ describe('buildActionLayerResponse', () => {
       selectedWork,
     });
 
-    expect(response.kind).toBe('reply');
-    if (response.kind !== 'reply') return;
-    expect(response.reply).toContain(
-      'Resuming Ship docs is the best grounded next step right now.',
-    );
-    expect(response.actionContext?.sourceKind).toBe('selected_work');
-    expect(response.activeEventContext).toBeNull();
+    expect(response.kind).toBe('none');
   });
 
-  it('answers honestly before the next meeting when work context is weak', async () => {
+  it('leaves before-next-meeting planning to the shared chief-of-staff layer', async () => {
     const fetchImpl = createGoogleCalendarFetchMock({
       eventsByCalendar: {
         primary: {
@@ -162,11 +156,7 @@ describe('buildActionLayerResponse', () => {
       },
     );
 
-    expect(response.kind).toBe('reply');
-    if (response.kind !== 'reply') return;
-    expect(response.reply).toContain('Before Design review, you have');
-    expect(response.reply).toContain('schedule-based guidance only');
-    expect(response.reply).toContain('Design review');
+    expect(response.kind).toBe('none');
   });
 
   it('sizes the next free window as a knock-out block for selected work', async () => {
@@ -202,7 +192,7 @@ describe('buildActionLayerResponse', () => {
     expect(response.reply).toContain('Ship docs');
   });
 
-  it('builds a concise meeting prep reply from the active event context', async () => {
+  it('no longer owns generic meeting prep prompts that are now routed through chief-of-staff', async () => {
     const fetchImpl = createGoogleCalendarFetchMock({
       eventsByCalendar: {
         primary: { items: [] },
@@ -231,11 +221,7 @@ describe('buildActionLayerResponse', () => {
       },
     );
 
-    expect(response.kind).toBe('reply');
-    if (response.kind !== 'reply') return;
-    expect(response.reply).toContain('grounded prep pass');
-    expect(response.reply).toContain('Prep: review the event details');
-    expect(response.activeEventContext?.id).toBe('evt-1');
+    expect(response.kind).toBe('none');
   });
 
   it('asks for a time when turning current work into a reminder', async () => {
@@ -261,7 +247,7 @@ describe('buildActionLayerResponse', () => {
     expect(response.message).toContain('come back to Ship docs');
   });
 
-  it('summarizes action items for today from reminders and work context', async () => {
+  it('leaves broad summarize-my-actions asks to the shared chief-of-staff layer', async () => {
     const fetchImpl = createGoogleCalendarFetchMock({
       eventsByCalendar: {
         primary: {
@@ -291,12 +277,7 @@ describe('buildActionLayerResponse', () => {
       },
     );
 
-    expect(response.kind).toBe('reply');
-    if (response.kind !== 'reply') return;
-    expect(response.reply).toContain('First handle the reminder');
-    expect(response.reply).toContain(
-      'Then use the open block to resume Ship docs',
-    );
+    expect(response.kind).toBe('none');
   });
 
   it('asks who the draft is for instead of inventing a recipient', async () => {
@@ -442,7 +423,7 @@ describe('buildActionLayerResponse', () => {
     expect(response.message).toBe('What task do you mean?');
   });
 
-  it('falls back honestly when there is no strong work or schedule context', async () => {
+  it('stays out of broad next-step asks even when the context is weak', async () => {
     const fetchImpl = createGoogleCalendarFetchMock({
       eventsByCalendar: { primary: { items: [] } },
     });
@@ -454,12 +435,7 @@ describe('buildActionLayerResponse', () => {
       fetchImpl,
     });
 
-    expect(response.kind).toBe('reply');
-    if (response.kind !== 'reply') return;
-    expect(response.reply).toContain(
-      "I don't have enough grounded work context",
-    );
-    expect(response.activeEventContext).toBeNull();
+    expect(response.kind).toBe('none');
   });
   it('reuses a communication draft context when turning it into a reminder later', async () => {
     const fetchImpl = createGoogleCalendarFetchMock({
