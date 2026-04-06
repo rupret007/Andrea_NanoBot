@@ -8,6 +8,7 @@ import {
 import { logger } from './logger.js';
 import {
   describeOpenAiConfigBlocker,
+  describeOpenAiProviderFailure,
   getOpenAiProviderStatus,
   resolveOpenAiProviderConfig,
 } from './openai-provider.js';
@@ -117,13 +118,18 @@ function buildRouteExplanation(
     providerUsed?: ResearchResult['providerUsed'];
     openAiBlocked?: string;
     openAiFailed?: boolean;
+    usedLocalFallback?: boolean;
   } = {},
 ): string {
   if (options.openAiBlocked) {
-    return `This looked like a web-backed research question, but Andrea's OpenAI research path is blocked because ${options.openAiBlocked.toLowerCase()} I fell back to grounded local context where I could.`;
+    return options.usedLocalFallback
+      ? `This looked like a web-backed research question, but Andrea's OpenAI research path is blocked because ${options.openAiBlocked.toLowerCase()} I fell back to grounded local context where I could.`
+      : `This looked like a web-backed research question, but Andrea's OpenAI research path is blocked because ${options.openAiBlocked.toLowerCase()}`;
   }
   if (options.openAiFailed) {
-    return 'This looked like a web-backed research question, but the live model call failed, so I fell back to grounded local context where possible.';
+    return options.usedLocalFallback
+      ? 'This looked like a web-backed research question, but the live model call failed, so I fell back to grounded local context where possible.'
+      : 'This looked like a web-backed research question, but the live model call failed before Andrea could produce a trustworthy answer.';
   }
   if (plan.primarySource === 'runtime_delegate') {
     return 'This request belongs on the runtime or operator lane because it is execution-heavy.';
@@ -139,6 +145,11 @@ function buildRouteExplanation(
   return plan.sources.localContext
     ? 'I used Andrea local context because this sounded personal and grounded in your existing threads, tasks, reminders, or calendar.'
     : 'I stayed with the shared research layer without bringing in external tools.';
+}
+
+interface OpenAiResearchProviderFailure {
+  providerFailure: string;
+  debugPath: string[];
 }
 
 function buildResearchText(
@@ -201,7 +212,7 @@ function buildResearchBlockerResult(
 ): ResearchResult {
   const summaryText =
     request.channel === 'alexa'
-      ? 'I cannot do that live yet because my web-backed research path is not configured here.'
+      ? 'I cannot do that live right now because my web-backed research path is unavailable here.'
       : `I cannot do that live yet because ${blocker}`;
   return {
     handled: true,
@@ -583,7 +594,7 @@ async function runOpenAiResearch(
   request: ResearchRequest,
   plan: ResearchPlan,
   context: LocalResearchContext,
-): Promise<ResearchResult | null> {
+): Promise<ResearchResult | OpenAiResearchProviderFailure | null> {
   const openAi = resolveOpenAiProviderConfig();
   if (!openAi) return null;
 
@@ -650,6 +661,11 @@ async function runOpenAiResearch(
     const requestId = response.headers.get('x-request-id') || undefined;
     if (!response.ok) {
       const text = await response.text();
+      const providerFailure = describeOpenAiProviderFailure(
+        response.status,
+        text,
+        'research',
+      );
       logger.warn(
         {
           status: response.status,
@@ -658,7 +674,16 @@ async function runOpenAiResearch(
         },
         'Research orchestrator OpenAI call failed',
       );
-      return null;
+      return {
+        providerFailure,
+        debugPath: [
+          `plan.primary=${plan.primarySource}`,
+          'openai.failed=true',
+          `provider_failure=${providerFailure}`,
+          response.status ? `status=${response.status}` : 'status=unknown',
+          requestId ? `request_id=${requestId}` : 'request_id=missing',
+        ],
+      };
     }
     const payload = (await response.json()) as unknown;
     const output = extractResponseOutputText(payload);
@@ -731,7 +756,14 @@ async function runOpenAiResearch(
     };
   } catch (err) {
     logger.warn({ err }, 'Research orchestrator OpenAI request errored');
-    return null;
+    return {
+      providerFailure: 'The live OpenAI research request errored before Andrea could produce a trustworthy answer.',
+      debugPath: [
+        `plan.primary=${plan.primarySource}`,
+        'openai.failed=true',
+        'request_exception=true',
+      ],
+    };
   }
 }
 
@@ -773,45 +805,59 @@ export async function runResearchOrchestrator(
     const openAiStatus = getOpenAiProviderStatus();
     if (!openAiStatus.configured) {
       const blocker = describeOpenAiConfigBlocker(openAiStatus.missing);
-      const localFallback = summarizeLocalResearch(request, context, plan, {
-        routeExplanation: buildRouteExplanation(plan, { openAiBlocked: blocker }),
-        debugPath: [
-          `plan.primary=${plan.primarySource}`,
-          `openai.blocked=${openAiStatus.missing.join(',') || 'unknown'}`,
-          'fallback=local_context',
-        ],
-        sourceNotes: [`OpenAI unavailable: ${blocker}`],
-      });
-      return localFallback.handled
-        ? localFallback
-        : buildResearchBlockerResult(request, plan, blocker, [
+      if (plan.sources.localContext) {
+        const localFallback = summarizeLocalResearch(request, context, plan, {
+          routeExplanation: buildRouteExplanation(plan, {
+            openAiBlocked: blocker,
+            usedLocalFallback: true,
+          }),
+          debugPath: [
             `plan.primary=${plan.primarySource}`,
             `openai.blocked=${openAiStatus.missing.join(',') || 'unknown'}`,
-          ]);
+            'fallback=local_context',
+          ],
+          sourceNotes: [`OpenAI unavailable: ${blocker}`],
+        });
+        if (localFallback.handled) {
+          return localFallback;
+        }
+      }
+
+      return buildResearchBlockerResult(request, plan, blocker, [
+        `plan.primary=${plan.primarySource}`,
+        `openai.blocked=${openAiStatus.missing.join(',') || 'unknown'}`,
+      ]);
     }
 
     const openAiResult = await runOpenAiResearch(request, plan, context);
-    if (openAiResult) {
+    if (openAiResult && !('providerFailure' in openAiResult)) {
       return openAiResult;
     }
 
-    const localFallback = summarizeLocalResearch(request, context, plan, {
-      routeExplanation: buildRouteExplanation(plan, { openAiFailed: true }),
-      debugPath: [
-        `plan.primary=${plan.primarySource}`,
-        'openai.failed=true',
-        'fallback=local_context',
-      ],
-      sourceNotes: ['OpenAI request failed; using local context fallback'],
-    });
-    return localFallback.handled
-      ? localFallback
-      : buildResearchBlockerResult(
-          request,
-          plan,
-          'the live OpenAI research request failed and there was no strong local fallback',
-          [`plan.primary=${plan.primarySource}`, 'openai.failed=true'],
-        );
+    const providerFailure =
+      openAiResult && 'providerFailure' in openAiResult
+        ? openAiResult.providerFailure
+        : 'the live OpenAI research request failed and there was no strong local fallback';
+    const providerDebugPath =
+      openAiResult && 'providerFailure' in openAiResult
+        ? openAiResult.debugPath
+        : [`plan.primary=${plan.primarySource}`, 'openai.failed=true'];
+
+    if (plan.sources.localContext) {
+      const localFallback = summarizeLocalResearch(request, context, plan, {
+        routeExplanation: buildRouteExplanation(plan, {
+          openAiFailed: true,
+          usedLocalFallback: true,
+        }),
+        debugPath: [...providerDebugPath, 'fallback=local_context'],
+        sourceNotes: [`OpenAI request failed: ${providerFailure}`],
+      });
+      if (localFallback.handled) {
+        return localFallback;
+      }
+    }
+
+    return buildResearchBlockerResult(request, plan, providerFailure, providerDebugPath);
   }
 
   return summarizeLocalResearch(request, context, plan, {

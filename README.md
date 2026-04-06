@@ -218,7 +218,7 @@ Andrea now has a shared assistant capability graph so Alexa and Telegram feel li
 - operator-only current-work controls stay out of Alexa even though they live in the same registry
 - bounded research now returns a summary first, structured findings, route explanation, and exact blocker truth when web-backed OpenAI research is unavailable
 - bounded research can use local context, optional OpenAI-backed synthesis with `web_search` when configured, and runtime delegation only when the request is clearly execution-heavy
-- Telegram image generation is now wired through the shared media capability when OpenAI credentials are present; Alexa keeps media at the handoff layer
+- Telegram image generation is now wired through the shared media capability when OpenAI credentials are present and the provider account is usable; Alexa keeps media at the handoff layer
 
 See [docs/ASSISTANT_CAPABILITY_GRAPH.md](docs/ASSISTANT_CAPABILITY_GRAPH.md) for the descriptor model, safety rules, research provider boundaries, and license-safe pattern sources.
 

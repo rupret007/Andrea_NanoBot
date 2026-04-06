@@ -128,7 +128,7 @@ Current media truth:
 
 - image generation, image editing, and video generation are now capability-gated
 - Telegram now has a bounded outbound media-delivery primitive for shared capabilities
-- `media.image_generate` is wired for Telegram when OpenAI credentials are configured
+- `media.image_generate` is wired for Telegram when OpenAI credentials are configured and the provider account is usable
 - Alexa keeps image generation at the request-and-deliver handoff layer
 - `media.image_edit` and `media.video_generate` remain prepared-only
 - if OpenAI is not configured, Andrea now reports the exact blocker honestly instead of pretending the provider is live

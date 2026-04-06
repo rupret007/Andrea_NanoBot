@@ -182,7 +182,7 @@ Then it chooses a primary source:
   - accepted memory facts
   - optional calendar signal
 - `openai_responses`
-  - only when concrete OpenAI credentials are present
+  - only when concrete OpenAI credentials are present and the provider account is usable
   - optional web-backed synthesis when the question is outward-facing or comparative
 - `runtime_delegate`
   - only for execution-heavy or operator-like requests that belong on the runtime lane

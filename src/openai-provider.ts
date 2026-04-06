@@ -84,3 +84,41 @@ export function describeOpenAiConfigBlocker(missing: string[]): string {
   }
   return `${missing.join(', ')} are not configured.`;
 }
+
+export function describeOpenAiProviderFailure(
+  status: number,
+  body: string,
+  surface: 'research' | 'image',
+): string {
+  const normalized = body.toLowerCase();
+  const subject =
+    surface === 'image'
+      ? 'the OpenAI image account on this machine'
+      : "Andrea's OpenAI research path on this machine";
+
+  if (
+    normalized.includes('insufficient_quota') ||
+    normalized.includes('billing_hard_limit_reached') ||
+    normalized.includes('billing_limit_user_error') ||
+    normalized.includes('quota') ||
+    normalized.includes('billing hard limit')
+  ) {
+    return `${subject} has hit a quota or billing limit.`;
+  }
+
+  if (
+    status === 401 ||
+    normalized.includes('invalid_api_key') ||
+    normalized.includes('incorrect api key')
+  ) {
+    return `${subject} rejected the configured API key.`;
+  }
+
+  if (status === 403) {
+    return `${subject} was denied by the provider.`;
+  }
+
+  return surface === 'image'
+    ? 'The image provider rejected the live generation request.'
+    : 'The live OpenAI research request failed at the provider.';
+}

@@ -280,7 +280,7 @@ Expect:
 
 Important truth:
 
-- OpenAI-backed research is only live when `OPENAI_API_KEY` is configured
+- OpenAI-backed research is only live when `OPENAI_API_KEY` is configured and the provider account has usable quota/billing
 - `web_search` is in scope for research; file search is not promised unless separate file-search plumbing is added
 - Telegram is the rich research and media surface
 - Alexa should stay concise and use handoffs when the result is too long or not voice-safe
@@ -307,7 +307,7 @@ Use this when the shared assistant core changes:
    - Telegram gets the richer research shape
    - `work.current_logs` remains blocked on Alexa and allowed only on the Telegram/operator side
 
-If `OPENAI_API_KEY` is configured, a comparative or outward-facing research prompt may use the OpenAI Responses path. If it is not configured, the shared research proof should still pass through grounded local context when available.
+If `OPENAI_API_KEY` is configured and the provider account is usable, a comparative or outward-facing research prompt may use the OpenAI Responses path. If it is missing or the provider account is quota-blocked, the shared research proof should report that blocker honestly instead of pretending the external answer is live.
 9. optional linked `what should I remember tonight`
 10. confirm `alexa_last_signed_request_type=IntentRequest`, a resolved `groupFolder`, and `responseSource=local_companion`
     - if the launch works but follow-ups fall into generic fallback, treat that as a likely stale live model first

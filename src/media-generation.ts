@@ -5,6 +5,7 @@ import type {
 } from './types.js';
 import {
   describeOpenAiConfigBlocker,
+  describeOpenAiProviderFailure,
   getOpenAiProviderStatus,
   resolveOpenAiProviderConfig,
 } from './openai-provider.js';
@@ -106,6 +107,11 @@ export async function runImageGeneration(
     const requestId = response.headers.get('x-request-id') || undefined;
     if (!response.ok) {
       const errorText = await response.text();
+      const providerFailure = describeOpenAiProviderFailure(
+        response.status,
+        errorText,
+        'image',
+      );
       logger.warn(
         {
           status: response.status,
@@ -117,7 +123,7 @@ export async function runImageGeneration(
       return buildUnavailableResult(
         request,
         status,
-        'The image provider is configured, but the generation request failed just now.',
+        providerFailure,
         [
           `media.image_generate:provider_error:${response.status}`,
           requestId ? `request_id:${requestId}` : 'request_id:missing',

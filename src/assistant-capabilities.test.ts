@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   executeAssistantCapability,
@@ -7,9 +7,16 @@ import {
 } from './assistant-capabilities.js';
 import { createTask, _initTestDatabase } from './db.js';
 
+const originalFetch = globalThis.fetch;
+
 describe('assistant capabilities', () => {
   beforeEach(() => {
     _initTestDatabase();
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
   });
 
   it('registers shared daily, research, work, and media capabilities with safety metadata', () => {
@@ -155,7 +162,23 @@ describe('assistant capabilities', () => {
     expect(alexa.researchResult?.routeExplanation).toContain('local context');
   });
 
-  it('keeps media image generation explicit and reports the config blocker honestly', async () => {
+  it('keeps media image generation explicit and reports provider unavailability honestly', async () => {
+    globalThis.fetch = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          error: {
+            message: 'Billing hard limit has been reached.',
+            type: 'billing_limit_user_error',
+            code: 'billing_hard_limit_reached',
+          },
+        }),
+        {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      );
+    }) as typeof fetch;
+
     const result = await executeAssistantCapability({
       capabilityId: 'media.image_generate',
       context: {
@@ -170,7 +193,7 @@ describe('assistant capabilities', () => {
 
     expect(result.handled).toBe(true);
     expect(result.mediaResult?.providerStatus.provider).toBe('openai_images');
-    expect(result.replyText).toContain('OPENAI_API_KEY');
+    expect(result.replyText).toContain('quota or billing limit');
     expect(result.trace?.responseSource).toBe('unavailable');
   });
 });

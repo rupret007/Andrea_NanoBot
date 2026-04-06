@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createTask, _initTestDatabase } from './db.js';
 import { handleLifeThreadCommand } from './life-threads.js';
+import * as openAiProvider from './openai-provider.js';
 import {
   planResearchRequest,
   runResearchOrchestrator,
@@ -17,6 +18,7 @@ describe('research orchestrator', () => {
     delete process.env.OPENAI_API_KEY;
     delete process.env.OPENAI_BASE_URL;
     globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
   });
 
   afterEach(() => {
@@ -84,6 +86,14 @@ describe('research orchestrator', () => {
   });
 
   it('returns an exact blocker when an OpenAI-style research question has no configured provider or local fallback', async () => {
+    vi.spyOn(openAiProvider, 'getOpenAiProviderStatus').mockReturnValue({
+      configured: false,
+      missing: ['OPENAI_API_KEY'],
+      baseUrl: 'https://api.openai.com/v1',
+      researchModel: 'gpt-5.4',
+      imageModel: 'gpt-image-1',
+    });
+
     const result = await runResearchOrchestrator({
       query: 'Compare the best standing desks for a small apartment',
       channel: 'telegram',
@@ -132,5 +142,38 @@ describe('research orchestrator', () => {
     expect(result.summaryText).toContain('The strongest option');
     expect(result.routeExplanation).toContain('OpenAI-backed');
     expect(result.structuredFindings[0]?.items[0]).toContain('Lower cost');
+  });
+
+  it('returns an exact provider blocker instead of unrelated local context when OpenAI fails for an external prompt', async () => {
+    process.env.OPENAI_API_KEY = 'test-key';
+    process.env.OPENAI_BASE_URL = 'https://example.test/v1';
+    globalThis.fetch = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          error: {
+            message: 'You exceeded your current quota, please check your plan and billing details.',
+            type: 'insufficient_quota',
+            code: 'insufficient_quota',
+          },
+        }),
+        {
+          status: 429,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      );
+    }) as typeof fetch;
+
+    const result = await runResearchOrchestrator({
+      query: 'Compare the Kindle Paperwhite and Kobo Clara Colour for someone who reads at night and cares about battery life.',
+      channel: 'telegram',
+      groupFolder: 'main',
+      now: new Date('2026-04-05T11:00:00.000Z'),
+    });
+
+    expect(result.providerUsed).toBeUndefined();
+    expect(result.summaryText).toContain('quota or billing limit');
+    expect(result.routeExplanation).toContain('blocked because');
+    expect(result.debugPath).toContain('openai.failed=true');
+    expect(result.fullText).not.toContain('Band');
   });
 });

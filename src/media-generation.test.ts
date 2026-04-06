@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { getMediaProviderStatus, runImageGeneration } from './media-generation.js';
+import * as openAiProvider from './openai-provider.js';
 
 const originalFetch = globalThis.fetch;
 const originalApiKey = process.env.OPENAI_API_KEY;
@@ -13,6 +14,7 @@ describe('media generation', () => {
     delete process.env.OPENAI_BASE_URL;
     delete process.env.OPENAI_IMAGE_MODEL;
     globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
   });
 
   afterEach(() => {
@@ -23,6 +25,15 @@ describe('media generation', () => {
   });
 
   it('reports the exact config blocker when OpenAI image generation is not configured', async () => {
+    vi.spyOn(openAiProvider, 'getOpenAiProviderStatus').mockReturnValue({
+      configured: false,
+      missing: ['OPENAI_API_KEY'],
+      baseUrl: 'https://api.openai.com/v1',
+      researchModel: 'gpt-5.4',
+      imageModel: 'gpt-image-1',
+    });
+    vi.spyOn(openAiProvider, 'resolveOpenAiProviderConfig').mockReturnValue(null);
+
     const status = getMediaProviderStatus();
     const result = await runImageGeneration({
       prompt: 'a watercolor lake at sunrise',
@@ -73,5 +84,37 @@ describe('media generation', () => {
     expect(result.providerUsed).toBe('openai_images');
     expect(result.artifact?.filename).toBe('andrea-generated-image.png');
     expect(result.debugPath).toContain('request_id:req_image_test');
+  });
+
+  it('surfaces a quota or billing blocker honestly when the provider rejects the image request', async () => {
+    process.env.OPENAI_API_KEY = 'test-key';
+    process.env.OPENAI_BASE_URL = 'https://example.test/v1';
+    globalThis.fetch = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          error: {
+            message: 'Billing hard limit has been reached.',
+            type: 'billing_limit_user_error',
+            code: 'billing_hard_limit_reached',
+          },
+        }),
+        {
+          status: 400,
+          headers: {
+            'Content-Type': 'application/json',
+            'x-request-id': 'req_image_limit',
+          },
+        },
+      );
+    }) as typeof fetch;
+
+    const result = await runImageGeneration({
+      prompt: 'a watercolor lake at sunrise',
+      channel: 'telegram',
+    });
+
+    expect(result.replyText).toContain('quota or billing limit');
+    expect(result.debugPath).toContain('request_id:req_image_limit');
+    expect(result.artifact).toBeUndefined();
   });
 });
