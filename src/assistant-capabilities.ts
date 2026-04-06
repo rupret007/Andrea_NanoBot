@@ -128,6 +128,8 @@ export interface AssistantCapabilityContext {
     lastAnswerSummary?: string;
     lastRecommendation?: string;
     conversationFocus?: string;
+    threadTitle?: string;
+    personName?: string;
     researchRouteExplanation?: string;
     researchProviderUsed?: ResearchResult['providerUsed'];
     saveForLaterCandidate?: string;
@@ -342,6 +344,8 @@ function extendCompanionFollowups(
     next.add('save_to_library');
     next.add('track_thread');
     next.add('create_reminder');
+    next.add('save_for_later');
+    next.add('draft_follow_up');
   }
   return [...next];
 }

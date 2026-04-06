@@ -264,7 +264,13 @@ describe('assistant capability router', () => {
         }),
       },
       summaryText: 'Candace still needs a dinner answer.',
-      supportedFollowups: ['send_details', 'save_to_library', 'create_reminder'],
+      supportedFollowups: [
+        'send_details',
+        'save_to_library',
+        'create_reminder',
+        'save_for_later',
+        'draft_follow_up',
+      ],
       styleHints: {
         channelMode: 'alexa_companion',
         responseSource: 'local_companion',
@@ -285,6 +291,12 @@ describe('assistant capability router', () => {
         'turn that into a reminder tonight',
         state,
       ),
+    ).toBeNull();
+    expect(
+      continueAssistantCapabilityFromAlexaState('save that for later', state),
+    ).toBeNull();
+    expect(
+      continueAssistantCapabilityFromAlexaState('draft that for me', state),
     ).toBeNull();
   });
 });

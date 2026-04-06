@@ -139,6 +139,8 @@ describe('assistant capabilities', () => {
         'save_to_library',
         'track_thread',
         'create_reminder',
+        'save_for_later',
+        'draft_follow_up',
       ]),
     );
     expect(result.continuationCandidate?.handoffPayload?.kind).toBe('message');
@@ -233,6 +235,8 @@ describe('assistant capabilities', () => {
         'save_to_library',
         'track_thread',
         'create_reminder',
+        'save_for_later',
+        'draft_follow_up',
       ]),
     );
     expect(alexa.handoffPayload?.kind).toBe('message');

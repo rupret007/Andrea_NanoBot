@@ -319,12 +319,21 @@ Current action-completion phrases:
 
 - `send me the details`
 - `also send it to Telegram`
+- `send me the full comparison`
+- `give me the deeper comparison in Telegram`
+- `save that for later`
+- `remember that for later`
 - `save that in my library`
 - `track that under Candace`
+- `keep track of that for tonight`
+- `draft that for me`
+- `draft a message about that`
 - `turn that into a reminder`
 
 The richer continuation stays on Telegram.
 Alexa remains the orientation and summary surface.
+
+The important closeout change is that `save for later` and `draft follow-up` no longer rely only on older Alexa-specific capture flows. When Alexa already has usable continuation context, those phrases now go through the same shared action-completion layer as `send details`, `save to library`, `track thread`, and `create reminder`.
 
 ## 5A) Research In Alexa
 

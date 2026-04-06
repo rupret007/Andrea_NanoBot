@@ -139,4 +139,88 @@ describe('assistant action completion', () => {
       true,
     );
   });
+
+  it('routes save-for-later follow-ups through the shared bridge-backed path', async () => {
+    const result = await completeAssistantActionFromAlexa(
+      {
+        groupFolder: 'main',
+        action: 'save_for_later',
+        utterance: 'save that for later',
+        conversationSummary: 'Candace dinner follow-up.',
+        priorSubjectData: {
+          companionContinuationJson: JSON.stringify({
+            capabilityId: 'daily.loose_ends',
+            voiceSummary: 'Candace still needs a dinner answer tonight.',
+            completionText:
+              'Candace still needs a dinner answer tonight, and pickup works better after rehearsal.',
+          }),
+        },
+      },
+      {},
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.bridgeSaveForLaterText).toContain(
+      'pickup works better after rehearsal',
+    );
+  });
+
+  it('turns keep-track-tonight follow-ups into bounded evening carryover', async () => {
+    const result = await completeAssistantActionFromAlexa(
+      {
+        groupFolder: 'main',
+        action: 'save_for_later',
+        utterance: 'keep track of that for tonight',
+        conversationSummary: 'Candace dinner follow-up.',
+        priorSubjectData: {
+          threadTitle: 'Candace',
+          companionContinuationJson: JSON.stringify({
+            capabilityId: 'daily.loose_ends',
+            voiceSummary: 'Candace still needs a dinner answer tonight.',
+            completionText:
+              'Candace still needs a dinner answer tonight, and pickup works better after rehearsal.',
+            threadTitle: 'Candace',
+          }),
+        },
+        now: new Date('2026-04-03T14:00:00Z'),
+      },
+      {},
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.replyText).toContain('evening reset');
+    expect(listLifeThreadsForGroup('main', ['active'])).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          title: 'Candace',
+          followthroughMode: 'important_only',
+        }),
+      ]),
+    );
+  });
+
+  it('prepares a draft-follow-up bridge request from prior Alexa context', async () => {
+    const result = await completeAssistantActionFromAlexa(
+      {
+        groupFolder: 'main',
+        action: 'draft_follow_up',
+        utterance: 'draft that for me',
+        conversationSummary: 'Candace dinner follow-up.',
+        priorSubjectData: {
+          threadTitle: 'Candace',
+          companionContinuationJson: JSON.stringify({
+            capabilityId: 'daily.loose_ends',
+            voiceSummary: 'Candace still needs a dinner answer tonight.',
+            completionText:
+              'Candace still needs a dinner answer tonight, and pickup works better after rehearsal.',
+            threadTitle: 'Candace',
+          }),
+        },
+      },
+      {},
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.bridgeDraftReference).toBe('Candace');
+  });
 });

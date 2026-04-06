@@ -502,7 +502,7 @@ export function continueAssistantCapabilityFromAlexaState(
   }
 
   if (
-    /^(send (?:me )?(?:the )?(?:details|full version)(?: to telegram)?|send (?:that|it) to telegram|also send (?:that|it) to telegram|save (?:that|it|this) (?:in|to) my library|save (?:that|it|this) to the library|track (?:that|it|this)(?: under .+)?|keep track of (?:that|it|this)(?: under .+)?|turn (?:that|it|this) into a reminder|remind me about (?:that|it|this))\b/.test(
+    /^(send (?:me )?(?:the )?(?:details|full version|full comparison)(?: to telegram)?|send (?:that|it) to telegram|also send (?:that|it) to telegram|give me the deeper comparison in telegram|save (?:that|it|this) (?:in|to) my library|save (?:that|it|this) to the library|save (?:that|it|this) for later|remember (?:that|it|this) for later|track (?:that|it|this)(?: under .+)?|keep track of (?:that|it|this)(?: under .+| for tonight)?|turn (?:that|it|this) into a reminder|remind me about (?:that|it|this)|draft that for me|draft a message about (?:that|it|this))\b/.test(
       lower,
     )
   ) {

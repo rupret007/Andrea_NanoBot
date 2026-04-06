@@ -100,10 +100,12 @@ describe('alexa conversation state', () => {
         'after_that',
         'remind_before_that',
         'save_that',
+        'save_for_later',
         'send_details',
         'save_to_library',
         'track_thread',
         'create_reminder',
+        'draft_follow_up',
         'action_guidance',
         'risk_check',
         'memory_control',
@@ -124,7 +126,16 @@ describe('alexa conversation state', () => {
       resolveAlexaConversationFollowup('remember that', state),
     ).toMatchObject({ ok: true, action: 'save_that' });
     expect(
+      resolveAlexaConversationFollowup('save that for later', state),
+    ).toMatchObject({ ok: true, action: 'save_for_later' });
+    expect(
       resolveAlexaConversationFollowup('send me the details', state),
+    ).toMatchObject({ ok: true, action: 'send_details' });
+    expect(
+      resolveAlexaConversationFollowup(
+        'give me the deeper comparison in Telegram',
+        state,
+      ),
     ).toMatchObject({ ok: true, action: 'send_details' });
     expect(
       resolveAlexaConversationFollowup('save that in my library', state),
@@ -135,6 +146,15 @@ describe('alexa conversation state', () => {
     expect(
       resolveAlexaConversationFollowup('turn that into a reminder tonight', state),
     ).toMatchObject({ ok: true, action: 'create_reminder' });
+    expect(
+      resolveAlexaConversationFollowup('keep track of that for tonight', state),
+    ).toMatchObject({ ok: true, action: 'save_for_later' });
+    expect(
+      resolveAlexaConversationFollowup('draft that for me', state),
+    ).toMatchObject({ ok: true, action: 'draft_follow_up' });
+    expect(
+      resolveAlexaConversationFollowup('draft a message about that', state),
+    ).toMatchObject({ ok: true, action: 'draft_follow_up' });
     expect(
       resolveAlexaConversationFollowup('remind me before that', state),
     ).toMatchObject({ ok: true, action: 'remind_before_that' });

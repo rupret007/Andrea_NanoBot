@@ -305,7 +305,9 @@ export type AlexaConversationFollowupAction =
   | 'send_details'
   | 'save_to_library'
   | 'track_thread'
-  | 'create_reminder';
+  | 'create_reminder'
+  | 'save_for_later'
+  | 'draft_follow_up';
 
 export type CompanionToneProfile = 'plain' | 'balanced' | 'warmer';
 

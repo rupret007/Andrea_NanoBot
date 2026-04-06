@@ -6,9 +6,9 @@ import { seedConfiguredAlexaLinkedAccount } from '../src/alexa-identity.js';
 import {
   getCompanionHandoff,
   getTaskById,
-  initDatabase,
   listKnowledgeSourcesForGroup,
   setRegisteredGroup,
+  _initTestDatabase,
 } from '../src/db.js';
 import { saveKnowledgeSource } from '../src/knowledge-library.js';
 import type {
@@ -26,7 +26,7 @@ function printBlock(title: string, lines: string[]): void {
 }
 
 async function main(): Promise<void> {
-  initDatabase();
+  _initTestDatabase();
   const groupFolder = 'handoff-debug';
   const chatJid = 'tg:handoff-debug';
 

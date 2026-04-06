@@ -26,9 +26,16 @@ Current voice-triggered completion actions:
 
 - `send me the details`
 - `send the full version to Telegram`
+- `send me the full comparison`
+- `give me the deeper comparison in Telegram`
 - `also send it to Telegram`
+- `save that for later`
+- `remember that for later`
 - `save that in my library`
 - `track that under Candace`
+- `keep track of that for tonight`
+- `draft that for me`
+- `draft a message about that`
 - `turn that into a reminder`
 - `make that part of my evening reset`
 
@@ -82,6 +89,8 @@ Typical phrases:
 - `Want the fuller version in Telegram?`
 - `I can send the details to Telegram.`
 - `I can save that for tonight if you want.`
+- `I can save that for later.`
+- `I can draft that for you.`
 - `I can keep track of that under the Candace thread.`
 
 Telegram then receives the richer continuation:
@@ -135,6 +144,8 @@ That harness proves:
 - one reminder completion
 
 The output prints the final handoff status, target chat, and delivered text or artifact receipt.
+
+The harness now seeds an isolated test database for each run so repeated proof passes do not accumulate duplicate saved-source output.
 
 ## Intentional Limits
 

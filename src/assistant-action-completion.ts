@@ -38,6 +38,8 @@ export interface AssistantActionCompletionResult {
   ritualResult?: RitualCommandResult;
   reminderTaskId?: string;
   handoffResult?: DeliverCompanionHandoffResult;
+  bridgeSaveForLaterText?: string;
+  bridgeDraftReference?: string;
 }
 
 function parseContinuationCandidate(
@@ -89,6 +91,125 @@ function extractReminderTiming(utterance: string): string | undefined {
   if (!normalized) return undefined;
   if (normalized === 'tonight') return 'today evening';
   return normalized;
+}
+
+function clipReference(value: string, max = 80): string {
+  const normalized = value.trim().replace(/\s+/g, ' ');
+  if (normalized.length <= max) return normalized;
+  return `${normalized.slice(0, max - 3).trimEnd()}...`;
+}
+
+function hasTonightCarryoverIntent(utterance: string): boolean {
+  return /\b(for tonight|tonight|this evening)\b/i.test(utterance);
+}
+
+function resolveThreadHint(
+  params: AssistantActionCompletionParams,
+  candidate: CompanionContinuationCandidate | undefined,
+): string | undefined {
+  return (
+    extractTrackThreadTitle(params.utterance, candidate) ||
+    candidate?.threadTitle?.trim() ||
+    params.priorSubjectData?.threadTitle?.trim() ||
+    params.priorSubjectData?.personName?.trim() ||
+    undefined
+  );
+}
+
+function resolveDraftReference(
+  params: AssistantActionCompletionParams,
+  candidate: CompanionContinuationCandidate | undefined,
+  completionText: string,
+): string | undefined {
+  const aboutMatch = params.utterance.match(
+    /\bdraft (?:a message|that|it|this) about (.+?)[.!?]*$/i,
+  )?.[1];
+  if (aboutMatch?.trim()) return clipReference(aboutMatch);
+
+  const forMatch = params.utterance.match(
+    /\bdraft (?:that|it|this|a follow up) for (.+?)[.!?]*$/i,
+  )?.[1];
+  if (forMatch?.trim() && !/^me$/i.test(forMatch.trim())) {
+    return clipReference(forMatch);
+  }
+
+  return (
+    candidate?.threadTitle?.trim() ||
+    params.priorSubjectData?.threadTitle?.trim() ||
+    params.priorSubjectData?.personName?.trim() ||
+    params.conversationSummary?.trim() ||
+    candidate?.voiceSummary?.trim() ||
+    (completionText ? clipReference(completionText) : undefined)
+  );
+}
+
+function completeEveningCarryover(
+  params: AssistantActionCompletionParams,
+  candidate: CompanionContinuationCandidate | undefined,
+  completionText: string,
+): AssistantActionCompletionResult {
+  const now = params.now;
+  const threadTitle = resolveThreadHint(params, candidate);
+  if (threadTitle) {
+    const lifeThreadResult = handleLifeThreadCommand({
+      groupFolder: params.groupFolder,
+      channel: 'alexa',
+      text: `track this under ${threadTitle} thread`,
+      replyText: completionText,
+      conversationSummary: params.conversationSummary,
+      now,
+    });
+    if (lifeThreadResult.handled && lifeThreadResult.referencedThread) {
+      const ritualResult = handleRitualCommand({
+        groupFolder: params.groupFolder,
+        channel: 'alexa',
+        text: 'make this part of my evening reset',
+        replyText: completionText,
+        conversationSummary: params.conversationSummary,
+        priorContext: {
+          usedThreadIds: [lifeThreadResult.referencedThread.id],
+        },
+        now,
+      });
+      if (ritualResult.handled) {
+        return {
+          handled: true,
+          replyText:
+            ritualResult.responseText ||
+            lifeThreadResult.responseText ||
+            'Okay.',
+          lifeThreadResult,
+          ritualResult,
+        };
+      }
+      return {
+        handled: true,
+        replyText: lifeThreadResult.responseText || 'Okay.',
+        lifeThreadResult,
+      };
+    }
+  }
+
+  const savedThread = handleLifeThreadCommand({
+    groupFolder: params.groupFolder,
+    channel: 'alexa',
+    text: "don't let me forget this tonight",
+    replyText: completionText,
+    conversationSummary: params.conversationSummary,
+    now,
+  });
+  if (savedThread.handled) {
+    return {
+      handled: true,
+      replyText: savedThread.responseText || 'Okay.',
+      lifeThreadResult: savedThread,
+    };
+  }
+
+  return {
+    handled: true,
+    replyText: 'Tell me what you want me to keep in view tonight first.',
+  };
 }
 
 async function deliverCandidateToTelegram(
@@ -251,6 +372,22 @@ export async function completeAssistantActionFromAlexa(
     };
   }
 
+  if (params.action === 'save_for_later') {
+    if (!completionText) {
+      return {
+        handled: true,
+        replyText: 'Tell me what you want saved first.',
+      };
+    }
+    if (hasTonightCarryoverIntent(params.utterance)) {
+      return completeEveningCarryover(params, candidate, completionText);
+    }
+    return {
+      handled: true,
+      bridgeSaveForLaterText: completionText,
+    };
+  }
+
   if (params.action === 'track_thread') {
     if (!completionText) {
       return {
@@ -274,6 +411,24 @@ export async function completeAssistantActionFromAlexa(
       handled: true,
       replyText: result.responseText || 'Okay.',
       lifeThreadResult: result,
+    };
+  }
+
+  if (params.action === 'draft_follow_up') {
+    const draftReference = resolveDraftReference(
+      params,
+      candidate,
+      completionText,
+    );
+    if (!draftReference) {
+      return {
+        handled: true,
+        replyText: 'Tell me what you want me to draft first.',
+      };
+    }
+    return {
+      handled: true,
+      bridgeDraftReference: draftReference,
     };
   }
 

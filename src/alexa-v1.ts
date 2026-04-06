@@ -132,8 +132,10 @@ export function buildAlexaConversationalFollowupPrompt(
     case 'remind_before_that':
       return `Set a reminder before the meeting or event described here: ${summary}. Confirm briefly once it is saved.${SPOKEN_STYLE_SUFFIX}`;
     case 'save_that':
+    case 'save_for_later':
       return `Save the key follow-through item from this context for later: ${summary}. Confirm briefly once it is captured.${SPOKEN_STYLE_SUFFIX}`;
     case 'draft_followup':
+    case 'draft_follow_up':
       return `Draft a short follow-up for the meeting or topic described here: ${summary}. Keep it concise and spoken.${SPOKEN_STYLE_SUFFIX}`;
     case 'action_guidance':
       return `Based on this context: ${summary}. Tell me the most useful thing to do about that next. If a short follow-up or message would help, say so briefly.${SPOKEN_STYLE_SUFFIX}`;

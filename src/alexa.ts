@@ -107,7 +107,10 @@ import {
 import { logger } from './logger.js';
 import { formatOutbound } from './router.js';
 import { handleRitualCommand } from './rituals.js';
-import { type AlexaCompanionGuidanceGoal } from './types.js';
+import {
+  type AlexaCompanionGuidanceGoal,
+  type CompanionContinuationCandidate,
+} from './types.js';
 import { getUserFacingErrorDetail } from './user-facing-error.js';
 import { normalizeVoicePrompt } from './voice-ready.js';
 import type { CompanionHandoffDeps } from './cross-channel-handoffs.js';
@@ -1119,7 +1122,10 @@ function buildAlexaContextualFallbackPhrases(
     state.styleHints.prioritizationLens === 'evening'
   ) {
     phrases.push('ask what you should remember tonight');
-  } else if (state.supportedFollowups.includes('save_that')) {
+  } else if (
+    state.supportedFollowups.includes('save_that') ||
+    state.supportedFollowups.includes('save_for_later')
+  ) {
     phrases.push('say save that for later');
   } else if (state.supportedFollowups.includes('anything_else')) {
     phrases.push('say anything else');
@@ -1753,8 +1759,129 @@ export function createAlexaSkill(
       .getResponse();
   };
 
+  const runDraftFollowUpCompletion = async (
+    handlerInput: HandlerInput,
+    authorization: { principal: AlexaPrincipal },
+    linked: Extract<ReturnType<typeof resolveAlexaLinkedAccount>, { ok: true }>,
+    draftReference: string,
+    conversationState?: AlexaConversationState,
+  ) => {
+    try {
+      const utterance = buildAlexaPersonalPrompt(ALEXA_DRAFT_FOLLOW_UP_INTENT, {
+        meetingReference: draftReference,
+      });
+      const result = await runAlexaAssistantTurn(
+        {
+          utterance,
+          principal: {
+            ...authorization.principal,
+            displayName: linked.account.displayName,
+          },
+          promptContext: conversationState
+            ? {
+                conversationSummary: conversationState.summaryText,
+                conversationSubjectKind: conversationState.subjectKind,
+                supportedFollowups: conversationState.supportedFollowups,
+                channelMode:
+                  conversationState.styleHints.channelMode || 'alexa_companion',
+                guidanceGoal: conversationState.styleHints.guidanceGoal,
+                initiativeLevel:
+                  conversationState.styleHints.initiativeLevel || 'measured',
+              }
+            : undefined,
+        },
+        {
+          assistantName,
+          targetGroupFolder: linked.account.groupFolder,
+          requireExistingTargetGroup: true,
+        },
+      );
+      const speech =
+        shapeAlexaSpeech(result.text) ||
+        `${assistantName} is thinking, but the answer came back empty. Please try again.`;
+      const summaryText =
+        speech.split(/(?<=[.!?])\s+/)[0]?.trim() ||
+        `Drafted a follow-up for ${draftReference}.`;
+      const continuationCandidate: CompanionContinuationCandidate = {
+        capabilityId: 'followthrough.draft_follow_up',
+        voiceSummary: summaryText,
+        completionText: result.text,
+        handoffPayload: {
+          kind: 'message',
+          title: 'Draft follow-up',
+          text: result.text,
+          followupSuggestions: ['I can send the full draft to Telegram if you want.'],
+        },
+        threadId: conversationState?.subjectData.threadId,
+        threadTitle: conversationState?.subjectData.threadTitle,
+        knowledgeSourceIds: conversationState?.subjectData.knowledgeSourceIds,
+        knowledgeSourceTitles:
+          conversationState?.subjectData.knowledgeSourceTitles,
+        followupSuggestions: ['I can send the full draft to Telegram if you want.'],
+      };
+
+      saveAlexaConversationState(
+        linked.principalKey,
+        linked.account.accessTokenHash,
+        linked.account.groupFolder,
+        buildAlexaCompanionConversationState({
+          flowKey: 'draft_follow_up',
+          subjectKind: 'draft',
+          summaryText,
+          guidanceGoal: 'action_follow_through',
+          subjectData: {
+            ...(conversationState?.subjectData || {}),
+            fallbackCount: 0,
+            meetingReference: draftReference,
+            lastAnswerSummary: summaryText,
+            pendingActionText: result.text,
+            companionContinuationJson: JSON.stringify(continuationCandidate),
+          },
+          supportedFollowups: [
+            'anything_else',
+            'shorter',
+            'say_more',
+            'send_details',
+            'save_to_library',
+            'save_for_later',
+            'create_reminder',
+            'memory_control',
+          ],
+          prioritizationLens:
+            conversationState?.styleHints.prioritizationLens || 'work',
+          hasActionItem: true,
+          responseSource: 'assistant_bridge',
+        }),
+      );
+
+      recordHandledRequest(handlerInput.requestEnvelope, {
+        responseSource: 'bridge',
+        linked: true,
+        groupFolder: linked.account.groupFolder,
+      });
+      return handlerInput.responseBuilder
+        .speak(speech)
+        .reprompt(DEFAULT_ALEXA_REPROMPT)
+        .getResponse();
+    } catch (err) {
+      if (err instanceof AlexaTargetGroupMissingError) {
+        recordHandledRequest(handlerInput.requestEnvelope, {
+          responseSource: 'barrier',
+          linked: true,
+          groupFolder: err.groupFolder,
+        });
+        return buildBarrierResponse(
+          handlerInput,
+          buildSetupBarrier(assistantName, err.groupFolder),
+        );
+      }
+      throw err;
+    }
+  };
+
   const runCompanionActionCompletion = async (
     handlerInput: HandlerInput,
+    authorization: { principal: AlexaPrincipal },
     linked: Extract<ReturnType<typeof resolveAlexaLinkedAccount>, { ok: true }>,
     action: import('./types.js').AlexaConversationFollowupAction,
     utterance: string,
@@ -1780,6 +1907,57 @@ export function createAlexaSkill(
     );
     if (!result.handled) {
       return null;
+    }
+
+    if (result.bridgeSaveForLaterText) {
+      return runLinkedAlexaTurn(
+        handlerInput,
+        config,
+        assistantName,
+        authorization.principal,
+        linked,
+        buildAlexaPersonalPrompt(ALEXA_SAVE_FOR_LATER_INTENT, {
+          captureText: result.bridgeSaveForLaterText,
+        }),
+        {
+          conversationState: buildAlexaCompanionConversationState({
+            flowKey: 'save_for_later',
+            subjectKind: 'saved_item',
+            summaryText: result.bridgeSaveForLaterText,
+            guidanceGoal: 'action_follow_through',
+            subjectData: {
+              ...(conversationState?.subjectData || {}),
+              savedText: result.bridgeSaveForLaterText,
+              lastAnswerSummary: result.bridgeSaveForLaterText,
+              pendingActionText: result.bridgeSaveForLaterText,
+            },
+            supportedFollowups: [
+              'anything_else',
+              'shorter',
+              'say_more',
+              'send_details',
+              'save_to_library',
+              'track_thread',
+              'create_reminder',
+              'memory_control',
+            ],
+            prioritizationLens:
+              conversationState?.styleHints.prioritizationLens || 'general',
+            hasActionItem: true,
+            responseSource: 'local_companion',
+          }),
+        },
+      );
+    }
+
+    if (result.bridgeDraftReference) {
+      return runDraftFollowUpCompletion(
+        handlerInput,
+        authorization,
+        linked,
+        result.bridgeDraftReference,
+        conversationState,
+      );
     }
 
     if (result.capabilityResult?.conversationSeed) {
@@ -2469,11 +2647,14 @@ export function createAlexaSkill(
           (earlyResolution.action === 'send_details' ||
             earlyResolution.action === 'save_to_library' ||
             earlyResolution.action === 'track_thread' ||
-            earlyResolution.action === 'create_reminder')
+            earlyResolution.action === 'create_reminder' ||
+            earlyResolution.action === 'save_for_later' ||
+            earlyResolution.action === 'draft_follow_up')
         ) {
           return (
             (await runCompanionActionCompletion(
               handlerInput,
+              authorization,
               linked,
               earlyResolution.action,
               followupText,
@@ -2599,11 +2780,14 @@ export function createAlexaSkill(
           resolution.action === 'send_details' ||
           resolution.action === 'save_to_library' ||
           resolution.action === 'track_thread' ||
-          resolution.action === 'create_reminder'
+          resolution.action === 'create_reminder' ||
+          resolution.action === 'save_for_later' ||
+          resolution.action === 'draft_follow_up'
         ) {
           return (
             (await runCompanionActionCompletion(
               handlerInput,
+              authorization,
               linked,
               resolution.action,
               followupText,
@@ -3144,6 +3328,7 @@ export function createAlexaSkill(
       if (pending.pendingKind === 'confirm_companion_completion') {
         const completionResponse = await runCompanionActionCompletion(
           handlerInput,
+          authorization,
           linked,
           (payload.action as import('./types.js').AlexaConversationFollowupAction) ||
             'send_details',

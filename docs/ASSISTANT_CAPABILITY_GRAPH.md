@@ -195,8 +195,11 @@ High-value handoff targets in this pass:
 
 Voice-triggered completion flows reuse existing systems instead of inventing new ones:
 
+- `save that for later` / `remember that for later` -> shared continuation -> existing follow-through persistence
 - `save that in my library` -> `knowledge.save_source`
 - `track that under Candace` -> life threads
+- `keep track of that for tonight` -> thread tracking plus bounded evening follow-through
+- `draft that for me` / `draft a message about that` -> shared continuation -> existing draft follow-up path
 - `turn that into a reminder` -> reminders
 - `make that part of my evening reset` -> rituals
 

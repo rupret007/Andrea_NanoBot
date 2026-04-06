@@ -82,6 +82,8 @@ const COMPANION_COMPLETION_ACTIONS: AlexaConversationFollowupAction[] = [
   'save_to_library',
   'track_thread',
   'create_reminder',
+  'save_for_later',
+  'draft_follow_up',
 ];
 
 function parseJsonSafe<T>(value: string, fallback: T): T {
@@ -233,11 +235,18 @@ export function resolveAlexaConversationFollowup(
     return resolveSupported('remind_before_that');
   }
   if (
-    /^(send (?:me )?(?:the )?(?:details|full version)(?: to telegram)?|send (?:that|it) to telegram|also send (?:that|it) to telegram)\b/i.test(
+    /^(send (?:me )?(?:the )?(?:details|full version|full comparison)(?: to telegram)?|send (?:that|it) to telegram|also send (?:that|it) to telegram|give me the deeper comparison in telegram)\b/i.test(
       normalized,
     )
   ) {
     return resolveSupported('send_details');
+  }
+  if (
+    /^(save (?:that|it|this) for later|remember (?:that|it|this) for later|keep track of (?:that|it|this) for tonight)\b/i.test(
+      normalized,
+    )
+  ) {
+    return resolveSupported('save_for_later');
   }
   if (
     /^(save (?:that|it|this) (?:in|to) my library|save (?:that|it|this) to the library)\b/i.test(
@@ -282,19 +291,20 @@ export function resolveAlexaConversationFollowup(
     return resolveSupported('risk_check');
   }
   if (
-    /^(draft a follow up for this meeting|draft a follow up)\b/i.test(
+    /^(draft that for me|draft a message about (?:that|it|this)|draft a follow up for this meeting|draft a follow up)\b/i.test(
       normalized,
     )
   ) {
-    return resolveSupported('draft_followup');
+    return resolveSupported('draft_follow_up');
   }
   if (
     /^(what should i message someone about|what should i follow up about)\b/i.test(
       normalized,
     )
   ) {
-    return supported.has('draft_followup')
-      ? resolveSupported('draft_followup')
+    return supported.has('draft_follow_up') ||
+      supported.has('draft_followup')
+      ? resolveSupported('draft_follow_up')
       : resolveSupported('action_guidance');
   }
   if (
