@@ -53,7 +53,8 @@
     "debug:daily-companion": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-daily-companion.ts",
     "debug:alexa-conversation": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-alexa-conversation.ts",
     "debug:shared-capabilities": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-shared-capabilities.ts",
-    "debug:research-mode": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-research-mode.ts"
+    "debug:research-mode": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-research-mode.ts",
+    "debug:knowledge-library": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-knowledge-library.ts"
   },
   "dependencies": {
     "@onecli-sh/sdk": "^0.2.0",

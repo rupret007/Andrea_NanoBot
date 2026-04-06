@@ -32,6 +32,13 @@ export interface AlexaConversationSubjectData {
   conversationFocus?: string;
   activeCapabilityId?: AssistantCapabilityId;
   researchHandoffEligible?: boolean;
+  researchRouteExplanation?: string;
+  researchProviderUsed?: import('./research-orchestrator.js').ResearchProviderUsed;
+  saveForLaterCandidate?: string;
+  knowledgeSourceIds?: string[];
+  knowledgeSourceTitles?: string[];
+  knowledgeSourceMatches?: string[];
+  knowledgeLastQuery?: string;
 }
 
 export interface AlexaConversationState {
@@ -171,10 +178,9 @@ export function resolveAlexaConversationFollowup(
       ? { ok: true, action, text: nextText }
       : {
           ok: false,
-          speech:
-            state.subjectData.personName
-              ? `I am not quite sure which part you mean. Was that still about ${state.subjectData.personName}, or something else?`
-              : 'I am not quite sure which part you mean yet. Please say it a little more directly.',
+          speech: state.subjectData.personName
+            ? `I am not quite sure which part you mean. Was that still about ${state.subjectData.personName}, or something else?`
+            : 'I am not quite sure which part you mean yet. Please say it a little more directly.',
         };
 
   if (/^(anything else|anything more|what else)\b/i.test(normalized)) {
@@ -225,13 +231,25 @@ export function resolveAlexaConversationFollowup(
   ) {
     return resolveSupported('action_guidance');
   }
-  if (/^(should i be worried about anything|is there anything i should worry about)\b/i.test(normalized)) {
+  if (
+    /^(should i be worried about anything|is there anything i should worry about)\b/i.test(
+      normalized,
+    )
+  ) {
     return resolveSupported('risk_check');
   }
-  if (/^(draft a follow up for this meeting|draft a follow up)\b/i.test(normalized)) {
+  if (
+    /^(draft a follow up for this meeting|draft a follow up)\b/i.test(
+      normalized,
+    )
+  ) {
     return resolveSupported('draft_followup');
   }
-  if (/^(what should i message someone about|what should i follow up about)\b/i.test(normalized)) {
+  if (
+    /^(what should i message someone about|what should i follow up about)\b/i.test(
+      normalized,
+    )
+  ) {
     return supported.has('draft_followup')
       ? resolveSupported('draft_followup')
       : resolveSupported('action_guidance');
@@ -252,9 +270,8 @@ export function resolveAlexaConversationFollowup(
 
   return {
     ok: false,
-    speech:
-      state.subjectData.personName
-        ? `I am not quite sure which part you mean. You can ask what is still open with ${state.subjectData.personName}, say more, or ask it a different way.`
-        : 'I did not quite get that follow-up. You can say anything else, say more, or ask it a different way.',
+    speech: state.subjectData.personName
+      ? `I am not quite sure which part you mean. You can ask what is still open with ${state.subjectData.personName}, say more, or ask it a different way.`
+      : 'I did not quite get that follow-up. You can say anything else, say more, or ask it a different way.',
   };
 }

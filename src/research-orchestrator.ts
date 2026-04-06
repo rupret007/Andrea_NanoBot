@@ -1,5 +1,9 @@
 import { TIMEZONE } from './config.js';
 import { getAllTasks, listProfileFactsForGroup } from './db.js';
+import {
+  searchKnowledgeLibrary,
+  type KnowledgeSearchResult,
+} from './knowledge-library.js';
 import { buildLifeThreadSnapshot } from './life-threads.js';
 import {
   listGoogleCalendarEvents,
@@ -22,8 +26,15 @@ export type ResearchRequestKind =
 
 export type ResearchSourceName =
   | 'local_context'
+  | 'knowledge_library'
   | 'openai_responses'
   | 'runtime_delegate';
+
+export type ResearchProviderUsed =
+  | 'local_context'
+  | 'knowledge_library'
+  | 'openai_responses'
+  | 'hybrid';
 
 export interface ResearchRequest {
   query: string;
@@ -35,10 +46,13 @@ export interface ResearchRequest {
   requestedDepth?: 'brief' | 'standard' | 'deep';
   comparisonTargets?: string[];
   allowWebSearch?: boolean;
+  savedMaterialMode?: 'auto' | 'only' | 'prefer' | 'combine';
+  requestedSourceIds?: string[];
 }
 
 export interface ResearchSourceSet {
   localContext: boolean;
+  knowledgeLibrary: boolean;
   openAiResponses: boolean;
   runtimeDelegate: boolean;
   webSearch: boolean;
@@ -63,6 +77,17 @@ export interface ResearchFindingSection {
   items: string[];
 }
 
+export interface ResearchSupportingSource {
+  origin: 'knowledge_library' | 'local_context' | 'outside_research';
+  title: string;
+  sourceId?: string;
+  sourceType?: string;
+  scope?: string;
+  excerpt?: string;
+  retrievalScore?: number;
+  matchReason?: string;
+}
+
 export interface ResearchResult {
   handled: boolean;
   kind: ResearchRequestKind;
@@ -72,13 +97,14 @@ export interface ResearchResult {
   fullText?: string;
   sourceNotes: string[];
   handoffOption?: ResearchHandoffOption;
-  providerUsed?: 'local_context' | 'openai_responses' | 'hybrid';
+  providerUsed?: ResearchProviderUsed;
   routeExplanation: string;
   structuredFindings: ResearchFindingSection[];
   followupSuggestions: string[];
   saveForLaterCandidate?: string;
   debugPath: string[];
   recommendationText?: string;
+  supportingSources?: ResearchSupportingSource[];
 }
 
 interface LocalResearchContext {
@@ -88,12 +114,24 @@ interface LocalResearchContext {
   memoryLines: string[];
 }
 
+interface KnowledgeResearchContext {
+  search: KnowledgeSearchResult;
+  contextBlock: string;
+  supportingSources: ResearchSupportingSource[];
+}
+
 const EXTERNAL_FACT_RE =
   /\b(compare|best|which|option|options|versus|vs\.?|tradeoffs?|pros and cons|pros|cons|research|look into|report back|summarize|summarise|explain|deciding|before deciding)\b/i;
 const PERSONAL_CONTEXT_RE =
   /\b(my|me|for me|using my context|my context|candace|family|household|calendar|reminder|thread|tonight|today|tomorrow|home)\b/i;
 const CODE_HEAVY_RE =
   /\b(repo|repository|code|branch|commit|runtime|shell|container|logs?|cursor|operator|work cockpit)\b/i;
+const SAVED_MATERIAL_RE =
+  /\b(saved notes?|saved material|saved sources?|my docs|my documents|my files|my library|my notes|what did i save|already know about|what have i saved|use only my saved material|combine my notes with outside research)\b/i;
+const SAVED_ONLY_RE =
+  /\b(use only my saved material|only my saved material|what do my saved notes say|what did i save about|summari[sz]e what i saved|what do i already know about|what have i saved)\b/i;
+const SAVED_COMBINE_RE =
+  /\b(combine my notes with outside research|combine my saved material with general knowledge|use my saved material with outside research)\b/i;
 
 function normalizeQuery(value: string): string {
   return normalizeVoicePrompt(value).replace(/\s+/g, ' ').trim();
@@ -102,7 +140,10 @@ function normalizeQuery(value: string): string {
 function buildDefaultFollowups(kind: ResearchRequestKind): string[] {
   switch (kind) {
     case 'compare':
-      return ['Want the tradeoffs in one line?', 'Want me to save this for later?'];
+      return [
+        'Want the tradeoffs in one line?',
+        'Want me to save this for later?',
+      ];
     case 'recommend':
       return ['Want the tradeoffs behind that?', 'Want a shorter version?'];
     case 'deep_research':
@@ -112,6 +153,34 @@ function buildDefaultFollowups(kind: ResearchRequestKind): string[] {
   }
 }
 
+function resolveSavedMaterialMode(
+  request: ResearchRequest,
+  normalizedQuery: string,
+): NonNullable<ResearchRequest['savedMaterialMode']> {
+  if (request.savedMaterialMode) {
+    return request.savedMaterialMode;
+  }
+  if (SAVED_COMBINE_RE.test(normalizedQuery)) {
+    return 'combine';
+  }
+  if (SAVED_ONLY_RE.test(normalizedQuery)) {
+    return 'only';
+  }
+  if (SAVED_MATERIAL_RE.test(normalizedQuery)) {
+    return 'prefer';
+  }
+  return 'auto';
+}
+
+function buildKnowledgeSourceNotes(
+  supportingSources: ResearchSupportingSource[],
+): string[] {
+  return supportingSources
+    .map((source) => source.title)
+    .filter(Boolean)
+    .slice(0, 4);
+}
+
 function buildRouteExplanation(
   plan: ResearchPlan,
   options: {
@@ -119,20 +188,45 @@ function buildRouteExplanation(
     openAiBlocked?: string;
     openAiFailed?: boolean;
     usedLocalFallback?: boolean;
+    knowledgeSummary?: string;
+    knowledgeCount?: number;
   } = {},
 ): string {
   if (options.openAiBlocked) {
+    if (plan.primarySource === 'knowledge_library') {
+      return options.knowledgeCount
+        ? `I started from your saved material because you asked for grounded source use, but the outside research step is blocked because ${options.openAiBlocked.toLowerCase()} I stayed with your saved material only.`
+        : `You asked for saved material plus outside research, but the outside research step is blocked because ${options.openAiBlocked.toLowerCase()}`;
+    }
     return options.usedLocalFallback
       ? `This looked like a web-backed research question, but Andrea's OpenAI research path is blocked because ${options.openAiBlocked.toLowerCase()} I fell back to grounded local context where I could.`
       : `This looked like a web-backed research question, but Andrea's OpenAI research path is blocked because ${options.openAiBlocked.toLowerCase()}`;
   }
   if (options.openAiFailed) {
+    if (plan.primarySource === 'knowledge_library') {
+      return options.knowledgeCount
+        ? 'I started from your saved material, but the outside research call failed, so I stayed with your saved sources only.'
+        : 'I tried to combine your saved material with outside research, but the outside research call failed before Andrea could add a trustworthy broader answer.';
+    }
     return options.usedLocalFallback
       ? 'This looked like a web-backed research question, but the live model call failed, so I fell back to grounded local context where possible.'
       : 'This looked like a web-backed research question, but the live model call failed before Andrea could produce a trustworthy answer.';
   }
   if (plan.primarySource === 'runtime_delegate') {
     return 'This request belongs on the runtime or operator lane because it is execution-heavy.';
+  }
+  if (plan.primarySource === 'knowledge_library') {
+    if (options.providerUsed === 'hybrid') {
+      return 'I started from your saved material and combined it with broader outside research because you asked for both.';
+    }
+    if (options.providerUsed === 'openai_responses') {
+      return options.knowledgeCount
+        ? 'I started from your saved material and then added outside research where it helped clarify the answer.'
+        : 'I checked your saved material first, did not find a strong match, and then used outside research for the broader answer.';
+    }
+    return options.knowledgeCount
+      ? 'I used your saved material because you asked for source-grounded guidance from your library.'
+      : 'I stayed with your saved material request, but I did not find a strong match in the current library.';
   }
   if (options.providerUsed === 'hybrid') {
     return 'I used Andrea local context plus OpenAI-backed synthesis because the question mixed personal context with a broader comparison.';
@@ -183,7 +277,11 @@ function buildSpokenResearchText(
   } = {},
 ): string {
   const parts = [summaryText.trim()];
-  const normalize = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const normalize = (value: string) =>
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim();
   const stripLeadIn = (value: string) =>
     value
       .replace(/^start with\s+/i, '')
@@ -192,16 +290,15 @@ function buildSpokenResearchText(
   if (
     options.recommendationText &&
     !normalize(summaryText).includes(normalize(options.recommendationText)) &&
-    !normalize(summaryText).includes(normalize(stripLeadIn(options.recommendationText)))
+    !normalize(summaryText).includes(
+      normalize(stripLeadIn(options.recommendationText)),
+    )
   ) {
     parts.push(options.recommendationText.trim());
   } else if (options.firstFinding) {
     parts.push(options.firstFinding.trim());
   }
-  return parts
-    .join(' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  return parts.join(' ').replace(/\s+/g, ' ').trim();
 }
 
 function buildResearchBlockerResult(
@@ -228,7 +325,8 @@ function buildResearchBlockerResult(
       openAiBlocked: blocker,
     }),
     structuredFindings: [],
-    followupSuggestions: request.channel === 'alexa' ? [] : buildDefaultFollowups(plan.kind),
+    followupSuggestions:
+      request.channel === 'alexa' ? [] : buildDefaultFollowups(plan.kind),
     debugPath,
   };
 }
@@ -249,26 +347,32 @@ export function isResearchPrompt(text: string): boolean {
 export function planResearchRequest(request: ResearchRequest): ResearchPlan {
   const query = normalizeQuery(request.query);
   const lower = query.toLowerCase();
-  const kind: ResearchRequestKind = /\b(compare|versus|vs\.?|tradeoffs?|pros and cons|pros|cons)\b/i.test(
-    lower,
-  )
-    ? 'compare'
-    : /\b(best choice|recommend|which should i|what should i pick|what should i know before deciding|before deciding|why)\b/i.test(
-          lower,
-        )
-      ? 'recommend'
-      : /\b(research|look into|report back|deep dive|explain the tradeoffs)\b/i.test(
+  const savedMaterialMode = resolveSavedMaterialMode(request, lower);
+  const kind: ResearchRequestKind =
+    /\b(compare|versus|vs\.?|tradeoffs?|pros and cons|pros|cons)\b/i.test(lower)
+      ? 'compare'
+      : /\b(best choice|recommend|which should i|what should i pick|what should i know before deciding|before deciding|why)\b/i.test(
             lower,
           )
-        ? 'deep_research'
-        : 'summary';
+        ? 'recommend'
+        : /\b(research|look into|report back|deep dive|explain the tradeoffs)\b/i.test(
+              lower,
+            )
+          ? 'deep_research'
+          : 'summary';
 
   const needsRuntimeDelegate = CODE_HEAVY_RE.test(lower);
+  const savedMaterialRequested =
+    savedMaterialMode !== 'auto' ||
+    SAVED_MATERIAL_RE.test(lower) ||
+    Boolean(request.requestedSourceIds?.length);
   const personalContextLikely = PERSONAL_CONTEXT_RE.test(lower);
   const externalLikely = EXTERNAL_FACT_RE.test(lower) && !personalContextLikely;
   const synthesisHeavy =
     kind !== 'summary' ||
-    /\b(report back|research|look into|what matters|before deciding)\b/i.test(lower);
+    /\b(report back|research|look into|what matters|before deciding)\b/i.test(
+      lower,
+    );
   const mixedContextLikely =
     personalContextLikely &&
     /\b(compare|best choice|recommend|tradeoffs?|before deciding|pros and cons)\b/i.test(
@@ -278,22 +382,32 @@ export function planResearchRequest(request: ResearchRequest): ResearchPlan {
       lower,
     );
   const shouldUseOpenAi =
-    externalLikely || mixedContextLikely || (!personalContextLikely && synthesisHeavy);
+    savedMaterialMode === 'combine' ||
+    externalLikely ||
+    mixedContextLikely ||
+    (!personalContextLikely && synthesisHeavy);
   const shouldUseLocalContext =
     Boolean(request.groupFolder) &&
     (personalContextLikely ||
       mixedContextLikely ||
       /\b(using my context|my context|for me)\b/i.test(lower) ||
       !shouldUseOpenAi);
+  const shouldUseKnowledgeLibrary = savedMaterialRequested;
 
   const sources: ResearchSourceSet = {
-    localContext: shouldUseLocalContext,
-    openAiResponses: shouldUseOpenAi,
+    localContext: shouldUseKnowledgeLibrary ? false : shouldUseLocalContext,
+    knowledgeLibrary: shouldUseKnowledgeLibrary,
+    openAiResponses: shouldUseKnowledgeLibrary
+      ? savedMaterialMode === 'combine'
+      : shouldUseOpenAi,
     runtimeDelegate: needsRuntimeDelegate,
     webSearch: Boolean(
       request.allowWebSearch ??
-        (shouldUseOpenAi &&
-          (externalLikely || /\b(current|latest|today|this week)\b/i.test(lower))),
+      ((shouldUseKnowledgeLibrary
+        ? savedMaterialMode === 'combine'
+        : shouldUseOpenAi) &&
+        (externalLikely ||
+          /\b(current|latest|today|this week)\b/i.test(lower))),
     ),
   };
 
@@ -304,6 +418,21 @@ export function planResearchRequest(request: ResearchRequest): ResearchPlan {
       reason: 'the request looks execution-heavy or operator-oriented',
       sources,
       needsTelegramHandoff: request.channel === 'alexa',
+    };
+  }
+
+  if (shouldUseKnowledgeLibrary) {
+    return {
+      kind,
+      primarySource: 'knowledge_library',
+      reason:
+        savedMaterialMode === 'combine'
+          ? 'the request explicitly asked to combine saved material with outside research'
+          : 'the request explicitly asked about saved notes or library material',
+      sources,
+      needsTelegramHandoff:
+        request.channel === 'alexa' &&
+        (kind !== 'summary' || savedMaterialMode === 'combine'),
     };
   }
 
@@ -318,7 +447,8 @@ export function planResearchRequest(request: ResearchRequest): ResearchPlan {
           : 'the request benefits from model synthesis beyond local context alone',
       sources,
       needsTelegramHandoff:
-        request.channel === 'alexa' && (kind !== 'summary' || sources.webSearch),
+        request.channel === 'alexa' &&
+        (kind !== 'summary' || sources.webSearch),
     };
   }
 
@@ -352,7 +482,9 @@ async function collectLocalResearchContext(
   });
   const threadCandidates = [
     ...snapshot.dueFollowups,
-    ...snapshot.activeThreads.filter((thread) => thread.surfaceMode !== 'manual_only'),
+    ...snapshot.activeThreads.filter(
+      (thread) => thread.surfaceMode !== 'manual_only',
+    ),
   ];
   const threadLines = threadCandidates.slice(0, 3).map((thread) => {
     const focus = thread.nextAction || thread.summary;
@@ -368,7 +500,9 @@ async function collectLocalResearchContext(
     .map((task) => task.prompt.trim())
     .filter(Boolean);
 
-  const memoryLines = listProfileFactsForGroup(request.groupFolder, ['accepted'])
+  const memoryLines = listProfileFactsForGroup(request.groupFolder, [
+    'accepted',
+  ])
     .slice(0, 3)
     .map((fact) => fact.sourceSummary.trim())
     .filter(Boolean);
@@ -406,6 +540,175 @@ async function collectLocalResearchContext(
     taskLines,
     calendarLines,
     memoryLines,
+  };
+}
+
+function buildKnowledgeContextBlock(
+  search: KnowledgeSearchResult,
+): KnowledgeResearchContext {
+  const seen = new Set<string>();
+  const supportingSources: ResearchSupportingSource[] = [];
+  for (const hit of search.hits) {
+    const key = hit.sourceId || `${hit.sourceTitle}:${hit.excerpt}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    supportingSources.push({
+      origin: 'knowledge_library',
+      title: hit.sourceTitle,
+      sourceId: hit.sourceId,
+      sourceType: hit.sourceType,
+      scope: hit.scope,
+      excerpt: hit.excerpt,
+      retrievalScore: hit.retrievalScore,
+      matchReason: hit.matchReason,
+    });
+    if (supportingSources.length >= 5) {
+      break;
+    }
+  }
+
+  const sourceLines = supportingSources.map((source, index) => {
+    const label = source.sourceType
+      ? `${source.title} (${source.sourceType.replace(/_/g, ' ')})`
+      : source.title;
+    return `${index + 1}. ${label}: ${source.excerpt || ''}`.trim();
+  });
+
+  return {
+    search,
+    contextBlock: sourceLines.join('\n'),
+    supportingSources,
+  };
+}
+
+function summarizeKnowledgeResearch(
+  request: ResearchRequest,
+  plan: ResearchPlan,
+  knowledge: KnowledgeResearchContext,
+  options: {
+    routeExplanation?: string;
+    note?: string;
+  } = {},
+): ResearchResult {
+  const supportingSources = knowledge.supportingSources;
+  if (supportingSources.length === 0) {
+    const summaryText =
+      request.channel === 'alexa'
+        ? 'I do not have saved material on that yet.'
+        : 'I do not have saved material on that yet.';
+    return {
+      handled: true,
+      kind: plan.kind,
+      plan,
+      summaryText,
+      spokenText: summaryText,
+      fullText: `${summaryText}\n\nWhy this route: ${
+        options.routeExplanation ||
+        buildRouteExplanation(plan, { knowledgeCount: 0 })
+      }`,
+      sourceNotes: ['no matching saved sources'],
+      providerUsed: 'knowledge_library',
+      routeExplanation:
+        options.routeExplanation ||
+        buildRouteExplanation(plan, { knowledgeCount: 0 }),
+      structuredFindings: [],
+      followupSuggestions:
+        request.channel === 'alexa'
+          ? ['Want me to save something on this topic first?']
+          : ['Want me to save a note or research result on this topic?'],
+      debugPath: [...knowledge.search.debugPath, 'knowledge.summary:no_hits'],
+      supportingSources: [],
+    };
+  }
+
+  const top = supportingSources[0]!;
+  const summaryLead =
+    plan.kind === 'compare'
+      ? `From your saved material, the clearest contrast starts with ${top.title}.`
+      : plan.kind === 'recommend'
+        ? `From your saved material, the strongest signal points to ${top.title}.`
+        : `From your saved material, the main takeaway starts with ${top.title}.`;
+  const summaryTail = top.excerpt ? ` ${top.excerpt}` : '';
+  const summaryText = `${summaryLead}${summaryTail}`.trim();
+  const spokenExcerpt = top.excerpt
+    ? top.excerpt
+        .replace(/\s+/g, ' ')
+        .replace(/^#+\s*/g, '')
+        .trim()
+        .slice(0, 140)
+        .trimEnd()
+    : '';
+  const spokenSummaryText = [summaryLead, spokenExcerpt]
+    .filter(Boolean)
+    .join(' ');
+  const structuredFindings: ResearchFindingSection[] = [
+    {
+      title:
+        plan.kind === 'compare' ? 'Saved sources compared' : 'Saved material',
+      items: supportingSources
+        .slice(0, 4)
+        .map((source) =>
+          source.excerpt ? `${source.title}: ${source.excerpt}` : source.title,
+        ),
+    },
+  ];
+  const recommendationText =
+    plan.kind === 'recommend'
+      ? `Start with ${top.title}. That source carries the strongest saved signal here.`
+      : undefined;
+  const routeExplanation =
+    options.routeExplanation ||
+    buildRouteExplanation(plan, {
+      providerUsed: 'knowledge_library',
+      knowledgeCount: supportingSources.length,
+    });
+
+  return {
+    handled: true,
+    kind: plan.kind,
+    plan,
+    providerUsed: 'knowledge_library',
+    summaryText,
+    spokenText:
+      request.channel === 'alexa'
+        ? buildSpokenResearchText(spokenSummaryText, {
+            recommendationText:
+              plan.kind === 'recommend' ? recommendationText : undefined,
+          })
+        : undefined,
+    fullText: buildResearchText(
+      summaryText,
+      structuredFindings,
+      recommendationText,
+      routeExplanation,
+    ),
+    sourceNotes: [
+      'knowledge library',
+      ...buildKnowledgeSourceNotes(supportingSources),
+      options.note || '',
+    ].filter(Boolean),
+    routeExplanation,
+    structuredFindings,
+    followupSuggestions: [
+      'Want the saved sources I used?',
+      ...(request.channel === 'telegram'
+        ? ['Want me to combine that with outside research?']
+        : ['I can send the fuller source list to Telegram if you want.']),
+    ],
+    saveForLaterCandidate: summaryText,
+    debugPath: [...knowledge.search.debugPath, 'knowledge.summary:grounded'],
+    recommendationText,
+    supportingSources,
+    handoffOption:
+      request.channel === 'alexa' &&
+      (plan.kind !== 'summary' || supportingSources.length > 2)
+        ? {
+            channel: 'telegram',
+            reason:
+              'the saved source detail is richer than a spoken answer should be',
+            prompt: request.query,
+          }
+        : undefined,
   };
 }
 
@@ -491,6 +794,26 @@ function summarizeLocalResearch(
   };
 }
 
+function collectKnowledgeLibraryContext(
+  request: ResearchRequest,
+): KnowledgeResearchContext | null {
+  if (!request.groupFolder) {
+    return null;
+  }
+  const search = searchKnowledgeLibrary({
+    groupFolder: request.groupFolder,
+    query: request.query,
+    requestedSourceIds: request.requestedSourceIds,
+    limit:
+      request.requestedDepth === 'deep'
+        ? 8
+        : request.channel === 'alexa'
+          ? 4
+          : 6,
+  });
+  return buildKnowledgeContextBlock(search);
+}
+
 function extractResponseOutputText(payload: unknown): string {
   if (!payload || typeof payload !== 'object') return '';
   const record = payload as {
@@ -508,7 +831,9 @@ function extractResponseOutputText(payload: unknown): string {
   }
   const text = record.output
     ?.flatMap((item) => item.content || [])
-    .map((content) => (content.type === 'output_text' ? content.text || '' : ''))
+    .map((content) =>
+      content.type === 'output_text' ? content.text || '' : '',
+    )
     .join('\n')
     .trim();
   return text || '';
@@ -563,7 +888,10 @@ function parseOpenAiResearchOutput(
       continue;
     }
     if (section === 'recommendation') {
-      recommendationText = [recommendationText, line].filter(Boolean).join(' ').trim();
+      recommendationText = [recommendationText, line]
+        .filter(Boolean)
+        .join(' ')
+        .trim();
       continue;
     }
     if (section === 'summary') {
@@ -573,10 +901,20 @@ function parseOpenAiResearchOutput(
   }
 
   if (!summaryText) {
-    summaryText = output.split(/(?<=[.!?])\s+/).slice(0, 2).join(' ').trim() || output;
+    summaryText =
+      output
+        .split(/(?<=[.!?])\s+/)
+        .slice(0, 2)
+        .join(' ')
+        .trim() || output;
   }
   if (findings.length === 0) {
-    findings.push(...output.split(/(?<=[.!?])\s+/).slice(1, 4).filter(Boolean));
+    findings.push(
+      ...output
+        .split(/(?<=[.!?])\s+/)
+        .slice(1, 4)
+        .filter(Boolean),
+    );
   }
   if (!recommendationText || /^none$/i.test(recommendationText)) {
     recommendationText = '';
@@ -586,7 +924,9 @@ function parseOpenAiResearchOutput(
     summaryText,
     findings: findings.slice(0, 4),
     recommendationText: recommendationText || undefined,
-    followupSuggestions: followups.length ? followups.slice(0, 3) : buildDefaultFollowups(kind),
+    followupSuggestions: followups.length
+      ? followups.slice(0, 3)
+      : buildDefaultFollowups(kind),
   };
 }
 
@@ -594,6 +934,7 @@ async function runOpenAiResearch(
   request: ResearchRequest,
   plan: ResearchPlan,
   context: LocalResearchContext,
+  knowledge?: KnowledgeResearchContext | null,
 ): Promise<ResearchResult | OpenAiResearchProviderFailure | null> {
   const openAi = resolveOpenAiProviderConfig();
   if (!openAi) return null;
@@ -631,6 +972,9 @@ async function runOpenAiResearch(
     '- <1 to 3 short next questions or handoffs>',
     localContextBlock
       ? `Use this personal context only when it genuinely helps:\n${localContextBlock}`
+      : '',
+    knowledge?.contextBlock
+      ? `Use this saved source material when it genuinely helps, and keep it distinct from outside knowledge:\n${knowledge.contextBlock}`
       : '',
     `User request: ${normalizeQuery(request.query)}`,
   ]
@@ -694,21 +1038,27 @@ async function runOpenAiResearch(
     const parsed = parseOpenAiResearchOutput(output, plan.kind);
     const routeExplanation = buildRouteExplanation(plan, {
       providerUsed:
-        plan.sources.localContext && localContextBlock ? 'hybrid' : 'openai_responses',
+        (plan.sources.localContext && localContextBlock) ||
+        knowledge?.supportingSources.length
+          ? 'hybrid'
+          : 'openai_responses',
+      knowledgeCount: knowledge?.supportingSources.length || 0,
     });
     return {
       handled: true,
       kind: plan.kind,
       plan,
       providerUsed:
-        plan.sources.localContext && localContextBlock
+        (plan.sources.localContext && localContextBlock) ||
+        knowledge?.supportingSources.length
           ? 'hybrid'
           : 'openai_responses',
       summaryText: parsed.summaryText,
       spokenText: buildSpokenResearchText(parsed.summaryText, {
         recommendationText:
           request.channel === 'alexa' ? parsed.recommendationText : undefined,
-        firstFinding: request.channel === 'alexa' ? parsed.findings[0] : undefined,
+        firstFinding:
+          request.channel === 'alexa' ? parsed.findings[0] : undefined,
       }),
       fullText: buildResearchText(
         parsed.summaryText,
@@ -737,7 +1087,10 @@ async function runOpenAiResearch(
       saveForLaterCandidate: parsed.summaryText,
       sourceNotes: [
         plan.sources.localContext && localContextBlock ? 'local context' : '',
-        plan.sources.webSearch ? 'OpenAI web search' : 'OpenAI Responses synthesis',
+        knowledge?.supportingSources.length ? 'knowledge library' : '',
+        plan.sources.webSearch
+          ? 'OpenAI web search'
+          : 'OpenAI Responses synthesis',
       ].filter(Boolean),
       handoffOption:
         plan.needsTelegramHandoff && request.channel === 'alexa'
@@ -749,15 +1102,23 @@ async function runOpenAiResearch(
           : undefined,
       debugPath: [
         `plan.primary=${plan.primarySource}`,
-        `provider=${plan.sources.localContext && localContextBlock ? 'hybrid' : 'openai_responses'}`,
+        `provider=${
+          (plan.sources.localContext && localContextBlock) ||
+          knowledge?.supportingSources.length
+            ? 'hybrid'
+            : 'openai_responses'
+        }`,
+        ...(knowledge?.search.debugPath || []),
         plan.sources.webSearch ? 'tool=web_search' : 'tool=none',
         requestId ? `request_id=${requestId}` : 'request_id=missing',
       ],
+      supportingSources: knowledge?.supportingSources || [],
     };
   } catch (err) {
     logger.warn({ err }, 'Research orchestrator OpenAI request errored');
     return {
-      providerFailure: 'The live OpenAI research request errored before Andrea could produce a trustworthy answer.',
+      providerFailure:
+        'The live OpenAI research request errored before Andrea could produce a trustworthy answer.',
       debugPath: [
         `plan.primary=${plan.primarySource}`,
         'openai.failed=true',
@@ -771,7 +1132,8 @@ export async function runResearchOrchestrator(
   request: ResearchRequest,
 ): Promise<ResearchResult> {
   const normalized = normalizeQuery(request.query);
-  const plan = planResearchRequest({ ...request, query: normalized });
+  const normalizedRequest = { ...request, query: normalized };
+  const plan = planResearchRequest(normalizedRequest);
 
   if (!normalized) {
     return {
@@ -799,7 +1161,134 @@ export async function runResearchOrchestrator(
     };
   }
 
-  const context = await collectLocalResearchContext(request);
+  const context =
+    plan.sources.localContext || plan.primarySource === 'openai_responses'
+      ? await collectLocalResearchContext(normalizedRequest)
+      : {
+          threadLines: [],
+          taskLines: [],
+          calendarLines: [],
+          memoryLines: [],
+        };
+  const knowledgeContext =
+    plan.sources.knowledgeLibrary || plan.primarySource === 'knowledge_library'
+      ? collectKnowledgeLibraryContext(normalizedRequest)
+      : null;
+
+  if (plan.primarySource === 'knowledge_library') {
+    if (!normalizedRequest.groupFolder) {
+      return {
+        handled: true,
+        kind: plan.kind,
+        plan,
+        summaryText:
+          normalizedRequest.channel === 'alexa'
+            ? 'I can only use saved material when I have your linked library context.'
+            : 'I can only use saved library material when this conversation is tied to one of your Andrea group folders.',
+        spokenText:
+          normalizedRequest.channel === 'alexa'
+            ? 'I can only use saved material when I have your linked library context.'
+            : undefined,
+        fullText:
+          'I can only use saved library material when this conversation is tied to one of your Andrea group folders.',
+        sourceNotes: ['knowledge library unavailable without group context'],
+        routeExplanation:
+          'You asked for saved material, but this request did not have a linked Andrea library scope.',
+        structuredFindings: [],
+        followupSuggestions: [],
+        debugPath: [
+          'plan.primary=knowledge_library',
+          'knowledge.blocked=no_group_folder',
+        ],
+        providerUsed: 'knowledge_library',
+      };
+    }
+
+    const groundedKnowledge =
+      knowledgeContext ||
+      buildKnowledgeContextBlock(
+        searchKnowledgeLibrary({
+          groupFolder: normalizedRequest.groupFolder,
+          query: normalizedRequest.query,
+          requestedSourceIds: normalizedRequest.requestedSourceIds,
+        }),
+      );
+
+    if (!plan.sources.openAiResponses) {
+      return summarizeKnowledgeResearch(
+        normalizedRequest,
+        plan,
+        groundedKnowledge,
+      );
+    }
+
+    const openAiStatus = getOpenAiProviderStatus();
+    if (!openAiStatus.configured) {
+      const blocker = describeOpenAiConfigBlocker(openAiStatus.missing);
+      if (groundedKnowledge.supportingSources.length > 0) {
+        return summarizeKnowledgeResearch(
+          normalizedRequest,
+          plan,
+          groundedKnowledge,
+          {
+            routeExplanation: buildRouteExplanation(plan, {
+              openAiBlocked: blocker,
+              knowledgeCount: groundedKnowledge.supportingSources.length,
+            }),
+            note: `OpenAI unavailable: ${blocker}`,
+          },
+        );
+      }
+      return buildResearchBlockerResult(normalizedRequest, plan, blocker, [
+        'plan.primary=knowledge_library',
+        `openai.blocked=${openAiStatus.missing.join(',') || 'unknown'}`,
+      ]);
+    }
+
+    const openAiKnowledgeResult = await runOpenAiResearch(
+      normalizedRequest,
+      plan,
+      context,
+      groundedKnowledge,
+    );
+    if (
+      openAiKnowledgeResult &&
+      !('providerFailure' in openAiKnowledgeResult)
+    ) {
+      return openAiKnowledgeResult;
+    }
+
+    const providerFailure =
+      openAiKnowledgeResult && 'providerFailure' in openAiKnowledgeResult
+        ? openAiKnowledgeResult.providerFailure
+        : 'the outside research step failed before Andrea could combine it with your saved material';
+    const providerDebugPath =
+      openAiKnowledgeResult && 'providerFailure' in openAiKnowledgeResult
+        ? openAiKnowledgeResult.debugPath
+        : ['plan.primary=knowledge_library', 'openai.failed=true'];
+
+    if (groundedKnowledge.supportingSources.length > 0) {
+      return summarizeKnowledgeResearch(
+        normalizedRequest,
+        plan,
+        groundedKnowledge,
+        {
+          routeExplanation: buildRouteExplanation(plan, {
+            openAiFailed: true,
+            knowledgeCount: groundedKnowledge.supportingSources.length,
+          }),
+          note: `OpenAI request failed: ${providerFailure}`,
+        },
+      );
+    }
+
+    return buildResearchBlockerResult(
+      normalizedRequest,
+      plan,
+      providerFailure,
+      providerDebugPath,
+    );
+  }
 
   if (plan.primarySource === 'openai_responses') {
     const openAiStatus = getOpenAiProviderStatus();
@@ -829,7 +1318,11 @@ export async function runResearchOrchestrator(
       ]);
     }
 
-    const openAiResult = await runOpenAiResearch(request, plan, context);
+    const openAiResult = await runOpenAiResearch(
+      normalizedRequest,
+      plan,
+      context,
+    );
     if (openAiResult && !('providerFailure' in openAiResult)) {
       return openAiResult;
     }
@@ -857,11 +1350,18 @@ export async function runResearchOrchestrator(
       }
     }
 
-    return buildResearchBlockerResult(request, plan, providerFailure, providerDebugPath);
+    return buildResearchBlockerResult(
+      normalizedRequest,
+      plan,
+      providerFailure,
+      providerDebugPath,
+    );
   }
 
-  return summarizeLocalResearch(request, context, plan, {
-    routeExplanation: buildRouteExplanation(plan, { providerUsed: 'local_context' }),
+  return summarizeLocalResearch(normalizedRequest, context, plan, {
+    routeExplanation: buildRouteExplanation(plan, {
+      providerUsed: 'local_context',
+    }),
     debugPath: ['plan.primary=local_context'],
   });
 }

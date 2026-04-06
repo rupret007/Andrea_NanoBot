@@ -47,6 +47,7 @@ Use these meanings consistently when reading `/cursor_status` and the setup docs
 - A secondary integrated `andrea_runtime` lane for Codex/OpenAI execution truth, with a `Codex/OpenAI` view inside `/cursor`, a shared current-work model, and `/runtime-*` as the explicit fallback shell.
 - A bounded life-thread layer for ongoing people, household, and follow-up continuity across Telegram and Alexa.
 - A shared assistant capability graph so Telegram and Alexa can call the same daily, household, memory, thread, and research actions safely.
+- A bounded Knowledge Library for explicit saved source material, source-grounded retrieval, and library-first research answers.
 - A small bounded personality layer plus request-driven Andrea Pulse.
 - A prepared BlueBubbles channel scaffold for future text-message expansion.
 
@@ -117,6 +118,10 @@ Current provider order:
   - reminders/tasks
   - accepted profile facts
   - optional calendar signal
+- `knowledge_library`
+  - explicit saved notes
+  - approved text-like file imports
+  - saved research results and summaries
 - `openai_responses`
   - only when concrete OpenAI credentials are configured
   - used for bounded synthesis and optional web-backed comparative answers
@@ -151,8 +156,42 @@ Helpful operator smoke paths:
 - `npm run debug:alexa-conversation`
 - `npm run debug:shared-capabilities`
 - `npm run debug:research-mode`
+- `npm run debug:knowledge-library`
 
 For the full architecture and the license-safe external patterns behind it, see [ASSISTANT_CAPABILITY_GRAPH.md](ASSISTANT_CAPABILITY_GRAPH.md).
+
+## Knowledge Library
+
+Andrea now has a bounded Knowledge Library for saved source material.
+
+Keep the boundary clear:
+
+- memory facts are durable preferences or profile truths
+- life threads are open ongoing matters
+- reminders are future nudges
+- current work is the active execution lane
+- the Knowledge Library is saved source material Andrea can retrieve and cite
+
+Current v1 implementation:
+
+- explicit/manual ingestion only
+- manual notes, saved research, and approved local text-file imports
+- SQLite-backed source and chunk storage
+- lexical-first retrieval through FTS5
+- provenance kept on every retrieval hit
+- disable, delete, and reindex controls
+
+Typical prompts:
+
+- `save this to my library`
+- `what do my saved notes say about this`
+- `what did I save about Candace`
+- `show me the relevant saved items`
+- `what sources are you using`
+- `use only my saved material`
+- `combine my notes with outside research`
+
+See [KNOWLEDGE_LIBRARY.md](KNOWLEDGE_LIBRARY.md) for the full model and controls.
 
 ## Alexa Companion Productization And Andrea Pulse
 

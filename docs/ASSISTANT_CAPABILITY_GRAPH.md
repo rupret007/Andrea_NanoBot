@@ -61,6 +61,13 @@ Current seeded categories:
 - `pulse`
   - interesting thing
   - surprise me / Andrea Pulse
+- `knowledge`
+  - save source
+  - list sources
+  - summarize saved material
+  - compare saved sources
+  - explain source usage
+  - disable, delete, and reindex saved sources
 - `research`
   - research topic
   - compare options
@@ -143,6 +150,7 @@ Examples now routed through the shared graph first:
 - household-aware prompts
 - open thread inspection
 - memory explain / remember / forget / manual-only controls
+- Knowledge Library controls and source-grounded summaries
 - Andrea Pulse requests
 - bounded research prompts
 
@@ -181,6 +189,11 @@ Then it chooses a primary source:
   - reminders/tasks
   - accepted memory facts
   - optional calendar signal
+- `knowledge_library`
+  - explicitly saved notes
+  - imported text-like files
+  - saved research results
+  - manually added reference material
 - `openai_responses`
   - only when concrete OpenAI credentials are present and the provider account is usable
   - optional web-backed synthesis when the question is outward-facing or comparative
@@ -204,9 +217,54 @@ Current behavior by channel:
 Important truth:
 
 - if OpenAI credentials are not present, the orchestrator still works from local context where possible and returns the exact blocker when the web-backed path is unavailable
+- if the user explicitly asks for saved material, the orchestrator can stay entirely inside the Knowledge Library and surface the supporting sources it used
 - it does not invent hidden provider support
 - it uses `web_search` only when the request is outward-facing or comparison-heavy
-- it does not promise file search unless that plumbing is actually wired
+- it does not promise generic file search unless that plumbing is actually wired
+
+## Knowledge Library
+
+Andrea now has a bounded Knowledge Library as a separate capability family.
+
+This is intentionally distinct from:
+
+- memory facts
+- life threads
+- reminders
+- current work
+
+The v1 library path is explicit and inspectable:
+
+- user-approved ingestion only
+- text-first storage and retrieval
+- lexical-first indexing with SQLite FTS5
+- chunk-level provenance for retrieved material
+- disable, delete, and reindex controls
+
+Current knowledge capabilities:
+
+- `knowledge.save_source`
+- `knowledge.list_sources`
+- `knowledge.summarize_saved`
+- `knowledge.compare_saved`
+- `knowledge.explain_sources`
+- `knowledge.disable_source`
+- `knowledge.delete_source`
+- `knowledge.reindex_source`
+
+By channel:
+
+- Telegram:
+  - summary first
+  - supporting sources section
+  - route explanation
+  - structured follow-up suggestions
+- Alexa:
+  - short saved-material summary
+  - source-aware phrasing
+  - Telegram handoff when the source detail is too large for voice
+- BlueBubbles:
+  - concise text-first source summaries
 
 ## Media Capability Preparation
 

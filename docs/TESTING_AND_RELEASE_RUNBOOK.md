@@ -37,6 +37,7 @@ For the shared assistant core specifically, add these focused checks when Alexa,
 node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/assistant-capabilities.test.ts src/assistant-capability-router.test.ts src/research-orchestrator.test.ts
 npm run debug:shared-capabilities
 npm run debug:research-mode
+npm run debug:knowledge-library
 ```
 
 ## 2. Major Suite
@@ -284,17 +285,8 @@ Important truth:
 - `web_search` is in scope for research; file search is not promised unless separate file-search plumbing is added
 - Telegram is the rich research and media surface
 - Alexa should stay concise and use handoffs when the result is too long or not voice-safe
-    - preferred: `Alexa, open Andrea Assistant`
-    - if the repo interaction model changed recently, import `docs/alexa/interaction-model.en-US.json` and run `Build Model` before this step
-5. linked `what am I forgetting`
-6. linked `anything else`
-7. linked `what about Candace`
-8. one preference or explainability turn such as `why`, `remember that`, or `be a little more direct`
-9. one bounded research turn such as `compare meal delivery options for this week`
-   - accepted behavior is a brief spoken answer, plus Telegram handoff language if the result is too long for voice
-10. confirm an operator-only action stays blocked on Alexa even though it remains available on Telegram/runtime surfaces
 
-## 9. Shared Capability Graph Validation
+## 10. Shared Capability Graph Validation
 
 Use this when the shared assistant core changes:
 
@@ -308,9 +300,6 @@ Use this when the shared assistant core changes:
    - `work.current_logs` remains blocked on Alexa and allowed only on the Telegram/operator side
 
 If `OPENAI_API_KEY` is configured and the provider account is usable, a comparative or outward-facing research prompt may use the OpenAI Responses path. If it is missing or the provider account is quota-blocked, the shared research proof should report that blocker honestly instead of pretending the external answer is live.
-9. optional linked `what should I remember tonight`
-10. confirm `alexa_last_signed_request_type=IntentRequest`, a resolved `groupFolder`, and `responseSource=local_companion`
-    - if the launch works but follow-ups fall into generic fallback, treat that as a likely stale live model first
 
 Check:
 
@@ -335,7 +324,40 @@ Optional if safe:
 - `/purchase-request <asin> <offer_id> 1`
 - `/purchase-approve <request_id> <approval_code>` only in trial mode or another intentionally disposable validation setup
 
-## 8. Restart And Verify
+## 11. Knowledge Library Validation
+
+Run this when the Knowledge Library model, ingestion, retrieval, or source-grounded research behavior changes.
+
+Focused tests:
+
+```bash
+node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/knowledge-library.test.ts src/research-orchestrator.test.ts src/assistant-capabilities.test.ts src/assistant-capability-router.test.ts
+```
+
+Pinned-Node proof harness:
+
+```bash
+npm run debug:knowledge-library
+```
+
+Expected proof points:
+
+- one explicit note saves into the library
+- one approved local text file imports cleanly
+- Telegram can summarize saved material with supporting sources
+- Telegram can compare saved sources with provenance
+- Telegram can list or explain the relevant saved items
+- Alexa can produce a short saved-material summary without dumping source detail
+- `use only my saved material` stays grounded in the library path
+
+Important truth:
+
+- the library is explicit/manual only in v1
+- retrieval is lexical-first with FTS5, not embeddings-driven
+- disabled or deleted sources must stop contributing to future answers
+- the library stays distinct from memory, life threads, reminders, and current work
+
+## 12. Restart And Verify
 
 After meaningful runtime or operator-surface changes:
 
@@ -368,7 +390,7 @@ Telegram live-testing truth:
 - it is not part of the default unit/full suite
 - it is the canonical proof that Telegram is actually replying end to end rather than only polling successfully
 
-## 9. Failure Handling
+## 13. Failure Handling
 
 ### `CREDENTIAL_RUNTIME_PROBE: failed`
 
@@ -396,7 +418,7 @@ Telegram live-testing truth:
 - treat it as optional unless you specifically want Cursor-backed runtime routing
 - check 9router endpoint/auth/model settings separately from Cloud/desktop
 
-## 10. Release Gate
+## 14. Release Gate
 
 Before pushing a release:
 

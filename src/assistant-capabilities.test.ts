@@ -5,7 +5,11 @@ import {
   getAssistantCapability,
   getAssistantCapabilityRegistry,
 } from './assistant-capabilities.js';
-import { createTask, _initTestDatabase } from './db.js';
+import {
+  createTask,
+  listKnowledgeSourcesForGroup,
+  _initTestDatabase,
+} from './db.js';
 
 const originalFetch = globalThis.fetch;
 
@@ -21,12 +25,21 @@ describe('assistant capabilities', () => {
 
   it('registers shared daily, research, work, and media capabilities with safety metadata', () => {
     const registry = getAssistantCapabilityRegistry();
-    expect(registry.some((entry) => entry.id === 'daily.loose_ends')).toBe(true);
-    expect(registry.some((entry) => entry.id === 'pulse.interesting_thing')).toBe(
+    expect(registry.some((entry) => entry.id === 'daily.loose_ends')).toBe(
       true,
     );
-    expect(registry.some((entry) => entry.id === 'research.compare')).toBe(true);
-    expect(registry.some((entry) => entry.id === 'work.current_logs')).toBe(true);
+    expect(
+      registry.some((entry) => entry.id === 'pulse.interesting_thing'),
+    ).toBe(true);
+    expect(
+      registry.some((entry) => entry.id === 'knowledge.summarize_saved'),
+    ).toBe(true);
+    expect(registry.some((entry) => entry.id === 'research.compare')).toBe(
+      true,
+    );
+    expect(registry.some((entry) => entry.id === 'work.current_logs')).toBe(
+      true,
+    );
     expect(registry.some((entry) => entry.id === 'media.video_generate')).toBe(
       true,
     );
@@ -43,9 +56,15 @@ describe('assistant capabilities', () => {
       safeForTelegram: true,
       safeForBlueBubbles: true,
     });
-    expect(getAssistantCapability('media.image_generate')?.availabilityNote).toContain(
-      'Telegram image generation is wired',
-    );
+    expect(getAssistantCapability('knowledge.save_source')).toMatchObject({
+      category: 'knowledge',
+      safeForAlexa: true,
+      safeForTelegram: true,
+      safeForBlueBubbles: true,
+    });
+    expect(
+      getAssistantCapability('media.image_generate')?.availabilityNote,
+    ).toContain('Telegram image generation is wired');
   });
 
   it('runs shared daily capability execution against the existing daily companion logic', async () => {
@@ -160,6 +179,121 @@ describe('assistant capabilities', () => {
     expect(telegram.replyText).toContain('*Why this route*');
     expect(alexa.replyText).toContain('Want');
     expect(alexa.researchResult?.routeExplanation).toContain('local context');
+  });
+
+  it('saves explicit library material and renders source-grounded answers differently by channel', async () => {
+    const save = await executeAssistantCapability({
+      capabilityId: 'knowledge.save_source',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:8004355504',
+      },
+      input: {
+        text: 'Save this note to my library: Candace wants Friday dinner after rehearsal because pickup is easier.',
+        canonicalText:
+          'Save this note to my library: Candace wants Friday dinner after rehearsal because pickup is easier.',
+      },
+    });
+
+    expect(save.handled).toBe(true);
+    expect(save.replyText).toContain('Saved');
+    expect(save.trace?.responseSource).toBe('knowledge_library');
+
+    const telegram = await executeAssistantCapability({
+      capabilityId: 'knowledge.summarize_saved',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:8004355504',
+      },
+      input: {
+        canonicalText:
+          'What do my saved notes say about Candace dinner timing?',
+      },
+    });
+    const alexa = await executeAssistantCapability({
+      capabilityId: 'knowledge.summarize_saved',
+      context: {
+        channel: 'alexa',
+        groupFolder: 'main',
+      },
+      input: {
+        canonicalText:
+          'What do my saved notes say about Candace dinner timing?',
+      },
+    });
+
+    expect(telegram.replyText).toContain('*Supporting Sources*');
+    expect(telegram.replyText).toContain('Candace');
+    expect(alexa.replyText).toContain('saved material');
+    expect(alexa.researchResult?.supportingSources?.[0]?.title).toBeTruthy();
+  });
+
+  it('preserves explicit library titles and explains matched sources by topic', async () => {
+    await executeAssistantCapability({
+      capabilityId: 'knowledge.save_source',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:8004355504',
+      },
+      input: {
+        text: 'Save this to my library titled Knowledge Proof Dinner Title: Friday dinner after rehearsal keeps pickup simpler and avoids a late bedtime. tags: proof,candace',
+        canonicalText:
+          'Save this to my library titled Knowledge Proof Dinner Title: Friday dinner after rehearsal keeps pickup simpler and avoids a late bedtime. tags: proof,candace',
+      },
+    });
+    await executeAssistantCapability({
+      capabilityId: 'knowledge.save_source',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:8004355504',
+      },
+      input: {
+        text: 'Save this to my library titled Knowledge Proof Dinner Backup: If rehearsal runs late, skipping Friday dinner may protect bedtime and keep the evening less rushed. tags: proof,candace',
+        canonicalText:
+          'Save this to my library titled Knowledge Proof Dinner Backup: If rehearsal runs late, skipping Friday dinner may protect bedtime and keep the evening less rushed. tags: proof,candace',
+      },
+    });
+
+    const sourceTitles = listKnowledgeSourcesForGroup('main').map(
+      (source) => source.title,
+    );
+    expect(sourceTitles).toContain('Knowledge Proof Dinner Title');
+
+    const telegram = await executeAssistantCapability({
+      capabilityId: 'knowledge.explain_sources',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:8004355504',
+      },
+      input: {
+        canonicalText:
+          'What sources are you using about Friday dinner after rehearsal?',
+      },
+    });
+    const alexa = await executeAssistantCapability({
+      capabilityId: 'knowledge.explain_sources',
+      context: {
+        channel: 'alexa',
+        groupFolder: 'main',
+      },
+      input: {
+        canonicalText:
+          'What sources are you using about Friday dinner after rehearsal?',
+      },
+    });
+
+    expect(telegram.replyText).toContain('*Sources I would use*');
+    expect(telegram.replyText).toContain('Knowledge Proof Dinner Title');
+    expect(telegram.replyText).toContain('*Why these sources*');
+    expect(alexa.replyText).toContain('I would use');
+    expect((alexa.replyText || '').toLowerCase()).toContain(
+      'friday dinner after rehearsal',
+    );
   });
 
   it('keeps media image generation explicit and reports provider unavailability honestly', async () => {

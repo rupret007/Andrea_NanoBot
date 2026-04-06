@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createTask, _initTestDatabase } from './db.js';
 import { handleLifeThreadCommand } from './life-threads.js';
+import { saveKnowledgeSource } from './knowledge-library.js';
 import * as openAiProvider from './openai-provider.js';
 import {
   planResearchRequest,
@@ -48,6 +49,18 @@ describe('research orchestrator', () => {
     expect(plan.sources.webSearch).toBe(true);
   });
 
+  it('plans saved-material prompts onto the knowledge-library route', () => {
+    const plan = planResearchRequest({
+      query: 'What do my saved notes say about Candace?',
+      channel: 'telegram',
+      groupFolder: 'main',
+    });
+
+    expect(plan.primarySource).toBe('knowledge_library');
+    expect(plan.sources.knowledgeLibrary).toBe(true);
+    expect(plan.sources.openAiResponses).toBe(false);
+  });
+
   it('builds a grounded local-context answer when personal context is available', async () => {
     handleLifeThreadCommand({
       groupFolder: 'main',
@@ -83,6 +96,72 @@ describe('research orchestrator', () => {
     expect(result.structuredFindings[0]?.items[0]).toContain('Candace');
     expect(result.sourceNotes).toContain('life threads');
     expect(result.followupSuggestions.length).toBeGreaterThan(0);
+  });
+
+  it('builds a grounded library answer when saved sources are requested', async () => {
+    saveKnowledgeSource({
+      groupFolder: 'main',
+      title: 'Candace Dinner Note',
+      content:
+        'Candace wants Friday dinner after rehearsal because pickup timing is easier and bedtime stays calmer.',
+      sourceType: 'manual_reference',
+      now: new Date('2026-04-05T09:00:00.000Z'),
+    });
+
+    const result = await runResearchOrchestrator({
+      query: 'What do my saved notes say about Candace dinner timing?',
+      channel: 'telegram',
+      groupFolder: 'main',
+      now: new Date('2026-04-05T10:00:00.000Z'),
+    });
+
+    expect(result.handled).toBe(true);
+    expect(result.providerUsed).toBe('knowledge_library');
+    expect(result.routeExplanation).toContain('saved material');
+    expect(result.supportingSources?.[0]?.title).toBe('Candace Dinner Note');
+    expect(result.structuredFindings[0]?.items[0]).toContain(
+      'Candace Dinner Note',
+    );
+  });
+
+  it('dedupes saved-source provenance and keeps Alexa library summaries concise', async () => {
+    saveKnowledgeSource({
+      groupFolder: 'main',
+      title: 'Long Dinner Notes',
+      content: [
+        'Candace dinner timing note: Friday after rehearsal keeps pickup simpler.',
+        'Candace dinner timing note: Friday also avoids a late bedtime if rehearsal runs long.',
+        'Candace dinner timing note: Saturday leaves more prep time, but it makes the handoff less simple.',
+      ].join('\n\n'),
+      sourceType: 'manual_reference',
+      now: new Date('2026-04-05T09:00:00.000Z'),
+    });
+    saveKnowledgeSource({
+      groupFolder: 'main',
+      title: 'Backup Dinner Summary',
+      content:
+        'Backup summary: Saturday dinner is calmer for prep, but Friday is easier for pickup and bedtime.',
+      sourceType: 'saved_research_result',
+      now: new Date('2026-04-05T09:05:00.000Z'),
+    });
+
+    const result = await runResearchOrchestrator({
+      query:
+        'Use only my saved material to compare saved sources about Candace dinner timing.',
+      channel: 'alexa',
+      groupFolder: 'main',
+      now: new Date('2026-04-05T10:00:00.000Z'),
+    });
+
+    expect(result.handled).toBe(true);
+    expect(result.providerUsed).toBe('knowledge_library');
+    expect(result.supportingSources?.length).toBeGreaterThan(1);
+    expect(
+      new Set(result.supportingSources?.map((source) => source.title)).size,
+    ).toBe(result.supportingSources?.length);
+    expect(result.spokenText).toContain('saved material');
+    expect(result.spokenText).not.toContain('Backup Dinner Summary');
+    expect(result.spokenText).not.toContain('\n');
   });
 
   it('returns an exact blocker when an OpenAI-style research question has no configured provider or local fallback', async () => {
@@ -144,6 +223,50 @@ describe('research orchestrator', () => {
     expect(result.structuredFindings[0]?.items[0]).toContain('Lower cost');
   });
 
+  it('can combine saved material with outside research when explicitly requested', async () => {
+    process.env.OPENAI_API_KEY = 'test-key';
+    process.env.OPENAI_BASE_URL = 'https://example.test/v1';
+    saveKnowledgeSource({
+      groupFolder: 'main',
+      title: 'Saved Delivery Notes',
+      content:
+        'Saved note: grocery delivery wins when you need flexibility and lower weekly cost.',
+      sourceType: 'saved_research_result',
+    });
+    globalThis.fetch = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          output_text: [
+            'Summary: Grocery delivery stays more flexible, while meal delivery reduces planning effort.',
+            'Findings:',
+            '- Grocery delivery is cheaper over a full week.',
+            '- Meal delivery cuts planning time.',
+            'Recommendation: Start with grocery delivery unless convenience matters more.',
+            'Follow-ups:',
+            '- Want the short version?',
+          ].join('\n'),
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      );
+    }) as typeof fetch;
+
+    const result = await runResearchOrchestrator({
+      query:
+        'Combine my notes with outside research on meal delivery versus grocery delivery.',
+      channel: 'telegram',
+      groupFolder: 'main',
+      now: new Date('2026-04-05T11:30:00.000Z'),
+    });
+
+    expect(result.handled).toBe(true);
+    expect(result.providerUsed).toBe('hybrid');
+    expect(result.routeExplanation).toContain('combined');
+    expect(result.supportingSources?.[0]?.title).toBe('Saved Delivery Notes');
+  });
+
   it('returns an exact provider blocker instead of unrelated local context when OpenAI fails for an external prompt', async () => {
     process.env.OPENAI_API_KEY = 'test-key';
     process.env.OPENAI_BASE_URL = 'https://example.test/v1';
@@ -151,7 +274,8 @@ describe('research orchestrator', () => {
       return new Response(
         JSON.stringify({
           error: {
-            message: 'You exceeded your current quota, please check your plan and billing details.',
+            message:
+              'You exceeded your current quota, please check your plan and billing details.',
             type: 'insufficient_quota',
             code: 'insufficient_quota',
           },
@@ -164,7 +288,8 @@ describe('research orchestrator', () => {
     }) as typeof fetch;
 
     const result = await runResearchOrchestrator({
-      query: 'Compare the Kindle Paperwhite and Kobo Clara Colour for someone who reads at night and cares about battery life.',
+      query:
+        'Compare the Kindle Paperwhite and Kobo Clara Colour for someone who reads at night and cares about battery life.',
       channel: 'telegram',
       groupFolder: 'main',
       now: new Date('2026-04-05T11:00:00.000Z'),

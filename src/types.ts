@@ -356,6 +356,74 @@ export interface BlueBubblesContactRef {
   address?: string | null;
 }
 
+export type KnowledgeSourceType =
+  | 'uploaded_document'
+  | 'generated_note'
+  | 'saved_research_result'
+  | 'imported_summary'
+  | 'manual_reference';
+
+export type KnowledgeScope = 'personal' | 'household' | 'work' | 'mixed';
+
+export type KnowledgeSensitivity = 'normal' | 'private' | 'sensitive';
+
+export type KnowledgeIngestionState =
+  | 'pending'
+  | 'ready'
+  | 'failed'
+  | 'deleted';
+
+export type KnowledgeIndexState =
+  | 'pending'
+  | 'indexed'
+  | 'stale'
+  | 'disabled'
+  | 'failed';
+
+export interface KnowledgeSourceRecord {
+  sourceId: string;
+  groupFolder: string;
+  sourceType: KnowledgeSourceType;
+  title: string;
+  shortSummary: string;
+  contentRef?: string | null;
+  normalizedText: string;
+  tags: string[];
+  scope: KnowledgeScope;
+  sensitivity: KnowledgeSensitivity;
+  ingestionState: KnowledgeIngestionState;
+  indexState: KnowledgeIndexState;
+  sourceChannel?: 'alexa' | 'telegram' | 'bluebubbles' | 'system' | null;
+  createdAt: string;
+  updatedAt: string;
+  lastUsedAt?: string | null;
+  disabledAt?: string | null;
+  deletedAt?: string | null;
+}
+
+export interface KnowledgeChunkRecord {
+  chunkId: string;
+  sourceId: string;
+  chunkIndex: number;
+  chunkText: string;
+  charLength: number;
+  createdAt: string;
+}
+
+export interface KnowledgeRetrievalHit {
+  sourceId: string;
+  sourceTitle: string;
+  sourceType: KnowledgeSourceType;
+  scope: KnowledgeScope;
+  sensitivity: KnowledgeSensitivity;
+  chunkId: string;
+  chunkIndex: number;
+  excerpt: string;
+  retrievalScore: number;
+  matchReason: string;
+  tags: string[];
+}
+
 export interface ChannelArtifact {
   kind: 'image';
   filename: string;
@@ -628,11 +696,7 @@ export interface ChannelSendReceipt {
   threadId?: string | null;
 }
 
-export type ChannelHealthState =
-  | 'starting'
-  | 'ready'
-  | 'degraded'
-  | 'stopped';
+export type ChannelHealthState = 'starting' | 'ready' | 'degraded' | 'stopped';
 
 export interface ChannelHealthSnapshot {
   name: string;

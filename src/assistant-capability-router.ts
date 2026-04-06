@@ -96,7 +96,9 @@ function matchDailyPrompt(normalized: string): AssistantCapabilityMatch | null {
   return null;
 }
 
-function matchHouseholdPrompt(normalized: string): AssistantCapabilityMatch | null {
+function matchHouseholdPrompt(
+  normalized: string,
+): AssistantCapabilityMatch | null {
   const lower = normalized.toLowerCase();
   if (
     lower === 'what about candace' ||
@@ -111,15 +113,13 @@ function matchHouseholdPrompt(normalized: string): AssistantCapabilityMatch | nu
       capabilityId: 'household.candace_upcoming',
       normalizedText: normalized,
       canonicalText:
-        lower === 'what about candace'
-          ? 'what about Candace'
-          : normalized,
+        lower === 'what about candace' ? 'what about Candace' : normalized,
       reason: 'matched Candace household phrasing',
     };
   }
   if (
     lower === 'anything for the family i am forgetting' ||
-    lower === 'anything for the family i\'m forgetting' ||
+    lower === "anything for the family i'm forgetting" ||
     lower === 'what do i need to follow up on at home' ||
     lower === 'what does the family have going on'
   ) {
@@ -133,7 +133,9 @@ function matchHouseholdPrompt(normalized: string): AssistantCapabilityMatch | nu
   return null;
 }
 
-function matchThreadPrompt(normalized: string): AssistantCapabilityMatch | null {
+function matchThreadPrompt(
+  normalized: string,
+): AssistantCapabilityMatch | null {
   const lower = normalized.toLowerCase();
   if (
     /^what threads do i have open\b/.test(lower) ||
@@ -166,7 +168,9 @@ function matchThreadPrompt(normalized: string): AssistantCapabilityMatch | null 
   return null;
 }
 
-function matchMemoryPrompt(normalized: string): AssistantCapabilityMatch | null {
+function matchMemoryPrompt(
+  normalized: string,
+): AssistantCapabilityMatch | null {
   const lower = normalized.toLowerCase();
   if (
     /^why did you say that\b/.test(lower) ||
@@ -254,6 +258,106 @@ function matchPulsePrompt(normalized: string): AssistantCapabilityMatch | null {
   return null;
 }
 
+function matchKnowledgePrompt(
+  normalized: string,
+): AssistantCapabilityMatch | null {
+  const lower = normalized.toLowerCase();
+  if (
+    /^save (?:this|that|this note|that note|this result|that result|this summary|that summary) to my library\b/.test(
+      lower,
+    ) ||
+    /^(?:save|add|import|index) (?:the )?(?:file|document) /.test(lower)
+  ) {
+    return {
+      capabilityId: 'knowledge.save_source',
+      normalizedText: normalized,
+      canonicalText: normalized,
+      reason: 'matched explicit library save phrasing',
+    };
+  }
+  if (
+    /^what sources are you using\b/.test(lower) ||
+    /^explain why this source was chosen\b/.test(lower)
+  ) {
+    return {
+      capabilityId: 'knowledge.explain_sources',
+      normalizedText: normalized,
+      canonicalText: normalized,
+      reason: 'matched saved-source explainability phrasing',
+    };
+  }
+  if (
+    /^show me the relevant saved items\b/.test(lower) ||
+    /^what have i saved about\b/.test(lower)
+  ) {
+    return {
+      capabilityId: 'knowledge.list_sources',
+      normalizedText: normalized,
+      canonicalText: normalized,
+      reason: 'matched saved-source listing phrasing',
+    };
+  }
+  if (
+    /^compare these saved sources\b/.test(lower) ||
+    /^compare my saved (?:notes|sources|material)\b/.test(lower)
+  ) {
+    return {
+      capabilityId: 'knowledge.compare_saved',
+      normalizedText: normalized,
+      canonicalText: normalized,
+      reason: 'matched saved-source comparison phrasing',
+    };
+  }
+  if (
+    /^what do my saved notes say about\b/.test(lower) ||
+    /^what did i save about\b/.test(lower) ||
+    /^summari[sz]e what i saved about\b/.test(lower) ||
+    /^what do i already know about\b/.test(lower) ||
+    /^use only my saved material\b/.test(lower) ||
+    /^combine my notes with outside research\b/.test(lower)
+  ) {
+    return {
+      capabilityId: /\bcompare\b/.test(lower)
+        ? 'knowledge.compare_saved'
+        : 'knowledge.summarize_saved',
+      normalizedText: normalized,
+      canonicalText: normalized,
+      reason: 'matched source-grounded knowledge-library phrasing',
+    };
+  }
+  if (
+    /^stop using that source\b/.test(lower) ||
+    /^disable that source\b/.test(lower)
+  ) {
+    return {
+      capabilityId: 'knowledge.disable_source',
+      normalizedText: normalized,
+      canonicalText: normalized,
+      reason: 'matched saved-source disable phrasing',
+    };
+  }
+  if (
+    /^forget this source\b/.test(lower) ||
+    /^delete this source\b/.test(lower)
+  ) {
+    return {
+      capabilityId: 'knowledge.delete_source',
+      normalizedText: normalized,
+      canonicalText: normalized,
+      reason: 'matched saved-source delete phrasing',
+    };
+  }
+  if (/^reindex this\b/.test(lower) || /^reindex that source\b/.test(lower)) {
+    return {
+      capabilityId: 'knowledge.reindex_source',
+      normalizedText: normalized,
+      canonicalText: normalized,
+      reason: 'matched saved-source reindex phrasing',
+    };
+  }
+  return null;
+}
+
 function matchMediaPrompt(normalized: string): AssistantCapabilityMatch | null {
   const lower = normalized.toLowerCase();
   const match = lower.match(
@@ -281,6 +385,7 @@ export function matchAssistantCapabilityRequest(
     matchThreadPrompt(normalized) ||
     matchMemoryPrompt(normalized) ||
     matchPulsePrompt(normalized) ||
+    matchKnowledgePrompt(normalized) ||
     matchMediaPrompt(normalized) ||
     (isSharedResearchRequest(normalized)
       ? {
@@ -332,7 +437,8 @@ export function continueAssistantCapabilityFromAlexaState(
     if (
       activeCapabilityId &&
       (activeCapabilityId.startsWith('research.') ||
-        activeCapabilityId.startsWith('pulse.'))
+        activeCapabilityId.startsWith('pulse.') ||
+        activeCapabilityId.startsWith('knowledge.'))
     ) {
       return {
         capabilityId: activeCapabilityId,
@@ -366,9 +472,9 @@ export function resolveAlexaIntentToCapability(
       return {
         capabilityId: 'daily.whats_next',
         normalizedText: 'what should I do next',
-        canonicalText:
-          'what should I do next',
-        reason: 'mapped next-step style Alexa intent to shared daily capability',
+        canonicalText: 'what should I do next',
+        reason:
+          'mapped next-step style Alexa intent to shared daily capability',
       };
     case ALEXA_WHAT_AM_I_FORGETTING_INTENT:
       return {

@@ -9,7 +9,9 @@ import type { AlexaConversationState } from './alexa-conversation.js';
 
 describe('assistant capability router', () => {
   it('matches shared daily and household requests', () => {
-    expect(matchAssistantCapabilityRequest('What am I forgetting?')).toMatchObject({
+    expect(
+      matchAssistantCapabilityRequest('What am I forgetting?'),
+    ).toMatchObject({
       capabilityId: 'daily.loose_ends',
     });
     expect(
@@ -17,28 +19,54 @@ describe('assistant capability router', () => {
     ).toMatchObject({
       capabilityId: 'household.candace_upcoming',
     });
-    expect(matchAssistantCapabilityRequest('What threads do I have open?')).toMatchObject(
-      {
-        capabilityId: 'threads.list_open',
-      },
-    );
+    expect(
+      matchAssistantCapabilityRequest('What threads do I have open?'),
+    ).toMatchObject({
+      capabilityId: 'threads.list_open',
+    });
   });
 
   it('matches bounded research prompts without inventing new intents', () => {
     expect(
-      matchAssistantCapabilityRequest('Compare meal delivery options for this week'),
+      matchAssistantCapabilityRequest(
+        'Compare meal delivery options for this week',
+      ),
     ).toMatchObject({
       capabilityId: 'research.compare',
     });
     expect(
-      matchAssistantCapabilityRequest('What is the best choice about weekend plans'),
+      matchAssistantCapabilityRequest(
+        'What is the best choice about weekend plans',
+      ),
     ).toMatchObject({
       capabilityId: 'research.recommend',
     });
     expect(
-      matchAssistantCapabilityRequest('What should I know before deciding on meal delivery?'),
+      matchAssistantCapabilityRequest(
+        'What should I know before deciding on meal delivery?',
+      ),
     ).toMatchObject({
       capabilityId: 'research.recommend',
+    });
+  });
+
+  it('matches explicit knowledge-library prompts cleanly', () => {
+    expect(
+      matchAssistantCapabilityRequest('Save this to my library'),
+    ).toMatchObject({
+      capabilityId: 'knowledge.save_source',
+    });
+    expect(
+      matchAssistantCapabilityRequest(
+        'What do my saved notes say about Candace?',
+      ),
+    ).toMatchObject({
+      capabilityId: 'knowledge.summarize_saved',
+    });
+    expect(
+      matchAssistantCapabilityRequest('What sources are you using?'),
+    ).toMatchObject({
+      capabilityId: 'knowledge.explain_sources',
     });
   });
 
@@ -55,7 +83,9 @@ describe('assistant capability router', () => {
 
   it('matches bounded image-generation requests without widening the capability graph', () => {
     expect(
-      matchAssistantCapabilityRequest('Generate an image of a cozy reading nook'),
+      matchAssistantCapabilityRequest(
+        'Generate an image of a cozy reading nook',
+      ),
     ).toMatchObject({
       capabilityId: 'media.image_generate',
       canonicalText: 'a cozy reading nook',
@@ -69,7 +99,9 @@ describe('assistant capability router', () => {
     expect(resolveAlexaIntentToCapability('WhatNextIntent')).toMatchObject({
       capabilityId: 'daily.whats_next',
     });
-    expect(resolveAlexaIntentToCapability('CandaceUpcomingIntent')).toMatchObject({
+    expect(
+      resolveAlexaIntentToCapability('CandaceUpcomingIntent'),
+    ).toMatchObject({
       capabilityId: 'household.candace_upcoming',
     });
   });
@@ -83,7 +115,12 @@ describe('assistant capability router', () => {
         lastAnswerSummary: 'meal delivery tradeoffs',
       },
       summaryText: 'meal delivery tradeoffs',
-      supportedFollowups: ['anything_else', 'shorter', 'say_more', 'memory_control'],
+      supportedFollowups: [
+        'anything_else',
+        'shorter',
+        'say_more',
+        'memory_control',
+      ],
       styleHints: {
         channelMode: 'alexa_companion',
         responseSource: 'local_companion',
@@ -121,7 +158,10 @@ describe('assistant capability router', () => {
       continuation: true,
     });
     expect(
-      continueAssistantCapabilityFromAlexaState('be a little more direct', state),
+      continueAssistantCapabilityFromAlexaState(
+        'be a little more direct',
+        state,
+      ),
     ).toMatchObject({
       capabilityId: 'pulse.surprise_me',
       continuation: true,
@@ -137,7 +177,12 @@ describe('assistant capability router', () => {
         lastAnswerSummary: 'Meal delivery looks cheaper but less flexible.',
       },
       summaryText: 'Meal delivery looks cheaper but less flexible.',
-      supportedFollowups: ['anything_else', 'shorter', 'say_more', 'memory_control'],
+      supportedFollowups: [
+        'anything_else',
+        'shorter',
+        'say_more',
+        'memory_control',
+      ],
       styleHints: {
         channelMode: 'alexa_companion',
         responseSource: 'local_companion',
@@ -145,9 +190,45 @@ describe('assistant capability router', () => {
     };
 
     expect(
-      continueAssistantCapabilityFromAlexaState('why did you choose that route', state),
+      continueAssistantCapabilityFromAlexaState(
+        'why did you choose that route',
+        state,
+      ),
     ).toMatchObject({
       capabilityId: 'research.compare',
+      continuation: true,
+    });
+  });
+
+  it('keeps knowledge follow-ups on the active capability', () => {
+    const state: AlexaConversationState = {
+      flowKey: 'knowledge_summarize_saved',
+      subjectKind: 'saved_item',
+      subjectData: {
+        activeCapabilityId: 'knowledge.summarize_saved',
+        lastAnswerSummary:
+          'Your saved material points to the Candace Friday dinner note.',
+        knowledgeSourceIds: ['source-1'],
+        knowledgeSourceTitles: ['Candace Dinner Notes'],
+      },
+      summaryText:
+        'Your saved material points to the Candace Friday dinner note.',
+      supportedFollowups: [
+        'anything_else',
+        'shorter',
+        'say_more',
+        'memory_control',
+      ],
+      styleHints: {
+        channelMode: 'alexa_companion',
+        responseSource: 'local_companion',
+      },
+    };
+
+    expect(
+      continueAssistantCapabilityFromAlexaState('say more', state),
+    ).toMatchObject({
+      capabilityId: 'knowledge.summarize_saved',
       continuation: true,
     });
   });

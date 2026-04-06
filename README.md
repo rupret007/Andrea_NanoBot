@@ -15,6 +15,7 @@
   <a href="docs/ADMIN_GUIDE.md">Admin Guide</a>&nbsp; | &nbsp;
   <a href="docs/ANDREA_OPENAI_BACKEND.md">OpenAI Backend</a>&nbsp; | &nbsp;
   <a href="docs/SETUP_AND_FEATURES_GUIDE.md">Setup Guide</a>&nbsp; | &nbsp;
+  <a href="docs/KNOWLEDGE_LIBRARY.md">Knowledge Library</a>&nbsp; | &nbsp;
   <a href="docs/BLUEBUBBLES_CHANNEL_PREP.md">BlueBubbles Prep</a>&nbsp; | &nbsp;
   <a href="docs/CHANNEL_COMMANDS_AND_ONBOARDING.md">Chat Commands</a>&nbsp; | &nbsp;
   <a href="docs/BACKEND_LANES_ARCHITECTURE.md">Backend Lanes</a>&nbsp; | &nbsp;
@@ -211,18 +212,40 @@ See [docs/BLUEBUBBLES_CHANNEL_PREP.md](docs/BLUEBUBBLES_CHANNEL_PREP.md) for the
 Andrea now has a shared assistant capability graph so Alexa and Telegram feel like two expressions of the same assistant rather than separate route trees.
 
 - shared capabilities now cover daily guidance, household-aware answers, explicit thread lookup, memory controls, and bounded research
+- shared capabilities now also cover explicit Knowledge Library controls such as saving sources, listing relevant sources, explaining source choice, and summarizing saved material
 - shared capabilities now also include explicit Andrea Pulse actions
 - Alexa keeps voice-safe shaping and bounded follow-ups
 - BlueBubbles is now represented as a prepared future channel with its own safety gate and output-shaping policy
 - Telegram keeps richer rendering and deeper operator-side actions
 - operator-only current-work controls stay out of Alexa even though they live in the same registry
 - bounded research now returns a summary first, structured findings, route explanation, and exact blocker truth when web-backed OpenAI research is unavailable
-- bounded research can use local context, optional OpenAI-backed synthesis with `web_search` when configured, and runtime delegation only when the request is clearly execution-heavy
+- bounded research can now use local context, the Knowledge Library, optional OpenAI-backed synthesis with `web_search` when configured, and runtime delegation only when the request is clearly execution-heavy
 - Telegram image generation is now wired through the shared media capability when OpenAI credentials are present and the provider account is usable; Alexa keeps media at the handoff layer
 
 See [docs/ASSISTANT_CAPABILITY_GRAPH.md](docs/ASSISTANT_CAPABILITY_GRAPH.md) for the descriptor model, safety rules, research provider boundaries, and license-safe pattern sources.
 
-For operator-side smoke testing of the shared core, use `npm run debug:shared-capabilities` and `npm run debug:research-mode`.
+For operator-side smoke testing of the shared core, use `npm run debug:shared-capabilities`, `npm run debug:research-mode`, and `npm run debug:knowledge-library`.
+
+## Knowledge Library
+
+Andrea now has a bounded **Knowledge Library** for saved source material.
+
+- it is explicit, inspectable, and source-labeled
+- it is separate from memory facts, life threads, reminders, and current work
+- it supports manual notes, saved research, and approved local text-file imports
+- retrieval is lexical-first with chunk-level provenance instead of silent blob matching
+- Telegram is the richer source-grounded surface, while Alexa stays concise and source-aware
+
+Useful prompts include:
+
+- `save this to my library`
+- `what do my saved notes say about this`
+- `compare these saved sources`
+- `what sources are you using`
+- `use only my saved material`
+- `combine my notes with outside research`
+
+See [docs/KNOWLEDGE_LIBRARY.md](docs/KNOWLEDGE_LIBRARY.md) for the library model, ingestion rules, retrieval behavior, privacy boundaries, and testing path.
 
 For day-to-day operator checks, use `/alexa-status` inside the registered main control chat and `npm run services:status` for the local Alexa listener, OAuth health, public-ingress hinting, and the last signed Alexa request markers on the host. Public HTTPS ingress and live signed utterances remain separate acceptance checks. If the live host is an `ngrok` `*.ngrok-free.dev` tunnel, the Alexa console endpoint SSL setting must use the wildcard-certificate option.
 
@@ -346,6 +369,8 @@ Andrea now has a bounded **life thread** layer for ongoing matters like Candace,
 
 - research a topic and summarize the result
 - compare options, explain tradeoffs, and recommend a choice with route explanation
+- save source material into a bounded Knowledge Library and ask source-grounded follow-up questions later
+- compare saved notes, summaries, and imported reference material with visible provenance
 - keep Alexa concise while Telegram carries the richer structured research surface
 - monitor or re-check information through scheduled tasks
 - organize output per chat or group context
@@ -471,6 +496,8 @@ Use the docs based on what you are trying to do:
   for where `CURSOR_API_KEY` comes from, what it enables, and how it differs from the desktop bridge
 - [docs/ALEXA_VOICE_INTEGRATION.md](docs/ALEXA_VOICE_INTEGRATION.md)
   for Alexa v1 setup, account-linking rules, Node 22 validation requirements, and the final live-acceptance runbook
+- [docs/KNOWLEDGE_LIBRARY.md](docs/KNOWLEDGE_LIBRARY.md)
+  for the Knowledge Library model, explicit save/import rules, lexical-first retrieval, and source-grounded answer behavior
 - [docs/BLUEBUBBLES_CHANNEL_PREP.md](docs/BLUEBUBBLES_CHANNEL_PREP.md)
   for the prepared BlueBubbles channel adapter, safety model, and current non-live scope
 - [docs/ADDONS_AND_FEATURE_MATRIX.md](docs/ADDONS_AND_FEATURE_MATRIX.md)

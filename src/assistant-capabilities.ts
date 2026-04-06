@@ -20,14 +20,26 @@ import { resolveCompanionToneProfileFromFacts } from './companion-personality.js
 import {
   isResearchPrompt,
   runResearchOrchestrator,
+  type ResearchSupportingSource,
   type ResearchResult,
 } from './research-orchestrator.js';
 import { runImageGeneration } from './media-generation.js';
+import {
+  deleteKnowledgeSourceById,
+  extractKnowledgeTopicQuery,
+  disableKnowledgeSourceById,
+  importKnowledgeFile,
+  reindexKnowledgeSourceById,
+  resolveKnowledgeSourceSelection,
+  saveKnowledgeSource,
+  searchKnowledgeLibrary,
+} from './knowledge-library.js';
 import type {
   AlexaCompanionGuidanceGoal,
   AlexaConversationFollowupAction,
   AlexaConversationSubjectKind,
   CompanionToneProfile,
+  KnowledgeSourceRecord,
   MediaGenerationResult,
 } from './types.js';
 import { normalizeVoicePrompt } from './voice-ready.js';
@@ -50,6 +62,14 @@ export type AssistantCapabilityId =
   | 'memory.manual_only'
   | 'pulse.interesting_thing'
   | 'pulse.surprise_me'
+  | 'knowledge.save_source'
+  | 'knowledge.list_sources'
+  | 'knowledge.summarize_saved'
+  | 'knowledge.compare_saved'
+  | 'knowledge.explain_sources'
+  | 'knowledge.disable_source'
+  | 'knowledge.delete_source'
+  | 'knowledge.reindex_source'
   | 'research.topic'
   | 'research.compare'
   | 'research.summarize'
@@ -68,6 +88,7 @@ export type AssistantCapabilityCategory =
   | 'threads'
   | 'memory'
   | 'pulse'
+  | 'knowledge'
   | 'research'
   | 'work'
   | 'media';
@@ -102,6 +123,10 @@ export interface AssistantCapabilityContext {
     researchRouteExplanation?: string;
     researchProviderUsed?: ResearchResult['providerUsed'];
     saveForLaterCandidate?: string;
+    knowledgeSourceIds?: string[];
+    knowledgeSourceTitles?: string[];
+    knowledgeSourceMatches?: string[];
+    knowledgeLastQuery?: string;
     activeCapabilityId?: AssistantCapabilityId;
   };
 }
@@ -123,6 +148,7 @@ export interface AssistantCapabilityTrace {
     | 'life_thread_local'
     | 'memory_local'
     | 'pulse_local'
+    | 'knowledge_library'
     | 'research_local'
     | 'research_openai'
     | 'research_handoff'
@@ -158,10 +184,20 @@ export interface AssistantCapabilityConversationSeed {
     researchRouteExplanation?: string;
     researchProviderUsed?: ResearchResult['providerUsed'];
     saveForLaterCandidate?: string;
+    knowledgeSourceIds?: string[];
+    knowledgeSourceTitles?: string[];
+    knowledgeSourceMatches?: string[];
+    knowledgeLastQuery?: string;
     toneProfile?: CompanionToneProfile;
   };
   supportedFollowups?: AlexaConversationFollowupAction[];
-  prioritizationLens?: 'general' | 'calendar' | 'family' | 'meeting' | 'work' | 'evening';
+  prioritizationLens?:
+    | 'general'
+    | 'calendar'
+    | 'family'
+    | 'meeting'
+    | 'work'
+    | 'evening';
   hasActionItem?: boolean;
   hasRiskSignal?: boolean;
   reminderCandidate?: boolean;
@@ -212,7 +248,9 @@ export interface AssistantCapabilityDescriptor {
 }
 
 function normalizeText(value: string | undefined): string {
-  return normalizeVoicePrompt(value || '').replace(/\s+/g, ' ').trim();
+  return normalizeVoicePrompt(value || '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function buildCapabilityTrace(
@@ -373,7 +411,8 @@ async function runLifeThreadCapability(
             threadId: result.referencedThread.id,
             threadTitle: result.referencedThread.title,
             threadSummaryLines: [
-              result.referencedThread.nextAction || result.referencedThread.summary,
+              result.referencedThread.nextAction ||
+                result.referencedThread.summary,
             ],
             conversationFocus: result.referencedThread.title,
           },
@@ -446,7 +485,10 @@ function isResearchExplainabilityTurn(query: string): boolean {
 }
 
 function formatResearchTelegramReply(result: ResearchResult): string {
-  const lines = ['*Research Summary*', result.summaryText || result.fullText || ''];
+  const lines = [
+    '*Research Summary*',
+    result.summaryText || result.fullText || '',
+  ];
   for (const section of result.structuredFindings) {
     if (!section.items.length) continue;
     lines.push('', `*${section.title}*`);
@@ -456,6 +498,14 @@ function formatResearchTelegramReply(result: ResearchResult): string {
   }
   if (result.recommendationText) {
     lines.push('', '*Recommendation*', result.recommendationText);
+  }
+  if (result.supportingSources?.length) {
+    lines.push('', '*Supporting Sources*');
+    for (const source of result.supportingSources.slice(0, 4)) {
+      lines.push(
+        `- ${source.title}${source.matchReason ? ` (${source.matchReason})` : ''}`,
+      );
+    }
   }
   lines.push('', '*Why this route*', result.routeExplanation);
   if (result.followupSuggestions.length) {
@@ -473,6 +523,14 @@ function formatResearchBlueBubblesReply(result: ResearchResult): string {
   if (firstSection?.items.length) {
     lines.push(...firstSection.items.slice(0, 2).map((item) => `- ${item}`));
   }
+  if (result.supportingSources?.length) {
+    lines.push(
+      `Sources: ${result.supportingSources
+        .slice(0, 2)
+        .map((source) => source.title)
+        .join(', ')}`,
+    );
+  }
   lines.push(`Route: ${result.routeExplanation}`);
   return lines.filter(Boolean).join('\n');
 }
@@ -481,7 +539,8 @@ function formatResearchAlexaReply(result: ResearchResult): {
   replyText: string;
   handoffOffer?: string;
 } {
-  const lead = result.spokenText || result.summaryText || result.fullText || 'Okay.';
+  const lead =
+    result.spokenText || result.summaryText || result.fullText || 'Okay.';
   const followupPrompt =
     result.handoffOption && result.plan.kind === 'compare'
       ? ' Want the tradeoffs, or should I send the fuller version to Telegram?'
@@ -496,6 +555,162 @@ function formatResearchAlexaReply(result: ResearchResult): {
       ? 'I can send the fuller version to Telegram if you want.'
       : undefined,
   };
+}
+
+function dedupeSupportingSources(
+  supportingSources: ResearchSupportingSource[] | undefined,
+): ResearchSupportingSource[] {
+  const unique = new Map<string, ResearchSupportingSource>();
+  for (const source of supportingSources || []) {
+    const key =
+      source.sourceId ||
+      `${source.title.toLowerCase()}:${(source.excerpt || '').toLowerCase()}`;
+    if (!unique.has(key)) {
+      unique.set(key, source);
+    }
+  }
+  return [...unique.values()];
+}
+
+function describeKnowledgeMatches(
+  supportingSources: ResearchSupportingSource[] | undefined,
+): string[] {
+  return dedupeSupportingSources(supportingSources)
+    .slice(0, 4)
+    .map((source) =>
+      source.matchReason
+        ? `${source.title}: ${source.matchReason}`
+        : source.title,
+    );
+}
+
+function summarizeKnowledgeSourceList(
+  sources: KnowledgeSourceRecord[],
+  hits?: ResearchSupportingSource[],
+): {
+  telegram: string;
+  alexa: string;
+  bluebubbles: string;
+} {
+  if (sources.length === 0) {
+    return {
+      telegram: 'I do not have any matching saved sources yet.',
+      alexa: 'I do not have any matching saved sources yet.',
+      bluebubbles: 'I do not have any matching saved sources yet.',
+    };
+  }
+
+  const matchById = new Map(
+    (hits || []).map((hit) => [
+      hit.sourceId || `${hit.title}:${hit.excerpt}`,
+      hit,
+    ]),
+  );
+  const telegramLines = ['*Saved Sources*'];
+  for (const source of sources.slice(0, 5)) {
+    const hit = matchById.get(source.sourceId);
+    telegramLines.push(
+      `- *${source.title}*${hit?.matchReason ? ` (${hit.matchReason})` : ''}`,
+    );
+    telegramLines.push(
+      `  ${source.shortSummary}${source.tags.length ? ` [tags: ${source.tags.join(', ')}]` : ''}`,
+    );
+  }
+
+  const alexaLead =
+    sources.length === 1
+      ? `I found one saved source: ${sources[0]!.title}.`
+      : `I found ${sources.length} saved sources. The strongest match is ${sources[0]!.title}.`;
+
+  return {
+    telegram: telegramLines.join('\n'),
+    alexa: alexaLead,
+    bluebubbles: [
+      'Saved sources:',
+      ...sources.slice(0, 3).map((source) => `- ${source.title}`),
+    ].join('\n'),
+  };
+}
+
+function extractKnowledgeExplainTopic(query: string): string {
+  return normalizeText(query)
+    .replace(
+      /^(?:what sources are you using(?: about| for)?|explain why this source was chosen(?: about| for)?|show me the relevant saved items(?: about| for)?)\s*/i,
+      '',
+    )
+    .trim();
+}
+
+function buildKnowledgeSourceExplainReply(
+  channel: AssistantCapabilityContext['channel'],
+  query: string,
+  supportingSources: ResearchSupportingSource[],
+): string {
+  if (supportingSources.length === 0) {
+    return 'I do not have any saved sources to ground that yet.';
+  }
+
+  const topic = extractKnowledgeExplainTopic(query);
+  const reason =
+    topic.length > 0
+      ? `They were the strongest saved matches for "${topic}".`
+      : 'They were the strongest saved matches in your library.';
+
+  if (channel === 'alexa') {
+    const names = supportingSources.slice(0, 3).map((source) => source.title);
+    const joinedNames =
+      names.length === 1
+        ? names[0]
+        : names.length === 2
+          ? `${names[0]} and ${names[1]}`
+          : `${names[0]}, ${names[1]}, and ${names[2]}`;
+    return `I would use ${joinedNames} because ${reason.toLowerCase()}`;
+  }
+
+  if (channel === 'bluebubbles') {
+    return [
+      'Sources I would use:',
+      ...supportingSources
+        .slice(0, 3)
+        .map(
+          (source) =>
+            `- ${source.title}${source.matchReason ? ` (${source.matchReason})` : ''}`,
+        ),
+      `Why these sources: ${reason}`,
+    ].join('\n');
+  }
+
+  return [
+    '*Sources I would use*',
+    ...supportingSources.slice(0, 4).map((source) => {
+      const lines = [
+        `- *${source.title}*${source.matchReason ? ` (${source.matchReason})` : ''}`,
+      ];
+      if (source.excerpt) {
+        lines.push(`  ${source.excerpt}`);
+      }
+      return lines.join('\n');
+    }),
+    '',
+    '*Why these sources*',
+    reason,
+  ].join('\n');
+}
+
+function inferKnowledgeRequestedSourceIds(
+  query: string,
+  context: AssistantCapabilityContext,
+): string[] | undefined {
+  const normalized = normalizeText(query).toLowerCase();
+  if (
+    context.priorSubjectData?.knowledgeSourceIds?.length &&
+    (/^(this|that|these) source/.test(normalized) ||
+      /\bthese saved sources\b/.test(normalized) ||
+      /\bthat source\b/.test(normalized))
+  ) {
+    return context.priorSubjectData.knowledgeSourceIds;
+  }
+  return undefined;
 }
 
 async function runResearchCapability(
@@ -593,13 +808,481 @@ async function runResearchCapability(
     trace: buildCapabilityTrace(
       descriptor,
       context,
-      result.providerUsed === 'openai_responses' || result.providerUsed === 'hybrid'
+      result.providerUsed === 'openai_responses' ||
+        result.providerUsed === 'hybrid'
         ? result.handoffOption && context.channel === 'alexa'
           ? 'research_handoff'
           : 'research_openai'
         : 'research_local',
       result.plan.reason,
       result.sourceNotes,
+    ),
+  };
+}
+
+function parseKnowledgeTitle(text: string): string | undefined {
+  const quoted =
+    text.match(/\b(?:as|titled|called)\s+["“]([^"”]+)["”]/i)?.[1] ||
+    text.match(/\b(?:as|titled|called)\s+([a-z0-9][a-z0-9'&: _-]{2,})$/i)?.[1];
+  return quoted?.trim();
+}
+
+function parseKnowledgeExplicitTitle(text: string): string | undefined {
+  return text
+    .match(/\b(?:as|titled|called)\s+([^:\n]+):/i)?.[1]
+    ?.replace(/\s+/g, ' ')
+    .trim();
+}
+
+function parseKnowledgeTags(text: string): string[] {
+  const raw =
+    text.match(/\btags?\s*[:=]\s*([a-z0-9, _-]+)/i)?.[1] ||
+    text.match(/\btagged\s+([a-z0-9, _-]+)/i)?.[1];
+  if (!raw) return [];
+  return raw
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .slice(0, 6);
+}
+
+function parseKnowledgeFilePath(text: string): string | undefined {
+  const quoted =
+    text.match(
+      /(?:save|add|import|index)\s+(?:the\s+)?(?:file|document)\s+["“]([^"”]+)["”]/i,
+    )?.[1] ||
+    text.match(
+      /(?:save|add|import|index)\s+(?:the\s+)?(?:file|document)\s+([A-Za-z]:\\[^\n]+?)(?:\s+to my library|\s*$)/i,
+    )?.[1];
+  return quoted?.trim();
+}
+
+function resolveKnowledgeSourceType(
+  context: AssistantCapabilityContext,
+  input: AssistantCapabilityInput,
+): 'saved_research_result' | 'generated_note' | 'manual_reference' {
+  const text = normalizeText(input.text || input.canonicalText);
+  if (
+    context.priorSubjectData?.activeCapabilityId?.startsWith('research.') ||
+    /\bresearch\b/.test(text) ||
+    context.priorSubjectData?.researchRouteExplanation
+  ) {
+    return 'saved_research_result';
+  }
+  if (context.replyText || context.priorSubjectData?.lastAnswerSummary) {
+    return 'generated_note';
+  }
+  return 'manual_reference';
+}
+
+function pickKnowledgeSaveContent(
+  context: AssistantCapabilityContext,
+  input: AssistantCapabilityInput,
+): string {
+  const text = input.text || input.canonicalText || '';
+  const colonContent = text.includes(':')
+    ? text.split(':').slice(1).join(':').trim()
+    : '';
+  if (colonContent) return colonContent;
+  if (context.replyText?.trim()) return context.replyText.trim();
+  if (context.priorSubjectData?.saveForLaterCandidate?.trim()) {
+    return context.priorSubjectData.saveForLaterCandidate.trim();
+  }
+  if (context.priorSubjectData?.lastAnswerSummary?.trim()) {
+    return context.priorSubjectData.lastAnswerSummary.trim();
+  }
+  return '';
+}
+
+function buildKnowledgeConversationSeed(
+  descriptor: AssistantCapabilityDescriptor,
+  summaryText: string,
+  query: string,
+  sourceIds: string[] = [],
+  sourceTitles: string[] = [],
+  sourceMatches: string[] = [],
+): AssistantCapabilityConversationSeed {
+  return {
+    flowKey: descriptor.id.replace(/\./g, '_'),
+    subjectKind: 'saved_item',
+    summaryText,
+    guidanceGoal: 'explainability',
+    subjectData: {
+      activeCapabilityId: descriptor.id,
+      lastAnswerSummary: summaryText,
+      conversationFocus: query,
+      knowledgeSourceIds: sourceIds,
+      knowledgeSourceTitles: sourceTitles,
+      knowledgeSourceMatches: sourceMatches,
+      knowledgeLastQuery: query,
+    },
+    supportedFollowups: descriptor.followupActions,
+    responseSource: 'local_companion',
+  };
+}
+
+async function runKnowledgeSaveCapability(
+  descriptor: AssistantCapabilityDescriptor,
+  context: AssistantCapabilityContext,
+  input: AssistantCapabilityInput,
+): Promise<AssistantCapabilityResult> {
+  if (!context.groupFolder) return { handled: false };
+
+  const raw = input.canonicalText || input.text || '';
+  const filePath = parseKnowledgeFilePath(raw);
+  const title = parseKnowledgeExplicitTitle(raw) || parseKnowledgeTitle(raw);
+  const tags = parseKnowledgeTags(raw);
+  const result = filePath
+    ? importKnowledgeFile({
+        groupFolder: context.groupFolder,
+        filePath,
+        title,
+        tags,
+        sourceChannel: context.channel === 'alexa' ? 'alexa' : context.channel,
+      })
+    : saveKnowledgeSource({
+        groupFolder: context.groupFolder,
+        title,
+        content: pickKnowledgeSaveContent(context, input),
+        sourceType: resolveKnowledgeSourceType(context, input),
+        tags,
+        sourceChannel: context.channel === 'alexa' ? 'alexa' : context.channel,
+      });
+
+  return {
+    handled: true,
+    capabilityId: descriptor.id,
+    replyText: result.message,
+    outputShape: descriptor.preferredOutputShape[context.channel],
+    conversationSeed: buildKnowledgeConversationSeed(
+      descriptor,
+      result.message,
+      raw || result.message,
+      result.source ? [result.source.sourceId] : [],
+      result.source ? [result.source.title] : [],
+      result.source ? [result.source.title] : [],
+    ),
+    trace: buildCapabilityTrace(
+      descriptor,
+      context,
+      'knowledge_library',
+      result.ok
+        ? 'saved an explicit library source'
+        : 'library save failed cleanly',
+      result.debugPath,
+    ),
+  };
+}
+
+function buildKnowledgeSourcesReply(
+  channel: AssistantCapabilityContext['channel'],
+  sources: KnowledgeSourceRecord[],
+  supportingSources?: ResearchSupportingSource[],
+): string {
+  const formatted = summarizeKnowledgeSourceList(sources, supportingSources);
+  if (channel === 'alexa') return formatted.alexa;
+  if (channel === 'bluebubbles') return formatted.bluebubbles;
+  return formatted.telegram;
+}
+
+async function runKnowledgeListCapability(
+  descriptor: AssistantCapabilityDescriptor,
+  context: AssistantCapabilityContext,
+  input: AssistantCapabilityInput,
+): Promise<AssistantCapabilityResult> {
+  if (!context.groupFolder) return { handled: false };
+  const query = input.canonicalText || input.text || '';
+  const search = searchKnowledgeLibrary({
+    groupFolder: context.groupFolder,
+    query,
+    requestedSourceIds: inferKnowledgeRequestedSourceIds(query, context),
+    limit: context.channel === 'alexa' ? 3 : 5,
+  });
+  const replyText = buildKnowledgeSourcesReply(
+    context.channel,
+    search.sources,
+    search.hits.map((hit) => ({
+      origin: 'knowledge_library',
+      title: hit.sourceTitle,
+      sourceId: hit.sourceId,
+      sourceType: hit.sourceType,
+      scope: hit.scope,
+      excerpt: hit.excerpt,
+      retrievalScore: hit.retrievalScore,
+      matchReason: hit.matchReason,
+    })),
+  );
+
+  return {
+    handled: true,
+    capabilityId: descriptor.id,
+    replyText,
+    outputShape: descriptor.preferredOutputShape[context.channel],
+    conversationSeed: buildKnowledgeConversationSeed(
+      descriptor,
+      search.sources.length
+        ? `Found ${search.sources.length} saved sources.`
+        : 'No matching saved sources yet.',
+      query,
+      search.sources.map((source) => source.sourceId),
+      search.sources.map((source) => source.title),
+      search.hits.map((hit) => `${hit.sourceTitle}: ${hit.matchReason}`),
+    ),
+    trace: buildCapabilityTrace(
+      descriptor,
+      context,
+      'knowledge_library',
+      'listed relevant saved sources from the knowledge library',
+      search.debugPath,
+    ),
+  };
+}
+
+async function runKnowledgeResearchCapability(
+  descriptor: AssistantCapabilityDescriptor,
+  context: AssistantCapabilityContext,
+  input: AssistantCapabilityInput,
+): Promise<AssistantCapabilityResult> {
+  const query =
+    input.canonicalText ||
+    input.text ||
+    context.priorSubjectData?.knowledgeLastQuery ||
+    '';
+  if (!query.trim()) return { handled: false };
+
+  if (
+    descriptor.id === 'knowledge.explain_sources' &&
+    context.priorSubjectData?.knowledgeSourceMatches?.length
+  ) {
+    const replyText =
+      context.channel === 'alexa'
+        ? `I used ${context.priorSubjectData.knowledgeSourceTitles?.slice(0, 2).join(' and ')} because they were the strongest saved matches.`
+        : [
+            '*Sources used*',
+            ...context.priorSubjectData.knowledgeSourceMatches.map(
+              (match) => `- ${match}`,
+            ),
+          ].join('\n');
+    return {
+      handled: true,
+      capabilityId: descriptor.id,
+      replyText,
+      outputShape: descriptor.preferredOutputShape[context.channel],
+      conversationSeed: buildKnowledgeConversationSeed(
+        descriptor,
+        context.priorSubjectData.lastAnswerSummary ||
+          'Saved source explanation',
+        query,
+        context.priorSubjectData.knowledgeSourceIds || [],
+        context.priorSubjectData.knowledgeSourceTitles || [],
+        context.priorSubjectData.knowledgeSourceMatches || [],
+      ),
+      trace: buildCapabilityTrace(
+        descriptor,
+        context,
+        'knowledge_library',
+        'explained the saved sources used in the active answer',
+      ),
+    };
+  }
+
+  if (descriptor.id === 'knowledge.explain_sources') {
+    if (!context.groupFolder) return { handled: false };
+    const topicQuery = extractKnowledgeTopicQuery(query);
+    if (!topicQuery.trim()) {
+      return {
+        handled: true,
+        capabilityId: descriptor.id,
+        replyText:
+          'Ask that about a saved topic, or right after a saved-material answer.',
+        outputShape: descriptor.preferredOutputShape[context.channel],
+        trace: buildCapabilityTrace(
+          descriptor,
+          context,
+          'knowledge_library',
+          'source explanation requested without a specific saved topic',
+        ),
+      };
+    }
+
+    const search = searchKnowledgeLibrary({
+      groupFolder: context.groupFolder,
+      query: topicQuery,
+      requestedSourceIds: inferKnowledgeRequestedSourceIds(query, context),
+      limit: context.channel === 'alexa' ? 2 : 4,
+    });
+    const supportingSources = dedupeSupportingSources(
+      search.hits.map((hit) => ({
+        origin: 'knowledge_library' as const,
+        title: hit.sourceTitle,
+        sourceId: hit.sourceId,
+        sourceType: hit.sourceType,
+        scope: hit.scope,
+        excerpt: hit.excerpt,
+        retrievalScore: hit.retrievalScore,
+        matchReason: hit.matchReason,
+      })),
+    );
+
+    return {
+      handled: true,
+      capabilityId: descriptor.id,
+      replyText: buildKnowledgeSourceExplainReply(
+        context.channel,
+        query,
+        supportingSources,
+      ),
+      outputShape: descriptor.preferredOutputShape[context.channel],
+      conversationSeed: buildKnowledgeConversationSeed(
+        descriptor,
+        supportingSources.length
+          ? `Explained the saved sources for ${topicQuery}.`
+          : 'No saved sources matched that topic yet.',
+        topicQuery,
+        supportingSources
+          .map((source) => source.sourceId)
+          .filter((sourceId): sourceId is string => Boolean(sourceId)),
+        supportingSources.map((source) => source.title),
+        describeKnowledgeMatches(supportingSources),
+      ),
+      trace: buildCapabilityTrace(
+        descriptor,
+        context,
+        'knowledge_library',
+        supportingSources.length
+          ? 'explained which saved sources matched the requested topic'
+          : 'no saved sources matched the requested topic',
+        search.debugPath,
+      ),
+    };
+  }
+
+  const savedMaterialMode = /\bcombine my notes with outside research\b/i.test(
+    query,
+  )
+    ? 'combine'
+    : 'only';
+  const requestedSourceIds = inferKnowledgeRequestedSourceIds(query, context);
+  const researchResult = await runResearchOrchestrator({
+    query,
+    channel: context.channel === 'bluebubbles' ? 'telegram' : context.channel,
+    groupFolder: context.groupFolder,
+    now: context.now,
+    conversationSummary: context.conversationSummary,
+    preferBrief: context.channel === 'alexa',
+    savedMaterialMode,
+    requestedSourceIds,
+  });
+  if (!researchResult.handled) return { handled: false };
+
+  const voice = formatResearchAlexaReply(researchResult);
+  const supportingSourceIds = (researchResult.supportingSources || [])
+    .map((source) => source.sourceId)
+    .filter((sourceId): sourceId is string => Boolean(sourceId));
+  const supportingSourceTitles = (researchResult.supportingSources || []).map(
+    (source) => source.title,
+  );
+  const knowledgeMatches = describeKnowledgeMatches(
+    researchResult.supportingSources,
+  );
+
+  return {
+    handled: true,
+    capabilityId: descriptor.id,
+    replyText:
+      context.channel === 'alexa'
+        ? voice.replyText
+        : context.channel === 'bluebubbles'
+          ? formatResearchBlueBubblesReply(researchResult)
+          : formatResearchTelegramReply(researchResult),
+    outputShape:
+      researchResult.handoffOption && context.channel === 'alexa'
+        ? 'handoff_offer'
+        : descriptor.preferredOutputShape[context.channel],
+    researchResult,
+    handoffOffer: voice.handoffOffer,
+    conversationSeed: buildKnowledgeConversationSeed(
+      descriptor,
+      researchResult.summaryText || query,
+      query,
+      supportingSourceIds,
+      supportingSourceTitles,
+      knowledgeMatches,
+    ),
+    trace: buildCapabilityTrace(
+      descriptor,
+      context,
+      'knowledge_library',
+      researchResult.routeExplanation,
+      researchResult.debugPath,
+    ),
+  };
+}
+
+async function runKnowledgeMutationCapability(
+  descriptor: AssistantCapabilityDescriptor,
+  context: AssistantCapabilityContext,
+  input: AssistantCapabilityInput,
+): Promise<AssistantCapabilityResult> {
+  if (!context.groupFolder) return { handled: false };
+  const query = input.canonicalText || input.text || '';
+  const selection = resolveKnowledgeSourceSelection({
+    groupFolder: context.groupFolder,
+    text: query,
+    priorSourceIds: context.priorSubjectData?.knowledgeSourceIds,
+  });
+  const target = selection.sources[0];
+  if (!target) {
+    return {
+      handled: true,
+      capabilityId: descriptor.id,
+      replyText: 'I could not find a matching saved source for that.',
+      outputShape: descriptor.preferredOutputShape[context.channel],
+      trace: buildCapabilityTrace(
+        descriptor,
+        context,
+        'knowledge_library',
+        'no matching saved source was available for the requested mutation',
+        selection.debugPath,
+      ),
+    };
+  }
+
+  const mutationResult =
+    descriptor.id === 'knowledge.disable_source'
+      ? disableKnowledgeSourceById(target.sourceId)
+      : descriptor.id === 'knowledge.delete_source'
+        ? deleteKnowledgeSourceById(target.sourceId)
+        : reindexKnowledgeSourceById(target.sourceId);
+  const mutationDebugPath: string[] =
+    descriptor.id === 'knowledge.reindex_source' &&
+    'debugPath' in mutationResult
+      ? (mutationResult.debugPath as string[])
+      : selection.debugPath;
+
+  return {
+    handled: true,
+    capabilityId: descriptor.id,
+    replyText: mutationResult.message,
+    outputShape: descriptor.preferredOutputShape[context.channel],
+    conversationSeed: buildKnowledgeConversationSeed(
+      descriptor,
+      mutationResult.message,
+      query,
+      [target.sourceId],
+      [target.title],
+      [target.title],
+    ),
+    trace: buildCapabilityTrace(
+      descriptor,
+      context,
+      'knowledge_library',
+      descriptor.id === 'knowledge.reindex_source'
+        ? 'reindexed a saved knowledge source'
+        : descriptor.id === 'knowledge.delete_source'
+          ? 'deleted a saved knowledge source'
+          : 'disabled a saved knowledge source',
+      mutationDebugPath,
     ),
   };
 }
@@ -621,7 +1304,9 @@ async function runMediaCapability(
           ? 'That media workflow is still a future hook.'
           : 'That media workflow is still prepared, but not implemented yet.',
       outputShape:
-        context.channel === 'alexa' ? 'voice_brief' : descriptor.preferredOutputShape[context.channel],
+        context.channel === 'alexa'
+          ? 'voice_brief'
+          : descriptor.preferredOutputShape[context.channel],
       trace: buildCapabilityTrace(
         descriptor,
         context,
@@ -763,7 +1448,13 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
       telegram: 'chat_rich',
       bluebubbles: 'chat_brief',
     },
-    followupActions: ['anything_else', 'shorter', 'say_more', 'action_guidance', 'memory_control'],
+    followupActions: [
+      'anything_else',
+      'shorter',
+      'say_more',
+      'action_guidance',
+      'memory_control',
+    ],
     handlerKind: 'local',
     execute: (context, input) =>
       runDailyCapability(
@@ -801,7 +1492,13 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
       telegram: 'chat_rich',
       bluebubbles: 'chat_brief',
     },
-    followupActions: ['anything_else', 'shorter', 'say_more', 'action_guidance', 'memory_control'],
+    followupActions: [
+      'anything_else',
+      'shorter',
+      'say_more',
+      'action_guidance',
+      'memory_control',
+    ],
     handlerKind: 'local',
     execute: (context, input) =>
       runDailyCapability(
@@ -840,7 +1537,13 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
       telegram: 'chat_rich',
       bluebubbles: 'chat_brief',
     },
-    followupActions: ['anything_else', 'shorter', 'say_more', 'save_that', 'memory_control'],
+    followupActions: [
+      'anything_else',
+      'shorter',
+      'say_more',
+      'save_that',
+      'memory_control',
+    ],
     handlerKind: 'local',
     execute: (context, input) =>
       runDailyCapability(
@@ -879,7 +1582,14 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
       telegram: 'chat_rich',
       bluebubbles: 'chat_brief',
     },
-    followupActions: ['anything_else', 'shorter', 'say_more', 'switch_person', 'action_guidance', 'memory_control'],
+    followupActions: [
+      'anything_else',
+      'shorter',
+      'say_more',
+      'switch_person',
+      'action_guidance',
+      'memory_control',
+    ],
     handlerKind: 'local',
     execute: (context, input) =>
       runDailyCapability(
@@ -926,7 +1636,13 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
       telegram: 'chat_rich',
       bluebubbles: 'chat_brief',
     },
-    followupActions: ['anything_else', 'shorter', 'say_more', 'action_guidance', 'memory_control'],
+    followupActions: [
+      'anything_else',
+      'shorter',
+      'say_more',
+      'action_guidance',
+      'memory_control',
+    ],
     handlerKind: 'local',
     execute: (context, input) =>
       runDailyCapability(
@@ -1018,7 +1734,8 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     },
     followupActions: ['memory_control'],
     handlerKind: 'edge_only',
-    availabilityNote: 'implemented at the channel edge for shorter drafting workflows',
+    availabilityNote:
+      'implemented at the channel edge for shorter drafting workflows',
   },
   {
     id: 'threads.list_open',
@@ -1040,11 +1757,15 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     followupActions: ['anything_else', 'shorter', 'say_more', 'memory_control'],
     handlerKind: 'local',
     execute: (context, input) =>
-      runLifeThreadCapability(CAPABILITY_DESCRIPTORS[9]!, cloneContext(context), {
-        ...input,
-        canonicalText:
-          input.canonicalText || input.text || 'what threads do I have open',
-      }),
+      runLifeThreadCapability(
+        CAPABILITY_DESCRIPTORS[9]!,
+        cloneContext(context),
+        {
+          ...input,
+          canonicalText:
+            input.canonicalText || input.text || 'what threads do I have open',
+        },
+      ),
   },
   {
     id: 'threads.explicit_lookup',
@@ -1066,7 +1787,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     followupActions: ['anything_else', 'shorter', 'say_more', 'memory_control'],
     handlerKind: 'local',
     execute: (context, input) =>
-      runLifeThreadCapability(CAPABILITY_DESCRIPTORS[10]!, cloneContext(context), input),
+      runLifeThreadCapability(
+        CAPABILITY_DESCRIPTORS[10]!,
+        cloneContext(context),
+        input,
+      ),
   },
   {
     id: 'memory.explain',
@@ -1088,7 +1813,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     followupActions: ['memory_control'],
     handlerKind: 'local',
     execute: (context, input) =>
-      runMemoryCapability(CAPABILITY_DESCRIPTORS[11]!, cloneContext(context), input),
+      runMemoryCapability(
+        CAPABILITY_DESCRIPTORS[11]!,
+        cloneContext(context),
+        input,
+      ),
   },
   {
     id: 'memory.remember',
@@ -1110,7 +1839,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     followupActions: ['memory_control'],
     handlerKind: 'local',
     execute: (context, input) =>
-      runMemoryCapability(CAPABILITY_DESCRIPTORS[12]!, cloneContext(context), input),
+      runMemoryCapability(
+        CAPABILITY_DESCRIPTORS[12]!,
+        cloneContext(context),
+        input,
+      ),
   },
   {
     id: 'memory.forget',
@@ -1132,7 +1865,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     followupActions: ['memory_control'],
     handlerKind: 'local',
     execute: (context, input) =>
-      runMemoryCapability(CAPABILITY_DESCRIPTORS[13]!, cloneContext(context), input),
+      runMemoryCapability(
+        CAPABILITY_DESCRIPTORS[13]!,
+        cloneContext(context),
+        input,
+      ),
   },
   {
     id: 'memory.manual_only',
@@ -1154,7 +1891,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     followupActions: ['memory_control'],
     handlerKind: 'local',
     execute: (context, input) =>
-      runMemoryCapability(CAPABILITY_DESCRIPTORS[14]!, cloneContext(context), input),
+      runMemoryCapability(
+        CAPABILITY_DESCRIPTORS[14]!,
+        cloneContext(context),
+        input,
+      ),
   },
   {
     id: 'pulse.interesting_thing',
@@ -1176,7 +1917,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     followupActions: ['anything_else', 'shorter', 'say_more'],
     handlerKind: 'local',
     execute: (context, input) =>
-      runPulseCapability(CAPABILITY_DESCRIPTORS[15]!, cloneContext(context), input),
+      runPulseCapability(
+        CAPABILITY_DESCRIPTORS[15]!,
+        cloneContext(context),
+        input,
+      ),
   },
   {
     id: 'pulse.surprise_me',
@@ -1198,7 +1943,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     followupActions: ['anything_else', 'shorter', 'say_more'],
     handlerKind: 'local',
     execute: (context, input) =>
-      runPulseCapability(CAPABILITY_DESCRIPTORS[16]!, cloneContext(context), input),
+      runPulseCapability(
+        CAPABILITY_DESCRIPTORS[16]!,
+        cloneContext(context),
+        input,
+      ),
   },
   {
     id: 'research.topic',
@@ -1220,7 +1969,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     followupActions: ['anything_else', 'shorter', 'say_more', 'memory_control'],
     handlerKind: 'research',
     execute: (context, input) =>
-      runResearchCapability(CAPABILITY_DESCRIPTORS[17]!, cloneContext(context), input),
+      runResearchCapability(
+        CAPABILITY_DESCRIPTORS[17]!,
+        cloneContext(context),
+        input,
+      ),
   },
   {
     id: 'research.compare',
@@ -1242,7 +1995,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     followupActions: ['anything_else', 'shorter', 'say_more', 'memory_control'],
     handlerKind: 'research',
     execute: (context, input) =>
-      runResearchCapability(CAPABILITY_DESCRIPTORS[18]!, cloneContext(context), input),
+      runResearchCapability(
+        CAPABILITY_DESCRIPTORS[18]!,
+        cloneContext(context),
+        input,
+      ),
   },
   {
     id: 'research.summarize',
@@ -1264,7 +2021,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     followupActions: ['anything_else', 'shorter', 'say_more', 'memory_control'],
     handlerKind: 'research',
     execute: (context, input) =>
-      runResearchCapability(CAPABILITY_DESCRIPTORS[19]!, cloneContext(context), input),
+      runResearchCapability(
+        CAPABILITY_DESCRIPTORS[19]!,
+        cloneContext(context),
+        input,
+      ),
   },
   {
     id: 'research.recommend',
@@ -1286,7 +2047,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     followupActions: ['anything_else', 'shorter', 'say_more', 'memory_control'],
     handlerKind: 'research',
     execute: (context, input) =>
-      runResearchCapability(CAPABILITY_DESCRIPTORS[20]!, cloneContext(context), input),
+      runResearchCapability(
+        CAPABILITY_DESCRIPTORS[20]!,
+        cloneContext(context),
+        input,
+      ),
   },
   {
     id: 'work.current_summary',
@@ -1373,7 +2138,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     availabilityNote:
       'Telegram image generation is wired when OpenAI credentials are configured; Alexa stays handoff-only',
     execute: (context, input) =>
-      runMediaCapability(CAPABILITY_DESCRIPTORS[24]!, cloneContext(context), input),
+      runMediaCapability(
+        CAPABILITY_DESCRIPTORS[24]!,
+        cloneContext(context),
+        input,
+      ),
   },
   {
     id: 'media.image_edit',
@@ -1396,7 +2165,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     handlerKind: 'edge_only',
     availabilityNote: 'prepared only; image editing provider is not wired yet',
     execute: (context, input) =>
-      runMediaCapability(CAPABILITY_DESCRIPTORS[25]!, cloneContext(context), input),
+      runMediaCapability(
+        CAPABILITY_DESCRIPTORS[25]!,
+        cloneContext(context),
+        input,
+      ),
   },
   {
     id: 'media.video_generate',
@@ -1419,7 +2192,219 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     handlerKind: 'edge_only',
     availabilityNote: 'future hook only; no video provider is wired yet',
     execute: (context, input) =>
-      runMediaCapability(CAPABILITY_DESCRIPTORS[26]!, cloneContext(context), input),
+      runMediaCapability(
+        CAPABILITY_DESCRIPTORS[26]!,
+        cloneContext(context),
+        input,
+      ),
+  },
+  {
+    id: 'knowledge.save_source',
+    label: 'Save To Library',
+    category: 'knowledge',
+    requiredInputs: ['text'],
+    optionalInputs: [],
+    requiresLinkedAccount: true,
+    requiresConfirmation: false,
+    safeForAlexa: true,
+    safeForTelegram: true,
+    safeForBlueBubbles: true,
+    operatorOnly: false,
+    preferredOutputShape: {
+      alexa: 'voice_brief',
+      telegram: 'chat_brief',
+      bluebubbles: 'chat_brief',
+    },
+    followupActions: ['say_more', 'memory_control'],
+    handlerKind: 'local',
+    execute: (context, input) =>
+      runKnowledgeSaveCapability(
+        CAPABILITY_DESCRIPTORS[27]!,
+        cloneContext(context),
+        input,
+      ),
+  },
+  {
+    id: 'knowledge.list_sources',
+    label: 'List Saved Sources',
+    category: 'knowledge',
+    requiredInputs: ['text'],
+    optionalInputs: [],
+    requiresLinkedAccount: true,
+    requiresConfirmation: false,
+    safeForAlexa: true,
+    safeForTelegram: true,
+    safeForBlueBubbles: true,
+    operatorOnly: false,
+    preferredOutputShape: {
+      alexa: 'voice_brief',
+      telegram: 'chat_rich',
+      bluebubbles: 'chat_brief',
+    },
+    followupActions: ['say_more', 'shorter', 'memory_control'],
+    handlerKind: 'local',
+    execute: (context, input) =>
+      runKnowledgeListCapability(
+        CAPABILITY_DESCRIPTORS[28]!,
+        cloneContext(context),
+        input,
+      ),
+  },
+  {
+    id: 'knowledge.summarize_saved',
+    label: 'Summarize Saved Material',
+    category: 'knowledge',
+    requiredInputs: ['text'],
+    optionalInputs: [],
+    requiresLinkedAccount: true,
+    requiresConfirmation: false,
+    safeForAlexa: true,
+    safeForTelegram: true,
+    safeForBlueBubbles: true,
+    operatorOnly: false,
+    preferredOutputShape: {
+      alexa: 'handoff_offer',
+      telegram: 'chat_rich',
+      bluebubbles: 'chat_brief',
+    },
+    followupActions: ['anything_else', 'shorter', 'say_more', 'memory_control'],
+    handlerKind: 'research',
+    execute: (context, input) =>
+      runKnowledgeResearchCapability(
+        CAPABILITY_DESCRIPTORS[29]!,
+        cloneContext(context),
+        input,
+      ),
+  },
+  {
+    id: 'knowledge.compare_saved',
+    label: 'Compare Saved Sources',
+    category: 'knowledge',
+    requiredInputs: ['text'],
+    optionalInputs: [],
+    requiresLinkedAccount: true,
+    requiresConfirmation: false,
+    safeForAlexa: true,
+    safeForTelegram: true,
+    safeForBlueBubbles: true,
+    operatorOnly: false,
+    preferredOutputShape: {
+      alexa: 'handoff_offer',
+      telegram: 'chat_rich',
+      bluebubbles: 'chat_brief',
+    },
+    followupActions: ['anything_else', 'shorter', 'say_more', 'memory_control'],
+    handlerKind: 'research',
+    execute: (context, input) =>
+      runKnowledgeResearchCapability(
+        CAPABILITY_DESCRIPTORS[30]!,
+        cloneContext(context),
+        input,
+      ),
+  },
+  {
+    id: 'knowledge.explain_sources',
+    label: 'Explain Saved Sources',
+    category: 'knowledge',
+    requiredInputs: ['text'],
+    optionalInputs: [],
+    requiresLinkedAccount: true,
+    requiresConfirmation: false,
+    safeForAlexa: true,
+    safeForTelegram: true,
+    safeForBlueBubbles: true,
+    operatorOnly: false,
+    preferredOutputShape: {
+      alexa: 'voice_brief',
+      telegram: 'chat_rich',
+      bluebubbles: 'chat_brief',
+    },
+    followupActions: ['shorter', 'say_more'],
+    handlerKind: 'local',
+    execute: (context, input) =>
+      runKnowledgeResearchCapability(
+        CAPABILITY_DESCRIPTORS[31]!,
+        cloneContext(context),
+        input,
+      ),
+  },
+  {
+    id: 'knowledge.disable_source',
+    label: 'Disable Saved Source',
+    category: 'knowledge',
+    requiredInputs: ['text'],
+    optionalInputs: [],
+    requiresLinkedAccount: true,
+    requiresConfirmation: false,
+    safeForAlexa: true,
+    safeForTelegram: true,
+    safeForBlueBubbles: true,
+    operatorOnly: false,
+    preferredOutputShape: {
+      alexa: 'voice_brief',
+      telegram: 'chat_brief',
+      bluebubbles: 'chat_brief',
+    },
+    followupActions: [],
+    handlerKind: 'local',
+    execute: (context, input) =>
+      runKnowledgeMutationCapability(
+        CAPABILITY_DESCRIPTORS[32]!,
+        cloneContext(context),
+        input,
+      ),
+  },
+  {
+    id: 'knowledge.delete_source',
+    label: 'Delete Saved Source',
+    category: 'knowledge',
+    requiredInputs: ['text'],
+    optionalInputs: [],
+    requiresLinkedAccount: true,
+    requiresConfirmation: false,
+    safeForAlexa: true,
+    safeForTelegram: true,
+    safeForBlueBubbles: true,
+    operatorOnly: false,
+    preferredOutputShape: {
+      alexa: 'voice_brief',
+      telegram: 'chat_brief',
+      bluebubbles: 'chat_brief',
+    },
+    followupActions: [],
+    handlerKind: 'local',
+    execute: (context, input) =>
+      runKnowledgeMutationCapability(
+        CAPABILITY_DESCRIPTORS[33]!,
+        cloneContext(context),
+        input,
+      ),
+  },
+  {
+    id: 'knowledge.reindex_source',
+    label: 'Reindex Saved Source',
+    category: 'knowledge',
+    requiredInputs: ['text'],
+    optionalInputs: [],
+    requiresLinkedAccount: true,
+    requiresConfirmation: false,
+    safeForAlexa: true,
+    safeForTelegram: true,
+    safeForBlueBubbles: true,
+    operatorOnly: false,
+    preferredOutputShape: {
+      alexa: 'voice_brief',
+      telegram: 'chat_brief',
+      bluebubbles: 'chat_brief',
+    },
+    followupActions: [],
+    handlerKind: 'local',
+    execute: (context, input) =>
+      runKnowledgeMutationCapability(
+        CAPABILITY_DESCRIPTORS[34]!,
+        cloneContext(context),
+        input,
+      ),
   },
 ];
 
@@ -1490,7 +2475,11 @@ export function capabilitySupportsResearch(id: AssistantCapabilityId): boolean {
 
 export function inferResearchCapabilityId(text: string): AssistantCapabilityId {
   const normalized = normalizeText(text).toLowerCase();
-  if (/\b(compare|versus|vs\.?|tradeoffs?|pros and cons|pros|cons)\b/.test(normalized)) {
+  if (
+    /\b(compare|versus|vs\.?|tradeoffs?|pros and cons|pros|cons)\b/.test(
+      normalized,
+    )
+  ) {
     return 'research.compare';
   }
   if (

@@ -17,6 +17,12 @@ import {
   AlexaOAuthRefreshTokenRecord,
   AlexaPendingSession,
   AgentThreadState,
+  KnowledgeChunkRecord,
+  KnowledgeIndexState,
+  KnowledgeRetrievalHit,
+  KnowledgeScope,
+  KnowledgeSensitivity,
+  KnowledgeSourceRecord,
   LifeThread,
   LifeThreadSignal,
   NewMessage,
@@ -286,6 +292,50 @@ function createSchema(database: Database.Database): void {
       ON profile_facts(group_folder, subject_id, category, fact_key);
     CREATE INDEX IF NOT EXISTS idx_profile_facts_group
       ON profile_facts(group_folder, state, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS knowledge_sources (
+      source_id TEXT PRIMARY KEY,
+      group_folder TEXT NOT NULL,
+      source_type TEXT NOT NULL,
+      title TEXT NOT NULL,
+      short_summary TEXT NOT NULL,
+      content_ref TEXT,
+      normalized_text TEXT NOT NULL,
+      tags_json TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      sensitivity TEXT NOT NULL,
+      ingestion_state TEXT NOT NULL,
+      index_state TEXT NOT NULL,
+      source_channel TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      last_used_at TEXT,
+      disabled_at TEXT,
+      deleted_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_knowledge_sources_group_updated
+      ON knowledge_sources(group_folder, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_knowledge_sources_group_title
+      ON knowledge_sources(group_folder, title COLLATE NOCASE ASC);
+    CREATE INDEX IF NOT EXISTS idx_knowledge_sources_group_state
+      ON knowledge_sources(group_folder, ingestion_state, index_state, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS knowledge_chunks (
+      chunk_id TEXT PRIMARY KEY,
+      source_id TEXT NOT NULL,
+      chunk_index INTEGER NOT NULL,
+      chunk_text TEXT NOT NULL,
+      char_length INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (source_id) REFERENCES knowledge_sources(source_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_source
+      ON knowledge_chunks(source_id, chunk_index ASC);
+    CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_chunks_fts USING fts5(
+      chunk_id UNINDEXED,
+      source_id UNINDEXED,
+      title,
+      tags,
+      content
+    );
     CREATE TABLE IF NOT EXISTS life_threads (
       id TEXT PRIMARY KEY,
       group_folder TEXT NOT NULL,
@@ -1387,7 +1437,9 @@ export function setAgentThread(thread: AgentThreadState): void {
 
 export function deleteAgentThread(groupFolder: string): void {
   assertValidGroupFolder(groupFolder);
-  db.prepare('DELETE FROM agent_threads WHERE group_folder = ?').run(groupFolder);
+  db.prepare('DELETE FROM agent_threads WHERE group_folder = ?').run(
+    groupFolder,
+  );
 }
 
 export function getAllAgentThreads(): Record<string, AgentThreadState> {
@@ -1870,9 +1922,7 @@ export function deleteRuntimeBackendCardContext(
   ).run(backendId, chatJid, messageId);
 }
 
-export function pruneExpiredRuntimeBackendCardContexts(
-  nowIso: string,
-): number {
+export function pruneExpiredRuntimeBackendCardContexts(nowIso: string): number {
   const result = db
     .prepare(
       `
@@ -2629,15 +2679,15 @@ export function listProfileSubjectsForGroup(
       `,
     )
     .all(groupFolder) as Array<{
-      id: string;
-      group_folder: string;
-      kind: ProfileSubject['kind'];
-      canonical_name: string;
-      display_name: string;
-      created_at: string;
-      updated_at: string;
-      disabled_at: string | null;
-    }>;
+    id: string;
+    group_folder: string;
+    kind: ProfileSubject['kind'];
+    canonical_name: string;
+    display_name: string;
+    created_at: string;
+    updated_at: string;
+    disabled_at: string | null;
+  }>;
 
   return rows.map((row) => ({
     id: row.id,
@@ -2858,22 +2908,22 @@ export function listProfileFactsForGroup(
       `,
     )
     .all(...args) as Array<{
-      id: string;
-      group_folder: string;
-      subject_id: string;
-      category: ProfileFact['category'];
-      fact_key: string;
-      value_json: string;
-      state: ProfileFact['state'];
-      source_channel: string;
-      source_summary: string;
-      created_at: string;
-      updated_at: string;
-      decided_at: string | null;
-      subject_kind: ProfileFactWithSubject['subjectKind'];
-      subject_canonical_name: string;
-      subject_display_name: string;
-    }>;
+    id: string;
+    group_folder: string;
+    subject_id: string;
+    category: ProfileFact['category'];
+    fact_key: string;
+    value_json: string;
+    state: ProfileFact['state'];
+    source_channel: string;
+    source_summary: string;
+    created_at: string;
+    updated_at: string;
+    decided_at: string | null;
+    subject_kind: ProfileFactWithSubject['subjectKind'];
+    subject_canonical_name: string;
+    subject_display_name: string;
+  }>;
 
   return rows.map((row) => ({
     id: row.id,
@@ -2892,6 +2942,538 @@ export function listProfileFactsForGroup(
     subjectCanonicalName: row.subject_canonical_name,
     subjectDisplayName: row.subject_display_name,
   }));
+}
+
+function mapKnowledgeSourceRow(row: {
+  source_id: string;
+  group_folder: string;
+  source_type: KnowledgeSourceRecord['sourceType'];
+  title: string;
+  short_summary: string;
+  content_ref: string | null;
+  normalized_text: string;
+  tags_json: string;
+  scope: KnowledgeScope;
+  sensitivity: KnowledgeSensitivity;
+  ingestion_state: KnowledgeSourceRecord['ingestionState'];
+  index_state: KnowledgeIndexState;
+  source_channel: KnowledgeSourceRecord['sourceChannel'];
+  created_at: string;
+  updated_at: string;
+  last_used_at: string | null;
+  disabled_at: string | null;
+  deleted_at: string | null;
+}): KnowledgeSourceRecord {
+  return {
+    sourceId: row.source_id,
+    groupFolder: row.group_folder,
+    sourceType: row.source_type,
+    title: row.title,
+    shortSummary: row.short_summary,
+    contentRef: row.content_ref,
+    normalizedText: row.normalized_text,
+    tags: parseStringArrayJson(row.tags_json),
+    scope: row.scope,
+    sensitivity: row.sensitivity,
+    ingestionState: row.ingestion_state,
+    indexState: row.index_state,
+    sourceChannel: row.source_channel,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    lastUsedAt: row.last_used_at,
+    disabledAt: row.disabled_at,
+    deletedAt: row.deleted_at,
+  };
+}
+
+function mapKnowledgeChunkRow(row: {
+  chunk_id: string;
+  source_id: string;
+  chunk_index: number;
+  chunk_text: string;
+  char_length: number;
+  created_at: string;
+}): KnowledgeChunkRecord {
+  return {
+    chunkId: row.chunk_id,
+    sourceId: row.source_id,
+    chunkIndex: row.chunk_index,
+    chunkText: row.chunk_text,
+    charLength: row.char_length,
+    createdAt: row.created_at,
+  };
+}
+
+export function upsertKnowledgeSource(record: KnowledgeSourceRecord): void {
+  assertValidGroupFolder(record.groupFolder);
+  db.prepare(
+    `
+      INSERT INTO knowledge_sources (
+        source_id,
+        group_folder,
+        source_type,
+        title,
+        short_summary,
+        content_ref,
+        normalized_text,
+        tags_json,
+        scope,
+        sensitivity,
+        ingestion_state,
+        index_state,
+        source_channel,
+        created_at,
+        updated_at,
+        last_used_at,
+        disabled_at,
+        deleted_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(source_id) DO UPDATE SET
+        group_folder = excluded.group_folder,
+        source_type = excluded.source_type,
+        title = excluded.title,
+        short_summary = excluded.short_summary,
+        content_ref = excluded.content_ref,
+        normalized_text = excluded.normalized_text,
+        tags_json = excluded.tags_json,
+        scope = excluded.scope,
+        sensitivity = excluded.sensitivity,
+        ingestion_state = excluded.ingestion_state,
+        index_state = excluded.index_state,
+        source_channel = excluded.source_channel,
+        created_at = excluded.created_at,
+        updated_at = excluded.updated_at,
+        last_used_at = excluded.last_used_at,
+        disabled_at = excluded.disabled_at,
+        deleted_at = excluded.deleted_at
+    `,
+  ).run(
+    record.sourceId,
+    record.groupFolder,
+    record.sourceType,
+    record.title,
+    record.shortSummary,
+    record.contentRef || null,
+    record.normalizedText,
+    JSON.stringify(record.tags || []),
+    record.scope,
+    record.sensitivity,
+    record.ingestionState,
+    record.indexState,
+    record.sourceChannel || null,
+    record.createdAt,
+    record.updatedAt,
+    record.lastUsedAt || null,
+    record.disabledAt || null,
+    record.deletedAt || null,
+  );
+}
+
+export function getKnowledgeSource(
+  sourceId: string,
+): KnowledgeSourceRecord | undefined {
+  const row = db
+    .prepare(
+      `
+        SELECT *
+        FROM knowledge_sources
+        WHERE source_id = ?
+        LIMIT 1
+      `,
+    )
+    .get(sourceId) as
+    | {
+        source_id: string;
+        group_folder: string;
+        source_type: KnowledgeSourceRecord['sourceType'];
+        title: string;
+        short_summary: string;
+        content_ref: string | null;
+        normalized_text: string;
+        tags_json: string;
+        scope: KnowledgeScope;
+        sensitivity: KnowledgeSensitivity;
+        ingestion_state: KnowledgeSourceRecord['ingestionState'];
+        index_state: KnowledgeIndexState;
+        source_channel: KnowledgeSourceRecord['sourceChannel'];
+        created_at: string;
+        updated_at: string;
+        last_used_at: string | null;
+        disabled_at: string | null;
+        deleted_at: string | null;
+      }
+    | undefined;
+  if (!row) return undefined;
+  if (!isValidGroupFolder(row.group_folder)) return undefined;
+  return mapKnowledgeSourceRow(row);
+}
+
+export function listKnowledgeSourcesForGroup(
+  groupFolder: string,
+  options: {
+    includeDisabled?: boolean;
+    includeDeleted?: boolean;
+    limit?: number;
+    query?: string;
+  } = {},
+): KnowledgeSourceRecord[] {
+  assertValidGroupFolder(groupFolder);
+  const clauses = ['group_folder = ?'];
+  const args: unknown[] = [groupFolder];
+
+  if (!options.includeDisabled) {
+    clauses.push('disabled_at IS NULL');
+  }
+  if (!options.includeDeleted) {
+    clauses.push('deleted_at IS NULL');
+    clauses.push("ingestion_state != 'deleted'");
+  }
+  if (options.query?.trim()) {
+    const like = `%${options.query.trim()}%`;
+    clauses.push(
+      '(title LIKE ? COLLATE NOCASE OR short_summary LIKE ? COLLATE NOCASE OR tags_json LIKE ? COLLATE NOCASE)',
+    );
+    args.push(like, like, like);
+  }
+
+  args.push(Math.max(1, options.limit || 25));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM knowledge_sources
+        WHERE ${clauses.join(' AND ')}
+        ORDER BY
+          CASE WHEN last_used_at IS NULL THEN 1 ELSE 0 END ASC,
+          last_used_at DESC,
+          updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<{
+    source_id: string;
+    group_folder: string;
+    source_type: KnowledgeSourceRecord['sourceType'];
+    title: string;
+    short_summary: string;
+    content_ref: string | null;
+    normalized_text: string;
+    tags_json: string;
+    scope: KnowledgeScope;
+    sensitivity: KnowledgeSensitivity;
+    ingestion_state: KnowledgeSourceRecord['ingestionState'];
+    index_state: KnowledgeIndexState;
+    source_channel: KnowledgeSourceRecord['sourceChannel'];
+    created_at: string;
+    updated_at: string;
+    last_used_at: string | null;
+    disabled_at: string | null;
+    deleted_at: string | null;
+  }>;
+
+  return rows.map((row) => mapKnowledgeSourceRow(row));
+}
+
+export function listKnowledgeSourcesByIds(
+  groupFolder: string,
+  sourceIds: string[],
+): KnowledgeSourceRecord[] {
+  assertValidGroupFolder(groupFolder);
+  if (sourceIds.length === 0) return [];
+  const placeholders = sourceIds.map(() => '?').join(', ');
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM knowledge_sources
+        WHERE group_folder = ?
+          AND source_id IN (${placeholders})
+          AND disabled_at IS NULL
+          AND deleted_at IS NULL
+          AND ingestion_state != 'deleted'
+      `,
+    )
+    .all(groupFolder, ...sourceIds) as Array<{
+    source_id: string;
+    group_folder: string;
+    source_type: KnowledgeSourceRecord['sourceType'];
+    title: string;
+    short_summary: string;
+    content_ref: string | null;
+    normalized_text: string;
+    tags_json: string;
+    scope: KnowledgeScope;
+    sensitivity: KnowledgeSensitivity;
+    ingestion_state: KnowledgeSourceRecord['ingestionState'];
+    index_state: KnowledgeIndexState;
+    source_channel: KnowledgeSourceRecord['sourceChannel'];
+    created_at: string;
+    updated_at: string;
+    last_used_at: string | null;
+    disabled_at: string | null;
+    deleted_at: string | null;
+  }>;
+
+  return rows.map((row) => mapKnowledgeSourceRow(row));
+}
+
+export function listKnowledgeChunksForSource(
+  sourceId: string,
+): KnowledgeChunkRecord[] {
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM knowledge_chunks
+        WHERE source_id = ?
+        ORDER BY chunk_index ASC
+      `,
+    )
+    .all(sourceId) as Array<{
+    chunk_id: string;
+    source_id: string;
+    chunk_index: number;
+    chunk_text: string;
+    char_length: number;
+    created_at: string;
+  }>;
+
+  return rows.map((row) => mapKnowledgeChunkRow(row));
+}
+
+export function replaceKnowledgeSourceChunks(
+  sourceId: string,
+  source: Pick<KnowledgeSourceRecord, 'title' | 'tags' | 'updatedAt'>,
+  chunks: KnowledgeChunkRecord[],
+): void {
+  const tx = db.transaction(() => {
+    db.prepare('DELETE FROM knowledge_chunks WHERE source_id = ?').run(
+      sourceId,
+    );
+    db.prepare('DELETE FROM knowledge_chunks_fts WHERE source_id = ?').run(
+      sourceId,
+    );
+
+    const insertChunk = db.prepare(
+      `
+        INSERT INTO knowledge_chunks (
+          chunk_id,
+          source_id,
+          chunk_index,
+          chunk_text,
+          char_length,
+          created_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+      `,
+    );
+    const insertFts = db.prepare(
+      `
+        INSERT INTO knowledge_chunks_fts (
+          chunk_id,
+          source_id,
+          title,
+          tags,
+          content
+        ) VALUES (?, ?, ?, ?, ?)
+      `,
+    );
+
+    for (const chunk of chunks) {
+      insertChunk.run(
+        chunk.chunkId,
+        chunk.sourceId,
+        chunk.chunkIndex,
+        chunk.chunkText,
+        chunk.charLength,
+        chunk.createdAt,
+      );
+      insertFts.run(
+        chunk.chunkId,
+        chunk.sourceId,
+        source.title,
+        source.tags.join(' '),
+        chunk.chunkText,
+      );
+    }
+
+    db.prepare(
+      `
+        UPDATE knowledge_sources
+        SET index_state = 'indexed',
+            updated_at = ?,
+            disabled_at = NULL,
+            deleted_at = CASE
+              WHEN ingestion_state = 'deleted' THEN deleted_at
+              ELSE NULL
+            END
+        WHERE source_id = ?
+      `,
+    ).run(source.updatedAt, sourceId);
+  });
+
+  tx();
+}
+
+export function searchKnowledgeChunks(params: {
+  groupFolder: string;
+  matchQuery: string;
+  requestedSourceIds?: string[];
+  limit?: number;
+}): KnowledgeRetrievalHit[] {
+  assertValidGroupFolder(params.groupFolder);
+  const clauses = [
+    'knowledge_chunks_fts MATCH ?',
+    's.group_folder = ?',
+    "s.ingestion_state = 'ready'",
+    "s.index_state = 'indexed'",
+    's.disabled_at IS NULL',
+    's.deleted_at IS NULL',
+  ];
+  const args: unknown[] = [params.matchQuery, params.groupFolder];
+
+  if (params.requestedSourceIds?.length) {
+    clauses.push(
+      `s.source_id IN (${params.requestedSourceIds.map(() => '?').join(', ')})`,
+    );
+    args.push(...params.requestedSourceIds);
+  }
+
+  args.push(Math.max(1, params.limit || 8));
+
+  const rows = db
+    .prepare(
+      `
+        SELECT
+          c.chunk_id,
+          c.chunk_index,
+          c.chunk_text,
+          s.source_id,
+          s.title,
+          s.source_type,
+          s.scope,
+          s.sensitivity,
+          s.tags_json,
+          bm25(knowledge_chunks_fts, 5.0, 2.0, 1.0) AS lexical_rank
+        FROM knowledge_chunks_fts
+        JOIN knowledge_chunks c ON c.chunk_id = knowledge_chunks_fts.chunk_id
+        JOIN knowledge_sources s ON s.source_id = c.source_id
+        WHERE ${clauses.join(' AND ')}
+        ORDER BY lexical_rank ASC, c.chunk_index ASC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<{
+    chunk_id: string;
+    chunk_index: number;
+    chunk_text: string;
+    source_id: string;
+    title: string;
+    source_type: KnowledgeRetrievalHit['sourceType'];
+    scope: KnowledgeScope;
+    sensitivity: KnowledgeSensitivity;
+    tags_json: string;
+    lexical_rank: number;
+  }>;
+
+  return rows.map((row) => {
+    const tags = parseStringArrayJson(row.tags_json);
+    const queryLower = params.matchQuery.toLowerCase();
+    const titleLower = row.title.toLowerCase();
+    const tagsLower = tags.join(' ').toLowerCase();
+    const excerpt =
+      row.chunk_text.length > 240
+        ? `${row.chunk_text.slice(0, 237).trimEnd()}...`
+        : row.chunk_text;
+    const matchReason = titleLower.includes(
+      queryLower.replace(/\s+or\s+/g, ' '),
+    )
+      ? 'matched source title'
+      : tagsLower &&
+          queryLower
+            .split(/\s+or\s+/)
+            .some((token) => tagsLower.includes(token))
+        ? 'matched source tags'
+        : 'matched saved content';
+    return {
+      sourceId: row.source_id,
+      sourceTitle: row.title,
+      sourceType: row.source_type,
+      scope: row.scope,
+      sensitivity: row.sensitivity,
+      chunkId: row.chunk_id,
+      chunkIndex: row.chunk_index,
+      excerpt,
+      retrievalScore: Number(
+        (1 / (1 + Math.max(0, row.lexical_rank || 0))).toFixed(3),
+      ),
+      matchReason,
+      tags,
+    };
+  });
+}
+
+export function touchKnowledgeSourcesLastUsed(
+  sourceIds: string[],
+  usedAt: string,
+): void {
+  if (sourceIds.length === 0) return;
+  const tx = db.transaction((ids: string[]) => {
+    const statement = db.prepare(
+      `
+        UPDATE knowledge_sources
+        SET last_used_at = ?, updated_at = MAX(updated_at, ?)
+        WHERE source_id = ?
+      `,
+    );
+    for (const sourceId of ids) {
+      statement.run(usedAt, usedAt, sourceId);
+    }
+  });
+  tx(sourceIds);
+}
+
+export function disableKnowledgeSource(
+  sourceId: string,
+  updatedAt: string,
+): boolean {
+  const result = db
+    .prepare(
+      `
+        UPDATE knowledge_sources
+        SET index_state = 'disabled',
+            disabled_at = ?,
+            updated_at = ?
+        WHERE source_id = ?
+          AND deleted_at IS NULL
+      `,
+    )
+    .run(updatedAt, updatedAt, sourceId);
+  return result.changes === 1;
+}
+
+export function markKnowledgeSourceDeleted(
+  sourceId: string,
+  updatedAt: string,
+): boolean {
+  const tx = db.transaction((id: string, now: string) => {
+    const result = db
+      .prepare(
+        `
+          UPDATE knowledge_sources
+          SET ingestion_state = 'deleted',
+              index_state = 'disabled',
+              deleted_at = ?,
+              updated_at = ?
+          WHERE source_id = ?
+        `,
+      )
+      .run(now, now, id);
+    db.prepare('DELETE FROM knowledge_chunks WHERE source_id = ?').run(id);
+    db.prepare('DELETE FROM knowledge_chunks_fts WHERE source_id = ?').run(id);
+    return result.changes === 1;
+  });
+
+  return tx(sourceId, updatedAt);
 }
 
 function parseStringArrayJson(value: string): string[] {
@@ -3093,27 +3675,27 @@ export function listLifeThreadsForGroup(
       `,
     )
     .all(...args) as Array<{
-      id: string;
-      group_folder: string;
-      title: string;
-      category: LifeThread['category'];
-      status: LifeThread['status'];
-      scope: LifeThread['scope'];
-      related_subject_ids_json: string;
-      context_tags_json: string;
-      summary: string;
-      next_action: string | null;
-      next_followup_at: string | null;
-      source_kind: LifeThread['sourceKind'];
-      confidence_kind: LifeThread['confidenceKind'];
-      user_confirmed: number;
-      sensitivity: LifeThread['sensitivity'];
-      surface_mode: LifeThread['surfaceMode'];
-      merged_into_thread_id: string | null;
-      created_at: string;
-      last_updated_at: string;
-      last_used_at: string | null;
-    }>;
+    id: string;
+    group_folder: string;
+    title: string;
+    category: LifeThread['category'];
+    status: LifeThread['status'];
+    scope: LifeThread['scope'];
+    related_subject_ids_json: string;
+    context_tags_json: string;
+    summary: string;
+    next_action: string | null;
+    next_followup_at: string | null;
+    source_kind: LifeThread['sourceKind'];
+    confidence_kind: LifeThread['confidenceKind'];
+    user_confirmed: number;
+    sensitivity: LifeThread['sensitivity'];
+    surface_mode: LifeThread['surfaceMode'];
+    merged_into_thread_id: string | null;
+    created_at: string;
+    last_updated_at: string;
+    last_used_at: string | null;
+  }>;
 
   return rows.map(mapLifeThreadRow);
 }
@@ -3289,19 +3871,19 @@ export function listLifeThreadSignals(
       `,
     )
     .all(threadId, Math.max(1, limit)) as Array<{
-      id: string;
-      thread_id: string;
-      group_folder: string;
-      source_kind: LifeThreadSignal['sourceKind'];
-      summary_text: string;
-      chat_jid: string | null;
-      message_id: string | null;
-      task_id: string | null;
-      calendar_event_id: string | null;
-      profile_fact_id: string | null;
-      confidence_kind: LifeThreadSignal['confidenceKind'];
-      created_at: string;
-    }>;
+    id: string;
+    thread_id: string;
+    group_folder: string;
+    source_kind: LifeThreadSignal['sourceKind'];
+    summary_text: string;
+    chat_jid: string | null;
+    message_id: string | null;
+    task_id: string | null;
+    calendar_event_id: string | null;
+    profile_fact_id: string | null;
+    confidence_kind: LifeThreadSignal['confidenceKind'];
+    created_at: string;
+  }>;
   return rows.map((row) => ({
     id: row.id,
     threadId: row.thread_id,
@@ -4197,74 +4779,74 @@ export function repairRegisteredMainChat(params: {
   fromJid: string;
   toJid: string;
   toName: string;
-}): (RegisteredGroup & { jid: string }) {
-  const tx = db.transaction((input: {
-    fromJid: string;
-    toJid: string;
-    toName: string;
-  }) => {
-    const existing = getRegisteredGroup(input.fromJid);
-    if (!existing) {
-      throw new Error(
-        `Cannot repair main chat registration because ${input.fromJid} is not registered.`,
-      );
-    }
-    if (existing.isMain !== true && existing.folder !== 'main') {
-      throw new Error(
-        `Cannot repair non-main registration ${input.fromJid} as the main chat.`,
-      );
-    }
+}): RegisteredGroup & { jid: string } {
+  const tx = db.transaction(
+    (input: { fromJid: string; toJid: string; toName: string }) => {
+      const existing = getRegisteredGroup(input.fromJid);
+      if (!existing) {
+        throw new Error(
+          `Cannot repair main chat registration because ${input.fromJid} is not registered.`,
+        );
+      }
+      if (existing.isMain !== true && existing.folder !== 'main') {
+        throw new Error(
+          `Cannot repair non-main registration ${input.fromJid} as the main chat.`,
+        );
+      }
 
-    const conflictingTarget = getRegisteredGroup(input.toJid);
-    if (
-      conflictingTarget &&
-      conflictingTarget.jid !== input.fromJid &&
-      conflictingTarget.folder !== existing.folder
-    ) {
-      throw new Error(
-        `Cannot repair main chat registration because ${input.toJid} is already registered to folder "${conflictingTarget.folder}".`,
-      );
-    }
+      const conflictingTarget = getRegisteredGroup(input.toJid);
+      if (
+        conflictingTarget &&
+        conflictingTarget.jid !== input.fromJid &&
+        conflictingTarget.folder !== existing.folder
+      ) {
+        throw new Error(
+          `Cannot repair main chat registration because ${input.toJid} is already registered to folder "${conflictingTarget.folder}".`,
+        );
+      }
 
-    if (input.fromJid !== input.toJid) {
-      pruneChatBoundEphemeralContexts(input.fromJid);
-    }
+      if (input.fromJid !== input.toJid) {
+        pruneChatBoundEphemeralContexts(input.fromJid);
+      }
 
-    if (conflictingTarget && conflictingTarget.jid !== input.fromJid) {
-      deleteRegisteredGroup(conflictingTarget.jid);
-    }
+      if (conflictingTarget && conflictingTarget.jid !== input.fromJid) {
+        deleteRegisteredGroup(conflictingTarget.jid);
+      }
 
-    db.prepare(
-      `
+      db.prepare(
+        `
         UPDATE registered_groups
         SET jid = ?, name = ?, folder = ?, trigger_pattern = ?, added_at = ?,
             container_config = ?, requires_trigger = ?, is_main = ?
         WHERE jid = ?
       `,
-    ).run(
-      input.toJid,
-      input.toName,
-      existing.folder,
-      existing.trigger,
-      existing.added_at,
-      existing.containerConfig ? JSON.stringify(existing.containerConfig) : null,
-      existing.requiresTrigger === undefined
-        ? 1
-        : existing.requiresTrigger
+      ).run(
+        input.toJid,
+        input.toName,
+        existing.folder,
+        existing.trigger,
+        existing.added_at,
+        existing.containerConfig
+          ? JSON.stringify(existing.containerConfig)
+          : null,
+        existing.requiresTrigger === undefined
           ? 1
-          : 0,
-      existing.isMain ? 1 : 0,
-      input.fromJid,
-    );
-
-    const repaired = getRegisteredGroup(input.toJid);
-    if (!repaired) {
-      throw new Error(
-        `Main chat repair failed to load the updated registration for ${input.toJid}.`,
+          : existing.requiresTrigger
+            ? 1
+            : 0,
+        existing.isMain ? 1 : 0,
+        input.fromJid,
       );
-    }
-    return repaired;
-  });
+
+      const repaired = getRegisteredGroup(input.toJid);
+      if (!repaired) {
+        throw new Error(
+          `Main chat repair failed to load the updated registration for ${input.toJid}.`,
+        );
+      }
+      return repaired;
+    },
+  );
 
   return tx(params);
 }
