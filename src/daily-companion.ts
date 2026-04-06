@@ -27,6 +27,7 @@ import {
 } from './life-threads.js';
 import { getCommunicationCarryoverSignal } from './communication-companion.js';
 import { buildChiefOfStaffSnapshot } from './chief-of-staff.js';
+import { getMissionCarryoverSignal } from './missions.js';
 import { getResolvedRitualProfile } from './rituals.js';
 import type {
   AlexaConversationFollowupAction,
@@ -147,7 +148,8 @@ interface CompanionDraft {
   comparisonKeys: DailyCompanionContext['comparisonKeys'];
 }
 
-const HOUSEHOLD_KEYWORD_RE = /\b(candace|family|household|travis|kids?|tonight|dinner|school|practice|pickup|dropoff|game)\b/i;
+const HOUSEHOLD_KEYWORD_RE =
+  /\b(candace|family|household|travis|kids?|tonight|dinner|school|practice|pickup|dropoff|game)\b/i;
 
 function normalizeMessage(message: string): string {
   return normalizeVoicePrompt(message).toLowerCase().trim();
@@ -254,7 +256,9 @@ function isHouseholdPrompt(normalized: string): boolean {
     /^what should i talk to [a-z][a-z' -]+ about\??$/.test(normalized) ||
     /^anything .*family.*forgetting\??$/.test(normalized) ||
     /^what do i need to follow up on at home\??$/.test(normalized) ||
-    /^what do i need to follow up on with [a-z][a-z' -]+\??$/.test(normalized) ||
+    /^what do i need to follow up on with [a-z][a-z' -]+\??$/.test(
+      normalized,
+    ) ||
     /\bfamily\b/.test(normalized) ||
     /\bhousehold\b/.test(normalized)
   );
@@ -279,7 +283,9 @@ function isLooseEndsPrompt(normalized: string): boolean {
   );
 }
 
-function extractExplicitHouseholdPerson(normalized: string): string | undefined {
+function extractExplicitHouseholdPerson(
+  normalized: string,
+): string | undefined {
   const stillOpenMatch = normalized.match(
     /^what('?s| is)? still open with ([a-z][a-z' -]+)\??$/,
   );
@@ -389,7 +395,10 @@ function formatReminderSummary(
   return `${formatClock(new Date(reminder.nextRunIso), timeZone)} ${reminder.label}`;
 }
 
-function summarizeEvent(event: CalendarEvent | null, timeZone: string): string | null {
+function summarizeEvent(
+  event: CalendarEvent | null,
+  timeZone: string,
+): string | null {
   if (!event) return null;
   return formatEventSummary(event, timeZone);
 }
@@ -479,9 +488,13 @@ function findBestMatchingThread(
 ): LifeThread | null {
   const normalizedQuery = query.toLowerCase().trim();
   return (
-    threads.find((thread) => thread.title.toLowerCase().includes(normalizedQuery)) ||
     threads.find((thread) =>
-      thread.contextTags.some((tag) => tag.toLowerCase().includes(normalizedQuery)),
+      thread.title.toLowerCase().includes(normalizedQuery),
+    ) ||
+    threads.find((thread) =>
+      thread.contextTags.some((tag) =>
+        tag.toLowerCase().includes(normalizedQuery),
+      ),
     ) ||
     null
   );
@@ -493,7 +506,10 @@ function buildThreadContextDetails(params: {
   recommendedThread: LifeThread | null;
 }): Pick<
   CompanionDraft,
-  'usedThreadIds' | 'usedThreadTitles' | 'usedThreadReasons' | 'threadSummaryLines'
+  | 'usedThreadIds'
+  | 'usedThreadTitles'
+  | 'usedThreadReasons'
+  | 'threadSummaryLines'
 > {
   const seen = new Set<string>();
   const usedThreadIds: string[] = [];
@@ -532,7 +548,9 @@ function buildKnownHouseholdTerms(facts: ProfileFactWithSubject[]): string[] {
   return [...terms];
 }
 
-function parsePreferences(facts: ProfileFactWithSubject[]): CompanionPreferences {
+function parsePreferences(
+  facts: ProfileFactWithSubject[],
+): CompanionPreferences {
   let familyContextEnabled = true;
   let workContextEnabled = true;
   let directMode = false;
@@ -669,7 +687,8 @@ function selectHouseholdLines(params: {
       : params.snapshot.calendar.timedEvents
   )
     .filter((event) => {
-      const haystack = `${event.title} ${event.calendarName || ''}`.toLowerCase();
+      const haystack =
+        `${event.title} ${event.calendarName || ''}`.toLowerCase();
       if (params.householdExplicit) {
         return knownTerms.some((term) => haystack.includes(term));
       }
@@ -688,7 +707,9 @@ function selectHouseholdLines(params: {
       return HOUSEHOLD_KEYWORD_RE.test(haystack);
     })
     .slice(0, 1)
-    .map((reminder) => formatReminderSummary(reminder, params.snapshot.timeZone));
+    .map((reminder) =>
+      formatReminderSummary(reminder, params.snapshot.timeZone),
+    );
 
   return [...householdEvents, ...householdReminders].slice(0, 2);
 }
@@ -778,7 +799,11 @@ function formatTextReply(
   lines: string[],
   personalityLine?: string | null,
 ): string {
-  return [lead, personalityLine, ...lines.filter(Boolean).map((line) => `- ${line}`)]
+  return [
+    lead,
+    personalityLine,
+    ...lines.filter(Boolean).map((line) => `- ${line}`),
+  ]
     .filter((line): line is string => Boolean(line))
     .join('\n');
 }
@@ -796,13 +821,22 @@ function humanizeAlexaDetailLine(line: string): string {
   const replacements: Array<[RegExp, (value: string) => string]> = [
     [/^Next:\s+/i, (value) => `Next up is ${value}`],
     [/^Reminder:\s+/i, (value) => `You have ${value}`],
-    [/^Open (?:window|block):\s+/i, (value) => `You also have an open stretch ${value}`],
-    [/^Thread(?: carryover| follow-up)?:\s+/i, (value) => `One loose end is ${value}`],
+    [
+      /^Open (?:window|block):\s+/i,
+      (value) => `You also have an open stretch ${value}`,
+    ],
+    [
+      /^Thread(?: carryover| follow-up)?:\s+/i,
+      (value) => `One loose end is ${value}`,
+    ],
     [/^Household(?: thread)?:\s+/i, (value) => `At home, ${value}`],
     [/^Shared plan:\s+/i, (value) => `The shared plan is ${value}`],
     [/^Also:\s+/i, (value) => `Also, ${value}`],
     [/^Current work:\s+/i, (value) => `Workwise, ${value}`],
-    [/^Tomorrow pressure:\s+/i, (value) => `Tomorrow's pressure point is ${value}`],
+    [
+      /^Tomorrow pressure:\s+/i,
+      (value) => `Tomorrow's pressure point is ${value}`,
+    ],
     [/^Tomorrow:\s+/i, (value) => `Tomorrow, ${value}`],
     [/^Also tomorrow:\s+/i, (value) => `Also tomorrow, ${value}`],
     [/^Tonight:\s+/i, (value) => `Tonight, ${value}`],
@@ -828,7 +862,11 @@ function formatAlexaReply(
 ): string {
   return buildVoiceReply({
     summary: ensureSentence(lead),
-    details: [personalityLine, ...lines.slice(0, directMode ? 1 : 2), recommendation]
+    details: [
+      personalityLine,
+      ...lines.slice(0, directMode ? 1 : 2),
+      recommendation,
+    ]
       .filter((line): line is string => Boolean(line))
       .map((line) => humanizeAlexaDetailLine(line)),
     maxDetails: directMode ? 1 : 2,
@@ -896,18 +934,16 @@ function applyRitualProfileToDraft(
       draft.recommendationText && draft.recommendationText.length > 140
         ? `${draft.recommendationText.slice(0, 137).trimEnd()}...`
         : draft.recommendationText,
-      signalsUsed: [...draft.signalsUsed, 'ritual_profile'],
-    };
+    signalsUsed: [...draft.signalsUsed, 'ritual_profile'],
+  };
 }
 
 function applyCommunicationCarryover(
   draft: CompanionDraft,
-  signal:
-    | {
-        summaryText: string;
-        sourceLabel: string;
-      }
-    | null,
+  signal: {
+    summaryText: string;
+    sourceLabel: string;
+  } | null,
 ): CompanionDraft {
   if (!signal) return draft;
   const detailLine = `Conversation carryover: ${signal.summaryText}`;
@@ -920,12 +956,33 @@ function applyCommunicationCarryover(
       draft.recommendationText ||
       `Keep ${signal.sourceLabel} in view so it does not slip.`,
     recommendationKind:
-      draft.recommendationKind === 'none'
-        ? 'do_now'
-        : draft.recommendationKind,
-      signalsUsed: [...new Set([...draft.signalsUsed, 'communication_threads'])],
-    };
-  }
+      draft.recommendationKind === 'none' ? 'do_now' : draft.recommendationKind,
+    signalsUsed: [...new Set([...draft.signalsUsed, 'communication_threads'])],
+  };
+}
+
+function applyMissionCarryover(
+  draft: CompanionDraft,
+  signal: {
+    summaryText: string;
+    sourceLabel: string;
+  } | null,
+): CompanionDraft {
+  if (!signal) return draft;
+  const detailLine = `Mission carryover: ${signal.summaryText}`;
+  if (draft.detailLines.includes(detailLine)) return draft;
+  return {
+    ...draft,
+    detailLines: [...draft.detailLines, detailLine].slice(0, 5),
+    extraDetails: [...draft.extraDetails, detailLine].slice(0, 4),
+    recommendationText:
+      draft.recommendationText ||
+      `Keep ${signal.sourceLabel} moving so it does not stall.`,
+    recommendationKind:
+      draft.recommendationKind === 'none' ? 'do_now' : draft.recommendationKind,
+    signalsUsed: [...new Set([...draft.signalsUsed, 'missions'])],
+  };
+}
 
 async function applyChiefOfStaffOverlay(params: {
   draft: CompanionDraft;
@@ -984,9 +1041,9 @@ async function applyChiefOfStaffOverlay(params: {
     ].slice(0, 5),
   };
 }
-  
-  function finalizeDraft(
-    draft: CompanionDraft,
+
+function finalizeDraft(
+  draft: CompanionDraft,
   channel: DailyCompanionChannel,
   now: Date,
   grounded: GroundedDaySnapshot | null,
@@ -1014,12 +1071,16 @@ async function applyChiefOfStaffOverlay(params: {
           prefs.directMode,
           personalityLine,
         )
-      : formatTextReply(draft.lead, [
-          ...draft.detailLines,
-          draft.recommendationText
-            ? `Suggestion: ${draft.recommendationText}`
-            : null,
-        ].filter(Boolean) as string[], personalityLine);
+      : formatTextReply(
+          draft.lead,
+          [
+            ...draft.detailLines,
+            draft.recommendationText
+              ? `Suggestion: ${draft.recommendationText}`
+              : null,
+          ].filter(Boolean) as string[],
+          personalityLine,
+        );
 
   const shortText =
     channel === 'alexa'
@@ -1030,12 +1091,16 @@ async function applyChiefOfStaffOverlay(params: {
       : draft.lead;
   const extendedText =
     channel === 'alexa'
-      ? formatTextReply(draft.lead, [
-          ...draft.detailLines,
-          draft.recommendationText
-            ? `Suggestion: ${draft.recommendationText}`
-            : null,
-        ].filter(Boolean) as string[], personalityLine)
+      ? formatTextReply(
+          draft.lead,
+          [
+            ...draft.detailLines,
+            draft.recommendationText
+              ? `Suggestion: ${draft.recommendationText}`
+              : null,
+          ].filter(Boolean) as string[],
+          personalityLine,
+        )
       : reply;
 
   const context: DailyCompanionContext = {
@@ -1128,7 +1193,8 @@ function buildMorningDraft(params: {
     recommendedThread: params.threadSnapshot.recommendedNextThread,
   });
 
-  let lead = 'Today looks fairly open right now, so you can start from a clean read of it.';
+  let lead =
+    'Today looks fairly open right now, so you can start from a clean read of it.';
   let leadReason = 'nothing_urgent';
   if (nextReminder) {
     lead = `The first thing I would keep in mind is ${nextReminder.label} at ${formatClock(
@@ -1142,7 +1208,11 @@ function buildMorningDraft(params: {
       snapshot.timeZone,
     )}.`;
     leadReason = 'next_timed_event';
-  } else if (snapshot.selectedWork && window && params.prefs.workContextEnabled) {
+  } else if (
+    snapshot.selectedWork &&
+    window &&
+    params.prefs.workContextEnabled
+  ) {
     lead = `You have open room to make progress on ${snapshot.selectedWork.title}.`;
     leadReason = 'selected_work_open_block';
   } else if (dueThread) {
@@ -1155,11 +1225,15 @@ function buildMorningDraft(params: {
 
   const detailLines = [
     nextEvent ? `Next: ${summarizeEvent(nextEvent, snapshot.timeZone)}` : null,
-    nextReminder ? `Reminder: ${formatReminderSummary(nextReminder, snapshot.timeZone)}` : null,
+    nextReminder
+      ? `Reminder: ${formatReminderSummary(nextReminder, snapshot.timeZone)}`
+      : null,
     window ? `Open window: ${window.label}` : null,
     dueThread ? `Thread carryover: ${summarizeThread(dueThread)}` : null,
     params.householdLines[0] ? `Household: ${params.householdLines[0]}` : null,
-    householdThread ? `Household thread: ${summarizeThread(householdThread)}` : null,
+    householdThread
+      ? `Household thread: ${summarizeThread(householdThread)}`
+      : null,
   ].filter((line): line is string => Boolean(line));
 
   return {
@@ -1186,7 +1260,9 @@ function buildMorningDraft(params: {
     signalsUsed: [
       'calendar',
       nextReminder ? 'reminders' : null,
-      snapshot.selectedWork && params.prefs.workContextEnabled ? 'current_work' : null,
+      snapshot.selectedWork && params.prefs.workContextEnabled
+        ? 'current_work'
+        : null,
       dueThread || householdThread ? 'life_threads' : null,
       params.householdLines.length > 0 ? 'household_context' : null,
     ].filter((line): line is string => Boolean(line)),
@@ -1203,7 +1279,9 @@ function buildMorningDraft(params: {
     threadSummaryLines: threadContext.threadSummaryLines,
     comparisonKeys: {
       nextEvent: nextEvent ? `${nextEvent.id}:${nextEvent.startIso}` : null,
-      nextReminder: nextReminder ? `${nextReminder.id}:${nextReminder.nextRunIso}` : null,
+      nextReminder: nextReminder
+        ? `${nextReminder.id}:${nextReminder.nextRunIso}`
+        : null,
       recommendation: recommendation.text,
       household: params.householdLines[0] || null,
       focus: recommendation.focusKey,
@@ -1266,7 +1344,9 @@ function buildMiddayDraft(params: {
       ? `Current work: ${snapshot.selectedWork.title} (${snapshot.selectedWork.statusLabel})`
       : null,
     nextEvent ? `Next: ${summarizeEvent(nextEvent, snapshot.timeZone)}` : null,
-    nextReminder ? `Reminder: ${formatReminderSummary(nextReminder, snapshot.timeZone)}` : null,
+    nextReminder
+      ? `Reminder: ${formatReminderSummary(nextReminder, snapshot.timeZone)}`
+      : null,
     window ? `Open block: ${window.label}` : null,
     dueThread ? `Thread follow-up: ${summarizeThread(dueThread)}` : null,
     slippingThread ? `Slipping: ${summarizeThread(slippingThread)}` : null,
@@ -1295,7 +1375,9 @@ function buildMiddayDraft(params: {
     signalsUsed: [
       'calendar',
       nextReminder ? 'reminders' : null,
-      snapshot.selectedWork && params.prefs.workContextEnabled ? 'current_work' : null,
+      snapshot.selectedWork && params.prefs.workContextEnabled
+        ? 'current_work'
+        : null,
       threadContext.threadSummaryLines[0] ? 'life_threads' : null,
       params.householdLines.length > 0 ? 'household_context' : null,
     ].filter((line): line is string => Boolean(line)),
@@ -1308,7 +1390,9 @@ function buildMiddayDraft(params: {
     threadSummaryLines: threadContext.threadSummaryLines,
     comparisonKeys: {
       nextEvent: nextEvent ? `${nextEvent.id}:${nextEvent.startIso}` : null,
-      nextReminder: nextReminder ? `${nextReminder.id}:${nextReminder.nextRunIso}` : null,
+      nextReminder: nextReminder
+        ? `${nextReminder.id}:${nextReminder.nextRunIso}`
+        : null,
       recommendation: recommendation.text,
       household: params.householdLines[0] || null,
       focus: recommendation.focusKey,
@@ -1355,13 +1439,13 @@ function buildEveningDraft(params: {
       ? `Close the loop on ${dueThread.title} tonight by ${dueThread.nextAction || dueThread.summary}.`
       : slippingThread
         ? `Touch ${slippingThread.title} tonight so it does not drift into tomorrow.`
-    : params.householdLines[0]
-      ? `Close the loop on ${params.householdLines[0]} before the evening gets away from you.`
-      : householdThread
-        ? `Close the loop on ${householdThread.title} before the night gets away from you.`
-      : tomorrowPressure
-        ? `Set yourself up for ${tomorrowPressure.title} before tomorrow starts.`
-        : 'If nothing else moves tonight, leave yourself one clean reminder for tomorrow.';
+        : params.householdLines[0]
+          ? `Close the loop on ${params.householdLines[0]} before the evening gets away from you.`
+          : householdThread
+            ? `Close the loop on ${householdThread.title} before the night gets away from you.`
+            : tomorrowPressure
+              ? `Set yourself up for ${tomorrowPressure.title} before tomorrow starts.`
+              : 'If nothing else moves tonight, leave yourself one clean reminder for tomorrow.';
 
   const lead = tonightReminder
     ? `Tonight's loose end is ${tonightReminder.label}.`
@@ -1369,24 +1453,28 @@ function buildEveningDraft(params: {
       ? `The open thread to close tonight is ${dueThread.title}.`
       : slippingThread
         ? `The thing still most likely to slip tonight is ${slippingThread.title}.`
-    : tomorrowPressure
-      ? `Tomorrow's first pressure point is ${tomorrowPressure.title} at ${formatClock(
-          new Date(tomorrowPressure.startIso),
-          params.snapshot.timeZone,
-        )}.`
-    : 'Tonight looks fairly calm, so this is mostly about closing the right loop.';
+        : tomorrowPressure
+          ? `Tomorrow's first pressure point is ${tomorrowPressure.title} at ${formatClock(
+              new Date(tomorrowPressure.startIso),
+              params.snapshot.timeZone,
+            )}.`
+          : 'Tonight looks fairly calm, so this is mostly about closing the right loop.';
 
   const detailLines = [
     tonightReminder
       ? `Tonight: ${formatReminderSummary(tonightReminder, params.snapshot.timeZone)}`
       : null,
     dueThread ? `Thread: ${summarizeThread(dueThread)}` : null,
-    slippingThread ? `Still slipping: ${summarizeThread(slippingThread)}` : null,
+    slippingThread
+      ? `Still slipping: ${summarizeThread(slippingThread)}`
+      : null,
     tomorrowPressure
       ? `Tomorrow: ${summarizeEvent(tomorrowPressure, params.snapshot.timeZone)}`
       : null,
     params.householdLines[0] ? `Household: ${params.householdLines[0]}` : null,
-    householdThread ? `Household thread: ${summarizeThread(householdThread)}` : null,
+    householdThread
+      ? `Household thread: ${summarizeThread(householdThread)}`
+      : null,
   ].filter((line): line is string => Boolean(line));
 
   return {
@@ -1438,7 +1526,12 @@ function buildEveningDraft(params: {
 
 function detectHouseholdAskStyle(
   normalized: string,
-): 'talk_about' | 'family_forgetting' | 'home_followup' | 'still_open' | 'shared_plans' {
+):
+  | 'talk_about'
+  | 'family_forgetting'
+  | 'home_followup'
+  | 'still_open'
+  | 'shared_plans' {
   if (/^what should i talk to [a-z][a-z' -]+ about\??$/.test(normalized)) {
     return 'talk_about';
   }
@@ -1500,7 +1593,10 @@ function buildHouseholdDraft(params: {
     personDisplayName,
   );
   const personLeadDetail = normalizeHouseholdDetail(
-    humanizedThreadDetail || relatedThread?.summary || relatedThread?.title || null,
+    humanizedThreadDetail ||
+      relatedThread?.summary ||
+      relatedThread?.title ||
+      null,
   );
   const lead = personName
     ? askStyle === 'talk_about'
@@ -1566,17 +1662,25 @@ function buildHouseholdDraft(params: {
     lead,
     leadReason: 'household_scope',
     detailLines: [
-      personName ? null : relatedThread ? `Thread: ${summarizeThread(relatedThread)}` : null,
-      ...householdLines.slice(0, 2).map((line, index) =>
-        index === 0 ? `Shared plan: ${line}` : `Also: ${line}`,
-      ),
+      personName
+        ? null
+        : relatedThread
+          ? `Thread: ${summarizeThread(relatedThread)}`
+          : null,
+      ...householdLines
+        .slice(0, 2)
+        .map((line, index) =>
+          index === 0 ? `Shared plan: ${line}` : `Also: ${line}`,
+        ),
     ].filter((line): line is string => Boolean(line)),
     extraDetails: householdLines.slice(1),
     recommendationText,
     recommendationKind: recommendationText ? 'do_now' : 'none',
-    signalsUsed: ['calendar', 'household_context', relatedThread ? 'life_threads' : null].filter(
-      (line): line is string => Boolean(line),
-    ),
+    signalsUsed: [
+      'calendar',
+      'household_context',
+      relatedThread ? 'life_threads' : null,
+    ].filter((line): line is string => Boolean(line)),
     signalsOmitted: [],
     householdSignals: householdLines,
     memoryLines: params.memoryLines,
@@ -1617,7 +1721,7 @@ function buildLooseEndsDraft(params: {
       : params.threadSnapshot.recommendedNextThread &&
           params.threadSnapshot.recommendedNextThread.id !== dueThread?.id
         ? params.threadSnapshot.recommendedNextThread
-      : null;
+        : null;
   const currentWork =
     params.snapshot.selectedWork && params.prefs.workContextEnabled
       ? params.snapshot.selectedWork
@@ -1662,7 +1766,7 @@ function buildLooseEndsDraft(params: {
           ? `Touch ${slippingThread.title} once tonight so it does not drift.`
           : currentWork
             ? `Either move ${currentWork.title} forward or save it as a reminder so it does not disappear.`
-          : 'If something is still nagging at you, save one reminder before you leave it behind.';
+            : 'If something is still nagging at you, save one reminder before you leave it behind.';
   const recommendationKind: DailyCompanionRecommendationKind =
     dueReminder || dueThread
       ? 'do_now'
@@ -1678,7 +1782,9 @@ function buildLooseEndsDraft(params: {
       ? `Tomorrow pressure: ${summarizeEvent(tomorrowPressure, params.snapshot.timeZone)}`
       : null,
     slippingThread ? `Keep on deck: ${summarizeThread(slippingThread)}` : null,
-    currentWork ? `Current work: ${currentWork.title} (${currentWork.statusLabel})` : null,
+    currentWork
+      ? `Current work: ${currentWork.title} (${currentWork.statusLabel})`
+      : null,
     params.householdLines[0] ? `Household: ${params.householdLines[0]}` : null,
   ].filter((line): line is string => Boolean(line));
 
@@ -1719,7 +1825,9 @@ function buildLooseEndsDraft(params: {
       nextEvent: tomorrowPressure
         ? `${tomorrowPressure.id}:${tomorrowPressure.startIso}`
         : null,
-      nextReminder: dueReminder ? `${dueReminder.id}:${dueReminder.nextRunIso}` : null,
+      nextReminder: dueReminder
+        ? `${dueReminder.id}:${dueReminder.nextRunIso}`
+        : null,
       recommendation: recommendationText,
       household: params.householdLines[0] || null,
       focus: leadReason,
@@ -1773,7 +1881,8 @@ function buildTomorrowDraft(params: {
   threadSnapshot: ReturnType<typeof buildLifeThreadSnapshot>;
 }): CompanionDraft {
   const tomorrowTimed = params.tomorrowSnapshot?.timedEvents.slice(0, 2) || [];
-  const tomorrowAllDay = params.tomorrowSnapshot?.allDayEvents.slice(0, 1) || [];
+  const tomorrowAllDay =
+    params.tomorrowSnapshot?.allDayEvents.slice(0, 1) || [];
   const firstEvent = tomorrowTimed[0] || tomorrowAllDay[0] || null;
   const detailLines = [...tomorrowTimed, ...tomorrowAllDay]
     .slice(0, 3)
@@ -1875,10 +1984,14 @@ function buildExplainabilityReply(
 
   const lines = [`I answered from ${signalText}.`];
   if (context.usedThreadTitles.length > 0) {
-    lines.push(`Thread context in play: ${context.usedThreadTitles.join('; ')}.`);
+    lines.push(
+      `Thread context in play: ${context.usedThreadTitles.join('; ')}.`,
+    );
   }
   if (context.memoryLines.length > 0) {
-    lines.push(`Remembered context in play: ${context.memoryLines.join('; ')}.`);
+    lines.push(
+      `Remembered context in play: ${context.memoryLines.join('; ')}.`,
+    );
   }
   if (context.ritualType) {
     lines.push(
@@ -1892,7 +2005,10 @@ function buildMemoryReply(
   channel: DailyCompanionChannel,
   context: DailyCompanionContext,
 ): string {
-  if (context.memoryLines.length === 0 && context.threadSummaryLines.length === 0) {
+  if (
+    context.memoryLines.length === 0 &&
+    context.threadSummaryLines.length === 0
+  ) {
     return channel === 'alexa'
       ? 'I am not leaning on any strong remembered preferences for this one yet.'
       : 'I am not leaning on any strong remembered preferences for this one yet.';
@@ -1903,13 +2019,14 @@ function buildMemoryReply(
       : null;
   if (context.memoryLines.length === 0) {
     return channel === 'alexa'
-      ? threadLead || 'I was mostly leaning on the current thread of the conversation.'
+      ? threadLead ||
+          'I was mostly leaning on the current thread of the conversation.'
       : threadLead || 'I was mostly leaning on current thread context.';
   }
   return channel === 'alexa'
-    ? `What I was keeping in mind is ${context.memoryLines.slice(0, 2).join(
-        ', ',
-      )}.`
+    ? `What I was keeping in mind is ${context.memoryLines
+        .slice(0, 2)
+        .join(', ')}.`
     : [
         'Remembered context affecting this:',
         ...context.memoryLines.map((line) => `- ${line}`),
@@ -1934,7 +2051,8 @@ function buildChangedReply(
     changes.push('the reminder pressure changed');
   }
   if (
-    previous.comparisonKeys.recommendation !== current.comparisonKeys.recommendation
+    previous.comparisonKeys.recommendation !==
+    current.comparisonKeys.recommendation
   ) {
     changes.push('my recommended next move changed');
   }
@@ -2042,9 +2160,10 @@ export async function buildDailyCompanionResponse(
               details: [extra[1] || null],
               maxDetails: 1,
             })
-          : [deps.priorContext.summaryText, ...extra.map((line) => `- ${line}`)].join(
-              '\n',
-            );
+          : [
+              deps.priorContext.summaryText,
+              ...extra.map((line) => `- ${line}`),
+            ].join('\n');
       return {
         reply,
         mode: deps.priorContext.mode,
@@ -2058,7 +2177,10 @@ export async function buildDailyCompanionResponse(
         grounded: null,
       };
     }
-    if (isActionGuidancePrompt(normalized) && deps.priorContext.recommendationText) {
+    if (
+      isActionGuidancePrompt(normalized) &&
+      deps.priorContext.recommendationText
+    ) {
       return {
         reply: deps.priorContext.recommendationText,
         mode: deps.priorContext.mode,
@@ -2196,8 +2318,16 @@ export async function buildDailyCompanionResponse(
           })
         : null,
     );
+    const missionDraft = applyMissionCarryover(
+      communicationDraft,
+      deps.groupFolder
+        ? getMissionCarryoverSignal({
+            groupFolder: deps.groupFolder,
+          })
+        : null,
+    );
     const staffedDraft = await applyChiefOfStaffOverlay({
-      draft: communicationDraft,
+      draft: missionDraft,
       channel: deps.channel,
       groupFolder: deps.groupFolder,
       message,
@@ -2207,11 +2337,7 @@ export async function buildDailyCompanionResponse(
       threadSnapshot,
     });
     const ritualizedDraft = ritualProfile
-      ? applyRitualProfileToDraft(
-          staffedDraft,
-          ritualProfile,
-          deps.channel,
-        )
+      ? applyRitualProfileToDraft(staffedDraft, ritualProfile, deps.channel)
       : staffedDraft;
     const current = finalizeDraft(
       ritualizedDraft,
@@ -2230,7 +2356,11 @@ export async function buildDailyCompanionResponse(
     if (isSameLocalDay(deps.priorContext.generatedAt, now)) {
       return {
         ...current,
-        reply: buildChangedReply(deps.channel, deps.priorContext, current.context),
+        reply: buildChangedReply(
+          deps.channel,
+          deps.priorContext,
+          current.context,
+        ),
       };
     }
     return current;
@@ -2282,8 +2412,16 @@ export async function buildDailyCompanionResponse(
         })
       : null,
   );
+  const missionDraft = applyMissionCarryover(
+    communicationDraft,
+    deps.groupFolder
+      ? getMissionCarryoverSignal({
+          groupFolder: deps.groupFolder,
+        })
+      : null,
+  );
   const staffedDraft = await applyChiefOfStaffOverlay({
-    draft: communicationDraft,
+    draft: missionDraft,
     channel: deps.channel,
     groupFolder: deps.groupFolder,
     message,

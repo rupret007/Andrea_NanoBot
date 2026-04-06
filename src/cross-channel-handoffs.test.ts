@@ -32,7 +32,15 @@ describe('cross-channel handoffs', () => {
         communicationThreadId: 'comm-1',
         communicationSubjectIds: ['subject-candace'],
         communicationLifeThreadIds: ['thread-candace'],
-        lastCommunicationSummary: 'Candace still needs a dinner answer tonight.',
+        lastCommunicationSummary:
+          'Candace still needs a dinner answer tonight.',
+        missionId: 'mission-1',
+        missionSummary: 'Plan Friday dinner with Candace.',
+        missionSuggestedActionsJson:
+          '[{"kind":"create_reminder","label":"Set a reminder","reason":"Lock the timing","requiresConfirmation":true}]',
+        missionBlockersJson: '["The timing still looks fuzzy."]',
+        missionStepFocusJson:
+          '{"stepId":"step-1","missionId":"mission-1","position":1,"title":"Lock the timing","detail":"Confirm when dinner should happen.","stepStatus":"pending","requiresUserJudgment":true,"suggestedActionKind":"create_reminder","linkedRefJson":null,"lastUpdatedAt":"2026-04-06T17:00:00.000Z"}',
         knowledgeSourceIds: ['source-1'],
         followupSuggestions: ['Save it if useful.'],
       },
@@ -58,6 +66,8 @@ describe('cross-channel handoffs', () => {
       capabilityId: 'research.compare',
       communicationThreadId: 'comm-1',
       lastCommunicationSummary: 'Candace still needs a dinner answer tonight.',
+      missionId: 'mission-1',
+      missionSummary: 'Plan Friday dinner with Candace.',
     });
   });
 
@@ -105,10 +115,7 @@ describe('cross-channel handoffs', () => {
       },
     });
 
-    const cancelled = cancelCompanionHandoff(
-      record.handoffId,
-      'User said no.',
-    );
+    const cancelled = cancelCompanionHandoff(record.handoffId, 'User said no.');
 
     expect(cancelled).toMatchObject({
       handoffId: record.handoffId,

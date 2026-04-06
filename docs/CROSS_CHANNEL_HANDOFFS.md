@@ -23,6 +23,7 @@ Current handoff targets:
 - image-generation delivery when the media path already has an artifact
 - daily and household companion answers when the user wants the fuller text in Telegram
 - communication-companion summaries, owed-reply views, and relationship-aware drafts when the user wants the richer text review on Telegram or BlueBubbles
+- mission summaries, blocker views, and suggested next actions when the user asks to send the fuller plan
 - bounded text continuations from Alexa into BlueBubbles messages when the user says `send that to my messages`
 
 Current voice-triggered completion actions:
@@ -104,6 +105,7 @@ Telegram then receives the richer continuation:
 
 - structured research answer
 - richer source-grounded detail
+- mission summary, blockers, suggested actions, and next-step focus when the current continuation is a plan
 - image artifact or captioned output
 - action confirmation for save/remind/track flows
 

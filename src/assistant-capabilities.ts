@@ -8,7 +8,7 @@ import {
   type DailyCompanionResponse,
 } from './daily-companion.js';
 import type { SelectedWorkContext } from './daily-command-center.js';
-import { getAllTasks, listProfileFactsForGroup } from './db.js';
+import { createTask, getAllTasks, listProfileFactsForGroup } from './db.js';
 import {
   buildLifeThreadSnapshot,
   handleLifeThreadCommand,
@@ -37,6 +37,7 @@ import {
   searchKnowledgeLibrary,
 } from './knowledge-library.js';
 import { handleRitualCommand } from './rituals.js';
+import { planContextualReminder } from './local-reminder.js';
 import {
   analyzeCommunicationMessage,
   buildCommunicationOpenLoops,
@@ -47,6 +48,12 @@ import {
   manageCommunicationTracking,
 } from './communication-companion.js';
 import { buildChiefOfStaffTurn } from './chief-of-staff.js';
+import {
+  buildMissionExecutionContext,
+  buildMissionTurn,
+  pickMissionActionFromUtterance,
+  updateMissionAfterExecution,
+} from './missions.js';
 import type {
   AlexaCompanionGuidanceGoal,
   AlexaConversationFollowupAction,
@@ -57,6 +64,9 @@ import type {
   CompanionToneProfile,
   KnowledgeSourceRecord,
   MediaGenerationResult,
+  MissionExecutionContext,
+  MissionPlanSnapshot,
+  MissionSuggestedAction,
 } from './types.js';
 import { normalizeVoicePrompt } from './voice-ready.js';
 
@@ -93,6 +103,11 @@ export type AssistantCapabilityId =
   | 'communication.draft_reply'
   | 'communication.open_loops'
   | 'communication.manage_tracking'
+  | 'missions.propose'
+  | 'missions.view'
+  | 'missions.execute'
+  | 'missions.manage'
+  | 'missions.explain'
   | 'staff.prioritize'
   | 'staff.plan_horizon'
   | 'staff.prepare'
@@ -120,6 +135,7 @@ export type AssistantCapabilityCategory =
   | 'rituals'
   | 'knowledge'
   | 'communication'
+  | 'missions'
   | 'staff'
   | 'research'
   | 'work'
@@ -153,6 +169,7 @@ export interface AssistantCapabilityContext {
     lastAnswerSummary?: string;
     lastRecommendation?: string;
     conversationFocus?: string;
+    threadId?: string;
     threadTitle?: string;
     personName?: string;
     researchRouteExplanation?: string;
@@ -167,6 +184,11 @@ export interface AssistantCapabilityContext {
     communicationLifeThreadIds?: string[];
     lastCommunicationSummary?: string;
     chiefOfStaffContextJson?: string;
+    missionId?: string;
+    missionSummary?: string;
+    missionSuggestedActionsJson?: string;
+    missionBlockersJson?: string;
+    missionStepFocusJson?: string;
     activeCapabilityId?: AssistantCapabilityId;
     companionContinuationJson?: string;
   };
@@ -234,6 +256,11 @@ export interface AssistantCapabilityConversationSeed {
     communicationLifeThreadIds?: string[];
     lastCommunicationSummary?: string;
     chiefOfStaffContextJson?: string;
+    missionId?: string;
+    missionSummary?: string;
+    missionSuggestedActionsJson?: string;
+    missionBlockersJson?: string;
+    missionStepFocusJson?: string;
     toneProfile?: CompanionToneProfile;
     companionContinuationJson?: string;
   };
@@ -338,6 +365,15 @@ function serializeCompanionContinuation(
   candidate: CompanionContinuationCandidate | undefined,
 ): string | undefined {
   return candidate ? JSON.stringify(candidate) : undefined;
+}
+
+function parseJsonSafe<T>(value: string | null | undefined, fallback: T): T {
+  if (!value) return fallback;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
 }
 
 function buildDailyContinuationCandidate(
@@ -724,7 +760,8 @@ async function runRitualFollowthroughCapability(
           threadTitle: dailyResponse.context.usedThreadTitles?.[0],
           threadSummaryLines: dailyResponse.context.threadSummaryLines || [],
           lastAnswerSummary: dailyResponse.context.summaryText,
-          lastRecommendation: dailyResponse.context.recommendationText || undefined,
+          lastRecommendation:
+            dailyResponse.context.recommendationText || undefined,
           conversationFocus:
             dailyResponse.context.usedThreadTitles?.[0] ||
             dailyResponse.context.subjectKind,
@@ -891,7 +928,8 @@ function buildMediaContinuationCandidate(
   mediaResult: MediaGenerationResult,
 ): CompanionContinuationCandidate {
   const normalizedPrompt = normalizeText(prompt);
-  const summary = mediaResult.summaryText || mediaResult.replyText || normalizedPrompt;
+  const summary =
+    mediaResult.summaryText || mediaResult.replyText || normalizedPrompt;
   return {
     capabilityId: descriptor.id,
     voiceSummary: summary,
@@ -1379,15 +1417,17 @@ function buildChiefOfStaffContinuationCandidate(input: {
       `Using ${input.chiefOfStaffContext.snapshot.signalsUsed.join(', ')}`,
     ),
     completionText:
-      input.chiefOfStaffContext.snapshot.bestNextAction ||
-      input.summaryText,
+      input.chiefOfStaffContext.snapshot.bestNextAction || input.summaryText,
     chiefOfStaffContextJson: JSON.stringify(input.chiefOfStaffContext),
     threadId: input.threadId,
     threadTitle: input.threadTitle,
     communicationThreadId: input.communicationThreadId,
     communicationSubjectIds: input.communicationSubjectIds,
     communicationLifeThreadIds: input.communicationLifeThreadIds,
-    followupSuggestions: ['why are you prioritizing that', 'save that for later'],
+    followupSuggestions: [
+      'why are you prioritizing that',
+      'save that for later',
+    ],
   };
 }
 
@@ -1438,6 +1478,93 @@ function buildChiefOfStaffConversationSeed(input: {
         input.continuationCandidate,
       ),
       toneProfile: undefined,
+    },
+    supportedFollowups: input.supportedFollowups,
+    responseSource: 'local_companion',
+  };
+}
+
+function buildMissionContinuationCandidate(input: {
+  descriptor: AssistantCapabilityDescriptor;
+  summaryText: string;
+  detailText: string;
+  missionId: string;
+  missionSummary: string;
+  blockers: string[];
+  suggestedActions: MissionSuggestedAction[];
+  stepFocus?: MissionExecutionContext['stepFocus'];
+  threadId?: string;
+  threadTitle?: string;
+  communicationThreadId?: string;
+  communicationSubjectIds?: string[];
+  communicationLifeThreadIds?: string[];
+  knowledgeSourceIds?: string[];
+  knowledgeSourceTitles?: string[];
+}): CompanionContinuationCandidate {
+  return {
+    capabilityId: input.descriptor.id,
+    voiceSummary: input.summaryText,
+    handoffPayload: buildCompanionMessagePayload(
+      input.descriptor.label,
+      input.detailText,
+      ['send me the plan', 'remind me', 'save this plan'],
+      'Using your current mission context.',
+    ),
+    completionText: input.stepFocus?.title || input.missionSummary,
+    missionId: input.missionId,
+    missionSummary: input.missionSummary,
+    missionSuggestedActionsJson: JSON.stringify(input.suggestedActions),
+    missionBlockersJson: JSON.stringify(input.blockers),
+    missionStepFocusJson: input.stepFocus
+      ? JSON.stringify(input.stepFocus)
+      : undefined,
+    threadId: input.threadId,
+    threadTitle: input.threadTitle,
+    communicationThreadId: input.communicationThreadId,
+    communicationSubjectIds: input.communicationSubjectIds,
+    communicationLifeThreadIds: input.communicationLifeThreadIds,
+    knowledgeSourceIds: input.knowledgeSourceIds,
+    knowledgeSourceTitles: input.knowledgeSourceTitles,
+    followupSuggestions: [
+      'what is the blocker',
+      'save this plan',
+      'send me the plan',
+    ],
+  };
+}
+
+function buildMissionConversationSeed(input: {
+  descriptor: AssistantCapabilityDescriptor;
+  summaryText: string;
+  conversationFocus: string;
+  continuationCandidate?: CompanionContinuationCandidate;
+  supportedFollowups?: AlexaConversationFollowupAction[];
+}): AssistantCapabilityConversationSeed {
+  return {
+    flowKey: input.descriptor.id.replace(/\./g, '_'),
+    subjectKind: 'mission',
+    summaryText: input.summaryText,
+    guidanceGoal: 'shared_plans',
+    subjectData: {
+      activeCapabilityId: input.descriptor.id,
+      conversationFocus: input.conversationFocus,
+      lastAnswerSummary: input.summaryText,
+      missionId: input.continuationCandidate?.missionId,
+      missionSummary: input.continuationCandidate?.missionSummary,
+      missionSuggestedActionsJson:
+        input.continuationCandidate?.missionSuggestedActionsJson,
+      missionBlockersJson: input.continuationCandidate?.missionBlockersJson,
+      missionStepFocusJson: input.continuationCandidate?.missionStepFocusJson,
+      communicationThreadId: input.continuationCandidate?.communicationThreadId,
+      communicationSubjectIds:
+        input.continuationCandidate?.communicationSubjectIds,
+      communicationLifeThreadIds:
+        input.continuationCandidate?.communicationLifeThreadIds,
+      chiefOfStaffContextJson:
+        input.continuationCandidate?.chiefOfStaffContextJson,
+      companionContinuationJson: serializeCompanionContinuation(
+        input.continuationCandidate,
+      ),
     },
     supportedFollowups: input.supportedFollowups,
     responseSource: 'local_companion',
@@ -1807,9 +1934,9 @@ async function runKnowledgeMutationCapability(
       : selection.debugPath;
 
   return {
-      handled: true,
-      capabilityId: descriptor.id,
-      replyText: mutationResult.message,
+    handled: true,
+    capabilityId: descriptor.id,
+    replyText: mutationResult.message,
     outputShape: descriptor.preferredOutputShape[context.channel],
     conversationSeed: buildKnowledgeConversationSeed(
       descriptor,
@@ -1829,9 +1956,9 @@ async function runKnowledgeMutationCapability(
           ? 'deleted a saved knowledge source'
           : 'disabled a saved knowledge source',
       mutationDebugPath,
-      ),
-    };
-  }
+    ),
+  };
+}
 
 async function runCommunicationUnderstandCapability(
   descriptor: AssistantCapabilityDescriptor,
@@ -1873,8 +2000,12 @@ async function runCommunicationUnderstandCapability(
     threadId: analysis.linkedLifeThreads[0]?.id,
     threadTitle: analysis.linkedLifeThreads[0]?.title || analysis.thread?.title,
     communicationThreadId: analysis.thread?.id,
-    communicationSubjectIds: analysis.linkedSubjects.map((subject) => subject.id),
-    communicationLifeThreadIds: analysis.linkedLifeThreads.map((thread) => thread.id),
+    communicationSubjectIds: analysis.linkedSubjects.map(
+      (subject) => subject.id,
+    ),
+    communicationLifeThreadIds: analysis.linkedLifeThreads.map(
+      (thread) => thread.id,
+    ),
   });
   const supportedFollowups = extendCompanionFollowups(
     descriptor.followupActions,
@@ -1893,10 +2024,15 @@ async function runCommunicationUnderstandCapability(
         analysis.messageText || input.canonicalText || input.text || '',
       personName: analysis.linkedSubjects[0]?.displayName,
       threadId: analysis.linkedLifeThreads[0]?.id,
-      threadTitle: analysis.linkedLifeThreads[0]?.title || analysis.thread?.title,
+      threadTitle:
+        analysis.linkedLifeThreads[0]?.title || analysis.thread?.title,
       communicationThreadId: analysis.thread?.id,
-      communicationSubjectIds: analysis.linkedSubjects.map((subject) => subject.id),
-      communicationLifeThreadIds: analysis.linkedLifeThreads.map((thread) => thread.id),
+      communicationSubjectIds: analysis.linkedSubjects.map(
+        (subject) => subject.id,
+      ),
+      communicationLifeThreadIds: analysis.linkedLifeThreads.map(
+        (thread) => thread.id,
+      ),
       lastCommunicationSummary: analysis.summaryText,
       continuationCandidate,
       supportedFollowups,
@@ -1955,7 +2091,9 @@ async function runCommunicationDraftCapability(
     threadTitle: draft.linkedLifeThreads[0]?.title || draft.thread?.title,
     communicationThreadId: draft.thread?.id,
     communicationSubjectIds: draft.linkedSubjects.map((subject) => subject.id),
-    communicationLifeThreadIds: draft.linkedLifeThreads.map((thread) => thread.id),
+    communicationLifeThreadIds: draft.linkedLifeThreads.map(
+      (thread) => thread.id,
+    ),
   });
   const supportedFollowups = extendCompanionFollowups(
     descriptor.followupActions,
@@ -1976,8 +2114,12 @@ async function runCommunicationDraftCapability(
       threadId: draft.linkedLifeThreads[0]?.id,
       threadTitle: draft.linkedLifeThreads[0]?.title || draft.thread?.title,
       communicationThreadId: draft.thread?.id,
-      communicationSubjectIds: draft.linkedSubjects.map((subject) => subject.id),
-      communicationLifeThreadIds: draft.linkedLifeThreads.map((thread) => thread.id),
+      communicationSubjectIds: draft.linkedSubjects.map(
+        (subject) => subject.id,
+      ),
+      communicationLifeThreadIds: draft.linkedLifeThreads.map(
+        (thread) => thread.id,
+      ),
       lastCommunicationSummary: draft.summaryText,
       continuationCandidate,
       supportedFollowups,
@@ -2011,7 +2153,10 @@ async function runCommunicationOpenLoopsCapability(
     priorContext: context.priorSubjectData,
     now: context.now,
   });
-  const replyText = formatCommunicationOpenLoopsReply(context.channel, openLoops);
+  const replyText = formatCommunicationOpenLoopsReply(
+    context.channel,
+    openLoops,
+  );
   const firstItem = openLoops.items[0];
   const continuationCandidate = buildCommunicationContinuationCandidate({
     descriptor,
@@ -2127,8 +2272,10 @@ async function runChiefOfStaffCapability(
     now: context.now,
     tasks,
     selectedWork: context.selectedWork || null,
-    priorChiefOfStaffContextJson: context.priorSubjectData?.chiefOfStaffContextJson,
-    priorCommunicationSubjectIds: context.priorSubjectData?.communicationSubjectIds,
+    priorChiefOfStaffContextJson:
+      context.priorSubjectData?.chiefOfStaffContextJson,
+    priorCommunicationSubjectIds:
+      context.priorSubjectData?.communicationSubjectIds,
     priorKnowledgeSourceIds: context.priorSubjectData?.knowledgeSourceIds,
   });
   const continuationCandidate = buildChiefOfStaffContinuationCandidate({
@@ -2170,6 +2317,331 @@ async function runChiefOfStaffCapability(
     handoffPayload: continuationCandidate.handoffPayload,
     continuationCandidate,
   };
+}
+
+async function runMissionCapability(
+  descriptor: AssistantCapabilityDescriptor,
+  context: AssistantCapabilityContext,
+  input: AssistantCapabilityInput,
+  mode: 'propose' | 'view' | 'execute' | 'manage' | 'explain',
+): Promise<AssistantCapabilityResult> {
+  if (!context.groupFolder) return { handled: false };
+  const text = input.canonicalText || input.text || '';
+
+  const carryMissionIntoResult = (params: {
+    summaryText: string;
+    detailText: string;
+    missionId: string;
+    missionSummary: string;
+    blockers: string[];
+    suggestedActions: MissionSuggestedAction[];
+    stepFocus?: MissionExecutionContext['stepFocus'];
+    replyText: string;
+  }): AssistantCapabilityResult => {
+    const continuationCandidate = buildMissionContinuationCandidate({
+      descriptor,
+      summaryText: params.summaryText,
+      detailText: params.detailText,
+      missionId: params.missionId,
+      missionSummary: params.missionSummary,
+      blockers: params.blockers,
+      suggestedActions: params.suggestedActions,
+      stepFocus: params.stepFocus,
+      threadId: context.priorSubjectData?.threadId,
+      threadTitle: context.priorSubjectData?.threadTitle,
+      communicationThreadId: context.priorSubjectData?.communicationThreadId,
+      communicationSubjectIds:
+        context.priorSubjectData?.communicationSubjectIds,
+      communicationLifeThreadIds:
+        context.priorSubjectData?.communicationLifeThreadIds,
+      knowledgeSourceIds: context.priorSubjectData?.knowledgeSourceIds,
+      knowledgeSourceTitles: context.priorSubjectData?.knowledgeSourceTitles,
+    });
+    const supportedFollowups = extendCompanionFollowups(
+      descriptor.followupActions,
+      continuationCandidate,
+    );
+    return {
+      handled: true,
+      capabilityId: descriptor.id,
+      replyText: params.replyText,
+      outputShape: descriptor.preferredOutputShape[context.channel],
+      conversationSeed: buildMissionConversationSeed({
+        descriptor,
+        summaryText: params.summaryText,
+        conversationFocus: text || params.summaryText,
+        continuationCandidate,
+        supportedFollowups,
+      }),
+      trace: buildCapabilityTrace(
+        descriptor,
+        context,
+        'local_companion',
+        `handled by missions in ${mode} mode`,
+      ),
+      followupActions: supportedFollowups,
+      handoffPayload: continuationCandidate.handoffPayload,
+      continuationCandidate,
+    };
+  };
+
+  if (mode !== 'execute') {
+    const result = await buildMissionTurn({
+      channel: context.channel,
+      groupFolder: context.groupFolder,
+      chatJid: context.chatJid,
+      text,
+      mode,
+      conversationSummary: context.conversationSummary,
+      replyText: context.replyText,
+      selectedWork: context.selectedWork || null,
+      priorContext: context.priorSubjectData,
+      now: context.now,
+    });
+    return carryMissionIntoResult({
+      summaryText: result.summaryText,
+      detailText: result.detailText,
+      missionId: result.mission.missionId,
+      missionSummary: result.mission.summary,
+      blockers: result.blockers,
+      suggestedActions: result.suggestedActions,
+      stepFocus: result.stepFocus,
+      replyText: result.replyText,
+    });
+  }
+
+  const missionId = context.priorSubjectData?.missionId;
+  if (!missionId) {
+    return {
+      handled: true,
+      capabilityId: descriptor.id,
+      replyText:
+        'I do not have a specific plan in view yet. Ask me to make a plan first.',
+      outputShape: descriptor.preferredOutputShape[context.channel],
+      trace: buildCapabilityTrace(
+        descriptor,
+        context,
+        'local_companion',
+        'mission execution requested without an active mission context',
+      ),
+    };
+  }
+  const executionContext = buildMissionExecutionContext(missionId);
+  if (!executionContext) {
+    return {
+      handled: true,
+      capabilityId: descriptor.id,
+      replyText: 'I cannot find that plan anymore, so let me rebuild it first.',
+      outputShape: descriptor.preferredOutputShape[context.channel],
+      trace: buildCapabilityTrace(
+        descriptor,
+        context,
+        'local_companion',
+        'mission execution context was missing',
+      ),
+    };
+  }
+  const actionKind = pickMissionActionFromUtterance({
+    utterance: text,
+    suggestedActions:
+      executionContext.suggestedActions.length > 0
+        ? executionContext.suggestedActions
+        : parseJsonSafe<MissionSuggestedAction[]>(
+            context.priorSubjectData?.missionSuggestedActionsJson,
+            [],
+          ),
+  });
+  if (!actionKind) {
+    return {
+      handled: true,
+      capabilityId: descriptor.id,
+      replyText:
+        'Tell me whether you want me to remind you, draft it, save it, or track it.',
+      outputShape: descriptor.preferredOutputShape[context.channel],
+      trace: buildCapabilityTrace(
+        descriptor,
+        context,
+        'local_companion',
+        'mission execution request had no actionable target',
+      ),
+    };
+  }
+
+  let replyText = 'Okay.';
+  let linkedReminderId: string | null = null;
+  let linkedKnowledgeSourceId: string | null = null;
+  let linkedLifeThreadId: string | null = null;
+  let linkedCurrentWorkJson: string | null = null;
+
+  if (actionKind === 'create_reminder') {
+    if (!context.chatJid) {
+      replyText =
+        'I can set that up when we are in a chat context that can hold the reminder.';
+    } else {
+      const timing =
+        executionContext.mission.dueHorizon === 'tonight'
+          ? 'today evening'
+          : executionContext.mission.dueHorizon === 'tomorrow'
+            ? 'tomorrow morning'
+            : executionContext.mission.dueHorizon === 'weekend'
+              ? 'tomorrow evening'
+              : 'today evening';
+      const plannedReminder = planContextualReminder(
+        timing,
+        executionContext.stepFocus?.title ||
+          executionContext.mission.summary ||
+          executionContext.mission.objective,
+        context.groupFolder,
+        context.chatJid,
+        context.now,
+      );
+      if (!plannedReminder) {
+        replyText = 'I could not turn that into a reminder yet.';
+      } else {
+        createTask(plannedReminder.task);
+        linkedReminderId = plannedReminder.task.id;
+        replyText = plannedReminder.confirmation;
+      }
+    }
+  } else if (actionKind === 'draft_follow_up') {
+    const personName =
+      context.priorSubjectData?.personName ||
+      parseJsonSafe<{ personName?: string }>(
+        executionContext.suggestedActions[0]?.linkedRefJson,
+        {},
+      ).personName;
+    const draft = draftCommunicationReply({
+      channel: context.channel,
+      groupFolder: context.groupFolder,
+      chatJid: context.chatJid,
+      text: text || `draft a reply to ${personName || 'them'}`,
+      replyText:
+        executionContext.mission.summary ||
+        context.replyText ||
+        context.conversationSummary,
+      conversationSummary: executionContext.mission.summary,
+      priorContext: {
+        personName,
+        communicationThreadId: context.priorSubjectData?.communicationThreadId,
+        communicationSubjectIds:
+          context.priorSubjectData?.communicationSubjectIds,
+        communicationLifeThreadIds:
+          context.priorSubjectData?.communicationLifeThreadIds,
+        lastCommunicationSummary:
+          context.priorSubjectData?.lastCommunicationSummary ||
+          executionContext.mission.summary,
+      },
+      now: context.now,
+    });
+    replyText = draft.draftText
+      ? formatCommunicationDraftReply(context.channel, draft)
+      : draft.clarificationQuestion ||
+        'I need a little more context before I draft that.';
+  } else if (actionKind === 'save_to_library') {
+    const saved = saveKnowledgeSource({
+      groupFolder: context.groupFolder,
+      sourceType: 'generated_note',
+      title: executionContext.mission.title,
+      content:
+        executionContext.mission.summary +
+        '\n\n' +
+        executionContext.steps
+          .map(
+            (step) =>
+              `${step.position}. ${step.title}${step.detail ? ` - ${step.detail}` : ''}`,
+          )
+          .join('\n'),
+      sourceChannel: context.channel,
+      shortSummary: executionContext.mission.summary,
+      now: context.now,
+    });
+    replyText = saved.message;
+    linkedKnowledgeSourceId = saved.source?.sourceId || null;
+  } else if (actionKind === 'link_thread') {
+    const threadTitle =
+      context.priorSubjectData?.threadTitle ||
+      parseJsonSafe<{ threadTitle?: string }>(
+        executionContext.suggestedActions[0]?.linkedRefJson,
+        {},
+      ).threadTitle;
+    const threadResult = handleLifeThreadCommand({
+      groupFolder: context.groupFolder,
+      channel: context.channel,
+      text: threadTitle
+        ? `track this under ${threadTitle} thread`
+        : 'save this for later',
+      replyText: executionContext.mission.summary,
+      conversationSummary: executionContext.mission.summary,
+      now: context.now,
+    });
+    replyText = threadResult.responseText || 'Okay.';
+    linkedLifeThreadId = threadResult.referencedThread?.id || null;
+  } else if (actionKind === 'pin_to_ritual') {
+    const ritualResult = handleRitualCommand({
+      groupFolder: context.groupFolder,
+      channel: context.channel,
+      text: 'make this part of my evening reset',
+      replyText: executionContext.mission.summary,
+      conversationSummary: executionContext.mission.summary,
+      priorContext:
+        executionContext.mission.linkedLifeThreadIds.length > 0
+          ? { usedThreadIds: executionContext.mission.linkedLifeThreadIds }
+          : undefined,
+      now: context.now,
+    });
+    replyText = ritualResult.responseText || 'Okay.';
+  } else if (actionKind === 'reference_current_work') {
+    linkedCurrentWorkJson =
+      executionContext.mission.linkedCurrentWorkJson ||
+      (context.selectedWork ? JSON.stringify(context.selectedWork) : null);
+    replyText = executionContext.mission.linkedCurrentWorkJson
+      ? 'I kept the current work context attached to this plan.'
+      : 'I do not have an active current-work selection tied to this plan yet.';
+  } else if (actionKind === 'start_research') {
+    const researchResult = await executeAssistantCapability({
+      capabilityId: inferResearchCapabilityId(
+        executionContext.mission.objective,
+      ),
+      context: {
+        ...context,
+        channel: context.channel === 'alexa' ? 'telegram' : context.channel,
+      },
+      input: {
+        text: executionContext.mission.objective,
+        canonicalText: executionContext.mission.objective,
+      },
+    });
+    replyText =
+      researchResult.replyText || 'I could not start that research cleanly.';
+  }
+
+  const updatedMission = updateMissionAfterExecution({
+    missionId: executionContext.mission.missionId,
+    actionKind,
+    linkedReminderId,
+    linkedKnowledgeSourceId,
+    linkedLifeThreadId,
+    linkedCurrentWorkJson,
+  });
+  const refreshed = buildMissionExecutionContext(
+    updatedMission?.missionId || executionContext.mission.missionId,
+  );
+  return carryMissionIntoResult({
+    summaryText: updatedMission?.summary || executionContext.mission.summary,
+    detailText:
+      updatedMission?.summary || executionContext.mission.summary || replyText,
+    missionId: executionContext.mission.missionId,
+    missionSummary: updatedMission?.summary || executionContext.mission.summary,
+    blockers: parseJsonSafe<string[]>(
+      updatedMission?.blockersJson ||
+        context.priorSubjectData?.missionBlockersJson,
+      [],
+    ),
+    suggestedActions:
+      refreshed?.suggestedActions || executionContext.suggestedActions,
+    stepFocus: refreshed?.stepFocus || executionContext.stepFocus,
+    replyText,
+  });
 }
 
 async function runMediaCapability(
@@ -2235,7 +2707,9 @@ async function runMediaCapability(
       flowKey: descriptor.id.replace(/\./g, '_'),
       subjectKind: 'saved_item',
       summaryText:
-        mediaResult.summaryText || mediaResult.replyText || normalizeText(prompt),
+        mediaResult.summaryText ||
+        mediaResult.replyText ||
+        normalizeText(prompt),
       guidanceGoal: 'action_follow_through',
       subjectData: {
         activeCapabilityId: descriptor.id,
@@ -3379,9 +3853,9 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
         input,
       ),
   },
-    {
-      id: 'rituals.followthrough',
-      label: 'Follow-through View',
+  {
+    id: 'rituals.followthrough',
+    label: 'Follow-through View',
     category: 'rituals',
     requiredInputs: ['text'],
     optionalInputs: [],
@@ -3399,321 +3873,469 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     followupActions: ['anything_else', 'shorter', 'say_more', 'memory_control'],
     handlerKind: 'local',
     execute: (context, input) =>
-        runRitualFollowthroughCapability(
-          CAPABILITY_DESCRIPTORS[37]!,
-          cloneContext(context),
-          input,
-        ),
+      runRitualFollowthroughCapability(
+        CAPABILITY_DESCRIPTORS[37]!,
+        cloneContext(context),
+        input,
+      ),
+  },
+  {
+    id: 'communication.understand_message',
+    label: 'Understand Message',
+    category: 'communication',
+    requiredInputs: ['text'],
+    optionalInputs: ['personName'],
+    requiresLinkedAccount: true,
+    requiresConfirmation: false,
+    safeForAlexa: true,
+    safeForTelegram: true,
+    safeForBlueBubbles: true,
+    operatorOnly: false,
+    preferredOutputShape: {
+      alexa: 'voice_brief',
+      telegram: 'chat_rich',
+      bluebubbles: 'chat_brief',
     },
-    {
-      id: 'communication.understand_message',
-      label: 'Understand Message',
-      category: 'communication',
-      requiredInputs: ['text'],
-      optionalInputs: ['personName'],
-      requiresLinkedAccount: true,
-      requiresConfirmation: false,
-      safeForAlexa: true,
-      safeForTelegram: true,
-      safeForBlueBubbles: true,
-      operatorOnly: false,
-      preferredOutputShape: {
-        alexa: 'voice_brief',
-        telegram: 'chat_rich',
-        bluebubbles: 'chat_brief',
-      },
-      followupActions: [
-        'anything_else',
-        'shorter',
-        'say_more',
-        'send_details',
-        'save_for_later',
-        'draft_follow_up',
-        'create_reminder',
-        'track_thread',
-      ],
-      handlerKind: 'local',
-      execute: (context, input) =>
-        runCommunicationUnderstandCapability(
-          CAPABILITY_DESCRIPTORS[38]!,
-          cloneContext(context),
-          input,
-        ),
+    followupActions: [
+      'anything_else',
+      'shorter',
+      'say_more',
+      'send_details',
+      'save_for_later',
+      'draft_follow_up',
+      'create_reminder',
+      'track_thread',
+    ],
+    handlerKind: 'local',
+    execute: (context, input) =>
+      runCommunicationUnderstandCapability(
+        CAPABILITY_DESCRIPTORS[38]!,
+        cloneContext(context),
+        input,
+      ),
+  },
+  {
+    id: 'communication.draft_reply',
+    label: 'Draft Reply',
+    category: 'communication',
+    requiredInputs: ['text'],
+    optionalInputs: ['personName'],
+    requiresLinkedAccount: true,
+    requiresConfirmation: false,
+    safeForAlexa: true,
+    safeForTelegram: true,
+    safeForBlueBubbles: true,
+    operatorOnly: false,
+    preferredOutputShape: {
+      alexa: 'handoff_offer',
+      telegram: 'chat_rich',
+      bluebubbles: 'chat_brief',
     },
-    {
-      id: 'communication.draft_reply',
-      label: 'Draft Reply',
-      category: 'communication',
-      requiredInputs: ['text'],
-      optionalInputs: ['personName'],
-      requiresLinkedAccount: true,
-      requiresConfirmation: false,
-      safeForAlexa: true,
-      safeForTelegram: true,
-      safeForBlueBubbles: true,
-      operatorOnly: false,
-      preferredOutputShape: {
-        alexa: 'handoff_offer',
-        telegram: 'chat_rich',
-        bluebubbles: 'chat_brief',
-      },
-      followupActions: ['shorter', 'say_more', 'send_details', 'save_for_later'],
-      handlerKind: 'local',
-      execute: (context, input) =>
-        runCommunicationDraftCapability(
-          CAPABILITY_DESCRIPTORS[39]!,
-          cloneContext(context),
-          input,
-        ),
+    followupActions: ['shorter', 'say_more', 'send_details', 'save_for_later'],
+    handlerKind: 'local',
+    execute: (context, input) =>
+      runCommunicationDraftCapability(
+        CAPABILITY_DESCRIPTORS[39]!,
+        cloneContext(context),
+        input,
+      ),
+  },
+  {
+    id: 'communication.open_loops',
+    label: 'Open Communication Loops',
+    category: 'communication',
+    requiredInputs: ['text'],
+    optionalInputs: ['personName'],
+    requiresLinkedAccount: true,
+    requiresConfirmation: false,
+    safeForAlexa: true,
+    safeForTelegram: true,
+    safeForBlueBubbles: true,
+    operatorOnly: false,
+    preferredOutputShape: {
+      alexa: 'voice_brief',
+      telegram: 'chat_rich',
+      bluebubbles: 'chat_brief',
     },
-    {
-      id: 'communication.open_loops',
-      label: 'Open Communication Loops',
-      category: 'communication',
-      requiredInputs: ['text'],
-      optionalInputs: ['personName'],
-      requiresLinkedAccount: true,
-      requiresConfirmation: false,
-      safeForAlexa: true,
-      safeForTelegram: true,
-      safeForBlueBubbles: true,
-      operatorOnly: false,
-      preferredOutputShape: {
-        alexa: 'voice_brief',
-        telegram: 'chat_rich',
-        bluebubbles: 'chat_brief',
-      },
-      followupActions: [
-        'anything_else',
-        'shorter',
-        'say_more',
-        'send_details',
-        'draft_follow_up',
-        'create_reminder',
-      ],
-      handlerKind: 'local',
-      execute: (context, input) =>
-        runCommunicationOpenLoopsCapability(
-          CAPABILITY_DESCRIPTORS[40]!,
-          cloneContext(context),
-          input,
-        ),
+    followupActions: [
+      'anything_else',
+      'shorter',
+      'say_more',
+      'send_details',
+      'draft_follow_up',
+      'create_reminder',
+    ],
+    handlerKind: 'local',
+    execute: (context, input) =>
+      runCommunicationOpenLoopsCapability(
+        CAPABILITY_DESCRIPTORS[40]!,
+        cloneContext(context),
+        input,
+      ),
+  },
+  {
+    id: 'communication.manage_tracking',
+    label: 'Manage Communication Tracking',
+    category: 'communication',
+    requiredInputs: ['text'],
+    optionalInputs: [],
+    requiresLinkedAccount: true,
+    requiresConfirmation: false,
+    safeForAlexa: true,
+    safeForTelegram: true,
+    safeForBlueBubbles: true,
+    operatorOnly: false,
+    preferredOutputShape: {
+      alexa: 'voice_brief',
+      telegram: 'chat_brief',
+      bluebubbles: 'chat_brief',
     },
-    {
-      id: 'communication.manage_tracking',
-      label: 'Manage Communication Tracking',
-      category: 'communication',
-      requiredInputs: ['text'],
-      optionalInputs: [],
-      requiresLinkedAccount: true,
-      requiresConfirmation: false,
-      safeForAlexa: true,
-      safeForTelegram: true,
-      safeForBlueBubbles: true,
-      operatorOnly: false,
-      preferredOutputShape: {
-        alexa: 'voice_brief',
-        telegram: 'chat_brief',
-        bluebubbles: 'chat_brief',
-      },
-      followupActions: ['anything_else', 'say_more'],
-      handlerKind: 'local',
-      execute: (context, input) =>
-        runCommunicationManageCapability(
-          CAPABILITY_DESCRIPTORS[41]!,
-          cloneContext(context),
-          input,
-        ),
+    followupActions: ['anything_else', 'say_more'],
+    handlerKind: 'local',
+    execute: (context, input) =>
+      runCommunicationManageCapability(
+        CAPABILITY_DESCRIPTORS[41]!,
+        cloneContext(context),
+        input,
+      ),
+  },
+  {
+    id: 'staff.prioritize',
+    label: 'Chief-of-Staff Priorities',
+    category: 'staff',
+    requiredInputs: ['text'],
+    optionalInputs: [],
+    requiresLinkedAccount: true,
+    requiresConfirmation: false,
+    safeForAlexa: true,
+    safeForTelegram: true,
+    safeForBlueBubbles: true,
+    operatorOnly: false,
+    preferredOutputShape: {
+      alexa: 'voice_brief',
+      telegram: 'chat_rich',
+      bluebubbles: 'chat_brief',
     },
-    {
-      id: 'staff.prioritize',
-      label: 'Chief-of-Staff Priorities',
-      category: 'staff',
-      requiredInputs: ['text'],
-      optionalInputs: [],
-      requiresLinkedAccount: true,
-      requiresConfirmation: false,
-      safeForAlexa: true,
-      safeForTelegram: true,
-      safeForBlueBubbles: true,
-      operatorOnly: false,
-      preferredOutputShape: {
-        alexa: 'voice_brief',
-        telegram: 'chat_rich',
-        bluebubbles: 'chat_brief',
-      },
-      followupActions: [
-        'anything_else',
-        'shorter',
-        'say_more',
-        'send_details',
-        'save_for_later',
-        'create_reminder',
-      ],
-      handlerKind: 'local',
-      execute: (context, input) =>
-        runChiefOfStaffCapability(
-          CAPABILITY_DESCRIPTORS[42]!,
-          cloneContext(context),
-          input,
-          'prioritize',
-        ),
+    followupActions: [
+      'anything_else',
+      'shorter',
+      'say_more',
+      'send_details',
+      'save_for_later',
+      'create_reminder',
+    ],
+    handlerKind: 'local',
+    execute: (context, input) =>
+      runChiefOfStaffCapability(
+        CAPABILITY_DESCRIPTORS[42]!,
+        cloneContext(context),
+        input,
+        'prioritize',
+      ),
+  },
+  {
+    id: 'staff.plan_horizon',
+    label: 'Chief-of-Staff Planning',
+    category: 'staff',
+    requiredInputs: ['text'],
+    optionalInputs: [],
+    requiresLinkedAccount: true,
+    requiresConfirmation: false,
+    safeForAlexa: true,
+    safeForTelegram: true,
+    safeForBlueBubbles: true,
+    operatorOnly: false,
+    preferredOutputShape: {
+      alexa: 'voice_brief',
+      telegram: 'chat_rich',
+      bluebubbles: 'chat_brief',
     },
-    {
-      id: 'staff.plan_horizon',
-      label: 'Chief-of-Staff Planning',
-      category: 'staff',
-      requiredInputs: ['text'],
-      optionalInputs: [],
-      requiresLinkedAccount: true,
-      requiresConfirmation: false,
-      safeForAlexa: true,
-      safeForTelegram: true,
-      safeForBlueBubbles: true,
-      operatorOnly: false,
-      preferredOutputShape: {
-        alexa: 'voice_brief',
-        telegram: 'chat_rich',
-        bluebubbles: 'chat_brief',
-      },
-      followupActions: [
-        'anything_else',
-        'shorter',
-        'say_more',
-        'send_details',
-        'save_for_later',
-      ],
-      handlerKind: 'local',
-      execute: (context, input) =>
-        runChiefOfStaffCapability(
-          CAPABILITY_DESCRIPTORS[43]!,
-          cloneContext(context),
-          input,
-          'plan_horizon',
-        ),
+    followupActions: [
+      'anything_else',
+      'shorter',
+      'say_more',
+      'send_details',
+      'save_for_later',
+    ],
+    handlerKind: 'local',
+    execute: (context, input) =>
+      runChiefOfStaffCapability(
+        CAPABILITY_DESCRIPTORS[43]!,
+        cloneContext(context),
+        input,
+        'plan_horizon',
+      ),
+  },
+  {
+    id: 'staff.prepare',
+    label: 'Chief-of-Staff Prep',
+    category: 'staff',
+    requiredInputs: ['text'],
+    optionalInputs: [],
+    requiresLinkedAccount: true,
+    requiresConfirmation: false,
+    safeForAlexa: true,
+    safeForTelegram: true,
+    safeForBlueBubbles: true,
+    operatorOnly: false,
+    preferredOutputShape: {
+      alexa: 'voice_brief',
+      telegram: 'chat_rich',
+      bluebubbles: 'chat_brief',
     },
-    {
-      id: 'staff.prepare',
-      label: 'Chief-of-Staff Prep',
-      category: 'staff',
-      requiredInputs: ['text'],
-      optionalInputs: [],
-      requiresLinkedAccount: true,
-      requiresConfirmation: false,
-      safeForAlexa: true,
-      safeForTelegram: true,
-      safeForBlueBubbles: true,
-      operatorOnly: false,
-      preferredOutputShape: {
-        alexa: 'voice_brief',
-        telegram: 'chat_rich',
-        bluebubbles: 'chat_brief',
-      },
-      followupActions: [
-        'anything_else',
-        'shorter',
-        'say_more',
-        'send_details',
-        'save_for_later',
-        'create_reminder',
-      ],
-      handlerKind: 'local',
-      execute: (context, input) =>
-        runChiefOfStaffCapability(
-          CAPABILITY_DESCRIPTORS[44]!,
-          cloneContext(context),
-          input,
-          'prepare',
-        ),
+    followupActions: [
+      'anything_else',
+      'shorter',
+      'say_more',
+      'send_details',
+      'save_for_later',
+      'create_reminder',
+    ],
+    handlerKind: 'local',
+    execute: (context, input) =>
+      runChiefOfStaffCapability(
+        CAPABILITY_DESCRIPTORS[44]!,
+        cloneContext(context),
+        input,
+        'prepare',
+      ),
+  },
+  {
+    id: 'staff.decision_support',
+    label: 'Chief-of-Staff Decision Support',
+    category: 'staff',
+    requiredInputs: ['text'],
+    optionalInputs: [],
+    requiresLinkedAccount: true,
+    requiresConfirmation: false,
+    safeForAlexa: true,
+    safeForTelegram: true,
+    safeForBlueBubbles: true,
+    operatorOnly: false,
+    preferredOutputShape: {
+      alexa: 'voice_brief',
+      telegram: 'chat_rich',
+      bluebubbles: 'chat_brief',
     },
-    {
-      id: 'staff.decision_support',
-      label: 'Chief-of-Staff Decision Support',
-      category: 'staff',
-      requiredInputs: ['text'],
-      optionalInputs: [],
-      requiresLinkedAccount: true,
-      requiresConfirmation: false,
-      safeForAlexa: true,
-      safeForTelegram: true,
-      safeForBlueBubbles: true,
-      operatorOnly: false,
-      preferredOutputShape: {
-        alexa: 'voice_brief',
-        telegram: 'chat_rich',
-        bluebubbles: 'chat_brief',
-      },
-      followupActions: [
-        'anything_else',
-        'shorter',
-        'say_more',
-        'send_details',
-        'save_for_later',
-      ],
-      handlerKind: 'local',
-      execute: (context, input) =>
-        runChiefOfStaffCapability(
-          CAPABILITY_DESCRIPTORS[45]!,
-          cloneContext(context),
-          input,
-          'decision_support',
-        ),
+    followupActions: [
+      'anything_else',
+      'shorter',
+      'say_more',
+      'send_details',
+      'save_for_later',
+    ],
+    handlerKind: 'local',
+    execute: (context, input) =>
+      runChiefOfStaffCapability(
+        CAPABILITY_DESCRIPTORS[45]!,
+        cloneContext(context),
+        input,
+        'decision_support',
+      ),
+  },
+  {
+    id: 'staff.explain',
+    label: 'Chief-of-Staff Explain',
+    category: 'staff',
+    requiredInputs: ['text'],
+    optionalInputs: [],
+    requiresLinkedAccount: true,
+    requiresConfirmation: false,
+    safeForAlexa: true,
+    safeForTelegram: true,
+    safeForBlueBubbles: true,
+    operatorOnly: false,
+    preferredOutputShape: {
+      alexa: 'voice_brief',
+      telegram: 'chat_rich',
+      bluebubbles: 'chat_brief',
     },
-    {
-      id: 'staff.explain',
-      label: 'Chief-of-Staff Explain',
-      category: 'staff',
-      requiredInputs: ['text'],
-      optionalInputs: [],
-      requiresLinkedAccount: true,
-      requiresConfirmation: false,
-      safeForAlexa: true,
-      safeForTelegram: true,
-      safeForBlueBubbles: true,
-      operatorOnly: false,
-      preferredOutputShape: {
-        alexa: 'voice_brief',
-        telegram: 'chat_rich',
-        bluebubbles: 'chat_brief',
-      },
-      followupActions: ['anything_else', 'shorter', 'say_more'],
-      handlerKind: 'local',
-      execute: (context, input) =>
-        runChiefOfStaffCapability(
-          CAPABILITY_DESCRIPTORS[46]!,
-          cloneContext(context),
-          input,
-          'explain',
-        ),
+    followupActions: ['anything_else', 'shorter', 'say_more'],
+    handlerKind: 'local',
+    execute: (context, input) =>
+      runChiefOfStaffCapability(
+        CAPABILITY_DESCRIPTORS[46]!,
+        cloneContext(context),
+        input,
+        'explain',
+      ),
+  },
+  {
+    id: 'staff.configure',
+    label: 'Configure Chief-of-Staff',
+    category: 'staff',
+    requiredInputs: ['text'],
+    optionalInputs: [],
+    requiresLinkedAccount: true,
+    requiresConfirmation: false,
+    safeForAlexa: true,
+    safeForTelegram: true,
+    safeForBlueBubbles: true,
+    operatorOnly: false,
+    preferredOutputShape: {
+      alexa: 'voice_brief',
+      telegram: 'chat_brief',
+      bluebubbles: 'chat_brief',
     },
-    {
-      id: 'staff.configure',
-      label: 'Configure Chief-of-Staff',
-      category: 'staff',
-      requiredInputs: ['text'],
-      optionalInputs: [],
-      requiresLinkedAccount: true,
-      requiresConfirmation: false,
-      safeForAlexa: true,
-      safeForTelegram: true,
-      safeForBlueBubbles: true,
-      operatorOnly: false,
-      preferredOutputShape: {
-        alexa: 'voice_brief',
-        telegram: 'chat_brief',
-        bluebubbles: 'chat_brief',
-      },
-      followupActions: ['anything_else', 'say_more'],
-      handlerKind: 'local',
-      execute: (context, input) =>
-        runChiefOfStaffCapability(
-          CAPABILITY_DESCRIPTORS[47]!,
-          cloneContext(context),
-          input,
-          'configure',
-        ),
+    followupActions: ['anything_else', 'say_more'],
+    handlerKind: 'local',
+    execute: (context, input) =>
+      runChiefOfStaffCapability(
+        CAPABILITY_DESCRIPTORS[47]!,
+        cloneContext(context),
+        input,
+        'configure',
+      ),
+  },
+  {
+    id: 'missions.propose',
+    label: 'Mission Proposal',
+    category: 'missions',
+    requiredInputs: ['text'],
+    optionalInputs: [],
+    requiresLinkedAccount: true,
+    requiresConfirmation: false,
+    safeForAlexa: true,
+    safeForTelegram: true,
+    safeForBlueBubbles: true,
+    operatorOnly: false,
+    preferredOutputShape: {
+      alexa: 'voice_brief',
+      telegram: 'chat_rich',
+      bluebubbles: 'chat_brief',
     },
-  ];
+    followupActions: [
+      'anything_else',
+      'shorter',
+      'say_more',
+      'send_details',
+      'save_for_later',
+      'create_reminder',
+    ],
+    handlerKind: 'local',
+    execute: (context, input) =>
+      runMissionCapability(
+        CAPABILITY_DESCRIPTORS[48]!,
+        cloneContext(context),
+        input,
+        'propose',
+      ),
+  },
+  {
+    id: 'missions.view',
+    label: 'Mission View',
+    category: 'missions',
+    requiredInputs: ['text'],
+    optionalInputs: [],
+    requiresLinkedAccount: true,
+    requiresConfirmation: false,
+    safeForAlexa: true,
+    safeForTelegram: true,
+    safeForBlueBubbles: true,
+    operatorOnly: false,
+    preferredOutputShape: {
+      alexa: 'voice_brief',
+      telegram: 'chat_rich',
+      bluebubbles: 'chat_brief',
+    },
+    followupActions: [
+      'anything_else',
+      'shorter',
+      'say_more',
+      'send_details',
+      'save_for_later',
+    ],
+    handlerKind: 'local',
+    execute: (context, input) =>
+      runMissionCapability(
+        CAPABILITY_DESCRIPTORS[49]!,
+        cloneContext(context),
+        input,
+        'view',
+      ),
+  },
+  {
+    id: 'missions.execute',
+    label: 'Execute Mission Action',
+    category: 'missions',
+    requiredInputs: ['text'],
+    optionalInputs: [],
+    requiresLinkedAccount: true,
+    requiresConfirmation: false,
+    safeForAlexa: true,
+    safeForTelegram: true,
+    safeForBlueBubbles: true,
+    operatorOnly: false,
+    preferredOutputShape: {
+      alexa: 'voice_brief',
+      telegram: 'chat_brief',
+      bluebubbles: 'chat_brief',
+    },
+    followupActions: ['anything_else', 'say_more', 'send_details'],
+    handlerKind: 'local',
+    execute: (context, input) =>
+      runMissionCapability(
+        CAPABILITY_DESCRIPTORS[50]!,
+        cloneContext(context),
+        input,
+        'execute',
+      ),
+  },
+  {
+    id: 'missions.manage',
+    label: 'Manage Mission',
+    category: 'missions',
+    requiredInputs: ['text'],
+    optionalInputs: [],
+    requiresLinkedAccount: true,
+    requiresConfirmation: false,
+    safeForAlexa: true,
+    safeForTelegram: true,
+    safeForBlueBubbles: true,
+    operatorOnly: false,
+    preferredOutputShape: {
+      alexa: 'voice_brief',
+      telegram: 'chat_brief',
+      bluebubbles: 'chat_brief',
+    },
+    followupActions: ['anything_else', 'say_more'],
+    handlerKind: 'local',
+    execute: (context, input) =>
+      runMissionCapability(
+        CAPABILITY_DESCRIPTORS[51]!,
+        cloneContext(context),
+        input,
+        'manage',
+      ),
+  },
+  {
+    id: 'missions.explain',
+    label: 'Explain Mission',
+    category: 'missions',
+    requiredInputs: ['text'],
+    optionalInputs: [],
+    requiresLinkedAccount: true,
+    requiresConfirmation: false,
+    safeForAlexa: true,
+    safeForTelegram: true,
+    safeForBlueBubbles: true,
+    operatorOnly: false,
+    preferredOutputShape: {
+      alexa: 'voice_brief',
+      telegram: 'chat_rich',
+      bluebubbles: 'chat_brief',
+    },
+    followupActions: ['anything_else', 'shorter', 'say_more', 'send_details'],
+    handlerKind: 'local',
+    execute: (context, input) =>
+      runMissionCapability(
+        CAPABILITY_DESCRIPTORS[52]!,
+        cloneContext(context),
+        input,
+        'explain',
+      ),
+  },
+];
 
 export function getAssistantCapabilityRegistry(): AssistantCapabilityDescriptor[] {
   return [...CAPABILITY_DESCRIPTORS];

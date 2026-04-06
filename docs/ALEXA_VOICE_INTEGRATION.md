@@ -68,6 +68,20 @@ Expected Alexa behavior:
 - explainable reasoning when asked
 - optional Telegram handoff when a richer breakdown is more useful than voice
 
+Alexa also now acts as a mission-orientation surface for explicit planning asks such as:
+
+- `help me plan tonight`
+- `what's the next step on that`
+- `what am I missing for this`
+- `what's still open in that plan`
+
+In that mode Andrea should stay short:
+
+- lead summary
+- next step
+- blocker or missing piece
+- optional fuller-plan handoff to Telegram
+
 Important limits:
 
 - no long spoken list of every open loop

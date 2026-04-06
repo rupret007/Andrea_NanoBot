@@ -50,6 +50,7 @@ Use these meanings consistently when reading `/cursor_status` and the setup docs
 - A bounded Knowledge Library for explicit saved source material, source-grounded retrieval, and library-first research answers.
 - A bounded communication-companion layer for explicit conversation summaries, reply drafting, and owed-reply guidance.
 - A bounded chief-of-staff and decision layer for priorities, slip-risk reads, prep guidance, and explainable planning.
+- A bounded missions layer for explicit multi-step plans that can reuse reminders, drafting, threads, research, and handoffs without becoming a second planner.
 - A bounded rituals and follow-through layer for morning, midday, evening, and carryover guidance.
 - A bounded Alexa-to-Telegram cross-channel handoff layer for richer continuations and voice-triggered action completion.
 - A small bounded personality layer plus request-driven Andrea Pulse.
@@ -164,6 +165,7 @@ Helpful operator smoke paths:
 - `npm run debug:knowledge-library`
 - `npm run debug:rituals`
 - `npm run debug:cross-channel-handoffs`
+- `npm run debug:missions`
 
 For the full architecture and the license-safe external patterns behind it, see [ASSISTANT_CAPABILITY_GRAPH.md](ASSISTANT_CAPABILITY_GRAPH.md).
 
@@ -193,6 +195,32 @@ Alexa uses this layer as a short orientation surface.
 Telegram uses it as the richer planning and decision surface.
 
 See [CHIEF_OF_STAFF_MODE.md](CHIEF_OF_STAFF_MODE.md) for the focused model and limits.
+
+## Missions And Multi-Step Execution
+
+Andrea now has a bounded `missions.*` layer for turning an explicit goal into a stored plan that can move forward across existing systems.
+
+Use it for:
+
+- `help me plan Friday dinner with Candace`
+- `turn this into a plan`
+- `help me prepare for tonight`
+- `what's the blocker`
+- `save this plan`
+- `pause that plan`
+
+Keep the product model clear:
+
+- missions are plan storage and step synthesis, not a full task manager
+- chief-of-staff still answers what matters and why
+- life threads still hold ongoing matters
+- reminders stay the concrete nudge system
+- durable supporting actions still require explicit approval
+
+Alexa uses missions for short orientation and handoff.
+Telegram is the richer mission surface.
+
+See [MISSIONS_AND_EXECUTION.md](MISSIONS_AND_EXECUTION.md) for the model, execution rules, and limits.
 
 ## Proactive Rituals And Follow-Through
 

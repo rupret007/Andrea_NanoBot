@@ -66,6 +66,7 @@ Those systems stay canonical:
 
 - life threads = ongoing matters
 - communication threads = people and reply follow-through
+- missions = explicit multi-step plans and bounded execution state
 - reminders = concrete nudges
 - rituals = timing and surfacing behavior
 - knowledge library = saved source material

@@ -39,13 +39,18 @@ export interface AlexaConversationSubjectData {
   knowledgeSourceTitles?: string[];
   knowledgeSourceMatches?: string[];
   knowledgeLastQuery?: string;
-    communicationThreadId?: string;
-    communicationSubjectIds?: string[];
-    communicationLifeThreadIds?: string[];
-    lastCommunicationSummary?: string;
-    chiefOfStaffContextJson?: string;
-    companionContinuationJson?: string;
-  }
+  communicationThreadId?: string;
+  communicationSubjectIds?: string[];
+  communicationLifeThreadIds?: string[];
+  lastCommunicationSummary?: string;
+  chiefOfStaffContextJson?: string;
+  missionId?: string;
+  missionSummary?: string;
+  missionSuggestedActionsJson?: string;
+  missionBlockersJson?: string;
+  missionStepFocusJson?: string;
+  companionContinuationJson?: string;
+}
 
 export interface AlexaConversationState {
   flowKey: string;
@@ -186,9 +191,9 @@ export function resolveAlexaConversationFollowup(
   const supported = new Set(state.supportedFollowups);
   const hasCompanionCompletionContext = Boolean(
     state.subjectData.companionContinuationJson?.trim() ||
-      state.subjectData.pendingActionText?.trim() ||
-      state.subjectData.lastAnswerSummary?.trim() ||
-      state.summaryText?.trim(),
+    state.subjectData.pendingActionText?.trim() ||
+    state.subjectData.lastAnswerSummary?.trim() ||
+    state.summaryText?.trim(),
   );
   const resolveSupported = (
     action: AlexaConversationFollowupAction,
@@ -240,7 +245,7 @@ export function resolveAlexaConversationFollowup(
     return resolveSupported('remind_before_that');
   }
   if (
-    /^(send (?:me )?(?:the )?(?:details|full version|full comparison)(?: to telegram)?|send (?:that|it) to telegram|also send (?:that|it) to telegram|give me the deeper comparison in telegram|send (?:that|it|this|the details) to (?:my )?messages|save (?:that|it|this) to (?:my )?messages|send me the details in messages)\b/i.test(
+    /^(send (?:me )?(?:the )?(?:details|full version|full comparison|plan)(?: to telegram)?|send (?:that|it) to telegram|also send (?:that|it) to telegram|give me the deeper comparison in telegram|send (?:that|it|this|the details|the plan) to (?:my )?messages|save (?:that|it|this) to (?:my )?messages|send me the details in messages|send me the plan)\b/i.test(
       normalized,
     )
   ) {
@@ -307,8 +312,7 @@ export function resolveAlexaConversationFollowup(
       normalized,
     )
   ) {
-    return supported.has('draft_follow_up') ||
-      supported.has('draft_followup')
+    return supported.has('draft_follow_up') || supported.has('draft_followup')
       ? resolveSupported('draft_follow_up')
       : resolveSupported('action_guidance');
   }

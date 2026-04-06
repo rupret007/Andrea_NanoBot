@@ -22,6 +22,7 @@
   <a href="docs/KNOWLEDGE_LIBRARY.md">Knowledge Library</a>&nbsp; | &nbsp;
   <a href="docs/COMMUNICATION_COMPANION.md">Communication Companion</a>&nbsp; | &nbsp;
   <a href="docs/CHIEF_OF_STAFF_MODE.md">Chief-of-Staff Mode</a>&nbsp; | &nbsp;
+  <a href="docs/MISSIONS_AND_EXECUTION.md">Missions</a>&nbsp; | &nbsp;
   <a href="docs/PROACTIVE_RITUALS.md">Proactive Rituals</a>&nbsp; | &nbsp;
   <a href="docs/CROSS_CHANNEL_HANDOFFS.md">Cross-Channel Handoffs</a>&nbsp; | &nbsp;
   <a href="docs/BLUEBUBBLES_CHANNEL_PREP.md">BlueBubbles</a>&nbsp; | &nbsp;
@@ -236,6 +237,18 @@ Communication threads stay distinct from:
 
 See [docs/COMMUNICATION_COMPANION.md](docs/COMMUNICATION_COMPANION.md) for the exact model, prompts, and testing flow.
 
+## Missions And Multi-Step Execution
+
+Andrea now has a bounded missions layer for turning an explicit goal into a stored plan that can move forward across Alexa, Telegram, and BlueBubbles.
+
+- explicit planning asks like `help me plan Friday dinner with Candace` create a stored `proposed` mission immediately
+- missions stay distinct from chief-of-staff, life threads, reminders, and current work
+- each mission keeps a short summary, 3-5 steps, blockers, and one suggested next action
+- durable follow-through still requires explicit approval such as `remind me`, `draft it`, `save that`, `track that`, or `start the research`
+- Alexa gives a short orientation read, while Telegram gets the fuller plan and action surface
+
+See [docs/MISSIONS_AND_EXECUTION.md](docs/MISSIONS_AND_EXECUTION.md) for the model, controls, and testing flow.
+
 ## Shared Assistant Core
 
 Andrea now has a shared assistant capability graph so Alexa and Telegram feel like two expressions of the same assistant rather than separate route trees.
@@ -278,6 +291,7 @@ See [docs/PROACTIVE_RITUALS.md](docs/PROACTIVE_RITUALS.md) for the model, contro
 See [docs/ASSISTANT_CAPABILITY_GRAPH.md](docs/ASSISTANT_CAPABILITY_GRAPH.md) for the descriptor model, safety rules, research provider boundaries, and license-safe pattern sources.
 
 For operator-side smoke testing of the shared core, use `npm run debug:shared-capabilities`, `npm run debug:research-mode`, and `npm run debug:knowledge-library`.
+For the missions layer specifically, use `npm run debug:missions`.
 
 ## Cross-Channel Companion Handoffs
 

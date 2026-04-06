@@ -370,9 +370,75 @@ function matchCommunicationPrompt(
   return null;
 }
 
-function matchStaffPrompt(
+function matchMissionPrompt(
   normalized: string,
 ): AssistantCapabilityMatch | null {
+  const lower = normalized.toLowerCase();
+  if (
+    /^help me plan\b/.test(lower) ||
+    /^make a plan\b/.test(lower) ||
+    /^turn this into a plan\b/.test(lower) ||
+    /^help me organize this\b/.test(lower) ||
+    /^help me figure out the next steps\b/.test(lower) ||
+    /^what('?s| is) my plan for\b/.test(lower) ||
+    /^help me prepare for tonight\b/.test(lower)
+  ) {
+    return {
+      capabilityId: 'missions.propose',
+      normalizedText: normalized,
+      canonicalText: normalized,
+      reason: 'matched mission planning phrasing',
+    };
+  }
+  if (
+    /^what('?s| is) the plan\b/.test(lower) ||
+    /^what('?s| is) still open in that plan\b/.test(lower) ||
+    /^what('?s| is) the next step on that\b/.test(lower) ||
+    /^what am i missing for this\b/.test(lower) ||
+    /^how should i handle this weekend\b/.test(lower)
+  ) {
+    return {
+      capabilityId: 'missions.view',
+      normalizedText: normalized,
+      canonicalText: normalized,
+      reason: 'matched mission view phrasing',
+    };
+  }
+  if (
+    /^save this plan\b/.test(lower) ||
+    /^activate this\b/.test(lower) ||
+    /^pause that plan\b/.test(lower) ||
+    /^close that plan\b/.test(lower) ||
+    /^make it simpler\b/.test(lower) ||
+    /^break it down more\b/.test(lower) ||
+    /^stop suggesting that\b/.test(lower) ||
+    /^mark this handled\b/.test(lower) ||
+    /^mark this done\b/.test(lower)
+  ) {
+    return {
+      capabilityId: 'missions.manage',
+      normalizedText: normalized,
+      canonicalText: normalized,
+      reason: 'matched mission control phrasing',
+    };
+  }
+  if (
+    /^what('?s| is) blocking this\b/.test(lower) ||
+    /^why this plan\b/.test(lower) ||
+    /^what should i do first\b/.test(lower) ||
+    /^what are you using to shape this\b/.test(lower)
+  ) {
+    return {
+      capabilityId: 'missions.explain',
+      normalizedText: normalized,
+      canonicalText: normalized,
+      reason: 'matched mission explainability phrasing',
+    };
+  }
+  return null;
+}
+
+function matchStaffPrompt(normalized: string): AssistantCapabilityMatch | null {
   const lower = normalized.toLowerCase();
   if (
     /^what matters most today\b/.test(lower) ||
@@ -587,6 +653,7 @@ export function matchAssistantCapabilityRequest(
   if (!normalized) return null;
 
   return (
+    matchMissionPrompt(normalized) ||
     matchStaffPrompt(normalized) ||
     matchDailyPrompt(normalized) ||
     matchHouseholdPrompt(normalized) ||
@@ -639,99 +706,148 @@ export function continueAssistantCapabilityFromAlexaState(
     };
   }
 
-    if (
-      /^(why\b|why did you choose that route\b|what path did you use\b|say more\b|make that shorter\b|shorter\b|be (a little |a bit )?more direct\b)\b/.test(
-        lower,
-      )
+  if (
+    /^(why\b|why did you choose that route\b|what path did you use\b|say more\b|make that shorter\b|shorter\b|be (a little |a bit )?more direct\b)\b/.test(
+      lower,
+    )
   ) {
-        if (
-          activeCapabilityId &&
-          (activeCapabilityId.startsWith('research.') ||
-            activeCapabilityId.startsWith('pulse.') ||
-            activeCapabilityId.startsWith('knowledge.') ||
-            activeCapabilityId.startsWith('communication.'))
-        ) {
-        return {
-          capabilityId: activeCapabilityId,
+    if (
+      activeCapabilityId &&
+      (activeCapabilityId.startsWith('research.') ||
+        activeCapabilityId.startsWith('pulse.') ||
+        activeCapabilityId.startsWith('knowledge.') ||
+        activeCapabilityId.startsWith('communication.'))
+    ) {
+      return {
+        capabilityId: activeCapabilityId,
         normalizedText: normalized,
         canonicalText: normalized,
         reason: 'continuing research capability style or depth follow-up',
         continuation: true,
-        };
-        }
-    }
-
-    if (
-      activeCapabilityId?.startsWith('staff.') &&
-      (/^(what matters today|what should i do next|what is slipping)\b/.test(lower) ||
-        /^say more\b/.test(lower) ||
-        /^make that shorter\b/.test(lower) ||
-        /^shorter\b/.test(lower) ||
-        /^why are you prioritizing that\b/.test(lower) ||
-        /^what are you using to decide this\b/.test(lower) ||
-        /^be less aggressive about surfacing family stuff\b/.test(lower) ||
-        /^don'?t suggest work right now\b/.test(lower) ||
-        /^be more direct\b/.test(lower) ||
-        /^be calmer\b/.test(lower) ||
-        /^reset my planning preferences\b/.test(lower))
-    ) {
-      const nextCapabilityId =
-        /^say more\b/.test(lower) ||
-        /^make that shorter\b/.test(lower) ||
-        /^shorter\b/.test(lower)
-          ? activeCapabilityId
-          : /^why are you prioritizing that\b/.test(lower) ||
-              /^what are you using to decide this\b/.test(lower)
-            ? 'staff.explain'
-            : /^be less aggressive about surfacing family stuff\b/.test(lower) ||
-                /^don'?t suggest work right now\b/.test(lower) ||
-                /^be more direct\b/.test(lower) ||
-                /^be calmer\b/.test(lower) ||
-                /^reset my planning preferences\b/.test(lower)
-              ? 'staff.configure'
-              : 'staff.prioritize';
-      return {
-        capabilityId: nextCapabilityId,
-        normalizedText: normalized,
-        canonicalText: normalized,
-        reason: 'continuing chief-of-staff guidance from the active context',
-        continuation: true,
       };
     }
+  }
 
-    if (
-      /^(what should i say back|draft that for me|give me a short reply|make it warmer|make it more direct)\b/.test(
-        lower,
-      ) &&
-      activeCapabilityId?.startsWith('communication.')
-    ) {
-      return {
-        capabilityId: 'communication.draft_reply',
-        normalizedText: normalized,
-        canonicalText: normalized,
-        reason: 'continuing the active communication thread with a draft follow-up',
-        continuation: true,
-      };
-    }
+  if (
+    activeCapabilityId?.startsWith('staff.') &&
+    (/^(what matters today|what should i do next|what is slipping)\b/.test(
+      lower,
+    ) ||
+      /^say more\b/.test(lower) ||
+      /^make that shorter\b/.test(lower) ||
+      /^shorter\b/.test(lower) ||
+      /^why are you prioritizing that\b/.test(lower) ||
+      /^what are you using to decide this\b/.test(lower) ||
+      /^be less aggressive about surfacing family stuff\b/.test(lower) ||
+      /^don'?t suggest work right now\b/.test(lower) ||
+      /^be more direct\b/.test(lower) ||
+      /^be calmer\b/.test(lower) ||
+      /^reset my planning preferences\b/.test(lower))
+  ) {
+    const nextCapabilityId =
+      /^say more\b/.test(lower) ||
+      /^make that shorter\b/.test(lower) ||
+      /^shorter\b/.test(lower)
+        ? activeCapabilityId
+        : /^why are you prioritizing that\b/.test(lower) ||
+            /^what are you using to decide this\b/.test(lower)
+          ? 'staff.explain'
+          : /^be less aggressive about surfacing family stuff\b/.test(lower) ||
+              /^don'?t suggest work right now\b/.test(lower) ||
+              /^be more direct\b/.test(lower) ||
+              /^be calmer\b/.test(lower) ||
+              /^reset my planning preferences\b/.test(lower)
+            ? 'staff.configure'
+            : 'staff.prioritize';
+    return {
+      capabilityId: nextCapabilityId,
+      normalizedText: normalized,
+      canonicalText: normalized,
+      reason: 'continuing chief-of-staff guidance from the active context',
+      continuation: true,
+    };
+  }
 
-    if (
-      /^(what do i owe people|anything i need to reply to|what conversations are still open)\b/.test(
+  if (
+    activeCapabilityId?.startsWith('missions.') &&
+    (/^(anything else|what('?s| is) the blocker|what('?s| is) blocking this|what('?s| is) the next step|what should i do first|what am i missing for this|break it down more|make it simpler)\b/.test(
+      lower,
+    ) ||
+      /^save this plan\b/.test(lower) ||
+      /^activate this\b/.test(lower) ||
+      /^pause that plan\b/.test(lower) ||
+      /^close that plan\b/.test(lower) ||
+      /^stop suggesting that\b/.test(lower) ||
+      /^mark this handled\b/.test(lower) ||
+      /^mark this done\b/.test(lower) ||
+      /^(do it|draft it|remind me|save that|track that|start (?:the )?research)\b/.test(
         lower,
-      ) &&
-      activeCapabilityId?.startsWith('communication.')
-    ) {
-      return {
-        capabilityId: 'communication.open_loops',
-        normalizedText: normalized,
-        canonicalText: normalized,
-        reason: 'continuing the active communication thread with an open-loops follow-up',
-        continuation: true,
-      };
-    }
+      ))
+  ) {
+    const nextCapabilityId =
+      /^(do it|draft it|remind me|save that|track that|start (?:the )?research)\b/.test(
+        lower,
+      )
+        ? 'missions.execute'
+        : /^save this plan\b/.test(lower) ||
+            /^activate this\b/.test(lower) ||
+            /^pause that plan\b/.test(lower) ||
+            /^close that plan\b/.test(lower) ||
+            /^stop suggesting that\b/.test(lower) ||
+            /^mark this handled\b/.test(lower) ||
+            /^mark this done\b/.test(lower) ||
+            /^break it down more\b/.test(lower) ||
+            /^make it simpler\b/.test(lower)
+          ? 'missions.manage'
+          : /^what('?s| is) the blocker\b/.test(lower) ||
+              /^what('?s| is) blocking this\b/.test(lower) ||
+              /^what should i do first\b/.test(lower)
+            ? 'missions.explain'
+            : 'missions.view';
+    return {
+      capabilityId: nextCapabilityId,
+      normalizedText: normalized,
+      canonicalText: normalized,
+      reason: 'continuing the active mission context',
+      continuation: true,
+    };
+  }
 
-    if (
-      /^(send (?:me )?(?:the )?(?:details|full version|full comparison)(?: to telegram)?|send (?:that|it) to telegram|also send (?:that|it) to telegram|give me the deeper comparison in telegram|save (?:that|it|this) (?:in|to) my library|save (?:that|it|this) to the library|save (?:that|it|this) for later|remember (?:that|it|this) for later|track (?:that|it|this)(?: under .+)?|keep track of (?:that|it|this)(?: under .+| for tonight)?|turn (?:that|it|this) into a reminder|remind me about (?:that|it|this)|draft that for me|draft a message about (?:that|it|this))\b/.test(
-        lower,
+  if (
+    /^(what should i say back|draft that for me|give me a short reply|make it warmer|make it more direct)\b/.test(
+      lower,
+    ) &&
+    activeCapabilityId?.startsWith('communication.')
+  ) {
+    return {
+      capabilityId: 'communication.draft_reply',
+      normalizedText: normalized,
+      canonicalText: normalized,
+      reason:
+        'continuing the active communication thread with a draft follow-up',
+      continuation: true,
+    };
+  }
+
+  if (
+    /^(what do i owe people|anything i need to reply to|what conversations are still open)\b/.test(
+      lower,
+    ) &&
+    activeCapabilityId?.startsWith('communication.')
+  ) {
+    return {
+      capabilityId: 'communication.open_loops',
+      normalizedText: normalized,
+      canonicalText: normalized,
+      reason:
+        'continuing the active communication thread with an open-loops follow-up',
+      continuation: true,
+    };
+  }
+
+  if (
+    /^(send (?:me )?(?:the )?(?:details|full version|full comparison|plan)(?: to telegram)?|send (?:that|it) to telegram|also send (?:that|it) to telegram|give me the deeper comparison in telegram|save (?:that|it|this) (?:in|to) my library|save (?:that|it|this) to the library|save (?:that|it|this) for later|remember (?:that|it|this) for later|track (?:that|it|this)(?: under .+)?|keep track of (?:that|it|this)(?: under .+| for tonight)?|turn (?:that|it|this) into a reminder|remind me about (?:that|it|this)|draft that for me|draft a message about (?:that|it|this)|send me the plan)\b/.test(
+      lower,
     )
   ) {
     return null;

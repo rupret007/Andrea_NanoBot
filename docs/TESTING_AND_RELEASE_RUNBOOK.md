@@ -75,6 +75,13 @@ node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/c
 npm run debug:chief-of-staff
 ```
 
+For missions and multi-step execution changes, add:
+
+```bash
+node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/missions.test.ts src/assistant-capability-router.test.ts src/assistant-capabilities.test.ts src/cross-channel-handoffs.test.ts
+npm run debug:missions
+```
+
 ## 2. Major Suite
 
 ```bash

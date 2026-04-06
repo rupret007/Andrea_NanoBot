@@ -296,7 +296,9 @@ async function deliverCandidateToChannel(
         ? {
             capabilityId: rerun.capabilityId,
             voiceSummary:
-              rerun.replyText || candidate.voiceSummary || candidate.completionText,
+              rerun.replyText ||
+              candidate.voiceSummary ||
+              candidate.completionText,
             handoffPayload: rerun.handoffPayload,
             completionText: candidate.completionText,
           }
@@ -311,21 +313,25 @@ async function deliverCandidateToChannel(
           rerunCandidate?.voiceSummary ||
           rerun.replyText ||
           candidate.voiceSummary,
-        payload:
-          rerunCandidate?.handoffPayload || {
-            kind: 'message',
-            title: 'Andrea follow-up',
-            text: rerun.replyText || candidate.voiceSummary,
-            followupSuggestions: [],
-          },
-          threadId: candidate.threadId,
-          communicationThreadId: candidate.communicationThreadId,
-          communicationSubjectIds: candidate.communicationSubjectIds,
-          communicationLifeThreadIds: candidate.communicationLifeThreadIds,
-          lastCommunicationSummary: candidate.lastCommunicationSummary,
-          knowledgeSourceIds: candidate.knowledgeSourceIds,
-          followupSuggestions: rerunCandidate?.followupSuggestions,
+        payload: rerunCandidate?.handoffPayload || {
+          kind: 'message',
+          title: 'Andrea follow-up',
+          text: rerun.replyText || candidate.voiceSummary,
+          followupSuggestions: [],
         },
+        threadId: candidate.threadId,
+        communicationThreadId: candidate.communicationThreadId,
+        communicationSubjectIds: candidate.communicationSubjectIds,
+        communicationLifeThreadIds: candidate.communicationLifeThreadIds,
+        lastCommunicationSummary: candidate.lastCommunicationSummary,
+        missionId: candidate.missionId,
+        missionSummary: candidate.missionSummary,
+        missionSuggestedActionsJson: candidate.missionSuggestedActionsJson,
+        missionBlockersJson: candidate.missionBlockersJson,
+        missionStepFocusJson: candidate.missionStepFocusJson,
+        knowledgeSourceIds: candidate.knowledgeSourceIds,
+        followupSuggestions: rerunCandidate?.followupSuggestions,
+      },
       deps as CompanionHandoffDeps,
     );
     return {
@@ -343,21 +349,25 @@ async function deliverCandidateToChannel(
       targetChannel,
       capabilityId: candidate?.capabilityId,
       voiceSummary: candidate?.voiceSummary || summary,
-      payload:
-        candidate?.handoffPayload || {
-          kind: 'message',
-          title: 'Andrea follow-up',
-          text: summary,
-          followupSuggestions: candidate?.followupSuggestions || [],
-        },
-        threadId: candidate?.threadId,
-        communicationThreadId: candidate?.communicationThreadId,
-        communicationSubjectIds: candidate?.communicationSubjectIds,
-        communicationLifeThreadIds: candidate?.communicationLifeThreadIds,
-        lastCommunicationSummary: candidate?.lastCommunicationSummary,
-        knowledgeSourceIds: candidate?.knowledgeSourceIds,
-        followupSuggestions: candidate?.followupSuggestions,
+      payload: candidate?.handoffPayload || {
+        kind: 'message',
+        title: 'Andrea follow-up',
+        text: summary,
+        followupSuggestions: candidate?.followupSuggestions || [],
       },
+      threadId: candidate?.threadId,
+      communicationThreadId: candidate?.communicationThreadId,
+      communicationSubjectIds: candidate?.communicationSubjectIds,
+      communicationLifeThreadIds: candidate?.communicationLifeThreadIds,
+      lastCommunicationSummary: candidate?.lastCommunicationSummary,
+      missionId: candidate?.missionId,
+      missionSummary: candidate?.missionSummary,
+      missionSuggestedActionsJson: candidate?.missionSuggestedActionsJson,
+      missionBlockersJson: candidate?.missionBlockersJson,
+      missionStepFocusJson: candidate?.missionStepFocusJson,
+      knowledgeSourceIds: candidate?.knowledgeSourceIds,
+      followupSuggestions: candidate?.followupSuggestions,
+    },
     deps as CompanionHandoffDeps,
   );
   return {

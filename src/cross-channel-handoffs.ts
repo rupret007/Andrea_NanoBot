@@ -75,6 +75,11 @@ export interface QueueCompanionHandoffParams {
   communicationSubjectIds?: string[];
   communicationLifeThreadIds?: string[];
   lastCommunicationSummary?: string;
+  missionId?: string;
+  missionSummary?: string;
+  missionSuggestedActionsJson?: string;
+  missionBlockersJson?: string;
+  missionStepFocusJson?: string;
   knowledgeSourceIds?: string[];
   workRef?: string;
   followupSuggestions?: string[];
@@ -98,14 +103,18 @@ function renderTelegramHandoffText(payload: CompanionHandoffPayload): string {
   const title = payload.title.trim();
   if (!title) return normalizedText;
   const normalizedTitle = title.toLowerCase();
-  const leadingWindow = normalizedText.slice(0, title.length + 12).toLowerCase();
+  const leadingWindow = normalizedText
+    .slice(0, title.length + 12)
+    .toLowerCase();
   if (leadingWindow.includes(normalizedTitle)) {
     return normalizedText;
   }
   return [`*${title}*`, normalizedText].filter(Boolean).join('\n\n');
 }
 
-function renderBlueBubblesHandoffText(payload: CompanionHandoffPayload): string {
+function renderBlueBubblesHandoffText(
+  payload: CompanionHandoffPayload,
+): string {
   const title = payload.title.trim();
   const text = payload.text.replace(/[*_`]/g, '').trim();
   if (!text) return title;
@@ -210,7 +219,8 @@ function buildCompanionHandoffRecord(
     taskId: params.taskId || null,
     communicationThreadId: params.communicationThreadId || null,
     communicationSubjectIdsJson:
-      params.communicationSubjectIds && params.communicationSubjectIds.length > 0
+      params.communicationSubjectIds &&
+      params.communicationSubjectIds.length > 0
         ? JSON.stringify(params.communicationSubjectIds)
         : null,
     communicationLifeThreadIdsJson:
@@ -219,6 +229,11 @@ function buildCompanionHandoffRecord(
         ? JSON.stringify(params.communicationLifeThreadIds)
         : null,
     lastCommunicationSummary: params.lastCommunicationSummary || null,
+    missionId: params.missionId || null,
+    missionSummary: params.missionSummary || null,
+    missionSuggestedActionsJson: params.missionSuggestedActionsJson || null,
+    missionBlockersJson: params.missionBlockersJson || null,
+    missionStepFocusJson: params.missionStepFocusJson || null,
     knowledgeSourceIdsJson:
       params.knowledgeSourceIds && params.knowledgeSourceIds.length > 0
         ? JSON.stringify(params.knowledgeSourceIds)
@@ -280,8 +295,13 @@ export async function deliverCompanionHandoff(
 
   const payload = params.payload;
   try {
-    if (payload.kind === 'artifact' && payload.artifact && targetChannel === 'bluebubbles') {
-      const errorText = 'BlueBubbles V1 only supports text handoffs. Use Telegram for artifacts.';
+    if (
+      payload.kind === 'artifact' &&
+      payload.artifact &&
+      targetChannel === 'bluebubbles'
+    ) {
+      const errorText =
+        'BlueBubbles V1 only supports text handoffs. Use Telegram for artifacts.';
       updateCompanionHandoff(record.handoffId, {
         status: 'failed',
         errorText,

@@ -85,6 +85,12 @@ describe('assistant capabilities', () => {
       safeForTelegram: true,
       safeForBlueBubbles: true,
     });
+    expect(getAssistantCapability('missions.propose')).toMatchObject({
+      category: 'missions',
+      safeForAlexa: true,
+      safeForTelegram: true,
+      safeForBlueBubbles: true,
+    });
     expect(
       getAssistantCapability('media.image_generate')?.availabilityNote,
     ).toContain('Telegram image generation is wired');
@@ -127,8 +133,34 @@ describe('assistant capabilities', () => {
     expect(
       result.conversationSeed?.subjectData?.chiefOfStaffContextJson,
     ).toBeTruthy();
+    expect(result.continuationCandidate?.chiefOfStaffContextJson).toBeTruthy();
+  });
+
+  it('runs mission proposal execution and carries mission continuation context forward', async () => {
+    const result = await executeAssistantCapability({
+      capabilityId: 'missions.propose',
+      context: {
+        channel: 'alexa',
+        groupFolder: 'main',
+        selectedWork: {
+          laneLabel: 'Cursor',
+          title: 'Ship docs',
+          statusLabel: 'Running',
+          summary: 'Polish the rollout docs',
+        },
+      },
+      input: {
+        canonicalText: 'help me plan Friday dinner with Candace',
+      },
+    });
+
+    expect(result.handled).toBe(true);
+    expect(result.replyText).toBeTruthy();
+    expect(result.conversationSeed?.subjectKind).toBe('mission');
+    expect(result.conversationSeed?.subjectData?.missionId).toBeTruthy();
+    expect(result.continuationCandidate?.missionId).toBeTruthy();
     expect(
-      result.continuationCandidate?.chiefOfStaffContextJson,
+      result.continuationCandidate?.missionSuggestedActionsJson,
     ).toBeTruthy();
   });
 
@@ -363,7 +395,9 @@ describe('assistant capabilities', () => {
 
     expect(understand.handled).toBe(true);
     expect(understand.replyText).toContain('Summary:');
-    expect(understand.continuationCandidate?.communicationThreadId).toBeTruthy();
+    expect(
+      understand.continuationCandidate?.communicationThreadId,
+    ).toBeTruthy();
     expect(
       understand.conversationSeed?.subjectData?.lastCommunicationSummary,
     ).toBeTruthy();
@@ -525,7 +559,8 @@ describe('assistant capabilities', () => {
         chatJid: 'tg:8004355504',
       },
       input: {
-        canonicalText: 'remind me to talk to Candace about dinner plans tonight',
+        canonicalText:
+          'remind me to talk to Candace about dinner plans tonight',
       },
     });
 

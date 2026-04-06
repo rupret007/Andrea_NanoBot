@@ -107,7 +107,9 @@ describe('assistant capability router', () => {
       capabilityId: 'staff.prepare',
     });
     expect(
-      matchAssistantCapabilityRequest('Should I handle this tonight or tomorrow?'),
+      matchAssistantCapabilityRequest(
+        'Should I handle this tonight or tomorrow?',
+      ),
     ).toMatchObject({
       capabilityId: 'staff.decision_support',
     });
@@ -118,6 +120,29 @@ describe('assistant capability router', () => {
     });
   });
 
+  it('matches mission planning and mission control prompts cleanly', () => {
+    expect(
+      matchAssistantCapabilityRequest(
+        'Help me plan Friday dinner with Candace',
+      ),
+    ).toMatchObject({
+      capabilityId: 'missions.propose',
+    });
+    expect(
+      matchAssistantCapabilityRequest("What's my plan for this weekend?"),
+    ).toMatchObject({
+      capabilityId: 'missions.propose',
+    });
+    expect(matchAssistantCapabilityRequest('Save this plan')).toMatchObject({
+      capabilityId: 'missions.manage',
+    });
+    expect(
+      matchAssistantCapabilityRequest("What's blocking this?"),
+    ).toMatchObject({
+      capabilityId: 'missions.explain',
+    });
+  });
+
   it('matches ritual status, control, and follow-through prompts cleanly', () => {
     expect(
       matchAssistantCapabilityRequest('What rituals do I have enabled?'),
@@ -125,7 +150,9 @@ describe('assistant capability router', () => {
       capabilityId: 'rituals.status',
     });
     expect(
-      matchAssistantCapabilityRequest('What follow-ups am I carrying right now?'),
+      matchAssistantCapabilityRequest(
+        'What follow-ups am I carrying right now?',
+      ),
     ).toMatchObject({
       capabilityId: 'rituals.followthrough',
     });
@@ -195,6 +222,37 @@ describe('assistant capability router', () => {
       continueAssistantCapabilityFromAlexaState('anything else', state),
     ).toMatchObject({
       capabilityId: 'research.topic',
+      continuation: true,
+    });
+  });
+
+  it('continues the active mission context for blocker and execution follow-ups', () => {
+    const state: AlexaConversationState = {
+      flowKey: 'missions_propose',
+      subjectKind: 'mission',
+      subjectData: {
+        activeCapabilityId: 'missions.propose',
+        missionId: 'mission-1',
+        missionSummary: 'Plan Friday dinner with Candace.',
+      },
+      summaryText: 'Plan Friday dinner with Candace.',
+      supportedFollowups: ['anything_else', 'send_details', 'save_for_later'],
+      styleHints: {
+        channelMode: 'alexa_companion',
+        responseSource: 'local_companion',
+      },
+    };
+
+    expect(
+      continueAssistantCapabilityFromAlexaState("what's the blocker", state),
+    ).toMatchObject({
+      capabilityId: 'missions.explain',
+      continuation: true,
+    });
+    expect(
+      continueAssistantCapabilityFromAlexaState('remind me', state),
+    ).toMatchObject({
+      capabilityId: 'missions.execute',
       continuation: true,
     });
   });
@@ -270,9 +328,11 @@ describe('assistant capability router', () => {
       subjectKind: 'general',
       subjectData: {
         activeCapabilityId: 'staff.prioritize',
-        lastAnswerSummary: 'Dinner reply and one work pressure are the main things in view.',
+        lastAnswerSummary:
+          'Dinner reply and one work pressure are the main things in view.',
       },
-      summaryText: 'Dinner reply and one work pressure are the main things in view.',
+      summaryText:
+        'Dinner reply and one work pressure are the main things in view.',
       supportedFollowups: ['anything_else', 'shorter', 'say_more'],
       styleHints: {
         channelMode: 'alexa_companion',
@@ -349,7 +409,10 @@ describe('assistant capability router', () => {
     };
 
     expect(
-      continueAssistantCapabilityFromAlexaState('what should I say back', state),
+      continueAssistantCapabilityFromAlexaState(
+        'what should I say back',
+        state,
+      ),
     ).toMatchObject({
       capabilityId: 'communication.draft_reply',
       continuation: true,

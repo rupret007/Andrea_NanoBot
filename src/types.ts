@@ -267,6 +267,7 @@ export type AlexaConversationSubjectKind =
   | 'household'
   | 'life_thread'
   | 'communication_thread'
+  | 'mission'
   | 'saved_item'
   | 'draft'
   | 'memory_fact'
@@ -578,6 +579,95 @@ export interface ChiefOfStaffContext {
   generatedAt: string;
 }
 
+export type MissionCategory =
+  | 'household'
+  | 'family'
+  | 'work'
+  | 'event_prep'
+  | 'communication'
+  | 'mixed';
+
+export type MissionStatus =
+  | 'proposed'
+  | 'active'
+  | 'blocked'
+  | 'paused'
+  | 'completed'
+  | 'archived';
+
+export type MissionStepStatus = 'pending' | 'blocked' | 'waiting' | 'done';
+
+export type MissionSuggestedActionKind =
+  | 'create_reminder'
+  | 'draft_follow_up'
+  | 'save_to_library'
+  | 'link_thread'
+  | 'track_follow_up'
+  | 'pin_to_ritual'
+  | 'start_research'
+  | 'reference_current_work';
+
+export interface MissionSuggestedAction {
+  kind: MissionSuggestedActionKind;
+  label: string;
+  reason: string;
+  requiresConfirmation: boolean;
+  linkedRefJson?: string | null;
+}
+
+export interface MissionRecord {
+  missionId: string;
+  groupFolder: string;
+  title: string;
+  objective: string;
+  category: MissionCategory;
+  status: MissionStatus;
+  scope: ChiefOfStaffScope;
+  linkedLifeThreadIds: string[];
+  linkedSubjectIds: string[];
+  linkedReminderIds: string[];
+  linkedCurrentWorkJson?: string | null;
+  linkedKnowledgeSourceIds: string[];
+  summary: string;
+  suggestedNextActionJson?: string | null;
+  blockersJson?: string | null;
+  dueHorizon?: ChiefOfStaffHorizon | null;
+  dueAt?: string | null;
+  mutedSuggestedActionKinds: MissionSuggestedActionKind[];
+  createdAt: string;
+  lastUpdatedAt: string;
+  userConfirmed: boolean;
+}
+
+export interface MissionStepRecord {
+  stepId: string;
+  missionId: string;
+  position: number;
+  title: string;
+  detail?: string | null;
+  stepStatus: MissionStepStatus;
+  requiresUserJudgment: boolean;
+  suggestedActionKind?: MissionSuggestedActionKind | null;
+  linkedRefJson?: string | null;
+  lastUpdatedAt: string;
+}
+
+export interface MissionPlanSnapshot {
+  mission: MissionRecord;
+  steps: MissionStepRecord[];
+  blockers: string[];
+  suggestedActions: MissionSuggestedAction[];
+  explainabilityLines: string[];
+  confidence: ChiefOfStaffConfidence;
+}
+
+export interface MissionExecutionContext {
+  mission: MissionRecord;
+  steps: MissionStepRecord[];
+  stepFocus?: MissionStepRecord | null;
+  suggestedActions: MissionSuggestedAction[];
+}
+
 export interface CommunicationThreadRecord {
   id: string;
   groupFolder: string;
@@ -727,6 +817,11 @@ export interface CompanionContinuationCandidate {
   handoffPayload?: CompanionHandoffPayload;
   completionText?: string;
   chiefOfStaffContextJson?: string;
+  missionId?: string;
+  missionSummary?: string;
+  missionSuggestedActionsJson?: string;
+  missionBlockersJson?: string;
+  missionStepFocusJson?: string;
   threadId?: string;
   threadTitle?: string;
   communicationThreadId?: string;
@@ -758,6 +853,11 @@ export interface CompanionHandoffRecord {
   communicationSubjectIdsJson?: string | null;
   communicationLifeThreadIdsJson?: string | null;
   lastCommunicationSummary?: string | null;
+  missionId?: string | null;
+  missionSummary?: string | null;
+  missionSuggestedActionsJson?: string | null;
+  missionBlockersJson?: string | null;
+  missionStepFocusJson?: string | null;
   knowledgeSourceIdsJson?: string | null;
   workRef?: string | null;
   followupSuggestionsJson?: string | null;

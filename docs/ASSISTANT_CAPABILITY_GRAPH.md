@@ -84,6 +84,12 @@ Current seeded categories:
     - decision support
     - explain prioritization
     - configure planning defaults
+  - `missions`
+    - propose plan
+    - view plan
+    - execute supporting action
+    - manage plan state
+    - explain plan shape
   - `research`
     - research topic
   - compare options
@@ -215,6 +221,22 @@ It synthesizes the current read from:
 - optional saved material when prep or decision context clearly calls for it
 
 Direct people or reply questions stay on their existing authoritative paths and are fed into chief-of-staff mode as inputs rather than being replaced by it.
+
+## Missions And Multi-Step Execution
+
+Andrea now also has a dedicated `missions.*` capability family for bounded plan storage and next-step synthesis.
+
+This layer is intentionally small:
+
+- explicit planning asks create a stored `proposed` mission
+- only confirmed or active missions should keep surfacing
+- durable actions still require explicit user approval
+- missions reuse reminders, drafting, life threads, research, rituals, and current work instead of replacing them
+
+Keep the distinction clear:
+
+- `staff.*` answers what matters and why
+- `missions.*` answers how to move a named goal forward
 
 ## Cross-Channel Handoffs And Action Completion
 

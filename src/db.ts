@@ -28,6 +28,8 @@ import {
   KnowledgeSourceRecord,
   LifeThread,
   LifeThreadSignal,
+  MissionRecord,
+  MissionStepRecord,
   NewMessage,
   ProfileFact,
   ProfileFactWithSubject,
@@ -410,6 +412,48 @@ function createSchema(database: Database.Database): void {
       ON communication_signals(communication_thread_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_communication_signals_group
       ON communication_signals(group_folder, created_at DESC);
+    CREATE TABLE IF NOT EXISTS missions (
+      mission_id TEXT PRIMARY KEY,
+      group_folder TEXT NOT NULL,
+      title TEXT NOT NULL,
+      objective TEXT NOT NULL,
+      category TEXT NOT NULL,
+      status TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      linked_life_thread_ids_json TEXT NOT NULL,
+      linked_subject_ids_json TEXT NOT NULL,
+      linked_reminder_ids_json TEXT NOT NULL,
+      linked_current_work_json TEXT,
+      linked_knowledge_source_ids_json TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      suggested_next_action_json TEXT,
+      blockers_json TEXT,
+      due_horizon TEXT,
+      due_at TEXT,
+      muted_suggested_action_kinds_json TEXT NOT NULL,
+      user_confirmed INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      last_updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_missions_group_updated
+      ON missions(group_folder, last_updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_missions_group_status
+      ON missions(group_folder, status, user_confirmed, last_updated_at DESC);
+    CREATE TABLE IF NOT EXISTS mission_steps (
+      step_id TEXT PRIMARY KEY,
+      mission_id TEXT NOT NULL,
+      position INTEGER NOT NULL,
+      title TEXT NOT NULL,
+      detail TEXT,
+      step_status TEXT NOT NULL,
+      requires_user_judgment INTEGER NOT NULL DEFAULT 0,
+      suggested_action_kind TEXT,
+      linked_ref_json TEXT,
+      last_updated_at TEXT NOT NULL,
+      FOREIGN KEY (mission_id) REFERENCES missions(mission_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_mission_steps_mission_position
+      ON mission_steps(mission_id, position ASC);
     CREATE TABLE IF NOT EXISTS companion_handoffs (
       handoff_id TEXT PRIMARY KEY,
       group_folder TEXT NOT NULL,
@@ -427,6 +471,11 @@ function createSchema(database: Database.Database): void {
       communication_subject_ids_json TEXT,
       communication_life_thread_ids_json TEXT,
       last_communication_summary TEXT,
+      mission_id TEXT,
+      mission_summary TEXT,
+      mission_suggested_actions_json TEXT,
+      mission_blockers_json TEXT,
+      mission_step_focus_json TEXT,
       knowledge_source_ids_json TEXT,
       work_ref TEXT,
       followup_suggestions_json TEXT,
@@ -800,6 +849,44 @@ function createSchema(database: Database.Database): void {
   try {
     database.exec(
       `ALTER TABLE companion_handoffs ADD COLUMN last_communication_summary TEXT`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(`ALTER TABLE companion_handoffs ADD COLUMN mission_id TEXT`);
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(
+      `ALTER TABLE companion_handoffs ADD COLUMN mission_summary TEXT`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(
+      `ALTER TABLE companion_handoffs ADD COLUMN mission_suggested_actions_json TEXT`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(
+      `ALTER TABLE companion_handoffs ADD COLUMN mission_blockers_json TEXT`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(
+      `ALTER TABLE companion_handoffs ADD COLUMN mission_step_focus_json TEXT`,
     );
   } catch {
     /* column already exists */
@@ -2752,6 +2839,11 @@ export function upsertCompanionHandoff(record: CompanionHandoffRecord): void {
         communication_subject_ids_json,
         communication_life_thread_ids_json,
         last_communication_summary,
+        mission_id,
+        mission_summary,
+        mission_suggested_actions_json,
+        mission_blockers_json,
+        mission_step_focus_json,
         knowledge_source_ids_json,
         work_ref,
         followup_suggestions_json,
@@ -2760,7 +2852,7 @@ export function upsertCompanionHandoff(record: CompanionHandoffRecord): void {
         created_at,
         expires_at,
         updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(handoff_id) DO UPDATE SET
         group_folder = excluded.group_folder,
         origin_channel = excluded.origin_channel,
@@ -2777,6 +2869,11 @@ export function upsertCompanionHandoff(record: CompanionHandoffRecord): void {
         communication_subject_ids_json = excluded.communication_subject_ids_json,
         communication_life_thread_ids_json = excluded.communication_life_thread_ids_json,
         last_communication_summary = excluded.last_communication_summary,
+        mission_id = excluded.mission_id,
+        mission_summary = excluded.mission_summary,
+        mission_suggested_actions_json = excluded.mission_suggested_actions_json,
+        mission_blockers_json = excluded.mission_blockers_json,
+        mission_step_focus_json = excluded.mission_step_focus_json,
         knowledge_source_ids_json = excluded.knowledge_source_ids_json,
         work_ref = excluded.work_ref,
         followup_suggestions_json = excluded.followup_suggestions_json,
@@ -2803,6 +2900,11 @@ export function upsertCompanionHandoff(record: CompanionHandoffRecord): void {
     record.communicationSubjectIdsJson || null,
     record.communicationLifeThreadIdsJson || null,
     record.lastCommunicationSummary || null,
+    record.missionId || null,
+    record.missionSummary || null,
+    record.missionSuggestedActionsJson || null,
+    record.missionBlockersJson || null,
+    record.missionStepFocusJson || null,
     record.knowledgeSourceIdsJson || null,
     record.workRef || null,
     record.followupSuggestionsJson || null,
@@ -2844,6 +2946,11 @@ export function getCompanionHandoff(
         communication_subject_ids_json: string | null;
         communication_life_thread_ids_json: string | null;
         last_communication_summary: string | null;
+        mission_id: string | null;
+        mission_summary: string | null;
+        mission_suggested_actions_json: string | null;
+        mission_blockers_json: string | null;
+        mission_step_focus_json: string | null;
         knowledge_source_ids_json: string | null;
         work_ref: string | null;
         followup_suggestions_json: string | null;
@@ -2873,6 +2980,11 @@ export function getCompanionHandoff(
     communicationSubjectIdsJson: row.communication_subject_ids_json,
     communicationLifeThreadIdsJson: row.communication_life_thread_ids_json,
     lastCommunicationSummary: row.last_communication_summary,
+    missionId: row.mission_id,
+    missionSummary: row.mission_summary,
+    missionSuggestedActionsJson: row.mission_suggested_actions_json,
+    missionBlockersJson: row.mission_blockers_json,
+    missionStepFocusJson: row.mission_step_focus_json,
     knowledgeSourceIdsJson: row.knowledge_source_ids_json,
     workRef: row.work_ref,
     followupSuggestionsJson: row.followup_suggestions_json,
@@ -2935,7 +3047,9 @@ export function purgeExpiredCompanionHandoffs(
   return result.changes;
 }
 
-function parseCommunicationStringArray(value: string | null | undefined): string[] {
+function parseCommunicationStringArray(
+  value: string | null | undefined,
+): string[] {
   if (!value) return [];
   try {
     const parsed = JSON.parse(value) as unknown;
@@ -2944,6 +3058,365 @@ function parseCommunicationStringArray(value: string | null | undefined): string
   } catch {
     return [];
   }
+}
+
+function mapMissionRow(row: {
+  mission_id: string;
+  group_folder: string;
+  title: string;
+  objective: string;
+  category: MissionRecord['category'];
+  status: MissionRecord['status'];
+  scope: MissionRecord['scope'];
+  linked_life_thread_ids_json: string;
+  linked_subject_ids_json: string;
+  linked_reminder_ids_json: string;
+  linked_current_work_json: string | null;
+  linked_knowledge_source_ids_json: string;
+  summary: string;
+  suggested_next_action_json: string | null;
+  blockers_json: string | null;
+  due_horizon: MissionRecord['dueHorizon'];
+  due_at: string | null;
+  muted_suggested_action_kinds_json: string;
+  user_confirmed: number;
+  created_at: string;
+  last_updated_at: string;
+}): MissionRecord {
+  return {
+    missionId: row.mission_id,
+    groupFolder: row.group_folder,
+    title: row.title,
+    objective: row.objective,
+    category: row.category,
+    status: row.status,
+    scope: row.scope,
+    linkedLifeThreadIds: parseCommunicationStringArray(
+      row.linked_life_thread_ids_json,
+    ),
+    linkedSubjectIds: parseCommunicationStringArray(
+      row.linked_subject_ids_json,
+    ),
+    linkedReminderIds: parseCommunicationStringArray(
+      row.linked_reminder_ids_json,
+    ),
+    linkedCurrentWorkJson: row.linked_current_work_json,
+    linkedKnowledgeSourceIds: parseCommunicationStringArray(
+      row.linked_knowledge_source_ids_json,
+    ),
+    summary: row.summary,
+    suggestedNextActionJson: row.suggested_next_action_json,
+    blockersJson: row.blockers_json,
+    dueHorizon: row.due_horizon || null,
+    dueAt: row.due_at,
+    mutedSuggestedActionKinds: parseCommunicationStringArray(
+      row.muted_suggested_action_kinds_json,
+    ) as MissionRecord['mutedSuggestedActionKinds'],
+    createdAt: row.created_at,
+    lastUpdatedAt: row.last_updated_at,
+    userConfirmed: row.user_confirmed === 1,
+  };
+}
+
+function mapMissionStepRow(row: {
+  step_id: string;
+  mission_id: string;
+  position: number;
+  title: string;
+  detail: string | null;
+  step_status: MissionStepRecord['stepStatus'];
+  requires_user_judgment: number;
+  suggested_action_kind: MissionStepRecord['suggestedActionKind'];
+  linked_ref_json: string | null;
+  last_updated_at: string;
+}): MissionStepRecord {
+  return {
+    stepId: row.step_id,
+    missionId: row.mission_id,
+    position: row.position,
+    title: row.title,
+    detail: row.detail,
+    stepStatus: row.step_status,
+    requiresUserJudgment: row.requires_user_judgment === 1,
+    suggestedActionKind: row.suggested_action_kind || null,
+    linkedRefJson: row.linked_ref_json,
+    lastUpdatedAt: row.last_updated_at,
+  };
+}
+
+export function upsertMission(record: MissionRecord): void {
+  assertValidGroupFolder(record.groupFolder);
+  db.prepare(
+    `
+      INSERT INTO missions (
+        mission_id,
+        group_folder,
+        title,
+        objective,
+        category,
+        status,
+        scope,
+        linked_life_thread_ids_json,
+        linked_subject_ids_json,
+        linked_reminder_ids_json,
+        linked_current_work_json,
+        linked_knowledge_source_ids_json,
+        summary,
+        suggested_next_action_json,
+        blockers_json,
+        due_horizon,
+        due_at,
+        muted_suggested_action_kinds_json,
+        user_confirmed,
+        created_at,
+        last_updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(mission_id) DO UPDATE SET
+        group_folder = excluded.group_folder,
+        title = excluded.title,
+        objective = excluded.objective,
+        category = excluded.category,
+        status = excluded.status,
+        scope = excluded.scope,
+        linked_life_thread_ids_json = excluded.linked_life_thread_ids_json,
+        linked_subject_ids_json = excluded.linked_subject_ids_json,
+        linked_reminder_ids_json = excluded.linked_reminder_ids_json,
+        linked_current_work_json = excluded.linked_current_work_json,
+        linked_knowledge_source_ids_json = excluded.linked_knowledge_source_ids_json,
+        summary = excluded.summary,
+        suggested_next_action_json = excluded.suggested_next_action_json,
+        blockers_json = excluded.blockers_json,
+        due_horizon = excluded.due_horizon,
+        due_at = excluded.due_at,
+        muted_suggested_action_kinds_json = excluded.muted_suggested_action_kinds_json,
+        user_confirmed = excluded.user_confirmed,
+        created_at = excluded.created_at,
+        last_updated_at = excluded.last_updated_at
+    `,
+  ).run(
+    record.missionId,
+    record.groupFolder,
+    record.title,
+    record.objective,
+    record.category,
+    record.status,
+    record.scope,
+    JSON.stringify(record.linkedLifeThreadIds || []),
+    JSON.stringify(record.linkedSubjectIds || []),
+    JSON.stringify(record.linkedReminderIds || []),
+    record.linkedCurrentWorkJson || null,
+    JSON.stringify(record.linkedKnowledgeSourceIds || []),
+    record.summary,
+    record.suggestedNextActionJson || null,
+    record.blockersJson || null,
+    record.dueHorizon || null,
+    record.dueAt || null,
+    JSON.stringify(record.mutedSuggestedActionKinds || []),
+    record.userConfirmed ? 1 : 0,
+    record.createdAt,
+    record.lastUpdatedAt,
+  );
+}
+
+export function getMission(missionId: string): MissionRecord | undefined {
+  const row = db
+    .prepare(
+      `
+        SELECT *
+        FROM missions
+        WHERE mission_id = ?
+        LIMIT 1
+      `,
+    )
+    .get(missionId) as
+    | {
+        mission_id: string;
+        group_folder: string;
+        title: string;
+        objective: string;
+        category: MissionRecord['category'];
+        status: MissionRecord['status'];
+        scope: MissionRecord['scope'];
+        linked_life_thread_ids_json: string;
+        linked_subject_ids_json: string;
+        linked_reminder_ids_json: string;
+        linked_current_work_json: string | null;
+        linked_knowledge_source_ids_json: string;
+        summary: string;
+        suggested_next_action_json: string | null;
+        blockers_json: string | null;
+        due_horizon: MissionRecord['dueHorizon'];
+        due_at: string | null;
+        muted_suggested_action_kinds_json: string;
+        user_confirmed: number;
+        created_at: string;
+        last_updated_at: string;
+      }
+    | undefined;
+  if (!row || !isValidGroupFolder(row.group_folder)) return undefined;
+  return mapMissionRow(row);
+}
+
+export function listMissionsForGroup(params: {
+  groupFolder: string;
+  statuses?: MissionRecord['status'][];
+  includeUnconfirmed?: boolean;
+  limit?: number;
+}): MissionRecord[] {
+  assertValidGroupFolder(params.groupFolder);
+  const clauses = ['group_folder = ?'];
+  const args: unknown[] = [params.groupFolder];
+  if (params.statuses?.length) {
+    clauses.push(`status IN (${params.statuses.map(() => '?').join(', ')})`);
+    args.push(...params.statuses);
+  }
+  if (!params.includeUnconfirmed) {
+    clauses.push("(user_confirmed = 1 OR status = 'active')");
+  }
+  const limit = Math.max(1, params.limit || 25);
+  args.push(limit);
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM missions
+        WHERE ${clauses.join(' AND ')}
+        ORDER BY
+          CASE status
+            WHEN 'active' THEN 0
+            WHEN 'blocked' THEN 1
+            WHEN 'proposed' THEN 2
+            WHEN 'paused' THEN 3
+            WHEN 'completed' THEN 4
+            ELSE 5
+          END,
+          last_updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<{
+    mission_id: string;
+    group_folder: string;
+    title: string;
+    objective: string;
+    category: MissionRecord['category'];
+    status: MissionRecord['status'];
+    scope: MissionRecord['scope'];
+    linked_life_thread_ids_json: string;
+    linked_subject_ids_json: string;
+    linked_reminder_ids_json: string;
+    linked_current_work_json: string | null;
+    linked_knowledge_source_ids_json: string;
+    summary: string;
+    suggested_next_action_json: string | null;
+    blockers_json: string | null;
+    due_horizon: MissionRecord['dueHorizon'];
+    due_at: string | null;
+    muted_suggested_action_kinds_json: string;
+    user_confirmed: number;
+    created_at: string;
+    last_updated_at: string;
+  }>;
+  return rows
+    .filter((row) => isValidGroupFolder(row.group_folder))
+    .map((row) => mapMissionRow(row));
+}
+
+export function updateMission(
+  missionId: string,
+  updates: Partial<
+    Omit<MissionRecord, 'missionId' | 'groupFolder' | 'createdAt'>
+  >,
+): boolean {
+  const existing = getMission(missionId);
+  if (!existing) return false;
+  upsertMission({
+    ...existing,
+    ...updates,
+    lastUpdatedAt: updates.lastUpdatedAt || new Date().toISOString(),
+  });
+  return true;
+}
+
+export function upsertMissionStep(record: MissionStepRecord): void {
+  db.prepare(
+    `
+      INSERT INTO mission_steps (
+        step_id,
+        mission_id,
+        position,
+        title,
+        detail,
+        step_status,
+        requires_user_judgment,
+        suggested_action_kind,
+        linked_ref_json,
+        last_updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(step_id) DO UPDATE SET
+        mission_id = excluded.mission_id,
+        position = excluded.position,
+        title = excluded.title,
+        detail = excluded.detail,
+        step_status = excluded.step_status,
+        requires_user_judgment = excluded.requires_user_judgment,
+        suggested_action_kind = excluded.suggested_action_kind,
+        linked_ref_json = excluded.linked_ref_json,
+        last_updated_at = excluded.last_updated_at
+    `,
+  ).run(
+    record.stepId,
+    record.missionId,
+    record.position,
+    record.title,
+    record.detail || null,
+    record.stepStatus,
+    record.requiresUserJudgment ? 1 : 0,
+    record.suggestedActionKind || null,
+    record.linkedRefJson || null,
+    record.lastUpdatedAt,
+  );
+}
+
+export function listMissionSteps(missionId: string): MissionStepRecord[] {
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM mission_steps
+        WHERE mission_id = ?
+        ORDER BY position ASC
+      `,
+    )
+    .all(missionId) as Array<{
+    step_id: string;
+    mission_id: string;
+    position: number;
+    title: string;
+    detail: string | null;
+    step_status: MissionStepRecord['stepStatus'];
+    requires_user_judgment: number;
+    suggested_action_kind: MissionStepRecord['suggestedActionKind'];
+    linked_ref_json: string | null;
+    last_updated_at: string;
+  }>;
+  return rows.map((row) => mapMissionStepRow(row));
+}
+
+export function replaceMissionSteps(
+  missionId: string,
+  steps: MissionStepRecord[],
+): void {
+  const deleteStmt = db.prepare(
+    'DELETE FROM mission_steps WHERE mission_id = ?',
+  );
+  const insert = db.transaction((nextSteps: MissionStepRecord[]) => {
+    deleteStmt.run(missionId);
+    for (const step of nextSteps) {
+      upsertMissionStep(step);
+    }
+  });
+  insert(steps);
 }
 
 function mapCommunicationThreadRow(row: {
@@ -2974,7 +3447,9 @@ function mapCommunicationThreadRow(row: {
     id: row.id,
     groupFolder: row.group_folder,
     title: row.title,
-    linkedSubjectIds: parseCommunicationStringArray(row.linked_subject_ids_json),
+    linkedSubjectIds: parseCommunicationStringArray(
+      row.linked_subject_ids_json,
+    ),
     linkedLifeThreadIds: parseCommunicationStringArray(
       row.linked_life_thread_ids_json,
     ),
@@ -3202,7 +3677,9 @@ export function listCommunicationThreadsForGroup(params: {
 
 export function updateCommunicationThread(
   id: string,
-  updates: Partial<Omit<CommunicationThreadRecord, 'id' | 'groupFolder' | 'createdAt'>>,
+  updates: Partial<
+    Omit<CommunicationThreadRecord, 'id' | 'groupFolder' | 'createdAt'>
+  >,
 ): boolean {
   const existing = getCommunicationThread(id);
   if (!existing) return false;
@@ -3215,10 +3692,12 @@ export function updateCommunicationThread(
 }
 
 export function deleteCommunicationThread(id: string): boolean {
-  db.prepare('DELETE FROM communication_signals WHERE communication_thread_id = ?').run(
-    id,
-  );
-  const result = db.prepare('DELETE FROM communication_threads WHERE id = ?').run(id);
+  db.prepare(
+    'DELETE FROM communication_signals WHERE communication_thread_id = ?',
+  ).run(id);
+  const result = db
+    .prepare('DELETE FROM communication_threads WHERE id = ?')
+    .run(id);
   return result.changes === 1;
 }
 
@@ -4269,7 +4748,9 @@ function mapRitualProfileRow(row: {
     scope: row.scope,
     timing: parseJsonObject(row.timing_json),
     toneStyle: row.tone_style,
-    sourceInputs: parseStringArrayJson(row.source_inputs_json) as RitualProfile['sourceInputs'],
+    sourceInputs: parseStringArrayJson(
+      row.source_inputs_json,
+    ) as RitualProfile['sourceInputs'],
     lastRunAt: row.last_run_at,
     nextDueAt: row.next_due_at,
     optInState: row.opt_in_state,
