@@ -91,6 +91,7 @@ import {
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
+import { buildBlueBubblesLinkedChatJid, resolveBlueBubblesConfig } from './channels/bluebubbles.js';
 import { planSimpleReminder } from './local-reminder.js';
 import {
   buildCalendarAssistantResponse,
@@ -125,6 +126,10 @@ import {
   writeAssistantHealthState,
   writeAssistantReadyState,
 } from './host-control.js';
+import {
+  listCompanionConversationChatJids,
+  resolveCompanionConversationBinding,
+} from './companion-conversation-binding.js';
 import { recordOrganicTelegramRoundtripSuccess } from './telegram-roundtrip.js';
 import { readEnvFile } from './env.js';
 import {
@@ -256,6 +261,7 @@ import {
   RuntimeBackendJob,
 } from './types.js';
 import { logger } from './logger.js';
+import { deliverCompanionHandoff } from './cross-channel-handoffs.js';
 import {
   buildDebugLogsInlineActions,
   buildDebugMutationInlineActions,
@@ -1566,6 +1572,13 @@ function classifyDirectAssistantPromptKind(input: {
 
 const channels: Channel[] = [];
 const queue = new GroupQueue();
+let blueBubblesConversationBinding:
+  | {
+      enabled: boolean;
+      allowedChatGuid?: string | null;
+      groupFolder?: string | null;
+    }
+  | undefined;
 const backendLaneRegistry = createBackendLaneRegistry();
 const cursorBackendLane = createCursorBackendLane();
 const andreaRuntimeExecutionEnabled = ANDREA_OPENAI_BACKEND_ENABLED;
@@ -2130,6 +2143,66 @@ export function _setRegisteredGroups(
   registeredGroups = groups;
 }
 
+function resolveCompanionBinding(chatJid: string) {
+  return resolveCompanionConversationBinding(chatJid, registeredGroups, {
+    bluebubbles: blueBubblesConversationBinding,
+  });
+}
+
+function listProcessableCompanionChatJids(): string[] {
+  return listCompanionConversationChatJids(registeredGroups, {
+    bluebubbles: blueBubblesConversationBinding,
+  });
+}
+
+let resolveTelegramMainChatForAlexa = (_groupFolder: string) => undefined as
+  | { chatJid: string }
+  | undefined;
+let resolveBlueBubblesCompanionChat = (_groupFolder: string) => undefined as
+  | { chatJid: string }
+  | undefined;
+let resolveCompanionHandoffTarget = (
+  groupFolder: string,
+  targetChannel: 'telegram' | 'bluebubbles',
+) =>
+  targetChannel === 'bluebubbles'
+    ? resolveBlueBubblesCompanionChat(groupFolder)
+    : resolveTelegramMainChatForAlexa(groupFolder);
+let sendCompanionHandoffMessageToChannel = async (
+  chatJid: string,
+  text: string,
+  options?: SendMessageOptions,
+) => {
+  const channel = findChannel(channels, chatJid);
+  if (!channel) {
+    throw new Error(`No channel found for ${chatJid}`);
+  }
+  return channel.sendMessage(chatJid, text, options);
+};
+let sendCompanionHandoffMessage = async (
+  _targetChannel: 'telegram' | 'bluebubbles',
+  chatJid: string,
+  text: string,
+  options?: SendMessageOptions,
+) => sendCompanionHandoffMessageToChannel(chatJid, text, options);
+let sendCompanionHandoffArtifactToChannel = async (
+  chatJid: string,
+  artifact: Parameters<NonNullable<Channel['sendArtifact']>>[1],
+  options?: Parameters<NonNullable<Channel['sendArtifact']>>[2],
+) => {
+  const channel = findChannel(channels, chatJid);
+  if (!channel?.sendArtifact) {
+    throw new Error(`Artifact delivery is unavailable for ${chatJid}`);
+  }
+  return channel.sendArtifact(chatJid, artifact, options);
+};
+let sendCompanionHandoffArtifact = async (
+  _targetChannel: 'telegram' | 'bluebubbles',
+  chatJid: string,
+  artifact: Parameters<NonNullable<Channel['sendArtifact']>>[1],
+  options?: Parameters<NonNullable<Channel['sendArtifact']>>[2],
+) => sendCompanionHandoffArtifactToChannel(chatJid, artifact, options);
+
 function getMainChatSessionState(chatJid: string): MainChatSessionState {
   const snapshot = queue
     .getRuntimeJobs()
@@ -2139,12 +2212,18 @@ function getMainChatSessionState(chatJid: string): MainChatSessionState {
   return snapshot.idleWaiting ? 'idle_assistant' : 'busy_assistant';
 }
 
+function isExplicitBlueBubblesTelegramHandoffRequest(text: string): boolean {
+  return /\b(send (?:me )?(?:the )?(?:details|fuller version|full version|full comparison)|send (?:that|it|this) (?:to|on) telegram|send me the fuller version on telegram)\b/i.test(
+    text,
+  );
+}
+
 /**
  * Process all pending messages for a group.
  * Called by the GroupQueue when it's this group's turn.
  */
 async function processGroupMessages(chatJid: string): Promise<boolean> {
-  const group = registeredGroups[chatJid];
+  const group = resolveCompanionBinding(chatJid)?.group;
   if (!group) return true;
 
   const channel = findChannel(channels, chatJid);
@@ -2152,6 +2231,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     logger.warn({ chatJid }, 'No channel owns JID, skipping messages');
     return true;
   }
+  const conversationChannel = channel.name === 'bluebubbles' ? 'bluebubbles' : 'telegram';
 
   const isMainGroup = group.isMain === true;
 
@@ -2243,7 +2323,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   const prompt = buildAssistantPromptWithPersonalization(
     formatMessages(promptMessages, TIMEZONE),
     {
-      channel: 'telegram',
+      channel: conversationChannel,
       groupFolder: group.folder,
     },
   );
@@ -3882,7 +3962,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       missedMessages.at(-1)?.thread_id,
     );
     const dailyResponse = await buildDailyCompanionResponse(lastContent, {
-      channel: 'telegram',
+      channel: conversationChannel,
       now,
       timeZone: TIMEZONE,
       groupFolder: group.folder,
@@ -4057,7 +4137,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     const result = await executeAssistantCapability({
       capabilityId: capabilityMatch.capabilityId,
       context: {
-        channel: 'telegram',
+        channel: conversationChannel,
         groupFolder: group.folder,
         chatJid,
         now,
@@ -4129,6 +4209,41 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         });
       } else {
         await channel.sendMessage(chatJid, result.replyText || 'Okay.');
+      }
+
+      if (
+        conversationChannel === 'bluebubbles' &&
+        isExplicitBlueBubblesTelegramHandoffRequest(lastContent) &&
+        result.continuationCandidate?.handoffPayload
+      ) {
+        const handoff = await deliverCompanionHandoff(
+          {
+            groupFolder: group.folder,
+            originChannel: 'bluebubbles',
+            targetChannel: 'telegram',
+            capabilityId: result.capabilityId,
+            voiceSummary:
+              result.continuationCandidate.voiceSummary ||
+              result.replyText ||
+              'Andrea follow-up',
+            payload: result.continuationCandidate.handoffPayload,
+            threadId: result.continuationCandidate.threadId,
+            knowledgeSourceIds: result.continuationCandidate.knowledgeSourceIds,
+            followupSuggestions:
+              result.continuationCandidate.followupSuggestions,
+          },
+          {
+            resolveTelegramMainChat: resolveTelegramMainChatForAlexa,
+            resolveBlueBubblesCompanionChat: resolveBlueBubblesCompanionChat,
+            resolveHandoffTarget: resolveCompanionHandoffTarget,
+            sendTelegramMessage: sendCompanionHandoffMessageToChannel,
+            sendBlueBubblesMessage: sendCompanionHandoffMessageToChannel,
+            sendHandoffMessage: sendCompanionHandoffMessage,
+            sendTelegramArtifact: sendCompanionHandoffArtifactToChannel,
+            sendHandoffArtifact: sendCompanionHandoffArtifact,
+          },
+        );
+        await channel.sendMessage(chatJid, handoff.speech);
       }
 
       logger.info(
@@ -4288,7 +4403,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   const lifeThreadTurn = handleLifeThreadCommand({
     groupFolder: group.folder,
-    channel: 'telegram',
+    channel: conversationChannel,
     chatJid,
     text: missedMessages.at(-1)?.content ?? '',
     replyText: missedMessages.at(-1)?.reply_to?.content,
@@ -4320,7 +4435,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   const personalizationTurn = handlePersonalizationCommand({
     groupFolder: group.folder,
-    channel: 'telegram',
+    channel: conversationChannel,
     text: missedMessages.at(-1)?.content ?? '',
     replyText: missedMessages.at(-1)?.reply_to?.content,
   });
@@ -4673,7 +4788,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   const proactiveCandidate = maybeCreateProactiveProfileCandidate({
     groupFolder: group.folder,
     chatJid,
-    channel: 'telegram',
+    channel: conversationChannel,
     text: missedMessages.at(-1)?.content ?? '',
   });
   if (proactiveCandidate) {
@@ -4874,7 +4989,7 @@ async function startMessageLoop(): Promise<void> {
 
   while (true) {
     try {
-      const jids = Object.keys(registeredGroups);
+      const jids = listProcessableCompanionChatJids();
       const { messages, newTimestamp } = getNewMessages(
         jids,
         lastTimestamp,
@@ -4900,7 +5015,7 @@ async function startMessageLoop(): Promise<void> {
         }
 
         for (const [chatJid, groupMessages] of messagesByGroup) {
-          const group = registeredGroups[chatJid];
+          const group = resolveCompanionBinding(chatJid)?.group;
           if (!group) continue;
 
           const channel = findChannel(channels, chatJid);
@@ -4999,7 +5114,7 @@ async function startMessageLoop(): Promise<void> {
           const formatted = buildAssistantPromptWithPersonalization(
             formatMessages(messagesToSend, TIMEZONE),
             {
-              channel: 'telegram',
+              channel: channel.name === 'bluebubbles' ? 'bluebubbles' : 'telegram',
               groupFolder: group.folder,
             },
           );
@@ -5036,7 +5151,9 @@ async function startMessageLoop(): Promise<void> {
  * Handles crash between advancing lastTimestamp and processing messages.
  */
 function recoverPendingMessages(): void {
-  for (const [chatJid, group] of Object.entries(registeredGroups)) {
+  for (const chatJid of listProcessableCompanionChatJids()) {
+    const group = resolveCompanionBinding(chatJid)?.group;
+    if (!group) continue;
     const pending = getMessagesSince(
       chatJid,
       getOrRecoverCursor(chatJid),
@@ -8964,6 +9081,12 @@ async function main(): Promise<void> {
   }
 
   // Channel callbacks (shared by all channels)
+  const blueBubblesConfig = resolveBlueBubblesConfig();
+  blueBubblesConversationBinding = {
+    enabled: blueBubblesConfig.enabled,
+    allowedChatGuid: blueBubblesConfig.allowedChatGuid,
+    groupFolder: blueBubblesConfig.groupFolder,
+  };
   const channelOpts = {
     onHealthUpdate: (snapshot: ChannelHealthSnapshot) => {
       channelHealthByName.set(snapshot.name, snapshot);
@@ -9721,6 +9844,19 @@ async function main(): Promise<void> {
           );
         return;
       }
+
+      if (chatJid.startsWith('bb:') && isSlashCommand) {
+        const channel = findChannel(channels, chatJid);
+        channel
+          ?.sendMessage(
+            chatJid,
+            'This BlueBubbles thread is for companion help, not control commands. Ask me naturally here, and use Telegram for the admin side.',
+          )
+          .catch((err) =>
+            logger.error({ err, chatJid }, 'BlueBubbles slash-command gate reply failed'),
+          );
+        return;
+      }
       if (
         repliedMessageContext?.agentId &&
         repliedMessageContext.contextKind !== 'cursor_dashboard'
@@ -9773,6 +9909,13 @@ async function main(): Promise<void> {
 
       // Sender allowlist drop mode: discard messages from denied senders before storing
       storeMessage(msg);
+      if (chatJid.startsWith('bb:') && resolveCompanionBinding(chatJid)) {
+        if (msg.timestamp > lastTimestamp) {
+          lastTimestamp = msg.timestamp;
+          saveState();
+        }
+        queue.enqueueMessageCheck(chatJid);
+      }
     },
     onChatMetadata: (
       chatJid: string,
@@ -9804,7 +9947,7 @@ async function main(): Promise<void> {
     channels.push(channel);
     await channel.connect();
   }
-  const resolveTelegramMainChatForAlexa = (groupFolder: string) => {
+  resolveTelegramMainChatForAlexa = (groupFolder: string) => {
     const telegramEntries = Object.entries(registeredGroups).filter(([jid]) => {
       const channel = findChannel(channels, jid);
       return channel?.name === 'telegram';
@@ -9828,22 +9971,78 @@ async function main(): Promise<void> {
     }
     return undefined;
   };
+  resolveBlueBubblesCompanionChat = (groupFolder: string) => {
+    const linkedChatJid = buildBlueBubblesLinkedChatJid(blueBubblesConfig);
+    if (!linkedChatJid || !blueBubblesConfig.enabled) {
+      return undefined;
+    }
+    const boundFolder = blueBubblesConfig.groupFolder || 'main';
+    if (boundFolder !== groupFolder) {
+      return undefined;
+    }
+    const channel = findChannel(channels, linkedChatJid);
+    if (channel?.name !== 'bluebubbles' || channel.isConnected() !== true) {
+      return undefined;
+    }
+    return { chatJid: linkedChatJid };
+  };
+  resolveCompanionHandoffTarget = (
+    groupFolder: string,
+    targetChannel: 'telegram' | 'bluebubbles',
+  ) =>
+    targetChannel === 'bluebubbles'
+      ? resolveBlueBubblesCompanionChat(groupFolder)
+      : resolveTelegramMainChatForAlexa(groupFolder);
+  sendCompanionHandoffMessageToChannel = async (chatJid, text, options) => {
+    const channel = findChannel(channels, chatJid);
+    if (!channel) {
+      throw new Error(`No channel found for ${chatJid}`);
+    }
+    return channel.sendMessage(chatJid, text, options);
+  };
+  sendCompanionHandoffMessage = async (
+    _targetChannel,
+    chatJid,
+    text,
+    options,
+  ) => sendCompanionHandoffMessageToChannel(chatJid, text, options);
+  sendCompanionHandoffArtifactToChannel = async (
+    chatJid,
+    artifact,
+    options,
+  ) => {
+    const channel = findChannel(channels, chatJid);
+    if (!channel?.sendArtifact) {
+      throw new Error(`Artifact delivery is unavailable for ${chatJid}`);
+    }
+    return channel.sendArtifact(chatJid, artifact, options);
+  };
+  sendCompanionHandoffArtifact = async (
+    targetChannel,
+    chatJid,
+    artifact,
+    options,
+  ) => {
+    if (targetChannel === 'bluebubbles') {
+      throw new Error('BlueBubbles artifact delivery is unavailable.');
+    }
+    return sendCompanionHandoffArtifactToChannel(chatJid, artifact, options);
+  };
   try {
     alexaRuntime = await startAlexaServer(undefined, {
+      resolveHandoffTarget: resolveCompanionHandoffTarget,
       resolveTelegramMainChat: resolveTelegramMainChatForAlexa,
+      resolveBlueBubblesCompanionChat,
+      sendHandoffMessage: sendCompanionHandoffMessage,
       sendTelegramMessage: async (chatJid, text, options) => {
-        const channel = findChannel(channels, chatJid);
-        if (!channel) {
-          throw new Error(`No channel found for ${chatJid}`);
-        }
-        return channel.sendMessage(chatJid, text, options);
+        return sendCompanionHandoffMessageToChannel(chatJid, text, options);
       },
+      sendBlueBubblesMessage: async (chatJid, text, options) => {
+        return sendCompanionHandoffMessageToChannel(chatJid, text, options);
+      },
+      sendHandoffArtifact: sendCompanionHandoffArtifact,
       sendTelegramArtifact: async (chatJid, artifact, options) => {
-        const channel = findChannel(channels, chatJid);
-        if (!channel?.sendArtifact) {
-          throw new Error(`Telegram artifact delivery is unavailable for ${chatJid}`);
-        }
-        return channel.sendArtifact(chatJid, artifact, options);
+        return sendCompanionHandoffArtifactToChannel(chatJid, artifact, options);
       },
     });
   } catch (err) {

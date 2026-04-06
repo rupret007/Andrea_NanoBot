@@ -338,6 +338,10 @@ export interface BlueBubblesConfig {
   enabled: boolean;
   baseUrl: string | null;
   password: string | null;
+  host: string;
+  port: number;
+  groupFolder: string;
+  allowedChatGuid: string | null;
   webhookPath: string;
   webhookSecret: string | null;
   sendEnabled: boolean;
@@ -560,7 +564,7 @@ export interface CompanionHandoffRecord {
   handoffId: string;
   groupFolder: string;
   originChannel: 'alexa' | 'telegram' | 'bluebubbles';
-  targetChannel: 'telegram';
+  targetChannel: 'telegram' | 'bluebubbles';
   targetChatJid?: string | null;
   capabilityId?: string | null;
   voiceSummary: string;

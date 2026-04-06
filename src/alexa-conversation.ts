@@ -235,7 +235,7 @@ export function resolveAlexaConversationFollowup(
     return resolveSupported('remind_before_that');
   }
   if (
-    /^(send (?:me )?(?:the )?(?:details|full version|full comparison)(?: to telegram)?|send (?:that|it) to telegram|also send (?:that|it) to telegram|give me the deeper comparison in telegram)\b/i.test(
+    /^(send (?:me )?(?:the )?(?:details|full version|full comparison)(?: to telegram)?|send (?:that|it) to telegram|also send (?:that|it) to telegram|give me the deeper comparison in telegram|send (?:that|it|this|the details) to (?:my )?messages|save (?:that|it|this) to (?:my )?messages|send me the details in messages)\b/i.test(
       normalized,
     )
   ) {

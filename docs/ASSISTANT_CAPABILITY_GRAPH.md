@@ -92,7 +92,7 @@ The graph is explicit about channel safety.
 
 - Alexa-safe capabilities are voice-first, bounded, and safe to answer through a linked personal assistant surface.
 - Telegram-safe capabilities can return richer structure and fuller text.
-- BlueBubbles-safe capabilities are text-first, concise, and simpler than Telegram operator flows.
+- BlueBubbles-safe capabilities are text-first, concise, and simpler than Telegram operator flows, and they now run through a real linked BlueBubbles companion channel.
 - Operator-only capabilities remain excluded from Alexa even when they exist in the graph.
 
 Current intended split:
@@ -109,9 +109,12 @@ Current intended split:
   - operator/runtime surfaces that are intentionally not exposed on Alexa
 - BlueBubbles-safe:
   - daily guidance
+  - rituals and follow-through prompts
   - household guidance
-  - explicit thread lookup
+  - explicit thread lookup and save-for-later style follow-through
   - memory controls
+  - Knowledge Library summaries
+  - draft follow-up
   - Andrea Pulse
   - bounded research summaries
 - Operator-only:

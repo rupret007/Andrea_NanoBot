@@ -18,7 +18,7 @@
   <a href="docs/KNOWLEDGE_LIBRARY.md">Knowledge Library</a>&nbsp; | &nbsp;
   <a href="docs/PROACTIVE_RITUALS.md">Proactive Rituals</a>&nbsp; | &nbsp;
   <a href="docs/CROSS_CHANNEL_HANDOFFS.md">Cross-Channel Handoffs</a>&nbsp; | &nbsp;
-  <a href="docs/BLUEBUBBLES_CHANNEL_PREP.md">BlueBubbles Prep</a>&nbsp; | &nbsp;
+  <a href="docs/BLUEBUBBLES_CHANNEL_PREP.md">BlueBubbles</a>&nbsp; | &nbsp;
   <a href="docs/CHANNEL_COMMANDS_AND_ONBOARDING.md">Chat Commands</a>&nbsp; | &nbsp;
   <a href="docs/BACKEND_LANES_ARCHITECTURE.md">Backend Lanes</a>&nbsp; | &nbsp;
   <a href="docs/ASSISTANT_CAPABILITY_GRAPH.md">Capability Graph</a>&nbsp; | &nbsp;
@@ -198,16 +198,17 @@ Andrea Pulse is a separate request-driven personality feature. It is not a healt
 - Pulse uses a small local curated catalog instead of adding a new provider dependency just for facts
 - `say more` stays on the same Pulse item, while `anything else` can move to a different one
 
-## BlueBubbles Prep
+## BlueBubbles Companion Channel
 
-BlueBubbles is now prepared as a future text-message channel through the same channel-adapter architecture Andrea already uses for Telegram and Alexa.
+BlueBubbles is now a real bounded Andrea messaging channel, not just prep work.
 
-- the current pass adds config parsing, webhook normalization, a channel scaffold, and capability-safety metadata
-- it does **not** claim end-to-end live messaging yet
-- outbound sends stay disabled by default
-- the current scaffold uses `bb:<chatGuid>` and `bb:<handle>` identifiers so BlueBubbles can plug into the shared capability graph cleanly later
+- one linked `bb:` conversation can share the same companion context as Telegram and Alexa through the existing `groupFolder`, defaulting to `main`
+- Andrea now accepts inbound BlueBubbles webhooks, replies back to that same linked conversation, and stays text-only on BlueBubbles for V1
+- BlueBubbles keeps companion-safe capabilities like daily guidance, reminders, follow-through, Knowledge Library summaries, draft follow-up, and short research summaries
+- richer details and artifacts still hand off explicitly to Telegram when that is the safer surface
+- BlueBubbles does **not** become a main control chat and does not expose work-cockpit or admin/runtime controls
 
-See [docs/BLUEBUBBLES_CHANNEL_PREP.md](docs/BLUEBUBBLES_CHANNEL_PREP.md) for the current implementation truth and the official API/webhook assumptions behind it.
+See [docs/BLUEBUBBLES_CHANNEL_PREP.md](docs/BLUEBUBBLES_CHANNEL_PREP.md) for the live V1 scope, config, webhook/send model, and exact current limits.
 
 ## Shared Assistant Core
 
@@ -220,7 +221,7 @@ Andrea now has a shared assistant capability graph so Alexa and Telegram feel li
 - Alexa can now hand richer results off to Telegram explicitly instead of pretending voice should carry everything
 - voice follow-ups like `send me the details`, `save that in my library`, and `turn that into a reminder` now map into the same shared completion layer
 - Alexa keeps voice-safe shaping and bounded follow-ups
-- BlueBubbles is now represented as a prepared future channel with its own safety gate and output-shaping policy
+- BlueBubbles is now a real companion channel with its own safety gate and output-shaping policy
 - Telegram keeps richer rendering and deeper operator-side actions
 - operator-only current-work controls stay out of Alexa even though they live in the same registry
 
@@ -254,10 +255,10 @@ For operator-side smoke testing of the shared core, use `npm run debug:shared-ca
 
 ## Cross-Channel Companion Handoffs
 
-Andrea now has a bounded Alexa-to-Telegram handoff layer so a conversation can start briefly on Alexa and finish with richer detail on Telegram.
+Andrea now has a bounded cross-channel handoff layer so a conversation can start briefly on Alexa, continue in BlueBubbles or Telegram when appropriate, and still feel like one assistant.
 
 - handoffs are explicit and user-visible
-- only the registered main Telegram chat is used as the delivery target
+- Telegram remains the richer artifact/detail surface, while BlueBubbles can now receive bounded text continuations
 - no silent push behavior was added
 - voice-triggered completion actions reuse existing reminder, thread, ritual, and Knowledge Library systems instead of creating a second planner
 
@@ -265,11 +266,12 @@ Typical follow-ups now include:
 
 - `send me the details`
 - `send the full version to Telegram`
+- `send that to my messages`
 - `save that in my library`
 - `track that under Candace`
 - `turn that into a reminder`
 
-Use `npm run debug:cross-channel-handoffs` for the operator-side near-live proof harness, and see [docs/CROSS_CHANNEL_HANDOFFS.md](docs/CROSS_CHANNEL_HANDOFFS.md) for the delivery model and limits.
+Use `npm run debug:cross-channel-handoffs` and `npm run debug:bluebubbles` for the operator-side near-live proof harnesses, and see [docs/CROSS_CHANNEL_HANDOFFS.md](docs/CROSS_CHANNEL_HANDOFFS.md) for the delivery model and limits.
 
 ## Knowledge Library
 
@@ -544,7 +546,7 @@ Use the docs based on what you are trying to do:
 - [docs/KNOWLEDGE_LIBRARY.md](docs/KNOWLEDGE_LIBRARY.md)
   for the Knowledge Library model, explicit save/import rules, lexical-first retrieval, and source-grounded answer behavior
 - [docs/BLUEBUBBLES_CHANNEL_PREP.md](docs/BLUEBUBBLES_CHANNEL_PREP.md)
-  for the prepared BlueBubbles channel adapter, safety model, and current non-live scope
+  for the live BlueBubbles companion channel scope, config, safety model, and current limits
 - [docs/ADDONS_AND_FEATURE_MATRIX.md](docs/ADDONS_AND_FEATURE_MATRIX.md)
   for deciding which skills and add-ons to enable
 - [docs/TESTING_AND_RELEASE_RUNBOOK.md](docs/TESTING_AND_RELEASE_RUNBOOK.md)

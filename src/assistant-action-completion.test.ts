@@ -112,6 +112,49 @@ describe('assistant action completion', () => {
     );
   });
 
+  it('can send a text handoff to the linked BlueBubbles messages thread', async () => {
+    const sendBlueBubblesMessage = vi.fn(async () => ({
+      platformMessageId: 'bb-msg-42',
+    }));
+
+    const result = await completeAssistantActionFromAlexa(
+      {
+        groupFolder: 'main',
+        action: 'send_details',
+        utterance: 'send that to my messages',
+        conversationSummary: 'Candace dinner follow-up.',
+        priorSubjectData: {
+          companionContinuationJson: JSON.stringify({
+            capabilityId: 'knowledge.summarize_saved',
+            voiceSummary: 'Candace still needs a dinner answer tonight.',
+            handoffPayload: {
+              kind: 'message',
+              title: 'Dinner follow-up',
+              text: 'Candace still needs a dinner answer tonight, and pickup works better after rehearsal.',
+              followupSuggestions: [],
+            },
+            completionText:
+              'Candace still needs a dinner answer tonight, and pickup works better after rehearsal.',
+          }),
+        },
+      },
+      {
+        resolveTelegramMainChat: () => ({ chatJid: 'tg:main' }),
+        resolveBlueBubblesCompanionChat: () => ({ chatJid: 'bb:chat-1' }),
+        sendTelegramMessage: vi.fn(async () => ({ platformMessageId: 'tg-unused' })),
+        sendBlueBubblesMessage,
+      },
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.replyText).toContain('your messages');
+    expect(result.handoffResult?.ok).toBe(true);
+    expect(sendBlueBubblesMessage).toHaveBeenCalledWith(
+      'bb:chat-1',
+      expect.stringContaining('Candace still needs a dinner answer'),
+    );
+  });
+
   it('creates a reminder when timing is explicit', async () => {
     const result = await completeAssistantActionFromAlexa(
       {

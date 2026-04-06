@@ -1,123 +1,174 @@
-# BlueBubbles Channel Prep
+# BlueBubbles Companion Channel
 
-BlueBubbles is prepared here as a future Andrea text-message channel. It is not a second assistant stack.
+BlueBubbles is now a real Andrea companion channel, not just a scaffold.
 
-The design goal is simple:
+The V1 goal is narrow on purpose:
 
-- keep one Andrea core
-- keep one shared capability graph
-- add BlueBubbles as another channel adapter beside Telegram and Alexa
+- one linked BlueBubbles conversation
+- shared companion context with Andrea's existing `groupFolder` flow, defaulting to `main`
+- inbound and outbound text only
+- explicit cross-channel handoffs
+- no main-control or operator/admin surface
+
+This is still not a second assistant stack.
+It is one more channel edge on the shared Andrea core.
 
 ## Current Truth
 
-Implemented in this pass:
+Implemented now:
 
-- BlueBubbles config types and env parsing
-- a scaffolded `bluebubbles` channel registration
-- webhook payload normalization into Andrea's shared `NewMessage` shape
-- `bb:<chatGuid>` and `bb:<handle>` identifiers for stable channel mapping
-- health snapshot reporting for the scaffold
-- capability-safety metadata so shared assistant actions can say whether they are safe for BlueBubbles
+- live BlueBubbles config parsing for host, port, linked group folder, and one allowed chat GUID
+- a dedicated local BlueBubbles webhook listener
+- webhook secret checking through the webhook URL query string
+- webhook normalization into Andrea's shared `NewMessage` shape
+- `bb:<chatGuid>` and `bb:<handle>` identity mapping
+- duplicate-delivery suppression for repeated message GUIDs
+- bounded outbound text reply-back to the same linked BlueBubbles conversation
+- shared companion routing through the existing capability graph
+- explicit BlueBubbles -> Telegram handoff for richer detail when the user asks for it
+- Alexa -> BlueBubbles text handoff support for `send that to my messages` style follow-ups
 
-Not implemented yet:
+Intentionally out of scope in V1:
 
-- no live end-to-end webhook listener is claimed from this pass
-- no fully wired outbound REST send path
-- no arbitrary new-conversation creation
-- no promise of live BlueBubbles transport without a real server and webhook environment
+- BlueBubbles as a main control chat
+- `/cursor`, runtime, logs, or deep admin control from BlueBubbles
+- arbitrary new-conversation creation
+- media/artifact send
+- read receipts, reactions, typing indicators, or background outbound automation
 
-## Official API / Webhook Assumptions
+## V1 Scope
 
-This scaffold is based on official BlueBubbles documentation and design patterns, not copied product logic.
+BlueBubbles is meant to feel like a personal companion text thread.
 
-Anchoring assumptions:
+Good fits:
 
-- REST API support starts with BlueBubbles Server `0.2.0+`
-- webhook support starts with BlueBubbles Server `1.0.0+`
-- API auth is query-parameter based in the official docs (`guid`, `password`, or `token` depending on endpoint/server setup)
-- webhooks are configured by URL plus selected event subscriptions
+- `what am I forgetting`
+- `what should I remember tonight`
+- `what's still open with Candace`
+- `save that for later`
+- `turn that into a reminder`
+- `save that in my library`
+- `draft something for me`
+- `what do my saved notes say about this`
+- short research summaries
 
-Because the official docs do not advertise signed webhook requests, Andrea treats webhook ingress conservatively.
+Not a fit by default:
 
-## Safety Model
+- operator shell commands
+- main-control chat setup
+- work-cockpit execution
+- logs, diagnostics, and provider admin surfaces
 
-BlueBubbles defaults are intentionally strict:
+## Config
 
-- disabled by default
-- webhook secret/path required for any future live ingress
-- outbound send disabled by default
-- future outbound send should stay reply-first to already known `bb:` chats before any broader send surface is considered
-
-That keeps BlueBubbles preparation honest without over-promising transport that has not been live-proven yet.
-
-## Andrea Channel Model
-
-BlueBubbles should fit Andrea's existing channel adapter model:
-
-- incoming webhook payload -> normalized `NewMessage`
-- outgoing text send -> channel adapter boundary
-- identity/contact mapping stays explicit
-- capability execution stays in the shared assistant core
-- channel-specific formatting stays at the edge
-
-Current identifier shape:
-
-- chat: `bb:<chatGuid>`
-- sender/contact: `bb:<handle>`
-
-## Config Surface
-
-Current scaffold env:
+BlueBubbles V1 uses these env settings:
 
 ```bash
 BLUEBUBBLES_ENABLED=false
 BLUEBUBBLES_BASE_URL=
 BLUEBUBBLES_PASSWORD=
+BLUEBUBBLES_HOST=127.0.0.1
+BLUEBUBBLES_PORT=4305
+BLUEBUBBLES_GROUP_FOLDER=main
+BLUEBUBBLES_ALLOWED_CHAT_GUID=
 BLUEBUBBLES_WEBHOOK_PATH=/bluebubbles/webhook
 BLUEBUBBLES_WEBHOOK_SECRET=
 BLUEBUBBLES_SEND_ENABLED=false
 ```
 
-Important truth:
+Meaning:
 
-- setting these values does not by itself make BlueBubbles live
-- `BLUEBUBBLES_SEND_ENABLED=true` should not be used until a verified outbound REST path is added and tested
+- `BLUEBUBBLES_GROUP_FOLDER` binds the linked BlueBubbles chat to an existing Andrea companion folder
+- `BLUEBUBBLES_ALLOWED_CHAT_GUID` is the one BlueBubbles conversation V1 will accept
+- `BLUEBUBBLES_SEND_ENABLED=true` is required for real reply-back
 
-## Channel Shaping
+## Webhook And Send Model
 
-BlueBubbles is intended to sit between Telegram and Alexa:
+Inbound:
 
-- more text-friendly than Alexa
-- simpler and less markdown-heavy than Telegram
-- no operator-only execution surfaces by default
+- Andrea listens locally on `http://<host>:<port><webhookPath>`
+- if `BLUEBUBBLES_WEBHOOK_SECRET` is set, append it to the webhook URL query string, for example `?secret=...`
+- Andrea accepts supported new-message webhook events only
+- malformed payloads get `400`
+- secret mismatch gets `401`
+- unsupported events get `202`
+- messages from unlinked chats are ignored with `202`
+- if the channel is enabled but not ready for live traffic, Andrea returns `503`
 
-Shared assistant actions that are good future fits:
+Outbound:
 
-- daily guidance
-- household-aware guidance
-- explicit thread lookup
-- memory controls
-- research summaries
-- Andrea Pulse
+- V1 sends only text replies back to the same linked BlueBubbles conversation
+- Andrea uses the documented BlueBubbles REST text-send path: `/api/v1/message/text`
+- auth is sent through the documented query-parameter style, with compatibility aliases for `guid`, `password`, and `token`
+- if reply threading is rejected, Andrea retries once without reply metadata
+- if BlueBubbles does not return a receipt, Andrea treats the send as failed
 
-Not a fit by default:
+## Shared Companion Binding
 
-- operator-only current-work controls
-- runtime shell/log surfaces
-- raw admin actions
+BlueBubbles does not become a second `registered_group`.
+Instead, Andrea maps the linked `bb:` conversation into the existing companion folder.
 
-## Testing The Scaffold
+That means:
 
-Current truthful checks:
+- Telegram, Alexa, and BlueBubbles can share the same bounded life-thread / reminder / ritual / knowledge context
+- BlueBubbles still does **not** inherit `isMain`
+- operator gating stays tied to real registered main chats, not BlueBubbles
+
+## Cross-Channel Handoffs
+
+BlueBubbles participates in the shared handoff model in a bounded way.
+
+Supported now:
+
+- Alexa -> BlueBubbles text handoff
+  - `send that to my messages`
+  - `save that to my messages`
+  - `send me the details in messages`
+- BlueBubbles -> Telegram rich-detail handoff
+  - `send me the fuller version on Telegram`
+
+Not supported:
+
+- silent push across channels
+- Telegram -> BlueBubbles fan-out
+- BlueBubbles media delivery
+
+## Testing
+
+Focused coverage:
 
 - `src/channels/bluebubbles.test.ts`
-- `npm run debug:shared-capabilities`
+- `src/companion-conversation-binding.test.ts`
+- `src/cross-channel-handoffs.test.ts`
+- `src/assistant-action-completion.test.ts`
 
-Those prove:
+Near-live proof harness:
 
-- config parsing
-- webhook normalization
-- disabled-send safety behavior
-- capability gating alongside Alexa and Telegram
+```bash
+npm run debug:bluebubbles
+```
 
-Until a real BlueBubbles server and webhook environment are configured, that is the strongest truthful proof for this channel.
+That harness proves:
+
+- real local BlueBubbles webhook listener startup
+- inbound webhook -> normalized companion message
+- reply-back into the same linked BlueBubbles conversation through the REST send path
+- shared companion binding to `groupFolder=main`
+- explicit BlueBubbles -> Telegram handoff for richer detail
+
+## Live Proof Boundary
+
+The strongest truthful proof on a machine without a reachable BlueBubbles server is `npm run debug:bluebubbles`.
+
+To claim fully live BlueBubbles proof, you still need:
+
+- a reachable BlueBubbles server
+- correct REST password/query auth
+- a real webhook URL configured in BlueBubbles
+- one linked allowed chat GUID
+- one real inbound message and one real reply-back observed on that server
+
+## References
+
+- [BlueBubbles REST API and webhooks](https://docs.bluebubbles.app/server/developer-guides/rest-api-and-webhooks)
+- [BlueBubbles Server](https://github.com/BlueBubblesApp/bluebubbles-server)

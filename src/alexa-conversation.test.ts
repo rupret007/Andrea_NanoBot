@@ -138,6 +138,9 @@ describe('alexa conversation state', () => {
       ),
     ).toMatchObject({ ok: true, action: 'send_details' });
     expect(
+      resolveAlexaConversationFollowup('send that to my messages', state),
+    ).toMatchObject({ ok: true, action: 'send_details' });
+    expect(
       resolveAlexaConversationFollowup('save that in my library', state),
     ).toMatchObject({ ok: true, action: 'save_to_library' });
     expect(

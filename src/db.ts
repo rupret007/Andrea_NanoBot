@@ -904,6 +904,20 @@ export function storeMessage(msg: NewMessage): void {
   );
 }
 
+export function hasStoredMessage(chatJid: string, messageId: string): boolean {
+  const row = db
+    .prepare(
+      `
+        SELECT 1
+        FROM messages
+        WHERE chat_jid = ? AND id = ?
+        LIMIT 1
+      `,
+    )
+    .get(chatJid, messageId) as { 1: number } | undefined;
+  return Boolean(row);
+}
+
 /**
  * Store a message directly.
  */

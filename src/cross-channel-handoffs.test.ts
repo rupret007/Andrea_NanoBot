@@ -110,4 +110,47 @@ describe('cross-channel handoffs', () => {
       errorText: 'User said no.',
     });
   });
+
+  it('can deliver a text handoff to the linked BlueBubbles thread', async () => {
+    const sendBlueBubblesMessage = vi.fn(async () => ({
+      platformMessageId: 'bb-msg-1',
+    }));
+
+    const result = await deliverCompanionHandoff(
+      {
+        groupFolder: 'main',
+        originChannel: 'alexa',
+        targetChannel: 'bluebubbles',
+        capabilityId: 'knowledge.summarize_saved',
+        voiceSummary: 'Candace still needs a dinner answer tonight.',
+        payload: {
+          kind: 'message',
+          title: 'Dinner follow-up',
+          text: 'Candace still needs a dinner answer tonight, and pickup works better after rehearsal.',
+          followupSuggestions: [],
+        },
+      },
+      {
+        resolveTelegramMainChat: () => ({ chatJid: 'tg:main' }),
+        resolveBlueBubblesCompanionChat: () => ({ chatJid: 'bb:chat-1' }),
+        sendTelegramMessage: vi.fn(),
+        sendBlueBubblesMessage,
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.speech).toContain('your messages');
+    expect(sendBlueBubblesMessage).toHaveBeenCalledWith(
+      'bb:chat-1',
+      expect.stringContaining('Candace still needs a dinner answer'),
+    );
+
+    const stored = getCompanionHandoff(result.handoffId);
+    expect(stored).toMatchObject({
+      status: 'delivered',
+      targetChannel: 'bluebubbles',
+      targetChatJid: 'bb:chat-1',
+      deliveredMessageId: 'bb-msg-1',
+    });
+  });
 });

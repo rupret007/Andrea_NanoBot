@@ -47,6 +47,13 @@ node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/c
 npm run debug:cross-channel-handoffs
 ```
 
+For BlueBubbles channel changes, add:
+
+```bash
+node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/channels/bluebubbles.test.ts src/companion-conversation-binding.test.ts src/cross-channel-handoffs.test.ts src/assistant-action-completion.test.ts
+npm run debug:bluebubbles
+```
+
 For ritual and follow-through changes, add:
 
 ```bash
@@ -135,6 +142,13 @@ Then validate the public-safe Telegram surface:
 - simple quick reply prompt
 - reminder prompt
 - `/cursor_status`
+
+If BlueBubbles is configured on that host, add:
+
+- one real inbound BlueBubbles message
+- one real reply back into the same linked BlueBubbles conversation
+- one safe companion flow such as `what am I forgetting`
+- one explicit BlueBubbles -> Telegram handoff if you are validating cross-channel continuity
 
 ## 6. Cursor Validation
 

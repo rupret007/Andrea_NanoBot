@@ -42,6 +42,29 @@ export interface AssistantActionCompletionResult {
   bridgeDraftReference?: string;
 }
 
+function resolveRequestedHandoffTarget(
+  utterance: string,
+): 'telegram' | 'bluebubbles' {
+  return /\b(?:my )?messages\b|\bbluebubbles\b/i.test(utterance)
+    ? 'bluebubbles'
+    : 'telegram';
+}
+
+function hasHandoffRuntime(
+  deps: Partial<CompanionHandoffDeps>,
+  targetChannel: 'telegram' | 'bluebubbles',
+): boolean {
+  if (deps.resolveHandoffTarget && deps.sendHandoffMessage) {
+    return true;
+  }
+  if (targetChannel === 'bluebubbles') {
+    return Boolean(
+      deps.resolveBlueBubblesCompanionChat && deps.sendBlueBubblesMessage,
+    );
+  }
+  return Boolean(deps.resolveTelegramMainChat && deps.sendTelegramMessage);
+}
+
 function parseContinuationCandidate(
   priorSubjectData: AssistantActionCompletionParams['priorSubjectData'],
 ): CompanionContinuationCandidate | undefined {
@@ -212,16 +235,19 @@ function completeEveningCarryover(
   };
 }
 
-async function deliverCandidateToTelegram(
+async function deliverCandidateToChannel(
   params: AssistantActionCompletionParams,
   candidate: CompanionContinuationCandidate | undefined,
   deps: Partial<CompanionHandoffDeps>,
 ): Promise<AssistantActionCompletionResult> {
-  if (!deps.resolveTelegramMainChat || !deps.sendTelegramMessage) {
+  const targetChannel = resolveRequestedHandoffTarget(params.utterance);
+  if (!hasHandoffRuntime(deps, targetChannel)) {
     return {
       handled: true,
       replyText:
-        'I cannot hand that off to Telegram from this runtime right now.',
+        targetChannel === 'bluebubbles'
+          ? 'I cannot send that to your messages from this runtime right now.'
+          : 'I cannot hand that off to Telegram from this runtime right now.',
     };
   }
   const summary = resolveCompletionText(params, candidate);
@@ -238,6 +264,12 @@ async function deliverCandidateToTelegram(
     candidate.completionText?.trim() &&
     !candidate.handoffPayload?.artifact
   ) {
+    if (targetChannel === 'bluebubbles') {
+      return {
+        handled: true,
+        replyText: 'I can only deliver images on Telegram right now.',
+      };
+    }
     const rerun = await executeAssistantCapability({
       capabilityId: 'media.image_generate',
       context: {
@@ -273,6 +305,7 @@ async function deliverCandidateToTelegram(
       {
         groupFolder: params.groupFolder,
         originChannel: 'alexa',
+        targetChannel,
         capabilityId: rerun.capabilityId || candidate.capabilityId,
         voiceSummary:
           rerunCandidate?.voiceSummary ||
@@ -303,6 +336,7 @@ async function deliverCandidateToTelegram(
     {
       groupFolder: params.groupFolder,
       originChannel: 'alexa',
+      targetChannel,
       capabilityId: candidate?.capabilityId,
       voiceSummary: candidate?.voiceSummary || summary,
       payload:
@@ -333,14 +367,17 @@ export async function completeAssistantActionFromAlexa(
   const completionText = resolveCompletionText(params, candidate);
 
   if (params.action === 'send_details') {
-    if (!deps.resolveTelegramMainChat || !deps.sendTelegramMessage) {
+    const targetChannel = resolveRequestedHandoffTarget(params.utterance);
+    if (!hasHandoffRuntime(deps, targetChannel)) {
       return {
         handled: true,
         replyText:
-          'I cannot hand that off to Telegram from this runtime right now.',
+          targetChannel === 'bluebubbles'
+            ? 'I cannot send that to your messages from this runtime right now.'
+            : 'I cannot hand that off to Telegram from this runtime right now.',
       };
     }
-    return deliverCandidateToTelegram(params, candidate, deps);
+    return deliverCandidateToChannel(params, candidate, deps);
   }
 
   if (params.action === 'save_to_library') {
