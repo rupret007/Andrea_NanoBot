@@ -22,6 +22,7 @@ export type FieldTrialProofState =
   | 'live_proven'
   | 'near_live_only'
   | 'externally_blocked'
+  | 'degraded_but_usable'
   | 'not_intended_for_trial';
 
 export type FieldTrialBlockerOwner = 'none' | 'repo_side' | 'external';
@@ -103,8 +104,12 @@ function formatProofMoment(iso: string | null | undefined): string {
   return `on ${iso}`;
 }
 
-function describeRecentJourney(label: string, event: PilotJourneyEventRecord): string {
-  return `${label} was live-proven ${formatProofMoment(
+function describeRecentJourney(
+  label: string,
+  event: PilotJourneyEventRecord,
+  proofLabel: 'live-proven' | 'degraded but usable',
+): string {
+  return `${label} was ${proofLabel} ${formatProofMoment(
     event.completedAt || event.startedAt,
   )}. ${event.summaryText}`;
 }
@@ -114,8 +119,10 @@ function formatBlockerClass(value: string | null | undefined, fallback: string):
   return value.replace(/_/g, ' ');
 }
 
-function isSuccessfulPilotOutcome(outcome: PilotJourneyEventRecord['outcome']): boolean {
-  return outcome === 'success' || outcome === 'degraded_usable';
+function isLiveProvenPilotOutcome(
+  outcome: PilotJourneyEventRecord['outcome'],
+): boolean {
+  return outcome === 'success';
 }
 
 function getRecentJourneyEvent(
@@ -148,10 +155,26 @@ function buildJourneyTruthFromEvent(params: {
     });
   }
 
-  if (isSuccessfulPilotOutcome(params.event.outcome)) {
+  if (isLiveProvenPilotOutcome(params.event.outcome)) {
     return buildTruth({
       proofState: 'live_proven',
-      detail: describeRecentJourney(params.label, params.event),
+      detail: describeRecentJourney(params.label, params.event, 'live-proven'),
+    });
+  }
+
+  if (params.event.outcome === 'degraded_usable') {
+    return buildTruth({
+      proofState: 'degraded_but_usable',
+      blocker: formatBlockerClass(
+        params.event.blockerClass,
+        `${params.label} stayed usable, but only through a bounded fallback path on this host.`,
+      ),
+      blockerOwner:
+        params.event.blockerOwner === 'none'
+          ? 'repo_side'
+          : params.event.blockerOwner,
+      nextAction: params.nearLiveNextAction,
+      detail: describeRecentJourney(params.label, params.event, 'degraded but usable'),
     });
   }
 
@@ -429,7 +452,15 @@ function buildResearchTruth(
 ): FieldTrialSurfaceTruth {
   const persisted = readProviderProofState(projectRoot);
   if (persisted?.research) {
-    return buildTruth(persisted.research);
+    return buildTruth({
+      ...persisted.research,
+      blockerOwner:
+        persisted.research.proofState === 'externally_blocked'
+          ? 'external'
+          : persisted.research.proofState === 'degraded_but_usable'
+            ? 'repo_side'
+            : 'none',
+    });
   }
 
   if (outwardResearchStatus === 'available') {
@@ -505,7 +536,15 @@ function buildResearchTruth(
 function buildImageGenerationTruth(projectRoot: string): FieldTrialSurfaceTruth {
   const persisted = readProviderProofState(projectRoot);
   if (persisted?.imageGeneration) {
-    return buildTruth(persisted.imageGeneration);
+    return buildTruth({
+      ...persisted.imageGeneration,
+      blockerOwner:
+        persisted.imageGeneration.proofState === 'externally_blocked'
+          ? 'external'
+          : persisted.imageGeneration.proofState === 'degraded_but_usable'
+            ? 'repo_side'
+            : 'none',
+    });
   }
 
   const providerStatus = getMediaProviderStatus();

@@ -40,6 +40,7 @@ Important truth:
 
 - `STATUS: failed` in `setup verify` does **not** mean the host is broken if `SERVICE: running_ready` and the failure is only external blockers
 - for this host today, the expected non-green blockers are Alexa live proof and direct-provider research/image access
+- `npm run debug:pilot` now distinguishes fully live proof from `degraded_but_usable` fallback, so a journey can stay useful without being overstated as fully proven
 
 ## Flagship Demo Flows
 
@@ -189,6 +190,7 @@ Use this when Andrea is being dogfooded day to day instead of formally demoed.
    - `save this as a pilot issue`
    - `mark this flow as awkward`
 7. Review open issues with `npm run debug:pilot`.
+8. If `debug:pilot` shows `degraded_but_usable`, treat that as a real refinement target rather than a full pilot pass.
 
 ## Known Live Blockers On This Windows Host
 

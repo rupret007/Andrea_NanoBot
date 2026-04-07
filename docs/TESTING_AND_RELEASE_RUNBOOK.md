@@ -69,7 +69,8 @@ npm run debug:pilot
 Treat `debug:pilot` as the operator view for:
 
 - current pilot-readiness proof by surface
-- recent flagship journey outcomes
+- latest proof freshness plus 24h / 7d usage for each flagship journey
+- recent flagged outcomes, including degraded-but-usable fallback
 - open private pilot issues
 
 For cross-channel handoff and action-completion changes, add:
@@ -239,6 +240,7 @@ Important pilot-mode limits:
 
 - pilot issue capture is explicit only; Andrea does not silently file issues
 - raw transcripts are not stored in pilot instrumentation
+- `degraded_but_usable` means Andrea stayed useful on a bounded fallback path and should be treated as a refinement target, not a clean live-proof pass
 - set `ANDREA_PILOT_LOGGING_ENABLED=0` on a host if you need to disable pilot journey logging and explicit issue capture entirely
 
 If BlueBubbles is configured on that host, add:

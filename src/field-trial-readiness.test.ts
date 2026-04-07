@@ -173,8 +173,10 @@ describe('field-trial readiness', () => {
     expect(truth.bluebubbles.nextAction).toContain('Mac-side BlueBubbles server/webhook');
     expect(truth.research.proofState).toBe('externally_blocked');
     expect(truth.research.blocker).toContain('quota or billing limit');
+    expect(truth.research.blockerOwner).toBe('external');
     expect(truth.imageGeneration.proofState).toBe('externally_blocked');
     expect(truth.imageGeneration.blocker).toContain('quota or billing limit');
+    expect(truth.imageGeneration.blockerOwner).toBe('external');
   });
 
   it('marks work cockpit live-proven from a recent pilot journey and surfaces pilot issue state', () => {
@@ -206,5 +208,32 @@ describe('field-trial readiness', () => {
     expect(truth.journeys.work_cockpit.proofState).toBe('live_proven');
     expect(truth.pilotIssues.loggingEnabled).toBe(true);
     expect(truth.pilotIssues.openCount).toBe(0);
+  });
+
+  it('surfaces degraded-but-usable journey truth instead of counting it as live-proven', () => {
+    const started = startPilotJourney({
+      journeyId: 'cross_channel_handoff',
+      systemsInvolved: ['cross_channel_handoffs'],
+      summaryText: 'Cross-channel handoff or save',
+      routeKey: 'assistant_completion',
+      channel: 'telegram',
+      groupFolder: 'main',
+      chatJid: 'tg:main',
+      startedAt: '2026-04-07T19:00:00.000Z',
+    });
+    expect(started).toBeTruthy();
+    completePilotJourney({
+      eventId: started!.eventId,
+      outcome: 'degraded_usable',
+      blockerClass: 'local_degraded_path',
+      blockerOwner: 'repo_side',
+      completedAt: '2026-04-07T19:00:05.000Z',
+      summaryText: "I can't check that live right now.",
+    });
+
+    const truth = buildFieldTrialOperatorTruth({ projectRoot: tempDir });
+
+    expect(truth.journeys.cross_channel_handoff.proofState).toBe('degraded_but_usable');
+    expect(truth.journeys.cross_channel_handoff.blocker).toContain('local degraded path');
   });
 });

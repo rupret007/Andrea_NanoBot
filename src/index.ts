@@ -4258,6 +4258,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   const buildCapabilityPilotOutcome = (
     result: AssistantCapabilityResult,
     explicitHandoffTarget: 'telegram' | 'bluebubbles' | null,
+    explicitHandoffCreated = false,
   ): {
     outcome: PilotJourneyOutcome;
     blockerClass?: string | null;
@@ -4302,7 +4303,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (result.trace?.responseSource?.startsWith('media')) {
       systemsInvolved.add('image_generation');
     }
-    if (explicitHandoffTarget) {
+    if (explicitHandoffTarget && explicitHandoffCreated) {
       systemsInvolved.add('cross_channel_handoffs');
       systemsInvolved.add(explicitHandoffTarget);
     }
@@ -4338,7 +4339,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           ? result.trace.reason
           : null,
       systemsInvolved: [...systemsInvolved],
-      handoffCreated: Boolean(explicitHandoffTarget),
+      handoffCreated: explicitHandoffCreated,
       missionCreated: Boolean(
         result.conversationSeed?.subjectData?.missionId ||
           result.continuationCandidate?.missionId,
@@ -4694,6 +4695,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       } else {
         clearSharedAssistantCapabilitySeed(chatJid);
       }
+      let explicitHandoffCreated = false;
       if (explicitHandoffTarget && result.continuationCandidate?.handoffPayload) {
         const handoff = await deliverCompanionHandoff(
           {
@@ -4738,6 +4740,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             sendHandoffArtifact: sendCompanionHandoffArtifact,
           },
         );
+        explicitHandoffCreated = true;
         await channel.sendMessage(chatJid, handoff.speech);
       }
 
@@ -4756,7 +4759,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       );
       completeConversationPilotProof(
         pilotRecord,
-        buildCapabilityPilotOutcome(result, explicitHandoffTarget),
+        buildCapabilityPilotOutcome(
+          result,
+          explicitHandoffTarget,
+          explicitHandoffCreated,
+        ),
       );
       return true;
     } catch (err) {

@@ -71,7 +71,7 @@ Current host truth for the Windows field-trial machine:
 - the local Codex/OpenAI runtime backend and the unified `/cursor` work cockpit are live on this host
 - outward research and Telegram image generation remain **externally blocked** until a direct provider key with working quota/billing is restored
 - `npm run services:status`, `npm run setup -- --step verify`, and `npm run debug:status` are the operator truth surfaces and should agree on service health, serving commit, and exact blockers
-- `npm run debug:pilot` is the pilot-mode proof surface for flagship journeys, recent outcomes, and private dogfooding issues
+- `npm run debug:pilot` is the pilot-mode proof surface for flagship journeys, proof freshness, degraded-but-usable fallback, recent flagged outcomes, and private dogfooding issues
 
 For the current demo/field-trial script, use [docs/DEMO_CHECKLIST.md](docs/DEMO_CHECKLIST.md).
 
@@ -80,6 +80,7 @@ For the current demo/field-trial script, use [docs/DEMO_CHECKLIST.md](docs/DEMO_
 Andrea now has a bounded pilot and dogfooding loop on this host:
 
 - flagship journey proof is recorded privately in local SQLite as sanitized journey events
+- operator review now distinguishes `live_proven`, `degraded_but_usable`, and externally blocked pilot states so dogfooding does not confuse a bounded fallback with a clean live proof
 - explicit pilot issue capture is available from shared assistant chat with phrases like:
   - `this felt weird`
   - `that answer was off`

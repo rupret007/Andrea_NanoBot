@@ -5,6 +5,7 @@ export type ProviderProofStateKind =
   | 'live_proven'
   | 'near_live_only'
   | 'externally_blocked'
+  | 'degraded_but_usable'
   | 'not_intended_for_trial';
 
 export interface ProviderProofSurfaceState {
@@ -37,6 +38,7 @@ function normalizeSurfaceState(
     proofState !== 'live_proven' &&
     proofState !== 'near_live_only' &&
     proofState !== 'externally_blocked' &&
+    proofState !== 'degraded_but_usable' &&
     proofState !== 'not_intended_for_trial'
   ) {
     return null;

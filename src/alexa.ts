@@ -1956,7 +1956,7 @@ export function createAlexaSkill(
           ? result.trace.reason
           : null,
       systemsInvolved: [...systemsInvolved],
-      handoffCreated: Boolean(result.handoffOffer),
+      handoffCreated: false,
       missionCreated: Boolean(
         result.conversationSeed?.subjectData?.missionId ||
           result.continuationCandidate?.missionId,

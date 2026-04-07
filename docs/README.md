@@ -120,7 +120,8 @@ That operator-only view shows:
 
 - current pilot-readiness proof by surface
 - the 7 flagship journey proof states
-- recent successful or degraded flagship journey outcomes
+- proof freshness and 24h / 7d usage by flagship journey
+- recent flagged outcomes, including degraded-but-usable fallback
 - open private pilot issues
 
 Private pilot issue capture is explicit and local-only. During dogfooding, you can say:

@@ -8,6 +8,7 @@ import {
   listRecentPilotJourneyEvents,
 } from './db.js';
 import {
+  buildPilotReviewDigest,
   capturePilotIssue,
   classifyPilotIssueKind,
   completePilotJourney,
@@ -58,6 +59,14 @@ describe('pilot mode', () => {
         canonicalText: 'what should i say back to candace',
       })?.journeyId,
     ).toBe('candace_followthrough');
+    expect(
+      resolvePilotJourneyFromCapability({
+        capabilityId: 'research.answer',
+        channel: 'telegram',
+        text: 'What is Jar Jar Binks species?',
+        canonicalText: 'what is jar jar binks species',
+      }),
+    ).toBeNull();
   });
 
   it('records and finalizes bounded pilot journey events', () => {
@@ -173,5 +182,54 @@ describe('pilot mode', () => {
     expect(
       findRecentPilotJourneyEvent({ chatJid: 'tg:main', maxAgeMinutes: 30 }),
     ).toBeNull();
+  });
+
+  it('builds pilot review digests with usage counts and latest problems', () => {
+    const success = startPilotJourney({
+      journeyId: 'ordinary_chat',
+      systemsInvolved: ['assistant_shell'],
+      summaryText: 'Ordinary chat greeting',
+      routeKey: 'direct_quick_reply',
+      channel: 'telegram',
+      groupFolder: 'main',
+      chatJid: 'tg:main',
+      startedAt: '2026-04-07T17:00:00.000Z',
+    });
+    completePilotJourney({
+      eventId: success!.eventId,
+      outcome: 'success',
+      blockerOwner: 'none',
+      completedAt: '2026-04-07T17:00:02.000Z',
+      summaryText: 'Pretty calm over here.',
+    });
+
+    const degraded = startPilotJourney({
+      journeyId: 'cross_channel_handoff',
+      systemsInvolved: ['cross_channel_handoffs'],
+      summaryText: 'Cross-channel handoff or save',
+      routeKey: 'assistant_completion',
+      channel: 'telegram',
+      groupFolder: 'main',
+      chatJid: 'tg:main',
+      startedAt: '2026-04-07T18:00:00.000Z',
+    });
+    completePilotJourney({
+      eventId: degraded!.eventId,
+      outcome: 'degraded_usable',
+      blockerClass: 'local_degraded_path',
+      blockerOwner: 'repo_side',
+      completedAt: '2026-04-07T18:00:05.000Z',
+      summaryText: "I can't check that live right now.",
+    });
+
+    const digest = buildPilotReviewDigest(new Date('2026-04-07T18:30:00.000Z'));
+
+    expect(digest.totalUsage24h).toBe(2);
+    expect(digest.journeyDigests.ordinary_chat.usage24h).toBe(1);
+    expect(digest.journeyDigests.ordinary_chat.proofFreshness).toBe('fresh');
+    expect(digest.journeyDigests.cross_channel_handoff.latestProblemEvent?.outcome).toBe(
+      'degraded_usable',
+    );
+    expect(digest.recentProblemEvents).toHaveLength(1);
   });
 });

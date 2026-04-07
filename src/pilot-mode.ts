@@ -86,6 +86,24 @@ export interface PilotReviewSnapshot {
   liveProofCutoffIso: string;
 }
 
+export interface PilotJourneyReviewDigest {
+  journeyId: PilotJourneyId;
+  usage24h: number;
+  usage7d: number;
+  latestEvent: PilotJourneyEventRecord | null;
+  latestSuccessAt: string | null;
+  latestUsableAt: string | null;
+  proofFreshness: 'fresh' | 'stale' | 'never';
+  latestProblemEvent: PilotJourneyEventRecord | null;
+}
+
+export interface PilotReviewDigest extends PilotReviewSnapshot {
+  totalUsage24h: number;
+  totalUsage7d: number;
+  journeyDigests: Record<PilotJourneyId, PilotJourneyReviewDigest>;
+  recentProblemEvents: PilotJourneyEventRecord[];
+}
+
 export function isPilotLoggingEnabled(): boolean {
   const raw = (process.env.ANDREA_PILOT_LOGGING_ENABLED || '').trim().toLowerCase();
   if (!raw) return true;
@@ -210,21 +228,6 @@ export function resolvePilotJourneyFromCapability(params: {
       journeyId: 'cross_channel_handoff',
       systemsInvolved: ['knowledge_library', 'cross_channel_handoffs'],
       summaryText: 'Knowledge save or handoff',
-      ...systemSeed,
-    };
-  }
-
-  if (
-    params.capabilityId.startsWith('research.') ||
-    params.capabilityId.startsWith('media.')
-  ) {
-    return {
-      journeyId: 'cross_channel_handoff',
-      systemsInvolved: [
-        params.capabilityId.startsWith('media.') ? 'image_generation' : 'research',
-        'cross_channel_handoffs',
-      ],
-      summaryText: 'Richer handoff or saved follow-through',
       ...systemSeed,
     };
   }
@@ -435,7 +438,7 @@ export function buildPilotReviewSnapshot(
   const liveProofCutoffIso = new Date(
     now.getTime() - PILOT_LIVE_PROOF_DAYS * 24 * 60 * 60 * 1000,
   ).toISOString();
-  const recentEvents = listRecentPilotJourneyEvents({ limit: 100 }).filter(
+  const recentEvents = listRecentPilotJourneyEvents({ limit: 300 }).filter(
     (event) => event.startedAt >= retentionCutoffIso,
   );
   const openIssues = listPilotIssues({ status: 'open', limit: 50 });
@@ -446,5 +449,86 @@ export function buildPilotReviewSnapshot(
     openIssueCount: countPilotIssues('open'),
     latestOpenIssue: openIssues[0] || null,
     liveProofCutoffIso,
+  };
+}
+
+function buildJourneyReviewDigest(
+  journeyId: PilotJourneyId,
+  events: PilotJourneyEventRecord[],
+  liveProofCutoffIso: string,
+  usage24hCutoffIso: string,
+  usage7dCutoffIso: string,
+): PilotJourneyReviewDigest {
+  const latestEvent = events[0] || null;
+  const latestSuccess = events.find((event) => event.outcome === 'success') || null;
+  const latestUsable =
+    events.find(
+      (event) => event.outcome === 'success' || event.outcome === 'degraded_usable',
+    ) || null;
+  const latestProblemEvent =
+    events.find(
+      (event) =>
+        event.outcome === 'degraded_usable' ||
+        event.outcome === 'externally_blocked' ||
+        event.outcome === 'internal_failure',
+    ) || null;
+  const latestSuccessAt = latestSuccess?.completedAt || latestSuccess?.startedAt || null;
+  const latestUsableAt = latestUsable?.completedAt || latestUsable?.startedAt || null;
+
+  return {
+    journeyId,
+    usage24h: events.filter((event) => event.startedAt >= usage24hCutoffIso).length,
+    usage7d: events.filter((event) => event.startedAt >= usage7dCutoffIso).length,
+    latestEvent,
+    latestSuccessAt,
+    latestUsableAt,
+    proofFreshness: latestSuccessAt
+      ? latestSuccessAt >= liveProofCutoffIso
+        ? 'fresh'
+        : 'stale'
+      : 'never',
+    latestProblemEvent,
+  };
+}
+
+export function buildPilotReviewDigest(now = new Date()): PilotReviewDigest {
+  const snapshot = buildPilotReviewSnapshot(now);
+  const usage24hCutoffIso = new Date(
+    now.getTime() - 24 * 60 * 60 * 1000,
+  ).toISOString();
+  const usage7dCutoffIso = new Date(
+    now.getTime() - PILOT_LIVE_PROOF_DAYS * 24 * 60 * 60 * 1000,
+  ).toISOString();
+  const journeyDigests = Object.fromEntries(
+    FLAGSHIP_PILOT_JOURNEYS.map((journeyId) => {
+      const events = snapshot.recentEvents.filter((event) => event.journeyId === journeyId);
+      return [
+        journeyId,
+        buildJourneyReviewDigest(
+          journeyId,
+          events,
+          snapshot.liveProofCutoffIso,
+          usage24hCutoffIso,
+          usage7dCutoffIso,
+        ),
+      ];
+    }),
+  ) as Record<PilotJourneyId, PilotJourneyReviewDigest>;
+
+  return {
+    ...snapshot,
+    totalUsage24h: snapshot.recentEvents.filter(
+      (event) => event.startedAt >= usage24hCutoffIso,
+    ).length,
+    totalUsage7d: snapshot.recentEvents.filter(
+      (event) => event.startedAt >= usage7dCutoffIso,
+    ).length,
+    journeyDigests,
+    recentProblemEvents: snapshot.recentEvents.filter(
+      (event) =>
+        event.outcome === 'degraded_usable' ||
+        event.outcome === 'externally_blocked' ||
+        event.outcome === 'internal_failure',
+    ),
   };
 }
