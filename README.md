@@ -7,6 +7,10 @@
 </p>
 
 <p align="center">
+  This repository is now the canonical Andrea codebase. The older <code>ANDREA/nanoclaw</code> checkout is reference-only and should not be used as the runtime root.
+</p>
+
+<p align="center">
   Andrea is designed to be practically useful every day: tasks, reminders, research, coding help, guarded shopping approvals, and secure chat-based automation across multiple backend lanes.
 </p>
 
@@ -583,7 +587,8 @@ That distinction matters during incidents:
 - a passing credential probe does **not** guarantee the assistant lane can answer
 - an `initial_output_timeout` is a runtime-startup/output problem, not automatically a missing-key problem
 - `/debug-*` commands are operator-only and let you turn log volume up or down live without restarting the service
-- `npm run services:status` now shows the active repo root, branch, commit, DB path, assistant name source, registered main Telegram chat, and the local Alexa listener/OAuth health when Alexa is configured so state drift is visible immediately
+- `npm run services:status`, `npm run debug:status`, and `npm run setup -- --step verify` now show the serving commit, the local workspace `HEAD`, installed artifact mode, current launch mode, and exact external blockers so host truth and dependency truth do not get mixed together
+- if `SERVING_COMMIT_MATCHES_WORKSPACE_HEAD: false`, restart into the current repo before treating any live proof as current
 - when you need both restart and verify, run `npm run services:restart` first, wait for it to finish, then run `npm run setup -- --step verify`
 
 ## Documentation Map

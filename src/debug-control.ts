@@ -4,10 +4,12 @@ import path from 'path';
 import { getRouterState, setRouterState } from './db.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import {
+  buildRuntimeCommitTruth,
   detectWindowsInstallArtifacts,
   detectWindowsInstallMode,
   determineWindowsHostServiceState,
   formatInstallModeLabel,
+  readAlexaLastSignedRequestState,
   readHostControlSnapshot,
   reconcileWindowsHostState,
 } from './host-control.js';
@@ -385,6 +387,10 @@ export function formatDebugStatus(): string {
   const probe = getAssistantExecutionProbeState();
   const scopes = Object.keys(config.scopedOverrides).sort();
   const hostSnapshot = readHostControlSnapshot();
+  const commitTruth = buildRuntimeCommitTruth({
+    runtimeAuditState: hostSnapshot.runtimeAuditState,
+  });
+  const alexaLastSignedRequest = readAlexaLastSignedRequestState();
   const windowsHost =
     process.platform === 'win32' ? reconcileWindowsHostState() : null;
   const installedMode =
@@ -408,13 +414,24 @@ export function formatDebugStatus(): string {
     ...(probe.checkedAt ? [`- Last execution probe: ${probe.checkedAt}`] : []),
     ...(probe.detail ? [`- Probe detail: ${probe.detail}`] : []),
     `- Host state: ${hostServiceState}`,
-    `- Install mode: ${installedMode}`,
-    `- Active launch mode: ${formatInstallModeLabel(
+    `- Installed artifact mode: ${installedMode}`,
+    `- Current launch mode: ${formatInstallModeLabel(
       windowsHost?.activeLaunchMode || hostSnapshot.hostState?.installMode,
     )}`,
     `- Host dependency: ${windowsHost?.dependencyState || hostSnapshot.hostState?.dependencyState || 'unknown'}`,
     ...(windowsHost?.dependencyError
       ? [`- Host dependency detail: ${windowsHost.dependencyError}`]
+      : []),
+    `- Active repo root: ${commitTruth.activeRepoRoot}`,
+    `- Workspace repo root: ${commitTruth.workspaceRepoRoot}`,
+    `- Serving git branch: ${commitTruth.activeGitBranch}`,
+    `- Serving git commit: ${commitTruth.activeGitCommit}`,
+    `- Workspace branch: ${commitTruth.workspaceGitBranch}`,
+    `- Workspace HEAD: ${commitTruth.workspaceGitCommit}`,
+    `- Serving commit aligned: ${commitTruth.servingCommitMatchesWorkspaceHead ? 'yes' : 'no'}`,
+    `- Alexa last signed request: ${alexaLastSignedRequest?.requestType || 'none'}`,
+    ...(alexaLastSignedRequest?.updatedAt
+      ? [`- Alexa last signed at: ${alexaLastSignedRequest.updatedAt}`]
       : []),
     ...(hostSnapshot.nodeRuntime
       ? [

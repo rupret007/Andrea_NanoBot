@@ -168,10 +168,17 @@ npm run setup -- --step verify
 
 Confirm:
 
-- `STATUS: success`
-- `SERVICE: running`
-- `CREDENTIAL_RUNTIME_PROBE: ok`
+- `SERVICE: running_ready`
+- `ACTIVE_REPO_ROOT` matches `C:\Users\rupret\Desktop\Andrea_NanoBot`
+- `SERVING_COMMIT_MATCHES_WORKSPACE_HEAD: true` after the final restart into the release-candidate commit
+- `HOST_INSTALL_MODE` and `HOST_ACTIVE_LAUNCH_MODE` are both truthful and understandable
 - `CONFIGURED_CHANNELS: telegram`
+
+Important truth for this host:
+
+- a healthy host can still report `STATUS: failed` if `EXTERNAL_BLOCKERS` are present
+- on the current host, that usually means `outward_research_direct_provider_credentials_missing` and/or `alexa_live_signed_turn_missing`, not a broken service
+- if `SERVICE: running_ready` and the blocker is external, treat that as an exact release-candidate caveat rather than a host failure
 
 Then validate the public-safe Telegram surface:
 

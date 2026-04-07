@@ -83,6 +83,40 @@ function Write-JsonFile {
   [System.IO.File]::WriteAllText($Path, $json, $utf8NoBom)
 }
 
+function Get-GitRef {
+  param([string[]] $GitArgs)
+
+  try {
+    $output = & git -C $projectRoot @GitArgs 2>$null
+    if ($LASTEXITCODE -eq 0 -and $output) {
+      return ([string]::Join("`n", @($output))).Trim()
+    }
+  } catch {
+    # fall through to unknown
+  }
+
+  return 'unknown'
+}
+
+function Get-InstalledArtifactMode {
+  $hasScheduledTask = $false
+  if (Get-Command schtasks.exe -ErrorAction SilentlyContinue) {
+    try {
+      & schtasks.exe /Query /TN 'NanoClaw' *> $null
+      if ($LASTEXITCODE -eq 0) {
+        $hasScheduledTask = $true
+      }
+    } catch {
+      $hasScheduledTask = $false
+    }
+  }
+
+  $hasStartupFolder = $startupFolderScriptPath -and (Test-Path -LiteralPath $startupFolderScriptPath)
+  if ($hasScheduledTask) { return 'scheduled_task' }
+  if ($hasStartupFolder) { return 'startup_folder' }
+  return 'manual_host_control'
+}
+
 function Read-DotEnv {
   $result = @{}
   $envPath = Join-Path $projectRoot '.env'
@@ -1828,11 +1862,12 @@ function Show-Status {
     $phase = 'process_stale'
   }
 
-  $install = if ($hostState -and $hostState.installMode) {
+  $currentLaunchMode = if ($hostState -and $hostState.installMode) {
     [string] $hostState.installMode
   } else {
     $InstallMode
   }
+  $installedArtifactMode = Get-InstalledArtifactMode
   $assistantHealth = Get-AssistantHealthStatus -HostState $hostState -ReadyState $readyState -RuntimePid $runtimePid
   $telegramTransport = Get-TelegramTransportStatus -AssistantHealthMarker $assistantHealthMarker
   $telegramRoundtrip = Get-TelegramRoundtripStatus -AssistantHealthMarker $assistantHealthMarker -HostState $hostState -ReadyState $readyState
@@ -1844,6 +1879,10 @@ function Show-Status {
   $activeRepoRoot = if ($runtimeAudit -and $runtimeAudit.activeRepoRoot) { [string] $runtimeAudit.activeRepoRoot } else { $projectRoot }
   $activeGitBranch = if ($runtimeAudit -and $runtimeAudit.activeGitBranch) { [string] $runtimeAudit.activeGitBranch } else { 'unknown' }
   $activeGitCommit = if ($runtimeAudit -and $runtimeAudit.activeGitCommit) { [string] $runtimeAudit.activeGitCommit } else { 'unknown' }
+  $workspaceGitBranch = Get-GitRef -GitArgs @('rev-parse', '--abbrev-ref', 'HEAD')
+  $workspaceGitCommit = Get-GitRef -GitArgs @('rev-parse', 'HEAD')
+  $repoRootsMatch = ([string]$activeRepoRoot).ToLowerInvariant() -eq ([string]$projectRoot).ToLowerInvariant()
+  $servingCommitMatchesWorkspaceHead = $repoRootsMatch -and $activeGitCommit -ne 'unknown' -and $workspaceGitCommit -ne 'unknown' -and $activeGitCommit -eq $workspaceGitCommit
   $activeEntryPath = if ($runtimeAudit -and $runtimeAudit.activeEntryPath) { [string] $runtimeAudit.activeEntryPath } else { $entryPath }
   $activeEnvPath = if ($runtimeAudit -and $runtimeAudit.activeEnvPath) { [string] $runtimeAudit.activeEnvPath } else { (Join-Path $projectRoot '.env') }
   $activeStoreDbPath = if ($runtimeAudit -and $runtimeAudit.activeStoreDbPath) { [string] $runtimeAudit.activeStoreDbPath } else { (Join-Path $projectRoot 'store\\messages.db') }
@@ -1861,7 +1900,8 @@ function Show-Status {
   Write-Output ("HOST_STATUS: phase={0}" -f $phase)
   Write-Output ("HOST_STATUS: process_running={0}" -f $processRunning.ToString().ToLowerInvariant())
   Write-Output ("HOST_STATUS: pid={0}" -f ($(if ($runtimePid) { $runtimePid } else { 'none' })))
-  Write-Output ("HOST_STATUS: install_mode={0}" -f $install)
+  Write-Output ("HOST_STATUS: install_mode={0}" -f $installedArtifactMode)
+  Write-Output ("HOST_STATUS: current_launch_mode={0}" -f $currentLaunchMode)
   Write-Output ("HOST_STATUS: ready_boot_id={0}" -f ($(if ($readyState) { [string] $readyState.bootId } else { 'none' })))
   Write-Output ("HOST_STATUS: node_version={0}" -f ($(if ($runtimeMetadata) { [string] $runtimeMetadata.version } else { 'unknown' })))
   Write-Output ("HOST_STATUS: node_path={0}" -f ($(if ($runtimeMetadata) { [string] $runtimeMetadata.nodePath } else { 'unknown' })))
@@ -1892,6 +1932,7 @@ function Show-Status {
   Write-Output ("HOST_STATUS: alexa_public_oauth_detail={0}" -f ([string] $alexaPublic.oauthDetail))
   Write-Output ("HOST_STATUS: alexa_last_signed_request_at={0}" -f ($(if ($alexaLastSignedRequest -and $alexaLastSignedRequest.updatedAt) { [string] $alexaLastSignedRequest.updatedAt } else { 'none' })))
   Write-Output ("HOST_STATUS: alexa_last_signed_request_type={0}" -f ($(if ($alexaLastSignedRequest -and $alexaLastSignedRequest.requestType) { [string] $alexaLastSignedRequest.requestType } else { 'none' })))
+  Write-Output ("HOST_STATUS: alexa_live_proof={0}" -f ($(if ($alexaLastSignedRequest -and $alexaLastSignedRequest.requestType) { 'live_signed_turn_recorded' } else { 'near_live_signed_turn_missing' })))
   Write-Output ("HOST_STATUS: alexa_last_signed_intent={0}" -f ($(if ($alexaLastSignedRequest -and $alexaLastSignedRequest.intentName) { [string] $alexaLastSignedRequest.intentName } else { 'none' })))
   Write-Output ("HOST_STATUS: alexa_last_signed_group_folder={0}" -f ($(if ($alexaLastSignedRequest -and $alexaLastSignedRequest.groupFolder) { [string] $alexaLastSignedRequest.groupFolder } else { 'none' })))
   Write-Output ("HOST_STATUS: alexa_last_signed_response_source={0}" -f ($(if ($alexaLastSignedRequest -and $alexaLastSignedRequest.responseSource) { [string] $alexaLastSignedRequest.responseSource } else { 'none' })))
@@ -1926,6 +1967,10 @@ function Show-Status {
     Write-Output ("HOST_STATUS: active_repo_root={0}" -f $activeRepoRoot)
   Write-Output ("HOST_STATUS: active_git_branch={0}" -f $activeGitBranch)
   Write-Output ("HOST_STATUS: active_git_commit={0}" -f $activeGitCommit)
+  Write-Output ("HOST_STATUS: workspace_repo_root={0}" -f $projectRoot)
+  Write-Output ("HOST_STATUS: workspace_git_branch={0}" -f $workspaceGitBranch)
+  Write-Output ("HOST_STATUS: workspace_git_commit={0}" -f $workspaceGitCommit)
+  Write-Output ("HOST_STATUS: serving_commit_matches_workspace_head={0}" -f $servingCommitMatchesWorkspaceHead.ToString().ToLowerInvariant())
   Write-Output ("HOST_STATUS: active_entry_path={0}" -f $activeEntryPath)
   Write-Output ("HOST_STATUS: active_env_path={0}" -f $activeEnvPath)
   Write-Output ("HOST_STATUS: active_store_db_path={0}" -f $activeStoreDbPath)

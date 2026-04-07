@@ -1,3 +1,4 @@
+import { execFileSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -18,7 +19,7 @@ import {
   setDebugLevel,
 } from './debug-control.js';
 import { _closeDatabase, _initTestDatabase } from './db.js';
-import { persistNanoclawHostState } from './host-control.js';
+import { persistNanoclawHostState, writeRuntimeAuditState } from './host-control.js';
 import { getLogControlConfig, setLogControlConfig } from './logger.js';
 
 describe('debug control', () => {
@@ -183,6 +184,61 @@ describe('debug log tails', () => {
     expect(status).toContain(
       `Host log path: ${path.join(tempDir, 'logs', 'nanoclaw.host.log')}`,
     );
+  });
+
+  it('shows serving commit drift and missing Alexa live proof in debug status', () => {
+    fs.writeFileSync(path.join(tempDir, 'README.md'), 'hello\n');
+    execFileSync('git', ['init'], {
+      cwd: tempDir,
+      stdio: 'ignore',
+    });
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], {
+      cwd: tempDir,
+      stdio: 'ignore',
+    });
+    execFileSync('git', ['config', 'user.name', 'Test User'], {
+      cwd: tempDir,
+      stdio: 'ignore',
+    });
+    execFileSync('git', ['branch', '-M', 'main'], {
+      cwd: tempDir,
+      stdio: 'ignore',
+    });
+    execFileSync('git', ['add', 'README.md'], {
+      cwd: tempDir,
+      stdio: 'ignore',
+    });
+    execFileSync('git', ['commit', '-m', 'init'], {
+      cwd: tempDir,
+      stdio: 'ignore',
+    });
+
+    writeRuntimeAuditState({
+      updatedAt: '2026-04-07T12:00:00.000Z',
+      activeRepoRoot: tempDir,
+      activeGitBranch: 'main',
+      activeGitCommit: 'dc67cf98c6b2f3d19c6a3c70f3a6c54abe266794',
+      activeEntryPath: path.join(tempDir, 'dist', 'index.js'),
+      activeEnvPath: path.join(tempDir, '.env'),
+      activeStoreDbPath: path.join(tempDir, 'store', 'messages.db'),
+      activeRuntimeStateDir: path.join(tempDir, 'data', 'runtime'),
+      assistantName: 'Andrea',
+      assistantNameSource: 'env',
+      registeredMainChatJid: null,
+      registeredMainChatName: null,
+      registeredMainChatFolder: null,
+      registeredMainChatPresentInChats: false,
+      latestTelegramChatJid: null,
+      latestTelegramChatName: null,
+      mainChatAuditWarning: null,
+    });
+
+    const status = formatDebugStatus();
+    expect(status).toContain('Installed artifact mode:');
+    expect(status).toContain('Current launch mode:');
+    expect(status).toContain('Serving git commit: dc67cf98c6b2f3d19c6a3c70f3a6c54abe266794');
+    expect(status).toContain('Serving commit aligned: no');
+    expect(status).toContain('Alexa last signed request: none');
   });
 
   it('prefers current chat service lines over stale group container logs', () => {

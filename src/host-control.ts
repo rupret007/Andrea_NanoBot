@@ -159,6 +159,28 @@ export interface RuntimeAuditState {
   mainChatAuditWarning: string | null;
 }
 
+export interface AlexaSignedRequestState {
+  updatedAt: string;
+  requestId: string;
+  requestType: string;
+  intentName: string | null;
+  applicationIdVerified: boolean;
+  linkingResolved: boolean;
+  groupFolder: string | null;
+  responseSource: string;
+}
+
+export interface RuntimeCommitTruth {
+  activeRepoRoot: string;
+  activeGitBranch: string;
+  activeGitCommit: string;
+  workspaceRepoRoot: string;
+  workspaceGitBranch: string;
+  workspaceGitCommit: string;
+  workspaceMatchesActiveRepoRoot: boolean;
+  servingCommitMatchesWorkspaceHead: boolean;
+}
+
 export interface AssistantHealthAssessment {
   status: AssistantHealthStatus;
   detail: string;
@@ -410,6 +432,18 @@ export function getTelegramTransportStatePath(
 
 export function getRuntimeAuditStatePath(projectRoot = process.cwd()): string {
   return resolveHostControlPaths(projectRoot).runtimeAuditStatePath;
+}
+
+export function getAlexaLastSignedRequestStatePath(
+  projectRoot = process.cwd(),
+): string {
+  const suffix = process.env.VITEST_WORKER_ID
+    ? `-${process.env.VITEST_WORKER_ID}`
+    : '';
+  return path.join(
+    resolveHostControlPaths(projectRoot).runtimeStateDir,
+    `alexa-last-signed-request${suffix}.json`,
+  );
 }
 
 export function getHostLockPath(projectRoot = process.cwd()): string {
@@ -688,6 +722,32 @@ function normalizeRuntimeAuditState(value: unknown): RuntimeAuditState | null {
   };
 }
 
+function normalizeAlexaSignedRequestState(
+  value: unknown,
+): AlexaSignedRequestState | null {
+  if (!value || typeof value !== 'object') return null;
+  const input = value as Partial<AlexaSignedRequestState>;
+  if (
+    !isNonEmptyString(input.updatedAt) ||
+    !isNonEmptyString(input.requestId) ||
+    !isNonEmptyString(input.requestType) ||
+    !isNonEmptyString(input.responseSource)
+  ) {
+    return null;
+  }
+
+  return {
+    updatedAt: input.updatedAt,
+    requestId: input.requestId,
+    requestType: input.requestType,
+    intentName: isNonEmptyString(input.intentName) ? input.intentName : null,
+    applicationIdVerified: input.applicationIdVerified === true,
+    linkingResolved: input.linkingResolved === true,
+    groupFolder: isNonEmptyString(input.groupFolder) ? input.groupFolder : null,
+    responseSource: input.responseSource,
+  };
+}
+
 function normalizeHostState(
   value: unknown,
   projectRoot = process.cwd(),
@@ -751,6 +811,14 @@ export function readRuntimeAuditState(
 ): RuntimeAuditState | null {
   return normalizeRuntimeAuditState(
     readJsonFile<unknown>(getRuntimeAuditStatePath(projectRoot)),
+  );
+}
+
+export function readAlexaLastSignedRequestState(
+  projectRoot = process.cwd(),
+): AlexaSignedRequestState | null {
+  return normalizeAlexaSignedRequestState(
+    readJsonFile<unknown>(getAlexaLastSignedRequestStatePath(projectRoot)),
   );
 }
 
@@ -922,6 +990,61 @@ export function writeRuntimeAuditState(
   }
   writeJsonFile(getRuntimeAuditStatePath(projectRoot), normalized);
   return normalized;
+}
+
+function readGitRef(projectRoot: string, args: string[]): string {
+  try {
+    return execFileSync('git', ['-C', resolveProjectRoot(projectRoot), ...args], {
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+  } catch {
+    return 'unknown';
+  }
+}
+
+function normalizePathForComparison(input: string): string {
+  const normalized = path.resolve(input);
+  return process.platform === 'win32'
+    ? normalized.toLowerCase()
+    : normalized;
+}
+
+export function buildRuntimeCommitTruth(options?: {
+  projectRoot?: string;
+  runtimeAuditState?: RuntimeAuditState | null;
+}): RuntimeCommitTruth {
+  const workspaceRepoRoot = resolveProjectRoot(options?.projectRoot);
+  const runtimeAuditState =
+    options?.runtimeAuditState || readRuntimeAuditState(workspaceRepoRoot);
+  const activeRepoRoot = runtimeAuditState?.activeRepoRoot || workspaceRepoRoot;
+  const activeGitBranch = runtimeAuditState?.activeGitBranch || 'unknown';
+  const activeGitCommit = runtimeAuditState?.activeGitCommit || 'unknown';
+  const workspaceGitBranch = readGitRef(workspaceRepoRoot, [
+    'rev-parse',
+    '--abbrev-ref',
+    'HEAD',
+  ]);
+  const workspaceGitCommit = readGitRef(workspaceRepoRoot, ['rev-parse', 'HEAD']);
+  const workspaceMatchesActiveRepoRoot =
+    normalizePathForComparison(activeRepoRoot) ===
+    normalizePathForComparison(workspaceRepoRoot);
+  const servingCommitMatchesWorkspaceHead =
+    workspaceMatchesActiveRepoRoot &&
+    activeGitCommit !== 'unknown' &&
+    workspaceGitCommit !== 'unknown' &&
+    activeGitCommit === workspaceGitCommit;
+
+  return {
+    activeRepoRoot,
+    activeGitBranch,
+    activeGitCommit,
+    workspaceRepoRoot,
+    workspaceGitBranch,
+    workspaceGitCommit,
+    workspaceMatchesActiveRepoRoot,
+    servingCommitMatchesWorkspaceHead,
+  };
 }
 
 export function assessAssistantHealthState(input: {

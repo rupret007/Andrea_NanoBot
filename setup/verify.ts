@@ -12,6 +12,7 @@ import Database from 'better-sqlite3';
 import { OneCLI } from '@onecli-sh/sdk';
 
 import { createDirectAssistantRequestPolicy } from '../src/assistant-routing.js';
+import { getAndreaOpenAiBackendStatus } from '../src/andrea-openai-runtime.js';
 import { ONECLI_URL, RUNTIME_STATE_DIR, STORE_DIR } from '../src/config.js';
 import { runContainerAgent } from '../src/container-runner.js';
 import {
@@ -23,9 +24,11 @@ import { initDatabase } from '../src/db.js';
 import { buildDirectAssistantContinuationPrompt } from '../src/direct-assistant-continuation.js';
 import { readEnvFile } from '../src/env.js';
 import {
+  buildRuntimeCommitTruth,
   detectWindowsInstallArtifacts,
   detectWindowsInstallMode,
   formatInstallModeLabel,
+  readAlexaLastSignedRequestState,
   reconcileWindowsHostState,
 } from '../src/host-control.js';
 import { logger } from '../src/logger.js';
@@ -1045,18 +1048,36 @@ export function isLikelyNativeOpenAiEndpoint(value: string): boolean {
   }
 }
 
-function buildVerifyNextSteps(input: {
+export function buildVerifyNextSteps(input: {
   missingRequirements: string[];
   hasNativeOpenAiEndpointMisconfig: boolean;
   credentialRuntimeProbeReason?: string;
   assistantExecutionProbeReason?: string;
   configuredChannels?: string[];
   hostLastError?: string;
+  runtimeBackendLocalExecutionState?: string;
+  runtimeBackendAuthState?: string;
+  alexaConfigured?: boolean;
+  alexaLastSignedRequestType?: string;
 }): string {
   const steps: string[] = [];
 
   if (input.missingRequirements.includes('credentials')) {
-    if (input.hasNativeOpenAiEndpointMisconfig) {
+    if (
+      input.runtimeBackendLocalExecutionState === 'available_authenticated' &&
+      !input.hasNativeOpenAiEndpointMisconfig
+    ) {
+      steps.push(
+        'Outward research is blocked because direct provider credentials are missing. The local runtime backend is healthy, so work-cockpit flows can still run on this host.',
+      );
+    } else if (
+      input.runtimeBackendLocalExecutionState === 'available_auth_required' &&
+      !input.hasNativeOpenAiEndpointMisconfig
+    ) {
+      steps.push(
+        'Outward research is blocked because direct provider credentials are missing, and the local runtime backend still needs operator auth before local execution is available.',
+      );
+    } else if (input.hasNativeOpenAiEndpointMisconfig) {
       steps.push(
         'Update OPENAI_BASE_URL/ANTHROPIC_BASE_URL to an Anthropic-compatible gateway (not api.openai.com) and keep OPENAI_API_KEY, or configure ANTHROPIC_* credentials.',
       );
@@ -1100,7 +1121,7 @@ function buildVerifyNextSteps(input: {
   if (input.missingRequirements.includes('credential_runtime_unusable')) {
     if (input.credentialRuntimeProbeReason === 'insufficient_quota') {
       steps.push(
-        'Runtime credential check failed: OpenAI key has insufficient quota. Top up billing, replace OPENAI_API_KEY, or switch to direct ANTHROPIC_* credentials.',
+        'Outward research is blocked because the OpenAI-compatible provider key is out of quota or billing. Top up billing, replace OPENAI_API_KEY, or switch to direct ANTHROPIC_* credentials.',
       );
     } else if (input.credentialRuntimeProbeReason === 'invalid_model_alias') {
       steps.push(
@@ -1118,6 +1139,15 @@ function buildVerifyNextSteps(input: {
       input.assistantExecutionProbeReason === 'initial_output_timeout'
         ? 'Assistant execution probe failed before first output. Check /debug-status, /debug-logs current, and the container runtime path.'
         : 'Assistant execution probe failed inside the container runtime. Check /debug-status, /debug-logs current, and the latest group container log.',
+    );
+  }
+
+  if (
+    input.alexaConfigured &&
+    (input.alexaLastSignedRequestType || 'none') === 'none'
+  ) {
+    steps.push(
+      'Alexa live proof still needs one signed turn. Import docs/alexa/interaction-model.en-US.json if needed, run Build Model, then do one real voice or authenticated simulator request and confirm services:status records an IntentRequest.',
     );
   }
 
@@ -1255,7 +1285,18 @@ export async function run(_args: string[]): Promise<void> {
   let hostLastError = '';
   let hostDependencyState = 'unknown';
   let hostDependencyError = '';
+  let runtimeBackendState = 'unknown';
+  let runtimeBackendAuthState = 'unknown';
+  let runtimeBackendLocalExecutionState = 'unknown';
+  let runtimeBackendDetail = '';
   const mgr = getServiceManager();
+  const commitTruth = buildRuntimeCommitTruth({
+    projectRoot,
+    runtimeAuditState: hostSnapshot?.runtimeAuditState,
+  });
+  const alexaSignedRequest = readAlexaLastSignedRequestState(projectRoot);
+  const alexaLastSignedRequestType = alexaSignedRequest?.requestType || 'none';
+  const alexaLastSignedRequestAt = alexaSignedRequest?.updatedAt || 'none';
 
   if (!nodeOk && platform === 'windows' && hostSnapshot?.nodeRuntime) {
     nodeOk = hostSnapshot.nodeRuntime.version.startsWith('22.');
@@ -1341,6 +1382,23 @@ export async function run(_args: string[]): Promise<void> {
     'Service status',
   );
 
+  try {
+    const runtimeBackendStatus = await getAndreaOpenAiBackendStatus();
+    runtimeBackendState = runtimeBackendStatus.state;
+    runtimeBackendAuthState = runtimeBackendStatus.meta?.authState || 'unknown';
+    runtimeBackendLocalExecutionState =
+      runtimeBackendStatus.meta?.localExecutionState || 'unknown';
+    runtimeBackendDetail =
+      runtimeBackendStatus.meta?.localExecutionDetail ||
+      runtimeBackendStatus.detail ||
+      '';
+  } catch (err) {
+    runtimeBackendState = 'unavailable';
+    runtimeBackendAuthState = 'unknown';
+    runtimeBackendLocalExecutionState = 'unavailable';
+    runtimeBackendDetail = err instanceof Error ? err.message : String(err);
+  }
+
   // 2. Check container runtime
   const containerRuntime = resolveContainerRuntimeName();
   const containerRuntimeStatus = getContainerRuntimeStatus(containerRuntime);
@@ -1405,6 +1463,10 @@ export async function run(_args: string[]): Promise<void> {
     configuredEndpoint: openAiCompatibleEndpoint,
     gatewayState: localGatewayState,
   });
+  const alexaEnvVars = readEnvFile(['ALEXA_SKILL_ID']);
+  const alexaConfigured = Boolean(
+    process.env.ALEXA_SKILL_ID || alexaEnvVars.ALEXA_SKILL_ID,
+  );
 
   const credentialRuntimeProbe =
     probeEndpoints.length > 0 && credentials !== 'missing'
@@ -1608,7 +1670,39 @@ export async function run(_args: string[]): Promise<void> {
     assistantExecutionProbeReason: assistantExecutionProbe.reason,
     configuredChannels,
     hostLastError,
+    runtimeBackendLocalExecutionState,
+    runtimeBackendAuthState,
+    alexaConfigured,
+    alexaLastSignedRequestType,
   });
+
+  let outwardResearchStatus = 'not_configured';
+  if (nativeOpenAiEndpointMisconfig) {
+    outwardResearchStatus = 'misconfigured_native_openai_endpoint';
+  } else if (credentials === 'missing') {
+    outwardResearchStatus = 'missing_direct_provider_credentials';
+  } else if (credentialRuntimeProbe.status === 'failed') {
+    outwardResearchStatus =
+      credentialRuntimeProbe.reason === 'insufficient_quota'
+        ? 'quota_blocked'
+        : 'degraded';
+  } else if (credentialRuntimeProbe.status === 'ok') {
+    outwardResearchStatus = 'available';
+  }
+
+  const externalBlockers: string[] = [];
+  if (outwardResearchStatus === 'missing_direct_provider_credentials') {
+    externalBlockers.push('outward_research_direct_provider_credentials_missing');
+  } else if (outwardResearchStatus === 'quota_blocked') {
+    externalBlockers.push('outward_research_quota_blocked');
+  } else if (outwardResearchStatus === 'degraded') {
+    externalBlockers.push('outward_research_runtime_probe_failed');
+  } else if (outwardResearchStatus === 'misconfigured_native_openai_endpoint') {
+    externalBlockers.push('outward_research_endpoint_misconfigured');
+  }
+  if (alexaConfigured && alexaLastSignedRequestType === 'none') {
+    externalBlockers.push('alexa_live_signed_turn_missing');
+  }
 
   // Determine overall status
   const status =
@@ -1646,6 +1740,14 @@ export async function run(_args: string[]): Promise<void> {
       : '',
     CONTAINER_RUNTIME: containerRuntime,
     CONTAINER_RUNTIME_STATUS: containerRuntimeStatus,
+    ACTIVE_REPO_ROOT: commitTruth.activeRepoRoot,
+    WORKSPACE_REPO_ROOT: commitTruth.workspaceRepoRoot,
+    ACTIVE_GIT_BRANCH: commitTruth.activeGitBranch,
+    ACTIVE_GIT_COMMIT: commitTruth.activeGitCommit,
+    WORKSPACE_GIT_BRANCH: commitTruth.workspaceGitBranch,
+    WORKSPACE_GIT_COMMIT: commitTruth.workspaceGitCommit,
+    SERVING_COMMIT_MATCHES_WORKSPACE_HEAD:
+      commitTruth.servingCommitMatchesWorkspaceHead,
     CREDENTIALS: credentials,
     CREDENTIAL_MODE: credentialMode,
     CREDENTIAL_SOURCES: credentialSources,
@@ -1660,9 +1762,21 @@ export async function run(_args: string[]): Promise<void> {
     CREDENTIAL_RUNTIME_PROBE_ENDPOINTS: probeEndpoints.join(','),
     CREDENTIAL_RUNTIME_PROBE_REASON: credentialRuntimeProbe.reason,
     CREDENTIAL_RUNTIME_PROBE_DETAIL: credentialRuntimeProbe.detail || '',
+    OUTWARD_RESEARCH_STATUS: outwardResearchStatus,
     LOCAL_GATEWAY_HEALTH: localGatewayHealth.status,
     LOCAL_GATEWAY_HEALTH_REASON: localGatewayHealth.reason,
     LOCAL_GATEWAY_HEALTH_DETAIL: localGatewayHealth.detail || '',
+    RUNTIME_BACKEND_STATE: runtimeBackendState,
+    RUNTIME_BACKEND_AUTH_STATE: runtimeBackendAuthState,
+    RUNTIME_BACKEND_LOCAL_EXECUTION_STATE: runtimeBackendLocalExecutionState,
+    RUNTIME_BACKEND_DETAIL: runtimeBackendDetail,
+    ALEXA_LAST_SIGNED_REQUEST_TYPE: alexaLastSignedRequestType,
+    ALEXA_LAST_SIGNED_REQUEST_AT: alexaLastSignedRequestAt,
+    ALEXA_LIVE_PROOF: alexaConfigured
+      ? alexaLastSignedRequestType === 'none'
+        ? 'near_live_signed_turn_missing'
+        : 'live_signed_turn_recorded'
+      : 'not_configured',
     ASSISTANT_EXECUTION_PROBE: assistantExecutionProbe.status,
     ASSISTANT_EXECUTION_PROBE_REASON: assistantExecutionProbe.reason,
     ASSISTANT_EXECUTION_PROBE_DETAIL: assistantExecutionProbe.detail || '',
@@ -1671,6 +1785,7 @@ export async function run(_args: string[]): Promise<void> {
     REGISTERED_GROUPS: registeredGroups,
     MOUNT_ALLOWLIST: mountAllowlist,
     SERVICE_EXPECTED_STOPPED: serviceExpectedStopped,
+    EXTERNAL_BLOCKERS: externalBlockers.join(','),
     MISSING_REQUIREMENTS: missingRequirements.join(','),
     NEXT_STEPS: nextSteps,
     STATUS: status,

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  buildVerifyNextSteps,
   buildBlockedAssistantExecutionProbeResult,
   buildCredentialProbeMessagesUrl,
   classifyLocalGatewayHealthPayload,
@@ -65,6 +66,51 @@ describe('determineCredentialStatus', () => {
       credentialSources: 'env',
       onecliCredentialStatus: 'unreachable',
     });
+  });
+});
+
+describe('buildVerifyNextSteps', () => {
+  it('calls out outward research separately when the local runtime backend is healthy', () => {
+    const steps = buildVerifyNextSteps({
+      missingRequirements: ['credentials'],
+      hasNativeOpenAiEndpointMisconfig: false,
+      runtimeBackendLocalExecutionState: 'available_authenticated',
+    });
+
+    expect(steps).toContain(
+      'Outward research is blocked because direct provider credentials are missing.',
+    );
+    expect(steps).toContain(
+      'The local runtime backend is healthy, so work-cockpit flows can still run on this host.',
+    );
+  });
+
+  it('calls out quota-blocked outward research explicitly', () => {
+    const steps = buildVerifyNextSteps({
+      missingRequirements: ['credential_runtime_unusable'],
+      hasNativeOpenAiEndpointMisconfig: false,
+      credentialRuntimeProbeReason: 'insufficient_quota',
+    });
+
+    expect(steps).toContain(
+      'Outward research is blocked because the OpenAI-compatible provider key is out of quota or billing.',
+    );
+  });
+
+  it('adds the exact Alexa live-proof step when no signed turn is recorded', () => {
+    const steps = buildVerifyNextSteps({
+      missingRequirements: [],
+      hasNativeOpenAiEndpointMisconfig: false,
+      alexaConfigured: true,
+      alexaLastSignedRequestType: 'none',
+    });
+
+    expect(steps).toContain(
+      'Alexa live proof still needs one signed turn.',
+    );
+    expect(steps).toContain(
+      'confirm services:status records an IntentRequest.',
+    );
   });
 });
 

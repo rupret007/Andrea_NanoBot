@@ -81,10 +81,11 @@ For the default live demo, stay on Telegram conversation + direct replies + remi
 
 Current Alexa truth:
 
+- `Andrea_NanoBot` is the only canonical repo now; the older `ANDREA/nanoclaw` checkout is non-authoritative reference only
 - Telegram ordinary chat and the main flagship follow-through journeys were live-proven on this host on April 7, 2026
-- Alexa repo-side and near-live proof are strong, but full live acceptance still means one fresh signed Alexa utterance on this host
+- Alexa repo-side and near-live proof are strong, but full live acceptance still means one fresh signed Alexa utterance on this host after importing the current interaction model and running `Build Model`
 - BlueBubbles remains near-live until a reachable live server/webhook is reproved
-- outward-facing research is currently validated as a graceful blocked path on this host because the provider account is quota-blocked
+- outward-facing research is currently validated as a graceful blocked path on this host because direct provider credentials are not currently usable for live outward lookup, even though the local runtime backend remains healthy
 
 ## Operations, Security, And Release
 

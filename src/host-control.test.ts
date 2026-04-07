@@ -1,3 +1,4 @@
+import { execFileSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -6,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
   assessAssistantHealthState,
+  buildRuntimeCommitTruth,
   clearAssistantHealthState,
   clearAssistantReadyState,
   clearRuntimeAuditState,
@@ -265,6 +267,65 @@ describe('host control state', () => {
         latestTelegramChatName: 'Jeff',
       }),
     );
+  });
+
+  it('builds runtime commit truth from the serving process and workspace head', () => {
+    fs.writeFileSync(path.join(tempDir, 'README.md'), 'hello\n');
+    execFileSync('git', ['init'], {
+      cwd: tempDir,
+      stdio: 'ignore',
+    });
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], {
+      cwd: tempDir,
+      stdio: 'ignore',
+    });
+    execFileSync('git', ['config', 'user.name', 'Test User'], {
+      cwd: tempDir,
+      stdio: 'ignore',
+    });
+    execFileSync('git', ['branch', '-M', 'main'], {
+      cwd: tempDir,
+      stdio: 'ignore',
+    });
+    execFileSync('git', ['add', 'README.md'], {
+      cwd: tempDir,
+      stdio: 'ignore',
+    });
+    execFileSync('git', ['commit', '-m', 'init'], {
+      cwd: tempDir,
+      stdio: 'ignore',
+    });
+    const workspaceGitCommit = execFileSync('git', ['rev-parse', 'HEAD'], {
+      cwd: tempDir,
+      encoding: 'utf-8',
+    }).trim();
+
+    writeRuntimeAuditState({
+      updatedAt: '2026-04-04T20:00:00.000Z',
+      activeRepoRoot: tempDir,
+      activeGitBranch: 'main',
+      activeGitCommit: 'dc67cf98c6b2f3d19c6a3c70f3a6c54abe266794',
+      activeEntryPath: path.join(tempDir, 'dist', 'index.js'),
+      activeEnvPath: path.join(tempDir, '.env'),
+      activeStoreDbPath: path.join(tempDir, 'store', 'messages.db'),
+      activeRuntimeStateDir: path.join(tempDir, 'data', 'runtime'),
+      assistantName: 'Andrea',
+      assistantNameSource: 'env',
+      registeredMainChatJid: null,
+      registeredMainChatName: null,
+      registeredMainChatFolder: null,
+      registeredMainChatPresentInChats: false,
+      latestTelegramChatJid: null,
+      latestTelegramChatName: null,
+      mainChatAuditWarning: null,
+    });
+
+    const truth = buildRuntimeCommitTruth({ projectRoot: tempDir });
+    expect(truth.workspaceRepoRoot).toBe(tempDir);
+    expect(truth.workspaceGitBranch).toBe('main');
+    expect(truth.workspaceGitCommit).toBe(workspaceGitCommit);
+    expect(truth.workspaceMatchesActiveRepoRoot).toBe(true);
+    expect(truth.servingCommitMatchesWorkspaceHead).toBe(false);
   });
 });
 
