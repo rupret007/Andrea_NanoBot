@@ -88,13 +88,18 @@ describe('buildVerifyNextSteps', () => {
 
   it('calls out quota-blocked outward research explicitly', () => {
     const steps = buildVerifyNextSteps({
-      missingRequirements: ['credential_runtime_unusable'],
+      missingRequirements: ['credentials'],
       hasNativeOpenAiEndpointMisconfig: false,
       credentialRuntimeProbeReason: 'insufficient_quota',
+      outwardResearchStatus: 'quota_blocked',
+      runtimeBackendLocalExecutionState: 'available_authenticated',
     });
 
     expect(steps).toContain(
-      'Outward research is blocked because the OpenAI-compatible provider key is out of quota or billing.',
+      'Outward research is blocked because the direct provider account on this host is out of quota or billing.',
+    );
+    expect(steps).toContain(
+      'The local runtime backend is healthy, so work-cockpit flows can still run on this host.',
     );
   });
 

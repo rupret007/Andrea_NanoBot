@@ -16,6 +16,13 @@ In flagship journeys, BlueBubbles is for calm message help and lightweight follo
 
 ## Current Truth
 
+Current host reality for the Windows field-trial machine:
+
+- BlueBubbles code and the near-live harness are present in `Andrea_NanoBot`
+- the real BlueBubbles server/webhook is **not installed or connected on this PC**
+- this means BlueBubbles is currently **externally blocked on the Windows host**, not freshly live-proven
+- the exact external next step is to reconnect the Mac-side BlueBubbles server/webhook and point this Windows host's `BLUEBUBBLES_*` config at it again
+
 Implemented now:
 
 - live BlueBubbles config parsing for host, port, linked group folder, and one allowed chat GUID
@@ -160,6 +167,7 @@ That harness proves:
 ## Live Proof Boundary
 
 The strongest truthful proof on a machine without a reachable BlueBubbles server is `npm run debug:bluebubbles`.
+That is the current truthful bar on this Windows host.
 
 To claim fully live BlueBubbles proof, you still need:
 

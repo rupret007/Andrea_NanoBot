@@ -221,6 +221,37 @@ function Invoke-LocalHealthProbe {
   }
 }
 
+function Get-FieldTrialTruthSnapshot {
+  $runnerPath = Join-Path $projectRoot 'scripts\run-with-pinned-node.mjs'
+  $scriptPath = Join-Path $projectRoot 'scripts\field-trial-readiness.ts'
+  $tsxPath = Join-Path $projectRoot 'node_modules\tsx\dist\cli.mjs'
+  if (
+    !(Test-Path -LiteralPath $runnerPath) -or
+    !(Test-Path -LiteralPath $scriptPath) -or
+    !(Test-Path -LiteralPath $tsxPath)
+  ) {
+    return $null
+  }
+
+  $nodeCommand = Get-Command node.exe -ErrorAction SilentlyContinue
+  if (-not $nodeCommand) {
+    $nodeCommand = Get-Command node -ErrorAction SilentlyContinue
+  }
+  if (-not $nodeCommand) {
+    return $null
+  }
+
+  try {
+    $json = & $nodeCommand.Source $runnerPath $tsxPath $scriptPath 2>$null
+    if ([string]::IsNullOrWhiteSpace($json)) {
+      return $null
+    }
+    return $json | ConvertFrom-Json
+  } catch {
+    return $null
+  }
+}
+
 function Get-AlexaLocalStatus {
   param([hashtable] $DotEnv)
 
@@ -1896,6 +1927,7 @@ function Show-Status {
   $latestTelegramChatJid = if ($runtimeAudit -and $runtimeAudit.latestTelegramChatJid) { [string] $runtimeAudit.latestTelegramChatJid } else { 'none' }
   $latestTelegramChatName = if ($runtimeAudit -and $runtimeAudit.latestTelegramChatName) { [string] $runtimeAudit.latestTelegramChatName } else { 'none' }
   $mainChatAuditWarning = if ($runtimeAudit -and $runtimeAudit.mainChatAuditWarning) { [string] $runtimeAudit.mainChatAuditWarning } else { 'none' }
+  $fieldTrialTruth = Get-FieldTrialTruthSnapshot
 
   Write-Output ("HOST_STATUS: phase={0}" -f $phase)
   Write-Output ("HOST_STATUS: process_running={0}" -f $processRunning.ToString().ToLowerInvariant())
@@ -1951,6 +1983,22 @@ function Show-Status {
   Write-Output ("HOST_STATUS: telegram_live_probe_configured={0}" -f ([string] $telegramProbeConfig.configured).ToLowerInvariant())
   Write-Output ("HOST_STATUS: telegram_live_probe_detail={0}" -f ([string] $telegramProbeConfig.detail))
   Write-Output ("HOST_STATUS: telegram_roundtrip_last_ok_at={0}" -f ($(if ($telegramRoundtrip.lastOkAt) { [string] $telegramRoundtrip.lastOkAt } else { 'none' })))
+  if ($fieldTrialTruth) {
+    Write-Output ("HOST_STATUS: telegram_live_proof={0}" -f ([string] $fieldTrialTruth.telegram.proofState))
+    Write-Output ("HOST_STATUS: telegram_live_proof_detail={0}" -f ([string] $fieldTrialTruth.telegram.detail))
+    Write-Output ("HOST_STATUS: telegram_live_proof_blocker={0}" -f ($(if ($fieldTrialTruth.telegram.blocker) { [string] $fieldTrialTruth.telegram.blocker } else { 'none' })))
+    Write-Output ("HOST_STATUS: telegram_live_proof_next_action={0}" -f ($(if ($fieldTrialTruth.telegram.nextAction) { [string] $fieldTrialTruth.telegram.nextAction } else { 'none' })))
+    Write-Output ("HOST_STATUS: bluebubbles_proof={0}" -f ([string] $fieldTrialTruth.bluebubbles.proofState))
+    Write-Output ("HOST_STATUS: bluebubbles_proof_detail={0}" -f ([string] $fieldTrialTruth.bluebubbles.detail))
+    Write-Output ("HOST_STATUS: bluebubbles_proof_blocker={0}" -f ($(if ($fieldTrialTruth.bluebubbles.blocker) { [string] $fieldTrialTruth.bluebubbles.blocker } else { 'none' })))
+    Write-Output ("HOST_STATUS: bluebubbles_proof_next_action={0}" -f ($(if ($fieldTrialTruth.bluebubbles.nextAction) { [string] $fieldTrialTruth.bluebubbles.nextAction } else { 'none' })))
+    Write-Output ("HOST_STATUS: outward_research_proof={0}" -f ([string] $fieldTrialTruth.research.proofState))
+    Write-Output ("HOST_STATUS: outward_research_blocker={0}" -f ($(if ($fieldTrialTruth.research.blocker) { [string] $fieldTrialTruth.research.blocker } else { 'none' })))
+    Write-Output ("HOST_STATUS: outward_research_next_action={0}" -f ($(if ($fieldTrialTruth.research.nextAction) { [string] $fieldTrialTruth.research.nextAction } else { 'none' })))
+    Write-Output ("HOST_STATUS: image_generation_proof={0}" -f ([string] $fieldTrialTruth.imageGeneration.proofState))
+    Write-Output ("HOST_STATUS: image_generation_blocker={0}" -f ($(if ($fieldTrialTruth.imageGeneration.blocker) { [string] $fieldTrialTruth.imageGeneration.blocker } else { 'none' })))
+    Write-Output ("HOST_STATUS: image_generation_next_action={0}" -f ($(if ($fieldTrialTruth.imageGeneration.nextAction) { [string] $fieldTrialTruth.imageGeneration.nextAction } else { 'none' })))
+  }
     Write-Output ("HOST_STATUS: telegram_roundtrip_last_probe_at={0}" -f ($(if ($telegramRoundtrip.lastProbeAt) { [string] $telegramRoundtrip.lastProbeAt } else { 'none' })))
     Write-Output ("HOST_STATUS: telegram_roundtrip_next_due_at={0}" -f ($(if ($telegramRoundtrip.nextDueAt) { [string] $telegramRoundtrip.nextDueAt } else { 'none' })))
     Write-Output ("HOST_STATUS: runtime_backend_enabled={0}" -f ([string] $backendSnapshot.enabled).ToLowerInvariant())

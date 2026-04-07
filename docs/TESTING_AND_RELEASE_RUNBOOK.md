@@ -178,6 +178,7 @@ Important truth for this host:
 
 - a healthy host can still report `STATUS: failed` if `EXTERNAL_BLOCKERS` are present
 - on the current host, that usually means `outward_research_direct_provider_credentials_missing` and/or `alexa_live_signed_turn_missing`, not a broken service
+- BlueBubbles is currently externally blocked on this Windows machine because the real BlueBubbles server/webhook is not installed or connected here
 - if `SERVICE: running_ready` and the blocker is external, treat that as an exact release-candidate caveat rather than a host failure
 
 Then validate the public-safe Telegram surface:
@@ -337,7 +338,7 @@ Current truthful closeout note:
 - Telegram is the live-proven release-candidate surface on this host for this pass
 - Alexa listener, OAuth, public ingress, and pinned Node 22 are healthy, but this pass has not yet reproven one fresh signed live voice `IntentRequest`
 - if `npm run services:status` still shows `alexa_last_signed_request_type=none`, the remaining Alexa blocker is one human-operated voice or authenticated simulator run after importing `docs/alexa/interaction-model.en-US.json` and running `Build Model`
-- BlueBubbles remains near-live unless a reachable live webhook/server is reproved on the same host
+- BlueBubbles remains externally blocked on this host unless a reachable live webhook/server is restored here
 - outward-facing research is currently a graceful blocked-path proof on this host because the provider account is quota-blocked
 - typed Alexa+ app chat is not an authoritative proof surface unless Andrea logs a real signed follow-up `IntentRequest` after launch
 - interaction-model changes require a fresh import of `docs/alexa/interaction-model.en-US.json` plus `Build Model` in the Alexa Developer Console before live utterance failures count against the repo

@@ -1,3 +1,5 @@
+import fs from 'fs';
+
 import {
   createAlexaSkill,
   getAlexaStatus,
@@ -9,6 +11,7 @@ import {
 } from '../src/alexa-identity.js';
 import { loadAlexaConversationState } from '../src/alexa-conversation.js';
 import { _initTestDatabase, setRegisteredGroup } from '../src/db.js';
+import { getAlexaLastSignedRequestStatePath } from '../src/host-control.js';
 import { handleLifeThreadCommand } from '../src/life-threads.js';
 import type { RequestEnvelope, ResponseEnvelope } from 'ask-sdk-model';
 
@@ -107,102 +110,116 @@ function extractSpeechText(responseEnvelope: ResponseEnvelope): string {
 }
 
 async function main(): Promise<void> {
-  _initTestDatabase();
-  setRegisteredGroup('tg:main', {
-    name: 'Main',
-    folder: 'main',
-    trigger: '@Andrea',
-    added_at: '2026-04-05T08:00:00Z',
-    requiresTrigger: false,
-    isMain: true,
-  });
-  handleLifeThreadCommand({
-    groupFolder: 'main',
-    channel: 'telegram',
-    chatJid: 'tg:main',
-    text: 'save this under the Candace thread',
-    replyText: 'Dinner plans tonight still need a clean answer.',
-    now: new Date('2026-04-05T08:00:00Z'),
-  });
+  const signedRequestStatePath = getAlexaLastSignedRequestStatePath();
+  const previousSignedRequestState = fs.existsSync(signedRequestStatePath)
+    ? fs.readFileSync(signedRequestStatePath, 'utf8')
+    : null;
 
-  const linked = seedConfiguredAlexaLinkedAccount({
-    ALEXA_LINKED_ACCOUNT_TOKEN: 'debug-linked-token',
-    ALEXA_LINKED_ACCOUNT_NAME: 'Andrea Alexa',
-    ALEXA_LINKED_ACCOUNT_GROUP_FOLDER: 'main',
-    ALEXA_LINKED_ACCOUNT_ALLOWED_USER_ID: 'amzn1.ask.account.debug-user',
-    ALEXA_LINKED_ACCOUNT_ALLOWED_PERSON_ID: 'amzn1.ask.person.debug-person',
-  });
+  try {
+    _initTestDatabase();
+    setRegisteredGroup('tg:main', {
+      name: 'Main',
+      folder: 'main',
+      trigger: '@Andrea',
+      added_at: '2026-04-05T08:00:00Z',
+      requiresTrigger: false,
+      isMain: true,
+    });
+    handleLifeThreadCommand({
+      groupFolder: 'main',
+      channel: 'telegram',
+      chatJid: 'tg:main',
+      text: 'save this under the Candace thread',
+      replyText: 'Dinner plans tonight still need a clean answer.',
+      now: new Date('2026-04-05T08:00:00Z'),
+    });
 
-  const principalKey = getAlexaPrincipalKey({
-    userId: 'amzn1.ask.account.debug-user',
-    personId: 'amzn1.ask.person.debug-person',
-  });
+    const linked = seedConfiguredAlexaLinkedAccount({
+      ALEXA_LINKED_ACCOUNT_TOKEN: 'debug-linked-token',
+      ALEXA_LINKED_ACCOUNT_NAME: 'Andrea Alexa',
+      ALEXA_LINKED_ACCOUNT_GROUP_FOLDER: 'main',
+      ALEXA_LINKED_ACCOUNT_ALLOWED_USER_ID: 'amzn1.ask.account.debug-user',
+      ALEXA_LINKED_ACCOUNT_ALLOWED_PERSON_ID: 'amzn1.ask.person.debug-person',
+    });
 
-  const skill = createAlexaSkill(buildConfig());
-  const turns: Array<{
-    label: string;
-    envelope: RequestEnvelope;
-  }> = [
-    {
-      label: 'Launch',
-      envelope: buildBaseEnvelope(),
-    },
-    {
-      label: 'Forgetting',
-      envelope: buildIntentEnvelope('WhatAmIForgettingIntent'),
-    },
-    {
-      label: 'Anything else',
-      envelope: buildIntentEnvelope('AnythingElseIntent'),
-    },
-    {
-      label: 'Candace follow-up',
-      envelope: buildIntentEnvelope('ConversationalFollowupIntent', {
-        followupText: 'what about Candace',
-      }),
-    },
-    {
-      label: 'Tonight',
-      envelope: buildIntentEnvelope('EveningResetIntent'),
-    },
-    {
-      label: 'Directness',
-      envelope: buildIntentEnvelope('MemoryControlIntent', {
-        memoryCommand: 'a little more direct',
-      }),
-    },
-  ];
+    const principalKey = getAlexaPrincipalKey({
+      userId: 'amzn1.ask.account.debug-user',
+      personId: 'amzn1.ask.person.debug-person',
+    });
 
-  for (const turn of turns) {
-    const response = await skill.invoke(turn.envelope);
-    const status = getAlexaStatus(buildConfig(), true, 4300);
-    const state = linked
-      ? loadAlexaConversationState(principalKey, linked.accessTokenHash)
-      : undefined;
-    const dailyContextRaw = state?.subjectData.dailyCompanionContextJson?.trim();
-    const dailyContext = dailyContextRaw
-      ? (JSON.parse(dailyContextRaw) as {
-          mode?: string;
-          leadReason?: string;
-          usedThreadTitles?: string[];
-        })
-      : undefined;
+    const skill = createAlexaSkill(buildConfig());
+    const turns: Array<{
+      label: string;
+      envelope: RequestEnvelope;
+    }> = [
+      {
+        label: 'Launch',
+        envelope: buildBaseEnvelope(),
+      },
+      {
+        label: 'Forgetting',
+        envelope: buildIntentEnvelope('WhatAmIForgettingIntent'),
+      },
+      {
+        label: 'Anything else',
+        envelope: buildIntentEnvelope('AnythingElseIntent'),
+      },
+      {
+        label: 'Candace follow-up',
+        envelope: buildIntentEnvelope('ConversationalFollowupIntent', {
+          followupText: 'what about Candace',
+        }),
+      },
+      {
+        label: 'Tonight',
+        envelope: buildIntentEnvelope('EveningResetIntent'),
+      },
+      {
+        label: 'Directness',
+        envelope: buildIntentEnvelope('MemoryControlIntent', {
+          memoryCommand: 'a little more direct',
+        }),
+      },
+    ];
 
-    process.stdout.write(`TURN: ${turn.label}\n`);
-    process.stdout.write(`SPEECH: ${extractSpeechText(response)}\n`);
-    process.stdout.write(
-      `SIGNED: ${status.lastSignedRequestType || 'unknown'} / ${
-        status.lastSignedIntent || 'none'
-      } / ${status.lastSignedResponseSource || 'unknown'}\n`,
-    );
-    process.stdout.write(
-      `STATE: ${state?.subjectKind || 'none'} / ${state?.summaryText || 'none'}\n`,
-    );
-    process.stdout.write(
-      `COMPANION: ${dailyContext?.mode || 'none'} / ${
-        dailyContext?.leadReason || 'none'
-      } / ${(dailyContext?.usedThreadTitles || []).join(', ') || 'none'}\n\n`,
-    );
+    for (const turn of turns) {
+      const response = await skill.invoke(turn.envelope);
+      const status = getAlexaStatus(buildConfig(), true, 4300);
+      const state = linked
+        ? loadAlexaConversationState(principalKey, linked.accessTokenHash)
+        : undefined;
+      const dailyContextRaw =
+        state?.subjectData.dailyCompanionContextJson?.trim();
+      const dailyContext = dailyContextRaw
+        ? (JSON.parse(dailyContextRaw) as {
+            mode?: string;
+            leadReason?: string;
+            usedThreadTitles?: string[];
+          })
+        : undefined;
+
+      process.stdout.write(`TURN: ${turn.label}\n`);
+      process.stdout.write(`SPEECH: ${extractSpeechText(response)}\n`);
+      process.stdout.write(
+        `SIGNED: ${status.lastSignedRequestType || 'unknown'} / ${
+          status.lastSignedIntent || 'none'
+        } / ${status.lastSignedResponseSource || 'unknown'}\n`,
+      );
+      process.stdout.write(
+        `STATE: ${state?.subjectKind || 'none'} / ${state?.summaryText || 'none'}\n`,
+      );
+      process.stdout.write(
+        `COMPANION: ${dailyContext?.mode || 'none'} / ${
+          dailyContext?.leadReason || 'none'
+        } / ${(dailyContext?.usedThreadTitles || []).join(', ') || 'none'}\n\n`,
+      );
+    }
+  } finally {
+    if (previousSignedRequestState == null) {
+      fs.rmSync(signedRequestStatePath, { force: true });
+    } else {
+      fs.writeFileSync(signedRequestStatePath, previousSignedRequestState, 'utf8');
+    }
   }
 }
 

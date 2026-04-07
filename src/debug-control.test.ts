@@ -184,6 +184,9 @@ describe('debug log tails', () => {
     expect(status).toContain(
       `Host log path: ${path.join(tempDir, 'logs', 'nanoclaw.host.log')}`,
     );
+    expect(status).toContain('BlueBubbles proof:');
+    expect(status).toContain('Outward research proof:');
+    expect(status).toContain('Image generation proof:');
   });
 
   it('shows serving commit drift and missing Alexa live proof in debug status', () => {

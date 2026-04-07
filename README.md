@@ -61,6 +61,19 @@ npm run debug:signature-flows
 
 Treat that flagship-flow suite and harness as the main product proof. The subsystem harnesses are still useful, but they are supporting checks now.
 
+## Field-Trial Truth
+
+Current host truth for the Windows field-trial machine:
+
+- Telegram is the richest **live-proven** surface.
+- Alexa is **near-live only** until one fresh signed `IntentRequest` is recorded on this host.
+- BlueBubbles is **externally blocked on this PC** because the real BlueBubbles server/webhook lives on the Mac-side environment and is not currently installed/configured here.
+- the local Codex/OpenAI runtime backend and the unified `/cursor` work cockpit are live on this host
+- outward research and Telegram image generation remain **externally blocked** until a direct provider key with working quota/billing is restored
+- `npm run services:status`, `npm run setup -- --step verify`, and `npm run debug:status` are the operator truth surfaces and should agree on service health, serving commit, and exact blockers
+
+For the current demo/field-trial script, use [docs/DEMO_CHECKLIST.md](docs/DEMO_CHECKLIST.md).
+
 ## What Andrea Is
 
 Andrea is one public assistant identity built on a secure NanoClaw runtime.
@@ -242,7 +255,7 @@ BlueBubbles is now a real bounded Andrea messaging channel, not just prep work.
 - richer details and artifacts still hand off explicitly to Telegram when that is the safer surface
 - BlueBubbles does **not** become a main control chat and does not expose work-cockpit or admin/runtime controls
 
-On this host, BlueBubbles remains near-live for release-candidate proof until a reachable webhook/server is reproved.
+On this host, BlueBubbles remains externally blocked for field-trial proof until a reachable Mac-side webhook/server is restored to this Windows machine.
 
 See [docs/BLUEBUBBLES_CHANNEL_PREP.md](docs/BLUEBUBBLES_CHANNEL_PREP.md) for the live V1 scope, config, webhook/send model, and exact current limits.
 

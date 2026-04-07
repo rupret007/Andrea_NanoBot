@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   reconcileWorkCockpitCurrentSelection,
   resolveRuntimeDashboardJobId,
+  shouldClearStaleWorkCockpitSelection,
 } from './work-cockpit-targets.js';
 
 describe('resolveRuntimeDashboardJobId', () => {
@@ -75,5 +76,37 @@ describe('reconcileWorkCockpitCurrentSelection', () => {
       laneId: 'cursor',
       jobId: 'cursor-job-2',
     });
+  });
+});
+
+describe('shouldClearStaleWorkCockpitSelection', () => {
+  it('clears a shared selection only when the selected job is missing', () => {
+    expect(
+      shouldClearStaleWorkCockpitSelection({
+        selectedJobId: 'runtime-job-1',
+        selectedExists: false,
+        status: 'succeeded',
+      }),
+    ).toBe(true);
+  });
+
+  it('keeps completed jobs selectable in the work cockpit', () => {
+    expect(
+      shouldClearStaleWorkCockpitSelection({
+        selectedJobId: 'runtime-job-2',
+        selectedExists: true,
+        status: 'succeeded',
+      }),
+    ).toBe(false);
+  });
+
+  it('keeps running jobs selectable in the work cockpit', () => {
+    expect(
+      shouldClearStaleWorkCockpitSelection({
+        selectedJobId: 'runtime-job-3',
+        selectedExists: true,
+        status: 'running',
+      }),
+    ).toBe(false);
   });
 });

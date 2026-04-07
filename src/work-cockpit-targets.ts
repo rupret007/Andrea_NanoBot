@@ -48,3 +48,14 @@ export function reconcileWorkCockpitCurrentSelection(params: {
   }
   return null;
 }
+
+export function shouldClearStaleWorkCockpitSelection(params: {
+  selectedJobId?: string | null;
+  selectedExists: boolean;
+  status?: string | null;
+}): boolean {
+  if (!params.selectedJobId) {
+    return false;
+  }
+  return !params.selectedExists;
+}

@@ -13,6 +13,7 @@ import {
   readHostControlSnapshot,
   reconcileWindowsHostState,
 } from './host-control.js';
+import { buildFieldTrialOperatorTruth } from './field-trial-readiness.js';
 import {
   getLogControlConfig,
   type LogControlConfig,
@@ -393,6 +394,10 @@ export function formatDebugStatus(): string {
   const alexaLastSignedRequest = readAlexaLastSignedRequestState();
   const windowsHost =
     process.platform === 'win32' ? reconcileWindowsHostState() : null;
+  const fieldTrialTruth = buildFieldTrialOperatorTruth({
+    hostSnapshot,
+    windowsHost,
+  });
   const installedMode =
     process.platform === 'win32'
       ? formatInstallModeLabel(
@@ -429,9 +434,48 @@ export function formatDebugStatus(): string {
     `- Workspace branch: ${commitTruth.workspaceGitBranch}`,
     `- Workspace HEAD: ${commitTruth.workspaceGitCommit}`,
     `- Serving commit aligned: ${commitTruth.servingCommitMatchesWorkspaceHead ? 'yes' : 'no'}`,
+    `- Telegram proof: ${fieldTrialTruth.telegram.proofState}`,
+    `- Telegram proof detail: ${fieldTrialTruth.telegram.detail}`,
+    ...(fieldTrialTruth.telegram.blocker
+      ? [`- Telegram blocker: ${fieldTrialTruth.telegram.blocker}`]
+      : []),
+    ...(fieldTrialTruth.telegram.nextAction
+      ? [`- Telegram next step: ${fieldTrialTruth.telegram.nextAction}`]
+      : []),
+    `- Alexa proof: ${fieldTrialTruth.alexa.proofState}`,
     `- Alexa last signed request: ${alexaLastSignedRequest?.requestType || 'none'}`,
     ...(alexaLastSignedRequest?.updatedAt
       ? [`- Alexa last signed at: ${alexaLastSignedRequest.updatedAt}`]
+      : []),
+    ...(fieldTrialTruth.alexa.blocker
+      ? [`- Alexa blocker: ${fieldTrialTruth.alexa.blocker}`]
+      : []),
+    ...(fieldTrialTruth.alexa.nextAction
+      ? [`- Alexa next step: ${fieldTrialTruth.alexa.nextAction}`]
+      : []),
+    `- BlueBubbles proof: ${fieldTrialTruth.bluebubbles.proofState}`,
+    `- BlueBubbles proof detail: ${fieldTrialTruth.bluebubbles.detail}`,
+    ...(fieldTrialTruth.bluebubbles.blocker
+      ? [`- BlueBubbles blocker: ${fieldTrialTruth.bluebubbles.blocker}`]
+      : []),
+    ...(fieldTrialTruth.bluebubbles.nextAction
+      ? [`- BlueBubbles next step: ${fieldTrialTruth.bluebubbles.nextAction}`]
+      : []),
+    `- Outward research proof: ${fieldTrialTruth.research.proofState}`,
+    `- Outward research detail: ${fieldTrialTruth.research.detail}`,
+    ...(fieldTrialTruth.research.blocker
+      ? [`- Outward research blocker: ${fieldTrialTruth.research.blocker}`]
+      : []),
+    ...(fieldTrialTruth.research.nextAction
+      ? [`- Outward research next step: ${fieldTrialTruth.research.nextAction}`]
+      : []),
+    `- Image generation proof: ${fieldTrialTruth.imageGeneration.proofState}`,
+    `- Image generation detail: ${fieldTrialTruth.imageGeneration.detail}`,
+    ...(fieldTrialTruth.imageGeneration.blocker
+      ? [`- Image generation blocker: ${fieldTrialTruth.imageGeneration.blocker}`]
+      : []),
+    ...(fieldTrialTruth.imageGeneration.nextAction
+      ? [`- Image generation next step: ${fieldTrialTruth.imageGeneration.nextAction}`]
       : []),
     ...(hostSnapshot.nodeRuntime
       ? [

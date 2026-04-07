@@ -23,6 +23,7 @@ import { setAssistantExecutionProbeState } from '../src/debug-control.js';
 import { initDatabase } from '../src/db.js';
 import { buildDirectAssistantContinuationPrompt } from '../src/direct-assistant-continuation.js';
 import { readEnvFile } from '../src/env.js';
+import { buildFieldTrialOperatorTruth } from '../src/field-trial-readiness.js';
 import {
   buildRuntimeCommitTruth,
   detectWindowsInstallArtifacts,
@@ -32,6 +33,7 @@ import {
   reconcileWindowsHostState,
 } from '../src/host-control.js';
 import { logger } from '../src/logger.js';
+import { readProviderProofState } from '../src/provider-proof-state.js';
 import { formatMessages } from '../src/router.js';
 import type { RegisteredGroup } from '../src/types.js';
 import {
@@ -1059,11 +1061,28 @@ export function buildVerifyNextSteps(input: {
   runtimeBackendAuthState?: string;
   alexaConfigured?: boolean;
   alexaLastSignedRequestType?: string;
+  outwardResearchStatus?:
+    | 'not_configured'
+    | 'misconfigured_native_openai_endpoint'
+    | 'missing_direct_provider_credentials'
+    | 'quota_blocked'
+    | 'degraded'
+    | 'available';
 }): string {
   const steps: string[] = [];
 
   if (input.missingRequirements.includes('credentials')) {
-    if (
+    if (input.outwardResearchStatus === 'quota_blocked') {
+      steps.push(
+        input.runtimeBackendLocalExecutionState === 'available_authenticated'
+          ? 'Outward research is blocked because the direct provider account on this host is out of quota or billing. The local runtime backend is healthy, so work-cockpit flows can still run on this host.'
+          : 'Outward research is blocked because the direct provider account on this host is out of quota or billing. Restore provider quota or billing, then rerun npm run debug:research-mode.',
+      );
+    } else if (input.outwardResearchStatus === 'degraded') {
+      steps.push(
+        'Outward research is configured, but the live provider path is currently degraded on this host. Repair the provider path, then rerun npm run debug:research-mode.',
+      );
+    } else if (
       input.runtimeBackendLocalExecutionState === 'available_authenticated' &&
       !input.hasNativeOpenAiEndpointMisconfig
     ) {
@@ -1707,19 +1726,6 @@ export async function run(_args: string[]): Promise<void> {
     missingRequirements.push('assistant_execution_unusable');
   }
 
-  const nextSteps = buildVerifyNextSteps({
-    missingRequirements,
-    hasNativeOpenAiEndpointMisconfig: nativeOpenAiEndpointMisconfig,
-    credentialRuntimeProbeReason: credentialRuntimeProbe.reason,
-    assistantExecutionProbeReason: assistantExecutionProbe.reason,
-    configuredChannels,
-    hostLastError,
-    runtimeBackendLocalExecutionState,
-    runtimeBackendAuthState,
-    alexaConfigured,
-    alexaLastSignedRequestType,
-  });
-
   let outwardResearchStatus = 'not_configured';
   if (nativeOpenAiEndpointMisconfig) {
     outwardResearchStatus = 'misconfigured_native_openai_endpoint';
@@ -1732,6 +1738,16 @@ export async function run(_args: string[]): Promise<void> {
         : 'degraded';
   } else if (credentialRuntimeProbe.status === 'ok') {
     outwardResearchStatus = 'available';
+  }
+  const providerProofState = readProviderProofState(projectRoot);
+  if (providerProofState?.research.proofState === 'live_proven') {
+    outwardResearchStatus = 'available';
+  } else if (providerProofState?.research.proofState === 'externally_blocked') {
+    outwardResearchStatus = /quota|billing/i.test(
+      providerProofState.research.blocker,
+    )
+      ? 'quota_blocked'
+      : 'degraded';
   }
 
   const externalBlockers: string[] = [];
@@ -1747,6 +1763,39 @@ export async function run(_args: string[]): Promise<void> {
   if (alexaConfigured && alexaLastSignedRequestType === 'none') {
     externalBlockers.push('alexa_live_signed_turn_missing');
   }
+
+  const nextSteps = buildVerifyNextSteps({
+    missingRequirements,
+    hasNativeOpenAiEndpointMisconfig: nativeOpenAiEndpointMisconfig,
+    credentialRuntimeProbeReason: credentialRuntimeProbe.reason,
+    assistantExecutionProbeReason: assistantExecutionProbe.reason,
+    configuredChannels,
+    hostLastError,
+    runtimeBackendLocalExecutionState,
+    runtimeBackendAuthState,
+    alexaConfigured,
+    alexaLastSignedRequestType,
+    outwardResearchStatus: outwardResearchStatus as
+      | 'not_configured'
+      | 'misconfigured_native_openai_endpoint'
+      | 'missing_direct_provider_credentials'
+      | 'quota_blocked'
+      | 'degraded'
+      | 'available',
+  });
+
+  const fieldTrialTruth = buildFieldTrialOperatorTruth({
+    projectRoot,
+    hostSnapshot,
+    windowsHost: platform === 'windows' ? windowsHost : null,
+    outwardResearchStatus: outwardResearchStatus as
+      | 'not_configured'
+      | 'misconfigured_native_openai_endpoint'
+      | 'missing_direct_provider_credentials'
+      | 'quota_blocked'
+      | 'degraded'
+      | 'available',
+  });
 
   const reportedMissingRequirements = buildReportedMissingRequirements({
     missingRequirements,
@@ -1814,6 +1863,9 @@ export async function run(_args: string[]): Promise<void> {
     CREDENTIAL_RUNTIME_PROBE_REASON: credentialRuntimeProbe.reason,
     CREDENTIAL_RUNTIME_PROBE_DETAIL: credentialRuntimeProbe.detail || '',
     OUTWARD_RESEARCH_STATUS: outwardResearchStatus,
+    OUTWARD_RESEARCH_PROOF: fieldTrialTruth.research.proofState,
+    OUTWARD_RESEARCH_BLOCKER: fieldTrialTruth.research.blocker,
+    OUTWARD_RESEARCH_NEXT_ACTION: fieldTrialTruth.research.nextAction,
     LOCAL_GATEWAY_HEALTH: localGatewayHealth.status,
     LOCAL_GATEWAY_HEALTH_REASON: localGatewayHealth.reason,
     LOCAL_GATEWAY_HEALTH_DETAIL: localGatewayHealth.detail || '',
@@ -1828,6 +1880,20 @@ export async function run(_args: string[]): Promise<void> {
         ? 'near_live_signed_turn_missing'
         : 'live_signed_turn_recorded'
       : 'not_configured',
+    ALEXA_LIVE_PROOF_BLOCKER: fieldTrialTruth.alexa.blocker,
+    ALEXA_LIVE_PROOF_NEXT_ACTION: fieldTrialTruth.alexa.nextAction,
+    TELEGRAM_LIVE_PROOF: fieldTrialTruth.telegram.proofState,
+    TELEGRAM_LIVE_PROOF_DETAIL: fieldTrialTruth.telegram.detail,
+    TELEGRAM_LIVE_PROOF_BLOCKER: fieldTrialTruth.telegram.blocker,
+    TELEGRAM_LIVE_PROOF_NEXT_ACTION: fieldTrialTruth.telegram.nextAction,
+    BLUEBUBBLES_PROOF: fieldTrialTruth.bluebubbles.proofState,
+    BLUEBUBBLES_PROOF_DETAIL: fieldTrialTruth.bluebubbles.detail,
+    BLUEBUBBLES_PROOF_BLOCKER: fieldTrialTruth.bluebubbles.blocker,
+    BLUEBUBBLES_PROOF_NEXT_ACTION: fieldTrialTruth.bluebubbles.nextAction,
+    IMAGE_GENERATION_PROOF: fieldTrialTruth.imageGeneration.proofState,
+    IMAGE_GENERATION_PROOF_DETAIL: fieldTrialTruth.imageGeneration.detail,
+    IMAGE_GENERATION_PROOF_BLOCKER: fieldTrialTruth.imageGeneration.blocker,
+    IMAGE_GENERATION_PROOF_NEXT_ACTION: fieldTrialTruth.imageGeneration.nextAction,
     ASSISTANT_EXECUTION_PROBE: assistantExecutionProbe.status,
     ASSISTANT_EXECUTION_PROBE_REASON: assistantExecutionProbe.reason,
     ASSISTANT_EXECUTION_PROBE_DETAIL: assistantExecutionProbe.detail || '',

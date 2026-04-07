@@ -13,6 +13,27 @@ Start with exactly one document based on your role:
 | Setup owner        | [SETUP_AND_FEATURES_GUIDE.md](SETUP_AND_FEATURES_GUIDE.md) | End-to-end install and runtime configuration                           |
 | Live demo operator | [DEMO_CHECKLIST.md](DEMO_CHECKLIST.md)                     | Tight demo script, preflight checks, and what to avoid demoing         |
 
+## Current Field-Trial Truth
+
+Use this shorthand when you need the current host story fast:
+
+- **live-proven on this Windows host**
+  - Telegram companion surface
+  - unified work cockpit with Codex/OpenAI runtime
+  - life-thread, communication-companion, mission, and chief-of-staff flows that ride on Telegram
+- **near-live only**
+  - Alexa, until one fresh signed live turn is recorded on this host
+- **externally blocked**
+  - BlueBubbles, because the real BlueBubbles server/webhook is not installed or connected on this PC
+  - outward research
+  - Telegram image generation
+
+When operator surfaces disagree, the release truth should come from:
+
+1. `npm run services:status`
+2. `npm run setup -- --step verify`
+3. `npm run debug:status`
+
 ## Product Shape In One Minute
 
 Andrea has two different documentation audiences on purpose:
@@ -84,7 +105,7 @@ Current Alexa truth:
 - `Andrea_NanoBot` is the only canonical repo now; the older `ANDREA/nanoclaw` checkout is non-authoritative reference only
 - Telegram ordinary chat and the main flagship follow-through journeys were live-proven on this host on April 7, 2026
 - Alexa repo-side and near-live proof are strong, but full live acceptance still means one fresh signed Alexa utterance on this host after importing the current interaction model and running `Build Model`
-- BlueBubbles remains near-live until a reachable live server/webhook is reproved
+- BlueBubbles is externally blocked on this Windows host because the real BlueBubbles server/webhook is not currently installed or connected here
 - outward-facing research is currently validated as a graceful blocked path on this host because direct provider credentials are not currently usable for live outward lookup, even though the local runtime backend remains healthy
 
 ## Operations, Security, And Release

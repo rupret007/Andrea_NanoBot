@@ -1,5 +1,6 @@
 import { executeAssistantCapability } from '../src/assistant-capabilities.js';
 import { initDatabase } from '../src/db.js';
+import { writeProviderProofState } from '../src/provider-proof-state.js';
 import { runResearchOrchestrator } from '../src/research-orchestrator.js';
 
 function parseArgs(argv: string[]): {
@@ -53,6 +54,11 @@ function printBlock(title: string, lines: string[]): void {
   process.stdout.write('\n');
 }
 
+function extractDebugToken(debugPath: string[], prefix: string): string {
+  const match = debugPath.find((entry) => entry.startsWith(prefix));
+  return match ? match.slice(prefix.length).trim() : '';
+}
+
 async function main(): Promise<void> {
   initDatabase();
   const { groupFolder, localPrompt, externalPrompt, imagePrompt } = parseArgs(
@@ -84,6 +90,73 @@ async function main(): Promise<void> {
       canonicalText: imagePrompt,
     },
   });
+
+  const checkedAt = new Date().toISOString();
+  const researchProviderFailure =
+    extractDebugToken(external.debugPath, 'provider_failure=') ||
+    external.sourceNotes
+      .find((line) => line.startsWith('blocked: '))
+      ?.slice('blocked: '.length)
+      .trim() ||
+    '';
+  const researchProof =
+    external.providerUsed === 'openai_responses'
+      ? {
+          proofState: 'live_proven' as const,
+          blocker: '',
+          detail: external.summaryText || 'OpenAI-backed outward research succeeded.',
+          nextAction: '',
+          checkedAt,
+          source: 'debug_research_mode' as const,
+        }
+      : {
+          proofState: researchProviderFailure ? 'externally_blocked' : 'near_live_only',
+          blocker:
+            researchProviderFailure ||
+            'Outward research still needs a fresh direct-provider proof run on this host.',
+          detail:
+            external.summaryText ||
+            'Outward research did not complete as a live provider-backed answer in this pass.',
+          nextAction: researchProviderFailure
+            ? 'Restore direct provider quota/billing or credentials, then rerun npm run debug:research-mode.'
+            : 'Rerun npm run debug:research-mode to refresh the outward research proof state.',
+          checkedAt,
+          source: 'debug_research_mode' as const,
+        };
+  const imageReply = (media.replyText || '').split(/\r?\n/)[0]?.trim() || '';
+  const imageProof =
+    media.mediaResult?.artifact
+      ? {
+          proofState: 'live_proven' as const,
+          blocker: '',
+          detail: 'Telegram image generation returned an image artifact.',
+          nextAction: '',
+          checkedAt,
+          source: 'debug_research_mode' as const,
+        }
+      : {
+          proofState: imageReply ? 'externally_blocked' : 'near_live_only',
+          blocker:
+            imageReply ||
+            'Image generation still needs a fresh Telegram artifact proof run on this host.',
+          detail:
+            media.mediaResult?.routeExplanation ||
+            media.trace?.reason ||
+            'Image generation did not return an artifact in this pass.',
+          nextAction: imageReply
+            ? 'Restore direct provider quota/billing or credentials, then rerun npm run debug:research-mode.'
+            : 'Rerun npm run debug:research-mode to refresh the image-generation proof state.',
+          checkedAt,
+          source: 'debug_research_mode' as const,
+        };
+  writeProviderProofState(
+    {
+      updatedAt: checkedAt,
+      research: researchProof,
+      imageGeneration: imageProof,
+    },
+    process.cwd(),
+  );
 
   printBlock('LOCAL CONTEXT RESEARCH', [
     `handled: ${local.handled}`,

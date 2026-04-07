@@ -128,6 +128,14 @@ describe('helper boundary wiring', () => {
     expect(source).toContain('reconcileWorkCockpitCurrentSelection({');
     expect(source).toContain('runtimeJobId: runtimeSelection?.selected?.handle.jobId || null');
     expect(source).toContain('cursorJobId: selection?.selected?.id || null');
+    expect(source).toContain('shouldClearStaleWorkCockpitSelection({');
+  });
+
+  it('keeps a plain Current Work request on the cockpit dashboard path', () => {
+    const source = readRepoFile('src/index.ts');
+
+    expect(source).toContain("trimmed === 'current work'");
+    expect(source).toContain("state: { kind: 'work_current' }");
   });
 
   it('routes shared assistant save and reminder follow-ups before generic direct action-layer fallbacks', () => {

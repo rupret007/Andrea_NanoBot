@@ -390,6 +390,7 @@ import {
 import {
   reconcileWorkCockpitCurrentSelection,
   resolveRuntimeDashboardJobId,
+  shouldClearStaleWorkCockpitSelection,
 } from './work-cockpit-targets.js';
 import {
   buildTaskOutputSuggestion,
@@ -6073,7 +6074,13 @@ async function main(): Promise<void> {
       selectedAgentId
         ? flattened.find((entry) => entry.id === selectedAgentId) || null
         : null;
-    if (selectedAgentId && (!selected || isTerminalWorkStatus(selected.status))) {
+    if (
+      shouldClearStaleWorkCockpitSelection({
+        selectedJobId: selectedAgentId,
+        selectedExists: Boolean(selected),
+        status: selected?.status || null,
+      })
+    ) {
       clearCurrentWorkSelection({
         chatJid,
         threadId,
@@ -6146,7 +6153,13 @@ async function main(): Promise<void> {
           chatJid,
         })
       : null;
-    if (selectedJobId && (!selected || isTerminalWorkStatus(selected.status))) {
+    if (
+      shouldClearStaleWorkCockpitSelection({
+        selectedJobId,
+        selectedExists: Boolean(selected),
+        status: selected?.status || null,
+      })
+    ) {
       clearCurrentWorkSelection({
         chatJid,
         threadId,
@@ -9537,6 +9550,21 @@ async function main(): Promise<void> {
       if (CURSOR_DASHBOARD_COMMANDS.has(commandToken)) {
         handleCursorDashboard(chatJid, msg).catch((err) =>
           logger.error({ err, chatJid }, 'Cursor dashboard command error'),
+        );
+        return;
+      }
+
+      if (
+        registeredGroups[chatJid]?.isMain === true &&
+        !isSlashCommand &&
+        trimmed === 'current work'
+      ) {
+        openCursorDashboard({
+          chatJid,
+          sourceMessage: msg,
+          state: { kind: 'work_current' },
+        }).catch((err) =>
+          logger.error({ err, chatJid }, 'Current work quick-open error'),
         );
         return;
       }
