@@ -1,4 +1,5 @@
 import { NewMessage } from './types.js';
+import { classifyConversationalTurn } from './conversational-core.js';
 
 export type AssistantRequestRoute =
   | 'direct_assistant'
@@ -455,6 +456,16 @@ export function classifyAssistantRequest(
   );
   if (protectedReason) {
     return createPolicy('protected_assistant', protectedReason);
+  }
+
+  if (lastContent) {
+    const conversationalTurnClass = classifyConversationalTurn(lastContent);
+    if (conversationalTurnClass !== 'work_or_operator') {
+      return createPolicy(
+        'direct_assistant',
+        `matched conversational ${conversationalTurnClass} request`,
+      );
+    }
   }
 
   return createPolicy(

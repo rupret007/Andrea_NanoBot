@@ -962,7 +962,7 @@ describe('createAlexaSkill', () => {
       }),
     );
 
-    expect(extractSpeechText(response)).toContain('voice-service snag');
+    expect(extractSpeechText(response)).toContain("couldn't get the deeper read");
     expect(extractSpeechText(response)).not.toContain('sk-test-secret');
   });
 

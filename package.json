@@ -61,7 +61,9 @@
     "debug:communication-companion": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-communication-companion.ts",
     "debug:chief-of-staff": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-chief-of-staff.ts",
     "debug:missions": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-missions.ts",
-    "debug:signature-flows": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-signature-flows.ts"
+    "debug:signature-flows": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-signature-flows.ts",
+    "debug:direct-runtime-shield": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-direct-runtime-shield.ts",
+    "debug:conversational-core": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-conversational-core.ts"
   },
   "dependencies": {
     "@onecli-sh/sdk": "^0.2.0",

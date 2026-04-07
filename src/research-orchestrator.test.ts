@@ -5,6 +5,7 @@ import { handleLifeThreadCommand } from './life-threads.js';
 import { saveKnowledgeSource } from './knowledge-library.js';
 import * as openAiProvider from './openai-provider.js';
 import {
+  isResearchPrompt,
   planResearchRequest,
   runResearchOrchestrator,
 } from './research-orchestrator.js';
@@ -47,6 +48,15 @@ describe('research orchestrator', () => {
 
     expect(plan.primarySource).toBe('openai_responses');
     expect(plan.sources.webSearch).toBe(true);
+  });
+
+  it('recognizes plain factoid and explanatory prompts as research-worthy without catching local utilities', () => {
+    expect(isResearchPrompt("What is Jar Jar Binks' species?")).toBe(true);
+    expect(isResearchPrompt('What should I know about Jar Jar Binks?')).toBe(
+      true,
+    );
+    expect(isResearchPrompt('What time is it in Australia?')).toBe(false);
+    expect(isResearchPrompt("What's still open with Candace?")).toBe(false);
   });
 
   it('plans saved-material prompts onto the knowledge-library route', () => {
@@ -180,7 +190,8 @@ describe('research orchestrator', () => {
     });
 
     expect(result.handled).toBe(true);
-    expect(result.summaryText).toContain('cannot do that live yet');
+    expect(result.summaryText).toContain("can't check that live right now");
+    expect(result.summaryText).not.toContain('OPENAI_API_KEY');
     expect(result.sourceNotes[0]).toContain('OPENAI_API_KEY');
     expect(result.debugPath).toContain('openai.blocked=OPENAI_API_KEY');
   });
@@ -296,8 +307,9 @@ describe('research orchestrator', () => {
     });
 
     expect(result.providerUsed).toBeUndefined();
-    expect(result.summaryText).toContain('quota or billing limit');
-    expect(result.routeExplanation).toContain('blocked because');
+    expect(result.summaryText).toContain("can't check that live right now");
+    expect(result.routeExplanation).toContain('live lookup');
+    expect(result.routeExplanation).not.toContain("OpenAI research path");
     expect(result.debugPath).toContain('openai.failed=true');
     expect(result.fullText).not.toContain('Band');
   });

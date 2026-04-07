@@ -1,4 +1,8 @@
 import type { NewMessage } from './types.js';
+import {
+  buildGracefulDegradedReply,
+  type ConversationalChannel,
+} from './conversational-core.js';
 
 const MAX_ABS_MATH_RESULT = 1_000_000_000_000;
 
@@ -62,6 +66,14 @@ function countWords(input: string): number {
   return input.trim().split(/\s+/).filter(Boolean).length;
 }
 
+function pickDeterministicVariant(
+  normalized: string,
+  variants: readonly string[],
+): string {
+  const seed = [...normalized].reduce((sum, char) => sum + char.charCodeAt(0), 0);
+  return variants[seed % variants.length] || variants[0] || '';
+}
+
 function isStandalonePrompt(
   normalized: string,
   pattern: RegExp,
@@ -70,8 +82,76 @@ function isStandalonePrompt(
   return pattern.test(normalized) && countWords(normalized) <= maxWords;
 }
 
+function formatClockInZone(date: Date, timeZone: string): string {
+  return date.toLocaleTimeString('en-US', {
+    timeZone,
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  });
+}
+
+function buildQuickTimeReply(message: string, now: Date): string | null {
+  const normalized = normalizeText(message);
+
+  if (
+    !/^(?:what time is it|what's the time|whats the time|time)(?: right now)?\b/.test(
+      normalized,
+    ) &&
+    !/\btime in\b/.test(normalized)
+  ) {
+    return null;
+  }
+
+  if (/\baustralia\b/.test(normalized)) {
+    const sydney = formatClockInZone(now, 'Australia/Sydney');
+    const perth = formatClockInZone(now, 'Australia/Perth');
+    return `Australia spans a few time zones. Right now it's ${sydney} in Sydney and ${perth} in Perth.`;
+  }
+
+  const cityTargets = [
+    { label: 'Sydney', pattern: /\bsydney\b/, timeZone: 'Australia/Sydney' },
+    {
+      label: 'Melbourne',
+      pattern: /\bmelbourne\b/,
+      timeZone: 'Australia/Melbourne',
+    },
+    {
+      label: 'Brisbane',
+      pattern: /\bbrisbane\b/,
+      timeZone: 'Australia/Brisbane',
+    },
+    {
+      label: 'Adelaide',
+      pattern: /\badelaide\b/,
+      timeZone: 'Australia/Adelaide',
+    },
+    { label: 'Darwin', pattern: /\bdarwin\b/, timeZone: 'Australia/Darwin' },
+    { label: 'Perth', pattern: /\bperth\b/, timeZone: 'Australia/Perth' },
+    { label: 'Tokyo', pattern: /\btokyo\b/, timeZone: 'Asia/Tokyo' },
+    { label: 'London', pattern: /\blondon\b/, timeZone: 'Europe/London' },
+    {
+      label: 'New York',
+      pattern: /\bnew york\b/,
+      timeZone: 'America/New_York',
+    },
+    { label: 'Chicago', pattern: /\bchicago\b/, timeZone: 'America/Chicago' },
+    {
+      label: 'Los Angeles',
+      pattern: /\blos angeles\b/,
+      timeZone: 'America/Los_Angeles',
+    },
+  ];
+
+  const match = cityTargets.find((target) => target.pattern.test(normalized));
+  if (!match) return null;
+
+  return `Right now it's ${formatClockInZone(now, match.timeZone)} in ${match.label}.`;
+}
+
 export function maybeBuildDirectQuickReply(
   messages: Pick<NewMessage, 'content'>[],
+  now = new Date(),
 ): string | null {
   const lastContent = messages.at(-1)?.content?.trim();
   if (!lastContent) return null;
@@ -90,7 +170,7 @@ export function maybeBuildDirectQuickReply(
   if (
     isStandalonePrompt(normalized, /^what are you (?:best|good) at[?.! ]*$/, 6)
   ) {
-    return "Keeping tasks, reminders, research, and operator status checks clean and calm. Give me one concrete ask and I'll keep it moving.";
+    return "Keeping tasks, reminders, research, and messy decisions clean and calm. Give me one concrete ask and I'll keep it moving.";
   }
 
   if (
@@ -120,7 +200,11 @@ export function maybeBuildDirectQuickReply(
       5,
     )
   ) {
-    return "Hi. I'm Andrea. Give me one thing to tackle and I'll keep it crisp.";
+    return pickDeterministicVariant(normalized, [
+      "Hi. I'm here. What do you want to tackle?",
+      "Hey. I'm here and ready.",
+      "Hi. Give me one thing and I'll keep it simple.",
+    ]);
   }
 
   if (
@@ -130,7 +214,11 @@ export function maybeBuildDirectQuickReply(
       9,
     )
   ) {
-    return 'Doing well and fully caffeinated in spirit. What do you want to tackle?';
+    return pickDeterministicVariant(normalized, [
+      'Doing well and ready. What do you want to tackle?',
+      "Doing well over here. What's the move?",
+      'Doing well and ready to help. What are we working on?',
+    ]);
   }
 
   if (
@@ -140,7 +228,53 @@ export function maybeBuildDirectQuickReply(
       5,
     )
   ) {
-    return 'Doing well and fully caffeinated in spirit. What do you want to tackle?';
+    return pickDeterministicVariant(normalized, [
+      'Doing well and ready. What do you want to tackle?',
+      "Doing well over here. What's the move?",
+      'Doing well and ready to help. What are we working on?',
+    ]);
+  }
+
+  if (
+    isStandalonePrompt(
+      normalized,
+      /^(?:(?:hi|hello|hey)[!., ]+)?(?:what('?s| is) up|sup)[?.! ]*$/,
+      6,
+    )
+  ) {
+    return pickDeterministicVariant(normalized, [
+      'Not much. I am here and ready if you want to work through something.',
+      "Keeping an eye on things. What's up on your side?",
+      "Pretty calm over here. What do you want to get moving?",
+    ]);
+  }
+
+  if (
+    isStandalonePrompt(
+      normalized,
+      /^(?:what are you doing|what'?re you doing)[?.! ]*$/,
+      5,
+    )
+  ) {
+    return pickDeterministicVariant(normalized, [
+      'Keeping an eye on things and ready to help.',
+      "Hanging out quietly until you throw me something useful.",
+      'Staying ready and trying not to make your chat weird.',
+    ]);
+  }
+
+  if (
+    isStandalonePrompt(
+      normalized,
+      /^(?:can you help me|help me)\??[!. ]*$/,
+      5,
+    )
+  ) {
+    return pickDeterministicVariant(normalized, [
+      'Yes. Tell me what you want to get done and I will help you work through it.',
+      'Yes. Give me the task or question and we will take it from there.',
+      'Absolutely. Give me one concrete thing and I will help you move it forward.',
+    ]);
   }
 
   if (
@@ -150,7 +284,11 @@ export function maybeBuildDirectQuickReply(
       3,
     )
   ) {
-    return "I'm here and ready.";
+    return pickDeterministicVariant(normalized, [
+      "I'm here.",
+      "I'm here and ready.",
+      "Still here.",
+    ]);
   }
 
   if (
@@ -160,7 +298,11 @@ export function maybeBuildDirectQuickReply(
       4,
     )
   ) {
-    return "Anytime. What's next?";
+    return pickDeterministicVariant(normalized, [
+      'Anytime.',
+      'Of course.',
+      'Happy to help.',
+    ]);
   }
 
   if (/^ping[!. ]*$/.test(normalized)) {
@@ -174,7 +316,11 @@ export function maybeBuildDirectQuickReply(
       3,
     )
   ) {
-    return 'Sounds good.';
+    return pickDeterministicVariant(normalized, [
+      'Sounds good.',
+      'Okay.',
+      'All right.',
+    ]);
   }
 
   if (
@@ -195,6 +341,16 @@ export function maybeBuildDirectQuickReply(
     )
   ) {
     return "I'm Andrea. I'm strongest on tasks, reminders, research, status checks, and careful approvals without turning the chat into a control panel.";
+  }
+
+  if (
+    isStandalonePrompt(
+      normalized,
+      /^(?:can|do) you use (?:(?:cursor(?: and codex)?|codex(?: and cursor)?))(?: right now)?[?.! ]*$/,
+      8,
+    )
+  ) {
+    return 'Yes. I can help with coding and repo work through Andrea when that lane is available.';
   }
 
   if (
@@ -233,17 +389,22 @@ export function maybeBuildDirectQuickReply(
     return "I know what's what. If chaos appears, I bring clarity and snacks.";
   }
 
+  const quickTimeReply = buildQuickTimeReply(lastContent, now);
+  if (quickTimeReply) return quickTimeReply;
+
   return buildQuickMathReply(lastContent);
 }
 
 export function maybeBuildDirectRescueReply(
   messages: Pick<NewMessage, 'content'>[],
+  now = new Date(),
+  channel: ConversationalChannel = 'telegram',
 ): string | null {
   const lastContent = messages.at(-1)?.content?.trim();
   if (!lastContent) return null;
 
   const normalized = normalizeText(lastContent);
-  const quickReply = maybeBuildDirectQuickReply(messages);
+  const quickReply = maybeBuildDirectQuickReply(messages, now);
   if (quickReply) return quickReply;
 
   const shortTurn =
@@ -255,5 +416,25 @@ export function maybeBuildDirectRescueReply(
 
   if (!shortTurn) return null;
 
-  return "I'm here. That one went sideways on my end. Ask it again in one short sentence and I'll keep it simple.";
+  return buildGracefulDegradedReply({
+    kind: 'assistant_runtime_unavailable',
+    channel,
+    text: lastContent,
+  });
+}
+
+export function buildDirectAssistantRuntimeFailureReply(
+  messages: Pick<NewMessage, 'content'>[],
+  runtimeMessage: string | null = null,
+  now = new Date(),
+  channel: ConversationalChannel = 'telegram',
+): string {
+  return (
+    maybeBuildDirectRescueReply(messages, now, channel) ??
+    buildGracefulDegradedReply({
+      kind: 'assistant_runtime_unavailable',
+      channel,
+      text: messages.at(-1)?.content || runtimeMessage || '',
+    })
+  );
 }

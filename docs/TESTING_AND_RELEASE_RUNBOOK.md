@@ -40,6 +40,15 @@ npm run debug:research-mode
 npm run debug:knowledge-library
 ```
 
+For ordinary companion chat, graceful degraded replies, and no-leakage checks, add:
+
+```bash
+node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/conversational-core.test.ts src/direct-quick-reply.test.ts src/assistant-routing.test.ts src/assistant-capability-router.test.ts src/research-orchestrator.test.ts src/user-facing-fallback.test.ts src/alexa.test.ts
+npm run debug:conversational-core
+```
+
+Treat this conversational-core stack as the fast proof that normal Telegram, Alexa, and BlueBubbles users still get warm ordinary chat plus humane blocked-path behavior instead of operator diagnostics.
+
 For the flagship end-to-end product journeys, add:
 
 ```bash
@@ -171,6 +180,8 @@ Then validate the public-safe Telegram surface:
 - `/commands`
 - simple quick reply prompt
 - reminder prompt
+- simple factoid prompt
+- one blocked-path prompt that should stay free of setup/runtime/operator wording
 - `/cursor_status`
 
 If BlueBubbles is configured on that host, add:

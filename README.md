@@ -67,6 +67,7 @@ What normal users should expect:
 - fast direct replies for simple questions, playful prompts, and basic math
 - a small safe Telegram command set
 - `/cursor_status` as the only public-safe Cursor command
+- warm ordinary chat plus graceful degraded replies when deeper runtime or live research is unavailable
 
 What operators should expect:
 
@@ -311,6 +312,7 @@ For operator-side smoke testing of the shared core, use `npm run debug:shared-ca
 For the missions layer specifically, use `npm run debug:missions`.
 
 ## Cross-Channel Companion Handoffs
+For the ordinary conversational surface and no-leakage degraded-response policy, use `npm run debug:conversational-core`.
 
 Andrea now has a bounded cross-channel handoff layer so a conversation can start briefly on Alexa, continue in BlueBubbles or Telegram when appropriate, and still feel like one assistant.
 

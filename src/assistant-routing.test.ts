@@ -40,6 +40,40 @@ describe('assistant request routing', () => {
     expect(policy.mcpTools).toEqual([]);
   });
 
+  it('keeps cursor-and-codex capability questions on the direct assistant route', () => {
+    const policy = classifyAssistantRequest([
+      { content: 'Can you use cursor and codex?' },
+    ]);
+
+    expect(policy.route).toBe('direct_assistant');
+    expect(policy.mcpTools).toEqual([]);
+  });
+
+  it('keeps lightweight timezone questions on the direct assistant route', () => {
+    const policy = classifyAssistantRequest([
+      { content: 'What time is it in Australia?' },
+    ]);
+
+    expect(policy.route).toBe('direct_assistant');
+    expect(policy.mcpTools).toEqual([]);
+  });
+
+  it('classifies vibe-check conversation before the generic direct fallback reason', () => {
+    const policy = classifyAssistantRequest([{ content: "What's up?" }]);
+
+    expect(policy.route).toBe('direct_assistant');
+    expect(policy.reason).toContain('greeting_or_vibe_check');
+  });
+
+  it('classifies plain factoid conversation before the generic direct fallback reason', () => {
+    const policy = classifyAssistantRequest([
+      { content: "What is Jar Jar Binks' species?" },
+    ]);
+
+    expect(policy.route).toBe('direct_assistant');
+    expect(policy.reason).toContain('simple_factoid');
+  });
+
   it('routes reminder and calendar asks to protected assistant handling', () => {
     const policy = classifyAssistantRequest([
       { content: 'Remind me tomorrow at 3pm to call Sam about the calendar.' },

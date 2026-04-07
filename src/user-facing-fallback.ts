@@ -1,5 +1,6 @@
 import type { AssistantRequestRoute } from './assistant-routing.js';
-import { maybeBuildDirectRescueReply } from './direct-quick-reply.js';
+import { buildDirectAssistantRuntimeFailureReply } from './direct-quick-reply.js';
+import type { ConversationalChannel } from './conversational-core.js';
 import type { NewMessage } from './types.js';
 
 function normalize(input: string): string {
@@ -9,15 +10,13 @@ function normalize(input: string): string {
 export function buildSilentSuccessFallback(
   route: AssistantRequestRoute,
   messages: Pick<NewMessage, 'content'>[],
+  channel: ConversationalChannel = 'telegram',
 ): string {
   const lastContent = messages.at(-1)?.content?.trim() ?? '';
   const normalized = normalize(lastContent);
 
   if (route === 'direct_assistant') {
-    return (
-      maybeBuildDirectRescueReply(messages) ??
-      "I'm here, but that answer came back blank on my side. Ask it again in one short sentence and I'll keep it crisp."
-    );
+    return buildDirectAssistantRuntimeFailureReply(messages, null, new Date(), channel);
   }
 
   if (route === 'protected_assistant') {

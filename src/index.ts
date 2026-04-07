@@ -313,8 +313,8 @@ import {
 } from './user-facing-error.js';
 import { resolveEffectiveIdleTimeout } from './runtime-timeout.js';
 import {
+  buildDirectAssistantRuntimeFailureReply,
   maybeBuildDirectQuickReply,
-  maybeBuildDirectRescueReply,
 } from './direct-quick-reply.js';
 import { buildDirectAssistantContinuationPrompt } from './direct-assistant-continuation.js';
 import { getAssistantSessionStorageKey } from './assistant-session.js';
@@ -4332,6 +4332,36 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     }
   }
 
+  if (requestPolicy.route === 'direct_assistant' && quickReply) {
+    try {
+      await channel.sendMessage(chatJid, quickReply);
+      logger.info(
+        {
+          component: 'assistant',
+          chatJid,
+          groupFolder: group.folder,
+          group: group.name,
+          requestRoute: requestPolicy.route,
+          directAssistantProfile: 'minimal_read_only',
+          promptKind: directAssistantPromptKind,
+          freshSession: forceFreshDirectAssistantSession,
+          rewriteApplied: directAssistantRewriteApplied,
+          quickReply: true,
+        },
+        'Handled message via direct quick reply path',
+      );
+      return true;
+    } catch (err) {
+      lastAgentTimestamp[chatJid] = previousCursor;
+      saveState();
+      logger.warn(
+        { group: group.name, err },
+        'Direct quick reply send failed, rolled back cursor for retry',
+      );
+      return false;
+    }
+  }
+
   if (
     requestPolicy.route === 'direct_assistant' ||
     requestPolicy.route === 'protected_assistant'
@@ -4342,36 +4372,6 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   }
 
   if (requestPolicy.route === 'direct_assistant') {
-    if (quickReply) {
-      try {
-        await channel.sendMessage(chatJid, quickReply);
-        logger.info(
-          {
-            component: 'assistant',
-            chatJid,
-            groupFolder: group.folder,
-            group: group.name,
-            requestRoute: requestPolicy.route,
-            directAssistantProfile: 'minimal_read_only',
-            promptKind: directAssistantPromptKind,
-            freshSession: forceFreshDirectAssistantSession,
-            rewriteApplied: directAssistantRewriteApplied,
-            quickReply: true,
-          },
-          'Handled message via direct quick reply path',
-        );
-        return true;
-      } catch (err) {
-        lastAgentTimestamp[chatJid] = previousCursor;
-        saveState();
-        logger.warn(
-          { group: group.name, err },
-          'Direct quick reply send failed, rolled back cursor for retry',
-        );
-        return false;
-      }
-    }
-
     if (await tryHandleLocalActionLayer('direct')) {
       return true;
     }
@@ -4682,8 +4682,20 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         !previousNotice ||
         previousNotice.code !== output.code ||
         now - previousNotice.at >= NON_RETRIABLE_ERROR_NOTIFY_COOLDOWN_MS;
+      const safeCompanionSurface =
+        requestPolicy.route === 'direct_assistant' ||
+        requestPolicy.route === 'protected_assistant';
 
-      if (shouldNotify && output.userMessage) {
+      if (safeCompanionSurface) {
+        await channel.sendMessage(
+          chatJid,
+          buildSilentSuccessFallback(
+            requestPolicy.route,
+            missedMessages,
+            conversationChannel,
+          ),
+        );
+      } else if (shouldNotify && output.userMessage) {
         await channel.sendMessage(chatJid, output.userMessage);
       } else if (!shouldNotify) {
         await channel.sendMessage(
@@ -4731,10 +4743,17 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
     if (
       output.status === 'error' &&
-      requestPolicy.route === 'direct_assistant' &&
-      output.userMessage
+      requestPolicy.route === 'direct_assistant'
     ) {
-      await channel.sendMessage(chatJid, output.userMessage);
+      await channel.sendMessage(
+        chatJid,
+        buildDirectAssistantRuntimeFailureReply(
+          missedMessages,
+          output.userMessage,
+          now,
+          conversationChannel,
+        ),
+      );
       logger.warn(
         {
           component: 'assistant',
@@ -4749,35 +4768,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           quickReply: Boolean(quickReply),
           recoveryAttempted: output.recoveryAttempted,
         },
-        'Surfaced direct assistant runtime failure to user without queue retry',
+        'Shielded direct assistant runtime failure with local reply',
       );
       return true;
     }
 
     if (hasPendingActionLayerContinuation) {
       if (await tryHandleLocalActionLayer('protected')) {
-        return true;
-      }
-    }
-
-    if (requestPolicy.route === 'direct_assistant') {
-      const rescueReply = maybeBuildDirectRescueReply(missedMessages);
-      if (rescueReply) {
-        await channel.sendMessage(chatJid, rescueReply);
-        logger.warn(
-          {
-            component: 'assistant',
-            chatJid,
-            groupFolder: group.folder,
-            group: group.name,
-            directAssistantProfile: 'minimal_read_only',
-            promptKind: directAssistantPromptKind,
-            freshSession: forceFreshDirectAssistantSession,
-            rewriteApplied: directAssistantRewriteApplied,
-            quickReply: Boolean(quickReply),
-          },
-          'Recovered direct assistant error with local rescue reply',
-        );
         return true;
       }
     }
@@ -4801,6 +4798,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     const fallbackReply = buildSilentSuccessFallback(
       requestPolicy.route,
       missedMessages,
+      conversationChannel,
     );
     await channel.sendMessage(chatJid, fallbackReply);
     logger.warn(

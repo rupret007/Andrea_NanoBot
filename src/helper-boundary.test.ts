@@ -76,10 +76,9 @@ describe('helper boundary wiring', () => {
     const continuationIndex = source.indexOf(
       'const hasPendingActionLayerContinuation = Boolean(',
     );
-    const directQuickReplyMatch = source.match(
-      /if \(requestPolicy\.route === 'direct_assistant'\) \{\s+if \(quickReply\)/,
+    const directQuickReplyIndex = source.indexOf(
+      "if (requestPolicy.route === 'direct_assistant' && quickReply)",
     );
-    const directQuickReplyIndex = directQuickReplyMatch?.index ?? -1;
 
     expect(continuationIndex).toBeGreaterThan(-1);
     expect(directQuickReplyIndex).toBeGreaterThan(-1);

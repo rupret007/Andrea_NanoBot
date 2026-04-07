@@ -16,6 +16,10 @@ import {
   getOpenAiProviderStatus,
   resolveOpenAiProviderConfig,
 } from './openai-provider.js';
+import {
+  buildGracefulDegradedReply,
+  isResearchEligibleConversationalPrompt,
+} from './conversational-core.js';
 import { normalizeVoicePrompt } from './voice-ready.js';
 
 export type ResearchRequestKind =
@@ -195,22 +199,22 @@ function buildRouteExplanation(
   if (options.openAiBlocked) {
     if (plan.primarySource === 'knowledge_library') {
       return options.knowledgeCount
-        ? `I started from your saved material because you asked for grounded source use, but the outside research step is blocked because ${options.openAiBlocked.toLowerCase()} I stayed with your saved material only.`
-        : `You asked for saved material plus outside research, but the outside research step is blocked because ${options.openAiBlocked.toLowerCase()}`;
+        ? 'I started from your saved material, but the live lookup was unavailable just then, so I stayed with your saved material only.'
+        : 'You asked for saved material plus live research, but the live lookup was unavailable just then.';
     }
     return options.usedLocalFallback
-      ? `This looked like a web-backed research question, but Andrea's OpenAI research path is blocked because ${options.openAiBlocked.toLowerCase()} I fell back to grounded local context where I could.`
-      : `This looked like a web-backed research question, but Andrea's OpenAI research path is blocked because ${options.openAiBlocked.toLowerCase()}`;
+      ? 'This needed a live lookup, but that live lookup was unavailable just then, so I fell back to the grounded context I had.'
+      : 'This needed a live lookup, but that live lookup was unavailable just then.';
   }
   if (options.openAiFailed) {
     if (plan.primarySource === 'knowledge_library') {
       return options.knowledgeCount
-        ? 'I started from your saved material, but the outside research call failed, so I stayed with your saved sources only.'
-        : 'I tried to combine your saved material with outside research, but the outside research call failed before Andrea could add a trustworthy broader answer.';
+        ? 'I started from your saved material, but the live lookup failed, so I stayed with your saved sources only.'
+        : 'I tried to combine your saved material with a live lookup, but that live lookup failed before I could add a broader answer.';
     }
     return options.usedLocalFallback
-      ? 'This looked like a web-backed research question, but the live model call failed, so I fell back to grounded local context where possible.'
-      : 'This looked like a web-backed research question, but the live model call failed before Andrea could produce a trustworthy answer.';
+      ? 'This needed a live lookup, but the live lookup failed, so I fell back to the grounded context I had.'
+      : 'This needed a live lookup, but the live lookup failed before I could produce a trustworthy answer.';
   }
   if (plan.primarySource === 'runtime_delegate') {
     return 'This request belongs on the runtime or operator lane because it is execution-heavy.';
@@ -307,10 +311,13 @@ function buildResearchBlockerResult(
   blocker: string,
   debugPath: string[],
 ): ResearchResult {
-  const summaryText =
-    request.channel === 'alexa'
-      ? 'I cannot do that live right now because my web-backed research path is unavailable here.'
-      : `I cannot do that live yet because ${blocker}`;
+  const summaryText = buildGracefulDegradedReply({
+    kind: 'research_unavailable',
+    channel: request.channel,
+    text: request.query,
+    hasGroundedAlternative:
+      plan.primarySource === 'knowledge_library' || plan.sources.localContext,
+  });
   return {
     handled: true,
     kind: plan.kind,
@@ -340,7 +347,8 @@ export function isResearchPrompt(text: string): boolean {
     ) ||
     /\b(report back|tradeoffs?|compare options|summarize findings|summarise findings|pros and cons|before deciding)\b/.test(
       normalized,
-    )
+    ) ||
+    isResearchEligibleConversationalPrompt(normalized)
   );
 }
 
@@ -367,7 +375,10 @@ export function planResearchRequest(request: ResearchRequest): ResearchPlan {
     SAVED_MATERIAL_RE.test(lower) ||
     Boolean(request.requestedSourceIds?.length);
   const personalContextLikely = PERSONAL_CONTEXT_RE.test(lower);
-  const externalLikely = EXTERNAL_FACT_RE.test(lower) && !personalContextLikely;
+  const externalLikely =
+    (EXTERNAL_FACT_RE.test(lower) ||
+      isResearchEligibleConversationalPrompt(lower)) &&
+    !personalContextLikely;
   const synthesisHeavy =
     kind !== 'summary' ||
     /\b(report back|research|look into|what matters|before deciding)\b/i.test(

@@ -4,11 +4,35 @@ import { buildSilentSuccessFallback } from './user-facing-fallback.js';
 
 describe('buildSilentSuccessFallback', () => {
   it('reuses the direct rescue reply for direct assistant turns', () => {
-    const reply = buildSilentSuccessFallback('direct_assistant', [
-      { content: 'Do you have a personality?' },
-    ]);
+    const reply = buildSilentSuccessFallback(
+      'direct_assistant',
+      [{ content: 'Do you have a personality?' }],
+      'telegram',
+    );
 
     expect(reply).toContain("I'm Andrea");
+  });
+
+  it('keeps direct capability fallbacks non-technical', () => {
+    const reply = buildSilentSuccessFallback(
+      'direct_assistant',
+      [{ content: 'Can you use cursor and codex?' }],
+      'telegram',
+    );
+
+    expect(reply).toContain('coding and repo work');
+    expect(reply).not.toContain('runtime failed during startup or execution');
+  });
+
+  it('shapes direct fallback more concisely for Alexa ordinary chat', () => {
+    const reply = buildSilentSuccessFallback(
+      'direct_assistant',
+      [{ content: "What's up?" }],
+      'alexa',
+    );
+
+    expect(reply).toBeTruthy();
+    expect(reply).not.toContain('operator');
   });
 
   it('uses reminder-specific wording for protected reminder requests', () => {

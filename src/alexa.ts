@@ -111,6 +111,7 @@ import {
   type AlexaCompanionGuidanceGoal,
   type CompanionContinuationCandidate,
 } from './types.js';
+import { buildGracefulDegradedReply } from './conversational-core.js';
 import { getUserFacingErrorDetail } from './user-facing-error.js';
 import { normalizeVoicePrompt } from './voice-ready.js';
 import type { CompanionHandoffDeps } from './cross-channel-handoffs.js';
@@ -3574,10 +3575,13 @@ export function createAlexaSkill(
     },
     handle(handlerInput: HandlerInput, error: Error) {
       logger.error({ err: error }, 'Alexa skill request failed');
+      const speech = buildGracefulDegradedReply({
+        kind: 'assistant_runtime_unavailable',
+        channel: 'alexa',
+        text: 'can you still help',
+      });
       return handlerInput.responseBuilder
-        .speak(
-          `Sorry, ${assistantName} hit a voice-service snag: ${shapeAlexaSpeech(getUserFacingErrorDetail(error))}`,
-        )
+        .speak(shapeAlexaSpeech(speech))
         .reprompt(DEFAULT_ALEXA_REPROMPT)
         .getResponse();
     },

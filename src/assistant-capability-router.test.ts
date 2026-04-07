@@ -48,6 +48,18 @@ describe('assistant capability router', () => {
     ).toMatchObject({
       capabilityId: 'research.recommend',
     });
+    expect(
+      matchAssistantCapabilityRequest("What is Jar Jar Binks' species?"),
+    ).toMatchObject({
+      capabilityId: 'research.topic',
+    });
+    expect(
+      matchAssistantCapabilityRequest(
+        'What should I know about Jar Jar Binks?',
+      ),
+    ).toMatchObject({
+      capabilityId: 'research.topic',
+    });
   });
 
   it('matches explicit knowledge-library prompts cleanly', () => {

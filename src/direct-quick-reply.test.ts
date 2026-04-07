@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildDirectAssistantRuntimeFailureReply,
   maybeBuildDirectQuickReply,
   maybeBuildDirectRescueReply,
 } from './direct-quick-reply.js';
@@ -25,7 +26,8 @@ describe('direct quick reply', () => {
   it('returns a greeting response', () => {
     const reply = maybeBuildDirectQuickReply([{ content: 'hello there' }]);
 
-    expect(reply).toContain("I'm Andrea");
+    expect(reply).toBeTruthy();
+    expect(reply?.toLowerCase()).toContain('hi');
   });
 
   it('returns a casual morning check-in response for the exact live failure phrasing', () => {
@@ -42,6 +44,27 @@ describe('direct quick reply', () => {
     ]);
 
     expect(reply).toContain('Doing well');
+  });
+
+  it("returns a calm what's-up response", () => {
+    const reply = maybeBuildDirectQuickReply([{ content: "what's up?" }]);
+
+    expect(reply).toBeTruthy();
+    expect(reply?.toLowerCase()).toContain('what');
+  });
+
+  it('returns a calm what-are-you-doing response', () => {
+    const reply = maybeBuildDirectQuickReply([{ content: 'what are you doing?' }]);
+
+    expect(reply).toBeTruthy();
+    expect(reply).not.toContain('/help');
+  });
+
+  it('returns a warm help-me response without dumping commands', () => {
+    const reply = maybeBuildDirectQuickReply([{ content: 'can you help me?' }]);
+
+    expect(reply).toBeTruthy();
+    expect(reply).not.toContain('/help');
   });
 
   it('does not hijack mixed greeting requests', () => {
@@ -71,7 +94,7 @@ describe('direct quick reply', () => {
   it('returns a presence response', () => {
     const reply = maybeBuildDirectQuickReply([{ content: 'you there?' }]);
 
-    expect(reply).toContain("I'm here");
+    expect(reply).toContain('here');
   });
 
   it('returns a brief capability response', () => {
@@ -79,6 +102,15 @@ describe('direct quick reply', () => {
 
     expect(reply).toContain("I'm Andrea");
     expect(reply).toContain('tasks');
+  });
+
+  it('returns a bounded coding-capability response for cursor and codex asks', () => {
+    const reply = maybeBuildDirectQuickReply([
+      { content: 'Can you use cursor and codex?' },
+    ]);
+
+    expect(reply).toContain('coding and repo work');
+    expect(reply).not.toContain('/cursor_status');
   });
 
   it('returns a stable command-help response', () => {
@@ -96,7 +128,7 @@ describe('direct quick reply', () => {
     ]);
 
     expect(reply).toContain('tasks');
-    expect(reply).toContain('operator status checks');
+    expect(reply).toContain('research');
   });
 
   it('returns a stable response for funny-or-pretending asks', () => {
@@ -128,15 +160,15 @@ describe('direct quick reply', () => {
   });
 
   it('returns a stable acknowledgment for short confirmations', () => {
-    expect(maybeBuildDirectQuickReply([{ content: 'ok' }])).toBe(
-      'Sounds good.',
-    );
-    expect(maybeBuildDirectQuickReply([{ content: 'yes!' }])).toBe(
-      'Sounds good.',
-    );
-    expect(maybeBuildDirectQuickReply([{ content: 'go ahead' }])).toBe(
-      'Sounds good.',
-    );
+    expect(
+      ['Sounds good.', 'Okay.', 'All right.'],
+    ).toContain(maybeBuildDirectQuickReply([{ content: 'ok' }]));
+    expect(
+      ['Sounds good.', 'Okay.', 'All right.'],
+    ).toContain(maybeBuildDirectQuickReply([{ content: 'yes!' }]));
+    expect(
+      ['Sounds good.', 'Okay.', 'All right.'],
+    ).toContain(maybeBuildDirectQuickReply([{ content: 'go ahead' }]));
   });
 
   it('does not hijack mixed requests that start with thanks', () => {
@@ -172,6 +204,17 @@ describe('direct quick reply', () => {
     ]);
 
     expect(reply).toContain("what's what");
+  });
+
+  it('returns a multi-timezone answer for Australia time asks', () => {
+    const reply = maybeBuildDirectQuickReply(
+      [{ content: 'What time is it in Australia?' }],
+      new Date('2026-04-06T12:00:00.000Z'),
+    );
+
+    expect(reply).toContain('Australia spans a few time zones');
+    expect(reply).toContain('Sydney');
+    expect(reply).toContain('Perth');
   });
 
   it('solves simple math expressions', () => {
@@ -225,7 +268,7 @@ describe('direct rescue reply', () => {
     const reply = maybeBuildDirectRescueReply([{ content: 'can you help?' }]);
 
     expect(reply).toContain("I'm here");
-    expect(reply).toContain('one short sentence');
+    expect(reply).not.toContain('operator');
   });
 
   it('does not rescue long complex asks', () => {
@@ -254,5 +297,40 @@ describe('direct rescue reply', () => {
     ]);
 
     expect(reply).toBeNull();
+  });
+});
+
+describe('direct runtime failure reply', () => {
+  it('prefers the local capability answer over a technical runtime banner', () => {
+    const reply = buildDirectAssistantRuntimeFailureReply(
+      [{ content: 'Can you use cursor and codex?' }],
+      'Andrea cannot run that assistant turn right now because the runtime failed during startup or execution.',
+    );
+
+    expect(reply).toContain('coding and repo work');
+    expect(reply).not.toContain('runtime failed during startup or execution');
+  });
+
+  it('keeps a generic direct fallback non-technical when no quick answer exists', () => {
+    const reply = buildDirectAssistantRuntimeFailureReply(
+      [{ content: 'Can you help me compare three backup vendors for next month?' }],
+      'Andrea cannot run that assistant turn right now because the runtime failed during startup or execution.',
+    );
+
+    expect(reply).toContain("can't check that live right now");
+    expect(reply).not.toContain('operator');
+    expect(reply).not.toContain('runtime failed during startup or execution');
+  });
+
+  it('shapes runtime failure replies more concisely for BlueBubbles', () => {
+    const reply = buildDirectAssistantRuntimeFailureReply(
+      [{ content: "What's up?" }],
+      'Andrea cannot run that assistant turn right now because the runtime failed during startup or execution.',
+      new Date('2026-04-06T22:18:10.000Z'),
+      'bluebubbles',
+    );
+
+    expect(reply).toBeTruthy();
+    expect(reply).not.toContain('setup verify');
   });
 });
