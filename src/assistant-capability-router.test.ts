@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  continueAssistantCapabilityFromPriorSubjectData,
   continueAssistantCapabilityFromAlexaState,
   matchAssistantCapabilityRequest,
   resolveAlexaIntentToCapability,
@@ -277,6 +278,39 @@ describe('assistant capability router', () => {
       capabilityId: 'missions.execute',
       continuation: true,
     });
+  });
+
+  it('continues the active mission context from shared assistant seed in direct chat', () => {
+    const subjectData = {
+      activeCapabilityId: 'missions.propose' as const,
+      missionId: 'mission-1',
+      missionSummary: 'Plan tonight.',
+    };
+
+    expect(
+      continueAssistantCapabilityFromPriorSubjectData(
+        "what's the next step",
+        subjectData,
+      ),
+    ).toMatchObject({
+      capabilityId: 'missions.view',
+      continuation: true,
+    });
+    expect(
+      continueAssistantCapabilityFromPriorSubjectData(
+        "what's blocking this",
+        subjectData,
+      ),
+    ).toMatchObject({
+      capabilityId: 'missions.explain',
+      continuation: true,
+    });
+    expect(
+      continueAssistantCapabilityFromPriorSubjectData(
+        'save that for later',
+        subjectData,
+      ),
+    ).toBeNull();
   });
 
   it('keeps Pulse follow-ups on the active capability', () => {

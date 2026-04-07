@@ -30,11 +30,21 @@ export interface AssistantCapabilityMatch {
   continuation?: boolean;
 }
 
+export interface AssistantCapabilityContinuationSubjectData {
+  activeCapabilityId?: AssistantCapabilityId;
+}
+
 function normalizeText(value: string | undefined): string {
   return normalizeVoicePrompt(value || '')
     .replace(/\s+/g, ' ')
     .replace(/[!?]+$/g, '')
     .trim();
+}
+
+function isSharedAssistantCompletionFollowup(lower: string): boolean {
+  return /^(send (?:me )?(?:the )?(?:details|fuller version|full version|full comparison|fuller plan|plan)(?: to telegram)?|send (?:that|it) to telegram|also send (?:that|it) to telegram|give me the deeper comparison in telegram|save (?:that|it|this) (?:in|to) my library|save (?:that|it|this) to the library|save (?:that|it|this) for later|remember (?:that|it|this) for later|save the draft|track (?:that|it|this)(?: under .+)?|keep track of (?:that|it|this)(?: under .+| for tonight)?|turn (?:that|it|this) into a reminder|remind me about (?:that|it|this)(?: tonight)?|draft that for me|draft a message about (?:that|it|this)|send me the plan|send me the fuller plan)\b/.test(
+    lower,
+  );
 }
 
 function matchDailyPrompt(normalized: string): AssistantCapabilityMatch | null {
@@ -674,14 +684,13 @@ export function matchAssistantCapabilityRequest(
   );
 }
 
-export function continueAssistantCapabilityFromAlexaState(
+function continueAssistantCapabilityFromActiveCapability(
   text: string,
-  state: AlexaConversationState | undefined,
+  activeCapabilityId: AssistantCapabilityId | undefined,
 ): AssistantCapabilityMatch | null {
   const normalized = normalizeText(text);
-  if (!state || !normalized) return null;
+  if (!normalized) return null;
   const lower = normalized.toLowerCase();
-  const activeCapabilityId = state.subjectData.activeCapabilityId;
 
   if (/^(anything else|what else|anything more)\b/.test(lower)) {
     if (activeCapabilityId) {
@@ -846,15 +855,38 @@ export function continueAssistantCapabilityFromAlexaState(
     };
   }
 
-  if (
-    /^(send (?:me )?(?:the )?(?:details|fuller version|full version|full comparison|fuller plan|plan)(?: to telegram)?|send (?:that|it) to telegram|also send (?:that|it) to telegram|give me the deeper comparison in telegram|save (?:that|it|this) (?:in|to) my library|save (?:that|it|this) to the library|save (?:that|it|this) for later|remember (?:that|it|this) for later|save the draft|track (?:that|it|this)(?: under .+)?|keep track of (?:that|it|this)(?: under .+| for tonight)?|turn (?:that|it|this) into a reminder|remind me about (?:that|it|this)(?: tonight)?|draft that for me|draft a message about (?:that|it|this)|send me the plan|send me the fuller plan)\b/.test(
-      lower,
-    )
-  ) {
+  if (isSharedAssistantCompletionFollowup(lower)) {
     return null;
   }
 
   return matchAssistantCapabilityRequest(normalized);
+}
+
+export function continueAssistantCapabilityFromPriorSubjectData(
+  text: string,
+  subjectData: AssistantCapabilityContinuationSubjectData | undefined,
+): AssistantCapabilityMatch | null {
+  if (!subjectData) return null;
+  const normalized = normalizeText(text);
+  if (!normalized) return null;
+  if (isSharedAssistantCompletionFollowup(normalized.toLowerCase())) {
+    return null;
+  }
+  return continueAssistantCapabilityFromActiveCapability(
+    normalized,
+    subjectData.activeCapabilityId,
+  );
+}
+
+export function continueAssistantCapabilityFromAlexaState(
+  text: string,
+  state: AlexaConversationState | undefined,
+): AssistantCapabilityMatch | null {
+  if (!state) return null;
+  return continueAssistantCapabilityFromActiveCapability(
+    text,
+    state.subjectData.activeCapabilityId,
+  );
 }
 
 export function resolveAlexaIntentToCapability(

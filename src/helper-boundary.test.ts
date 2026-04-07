@@ -105,7 +105,13 @@ describe('helper boundary wiring', () => {
     const source = readRepoFile('src/index.ts');
 
     expect(source).toContain(
+      'continueAssistantCapabilityFromPriorSubjectData(',
+    );
+    expect(source).toContain(
       'const priorAssistantCapabilitySeed = getSharedAssistantCapabilitySeed(',
+    );
+    expect(source).toContain(
+      'priorAssistantCapabilitySeed?.subjectData,',
     );
     expect(source).toContain(
       'priorSubjectData: priorAssistantCapabilitySeed?.subjectData',
@@ -114,6 +120,14 @@ describe('helper boundary wiring', () => {
       'setSharedAssistantCapabilitySeed(chatJid, result.conversationSeed, now);',
     );
     expect(source).toContain('clearSharedAssistantCapabilitySeed(chatJid);');
+  });
+
+  it('reconciles work-cockpit current-work panels against the visible lane state before clearing selection', () => {
+    const source = readRepoFile('src/index.ts');
+
+    expect(source).toContain('reconcileWorkCockpitCurrentSelection({');
+    expect(source).toContain('runtimeJobId: runtimeSelection?.selected?.handle.jobId || null');
+    expect(source).toContain('cursorJobId: selection?.selected?.id || null');
   });
 
   it('routes shared assistant save and reminder follow-ups before generic direct action-layer fallbacks', () => {

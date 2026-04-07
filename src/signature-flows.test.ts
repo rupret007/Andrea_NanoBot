@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { completeAssistantActionFromAlexa } from './assistant-action-completion.js';
+import { continueAssistantCapabilityFromPriorSubjectData } from './assistant-capability-router.js';
 import { executeAssistantCapability } from './assistant-capabilities.js';
 import { analyzeCommunicationMessage } from './communication-companion.js';
 import { deliverCompanionHandoff } from './cross-channel-handoffs.js';
@@ -355,6 +356,107 @@ describe('signature flows', () => {
     expect(getMission(missionId!)?.linkedReminderIds.length || 0).toBeGreaterThan(
       0,
     );
+  });
+
+  it('keeps plain mission follow-ups on the same mission in direct chat', async () => {
+    const groupFolder = 'signature-mission-continue';
+    const chatJid = 'tg:signature-mission-continue';
+    const now = new Date('2026-04-06T12:00:00.000Z');
+
+    analyzeCommunicationMessage({
+      channel: 'telegram',
+      groupFolder,
+      chatJid,
+      text: 'Candace: Can you let me know if dinner still works tonight?',
+      now,
+    });
+
+    const openLoops = await executeAssistantCapability({
+      capabilityId: 'communication.open_loops',
+      context: {
+        channel: 'telegram',
+        groupFolder,
+        chatJid,
+        now,
+      },
+      input: {
+        canonicalText: "what's still open with Candace",
+      },
+    });
+
+    const proposed = await executeAssistantCapability({
+      capabilityId: 'missions.propose',
+      context: {
+        channel: 'telegram',
+        groupFolder,
+        chatJid,
+        now,
+        priorSubjectData: openLoops.conversationSeed?.subjectData,
+      },
+      input: {
+        canonicalText: 'help me plan tonight',
+      },
+    });
+
+    const nextStepMatch = continueAssistantCapabilityFromPriorSubjectData(
+      "what's the next step",
+      proposed.conversationSeed?.subjectData,
+    );
+    expect(nextStepMatch).toMatchObject({
+      capabilityId: 'missions.view',
+      continuation: true,
+    });
+
+    const nextStep = await executeAssistantCapability({
+      capabilityId: nextStepMatch!.capabilityId,
+      context: {
+        channel: 'telegram',
+        groupFolder,
+        chatJid,
+        now,
+        priorSubjectData: proposed.conversationSeed?.subjectData,
+      },
+      input: {
+        text: "what's the next step",
+        canonicalText: nextStepMatch!.canonicalText,
+      },
+    });
+
+    expect(nextStep.handled).toBe(true);
+    expect(nextStep.replyText).toContain('Next:');
+    expect(nextStep.replyText).toContain('Candace');
+    expect(nextStep.replyText).not.toContain('Research Summary');
+
+    const blockerMatch = continueAssistantCapabilityFromPriorSubjectData(
+      "what's blocking this",
+      nextStep.conversationSeed?.subjectData || proposed.conversationSeed?.subjectData,
+    );
+    expect(blockerMatch).toMatchObject({
+      capabilityId: 'missions.explain',
+      continuation: true,
+    });
+
+    const blocker = await executeAssistantCapability({
+      capabilityId: blockerMatch!.capabilityId,
+      context: {
+        channel: 'telegram',
+        groupFolder,
+        chatJid,
+        now,
+        priorSubjectData:
+          nextStep.conversationSeed?.subjectData ||
+          proposed.conversationSeed?.subjectData,
+      },
+      input: {
+        text: "what's blocking this",
+        canonicalText: blockerMatch!.canonicalText,
+      },
+    });
+
+    expect(blocker.handled).toBe(true);
+    expect((blocker.replyText || '').toLowerCase()).toContain('blocker');
+    expect(blocker.replyText).toContain('Candace');
+    expect(blocker.replyText).not.toContain('Research Summary');
   });
 
   it('keeps research, richer detail, and library save on the same chain', async () => {

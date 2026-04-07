@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveRuntimeDashboardJobId } from './work-cockpit-targets.js';
+import {
+  reconcileWorkCockpitCurrentSelection,
+  resolveRuntimeDashboardJobId,
+} from './work-cockpit-targets.js';
 
 describe('resolveRuntimeDashboardJobId', () => {
   it('uses the exact runtime job id from a unified current-work card', () => {
@@ -31,5 +34,46 @@ describe('resolveRuntimeDashboardJobId', () => {
         state: { kind: 'work_current' },
       }),
     ).toBeNull();
+  });
+});
+
+describe('reconcileWorkCockpitCurrentSelection', () => {
+  it('keeps an explicit current-work selection when one already exists', () => {
+    expect(
+      reconcileWorkCockpitCurrentSelection({
+        currentSelection: {
+          laneId: 'cursor',
+          jobId: 'cursor-job-1',
+        },
+        runtimeJobId: 'runtime-job-1',
+      }),
+    ).toEqual({
+      laneId: 'cursor',
+      jobId: 'cursor-job-1',
+    });
+  });
+
+  it('promotes the current runtime task when the shared selection is missing', () => {
+    expect(
+      reconcileWorkCockpitCurrentSelection({
+        currentSelection: null,
+        runtimeJobId: 'runtime-job-2',
+      }),
+    ).toEqual({
+      laneId: 'andrea_runtime',
+      jobId: 'runtime-job-2',
+    });
+  });
+
+  it('falls back to the current cursor task when no runtime task is selected', () => {
+    expect(
+      reconcileWorkCockpitCurrentSelection({
+        currentSelection: null,
+        cursorJobId: 'cursor-job-2',
+      }),
+    ).toEqual({
+      laneId: 'cursor',
+      jobId: 'cursor-job-2',
+    });
   });
 });

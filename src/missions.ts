@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 
 import type { SelectedWorkContext } from './daily-command-center.js';
 import {
+  getLifeThread,
   getMission,
   listMissionsForGroup,
   listProfileSubjectsForGroup,
@@ -24,6 +25,7 @@ import type {
   MissionStepRecord,
   MissionSuggestedAction,
   MissionSuggestedActionKind,
+  LifeThread,
   ProfileSubject,
 } from './types.js';
 import { normalizeVoicePrompt } from './voice-ready.js';
@@ -176,6 +178,38 @@ function resolveLinkedSubjects(
     }
   }
   return subjects.filter((subject) => seen.has(subject.id));
+}
+
+function resolveStoredLinkedSubjects(
+  groupFolder: string,
+  existing?: MissionRecord,
+): ProfileSubject[] {
+  if (!existing?.linkedSubjectIds.length) return [];
+  const subjects = listProfileSubjectsForGroup(groupFolder);
+  const selected = new Set(existing.linkedSubjectIds);
+  return subjects.filter((subject) => selected.has(subject.id));
+}
+
+function mergeLinkedSubjects(
+  primary: ProfileSubject[],
+  secondary: ProfileSubject[],
+): ProfileSubject[] {
+  const merged = new Map<string, ProfileSubject>();
+  for (const subject of [...primary, ...secondary]) {
+    merged.set(subject.id, subject);
+  }
+  return [...merged.values()];
+}
+
+function resolveStoredLinkedLifeThread(
+  existing?: MissionRecord,
+): LifeThread | null {
+  if (!existing?.linkedLifeThreadIds.length) return null;
+  for (const threadId of existing.linkedLifeThreadIds) {
+    const thread = getLifeThread(threadId);
+    if (thread) return thread;
+  }
+  return null;
 }
 
 function resolveLinkedLifeThread(
@@ -735,16 +769,13 @@ async function buildMissionSnapshot(
 }> {
   const now = input.now || new Date();
   const objective = existing?.objective || extractObjective(input);
-  const linkedSubjects = resolveLinkedSubjects(
-    input.groupFolder,
-    objective,
-    input.priorContext,
+  const linkedSubjects = mergeLinkedSubjects(
+    resolveStoredLinkedSubjects(input.groupFolder, existing),
+    resolveLinkedSubjects(input.groupFolder, objective, input.priorContext),
   );
-  const linkedLifeThread = resolveLinkedLifeThread(
-    input.groupFolder,
-    objective,
-    input.priorContext,
-  );
+  const linkedLifeThread =
+    resolveStoredLinkedLifeThread(existing) ||
+    resolveLinkedLifeThread(input.groupFolder, objective, input.priorContext);
   const horizon = existing?.dueHorizon || inferHorizon(input.text);
   const chief = await buildChiefOfStaffSnapshot({
     channel: input.channel,

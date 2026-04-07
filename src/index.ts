@@ -119,7 +119,10 @@ import {
   type AssistantCapabilityResult,
 } from './assistant-capabilities.js';
 import { completeAssistantActionFromAlexa } from './assistant-action-completion.js';
-import { matchAssistantCapabilityRequest } from './assistant-capability-router.js';
+import {
+  continueAssistantCapabilityFromPriorSubjectData,
+  matchAssistantCapabilityRequest,
+} from './assistant-capability-router.js';
 import {
   resolveAlexaConversationFollowup,
   type AlexaConversationState,
@@ -384,7 +387,10 @@ import {
   stripLeadingMarkdownTitle,
   formatTaskReplyPrompt,
 } from './task-presentation.js';
-import { resolveRuntimeDashboardJobId } from './work-cockpit-targets.js';
+import {
+  reconcileWorkCockpitCurrentSelection,
+  resolveRuntimeDashboardJobId,
+} from './work-cockpit-targets.js';
 import {
   buildTaskOutputSuggestion,
   getTaskContextType,
@@ -4337,14 +4343,18 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   };
 
   const tryHandleSharedAssistantCapability = async (): Promise<boolean> => {
-    const capabilityMatch = matchAssistantCapabilityRequest(lastContent);
-    if (!capabilityMatch) {
-      return false;
-    }
     const priorAssistantCapabilitySeed = getSharedAssistantCapabilitySeed(
       chatJid,
       now,
     );
+    const capabilityMatch =
+      continueAssistantCapabilityFromPriorSubjectData(
+        lastContent,
+        priorAssistantCapabilitySeed?.subjectData,
+      ) || matchAssistantCapabilityRequest(lastContent);
+    if (!capabilityMatch) {
+      return false;
+    }
     const priorDailyContext = getDailyCompanionContext(chatJid, now);
     const selectedWork = await getSelectedDailyWorkContext(
       chatJid,
@@ -6254,6 +6264,23 @@ async function main(): Promise<void> {
         group.folder,
         params.sourceMessage?.thread_id,
       );
+      const reconciledCurrentWorkSelection =
+        reconcileWorkCockpitCurrentSelection({
+          currentSelection: currentWorkSelection
+            ? {
+                laneId: currentWorkSelection.laneId,
+                jobId: currentWorkSelection.jobId,
+              }
+            : null,
+          cursorJobId: selection?.selected?.id || null,
+          runtimeJobId: runtimeSelection?.selected?.handle.jobId || null,
+        });
+      const effectiveCurrentWorkSelection = reconciledCurrentWorkSelection
+        ? {
+            ...reconciledCurrentWorkSelection,
+            source: currentWorkSelection?.source || 'shared',
+          }
+        : null;
       const render = buildCursorDashboardHome({
         ...summarizeCursorDashboardLines({
           cloudStatus,
@@ -6263,7 +6290,7 @@ async function main(): Promise<void> {
         }),
         currentJob: selection?.selected || undefined,
         currentRuntimeTask: runtimeSelection?.selected || undefined,
-        currentFocusLaneId: currentWorkSelection?.laneId || null,
+        currentFocusLaneId: effectiveCurrentWorkSelection?.laneId || null,
       });
       return upsertCursorDashboardMessage({
         chatJid: params.chatJid,
@@ -6271,8 +6298,8 @@ async function main(): Promise<void> {
         state: params.state,
         text: render.text,
         inlineActionRows: render.inlineActionRows,
-        selectedAgentId: currentWorkSelection?.jobId || null,
-        selectedLaneId: currentWorkSelection?.laneId,
+        selectedAgentId: effectiveCurrentWorkSelection?.jobId || null,
+        selectedLaneId: effectiveCurrentWorkSelection?.laneId,
         forceNew: params.forceNew,
       });
     }
@@ -6386,8 +6413,25 @@ async function main(): Promise<void> {
         group.folder,
         params.sourceMessage?.thread_id,
       );
+      const reconciledCurrentWorkSelection =
+        reconcileWorkCockpitCurrentSelection({
+          currentSelection: currentWorkSelection
+            ? {
+                laneId: currentWorkSelection.laneId,
+                jobId: currentWorkSelection.jobId,
+              }
+            : null,
+          cursorJobId: selection?.selected?.id || null,
+          runtimeJobId: runtimeSelection?.selected?.handle.jobId || null,
+        });
+      const effectiveCurrentWorkSelection = reconciledCurrentWorkSelection
+        ? {
+            ...reconciledCurrentWorkSelection,
+            source: currentWorkSelection?.source || 'shared',
+          }
+        : null;
       const render = buildCursorDashboardWorkCurrent({
-        currentFocusLaneId: currentWorkSelection?.laneId || null,
+        currentFocusLaneId: effectiveCurrentWorkSelection?.laneId || null,
         currentJob: selection?.selected || undefined,
         currentRuntimeTask: runtimeSelection?.selected || undefined,
         executionEnabled: runtimeBackendStatus.state === 'available',
@@ -6402,8 +6446,9 @@ async function main(): Promise<void> {
         state: params.state,
         text: render.text,
         inlineActionRows: render.inlineActionRows,
-        selectedAgentId: currentWorkSelection?.jobId || render.selectedAgentId,
-        selectedLaneId: currentWorkSelection?.laneId,
+        selectedAgentId:
+          effectiveCurrentWorkSelection?.jobId || render.selectedAgentId,
+        selectedLaneId: effectiveCurrentWorkSelection?.laneId,
         forceNew: params.forceNew,
       });
     }
