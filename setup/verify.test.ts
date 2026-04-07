@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  buildVerifyNextSteps,
   buildBlockedAssistantExecutionProbeResult,
   buildCredentialProbeMessagesUrl,
+  buildReportedMissingRequirements,
+  buildVerifyNextSteps,
   classifyLocalGatewayHealthPayload,
   classifyCredentialProbeFailure,
   determineCredentialStatus,
@@ -111,6 +112,34 @@ describe('buildVerifyNextSteps', () => {
     expect(steps).toContain(
       'confirm services:status records an IntentRequest.',
     );
+  });
+});
+
+describe('buildReportedMissingRequirements', () => {
+  it('replaces generic credential blockers with the exact outward research blocker', () => {
+    const requirements = buildReportedMissingRequirements({
+      missingRequirements: ['credentials'],
+      outwardResearchStatus: 'missing_direct_provider_credentials',
+      alexaConfigured: true,
+      alexaLastSignedRequestType: 'none',
+    });
+
+    expect(requirements).toEqual([
+      'outward_research_direct_provider_credentials_missing',
+      'alexa_live_signed_turn_missing',
+    ]);
+  });
+
+  it('maps runtime probe failures to specific outward research blockers', () => {
+    const requirements = buildReportedMissingRequirements({
+      missingRequirements: ['credential_runtime_unusable', 'service_running'],
+      outwardResearchStatus: 'quota_blocked',
+    });
+
+    expect(requirements).toEqual([
+      'outward_research_quota_blocked',
+      'service_running',
+    ]);
   });
 });
 

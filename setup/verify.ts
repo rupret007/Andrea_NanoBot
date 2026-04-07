@@ -1158,6 +1158,50 @@ export function buildVerifyNextSteps(input: {
   return steps.join(' | ');
 }
 
+export function buildReportedMissingRequirements(input: {
+  missingRequirements: string[];
+  outwardResearchStatus:
+    | 'not_configured'
+    | 'misconfigured_native_openai_endpoint'
+    | 'missing_direct_provider_credentials'
+    | 'quota_blocked'
+    | 'degraded'
+    | 'available';
+  alexaConfigured?: boolean;
+  alexaLastSignedRequestType?: string;
+}): string[] {
+  const reported = new Set<string>();
+
+  const outwardResearchRequirement =
+    input.outwardResearchStatus === 'missing_direct_provider_credentials'
+      ? 'outward_research_direct_provider_credentials_missing'
+      : input.outwardResearchStatus === 'quota_blocked'
+        ? 'outward_research_quota_blocked'
+        : input.outwardResearchStatus === 'degraded'
+          ? 'outward_research_runtime_probe_failed'
+          : input.outwardResearchStatus === 'misconfigured_native_openai_endpoint'
+            ? 'outward_research_endpoint_misconfigured'
+            : null;
+
+  for (const requirement of input.missingRequirements) {
+    if (
+      (requirement === 'credentials' ||
+        requirement === 'credential_runtime_unusable') &&
+      outwardResearchRequirement
+    ) {
+      reported.add(outwardResearchRequirement);
+      continue;
+    }
+    reported.add(requirement);
+  }
+
+  if (input.alexaConfigured && input.alexaLastSignedRequestType === 'none') {
+    reported.add('alexa_live_signed_turn_missing');
+  }
+
+  return [...reported];
+}
+
 export interface CredentialStatusInput {
   hasAnthropicDirectCredential: boolean;
   hasOpenAiCompatibleCredential: boolean;
@@ -1704,6 +1748,13 @@ export async function run(_args: string[]): Promise<void> {
     externalBlockers.push('alexa_live_signed_turn_missing');
   }
 
+  const reportedMissingRequirements = buildReportedMissingRequirements({
+    missingRequirements,
+    outwardResearchStatus,
+    alexaConfigured,
+    alexaLastSignedRequestType,
+  });
+
   // Determine overall status
   const status =
     nodeOk &&
@@ -1786,7 +1837,7 @@ export async function run(_args: string[]): Promise<void> {
     MOUNT_ALLOWLIST: mountAllowlist,
     SERVICE_EXPECTED_STOPPED: serviceExpectedStopped,
     EXTERNAL_BLOCKERS: externalBlockers.join(','),
-    MISSING_REQUIREMENTS: missingRequirements.join(','),
+    MISSING_REQUIREMENTS: reportedMissingRequirements.join(','),
     NEXT_STEPS: nextSteps,
     STATUS: status,
     LOG: 'stdout/stderr (no dedicated setup.log file)',
