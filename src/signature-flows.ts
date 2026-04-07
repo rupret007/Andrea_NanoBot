@@ -107,7 +107,11 @@ export function buildSignatureFlowText(input: {
   const lead = normalizeText(input.lead);
   const nextAction = normalizeActionText(input.nextAction);
   const bodyText = input.bodyText?.trim();
-  const detailLines = dedupeLines(input.detailLines || []);
+  const detailLines = dedupeLines(input.detailLines || []).filter((line) => {
+    const normalizedLine = normalizeText(line);
+    if (!normalizedLine) return false;
+    return normalizedLine.toLowerCase() !== lead.toLowerCase();
+  });
   const lines: string[] = [];
 
   if (lead) lines.push(lead);

@@ -15,7 +15,7 @@ describe('assistant capability router', () => {
       capabilityId: 'daily.loose_ends',
     });
     expect(
-      matchAssistantCapabilityRequest("What's still open with Candace?"),
+      matchAssistantCapabilityRequest('What about Candace?'),
     ).toMatchObject({
       capabilityId: 'household.candace_upcoming',
     });
@@ -97,6 +97,16 @@ describe('assistant capability router', () => {
     });
     expect(
       matchAssistantCapabilityRequest('What do I owe people right now?'),
+    ).toMatchObject({
+      capabilityId: 'communication.open_loops',
+    });
+    expect(
+      matchAssistantCapabilityRequest("What's still open with Candace?"),
+    ).toMatchObject({
+      capabilityId: 'communication.open_loops',
+    });
+    expect(
+      matchAssistantCapabilityRequest('What should I talk to Candace about?'),
     ).toMatchObject({
       capabilityId: 'communication.open_loops',
     });

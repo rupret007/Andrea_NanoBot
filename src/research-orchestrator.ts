@@ -141,6 +141,25 @@ function normalizeQuery(value: string): string {
   return normalizeVoicePrompt(value).replace(/\s+/g, ' ').trim();
 }
 
+function normalizeResearchTaskPrompt(prompt: string): string {
+  const normalized = prompt.trim();
+  const scheduledMatch = normalized.match(
+    /^Send a concise reminder that "(.+?)" is scheduled for /i,
+  );
+  if (scheduledMatch) {
+    return scheduledMatch[1]!.trim();
+  }
+
+  const reminderMatch = normalized.match(
+    /^Send a concise reminder telling the user to (.+?)\.?$/i,
+  );
+  if (reminderMatch) {
+    return reminderMatch[1]!.replace(/[.!?]+$/g, '').trim();
+  }
+
+  return normalized;
+}
+
 function buildDefaultFollowups(kind: ResearchRequestKind): string[] {
   switch (kind) {
     case 'compare':
@@ -508,7 +527,7 @@ async function collectLocalResearchContext(
         task.group_folder === request.groupFolder && task.status === 'active',
     )
     .slice(0, 3)
-    .map((task) => task.prompt.trim())
+    .map((task) => normalizeResearchTaskPrompt(task.prompt))
     .filter(Boolean);
 
   const memoryLines = listProfileFactsForGroup(request.groupFolder, [

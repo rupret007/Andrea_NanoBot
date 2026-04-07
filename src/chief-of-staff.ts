@@ -453,12 +453,17 @@ function buildOpportunitySignal(
     Math.round((openWindow.end.getTime() - openWindow.start.getTime()) / 60000),
   );
   if (minutes < 20) return null;
+  const summaryText = selectedWork
+    ? minutes >= 180
+      ? `You have a decent stretch of usable room that could move ${selectedWork.title}.`
+      : `You have about ${minutes} minutes of usable room that could move ${selectedWork.title}.`
+    : minutes >= 180
+      ? 'You have a decent amount of breathing room right now.'
+      : `You have about ${minutes} minutes of usable breathing room.`;
   return {
     kind: 'opportunity',
     title: selectedWork?.title || 'Open window',
-    summaryText: selectedWork
-      ? `You have about ${minutes} minutes of usable room that could move ${selectedWork.title}.`
-      : `You have about ${minutes} minutes of usable breathing room.`,
+    summaryText,
     scope: selectedWork ? 'work' : 'personal',
     urgency: 'low',
     importance: selectedWork ? 'medium' : 'low',

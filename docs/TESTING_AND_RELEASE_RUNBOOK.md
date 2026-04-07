@@ -327,15 +327,11 @@ If any of those are missing, record Alexa as **code-ready but setup-blocked** in
 
 Current truthful closeout note:
 
-- Alexa is now live-accepted on this host after a real signed voice conversation
-- the accepted flow was:
-  - `Open Andrea Assistant`
-  - `What am I forgetting?`
-  - `Anything else?`
-  - `What about Candace?`
-  - `Be a little more direct.`
-  - optional `What should I remember tonight?`
-- the accepted live turns resolved to `groupFolder=main` and used `responseSource=local_companion`
+- Telegram is the live-proven release-candidate surface on this host for this pass
+- Alexa listener, OAuth, public ingress, and pinned Node 22 are healthy, but this pass has not yet reproven one fresh signed live voice `IntentRequest`
+- if `npm run services:status` still shows `alexa_last_signed_request_type=none`, the remaining Alexa blocker is one human-operated voice or authenticated simulator run after importing `docs/alexa/interaction-model.en-US.json` and running `Build Model`
+- BlueBubbles remains near-live unless a reachable live webhook/server is reproved on the same host
+- outward-facing research is currently a graceful blocked-path proof on this host because the provider account is quota-blocked
 - typed Alexa+ app chat is not an authoritative proof surface unless Andrea logs a real signed follow-up `IntentRequest` after launch
 - interaction-model changes require a fresh import of `docs/alexa/interaction-model.en-US.json` plus `Build Model` in the Alexa Developer Console before live utterance failures count against the repo
 - if live voice still falls into `AMAZON.FallbackIntent` after that rebuild, use the Alexa Developer Console Utterance Profiler or Intent History to capture the exact recognized phrase before changing repo code

@@ -100,4 +100,40 @@ describe('helper boundary wiring', () => {
       'planSimpleReminder(lastContent, group.folder, chatJid, now)',
     );
   });
+
+  it('persists shared capability follow-up context so plain Telegram continuations do not fall back to stale daily context', () => {
+    const source = readRepoFile('src/index.ts');
+
+    expect(source).toContain(
+      'const priorAssistantCapabilitySeed = getSharedAssistantCapabilitySeed(',
+    );
+    expect(source).toContain(
+      'priorSubjectData: priorAssistantCapabilitySeed?.subjectData',
+    );
+    expect(source).toContain(
+      'setSharedAssistantCapabilitySeed(chatJid, result.conversationSeed, now);',
+    );
+    expect(source).toContain('clearSharedAssistantCapabilitySeed(chatJid);');
+  });
+
+  it('routes shared assistant save and reminder follow-ups before generic direct action-layer fallbacks', () => {
+    const source = readRepoFile('src/index.ts');
+    const sharedCompletionIndex = source.indexOf(
+      'if (await tryHandleSharedAssistantCompletion()) {',
+    );
+    const directActionLayerIndex = source.indexOf(
+      "if (await tryHandleLocalActionLayer('direct')) {",
+    );
+
+    expect(source).toContain(
+      'const tryHandleSharedAssistantCompletion = async (): Promise<boolean> => {',
+    );
+    expect(source).toContain(
+      'const followup = resolveAlexaConversationFollowup(lastContent, state);',
+    );
+    expect(source).toContain('completeAssistantActionFromAlexa(');
+    expect(sharedCompletionIndex).toBeGreaterThan(-1);
+    expect(directActionLayerIndex).toBeGreaterThan(-1);
+    expect(sharedCompletionIndex).toBeLessThan(directActionLayerIndex);
+  });
 });

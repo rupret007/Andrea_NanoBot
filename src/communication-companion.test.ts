@@ -6,6 +6,7 @@ import {
   listCommunicationThreadsForGroup,
   storeChatMetadata,
   storeMessageDirect,
+  upsertLifeThread,
   upsertProfileSubject,
 } from './db.js';
 import {
@@ -109,6 +110,87 @@ describe('communication companion', () => {
     expect(result.style).toBe('warmer');
     expect(result.draftText).toContain('Hey Candace,');
     expect(result.draftText).toMatch(/let me know/i);
+  });
+
+  it('phrases confirmation asks more naturally in summaries and drafts', () => {
+    const analysis = analyzeCommunicationMessage({
+      channel: 'bluebubbles',
+      groupFolder: 'main',
+      chatJid: 'bb:test',
+      text: 'Summarize this message: Band: can you confirm tonight by 6 if you are in?',
+      now: new Date('2026-04-06T09:00:00.000Z'),
+    });
+
+    const draft = draftCommunicationReply({
+      channel: 'bluebubbles',
+      groupFolder: 'main',
+      chatJid: 'bb:test',
+      text: 'what should I say back',
+      conversationSummary: analysis.summaryText,
+      priorContext: analysis.thread
+        ? {
+            communicationThreadId: analysis.thread.id,
+            lastCommunicationSummary: analysis.summaryText,
+          }
+        : undefined,
+      now: new Date('2026-04-06T09:05:00.000Z'),
+    });
+
+    expect(analysis.ok).toBe(true);
+    expect(analysis.summaryText).toContain('whether you are in by 6 tonight');
+    expect(analysis.summaryText).not.toContain('about confirm');
+    expect(draft.ok).toBe(true);
+    expect(draft.draftText).toContain('whether you are in by 6 tonight');
+  });
+
+  it('strips saved-note command wording from relationship-aware draft support lines', () => {
+    seedCandace();
+    upsertLifeThread({
+      id: 'thread-candace-dinner-proof',
+      groupFolder: 'main',
+      title: 'Candace',
+      category: 'relationship',
+      status: 'active',
+      scope: 'personal',
+      relatedSubjectIds: ['subject-candace'],
+      contextTags: ['candace', 'dinner'],
+      summary: 'Candace dinner follow-up.',
+      nextAction:
+        'Save this to my library as Knowledge Proof Dinner A: Friday dinner after rehearsal keeps pickup simpler and avoids a late bedtime. tags: proof,candace',
+      nextFollowupAt: null,
+      sourceKind: 'explicit',
+      confidenceKind: 'high',
+      userConfirmed: true,
+      sensitivity: 'sensitive',
+      surfaceMode: 'default',
+      followthroughMode: 'important_only',
+      lastSurfacedAt: null,
+      snoozedUntil: null,
+      linkedTaskId: null,
+      mergedIntoThreadId: null,
+      createdAt: '2026-04-06T08:00:00.000Z',
+      lastUpdatedAt: '2026-04-06T08:00:00.000Z',
+      lastUsedAt: null,
+    });
+
+    const result = draftCommunicationReply({
+      channel: 'telegram',
+      groupFolder: 'main',
+      text: 'what should I say back',
+      conversationSummary: 'Candace wants a follow-up about whether dinner still works tonight.',
+      priorContext: {
+        lastCommunicationSummary:
+          'Candace wants a follow-up about whether dinner still works tonight.',
+      },
+      now: new Date('2026-04-06T09:00:00.000Z'),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.draftText).toContain(
+      'Friday dinner after rehearsal keeps pickup simpler and avoids a late bedtime',
+    );
+    expect(result.draftText).not.toContain('Save this to my library as');
+    expect(result.draftText).not.toContain('tags:');
   });
 
   it('summarizes what is still owed and respects manual-only carryover suppression', () => {

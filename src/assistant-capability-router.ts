@@ -106,12 +106,7 @@ function matchHouseholdPrompt(
   const lower = normalized.toLowerCase();
   if (
     lower === 'what about candace' ||
-    lower === 'what do candace and i have coming up' ||
-    lower === "what's still open with candace" ||
-    lower === 'what is still open with candace' ||
-    lower === 'what still open with candace' ||
-    lower === 'what should i talk to candace about' ||
-    lower === 'what do i need to follow up on with candace'
+    lower === 'what do candace and i have coming up'
   ) {
     return {
       capabilityId: 'household.candace_upcoming',
@@ -343,7 +338,11 @@ function matchCommunicationPrompt(
     /^what do i owe people\b/.test(lower) ||
     /^who am i forgetting to respond to\b/.test(lower) ||
     /^anything i need to send tonight\b/.test(lower) ||
-    /^anything i need to reply to\b/.test(lower)
+    /^anything i need to reply to\b/.test(lower) ||
+    /^what('?s| is)? still open with [a-z][a-z' -]+\??$/.test(lower) ||
+    /^what still open with [a-z][a-z' -]+\??$/.test(lower) ||
+    /^what should i talk to [a-z][a-z' -]+ about\??$/.test(lower) ||
+    /^what do i need to follow up on with [a-z][a-z' -]+\??$/.test(lower)
   ) {
     return {
       capabilityId: 'communication.open_loops',
@@ -657,11 +656,11 @@ export function matchAssistantCapabilityRequest(
     matchStaffPrompt(normalized) ||
     matchDailyPrompt(normalized) ||
     matchHouseholdPrompt(normalized) ||
+    matchCommunicationPrompt(normalized) ||
     matchThreadPrompt(normalized) ||
     matchMemoryPrompt(normalized) ||
     matchPulsePrompt(normalized) ||
     matchRitualPrompt(normalized) ||
-    matchCommunicationPrompt(normalized) ||
     matchKnowledgePrompt(normalized) ||
     matchMediaPrompt(normalized) ||
     (isSharedResearchRequest(normalized)

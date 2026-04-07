@@ -115,9 +115,15 @@ import {
 } from './life-threads.js';
 import {
   executeAssistantCapability,
+  type AssistantCapabilityConversationSeed,
   type AssistantCapabilityResult,
 } from './assistant-capabilities.js';
+import { completeAssistantActionFromAlexa } from './assistant-action-completion.js';
 import { matchAssistantCapabilityRequest } from './assistant-capability-router.js';
+import {
+  resolveAlexaConversationFollowup,
+  type AlexaConversationState,
+} from './alexa-conversation.js';
 import {
   clearAssistantHealthState,
   clearAssistantReadyState,
@@ -498,6 +504,8 @@ const ACTION_LAYER_PENDING_REMINDER_PREFIX = 'action_layer_pending_reminder:';
 const ACTION_LAYER_PENDING_DRAFT_PREFIX = 'action_layer_pending_draft:';
 const DAILY_COMPANION_CONTEXT_PREFIX = 'daily_companion_context:';
 const DAILY_COMPANION_CONTEXT_TTL_MS = 10 * 60 * 1000;
+const SHARED_ASSISTANT_CONTEXT_PREFIX = 'shared_assistant_context:';
+const SHARED_ASSISTANT_CONTEXT_TTL_MS = 10 * 60 * 1000;
 
 function getGoogleCalendarPendingStateKey(chatJid: string): string {
   return `${GOOGLE_CALENDAR_PENDING_STATE_PREFIX}${chatJid}`;
@@ -537,6 +545,16 @@ function getActionLayerPendingDraftKey(chatJid: string): string {
 
 function getDailyCompanionContextKey(chatJid: string): string {
   return `${DAILY_COMPANION_CONTEXT_PREFIX}${chatJid}`;
+}
+
+function getSharedAssistantContextKey(chatJid: string): string {
+  return `${SHARED_ASSISTANT_CONTEXT_PREFIX}${chatJid}`;
+}
+
+interface SharedAssistantContextState {
+  version: 1;
+  createdAt: string;
+  seed: AssistantCapabilityConversationSeed;
 }
 
 const ACTIVE_REPO_ROOT = process.cwd();
@@ -977,6 +995,59 @@ function setDailyCompanionContext(
 
 function clearDailyCompanionContext(chatJid: string): void {
   deleteRouterState(getDailyCompanionContextKey(chatJid));
+}
+
+function getSharedAssistantCapabilitySeed(
+  chatJid: string,
+  now = new Date(),
+): AssistantCapabilityConversationSeed | null {
+  const raw = getRouterState(getSharedAssistantContextKey(chatJid));
+  if (!raw) return null;
+
+  try {
+    const parsed = JSON.parse(raw) as SharedAssistantContextState;
+    if (
+      !parsed ||
+      parsed.version !== 1 ||
+      !parsed.createdAt ||
+      !parsed.seed?.flowKey ||
+      !parsed.seed?.summaryText
+    ) {
+      clearSharedAssistantCapabilitySeed(chatJid);
+      return null;
+    }
+
+    const createdAtMs = Date.parse(parsed.createdAt);
+    if (
+      !Number.isFinite(createdAtMs) ||
+      createdAtMs + SHARED_ASSISTANT_CONTEXT_TTL_MS < now.getTime()
+    ) {
+      clearSharedAssistantCapabilitySeed(chatJid);
+      return null;
+    }
+
+    return parsed.seed;
+  } catch {
+    clearSharedAssistantCapabilitySeed(chatJid);
+    return null;
+  }
+}
+
+function setSharedAssistantCapabilitySeed(
+  chatJid: string,
+  seed: AssistantCapabilityConversationSeed,
+  now = new Date(),
+): void {
+  const state: SharedAssistantContextState = {
+    version: 1,
+    createdAt: now.toISOString(),
+    seed,
+  };
+  setRouterState(getSharedAssistantContextKey(chatJid), JSON.stringify(state));
+}
+
+function clearSharedAssistantCapabilitySeed(chatJid: string): void {
+  deleteRouterState(getSharedAssistantContextKey(chatJid));
 }
 
 function formatCreatedGoogleCalendarEventReply(input: {
@@ -4005,6 +4076,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       } else {
         clearActionLayerContext(chatJid);
       }
+      clearSharedAssistantCapabilitySeed(chatJid);
       setDailyCompanionContext(chatJid, dailyResponse.context);
       const suggestedThread =
         lastContent &&
@@ -4114,6 +4186,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           inlineActionRows: buildCalendarLookupInlineActionRows(lastContent),
         },
       );
+      clearSharedAssistantCapabilitySeed(chatJid);
       logger.info(
         {
           component: 'assistant',
@@ -4137,11 +4210,142 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     }
   };
 
+  const tryHandleSharedAssistantCompletion = async (): Promise<boolean> => {
+    const sharedSeed = getSharedAssistantCapabilitySeed(chatJid, now);
+    if (!sharedSeed) {
+      return false;
+    }
+
+    const state: AlexaConversationState = {
+      flowKey: sharedSeed.flowKey,
+      subjectKind: sharedSeed.subjectKind,
+      subjectData: sharedSeed.subjectData || {},
+      summaryText: sharedSeed.summaryText,
+      supportedFollowups: sharedSeed.supportedFollowups || [],
+      styleHints: {},
+    };
+    const followup = resolveAlexaConversationFollowup(lastContent, state);
+    if (!followup.ok || !followup.action) {
+      return false;
+    }
+
+    const result = await completeAssistantActionFromAlexa(
+      {
+        groupFolder: group.folder,
+        action: followup.action,
+        utterance: followup.text || lastContent,
+        conversationSummary: sharedSeed.summaryText,
+        priorSubjectData: sharedSeed.subjectData,
+        replyText:
+          sharedSeed.subjectData?.pendingActionText ||
+          sharedSeed.subjectData?.lastAnswerSummary,
+        now,
+      },
+      {
+        resolveTelegramMainChat: resolveTelegramMainChatForAlexa,
+        resolveBlueBubblesCompanionChat: resolveBlueBubblesCompanionChat,
+        resolveHandoffTarget: resolveCompanionHandoffTarget,
+        sendTelegramMessage: sendCompanionHandoffMessageToChannel,
+        sendBlueBubblesMessage: sendCompanionHandoffMessageToChannel,
+        sendHandoffMessage: sendCompanionHandoffMessage,
+        sendTelegramArtifact: sendCompanionHandoffArtifactToChannel,
+        sendHandoffArtifact: sendCompanionHandoffArtifact,
+      },
+    );
+    if (!result.handled) {
+      return false;
+    }
+
+    try {
+      if (result.reminderTaskId) {
+        refreshTaskSnapshots(registeredGroups);
+      }
+
+      if (result.bridgeSaveForLaterText) {
+        const savedThread = handleLifeThreadCommand({
+          groupFolder: group.folder,
+          channel: conversationChannel,
+          chatJid,
+          text: 'save this for later',
+          replyText: result.bridgeSaveForLaterText,
+          conversationSummary: sharedSeed.summaryText,
+          now,
+        });
+        if (savedThread.referencedThread) {
+          setLastReferencedLifeThread(chatJid, savedThread.referencedThread, now);
+        }
+        await channel.sendMessage(chatJid, savedThread.responseText || 'Okay.');
+      } else if (
+        result.bridgeDraftReference &&
+        sharedSeed.subjectData?.activeCapabilityId?.startsWith('communication.')
+      ) {
+        const draftResult = await executeAssistantCapability({
+          capabilityId: 'communication.draft_reply',
+          context: {
+            channel: conversationChannel,
+            groupFolder: group.folder,
+            chatJid,
+            now,
+            conversationSummary: sharedSeed.summaryText,
+            priorSubjectData: sharedSeed.subjectData,
+            replyText: missedMessages.at(-1)?.reply_to?.content,
+          },
+          input: {
+            text: 'what should I say back',
+            canonicalText: 'what should I say back',
+          },
+        });
+        if (!draftResult.handled) {
+          return false;
+        }
+        await channel.sendMessage(chatJid, draftResult.replyText || 'Okay.');
+        if (draftResult.conversationSeed) {
+          setSharedAssistantCapabilitySeed(chatJid, draftResult.conversationSeed, now);
+        } else {
+          clearSharedAssistantCapabilitySeed(chatJid);
+        }
+      } else {
+        await channel.sendMessage(chatJid, result.replyText || 'Okay.');
+      }
+
+      clearActionLayerContext(chatJid);
+      logger.info(
+        {
+          component: 'assistant',
+          chatJid,
+          groupFolder: group.folder,
+          group: group.name,
+          requestRoute: requestPolicy.route,
+          followupAction: followup.action,
+        },
+        'Handled shared assistant follow-up completion via local fast path',
+      );
+      return true;
+    } catch (err) {
+      lastAgentTimestamp[chatJid] = previousCursor;
+      saveState();
+      logger.warn(
+        {
+          group: group.name,
+          err,
+          followupAction: followup.action,
+        },
+        'Shared assistant follow-up completion failed, rolled back cursor for retry',
+      );
+      return false;
+    }
+  };
+
   const tryHandleSharedAssistantCapability = async (): Promise<boolean> => {
     const capabilityMatch = matchAssistantCapabilityRequest(lastContent);
     if (!capabilityMatch) {
       return false;
     }
+    const priorAssistantCapabilitySeed = getSharedAssistantCapabilitySeed(
+      chatJid,
+      now,
+    );
+    const priorDailyContext = getDailyCompanionContext(chatJid, now);
     const selectedWork = await getSelectedDailyWorkContext(
       chatJid,
       missedMessages.at(-1)?.thread_id,
@@ -4155,8 +4359,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         chatJid,
         now,
         selectedWork,
-        conversationSummary: getDailyCompanionContext(chatJid, now)?.summaryText,
-        priorCompanionContext: getDailyCompanionContext(chatJid, now),
+        conversationSummary:
+          priorAssistantCapabilitySeed?.summaryText ||
+          priorDailyContext?.summaryText,
+        priorCompanionContext: priorDailyContext,
+        priorSubjectData: priorAssistantCapabilitySeed?.subjectData,
         replyText: missedMessages.at(-1)?.reply_to?.content,
       },
       input: {
@@ -4223,6 +4430,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         });
       } else {
         await channel.sendMessage(chatJid, result.replyText || 'Okay.');
+      }
+
+      if (result.conversationSeed) {
+        setSharedAssistantCapabilitySeed(chatJid, result.conversationSeed, now);
+      } else {
+        clearSharedAssistantCapabilitySeed(chatJid);
       }
 
       const explicitHandoffTarget = resolveExplicitCompanionHandoffTarget(
@@ -4335,6 +4548,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   if (requestPolicy.route === 'direct_assistant' && quickReply) {
     try {
       await channel.sendMessage(chatJid, quickReply);
+      clearSharedAssistantCapabilitySeed(chatJid);
       logger.info(
         {
           component: 'assistant',
@@ -4369,6 +4583,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (await tryHandleSharedAssistantCapability()) {
       return true;
     }
+    if (await tryHandleSharedAssistantCompletion()) {
+      return true;
+    }
   }
 
   if (requestPolicy.route === 'direct_assistant') {
@@ -4399,6 +4616,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       try {
         createTask(plannedReminder.task);
         refreshTaskSnapshots(registeredGroups);
+        clearSharedAssistantCapabilitySeed(chatJid);
         await channel.sendMessage(chatJid, plannedReminder.confirmation);
         logger.info(
           {
@@ -4443,6 +4661,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   });
   if (lifeThreadTurn.handled) {
     try {
+      clearSharedAssistantCapabilitySeed(chatJid);
       if (lifeThreadTurn.referencedThread) {
         setLastReferencedLifeThread(chatJid, lifeThreadTurn.referencedThread, now);
       }

@@ -108,6 +108,34 @@ describe('research orchestrator', () => {
     expect(result.followupSuggestions.length).toBeGreaterThan(0);
   });
 
+  it('strips reminder-system prompt wording from local task context before surfacing it', async () => {
+    createTask({
+      id: 'task-research-reminder',
+      group_folder: 'main',
+      chat_jid: 'tg:8004355504',
+      prompt:
+        'Send a concise reminder telling the user to decide whether to switch dinner plans.',
+      schedule_type: 'once',
+      schedule_value: '2026-04-05T20:00:00.000Z',
+      context_mode: 'group',
+      next_run: '2026-04-05T20:00:00.000Z',
+      status: 'active',
+      created_at: '2026-04-05T09:10:00.000Z',
+    });
+
+    const result = await runResearchOrchestrator({
+      query: 'Summarize what matters from my current context',
+      channel: 'alexa',
+      groupFolder: 'main',
+      now: new Date('2026-04-05T10:00:00.000Z'),
+    });
+
+    expect(result.handled).toBe(true);
+    expect(result.summaryText).toContain('decide whether to switch dinner plans');
+    expect(result.summaryText).not.toContain('Send a concise reminder');
+    expect(result.fullText).not.toContain('Send a concise reminder');
+  });
+
   it('builds a grounded library answer when saved sources are requested', async () => {
     saveKnowledgeSource({
       groupFolder: 'main',

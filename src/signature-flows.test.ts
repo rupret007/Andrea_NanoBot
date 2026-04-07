@@ -4,6 +4,7 @@ import { completeAssistantActionFromAlexa } from './assistant-action-completion.
 import { executeAssistantCapability } from './assistant-capabilities.js';
 import { analyzeCommunicationMessage } from './communication-companion.js';
 import { deliverCompanionHandoff } from './cross-channel-handoffs.js';
+import { buildSignatureFlowText } from './signature-flows.js';
 import {
   _initTestDatabase,
   createTask,
@@ -74,6 +75,24 @@ function buildAlexaPriorSubjectData(
 describe('signature flows', () => {
   beforeEach(() => {
     _initTestDatabase();
+  });
+
+  it('does not repeat the lead when the first detail line matches it', () => {
+    const text = buildSignatureFlowText({
+      lead: 'You have about 1431 minutes of usable breathing room.',
+      detailLines: [
+        'You have about 1431 minutes of usable breathing room.',
+        'Keep Open window in view, but it does not need force right now.',
+      ],
+      nextAction: 'Keep Open window in view, but it does not need force right now.',
+      whyLine: 'It is the strongest combined pressure in view right now.',
+    });
+
+    expect(text).toContain('You have about 1431 minutes of usable breathing room.');
+    expect(text).toContain(
+      'Next: Keep Open window in view, but it does not need force right now.',
+    );
+    expect(text.match(/usable breathing room\./gi)).toHaveLength(1);
   });
 
   it('keeps Alexa daily orientation and Telegram follow-through in one flow', async () => {

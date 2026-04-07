@@ -81,8 +81,10 @@ For the default live demo, stay on Telegram conversation + direct replies + remi
 
 Current Alexa truth:
 
-- repo-side and near-live proof are strong
-- full live acceptance still means one real signed Alexa utterance unless you already reproved that on the current host
+- Telegram ordinary chat and the main flagship follow-through journeys were live-proven on this host on April 7, 2026
+- Alexa repo-side and near-live proof are strong, but full live acceptance still means one fresh signed Alexa utterance on this host
+- BlueBubbles remains near-live until a reachable live server/webhook is reproved
+- outward-facing research is currently validated as a graceful blocked path on this host because the provider account is quota-blocked
 
 ## Operations, Security, And Release
 

@@ -137,6 +137,37 @@ function normalizeDraftTopicSummary(value: string): string {
     .replace(/\.$/, '');
 }
 
+function normalizeCommunicationFocus(value: string): string {
+  return value
+    .replace(/^confirm\b\s+/i, 'whether ')
+    .replace(
+      /\bwhether\s+tonight by (\d{1,2})(?::(\d{2}))?\s+if you are in\b/i,
+      (_match, hour: string, minute?: string) =>
+        `whether you are in by ${hour}${minute ? `:${minute}` : ''} tonight`,
+    )
+    .replace(
+      /\btonight by (\d{1,2})(?::(\d{2}))?\b/i,
+      (_match, hour: string, minute?: string) =>
+        `by ${hour}${minute ? `:${minute}` : ''} tonight`,
+    )
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[.!?]+$/g, '');
+}
+
+function normalizeCommunicationSupportLine(value: string): string {
+  return value
+    .replace(
+      /^save this (?:note )?to my library(?: (?:as|titled))?\s+[^:]+:\s*/i,
+      '',
+    )
+    .replace(/^save this (?:note )?to my library:\s*/i, '')
+    .replace(/\s+tags:\s*[^.]+$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[.!?]+$/g, '');
+}
+
 function slugifyName(value: string): string {
   return value
     .toLowerCase()
@@ -444,7 +475,10 @@ function buildSummaryText(
       .trim(),
     110,
   );
-  const focus = clipText((questionTopic || snippet).trim(), 90).toLowerCase();
+  const focus = clipText(
+    normalizeCommunicationFocus((questionTopic || snippet).trim()),
+    90,
+  ).toLowerCase();
   if (followupState === 'reply_needed') {
     return `${lead} wants an answer about ${focus}.`;
   }
@@ -642,10 +676,13 @@ function buildRelationshipAwareDraft(input: {
       : draftTopic.startsWith('whether ')
         ? `I wanted to check in about ${draftTopic}.`
         : `I wanted to follow up about ${draftTopic}.`;
-  const supportLine =
+  const rawSupportLine =
     input.linkedLifeThreads[0]?.nextAction ||
     input.linkedLifeThreads[0]?.summary ||
     input.toneHints[0] ||
+    '';
+  const supportLine =
+    normalizeCommunicationSupportLine(rawSupportLine) ||
     (companionTone === 'plain'
       ? 'Here is the main thing from my side.'
       : 'I wanted to keep it simple.');

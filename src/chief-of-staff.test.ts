@@ -208,4 +208,29 @@ describe('chief-of-staff', () => {
     expect(result.snapshot.confidence).toBe('low');
     expect(result.summaryText.toLowerCase()).toContain('not confident enough');
   });
+
+  it('softens long open-window summaries so they do not read like raw minute counts', async () => {
+    const now = new Date('2026-04-06T17:30:00.000Z');
+    const result = await buildChiefOfStaffTurn({
+      channel: 'telegram',
+      groupFolder: 'main',
+      text: 'what should I do next',
+      mode: 'prioritize',
+      now,
+      groundedSnapshot: {
+        ...createGroundedSnapshot(now),
+        selectedWork: null,
+        meaningfulOpenWindows: [
+          {
+            start: new Date('2026-04-06T18:00:00.000Z'),
+            end: new Date('2026-04-06T23:00:00.000Z'),
+          },
+        ],
+      },
+      lifeThreadSnapshot: createLifeThreadSnapshot(),
+    });
+
+    expect(result.snapshot.mainSignal?.summaryText).toContain('breathing room');
+    expect(result.snapshot.mainSignal?.summaryText).not.toContain('300 minutes');
+  });
 });

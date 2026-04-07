@@ -542,7 +542,7 @@ When the environment is configured, use this order:
 
 If you need one sentence for the current state, use this:
 
-- Alexa Companion Mode is repo-ready and near-live validated; the only remaining full-live step is one real signed Alexa utterance unless that has already been re-proven on the current host.
+- Alexa Companion Mode is repo-ready and near-live validated; as of April 7, 2026 the remaining full-live step on this host is one fresh signed Alexa utterance after the current interaction model is imported and `Build Model` has been run.
 
 ## 9) Incident Notes
 
