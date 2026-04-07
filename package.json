@@ -58,6 +58,7 @@
     "debug:rituals": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-rituals.ts",
     "debug:cross-channel-handoffs": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-cross-channel-handoffs.ts",
     "debug:bluebubbles": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-bluebubbles.ts",
+    "debug:pilot": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-pilot.ts",
     "debug:communication-companion": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-communication-companion.ts",
     "debug:chief-of-staff": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-chief-of-staff.ts",
     "debug:missions": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-missions.ts",

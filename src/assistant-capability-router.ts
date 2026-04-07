@@ -237,6 +237,25 @@ function matchMemoryPrompt(
   return null;
 }
 
+function matchPilotPrompt(normalized: string): AssistantCapabilityMatch | null {
+  const lower = normalized.toLowerCase();
+  if (
+    /^this felt weird\b/.test(lower) ||
+    /^that answer was off\b/.test(lower) ||
+    /^this shouldn'?t have happened\b/.test(lower) ||
+    /^save this as a pilot issue\b/.test(lower) ||
+    /^mark this flow as awkward\b/.test(lower)
+  ) {
+    return {
+      capabilityId: 'pilot.capture_issue',
+      normalizedText: normalized,
+      canonicalText: normalized,
+      reason: 'matched explicit pilot issue capture phrasing',
+    };
+  }
+  return null;
+}
+
 function matchPulsePrompt(normalized: string): AssistantCapabilityMatch | null {
   const lower = normalized.toLowerCase();
   if (
@@ -662,6 +681,7 @@ export function matchAssistantCapabilityRequest(
   if (!normalized) return null;
 
   return (
+    matchPilotPrompt(normalized) ||
     matchMissionPrompt(normalized) ||
     matchStaffPrompt(normalized) ||
     matchDailyPrompt(normalized) ||
@@ -691,6 +711,13 @@ function continueAssistantCapabilityFromActiveCapability(
   const normalized = normalizeText(text);
   if (!normalized) return null;
   const lower = normalized.toLowerCase();
+  const pilotMatch = matchPilotPrompt(normalized);
+  if (pilotMatch) {
+    return {
+      ...pilotMatch,
+      continuation: true,
+    };
+  }
 
   if (/^(anything else|what else|anything more)\b/.test(lower)) {
     if (activeCapabilityId) {
@@ -869,6 +896,8 @@ export function continueAssistantCapabilityFromPriorSubjectData(
   if (!subjectData) return null;
   const normalized = normalizeText(text);
   if (!normalized) return null;
+  const pilotMatch = matchPilotPrompt(normalized);
+  if (pilotMatch) return pilotMatch;
   if (isSharedAssistantCompletionFollowup(normalized.toLowerCase())) {
     return null;
   }

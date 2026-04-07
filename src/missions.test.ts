@@ -185,4 +185,35 @@ describe('missions', () => {
     );
     expect(explained.replyText).toContain('Clear it by: Lock the timing.');
   });
+
+  it('starts a fresh explicit proposal instead of reusing the prior mission id', async () => {
+    const now = new Date('2026-04-06T18:20:00.000Z');
+
+    const first = await buildMissionTurn({
+      channel: 'telegram',
+      groupFolder: 'main',
+      chatJid: 'tg:main',
+      text: 'help me plan tonight',
+      mode: 'propose',
+      selectedWork,
+      now,
+    });
+
+    const second = await buildMissionTurn({
+      channel: 'telegram',
+      groupFolder: 'main',
+      chatJid: 'tg:main',
+      text: 'help me plan Friday dinner with Candace',
+      mode: 'propose',
+      priorContext: {
+        missionId: first.mission.missionId,
+      },
+      selectedWork,
+      now,
+    });
+
+    expect(second.mission.missionId).not.toBe(first.mission.missionId);
+    expect(second.mission.title).toContain('Friday dinner with Candace');
+    expect(second.replyText).toContain('For Friday dinner with Candace');
+  });
 });

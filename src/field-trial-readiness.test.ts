@@ -4,12 +4,14 @@ import path from 'path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { _closeDatabase, _initTestDatabase } from './db.js';
 import { buildFieldTrialOperatorTruth } from './field-trial-readiness.js';
 import {
   resolveHostControlPaths,
   type HostControlSnapshot,
   type WindowsHostReconciliation,
 } from './host-control.js';
+import { completePilotJourney, startPilotJourney } from './pilot-mode.js';
 import { writeProviderProofState } from './provider-proof-state.js';
 
 describe('field-trial readiness', () => {
@@ -21,9 +23,11 @@ describe('field-trial readiness', () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'andrea-field-trial-'));
     process.chdir(tempDir);
     vi.unstubAllEnvs();
+    _initTestDatabase();
   });
 
   afterEach(() => {
+    _closeDatabase();
     process.chdir(previousCwd);
     fs.rmSync(tempDir, { recursive: true, force: true });
     vi.unstubAllEnvs();
@@ -171,5 +175,36 @@ describe('field-trial readiness', () => {
     expect(truth.research.blocker).toContain('quota or billing limit');
     expect(truth.imageGeneration.proofState).toBe('externally_blocked');
     expect(truth.imageGeneration.blocker).toContain('quota or billing limit');
+  });
+
+  it('marks work cockpit live-proven from a recent pilot journey and surfaces pilot issue state', () => {
+    const started = startPilotJourney({
+      journeyId: 'work_cockpit',
+      systemsInvolved: ['work_cockpit', 'andrea_runtime'],
+      summaryText: 'Opened Current Work and continued it.',
+      routeKey: 'current_work',
+      channel: 'telegram',
+      groupFolder: 'main',
+      chatJid: 'tg:main',
+      threadId: 'thread-1',
+      startedAt: '2026-04-07T17:00:00.000Z',
+    });
+    expect(started).toBeTruthy();
+    completePilotJourney({
+      eventId: started!.eventId,
+      outcome: 'success',
+      blockerOwner: 'none',
+      currentWorkRef: 'runtime-job-1',
+      completedAt: '2026-04-07T17:00:10.000Z',
+      summaryText: 'Opened Current Work and continued runtime-job-1.',
+    });
+
+    const truth = buildFieldTrialOperatorTruth({ projectRoot: tempDir });
+
+    expect(truth.workCockpit.proofState).toBe('live_proven');
+    expect(truth.workCockpit.detail).toContain('live-proven');
+    expect(truth.journeys.work_cockpit.proofState).toBe('live_proven');
+    expect(truth.pilotIssues.loggingEnabled).toBe(true);
+    expect(truth.pilotIssues.openCount).toBe(0);
   });
 });

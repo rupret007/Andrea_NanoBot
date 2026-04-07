@@ -59,6 +59,19 @@ npm run debug:signature-flows
 This is the fastest proof that the best Alexa, Telegram, BlueBubbles, communication, mission, and research journeys still feel coherent end to end.
 Treat this flagship-flow suite and harness as the primary product proof. The narrower subsystem suites below are there to debug seams after the flagship proof tells you which journey regressed.
 
+For pilot-mode instrumentation, flagship journey proof, and private issue-capture changes, add:
+
+```bash
+node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/pilot-mode.test.ts src/field-trial-readiness.test.ts src/debug-control.test.ts src/assistant-capability-router.test.ts
+npm run debug:pilot
+```
+
+Treat `debug:pilot` as the operator view for:
+
+- current pilot-readiness proof by surface
+- recent flagship journey outcomes
+- open private pilot issues
+
 For cross-channel handoff and action-completion changes, add:
 
 ```bash
@@ -192,6 +205,41 @@ Then validate the public-safe Telegram surface:
 - one blocked-path prompt that should stay free of setup/runtime/operator wording
 - reminder prompt
 - `/cursor_status`
+
+For pilot-mode and daily dogfooding specifically, also validate:
+
+- `npm run debug:pilot`
+- one flagship ordinary-chat turn: `hi` or `what's up`
+- one daily-guidance turn: `what am I forgetting`
+- one Candace follow-through chain:
+  - `what's still open with Candace`
+  - `what should I say back`
+  - `save that for later`
+- one mission chain:
+  - `help me plan tonight`
+  - `what's the next step`
+  - `what's blocking this`
+- one work-cockpit chain:
+  - `/cursor`
+  - `Current Work`
+  - one reply-linked continuation
+- one knowledge-library turn:
+  - `use only my saved material for ...`
+  - or `save this to my library: ...`
+
+If something feels off during pilot use, capture it explicitly with one of these shared assistant phrases:
+
+- `this felt weird`
+- `that answer was off`
+- `this shouldn't have happened`
+- `save this as a pilot issue`
+- `mark this flow as awkward`
+
+Important pilot-mode limits:
+
+- pilot issue capture is explicit only; Andrea does not silently file issues
+- raw transcripts are not stored in pilot instrumentation
+- set `ANDREA_PILOT_LOGGING_ENABLED=0` on a host if you need to disable pilot journey logging and explicit issue capture entirely
 
 If BlueBubbles is configured on that host, add:
 

@@ -33,9 +33,11 @@ import {
 import {
   executeAssistantCapability,
   type AssistantCapabilityConversationSeed,
+  type AssistantCapabilityResult,
 } from './assistant-capabilities.js';
 import {
   completeAssistantActionFromAlexa,
+  type AssistantActionCompletionResult,
 } from './assistant-action-completion.js';
 import {
   getAlexaOAuthStatus,
@@ -105,11 +107,18 @@ import {
   handleLifeThreadCommand,
 } from './life-threads.js';
 import { logger } from './logger.js';
+import {
+  completePilotJourney,
+  resolvePilotJourneyFromCapability,
+  startPilotJourney,
+} from './pilot-mode.js';
 import { formatOutbound } from './router.js';
 import { handleRitualCommand } from './rituals.js';
 import {
   type AlexaCompanionGuidanceGoal,
   type CompanionContinuationCandidate,
+  type PilotBlockerOwner,
+  type PilotJourneyOutcome,
 } from './types.js';
 import { buildGracefulDegradedReply } from './conversational-core.js';
 import { getUserFacingErrorDetail } from './user-facing-error.js';
@@ -1880,6 +1889,145 @@ export function createAlexaSkill(
     }
   };
 
+  const buildAlexaCapabilityPilotOutcome = (
+    result: AssistantCapabilityResult,
+  ): {
+    outcome: PilotJourneyOutcome;
+    blockerClass?: string | null;
+    blockerOwner?: PilotBlockerOwner;
+    degradedPath?: string | null;
+    systemsInvolved?: string[];
+    handoffCreated?: boolean;
+    missionCreated?: boolean;
+    threadSaved?: boolean;
+    reminderCreated?: boolean;
+    librarySaved?: boolean;
+    summaryText?: string | null;
+  } => {
+    const systemsInvolved = new Set<string>();
+    const capabilityId = result.capabilityId || '';
+    if (result.dailyResponse) systemsInvolved.add('daily_companion');
+    if (result.lifeThreadResult?.referencedThread) systemsInvolved.add('life_threads');
+    if (capabilityId.startsWith('communication.')) {
+      systemsInvolved.add('communication_companion');
+    }
+    if (capabilityId.startsWith('missions.')) {
+      systemsInvolved.add('missions');
+      systemsInvolved.add('chief_of_staff');
+    }
+    if (capabilityId.startsWith('staff.')) systemsInvolved.add('chief_of_staff');
+    if (capabilityId.startsWith('knowledge.')) systemsInvolved.add('knowledge_library');
+    if (capabilityId.startsWith('threads.')) systemsInvolved.add('life_threads');
+    if (result.trace?.responseSource?.startsWith('research')) {
+      systemsInvolved.add('research');
+    }
+    if (result.trace?.responseSource?.startsWith('media')) {
+      systemsInvolved.add('image_generation');
+    }
+    return {
+      outcome:
+        (capabilityId.startsWith('research.') ||
+          capabilityId.startsWith('media.')) &&
+        result.trace?.responseSource === 'unavailable'
+          ? 'externally_blocked'
+          : result.trace?.responseSource === 'unavailable'
+            ? 'degraded_usable'
+            : 'success',
+      blockerClass:
+        capabilityId.startsWith('research.') &&
+        result.trace?.responseSource === 'unavailable'
+          ? 'outward_research_blocked'
+          : capabilityId.startsWith('media.') &&
+              result.trace?.responseSource === 'unavailable'
+            ? 'image_generation_blocked'
+            : result.trace?.responseSource === 'unavailable'
+              ? 'local_degraded_path'
+              : null,
+      blockerOwner:
+        (capabilityId.startsWith('research.') ||
+          capabilityId.startsWith('media.')) &&
+        result.trace?.responseSource === 'unavailable'
+          ? 'external'
+          : result.trace?.responseSource === 'unavailable'
+            ? 'repo_side'
+            : 'none',
+      degradedPath:
+        result.trace?.responseSource === 'unavailable'
+          ? result.trace.reason
+          : null,
+      systemsInvolved: [...systemsInvolved],
+      handoffCreated: Boolean(result.handoffOffer),
+      missionCreated: Boolean(
+        result.conversationSeed?.subjectData?.missionId ||
+          result.continuationCandidate?.missionId,
+      ),
+      threadSaved: Boolean(result.lifeThreadResult?.referencedThread),
+      librarySaved: capabilityId === 'knowledge.save_source',
+      summaryText:
+        result.conversationSeed?.summaryText ||
+        result.replyText ||
+        result.trace?.reason ||
+        null,
+    };
+  };
+
+  const buildAlexaCompletionPilotOutcome = (
+    result: AssistantActionCompletionResult,
+  ): {
+    outcome: PilotJourneyOutcome;
+    blockerClass?: string | null;
+    blockerOwner?: PilotBlockerOwner;
+    degradedPath?: string | null;
+    systemsInvolved?: string[];
+    handoffCreated?: boolean;
+    missionCreated?: boolean;
+    threadSaved?: boolean;
+    reminderCreated?: boolean;
+    librarySaved?: boolean;
+    summaryText?: string | null;
+  } => {
+    const capabilityOutcome = result.capabilityResult
+      ? buildAlexaCapabilityPilotOutcome(result.capabilityResult)
+      : null;
+    const systemsInvolved = new Set(capabilityOutcome?.systemsInvolved || []);
+    if (result.handoffResult) {
+      systemsInvolved.add('cross_channel_handoffs');
+    }
+    if (result.bridgeSaveForLaterText || result.lifeThreadResult?.referencedThread) {
+      systemsInvolved.add('life_threads');
+    }
+    if (result.reminderTaskId) {
+      systemsInvolved.add('reminders');
+    }
+    if (result.bridgeDraftReference) {
+      systemsInvolved.add('communication_companion');
+    }
+    return {
+      outcome: capabilityOutcome?.outcome || 'success',
+      blockerClass: capabilityOutcome?.blockerClass || null,
+      blockerOwner: capabilityOutcome?.blockerOwner || 'none',
+      degradedPath: capabilityOutcome?.degradedPath || null,
+      systemsInvolved: [...systemsInvolved],
+      handoffCreated: Boolean(result.handoffResult),
+      missionCreated: Boolean(
+        capabilityOutcome?.missionCreated ||
+          result.capabilityResult?.conversationSeed?.subjectData?.missionId,
+      ),
+      threadSaved: Boolean(
+        result.bridgeSaveForLaterText || result.lifeThreadResult?.referencedThread,
+      ),
+      reminderCreated: Boolean(result.reminderTaskId),
+      librarySaved: Boolean(capabilityOutcome?.librarySaved),
+      summaryText:
+        result.replyText ||
+        result.bridgeSaveForLaterText ||
+        result.bridgeDraftReference ||
+        result.capabilityResult?.conversationSeed?.summaryText ||
+        result.capabilityResult?.replyText ||
+        null,
+    };
+  };
+
   const runCompanionActionCompletion = async (
     handlerInput: HandlerInput,
     authorization: { principal: AlexaPrincipal },
@@ -1888,24 +2036,47 @@ export function createAlexaSkill(
     utterance: string,
     conversationState?: AlexaConversationState,
   ) => {
-    const result = await completeAssistantActionFromAlexa(
-      {
-        groupFolder: linked.account.groupFolder,
-        action,
-        utterance,
-        conversationSummary: conversationState?.summaryText,
-        priorSubjectData: conversationState?.subjectData,
-        replyText:
-          conversationState?.subjectData.pendingActionText ||
-          conversationState?.subjectData.lastAnswerSummary,
-        now: getRequestTimestampDate(handlerInput.requestEnvelope),
-      },
-      {
-        resolveTelegramMainChat: deps.resolveTelegramMainChat,
-        sendTelegramMessage: deps.sendTelegramMessage,
-        sendTelegramArtifact: deps.sendTelegramArtifact,
-      },
-    );
+    const pilotRecord = startPilotJourney({
+      journeyId: 'cross_channel_handoff',
+      systemsInvolved: ['alexa', 'cross_channel_handoffs'],
+      summaryText: `Alexa companion action ${action}`,
+      routeKey: `alexa_completion:${action}`,
+      channel: 'alexa',
+      groupFolder: linked.account.groupFolder,
+    });
+    let result: AssistantActionCompletionResult;
+    try {
+      result = await completeAssistantActionFromAlexa(
+        {
+          groupFolder: linked.account.groupFolder,
+          action,
+          utterance,
+          conversationSummary: conversationState?.summaryText,
+          priorSubjectData: conversationState?.subjectData,
+          replyText:
+            conversationState?.subjectData.pendingActionText ||
+            conversationState?.subjectData.lastAnswerSummary,
+          now: getRequestTimestampDate(handlerInput.requestEnvelope),
+        },
+        {
+          resolveTelegramMainChat: deps.resolveTelegramMainChat,
+          sendTelegramMessage: deps.sendTelegramMessage,
+          sendTelegramArtifact: deps.sendTelegramArtifact,
+        },
+      );
+    } catch (err) {
+      if (pilotRecord) {
+        completePilotJourney({
+          eventId: pilotRecord.eventId,
+          outcome: 'internal_failure',
+          blockerClass: 'alexa_companion_completion_failed',
+          blockerOwner: 'repo_side',
+          summaryText:
+            err instanceof Error ? err.message : 'alexa companion completion failed',
+        });
+      }
+      throw err;
+    }
     if (!result.handled) {
       return null;
     }
@@ -2044,6 +2215,12 @@ export function createAlexaSkill(
       linked: true,
       groupFolder: linked.account.groupFolder,
     });
+    if (pilotRecord) {
+      completePilotJourney({
+        eventId: pilotRecord.eventId,
+        ...buildAlexaCompletionPilotOutcome(result),
+      });
+    }
     return handlerInput.responseBuilder
       .speak(result.replyText || 'Okay.')
       .reprompt(DEFAULT_ALEXA_REPROMPT)
@@ -2063,22 +2240,55 @@ export function createAlexaSkill(
   ) => {
     clearAlexaPendingSession(linked.principalKey);
     const priorCompanionContext = parseDailyCompanionContext(conversationState);
-    const result = await executeAssistantCapability({
-      capabilityId: capability.capabilityId,
-      context: {
+    const pilotRecord = startPilotJourney({
+      ...(resolvePilotJourneyFromCapability({
+        capabilityId: capability.capabilityId,
         channel: 'alexa',
-        groupFolder: linked.account.groupFolder,
-        conversationSummary: conversationState?.summaryText,
-        priorCompanionContext: priorCompanionContext || null,
-        priorSubjectData: conversationState?.subjectData,
-        factIdHint: getAlexaConversationReferencedFactId(conversationState),
-        now: new Date(),
-      },
-      input: {
         text: capability.normalizedText,
         canonicalText: capability.canonicalText,
-      },
+        personName: conversationState?.subjectData?.personName,
+        threadTitle: conversationState?.subjectData?.threadTitle,
+        summaryText: conversationState?.summaryText,
+      }) || {
+        journeyId: 'alexa_orientation' as const,
+        systemsInvolved: ['alexa'],
+        summaryText: 'Alexa shared capability',
+        routeKey: capability.capabilityId,
+      }),
+      channel: 'alexa',
+      groupFolder: linked.account.groupFolder,
     });
+    let result: AssistantCapabilityResult;
+    try {
+      result = await executeAssistantCapability({
+        capabilityId: capability.capabilityId,
+        context: {
+          channel: 'alexa',
+          groupFolder: linked.account.groupFolder,
+          conversationSummary: conversationState?.summaryText,
+          priorCompanionContext: priorCompanionContext || null,
+          priorSubjectData: conversationState?.subjectData,
+          factIdHint: getAlexaConversationReferencedFactId(conversationState),
+          now: new Date(),
+        },
+        input: {
+          text: capability.normalizedText,
+          canonicalText: capability.canonicalText,
+        },
+      });
+    } catch (err) {
+      if (pilotRecord) {
+        completePilotJourney({
+          eventId: pilotRecord.eventId,
+          outcome: 'internal_failure',
+          blockerClass: 'alexa_shared_capability_failed',
+          blockerOwner: 'repo_side',
+          summaryText:
+            err instanceof Error ? err.message : 'alexa shared capability failed',
+        });
+      }
+      throw err;
+    }
     if (!result.handled) {
       return null;
     }
@@ -2094,6 +2304,12 @@ export function createAlexaSkill(
             guidanceGoal: 'open_conversation',
             responseSource: 'local_companion',
           });
+      if (pilotRecord) {
+        completePilotJourney({
+          eventId: pilotRecord.eventId,
+          ...buildAlexaCapabilityPilotOutcome(result),
+        });
+      }
       return respondWithLocalCompanion(
         handlerInput,
         linked,
@@ -2151,6 +2367,12 @@ export function createAlexaSkill(
       linked: true,
       groupFolder: linked.account.groupFolder,
     });
+    if (pilotRecord) {
+      completePilotJourney({
+        eventId: pilotRecord.eventId,
+        ...buildAlexaCapabilityPilotOutcome(result),
+      });
+    }
     return handlerInput.responseBuilder
       .speak(result.replyText || 'Okay.')
       .reprompt(DEFAULT_ALEXA_REPROMPT)

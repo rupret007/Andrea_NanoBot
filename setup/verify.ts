@@ -1886,6 +1886,39 @@ export async function run(_args: string[]): Promise<void> {
     TELEGRAM_LIVE_PROOF_DETAIL: fieldTrialTruth.telegram.detail,
     TELEGRAM_LIVE_PROOF_BLOCKER: fieldTrialTruth.telegram.blocker,
     TELEGRAM_LIVE_PROOF_NEXT_ACTION: fieldTrialTruth.telegram.nextAction,
+    HOST_HEALTH_PROOF: fieldTrialTruth.hostHealth.proofState,
+    HOST_HEALTH_DETAIL: fieldTrialTruth.hostHealth.detail,
+    WORK_COCKPIT_PROOF: fieldTrialTruth.workCockpit.proofState,
+    WORK_COCKPIT_PROOF_DETAIL: fieldTrialTruth.workCockpit.detail,
+    WORK_COCKPIT_PROOF_BLOCKER: fieldTrialTruth.workCockpit.blocker,
+    WORK_COCKPIT_PROOF_NEXT_ACTION: fieldTrialTruth.workCockpit.nextAction,
+    LIFE_THREADS_PROOF: fieldTrialTruth.lifeThreads.proofState,
+    LIFE_THREADS_PROOF_DETAIL: fieldTrialTruth.lifeThreads.detail,
+    COMMUNICATION_COMPANION_PROOF:
+      fieldTrialTruth.communicationCompanion.proofState,
+    COMMUNICATION_COMPANION_PROOF_DETAIL:
+      fieldTrialTruth.communicationCompanion.detail,
+    CHIEF_OF_STAFF_MISSIONS_PROOF:
+      fieldTrialTruth.chiefOfStaffMissions.proofState,
+    CHIEF_OF_STAFF_MISSIONS_PROOF_DETAIL:
+      fieldTrialTruth.chiefOfStaffMissions.detail,
+    KNOWLEDGE_LIBRARY_PROOF: fieldTrialTruth.knowledgeLibrary.proofState,
+    KNOWLEDGE_LIBRARY_PROOF_DETAIL: fieldTrialTruth.knowledgeLibrary.detail,
+    PILOT_LOGGING_ENABLED: fieldTrialTruth.pilotIssues.loggingEnabled,
+    PILOT_OPEN_ISSUES: fieldTrialTruth.pilotIssues.openCount,
+    PILOT_LATEST_ISSUE_SUMMARY: fieldTrialTruth.pilotIssues.latestSummary,
+    JOURNEY_ORDINARY_CHAT_PROOF: fieldTrialTruth.journeys.ordinary_chat.proofState,
+    JOURNEY_DAILY_GUIDANCE_PROOF:
+      fieldTrialTruth.journeys.daily_guidance.proofState,
+    JOURNEY_CANDACE_FOLLOWTHROUGH_PROOF:
+      fieldTrialTruth.journeys.candace_followthrough.proofState,
+    JOURNEY_MISSION_PLANNING_PROOF:
+      fieldTrialTruth.journeys.mission_planning.proofState,
+    JOURNEY_WORK_COCKPIT_PROOF: fieldTrialTruth.journeys.work_cockpit.proofState,
+    JOURNEY_CROSS_CHANNEL_HANDOFF_PROOF:
+      fieldTrialTruth.journeys.cross_channel_handoff.proofState,
+    JOURNEY_ALEXA_ORIENTATION_PROOF:
+      fieldTrialTruth.journeys.alexa_orientation.proofState,
     BLUEBUBBLES_PROOF: fieldTrialTruth.bluebubbles.proofState,
     BLUEBUBBLES_PROOF_DETAIL: fieldTrialTruth.bluebubbles.detail,
     BLUEBUBBLES_PROOF_BLOCKER: fieldTrialTruth.bluebubbles.blocker,

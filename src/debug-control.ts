@@ -477,6 +477,33 @@ export function formatDebugStatus(): string {
     ...(fieldTrialTruth.imageGeneration.nextAction
       ? [`- Image generation next step: ${fieldTrialTruth.imageGeneration.nextAction}`]
       : []),
+    `- Host health proof: ${fieldTrialTruth.hostHealth.proofState}`,
+    `- Host health detail: ${fieldTrialTruth.hostHealth.detail}`,
+    `- Work cockpit proof: ${fieldTrialTruth.workCockpit.proofState}`,
+    `- Work cockpit detail: ${fieldTrialTruth.workCockpit.detail}`,
+    ...(fieldTrialTruth.workCockpit.blocker
+      ? [`- Work cockpit blocker: ${fieldTrialTruth.workCockpit.blocker}`]
+      : []),
+    `- Life threads proof: ${fieldTrialTruth.lifeThreads.proofState}`,
+    `- Life threads detail: ${fieldTrialTruth.lifeThreads.detail}`,
+    `- Communication proof: ${fieldTrialTruth.communicationCompanion.proofState}`,
+    `- Communication detail: ${fieldTrialTruth.communicationCompanion.detail}`,
+    `- Missions proof: ${fieldTrialTruth.chiefOfStaffMissions.proofState}`,
+    `- Missions detail: ${fieldTrialTruth.chiefOfStaffMissions.detail}`,
+    `- Knowledge proof: ${fieldTrialTruth.knowledgeLibrary.proofState}`,
+    `- Knowledge detail: ${fieldTrialTruth.knowledgeLibrary.detail}`,
+    `- Pilot logging enabled: ${fieldTrialTruth.pilotIssues.loggingEnabled ? 'yes' : 'no'}`,
+    `- Open pilot issues: ${fieldTrialTruth.pilotIssues.openCount}`,
+    ...(fieldTrialTruth.pilotIssues.latestSummary
+      ? [`- Latest pilot issue: ${fieldTrialTruth.pilotIssues.latestSummary}`]
+      : []),
+    `- Journey ordinary_chat: ${fieldTrialTruth.journeys.ordinary_chat.proofState}`,
+    `- Journey daily_guidance: ${fieldTrialTruth.journeys.daily_guidance.proofState}`,
+    `- Journey candace_followthrough: ${fieldTrialTruth.journeys.candace_followthrough.proofState}`,
+    `- Journey mission_planning: ${fieldTrialTruth.journeys.mission_planning.proofState}`,
+    `- Journey work_cockpit: ${fieldTrialTruth.journeys.work_cockpit.proofState}`,
+    `- Journey cross_channel_handoff: ${fieldTrialTruth.journeys.cross_channel_handoff.proofState}`,
+    `- Journey alexa_orientation: ${fieldTrialTruth.journeys.alexa_orientation.proofState}`,
     ...(hostSnapshot.nodeRuntime
       ? [
           `- Pinned Node: ${hostSnapshot.nodeRuntime.version}`,

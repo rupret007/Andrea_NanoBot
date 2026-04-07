@@ -128,6 +128,7 @@ Current truthful host status:
 - issued access tokens resolve to `groupFolder=main`
 - repo-side and near-live Alexa proof are strong on this host
 - a **fresh signed live turn is still required** before calling Alexa fully live-proven here
+- pilot-mode operator surfaces (`services:status`, `setup verify`, `debug:status`, `debug:pilot`) should all continue to classify Alexa as `near_live_only` until that signed turn happens
 - current truthful blocker:
   - `alexa_last_signed_request_type=none`
   - no fresh signed `IntentRequest` has been recorded during the current closeout pass

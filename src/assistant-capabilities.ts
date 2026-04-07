@@ -62,6 +62,7 @@ import {
   stripSignatureFlowSystemPrefix,
   buildSignatureFlowText,
 } from './signature-flows.js';
+import { capturePilotIssue } from './pilot-mode.js';
 import type {
   AlexaCompanionGuidanceGoal,
   AlexaConversationFollowupAction,
@@ -88,6 +89,7 @@ export type AssistantCapabilityId =
   | 'followthrough.remind_before_anchor'
   | 'followthrough.save_for_later'
   | 'followthrough.draft_follow_up'
+  | 'pilot.capture_issue'
   | 'threads.list_open'
   | 'threads.explicit_lookup'
   | 'memory.explain'
@@ -137,6 +139,7 @@ export type AssistantCapabilityCategory =
   | 'daily'
   | 'household'
   | 'followthrough'
+  | 'pilot'
   | 'threads'
   | 'memory'
   | 'pulse'
@@ -2916,6 +2919,65 @@ async function runPulseCapability(
   };
 }
 
+async function runPilotCaptureCapability(
+  descriptor: AssistantCapabilityDescriptor,
+  context: AssistantCapabilityContext,
+  input: AssistantCapabilityInput,
+): Promise<AssistantCapabilityResult> {
+  if (!context.groupFolder) {
+    return {
+      handled: true,
+      capabilityId: descriptor.id,
+      replyText: 'I can only save pilot issues from a registered assistant context.',
+      outputShape: descriptor.preferredOutputShape[context.channel],
+      trace: buildCapabilityTrace(
+        descriptor,
+        context,
+        'unavailable',
+        'pilot issue capture requires a registered assistant context',
+      ),
+    };
+  }
+
+  const capture = capturePilotIssue({
+    channel: context.channel,
+    groupFolder: context.groupFolder,
+    chatJid: context.chatJid,
+    threadId: context.threadHint || context.priorSubjectData?.threadId,
+    utterance: input.canonicalText || input.text || '',
+    routeKey: descriptor.id,
+    assistantContextSummary:
+      context.priorSubjectData?.lastAnswerSummary ||
+      context.conversationSummary ||
+      context.replyText ||
+      '',
+    linkedRefs: {
+      missionId: context.priorSubjectData?.missionId,
+      lifeThreadId: context.priorSubjectData?.threadId,
+      communicationThreadId: context.priorSubjectData?.communicationThreadId,
+      knowledgeSourceIds: context.priorSubjectData?.knowledgeSourceIds,
+      currentWorkRef: context.selectedWork
+        ? `${context.selectedWork.laneLabel}: ${context.selectedWork.title}`
+        : undefined,
+    },
+  });
+
+  return {
+    handled: capture.handled,
+    capabilityId: descriptor.id,
+    replyText: capture.replyText,
+    outputShape: descriptor.preferredOutputShape[context.channel],
+    trace: buildCapabilityTrace(
+      descriptor,
+      context,
+      capture.record ? 'local_companion' : 'unavailable',
+      capture.record
+        ? 'captured a private pilot issue'
+        : 'pilot issue capture was unavailable',
+    ),
+  };
+}
+
 const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
   {
     id: 'daily.morning_brief',
@@ -4463,6 +4525,32 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
         cloneContext(context),
         input,
         'explain',
+      ),
+  },
+  {
+    id: 'pilot.capture_issue',
+    label: 'Capture Pilot Issue',
+    category: 'pilot',
+    requiredInputs: ['text'],
+    optionalInputs: [],
+    requiresLinkedAccount: false,
+    requiresConfirmation: false,
+    safeForAlexa: true,
+    safeForTelegram: true,
+    safeForBlueBubbles: true,
+    operatorOnly: false,
+    preferredOutputShape: {
+      alexa: 'voice_brief',
+      telegram: 'chat_brief',
+      bluebubbles: 'chat_brief',
+    },
+    followupActions: [],
+    handlerKind: 'local',
+    execute: (context, input) =>
+      runPilotCaptureCapability(
+        CAPABILITY_DESCRIPTORS[53]!,
+        cloneContext(context),
+        input,
       ),
   },
 ];

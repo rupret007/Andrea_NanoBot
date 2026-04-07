@@ -22,6 +22,11 @@ Current host reality for the Windows field-trial machine:
 - the real BlueBubbles server/webhook is **not installed or connected on this PC**
 - this means BlueBubbles is currently **externally blocked on the Windows host**, not freshly live-proven
 - the exact external next step is to reconnect the Mac-side BlueBubbles server/webhook and point this Windows host's `BLUEBUBBLES_*` config at it again
+- operator truth surfaces now keep that story explicit:
+  - `npm run services:status`
+  - `npm run setup -- --step verify`
+  - `npm run debug:status`
+  - `npm run debug:pilot`
 
 Implemented now:
 

@@ -71,8 +71,24 @@ Current host truth for the Windows field-trial machine:
 - the local Codex/OpenAI runtime backend and the unified `/cursor` work cockpit are live on this host
 - outward research and Telegram image generation remain **externally blocked** until a direct provider key with working quota/billing is restored
 - `npm run services:status`, `npm run setup -- --step verify`, and `npm run debug:status` are the operator truth surfaces and should agree on service health, serving commit, and exact blockers
+- `npm run debug:pilot` is the pilot-mode proof surface for flagship journeys, recent outcomes, and private dogfooding issues
 
 For the current demo/field-trial script, use [docs/DEMO_CHECKLIST.md](docs/DEMO_CHECKLIST.md).
+
+## Pilot Mode
+
+Andrea now has a bounded pilot and dogfooding loop on this host:
+
+- flagship journey proof is recorded privately in local SQLite as sanitized journey events
+- explicit pilot issue capture is available from shared assistant chat with phrases like:
+  - `this felt weird`
+  - `that answer was off`
+  - `this shouldn't have happened`
+  - `save this as a pilot issue`
+  - `mark this flow as awkward`
+- pilot review stays operator-only through `npm run debug:pilot`
+- raw private transcripts are not stored in pilot instrumentation; only short sanitized summaries and linked artifact ids are retained
+- set `ANDREA_PILOT_LOGGING_ENABLED=0` on the host if you need to disable both journey logging and explicit pilot issue capture
 
 ## What Andrea Is
 

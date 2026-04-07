@@ -769,17 +769,27 @@ function formatMissionReply(
 function resolveExistingMission(
   input: MissionTurnInput,
 ): MissionRecord | undefined {
+  const normalizedText = normalizeText(input.text);
+  const referencesPriorMission = /\b(this|that)\b/i.test(normalizedText);
+
+  if (input.mode === 'propose') {
+    if (referencesPriorMission) {
+      if (input.priorContext?.missionId) {
+        return getMission(input.priorContext.missionId);
+      }
+      return listMissionsForGroup({
+        groupFolder: input.groupFolder,
+        includeUnconfirmed: true,
+        limit: 1,
+      })[0];
+    }
+    return undefined;
+  }
+
   if (input.priorContext?.missionId) {
     return getMission(input.priorContext.missionId);
   }
-  if (input.mode !== 'propose' || !/\b(this|that)\b/i.test(input.text)) {
-    return undefined;
-  }
-  return listMissionsForGroup({
-    groupFolder: input.groupFolder,
-    includeUnconfirmed: true,
-    limit: 1,
-  })[0];
+  return undefined;
 }
 
 function resolveManageTargetAction(

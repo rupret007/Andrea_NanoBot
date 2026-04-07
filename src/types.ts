@@ -714,6 +714,85 @@ export interface CommunicationSignalRecord {
   createdAt: string;
 }
 
+export type PilotJourneyId =
+  | 'ordinary_chat'
+  | 'daily_guidance'
+  | 'candace_followthrough'
+  | 'mission_planning'
+  | 'work_cockpit'
+  | 'cross_channel_handoff'
+  | 'alexa_orientation';
+
+export type PilotJourneyOutcome =
+  | 'success'
+  | 'degraded_usable'
+  | 'externally_blocked'
+  | 'internal_failure'
+  | 'abandoned';
+
+export type PilotBlockerOwner = 'none' | 'repo_side' | 'external';
+
+export interface PilotJourneyEventRecord {
+  eventId: string;
+  journeyId: PilotJourneyId;
+  channel: 'alexa' | 'telegram' | 'bluebubbles';
+  groupFolder: string;
+  chatJid?: string | null;
+  threadId?: string | null;
+  routeKey?: string | null;
+  systemsInvolved: string[];
+  outcome: PilotJourneyOutcome;
+  blockerClass?: string | null;
+  blockerOwner: PilotBlockerOwner;
+  degradedPath?: string | null;
+  handoffCreated: boolean;
+  missionCreated: boolean;
+  threadSaved: boolean;
+  reminderCreated: boolean;
+  librarySaved: boolean;
+  currentWorkRef?: string | null;
+  summaryText: string;
+  startedAt: string;
+  completedAt?: string | null;
+  durationMs?: number | null;
+}
+
+export type PilotIssueStatus = 'open' | 'triaged' | 'closed';
+
+export type PilotIssueKind =
+  | 'felt_weird'
+  | 'answer_off'
+  | 'should_not_happen'
+  | 'awkward_flow'
+  | 'manual_pilot_issue';
+
+export interface PilotIssueLinkedRefs {
+  missionId?: string;
+  lifeThreadId?: string;
+  communicationThreadId?: string;
+  reminderTaskId?: string;
+  knowledgeSourceIds?: string[];
+  currentWorkRef?: string;
+}
+
+export interface PilotIssueRecord {
+  issueId: string;
+  createdAt: string;
+  status: PilotIssueStatus;
+  issueKind: PilotIssueKind;
+  channel: 'alexa' | 'telegram' | 'bluebubbles';
+  groupFolder: string;
+  chatJid?: string | null;
+  threadId?: string | null;
+  journeyEventId?: string | null;
+  routeKey?: string | null;
+  blockerClass?: string | null;
+  blockerOwner: PilotBlockerOwner;
+  summaryText: string;
+  assistantContextSummary: string;
+  linkedRefs: PilotIssueLinkedRefs;
+}
+
 export interface KnowledgeSourceRecord {
   sourceId: string;
   groupFolder: string;

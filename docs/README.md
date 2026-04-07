@@ -108,6 +108,35 @@ Current Alexa truth:
 - BlueBubbles is externally blocked on this Windows host because the real BlueBubbles server/webhook is not currently installed or connected here
 - outward-facing research is currently validated as a graceful blocked path on this host because direct provider credentials are not currently usable for live outward lookup, even though the local runtime backend remains healthy
 
+## Pilot Review Loop
+
+Andrea now has one bounded pilot-mode review surface for this host:
+
+```bash
+npm run debug:pilot
+```
+
+That operator-only view shows:
+
+- current pilot-readiness proof by surface
+- the 7 flagship journey proof states
+- recent successful or degraded flagship journey outcomes
+- open private pilot issues
+
+Private pilot issue capture is explicit and local-only. During dogfooding, you can say:
+
+- `this felt weird`
+- `that answer was off`
+- `this shouldn't have happened`
+- `save this as a pilot issue`
+- `mark this flow as awkward`
+
+Important limits:
+
+- this does not create a public bug tracker
+- raw transcripts are not stored in pilot instrumentation
+- set `ANDREA_PILOT_LOGGING_ENABLED=0` if you need to disable journey logging and explicit pilot issue capture on a host
+
 ## Operations, Security, And Release
 
 Use these during incidents, audits, or release preparation:

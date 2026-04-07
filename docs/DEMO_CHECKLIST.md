@@ -163,6 +163,42 @@ Optional same-day extras:
 - BlueBubbles only if the Mac-side server/webhook is reachable again
 - outward research or image generation only if direct provider credentials are truly working again
 
+## Short Pilot Checklist
+
+Use this when Andrea is being dogfooded day to day instead of formally demoed.
+
+1. Run `npm run services:status`, `npm run setup -- --step verify`, `npm run debug:status`, and `npm run debug:pilot`.
+2. Confirm `SERVICE: running_ready` and `serving_commit_matches_workspace_head=true`.
+3. Confirm flagship journey proof shows:
+   - Telegram `live_proven`
+   - ordinary chat, daily guidance, Candace follow-through, mission planning, work cockpit, and cross-channel handoff `live_proven`
+   - Alexa `near_live_only` unless a fresh signed turn happened today
+4. Re-run one short Telegram chain:
+   - `hi`
+   - `what am I forgetting`
+   - `what should I say back`
+   - `save that for later`
+5. Re-run one work-cockpit chain:
+   - `/cursor`
+   - `Current Work`
+   - one reply-linked continuation
+6. If something feels off, capture it explicitly with:
+   - `this felt weird`
+   - `that answer was off`
+   - `this shouldn't have happened`
+   - `save this as a pilot issue`
+   - `mark this flow as awkward`
+7. Review open issues with `npm run debug:pilot`.
+
+## Known Live Blockers On This Windows Host
+
+- Alexa is still one fresh signed `IntentRequest` away from full live proof.
+- BlueBubbles is externally blocked here because the real server/webhook lives on the Mac-side environment and is not installed on this PC.
+- Outward research is externally blocked by direct-provider quota or billing.
+- Telegram image generation is externally blocked by direct-provider billing or image access.
+
+These are exact host caveats, not reasons to call the core host unhealthy when `SERVICE: running_ready`.
+
 ## What Not To Claim
 
 Do not claim on this Windows host today:

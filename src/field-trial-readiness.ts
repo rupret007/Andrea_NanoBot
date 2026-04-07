@@ -1,4 +1,7 @@
-import { buildBlueBubblesHealthSnapshot, resolveBlueBubblesConfig } from './channels/bluebubbles.js';
+import {
+  buildBlueBubblesHealthSnapshot,
+  resolveBlueBubblesConfig,
+} from './channels/bluebubbles.js';
 import { readEnvFile } from './env.js';
 import {
   assessAssistantHealthState,
@@ -11,7 +14,9 @@ import {
 } from './host-control.js';
 import { getMediaProviderStatus } from './media-generation.js';
 import { describeOpenAiConfigBlocker, getOpenAiProviderStatus } from './openai-provider.js';
+import { buildPilotReviewSnapshot } from './pilot-mode.js';
 import { readProviderProofState } from './provider-proof-state.js';
+import type { PilotJourneyEventRecord, PilotJourneyId } from './types.js';
 
 export type FieldTrialProofState =
   | 'live_proven'
@@ -29,12 +34,36 @@ export interface FieldTrialSurfaceTruth {
   detail: string;
 }
 
+export interface FieldTrialJourneyTruthMap {
+  ordinary_chat: FieldTrialSurfaceTruth;
+  daily_guidance: FieldTrialSurfaceTruth;
+  candace_followthrough: FieldTrialSurfaceTruth;
+  mission_planning: FieldTrialSurfaceTruth;
+  work_cockpit: FieldTrialSurfaceTruth;
+  cross_channel_handoff: FieldTrialSurfaceTruth;
+  alexa_orientation: FieldTrialSurfaceTruth;
+}
+
+export interface FieldTrialPilotIssueTruth {
+  loggingEnabled: boolean;
+  openCount: number;
+  latestSummary: string;
+}
+
 export interface FieldTrialOperatorTruth {
   telegram: FieldTrialSurfaceTruth;
   alexa: FieldTrialSurfaceTruth;
   bluebubbles: FieldTrialSurfaceTruth;
+  workCockpit: FieldTrialSurfaceTruth;
+  lifeThreads: FieldTrialSurfaceTruth;
+  communicationCompanion: FieldTrialSurfaceTruth;
+  chiefOfStaffMissions: FieldTrialSurfaceTruth;
+  knowledgeLibrary: FieldTrialSurfaceTruth;
   research: FieldTrialSurfaceTruth;
   imageGeneration: FieldTrialSurfaceTruth;
+  hostHealth: FieldTrialSurfaceTruth;
+  journeys: FieldTrialJourneyTruthMap;
+  pilotIssues: FieldTrialPilotIssueTruth;
 }
 
 export interface BuildFieldTrialOperatorTruthOptions {
@@ -50,6 +79,13 @@ export interface BuildFieldTrialOperatorTruthOptions {
     | 'available';
 }
 
+interface PilotReviewSnapshotLike {
+  loggingEnabled: boolean;
+  recentEvents: PilotJourneyEventRecord[];
+  openIssueCount: number;
+  latestOpenIssue: { summaryText: string } | null;
+}
+
 function buildTruth(
   truth: Partial<FieldTrialSurfaceTruth> & Pick<FieldTrialSurfaceTruth, 'proofState'>,
 ): FieldTrialSurfaceTruth {
@@ -60,6 +96,147 @@ function buildTruth(
     detail: '',
     ...truth,
   };
+}
+
+function formatProofMoment(iso: string | null | undefined): string {
+  if (!iso) return 'recently';
+  return `on ${iso}`;
+}
+
+function describeRecentJourney(label: string, event: PilotJourneyEventRecord): string {
+  return `${label} was live-proven ${formatProofMoment(
+    event.completedAt || event.startedAt,
+  )}. ${event.summaryText}`;
+}
+
+function formatBlockerClass(value: string | null | undefined, fallback: string): string {
+  if (!value) return fallback;
+  return value.replace(/_/g, ' ');
+}
+
+function isSuccessfulPilotOutcome(outcome: PilotJourneyEventRecord['outcome']): boolean {
+  return outcome === 'success' || outcome === 'degraded_usable';
+}
+
+function getRecentJourneyEvent(
+  review: PilotReviewSnapshotLike,
+  predicate: (event: PilotJourneyEventRecord) => boolean,
+): PilotJourneyEventRecord | null {
+  return review.recentEvents.find(predicate) || null;
+}
+
+function getJourneyEventById(
+  review: PilotReviewSnapshotLike,
+  journeyId: PilotJourneyId,
+): PilotJourneyEventRecord | null {
+  return getRecentJourneyEvent(review, (event) => event.journeyId === journeyId);
+}
+
+function buildJourneyTruthFromEvent(params: {
+  label: string;
+  event: PilotJourneyEventRecord | null;
+  nearLiveDetail: string;
+  nearLiveNextAction: string;
+  externalBlocker?: string;
+  externalNextAction?: string;
+}): FieldTrialSurfaceTruth {
+  if (!params.event) {
+    return buildTruth({
+      proofState: 'near_live_only',
+      detail: params.nearLiveDetail,
+      nextAction: params.nearLiveNextAction,
+    });
+  }
+
+  if (isSuccessfulPilotOutcome(params.event.outcome)) {
+    return buildTruth({
+      proofState: 'live_proven',
+      detail: describeRecentJourney(params.label, params.event),
+    });
+  }
+
+  if (params.event.outcome === 'externally_blocked') {
+    return buildTruth({
+      proofState: 'externally_blocked',
+      blocker:
+        params.externalBlocker ||
+        formatBlockerClass(
+          params.event.blockerClass,
+          `${params.label} is blocked by an external dependency on this host.`,
+        ),
+      blockerOwner:
+        params.event.blockerOwner === 'none'
+          ? 'external'
+          : params.event.blockerOwner,
+      nextAction: params.externalNextAction || params.nearLiveNextAction,
+      detail:
+        params.event.summaryText ||
+        `${params.label} hit an external blocker on this host.`,
+    });
+  }
+
+  if (params.event.outcome === 'internal_failure') {
+    return buildTruth({
+      proofState: 'near_live_only',
+      blocker: `${params.label} hit a repo-side failure during the most recent proof run.`,
+      blockerOwner: 'repo_side',
+      nextAction: params.nearLiveNextAction,
+      detail:
+        params.event.summaryText ||
+        `${params.label} needs one clean rerun after the last internal failure.`,
+    });
+  }
+
+  return buildTruth({
+    proofState: 'near_live_only',
+    detail: params.nearLiveDetail,
+    nextAction: params.nearLiveNextAction,
+  });
+}
+
+function buildHostHealthTruth(
+  hostSnapshot: HostControlSnapshot,
+  windowsHost: WindowsHostReconciliation | null,
+): FieldTrialSurfaceTruth {
+  const serviceState =
+    windowsHost?.serviceState ||
+    hostSnapshot.hostState?.phase ||
+    'stopped';
+  const dependencyState =
+    windowsHost?.dependencyState || hostSnapshot.hostState?.dependencyState || 'unknown';
+  const dependencyError =
+    windowsHost?.dependencyError || hostSnapshot.hostState?.dependencyError || '';
+
+  if (serviceState === 'running_ready') {
+    return buildTruth({
+      proofState: 'live_proven',
+      detail:
+        dependencyState === 'degraded' && dependencyError
+          ? `Host-control is healthy and ready on this machine. Dependency state is degraded: ${dependencyError}`
+          : 'Host-control, watchdog, and readiness are healthy on this machine.',
+    });
+  }
+
+  if (serviceState === 'starting') {
+    return buildTruth({
+      proofState: 'near_live_only',
+      blocker: 'Andrea is still starting on this machine.',
+      nextAction: 'Wait for the host to reach running_ready, then rerun services:status.',
+      detail: 'The host is starting and not ready to claim a full pilot proof yet.',
+    });
+  }
+
+  return buildTruth({
+    proofState: 'externally_blocked',
+    blocker:
+      windowsHost?.launcherError ||
+      hostSnapshot.hostState?.lastError ||
+      'Andrea is not currently healthy on this machine.',
+    blockerOwner: 'repo_side',
+    nextAction:
+      'Repair the host-control path on this machine, then rerun services:status, setup verify, and debug:status.',
+    detail: `Host state is ${serviceState}.`,
+  });
 }
 
 function buildTelegramTruth(
@@ -236,7 +413,8 @@ function buildBlueBubblesTruth(): FieldTrialSurfaceTruth {
 
   return buildTruth({
     proofState: 'near_live_only',
-    blocker: 'A fresh real BlueBubbles inbound -> reply -> follow-up roundtrip has not been reproved on this host.',
+    blocker:
+      'A fresh real BlueBubbles inbound -> reply -> follow-up roundtrip has not been reproved on this host.',
     blockerOwner: 'external',
     nextAction:
       'Send one real BlueBubbles message through the reachable server/webhook and confirm Andrea replies in the same linked conversation.',
@@ -264,7 +442,8 @@ function buildResearchTruth(
   if (outwardResearchStatus === 'quota_blocked') {
     return buildTruth({
       proofState: 'externally_blocked',
-      blocker: 'Outward research is blocked because the direct provider account is out of quota or billing.',
+      blocker:
+        'Outward research is blocked because the direct provider account is out of quota or billing.',
       blockerOwner: 'external',
       nextAction:
         'Restore provider quota or billing for the direct outward research account, then rerun setup -- --step verify.',
@@ -281,8 +460,7 @@ function buildResearchTruth(
       blockerOwner: 'external',
       nextAction:
         'Point the core runtime back at an Anthropic-compatible gateway and keep direct provider keys separate for outward research.',
-      detail:
-        'The research/runtime configuration is mis-keyed on this host.',
+      detail: 'The research/runtime configuration is mis-keyed on this host.',
     });
   }
 
@@ -314,7 +492,8 @@ function buildResearchTruth(
 
   return buildTruth({
     proofState: 'near_live_only',
-    blocker: 'Outward research is configured, but this pass has not freshly reproved a live direct-provider answer on this host.',
+    blocker:
+      'Outward research is configured, but this pass has not freshly reproved a live direct-provider answer on this host.',
     blockerOwner: 'none',
     nextAction:
       'Run one real outward research question on this host and confirm a provider-backed answer succeeds.',
@@ -344,12 +523,99 @@ function buildImageGenerationTruth(projectRoot: string): FieldTrialSurfaceTruth 
 
   return buildTruth({
     proofState: 'near_live_only',
-    blocker: 'Image generation is configured, but this pass has not freshly reproved a live Telegram image on this host.',
+    blocker:
+      'Image generation is configured, but this pass has not freshly reproved a live Telegram image on this host.',
     blockerOwner: 'none',
     nextAction:
       'Run one real Telegram image-generation request and confirm the image artifact comes back.',
     detail:
       'The image-generation provider looks configured, but it still needs a same-host live repro.',
+  });
+}
+
+function buildJourneyTruths(
+  review: PilotReviewSnapshotLike,
+  telegramTruth: FieldTrialSurfaceTruth,
+  alexaTruth: FieldTrialSurfaceTruth,
+): FieldTrialJourneyTruthMap {
+  return {
+    ordinary_chat: buildJourneyTruthFromEvent({
+      label: 'Ordinary chat',
+      event: getJourneyEventById(review, 'ordinary_chat'),
+      nearLiveDetail:
+        telegramTruth.proofState === 'live_proven'
+          ? 'Telegram is healthy, but ordinary chat needs one fresh same-host proof turn.'
+          : 'Ordinary chat is waiting on the Telegram live surface.',
+      nearLiveNextAction: 'Send `hi` or `what\'s up` in Telegram on this host.',
+    }),
+    daily_guidance: buildJourneyTruthFromEvent({
+      label: 'Daily guidance',
+      event: getJourneyEventById(review, 'daily_guidance'),
+      nearLiveDetail:
+        'Daily guidance is ready, but it still needs one fresh `what am I forgetting` or `what should I remember tonight` proof turn.',
+      nearLiveNextAction:
+        'Run `what am I forgetting` or `what should I remember tonight` in Telegram on this host.',
+    }),
+    candace_followthrough: buildJourneyTruthFromEvent({
+      label: 'Candace follow-through',
+      event: getJourneyEventById(review, 'candace_followthrough'),
+      nearLiveDetail:
+        'Candace follow-through is ready, but it still needs one fresh same-host proof chain.',
+      nearLiveNextAction:
+        'Run `what\'s still open with Candace`, `what should I say back`, and `save that for later` in Telegram on this host.',
+    }),
+    mission_planning: buildJourneyTruthFromEvent({
+      label: 'Mission planning',
+      event: getJourneyEventById(review, 'mission_planning'),
+      nearLiveDetail:
+        'Mission planning is ready, but it still needs one fresh same-host proof chain.',
+      nearLiveNextAction:
+        'Run `help me plan tonight`, `what\'s the next step`, and `what\'s blocking this` in Telegram on this host.',
+    }),
+    work_cockpit: buildJourneyTruthFromEvent({
+      label: 'Work cockpit',
+      event: getJourneyEventById(review, 'work_cockpit'),
+      nearLiveDetail:
+        'The `/cursor` work cockpit is ready, but it still needs one fresh same-host dashboard and continuation proof.',
+      nearLiveNextAction:
+        'Run `/cursor`, `Current Work`, and one reply-linked continuation on this host.',
+    }),
+    cross_channel_handoff: buildJourneyTruthFromEvent({
+      label: 'Cross-channel handoff',
+      event: getJourneyEventById(review, 'cross_channel_handoff'),
+      nearLiveDetail:
+        'Cross-channel save and handoff flows are ready, but they still need one fresh same-host proof turn.',
+      nearLiveNextAction:
+        'Run `send me the full version` or `save that for later` from a flagship Telegram journey on this host.',
+    }),
+    alexa_orientation:
+      alexaTruth.proofState === 'live_proven'
+        ? alexaTruth
+        : buildTruth({
+            proofState: alexaTruth.proofState,
+            blocker: alexaTruth.blocker,
+            blockerOwner: alexaTruth.blockerOwner,
+            nextAction: alexaTruth.nextAction,
+            detail:
+              alexaTruth.proofState === 'near_live_only'
+                ? 'Alexa orientation stays near-live until one fresh signed turn is recorded on this host.'
+                : alexaTruth.detail,
+          }),
+  };
+}
+
+function buildSurfaceTruthFromPilotEvidence(params: {
+  label: string;
+  review: PilotReviewSnapshotLike;
+  predicate: (event: PilotJourneyEventRecord) => boolean;
+  nearLiveDetail: string;
+  nearLiveNextAction: string;
+}): FieldTrialSurfaceTruth {
+  return buildJourneyTruthFromEvent({
+    label: params.label,
+    event: getRecentJourneyEvent(params.review, params.predicate),
+    nearLiveDetail: params.nearLiveDetail,
+    nearLiveNextAction: params.nearLiveNextAction,
   });
 }
 
@@ -364,12 +630,90 @@ export function buildFieldTrialOperatorTruth(
         ? reconcileWindowsHostState({ projectRoot })
         : null
       : options.windowsHost;
+  const review = buildPilotReviewSnapshot();
+
+  const telegram = buildTelegramTruth(hostSnapshot, windowsHost);
+  const alexa = buildAlexaTruth(projectRoot);
+  const bluebubbles = buildBlueBubblesTruth();
+  const research = buildResearchTruth(projectRoot, options.outwardResearchStatus);
+  const imageGeneration = buildImageGenerationTruth(projectRoot);
+  const hostHealth = buildHostHealthTruth(hostSnapshot, windowsHost);
+  const journeys = buildJourneyTruths(review, telegram, alexa);
+
+  const workCockpit = buildSurfaceTruthFromPilotEvidence({
+    label: 'Work cockpit',
+    review,
+    predicate: (event) => event.journeyId === 'work_cockpit',
+    nearLiveDetail:
+      'The work cockpit is ready, but it still needs one fresh `/cursor` and `Current Work` proof chain on this host.',
+    nearLiveNextAction:
+      'Run `/cursor`, `Current Work`, and one reply-linked continuation on this host.',
+  });
+  const lifeThreads = buildSurfaceTruthFromPilotEvidence({
+    label: 'Life threads',
+    review,
+    predicate: (event) =>
+      event.threadSaved === true ||
+      event.routeKey?.startsWith('threads.') === true ||
+      event.systemsInvolved.includes('life_threads'),
+    nearLiveDetail:
+      'Life-thread tracking is ready, but it still needs one fresh same-host save or thread-control proof turn.',
+    nearLiveNextAction:
+      'Run `save that for later` or another explicit thread-control turn on this host.',
+  });
+  const communicationCompanion = buildSurfaceTruthFromPilotEvidence({
+    label: 'Communication companion',
+    review,
+    predicate: (event) =>
+      event.journeyId === 'candace_followthrough' ||
+      event.systemsInvolved.includes('communication_companion'),
+    nearLiveDetail:
+      'Communication companion flows are ready, but they still need one fresh same-host proof turn.',
+    nearLiveNextAction:
+      'Run `what\'s still open with Candace` or `what should I say back` on this host.',
+  });
+  const chiefOfStaffMissions = buildSurfaceTruthFromPilotEvidence({
+    label: 'Chief-of-staff and missions',
+    review,
+    predicate: (event) =>
+      event.journeyId === 'mission_planning' ||
+      event.systemsInvolved.includes('missions') ||
+      event.systemsInvolved.includes('chief_of_staff'),
+    nearLiveDetail:
+      'Chief-of-staff and mission flows are ready, but they still need one fresh same-host proof chain.',
+    nearLiveNextAction:
+      'Run `help me plan tonight`, `what\'s the next step`, and `what\'s blocking this` on this host.',
+  });
+  const knowledgeLibrary = buildSurfaceTruthFromPilotEvidence({
+    label: 'Knowledge library',
+    review,
+    predicate: (event) =>
+      event.librarySaved === true ||
+      event.systemsInvolved.includes('knowledge_library') ||
+      event.routeKey?.startsWith('knowledge.') === true,
+    nearLiveDetail:
+      'Knowledge-library flows are ready, but they still need one fresh same-host proof save or source-grounded answer.',
+    nearLiveNextAction:
+      'Run one `use only my saved material` or `save this to my library` proof turn on this host.',
+  });
 
   return {
-    telegram: buildTelegramTruth(hostSnapshot, windowsHost),
-    alexa: buildAlexaTruth(projectRoot),
-    bluebubbles: buildBlueBubblesTruth(),
-    research: buildResearchTruth(projectRoot, options.outwardResearchStatus),
-    imageGeneration: buildImageGenerationTruth(projectRoot),
+    telegram,
+    alexa,
+    bluebubbles,
+    workCockpit,
+    lifeThreads,
+    communicationCompanion,
+    chiefOfStaffMissions,
+    knowledgeLibrary,
+    research,
+    imageGeneration,
+    hostHealth,
+    journeys,
+    pilotIssues: {
+      loggingEnabled: review.loggingEnabled,
+      openCount: review.openIssueCount,
+      latestSummary: review.latestOpenIssue?.summaryText || '',
+    },
   };
 }

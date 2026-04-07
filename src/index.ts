@@ -124,6 +124,15 @@ import {
   matchAssistantCapabilityRequest,
 } from './assistant-capability-router.js';
 import {
+  completePilotJourney,
+  type PilotJourneyCompleteParams,
+  resolveCrossChannelPilotJourney,
+  resolveOrdinaryChatPilotJourney,
+  resolvePilotJourneyFromCapability,
+  resolveWorkCockpitPilotJourney,
+  startPilotJourney,
+} from './pilot-mode.js';
+import {
   resolveAlexaConversationFollowup,
   type AlexaConversationState,
 } from './alexa-conversation.js';
@@ -265,6 +274,8 @@ import {
   Channel,
   ChannelHealthSnapshot,
   NewMessage,
+  PilotBlockerOwner,
+  PilotJourneyOutcome,
   RegisteredGroup,
   SendMessageOptions,
   RuntimeBackendJob,
@@ -4217,6 +4228,189 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     }
   };
 
+  const startConversationPilotProof = (
+    seed:
+      | ReturnType<typeof resolveOrdinaryChatPilotJourney>
+      | ReturnType<typeof resolveCrossChannelPilotJourney>
+      | ReturnType<typeof resolvePilotJourneyFromCapability>,
+  ) =>
+    seed
+      ? startPilotJourney({
+          ...seed,
+          channel: conversationChannel,
+          groupFolder: group.folder,
+          chatJid,
+          threadId: missedMessages.at(-1)?.thread_id || null,
+        })
+      : null;
+
+  const completeConversationPilotProof = (
+    record: ReturnType<typeof startPilotJourney>,
+    params: Omit<PilotJourneyCompleteParams, 'eventId'>,
+  ): void => {
+    if (!record) return;
+    completePilotJourney({
+      eventId: record.eventId,
+      ...params,
+    });
+  };
+
+  const buildCapabilityPilotOutcome = (
+    result: AssistantCapabilityResult,
+    explicitHandoffTarget: 'telegram' | 'bluebubbles' | null,
+  ): {
+    outcome: PilotJourneyOutcome;
+    blockerClass?: string | null;
+    blockerOwner?: PilotBlockerOwner;
+    degradedPath?: string | null;
+    systemsInvolved?: string[];
+    handoffCreated?: boolean;
+    missionCreated?: boolean;
+    threadSaved?: boolean;
+    reminderCreated?: boolean;
+    librarySaved?: boolean;
+    currentWorkRef?: string | null;
+    summaryText?: string | null;
+  } => {
+    const systemsInvolved = new Set<string>();
+    const capabilityId = result.capabilityId || '';
+    if (result.dailyResponse) {
+      systemsInvolved.add('daily_companion');
+    }
+    if (result.lifeThreadResult?.referencedThread) {
+      systemsInvolved.add('life_threads');
+    }
+    if (capabilityId.startsWith('communication.')) {
+      systemsInvolved.add('communication_companion');
+    }
+    if (capabilityId.startsWith('missions.')) {
+      systemsInvolved.add('missions');
+      systemsInvolved.add('chief_of_staff');
+    }
+    if (capabilityId.startsWith('staff.')) {
+      systemsInvolved.add('chief_of_staff');
+    }
+    if (capabilityId.startsWith('knowledge.')) {
+      systemsInvolved.add('knowledge_library');
+    }
+    if (capabilityId.startsWith('threads.')) {
+      systemsInvolved.add('life_threads');
+    }
+    if (result.trace?.responseSource?.startsWith('research')) {
+      systemsInvolved.add('research');
+    }
+    if (result.trace?.responseSource?.startsWith('media')) {
+      systemsInvolved.add('image_generation');
+    }
+    if (explicitHandoffTarget) {
+      systemsInvolved.add('cross_channel_handoffs');
+      systemsInvolved.add(explicitHandoffTarget);
+    }
+    return {
+      outcome:
+        (capabilityId.startsWith('research.') ||
+          capabilityId.startsWith('media.')) &&
+        result.trace?.responseSource === 'unavailable'
+          ? 'externally_blocked'
+          : result.trace?.responseSource === 'unavailable'
+            ? 'degraded_usable'
+            : 'success',
+      blockerClass:
+        capabilityId.startsWith('research.') &&
+        result.trace?.responseSource === 'unavailable'
+          ? 'outward_research_blocked'
+          : capabilityId.startsWith('media.') &&
+              result.trace?.responseSource === 'unavailable'
+            ? 'image_generation_blocked'
+            : result.trace?.responseSource === 'unavailable'
+              ? 'local_degraded_path'
+              : null,
+      blockerOwner:
+        (capabilityId.startsWith('research.') ||
+          capabilityId.startsWith('media.')) &&
+        result.trace?.responseSource === 'unavailable'
+          ? 'external'
+          : result.trace?.responseSource === 'unavailable'
+            ? 'repo_side'
+            : 'none',
+      degradedPath:
+        result.trace?.responseSource === 'unavailable'
+          ? result.trace.reason
+          : null,
+      systemsInvolved: [...systemsInvolved],
+      handoffCreated: Boolean(explicitHandoffTarget),
+      missionCreated: Boolean(
+        result.conversationSeed?.subjectData?.missionId ||
+          result.continuationCandidate?.missionId,
+      ),
+      threadSaved: Boolean(result.lifeThreadResult?.referencedThread),
+      librarySaved: capabilityId === 'knowledge.save_source',
+      summaryText:
+        result.conversationSeed?.summaryText ||
+        result.replyText ||
+        result.trace?.reason ||
+        null,
+    };
+  };
+
+  const buildCompletionPilotOutcome = (
+    result: Awaited<ReturnType<typeof completeAssistantActionFromAlexa>>,
+  ): {
+    outcome: PilotJourneyOutcome;
+    blockerClass?: string | null;
+    blockerOwner?: PilotBlockerOwner;
+    degradedPath?: string | null;
+    systemsInvolved?: string[];
+    handoffCreated?: boolean;
+    missionCreated?: boolean;
+    threadSaved?: boolean;
+    reminderCreated?: boolean;
+    librarySaved?: boolean;
+    currentWorkRef?: string | null;
+    summaryText?: string | null;
+  } => {
+    const capabilityOutcome = result.capabilityResult
+      ? buildCapabilityPilotOutcome(result.capabilityResult, null)
+      : null;
+    const systemsInvolved = new Set(capabilityOutcome?.systemsInvolved || []);
+    if (result.handoffResult) {
+      systemsInvolved.add('cross_channel_handoffs');
+    }
+    if (result.bridgeSaveForLaterText || result.lifeThreadResult?.referencedThread) {
+      systemsInvolved.add('life_threads');
+    }
+    if (result.reminderTaskId) {
+      systemsInvolved.add('reminders');
+    }
+    if (result.bridgeDraftReference) {
+      systemsInvolved.add('communication_companion');
+    }
+    return {
+      outcome: capabilityOutcome?.outcome || 'success',
+      blockerClass: capabilityOutcome?.blockerClass || null,
+      blockerOwner: capabilityOutcome?.blockerOwner || 'none',
+      degradedPath: capabilityOutcome?.degradedPath || null,
+      systemsInvolved: [...systemsInvolved],
+      handoffCreated: Boolean(result.handoffResult),
+      missionCreated: Boolean(
+        capabilityOutcome?.missionCreated ||
+          result.capabilityResult?.conversationSeed?.subjectData?.missionId,
+      ),
+      threadSaved: Boolean(
+        result.bridgeSaveForLaterText || result.lifeThreadResult?.referencedThread,
+      ),
+      reminderCreated: Boolean(result.reminderTaskId),
+      librarySaved: Boolean(capabilityOutcome?.librarySaved),
+      summaryText:
+        result.replyText ||
+        result.bridgeSaveForLaterText ||
+        result.bridgeDraftReference ||
+        result.capabilityResult?.conversationSeed?.summaryText ||
+        result.capabilityResult?.replyText ||
+        null,
+    };
+  };
+
   const tryHandleSharedAssistantCompletion = async (): Promise<boolean> => {
     const sharedSeed = getSharedAssistantCapabilitySeed(chatJid, now);
     if (!sharedSeed) {
@@ -4236,29 +4430,44 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       return false;
     }
 
-    const result = await completeAssistantActionFromAlexa(
-      {
-        groupFolder: group.folder,
-        action: followup.action,
-        utterance: followup.text || lastContent,
-        conversationSummary: sharedSeed.summaryText,
-        priorSubjectData: sharedSeed.subjectData,
-        replyText:
-          sharedSeed.subjectData?.pendingActionText ||
-          sharedSeed.subjectData?.lastAnswerSummary,
-        now,
-      },
-      {
-        resolveTelegramMainChat: resolveTelegramMainChatForAlexa,
-        resolveBlueBubblesCompanionChat: resolveBlueBubblesCompanionChat,
-        resolveHandoffTarget: resolveCompanionHandoffTarget,
-        sendTelegramMessage: sendCompanionHandoffMessageToChannel,
-        sendBlueBubblesMessage: sendCompanionHandoffMessageToChannel,
-        sendHandoffMessage: sendCompanionHandoffMessage,
-        sendTelegramArtifact: sendCompanionHandoffArtifactToChannel,
-        sendHandoffArtifact: sendCompanionHandoffArtifact,
-      },
+    const pilotRecord = startConversationPilotProof(
+      resolveCrossChannelPilotJourney(lastContent),
     );
+    let result: Awaited<ReturnType<typeof completeAssistantActionFromAlexa>>;
+    try {
+      result = await completeAssistantActionFromAlexa(
+        {
+          groupFolder: group.folder,
+          action: followup.action,
+          utterance: followup.text || lastContent,
+          conversationSummary: sharedSeed.summaryText,
+          priorSubjectData: sharedSeed.subjectData,
+          replyText:
+            sharedSeed.subjectData?.pendingActionText ||
+            sharedSeed.subjectData?.lastAnswerSummary,
+          now,
+        },
+        {
+          resolveTelegramMainChat: resolveTelegramMainChatForAlexa,
+          resolveBlueBubblesCompanionChat: resolveBlueBubblesCompanionChat,
+          resolveHandoffTarget: resolveCompanionHandoffTarget,
+          sendTelegramMessage: sendCompanionHandoffMessageToChannel,
+          sendBlueBubblesMessage: sendCompanionHandoffMessageToChannel,
+          sendHandoffMessage: sendCompanionHandoffMessage,
+          sendTelegramArtifact: sendCompanionHandoffArtifactToChannel,
+          sendHandoffArtifact: sendCompanionHandoffArtifact,
+        },
+      );
+    } catch (err) {
+      completeConversationPilotProof(pilotRecord, {
+        outcome: 'internal_failure',
+        blockerClass: 'assistant_completion_runtime_failed',
+        blockerOwner: 'repo_side',
+        summaryText:
+          err instanceof Error ? err.message : 'assistant completion failed',
+      });
+      throw err;
+    }
     if (!result.handled) {
       return false;
     }
@@ -4327,8 +4536,16 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         },
         'Handled shared assistant follow-up completion via local fast path',
       );
+      completeConversationPilotProof(pilotRecord, buildCompletionPilotOutcome(result));
       return true;
     } catch (err) {
+      completeConversationPilotProof(pilotRecord, {
+        outcome: 'internal_failure',
+        blockerClass: 'assistant_completion_send_failed',
+        blockerOwner: 'repo_side',
+        summaryText:
+          err instanceof Error ? err.message : 'assistant completion send failed',
+      });
       lastAgentTimestamp[chatJid] = previousCursor;
       saveState();
       logger.warn(
@@ -4361,32 +4578,61 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       chatJid,
       missedMessages.at(-1)?.thread_id,
     );
-
-    const result = await executeAssistantCapability({
-      capabilityId: capabilityMatch.capabilityId,
-      context: {
+    const pilotRecord = startConversationPilotProof(
+      resolvePilotJourneyFromCapability({
+        capabilityId: capabilityMatch.capabilityId,
         channel: conversationChannel,
-        groupFolder: group.folder,
-        chatJid,
-        now,
-        selectedWork,
-        conversationSummary:
-          priorAssistantCapabilitySeed?.summaryText ||
-          priorDailyContext?.summaryText,
-        priorCompanionContext: priorDailyContext,
-        priorSubjectData: priorAssistantCapabilitySeed?.subjectData,
-        replyText: missedMessages.at(-1)?.reply_to?.content,
-      },
-      input: {
         text: lastContent,
         canonicalText: capabilityMatch.canonicalText,
-      },
-    });
+        personName:
+          priorAssistantCapabilitySeed?.subjectData?.personName,
+        threadTitle: priorAssistantCapabilitySeed?.subjectData?.threadTitle,
+        summaryText:
+          priorAssistantCapabilitySeed?.summaryText ||
+          priorDailyContext?.summaryText,
+      }),
+    );
+    let result: AssistantCapabilityResult;
+    try {
+      result = await executeAssistantCapability({
+        capabilityId: capabilityMatch.capabilityId,
+        context: {
+          channel: conversationChannel,
+          groupFolder: group.folder,
+          chatJid,
+          now,
+          selectedWork,
+          conversationSummary:
+            priorAssistantCapabilitySeed?.summaryText ||
+            priorDailyContext?.summaryText,
+          priorCompanionContext: priorDailyContext,
+          priorSubjectData: priorAssistantCapabilitySeed?.subjectData,
+          replyText: missedMessages.at(-1)?.reply_to?.content,
+        },
+        input: {
+          text: lastContent,
+          canonicalText: capabilityMatch.canonicalText,
+        },
+      });
+    } catch (err) {
+      completeConversationPilotProof(pilotRecord, {
+        outcome: 'internal_failure',
+        blockerClass: 'assistant_capability_runtime_failed',
+        blockerOwner: 'repo_side',
+        summaryText:
+          err instanceof Error ? err.message : 'assistant capability failed',
+      });
+      throw err;
+    }
     if (!result.handled) {
       return false;
     }
 
     try {
+      const explicitHandoffTarget = resolveExplicitCompanionHandoffTarget(
+        lastContent,
+        conversationChannel,
+      );
       if (result.dailyResponse) {
         const actionContext = result.dailyResponse.grounded
           ? buildActionLayerContextFromDailyCommandCenter({
@@ -4448,11 +4694,6 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       } else {
         clearSharedAssistantCapabilitySeed(chatJid);
       }
-
-      const explicitHandoffTarget = resolveExplicitCompanionHandoffTarget(
-        lastContent,
-        conversationChannel,
-      );
       if (explicitHandoffTarget && result.continuationCandidate?.handoffPayload) {
         const handoff = await deliverCompanionHandoff(
           {
@@ -4513,8 +4754,19 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         },
         'Handled assistant request via shared capability fast path',
       );
+      completeConversationPilotProof(
+        pilotRecord,
+        buildCapabilityPilotOutcome(result, explicitHandoffTarget),
+      );
       return true;
     } catch (err) {
+      completeConversationPilotProof(pilotRecord, {
+        outcome: 'internal_failure',
+        blockerClass: 'assistant_capability_send_failed',
+        blockerOwner: 'repo_side',
+        summaryText:
+          err instanceof Error ? err.message : 'assistant capability send failed',
+      });
       lastAgentTimestamp[chatJid] = previousCursor;
       saveState();
       logger.warn(
@@ -4557,9 +4809,17 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   }
 
   if (requestPolicy.route === 'direct_assistant' && quickReply) {
+    const quickReplyPilot = startConversationPilotProof(
+      resolveOrdinaryChatPilotJourney(lastContent),
+    );
     try {
       await channel.sendMessage(chatJid, quickReply);
       clearSharedAssistantCapabilitySeed(chatJid);
+      completeConversationPilotProof(quickReplyPilot, {
+        outcome: 'success',
+        blockerOwner: 'none',
+        summaryText: quickReply,
+      });
       logger.info(
         {
           component: 'assistant',
@@ -4577,6 +4837,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       );
       return true;
     } catch (err) {
+      completeConversationPilotProof(quickReplyPilot, {
+        outcome: 'internal_failure',
+        blockerClass: 'direct_quick_reply_send_failed',
+        blockerOwner: 'repo_side',
+        summaryText:
+          err instanceof Error ? err.message : 'direct quick reply send failed',
+      });
       lastAgentTimestamp[chatJid] = previousCursor;
       saveState();
       logger.warn(
@@ -7442,12 +7709,87 @@ async function main(): Promise<void> {
     chatJid: string,
     sourceMessage?: NewMessage,
   ): Promise<void> {
-    await openCursorDashboard({
-      chatJid,
-      sourceMessage,
-      state: { kind: 'home' },
-      forceNew: true,
-    });
+    const group = registeredGroups[chatJid];
+    const pilotRecord = group
+      ? startPilotJourney({
+          ...resolveWorkCockpitPilotJourney({ source: 'dashboard_open' }),
+          channel: 'telegram',
+          groupFolder: group.folder,
+          chatJid,
+          threadId: sourceMessage?.thread_id || null,
+        })
+      : null;
+    try {
+      await openCursorDashboard({
+        chatJid,
+        sourceMessage,
+        state: { kind: 'home' },
+        forceNew: true,
+      });
+      if (pilotRecord) {
+        completePilotJourney({
+          eventId: pilotRecord.eventId,
+          outcome: 'success',
+          blockerOwner: 'none',
+          summaryText: 'Opened the work cockpit dashboard.',
+        });
+      }
+    } catch (err) {
+      if (pilotRecord) {
+        completePilotJourney({
+          eventId: pilotRecord.eventId,
+          outcome: 'internal_failure',
+          blockerClass: 'work_cockpit_dashboard_failed',
+          blockerOwner: 'repo_side',
+          summaryText:
+            err instanceof Error ? err.message : 'work cockpit dashboard failed',
+        });
+      }
+      throw err;
+    }
+  }
+
+  async function handleCurrentWorkQuickOpen(
+    chatJid: string,
+    sourceMessage?: NewMessage,
+  ): Promise<void> {
+    const group = registeredGroups[chatJid];
+    const pilotRecord = group
+      ? startPilotJourney({
+          ...resolveWorkCockpitPilotJourney({ source: 'current_work' }),
+          channel: 'telegram',
+          groupFolder: group.folder,
+          chatJid,
+          threadId: sourceMessage?.thread_id || null,
+        })
+      : null;
+    try {
+      await openCursorDashboard({
+        chatJid,
+        sourceMessage,
+        state: { kind: 'work_current' },
+      });
+      if (pilotRecord) {
+        completePilotJourney({
+          eventId: pilotRecord.eventId,
+          outcome: 'success',
+          blockerOwner: 'none',
+          summaryText: 'Opened current work from the work cockpit.',
+        });
+      }
+    } catch (err) {
+      if (pilotRecord) {
+        completePilotJourney({
+          eventId: pilotRecord.eventId,
+          outcome: 'internal_failure',
+          blockerClass: 'current_work_quick_open_failed',
+          blockerOwner: 'repo_side',
+          summaryText:
+            err instanceof Error ? err.message : 'current work quick-open failed',
+        });
+      }
+      throw err;
+    }
   }
 
   async function handleAmazonStatus(chatJid: string): Promise<void> {
@@ -9064,6 +9406,17 @@ async function main(): Promise<void> {
       return;
     }
     const normalizedAgentId = resolvedCursorTarget.agentId;
+    const pilotRecord = startPilotJourney({
+      ...resolveWorkCockpitPilotJourney({
+        source: 'reply_followup',
+        laneId: 'cursor',
+      }),
+      channel: 'telegram',
+      groupFolder: group.folder,
+      chatJid,
+      threadId: sourceMessage?.thread_id || null,
+      summaryText: `Cursor follow-up for ${labelCursorRecord(normalizedAgentId)}`,
+    });
 
     try {
       const replyMessageContext = getActiveCursorMessageContext(
@@ -9077,6 +9430,15 @@ async function main(): Promise<void> {
         const harmlessReply = maybeBuildHarmlessTaskReply(promptText);
         if (harmlessReply) {
           await sendCursorMessage(chatJid, harmlessReply, sourceMessage);
+          if (pilotRecord) {
+            completePilotJourney({
+              eventId: pilotRecord.eventId,
+              outcome: 'degraded_usable',
+              blockerClass: 'work_cockpit_harmless_reply_short_circuit',
+              blockerOwner: 'none',
+              summaryText: harmlessReply,
+            });
+          }
           return;
         }
       }
@@ -9124,7 +9486,29 @@ async function main(): Promise<void> {
           .filter((line): line is string => Boolean(line))
           .join('\n\n'),
       });
+      if (pilotRecord) {
+        completePilotJourney({
+          eventId: pilotRecord.eventId,
+          outcome: 'success',
+          blockerOwner: 'none',
+          currentWorkRef: followed.id,
+          summaryText:
+            followed.summary ||
+            followed.promptText ||
+            `Continued Cursor task ${formatOpaqueTaskId(followed.id)}.`,
+        });
+      }
     } catch (err) {
+      if (pilotRecord) {
+        completePilotJourney({
+          eventId: pilotRecord.eventId,
+          outcome: 'internal_failure',
+          blockerClass: 'work_cockpit_cursor_followup_failed',
+          blockerOwner: 'repo_side',
+          summaryText:
+            err instanceof Error ? err.message : 'cursor follow-up failed',
+        });
+      }
       const clearedSelection = maybeClearCursorSelectionForCommandError({
         chatJid,
         threadId: sourceMessage?.thread_id,
@@ -9165,9 +9549,23 @@ async function main(): Promise<void> {
       chatJid,
       sourceMessage?.reply_to_id,
     );
+    const runtimePilotRecord =
+      commandToken === '/runtime-followup'
+        ? startPilotJourney({
+            ...resolveWorkCockpitPilotJourney({
+              source: 'reply_followup',
+              laneId: 'andrea_runtime',
+            }),
+            channel: 'telegram',
+            groupFolder: group.folder,
+            chatJid,
+            threadId: sourceMessage?.thread_id || null,
+          })
+        : null;
 
-    await dispatchRuntimeCommand(
-      {
+    try {
+      await dispatchRuntimeCommand(
+        {
         async sendToChat(targetChatJid, text, extra = {}) {
           const sent = await channel.sendMessage(
             targetChatJid,
@@ -9366,23 +9764,45 @@ async function main(): Promise<void> {
         shouldClearSelectionForError(err) {
           return shouldClearRuntimeSelectionForError(err);
         },
-      },
-      {
-        operatorChatJid: chatJid,
-        groupFolder: group.folder,
-        rawTrimmed,
-        commandToken,
-        threadId: sourceMessage?.thread_id,
-        replyToMessageId: sourceMessage?.reply_to_id,
-        replyMessageContext: replyMessageContext
-          ? {
-              agentId: replyMessageContext.agentId,
-              contextKind: replyMessageContext.contextKind,
-              payload: replyMessageContext.payload,
-            }
-          : null,
-      },
-    );
+        },
+        {
+          operatorChatJid: chatJid,
+          groupFolder: group.folder,
+          rawTrimmed,
+          commandToken,
+          threadId: sourceMessage?.thread_id,
+          replyToMessageId: sourceMessage?.reply_to_id,
+          replyMessageContext: replyMessageContext
+            ? {
+                agentId: replyMessageContext.agentId,
+                contextKind: replyMessageContext.contextKind,
+                payload: replyMessageContext.payload,
+              }
+            : null,
+        },
+      );
+      if (runtimePilotRecord) {
+        completePilotJourney({
+          eventId: runtimePilotRecord.eventId,
+          outcome: 'success',
+          blockerOwner: 'none',
+          summaryText:
+            'Continued current work in the Codex/OpenAI runtime lane.',
+        });
+      }
+    } catch (err) {
+      if (runtimePilotRecord) {
+        completePilotJourney({
+          eventId: runtimePilotRecord.eventId,
+          outcome: 'internal_failure',
+          blockerClass: 'work_cockpit_runtime_followup_failed',
+          blockerOwner: 'repo_side',
+          summaryText:
+            err instanceof Error ? err.message : 'runtime follow-up failed',
+        });
+      }
+      throw err;
+    }
   }
 
   // Channel callbacks (shared by all channels)
@@ -9559,11 +9979,7 @@ async function main(): Promise<void> {
         !isSlashCommand &&
         trimmed === 'current work'
       ) {
-        openCursorDashboard({
-          chatJid,
-          sourceMessage: msg,
-          state: { kind: 'work_current' },
-        }).catch((err) =>
+        handleCurrentWorkQuickOpen(chatJid, msg).catch((err) =>
           logger.error({ err, chatJid }, 'Current work quick-open error'),
         );
         return;

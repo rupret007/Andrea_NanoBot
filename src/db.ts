@@ -34,6 +34,8 @@ import {
   ProfileFact,
   ProfileFactWithSubject,
   ProfileSubject,
+  PilotIssueRecord,
+  PilotJourneyEventRecord,
   RegisteredGroup,
   RitualProfile,
   RuntimeBackendCardContextRecord,
@@ -412,6 +414,62 @@ function createSchema(database: Database.Database): void {
       ON communication_signals(communication_thread_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_communication_signals_group
       ON communication_signals(group_folder, created_at DESC);
+    CREATE TABLE IF NOT EXISTS pilot_journey_events (
+      event_id TEXT PRIMARY KEY,
+      journey_id TEXT NOT NULL,
+      channel TEXT NOT NULL,
+      group_folder TEXT NOT NULL,
+      chat_jid TEXT,
+      thread_id TEXT,
+      route_key TEXT,
+      systems_involved_json TEXT NOT NULL,
+      outcome TEXT NOT NULL,
+      blocker_class TEXT,
+      blocker_owner TEXT NOT NULL,
+      degraded_path TEXT,
+      handoff_created INTEGER NOT NULL DEFAULT 0,
+      mission_created INTEGER NOT NULL DEFAULT 0,
+      thread_saved INTEGER NOT NULL DEFAULT 0,
+      reminder_created INTEGER NOT NULL DEFAULT 0,
+      library_saved INTEGER NOT NULL DEFAULT 0,
+      current_work_ref TEXT,
+      summary_text TEXT NOT NULL,
+      started_at TEXT NOT NULL,
+      completed_at TEXT,
+      duration_ms INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_pilot_journey_events_group_started
+      ON pilot_journey_events(group_folder, started_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_pilot_journey_events_journey_completed
+      ON pilot_journey_events(journey_id, completed_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_pilot_journey_events_outcome_completed
+      ON pilot_journey_events(outcome, completed_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_pilot_journey_events_chat_started
+      ON pilot_journey_events(chat_jid, started_at DESC);
+    CREATE TABLE IF NOT EXISTS pilot_issues (
+      issue_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      status TEXT NOT NULL,
+      issue_kind TEXT NOT NULL,
+      channel TEXT NOT NULL,
+      group_folder TEXT NOT NULL,
+      chat_jid TEXT,
+      thread_id TEXT,
+      journey_event_id TEXT,
+      route_key TEXT,
+      blocker_class TEXT,
+      blocker_owner TEXT NOT NULL,
+      summary_text TEXT NOT NULL,
+      assistant_context_summary TEXT NOT NULL,
+      linked_refs_json TEXT NOT NULL,
+      FOREIGN KEY (journey_event_id) REFERENCES pilot_journey_events(event_id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_pilot_issues_status_created
+      ON pilot_issues(status, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_pilot_issues_journey
+      ON pilot_issues(journey_event_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_pilot_issues_group_chat
+      ON pilot_issues(group_folder, chat_jid, created_at DESC);
     CREATE TABLE IF NOT EXISTS missions (
       mission_id TEXT PRIMARY KEY,
       group_folder TEXT NOT NULL,
@@ -941,6 +999,9 @@ export function initDatabase(): void {
 
   db = new Database(dbPath);
   createSchema(db);
+  prunePilotLoopData(
+    new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
+  );
 
   // Migrate from JSON files if they exist
   migrateJsonState();
@@ -950,6 +1011,9 @@ export function initDatabase(): void {
 export function _initTestDatabase(): void {
   db = new Database(':memory:');
   createSchema(db);
+  prunePilotLoopData(
+    new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
+  );
 }
 
 /** @internal - for tests only. */
@@ -3795,6 +3859,477 @@ export function listCommunicationSignalsForThread(
       urgency: row.urgency,
       createdAt: row.created_at,
     }));
+}
+
+function mapPilotJourneyEventRow(row: {
+  event_id: string;
+  journey_id: PilotJourneyEventRecord['journeyId'];
+  channel: PilotJourneyEventRecord['channel'];
+  group_folder: string;
+  chat_jid: string | null;
+  thread_id: string | null;
+  route_key: string | null;
+  systems_involved_json: string;
+  outcome: PilotJourneyEventRecord['outcome'];
+  blocker_class: string | null;
+  blocker_owner: PilotJourneyEventRecord['blockerOwner'];
+  degraded_path: string | null;
+  handoff_created: number;
+  mission_created: number;
+  thread_saved: number;
+  reminder_created: number;
+  library_saved: number;
+  current_work_ref: string | null;
+  summary_text: string;
+  started_at: string;
+  completed_at: string | null;
+  duration_ms: number | null;
+}): PilotJourneyEventRecord {
+  return {
+    eventId: row.event_id,
+    journeyId: row.journey_id,
+    channel: row.channel,
+    groupFolder: row.group_folder,
+    chatJid: row.chat_jid,
+    threadId: row.thread_id,
+    routeKey: row.route_key,
+    systemsInvolved: parseStringArrayJson(row.systems_involved_json),
+    outcome: row.outcome,
+    blockerClass: row.blocker_class,
+    blockerOwner: row.blocker_owner,
+    degradedPath: row.degraded_path,
+    handoffCreated: Boolean(row.handoff_created),
+    missionCreated: Boolean(row.mission_created),
+    threadSaved: Boolean(row.thread_saved),
+    reminderCreated: Boolean(row.reminder_created),
+    librarySaved: Boolean(row.library_saved),
+    currentWorkRef: row.current_work_ref,
+    summaryText: row.summary_text,
+    startedAt: row.started_at,
+    completedAt: row.completed_at,
+    durationMs: row.duration_ms,
+  };
+}
+
+export function insertPilotJourneyEvent(record: PilotJourneyEventRecord): void {
+  assertValidGroupFolder(record.groupFolder);
+  db.prepare(
+    `
+      INSERT INTO pilot_journey_events (
+        event_id,
+        journey_id,
+        channel,
+        group_folder,
+        chat_jid,
+        thread_id,
+        route_key,
+        systems_involved_json,
+        outcome,
+        blocker_class,
+        blocker_owner,
+        degraded_path,
+        handoff_created,
+        mission_created,
+        thread_saved,
+        reminder_created,
+        library_saved,
+        current_work_ref,
+        summary_text,
+        started_at,
+        completed_at,
+        duration_ms
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(event_id) DO UPDATE SET
+        journey_id = excluded.journey_id,
+        channel = excluded.channel,
+        group_folder = excluded.group_folder,
+        chat_jid = excluded.chat_jid,
+        thread_id = excluded.thread_id,
+        route_key = excluded.route_key,
+        systems_involved_json = excluded.systems_involved_json,
+        outcome = excluded.outcome,
+        blocker_class = excluded.blocker_class,
+        blocker_owner = excluded.blocker_owner,
+        degraded_path = excluded.degraded_path,
+        handoff_created = excluded.handoff_created,
+        mission_created = excluded.mission_created,
+        thread_saved = excluded.thread_saved,
+        reminder_created = excluded.reminder_created,
+        library_saved = excluded.library_saved,
+        current_work_ref = excluded.current_work_ref,
+        summary_text = excluded.summary_text,
+        started_at = excluded.started_at,
+        completed_at = excluded.completed_at,
+        duration_ms = excluded.duration_ms
+    `,
+  ).run(
+    record.eventId,
+    record.journeyId,
+    record.channel,
+    record.groupFolder,
+    record.chatJid || null,
+    record.threadId || null,
+    record.routeKey || null,
+    JSON.stringify(record.systemsInvolved || []),
+    record.outcome,
+    record.blockerClass || null,
+    record.blockerOwner,
+    record.degradedPath || null,
+    record.handoffCreated ? 1 : 0,
+    record.missionCreated ? 1 : 0,
+    record.threadSaved ? 1 : 0,
+    record.reminderCreated ? 1 : 0,
+    record.librarySaved ? 1 : 0,
+    record.currentWorkRef || null,
+    record.summaryText,
+    record.startedAt,
+    record.completedAt || null,
+    record.durationMs ?? null,
+  );
+}
+
+export function finalizePilotJourneyEvent(
+  eventId: string,
+  updates: Partial<
+    Omit<
+      PilotJourneyEventRecord,
+      'eventId' | 'journeyId' | 'channel' | 'groupFolder' | 'startedAt'
+    >
+  >,
+): boolean {
+  const existing = getPilotJourneyEvent(eventId);
+  if (!existing) return false;
+  insertPilotJourneyEvent({
+    ...existing,
+    ...updates,
+  });
+  return true;
+}
+
+export function getPilotJourneyEvent(
+  eventId: string,
+): PilotJourneyEventRecord | null {
+  const row = db
+    .prepare(
+      `
+        SELECT *
+        FROM pilot_journey_events
+        WHERE event_id = ?
+      `,
+    )
+    .get(eventId) as
+    | {
+        event_id: string;
+        journey_id: PilotJourneyEventRecord['journeyId'];
+        channel: PilotJourneyEventRecord['channel'];
+        group_folder: string;
+        chat_jid: string | null;
+        thread_id: string | null;
+        route_key: string | null;
+        systems_involved_json: string;
+        outcome: PilotJourneyEventRecord['outcome'];
+        blocker_class: string | null;
+        blocker_owner: PilotJourneyEventRecord['blockerOwner'];
+        degraded_path: string | null;
+        handoff_created: number;
+        mission_created: number;
+        thread_saved: number;
+        reminder_created: number;
+        library_saved: number;
+        current_work_ref: string | null;
+        summary_text: string;
+        started_at: string;
+        completed_at: string | null;
+        duration_ms: number | null;
+      }
+    | undefined;
+
+  if (!row || !isValidGroupFolder(row.group_folder)) {
+    return null;
+  }
+
+  return mapPilotJourneyEventRow(row);
+}
+
+export function listRecentPilotJourneyEvents(params: {
+  limit?: number;
+  journeyId?: PilotJourneyEventRecord['journeyId'];
+  channel?: PilotJourneyEventRecord['channel'];
+  outcome?: PilotJourneyEventRecord['outcome'];
+} = {}): PilotJourneyEventRecord[] {
+  const clauses: string[] = [];
+  const values: Array<string | number> = [];
+
+  if (params.journeyId) {
+    clauses.push('journey_id = ?');
+    values.push(params.journeyId);
+  }
+  if (params.channel) {
+    clauses.push('channel = ?');
+    values.push(params.channel);
+  }
+  if (params.outcome) {
+    clauses.push('outcome = ?');
+    values.push(params.outcome);
+  }
+
+  const sql = [
+    'SELECT *',
+    'FROM pilot_journey_events',
+    clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '',
+    'ORDER BY started_at DESC',
+    'LIMIT ?',
+  ]
+    .filter(Boolean)
+    .join('\n');
+  values.push(Math.max(1, params.limit || 20));
+
+  const rows = db.prepare(sql).all(...values) as Array<{
+    event_id: string;
+    journey_id: PilotJourneyEventRecord['journeyId'];
+    channel: PilotJourneyEventRecord['channel'];
+    group_folder: string;
+    chat_jid: string | null;
+    thread_id: string | null;
+    route_key: string | null;
+    systems_involved_json: string;
+    outcome: PilotJourneyEventRecord['outcome'];
+    blocker_class: string | null;
+    blocker_owner: PilotJourneyEventRecord['blockerOwner'];
+    degraded_path: string | null;
+    handoff_created: number;
+    mission_created: number;
+    thread_saved: number;
+    reminder_created: number;
+    library_saved: number;
+    current_work_ref: string | null;
+    summary_text: string;
+    started_at: string;
+    completed_at: string | null;
+    duration_ms: number | null;
+  }>;
+
+  return rows
+    .filter((row) => isValidGroupFolder(row.group_folder))
+    .map((row) => mapPilotJourneyEventRow(row));
+}
+
+export function findRecentPilotJourneyEvent(params: {
+  chatJid?: string | null;
+  threadId?: string | null;
+  maxAgeMinutes?: number;
+}): PilotJourneyEventRecord | null {
+  const maxAgeMinutes = Math.max(1, params.maxAgeMinutes || 30);
+  const cutoffIso = new Date(Date.now() - maxAgeMinutes * 60 * 1000).toISOString();
+  const clauses = ['started_at >= ?'];
+  const values: Array<string> = [cutoffIso];
+
+  if (params.chatJid) {
+    clauses.push('chat_jid = ?');
+    values.push(params.chatJid);
+  }
+  if (params.threadId) {
+    clauses.push('thread_id = ?');
+    values.push(params.threadId);
+  }
+
+  const row = db
+    .prepare(
+      `
+        SELECT *
+        FROM pilot_journey_events
+        WHERE ${clauses.join(' AND ')}
+        ORDER BY started_at DESC
+        LIMIT 1
+      `,
+    )
+    .get(...values) as
+    | {
+        event_id: string;
+        journey_id: PilotJourneyEventRecord['journeyId'];
+        channel: PilotJourneyEventRecord['channel'];
+        group_folder: string;
+        chat_jid: string | null;
+        thread_id: string | null;
+        route_key: string | null;
+        systems_involved_json: string;
+        outcome: PilotJourneyEventRecord['outcome'];
+        blocker_class: string | null;
+        blocker_owner: PilotJourneyEventRecord['blockerOwner'];
+        degraded_path: string | null;
+        handoff_created: number;
+        mission_created: number;
+        thread_saved: number;
+        reminder_created: number;
+        library_saved: number;
+        current_work_ref: string | null;
+        summary_text: string;
+        started_at: string;
+        completed_at: string | null;
+        duration_ms: number | null;
+      }
+    | undefined;
+
+  if (!row || !isValidGroupFolder(row.group_folder)) {
+    return null;
+  }
+  return mapPilotJourneyEventRow(row);
+}
+
+function mapPilotIssueRow(row: {
+  issue_id: string;
+  created_at: string;
+  status: PilotIssueRecord['status'];
+  issue_kind: PilotIssueRecord['issueKind'];
+  channel: PilotIssueRecord['channel'];
+  group_folder: string;
+  chat_jid: string | null;
+  thread_id: string | null;
+  journey_event_id: string | null;
+  route_key: string | null;
+  blocker_class: string | null;
+  blocker_owner: PilotIssueRecord['blockerOwner'];
+  summary_text: string;
+  assistant_context_summary: string;
+  linked_refs_json: string;
+}): PilotIssueRecord {
+  return {
+    issueId: row.issue_id,
+    createdAt: row.created_at,
+    status: row.status,
+    issueKind: row.issue_kind,
+    channel: row.channel,
+    groupFolder: row.group_folder,
+    chatJid: row.chat_jid,
+    threadId: row.thread_id,
+    journeyEventId: row.journey_event_id,
+    routeKey: row.route_key,
+    blockerClass: row.blocker_class,
+    blockerOwner: row.blocker_owner,
+    summaryText: row.summary_text,
+    assistantContextSummary: row.assistant_context_summary,
+    linkedRefs: parseJsonObject(row.linked_refs_json) as PilotIssueRecord['linkedRefs'],
+  };
+}
+
+export function insertPilotIssue(record: PilotIssueRecord): void {
+  assertValidGroupFolder(record.groupFolder);
+  db.prepare(
+    `
+      INSERT INTO pilot_issues (
+        issue_id,
+        created_at,
+        status,
+        issue_kind,
+        channel,
+        group_folder,
+        chat_jid,
+        thread_id,
+        journey_event_id,
+        route_key,
+        blocker_class,
+        blocker_owner,
+        summary_text,
+        assistant_context_summary,
+        linked_refs_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(issue_id) DO UPDATE SET
+        created_at = excluded.created_at,
+        status = excluded.status,
+        issue_kind = excluded.issue_kind,
+        channel = excluded.channel,
+        group_folder = excluded.group_folder,
+        chat_jid = excluded.chat_jid,
+        thread_id = excluded.thread_id,
+        journey_event_id = excluded.journey_event_id,
+        route_key = excluded.route_key,
+        blocker_class = excluded.blocker_class,
+        blocker_owner = excluded.blocker_owner,
+        summary_text = excluded.summary_text,
+        assistant_context_summary = excluded.assistant_context_summary,
+        linked_refs_json = excluded.linked_refs_json
+    `,
+  ).run(
+    record.issueId,
+    record.createdAt,
+    record.status,
+    record.issueKind,
+    record.channel,
+    record.groupFolder,
+    record.chatJid || null,
+    record.threadId || null,
+    record.journeyEventId || null,
+    record.routeKey || null,
+    record.blockerClass || null,
+    record.blockerOwner,
+    record.summaryText,
+    record.assistantContextSummary,
+    JSON.stringify(record.linkedRefs || {}),
+  );
+}
+
+export function listPilotIssues(params: {
+  status?: PilotIssueRecord['status'];
+  limit?: number;
+} = {}): PilotIssueRecord[] {
+  const clauses: string[] = [];
+  const values: Array<string | number> = [];
+  if (params.status) {
+    clauses.push('status = ?');
+    values.push(params.status);
+  }
+  const sql = [
+    'SELECT *',
+    'FROM pilot_issues',
+    clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '',
+    'ORDER BY created_at DESC',
+    'LIMIT ?',
+  ]
+    .filter(Boolean)
+    .join('\n');
+  values.push(Math.max(1, params.limit || 20));
+
+  const rows = db.prepare(sql).all(...values) as Array<{
+    issue_id: string;
+    created_at: string;
+    status: PilotIssueRecord['status'];
+    issue_kind: PilotIssueRecord['issueKind'];
+    channel: PilotIssueRecord['channel'];
+    group_folder: string;
+    chat_jid: string | null;
+    thread_id: string | null;
+    journey_event_id: string | null;
+    route_key: string | null;
+    blocker_class: string | null;
+    blocker_owner: PilotIssueRecord['blockerOwner'];
+    summary_text: string;
+    assistant_context_summary: string;
+    linked_refs_json: string;
+  }>;
+
+  return rows
+    .filter((row) => isValidGroupFolder(row.group_folder))
+    .map((row) => mapPilotIssueRow(row));
+}
+
+export function countPilotIssues(status?: PilotIssueRecord['status']): number {
+  if (status) {
+    const row = db
+      .prepare('SELECT COUNT(*) as total FROM pilot_issues WHERE status = ?')
+      .get(status) as { total: number };
+    return row.total;
+  }
+  const row = db
+    .prepare('SELECT COUNT(*) as total FROM pilot_issues')
+    .get() as { total: number };
+  return row.total;
+}
+
+export function prunePilotLoopData(cutoffIso: string): void {
+  db.prepare('DELETE FROM pilot_issues WHERE created_at < ?').run(cutoffIso);
+  db.prepare('DELETE FROM pilot_journey_events WHERE started_at < ?').run(
+    cutoffIso,
+  );
 }
 
 export function upsertProfileSubject(record: ProfileSubject): void {

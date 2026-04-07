@@ -206,6 +206,20 @@ describe('assistant capability router', () => {
     });
   });
 
+  it('matches explicit pilot issue capture prompts without widening the router', () => {
+    expect(matchAssistantCapabilityRequest('this felt weird')).toMatchObject({
+      capabilityId: 'pilot.capture_issue',
+    });
+    expect(matchAssistantCapabilityRequest('that answer was off')).toMatchObject({
+      capabilityId: 'pilot.capture_issue',
+    });
+    expect(
+      matchAssistantCapabilityRequest('mark this flow as awkward'),
+    ).toMatchObject({
+      capabilityId: 'pilot.capture_issue',
+    });
+  });
+
   it('maps core Alexa intents into shared capabilities', () => {
     expect(resolveAlexaIntentToCapability('MyDayIntent')).toMatchObject({
       capabilityId: 'daily.morning_brief',

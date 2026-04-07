@@ -18,7 +18,7 @@ import {
   setAssistantExecutionProbeState,
   setDebugLevel,
 } from './debug-control.js';
-import { _closeDatabase, _initTestDatabase } from './db.js';
+import { _closeDatabase, _initTestDatabase, insertPilotIssue, insertPilotJourneyEvent } from './db.js';
 import { persistNanoclawHostState, writeRuntimeAuditState } from './host-control.js';
 import { getLogControlConfig, setLogControlConfig } from './logger.js';
 
@@ -187,6 +187,8 @@ describe('debug log tails', () => {
     expect(status).toContain('BlueBubbles proof:');
     expect(status).toContain('Outward research proof:');
     expect(status).toContain('Image generation proof:');
+    expect(status).toContain('Host health proof:');
+    expect(status).toContain('Work cockpit proof:');
   });
 
   it('shows serving commit drift and missing Alexa live proof in debug status', () => {
@@ -242,6 +244,56 @@ describe('debug log tails', () => {
     expect(status).toContain('Serving git commit: dc67cf98c6b2f3d19c6a3c70f3a6c54abe266794');
     expect(status).toContain('Serving commit aligned: no');
     expect(status).toContain('Alexa last signed request: none');
+  });
+
+  it('surfaces pilot issue counts and journey truth in debug status', () => {
+    insertPilotJourneyEvent({
+      eventId: 'journey-1',
+      journeyId: 'daily_guidance',
+      channel: 'telegram',
+      groupFolder: 'main',
+      chatJid: 'tg:main',
+      threadId: null,
+      routeKey: 'daily.loose_ends',
+      systemsInvolved: ['daily_companion'],
+      outcome: 'success',
+      blockerClass: null,
+      blockerOwner: 'none',
+      degradedPath: null,
+      handoffCreated: false,
+      missionCreated: false,
+      threadSaved: false,
+      reminderCreated: false,
+      librarySaved: false,
+      currentWorkRef: null,
+      summaryText: 'Daily guidance proof',
+      startedAt: '2026-04-07T17:00:00.000Z',
+      completedAt: '2026-04-07T17:00:05.000Z',
+      durationMs: 5000,
+    });
+    insertPilotIssue({
+      issueId: 'issue-1',
+      createdAt: '2026-04-07T17:05:00.000Z',
+      status: 'open',
+      issueKind: 'felt_weird',
+      channel: 'telegram',
+      groupFolder: 'main',
+      chatJid: 'tg:main',
+      threadId: null,
+      journeyEventId: 'journey-1',
+      routeKey: 'pilot.capture_issue',
+      blockerClass: null,
+      blockerOwner: 'none',
+      summaryText: 'User marked daily guidance as weird.',
+      assistantContextSummary: 'Daily guidance proof',
+      linkedRefs: {},
+    });
+
+    const status = formatDebugStatus();
+    expect(status).toContain('Pilot logging enabled: yes');
+    expect(status).toContain('Open pilot issues: 1');
+    expect(status).toContain('Latest pilot issue: User marked daily guidance as weird.');
+    expect(status).toContain('Journey daily_guidance: live_proven');
   });
 
   it('prefers current chat service lines over stale group container logs', () => {
