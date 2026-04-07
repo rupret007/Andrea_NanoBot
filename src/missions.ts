@@ -306,6 +306,7 @@ function buildMissionBlockers(params: {
   horizon: ChiefOfStaffHorizon;
   selectedWork?: SelectedWorkContext | null;
   openLoopSummary?: string;
+  openLoopLead?: string;
   linkedLifeThreadTitle?: string | null;
   linkedSubjects: ProfileSubject[];
 }): string[] {
@@ -339,7 +340,10 @@ function buildMissionBlockers(params: {
     params.openLoopSummary &&
     !/^nothing important/i.test(params.openLoopSummary)
   ) {
-    blockers.push('There is still at least one open conversation in the mix.');
+    blockers.push(
+      params.openLoopLead ||
+        'There is still at least one open conversation in the mix.',
+    );
   }
   if (
     !params.linkedLifeThreadTitle &&
@@ -698,13 +702,45 @@ function buildMissionDetailText(snapshot: MissionPlanSnapshot): string {
   });
 }
 
+function isMissionBlockerExplainRequest(text: string): boolean {
+  return /\b(what('?s| is) blocking this|what('?s| is) the blocker|what am i missing for this)\b/i.test(
+    text,
+  );
+}
+
 function formatMissionReply(
+  input: Pick<MissionTurnInput, 'channel' | 'mode' | 'text'>,
   channel: MissionTurnInput['channel'],
   snapshot: MissionPlanSnapshot,
   stepFocus: MissionStepRecord | null,
 ): string {
   const blocker = snapshot.blockers[0];
   const action = snapshot.suggestedActions[0]?.label;
+  if (
+    input.mode === 'explain' &&
+    isMissionBlockerExplainRequest(input.text || '')
+  ) {
+    if (channel === 'alexa') {
+      if (blocker) {
+        return stepFocus
+          ? `The main blocker right now is this: ${blocker} Next, clear it by ${stepFocus.title}.`
+          : `The main blocker right now is this: ${blocker}`;
+      }
+      return action
+        ? `I do not see a major blocker right now. Next, ${action.toLowerCase()}.`
+        : 'I do not see a major blocker right now.';
+    }
+
+    return buildSignatureFlowText({
+      lead: blocker
+        ? `The main blocker right now is this: ${blocker}`
+        : 'I do not see a major blocker right now.',
+      detailLines: stepFocus ? [`Clear it by: ${stepFocus.title}.`] : [],
+      nextAction: action || stepFocus?.title || null,
+      whyLine: snapshot.explainabilityLines[0],
+    });
+  }
+
   if (channel === 'alexa') {
     const parts = [snapshot.mission.summary];
     if (stepFocus) {
@@ -836,6 +872,7 @@ async function buildMissionSnapshot(
     horizon,
     selectedWork: input.selectedWork || null,
     openLoopSummary: openLoops.summaryText,
+    openLoopLead: openLoops.items[0]?.summaryText,
     linkedLifeThreadTitle: linkedLifeThread?.title || null,
     linkedSubjects,
   });
@@ -1004,7 +1041,7 @@ export async function buildMissionTurn(
     ok: true,
     summaryText: mission.summary,
     detailText: buildMissionDetailText(finalSnapshot),
-    replyText: formatMissionReply(input.channel, finalSnapshot, stepFocus),
+    replyText: formatMissionReply(input, input.channel, finalSnapshot, stepFocus),
     mission,
     steps,
     blockers,

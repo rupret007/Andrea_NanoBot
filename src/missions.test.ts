@@ -144,4 +144,45 @@ describe('missions', () => {
     expect(missionId).toBeTruthy();
     expect(getMission(missionId!)?.linkedReminderIds.length).toBeGreaterThan(0);
   });
+
+  it('answers blocker follow-ups with blocker-specific mission copy', async () => {
+    const now = new Date('2026-04-06T18:15:00.000Z');
+    const blockedWork: SelectedWorkContext = {
+      laneLabel: 'Cursor',
+      title: 'Ship release notes',
+      statusLabel: 'Blocked',
+      summary: 'Blocked waiting on release sign-off.',
+    };
+
+    const proposed = await buildMissionTurn({
+      channel: 'telegram',
+      groupFolder: 'main',
+      chatJid: 'tg:main',
+      text: 'help me plan tonight',
+      mode: 'propose',
+      selectedWork: blockedWork,
+      now,
+    });
+
+    const explained = await buildMissionTurn({
+      channel: 'telegram',
+      groupFolder: 'main',
+      chatJid: 'tg:main',
+      text: "what's blocking this",
+      mode: 'explain',
+      priorContext: {
+        missionId: proposed.mission.missionId,
+      },
+      selectedWork: blockedWork,
+      now,
+    });
+
+    expect(explained.replyText).toContain(
+      'The main blocker right now is this:',
+    );
+    expect(explained.replyText).toContain(
+      'Current work still has pressure around Ship release notes.',
+    );
+    expect(explained.replyText).toContain('Clear it by: Lock the timing.');
+  });
 });

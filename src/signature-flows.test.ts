@@ -454,7 +454,7 @@ describe('signature flows', () => {
     });
 
     expect(blocker.handled).toBe(true);
-    expect((blocker.replyText || '').toLowerCase()).toContain('blocker');
+    expect(blocker.replyText).toContain('The main blocker right now is this:');
     expect(blocker.replyText).toContain('Candace');
     expect(blocker.replyText).not.toContain('Research Summary');
   });
