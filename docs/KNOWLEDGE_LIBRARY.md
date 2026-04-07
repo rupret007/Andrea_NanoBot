@@ -12,6 +12,8 @@ Knowledge Library is the core of the saveable research journey:
 - save the useful result to the library
 - come back later and ask what your saved material says
 
+The polished save step should confirm what Andrea saved and what you can do next, without inventing a fake open loop when the journey was just about keeping useful material.
+
 This is not the same thing as memory, life threads, reminders, or current work.
 
 - **memory/profile** stores durable facts and preferences

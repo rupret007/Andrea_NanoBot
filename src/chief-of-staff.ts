@@ -40,6 +40,10 @@ import type {
   ProfileSubject,
   ScheduledTask,
 } from './types.js';
+import {
+  buildSignatureFlowText,
+  buildSignatureSignalsWhyLine,
+} from './signature-flows.js';
 import { buildVoiceReply, normalizeVoicePrompt } from './voice-ready.js';
 
 const CHIEF_OF_STAFF_FACT_KEY = 'chief_of_staff_preferences';
@@ -617,23 +621,26 @@ function resolveCommunicationCandidate(
 }
 
 function buildDetailText(snapshot: ChiefOfStaffSnapshot): string {
-  const lines = [snapshot.summaryText];
-  if (snapshot.mainSignal) {
-    lines.push(`Main thing: ${snapshot.mainSignal.title}: ${snapshot.mainSignal.summaryText}`);
-  }
-  for (const signal of snapshot.supportingSignals.slice(0, 2)) {
-    lines.push(`Also in view: ${signal.title}: ${signal.summaryText}`);
-  }
-  if (snapshot.prepChecklist.length > 0) {
-    lines.push(...snapshot.prepChecklist.map((item) => `Prep: ${item}`));
-  }
-  if (snapshot.bestNextAction) {
-    lines.push(`Next: ${snapshot.bestNextAction}`);
-  }
-  if (snapshot.confidence === 'low') {
-    lines.push("Confidence: I'm not confident enough to rank this much harder than that.");
-  }
-  return lines.join('\n');
+  const whyLine =
+    snapshot.explainabilityLines[0] &&
+    snapshot.explainabilityLines[0] !== snapshot.summaryText
+      ? snapshot.explainabilityLines[0]
+      : buildSignatureSignalsWhyLine(snapshot.signalsUsed);
+
+  return buildSignatureFlowText({
+    lead: snapshot.summaryText,
+    detailLines: [
+      ...snapshot.supportingSignals
+        .slice(0, 2)
+        .map((signal) => `${signal.title}: ${signal.summaryText}`),
+      ...snapshot.prepChecklist.map((item) => `Prep: ${item}`),
+      snapshot.confidence === 'low'
+        ? "Confidence: I'm not confident enough to rank this much harder than that."
+        : null,
+    ],
+    nextAction: snapshot.bestNextAction,
+    whyLine,
+  });
 }
 
 function formatChiefOfStaffReply(
@@ -653,17 +660,18 @@ function formatChiefOfStaffReply(
   }
 
   if (channel === 'bluebubbles') {
-    const lines = [snapshot.summaryText];
-    if (snapshot.supportingSignals[0]) {
-      lines.push(`Also: ${snapshot.supportingSignals[0].summaryText}`);
-    }
-    if (snapshot.bestNextAction) {
-      lines.push(`Next: ${snapshot.bestNextAction}`);
-    }
-    if (mode === 'explain') {
-      lines.push(...snapshot.explainabilityLines.slice(0, 2));
-    }
-    return lines.join('\n');
+    return buildSignatureFlowText({
+      lead: snapshot.summaryText,
+      detailLines: snapshot.supportingSignals[0]
+        ? [snapshot.supportingSignals[0].summaryText]
+        : [],
+      nextAction: snapshot.bestNextAction,
+      whyLine:
+        mode === 'explain'
+          ? snapshot.explainabilityLines[0] ||
+            buildSignatureSignalsWhyLine(snapshot.signalsUsed)
+          : undefined,
+    });
   }
 
   return buildDetailText(snapshot);

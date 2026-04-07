@@ -15,6 +15,7 @@ They show up most in:
 
 The point is not to create a second task system or a noisy push engine.
 The point is to help Andrea keep the user's day oriented and stop important threads from quietly slipping.
+The polished flagship read should surface one prioritized carryover focus and one next move, rather than stacking separate reminder/thread/mission labels in the same answer.
 
 ## What Rituals Are
 

@@ -12,6 +12,7 @@ The V1 goal is narrow on purpose:
 
 This is still not a second assistant stack.
 It is one more channel edge on the shared Andrea core.
+In flagship journeys, BlueBubbles is for calm message help and lightweight follow-through, while Telegram remains the richer escalation surface when the user explicitly asks for more detail.
 
 ## Current Truth
 

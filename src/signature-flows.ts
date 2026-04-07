@@ -2,6 +2,18 @@ import type { CompanionHandoffPayload } from './types.js';
 
 type SignatureFlowChannel = 'alexa' | 'telegram' | 'bluebubbles';
 
+const SIGNATURE_SIGNAL_LABELS: Record<string, string> = {
+  calendar: 'your calendar',
+  reminders: 'reminders',
+  life_threads: 'ongoing threads',
+  communication_threads: 'open conversations',
+  current_work: 'current work',
+  household_context: 'home context',
+  missions: 'active plans',
+  chief_of_staff: 'the strongest pressure in view',
+  knowledge_library: 'saved material',
+};
+
 function normalizeText(value: string | null | undefined): string {
   return (value || '')
     .replace(/\btoday evening\b/gi, 'tonight')
@@ -22,7 +34,7 @@ function ensureSentence(value: string | null | undefined): string {
 function dedupeLines(lines: Array<string | null | undefined>): string[] {
   const next: string[] = [];
   for (const line of lines) {
-    const normalized = normalizeText(line);
+    const normalized = stripSignatureFlowSystemPrefix(line);
     if (!normalized) continue;
     if (
       next.some(
@@ -34,6 +46,40 @@ function dedupeLines(lines: Array<string | null | undefined>): string[] {
     next.push(normalized);
   }
   return next;
+}
+
+export function stripSignatureFlowSystemPrefix(
+  value: string | null | undefined,
+): string {
+  const normalized = normalizeText(value);
+  if (!normalized) return '';
+
+  return normalized
+    .replace(/^(?:conversation carryover|open conversation):\s*/i, '')
+    .replace(/^(?:mission carryover|plan carryover|chief-of-staff read):\s*/i, '')
+    .replace(/^current work:\s*/i, 'Work: ')
+    .replace(/^household:\s*/i, 'At home, ')
+    .trim();
+}
+
+export function buildSignatureSignalsWhyLine(
+  signalsUsed: string[] | null | undefined,
+): string | undefined {
+  const labels = dedupeLines(
+    (signalsUsed || []).map(
+      (signal) =>
+        SIGNATURE_SIGNAL_LABELS[signal] || signal.replace(/_/g, ' '),
+    ),
+  );
+
+  if (labels.length === 0) return undefined;
+  if (labels.length === 1) {
+    return `This came from ${labels[0]}.`;
+  }
+  if (labels.length === 2) {
+    return `This came from ${labels[0]} and ${labels[1]}.`;
+  }
+  return `This came from ${labels.slice(0, -1).join(', ')}, and ${labels.at(-1)}.`;
 }
 
 function normalizeActionText(value: string | null | undefined): string | undefined {

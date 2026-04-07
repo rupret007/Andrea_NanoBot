@@ -18,6 +18,8 @@ The productized journey should feel like:
 - executes that action only after the user says yes
 - keeps the same plan alive across Alexa, Telegram, and follow-through
 
+Telegram is the default rich mission surface. Alexa should orient around the next step and blocker, and BlueBubbles should stay concise unless the user explicitly wants the fuller plan elsewhere.
+
 ## What Missions Are
 
 Missions are not a second task manager.

@@ -426,8 +426,9 @@ function buildSummaryText(
   followupState: CommunicationFollowupState,
 ): string {
   const lead = linkedSubjects[0]?.displayName || 'They';
+  const ifTopic = messageText.match(/\blet me know if (.+?)[.!?]*$/i)?.[1];
   const questionTopic =
-    messageText.match(/\blet me know if (.+?)[.!?]*$/i)?.[1] ||
+    (ifTopic ? `whether ${ifTopic}` : null) ||
     messageText.match(/\bcan you (.+?)[.!?]*$/i)?.[1] ||
     messageText.match(/\bcould you (.+?)[.!?]*$/i)?.[1] ||
     messageText.match(/\bwould you (.+?)[.!?]*$/i)?.[1];
@@ -635,8 +636,12 @@ function buildRelationshipAwareDraft(input: {
     normalizeDraftTopicSummary(input.summaryText) || input.summaryText.replace(/\.$/, '');
   const baseBody =
     input.style === 'direct'
-      ? `On my side, ${draftTopic}.`
-      : `I wanted to follow up about ${draftTopic}.`;
+      ? draftTopic.startsWith('whether ')
+        ? `I still need to sort out ${draftTopic}.`
+        : `On my side, ${draftTopic}.`
+      : draftTopic.startsWith('whether ')
+        ? `I wanted to check in about ${draftTopic}.`
+        : `I wanted to follow up about ${draftTopic}.`;
   const supportLine =
     input.linkedLifeThreads[0]?.nextAction ||
     input.linkedLifeThreads[0]?.summary ||

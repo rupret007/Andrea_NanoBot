@@ -291,7 +291,8 @@ describe('buildDailyCompanionResponse', () => {
       tasks: [],
     });
 
-    expect(response?.reply).toContain('Conversation carryover');
+    expect(response?.reply).toContain('Candace wants a follow-up');
+    expect(response?.reply).toContain('Why this came up:');
     expect(response?.signalsUsed).toContain('communication_threads');
   });
 
@@ -697,7 +698,8 @@ describe('buildDailyCompanionResponse', () => {
     expect(telegram?.grounded?.currentFocus.reason).toBe(
       alexa?.grounded?.currentFocus.reason,
     );
-    expect(telegram?.reply).toContain('- ');
+    expect(telegram?.reply).toContain('Next:');
+    expect(telegram?.reply).toContain('Why this came up:');
     expect(alexa?.reply).not.toContain('- ');
     expect((alexa?.reply.split('\n').length || 0) <= 3).toBe(true);
     expect(alexa?.reply).not.toContain('Reminder:');

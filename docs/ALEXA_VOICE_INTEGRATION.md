@@ -18,6 +18,7 @@ Andrea now uses an internal **Alexa Companion Mode**:
 - request-driven Andrea Pulse turns for light interesting facts or surprises
 
 Telegram remains the primary operator surface. Alexa reuses the same trust boundaries, schedule intelligence, reminders, drafting, and follow-through logic.
+In flagship journeys, Alexa should orient quickly, give one best next move, and hand off richer detail to Telegram without making the user restate the whole topic.
 
 ## 0A) Shared Capability Routing
 

@@ -4,6 +4,7 @@ import {
 } from './andrea-pulse.js';
 import {
   buildDailyCompanionResponse,
+  buildDailyJourneyWhyLine,
   type DailyCompanionContext,
   type DailyCompanionResponse,
 } from './daily-companion.js';
@@ -57,6 +58,8 @@ import {
 import {
   buildSignatureFlowPayload,
   buildSignaturePostActionConfirmation,
+  buildSignatureSignalsWhyLine,
+  stripSignatureFlowSystemPrefix,
   buildSignatureFlowText,
 } from './signature-flows.js';
 import type {
@@ -385,6 +388,47 @@ function buildDailyContinuationCandidate(
   descriptor: AssistantCapabilityDescriptor,
   response: DailyCompanionResponse,
 ): CompanionContinuationCandidate {
+  const buildDailyCompletionText = (): string => {
+    const summaryText = normalizeText(response.context.summaryText);
+    const summaryTarget = summaryText
+      .replace(/^the easiest thing to forget right now is\s+/i, '')
+      .replace(/^the main prep move is to get\s+/i, '')
+      .replace(/^for (?:today|tonight|tomorrow|this week|weekend|next few days),\s+/i, '')
+      .replace(/\s+ready\.$/i, '')
+      .replace(/[.!?]+$/g, '')
+      .trim();
+    if (summaryTarget && summaryTarget.toLowerCase() !== summaryText.toLowerCase()) {
+      return summaryTarget;
+    }
+
+    const detailTarget = stripSignatureFlowSystemPrefix(
+      response.context.extraDetails[0],
+    )
+      .replace(/[.!?]+$/g, '')
+      .trim();
+    if (
+      detailTarget &&
+      !/^work:\s*/i.test(detailTarget) &&
+      !/^at home,\s*/i.test(detailTarget)
+    ) {
+      return detailTarget;
+    }
+
+    const recommendationTarget = normalizeText(
+      response.context.recommendationText || undefined,
+    )
+      .replace(/^handle\s+/i, '')
+      .replace(/^keep\s+/i, '')
+      .replace(/\s+next[.!?]*$/i, '')
+      .replace(/[.!?]+$/g, '')
+      .trim();
+    if (recommendationTarget) {
+      return recommendationTarget;
+    }
+
+    return summaryText || descriptor.label;
+  };
+
   const title =
     response.context.usedThreadTitles?.[0] ||
     response.context.subjectData.personName ||
@@ -402,9 +446,11 @@ function buildDailyContinuationCandidate(
       detailLines: response.context.extraDetails,
       nextAction: response.context.recommendationText,
       whyLine:
-        response.context.signalsUsed.length > 0
-          ? `I used ${response.context.signalsUsed.join(', ')}.`
-          : undefined,
+        buildDailyJourneyWhyLine({
+          leadReason: response.context.leadReason,
+          signalsUsed: response.context.signalsUsed,
+          subjectData: response.context.subjectData,
+        }) || buildSignatureSignalsWhyLine(response.context.signalsUsed),
       followupSuggestions,
       sourceSummary:
         response.context.signalsUsed.length > 0
@@ -412,9 +458,7 @@ function buildDailyContinuationCandidate(
           : undefined,
     }),
     completionText:
-      response.context.recommendationText ||
-      response.context.extendedText ||
-      response.context.summaryText,
+      buildDailyCompletionText(),
     threadId: response.context.usedThreadIds?.[0],
     threadTitle: response.context.usedThreadTitles?.[0],
     followupSuggestions,
@@ -1450,10 +1494,9 @@ function buildChiefOfStaffContinuationCandidate(input: {
       lead: input.summaryText,
       bodyText: input.detailText,
       nextAction: input.chiefOfStaffContext.snapshot.bestNextAction,
-      whyLine:
-        input.chiefOfStaffContext.snapshot.signalsUsed.length > 0
-          ? `I used ${input.chiefOfStaffContext.snapshot.signalsUsed.join(', ')}.`
-          : undefined,
+      whyLine: buildSignatureSignalsWhyLine(
+        input.chiefOfStaffContext.snapshot.signalsUsed,
+      ),
       followupSuggestions,
       sourceSummary:
         input.chiefOfStaffContext.snapshot.signalsUsed.length > 0
@@ -2536,11 +2579,12 @@ async function runMissionCapability(
             : executionContext.mission.dueHorizon === 'weekend'
               ? 'tomorrow evening'
               : 'today evening';
+      const reminderTarget = executionContext.stepFocus?.title
+        ? `${executionContext.stepFocus.title.charAt(0).toLowerCase()}${executionContext.stepFocus.title.slice(1)}`
+        : executionContext.mission.summary || executionContext.mission.objective;
       const plannedReminder = planContextualReminder(
         timing,
-        executionContext.stepFocus?.title ||
-          executionContext.mission.summary ||
-          executionContext.mission.objective,
+        reminderTarget,
         context.groupFolder,
         context.chatJid,
         context.now,

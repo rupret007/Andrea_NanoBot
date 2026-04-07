@@ -472,12 +472,18 @@ export async function completeAssistantActionFromAlexa(
         canonicalText: params.utterance,
       },
     });
+    const stillOpen =
+      candidate?.missionId ||
+      candidate?.communicationThreadId ||
+      candidate?.threadId
+        ? resolveOpenLoopText(params, candidate, completionText)
+        : null;
     return {
       handled: true,
       replyText: buildSignaturePostActionConfirmation({
         channel: 'alexa',
         didWhat: result.replyText || 'Okay.',
-        stillOpen: resolveOpenLoopText(params, candidate, completionText),
+        stillOpen,
         nextSuggestion: resolveNextSuggestion(params, candidate),
       }),
       capabilityResult: result,

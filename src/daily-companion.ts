@@ -29,6 +29,7 @@ import { getCommunicationCarryoverSignal } from './communication-companion.js';
 import { buildChiefOfStaffSnapshot } from './chief-of-staff.js';
 import { getMissionCarryoverSignal } from './missions.js';
 import { getResolvedRitualProfile } from './rituals.js';
+import { buildSignatureFlowText } from './signature-flows.js';
 import type {
   AlexaConversationFollowupAction,
   AlexaConversationSubjectKind,
@@ -985,6 +986,7 @@ function buildCommunicationCarryoverFocus(
   signal: ReturnType<typeof getCommunicationCarryoverSignal>,
 ): CarryoverFocusDecision | null {
   if (!signal) return null;
+  const label = signal.sourceLabel.replace(/\s+conversation$/i, '').trim();
   const priority =
     signal.urgency === 'tonight'
       ? 98
@@ -993,16 +995,19 @@ function buildCommunicationCarryoverFocus(
         : signal.urgency === 'tomorrow'
           ? 88
           : 82;
-    return {
-      priority,
-      kind: 'communication',
-      lead: `The conversation most likely to slip is ${signal.sourceLabel}.`,
-      leadReason: 'communication_carryover',
-      detailLine: `Conversation carryover: ${signal.summaryText}`,
-      recommendationText: `Keep ${signal.sourceLabel} moving so it does not slip.`,
-      signalsUsed: ['communication_threads'],
-    };
-  }
+  return {
+    priority,
+    kind: 'communication',
+    lead: `The conversation most likely to slip is ${label}.`,
+    leadReason: 'communication_carryover',
+    detailLine: signal.summaryText,
+    recommendationText:
+      signal.urgency === 'tonight'
+        ? `Reply to ${label} before tonight.`
+        : `Reply to ${label} next.`,
+    signalsUsed: ['communication_threads'],
+  };
+}
 
 function buildMissionCarryoverFocus(
   signal: ReturnType<typeof getMissionCarryoverSignal>,
@@ -1013,8 +1018,8 @@ function buildMissionCarryoverFocus(
     kind: 'mission',
     lead: `The plan most likely to stall is ${signal.sourceLabel}.`,
     leadReason: 'mission_carryover',
-    detailLine: `Plan carryover: ${signal.summaryText}`,
-    recommendationText: `Keep ${signal.sourceLabel} moving so it does not stall.`,
+    detailLine: signal.summaryText,
+    recommendationText: `Take the next step on ${signal.sourceLabel}.`,
     signalsUsed: ['missions'],
   };
 }
@@ -1049,13 +1054,51 @@ function buildChiefOfStaffCarryoverFocus(params: {
         params.draft.leadReason === 'weak_signal' && params.staff.snapshot.mainSignal
           ? 'chief_of_staff'
           : params.draft.leadReason,
-      detailLine: params.staff.snapshot.mainSignal
-        ? `Chief-of-staff read: ${params.staff.snapshot.mainSignal.summaryText}`
-        : `Chief-of-staff read: ${params.staff.snapshot.summaryText}`,
+      detailLine:
+        params.staff.snapshot.mainSignal?.summaryText ||
+        params.staff.snapshot.summaryText,
       recommendationText: params.staff.snapshot.bestNextAction || null,
       signalsUsed: ['chief_of_staff'],
-    };
+  };
+}
+
+export function buildDailyJourneyWhyLine(input: {
+  leadReason: string;
+  signalsUsed: string[];
+  subjectData?: DailyCompanionContext['subjectData'];
+}): string | undefined {
+  if (input.leadReason === 'due_reminder') {
+    return 'It already has real time pressure on it.';
   }
+  if (input.leadReason === 'due_thread') {
+    return 'It is the clearest thread that could slip next.';
+  }
+  if (input.leadReason === 'mission_carryover') {
+    return 'It is the plan most likely to stall if you leave it untouched.';
+  }
+  if (input.leadReason === 'communication_carryover') {
+    return input.subjectData?.personName
+      ? `It is the clearest open conversation with ${input.subjectData.personName}.`
+      : 'It is the clearest open conversation that still wants follow-through.';
+  }
+  if (input.signalsUsed.includes('chief_of_staff')) {
+    return 'It is the strongest combined pressure in view right now.';
+  }
+  if (input.signalsUsed.includes('household_context')) {
+    return 'It has practical home follow-through tied to it.';
+  }
+  return undefined;
+}
+
+function shouldUseSignatureJourneyEnvelope(
+  channel: DailyCompanionChannel,
+  mode: DailyCompanionMode,
+): boolean {
+  return (
+    channel !== 'alexa' &&
+    ['open_guidance', 'household_guidance', 'evening_reset'].includes(mode)
+  );
+}
 
 async function applyPrioritizedCarryoverFocus(params: {
   draft: CompanionDraft;
@@ -1181,6 +1224,17 @@ function finalizeDraft(
     lowStakes: isLowStakesLeadReason(draft.leadReason),
     leadReason: draft.leadReason,
   });
+  const journeyWhyLine = buildDailyJourneyWhyLine({
+    leadReason: draft.leadReason,
+    signalsUsed: draft.signalsUsed,
+    subjectData: draft.subjectData,
+  });
+  const flagshipTextReply = buildSignatureFlowText({
+    lead: draft.lead,
+    detailLines: draft.detailLines,
+    nextAction: draft.recommendationText,
+    whyLine: journeyWhyLine,
+  });
   const reply =
     channel === 'alexa'
       ? formatAlexaReply(
@@ -1190,6 +1244,8 @@ function finalizeDraft(
           prefs.directMode,
           personalityLine,
         )
+      : shouldUseSignatureJourneyEnvelope(channel, draft.mode)
+        ? flagshipTextReply
       : formatTextReply(
           draft.lead,
           [
@@ -1210,16 +1266,18 @@ function finalizeDraft(
       : draft.lead;
   const extendedText =
     channel === 'alexa'
-      ? formatTextReply(
-          draft.lead,
-          [
-            ...draft.detailLines,
-            draft.recommendationText
-              ? `Suggestion: ${draft.recommendationText}`
-              : null,
-          ].filter(Boolean) as string[],
-          personalityLine,
-        )
+      ? shouldUseSignatureJourneyEnvelope('telegram', draft.mode)
+        ? flagshipTextReply
+        : formatTextReply(
+            draft.lead,
+            [
+              ...draft.detailLines,
+              draft.recommendationText
+                ? `Suggestion: ${draft.recommendationText}`
+                : null,
+            ].filter(Boolean) as string[],
+            personalityLine,
+          )
       : reply;
 
   const context: DailyCompanionContext = {

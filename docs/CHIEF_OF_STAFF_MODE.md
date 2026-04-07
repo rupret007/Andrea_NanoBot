@@ -13,6 +13,7 @@ Chief-of-staff mode is the front door for journeys like:
 
 Its job is to surface one clear read, one thing not to let slip, and one next move.
 When that answer needs richer detail or action, missions, reminders, communication follow-through, and handoffs take over without losing the thread.
+In practice, the polished version should sound like one lead, one next step, and one short why-line, not a stack of separate subsystem reads.
 
 This is not a second task manager and not an autonomous planner.
 

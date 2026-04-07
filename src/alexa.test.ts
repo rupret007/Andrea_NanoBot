@@ -47,9 +47,16 @@ vi.mock('./alexa-bridge.js', async () => {
   };
 });
 
-vi.mock('./daily-companion.js', () => ({
-  buildDailyCompanionResponse: vi.fn(),
-}));
+vi.mock('./daily-companion.js', async () => {
+  const actual =
+    await vi.importActual<typeof import('./daily-companion.js')>(
+      './daily-companion.js',
+    );
+  return {
+    ...actual,
+    buildDailyCompanionResponse: vi.fn(),
+  };
+});
 
 const mockedRunAlexaAssistantTurn = vi.mocked(runAlexaAssistantTurn);
 const mockedBuildDailyCompanionResponse = vi.mocked(buildDailyCompanionResponse);

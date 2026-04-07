@@ -48,6 +48,7 @@ Andrea's current flagship journeys are:
 
 Use these docs as the architecture behind those journeys, not as separate product silos.
 For repo-side proof, run `npm run debug:signature-flows`.
+That flagship-flow suite and harness are now the primary product proof. Subsystem tests and debug scripts are supporting evidence.
 
 Operator command examples in the docs use hyphen aliases in Telegram, such as `/cursor`, `/cursor-jobs`, `/cursor-create`, and `/purchase-request`.
 Underscore aliases remain accepted for compatibility, but they are not the preferred examples anymore.

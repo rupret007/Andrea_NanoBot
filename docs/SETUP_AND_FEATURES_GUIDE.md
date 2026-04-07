@@ -41,6 +41,12 @@ The shared proof harness for those journeys is:
 npm run debug:signature-flows
 ```
 
+Default product shape:
+
+- Alexa gives the short orientation
+- Telegram is the richer execution and follow-through surface
+- BlueBubbles stays calm and text-first, with explicit Telegram escalation when the fuller answer is better there
+
 ## Status Terms
 
 Use these meanings consistently when reading `/cursor_status` and the setup docs:

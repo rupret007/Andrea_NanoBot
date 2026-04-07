@@ -57,6 +57,7 @@ npm run debug:signature-flows
 ```
 
 This is the fastest proof that the best Alexa, Telegram, BlueBubbles, communication, mission, and research journeys still feel coherent end to end.
+Treat this flagship-flow suite and harness as the primary product proof. The narrower subsystem suites below are there to debug seams after the flagship proof tells you which journey regressed.
 
 For cross-channel handoff and action-completion changes, add:
 
@@ -179,9 +180,9 @@ Then validate the public-safe Telegram surface:
 - `npm run telegram:user:smoke`
 - `/commands`
 - simple quick reply prompt
-- reminder prompt
 - simple factoid prompt
 - one blocked-path prompt that should stay free of setup/runtime/operator wording
+- reminder prompt
 - `/cursor_status`
 
 If BlueBubbles is configured on that host, add:

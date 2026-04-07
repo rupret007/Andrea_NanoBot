@@ -116,6 +116,9 @@ describe('signature flows', () => {
     expect(daily.continuationCandidate?.handoffPayload?.text).toContain(
       'Why this came up:',
     );
+    expect(daily.continuationCandidate?.handoffPayload?.text).not.toContain(
+      'Conversation carryover:',
+    );
 
     const sendTelegramMessage = vi.fn(
       async (_targetChatJid: string, _text: string): Promise<SendMessageResult> => ({
@@ -199,7 +202,10 @@ describe('signature flows', () => {
     );
 
     expect(reminder.handled).toBe(true);
-    expect(reminder.replyText).toContain('The open piece is');
+    expect(reminder.replyText).toContain('call Candace');
+    expect(reminder.replyText).not.toContain(
+      'Keep Candace conversation moving',
+    );
     expect(
       getAllTasks().filter((task) => task.group_folder === groupFolder).length,
     ).toBeGreaterThan(beforeTaskCount);
@@ -250,6 +256,7 @@ describe('signature flows', () => {
 
     expect(draft.handled).toBe(true);
     expect(draft.replyText).toContain('Draft:');
+    expect(draft.replyText).toContain('whether dinner still works tonight');
     expect(draft.continuationCandidate?.communicationThreadId).toBe(
       openLoops.continuationCandidate?.communicationThreadId,
     );
@@ -325,6 +332,7 @@ describe('signature flows', () => {
 
     expect(executed.handled).toBe(true);
     expect(executed.replyText).toContain('Still open:');
+    expect(executed.replyText).toContain('get aligned with Candace');
     expect(getMission(missionId!)?.linkedReminderIds.length || 0).toBeGreaterThan(
       0,
     );
@@ -410,6 +418,7 @@ describe('signature flows', () => {
       expect.stringContaining('Next:'),
     );
     expect(save.replyText).toContain('Saved');
+    expect(save.replyText).not.toContain('The open piece is');
     expect(listKnowledgeSourcesForGroup(groupFolder).length).toBeGreaterThan(0);
   });
 

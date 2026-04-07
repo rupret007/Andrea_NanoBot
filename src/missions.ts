@@ -359,13 +359,17 @@ function buildMissionSummary(params: {
   horizon: ChiefOfStaffHorizon;
   canDoNow: string | null;
 }): string {
+  const subject = params.title.replace(/^plan\s+/i, '').trim() || params.title;
+  const firstMove = params.canDoNow
+    ? `to ${params.canDoNow.charAt(0).toLowerCase()}${params.canDoNow.slice(1)}`
+    : null;
   if (params.canDoNow) {
-    return `${params.title} stays manageable if you start with ${params.canDoNow.toLowerCase()}.`;
+    return `For ${subject}, the first move is ${firstMove}.`;
   }
   if (params.blockers.length > 0) {
-    return `${params.title} is mostly about clearing ${params.blockers[0]!.replace(/\.$/, '').toLowerCase()}.`;
+    return `For ${subject}, clear ${params.blockers[0]!.replace(/\.$/, '').toLowerCase()}.`;
   }
-  return `The main move for ${params.horizon.replace(/_/g, ' ')} is to get this into a clear order.`;
+  return `For ${params.horizon.replace(/_/g, ' ')}, get ${subject.toLowerCase()} into a clear order.`;
 }
 
 function buildMissionSteps(params: {

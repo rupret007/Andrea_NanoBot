@@ -28,6 +28,7 @@ The current signature handoff journeys are:
 - BlueBubbles -> Telegram escalation when the fuller answer is better there
 
 In all of these, Andrea should feel like one assistant continuing the same thought, not two channels re-answering from scratch.
+The current productization bar is that the richer continuation preserves the same lead, next step, and why-line rather than rephrasing the answer as a separate module.
 
 Current handoff targets:
 

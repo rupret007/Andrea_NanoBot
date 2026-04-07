@@ -55,6 +55,8 @@ These flows are now backed by one shared capability graph, one continuation/hand
 npm run debug:signature-flows
 ```
 
+Treat that flagship-flow suite and harness as the main product proof. The subsystem harnesses are still useful, but they are supporting checks now.
+
 ## What Andrea Is
 
 Andrea is one public assistant identity built on a secure NanoClaw runtime.
@@ -65,9 +67,9 @@ What normal users should expect:
 - reminders, follow-ups, and simple task help
 - research, summaries, and project help
 - fast direct replies for simple questions, playful prompts, and basic math
+- warm ordinary chat plus graceful degraded replies when deeper runtime or live research is unavailable
 - a small safe Telegram command set
 - `/cursor_status` as the only public-safe Cursor command
-- warm ordinary chat plus graceful degraded replies when deeper runtime or live research is unavailable
 
 What operators should expect:
 
@@ -310,9 +312,9 @@ See [docs/ASSISTANT_CAPABILITY_GRAPH.md](docs/ASSISTANT_CAPABILITY_GRAPH.md) for
 
 For operator-side smoke testing of the shared core, use `npm run debug:shared-capabilities`, `npm run debug:research-mode`, and `npm run debug:knowledge-library`.
 For the missions layer specifically, use `npm run debug:missions`.
+For the ordinary conversational surface and no-leakage degraded-response policy, use `npm run debug:conversational-core`.
 
 ## Cross-Channel Companion Handoffs
-For the ordinary conversational surface and no-leakage degraded-response policy, use `npm run debug:conversational-core`.
 
 Andrea now has a bounded cross-channel handoff layer so a conversation can start briefly on Alexa, continue in BlueBubbles or Telegram when appropriate, and still feel like one assistant.
 

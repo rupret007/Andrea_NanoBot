@@ -12,6 +12,7 @@ Communication companion is the core of journeys like:
 - `Remind me to reply later tonight.`
 
 The flagship product goal is that Andrea can move from open loop -> draft -> save or remind without making the user restate the whole conversation.
+Telegram and BlueBubbles should now preserve the same communication-thread context across that journey, with Telegram as the richer review/edit surface and BlueBubbles as the calmer message-help surface.
 
 This is not a full inbox app, not a CRM, and not an auto-reply system.
 

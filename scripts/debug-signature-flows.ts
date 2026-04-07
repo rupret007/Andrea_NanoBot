@@ -31,6 +31,18 @@ function printBlock(title: string, lines: string[]): void {
   process.stdout.write('\n');
 }
 
+function extractLabelLine(
+  text: string | null | undefined,
+  label: string,
+): string {
+  return (
+    text
+      ?.split('\n')
+      .find((line) => line.startsWith(`${label}:`))
+      ?.trim() || 'none'
+  );
+}
+
 function createReminderTask(
   groupFolder: string,
   label: string,
@@ -141,7 +153,7 @@ async function main(): Promise<void> {
   printBlock('ALEXA DAILY ORIENTATION -> TELEGRAM', [
     `prompt: what am I forgetting`,
     `lead_reply: ${daily.replyText || 'none'}`,
-    `next_action: ${daily.continuationCandidate?.handoffPayload?.text.split('\n').find((line) => line.startsWith('Next:')) || 'none'}`,
+    `next_action: ${extractLabelLine(daily.continuationCandidate?.handoffPayload?.text, 'Next')}`,
     `handoff_status: ${dailyHandoff.handoffResult?.status || 'none'}`,
   ]);
 
@@ -166,6 +178,7 @@ async function main(): Promise<void> {
   printBlock('OPEN-LOOPS RECOVERY', [
     `prompt: remind me about that tonight`,
     `reply: ${openLoopReminder.replyText || 'none'}`,
+    `still_open: ${openLoopReminder.replyText?.includes('The open piece is') ? openLoopReminder.replyText.split('The open piece is ')[1]?.split('. ')[0] || 'none' : 'none'}`,
     `task_count: ${getAllTasks().filter((task) => task.group_folder === dailyGroup).length}`,
   ]);
 
@@ -225,6 +238,7 @@ async function main(): Promise<void> {
     `lead_reply: ${candaceOpen.replyText || 'none'}`,
     `draft: ${candaceDraft.replyText || 'none'}`,
     `tracked: ${candaceTrack.replyText || 'none'}`,
+    `still_open: ${extractLabelLine(candaceTrack.replyText, 'Still open')}`,
   ]);
 
   const missionGroup = 'signature-debug-mission';
@@ -272,6 +286,7 @@ async function main(): Promise<void> {
     `plan: ${mission.replyText || 'none'}`,
     `blockers: ${mission.continuationCandidate?.missionBlockersJson || '[]'}`,
     `executed: ${missionExecute.replyText || 'none'}`,
+    `still_open: ${extractLabelLine(missionExecute.replyText, 'Still open')}`,
     `linked_reminders: ${getMission(missionId)?.linkedReminderIds.join(', ') || 'none'}`,
   ]);
 
@@ -340,6 +355,7 @@ async function main(): Promise<void> {
     `voice_reply: ${research.replyText || 'none'}`,
     `handoff_status: ${researchHandoff.handoffResult?.status || 'none'}`,
     `save_reply: ${researchSave.replyText || 'none'}`,
+    `still_open: ${extractLabelLine(researchSave.replyText, 'Still open')}`,
     `library_count: ${listKnowledgeSourcesForGroup(researchGroup).length}`,
   ]);
 
@@ -425,6 +441,7 @@ async function main(): Promise<void> {
     `summary: ${blueUnderstand.replyText || 'none'}`,
     `draft: ${blueDraft.replyText || 'none'}`,
     `remind_later: ${blueReminder.replyText || 'none'}`,
+    `still_open: ${extractLabelLine(blueReminder.replyText, 'Still open')}`,
     `handoff_status: ${blueHandoff.status}`,
   ]);
 }
