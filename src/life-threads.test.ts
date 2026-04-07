@@ -360,6 +360,38 @@ describe('life threads', () => {
     expect(thread?.nextAction).toContain('Talk to Candace');
   });
 
+  it('uses the clean summary line when save-for-later context includes a draft block', () => {
+    const dirtyDraftReply = [
+      'Candace wants a follow-up about whether dinner still works tonight.',
+      'Draft:',
+      'Hey Candace, I wanted to check in about whether dinner still works tonight. Candace wants a follow-up about whether dinner still works tonight.',
+      'Next: Save it, send the fuller version, or remind yourself later.',
+      'Why this came up: This is shaped around Candace and the current conversation.',
+    ].join('\n');
+
+    const result = handleLifeThreadCommand({
+      groupFolder: 'main',
+      channel: 'telegram',
+      chatJid: 'tg:8004355504',
+      text: 'save this for later',
+      replyText: dirtyDraftReply,
+      now: new Date('2026-04-04T09:00:00.000Z'),
+    });
+
+    const thread = result.referencedThread
+      ? getLifeThread(result.referencedThread.id)
+      : null;
+
+    expect(result.handled).toBe(true);
+    expect(result.responseText).toContain(
+      'Candace wants a follow-up about whether dinner still works tonight.',
+    );
+    expect(result.responseText).not.toContain('Draft:');
+    expect(thread?.summary).toBe(
+      'Candace wants a follow-up about whether dinner still works tonight.',
+    );
+  });
+
   it('keeps manual and snoozed threads out of automatic follow-through while surfacing slipping ones', () => {
     const due = handleLifeThreadCommand({
       groupFolder: 'main',

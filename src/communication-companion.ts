@@ -162,10 +162,56 @@ function normalizeCommunicationSupportLine(value: string): string {
       '',
     )
     .replace(/^save this (?:note )?to my library:\s*/i, '')
+    .replace(/^save (?:that|it|this)(?: for later)?[:,-]?\s*/i, '')
+    .replace(/^keep track of (?:that|it|this)(?: for (?:later|tonight))?[:,-]?\s*/i, '')
+    .replace(/^still open:\s*/i, '')
+    .replace(/^summary:\s*/i, '')
+    .replace(/\bdraft:\s*[\s\S]*$/i, '')
     .replace(/\s+tags:\s*[^.]+$/i, '')
     .replace(/\s+/g, ' ')
     .trim()
     .replace(/[.!?]+$/g, '');
+}
+
+function normalizeComparisonText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function isRedundantCommunicationSupportLine(input: {
+  supportLine: string;
+  summaryText: string;
+  draftTopic: string;
+}): boolean {
+  const supportLine = normalizeComparisonText(input.supportLine);
+  if (!supportLine) return true;
+  const summaryText = normalizeComparisonText(input.summaryText);
+  const draftTopic = normalizeComparisonText(input.draftTopic);
+
+  if (
+    summaryText &&
+    (supportLine === summaryText ||
+      supportLine.includes(summaryText) ||
+      summaryText.includes(supportLine))
+  ) {
+    return true;
+  }
+  if (
+    draftTopic &&
+    (supportLine === draftTopic ||
+      supportLine.includes(draftTopic) ||
+      draftTopic.includes(supportLine))
+  ) {
+    return true;
+  }
+  return (
+    /^(?:[a-z]+ )?(?:wants an answer|wants a follow up|said they would get back to you|sounds settled) about\b/.test(
+      supportLine,
+    ) ||
+    /^(?:reply|follow up|save|track)\b/.test(supportLine)
+  );
 }
 
 function slugifyName(value: string): string {
@@ -681,8 +727,16 @@ function buildRelationshipAwareDraft(input: {
     input.linkedLifeThreads[0]?.summary ||
     input.toneHints[0] ||
     '';
+  const normalizedSupportLine = normalizeCommunicationSupportLine(rawSupportLine);
   const supportLine =
-    normalizeCommunicationSupportLine(rawSupportLine) ||
+    (normalizedSupportLine &&
+    !isRedundantCommunicationSupportLine({
+      supportLine: normalizedSupportLine,
+      summaryText: input.summaryText,
+      draftTopic,
+    })
+      ? normalizedSupportLine
+      : '') ||
     (companionTone === 'plain'
       ? 'Here is the main thing from my side.'
       : 'I wanted to keep it simple.');

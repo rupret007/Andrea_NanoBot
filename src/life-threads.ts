@@ -905,12 +905,43 @@ function buildSaveConfirmation(
   return `Okay. I saved that under the ${thread.title} thread.\n- ${summary}`;
 }
 
+function normalizeLifeThreadSummaryLine(value: string): string {
+  return normalizeText(value)
+    .replace(/^[*-]\s*/, '')
+    .replace(/^still open:\s*/i, '')
+    .replace(/^summary:\s*/i, '')
+    .replace(/^save (?:that|it|this)(?: for later)?[:,-]?\s*/i, '')
+    .replace(/^keep track of (?:that|it|this)(?: for (?:later|tonight))?[:,-]?\s*/i, '')
+    .trim();
+}
+
+function extractLifeThreadSummaryCandidate(value: string | undefined): string {
+  if (!value) return '';
+  const lines = value
+    .split(/\r?\n/)
+    .map((line) => normalizeText(line))
+    .filter(Boolean);
+  for (const line of lines) {
+    if (/^draft:/i.test(line)) {
+      break;
+    }
+    if (/^(?:next|why this came up|follow-up|urgency):/i.test(line)) {
+      continue;
+    }
+    const normalized = normalizeLifeThreadSummaryLine(line);
+    if (normalized) {
+      return clipSummary(normalized);
+    }
+  }
+  return '';
+}
+
 function getSummarySource(input: LifeThreadCommandInput): string {
-  return clipSummary(
-    input.replyText ||
-      input.conversationSummary ||
-      input.priorContext?.summaryText ||
-      input.text,
+  return (
+    extractLifeThreadSummaryCandidate(input.replyText) ||
+    extractLifeThreadSummaryCandidate(input.conversationSummary) ||
+    extractLifeThreadSummaryCandidate(input.priorContext?.summaryText) ||
+    extractLifeThreadSummaryCandidate(input.text)
   );
 }
 

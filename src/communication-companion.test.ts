@@ -193,6 +193,56 @@ describe('communication companion', () => {
     expect(result.draftText).not.toContain('tags:');
   });
 
+  it('does not recycle leaked draft blocks back into the draft body', () => {
+    seedCandace();
+    upsertLifeThread({
+      id: 'thread-candace-dirty-draft',
+      groupFolder: 'main',
+      title: 'Candace',
+      category: 'relationship',
+      status: 'active',
+      scope: 'personal',
+      relatedSubjectIds: ['subject-candace'],
+      contextTags: ['candace', 'dinner'],
+      summary: 'Candace dinner follow-up.',
+      nextAction:
+        'Candace wants a follow-up about whether dinner still works tonight. Draft: Hey Candace, I wanted to check in about whether dinner still works tonight.',
+      nextFollowupAt: null,
+      sourceKind: 'explicit',
+      confidenceKind: 'high',
+      userConfirmed: true,
+      sensitivity: 'sensitive',
+      surfaceMode: 'default',
+      followthroughMode: 'important_only',
+      lastSurfacedAt: null,
+      snoozedUntil: null,
+      linkedTaskId: null,
+      mergedIntoThreadId: null,
+      createdAt: '2026-04-06T08:00:00.000Z',
+      lastUpdatedAt: '2026-04-06T08:00:00.000Z',
+      lastUsedAt: null,
+    });
+
+    const result = draftCommunicationReply({
+      channel: 'telegram',
+      groupFolder: 'main',
+      text: 'what should I say back',
+      conversationSummary:
+        'Candace wants a follow-up about whether dinner still works tonight.',
+      priorContext: {
+        lastCommunicationSummary:
+          'Candace wants a follow-up about whether dinner still works tonight.',
+      },
+      now: new Date('2026-04-06T09:00:00.000Z'),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.draftText).not.toContain('Draft:');
+    expect(
+      result.draftText?.match(/whether dinner still works tonight/gi) || [],
+    ).toHaveLength(1);
+  });
+
   it('summarizes what is still owed and respects manual-only carryover suppression', () => {
     seedCandace();
     analyzeCommunicationMessage({
