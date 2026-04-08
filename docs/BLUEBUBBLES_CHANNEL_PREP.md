@@ -1,98 +1,150 @@
 # BlueBubbles Companion Channel
 
-BlueBubbles is now a real Andrea companion channel, not just a scaffold.
+BlueBubbles is Andrea's calm, text-first companion surface for personal messaging.
 
-The V1 goal is narrow on purpose:
-
-- one linked BlueBubbles conversation
-- shared companion context with Andrea's existing `groupFolder` flow, defaulting to `main`
-- inbound and outbound text only
-- explicit cross-channel handoffs
-- no main-control or operator/admin surface
-
-This is still not a second assistant stack.
+It is not a second operator shell.
+It is not a passive inbox bot.
 It is one more channel edge on the shared Andrea core.
-In flagship journeys, BlueBubbles is for calm message help and lightweight follow-through, while Telegram remains the richer escalation surface when the user explicitly asks for more detail.
 
 ## Current Truth
 
-Current host reality for the Windows field-trial machine:
+Current host reality for the Windows operator machine:
 
-- BlueBubbles code and the near-live harness are present in `Andrea_NanoBot`
-- the real BlueBubbles server/webhook is **not installed or connected on this PC**
-- this means BlueBubbles is currently **externally blocked on the Windows host**, not freshly live-proven
-- the exact external next step is to reconnect the Mac-side BlueBubbles server/webhook and point this Windows host's `BLUEBUBBLES_*` config at it again
-- operator truth surfaces now keep that story explicit:
-  - `npm run services:status`
-  - `npm run setup -- --step verify`
-  - `npm run debug:status`
-  - `npm run debug:pilot`
+- the BlueBubbles desktop app is installed and connected to the Mac-side server
+- Andrea now has live `BLUEBUBBLES_*` config loaded on this host
+- Andrea can reach and authenticate to the live BlueBubbles server
+- Andrea's public webhook is now registered on that server
+- BlueBubbles is therefore **near-live only**, not externally blocked
+- the exact remaining blocker is one fresh real inbound -> reply -> follow-up proof chain on this host
 
-Implemented now:
+Use these operator truth surfaces:
 
-- live BlueBubbles config parsing for host, port, linked group folder, and one allowed chat GUID
-- a dedicated local BlueBubbles webhook listener
-- webhook secret checking through the webhook URL query string
-- webhook normalization into Andrea's shared `NewMessage` shape
-- `bb:<chatGuid>` and `bb:<handle>` identity mapping
-- duplicate-delivery suppression for repeated message GUIDs
-- bounded outbound text reply-back to the same linked BlueBubbles conversation
-- shared companion routing through the existing capability graph
-- explicit BlueBubbles -> Telegram handoff for richer detail when the user asks for it
-- Alexa -> BlueBubbles text handoff support for `send that to my messages` style follow-ups
-
-Intentionally out of scope in V1:
-
-- BlueBubbles as a main control chat
-- `/cursor`, runtime, logs, or deep admin control from BlueBubbles
-- arbitrary new-conversation creation
-- media/artifact send
-- read receipts, reactions, typing indicators, or background outbound automation
+- `npm run services:status`
+- `npm run setup -- --step verify`
+- `npm run debug:status`
+- `npm run debug:bluebubbles -- --live`
+- `npm run debug:pilot`
 
 ## V1 Scope
 
-BlueBubbles is meant to feel like a personal companion text thread.
+BlueBubbles V1 is intentionally narrower than Telegram, but it is no longer pinned to one linked thread.
 
-Good fits:
+Andrea now supports:
 
-- `what am I forgetting`
-- `what should I remember tonight`
-- `what's still open with Candace`
-- `save that for later`
-- `turn that into a reminder`
-- `save that in my library`
-- `draft something for me`
-- `what do my saved notes say about this`
-- short research summaries
+- all synced personal and group chats when `BLUEBUBBLES_CHAT_SCOPE=all_synced`
+- `@Andrea` mention required
+- ordinary chat when it is clearly directed at Andrea
+- daily guidance
+- communication-companion help like:
+  - `summarize this`
+  - `do I owe a reply`
+  - `draft a response`
+  - `remind me to reply later`
+- Candace and household follow-through
+- mission / chief-of-staff follow-through
+- knowledge-library lookups and source explanations
+- explicit save to thread / reminder / library
+- explicit BlueBubbles -> Telegram escalation when the fuller answer belongs there
 
-Not a fit by default:
+Andrea should feel:
 
-- operator shell commands
-- main-control chat setup
-- work-cockpit execution
-- logs, diagnostics, and provider admin surfaces
+- calm
+- personal
+- concise but not clipped
+- less operator-ish than Telegram
+
+## Safety Model
+
+BlueBubbles remains companion-safe only.
+
+Allowed directly:
+
+- ordinary companion conversation
+- daily guidance
+- communication-companion flows
+- mission guidance
+- knowledge lookups
+- save / remind / track flows
+- explicit text handoffs
+
+Handoff-only or blocked:
+
+- work cockpit
+- runtime, logs, and provider diagnostics
+- `registermain` and main-chat control flows
+- slash-command operator internals
+- artifact-heavy delivery
+
+If a BlueBubbles chat tries to use operator-only controls, Andrea should answer calmly and point that work back to Telegram.
+
+## Reply Gate
+
+Andrea does **not** auto-reply to ordinary social chatter on BlueBubbles.
+
+Andrea replies only when the message explicitly mentions `@Andrea`, for example:
+
+- `@Andrea hi`
+- `@Andrea what am I forgetting`
+- `@Andrea summarize this`
+- `@Andrea what should I say back`
+- `@Andrea help me plan tonight`
+
+Messages that are just normal conversation without an Andrea ask are ignored.
+
+## Current-Chat Summaries
+
+`summarize this` on BlueBubbles should use the current chat's recent context.
+
+Behavior:
+
+- use recent stored `bb:` messages first
+- ignore the `summarize this` ask itself when looking for the actual text to summarize
+- if local context is thin, Andrea now primes recent current-chat history from the live BlueBubbles server on demand
+- stay bounded to the current chat only
+- suggest useful next actions like draft, remind-later, or Telegram escalation
+
+This keeps BlueBubbles useful for real text-message help without turning it into passive inbox surveillance.
+
+## Cross-Channel Handoffs
+
+BlueBubbles -> Telegram is explicit and supported:
+
+- `send me the fuller version on Telegram`
+
+Alexa / Telegram -> BlueBubbles is also explicit, but the target is now:
+
+- the most recent Andrea-engaged BlueBubbles chat on this host
+- only if that engagement is fresh within 12 hours
+
+Andrea does **not** silently target the currently active BlueBubbles desktop chat.
+If there is no recent Andrea-engaged BlueBubbles chat, Andrea should say so plainly and ask the user to start from BlueBubbles first.
 
 ## Config
 
 BlueBubbles V1 uses these env settings:
 
 ```bash
-BLUEBUBBLES_ENABLED=false
+BLUEBUBBLES_ENABLED=true
 BLUEBUBBLES_BASE_URL=
 BLUEBUBBLES_PASSWORD=
-BLUEBUBBLES_HOST=127.0.0.1
+BLUEBUBBLES_HOST=0.0.0.0
 BLUEBUBBLES_PORT=4305
 BLUEBUBBLES_GROUP_FOLDER=main
+BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL=
+BLUEBUBBLES_CHAT_SCOPE=all_synced
+BLUEBUBBLES_ALLOWED_CHAT_GUIDS=
 BLUEBUBBLES_ALLOWED_CHAT_GUID=
 BLUEBUBBLES_WEBHOOK_PATH=/bluebubbles/webhook
 BLUEBUBBLES_WEBHOOK_SECRET=
-BLUEBUBBLES_SEND_ENABLED=false
+BLUEBUBBLES_SEND_ENABLED=true
 ```
 
 Meaning:
 
-- `BLUEBUBBLES_GROUP_FOLDER` binds the linked BlueBubbles chat to an existing Andrea companion folder
-- `BLUEBUBBLES_ALLOWED_CHAT_GUID` is the one BlueBubbles conversation V1 will accept
+- `BLUEBUBBLES_GROUP_FOLDER` binds BlueBubbles companion state into Andrea's shared companion folder, usually `main`
+- `BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL` is the Mac-reachable Andrea URL, not the local bind address
+- `BLUEBUBBLES_CHAT_SCOPE=all_synced` allows all synced personal and group chats
+- `BLUEBUBBLES_ALLOWED_CHAT_GUIDS` and `BLUEBUBBLES_ALLOWED_CHAT_GUID` are only for optional allowlist mode
 - `BLUEBUBBLES_SEND_ENABLED=true` is required for real reply-back
 
 ## Webhook And Send Model
@@ -100,87 +152,76 @@ Meaning:
 Inbound:
 
 - Andrea listens locally on `http://<host>:<port><webhookPath>`
-- if `BLUEBUBBLES_WEBHOOK_SECRET` is set, append it to the webhook URL query string, for example `?secret=...`
+- the Mac-side BlueBubbles server should call the public webhook URL, not `127.0.0.1`
+- if `BLUEBUBBLES_WEBHOOK_SECRET` is set, append it as `?secret=...`
 - Andrea accepts supported new-message webhook events only
-- malformed payloads get `400`
-- secret mismatch gets `401`
-- unsupported events get `202`
-- messages from unlinked chats are ignored with `202`
-- if the channel is enabled but not ready for live traffic, Andrea returns `503`
+- messages from chats outside the configured scope are ignored
+- messages from the user that do not explicitly mention `@Andrea` are stored but do not wake Andrea
 
 Outbound:
 
-- V1 sends only text replies back to the same linked BlueBubbles conversation
-- Andrea uses the documented BlueBubbles REST text-send path: `/api/v1/message/text`
-- auth is sent through the documented query-parameter style, with compatibility aliases for `guid`, `password`, and `token`
+- Andrea sends bounded text replies only
+- send path is `/api/v1/message/text`
+- auth is sent with compatible `guid`, `password`, and `token` query parameters
+- Andrea includes both `text` and `message` fields in the payload for compatibility
 - if reply threading is rejected, Andrea retries once without reply metadata
-- if BlueBubbles does not return a receipt, Andrea treats the send as failed
 
-## Shared Companion Binding
+## Proof Bar
 
-BlueBubbles does not become a second `registered_group`.
-Instead, Andrea maps the linked `bb:` conversation into the existing companion folder.
+BlueBubbles is `live_proven` only after all of these happen on this host:
 
-That means:
+1. one real inbound BlueBubbles message reaches Andrea
+2. Andrea replies into that same BlueBubbles conversation
+3. one same-thread follow-up preserves continuity
+4. the flow stays companion-safe
 
-- Telegram, Alexa, and BlueBubbles can share the same bounded life-thread / reminder / ritual / knowledge context
-- BlueBubbles still does **not** inherit `isMain`
-- operator gating stays tied to real registered main chats, not BlueBubbles
+If config is present and the server/webhook are ready but that roundtrip has not happened yet, BlueBubbles stays `near_live_only`.
 
-## Cross-Channel Handoffs
+## Operator Proof Steps
 
-BlueBubbles participates in the shared handoff model in a bounded way.
+Use this exact proof sequence:
 
-Supported now:
+1. Confirm `npm run debug:bluebubbles -- --live` shows:
+   - `transport: ready`
+   - `webhook_registration: registered`
+2. Send a real BlueBubbles message in any synced chat:
+   - `@Andrea hi`
+3. Confirm Andrea replies in that same Messages thread.
+4. Send a same-thread follow-up:
+   - `@Andrea what am I forgetting`
+5. Send:
+   - `summarize this`
+6. Optionally send:
+   - `send me the fuller version on Telegram`
+7. Run:
+   - `npm run services:status`
 
-- Alexa -> BlueBubbles text handoff
-  - `send that to my messages`
-  - `save that to my messages`
-  - `send me the details in messages`
-- BlueBubbles -> Telegram rich-detail handoff
-  - `send me the fuller version on Telegram`
+Success should show:
 
-Not supported:
-
-- silent push across channels
-- Telegram -> BlueBubbles fan-out
-- BlueBubbles media delivery
+- `bluebubbles_proof=live_proven`
+- a recent `bluebubbles_most_recent_chat`
+- non-`none` `bluebubbles_last_inbound`
+- non-`none` `bluebubbles_last_outbound`
 
 ## Testing
 
 Focused coverage:
 
 - `src/channels/bluebubbles.test.ts`
+- `src/bluebubbles-companion.test.ts`
 - `src/companion-conversation-binding.test.ts`
+- `src/communication-companion.test.ts`
 - `src/cross-channel-handoffs.test.ts`
-- `src/assistant-action-completion.test.ts`
 
-Near-live proof harness:
+Repo-side harnesses:
 
 ```bash
 npm run debug:bluebubbles
+npm run debug:bluebubbles -- --live
 ```
 
-That harness proves:
-
-- real local BlueBubbles webhook listener startup
-- inbound webhook -> normalized companion message
-- reply-back into the same linked BlueBubbles conversation through the REST send path
-- shared companion binding to `groupFolder=main`
-- explicit BlueBubbles -> Telegram handoff for richer detail
-
-## Live Proof Boundary
-
-The strongest truthful proof on a machine without a reachable BlueBubbles server is `npm run debug:bluebubbles`.
-That is the current truthful bar on this Windows host.
-
-To claim fully live BlueBubbles proof, you still need:
-
-- a reachable BlueBubbles server
-- correct REST password/query auth
-- a real webhook URL configured in BlueBubbles
-- one linked allowed chat GUID
-- one real inbound message and one real reply-back observed on that server
+Use the default harness for stubbed transport/regression checks.
+Use `--live` for the current host truth, webhook registration state, and exact remaining blocker.
 
 ## References
 

@@ -1,10 +1,13 @@
+import { randomUUID } from 'crypto';
 import http, { type IncomingMessage, type Server, type ServerResponse } from 'http';
 
-import { hasStoredMessage } from '../db.js';
+import { hasStoredMessage, storeChatMetadata, storeMessageDirect } from '../db.js';
 import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
 import { buildBlueBubblesChatJid } from '../companion-conversation-binding.js';
+import { hasBlueBubblesAndreaMention } from '../bluebubbles-companion.js';
 import type {
+  BlueBubblesChatScope,
   BlueBubblesChatRef,
   BlueBubblesConfig,
   BlueBubblesContactRef,
@@ -19,6 +22,8 @@ import { ChannelOpts, registerChannel } from './registry.js';
 
 const DEFAULT_BLUEBUBBLES_HOST = '127.0.0.1';
 const DEFAULT_BLUEBUBBLES_PORT = 4305;
+const DEFAULT_BLUEBUBBLES_CHAT_SCOPE: BlueBubblesChatScope = 'allowlist';
+const BLUEBUBBLES_OUTBOUND_SENDER_LABEL = 'Andrea:';
 
 function parseBool(value: string | undefined, fallback = false): boolean {
   if (value == null) return fallback;
@@ -34,6 +39,31 @@ function normalizeBaseUrl(value: string | undefined): string | null {
   const trimmed = value?.trim();
   if (!trimmed) return null;
   return trimmed.replace(/\/+$/, '');
+}
+
+function normalizeChatScope(value: string | undefined): BlueBubblesChatScope {
+  const normalized = value?.trim().toLowerCase();
+  if (normalized === 'all_synced') return 'all_synced';
+  if (normalized === 'contacts_only') return 'contacts_only';
+  return DEFAULT_BLUEBUBBLES_CHAT_SCOPE;
+}
+
+function normalizeAllowedChatGuids(
+  value: string | undefined,
+  legacyValue: string | undefined,
+): string[] {
+  const normalized = new Set<string>();
+  for (const item of (value || '').split(',')) {
+    const trimmed = item.trim();
+    if (trimmed) {
+      normalized.add(trimmed);
+    }
+  }
+  const legacy = legacyValue?.trim();
+  if (legacy) {
+    normalized.add(legacy);
+  }
+  return [...normalized];
 }
 
 function normalizeText(value: string | undefined): string | null {
@@ -52,13 +82,31 @@ function normalizeBlueBubblesReplyId(value: string | null): string | undefined {
   return normalized.startsWith('bb:') ? normalized : `bb:${normalized}`;
 }
 
-export function buildBlueBubblesLinkedChatJid(
-  config: Pick<BlueBubblesConfig, 'allowedChatGuid'>,
-): string | null {
-  return buildBlueBubblesChatJid(config.allowedChatGuid);
+function formatBlueBubblesOutboundText(text: string): string {
+  const normalized = text.replace(/\r\n/g, '\n');
+  if (normalized.startsWith(BLUEBUBBLES_OUTBOUND_SENDER_LABEL)) {
+    return normalized;
+  }
+
+  const newlineIndex = normalized.indexOf('\n');
+  if (newlineIndex === -1) {
+    return `${BLUEBUBBLES_OUTBOUND_SENDER_LABEL} ${normalized}`;
+  }
+
+  const firstLine = normalized.slice(0, newlineIndex);
+  const remaining = normalized.slice(newlineIndex);
+  return `${BLUEBUBBLES_OUTBOUND_SENDER_LABEL} ${firstLine}${remaining}`;
 }
 
-export function buildBlueBubblesWebhookUrl(
+export function buildBlueBubblesLinkedChatJid(
+  config: Pick<BlueBubblesConfig, 'allowedChatGuid' | 'allowedChatGuids'>,
+): string | null {
+  return buildBlueBubblesChatJid(
+    config.allowedChatGuid || config.allowedChatGuids[0] || null,
+  );
+}
+
+export function buildBlueBubblesListenerWebhookUrl(
   config: Pick<BlueBubblesConfig, 'host' | 'port' | 'webhookPath' | 'webhookSecret'>,
 ): string {
   const url = new URL(`http://${config.host}:${config.port}${config.webhookPath}`);
@@ -66,6 +114,131 @@ export function buildBlueBubblesWebhookUrl(
     url.searchParams.set('secret', config.webhookSecret);
   }
   return url.toString();
+}
+
+export function buildBlueBubblesWebhookUrl(
+  config: Pick<
+    BlueBubblesConfig,
+    'host' | 'port' | 'webhookPath' | 'webhookSecret' | 'webhookPublicBaseUrl'
+  >,
+): string {
+  const baseUrl =
+    normalizeBaseUrl(config.webhookPublicBaseUrl || undefined) ||
+    `http://${config.host}:${config.port}`;
+  const url = new URL(config.webhookPath, `${baseUrl}/`);
+  if (config.webhookSecret) {
+    url.searchParams.set('secret', config.webhookSecret);
+  }
+  return url.toString();
+}
+
+export function redactBlueBubblesWebhookUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    if (parsed.searchParams.has('secret')) {
+      parsed.searchParams.set('secret', '***');
+    }
+    return parsed.toString();
+  } catch {
+    return url.replace(/([?&]secret=)[^&]+/i, '$1***');
+  }
+}
+
+function isBlueBubblesRoutingConfigured(config: BlueBubblesConfig): boolean {
+  if (!config.baseUrl || !config.password || !config.groupFolder) {
+    return false;
+  }
+  if (config.chatScope === 'allowlist') {
+    return config.allowedChatGuids.length > 0;
+  }
+  return true;
+}
+
+export function extractBlueBubblesChatGuid(jid: string): string | null {
+  if (!jid.startsWith('bb:')) return null;
+  const chatGuid = jid.slice(3).trim();
+  return chatGuid || null;
+}
+
+export function isBlueBubblesChatEligible(
+  config: Pick<BlueBubblesConfig, 'chatScope' | 'allowedChatGuids'>,
+  chatGuid: string | null | undefined,
+  isGroup?: boolean,
+): boolean {
+  const normalized = chatGuid?.trim();
+  if (!normalized) return false;
+  if (config.chatScope === 'all_synced') {
+    return true;
+  }
+  if (config.chatScope === 'contacts_only') {
+    return isGroup === false;
+  }
+  return config.allowedChatGuids.includes(normalized);
+}
+
+interface BlueBubblesDirectChatMetadata {
+  chatJid: string;
+  chatGuid: string;
+  isGroup: boolean;
+  chatIdentifier: string | null;
+  lastAddressedHandle: string | null;
+  handleAddress: string | null;
+  service: string | null;
+}
+
+interface BlueBubblesOutboundTargetCandidate {
+  kind:
+    | 'chat_guid'
+    | 'last_addressed_handle'
+    | 'service_specific_last_addressed_handle'
+    | 'chat_identifier'
+    | 'handle_address'
+    | 'service_specific_direct';
+  chatGuid: string;
+}
+
+type BlueBubblesSendMethod = 'private-api' | 'apple-script';
+
+function extractBlueBubblesServiceFromChatGuid(
+  chatGuid: string | null | undefined,
+): string | null {
+  const normalized = chatGuid?.trim();
+  if (!normalized) return null;
+  const [service] = normalized.split(';', 1);
+  return service?.trim() || null;
+}
+
+function inferBlueBubblesGroupChat(
+  chatGuid: string | null | undefined,
+  explicitIsGroup?: boolean | null,
+): boolean {
+  if (typeof explicitIsGroup === 'boolean') {
+    return explicitIsGroup;
+  }
+  const normalized = chatGuid?.trim() || '';
+  const match = normalized.match(/^[^;]+;([+-]);/);
+  if (match?.[1] === '+') return true;
+  if (match?.[1] === '-') return false;
+  return /;\+;chat/i.test(normalized);
+}
+
+function normalizeBlueBubblesDirectTargetValue(
+  value: string | null | undefined,
+): string | null {
+  const normalized = value?.trim();
+  return normalized || null;
+}
+
+function buildBlueBubblesDirectTargetGuid(
+  service: string,
+  value: string | null | undefined,
+): string | null {
+  const normalizedValue = normalizeBlueBubblesDirectTargetValue(value);
+  if (!normalizedValue) return null;
+  if (/^[^;]+;[+-];/.test(normalizedValue)) {
+    return normalizedValue;
+  }
+  return `${service};-;${normalizedValue}`;
 }
 
 export function resolveBlueBubblesConfig(
@@ -76,6 +249,9 @@ export function resolveBlueBubblesConfig(
     'BLUEBUBBLES_HOST',
     'BLUEBUBBLES_PORT',
     'BLUEBUBBLES_GROUP_FOLDER',
+    'BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL',
+    'BLUEBUBBLES_CHAT_SCOPE',
+    'BLUEBUBBLES_ALLOWED_CHAT_GUIDS',
     'BLUEBUBBLES_ALLOWED_CHAT_GUID',
     'BLUEBUBBLES_WEBHOOK_PATH',
     'BLUEBUBBLES_WEBHOOK_SECRET',
@@ -105,6 +281,19 @@ export function resolveBlueBubblesConfig(
       process.env.BLUEBUBBLES_GROUP_FOLDER ||
       env.BLUEBUBBLES_GROUP_FOLDER ||
       'main',
+    webhookPublicBaseUrl: normalizeBaseUrl(
+      process.env.BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL ||
+        env.BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL,
+    ),
+    chatScope: normalizeChatScope(
+      process.env.BLUEBUBBLES_CHAT_SCOPE || env.BLUEBUBBLES_CHAT_SCOPE,
+    ),
+    allowedChatGuids: normalizeAllowedChatGuids(
+      process.env.BLUEBUBBLES_ALLOWED_CHAT_GUIDS ||
+        env.BLUEBUBBLES_ALLOWED_CHAT_GUIDS,
+      process.env.BLUEBUBBLES_ALLOWED_CHAT_GUID ||
+        env.BLUEBUBBLES_ALLOWED_CHAT_GUID,
+    ),
     allowedChatGuid:
       process.env.BLUEBUBBLES_ALLOWED_CHAT_GUID ||
       env.BLUEBUBBLES_ALLOWED_CHAT_GUID ||
@@ -127,9 +316,7 @@ export function buildBlueBubblesHealthSnapshot(
   config: BlueBubblesConfig,
   overrides: Partial<ChannelHealthSnapshot> = {},
 ): ChannelHealthSnapshot {
-  const configured = Boolean(
-    config.baseUrl && config.password && config.allowedChatGuid && config.groupFolder,
-  );
+  const configured = isBlueBubblesRoutingConfigured(config);
   const defaultState = !config.enabled
     ? 'stopped'
     : !configured
@@ -140,9 +327,11 @@ export function buildBlueBubblesHealthSnapshot(
   const defaultDetail = !config.enabled
     ? 'BlueBubbles disabled'
     : !configured
-      ? 'BlueBubbles enabled but missing base URL, password, or allowed chat link'
+      ? config.chatScope === 'allowlist'
+        ? 'BlueBubbles enabled but missing base URL, password, or allowlist chat link'
+        : 'BlueBubbles enabled but missing base URL, password, or shared group binding'
       : config.sendEnabled
-        ? `BlueBubbles listener ready for ${buildBlueBubblesLinkedChatJid(config)}`
+        ? `BlueBubbles listener ready for ${config.chatScope}`
         : 'BlueBubbles listener is configured, but outbound reply-back is disabled';
   return {
     name: 'bluebubbles',
@@ -158,6 +347,23 @@ function firstString(...values: unknown[]): string | null {
   for (const value of values) {
     if (typeof value === 'string' && value.trim()) {
       return value.trim();
+    }
+  }
+  return null;
+}
+
+function firstBoolean(...values: unknown[]): boolean | null {
+  for (const value of values) {
+    if (typeof value === 'boolean') {
+      return value;
+    }
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value !== 0;
+    }
+    if (typeof value === 'string' && value.trim()) {
+      const normalized = value.trim().toLowerCase();
+      if (normalized === 'true' || normalized === '1') return true;
+      if (normalized === 'false' || normalized === '0') return false;
     }
   }
   return null;
@@ -235,6 +441,12 @@ function extractBlueBubblesReceiptId(payload: unknown): string | null {
   );
 }
 
+function extractBlueBubblesPrivateApiState(payload: unknown): boolean | null {
+  const root = asRecord(payload);
+  const data = asRecord(root.data);
+  return firstBoolean(data.private_api, data.privateApi, root.private_api, root.privateApi);
+}
+
 function buildAuthSearchParams(password: string): URLSearchParams {
   const params = new URLSearchParams();
   params.set('guid', password);
@@ -268,7 +480,12 @@ export function normalizeBlueBubblesWebhookEvent(
   const root = asRecord(payload);
   const data = asRecord(root.data);
   const message = asRecord(data.message);
-  const chat = asRecord(data.chat);
+  const chats = Array.isArray(data.chats)
+    ? data.chats.map((item) => asRecord(item))
+    : Array.isArray(root.chats)
+      ? root.chats.map((item) => asRecord(item))
+      : [];
+  const chat = chats[0] || asRecord(data.chat || root.chat);
 
   return {
     type:
@@ -281,7 +498,7 @@ export function normalizeBlueBubblesWebhookEvent(
       message.guid,
       message.messageGuid,
     ),
-    chatGuid: firstString(root.chatGuid, data.chatGuid, chat.guid),
+    chatGuid: firstString(root.chatGuid, data.chatGuid, chat.guid, chat.chatGuid),
     data,
   };
 }
@@ -292,7 +509,14 @@ export function normalizeBlueBubblesContactRef(
   const root = asRecord(payload);
   const data = asRecord(root.data);
   const message = asRecord(data.message);
-  const sender = asRecord(message.handle || message.sender);
+  const sender = asRecord(
+    message.handle ||
+      message.sender ||
+      data.handle ||
+      data.sender ||
+      root.handle ||
+      root.sender,
+  );
 
   return {
     handle:
@@ -300,6 +524,8 @@ export function normalizeBlueBubblesContactRef(
         sender.address,
         sender.handle,
         sender.id,
+        data.address,
+        root.address,
         message.handle,
         message.address,
         'unknown',
@@ -307,10 +533,18 @@ export function normalizeBlueBubblesContactRef(
     displayName: firstString(
       sender.displayName,
       sender.name,
+      data.senderName,
+      data.displayName,
       message.senderName,
       message.contactName,
     ),
-    address: firstString(sender.address, message.address),
+    address: firstString(sender.address, data.address, message.address, root.address),
+    service: firstString(
+      sender.service,
+      message.service,
+      data.service,
+      root.service,
+    ),
   };
 }
 
@@ -319,7 +553,12 @@ export function normalizeBlueBubblesChatRef(
 ): BlueBubblesChatRef {
   const root = asRecord(payload);
   const data = asRecord(root.data);
-  const chat = asRecord(data.chat);
+  const chats = Array.isArray(data.chats)
+    ? data.chats.map((item) => asRecord(item))
+    : Array.isArray(root.chats)
+      ? root.chats.map((item) => asRecord(item))
+      : [];
+  const chat = chats[0] || asRecord(data.chat || root.chat);
   const participants = Array.isArray(chat.participants)
     ? chat.participants
         .map((participant) => {
@@ -334,18 +573,36 @@ export function normalizeBlueBubblesChatRef(
       firstString(root.chatGuid, data.chatGuid, chat.guid, chat.chatGuid) ||
       'unknown',
     displayName: firstString(chat.displayName, chat.name),
-    isGroup:
-      typeof chat.isGroup === 'boolean'
-        ? chat.isGroup
-        : participants.length > 1,
+    isGroup: firstBoolean(chat.isGroup, data.isGroup, root.isGroup) ?? participants.length > 1,
     participants,
+    chatIdentifier: firstString(
+      chat.chatIdentifier,
+      chat.identifier,
+      data.chatIdentifier,
+      root.chatIdentifier,
+    ),
+    lastAddressedHandle: firstString(
+      chat.lastAddressedHandle,
+      data.lastAddressedHandle,
+      root.lastAddressedHandle,
+    ),
+    service:
+      firstString(chat.service, data.service, root.service) ||
+      extractBlueBubblesServiceFromChatGuid(
+        firstString(root.chatGuid, data.chatGuid, chat.guid, chat.chatGuid),
+      ),
   };
 }
 
 export function normalizeBlueBubblesIncomingMessage(
   payload: unknown,
   now = new Date(),
-): { chatJid: string; message: NewMessage; chat: BlueBubblesChatRef } | null {
+): {
+  chatJid: string;
+  message: NewMessage;
+  chat: BlueBubblesChatRef;
+  contact: BlueBubblesContactRef;
+} | null {
   const event = normalizeBlueBubblesWebhookEvent(payload);
   if (!/new.?message/i.test(event.type) && event.type !== 'message.new') {
     return null;
@@ -359,6 +616,7 @@ export function normalizeBlueBubblesIncomingMessage(
     message.body,
     data.text,
     data.message,
+    root.body,
     root.text,
   );
   if (!text) return null;
@@ -371,6 +629,7 @@ export function normalizeBlueBubblesIncomingMessage(
   return {
     chatJid: `bb:${chat.chatGuid}`,
     chat,
+    contact,
     message: {
       id: `bb:${messageGuid}`,
       chat_jid: `bb:${chat.chatGuid}`,
@@ -378,15 +637,322 @@ export function normalizeBlueBubblesIncomingMessage(
       sender_name: contact.displayName || contact.handle,
       content: text,
       timestamp: normalizeTimestamp(
-        message.dateCreated || message.date || root.dateCreated,
+        message.dateCreated ||
+          message.date ||
+          data.dateCreated ||
+          data.date ||
+          root.dateCreated ||
+          root.date,
         now,
       ),
-      is_from_me: Boolean(message.isFromMe),
+      is_from_me:
+        firstBoolean(message.isFromMe, data.isFromMe, root.isFromMe) || false,
       is_bot_message: false,
       reply_to_id: normalizeBlueBubblesReplyId(
-        firstString(message.replyToGuid, data.replyToGuid, root.replyToGuid),
+        firstString(
+          message.replyToGuid,
+          data.replyToGuid,
+          root.replyToGuid,
+          message.associatedMessageGuid,
+          data.associatedMessageGuid,
+          root.associatedMessageGuid,
+        ),
       ),
     },
+  };
+}
+
+type BlueBubblesWebhookRegistrationState =
+  | 'not_configured'
+  | 'registered'
+  | 'missing'
+  | 'auth_failed'
+  | 'unreachable';
+
+export interface BlueBubblesWebhookInspection {
+  state: BlueBubblesWebhookRegistrationState;
+  detail: string;
+  webhookId?: number | null;
+}
+
+function normalizeBlueBubblesWebhookList(payload: unknown): Array<{
+  id: number | null;
+  url: string;
+  events: string[];
+}> {
+  const root = asRecord(payload);
+  const entries = Array.isArray(root.data)
+    ? root.data
+    : Array.isArray(root.webhooks)
+      ? root.webhooks
+      : [];
+  return entries
+    .map((entry) => {
+      const record = asRecord(entry);
+      const url = firstString(record.url, record.endpoint);
+      if (!url) return null;
+      return {
+        id:
+          typeof record.id === 'number' && Number.isFinite(record.id)
+            ? record.id
+            : null,
+        url,
+        events: Array.isArray(record.events)
+          ? record.events
+              .map((event) => (typeof event === 'string' ? event : ''))
+              .filter((event): event is string => Boolean(event))
+          : [],
+      };
+    })
+    .filter(
+      (entry): entry is { id: number | null; url: string; events: string[] } =>
+        entry !== null,
+    );
+}
+
+export async function inspectBlueBubblesWebhookRegistration(
+  config: Pick<
+    BlueBubblesConfig,
+    | 'enabled'
+    | 'baseUrl'
+    | 'password'
+    | 'host'
+    | 'port'
+    | 'webhookPath'
+    | 'webhookSecret'
+    | 'webhookPublicBaseUrl'
+  >,
+): Promise<BlueBubblesWebhookInspection> {
+  if (!config.enabled || !config.baseUrl || !config.password) {
+    return {
+      state: 'not_configured',
+      detail:
+        'webhook registration cannot be checked until BlueBubbles is enabled with a base URL and password',
+    };
+  }
+
+  const expectedUrl = buildBlueBubblesWebhookUrl(config);
+  const url = new URL('/api/v1/webhook', config.baseUrl);
+  for (const [key, value] of buildAuthSearchParams(config.password).entries()) {
+    url.searchParams.set(key, value);
+  }
+
+  try {
+    const response = await fetch(url);
+    const responseText = await response.text();
+    if (response.status === 401 || response.status === 403) {
+      return {
+        state: 'auth_failed',
+        detail: extractBlueBubblesErrorText(response.status, responseText),
+      };
+    }
+    if (!response.ok) {
+      return {
+        state: 'unreachable',
+        detail: extractBlueBubblesErrorText(response.status, responseText),
+      };
+    }
+    const webhooks = normalizeBlueBubblesWebhookList(
+      parseBlueBubblesJson(responseText),
+    );
+    const matched = webhooks.find((entry) => entry.url === expectedUrl);
+    if (!matched) {
+      return {
+        state: 'missing',
+        detail: 'no matching Andrea webhook is registered on the BlueBubbles server',
+      };
+    }
+    return {
+      state: 'registered',
+      detail:
+        matched.id != null
+          ? `registered on the BlueBubbles server as webhook ${matched.id}`
+          : 'registered on the BlueBubbles server',
+      webhookId: matched.id,
+    };
+  } catch (error) {
+    return {
+      state: 'unreachable',
+      detail:
+        error instanceof Error
+          ? error.message
+          : 'BlueBubbles webhook registration check failed',
+    };
+  }
+}
+
+function normalizeBlueBubblesHistoryPayload(
+  chatGuid: string,
+  rawMessage: unknown,
+): unknown {
+  const message = asRecord(rawMessage);
+  const chats = Array.isArray(message.chats)
+    ? message.chats.map((item) => asRecord(item))
+    : [];
+  const chat = chats[0] || {};
+  const handle = asRecord(message.handle);
+  const participants = Array.isArray(chat.participants)
+    ? chat.participants
+    : handle.address
+      ? [{ address: handle.address, displayName: handle.displayName }]
+      : [];
+
+  return {
+    type: 'new-message',
+    data: {
+      guid: firstString(message.guid, message.messageGuid, message.id),
+      chatGuid,
+      chat: {
+        guid: firstString(chat.guid, chat.chatGuid, chatGuid) || chatGuid,
+        displayName: firstString(chat.displayName, chat.name),
+        isGroup:
+          typeof chat.isGroup === 'boolean'
+            ? chat.isGroup
+            : Array.isArray(participants) && participants.length > 1,
+        chatIdentifier: firstString(
+          chat.chatIdentifier,
+          chat.identifier,
+          message.chatIdentifier,
+        ),
+        lastAddressedHandle: firstString(
+          chat.lastAddressedHandle,
+          message.lastAddressedHandle,
+        ),
+        service:
+          firstString(chat.service, handle.service, message.service) ||
+          extractBlueBubblesServiceFromChatGuid(chatGuid),
+        participants,
+      },
+      message: {
+        guid: firstString(message.guid, message.messageGuid, message.id),
+        text: firstString(message.text, message.body, message.message),
+        senderName: firstString(
+          message.senderName,
+          handle.displayName,
+          handle.address,
+        ),
+        handle: {
+          address: firstString(handle.address, handle.handle, handle.id),
+          displayName: firstString(handle.displayName, message.senderName),
+          service:
+            firstString(handle.service, message.service, chat.service) ||
+            extractBlueBubblesServiceFromChatGuid(chatGuid),
+        },
+        replyToGuid: firstString(message.replyToGuid, message.associatedMessageGuid),
+        dateCreated:
+          message.dateCreated || message.date || message.dateCreatedEpoch,
+        isFromMe: Boolean(message.isFromMe),
+      },
+    },
+  };
+}
+
+function normalizeBlueBubblesHistoryRows(payload: unknown): unknown[] {
+  const root = asRecord(payload);
+  if (Array.isArray(root.data)) return root.data;
+  if (Array.isArray(root.messages)) return root.messages;
+  return [];
+}
+
+type NormalizedBlueBubblesHistoryRow = {
+  chatJid: string;
+  message: NewMessage;
+  chat: BlueBubblesChatRef;
+  contact: BlueBubblesContactRef;
+};
+
+async function fetchNormalizedBlueBubblesHistoryRows(
+  config: Pick<BlueBubblesConfig, 'baseUrl' | 'password'>,
+  chatGuid: string,
+  limit = 12,
+): Promise<NormalizedBlueBubblesHistoryRow[]> {
+  if (!chatGuid || !config.baseUrl || !config.password) {
+    return [];
+  }
+
+  const url = new URL(
+    `/api/v1/chat/${encodeURIComponent(chatGuid)}/message`,
+    config.baseUrl,
+  );
+  for (const [key, value] of buildAuthSearchParams(config.password).entries()) {
+    url.searchParams.set(key, value);
+  }
+  url.searchParams.set('limit', String(Math.max(1, limit)));
+  url.searchParams.set('offset', '0');
+  url.searchParams.set('sort', 'DESC');
+
+  const response = await fetch(url);
+  const responseText = await response.text();
+  if (!response.ok) {
+    throw new Error(extractBlueBubblesErrorText(response.status, responseText));
+  }
+
+  return normalizeBlueBubblesHistoryRows(parseBlueBubblesJson(responseText))
+    .map((row) =>
+      normalizeBlueBubblesIncomingMessage(
+        normalizeBlueBubblesHistoryPayload(chatGuid, row),
+      ),
+    )
+    .filter(
+      (
+        row,
+      ): row is {
+        chatJid: string;
+        message: NewMessage;
+        chat: BlueBubblesChatRef;
+        contact: BlueBubblesContactRef;
+      } => row !== null,
+    )
+    .sort((left, right) =>
+      left.message.timestamp.localeCompare(right.message.timestamp),
+    );
+}
+
+export async function primeBlueBubblesChatHistory(
+  config: Pick<BlueBubblesConfig, 'baseUrl' | 'password'>,
+  chatJid: string,
+  limit = 12,
+): Promise<{ storedCount: number; totalCount: number }> {
+  const chatGuid = extractBlueBubblesChatGuid(chatJid);
+  if (!chatGuid || !config.baseUrl || !config.password) {
+    return { storedCount: 0, totalCount: 0 };
+  }
+
+  const normalizedRows = await fetchNormalizedBlueBubblesHistoryRows(
+    config,
+    chatGuid,
+    limit,
+  );
+
+  let storedCount = 0;
+  for (const row of normalizedRows) {
+    storeChatMetadata(
+      row.chatJid,
+      row.message.timestamp,
+      row.chat.displayName || row.chat.chatGuid,
+      'bluebubbles',
+      row.chat.isGroup,
+    );
+    if (hasStoredMessage(row.chatJid, row.message.id)) {
+      continue;
+    }
+    storeMessageDirect({
+      id: row.message.id,
+      chat_jid: row.chatJid,
+      sender: row.message.sender,
+      sender_name: row.message.sender_name,
+      content: row.message.content,
+      timestamp: row.message.timestamp,
+      is_from_me: Boolean(row.message.is_from_me),
+      is_bot_message: row.message.is_bot_message,
+      reply_to_id: row.message.reply_to_id || undefined,
+    });
+    storedCount += 1;
+  }
+
+  return {
+    storedCount,
+    totalCount: normalizedRows.length,
   };
 }
 
@@ -428,7 +994,48 @@ export class BlueBubblesChannel implements Channel {
 
   private lastErrorText: string | null = null;
 
+  private transportProbeStatus:
+    | 'not_checked'
+    | 'reachable'
+    | 'auth_failed'
+    | 'unreachable' = 'not_checked';
+
+  private transportProbeDetail: string | null = null;
+
+  private webhookRegistrationStatus: BlueBubblesWebhookRegistrationState =
+    'not_configured';
+
+  private webhookRegistrationDetail: string | null = null;
+
   private readonly inflightMessageIds = new Set<string>();
+
+  private readonly directChatMetadataByJid = new Map<
+    string,
+    BlueBubblesDirectChatMetadata
+  >();
+
+  private readonly successfulOutboundTargetByJid = new Map<
+    string,
+    BlueBubblesOutboundTargetCandidate
+  >();
+
+  private lastInboundChatJid: string | null = null;
+
+  private lastInboundWasSelfAuthored = false;
+
+  private lastOutboundTargetKind: string | null = null;
+
+  private lastOutboundTargetValue: string | null = null;
+
+  private lastSendErrorDetail: string | null = null;
+
+  private lastMetadataHydrationSource: 'none' | 'history' = 'none';
+
+  private lastAttemptedTargetSequence: string[] = [];
+
+  private sendMethod: BlueBubblesSendMethod = 'private-api';
+
+  private privateApiAvailable: boolean | null = null;
 
   constructor(
     private readonly config: BlueBubblesConfig,
@@ -437,29 +1044,272 @@ export class BlueBubblesChannel implements Channel {
     this.activePort = config.port;
   }
 
-  private emitHealth(overrides: Partial<ChannelHealthSnapshot> = {}): void {
-    const configured = Boolean(
-      this.config.baseUrl &&
-        this.config.password &&
-        this.config.allowedChatGuid &&
-        this.config.groupFolder,
+  private buildDirectChatMetadata(input: {
+    chatJid: string;
+    chat: BlueBubblesChatRef;
+    contact: BlueBubblesContactRef;
+  }): BlueBubblesDirectChatMetadata {
+    return {
+      chatJid: input.chatJid,
+      chatGuid: input.chat.chatGuid,
+      isGroup: inferBlueBubblesGroupChat(
+        input.chat.chatGuid,
+        input.chat.isGroup,
+      ),
+      chatIdentifier:
+        normalizeBlueBubblesDirectTargetValue(input.chat.chatIdentifier) ||
+        normalizeBlueBubblesDirectTargetValue(
+          input.chat.chatGuid.split(';').slice(2).join(';'),
+        ),
+      lastAddressedHandle: normalizeBlueBubblesDirectTargetValue(
+        input.chat.lastAddressedHandle,
+      ),
+      handleAddress: normalizeBlueBubblesDirectTargetValue(input.contact.address),
+      service:
+        normalizeBlueBubblesDirectTargetValue(input.contact.service) ||
+        normalizeBlueBubblesDirectTargetValue(input.chat.service) ||
+        extractBlueBubblesServiceFromChatGuid(input.chat.chatGuid),
+    };
+  }
+
+  private cacheDirectChatMetadata(
+    metadata: BlueBubblesDirectChatMetadata,
+  ): boolean {
+    if (metadata.isGroup) {
+      this.directChatMetadataByJid.delete(metadata.chatJid);
+      return false;
+    }
+
+    const previous = this.directChatMetadataByJid.get(metadata.chatJid);
+    const next: BlueBubblesDirectChatMetadata = {
+      chatJid: metadata.chatJid,
+      chatGuid: metadata.chatGuid || previous?.chatGuid || metadata.chatJid,
+      isGroup: metadata.isGroup,
+      chatIdentifier:
+        metadata.chatIdentifier || previous?.chatIdentifier || null,
+      lastAddressedHandle:
+        metadata.lastAddressedHandle || previous?.lastAddressedHandle || null,
+      handleAddress: metadata.handleAddress || previous?.handleAddress || null,
+      service: metadata.service || previous?.service || null,
+    };
+    const changed =
+      !previous ||
+      previous.chatGuid !== next.chatGuid ||
+      previous.chatIdentifier !== next.chatIdentifier ||
+      previous.lastAddressedHandle !== next.lastAddressedHandle ||
+      previous.handleAddress !== next.handleAddress ||
+      previous.service !== next.service;
+    this.directChatMetadataByJid.set(metadata.chatJid, next);
+    return changed;
+  }
+
+  private rememberObservedChatMetadata(input: {
+    chatJid: string;
+    chat: BlueBubblesChatRef;
+    contact: BlueBubblesContactRef;
+    message: Pick<NewMessage, 'is_from_me' | 'timestamp'>;
+  }): void {
+    this.lastInboundChatJid = input.chatJid;
+    this.lastInboundWasSelfAuthored = Boolean(input.message.is_from_me);
+    this.lastInboundObservedAt = input.message.timestamp;
+
+    const isGroup = inferBlueBubblesGroupChat(
+      input.chat.chatGuid,
+      input.chat.isGroup,
     );
-    const readyForTraffic = configured && this.config.sendEnabled;
+    if (isGroup) {
+      this.directChatMetadataByJid.delete(input.chatJid);
+      return;
+    }
+
+    this.cacheDirectChatMetadata(this.buildDirectChatMetadata(input));
+  }
+
+  private getDirectChatMetadata(
+    chatJid: string,
+    chatGuid: string,
+  ): BlueBubblesDirectChatMetadata {
+    const cached = this.directChatMetadataByJid.get(chatJid);
+    if (cached) {
+      return cached;
+    }
+    const inferredIdentifier =
+      normalizeBlueBubblesDirectTargetValue(chatGuid.split(';').slice(2).join(';')) ||
+      null;
+    return {
+      chatJid,
+      chatGuid,
+      isGroup: inferBlueBubblesGroupChat(chatGuid),
+      chatIdentifier: inferredIdentifier,
+      lastAddressedHandle: null,
+      handleAddress: inferredIdentifier,
+      service: extractBlueBubblesServiceFromChatGuid(chatGuid),
+    };
+  }
+
+  private async hydrateDirectChatMetadataFromHistory(
+    chatJid: string,
+    chatGuid: string,
+    limit = 3,
+  ): Promise<boolean> {
+    const current = this.getDirectChatMetadata(chatJid, chatGuid);
+    if (current.isGroup) {
+      return false;
+    }
+
+    const rows = await fetchNormalizedBlueBubblesHistoryRows(
+      this.config,
+      chatGuid,
+      limit,
+    );
+    if (rows.length === 0) {
+      return false;
+    }
+
+    this.lastMetadataHydrationSource = 'history';
+    let changed = false;
+    for (const row of rows) {
+      if (row.chatJid !== chatJid) continue;
+      changed =
+        this.cacheDirectChatMetadata(this.buildDirectChatMetadata(row)) ||
+        changed;
+    }
+    return changed;
+  }
+
+  private buildOutboundTargetCandidates(
+    chatJid: string,
+    chatGuid: string,
+  ): BlueBubblesOutboundTargetCandidate[] {
+    const candidates: BlueBubblesOutboundTargetCandidate[] = [];
+    const seen = new Set<string>();
+    const push = (
+      kind: BlueBubblesOutboundTargetCandidate['kind'],
+      targetChatGuid: string | null | undefined,
+    ): void => {
+      const normalized = normalizeBlueBubblesDirectTargetValue(targetChatGuid);
+      if (!normalized || seen.has(normalized)) {
+        return;
+      }
+      seen.add(normalized);
+      candidates.push({ kind, chatGuid: normalized });
+    };
+
+    const cached = this.successfulOutboundTargetByJid.get(chatJid);
+    if (cached) {
+      push(cached.kind, cached.chatGuid);
+    }
+
+    push('chat_guid', chatGuid);
+
+    const metadata = this.getDirectChatMetadata(chatJid, chatGuid);
+    if (metadata.isGroup) {
+      return candidates;
+    }
+
+    push(
+      'last_addressed_handle',
+      buildBlueBubblesDirectTargetGuid('any', metadata.lastAddressedHandle),
+    );
+    push(
+      'service_specific_last_addressed_handle',
+      metadata.service
+        ? buildBlueBubblesDirectTargetGuid(
+            metadata.service,
+            metadata.lastAddressedHandle,
+          )
+        : null,
+    );
+    push(
+      'chat_identifier',
+      buildBlueBubblesDirectTargetGuid('any', metadata.chatIdentifier),
+    );
+    push(
+      'handle_address',
+      buildBlueBubblesDirectTargetGuid('any', metadata.handleAddress),
+    );
+    push(
+      'service_specific_direct',
+      metadata.service
+        ? buildBlueBubblesDirectTargetGuid(
+            metadata.service,
+            metadata.handleAddress || metadata.chatIdentifier,
+          )
+        : null,
+    );
+
+    return candidates;
+  }
+
+  private updateLastOutboundAttempt(
+    candidate: BlueBubblesOutboundTargetCandidate,
+  ): void {
+    this.lastOutboundTargetKind = candidate.kind;
+    this.lastOutboundTargetValue = candidate.chatGuid;
+  }
+
+  private buildBlueBubblesSendFailureMessage(
+    attemptedTargets: BlueBubblesOutboundTargetCandidate[],
+    errorText: string,
+  ): string {
+    const attemptedKinds = attemptedTargets.map((candidate) => candidate.kind);
+    if (attemptedKinds.length === 0) {
+      return errorText;
+    }
+    return `BlueBubbles send failed after targets [${attemptedKinds.join(', ')}]: ${errorText}`;
+  }
+
+  private isRetryableDirectTargetError(errorText: string): boolean {
+    return /message send error/i.test(errorText);
+  }
+
+  private emitHealth(overrides: Partial<ChannelHealthSnapshot> = {}): void {
+    const configured = isBlueBubblesRoutingConfigured(this.config);
+    const readyForTraffic =
+      configured &&
+      this.config.sendEnabled &&
+      this.transportProbeStatus === 'reachable' &&
+      this.webhookRegistrationStatus === 'registered';
     const detailParts = [
       this.connected
         ? `listener ${this.config.host}:${this.activePort}${this.config.webhookPath}`
         : 'listener stopped',
-      this.config.allowedChatGuid
-        ? `linked chat ${buildBlueBubblesLinkedChatJid(this.config)}`
-        : 'linked chat missing',
+      `scope ${this.config.chatScope}`,
+      `reply gate mention_required`,
+      `webhook ${this.getPublicWebhookDisplayUrl()}`,
+      this.webhookRegistrationDetail
+        ? `webhook registration ${this.webhookRegistrationDetail}`
+        : 'webhook registration not checked yet',
+      this.transportProbeDetail
+        ? `transport ${this.transportProbeDetail}`
+        : 'transport not checked yet',
       this.lastInboundObservedAt
         ? `last inbound ${this.lastInboundObservedAt}`
         : 'no inbound observed yet',
+      `last inbound chat ${this.lastInboundChatJid || 'none'}`,
+      `last inbound self_authored ${this.lastInboundWasSelfAuthored ? 'yes' : 'no'}`,
       this.lastOutboundResult
         ? `last outbound ${this.lastOutboundResult}`
         : this.config.sendEnabled
           ? 'no outbound sent yet'
           : 'outbound disabled',
+      `last outbound target kind ${this.lastOutboundTargetKind || 'none'}`,
+      `last outbound target value ${this.lastOutboundTargetValue || 'none'}`,
+      `last send error ${this.lastSendErrorDetail || 'none'}`,
+      `send method ${this.sendMethod}`,
+      `private api available ${
+        this.privateApiAvailable == null
+          ? 'unknown'
+          : this.privateApiAvailable
+            ? 'yes'
+            : 'no'
+      }`,
+      `last metadata hydration ${this.lastMetadataHydrationSource}`,
+      `attempted target sequence ${
+        this.lastAttemptedTargetSequence.length > 0
+          ? this.lastAttemptedTargetSequence.join(' -> ')
+          : 'none'
+      }`,
     ];
     this.opts.onHealthUpdate?.(
       buildBlueBubblesHealthSnapshot(this.config, {
@@ -483,11 +1333,96 @@ export class BlueBubblesChannel implements Channel {
     return Boolean(
       this.connected &&
         this.config.enabled &&
-        this.config.baseUrl &&
-        this.config.password &&
-        this.config.allowedChatGuid &&
+        isBlueBubblesRoutingConfigured(this.config) &&
         this.config.sendEnabled,
     );
+  }
+
+  private async probeBlueBubblesTransport(): Promise<void> {
+    if (!this.config.baseUrl || !this.config.password) {
+      this.transportProbeStatus = 'not_checked';
+      this.transportProbeDetail = 'not configured';
+      return;
+    }
+
+    const url = new URL('/api/v1/ping', this.config.baseUrl);
+    for (const [key, value] of buildAuthSearchParams(this.config.password).entries()) {
+      url.searchParams.set(key, value);
+    }
+
+    try {
+      const response = await fetch(url);
+      const responseText = await response.text();
+      if (response.ok) {
+        this.transportProbeStatus = 'reachable';
+        this.transportProbeDetail = `reachable/auth ok (${response.status})`;
+        return;
+      }
+      if (response.status === 401 || response.status === 403) {
+        this.transportProbeStatus = 'auth_failed';
+        this.transportProbeDetail =
+          extractBlueBubblesErrorText(response.status, responseText);
+        return;
+      }
+      this.transportProbeStatus = 'unreachable';
+      this.transportProbeDetail = extractBlueBubblesErrorText(
+        response.status,
+        responseText,
+      );
+    } catch (error) {
+      this.transportProbeStatus = 'unreachable';
+      this.transportProbeDetail =
+        error instanceof Error ? error.message : 'transport probe failed';
+    }
+  }
+
+  private async refreshWebhookRegistration(): Promise<void> {
+    const inspection = await inspectBlueBubblesWebhookRegistration(this.config);
+    this.webhookRegistrationStatus = inspection.state;
+    this.webhookRegistrationDetail = inspection.detail;
+  }
+
+  private async refreshServerInfo(): Promise<void> {
+    if (!this.config.baseUrl || !this.config.password) {
+      this.privateApiAvailable = null;
+      this.sendMethod = 'private-api';
+      return;
+    }
+
+    const url = new URL('/api/v1/server/info', this.config.baseUrl);
+    for (const [key, value] of buildAuthSearchParams(this.config.password).entries()) {
+      url.searchParams.set(key, value);
+    }
+
+    try {
+      const response = await fetch(url);
+      const responseText = await response.text();
+      if (!response.ok) {
+        this.privateApiAvailable = null;
+        this.sendMethod = 'private-api';
+        logger.info(
+          {
+            status: response.status,
+            detail: extractBlueBubblesErrorText(response.status, responseText),
+          },
+          'BlueBubbles server info probe failed; keeping private-api send mode',
+        );
+        return;
+      }
+
+      const privateApi = extractBlueBubblesPrivateApiState(
+        parseBlueBubblesJson(responseText),
+      );
+      this.privateApiAvailable = privateApi;
+      this.sendMethod = privateApi === false ? 'apple-script' : 'private-api';
+    } catch (error) {
+      this.privateApiAvailable = null;
+      this.sendMethod = 'private-api';
+      logger.info(
+        { err: error },
+        'BlueBubbles server info probe failed; keeping private-api send mode',
+      );
+    }
   }
 
   private verifyWebhookSecret(reqUrl: URL): boolean {
@@ -550,19 +1485,28 @@ export class BlueBubblesChannel implements Channel {
       writeResponse(res, 400, 'Malformed BlueBubbles message payload');
       return;
     }
-    if (normalized.chat.chatGuid !== this.config.allowedChatGuid) {
+    if (
+      !isBlueBubblesChatEligible(
+        this.config,
+        normalized.chat.chatGuid,
+        normalized.chat.isGroup,
+      )
+    ) {
       logger.info(
         {
-          expectedChatGuid: this.config.allowedChatGuid,
+          chatScope: this.config.chatScope,
           receivedChatGuid: normalized.chat.chatGuid,
         },
-        'Ignoring BlueBubbles message from an unlinked chat',
+        'Ignoring BlueBubbles message outside the configured chat scope',
       );
-      writeResponse(res, 202, 'Ignored unlinked chat');
+      writeResponse(res, 202, 'Ignored chat outside configured scope');
       return;
     }
-    if (normalized.message.is_from_me) {
-      writeResponse(res, 202, 'Ignored outgoing message');
+    if (
+      normalized.message.is_from_me &&
+      !hasBlueBubblesAndreaMention(normalized.message.content)
+    ) {
+      writeResponse(res, 202, 'Ignored outgoing message without @Andrea mention');
       return;
     }
     if (
@@ -572,6 +1516,13 @@ export class BlueBubblesChannel implements Channel {
       writeResponse(res, 202, 'Ignored duplicate delivery');
       return;
     }
+
+    this.rememberObservedChatMetadata({
+      chatJid: normalized.chatJid,
+      chat: normalized.chat,
+      contact: normalized.contact,
+      message: normalized.message,
+    });
 
     this.inflightMessageIds.add(normalized.message.id);
     try {
@@ -583,7 +1534,6 @@ export class BlueBubblesChannel implements Channel {
         normalized.chat.isGroup,
       );
       await this.opts.onMessage(normalized.chatJid, normalized.message);
-      this.lastInboundObservedAt = normalized.message.timestamp;
       this.lastErrorText = null;
       if (!this.lastReadyAt) {
         this.lastReadyAt = new Date().toISOString();
@@ -601,11 +1551,12 @@ export class BlueBubblesChannel implements Channel {
   }
 
   private async postBlueBubblesText(
+    chatGuid: string,
     text: string,
     replyToGuid?: string,
   ): Promise<SendMessageResult> {
-    if (!this.config.baseUrl || !this.config.password || !this.config.allowedChatGuid) {
-      throw new Error('BlueBubbles transport is missing base URL, password, or linked chat');
+    if (!this.config.baseUrl || !this.config.password || !chatGuid) {
+      throw new Error('BlueBubbles transport is missing base URL, password, or chat target');
     }
     const url = new URL('/api/v1/message/text', this.config.baseUrl);
     for (const [key, value] of buildAuthSearchParams(this.config.password).entries()) {
@@ -613,12 +1564,13 @@ export class BlueBubblesChannel implements Channel {
     }
 
     const body: Record<string, unknown> = {
-      chatGuid: this.config.allowedChatGuid,
-      text,
-      method: 'private-api',
+      chatGuid,
+      message: text,
+      tempGuid: randomUUID(),
+      method: this.sendMethod,
     };
     if (replyToGuid) {
-      body.replyToGuid = replyToGuid;
+      body.selectedMessageGuid = replyToGuid;
     }
 
     const response = await fetch(url, {
@@ -643,25 +1595,107 @@ export class BlueBubblesChannel implements Channel {
   }
 
   private async sendBlueBubblesReply(
+    jid: string,
     text: string,
     options?: SendMessageOptions,
   ): Promise<SendMessageResult> {
+    const chatGuid = extractBlueBubblesChatGuid(jid);
+    if (!chatGuid) {
+      throw new Error('BlueBubbles target chat is invalid.');
+    }
     const replyToGuid = options?.replyToMessageId?.startsWith('bb:')
       ? options.replyToMessageId.slice(3)
       : undefined;
-    if (!replyToGuid) {
-      return this.postBlueBubblesText(text);
+    this.lastMetadataHydrationSource = 'none';
+    this.lastAttemptedTargetSequence = [];
+
+    if (replyToGuid) {
+      try {
+        this.updateLastOutboundAttempt({ kind: 'chat_guid', chatGuid });
+        const result = await this.postBlueBubblesText(chatGuid, text, replyToGuid);
+        this.successfulOutboundTargetByJid.set(jid, {
+          kind: 'chat_guid',
+          chatGuid,
+        });
+        this.lastSendErrorDetail = null;
+        return result;
+      } catch (error) {
+        logger.info(
+          { err: error, replyToGuid },
+          'BlueBubbles reply threading was rejected, retrying without reply metadata',
+        );
+      }
     }
 
-    try {
-      return await this.postBlueBubblesText(text, replyToGuid);
-    } catch (error) {
-      logger.info(
-        { err: error, replyToGuid },
-        'BlueBubbles reply threading was rejected, retrying without reply metadata',
-      );
-      return this.postBlueBubblesText(text);
+    let candidates = this.buildOutboundTargetCandidates(jid, chatGuid);
+    const attemptedTargets: BlueBubblesOutboundTargetCandidate[] = [];
+    let lastErrorText = 'BlueBubbles send failed.';
+    let nextCandidateIndex = 0;
+    let hydrationAttempted = false;
+
+    while (nextCandidateIndex < candidates.length) {
+      const candidate = candidates[nextCandidateIndex];
+      nextCandidateIndex += 1;
+      this.updateLastOutboundAttempt(candidate);
+      attemptedTargets.push(candidate);
+      this.lastAttemptedTargetSequence.push(candidate.kind);
+      try {
+        const result = await this.postBlueBubblesText(candidate.chatGuid, text);
+        this.successfulOutboundTargetByJid.set(jid, candidate);
+        this.lastSendErrorDetail = null;
+        return result;
+      } catch (error) {
+        const errorText =
+          error instanceof Error ? error.message : 'Unknown BlueBubbles send error';
+        this.lastSendErrorDetail = errorText;
+        lastErrorText = errorText;
+        const directMetadata = this.getDirectChatMetadata(jid, chatGuid);
+        const shouldHydrateFromHistory =
+          !directMetadata.isGroup &&
+          !hydrationAttempted &&
+          !directMetadata.lastAddressedHandle &&
+          this.isRetryableDirectTargetError(errorText);
+        if (shouldHydrateFromHistory) {
+          try {
+            await this.hydrateDirectChatMetadataFromHistory(jid, chatGuid, 3);
+            candidates = this.buildOutboundTargetCandidates(jid, chatGuid);
+          } catch (hydrationError) {
+            logger.warn(
+              {
+                err: hydrationError,
+                chatJid: jid,
+                chatGuid,
+              },
+              'BlueBubbles direct-chat metadata hydration failed',
+            );
+          } finally {
+            hydrationAttempted = true;
+          }
+        }
+
+        const canRetry =
+          !this.getDirectChatMetadata(jid, chatGuid).isGroup &&
+          this.isRetryableDirectTargetError(errorText) &&
+          nextCandidateIndex < candidates.length;
+        if (!canRetry) {
+          break;
+        }
+
+        logger.info(
+          {
+            err: error,
+            chatJid: jid,
+            targetKind: candidate.kind,
+            targetChatGuid: candidate.chatGuid,
+          },
+          'BlueBubbles direct-chat send failed, retrying with another target hint',
+        );
+      }
     }
+
+    throw new Error(
+      this.buildBlueBubblesSendFailureMessage(attemptedTargets, lastErrorText),
+    );
   }
 
   async connect(): Promise<void> {
@@ -697,6 +1731,15 @@ export class BlueBubblesChannel implements Channel {
         resolve();
       });
     });
+    await this.probeBlueBubblesTransport();
+    await this.refreshServerInfo();
+    await this.refreshWebhookRegistration();
+    this.lastErrorText =
+      this.transportProbeStatus === 'reachable' &&
+      this.webhookRegistrationStatus === 'registered'
+        ? null
+        : this.webhookRegistrationDetail || this.transportProbeDetail;
+    this.emitHealth();
   }
 
   async sendMessage(
@@ -710,20 +1753,37 @@ export class BlueBubblesChannel implements Channel {
     if (!this.config.sendEnabled) {
       throw new Error('BlueBubbles outbound send is disabled.');
     }
-    const linkedChatJid = buildBlueBubblesLinkedChatJid(this.config);
-    if (!linkedChatJid) {
-      throw new Error('BlueBubbles linked chat is not configured.');
+    const chatGuid = extractBlueBubblesChatGuid(jid);
+    if (!chatGuid) {
+      throw new Error('BlueBubbles target chat is not valid.');
     }
-    if (jid !== linkedChatJid) {
+    if (!isBlueBubblesChatEligible(this.config, chatGuid)) {
       throw new Error(
-        `BlueBubbles V1 only supports reply-back to the linked companion chat (${linkedChatJid}).`,
+        'BlueBubbles can only reply inside the configured chat scope.',
       );
     }
 
+    const renderedText = formatBlueBubblesOutboundText(text);
+
     try {
-      const result = await this.sendBlueBubblesReply(text, options);
+      const result = await this.sendBlueBubblesReply(jid, renderedText, options);
       this.lastOutboundResult = result.platformMessageId || 'sent without message id';
       this.lastErrorText = null;
+      this.lastSendErrorDetail = null;
+      storeChatMetadata(jid, new Date().toISOString(), jid, 'bluebubbles');
+      storeMessageDirect({
+        id:
+          result.platformMessageId ||
+          `bb:outbound:${chatGuid}:${new Date().toISOString()}`,
+        chat_jid: jid,
+        sender: 'Andrea',
+        sender_name: 'Andrea',
+        content: renderedText,
+        timestamp: new Date().toISOString(),
+        is_from_me: true,
+        is_bot_message: true,
+        reply_to_id: options?.replyToMessageId || undefined,
+      });
       this.emitHealth();
       return result;
     } catch (error) {
@@ -743,12 +1803,26 @@ export class BlueBubblesChannel implements Channel {
   }
 
   getWebhookUrl(): string {
-    return buildBlueBubblesWebhookUrl({
+    return buildBlueBubblesListenerWebhookUrl({
       host: this.config.host,
       port: this.activePort,
       webhookPath: this.config.webhookPath,
       webhookSecret: this.config.webhookSecret,
     });
+  }
+
+  getPublicWebhookUrl(): string {
+    return buildBlueBubblesWebhookUrl({
+      host: this.config.host,
+      port: this.activePort,
+      webhookPath: this.config.webhookPath,
+      webhookSecret: this.config.webhookSecret,
+      webhookPublicBaseUrl: this.config.webhookPublicBaseUrl,
+    });
+  }
+
+  getPublicWebhookDisplayUrl(): string {
+    return redactBlueBubblesWebhookUrl(this.getPublicWebhookUrl());
   }
 
   getLinkedChatJid(): string | null {

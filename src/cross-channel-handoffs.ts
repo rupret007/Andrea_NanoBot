@@ -269,7 +269,7 @@ export async function deliverCompanionHandoff(
   if (!target?.chatJid) {
     const errorText =
       targetChannel === 'bluebubbles'
-        ? 'No linked BlueBubbles companion chat is available for this account.'
+        ? 'No recent Andrea-engaged BlueBubbles chat is available for this account.'
         : 'No registered main Telegram chat is available for this linked account.';
     updateCompanionHandoff(record.handoffId, {
       status: 'failed',
@@ -282,7 +282,7 @@ export async function deliverCompanionHandoff(
       status: 'failed',
       speech:
         targetChannel === 'bluebubbles'
-          ? 'I do not have a linked BlueBubbles messages thread set up for this account yet.'
+          ? 'I do not have a recent BlueBubbles conversation to send that into yet. Start from BlueBubbles first.'
           : 'I do not have a main Telegram chat set up for this account yet.',
       errorText,
     };

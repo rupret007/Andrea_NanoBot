@@ -4,15 +4,26 @@ import { executeAssistantCapability } from '../src/assistant-capabilities.js';
 import { matchAssistantCapabilityRequest } from '../src/assistant-capability-router.js';
 import {
   BlueBubblesChannel,
+  buildBlueBubblesWebhookUrl,
+  redactBlueBubblesWebhookUrl,
+  resolveBlueBubblesConfig,
 } from '../src/channels/bluebubbles.js';
+import {
+  normalizeBlueBubblesCompanionPrompt,
+  resolveMostRecentBlueBubblesCompanionChat,
+} from '../src/bluebubbles-companion.js';
 import { resolveCompanionConversationBinding } from '../src/companion-conversation-binding.js';
 import { deliverCompanionHandoff } from '../src/cross-channel-handoffs.js';
 import {
   _initTestDatabase,
+  getAllChats,
+  initDatabase,
+  listRecentMessagesForChat,
   setRegisteredGroup,
   storeChatMetadata,
   storeMessage,
 } from '../src/db.js';
+import { buildFieldTrialOperatorTruth } from '../src/field-trial-readiness.js';
 import { saveKnowledgeSource } from '../src/knowledge-library.js';
 
 function printBlock(title: string, lines: string[]): void {
@@ -26,6 +37,12 @@ function printBlock(title: string, lines: string[]): void {
 async function startBlueBubblesApiStub() {
   const sentMessages: Array<{ url: string; body: Record<string, unknown> }> = [];
   const server = http.createServer(async (req, res) => {
+    if ((req.method || 'GET').toUpperCase() === 'GET') {
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ status: 200, message: 'Ping received!', data: 'pong' }));
+      return;
+    }
     const chunks: Buffer[] = [];
     for await (const chunk of req) {
       chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
@@ -65,7 +82,76 @@ async function startBlueBubblesApiStub() {
   };
 }
 
+async function runLiveMode(): Promise<void> {
+  initDatabase();
+  const config = resolveBlueBubblesConfig();
+  const truth = buildFieldTrialOperatorTruth();
+  const chats = getAllChats().filter((chat) => chat.jid.startsWith('bb:')).slice(0, 5);
+  const recentChat = resolveMostRecentBlueBubblesCompanionChat({
+    groupFolder: config.groupFolder || 'main',
+    maxAgeHours: 12,
+  });
+
+  printBlock('BLUEBUBBLES LIVE CONFIG', [
+    `enabled: ${config.enabled}`,
+    `base_url: ${config.baseUrl || 'missing'}`,
+    `public_webhook_url: ${
+      config.enabled
+        ? redactBlueBubblesWebhookUrl(buildBlueBubblesWebhookUrl(config))
+        : 'missing'
+    }`,
+    `listener: ${config.host}:${config.port}${config.webhookPath}`,
+    `chat_scope: ${config.chatScope}`,
+    `reply_gate: mention_required`,
+    `send_enabled: ${config.sendEnabled}`,
+  ]);
+
+  printBlock('BLUEBUBBLES LIVE PROOF', [
+    `proof: ${truth.bluebubbles.proofState}`,
+    `detail: ${truth.bluebubbles.detail}`,
+    `blocker: ${truth.bluebubbles.blocker || 'none'}`,
+    `next_action: ${truth.bluebubbles.nextAction || 'none'}`,
+    `transport: ${truth.bluebubbles.transportState}`,
+    `transport_detail: ${truth.bluebubbles.transportDetail}`,
+    `webhook_registration: ${truth.bluebubbles.webhookRegistrationState}`,
+    `webhook_registration_detail: ${truth.bluebubbles.webhookRegistrationDetail}`,
+    `most_recent_chat: ${truth.bluebubbles.mostRecentEngagedChatJid}`,
+    `most_recent_engaged_at: ${truth.bluebubbles.mostRecentEngagedAt}`,
+    `last_inbound: ${truth.bluebubbles.lastInboundObservedAt}`,
+    `last_inbound_chat: ${truth.bluebubbles.lastInboundChatJid}`,
+    `last_inbound_self_authored: ${truth.bluebubbles.lastInboundWasSelfAuthored}`,
+    `last_outbound: ${truth.bluebubbles.lastOutboundResult}`,
+      `last_outbound_target_kind: ${truth.bluebubbles.lastOutboundTargetKind}`,
+      `last_outbound_target: ${truth.bluebubbles.lastOutboundTarget}`,
+      `last_send_error: ${truth.bluebubbles.lastSendErrorDetail}`,
+      `send_method: ${truth.bluebubbles.sendMethod}`,
+      `private_api_available: ${truth.bluebubbles.privateApiAvailable}`,
+      `last_metadata_hydration: ${truth.bluebubbles.lastMetadataHydrationSource}`,
+      `attempted_target_sequence: ${truth.bluebubbles.attemptedTargetSequence}`,
+  ]);
+
+  printBlock(
+    'BLUEBUBBLES LIVE CHATS',
+    chats.length > 0
+      ? chats.map((chat) => {
+          const latest = listRecentMessagesForChat(chat.jid, 1)[0];
+          return `${chat.jid} | name=${chat.name} | is_group=${chat.is_group} | last_message=${latest?.timestamp || chat.last_message_time}`;
+        })
+      : ['none'],
+  );
+
+  printBlock('BLUEBUBBLES LIVE TARGET', [
+    `recent_target: ${recentChat?.chatJid || 'none'}`,
+    `recent_target_at: ${recentChat?.engagedAt || 'none'}`,
+  ]);
+}
+
 async function main(): Promise<void> {
+  if (process.argv.includes('--live')) {
+    await runLiveMode();
+    return;
+  }
+
   _initTestDatabase();
 
   setRegisteredGroup('tg:main', {
@@ -100,6 +186,9 @@ async function main(): Promise<void> {
       host: '127.0.0.1',
       port: 0,
       groupFolder: 'main',
+      webhookPublicBaseUrl: null,
+      chatScope: 'allowlist',
+      allowedChatGuids: ['chat-proof'],
       allowedChatGuid: 'chat-proof',
       webhookPath: '/bluebubbles/webhook',
       webhookSecret: 'hook-proof',
@@ -128,6 +217,8 @@ async function main(): Promise<void> {
           {
             bluebubbles: {
               enabled: true,
+              chatScope: 'allowlist',
+              allowedChatGuids: ['chat-proof'],
               allowedChatGuid: 'chat-proof',
               groupFolder: 'main',
             },
@@ -137,7 +228,8 @@ async function main(): Promise<void> {
           throw new Error('Missing BlueBubbles companion binding');
         }
 
-        const match = matchAssistantCapabilityRequest(message.content);
+        const promptText = normalizeBlueBubblesCompanionPrompt(message.content);
+        const match = matchAssistantCapabilityRequest(promptText);
         if (!match) {
           await channel.sendMessage(chatJid, "I'm here. Ask me naturally and I'll keep going.");
           return;
@@ -151,7 +243,7 @@ async function main(): Promise<void> {
             now: new Date('2026-04-06T12:05:00.000Z'),
           },
           input: {
-            text: message.content,
+            text: promptText,
             canonicalText: match.canonicalText,
           },
         });
@@ -221,7 +313,7 @@ async function main(): Promise<void> {
         },
         message: {
           guid: 'msg-proof-1',
-          text: 'What am I forgetting?',
+          text: '@Andrea what am I forgetting?',
           senderName: 'Rupret',
           handle: {
             address: '+15550001111',
@@ -242,7 +334,7 @@ async function main(): Promise<void> {
         },
         message: {
           guid: 'msg-proof-2',
-          text: 'What do my saved notes say about Candace dinner timing? Send me the fuller version on Telegram.',
+          text: '@Andrea what do my saved notes say about Candace dinner timing? Send me the fuller version on Telegram.',
           senderName: 'Rupret',
           handle: {
             address: '+15550001111',
@@ -279,6 +371,8 @@ async function main(): Promise<void> {
       {
         bluebubbles: {
           enabled: true,
+          chatScope: 'allowlist',
+          allowedChatGuids: ['chat-proof'],
           allowedChatGuid: 'chat-proof',
           groupFolder: 'main',
         },

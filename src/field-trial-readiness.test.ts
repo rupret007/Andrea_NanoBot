@@ -4,7 +4,13 @@ import path from 'path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { _closeDatabase, _initTestDatabase } from './db.js';
+import {
+  _closeDatabase,
+  _initTestDatabase,
+  insertPilotJourneyEvent,
+  storeChatMetadata,
+  storeMessage,
+} from './db.js';
 import { buildFieldTrialOperatorTruth } from './field-trial-readiness.js';
 import {
   getAlexaLastSignedRequestStatePath,
@@ -199,6 +205,8 @@ describe('field-trial readiness', () => {
     vi.stubEnv('BLUEBUBBLES_ENABLED', '');
     vi.stubEnv('BLUEBUBBLES_BASE_URL', '');
     vi.stubEnv('BLUEBUBBLES_PASSWORD', '');
+    vi.stubEnv('BLUEBUBBLES_CHAT_SCOPE', '');
+    vi.stubEnv('BLUEBUBBLES_ALLOWED_CHAT_GUIDS', '');
     vi.stubEnv('BLUEBUBBLES_ALLOWED_CHAT_GUID', '');
     writeProviderProofState({
       updatedAt: '2026-04-07T18:00:00.000Z',
@@ -227,12 +235,224 @@ describe('field-trial readiness', () => {
     expect(truth.bluebubbles.proofState).toBe('externally_blocked');
     expect(truth.bluebubbles.blocker).toContain('not configured in Andrea on this host');
     expect(truth.bluebubbles.nextAction).toContain('BLUEBUBBLES_*');
+    expect(truth.bluebubbles.chatScope).toBe('allowlist');
     expect(truth.research.proofState).toBe('externally_blocked');
     expect(truth.research.blocker).toContain('quota or billing limit');
     expect(truth.research.blockerOwner).toBe('external');
     expect(truth.imageGeneration.proofState).toBe('externally_blocked');
     expect(truth.imageGeneration.blocker).toContain('quota or billing limit');
     expect(truth.imageGeneration.blockerOwner).toBe('external');
+  });
+
+  it('marks BlueBubbles live-proven from fresh same-chat proof across real traffic', () => {
+    vi.stubEnv('BLUEBUBBLES_ENABLED', 'true');
+    vi.stubEnv('BLUEBUBBLES_BASE_URL', 'http://macbook-pro.local:1234');
+    vi.stubEnv('BLUEBUBBLES_PASSWORD', 'secret');
+    vi.stubEnv('BLUEBUBBLES_GROUP_FOLDER', 'main');
+    vi.stubEnv('BLUEBUBBLES_CHAT_SCOPE', 'all_synced');
+    vi.stubEnv('BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL', 'http://192.168.5.136:4305');
+    vi.stubEnv('BLUEBUBBLES_WEBHOOK_SECRET', 'hook-secret');
+    vi.stubEnv('BLUEBUBBLES_SEND_ENABLED', 'true');
+
+    const snapshot: HostControlSnapshot = {
+      paths: resolveHostControlPaths(tempDir),
+      nodeRuntime: null,
+      hostState: null,
+      readyState: null,
+      assistantHealthState: {
+        bootId: 'boot-blue',
+        pid: process.pid,
+        appVersion: '1.0.0-test',
+        updatedAt: '2026-04-07T20:10:00.000Z',
+        channels: [
+          {
+            name: 'bluebubbles',
+            configured: true,
+            state: 'ready',
+            updatedAt: '2026-04-07T20:10:00.000Z',
+            detail: 'listener 0.0.0.0:4305/bluebubbles/webhook | scope all_synced | reply gate mention_required | transport reachable/auth ok (200)',
+          },
+        ],
+      },
+      telegramRoundtripState: null,
+      telegramTransportState: null,
+      runtimeAuditState: null,
+    };
+
+    storeChatMetadata(
+      'bb:iMessage;+;chat-proof',
+      '2026-04-07T20:05:00.000Z',
+      'Candace',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'bb:msg-1',
+      chat_jid: 'bb:iMessage;+;chat-proof',
+      sender: 'bb:+15551234567',
+      sender_name: 'Candace',
+      content: '@Andrea hi',
+      timestamp: '2026-04-07T20:00:00.000Z',
+      is_from_me: false,
+      is_bot_message: false,
+    });
+    storeMessage({
+      id: 'bb:msg-2',
+      chat_jid: 'bb:iMessage;+;chat-proof',
+      sender: 'Andrea',
+      sender_name: 'Andrea',
+      content: 'Hi. I am here.',
+      timestamp: '2026-04-07T20:01:00.000Z',
+      is_from_me: true,
+      is_bot_message: true,
+    });
+    insertPilotJourneyEvent({
+      eventId: 'bb-proof-1',
+      journeyId: 'ordinary_chat',
+      channel: 'bluebubbles',
+      groupFolder: 'main',
+      chatJid: 'bb:iMessage;+;chat-proof',
+      threadId: null,
+      routeKey: 'direct_quick_reply',
+      systemsInvolved: ['assistant_shell'],
+      outcome: 'success',
+      blockerClass: null,
+      blockerOwner: 'none',
+      degradedPath: null,
+      handoffCreated: false,
+      missionCreated: false,
+      threadSaved: false,
+      reminderCreated: false,
+      librarySaved: false,
+      currentWorkRef: null,
+      summaryText: 'Ordinary chat greeting',
+      startedAt: '2026-04-07T20:00:00.000Z',
+      completedAt: '2026-04-07T20:00:02.000Z',
+      durationMs: 2000,
+    });
+    insertPilotJourneyEvent({
+      eventId: 'bb-proof-2',
+      journeyId: 'daily_guidance',
+      channel: 'bluebubbles',
+      groupFolder: 'main',
+      chatJid: 'bb:iMessage;+;chat-proof',
+      threadId: null,
+      routeKey: 'daily.loose_ends',
+      systemsInvolved: ['daily_companion'],
+      outcome: 'success',
+      blockerClass: null,
+      blockerOwner: 'none',
+      degradedPath: null,
+      handoffCreated: false,
+      missionCreated: false,
+      threadSaved: false,
+      reminderCreated: false,
+      librarySaved: false,
+      currentWorkRef: null,
+      summaryText: 'Daily loose-ends guidance',
+      startedAt: '2026-04-07T20:03:00.000Z',
+      completedAt: '2026-04-07T20:03:06.000Z',
+      durationMs: 6000,
+    });
+
+    const truth = buildFieldTrialOperatorTruth({
+      projectRoot: tempDir,
+      hostSnapshot: snapshot,
+      windowsHost: null,
+    });
+
+    expect(truth.bluebubbles.proofState).toBe('live_proven');
+    expect(truth.bluebubbles.mostRecentEngagedChatJid).toBe('bb:iMessage;+;chat-proof');
+    expect(truth.bluebubbles.transportState).toBe('ready');
+    expect(truth.bluebubbles.replyGateMode).toBe('mention_required');
+    expect(truth.bluebubbles.publicWebhookUrl).toContain('secret=***');
+    expect(truth.bluebubbles.lastInboundObservedAt).toBe('2026-04-07T20:00:00.000Z');
+    expect(truth.bluebubbles.lastOutboundResult).toContain('bb:iMessage;+;chat-proof');
+  });
+
+  it('treats a self-authored @Andrea BlueBubbles message with failed reply-back as degraded-but-usable', () => {
+    vi.stubEnv('BLUEBUBBLES_ENABLED', 'true');
+    vi.stubEnv('BLUEBUBBLES_BASE_URL', 'http://macbook-pro.local:1234');
+    vi.stubEnv('BLUEBUBBLES_PASSWORD', 'secret');
+    vi.stubEnv('BLUEBUBBLES_GROUP_FOLDER', 'main');
+    vi.stubEnv('BLUEBUBBLES_CHAT_SCOPE', 'all_synced');
+    vi.stubEnv('BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL', 'http://192.168.5.136:4305');
+    vi.stubEnv('BLUEBUBBLES_WEBHOOK_SECRET', 'hook-secret');
+    vi.stubEnv('BLUEBUBBLES_SEND_ENABLED', 'true');
+
+    const snapshot: HostControlSnapshot = {
+      paths: resolveHostControlPaths(tempDir),
+      nodeRuntime: null,
+      hostState: null,
+      readyState: null,
+      assistantHealthState: {
+        bootId: 'boot-blue-self',
+        pid: process.pid,
+        appVersion: '1.0.0-test',
+        updatedAt: '2026-04-08T05:10:33.000Z',
+        channels: [
+          {
+            name: 'bluebubbles',
+            configured: true,
+            state: 'degraded',
+            updatedAt: '2026-04-08T05:10:33.000Z',
+            lastError:
+              'BlueBubbles send failed after targets [chat_guid, last_addressed_handle, service_specific_last_addressed_handle]: Message Send Error',
+            detail:
+              'listener 0.0.0.0:4305/bluebubbles/webhook | scope all_synced | reply gate mention_required | transport reachable/auth ok (200) | last inbound 2026-04-08T05:10:24.440Z | last inbound chat bb:iMessage;-;+14695405551 | last inbound self_authored yes | no outbound sent yet | last outbound target kind service_specific_last_addressed_handle | last outbound target value iMessage;-;jeffstory007@gmail.com | last send error Message Send Error | send method apple-script | private api available no | last metadata hydration history | attempted target sequence chat_guid -> last_addressed_handle -> service_specific_last_addressed_handle',
+          },
+        ],
+      },
+      telegramRoundtripState: null,
+      telegramTransportState: null,
+      runtimeAuditState: null,
+    };
+
+    storeChatMetadata(
+      'bb:iMessage;-;+14695405551',
+      '2026-04-08T05:10:24.440Z',
+      'Jeff',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'bb:msg-self-1',
+      chat_jid: 'bb:iMessage;-;+14695405551',
+      sender: 'bb:+14695405551',
+      sender_name: 'Jeff',
+      content: '@Andrea what time is it?',
+      timestamp: '2026-04-08T05:10:24.440Z',
+      is_from_me: true,
+      is_bot_message: false,
+    });
+
+    const truth = buildFieldTrialOperatorTruth({
+      projectRoot: tempDir,
+      hostSnapshot: snapshot,
+      windowsHost: null,
+    });
+
+    expect(truth.bluebubbles.proofState).toBe('degraded_but_usable');
+    expect(truth.bluebubbles.blocker).toContain('received your @Andrea message');
+    expect(truth.bluebubbles.blockerOwner).toBe('repo_side');
+    expect(truth.bluebubbles.nextAction).toContain('self-chat');
+    expect(truth.bluebubbles.lastInboundObservedAt).toBe('2026-04-08T05:10:24.440Z');
+    expect(truth.bluebubbles.lastInboundChatJid).toBe('bb:iMessage;-;+14695405551');
+    expect(truth.bluebubbles.lastInboundWasSelfAuthored).toBe(true);
+    expect(truth.bluebubbles.lastOutboundResult).toBe('none');
+    expect(truth.bluebubbles.lastOutboundTargetKind).toBe(
+      'service_specific_last_addressed_handle',
+    );
+    expect(truth.bluebubbles.lastOutboundTarget).toBe(
+      'iMessage;-;jeffstory007@gmail.com',
+    );
+    expect(truth.bluebubbles.lastSendErrorDetail).toBe('Message Send Error');
+    expect(truth.bluebubbles.sendMethod).toBe('apple-script');
+    expect(truth.bluebubbles.privateApiAvailable).toBe('no');
+    expect(truth.bluebubbles.lastMetadataHydrationSource).toBe('history');
+    expect(truth.bluebubbles.attemptedTargetSequence).toBe(
+      'chat_guid -> last_addressed_handle -> service_specific_last_addressed_handle',
+    );
   });
 
   it('keeps research and image generation live-proven from persisted provider proof', () => {

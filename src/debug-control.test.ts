@@ -185,6 +185,13 @@ describe('debug log tails', () => {
       `Host log path: ${path.join(tempDir, 'logs', 'nanoclaw.host.log')}`,
     );
     expect(status).toContain('BlueBubbles proof:');
+    expect(status).toContain('BlueBubbles last inbound chat:');
+    expect(status).toContain('BlueBubbles last outbound target kind:');
+    expect(status).toContain('BlueBubbles last send error:');
+    expect(status).toContain('BlueBubbles send method:');
+    expect(status).toContain('BlueBubbles private API available:');
+    expect(status).toContain('BlueBubbles last metadata hydration:');
+    expect(status).toContain('BlueBubbles attempted target sequence:');
     expect(status).toContain('Outward research proof:');
     expect(status).toContain('Image generation proof:');
     expect(status).toContain('Host health proof:');

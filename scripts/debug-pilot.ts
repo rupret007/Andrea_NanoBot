@@ -143,6 +143,23 @@ async function main(): Promise<void> {
     `  confirm=${truth.alexa.confirmCommand}`,
     ...(truth.alexa.blocker ? [`  blocker=${truth.alexa.blocker}`] : []),
     `- BlueBubbles: ${truth.bluebubbles.proofState}`,
+    `  scope=${truth.bluebubbles.chatScope} / reply_gate=${truth.bluebubbles.replyGateMode} / transport=${truth.bluebubbles.transportState}`,
+    `  server=${truth.bluebubbles.serverBaseUrl}`,
+    `  webhook=${truth.bluebubbles.publicWebhookUrl}`,
+    `  listener=${truth.bluebubbles.listenerHost}:${truth.bluebubbles.listenerPort}`,
+    `  most_recent_chat=${truth.bluebubbles.mostRecentEngagedChatJid} / engaged_at=${truth.bluebubbles.mostRecentEngagedAt}`,
+    `  last_inbound=${truth.bluebubbles.lastInboundObservedAt} / chat=${truth.bluebubbles.lastInboundChatJid} / self_authored=${truth.bluebubbles.lastInboundWasSelfAuthored}`,
+      `  last_outbound=${truth.bluebubbles.lastOutboundResult} / target_kind=${truth.bluebubbles.lastOutboundTargetKind} / target=${truth.bluebubbles.lastOutboundTarget}`,
+      `  last_send_error=${truth.bluebubbles.lastSendErrorDetail}`,
+      `  send_method=${truth.bluebubbles.sendMethod} / private_api_available=${truth.bluebubbles.privateApiAvailable}`,
+      `  metadata_hydration=${truth.bluebubbles.lastMetadataHydrationSource} / attempted_targets=${truth.bluebubbles.attemptedTargetSequence}`,
+    `  transport_detail=${truth.bluebubbles.transportDetail}`,
+    ...(truth.bluebubbles.blocker
+      ? [`  blocker=${truth.bluebubbles.blocker}`]
+      : []),
+    ...(truth.bluebubbles.nextAction
+      ? [`  next_step=${truth.bluebubbles.nextAction}`]
+      : []),
     `- Work cockpit: ${truth.workCockpit.proofState}`,
     `- Life threads: ${truth.lifeThreads.proofState}`,
     `- Communication companion: ${truth.communicationCompanion.proofState}`,

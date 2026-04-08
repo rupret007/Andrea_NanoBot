@@ -12,7 +12,7 @@ Andrea can now:
 
 - answer briefly on Alexa
 - offer a fuller Telegram continuation when the result is richer than voice should carry
-- send a bounded text continuation into the linked BlueBubbles messages thread when the user explicitly asks for it
+- send a bounded text continuation into the most recent Andrea-engaged BlueBubbles chat when the user explicitly asks for it
 - turn a voice conversation into a concrete action using the existing reminder, thread, library, and ritual systems
 - keep the handoff explicit and honest if delivery fails
 
@@ -141,13 +141,13 @@ The handoff layer reuses existing capability gating instead of bypassing it.
 
 Important boundaries:
 
-- Alexa can now hand off to Telegram or to one linked BlueBubbles messages thread
-- only the registered main Telegram chat and one linked BlueBubbles conversation are valid delivery targets in v1
+- Alexa can now hand off to Telegram or to the most recent Andrea-engaged BlueBubbles chat on this host
+- the registered main Telegram chat and a fresh recent BlueBubbles companion chat are the only valid delivery targets in v1
 - work cockpit, logs, runtime controls, and other operator-only flows remain out of scope for Alexa
 - failed delivery is surfaced honestly
 
 If no registered main Telegram chat exists for the linked account, Andrea says so plainly and the handoff is marked failed.
-If no linked BlueBubbles thread exists, Andrea says that plainly too.
+If no recent Andrea-engaged BlueBubbles chat exists, Andrea says that plainly and asks the user to start from BlueBubbles first.
 
 ## Testing
 
@@ -182,7 +182,7 @@ The harness now seeds an isolated test database for each run so repeated proof p
 
 Current intentional limits:
 
-- no generic cross-channel routing beyond Alexa, Telegram, and one linked BlueBubbles thread
+- no generic cross-channel routing beyond Alexa, Telegram, and the most recent Andrea-engaged BlueBubbles chat
 - no autonomous follow-up loops
 - no background retries
 - no silent pushes

@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
+import { _initTestDatabase, storeChatMetadata } from './db.js';
 import {
   buildBlueBubblesChatJid,
   listCompanionConversationChatJids,
@@ -7,6 +8,10 @@ import {
 } from './companion-conversation-binding.js';
 
 describe('companion conversation binding', () => {
+  beforeEach(() => {
+    _initTestDatabase();
+  });
+
   const registeredGroups = {
     'tg:main': {
       name: 'Main',
@@ -40,11 +45,11 @@ describe('companion conversation binding', () => {
     });
   });
 
-  it('maps the linked BlueBubbles chat into the shared companion folder without making it main', () => {
+  it('maps all-synced BlueBubbles chats into the shared companion folder without making them main', () => {
     const binding = resolveCompanionConversationBinding('bb:chat-123', registeredGroups, {
       bluebubbles: {
         enabled: true,
-        allowedChatGuid: 'chat-123',
+        chatScope: 'all_synced',
         groupFolder: 'main',
       },
     });
@@ -62,15 +67,108 @@ describe('companion conversation binding', () => {
     expect(binding?.group.name).toContain('BlueBubbles');
   });
 
-  it('lists the linked BlueBubbles jid for companion polling when the shared folder exists', () => {
+  it('lists known all-synced BlueBubbles jids for companion polling when the shared folder exists', () => {
+    storeChatMetadata(
+      'bb:iMessage;+;chat-123',
+      '2026-04-07T18:00:00.000Z',
+      'Candace',
+      'bluebubbles',
+      false,
+    );
+    storeChatMetadata(
+      'bb:iMessage;+;chat-456',
+      '2026-04-07T18:01:00.000Z',
+      'Family',
+      'bluebubbles',
+      true,
+    );
+
     expect(
       listCompanionConversationChatJids(registeredGroups, {
         bluebubbles: {
           enabled: true,
-          allowedChatGuid: 'chat-123',
+          chatScope: 'all_synced',
           groupFolder: 'main',
         },
       }),
-    ).toEqual(expect.arrayContaining(['tg:main', 'bb:chat-123']));
+    ).toEqual(
+      expect.arrayContaining([
+        'tg:main',
+        'bb:iMessage;+;chat-123',
+        'bb:iMessage;+;chat-456',
+      ]),
+    );
+  });
+
+  it('can scope BlueBubbles to contacts-only when chat metadata says the chat is 1:1', () => {
+    storeChatMetadata(
+      'bb:iMessage;+;chat-dm',
+      '2026-04-07T18:00:00.000Z',
+      'Candace',
+      'bluebubbles',
+      false,
+    );
+    storeChatMetadata(
+      'bb:iMessage;+;chat-group',
+      '2026-04-07T18:01:00.000Z',
+      'Family',
+      'bluebubbles',
+      true,
+    );
+
+    expect(
+      resolveCompanionConversationBinding('bb:iMessage;+;chat-dm', registeredGroups, {
+        bluebubbles: {
+          enabled: true,
+          chatScope: 'contacts_only',
+          groupFolder: 'main',
+        },
+      }),
+    ).toBeTruthy();
+    expect(
+      resolveCompanionConversationBinding('bb:iMessage;+;chat-group', registeredGroups, {
+        bluebubbles: {
+          enabled: true,
+          chatScope: 'contacts_only',
+          groupFolder: 'main',
+        },
+      }),
+    ).toBeUndefined();
+  });
+
+  it('supports allowlist mode through the new list field and the legacy single-chat field', () => {
+    expect(
+      resolveCompanionConversationBinding('bb:chat-a', registeredGroups, {
+        bluebubbles: {
+          enabled: true,
+          chatScope: 'allowlist',
+          allowedChatGuids: ['chat-a'],
+          allowedChatGuid: 'chat-b',
+          groupFolder: 'main',
+        },
+      }),
+    ).toBeTruthy();
+    expect(
+      resolveCompanionConversationBinding('bb:chat-b', registeredGroups, {
+        bluebubbles: {
+          enabled: true,
+          chatScope: 'allowlist',
+          allowedChatGuids: ['chat-a'],
+          allowedChatGuid: 'chat-b',
+          groupFolder: 'main',
+        },
+      }),
+    ).toBeTruthy();
+    expect(
+      resolveCompanionConversationBinding('bb:chat-c', registeredGroups, {
+        bluebubbles: {
+          enabled: true,
+          chatScope: 'allowlist',
+          allowedChatGuids: ['chat-a'],
+          allowedChatGuid: 'chat-b',
+          groupFolder: 'main',
+        },
+      }),
+    ).toBeUndefined();
   });
 });

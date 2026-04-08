@@ -192,7 +192,7 @@ Important truth for this host:
 
 - a healthy host can still report `STATUS: failed` if `EXTERNAL_BLOCKERS` are present
 - on the current host, that now usually means `alexa_live_signed_turn_missing`, not a broken service
-- BlueBubbles remains externally blocked in Andrea on this Windows machine until the `BLUEBUBBLES_*` host configuration is loaded and a same-host roundtrip is reproved
+- BlueBubbles is near-live on this Windows machine once the `BLUEBUBBLES_*` host configuration is loaded, the server is reachable, and Andrea's public webhook is registered; it becomes live-proven only after a same-host roundtrip is reproved
 - if `SERVICE: running_ready` and the blocker is external, treat that as an exact release-candidate caveat rather than a host failure
 
 Then validate the public-safe Telegram surface:
@@ -246,11 +246,11 @@ Important pilot-mode limits:
 If BlueBubbles is configured on that host, add:
 
 - one real inbound BlueBubbles message
-- one real reply back into the same linked BlueBubbles conversation
+- one real reply back into that same BlueBubbles conversation
 - one safe companion flow such as `what am I forgetting`
 - one explicit BlueBubbles -> Telegram handoff if you are validating cross-channel continuity
 - one explicit communication-companion flow such as:
-  - `summarize this message`
+  - `summarize this`
   - `what should I say back`
   - `what do I owe people`
   - `remind me to reply later`
@@ -388,7 +388,7 @@ Current truthful closeout note:
 - Telegram is the live-proven release-candidate surface on this host for this pass
 - Alexa listener, OAuth, public ingress, and pinned Node 22 are healthy, and Alexa is live-proven on this host from a fresh handled signed `IntentRequest`
 - if `npm run services:status` later shows `alexa_live_proof=near_live_only`, the remaining Alexa blocker is one human-operated voice or authenticated simulator run after importing `docs/alexa/interaction-model.en-US.json` and running `Build Model`
-- BlueBubbles remains externally blocked in Andrea on this host until the `BLUEBUBBLES_*` host configuration is loaded and a real same-host roundtrip is reproved
+- BlueBubbles is now near-live on this host once the `BLUEBUBBLES_*` config is loaded, the server is reachable, and Andrea's public webhook is registered; it remains below live-proven until one real same-host roundtrip is reproved
 - outward-facing research and Telegram image generation are now live-proven on this host through the direct OpenAI provider path
 - if the Anthropic-compatible LiteLLM gateway degrades later, report that separately as the core-runtime compatibility lane rather than as a direct OpenAI billing problem
 - typed Alexa+ app chat is not an authoritative proof surface unless Andrea logs a real signed follow-up `IntentRequest` after launch

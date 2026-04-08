@@ -224,7 +224,7 @@ function slugifyName(value: string): string {
 function stripCommandPrefix(raw: string): string {
   return raw
     .replace(
-      /^(?:summarize this message|what did they mean|what still needs a reply here|what should i say back|draft a reply(?: to [a-z][a-z' -]+)?|give me a short reply|make it warmer|make it more direct|make it sound like me|save this conversation under [^:]+|remind me to reply later|don't surface this automatically|dont surface this automatically|stop tracking that|forget this conversation thread|mark that handled)[:,-]?\s*/i,
+      /^(?:summarize this(?: message)?|what did they mean|what still needs a reply here|what should i say back|draft a response|draft a reply(?: to [a-z][a-z' -]+)?|give me a short reply|make it warmer|make it more direct|make it sound like me|save this conversation under [^:]+|remind me to reply later|don't surface this automatically|dont surface this automatically|stop tracking that|forget this conversation thread|mark that handled)[:,-]?\s*/i,
       '',
     )
     .trim();
@@ -245,12 +245,17 @@ function extractLatestInboundMessage(chatJid: string | undefined): {
   timestamp?: string;
 } {
   if (!chatJid) return {};
-  const message = listRecentMessagesForChat(chatJid, 8).find(
-    (item) => !item.is_from_me && !item.is_bot_message && item.content?.trim(),
-  );
+  const message = listRecentMessagesForChat(chatJid, 12).find((item) => {
+    if (item.is_from_me || item.is_bot_message || !item.content?.trim()) {
+      return false;
+    }
+    return Boolean(cleanMessageBody(item.content));
+  });
   if (!message) return {};
+  const cleaned = cleanMessageBody(message.content);
+  if (!cleaned) return {};
   return {
-    text: message.content,
+    text: cleaned,
     messageId: message.id,
     timestamp: message.timestamp,
   };

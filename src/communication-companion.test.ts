@@ -96,6 +96,48 @@ describe('communication companion', () => {
     expect(result.followupState).toBe('reply_needed');
   });
 
+  it('skips the current companion ask when falling back to BlueBubbles chat context', () => {
+    seedCandace();
+    storeChatMetadata(
+      'bb:chat-2',
+      '2026-04-06T10:06:00.000Z',
+      'Candace',
+      'bluebubbles',
+      false,
+    );
+    storeMessageDirect({
+      id: 'bb:msg-older',
+      chat_jid: 'bb:chat-2',
+      sender: '+15551234567',
+      sender_name: 'Candace',
+      content: 'Can you send me the address when you get a chance?',
+      timestamp: '2026-04-06T10:00:00.000Z',
+      is_from_me: false,
+      is_bot_message: false,
+    });
+    storeMessageDirect({
+      id: 'bb:msg-ask',
+      chat_jid: 'bb:chat-2',
+      sender: '+15551234567',
+      sender_name: 'Candace',
+      content: 'summarize this',
+      timestamp: '2026-04-06T10:05:00.000Z',
+      is_from_me: false,
+      is_bot_message: false,
+    });
+
+    const result = analyzeCommunicationMessage({
+      channel: 'bluebubbles',
+      groupFolder: 'main',
+      chatJid: 'bb:chat-2',
+      now: new Date('2026-04-06T10:06:00.000Z'),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.messageText).toContain('address');
+    expect(result.messageText).not.toContain('summarize this');
+  });
+
   it('builds warmer drafts from relationship-aware message context', () => {
     seedCandace();
 

@@ -25,9 +25,9 @@ Use this shorthand when you need the current host story fast:
   - outward research
   - Telegram image generation
 - **near-live only**
-  - nothing currently; if Alexa proof ages past 24 hours, it drops back here until one fresh handled signed `IntentRequest` is recorded again
+  - BlueBubbles on this PC, because Andrea can reach the live server and the webhook is registered, but one real same-host inbound -> reply -> follow-up roundtrip still needs to be reproved
 - **externally blocked**
-  - BlueBubbles in Andrea on this PC, until the `BLUEBUBBLES_*` host configuration is loaded and one real same-host roundtrip is reproved
+  - nothing currently in the BlueBubbles lane; if the live server, auth, or webhook wiring regresses, operator surfaces should report that exact blocker again
 
 When operator surfaces disagree, the release truth should come from:
 
@@ -106,7 +106,7 @@ Current Alexa truth:
 - `Andrea_NanoBot` is the only canonical repo now; the older `ANDREA/nanoclaw` checkout is non-authoritative reference only
 - Telegram ordinary chat and the main flagship follow-through journeys were live-proven on this host on April 7, 2026
 - Alexa is now live-proven on this host from a fresh handled signed `WhatAmIForgettingIntent`; if that proof ages past 24 hours, operator surfaces intentionally downgrade it back to `near_live_only`
-- BlueBubbles remains externally blocked in Andrea on this Windows host until the `BLUEBUBBLES_*` host configuration is loaded and one real inbound -> reply -> follow-up roundtrip is reproved here
+- BlueBubbles is now near-live on this Windows host: the live `BLUEBUBBLES_*` configuration is loaded, the server is reachable, and the webhook is registered, but one real inbound -> reply -> follow-up roundtrip still needs to be reproved here
 - outward-facing research and Telegram image generation are now live-proven on this host through the direct OpenAI provider path
 - the local Anthropic-compatible LiteLLM gateway remains a separate compatibility/runtime lane and should be reported separately if it degrades later
 

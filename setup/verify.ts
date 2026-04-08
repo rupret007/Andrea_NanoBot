@@ -2074,6 +2074,40 @@ export async function run(_args: string[]): Promise<void> {
     BLUEBUBBLES_PROOF_DETAIL: fieldTrialTruth.bluebubbles.detail,
     BLUEBUBBLES_PROOF_BLOCKER: fieldTrialTruth.bluebubbles.blocker,
     BLUEBUBBLES_PROOF_NEXT_ACTION: fieldTrialTruth.bluebubbles.nextAction,
+    BLUEBUBBLES_TRANSPORT: fieldTrialTruth.bluebubbles.transportState,
+    BLUEBUBBLES_TRANSPORT_DETAIL: fieldTrialTruth.bluebubbles.transportDetail,
+    BLUEBUBBLES_SERVER_BASE_URL: fieldTrialTruth.bluebubbles.serverBaseUrl,
+    BLUEBUBBLES_WEBHOOK_URL: fieldTrialTruth.bluebubbles.publicWebhookUrl,
+    BLUEBUBBLES_WEBHOOK_REGISTRATION:
+      fieldTrialTruth.bluebubbles.webhookRegistrationState,
+    BLUEBUBBLES_WEBHOOK_REGISTRATION_DETAIL:
+      fieldTrialTruth.bluebubbles.webhookRegistrationDetail,
+    BLUEBUBBLES_LISTENER: `${fieldTrialTruth.bluebubbles.listenerHost}:${fieldTrialTruth.bluebubbles.listenerPort}`,
+    BLUEBUBBLES_CHAT_SCOPE: fieldTrialTruth.bluebubbles.chatScope,
+    BLUEBUBBLES_REPLY_GATE: fieldTrialTruth.bluebubbles.replyGateMode,
+    BLUEBUBBLES_MOST_RECENT_CHAT:
+      fieldTrialTruth.bluebubbles.mostRecentEngagedChatJid,
+    BLUEBUBBLES_LAST_INBOUND:
+      fieldTrialTruth.bluebubbles.lastInboundObservedAt,
+    BLUEBUBBLES_LAST_INBOUND_CHAT:
+      fieldTrialTruth.bluebubbles.lastInboundChatJid,
+    BLUEBUBBLES_LAST_INBOUND_SELF_AUTHORED:
+      fieldTrialTruth.bluebubbles.lastInboundWasSelfAuthored,
+    BLUEBUBBLES_LAST_OUTBOUND:
+      fieldTrialTruth.bluebubbles.lastOutboundResult,
+    BLUEBUBBLES_LAST_OUTBOUND_TARGET_KIND:
+      fieldTrialTruth.bluebubbles.lastOutboundTargetKind,
+    BLUEBUBBLES_LAST_OUTBOUND_TARGET:
+      fieldTrialTruth.bluebubbles.lastOutboundTarget,
+    BLUEBUBBLES_LAST_SEND_ERROR:
+      fieldTrialTruth.bluebubbles.lastSendErrorDetail,
+    BLUEBUBBLES_SEND_METHOD: fieldTrialTruth.bluebubbles.sendMethod,
+    BLUEBUBBLES_PRIVATE_API_AVAILABLE:
+      fieldTrialTruth.bluebubbles.privateApiAvailable,
+    BLUEBUBBLES_LAST_METADATA_HYDRATION:
+      fieldTrialTruth.bluebubbles.lastMetadataHydrationSource,
+    BLUEBUBBLES_ATTEMPTED_TARGET_SEQUENCE:
+      fieldTrialTruth.bluebubbles.attemptedTargetSequence,
     IMAGE_GENERATION_PROOF: fieldTrialTruth.imageGeneration.proofState,
     IMAGE_GENERATION_PROOF_DETAIL: fieldTrialTruth.imageGeneration.detail,
     IMAGE_GENERATION_PROOF_BLOCKER: fieldTrialTruth.imageGeneration.blocker,

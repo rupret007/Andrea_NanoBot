@@ -337,6 +337,7 @@ function matchCommunicationPrompt(
 ): AssistantCapabilityMatch | null {
   const lower = normalized.toLowerCase();
   if (
+    /^summari[sz]e this\b/.test(lower) ||
     /^summari[sz]e this message\b/.test(lower) ||
     /^what did they mean\b/.test(lower) ||
     /^what still needs a reply here\b/.test(lower)
@@ -350,6 +351,8 @@ function matchCommunicationPrompt(
   }
   if (
     /^what should i say back\b/.test(lower) ||
+    /^draft a response\b/.test(lower) ||
+    /^draft a reply\b/.test(lower) ||
     /^draft a reply to\b/.test(lower) ||
     /^give me a short reply\b/.test(lower) ||
     /^make it warmer\b/.test(lower) ||
@@ -364,6 +367,7 @@ function matchCommunicationPrompt(
     };
   }
   if (
+    /^do i owe a reply\b/.test(lower) ||
     /^what do i owe people\b/.test(lower) ||
     /^who am i forgetting to respond to\b/.test(lower) ||
     /^anything i need to send tonight\b/.test(lower) ||

@@ -91,7 +91,10 @@ import {
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
-import { buildBlueBubblesLinkedChatJid, resolveBlueBubblesConfig } from './channels/bluebubbles.js';
+import {
+  primeBlueBubblesChatHistory,
+  resolveBlueBubblesConfig,
+} from './channels/bluebubbles.js';
 import { planSimpleReminder } from './local-reminder.js';
 import {
   buildCalendarAssistantResponse,
@@ -148,6 +151,11 @@ import {
   listCompanionConversationChatJids,
   resolveCompanionConversationBinding,
 } from './companion-conversation-binding.js';
+import {
+  isBlueBubblesExplicitAsk,
+  normalizeBlueBubblesCompanionPrompt,
+  resolveMostRecentBlueBubblesCompanionChat,
+} from './bluebubbles-companion.js';
 import { recordOrganicTelegramRoundtripSuccess } from './telegram-roundtrip.js';
 import { readEnvFile } from './env.js';
 import {
@@ -1664,6 +1672,8 @@ const queue = new GroupQueue();
 let blueBubblesConversationBinding:
   | {
       enabled: boolean;
+      chatScope?: 'all_synced' | 'contacts_only' | 'allowlist';
+      allowedChatGuids?: string[];
       allowedChatGuid?: string | null;
       groupFolder?: string | null;
     }
@@ -2459,7 +2469,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     'Processing messages',
   );
 
-  const lastContent = missedMessages.at(-1)?.content ?? '';
+  const rawLastContent = missedMessages.at(-1)?.content ?? '';
+  const lastContent =
+    chatJid.startsWith('bb:')
+      ? normalizeBlueBubblesCompanionPrompt(rawLastContent)
+      : rawLastContent;
   const now = new Date();
   const tryHandleLocalCalendarAutomation = async (): Promise<boolean> => {
     try {
@@ -9816,6 +9830,8 @@ async function main(): Promise<void> {
   const blueBubblesConfig = resolveBlueBubblesConfig();
   blueBubblesConversationBinding = {
     enabled: blueBubblesConfig.enabled,
+    chatScope: blueBubblesConfig.chatScope,
+    allowedChatGuids: blueBubblesConfig.allowedChatGuids,
     allowedChatGuid: blueBubblesConfig.allowedChatGuid,
     groupFolder: blueBubblesConfig.groupFolder,
   };
@@ -10657,7 +10673,41 @@ async function main(): Promise<void> {
           lastTimestamp = msg.timestamp;
           saveState();
         }
-        queue.enqueueMessageCheck(chatJid);
+        const hasRecentCompanionContext = Boolean(
+          getSharedAssistantCapabilitySeed(chatJid, new Date()),
+        );
+        if (
+          isBlueBubblesExplicitAsk(msg.content, {
+            hasRecentCompanionContext,
+          })
+        ) {
+          try {
+            const primed = await primeBlueBubblesChatHistory(
+              blueBubblesConfig,
+              chatJid,
+              12,
+            );
+            if (primed.storedCount > 0) {
+              logger.debug(
+                { chatJid, storedCount: primed.storedCount, totalCount: primed.totalCount },
+                'Primed BlueBubbles recent chat history for an @Andrea mention',
+              );
+            }
+          } catch (error) {
+            logger.info(
+              { err: error, chatJid },
+              'BlueBubbles recent-history priming failed; continuing with stored local context',
+            );
+          }
+          queue.enqueueMessageCheck(chatJid);
+        } else {
+          lastAgentTimestamp[chatJid] = msg.timestamp;
+          saveState();
+          logger.debug(
+            { chatJid, messageId: msg.id },
+            'Ignored BlueBubbles chatter without an @Andrea mention',
+          );
+        }
       }
     },
     onChatMetadata: (
@@ -10715,19 +10765,25 @@ async function main(): Promise<void> {
     return undefined;
   };
   resolveBlueBubblesCompanionChat = (groupFolder: string) => {
-    const linkedChatJid = buildBlueBubblesLinkedChatJid(blueBubblesConfig);
-    if (!linkedChatJid || !blueBubblesConfig.enabled) {
+    if (!blueBubblesConfig.enabled) {
       return undefined;
     }
     const boundFolder = blueBubblesConfig.groupFolder || 'main';
     if (boundFolder !== groupFolder) {
       return undefined;
     }
-    const channel = findChannel(channels, linkedChatJid);
+    const recentChat = resolveMostRecentBlueBubblesCompanionChat({
+      groupFolder,
+      maxAgeHours: 12,
+    });
+    if (!recentChat?.chatJid) {
+      return undefined;
+    }
+    const channel = findChannel(channels, recentChat.chatJid);
     if (channel?.name !== 'bluebubbles' || channel.isConnected() !== true) {
       return undefined;
     }
-    return { chatJid: linkedChatJid };
+    return { chatJid: recentChat.chatJid };
   };
   resolveCompanionHandoffTarget = (
     groupFolder: string,

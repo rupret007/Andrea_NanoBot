@@ -336,6 +336,11 @@ export interface PulsePreference {
   updatedAt?: string | null;
 }
 
+export type BlueBubblesChatScope =
+  | 'all_synced'
+  | 'contacts_only'
+  | 'allowlist';
+
 export interface BlueBubblesConfig {
   enabled: boolean;
   baseUrl: string | null;
@@ -343,6 +348,9 @@ export interface BlueBubblesConfig {
   host: string;
   port: number;
   groupFolder: string;
+  webhookPublicBaseUrl: string | null;
+  chatScope: BlueBubblesChatScope;
+  allowedChatGuids: string[];
   allowedChatGuid: string | null;
   webhookPath: string;
   webhookSecret: string | null;
@@ -361,12 +369,16 @@ export interface BlueBubblesChatRef {
   displayName?: string | null;
   isGroup?: boolean;
   participants?: string[];
+  chatIdentifier?: string | null;
+  lastAddressedHandle?: string | null;
+  service?: string | null;
 }
 
 export interface BlueBubblesContactRef {
   handle: string;
   displayName?: string | null;
   address?: string | null;
+  service?: string | null;
 }
 
 export type KnowledgeSourceType =

@@ -65,9 +65,10 @@ Andrea creates or updates communication context only when the user explicitly br
 Out of scope in v1:
 
 - passive inbox crawling
-- passive BlueBubbles multi-chat sync
 - automatic message sending
 - autonomous follow-up spam
+
+BlueBubbles V1 can now work across synced chats, but Andrea should still wake only on explicit `@Andrea` mentions and should not behave like a passive inbox triage bot.
 
 ## What Andrea Can Do
 

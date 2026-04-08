@@ -45,7 +45,7 @@ Default product shape:
 
 - Alexa gives the short orientation
 - Telegram is the richer execution and follow-through surface
-- BlueBubbles stays calm and text-first, with explicit Telegram escalation when the fuller answer is better there
+- BlueBubbles stays calm and text-first across synced chats, only replies when a message explicitly mentions `@Andrea`, and escalates explicitly to Telegram when the fuller answer is better there
 
 ## Status Terms
 
@@ -77,7 +77,7 @@ Use these meanings consistently when reading `/cursor_status` and the setup docs
 - A bounded rituals and follow-through layer for morning, midday, evening, and carryover guidance.
 - A bounded Alexa-to-Telegram cross-channel handoff layer for richer continuations and voice-triggered action completion.
 - A small bounded personality layer plus request-driven Andrea Pulse.
-- A real bounded BlueBubbles companion channel for one linked personal messages thread.
+- A real bounded BlueBubbles companion channel across synced personal and group chats, gated to explicit `@Andrea` mentions only.
 
 For demo use, keep the default public surface smaller than the full operator feature set.
 The safest baseline is Telegram + direct assistance + fast quick replies for simple asks + reminders/tasks + `/cursor_status` + clean startup/health checks.
@@ -320,7 +320,7 @@ Current product truth:
 - the layer reuses profile subjects, life threads, reminders, rituals, and handoffs instead of building a separate CRM or inbox product
 - Alexa is the orientation surface
 - Telegram and BlueBubbles are the richer communication surfaces
-- no passive inbox crawl, no passive BlueBubbles sync, and no auto-send
+- no passive inbox crawl, no auto-reply spam, and no operator backdoor on BlueBubbles
 
 Typical prompts:
 
@@ -407,11 +407,12 @@ BlueBubbles is now a live V1 companion channel through the same adapter architec
 
 Current implementation truth:
 
-- one linked BlueBubbles conversation can share the same Andrea companion folder, defaulting to `main`
-- Andrea accepts inbound BlueBubbles webhook messages, normalizes them into shared `bb:` identities, and replies back to the same conversation
+- all synced BlueBubbles chats can share the same Andrea companion folder, defaulting to `main`, when `BLUEBUBBLES_CHAT_SCOPE=all_synced`
+- Andrea accepts inbound BlueBubbles webhook messages, normalizes them into shared `bb:` identities, and replies back only when the message explicitly mentions `@Andrea`
 - outbound is intentionally text-only in V1
 - BlueBubbles stays companion-safe and does not become a main control chat
 - richer detail and artifacts still hand off explicitly to Telegram
+- `summarize this` now uses the current BlueBubbles chat's recent context and can prime recent history from the live server when local context is thin
 
 See [BLUEBUBBLES_CHANNEL_PREP.md](BLUEBUBBLES_CHANNEL_PREP.md) for the exact config, webhook/send model, and current limits.
 

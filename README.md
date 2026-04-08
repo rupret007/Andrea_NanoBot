@@ -67,7 +67,7 @@ Current host truth for the Windows field-trial machine:
 
 - Telegram is the richest **live-proven** surface.
 - Alexa is **live-proven** on this host while one fresh handled signed `IntentRequest` remains within the 24-hour proof window.
-- BlueBubbles is **externally blocked in Andrea on this PC** until the `BLUEBUBBLES_*` host configuration is loaded and one real inbound -> reply -> follow-up roundtrip is reproved here.
+- BlueBubbles is **near-live only on this PC**: Andrea can reach the live server and has a registered webhook, but it still needs one fresh real inbound -> reply -> follow-up roundtrip to count as live-proven.
 - the local Codex/OpenAI runtime backend and the unified `/cursor` work cockpit are live on this host
 - outward research and Telegram image generation are now **live-proven** on this host through the direct OpenAI provider path
 - the local Anthropic-compatible LiteLLM gateway is a separate internal compatibility lane; if it degrades later, operator surfaces should report that separately from direct OpenAI proof
@@ -267,13 +267,14 @@ Andrea Pulse is a separate request-driven personality feature. It is not a healt
 
 BlueBubbles is now a real bounded Andrea messaging channel, not just prep work.
 
-- one linked `bb:` conversation can share the same companion context as Telegram and Alexa through the existing `groupFolder`, defaulting to `main`
-- Andrea now accepts inbound BlueBubbles webhooks, replies back to that same linked conversation, and stays text-only on BlueBubbles for V1
-- BlueBubbles keeps companion-safe capabilities like daily guidance, reminders, follow-through, Knowledge Library summaries, draft follow-up, and short research summaries
-- richer details and artifacts still hand off explicitly to Telegram when that is the safer surface
+- BlueBubbles V1 now supports all synced personal and group chats, not one pinned linked thread
+- Andrea replies only when a message explicitly mentions `@Andrea`, so ordinary social chatter does not trigger assistant replies
+- current-chat asks like `summarize this` now use recent `bb:` chat context and can prime recent history from the live BlueBubbles server when local context is thin
+- BlueBubbles keeps companion-safe capabilities like daily guidance, communication help, follow-through, Knowledge Library summaries, draft follow-up, and short research summaries
+- richer details still hand off explicitly to Telegram when that is the better surface
 - BlueBubbles does **not** become a main control chat and does not expose work-cockpit or admin/runtime controls
 
-On this host, BlueBubbles remains externally blocked for field-trial proof until Andrea has the live `BLUEBUBBLES_*` host configuration loaded and one real same-host roundtrip is reproved.
+On this host, BlueBubbles is now near-live: Andrea has the live `BLUEBUBBLES_*` configuration loaded, the server is reachable, and Andrea's public webhook is registered, but one real same-host inbound -> reply -> follow-up roundtrip still needs to be reproved.
 
 See [docs/BLUEBUBBLES_CHANNEL_PREP.md](docs/BLUEBUBBLES_CHANNEL_PREP.md) for the live V1 scope, config, webhook/send model, and exact current limits.
 
