@@ -7,7 +7,51 @@ import {
   listKnowledgeSourcesForGroup,
   listLifeThreadsForGroup,
   _initTestDatabase,
+  upsertDelegationRule,
 } from './db.js';
+import type { DelegationRuleRecord } from './types.js';
+
+function seedDelegationRule(
+  overrides: Partial<DelegationRuleRecord> = {},
+): DelegationRuleRecord {
+  const record: DelegationRuleRecord = {
+    ruleId: overrides.ruleId || 'rule-1',
+    groupFolder: overrides.groupFolder || 'main',
+    title: overrides.title || 'Default delegation rule',
+    triggerType: overrides.triggerType || 'bundle_type',
+    triggerScope: overrides.triggerScope || 'mixed',
+    conditionsJson:
+      overrides.conditionsJson ||
+      JSON.stringify({
+        actionType: 'create_reminder',
+        originKind: 'daily_guidance',
+      }),
+    delegatedActionsJson:
+      overrides.delegatedActionsJson ||
+      JSON.stringify([
+        {
+          actionType: 'create_reminder',
+          timingHint: 'tomorrow morning',
+        },
+      ]),
+    approvalMode: overrides.approvalMode || 'auto_apply_when_safe',
+    status: overrides.status || 'active',
+    createdAt: overrides.createdAt || '2026-04-08T10:00:00.000Z',
+    lastUsedAt: overrides.lastUsedAt ?? null,
+    timesUsed: overrides.timesUsed ?? 0,
+    timesAutoApplied: overrides.timesAutoApplied ?? 0,
+    timesOverridden: overrides.timesOverridden ?? 0,
+    lastOutcomeStatus: overrides.lastOutcomeStatus ?? null,
+    userConfirmed: overrides.userConfirmed ?? true,
+    channelApplicabilityJson:
+      overrides.channelApplicabilityJson ||
+      JSON.stringify(['telegram', 'alexa', 'bluebubbles']),
+    safetyLevel:
+      overrides.safetyLevel || 'safe_to_auto_after_delegation',
+  };
+  upsertDelegationRule(record);
+  return record;
+}
 
 describe('assistant action completion', () => {
   beforeEach(() => {
@@ -209,6 +253,44 @@ describe('assistant action completion', () => {
     );
   });
 
+  it('uses a saved save-for-later rule to auto-create the usual reminder', async () => {
+    seedDelegationRule({
+      ruleId: 'rule-save-later',
+      title: 'Save-for-later reminder default',
+      conditionsJson: JSON.stringify({
+        actionType: 'create_reminder',
+        originKind: 'daily_guidance',
+        promptPattern: 'save_that',
+      }),
+    });
+
+    const result = await completeAssistantActionFromAlexa(
+      {
+        groupFolder: 'main',
+        action: 'save_for_later',
+        utterance: 'save that for later',
+        conversationSummary: 'Candace dinner follow-up.',
+        now: new Date('2026-04-03T14:00:00Z'),
+        priorSubjectData: {
+          companionContinuationJson: JSON.stringify({
+            capabilityId: 'daily.loose_ends',
+            voiceSummary: 'Candace still needs a dinner answer tonight.',
+            completionText:
+              'Candace still needs a dinner answer tonight, and pickup works better after rehearsal.',
+          }),
+        },
+      },
+      {
+        resolveTelegramMainChat: () => ({ chatJid: 'tg:main' }),
+      },
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.replyText).toContain('usual save-for-later rule');
+    expect(result.reminderTaskId).toBeTruthy();
+    expect(getAllTasks()).toHaveLength(1);
+  });
+
   it('turns keep-track-tonight follow-ups into bounded evening carryover', async () => {
     const result = await completeAssistantActionFromAlexa(
       {
@@ -266,6 +348,85 @@ describe('assistant action completion', () => {
 
     expect(result.handled).toBe(true);
     expect(result.bridgeDraftReference).toBe('Candace');
+  });
+
+  it('uses the remembered reminder timing when the voice follow-up omits a time', async () => {
+    seedDelegationRule({
+      ruleId: 'rule-reminder',
+      title: 'Reminder timing default',
+      conditionsJson: JSON.stringify({
+        actionType: 'create_reminder',
+        originKind: 'daily_guidance',
+      }),
+    });
+
+    const result = await completeAssistantActionFromAlexa(
+      {
+        groupFolder: 'main',
+        action: 'create_reminder',
+        utterance: 'turn that into a reminder',
+        conversationSummary: 'Band thing follow-up.',
+        now: new Date('2026-04-03T14:00:00Z'),
+        priorSubjectData: {
+          companionContinuationJson: JSON.stringify({
+            capabilityId: 'daily.loose_ends',
+            voiceSummary: 'Do not forget the band thing.',
+            completionText: 'Do not forget the band thing.',
+          }),
+        },
+      },
+      {
+        resolveTelegramMainChat: () => ({ chatJid: 'tg:main' }),
+      },
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.replyText).toContain('usual reminder rule');
+    expect(result.reminderTaskId).toBeTruthy();
+  });
+
+  it('uses the remembered thread default when tracking without an explicit title', async () => {
+    seedDelegationRule({
+      ruleId: 'rule-thread',
+      title: 'Family thread default',
+      conditionsJson: JSON.stringify({
+        actionType: 'save_to_thread',
+        originKind: 'daily_guidance',
+      }),
+      delegatedActionsJson: JSON.stringify([
+        {
+          actionType: 'save_to_thread',
+          threadTitle: 'Family',
+        },
+      ]),
+    });
+
+    const result = await completeAssistantActionFromAlexa(
+      {
+        groupFolder: 'main',
+        action: 'track_thread',
+        utterance: 'track that',
+        conversationSummary: 'Dinner follow-up for Candace.',
+        priorSubjectData: {
+          companionContinuationJson: JSON.stringify({
+            capabilityId: 'daily.loose_ends',
+            voiceSummary: 'Dinner follow-up for Candace.',
+            completionText: 'Candace still needs a dinner answer tonight.',
+          }),
+        },
+      },
+      {},
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.replyText).toContain('usual thread rule');
+    expect(listLifeThreadsForGroup('main', ['active'])).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          title: 'Family',
+        }),
+      ]),
+    );
   });
 
   it('can approve an action bundle from Alexa and execute the reminder action', async () => {

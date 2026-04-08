@@ -57,6 +57,9 @@ export interface AlexaConversationSubjectData {
   outcomeReviewFocusOutcomeIds?: string[];
   outcomeReviewPrimaryOutcomeId?: string;
   outcomeReviewSummary?: string;
+  delegationRulePreviewJson?: string;
+  delegationRuleFocusRuleId?: string;
+  delegationRuleExplanation?: string;
 }
 
 export interface AlexaConversationState {
@@ -103,6 +106,8 @@ const COMPANION_COMPLETION_ACTIONS: AlexaConversationFollowupAction[] = [
   'draft_follow_up',
   'approve_bundle',
   'show_bundle',
+  'delegation_control',
+  'show_rules',
 ];
 
 function parseJsonSafe<T>(value: string, fallback: T): T {
@@ -340,6 +345,19 @@ export function resolveAlexaConversationFollowup(
     /^what about candace\b/i.test(normalized)
   ) {
     return resolveSupported('switch_person');
+  }
+  if (
+    /^(do this automatically next time|remember this as my default|don't ask me every time about that|always ask before doing that|stop doing that automatically|why did that fire)\b/i.test(
+      normalized,
+    )
+  ) {
+    return resolveSupported('delegation_control');
+  }
+  if (/^(yes|save it|remember that default|use that default)\b/i.test(normalized)) {
+    return resolveSupported('delegation_control');
+  }
+  if (/^(show my rules)\b/i.test(normalized)) {
+    return resolveSupported('show_rules');
   }
   if (
     /^(forget that|stop using that|what do you remember\b|why\b|why did you say that|what are you using to personalize this|reset that preference|be more direct|be a little more direct|be a bit more direct|don'?t bring that up automatically|stop bringing that up)/i.test(

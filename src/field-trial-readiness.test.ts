@@ -30,6 +30,8 @@ describe('field-trial readiness', () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'andrea-field-trial-'));
     process.chdir(tempDir);
     vi.unstubAllEnvs();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-04-08T12:00:00.000Z'));
     _initTestDatabase();
   });
 
@@ -38,6 +40,7 @@ describe('field-trial readiness', () => {
     process.chdir(previousCwd);
     fs.rmSync(tempDir, { recursive: true, force: true });
     vi.unstubAllEnvs();
+    vi.useRealTimers();
   });
 
   it('marks Telegram live-proven when transport and roundtrip are healthy', () => {

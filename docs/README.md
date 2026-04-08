@@ -85,6 +85,7 @@ Use these when you are enabling or validating specific capabilities:
 | Telegram onboarding and command UX | [CHANNEL_COMMANDS_AND_ONBOARDING.md](CHANNEL_COMMANDS_AND_ONBOARDING.md) |
 | Telegram operator live testing     | [TELEGRAM_OPERATOR_LIVE_TESTING.md](TELEGRAM_OPERATOR_LIVE_TESTING.md)   |
 | Approval Center / Action Bundles   | [ACTION_BUNDLES.md](ACTION_BUNDLES.md)                                   |
+| Delegation Rules / Safe Automation | [DELEGATION_RULES_AND_SAFE_AUTOMATION.md](DELEGATION_RULES_AND_SAFE_AUTOMATION.md) |
 | Outcome Tracking / Reviews         | [OUTCOME_TRACKING_AND_REVIEWS.md](OUTCOME_TRACKING_AND_REVIEWS.md)       |
 | Knowledge Library                  | [KNOWLEDGE_LIBRARY.md](KNOWLEDGE_LIBRARY.md)                             |
 | Cursor Cloud API keys              | [CURSOR_API_KEYS.md](CURSOR_API_KEYS.md)                                 |
@@ -99,6 +100,7 @@ For the productized flagship-flow view specifically:
 - Candace / people follow-through: [COMMUNICATION_COMPANION.md](COMMUNICATION_COMPANION.md)
 - plan creation and execution: [MISSIONS_AND_EXECUTION.md](MISSIONS_AND_EXECUTION.md)
 - approval and partial execution: [ACTION_BUNDLES.md](ACTION_BUNDLES.md)
+- delegated defaults and safe automation: [DELEGATION_RULES_AND_SAFE_AUTOMATION.md](DELEGATION_RULES_AND_SAFE_AUTOMATION.md)
 - closure and carryover review: [OUTCOME_TRACKING_AND_REVIEWS.md](OUTCOME_TRACKING_AND_REVIEWS.md)
 - research -> saveable output: [KNOWLEDGE_LIBRARY.md](KNOWLEDGE_LIBRARY.md)
 - cross-surface continuity: [CROSS_CHANNEL_HANDOFFS.md](CROSS_CHANNEL_HANDOFFS.md) + [ALEXA_VOICE_INTEGRATION.md](ALEXA_VOICE_INTEGRATION.md)

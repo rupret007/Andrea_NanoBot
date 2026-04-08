@@ -130,6 +130,21 @@ Treat that bundle suite as the fast proof that Andrea can:
 - report partial success or failure calmly
 - keep Alexa and Telegram follow-up semantics aligned
 
+For delegation-rule and safe-automation changes, add:
+
+```bash
+node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/delegation-rules.test.ts src/action-bundles.test.ts src/assistant-action-completion.test.ts src/alexa.test.ts src/outcome-reviews.test.ts
+npm run telegram:user:smoke
+```
+
+Treat that delegation suite as the fast proof that Andrea can:
+
+- preview and confirm a delegation rule from natural language
+- auto-apply only safe delegated actions
+- keep guarded actions on fresh approval
+- explain when a usual rule fired
+- keep rule-driven actions visible in outcome review
+
 For outcome tracking, carryover, and review-flow changes, add:
 
 ```bash
@@ -314,6 +329,20 @@ Preferred proof shape:
 - one loop that is honestly `partial` or `deferred`
 - one review answer that surfaces it clearly
 - one control that changes the carryover state without deleting the source
+
+If you are validating delegation rules on the live host, add:
+
+- one natural rule-creation ask such as `do this automatically next time`
+- one confirmation turn where Andrea previews the rule before saving it
+- one second flow where the saved rule fires on a safe action
+- one explainability turn such as `why did that fire`
+- one override turn such as `always ask before doing that`
+
+Preferred proof shape:
+
+- one safe delegated default is reused without mystery
+- one guarded action still asks despite a related rule existing
+- one review or outcome surface shows that a rule fired
 
 ## 6. Cursor Validation
 

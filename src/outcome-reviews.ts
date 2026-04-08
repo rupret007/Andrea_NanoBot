@@ -277,14 +277,24 @@ function buildSourceLabel(
 function buildReviewItem(outcome: OutcomeRecord): OutcomeReviewItem {
   const linkedRefs = parseOutcomeLinkedRefs(outcome);
   const sourceLabel = buildSourceLabel(outcome, linkedRefs);
+  const ruleNote = linkedRefs.delegationRuleId
+    ? linkedRefs.delegationExplanation || 'Used your usual rule here.'
+    : null;
   return {
     outcome,
     linkedRefs,
     sourceLabel,
-    summaryText:
-      clipText(outcome.completionSummary, 160) ||
-      clipText(outcome.nextFollowupText, 160) ||
-      sourceLabel,
+    summaryText: clipText(
+      [
+        clipText(outcome.completionSummary, 120) ||
+          clipText(outcome.nextFollowupText, 120) ||
+          sourceLabel,
+        ruleNote,
+      ]
+        .filter(Boolean)
+        .join(' '),
+      160,
+    ),
     nextFollowupText: outcome.nextFollowupText,
     blockerText: outcome.blockerText,
   };
@@ -373,7 +383,15 @@ function formatOutcomeLine(item: OutcomeReviewItem): string {
     return `${label}: ${clipText(item.blockerText, 120)}`;
   }
   if (item.nextFollowupText) {
-    return `${label}: ${clipText(item.nextFollowupText, 120)}`;
+    const ruleNote = item.linkedRefs.delegationRuleId
+      ? clipText(
+          item.linkedRefs.delegationExplanation || 'Used your usual rule here.',
+          80,
+        )
+      : null;
+    return `${label}: ${clipText(item.nextFollowupText, 120)}${
+      ruleNote ? ` ${ruleNote}` : ''
+    }`;
   }
   return `${label}: ${clipText(item.summaryText, 120)}`;
 }
@@ -570,6 +588,7 @@ export function syncOutcomeFromBundleSnapshot(
     snapshot.bundle.relatedRefsJson,
     {},
   );
+  const firstRuleAction = snapshot.actions.find((action) => action.delegationRuleId);
   return upsertOutcomeRecord({
     groupFolder: snapshot.bundle.groupFolder,
     sourceType: 'action_bundle',
@@ -591,6 +610,9 @@ export function syncOutcomeFromBundleSnapshot(
       handoffId: relatedRefs.handoffId,
       knowledgeSourceIds: relatedRefs.knowledgeSourceIds,
       chatJid: snapshot.bundle.presentationChatJid || undefined,
+      delegationRuleId: firstRuleAction?.delegationRuleId || undefined,
+      delegationMode: firstRuleAction?.delegationMode || null,
+      delegationExplanation: firstRuleAction?.delegationExplanation || null,
     },
     userConfirmed: snapshot.bundle.userConfirmed,
     now,

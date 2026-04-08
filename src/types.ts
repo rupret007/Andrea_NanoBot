@@ -311,7 +311,9 @@ export type AlexaConversationFollowupAction =
   | 'save_for_later'
   | 'draft_follow_up'
   | 'approve_bundle'
-  | 'show_bundle';
+  | 'show_bundle'
+  | 'delegation_control'
+  | 'show_rules';
 
 export type CompanionToneProfile = 'plain' | 'balanced' | 'warmer';
 
@@ -717,6 +719,9 @@ export interface ActionBundleActionRecord {
   summary: string;
   requiresConfirmation: boolean;
   status: ActionBundleActionStatus;
+  delegationRuleId?: string | null;
+  delegationMode?: DelegationApprovalMode | null;
+  delegationExplanation?: string | null;
   failureReason?: string | null;
   payloadJson: string;
   resultRefJson?: string | null;
@@ -727,6 +732,88 @@ export interface ActionBundleActionRecord {
 export interface ActionBundleSnapshot {
   bundle: ActionBundleRecord;
   actions: ActionBundleActionRecord[];
+}
+
+export type DelegationTriggerType =
+  | 'prompt_pattern'
+  | 'capability_result'
+  | 'bundle_type'
+  | 'mission_category'
+  | 'thread_category'
+  | 'ritual_context'
+  | 'communication_context'
+  | 'review_context';
+
+export type DelegationTriggerScope =
+  | 'personal'
+  | 'household'
+  | 'family'
+  | 'work'
+  | 'mixed';
+
+export type DelegationApprovalMode =
+  | 'always_ask'
+  | 'ask_once_then_remember'
+  | 'auto_apply_when_safe'
+  | 'suggest_only';
+
+export type DelegationRuleStatus = 'active' | 'paused' | 'disabled';
+
+export type DelegationSafetyLevel =
+  | 'safe_to_auto_after_delegation'
+  | 'safe_to_suggest_only'
+  | 'always_requires_fresh_approval'
+  | 'never_automate';
+
+export type DelegationPromptPattern =
+  | 'save_that'
+  | 'save_for_later'
+  | 'send_full_version'
+  | 'reply_followthrough'
+  | 'general_default';
+
+export interface DelegationRuleConditions {
+  promptPattern?: DelegationPromptPattern;
+  actionType?: ActionBundleActionType | null;
+  originKind?: ActionBundleOriginKind | null;
+  missionCategory?: MissionCategory | null;
+  personName?: string | null;
+  threadTitle?: string | null;
+  ritualType?: RitualType | null;
+  reviewHorizon?: OutcomeReviewHorizon | null;
+  communicationContext?:
+    | 'reply_followthrough'
+    | 'household_followthrough'
+    | 'general'
+    | null;
+}
+
+export interface DelegationRuleAction {
+  actionType: ActionBundleActionType;
+  timingHint?: string | null;
+  threadTitle?: string | null;
+  note?: string | null;
+}
+
+export interface DelegationRuleRecord {
+  ruleId: string;
+  groupFolder: string;
+  title: string;
+  triggerType: DelegationTriggerType;
+  triggerScope: DelegationTriggerScope;
+  conditionsJson: string;
+  delegatedActionsJson: string;
+  approvalMode: DelegationApprovalMode;
+  status: DelegationRuleStatus;
+  createdAt: string;
+  lastUsedAt?: string | null;
+  timesUsed: number;
+  timesAutoApplied: number;
+  timesOverridden: number;
+  lastOutcomeStatus?: OutcomeStatus | null;
+  userConfirmed: boolean;
+  channelApplicabilityJson: string;
+  safetyLevel: DelegationSafetyLevel;
 }
 
 export type OutcomeSourceType =
@@ -766,6 +853,9 @@ export interface OutcomeLinkedRefs {
   knowledgeSourceIds?: string[];
   chatJid?: string;
   personName?: string;
+  delegationRuleId?: string;
+  delegationMode?: DelegationApprovalMode | null;
+  delegationExplanation?: string | null;
 }
 
 export interface OutcomeRecord {

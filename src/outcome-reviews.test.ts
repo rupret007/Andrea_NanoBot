@@ -323,6 +323,48 @@ describe('outcome reviews', () => {
     expect(presentation.inlineActionRows[0]?.[0]?.label).toContain('Mark handled');
   });
 
+  it('surfaces rule-driven follow-through in review output', () => {
+    const now = new Date('2026-04-08T20:05:00.000Z');
+    syncOutcomeFromReminderTask(
+      {
+        id: 'task-rule',
+        group_folder: 'main',
+        chat_jid: 'tg:main',
+        prompt: 'Check in with Candace tomorrow morning.',
+        status: 'active',
+        next_run: '2026-04-09T14:00:00.000Z',
+      },
+      {
+        linkedRefs: {
+          reminderTaskId: 'task-rule',
+          communicationThreadId: 'comm-1',
+          delegationRuleId: 'rule-1',
+          delegationMode: 'auto_apply_when_safe',
+          delegationExplanation: 'Used your usual reminder rule here.',
+        },
+        summaryText: 'Saved a reminder for tomorrow morning.',
+        now,
+      },
+    );
+
+    const snapshot = buildReviewSnapshot({
+      groupFolder: 'main',
+      match: { kind: 'daily_review' },
+      now,
+    });
+    const presentation = buildOutcomeReviewResponse({
+      groupFolder: 'main',
+      match: { kind: 'daily_review' },
+      channel: 'telegram',
+      now,
+    });
+
+    expect(snapshot.carryIntoTomorrow[0]?.summaryText).toContain(
+      'usual reminder rule',
+    );
+    expect(presentation.text).toContain('usual reminder rule');
+  });
+
   it('applies review controls to handle, defer, and suppress open loops', () => {
     const now = new Date('2026-04-08T20:30:00.000Z');
     const communication = seedCommunicationThread({

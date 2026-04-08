@@ -19,6 +19,10 @@ import {
   handleLifeThreadCommand,
   type LifeThreadCommandResult,
 } from './life-threads.js';
+import {
+  findMatchingDelegationRule,
+  recordDelegationRuleUsage,
+} from './delegation-rules.js';
 import { planContextualReminder } from './local-reminder.js';
 import { syncOutcomeFromReminderTask } from './outcome-reviews.js';
 import { handleRitualCommand, type RitualCommandResult } from './rituals.js';
@@ -26,6 +30,7 @@ import { buildSignaturePostActionConfirmation } from './signature-flows.js';
 import type {
   AlexaConversationFollowupAction,
   ActionBundleActionType,
+  ActionBundleOriginKind,
   CompanionContinuationCandidate,
 } from './types.js';
 
@@ -123,6 +128,42 @@ function resolveBundleActionType(
   ) {
     return 'create_reminder';
   }
+  return null;
+}
+
+function deriveOriginKind(
+  candidate: CompanionContinuationCandidate | undefined,
+  priorSubjectData?: AssistantActionCompletionParams['priorSubjectData'],
+): ActionBundleOriginKind | null {
+  if (candidate?.missionId || priorSubjectData?.missionId) return 'mission';
+  if (
+    candidate?.communicationThreadId ||
+    priorSubjectData?.communicationThreadId
+  ) {
+    return 'communication';
+  }
+  if (
+    candidate?.chiefOfStaffContextJson ||
+    priorSubjectData?.chiefOfStaffContextJson
+  ) {
+    return 'chief_of_staff';
+  }
+  const activeCapabilityId =
+    candidate?.capabilityId || priorSubjectData?.activeCapabilityId;
+  if (
+    activeCapabilityId?.startsWith('daily.') ||
+    activeCapabilityId === 'household.candace_upcoming'
+  ) {
+    return 'daily_guidance';
+  }
+  if (
+    activeCapabilityId?.startsWith('research.') ||
+    activeCapabilityId?.startsWith('knowledge.')
+  ) {
+    return 'research';
+  }
+  if (candidate?.handoffPayload) return 'handoff';
+  if (priorSubjectData) return 'daily_guidance';
   return null;
 }
 
@@ -664,6 +705,127 @@ export async function completeAssistantActionFromAlexa(
     if (hasTonightCarryoverIntent(params.utterance)) {
       return completeEveningCarryover(params, candidate, completionText);
     }
+    const reminderRule = findMatchingDelegationRule({
+        groupFolder: params.groupFolder,
+        channel: 'alexa',
+        actionType: 'create_reminder',
+        originKind: deriveOriginKind(candidate, params.priorSubjectData),
+        personName: candidate?.threadTitle || null,
+        threadTitle: candidate?.threadTitle || null,
+        promptPattern: 'save_that',
+      communicationContext: candidate?.communicationThreadId
+        ? 'reply_followthrough'
+        : 'general',
+    });
+    if (
+      reminderRule.rule &&
+      reminderRule.autoApplied &&
+      reminderRule.delegatedAction?.actionType === 'create_reminder' &&
+      reminderRule.delegatedAction.timingHint
+    ) {
+      if (!deps.resolveTelegramMainChat) {
+        return {
+          handled: true,
+          replyText:
+            'I remember your usual save-for-later rule, but I cannot route reminders from this Alexa runtime right now.',
+        };
+      }
+      const target = deps.resolveTelegramMainChat(params.groupFolder);
+      if (!target?.chatJid) {
+        return {
+          handled: true,
+          replyText:
+            'I remember your usual save-for-later rule, but I do not have a main Telegram chat set up for reminders on this account yet.',
+        };
+      }
+      const plannedReminder = planContextualReminder(
+        reminderRule.delegatedAction.timingHint,
+        completionText,
+        params.groupFolder,
+        target.chatJid,
+        params.now,
+      );
+      if (plannedReminder) {
+        createTask(plannedReminder.task);
+        syncOutcomeFromReminderTask(plannedReminder.task, {
+          linkedRefs: {
+            reminderTaskId: plannedReminder.task.id,
+            threadId: candidate?.threadId,
+            communicationThreadId: candidate?.communicationThreadId,
+            missionId: candidate?.missionId,
+            delegationRuleId: reminderRule.rule.ruleId,
+            delegationMode: reminderRule.effectiveApprovalMode,
+            delegationExplanation: reminderRule.explanation || null,
+          },
+          summaryText: plannedReminder.confirmation,
+          now: params.now,
+        });
+        recordDelegationRuleUsage({
+          ruleId: reminderRule.rule.ruleId,
+          autoApplied: true,
+          outcomeStatus: 'completed',
+          now: params.now,
+        });
+        return {
+          handled: true,
+          replyText: buildSignaturePostActionConfirmation({
+            channel: 'alexa',
+            didWhat: `${plannedReminder.confirmation} I used your usual save-for-later rule here.`,
+            stillOpen: resolveOpenLoopText(params, candidate, completionText),
+            nextSuggestion: resolveNextSuggestion(params, candidate),
+          }),
+          reminderTaskId: plannedReminder.task.id,
+        };
+      }
+    }
+    const threadRule = findMatchingDelegationRule({
+        groupFolder: params.groupFolder,
+        channel: 'alexa',
+        actionType: 'save_to_thread',
+        originKind: deriveOriginKind(candidate, params.priorSubjectData),
+        personName: candidate?.threadTitle || null,
+        threadTitle: candidate?.threadTitle || null,
+        promptPattern: 'save_for_later',
+      communicationContext: candidate?.communicationThreadId
+        ? 'reply_followthrough'
+        : 'general',
+    });
+    if (
+      threadRule.rule &&
+      threadRule.autoApplied &&
+      threadRule.delegatedAction?.actionType === 'save_to_thread'
+    ) {
+      const delegatedThreadTitle =
+        threadRule.delegatedAction.threadTitle ||
+        candidate?.threadTitle ||
+        null;
+      const result = handleLifeThreadCommand({
+        groupFolder: params.groupFolder,
+        channel: 'alexa',
+        text: delegatedThreadTitle
+          ? `track this under ${delegatedThreadTitle} thread`
+          : 'save this for later',
+        replyText: completionText,
+        conversationSummary: params.conversationSummary,
+        now: params.now,
+      });
+      recordDelegationRuleUsage({
+        ruleId: threadRule.rule.ruleId,
+        autoApplied: true,
+        outcomeStatus: result.handled ? 'completed' : 'failed',
+        now: params.now,
+      });
+      return {
+        handled: true,
+        replyText: buildSignaturePostActionConfirmation({
+          channel: 'alexa',
+          didWhat: `${result.responseText || 'Okay.'} I used your usual save-for-later rule here.`,
+          stillOpen: resolveOpenLoopText(params, candidate, completionText),
+          nextSuggestion: resolveNextSuggestion(params, candidate),
+        }),
+        lifeThreadResult: result,
+      };
+    }
     return {
       handled: true,
       bridgeSaveForLaterText: completionText,
@@ -677,7 +839,21 @@ export async function completeAssistantActionFromAlexa(
         replyText: 'Tell me what you want tracked first.',
       };
     }
-    const threadTitle = extractTrackThreadTitle(params.utterance, candidate);
+    const threadRule = findMatchingDelegationRule({
+        groupFolder: params.groupFolder,
+        channel: 'alexa',
+        actionType: 'save_to_thread',
+        originKind: deriveOriginKind(candidate, params.priorSubjectData),
+        personName: candidate?.threadTitle || null,
+        threadTitle: candidate?.threadTitle || null,
+        communicationContext: candidate?.communicationThreadId
+        ? 'reply_followthrough'
+        : 'general',
+    });
+    const threadTitle =
+      extractTrackThreadTitle(params.utterance, candidate) ||
+      threadRule.delegatedAction?.threadTitle ||
+      null;
     const text = threadTitle
       ? `track this under ${threadTitle} thread`
       : 'save this for later';
@@ -689,11 +865,24 @@ export async function completeAssistantActionFromAlexa(
       conversationSummary: params.conversationSummary,
       now: params.now,
     });
+    if (threadRule.rule) {
+      recordDelegationRuleUsage({
+        ruleId: threadRule.rule.ruleId,
+        autoApplied: Boolean(
+          threadRule.autoApplied && !extractTrackThreadTitle(params.utterance, candidate),
+        ),
+        outcomeStatus: result.handled ? 'completed' : 'failed',
+        now: params.now,
+      });
+    }
     return {
       handled: true,
       replyText: buildSignaturePostActionConfirmation({
         channel: 'alexa',
-        didWhat: result.responseText || 'Okay.',
+        didWhat:
+          threadRule.rule && !extractTrackThreadTitle(params.utterance, candidate)
+            ? `${result.responseText || 'Okay.'} I used your usual thread rule here.`
+            : result.responseText || 'Okay.',
         stillOpen: resolveOpenLoopText(params, candidate, completionText),
         nextSuggestion: resolveNextSuggestion(params, candidate),
       }),
@@ -726,7 +915,21 @@ export async function completeAssistantActionFromAlexa(
         replyText: 'Tell me what you want reminded about first.',
       };
     }
-    const timing = extractReminderTiming(params.utterance);
+    const reminderRule = findMatchingDelegationRule({
+        groupFolder: params.groupFolder,
+        channel: 'alexa',
+        actionType: 'create_reminder',
+        originKind: deriveOriginKind(candidate, params.priorSubjectData),
+        personName: candidate?.threadTitle || null,
+        threadTitle: candidate?.threadTitle || null,
+        communicationContext: candidate?.communicationThreadId
+        ? 'reply_followthrough'
+        : 'general',
+    });
+    const timing =
+      extractReminderTiming(params.utterance) ||
+      reminderRule.delegatedAction?.timingHint ||
+      null;
     if (!timing) {
       return {
         handled: true,
@@ -770,15 +973,31 @@ export async function completeAssistantActionFromAlexa(
         threadId: candidate?.threadId,
         communicationThreadId: candidate?.communicationThreadId,
         missionId: candidate?.missionId,
+        delegationRuleId: reminderRule.rule?.ruleId,
+        delegationMode: reminderRule.effectiveApprovalMode,
+        delegationExplanation: reminderRule.explanation || null,
       },
       summaryText: plannedReminder.confirmation,
       now: params.now,
     });
+    if (reminderRule.rule) {
+      recordDelegationRuleUsage({
+        ruleId: reminderRule.rule.ruleId,
+        autoApplied: Boolean(
+          reminderRule.autoApplied && !extractReminderTiming(params.utterance),
+        ),
+        outcomeStatus: 'completed',
+        now: params.now,
+      });
+    }
     return {
       handled: true,
       replyText: buildSignaturePostActionConfirmation({
         channel: 'alexa',
-        didWhat: plannedReminder.confirmation,
+        didWhat:
+          reminderRule.rule && !extractReminderTiming(params.utterance)
+            ? `${plannedReminder.confirmation} I used your usual reminder rule here.`
+            : plannedReminder.confirmation,
         stillOpen: resolveOpenLoopText(params, candidate, completionText),
         nextSuggestion: resolveNextSuggestion(params, candidate),
       }),

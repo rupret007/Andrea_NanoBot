@@ -4,6 +4,7 @@ import { draftCommunicationReply, formatCommunicationDraftReply } from './commun
 import {
   createTask,
   findLatestOpenActionBundleForChat,
+  getMission,
   findOpenActionBundleBySource,
   getActionBundleSnapshot,
   replaceActionBundleActions,
@@ -22,6 +23,12 @@ import {
   syncOutcomeFromCurrentWorkRef,
   syncOutcomeFromReminderTask,
 } from './outcome-reviews.js';
+import {
+  applyDelegationRulesToActionPlans,
+  recordDelegationRuleOverride,
+  recordDelegationRuleUsage,
+  type RuleAwareActionPlan,
+} from './delegation-rules.js';
 import { handleRitualCommand } from './rituals.js';
 import type {
   ActionBundleActionRecord,
@@ -109,6 +116,8 @@ type BundleActionPayload =
   | RitualActionPayload
   | TelegramHandoffActionPayload
   | CurrentWorkActionPayload;
+
+type SynthesizedAction = RuleAwareActionPlan<BundleActionPayload>;
 
 export interface CreateActionBundleParams {
   groupFolder: string;
@@ -356,24 +365,12 @@ function synthesizeMissionActions(params: {
   candidate: CompanionContinuationCandidate;
   sourceContext: ActionBundleSourceContext;
   now: string;
-}): Array<{
-  actionType: ActionBundleActionType;
-  targetSystem: ActionBundleActionRecord['targetSystem'];
-  summary: string;
-  requiresConfirmation: boolean;
-  payload: BundleActionPayload;
-}> {
+}): SynthesizedAction[] {
   const suggestedActions = parseJsonSafe<MissionSuggestedAction[]>(
     params.candidate.missionSuggestedActionsJson,
     [],
   );
-  const actions: Array<{
-    actionType: ActionBundleActionType;
-    targetSystem: ActionBundleActionRecord['targetSystem'];
-    summary: string;
-    requiresConfirmation: boolean;
-    payload: BundleActionPayload;
-  }> = [];
+  const actions: SynthesizedAction[] = [];
   for (const action of suggestedActions) {
     const linkedRef = parseJsonSafe<Record<string, unknown>>(
       action.linkedRefJson,
@@ -479,13 +476,7 @@ function synthesizeActions(params: {
   sourceContext: ActionBundleSourceContext;
   presentationChannel: ActionBundlePresentationChannel;
   now: string;
-}): Array<{
-  actionType: ActionBundleActionType;
-  targetSystem: ActionBundleActionRecord['targetSystem'];
-  summary: string;
-  requiresConfirmation: boolean;
-  payload: BundleActionPayload;
-}> {
+}): SynthesizedAction[] {
   if (params.originKind === 'mission') {
     return synthesizeMissionActions({
       candidate: params.candidate,
@@ -494,13 +485,7 @@ function synthesizeActions(params: {
     });
   }
 
-  const actions: Array<{
-    actionType: ActionBundleActionType;
-    targetSystem: ActionBundleActionRecord['targetSystem'];
-    summary: string;
-    requiresConfirmation: boolean;
-    payload: BundleActionPayload;
-  }> = [];
+  const actions: SynthesizedAction[] = [];
   const completionText = inferReminderBody(params.sourceContext, params.candidate);
   const threadTitle = params.candidate.threadTitle || null;
 
@@ -672,12 +657,29 @@ export function createOrRefreshActionBundle(
     candidate,
     sourceContext,
   });
-  const synthesized = synthesizeActions({
+  const missionCategory = candidate.missionId
+    ? getMission(candidate.missionId)?.category || null
+    : null;
+  const synthesized = applyDelegationRulesToActionPlans({
+    groupFolder: params.groupFolder,
+    channel: params.presentationChannel,
     originKind,
-    candidate,
-    sourceContext,
-    presentationChannel: params.presentationChannel,
-    now: nowIso,
+    missionCategory,
+    personName: candidate.threadTitle || null,
+    threadTitle: candidate.threadTitle || null,
+    communicationContext:
+      originKind === 'communication'
+        ? 'reply_followthrough'
+        : originKind === 'daily_guidance'
+          ? 'household_followthrough'
+          : 'general',
+    actions: synthesizeActions({
+      originKind,
+      candidate,
+      sourceContext,
+      presentationChannel: params.presentationChannel,
+      now: nowIso,
+    }),
   }).slice(0, MAX_ACTIONS_PER_BUNDLE);
   if (synthesized.length < 2) return null;
 
@@ -725,8 +727,12 @@ export function createOrRefreshActionBundle(
     targetSystem: action.targetSystem,
     summary: action.summary,
     requiresConfirmation: action.requiresConfirmation,
+    delegationRuleId: action.delegationRuleId || null,
+    delegationMode: action.delegationMode || null,
+    delegationExplanation: action.delegationExplanation || null,
     status:
       existingSnapshot?.actions.find((item) => item.orderIndex === index + 1)?.status ||
+      action.initialStatus ||
       'proposed',
     failureReason:
       existingSnapshot?.actions.find((item) => item.orderIndex === index + 1)?.failureReason ||
@@ -751,6 +757,13 @@ export function createOrRefreshActionBundle(
 function statusPill(action: ActionBundleActionRecord, selectionMode: boolean): string {
   if (selectionMode) {
     return action.status === 'approved' ? '[x]' : '[ ]';
+  }
+  if (
+    action.delegationRuleId &&
+    action.delegationMode === 'auto_apply_when_safe' &&
+    action.status === 'approved'
+  ) {
+    return '[usual]';
   }
   switch (action.status) {
     case 'executed':
@@ -791,9 +804,15 @@ export function buildActionBundlePresentation(
   if (sourceContext.whyLine) {
     lines.push(sourceContext.whyLine);
   }
+  const ruleDriven = snapshot.actions.filter((action) => action.delegationRuleId);
+  if (ruleDriven.length > 0) {
+    lines.push(
+      `Andrea used your saved rule on ${ruleDriven.length} ${ruleDriven.length === 1 ? 'step' : 'steps'} here.`,
+    );
+  }
   for (const action of snapshot.actions) {
     lines.push(
-      `${action.orderIndex}. ${statusPill(action, selectionMode)} ${action.summary}`,
+      `${action.orderIndex}. ${statusPill(action, selectionMode)} ${action.summary}${action.delegationRuleId ? ' [usual rule]' : ''}`,
     );
   }
 
@@ -802,7 +821,7 @@ export function buildActionBundlePresentation(
     for (const action of pendingActions(snapshot)) {
       rows.push([
         {
-          label: `${action.status === 'approved' ? '[x]' : '[ ]'} ${action.orderIndex}. ${action.summary}`,
+          label: `${action.status === 'approved' ? '[x]' : '[ ]'} ${action.orderIndex}. ${action.summary}${action.delegationRuleId ? ' [rule]' : ''}`,
           actionId: `/bundle-toggle ${snapshot.bundle.bundleId} ${action.orderIndex}`,
         },
       ]);
@@ -833,13 +852,14 @@ export function buildActionBundleVoiceSummary(
   snapshot: ActionBundleSnapshot,
 ): ActionBundleVoiceSummary {
   const actions = pendingActions(snapshot).slice(0, 3).map((action) => action.summary.toLowerCase());
+  const usedRule = snapshot.actions.some((action) => action.delegationRuleId);
   const summary =
     actions.length > 0
       ? `I have ${actions.length === 1 ? 'one next step' : `${actions.length} next steps`} ready: ${formatList(actions)}.`
       : 'I have a bundle ready if you want me to go over it again.';
   return {
-    summary,
-    speech: `${summary} Say do that, just the reminder, save it for later, or send the details to Telegram.`,
+    summary: usedRule ? `${summary} I used one of your usual rules here.` : summary,
+    speech: `${usedRule ? `${summary} I used one of your usual rules here.` : summary} Say do that, just the reminder, save it for later, or send the details to Telegram.`,
   };
 }
 
@@ -1029,6 +1049,9 @@ async function executeBundleAction(
         threadId: relatedRefs.threadId,
         communicationThreadId: relatedRefs.communicationThreadId,
         chatJid: reminderChatJid,
+        delegationRuleId: action.delegationRuleId || undefined,
+        delegationMode: action.delegationMode || null,
+        delegationExplanation: action.delegationExplanation || null,
       },
       summaryText: planned.confirmation,
       now,
@@ -1278,6 +1301,14 @@ async function executeActions(
         failureReason: null,
         resultRefJson: result.resultRefJson || null,
       });
+      if (action.delegationRuleId) {
+        recordDelegationRuleUsage({
+          ruleId: action.delegationRuleId,
+          autoApplied: action.delegationMode === 'auto_apply_when_safe',
+          outcomeStatus: 'completed',
+          now: currentTime,
+        });
+      }
       executed.push(result.label);
       if (result.detailText) detailTexts.push(result.detailText);
     } else {
@@ -1286,6 +1317,14 @@ async function executeActions(
         lastUpdatedAt: currentTime.toISOString(),
         failureReason: result.failureReason || 'Bundle action failed',
       });
+      if (action.delegationRuleId) {
+        recordDelegationRuleUsage({
+          ruleId: action.delegationRuleId,
+          autoApplied: action.delegationMode === 'auto_apply_when_safe',
+          outcomeStatus: 'failed',
+          now: currentTime,
+        });
+      }
       failed.push(result.label);
     }
   }
@@ -1396,6 +1435,9 @@ export async function applyActionBundleOperation(
   if (operation.kind === 'skip_selected') {
     const selected = selectedActions(snapshot);
     for (const action of selected) {
+      if (action.delegationRuleId) {
+        recordDelegationRuleOverride(action.delegationRuleId, now);
+      }
       updateActionBundleAction(action.actionId, {
         status: 'skipped',
         lastUpdatedAt: now.toISOString(),
@@ -1424,6 +1466,9 @@ export async function applyActionBundleOperation(
   if (operation.kind === 'skip_action_type') {
     const target = pendingActions(snapshot).filter((action) => action.actionType === operation.actionType);
     for (const action of target) {
+      if (action.delegationRuleId) {
+        recordDelegationRuleOverride(action.delegationRuleId, now);
+      }
       updateActionBundleAction(action.actionId, {
         status: 'skipped',
         lastUpdatedAt: now.toISOString(),

@@ -11,9 +11,54 @@ import {
   _initTestDatabase,
   getActionBundleSnapshot,
   getAllTasks,
+  getDelegationRule,
   listKnowledgeSourcesForGroup,
   listLifeThreadsForGroup,
+  upsertDelegationRule,
 } from './db.js';
+import type { DelegationRuleRecord } from './types.js';
+
+function seedDelegationRule(
+  overrides: Partial<DelegationRuleRecord> = {},
+): DelegationRuleRecord {
+  const record: DelegationRuleRecord = {
+    ruleId: overrides.ruleId || 'rule-1',
+    groupFolder: overrides.groupFolder || 'main',
+    title: overrides.title || 'Candace reminder default',
+    triggerType: overrides.triggerType || 'bundle_type',
+    triggerScope: overrides.triggerScope || 'mixed',
+    conditionsJson:
+      overrides.conditionsJson ||
+      JSON.stringify({
+        actionType: 'create_reminder',
+        originKind: 'communication',
+      }),
+    delegatedActionsJson:
+      overrides.delegatedActionsJson ||
+      JSON.stringify([
+        {
+          actionType: 'create_reminder',
+          timingHint: 'tomorrow morning',
+        },
+      ]),
+    approvalMode: overrides.approvalMode || 'auto_apply_when_safe',
+    status: overrides.status || 'active',
+    createdAt: overrides.createdAt || '2026-04-08T10:00:00.000Z',
+    lastUsedAt: overrides.lastUsedAt ?? null,
+    timesUsed: overrides.timesUsed ?? 0,
+    timesAutoApplied: overrides.timesAutoApplied ?? 0,
+    timesOverridden: overrides.timesOverridden ?? 0,
+    lastOutcomeStatus: overrides.lastOutcomeStatus ?? null,
+    userConfirmed: overrides.userConfirmed ?? true,
+    channelApplicabilityJson:
+      overrides.channelApplicabilityJson ||
+      JSON.stringify(['telegram', 'alexa', 'bluebubbles']),
+    safetyLevel:
+      overrides.safetyLevel || 'safe_to_auto_after_delegation',
+  };
+  upsertDelegationRule(record);
+  return record;
+}
 
 describe('action bundles', () => {
   beforeEach(() => {
@@ -207,5 +252,52 @@ describe('action bundles', () => {
     expect(result.replyText).toContain('reminder');
     expect(getAllTasks()).toHaveLength(1);
     expect(listLifeThreadsForGroup('main', ['active'])).toHaveLength(0);
+  });
+
+  it('marks rule-driven actions in a bundle and records overrides when skipped', async () => {
+    const rule = seedDelegationRule();
+    const snapshot = createOrRefreshActionBundle({
+      groupFolder: 'main',
+      presentationChannel: 'telegram',
+      presentationChatJid: 'tg:main',
+      capabilityId: 'communication.understand_message',
+      continuationCandidate: {
+        capabilityId: 'communication.understand_message',
+        voiceSummary: 'Candace still needs a dinner answer.',
+        communicationThreadId: 'comm-1',
+        lastCommunicationSummary: 'Candace still needs a dinner answer.',
+        threadTitle: 'Candace',
+        completionText: 'Candace still needs a dinner answer tonight.',
+      },
+      summaryText: 'Candace still needs a dinner answer.',
+      utterance: 'what should I say back',
+      now: new Date('2026-04-08T10:00:00.000Z'),
+    });
+
+    expect(snapshot).toBeTruthy();
+    expect(
+      snapshot!.actions.find((action) => action.actionType === 'create_reminder')
+        ?.status,
+    ).toBe('approved');
+
+    const presentation = buildActionBundlePresentation(snapshot!);
+    expect(presentation.text).toContain('Andrea used your saved rule');
+    expect(presentation.text).toContain('[usual rule]');
+
+    const result = await applyActionBundleOperation(
+      snapshot!.bundle.bundleId,
+      { kind: 'skip_action_type', actionType: 'create_reminder' },
+      {
+        groupFolder: 'main',
+        channel: 'telegram',
+        chatJid: 'tg:main',
+        currentTime: new Date('2026-04-08T10:15:00.000Z'),
+        resolveTelegramMainChat: () => ({ chatJid: 'tg:main' }),
+        sendTelegramMessage: vi.fn(async () => ({ platformMessageId: 'unused' })),
+      },
+    );
+
+    expect(result.handled).toBe(true);
+    expect(getDelegationRule(rule.ruleId)?.timesOverridden).toBe(1);
   });
 });

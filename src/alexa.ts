@@ -44,6 +44,13 @@ import {
   createOrRefreshActionBundle,
 } from './action-bundles.js';
 import {
+  buildDelegationRuleListPresentation,
+  buildDelegationRulePreview,
+  buildDelegationRuleWhyText,
+  saveDelegationRuleFromPreview,
+  updateDelegationRuleMode,
+} from './delegation-rules.js';
+import {
   getAlexaOAuthStatus,
   handleAlexaOAuthRequest,
   resolveAlexaOAuthConfig,
@@ -104,7 +111,12 @@ import {
   buildDailyCompanionResponse,
   type DailyCompanionContext,
 } from './daily-companion.js';
-import { getAllTasks } from './db.js';
+import {
+  getActionBundleSnapshot,
+  getAllTasks,
+  getDelegationRule,
+  listDelegationRulesForGroup,
+} from './db.js';
 import { readEnvFile } from './env.js';
 import { assertValidGroupFolder } from './group-folder.js';
 import {
@@ -1028,6 +1040,8 @@ function baseFollowupsForSubject(
     'shorter',
     'say_more',
     'memory_control',
+    'delegation_control',
+    'show_rules',
   ];
 
   switch (subjectKind) {
@@ -2391,6 +2405,9 @@ export function createAlexaSkill(
         result.replyText = `${result.replyText || 'Okay.'} ${voiceSummary.summary}`.trim();
       }
       if (result.conversationSeed) {
+        const firstRuleAction = actionBundle.actions.find(
+          (action) => action.delegationRuleId,
+        );
         result.conversationSeed.subjectData = {
           ...(result.conversationSeed.subjectData || {}),
           actionBundleId: actionBundle.bundle.bundleId,
@@ -2399,6 +2416,8 @@ export function createAlexaSkill(
             .slice(0, 3)
             .map((action) => action.summary)
             .join(', '),
+          delegationRuleFocusRuleId:
+            firstRuleAction?.delegationRuleId || undefined,
         };
         result.conversationSeed.supportedFollowups = Array.from(
           new Set([
@@ -2406,6 +2425,8 @@ export function createAlexaSkill(
             'approve_bundle',
             'show_bundle',
             'send_details',
+            'delegation_control',
+            'show_rules',
           ]),
         );
       }
@@ -3112,43 +3133,49 @@ export function createAlexaSkill(
           );
         }
 
-        const localResponse = await buildDailyCompanionResponse(followupText, {
-          channel: 'alexa',
-          groupFolder: linked.account.groupFolder,
-          tasks: getAllTasks().filter(
-            (task) => task.group_folder === linked.account.groupFolder,
-          ),
-          priorContext: priorCompanionContext || null,
-        });
-        if (localResponse) {
-          return respondWithLocalCompanion(
-            handlerInput,
-            linked,
-            conversationState ||
-              buildAlexaCompanionConversationState({
-                flowKey: 'daily_companion_followup',
-                subjectKind: localResponse.context.subjectKind,
-                summaryText: localResponse.context.summaryText,
-                guidanceGoal: localResponse.context.subjectKind === 'person'
-                  ? 'shared_plans'
-                  : 'open_conversation',
-                subjectData: {
-                  ...localResponse.context.subjectData,
-                  threadId: localResponse.context.usedThreadIds?.[0],
-                  threadTitle: localResponse.context.usedThreadTitles?.[0],
-                  threadSummaryLines:
-                    localResponse.context.threadSummaryLines || [],
-                },
-                prioritizationLens:
-                  localResponse.context.subjectKind === 'person' ||
-                  localResponse.context.subjectKind === 'household'
-                    ? 'family'
-                    : 'general',
-                hasActionItem: Boolean(localResponse.context.recommendationText),
-                responseSource: 'local_companion',
-              }),
-            localResponse,
-          );
+        const hasDelegationFollowup =
+          earlyResolution.ok &&
+          (earlyResolution.action === 'delegation_control' ||
+            earlyResolution.action === 'show_rules');
+        if (!hasDelegationFollowup) {
+          const localResponse = await buildDailyCompanionResponse(followupText, {
+            channel: 'alexa',
+            groupFolder: linked.account.groupFolder,
+            tasks: getAllTasks().filter(
+              (task) => task.group_folder === linked.account.groupFolder,
+            ),
+            priorContext: priorCompanionContext || null,
+          });
+          if (localResponse) {
+            return respondWithLocalCompanion(
+              handlerInput,
+              linked,
+              conversationState ||
+                buildAlexaCompanionConversationState({
+                  flowKey: 'daily_companion_followup',
+                  subjectKind: localResponse.context.subjectKind,
+                  summaryText: localResponse.context.summaryText,
+                  guidanceGoal: localResponse.context.subjectKind === 'person'
+                    ? 'shared_plans'
+                    : 'open_conversation',
+                  subjectData: {
+                    ...localResponse.context.subjectData,
+                    threadId: localResponse.context.usedThreadIds?.[0],
+                    threadTitle: localResponse.context.usedThreadTitles?.[0],
+                    threadSummaryLines:
+                      localResponse.context.threadSummaryLines || [],
+                  },
+                  prioritizationLens:
+                    localResponse.context.subjectKind === 'person' ||
+                    localResponse.context.subjectKind === 'household'
+                      ? 'family'
+                      : 'general',
+                  hasActionItem: Boolean(localResponse.context.recommendationText),
+                  responseSource: 'local_companion',
+                }),
+              localResponse,
+            );
+          }
         }
 
         const lifeThreadResponse = runLifeThreadCommand(
@@ -3183,6 +3210,199 @@ export function createAlexaSkill(
             followupText,
             conversationState,
           );
+        }
+
+        if (resolution.action === 'show_rules') {
+          const rules = listDelegationRulesForGroup({
+            groupFolder: linked.account.groupFolder,
+            statuses: ['active', 'paused'],
+            limit: 6,
+          });
+          const lead =
+            rules.length === 0
+              ? 'You do not have any saved delegation rules yet.'
+              : rules.length === 1
+                ? `You have one saved delegation rule. The main one is ${rules[0]!.title}. I can send the fuller list to Telegram if you want.`
+                : `You have ${rules.length} saved delegation rules. The main one is ${rules[0]!.title}. I can send the fuller list to Telegram if you want.`;
+          saveAlexaConversationState(
+            linked.principalKey,
+            linked.account.accessTokenHash,
+            linked.account.groupFolder,
+            buildAlexaCompanionConversationState({
+              flowKey: 'delegation_rules',
+              subjectKind: 'saved_item',
+              summaryText: 'delegation rules',
+              guidanceGoal: 'explainability',
+              supportedFollowups: ['delegation_control', 'show_rules'],
+              subjectData: {
+                ...(conversationState?.subjectData || {}),
+                delegationRuleFocusRuleId: rules[0]?.ruleId,
+              },
+            }),
+          );
+          recordHandledRequest(handlerInput.requestEnvelope, {
+            responseSource: 'barrier',
+            linked: true,
+            groupFolder: linked.account.groupFolder,
+          });
+          return handlerInput.responseBuilder
+            .speak(lead)
+            .reprompt(DEFAULT_ALEXA_REPROMPT)
+            .getResponse();
+        }
+
+        if (resolution.action === 'delegation_control') {
+          const previewJson =
+            conversationState?.subjectData.delegationRulePreviewJson?.trim();
+          if (
+            previewJson &&
+            /^(yes|save it|remember that default|use that default)\b/i.test(
+              followupText.trim(),
+            )
+          ) {
+            try {
+              const preview = JSON.parse(previewJson);
+              saveDelegationRuleFromPreview(
+                linked.account.groupFolder,
+                preview,
+                new Date(),
+              );
+              saveAlexaConversationState(
+                linked.principalKey,
+                linked.account.accessTokenHash,
+                linked.account.groupFolder,
+                buildAlexaCompanionConversationState({
+                  flowKey: 'delegation_rules',
+                  subjectKind: 'saved_item',
+                  summaryText: 'saved delegation rule',
+                  guidanceGoal: 'explainability',
+                  supportedFollowups: ['delegation_control', 'show_rules'],
+                  subjectData: {
+                    ...(conversationState?.subjectData || {}),
+                    delegationRulePreviewJson: undefined,
+                  },
+                }),
+              );
+              recordHandledRequest(handlerInput.requestEnvelope, {
+                responseSource: 'barrier',
+                linked: true,
+                groupFolder: linked.account.groupFolder,
+              });
+              return handlerInput.responseBuilder
+                .speak(
+                  'Okay. I saved that as a delegation rule. Ask me to show your rules if you want the fuller list in Telegram.',
+                )
+                .reprompt(DEFAULT_ALEXA_REPROMPT)
+                .getResponse();
+            } catch {
+              /* fall through to a new preview */
+            }
+          }
+
+          const focusedRuleId =
+            conversationState?.subjectData.delegationRuleFocusRuleId || null;
+          if (
+            focusedRuleId &&
+            /^(always ask before doing that|stop doing that automatically)\b/i.test(
+              followupText.trim(),
+            )
+          ) {
+            updateDelegationRuleMode(focusedRuleId, 'always_ask');
+            recordHandledRequest(handlerInput.requestEnvelope, {
+              responseSource: 'barrier',
+              linked: true,
+              groupFolder: linked.account.groupFolder,
+            });
+            return handlerInput.responseBuilder
+              .speak('Okay. I will ask each time before doing that.')
+              .reprompt(DEFAULT_ALEXA_REPROMPT)
+              .getResponse();
+          }
+          if (focusedRuleId && /^why did that fire\b/i.test(followupText.trim())) {
+            const rule = getDelegationRule(focusedRuleId);
+            const explanation = rule
+              ? `I used ${rule.title} because it matched this kind of flow. It is set to ${rule.approvalMode.replace(/_/g, ' ')}.`
+              : 'I used the saved rule that matched this situation.';
+            recordHandledRequest(handlerInput.requestEnvelope, {
+              responseSource: 'barrier',
+              linked: true,
+              groupFolder: linked.account.groupFolder,
+            });
+            return handlerInput.responseBuilder
+              .speak(explanation)
+              .reprompt(DEFAULT_ALEXA_REPROMPT)
+              .getResponse();
+          }
+
+          const currentBundle = conversationState?.subjectData.actionBundleId
+            ? getActionBundleSnapshot(conversationState.subjectData.actionBundleId)
+            : undefined;
+          const previewResult = buildDelegationRulePreview({
+            utterance: followupText,
+            context: {
+              groupFolder: linked.account.groupFolder,
+              channel: 'alexa',
+              currentBundle,
+              actionTypeHint: currentBundle?.actions.find((action) =>
+                ['approved', 'proposed'].includes(action.status),
+              )?.actionType,
+              originKind: currentBundle?.bundle.originKind,
+              threadTitle:
+                conversationState?.subjectData.threadTitle ||
+                currentBundle?.bundle.title ||
+                null,
+              personName:
+                conversationState?.subjectData.personName ||
+                currentBundle?.bundle.title ||
+                null,
+              communicationContext:
+                currentBundle?.bundle.originKind === 'communication'
+                  ? 'reply_followthrough'
+                  : currentBundle?.bundle.originKind === 'daily_guidance'
+                    ? 'household_followthrough'
+                    : 'general',
+            },
+          });
+          if (previewResult.clarificationQuestion) {
+            recordHandledRequest(handlerInput.requestEnvelope, {
+              responseSource: 'barrier',
+              linked: true,
+              groupFolder: linked.account.groupFolder,
+            });
+            return handlerInput.responseBuilder
+              .speak(previewResult.clarificationQuestion)
+              .reprompt(DEFAULT_ALEXA_REPROMPT)
+              .getResponse();
+          }
+          if (previewResult.preview) {
+            saveAlexaConversationState(
+              linked.principalKey,
+              linked.account.accessTokenHash,
+              linked.account.groupFolder,
+              buildAlexaCompanionConversationState({
+                flowKey: 'delegation_rules',
+                subjectKind: 'saved_item',
+                summaryText: previewResult.preview.title,
+                guidanceGoal: 'explainability',
+                supportedFollowups: ['delegation_control', 'show_rules'],
+                subjectData: {
+                  ...(conversationState?.subjectData || {}),
+                  delegationRulePreviewJson: JSON.stringify(previewResult.preview),
+                },
+              }),
+            );
+            recordHandledRequest(handlerInput.requestEnvelope, {
+              responseSource: 'barrier',
+              linked: true,
+              groupFolder: linked.account.groupFolder,
+            });
+            return handlerInput.responseBuilder
+              .speak(
+                `${previewResult.preview.explanation} ${previewResult.preview.safetyNote} Say yes to save it, or say always ask before doing that.`,
+              )
+              .reprompt(DEFAULT_ALEXA_REPROMPT)
+              .getResponse();
+          }
         }
 
         if (resolution.action === 'memory_control') {

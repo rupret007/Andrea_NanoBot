@@ -19,6 +19,10 @@
 </p>
 
 <p align="center">
+  Andrea can also remember explicitly delegated safe defaults, so repeated reminder, save, ritual, and handoff patterns become smoother without turning into silent automation.
+</p>
+
+<p align="center">
   <a href="docs/USER_GUIDE.md">User Guide</a>&nbsp; | &nbsp;
   <a href="docs/ADMIN_GUIDE.md">Admin Guide</a>&nbsp; | &nbsp;
   <a href="docs/ANDREA_OPENAI_BACKEND.md">OpenAI Backend</a>&nbsp; | &nbsp;
@@ -26,6 +30,7 @@
   <a href="docs/KNOWLEDGE_LIBRARY.md">Knowledge Library</a>&nbsp; | &nbsp;
   <a href="docs/COMMUNICATION_COMPANION.md">Communication Companion</a>&nbsp; | &nbsp;
   <a href="docs/ACTION_BUNDLES.md">Action Bundles</a>&nbsp; | &nbsp;
+  <a href="docs/DELEGATION_RULES_AND_SAFE_AUTOMATION.md">Delegation Rules</a>&nbsp; | &nbsp;
   <a href="docs/OUTCOME_TRACKING_AND_REVIEWS.md">Reviews</a>&nbsp; | &nbsp;
   <a href="docs/CHIEF_OF_STAFF_MODE.md">Chief-of-Staff Mode</a>&nbsp; | &nbsp;
   <a href="docs/MISSIONS_AND_EXECUTION.md">Missions</a>&nbsp; | &nbsp;

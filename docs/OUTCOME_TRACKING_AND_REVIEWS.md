@@ -40,6 +40,9 @@ Reminders still hold future nudges.
 Life threads still hold ongoing matters.
 Outcomes only hold closure truth across those systems.
 
+Delegation rules can influence how an action was handled, but they do not replace closure truth.
+If Andrea used a saved rule to create a reminder, for example, the outcome should still usually read as `deferred`, not falsely `completed`.
+
 ## Core Outcome Model
 
 Andrea stores one compact outcome row per tracked source.
@@ -176,7 +179,24 @@ Typical flow:
 5. Daily or weekly review surfaces what is still unresolved.
 
 Bundles are about approval.
+Delegation rules are about remembered safe defaults.
 Outcomes are about closure.
+
+## Rule-Driven Actions In Review
+
+When a saved delegation rule fires, Andrea should keep that visible in review rather than hiding it.
+
+Examples:
+
+- `Used your usual reminder rule here.`
+- `Saved under your usual Candace follow-up rule.`
+- `Marked as carryover using your usual evening-review rule.`
+
+That matters for trust:
+
+- you can see that a default was reused
+- you can tell when the default was helpful
+- you can decide later that Andrea should always ask instead
 
 ## How This Connects To Existing Systems
 
@@ -195,7 +215,7 @@ Those systems stay distinct on purpose.
 For repo-side validation, run:
 
 ```bash
-node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/outcome-reviews.test.ts src/alexa.test.ts src/action-bundles.test.ts src/communication-companion.test.ts
+node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/outcome-reviews.test.ts src/alexa.test.ts src/action-bundles.test.ts src/communication-companion.test.ts src/delegation-rules.test.ts
 npm run typecheck
 npm run build
 npm run test

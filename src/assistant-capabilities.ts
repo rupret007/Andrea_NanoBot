@@ -205,6 +205,9 @@ export interface AssistantCapabilityContext {
     actionBundleId?: string;
     actionBundleTitle?: string;
     actionBundleSummary?: string;
+    delegationRulePreviewJson?: string;
+    delegationRuleFocusRuleId?: string;
+    delegationRuleExplanation?: string;
   };
 }
 
@@ -280,6 +283,9 @@ export interface AssistantCapabilityConversationSeed {
     actionBundleId?: string;
     actionBundleTitle?: string;
     actionBundleSummary?: string;
+    delegationRulePreviewJson?: string;
+    delegationRuleFocusRuleId?: string;
+    delegationRuleExplanation?: string;
   };
   supportedFollowups?: AlexaConversationFollowupAction[];
   prioritizationLens?:

@@ -3,6 +3,7 @@ import fs from 'fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type RequestEnvelope, type ResponseEnvelope } from 'ask-sdk-model';
 
+import { createOrRefreshActionBundle } from './action-bundles.js';
 import {
   createAlexaSkill,
   formatAlexaStatusMessage,
@@ -31,12 +32,15 @@ import {
 import {
   _initTestDatabase,
   getAllTasks,
+  listDelegationRulesForGroup,
   listKnowledgeSourcesForGroup,
   setRegisteredGroup,
+  upsertDelegationRule,
   upsertCommunicationThread,
 } from './db.js';
 import { ASSISTANT_NAME } from './config.js';
 import { syncOutcomeFromCommunicationThreadRecord } from './outcome-reviews.js';
+import type { DelegationRuleRecord } from './types.js';
 
 vi.mock('./alexa-bridge.js', async () => {
   const actual =
@@ -246,6 +250,48 @@ function seedLinkedAccount(groupFolder = 'main') {
     ALEXA_LINKED_ACCOUNT_ALLOWED_USER_ID: 'amzn1.ask.account.test-user',
     ALEXA_LINKED_ACCOUNT_ALLOWED_PERSON_ID: 'amzn1.ask.person.test-person',
   });
+}
+
+function seedDelegationRule(
+  overrides: Partial<DelegationRuleRecord> = {},
+): DelegationRuleRecord {
+  const record: DelegationRuleRecord = {
+    ruleId: overrides.ruleId || 'rule-1',
+    groupFolder: overrides.groupFolder || 'main',
+    title: overrides.title || 'Default delegation rule',
+    triggerType: overrides.triggerType || 'bundle_type',
+    triggerScope: overrides.triggerScope || 'mixed',
+    conditionsJson:
+      overrides.conditionsJson ||
+      JSON.stringify({
+        actionType: 'create_reminder',
+        originKind: 'daily_guidance',
+      }),
+    delegatedActionsJson:
+      overrides.delegatedActionsJson ||
+      JSON.stringify([
+        {
+          actionType: 'create_reminder',
+          timingHint: 'tomorrow morning',
+        },
+      ]),
+    approvalMode: overrides.approvalMode || 'auto_apply_when_safe',
+    status: overrides.status || 'active',
+    createdAt: overrides.createdAt || '2026-04-08T10:00:00.000Z',
+    lastUsedAt: overrides.lastUsedAt ?? null,
+    timesUsed: overrides.timesUsed ?? 0,
+    timesAutoApplied: overrides.timesAutoApplied ?? 0,
+    timesOverridden: overrides.timesOverridden ?? 0,
+    lastOutcomeStatus: overrides.lastOutcomeStatus ?? null,
+    userConfirmed: overrides.userConfirmed ?? true,
+    channelApplicabilityJson:
+      overrides.channelApplicabilityJson ||
+      JSON.stringify(['telegram', 'alexa', 'bluebubbles']),
+    safetyLevel:
+      overrides.safetyLevel || 'safe_to_auto_after_delegation',
+  };
+  upsertDelegationRule(record);
+  return record;
 }
 
 describe('resolveAlexaConfig', () => {
@@ -1318,6 +1364,114 @@ describe('createAlexaSkill', () => {
     expect(extractSpeechText(response)).toContain(
       'I saved that as follow-through for later',
     );
+  });
+
+  it('can preview and save a delegation rule from the current Alexa bundle context', async () => {
+    const linked = seedLinkedAccount('main');
+    const bundle = createOrRefreshActionBundle({
+      groupFolder: 'main',
+      presentationChannel: 'alexa',
+      capabilityId: 'communication.understand_message',
+      continuationCandidate: {
+        capabilityId: 'communication.understand_message',
+        voiceSummary: 'Candace still needs a dinner answer.',
+        communicationThreadId: 'comm-1',
+        lastCommunicationSummary: 'Candace still needs a dinner answer.',
+        threadTitle: 'Candace',
+        completionText: 'Candace still needs a dinner answer tonight.',
+      },
+      summaryText: 'Candace still needs a dinner answer.',
+      utterance: 'what should I say back',
+      now: new Date('2026-04-08T10:00:00.000Z'),
+    });
+
+    saveAlexaConversationState(
+      getAlexaPrincipalKey({
+        userId: 'amzn1.ask.account.test-user',
+        personId: 'amzn1.ask.person.test-person',
+      }),
+      linked!.accessTokenHash,
+      'main',
+      {
+        flowKey: 'communication_followthrough',
+        subjectKind: 'person',
+        subjectData: {
+          personName: 'Candace',
+          actionBundleId: bundle?.bundle.bundleId,
+        },
+        summaryText: 'Candace still needs a dinner answer.',
+        supportedFollowups: ['delegation_control', 'show_rules'],
+        styleHints: {
+          channelMode: 'alexa_companion',
+          responseSource: 'local_companion',
+        },
+      },
+    );
+
+    const skill = createAlexaSkill(buildConfig());
+    const previewResponse = await skill.invoke(
+      buildIntentEnvelope('ConversationalFollowupIntent', {
+        followupText: 'do this automatically next time',
+      }),
+    );
+
+    expect(extractSpeechText(previewResponse)).toContain('Say yes to save it');
+    expect(
+      loadAlexaConversationState(
+        getAlexaPrincipalKey({
+          userId: 'amzn1.ask.account.test-user',
+          personId: 'amzn1.ask.person.test-person',
+        }),
+        linked!.accessTokenHash,
+      )?.subjectData.delegationRulePreviewJson,
+    ).toBeTruthy();
+
+    const confirmResponse = await skill.invoke(
+      buildIntentEnvelope('ConversationalFollowupIntent', {
+        followupText: 'yes',
+      }),
+    );
+
+    expect(extractSpeechText(confirmResponse)).toContain(
+      'saved that as a delegation rule',
+    );
+    expect(listDelegationRulesForGroup({ groupFolder: 'main' })).toHaveLength(1);
+  });
+
+  it('uses a saved rule during an Alexa reminder follow-up and explains it briefly', async () => {
+    seedDelegationRule({
+      ruleId: 'rule-reminder',
+      title: 'Default reminder timing',
+      conditionsJson: JSON.stringify({
+        actionType: 'create_reminder',
+        originKind: 'daily_guidance',
+      }),
+    });
+    mockedBuildDailyCompanionResponse.mockResolvedValue(
+      buildCompanionResponse('Do not forget the band thing.', {
+        context: {
+          ...buildCompanionResponse('x').context,
+          summaryText: 'Do not forget the band thing.',
+          extendedText:
+            'Do not forget the band thing before tonight so you can lock the details in.',
+        },
+      }),
+    );
+
+    const skill = createAlexaSkill(buildConfig(), {
+      resolveTelegramMainChat: () => ({ chatJid: 'tg:main' }),
+      sendTelegramMessage: vi.fn(async () => ({ platformMessageId: 'tg-msg-2' })),
+    });
+
+    await skill.invoke(buildIntentEnvelope('WhatAmIForgettingIntent'));
+    const response = await skill.invoke(
+      buildIntentEnvelope('ConversationalFollowupIntent', {
+        followupText: 'turn that into a reminder',
+      }),
+    );
+
+    expect(extractSpeechText(response)).toContain('usual reminder rule');
+    expect(getAllTasks().length).toBeGreaterThan(0);
   });
 
   it('drafts from the current Alexa context without restarting from a blank prompt', async () => {

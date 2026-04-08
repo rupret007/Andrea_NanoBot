@@ -23,6 +23,7 @@ import {
   CommunicationSignalRecord,
   CommunicationThreadRecord,
   CompanionHandoffRecord,
+  DelegationRuleRecord,
   KnowledgeChunkRecord,
   KnowledgeIndexState,
   KnowledgeRetrievalHit,
@@ -586,6 +587,9 @@ function createSchema(database: Database.Database): void {
       summary TEXT NOT NULL,
       requires_confirmation INTEGER NOT NULL DEFAULT 1,
       status TEXT NOT NULL,
+      delegation_rule_id TEXT,
+      delegation_mode TEXT,
+      delegation_explanation TEXT,
       failure_reason TEXT,
       payload_json TEXT NOT NULL,
       result_ref_json TEXT,
@@ -595,6 +599,28 @@ function createSchema(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_action_bundle_actions_bundle_order
       ON action_bundle_actions(bundle_id, order_index ASC);
+    CREATE TABLE IF NOT EXISTS delegation_rules (
+      rule_id TEXT PRIMARY KEY,
+      group_folder TEXT NOT NULL,
+      title TEXT NOT NULL,
+      trigger_type TEXT NOT NULL,
+      trigger_scope TEXT NOT NULL,
+      conditions_json TEXT NOT NULL,
+      delegated_actions_json TEXT NOT NULL,
+      approval_mode TEXT NOT NULL,
+      status TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      last_used_at TEXT,
+      times_used INTEGER NOT NULL DEFAULT 0,
+      times_auto_applied INTEGER NOT NULL DEFAULT 0,
+      times_overridden INTEGER NOT NULL DEFAULT 0,
+      last_outcome_status TEXT,
+      user_confirmed INTEGER NOT NULL DEFAULT 0,
+      channel_applicability_json TEXT NOT NULL,
+      safety_level TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_delegation_rules_group_status
+      ON delegation_rules(group_folder, status, last_used_at DESC, created_at DESC);
     CREATE TABLE IF NOT EXISTS outcomes (
       outcome_id TEXT PRIMARY KEY,
       group_folder TEXT NOT NULL,
@@ -1025,6 +1051,30 @@ function createSchema(database: Database.Database): void {
   try {
     database.exec(
       `ALTER TABLE companion_handoffs ADD COLUMN mission_step_focus_json TEXT`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(
+      `ALTER TABLE action_bundle_actions ADD COLUMN delegation_rule_id TEXT`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(
+      `ALTER TABLE action_bundle_actions ADD COLUMN delegation_mode TEXT`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(
+      `ALTER TABLE action_bundle_actions ADD COLUMN delegation_explanation TEXT`,
     );
   } catch {
     /* column already exists */
@@ -3220,6 +3270,255 @@ export function listCompanionHandoffsForGroup(params: {
     .filter((record): record is CompanionHandoffRecord => Boolean(record));
 }
 
+export function upsertDelegationRule(record: DelegationRuleRecord): void {
+  assertValidGroupFolder(record.groupFolder);
+  db.prepare(
+    `
+      INSERT INTO delegation_rules (
+        rule_id,
+        group_folder,
+        title,
+        trigger_type,
+        trigger_scope,
+        conditions_json,
+        delegated_actions_json,
+        approval_mode,
+        status,
+        created_at,
+        last_used_at,
+        times_used,
+        times_auto_applied,
+        times_overridden,
+        last_outcome_status,
+        user_confirmed,
+        channel_applicability_json,
+        safety_level
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(rule_id) DO UPDATE SET
+        group_folder = excluded.group_folder,
+        title = excluded.title,
+        trigger_type = excluded.trigger_type,
+        trigger_scope = excluded.trigger_scope,
+        conditions_json = excluded.conditions_json,
+        delegated_actions_json = excluded.delegated_actions_json,
+        approval_mode = excluded.approval_mode,
+        status = excluded.status,
+        created_at = excluded.created_at,
+        last_used_at = excluded.last_used_at,
+        times_used = excluded.times_used,
+        times_auto_applied = excluded.times_auto_applied,
+        times_overridden = excluded.times_overridden,
+        last_outcome_status = excluded.last_outcome_status,
+        user_confirmed = excluded.user_confirmed,
+        channel_applicability_json = excluded.channel_applicability_json,
+        safety_level = excluded.safety_level
+    `,
+  ).run(
+    record.ruleId,
+    record.groupFolder,
+    record.title,
+    record.triggerType,
+    record.triggerScope,
+    record.conditionsJson,
+    record.delegatedActionsJson,
+    record.approvalMode,
+    record.status,
+    record.createdAt,
+    record.lastUsedAt || null,
+    record.timesUsed,
+    record.timesAutoApplied,
+    record.timesOverridden,
+    record.lastOutcomeStatus || null,
+    record.userConfirmed ? 1 : 0,
+    record.channelApplicabilityJson,
+    record.safetyLevel,
+  );
+}
+
+function mapDelegationRuleRow(row: {
+  rule_id: string;
+  group_folder: string;
+  title: string;
+  trigger_type: DelegationRuleRecord['triggerType'];
+  trigger_scope: DelegationRuleRecord['triggerScope'];
+  conditions_json: string;
+  delegated_actions_json: string;
+  approval_mode: DelegationRuleRecord['approvalMode'];
+  status: DelegationRuleRecord['status'];
+  created_at: string;
+  last_used_at: string | null;
+  times_used: number;
+  times_auto_applied: number;
+  times_overridden: number;
+  last_outcome_status: DelegationRuleRecord['lastOutcomeStatus'];
+  user_confirmed: number;
+  channel_applicability_json: string;
+  safety_level: DelegationRuleRecord['safetyLevel'];
+}): DelegationRuleRecord {
+  return {
+    ruleId: row.rule_id,
+    groupFolder: row.group_folder,
+    title: row.title,
+    triggerType: row.trigger_type,
+    triggerScope: row.trigger_scope,
+    conditionsJson: row.conditions_json,
+    delegatedActionsJson: row.delegated_actions_json,
+    approvalMode: row.approval_mode,
+    status: row.status,
+    createdAt: row.created_at,
+    lastUsedAt: row.last_used_at,
+    timesUsed: row.times_used,
+    timesAutoApplied: row.times_auto_applied,
+    timesOverridden: row.times_overridden,
+    lastOutcomeStatus: row.last_outcome_status,
+    userConfirmed: row.user_confirmed === 1,
+    channelApplicabilityJson: row.channel_applicability_json,
+    safetyLevel: row.safety_level,
+  };
+}
+
+export function getDelegationRule(
+  ruleId: string,
+): DelegationRuleRecord | undefined {
+  const row = db
+    .prepare(
+      `
+        SELECT *
+        FROM delegation_rules
+        WHERE rule_id = ?
+        LIMIT 1
+      `,
+    )
+    .get(ruleId) as
+    | {
+        rule_id: string;
+        group_folder: string;
+        title: string;
+        trigger_type: DelegationRuleRecord['triggerType'];
+        trigger_scope: DelegationRuleRecord['triggerScope'];
+        conditions_json: string;
+        delegated_actions_json: string;
+        approval_mode: DelegationRuleRecord['approvalMode'];
+        status: DelegationRuleRecord['status'];
+        created_at: string;
+        last_used_at: string | null;
+        times_used: number;
+        times_auto_applied: number;
+        times_overridden: number;
+        last_outcome_status: DelegationRuleRecord['lastOutcomeStatus'];
+        user_confirmed: number;
+        channel_applicability_json: string;
+        safety_level: DelegationRuleRecord['safetyLevel'];
+      }
+    | undefined;
+  if (!row || !isValidGroupFolder(row.group_folder)) return undefined;
+  return mapDelegationRuleRow(row);
+}
+
+export function listDelegationRulesForGroup(params: {
+  groupFolder: string;
+  statuses?: DelegationRuleRecord['status'][];
+  limit?: number;
+}): DelegationRuleRecord[] {
+  assertValidGroupFolder(params.groupFolder);
+  const clauses = ['group_folder = ?'];
+  const args: unknown[] = [params.groupFolder];
+  if (params.statuses?.length) {
+    clauses.push(`status IN (${params.statuses.map(() => '?').join(', ')})`);
+    args.push(...params.statuses);
+  }
+  args.push(Math.max(1, params.limit || 100));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM delegation_rules
+        WHERE ${clauses.join(' AND ')}
+        ORDER BY
+          CASE status
+            WHEN 'active' THEN 0
+            WHEN 'paused' THEN 1
+            ELSE 2
+          END,
+          COALESCE(last_used_at, created_at) DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<{
+      rule_id: string;
+      group_folder: string;
+      title: string;
+      trigger_type: DelegationRuleRecord['triggerType'];
+      trigger_scope: DelegationRuleRecord['triggerScope'];
+      conditions_json: string;
+      delegated_actions_json: string;
+      approval_mode: DelegationRuleRecord['approvalMode'];
+      status: DelegationRuleRecord['status'];
+      created_at: string;
+      last_used_at: string | null;
+      times_used: number;
+      times_auto_applied: number;
+      times_overridden: number;
+      last_outcome_status: DelegationRuleRecord['lastOutcomeStatus'];
+      user_confirmed: number;
+      channel_applicability_json: string;
+      safety_level: DelegationRuleRecord['safetyLevel'];
+    }>;
+  return rows
+    .filter((row) => isValidGroupFolder(row.group_folder))
+    .map((row) => mapDelegationRuleRow(row));
+}
+
+export function updateDelegationRule(
+  ruleId: string,
+  updates: Partial<
+    Pick<
+      DelegationRuleRecord,
+      | 'title'
+      | 'conditionsJson'
+      | 'delegatedActionsJson'
+      | 'approvalMode'
+      | 'status'
+      | 'lastUsedAt'
+      | 'timesUsed'
+      | 'timesAutoApplied'
+      | 'timesOverridden'
+      | 'lastOutcomeStatus'
+      | 'userConfirmed'
+      | 'channelApplicabilityJson'
+      | 'safetyLevel'
+    >
+  >,
+): void {
+  const existing = getDelegationRule(ruleId);
+  if (!existing) return;
+  upsertDelegationRule({
+    ...existing,
+    title: updates.title ?? existing.title,
+    conditionsJson: updates.conditionsJson ?? existing.conditionsJson,
+    delegatedActionsJson:
+      updates.delegatedActionsJson ?? existing.delegatedActionsJson,
+    approvalMode: updates.approvalMode ?? existing.approvalMode,
+    status: updates.status ?? existing.status,
+    lastUsedAt:
+      updates.lastUsedAt !== undefined ? updates.lastUsedAt : existing.lastUsedAt,
+    timesUsed: updates.timesUsed ?? existing.timesUsed,
+    timesAutoApplied: updates.timesAutoApplied ?? existing.timesAutoApplied,
+    timesOverridden: updates.timesOverridden ?? existing.timesOverridden,
+    lastOutcomeStatus:
+      updates.lastOutcomeStatus !== undefined
+        ? updates.lastOutcomeStatus
+        : existing.lastOutcomeStatus,
+    userConfirmed:
+      updates.userConfirmed !== undefined
+        ? updates.userConfirmed
+        : existing.userConfirmed,
+    channelApplicabilityJson:
+      updates.channelApplicabilityJson ?? existing.channelApplicabilityJson,
+    safetyLevel: updates.safetyLevel ?? existing.safetyLevel,
+  });
+}
+
 export function upsertOutcome(record: OutcomeRecord): void {
   assertValidGroupFolder(record.groupFolder);
   db.prepare(
@@ -3614,12 +3913,15 @@ export function replaceActionBundleActions(
           summary,
           requires_confirmation,
           status,
+          delegation_rule_id,
+          delegation_mode,
+          delegation_explanation,
           failure_reason,
           payload_json,
           result_ref_json,
           created_at,
           last_updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
     );
     for (const action of nextActions) {
@@ -3632,6 +3934,9 @@ export function replaceActionBundleActions(
         action.summary,
         action.requiresConfirmation ? 1 : 0,
         action.status,
+        action.delegationRuleId || null,
+        action.delegationMode || null,
+        action.delegationExplanation || null,
         action.failureReason || null,
         action.payloadJson,
         action.resultRefJson || null,
@@ -3720,6 +4025,9 @@ export function listActionBundleActions(
       summary: string;
       requires_confirmation: number;
       status: ActionBundleActionRecord['status'];
+      delegation_rule_id: string | null;
+      delegation_mode: NonNullable<ActionBundleActionRecord['delegationMode']> | null;
+      delegation_explanation: string | null;
       failure_reason: string | null;
       payload_json: string;
       result_ref_json: string | null;
@@ -3736,6 +4044,9 @@ export function listActionBundleActions(
     summary: row.summary,
     requiresConfirmation: row.requires_confirmation === 1,
     status: row.status,
+    delegationRuleId: row.delegation_rule_id,
+    delegationMode: row.delegation_mode,
+    delegationExplanation: row.delegation_explanation,
     failureReason: row.failure_reason,
     payloadJson: row.payload_json,
     resultRefJson: row.result_ref_json,

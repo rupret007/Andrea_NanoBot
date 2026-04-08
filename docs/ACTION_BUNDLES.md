@@ -83,6 +83,9 @@ Conversational follow-ups still work for common phrases like:
 - `show me the actions again`
 - `not now`
 
+When a saved delegation rule applies, Telegram should say so plainly instead of acting mysteriously.
+For example, a reminder or save action may already arrive approved because Andrea is using your usual safe default.
+
 ### Alexa
 
 Alexa keeps bundles short and orienting.
@@ -108,10 +111,12 @@ If you want the full bundle from BlueBubbles, the intended path is an explicit T
 ## Approval And Execution Rules
 
 - Durable actions require explicit approval before execution.
+- Saved delegation rules can pre-approve or auto-apply only the action families explicitly marked safe by the rule engine.
 - A bundle never claims an action ran unless Andrea persisted that result.
 - Executed actions do not rerun just because the same bundle card is tapped again.
 - Skipped, failed, and deferred actions stay visible in bundle state.
 - Partial execution is normal and must be reported honestly.
+- Guarded actions such as calendar-event creation or external sends still require fresh approval even if a related rule exists.
 
 ## Partial Success And Failure
 
@@ -169,6 +174,7 @@ Once actions are approved and run, Andrea's outcome-tracking layer takes over th
 That handoff is intentional:
 
 - bundles = approval and execution
+- delegation rules = remembered safe defaults for repeated actions
 - outcomes and reviews = closure and carryover
 
 See [OUTCOME_TRACKING_AND_REVIEWS.md](OUTCOME_TRACKING_AND_REVIEWS.md) for the review model and natural closure controls.
@@ -178,12 +184,20 @@ See [OUTCOME_TRACKING_AND_REVIEWS.md](OUTCOME_TRACKING_AND_REVIEWS.md) for the r
 For repo-side validation, run:
 
 ```bash
-node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/action-bundles.test.ts src/assistant-action-completion.test.ts src/alexa-conversation.test.ts
+node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/action-bundles.test.ts src/assistant-action-completion.test.ts src/alexa-conversation.test.ts src/delegation-rules.test.ts
 npm run typecheck
 npm run build
 npm run test
 npm run telegram:user:smoke
 ```
+
+For a rule-aware bundle proof, use a flow like:
+
+1. trigger a bundle-producing flow such as `what's still open with Candace`
+2. say `do this automatically next time` or `remember this as my default`
+3. confirm Andrea previews the rule before saving it
+4. trigger the same kind of flow again
+5. confirm the safe action is already approved or auto-applied with a plain explanation like `used your usual rule`
 
 For a practical Telegram proof, use a flow that naturally produces multiple next steps, such as:
 

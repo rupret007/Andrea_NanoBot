@@ -196,6 +196,17 @@ import {
   type OutcomeReviewPromptMatch,
 } from './outcome-reviews.js';
 import {
+  buildDelegationRuleListPresentation,
+  buildDelegationRulePreview,
+  buildDelegationRulePreviewPresentation,
+  buildDelegationRuleWhyText,
+  interpretDelegationRuleUtterance,
+  retargetDelegationRuleChannels,
+  saveDelegationRuleFromPreview,
+  updateDelegationRuleMode,
+} from './delegation-rules.js';
+import { getDelegationRule, updateDelegationRule } from './db.js';
+import {
   advancePendingCalendarAutomation,
   buildCalendarAutomationPersistInput,
   computeCalendarAutomationNextRun,
@@ -558,6 +569,7 @@ const SHARED_ASSISTANT_CONTEXT_PREFIX = 'shared_assistant_context:';
 const SHARED_ASSISTANT_CONTEXT_TTL_MS = 10 * 60 * 1000;
 const OUTCOME_REVIEW_CONTEXT_PREFIX = 'outcome_review_context:';
 const OUTCOME_REVIEW_CONTEXT_TTL_MS = 30 * 60 * 1000;
+const DELEGATION_RULE_CONTEXT_PREFIX = 'delegation_rule_context:';
 
 function getGoogleCalendarPendingStateKey(chatJid: string): string {
   return `${GOOGLE_CALENDAR_PENDING_STATE_PREFIX}${chatJid}`;
@@ -607,6 +619,10 @@ function getOutcomeReviewContextKey(chatJid: string): string {
   return `${OUTCOME_REVIEW_CONTEXT_PREFIX}${chatJid}`;
 }
 
+function getDelegationRuleContextKey(chatJid: string): string {
+  return `${DELEGATION_RULE_CONTEXT_PREFIX}${chatJid}`;
+}
+
 interface SharedAssistantContextState {
   version: 1;
   createdAt: string;
@@ -619,6 +635,16 @@ interface OutcomeReviewContextState {
   promptMatchJson: string;
   focusOutcomeIds: string[];
   primaryOutcomeId?: string | null;
+  presentationMessageId?: string | null;
+}
+
+interface DelegationRuleContextState {
+  version: 1;
+  createdAt: string;
+  previewJson?: string | null;
+  previewId?: string | null;
+  focusRuleIds?: string[];
+  primaryRuleId?: string | null;
   presentationMessageId?: string | null;
 }
 
@@ -1109,6 +1135,45 @@ function clearOutcomeReviewContext(chatJid: string): void {
   deleteRouterState(getOutcomeReviewContextKey(chatJid));
 }
 
+function getDelegationRuleContext(
+  chatJid: string,
+  now = new Date(),
+): DelegationRuleContextState | null {
+  const raw = getRouterState(getDelegationRuleContextKey(chatJid));
+  if (!raw) return null;
+
+  try {
+    const parsed = JSON.parse(raw) as DelegationRuleContextState;
+    if (!parsed || parsed.version !== 1 || !parsed.createdAt) {
+      clearDelegationRuleContext(chatJid);
+      return null;
+    }
+    const createdAtMs = Date.parse(parsed.createdAt);
+    if (
+      !Number.isFinite(createdAtMs) ||
+      createdAtMs + OUTCOME_REVIEW_CONTEXT_TTL_MS < now.getTime()
+    ) {
+      clearDelegationRuleContext(chatJid);
+      return null;
+    }
+    return parsed;
+  } catch {
+    clearDelegationRuleContext(chatJid);
+    return null;
+  }
+}
+
+function setDelegationRuleContext(
+  chatJid: string,
+  state: DelegationRuleContextState,
+): void {
+  setRouterState(getDelegationRuleContextKey(chatJid), JSON.stringify(state));
+}
+
+function clearDelegationRuleContext(chatJid: string): void {
+  deleteRouterState(getDelegationRuleContextKey(chatJid));
+}
+
 function getSharedAssistantCapabilitySeed(
   chatJid: string,
   now = new Date(),
@@ -1240,6 +1305,52 @@ function parseReviewCommand(rawText: string):
   return null;
 }
 
+function parseDelegationRuleCommand(rawText: string):
+  | {
+      command:
+        | 'confirm_preview'
+        | 'cancel_preview'
+        | 'pause'
+        | 'disable'
+        | 'always_ask'
+        | 'auto_safe'
+        | 'why'
+        | 'use_here';
+      targetId: string;
+    }
+  | null {
+  const trimmed = rawText.trim();
+  const parts = trimmed.split(/\s+/);
+  const command = parts[0]?.toLowerCase();
+  const targetId = parts[1];
+  if (!targetId) return null;
+  if (command === '/rule-confirm') {
+    return { command: 'confirm_preview', targetId };
+  }
+  if (command === '/rule-cancel') {
+    return { command: 'cancel_preview', targetId };
+  }
+  if (command === '/rule-pause') {
+    return { command: 'pause', targetId };
+  }
+  if (command === '/rule-disable') {
+    return { command: 'disable', targetId };
+  }
+  if (command === '/rule-always-ask') {
+    return { command: 'always_ask', targetId };
+  }
+  if (command === '/rule-auto-safe') {
+    return { command: 'auto_safe', targetId };
+  }
+  if (command === '/rule-why') {
+    return { command: 'why', targetId };
+  }
+  if (command === '/rule-use-here') {
+    return { command: 'use_here', targetId };
+  }
+  return null;
+}
+
 async function applyAndPresentActionBundle(params: {
   chatJid: string;
   bundleId: string;
@@ -1273,6 +1384,9 @@ async function applyAndPresentActionBundle(params: {
 
   if (channel.name === 'telegram' && result.presentation) {
     const messageId = result.snapshot?.bundle.presentationMessageId || null;
+    const firstRuleAction = result.snapshot?.actions.find(
+      (action) => action.delegationRuleId,
+    );
     if (messageId && channel.editMessage) {
       await channel.editMessage(params.chatJid, messageId, result.presentation.text, {
         inlineActionRows: result.presentation.inlineActionRows,
@@ -1283,6 +1397,15 @@ async function applyAndPresentActionBundle(params: {
         mode: result.presentation.mode,
         now: params.now,
       });
+      if (firstRuleAction?.delegationRuleId) {
+        setDelegationRuleContext(params.chatJid, {
+          version: 1,
+          createdAt: (params.now || new Date()).toISOString(),
+          focusRuleIds: [firstRuleAction.delegationRuleId],
+          primaryRuleId: firstRuleAction.delegationRuleId,
+          presentationMessageId: messageId,
+        });
+      }
     } else {
       const sent = await channel.sendMessage(params.chatJid, result.presentation.text, {
         inlineActionRows: result.presentation.inlineActionRows,
@@ -1293,6 +1416,15 @@ async function applyAndPresentActionBundle(params: {
         mode: result.presentation.mode,
         now: params.now,
       });
+      if (firstRuleAction?.delegationRuleId) {
+        setDelegationRuleContext(params.chatJid, {
+          version: 1,
+          createdAt: (params.now || new Date()).toISOString(),
+          focusRuleIds: [firstRuleAction.delegationRuleId],
+          primaryRuleId: firstRuleAction.delegationRuleId,
+          presentationMessageId: sent.platformMessageId || null,
+        });
+      }
     }
   }
 
@@ -1403,6 +1535,106 @@ async function applyAndPresentOutcomeReviewControl(params: {
     await channel.sendMessage(params.chatJid, result.replyText);
   }
 
+  return true;
+}
+
+async function applyAndPresentDelegationRuleCommand(params: {
+  chatJid: string;
+  command:
+    | 'confirm_preview'
+    | 'cancel_preview'
+    | 'pause'
+    | 'disable'
+    | 'always_ask'
+    | 'auto_safe'
+    | 'why'
+    | 'use_here';
+  targetId: string;
+  now?: Date;
+}): Promise<boolean> {
+  const group = resolveCompanionBinding(params.chatJid)?.group;
+  const channel = findChannel(channels, params.chatJid);
+  if (!group || !channel) return false;
+  const now = params.now || new Date();
+  const context = getDelegationRuleContext(params.chatJid, now);
+
+  if (params.command === 'confirm_preview') {
+    if (!context?.previewJson || context.previewId !== params.targetId) return false;
+    try {
+      const preview = JSON.parse(context.previewJson);
+      const rule = saveDelegationRuleFromPreview(group.folder, preview, now);
+      clearDelegationRuleContext(params.chatJid);
+      const presentation = buildDelegationRuleListPresentation({
+        groupFolder: group.folder,
+        channel: channel.name === 'bluebubbles' ? 'bluebubbles' : 'telegram',
+      });
+      await channel.sendMessage(
+        params.chatJid,
+        `Andrea: I saved that as a delegation rule.\n\n${presentation.text}`,
+        { inlineActionRows: presentation.inlineActionRows },
+      );
+      setDelegationRuleContext(params.chatJid, {
+        version: 1,
+        createdAt: now.toISOString(),
+        focusRuleIds: presentation.focusRuleIds,
+        primaryRuleId: rule.ruleId,
+      });
+      return true;
+    } catch {
+      clearDelegationRuleContext(params.chatJid);
+      return false;
+    }
+  }
+
+  if (params.command === 'cancel_preview') {
+    if (context?.previewId !== params.targetId) return false;
+    clearDelegationRuleContext(params.chatJid);
+    await channel.sendMessage(
+      params.chatJid,
+      'Andrea: Okay — I did not save that delegation rule.',
+    );
+    return true;
+  }
+
+  if (params.command === 'pause') {
+    updateDelegationRule(params.targetId, { status: 'paused' });
+  } else if (params.command === 'disable') {
+    updateDelegationRule(params.targetId, { status: 'disabled' });
+  } else if (params.command === 'always_ask') {
+    updateDelegationRuleMode(params.targetId, 'always_ask');
+  } else if (params.command === 'auto_safe') {
+    updateDelegationRuleMode(params.targetId, 'auto_apply_when_safe');
+  } else if (params.command === 'use_here') {
+    retargetDelegationRuleChannels(
+      params.targetId,
+      [channel.name === 'bluebubbles' ? 'bluebubbles' : 'telegram'],
+    );
+  } else if (params.command === 'why') {
+    const rule = getDelegationRule(params.targetId);
+    if (!rule) return false;
+    await channel.sendMessage(params.chatJid, buildDelegationRuleWhyText(rule));
+    setDelegationRuleContext(params.chatJid, {
+      version: 1,
+      createdAt: now.toISOString(),
+      focusRuleIds: [rule.ruleId],
+      primaryRuleId: rule.ruleId,
+    });
+    return true;
+  }
+
+  const presentation = buildDelegationRuleListPresentation({
+    groupFolder: group.folder,
+    channel: channel.name === 'bluebubbles' ? 'bluebubbles' : 'telegram',
+  });
+  await channel.sendMessage(params.chatJid, presentation.text, {
+    inlineActionRows: presentation.inlineActionRows,
+  });
+  setDelegationRuleContext(params.chatJid, {
+    version: 1,
+    createdAt: now.toISOString(),
+    focusRuleIds: presentation.focusRuleIds,
+    primaryRuleId: params.targetId,
+  });
   return true;
 }
 
@@ -2880,6 +3112,109 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       control,
       now,
     });
+  };
+  const tryHandleDelegationRules = async (): Promise<boolean> => {
+    const intent = interpretDelegationRuleUtterance(lastContent);
+    if (!intent) return false;
+
+    if (conversationChannel === 'bluebubbles') {
+      await channel.sendMessage(
+        chatJid,
+        'Andrea: I can honor your usual safe defaults here, but rule setup and editing works best in Telegram. Ask me to send the rule details there if you want to manage them.',
+      );
+      return true;
+    }
+
+    if (intent.kind === 'show_rules') {
+      const presentation = buildDelegationRuleListPresentation({
+        groupFolder: group.folder,
+        channel: conversationChannel,
+      });
+      const sent = await channel.sendMessage(chatJid, presentation.text, {
+        inlineActionRows: presentation.inlineActionRows,
+      });
+      setDelegationRuleContext(chatJid, {
+        version: 1,
+        createdAt: now.toISOString(),
+        focusRuleIds: presentation.focusRuleIds,
+        primaryRuleId: presentation.primaryRuleId || null,
+        presentationMessageId: sent.platformMessageId || null,
+      });
+      return true;
+    }
+
+    if (
+      intent.kind === 'pause_rule' ||
+      intent.kind === 'disable_rule' ||
+      intent.kind === 'always_ask' ||
+      intent.kind === 'stop_automatic' ||
+      intent.kind === 'why_rule'
+    ) {
+      const context = getDelegationRuleContext(chatJid, now);
+      const targetRuleId =
+        context?.primaryRuleId || context?.focusRuleIds?.[0] || null;
+      if (!targetRuleId) return false;
+      return applyAndPresentDelegationRuleCommand({
+        chatJid,
+        command:
+          intent.kind === 'pause_rule'
+            ? 'pause'
+            : intent.kind === 'disable_rule'
+              ? 'disable'
+              : intent.kind === 'why_rule'
+                ? 'why'
+                : 'always_ask',
+        targetId: targetRuleId,
+        now,
+      });
+    }
+
+    const currentBundle = findLatestChatActionBundle({
+      groupFolder: group.folder,
+      presentationChannel: conversationChannel,
+      chatJid,
+      now,
+    });
+    const previewResult = buildDelegationRulePreview({
+      utterance: lastContent,
+      context: {
+        groupFolder: group.folder,
+        channel: conversationChannel,
+        currentBundle,
+        actionTypeHint: currentBundle?.actions.find((action) =>
+          ['approved', 'proposed'].includes(action.status),
+        )?.actionType,
+        originKind: currentBundle?.bundle.originKind,
+        threadTitle: currentBundle?.bundle.title || null,
+        personName: currentBundle?.bundle.title || null,
+        communicationContext:
+          currentBundle?.bundle.originKind === 'communication'
+            ? 'reply_followthrough'
+            : currentBundle?.bundle.originKind === 'daily_guidance'
+              ? 'household_followthrough'
+              : 'general',
+      },
+    });
+    if (!previewResult.handled) return false;
+    if (previewResult.clarificationQuestion) {
+      await channel.sendMessage(chatJid, previewResult.clarificationQuestion);
+      return true;
+    }
+    if (!previewResult.preview) return false;
+    const presentation = buildDelegationRulePreviewPresentation(
+      previewResult.preview,
+    );
+    const sent = await channel.sendMessage(chatJid, presentation.text, {
+      inlineActionRows: presentation.inlineActionRows,
+    });
+    setDelegationRuleContext(chatJid, {
+      version: 1,
+      createdAt: now.toISOString(),
+      previewJson: JSON.stringify(previewResult.preview),
+      previewId: previewResult.preview.previewId,
+      presentationMessageId: sent.platformMessageId || null,
+    });
+    return true;
   };
   const tryHandleLocalCalendarAutomation = async (): Promise<boolean> => {
     try {
@@ -5207,6 +5542,18 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             mode: presentation.mode,
             now,
           });
+          const firstRuleAction = actionBundle.actions.find(
+            (action) => action.delegationRuleId,
+          );
+          if (firstRuleAction?.delegationRuleId) {
+            setDelegationRuleContext(chatJid, {
+              version: 1,
+              createdAt: now.toISOString(),
+              focusRuleIds: [firstRuleAction.delegationRuleId],
+              primaryRuleId: firstRuleAction.delegationRuleId,
+              presentationMessageId: sent.platformMessageId || null,
+            });
+          }
         } else if (conversationChannel === 'bluebubbles') {
           await channel.sendMessage(
             chatJid,
@@ -5391,6 +5738,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     requestPolicy.route === 'protected_assistant'
   ) {
     if (await tryHandleOutcomeReview()) {
+      return true;
+    }
+    if (await tryHandleDelegationRules()) {
       return true;
     }
     if (await tryHandleActionBundleFollowup()) {
@@ -10473,6 +10823,19 @@ async function main(): Promise<void> {
           now: new Date(),
         }).catch((err) =>
           logger.error({ err, chatJid }, 'Outcome review command error'),
+        );
+        return;
+      }
+
+      const delegationRuleCommand = parseDelegationRuleCommand(rawTrimmed);
+      if (delegationRuleCommand) {
+        applyAndPresentDelegationRuleCommand({
+          chatJid,
+          command: delegationRuleCommand.command,
+          targetId: delegationRuleCommand.targetId,
+          now: new Date(),
+        }).catch((err) =>
+          logger.error({ err, chatJid }, 'Delegation rule command error'),
         );
         return;
       }
