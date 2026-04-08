@@ -17,6 +17,19 @@ export type DegradedResponseKind =
   | 'stale_context'
   | 'unsupported_channel_capability';
 
+export type CalendarCompanionFailureAction =
+  | 'create_event'
+  | 'confirm_reminder';
+
+export type CalendarCompanionFailureKind =
+  | 'temporary_unavailable'
+  | 'calendar_access_unavailable'
+  | 'calendar_auth_unavailable';
+
+export type CalendarCompanionSuccessAction =
+  | 'create_event'
+  | 'update_event';
+
 function normalizeText(input: string): string {
   return input
     .toLowerCase()
@@ -295,4 +308,150 @@ export function buildGracefulDegradedReply(params: {
       ? `I can't do that from here, but I can send it to ${params.targetChannel === 'telegram' ? 'Telegram' : 'Messages'}.`
       : "I can't do that from this channel.",
   });
+}
+
+export function buildCalendarCompanionFailureReply(params: {
+  channel: ConversationalChannel;
+  action: CalendarCompanionFailureAction;
+  kind: CalendarCompanionFailureKind;
+}): string {
+  if (params.kind === 'temporary_unavailable') {
+    return buildChannelVariant(params.channel, {
+      telegram:
+        params.action === 'create_event'
+          ? "I couldn't add that right this second. If you want, I can save that for later or remind Jeff instead."
+          : "I couldn't line that reminder up right this second. If you want, I can save that for later or help you remind Jeff instead.",
+      alexa:
+        params.action === 'create_event'
+          ? "I couldn't add that right this second. I can save that for later or remind Jeff instead."
+          : "I couldn't line that reminder up right this second. I can save that for later or help you remind Jeff instead.",
+      bluebubbles:
+        params.action === 'create_event'
+          ? "I couldn't add that right this second. If you want, I can save that for later or remind Jeff instead."
+          : "I couldn't line that reminder up right this second. If you want, I can save that for later or help you remind Jeff instead.",
+    });
+  }
+
+  if (params.kind === 'calendar_auth_unavailable') {
+    return buildChannelVariant(params.channel, {
+      telegram:
+        params.action === 'create_event'
+          ? "I don't have the calendar connected right now. I can still save that for later or remind Jeff instead."
+          : "I don't have the calendar connected right now. I can still save that for later or help you remind Jeff instead.",
+      alexa:
+        params.action === 'create_event'
+          ? "I don't have the calendar connected right now. I can save that for later or remind Jeff instead."
+          : "I don't have the calendar connected right now. I can save that for later or help you remind Jeff instead.",
+      bluebubbles:
+        params.action === 'create_event'
+          ? "I don't have the calendar connected right now. I can still save that for later or remind Jeff instead."
+          : "I don't have the calendar connected right now. I can still save that for later or help you remind Jeff instead.",
+    });
+  }
+
+  return buildChannelVariant(params.channel, {
+    telegram:
+      params.action === 'create_event'
+        ? "I can't reach the calendar right now. I can still save that for later or remind Jeff instead."
+        : "I can't reach the calendar details I need right now. I can still save that for later or help you remind Jeff instead.",
+    alexa:
+      params.action === 'create_event'
+        ? "I can't reach the calendar right now. I can save that for later or remind Jeff instead."
+        : "I can't reach the calendar details I need right now. I can save that for later or help you remind Jeff instead.",
+    bluebubbles:
+      params.action === 'create_event'
+        ? "I can't reach the calendar right now. I can still save that for later or remind Jeff instead."
+        : "I can't reach the calendar details I need right now. I can still save that for later or help you remind Jeff instead.",
+  });
+}
+
+function formatCalendarReference(calendarName: string): string {
+  const trimmed = calendarName.trim();
+  if (!trimmed) {
+    return 'the calendar';
+  }
+  if (/calendar/i.test(trimmed)) {
+    return trimmed;
+  }
+  if (/^(family|home|work|personal)$/i.test(trimmed)) {
+    return `the ${trimmed} calendar`;
+  }
+  if (/^[A-Z][a-z]+$/.test(trimmed)) {
+    return `${trimmed}${trimmed.endsWith('s') ? "'" : "'s"} calendar`;
+  }
+  return `the ${trimmed} calendar`;
+}
+
+function formatCalendarWhen(input: {
+  startIso: string;
+  endIso: string;
+  allDay: boolean;
+  timeZone: string;
+}): string {
+  const dateFormatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: input.timeZone,
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+  const dayLabel = dateFormatter.format(new Date(input.startIso));
+  if (input.allDay) {
+    return `for ${dayLabel}`;
+  }
+
+  const timeFormatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: input.timeZone,
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+  return `for ${dayLabel} from ${timeFormatter.format(
+    new Date(input.startIso),
+  )} to ${timeFormatter.format(new Date(input.endIso))}`;
+}
+
+export function buildCalendarCompanionEventReply(input: {
+  action: CalendarCompanionSuccessAction;
+  title: string;
+  startIso: string;
+  endIso: string;
+  allDay: boolean;
+  timeZone: string;
+  calendarName: string;
+  htmlLink?: string | null;
+}): string {
+  const calendarReference = formatCalendarReference(input.calendarName);
+  const whenText = formatCalendarWhen(input);
+  const base =
+    input.action === 'create_event'
+      ? `Got it - I added "${input.title}" to ${calendarReference} ${whenText}.`
+      : `Done - I updated "${input.title}" on ${calendarReference} ${whenText}.`;
+
+  return input.htmlLink
+    ? `${base}\n\nOpen in Google Calendar: ${input.htmlLink}`
+    : base;
+}
+
+export function buildCalendarCompanionReminderReply(input: {
+  title: string;
+  offsetLabel: string;
+  remindAtIso: string;
+  allDay: boolean;
+  timeZone: string;
+}): string {
+  const reminderFormatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: input.timeZone,
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+  const reminderText =
+    input.allDay && input.offsetLabel !== 'the night before'
+      ? `about ${input.title}`
+      : `${input.offsetLabel} ${input.title}`;
+  return `Done - I'll remind you ${reminderText} at ${reminderFormatter.format(
+    new Date(input.remindAtIso),
+  )}.`;
 }

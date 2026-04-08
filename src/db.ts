@@ -11,6 +11,9 @@ import type {
   RuntimeOrchestrationJobList,
 } from './andrea-runtime/types.js';
 import {
+  ActionBundleActionRecord,
+  ActionBundleRecord,
+  ActionBundleSnapshot,
   AlexaConversationContext,
   AlexaLinkedAccount,
   AlexaOAuthAuthorizationCodeRecord,
@@ -547,6 +550,50 @@ function createSchema(database: Database.Database): void {
       ON companion_handoffs(group_folder, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_companion_handoffs_status_expires
       ON companion_handoffs(status, expires_at ASC);
+    CREATE TABLE IF NOT EXISTS action_bundles (
+      bundle_id TEXT PRIMARY KEY,
+      group_folder TEXT NOT NULL,
+      title TEXT NOT NULL,
+      origin_kind TEXT NOT NULL,
+      origin_capability TEXT,
+      source_context_key TEXT,
+      source_context_json TEXT NOT NULL,
+      presentation_channel TEXT NOT NULL,
+      presentation_chat_jid TEXT,
+      presentation_thread_id TEXT,
+      presentation_message_id TEXT,
+      presentation_mode TEXT,
+      bundle_status TEXT NOT NULL,
+      user_confirmed INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      last_updated_at TEXT NOT NULL,
+      related_refs_json TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_action_bundles_group_updated
+      ON action_bundles(group_folder, last_updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_action_bundles_source_open
+      ON action_bundles(group_folder, source_context_key, bundle_status, expires_at);
+    CREATE INDEX IF NOT EXISTS idx_action_bundles_chat_open
+      ON action_bundles(group_folder, presentation_chat_jid, presentation_channel, bundle_status, last_updated_at DESC);
+    CREATE TABLE IF NOT EXISTS action_bundle_actions (
+      action_id TEXT PRIMARY KEY,
+      bundle_id TEXT NOT NULL,
+      order_index INTEGER NOT NULL,
+      action_type TEXT NOT NULL,
+      target_system TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      requires_confirmation INTEGER NOT NULL DEFAULT 1,
+      status TEXT NOT NULL,
+      failure_reason TEXT,
+      payload_json TEXT NOT NULL,
+      result_ref_json TEXT,
+      created_at TEXT NOT NULL,
+      last_updated_at TEXT NOT NULL,
+      FOREIGN KEY (bundle_id) REFERENCES action_bundles(bundle_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_action_bundle_actions_bundle_order
+      ON action_bundle_actions(bundle_id, order_index ASC);
     CREATE TABLE IF NOT EXISTS life_threads (
       id TEXT PRIMARY KEY,
       group_folder TEXT NOT NULL,
@@ -3105,6 +3152,412 @@ export function purgeExpiredCompanionHandoffs(
             updated_at = ?
         WHERE expires_at <= ?
           AND status IN ('queued', 'failed')
+      `,
+    )
+    .run(now, now);
+  return result.changes;
+}
+
+export function upsertActionBundle(record: ActionBundleRecord): void {
+  assertValidGroupFolder(record.groupFolder);
+  db.prepare(
+    `
+      INSERT INTO action_bundles (
+        bundle_id,
+        group_folder,
+        title,
+        origin_kind,
+        origin_capability,
+        source_context_key,
+        source_context_json,
+        presentation_channel,
+        presentation_chat_jid,
+        presentation_thread_id,
+        presentation_message_id,
+        presentation_mode,
+        bundle_status,
+        user_confirmed,
+        created_at,
+        expires_at,
+        last_updated_at,
+        related_refs_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(bundle_id) DO UPDATE SET
+        group_folder = excluded.group_folder,
+        title = excluded.title,
+        origin_kind = excluded.origin_kind,
+        origin_capability = excluded.origin_capability,
+        source_context_key = excluded.source_context_key,
+        source_context_json = excluded.source_context_json,
+        presentation_channel = excluded.presentation_channel,
+        presentation_chat_jid = excluded.presentation_chat_jid,
+        presentation_thread_id = excluded.presentation_thread_id,
+        presentation_message_id = excluded.presentation_message_id,
+        presentation_mode = excluded.presentation_mode,
+        bundle_status = excluded.bundle_status,
+        user_confirmed = excluded.user_confirmed,
+        created_at = excluded.created_at,
+        expires_at = excluded.expires_at,
+        last_updated_at = excluded.last_updated_at,
+        related_refs_json = excluded.related_refs_json
+    `,
+  ).run(
+    record.bundleId,
+    record.groupFolder,
+    record.title,
+    record.originKind,
+    record.originCapability || null,
+    record.sourceContextKey || null,
+    record.sourceContextJson,
+    record.presentationChannel,
+    record.presentationChatJid || null,
+    record.presentationThreadId || null,
+    record.presentationMessageId || null,
+    record.presentationMode || null,
+    record.bundleStatus,
+    record.userConfirmed ? 1 : 0,
+    record.createdAt,
+    record.expiresAt,
+    record.lastUpdatedAt,
+    record.relatedRefsJson || null,
+  );
+}
+
+export function replaceActionBundleActions(
+  bundleId: string,
+  actions: ActionBundleActionRecord[],
+): void {
+  const tx = db.transaction((nextActions: ActionBundleActionRecord[]) => {
+    db.prepare(`DELETE FROM action_bundle_actions WHERE bundle_id = ?`).run(bundleId);
+    const insert = db.prepare(
+      `
+        INSERT INTO action_bundle_actions (
+          action_id,
+          bundle_id,
+          order_index,
+          action_type,
+          target_system,
+          summary,
+          requires_confirmation,
+          status,
+          failure_reason,
+          payload_json,
+          result_ref_json,
+          created_at,
+          last_updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+    );
+    for (const action of nextActions) {
+      insert.run(
+        action.actionId,
+        action.bundleId,
+        action.orderIndex,
+        action.actionType,
+        action.targetSystem,
+        action.summary,
+        action.requiresConfirmation ? 1 : 0,
+        action.status,
+        action.failureReason || null,
+        action.payloadJson,
+        action.resultRefJson || null,
+        action.createdAt,
+        action.lastUpdatedAt,
+      );
+    }
+  });
+  tx(actions);
+}
+
+export function getActionBundle(bundleId: string): ActionBundleRecord | undefined {
+  const row = db
+    .prepare(
+      `
+        SELECT *
+        FROM action_bundles
+        WHERE bundle_id = ?
+        LIMIT 1
+      `,
+    )
+    .get(bundleId) as
+    | {
+        bundle_id: string;
+        group_folder: string;
+        title: string;
+        origin_kind: ActionBundleRecord['originKind'];
+        origin_capability: string | null;
+        source_context_key: string | null;
+        source_context_json: string;
+        presentation_channel: ActionBundleRecord['presentationChannel'];
+        presentation_chat_jid: string | null;
+        presentation_thread_id: string | null;
+        presentation_message_id: string | null;
+        presentation_mode: ActionBundleRecord['presentationMode'] | null;
+        bundle_status: ActionBundleRecord['bundleStatus'];
+        user_confirmed: number;
+        created_at: string;
+        expires_at: string;
+        last_updated_at: string;
+        related_refs_json: string | null;
+      }
+    | undefined;
+  if (!row) return undefined;
+  if (!isValidGroupFolder(row.group_folder)) return undefined;
+  return {
+    bundleId: row.bundle_id,
+    groupFolder: row.group_folder,
+    title: row.title,
+    originKind: row.origin_kind,
+    originCapability: row.origin_capability,
+    sourceContextKey: row.source_context_key,
+    sourceContextJson: row.source_context_json,
+    presentationChannel: row.presentation_channel,
+    presentationChatJid: row.presentation_chat_jid,
+    presentationThreadId: row.presentation_thread_id,
+    presentationMessageId: row.presentation_message_id,
+    presentationMode: row.presentation_mode,
+    bundleStatus: row.bundle_status,
+    userConfirmed: row.user_confirmed === 1,
+    createdAt: row.created_at,
+    expiresAt: row.expires_at,
+    lastUpdatedAt: row.last_updated_at,
+    relatedRefsJson: row.related_refs_json,
+  };
+}
+
+export function listActionBundleActions(
+  bundleId: string,
+): ActionBundleActionRecord[] {
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM action_bundle_actions
+        WHERE bundle_id = ?
+        ORDER BY order_index ASC
+      `,
+    )
+    .all(bundleId) as Array<{
+      action_id: string;
+      bundle_id: string;
+      order_index: number;
+      action_type: ActionBundleActionRecord['actionType'];
+      target_system: ActionBundleActionRecord['targetSystem'];
+      summary: string;
+      requires_confirmation: number;
+      status: ActionBundleActionRecord['status'];
+      failure_reason: string | null;
+      payload_json: string;
+      result_ref_json: string | null;
+      created_at: string;
+      last_updated_at: string;
+    }>;
+
+  return rows.map((row) => ({
+    actionId: row.action_id,
+    bundleId: row.bundle_id,
+    orderIndex: row.order_index,
+    actionType: row.action_type,
+    targetSystem: row.target_system,
+    summary: row.summary,
+    requiresConfirmation: row.requires_confirmation === 1,
+    status: row.status,
+    failureReason: row.failure_reason,
+    payloadJson: row.payload_json,
+    resultRefJson: row.result_ref_json,
+    createdAt: row.created_at,
+    lastUpdatedAt: row.last_updated_at,
+  }));
+}
+
+export function getActionBundleSnapshot(
+  bundleId: string,
+): ActionBundleSnapshot | undefined {
+  const bundle = getActionBundle(bundleId);
+  if (!bundle) return undefined;
+  return {
+    bundle,
+    actions: listActionBundleActions(bundleId),
+  };
+}
+
+export function findOpenActionBundleBySource(
+  groupFolder: string,
+  sourceContextKey: string,
+  now = new Date().toISOString(),
+): ActionBundleRecord | undefined {
+  if (!sourceContextKey.trim()) return undefined;
+  const row = db
+    .prepare(
+      `
+        SELECT bundle_id
+        FROM action_bundles
+        WHERE group_folder = ?
+          AND source_context_key = ?
+          AND bundle_status IN ('open', 'partially_done')
+          AND expires_at > ?
+        ORDER BY last_updated_at DESC
+        LIMIT 1
+      `,
+    )
+    .get(groupFolder, sourceContextKey, now) as { bundle_id: string } | undefined;
+  return row ? getActionBundle(row.bundle_id) : undefined;
+}
+
+export function findLatestOpenActionBundleForChat(params: {
+  groupFolder: string;
+  presentationChannel: ActionBundleRecord['presentationChannel'];
+  presentationChatJid: string;
+  now?: string;
+}): ActionBundleRecord | undefined {
+  const row = db
+    .prepare(
+      `
+        SELECT bundle_id
+        FROM action_bundles
+        WHERE group_folder = ?
+          AND presentation_channel = ?
+          AND presentation_chat_jid = ?
+          AND bundle_status IN ('open', 'partially_done')
+          AND expires_at > ?
+        ORDER BY last_updated_at DESC
+        LIMIT 1
+      `,
+    )
+    .get(
+      params.groupFolder,
+      params.presentationChannel,
+      params.presentationChatJid,
+      params.now || new Date().toISOString(),
+    ) as { bundle_id: string } | undefined;
+  return row ? getActionBundle(row.bundle_id) : undefined;
+}
+
+export function updateActionBundle(
+  bundleId: string,
+  updates: Partial<
+    Pick<
+      ActionBundleRecord,
+      | 'title'
+      | 'presentationChannel'
+      | 'presentationChatJid'
+      | 'presentationThreadId'
+      | 'presentationMessageId'
+      | 'presentationMode'
+      | 'bundleStatus'
+      | 'userConfirmed'
+      | 'expiresAt'
+      | 'lastUpdatedAt'
+      | 'relatedRefsJson'
+    >
+  >,
+): void {
+  const existing = getActionBundle(bundleId);
+  if (!existing) return;
+  upsertActionBundle({
+    ...existing,
+    title: updates.title ?? existing.title,
+    presentationChannel:
+      updates.presentationChannel ?? existing.presentationChannel,
+    presentationChatJid:
+      updates.presentationChatJid !== undefined
+        ? updates.presentationChatJid
+        : existing.presentationChatJid,
+    presentationThreadId:
+      updates.presentationThreadId !== undefined
+        ? updates.presentationThreadId
+        : existing.presentationThreadId,
+    presentationMessageId:
+      updates.presentationMessageId !== undefined
+        ? updates.presentationMessageId
+        : existing.presentationMessageId,
+    presentationMode:
+      updates.presentationMode !== undefined
+        ? updates.presentationMode
+        : existing.presentationMode,
+    bundleStatus: updates.bundleStatus ?? existing.bundleStatus,
+    userConfirmed:
+      updates.userConfirmed !== undefined
+        ? updates.userConfirmed
+        : existing.userConfirmed,
+    expiresAt: updates.expiresAt ?? existing.expiresAt,
+    lastUpdatedAt: updates.lastUpdatedAt ?? new Date().toISOString(),
+    relatedRefsJson:
+      updates.relatedRefsJson !== undefined
+        ? updates.relatedRefsJson
+        : existing.relatedRefsJson,
+  });
+}
+
+export function updateActionBundleAction(
+  actionId: string,
+  updates: Partial<
+    Pick<
+      ActionBundleActionRecord,
+      'status' | 'failureReason' | 'resultRefJson' | 'lastUpdatedAt'
+    >
+  >,
+): void {
+  const existing = db
+    .prepare(
+      `
+        SELECT *
+        FROM action_bundle_actions
+        WHERE action_id = ?
+        LIMIT 1
+      `,
+    )
+    .get(actionId) as
+    | {
+        action_id: string;
+        bundle_id: string;
+        order_index: number;
+        action_type: ActionBundleActionRecord['actionType'];
+        target_system: ActionBundleActionRecord['targetSystem'];
+        summary: string;
+        requires_confirmation: number;
+        status: ActionBundleActionRecord['status'];
+        failure_reason: string | null;
+        payload_json: string;
+        result_ref_json: string | null;
+        created_at: string;
+        last_updated_at: string;
+      }
+    | undefined;
+  if (!existing) return;
+  db.prepare(
+    `
+      UPDATE action_bundle_actions
+      SET status = ?,
+          failure_reason = ?,
+          result_ref_json = ?,
+          last_updated_at = ?
+      WHERE action_id = ?
+    `,
+  ).run(
+    updates.status ?? existing.status,
+    updates.failureReason !== undefined
+      ? updates.failureReason
+      : existing.failure_reason,
+    updates.resultRefJson !== undefined
+      ? updates.resultRefJson
+      : existing.result_ref_json,
+    updates.lastUpdatedAt ?? new Date().toISOString(),
+    actionId,
+  );
+}
+
+export function purgeExpiredActionBundles(
+  now = new Date().toISOString(),
+): number {
+  const result = db
+    .prepare(
+      `
+        UPDATE action_bundles
+        SET bundle_status = 'expired',
+            last_updated_at = ?
+        WHERE expires_at <= ?
+          AND bundle_status IN ('open', 'partially_done')
       `,
     )
     .run(now, now);

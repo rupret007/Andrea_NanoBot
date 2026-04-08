@@ -25,6 +25,7 @@
   <a href="docs/SETUP_AND_FEATURES_GUIDE.md">Setup Guide</a>&nbsp; | &nbsp;
   <a href="docs/KNOWLEDGE_LIBRARY.md">Knowledge Library</a>&nbsp; | &nbsp;
   <a href="docs/COMMUNICATION_COMPANION.md">Communication Companion</a>&nbsp; | &nbsp;
+  <a href="docs/ACTION_BUNDLES.md">Action Bundles</a>&nbsp; | &nbsp;
   <a href="docs/CHIEF_OF_STAFF_MODE.md">Chief-of-Staff Mode</a>&nbsp; | &nbsp;
   <a href="docs/MISSIONS_AND_EXECUTION.md">Missions</a>&nbsp; | &nbsp;
   <a href="docs/PROACTIVE_RITUALS.md">Proactive Rituals</a>&nbsp; | &nbsp;
@@ -353,6 +354,18 @@ See [docs/ASSISTANT_CAPABILITY_GRAPH.md](docs/ASSISTANT_CAPABILITY_GRAPH.md) for
 For operator-side smoke testing of the shared core, use `npm run debug:shared-capabilities`, `npm run debug:research-mode`, and `npm run debug:knowledge-library`.
 For the missions layer specifically, use `npm run debug:missions`.
 For the ordinary conversational surface and no-leakage degraded-response policy, use `npm run debug:conversational-core`.
+
+## Approval Center And Action Bundles
+
+Andrea now has a bounded Action Bundle layer so good advice can turn into explicit next steps without taking control away from you.
+
+- bundles are small, explainable sets of actions built on top of existing reminders, drafts, thread saves, library saves, rituals, handoffs, and mission follow-through
+- Telegram is the rich approval surface with inline actions like `Approve all`, `Pick actions`, and `Not now`
+- Alexa stays concise and can orient you around the bundle, approve simple subsets, or send the full bundle to Telegram
+- BlueBubbles stays bounded and hands richer bundle approval back to Telegram
+- bundle execution is explicit, tracked, and honest about partial success or failure
+
+See [docs/ACTION_BUNDLES.md](docs/ACTION_BUNDLES.md) for the model, approval flow, and current limits.
 
 ## Cross-Channel Companion Handoffs
 

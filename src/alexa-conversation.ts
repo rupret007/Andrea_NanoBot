@@ -50,6 +50,9 @@ export interface AlexaConversationSubjectData {
   missionBlockersJson?: string;
   missionStepFocusJson?: string;
   companionContinuationJson?: string;
+  actionBundleId?: string;
+  actionBundleTitle?: string;
+  actionBundleSummary?: string;
 }
 
 export interface AlexaConversationState {
@@ -94,6 +97,8 @@ const COMPANION_COMPLETION_ACTIONS: AlexaConversationFollowupAction[] = [
   'create_reminder',
   'save_for_later',
   'draft_follow_up',
+  'approve_bundle',
+  'show_bundle',
 ];
 
 function parseJsonSafe<T>(value: string, fallback: T): T {
@@ -251,6 +256,16 @@ export function resolveAlexaConversationFollowup(
   ) {
     return resolveSupported('send_details');
   }
+  if (/^(do that|do all that|approve all)\b/i.test(normalized)) {
+    return resolveSupported('approve_bundle');
+  }
+  if (
+    /^(show me the actions again|show again|what are the actions)\b/i.test(
+      normalized,
+    )
+  ) {
+    return resolveSupported('show_bundle');
+  }
   if (
     /^(save (?:that|it|this) for later|remember (?:that|it|this) for later|keep track of (?:that|it|this) for tonight|save the draft)\b/i.test(
       normalized,
@@ -280,7 +295,7 @@ export function resolveAlexaConversationFollowup(
     return resolveSupported('track_thread');
   }
   if (
-    /^(turn (?:that|it|this) into a reminder|remind me about (?:that|it|this)(?: tonight)?|save (?:that|it|this) for later tonight)\b/i.test(
+    /^(turn (?:that|it|this) into a reminder|remind me about (?:that|it|this)(?: tonight)?|save (?:that|it|this) for later tonight|just the reminder|only the reminder|do the reminder)\b/i.test(
       normalized,
     )
   ) {

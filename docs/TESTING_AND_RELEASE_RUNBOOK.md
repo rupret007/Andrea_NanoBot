@@ -115,6 +115,21 @@ node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/m
 npm run debug:missions
 ```
 
+For Action Bundle and approval-flow changes, add:
+
+```bash
+node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/action-bundles.test.ts src/assistant-action-completion.test.ts src/alexa-conversation.test.ts src/assistant-capabilities.test.ts
+npm run telegram:user:smoke
+```
+
+Treat that bundle suite as the fast proof that Andrea can:
+
+- synthesize a compact bundle
+- approve all or a subset
+- execute through existing reminder/draft/thread/library/handoff systems
+- report partial success or failure calmly
+- keep Alexa and Telegram follow-up semantics aligned
+
 ## 2. Major Suite
 
 ```bash

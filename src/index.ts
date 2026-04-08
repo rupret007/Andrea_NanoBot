@@ -140,9 +140,16 @@ import {
   type AlexaConversationState,
 } from './alexa-conversation.js';
 import {
+  buildCalendarCompanionEventReply,
+  buildCalendarCompanionFailureReply,
+  type CalendarCompanionFailureKind,
+  type ConversationalChannel,
+} from './conversational-core.js';
+import {
   clearAssistantHealthState,
   clearAssistantReadyState,
   clearTelegramTransportState,
+  reconcileWindowsHostState,
   writeRuntimeAuditState,
   writeAssistantHealthState,
   writeAssistantReadyState,
@@ -171,6 +178,15 @@ import {
   type PendingActionDraftState,
   type PendingActionReminderState,
 } from './action-layer.js';
+import {
+  type ActionBundleOperation,
+  applyActionBundleOperation,
+  buildActionBundlePresentation,
+  createOrRefreshActionBundle,
+  findLatestChatActionBundle,
+  interpretActionBundleFollowup,
+  rememberActionBundlePresentation,
+} from './action-bundles.js';
 import {
   advancePendingCalendarAutomation,
   buildCalendarAutomationPersistInput,
@@ -1076,84 +1092,111 @@ function clearSharedAssistantCapabilitySeed(chatJid: string): void {
   deleteRouterState(getSharedAssistantContextKey(chatJid));
 }
 
-function formatCreatedGoogleCalendarEventReply(input: {
-  title: string;
-  startIso: string;
-  endIso: string;
-  allDay: boolean;
-  timeZone: string;
-  calendarName: string;
-  htmlLink?: string | null;
-}): string {
-  const dateFormatter = new Intl.DateTimeFormat('en-US', {
-    timeZone: input.timeZone,
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  });
-
-  if (input.allDay) {
-    const base = `Added "${input.title}" to ${input.calendarName} on ${dateFormatter.format(
-      new Date(input.startIso),
-    )} as an all-day event.`;
-    return input.htmlLink
-      ? `${base}\n\nOpen in Google Calendar: ${input.htmlLink}`
-      : base;
+function parseBundleCommand(rawText: string):
+  | {
+      bundleId: string;
+      operation:
+        | { kind: 'approve_all' }
+        | { kind: 'enter_selection' }
+        | { kind: 'toggle_action'; orderIndex: number }
+        | { kind: 'run_selected' }
+        | { kind: 'skip_selected' }
+        | { kind: 'defer_all' }
+        | { kind: 'show' };
+    }
+  | null {
+  const trimmed = rawText.trim();
+  const parts = trimmed.split(/\s+/);
+  const command = parts[0]?.toLowerCase();
+  const bundleId = parts[1];
+  if (!bundleId) return null;
+  if (command === '/bundle-run-all') {
+    return { bundleId, operation: { kind: 'approve_all' } };
   }
-
-  const timeFormatter = new Intl.DateTimeFormat('en-US', {
-    timeZone: input.timeZone,
-    hour: 'numeric',
-    minute: '2-digit',
-  });
-  const base = `Added "${input.title}" to ${input.calendarName} on ${dateFormatter.format(
-    new Date(input.startIso),
-  )} from ${timeFormatter.format(new Date(input.startIso))} to ${timeFormatter.format(
-    new Date(input.endIso),
-  )}.`;
-  return input.htmlLink
-    ? `${base}\n\nOpen in Google Calendar: ${input.htmlLink}`
-    : base;
+  if (command === '/bundle-pick') {
+    return { bundleId, operation: { kind: 'enter_selection' } };
+  }
+  if (command === '/bundle-toggle') {
+    const orderIndex = Number.parseInt(parts[2] || '', 10);
+    if (!Number.isFinite(orderIndex) || orderIndex < 1) return null;
+    return { bundleId, operation: { kind: 'toggle_action', orderIndex } };
+  }
+  if (command === '/bundle-run-selected') {
+    return { bundleId, operation: { kind: 'run_selected' } };
+  }
+  if (command === '/bundle-skip-selected') {
+    return { bundleId, operation: { kind: 'skip_selected' } };
+  }
+  if (command === '/bundle-defer') {
+    return { bundleId, operation: { kind: 'defer_all' } };
+  }
+  if (command === '/bundle-show') {
+    return { bundleId, operation: { kind: 'show' } };
+  }
+  return null;
 }
 
-function formatUpdatedGoogleCalendarEventReply(input: {
-  title: string;
-  startIso: string;
-  endIso: string;
-  allDay: boolean;
-  timeZone: string;
-  calendarName: string;
-  htmlLink?: string | null;
-}): string {
-  const dateFormatter = new Intl.DateTimeFormat('en-US', {
-    timeZone: input.timeZone,
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  });
+async function applyAndPresentActionBundle(params: {
+  chatJid: string;
+  bundleId: string;
+  operation: ActionBundleOperation;
+  now?: Date;
+}): Promise<boolean> {
+  const group = resolveCompanionBinding(params.chatJid)?.group;
+  const channel = findChannel(channels, params.chatJid);
+  if (!group || !channel) return false;
+  const conversationChannel =
+    channel.name === 'bluebubbles' ? 'bluebubbles' : 'telegram';
+  const result = await applyActionBundleOperation(
+    params.bundleId,
+    params.operation,
+    {
+      groupFolder: group.folder,
+      channel: conversationChannel,
+      chatJid: params.chatJid,
+      currentTime: params.now,
+      resolveTelegramMainChat: resolveTelegramMainChatForAlexa,
+      resolveBlueBubblesCompanionChat: resolveBlueBubblesCompanionChat,
+      resolveHandoffTarget: resolveCompanionHandoffTarget,
+      sendTelegramMessage: sendCompanionHandoffMessageToChannel,
+      sendBlueBubblesMessage: sendCompanionHandoffMessageToChannel,
+      sendHandoffMessage: sendCompanionHandoffMessage,
+      sendTelegramArtifact: sendCompanionHandoffArtifactToChannel,
+      sendHandoffArtifact: sendCompanionHandoffArtifact,
+    },
+  );
+  if (!result.handled) return false;
 
-  if (input.allDay) {
-    const base = `Updated "${input.title}" on ${dateFormatter.format(new Date(input.startIso))} in ${input.calendarName}.`;
-    return input.htmlLink
-      ? `${base}\n\nOpen in Google Calendar: ${input.htmlLink}`
-      : base;
+  if (channel.name === 'telegram' && result.presentation) {
+    const messageId = result.snapshot?.bundle.presentationMessageId || null;
+    if (messageId && channel.editMessage) {
+      await channel.editMessage(params.chatJid, messageId, result.presentation.text, {
+        inlineActionRows: result.presentation.inlineActionRows,
+      });
+      rememberActionBundlePresentation({
+        bundleId: params.bundleId,
+        messageId,
+        mode: result.presentation.mode,
+        now: params.now,
+      });
+    } else {
+      const sent = await channel.sendMessage(params.chatJid, result.presentation.text, {
+        inlineActionRows: result.presentation.inlineActionRows,
+      });
+      rememberActionBundlePresentation({
+        bundleId: params.bundleId,
+        messageId: sent.platformMessageId || null,
+        mode: result.presentation.mode,
+        now: params.now,
+      });
+    }
   }
 
-  const timeFormatter = new Intl.DateTimeFormat('en-US', {
-    timeZone: input.timeZone,
-    hour: 'numeric',
-    minute: '2-digit',
-  });
-  const base = `Updated "${input.title}" in ${input.calendarName} to ${dateFormatter.format(
-    new Date(input.startIso),
-  )} from ${timeFormatter.format(new Date(input.startIso))} to ${timeFormatter.format(
-    new Date(input.endIso),
-  )}.`;
-  return input.htmlLink
-    ? `${base}\n\nOpen in Google Calendar: ${input.htmlLink}`
-    : base;
+  if (result.replyText) {
+    await channel.sendMessage(params.chatJid, result.replyText);
+  }
+
+  return true;
 }
 
 const CALENDAR_LOOKUP_TOMORROW_PROMPT = "What's on my calendar tomorrow?";
@@ -1202,6 +1245,103 @@ function formatCalendarPanelText(title: string, body: string): string {
     title,
     sections: [stripLeadingMarkdownTitle(body)],
   });
+}
+
+function resolveConversationalChannelForChannelName(
+  channelName: string,
+): ConversationalChannel {
+  if (channelName === 'bluebubbles' || channelName === 'alexa') {
+    return channelName;
+  }
+  return 'telegram';
+}
+
+function isGoogleCalendarAuthOrConfigDetail(
+  detail: string | null | undefined,
+): boolean {
+  if (!detail) return false;
+  const normalized = detail.toLowerCase();
+  return (
+    normalized.includes('google_calendar_') ||
+    normalized.includes('access token') ||
+    normalized.includes('refresh token') ||
+    normalized.includes('client id') ||
+    normalized.includes('client secret') ||
+    normalized.includes('credentials') ||
+    normalized.includes('oauth')
+  );
+}
+
+function isTransientCalendarHostWindow(): boolean {
+  try {
+    const reconciliation = reconcileWindowsHostState({
+      projectRoot: process.cwd(),
+    });
+    return (
+      reconciliation.serviceState === 'starting' ||
+      reconciliation.serviceState === 'process_stale'
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isTransientCalendarFailureDetail(
+  detail: string | null | undefined,
+): boolean {
+  if (!detail) return false;
+  const normalized = detail.toLowerCase();
+  return (
+    normalized.includes('timed out') ||
+    normalized.includes('timeout') ||
+    normalized.includes('temporarily unavailable') ||
+    normalized.includes('network') ||
+    normalized.includes('econnreset') ||
+    normalized.includes('enotfound') ||
+    normalized.includes('service unavailable')
+  );
+}
+
+function resolveCalendarCompanionFailureKind(params: {
+  technicalDetail?: string | null;
+  transientHostUnavailable?: boolean;
+  fallbackKind?: Exclude<CalendarCompanionFailureKind, 'temporary_unavailable'>;
+}): CalendarCompanionFailureKind {
+  if (
+    params.transientHostUnavailable ||
+    isTransientCalendarFailureDetail(params.technicalDetail)
+  ) {
+    return 'temporary_unavailable';
+  }
+  if (params.fallbackKind) {
+    return params.fallbackKind;
+  }
+  if (isGoogleCalendarAuthOrConfigDetail(params.technicalDetail)) {
+    return 'calendar_auth_unavailable';
+  }
+  return 'calendar_access_unavailable';
+}
+
+function buildCalendarCompanionFailurePanelText(params: {
+  title: string;
+  channelName: string;
+  action: 'create_event' | 'confirm_reminder';
+  technicalDetail?: string | null;
+  fallbackKind?: Exclude<CalendarCompanionFailureKind, 'temporary_unavailable'>;
+}): string {
+  const transientHostUnavailable = isTransientCalendarHostWindow();
+  return formatCalendarPanelText(
+    params.title,
+    buildCalendarCompanionFailureReply({
+      channel: resolveConversationalChannelForChannelName(params.channelName),
+      action: params.action,
+      kind: resolveCalendarCompanionFailureKind({
+        technicalDetail: params.technicalDetail,
+        transientHostUnavailable,
+        fallbackKind: params.fallbackKind,
+      }),
+    }),
+  );
 }
 
 function formatDailyCompanionPanelTitle(mode: DailyCompanionMode): string {
@@ -2475,6 +2615,23 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       ? normalizeBlueBubblesCompanionPrompt(rawLastContent)
       : rawLastContent;
   const now = new Date();
+  const tryHandleActionBundleFollowup = async (): Promise<boolean> => {
+    const snapshot = findLatestChatActionBundle({
+      groupFolder: group.folder,
+      presentationChannel: conversationChannel,
+      chatJid,
+      now,
+    });
+    if (!snapshot) return false;
+    const operation = interpretActionBundleFollowup(lastContent, snapshot);
+    if (!operation) return false;
+    return applyAndPresentActionBundle({
+      chatJid,
+      bundleId: snapshot.bundle.bundleId,
+      operation,
+      now,
+    });
+  };
   const tryHandleLocalCalendarAutomation = async (): Promise<boolean> => {
     try {
       const pendingAutomation = getPendingCalendarAutomationState(chatJid);
@@ -3012,7 +3169,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               chatJid,
               formatCalendarPanelText(
                 '*Google Calendar*',
-                formatUpdatedGoogleCalendarEventReply({
+                buildCalendarCompanionEventReply({
+                  action: 'update_event',
                   title: movedEvent.title,
                   startIso: movedEvent.startIso,
                   endIso: movedEvent.endIso,
@@ -3053,7 +3211,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             chatJid,
             formatCalendarPanelText(
               '*Google Calendar*',
-              formatUpdatedGoogleCalendarEventReply({
+              buildCalendarCompanionEventReply({
+                action: 'update_event',
                 title: updatedEvent.title,
                 startIso: updatedEvent.startIso,
                 endIso: updatedEvent.endIso,
@@ -3099,12 +3258,24 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
                 googleConfig,
               );
             if (successCount === 0) {
+              logger.warn(
+                {
+                  component: 'assistant',
+                  chatJid,
+                  groupFolder: group.folder,
+                  group: group.name,
+                  failures,
+                },
+                'Google calendar reminder lookup unavailable during local fast path',
+              );
               await channel.sendMessage(
                 chatJid,
-                formatCalendarPanelText(
-                  '*Calendar*',
-                  "I can't confirm that reminder right now because Google Calendar access is unavailable on this host.",
-                ),
+                buildCalendarCompanionFailurePanelText({
+                  title: '*Calendar*',
+                  channelName: channel.name,
+                  action: 'confirm_reminder',
+                  technicalDetail: failures.join('; '),
+                }),
                 {
                   inlineActionRows: buildCalendarLookupInlineActionRows(
                     CALENDAR_LOOKUP_TOMORROW_PROMPT,
@@ -3388,12 +3559,16 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         );
       } catch (error) {
         try {
+          const technicalDetail =
+            error instanceof Error ? error.message : String(error);
           await channel.sendMessage(
             chatJid,
-            formatCalendarPanelText(
-              '*Google Calendar*',
-              `I can't create a Google Calendar event right now because Google Calendar access is unavailable on this host.\n\n${error instanceof Error ? error.message : String(error)}`,
-            ),
+            buildCalendarCompanionFailurePanelText({
+              title: '*Google Calendar*',
+              channelName: channel.name,
+              action: 'create_event',
+              technicalDetail,
+            }),
             {
               inlineActionRows: buildCalendarLookupInlineActionRows(
                 CALENDAR_LOOKUP_TOMORROW_PROMPT,
@@ -3406,6 +3581,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               chatJid,
               groupFolder: group.folder,
               group: group.name,
+              err: error,
+              technicalDetail,
             },
             'Google calendar create unavailable during local fast path',
           );
@@ -3442,7 +3619,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         createPlan.kind === 'needs_details'
           ? createPlan.message
           : noWritableCalendars
-            ? 'I can read your Google calendars here, but none of the selected Google calendars are writable right now.'
+            ? buildCalendarCompanionFailureReply({
+                channel: resolveConversationalChannelForChannelName(channel.name),
+                action: 'create_event',
+                kind: 'calendar_auth_unavailable',
+              })
             : formatGoogleCalendarCreatePrompt(pendingDraftState!);
 
       try {
@@ -3688,7 +3869,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         chatJid,
         formatCalendarPanelText(
           '*Google Calendar*',
-          formatCreatedGoogleCalendarEventReply({
+          buildCalendarCompanionEventReply({
+            action: 'create_event',
             title: continueResult.state.draft.title,
             startIso: createdEvent.startIso,
             endIso: createdEvent.endIso,
@@ -3722,12 +3904,16 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       try {
         clearPendingGoogleCalendarCreateState(chatJid);
         clearGoogleCalendarSchedulingContext(chatJid);
+        const technicalDetail =
+          error instanceof Error ? error.message : String(error);
         await channel.sendMessage(
           chatJid,
-          formatCalendarPanelText(
-            '*Google Calendar*',
-            `I couldn't create that Google Calendar event.\n\n${error instanceof Error ? error.message : String(error)}`,
-          ),
+          buildCalendarCompanionFailurePanelText({
+            title: '*Google Calendar*',
+            channelName: channel.name,
+            action: 'create_event',
+            technicalDetail,
+          }),
           {
             inlineActionRows: buildCalendarLookupInlineActionRows(
               CALENDAR_LOOKUP_TOMORROW_PROMPT,
@@ -3740,6 +3926,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             chatJid,
             groupFolder: group.folder,
             group: group.name,
+            err: error,
+            technicalDetail,
           },
           'Google calendar event create failed during local fast path',
         );
@@ -4704,6 +4892,64 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         await channel.sendMessage(chatJid, result.replyText || 'Okay.');
       }
 
+      const actionBundle = createOrRefreshActionBundle({
+        groupFolder: group.folder,
+        presentationChannel: conversationChannel,
+        presentationChatJid: chatJid,
+        presentationThreadId: missedMessages.at(-1)?.thread_id || null,
+        capabilityId: result.capabilityId,
+        continuationCandidate: result.continuationCandidate,
+        summaryText: result.conversationSeed?.summaryText || result.replyText,
+        replyText: result.replyText,
+        utterance: lastContent,
+        now,
+      });
+      if (actionBundle) {
+        if (result.conversationSeed) {
+          result.conversationSeed.subjectData = {
+            ...(result.conversationSeed.subjectData || {}),
+            actionBundleId: actionBundle.bundle.bundleId,
+            actionBundleTitle: actionBundle.bundle.title,
+            actionBundleSummary: actionBundle.actions
+              .slice(0, 3)
+              .map((action) => action.summary)
+              .join(', '),
+          };
+          result.conversationSeed.supportedFollowups = Array.from(
+            new Set([
+              ...(result.conversationSeed.supportedFollowups || []),
+              'approve_bundle',
+              'show_bundle',
+            ]),
+          );
+        }
+        if (result.continuationCandidate) {
+          result.continuationCandidate.actionBundleId = actionBundle.bundle.bundleId;
+          result.continuationCandidate.actionBundleTitle = actionBundle.bundle.title;
+          result.continuationCandidate.actionBundleSummary = actionBundle.actions
+            .slice(0, 3)
+            .map((action) => action.summary)
+            .join(', ');
+        }
+        if (conversationChannel === 'telegram') {
+          const presentation = buildActionBundlePresentation(actionBundle);
+          const sent = await channel.sendMessage(chatJid, presentation.text, {
+            inlineActionRows: presentation.inlineActionRows,
+          });
+          rememberActionBundlePresentation({
+            bundleId: actionBundle.bundle.bundleId,
+            messageId: sent.platformMessageId || null,
+            mode: presentation.mode,
+            now,
+          });
+        } else if (conversationChannel === 'bluebubbles') {
+          await channel.sendMessage(
+            chatJid,
+            'Andrea: I can line up the next steps for you. Ask me to send the details to Telegram if you want the full bundle there.',
+          );
+        }
+      }
+
       if (result.conversationSeed) {
         setSharedAssistantCapabilitySeed(chatJid, result.conversationSeed, now);
       } else {
@@ -4879,6 +5125,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     requestPolicy.route === 'direct_assistant' ||
     requestPolicy.route === 'protected_assistant'
   ) {
+    if (await tryHandleActionBundleFollowup()) {
+      return true;
+    }
     if (await tryHandleSharedAssistantCapability()) {
       return true;
     }
@@ -9922,6 +10171,19 @@ async function main(): Promise<void> {
             isMain: registeredGroups[chatJid]?.isMain === true,
           },
           'Blocked command outside allowed surface',
+        );
+        return;
+      }
+
+      const bundleCommand = parseBundleCommand(rawTrimmed);
+      if (bundleCommand) {
+        applyAndPresentActionBundle({
+          chatJid,
+          bundleId: bundleCommand.bundleId,
+          operation: bundleCommand.operation,
+          now: new Date(),
+        }).catch((err) =>
+          logger.error({ err, chatJid }, 'Action bundle command error'),
         );
         return;
       }

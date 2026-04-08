@@ -8,6 +8,7 @@ import type {
   GoogleCalendarMetadata,
 } from './google-calendar.js';
 import type { ScheduledTask } from './types.js';
+import { buildCalendarCompanionReminderReply } from './conversational-core.js';
 import {
   buildVoiceReply,
   formatVoiceChoicePrompt,
@@ -1482,19 +1483,18 @@ export function buildEventReminderTaskPlan(input: {
 
   const confirmation =
     targetEvents.length === 1
-      ? `Okay. I'll remind you ${
-          targetEvents[0]!.allDay && input.state.offset.kind !== 'night_before'
-            ? `about ${targetEvents[0]!.title}`
-            : `${input.state.offset.label} ${targetEvents[0]!.title}`
-        } at ${reminderFormatter.format(
-          new Date(
+      ? buildCalendarCompanionReminderReply({
+          title: targetEvents[0]!.title,
+          offsetLabel: input.state.offset.label,
+          remindAtIso:
             input.state.remindAtIso ||
-              input.state.remindAtByEventId?.[targetEvents[0]!.id] ||
-              '',
-          ),
-        )}.`
+            input.state.remindAtByEventId?.[targetEvents[0]!.id] ||
+            '',
+          allDay: targetEvents[0]!.allDay,
+          timeZone,
+        })
       : [
-          `Okay. I'll set ${targetEvents.length} reminders:`,
+          `Got it - I'll set ${targetEvents.length} reminders:`,
           ...targetEvents.map((event) => {
             const remindAt = input.state.remindAtByEventId?.[event.id];
             return `- ${event.title}: ${

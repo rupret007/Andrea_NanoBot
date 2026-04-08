@@ -202,6 +202,9 @@ export interface AssistantCapabilityContext {
     missionStepFocusJson?: string;
     activeCapabilityId?: AssistantCapabilityId;
     companionContinuationJson?: string;
+    actionBundleId?: string;
+    actionBundleTitle?: string;
+    actionBundleSummary?: string;
   };
 }
 
@@ -274,6 +277,9 @@ export interface AssistantCapabilityConversationSeed {
     missionStepFocusJson?: string;
     toneProfile?: CompanionToneProfile;
     companionContinuationJson?: string;
+    actionBundleId?: string;
+    actionBundleTitle?: string;
+    actionBundleSummary?: string;
   };
   supportedFollowups?: AlexaConversationFollowupAction[];
   prioritizationLens?:

@@ -309,7 +309,9 @@ export type AlexaConversationFollowupAction =
   | 'track_thread'
   | 'create_reminder'
   | 'save_for_later'
-  | 'draft_follow_up';
+  | 'draft_follow_up'
+  | 'approve_bundle'
+  | 'show_bundle';
 
 export type CompanionToneProfile = 'plain' | 'balanced' | 'warmer';
 
@@ -619,6 +621,114 @@ export type MissionSuggestedActionKind =
   | 'start_research'
   | 'reference_current_work';
 
+export type ActionBundleOriginKind =
+  | 'mission'
+  | 'communication'
+  | 'chief_of_staff'
+  | 'daily_guidance'
+  | 'research'
+  | 'handoff';
+
+export type ActionBundlePresentationChannel =
+  | 'telegram'
+  | 'alexa'
+  | 'bluebubbles';
+
+export type ActionBundleStatus =
+  | 'open'
+  | 'partially_done'
+  | 'done'
+  | 'dismissed'
+  | 'expired';
+
+export type ActionBundlePresentationMode = 'default' | 'selection';
+
+export type ActionBundleActionType =
+  | 'create_reminder'
+  | 'draft_follow_up'
+  | 'save_to_thread'
+  | 'save_to_library'
+  | 'pin_to_ritual'
+  | 'send_to_telegram'
+  | 'reference_current_work';
+
+export type ActionBundleTargetSystem =
+  | 'reminders'
+  | 'communication'
+  | 'life_threads'
+  | 'knowledge_library'
+  | 'rituals'
+  | 'cross_channel_handoffs'
+  | 'missions'
+  | 'current_work';
+
+export type ActionBundleActionStatus =
+  | 'proposed'
+  | 'approved'
+  | 'executed'
+  | 'skipped'
+  | 'failed'
+  | 'deferred';
+
+export interface ActionBundleRelatedRefs {
+  missionId?: string;
+  threadId?: string;
+  communicationThreadId?: string;
+  knowledgeSourceIds?: string[];
+  currentWorkRef?: string;
+  handoffId?: string;
+}
+
+export interface ActionBundleSourceContext {
+  whyLine?: string;
+  summaryText?: string;
+  utterance?: string;
+  personName?: string;
+  titleHint?: string;
+}
+
+export interface ActionBundleRecord {
+  bundleId: string;
+  groupFolder: string;
+  title: string;
+  originKind: ActionBundleOriginKind;
+  originCapability?: string | null;
+  sourceContextKey?: string | null;
+  sourceContextJson: string;
+  presentationChannel: ActionBundlePresentationChannel;
+  presentationChatJid?: string | null;
+  presentationThreadId?: string | null;
+  presentationMessageId?: string | null;
+  presentationMode?: ActionBundlePresentationMode | null;
+  bundleStatus: ActionBundleStatus;
+  userConfirmed: boolean;
+  createdAt: string;
+  expiresAt: string;
+  lastUpdatedAt: string;
+  relatedRefsJson?: string | null;
+}
+
+export interface ActionBundleActionRecord {
+  actionId: string;
+  bundleId: string;
+  orderIndex: number;
+  actionType: ActionBundleActionType;
+  targetSystem: ActionBundleTargetSystem;
+  summary: string;
+  requiresConfirmation: boolean;
+  status: ActionBundleActionStatus;
+  failureReason?: string | null;
+  payloadJson: string;
+  resultRefJson?: string | null;
+  createdAt: string;
+  lastUpdatedAt: string;
+}
+
+export interface ActionBundleSnapshot {
+  bundle: ActionBundleRecord;
+  actions: ActionBundleActionRecord[];
+}
+
 export interface MissionSuggestedAction {
   kind: MissionSuggestedActionKind;
   label: string;
@@ -922,6 +1032,9 @@ export interface CompanionContinuationCandidate {
   knowledgeSourceIds?: string[];
   knowledgeSourceTitles?: string[];
   followupSuggestions?: string[];
+  actionBundleId?: string;
+  actionBundleTitle?: string;
+  actionBundleSummary?: string;
 }
 
 export interface CompanionHandoffRecord {

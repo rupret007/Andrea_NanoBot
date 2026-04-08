@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { createOrRefreshActionBundle } from './action-bundles.js';
 import { completeAssistantActionFromAlexa } from './assistant-action-completion.js';
 import {
   getAllTasks,
@@ -265,5 +266,112 @@ describe('assistant action completion', () => {
 
     expect(result.handled).toBe(true);
     expect(result.bridgeDraftReference).toBe('Candace');
+  });
+
+  it('can approve an action bundle from Alexa and execute the reminder action', async () => {
+    const bundle = createOrRefreshActionBundle({
+      groupFolder: 'main',
+      presentationChannel: 'alexa',
+      capabilityId: 'communication.understand_message',
+      continuationCandidate: {
+        capabilityId: 'communication.understand_message',
+        voiceSummary: 'Candace still needs a dinner answer.',
+        communicationThreadId: 'comm-1',
+        lastCommunicationSummary: 'Candace still needs a dinner answer.',
+        threadTitle: 'Candace',
+        completionText: 'Candace still needs a dinner answer tonight.',
+      },
+      summaryText: 'Candace still needs a dinner answer.',
+      utterance: 'what should I say back',
+      now: new Date('2026-04-08T10:00:00.000Z'),
+    });
+
+    const result = await completeAssistantActionFromAlexa(
+      {
+        groupFolder: 'main',
+        action: 'approve_bundle',
+        utterance: 'do that',
+        conversationSummary: 'Candace still needs a dinner answer.',
+        priorSubjectData: {
+          actionBundleId: bundle?.bundle.bundleId,
+          companionContinuationJson: JSON.stringify({
+            capabilityId: 'communication.understand_message',
+            actionBundleId: bundle?.bundle.bundleId,
+            completionText: 'Candace still needs a dinner answer tonight.',
+          }),
+        },
+        now: new Date('2026-04-08T10:15:00.000Z'),
+      },
+      {
+        resolveTelegramMainChat: () => ({ chatJid: 'tg:main' }),
+        sendTelegramMessage: vi.fn(async () => ({ platformMessageId: 'tg-msg-1' })),
+      },
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.replyText).toContain('Andrea:');
+    expect(getAllTasks().some((task) => task.chat_jid === 'tg:main')).toBe(true);
+  });
+
+  it('can hand the action bundle to Telegram from Alexa', async () => {
+    const bundle = createOrRefreshActionBundle({
+      groupFolder: 'main',
+      presentationChannel: 'alexa',
+      capabilityId: 'research.compare',
+      continuationCandidate: {
+        capabilityId: 'research.compare',
+        voiceSummary: 'Kindle is the safer battery pick.',
+        handoffPayload: {
+          kind: 'message',
+          title: 'Full comparison',
+          text: 'Kindle is the safer battery pick for long travel days.',
+          followupSuggestions: ['Save it if useful.'],
+        },
+        completionText: 'Kindle is the safer battery pick for long travel days.',
+      },
+      summaryText: 'Kindle is the safer battery pick.',
+      utterance: 'compare kindle versus kobo',
+      now: new Date('2026-04-08T10:00:00.000Z'),
+    });
+    const sendTelegramMessage = vi.fn(async () => ({
+      platformMessageId: 'tg-bundle-1',
+    }));
+
+    const result = await completeAssistantActionFromAlexa(
+      {
+        groupFolder: 'main',
+        action: 'send_details',
+        utterance: 'send the details to Telegram',
+        conversationSummary: 'Kindle is the safer battery pick.',
+        priorSubjectData: {
+          actionBundleId: bundle?.bundle.bundleId,
+          companionContinuationJson: JSON.stringify({
+            capabilityId: 'research.compare',
+            actionBundleId: bundle?.bundle.bundleId,
+            handoffPayload: {
+              kind: 'message',
+              title: 'Full comparison',
+              text: 'Kindle is the safer battery pick for long travel days.',
+              followupSuggestions: ['Save it if useful.'],
+            },
+            completionText: 'Kindle is the safer battery pick for long travel days.',
+          }),
+        },
+      },
+      {
+        resolveTelegramMainChat: () => ({ chatJid: 'tg:main' }),
+        sendTelegramMessage,
+      },
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.replyText).toContain('action bundle');
+    expect(sendTelegramMessage).toHaveBeenCalledWith(
+      'tg:main',
+      expect.stringContaining('*Action bundle*'),
+      expect.objectContaining({
+        inlineActionRows: expect.any(Array),
+      }),
+    );
   });
 });

@@ -106,6 +106,8 @@ describe('alexa conversation state', () => {
         'track_thread',
         'create_reminder',
         'draft_follow_up',
+        'approve_bundle',
+        'show_bundle',
         'action_guidance',
         'risk_check',
         'memory_control',
@@ -150,6 +152,9 @@ describe('alexa conversation state', () => {
       resolveAlexaConversationFollowup('turn that into a reminder tonight', state),
     ).toMatchObject({ ok: true, action: 'create_reminder' });
     expect(
+      resolveAlexaConversationFollowup('just the reminder', state),
+    ).toMatchObject({ ok: true, action: 'create_reminder' });
+    expect(
       resolveAlexaConversationFollowup('keep track of that for tonight', state),
     ).toMatchObject({ ok: true, action: 'save_for_later' });
     expect(
@@ -158,6 +163,12 @@ describe('alexa conversation state', () => {
     expect(
       resolveAlexaConversationFollowup('draft a message about that', state),
     ).toMatchObject({ ok: true, action: 'draft_follow_up' });
+    expect(
+      resolveAlexaConversationFollowup('do that', state),
+    ).toMatchObject({ ok: true, action: 'approve_bundle' });
+    expect(
+      resolveAlexaConversationFollowup('show me the actions again', state),
+    ).toMatchObject({ ok: true, action: 'show_bundle' });
     expect(
       resolveAlexaConversationFollowup('remind me before that', state),
     ).toMatchObject({ ok: true, action: 'remind_before_that' });

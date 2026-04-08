@@ -40,6 +40,10 @@ import {
   type AssistantActionCompletionResult,
 } from './assistant-action-completion.js';
 import {
+  buildActionBundleVoiceSummary,
+  createOrRefreshActionBundle,
+} from './action-bundles.js';
+import {
   getAlexaOAuthStatus,
   handleAlexaOAuthRequest,
   resolveAlexaOAuthConfig,
@@ -2291,6 +2295,51 @@ export function createAlexaSkill(
     }
     if (!result.handled) {
       return null;
+    }
+
+    const actionBundle = createOrRefreshActionBundle({
+      groupFolder: linked.account.groupFolder,
+      presentationChannel: 'alexa',
+      capabilityId: result.capabilityId,
+      continuationCandidate: result.continuationCandidate,
+      summaryText: result.conversationSeed?.summaryText || result.replyText,
+      replyText: result.replyText,
+      utterance: capability.normalizedText,
+    });
+    if (actionBundle) {
+      const voiceSummary = buildActionBundleVoiceSummary(actionBundle);
+      if (result.dailyResponse) {
+        result.dailyResponse.reply = `${result.dailyResponse.reply} ${voiceSummary.summary}`.trim();
+      } else {
+        result.replyText = `${result.replyText || 'Okay.'} ${voiceSummary.summary}`.trim();
+      }
+      if (result.conversationSeed) {
+        result.conversationSeed.subjectData = {
+          ...(result.conversationSeed.subjectData || {}),
+          actionBundleId: actionBundle.bundle.bundleId,
+          actionBundleTitle: actionBundle.bundle.title,
+          actionBundleSummary: actionBundle.actions
+            .slice(0, 3)
+            .map((action) => action.summary)
+            .join(', '),
+        };
+        result.conversationSeed.supportedFollowups = Array.from(
+          new Set([
+            ...(result.conversationSeed.supportedFollowups || []),
+            'approve_bundle',
+            'show_bundle',
+            'send_details',
+          ]),
+        );
+      }
+      if (result.continuationCandidate) {
+        result.continuationCandidate.actionBundleId = actionBundle.bundle.bundleId;
+        result.continuationCandidate.actionBundleTitle = actionBundle.bundle.title;
+        result.continuationCandidate.actionBundleSummary = actionBundle.actions
+          .slice(0, 3)
+          .map((action) => action.summary)
+          .join(', ');
+      }
     }
 
     if (result.dailyResponse) {

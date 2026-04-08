@@ -4,6 +4,7 @@ import {
   advancePendingCalendarReminder,
   advancePendingGoogleCalendarEventAction,
   buildActiveGoogleCalendarEventContextState,
+  buildEventReminderTaskPlan,
   buildPendingCalendarReminderStateFromMatches,
   buildSameDaySuggestions,
   matchGoogleCalendarTrackedEvents,
@@ -328,6 +329,77 @@ describe('calendar follow-through reminders', () => {
     expect(result.state.targetEvent?.id).toBe('evt-family-tomorrow');
     expect(result.message).toContain('Family closeout proof');
     expect(result.message).not.toContain('Google all-day proof');
+  });
+
+  it('formats single reminder confirmations in the calmer companion voice', () => {
+    const pending = buildPendingCalendarReminderStateFromMatches({
+      events: [dentistEvent],
+      offset: {
+        kind: 'minutes_before',
+        minutes: 30,
+        label: '30 minutes before',
+      },
+      targetLabel: 'dentist appointment',
+      now: new Date('2026-04-01T10:00:00-05:00'),
+    });
+
+    expect(pending.kind).toBe('awaiting_input');
+    if (pending.kind !== 'awaiting_input') return;
+
+    const plan = buildEventReminderTaskPlan({
+      state: pending.state,
+      groupFolder: 'main',
+      chatJid: 'bb:test',
+      now: new Date('2026-04-01T10:00:00-05:00'),
+      timeZone: 'America/Chicago',
+    });
+
+    expect(plan.confirmation).toContain(
+      "Done - I'll remind you 30 minutes before Dentist appointment at",
+    );
+    expect(plan.confirmation).not.toContain('Reminder:');
+  });
+
+  it('formats grouped reminder confirmations without sounding robotic', () => {
+    const resolved = resolveCalendarReminderLookup({
+      events: [
+        {
+          ...dentistEvent,
+          id: 'evt-1',
+        },
+        {
+          ...dentistEvent,
+          id: 'evt-2',
+          title: 'Dinner reservation',
+          startIso: '2026-04-02T21:00:00.000Z',
+          endIso: '2026-04-02T22:00:00.000Z',
+        },
+      ],
+      offset: {
+        kind: 'minutes_before',
+        minutes: 30,
+        label: '30 minutes before',
+      },
+      targetLabel: 'anything on my calendar tomorrow afternoon',
+      selectorMode: 'all_timed_in_window',
+      queryText: null,
+      scopeFilter: null,
+      now: new Date('2026-04-01T10:00:00-05:00'),
+    });
+
+    expect(resolved.kind).toBe('awaiting_input');
+    if (resolved.kind !== 'awaiting_input') return;
+
+    const plan = buildEventReminderTaskPlan({
+      state: resolved.state,
+      groupFolder: 'main',
+      chatJid: 'bb:test',
+      now: new Date('2026-04-01T10:00:00-05:00'),
+      timeZone: 'America/Chicago',
+    });
+
+    expect(plan.confirmation).toContain("Got it - I'll set 2 reminders:");
+    expect(plan.confirmation).toContain('Dinner reservation');
   });
 });
 

@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildCalendarCompanionEventReply,
+  buildCalendarCompanionFailureReply,
+  buildCalendarCompanionReminderReply,
   buildGracefulDegradedReply,
   classifyConversationalTurn,
   isResearchEligibleConversationalPrompt,
@@ -143,5 +146,79 @@ describe('graceful degraded replies', () => {
     expect(staleReply).not.toContain('runtime');
     expect(unsupportedReply).toContain('Telegram');
     expect(unsupportedReply).not.toContain('delegate');
+  });
+
+  it('keeps calendar-create failures human without leaking technical setup detail in BlueBubbles', () => {
+    const reply = buildCalendarCompanionFailureReply({
+      channel: 'bluebubbles',
+      action: 'create_event',
+      kind: 'calendar_auth_unavailable',
+    });
+
+    expect(reply).toContain("I don't have the calendar connected");
+    expect(reply).toContain('save that for later');
+    expect(reply).toContain('remind Jeff instead');
+    expect(reply).not.toContain('GOOGLE_CALENDAR_');
+    expect(reply).not.toContain('host');
+    expect(reply).not.toContain('setup');
+  });
+
+  it('keeps reminder-confirmation failures human during a transient host restart window', () => {
+    const reply = buildCalendarCompanionFailureReply({
+      channel: 'telegram',
+      action: 'confirm_reminder',
+      kind: 'temporary_unavailable',
+    });
+
+    expect(reply).toContain("I couldn't line that reminder up right this second");
+    expect(reply).toContain('save that for later');
+    expect(reply).not.toContain('host');
+    expect(reply).not.toContain('runtime');
+  });
+
+  it('keeps calendar access failures calm and action-oriented', () => {
+    const reply = buildCalendarCompanionFailureReply({
+      channel: 'telegram',
+      action: 'create_event',
+      kind: 'calendar_access_unavailable',
+    });
+
+    expect(reply).toContain("I can't reach the calendar right now.");
+    expect(reply).toContain('save that for later');
+    expect(reply).not.toContain('GOOGLE_CALENDAR_');
+  });
+
+  it('formats calendar-create successes with a short human confirmation', () => {
+    const reply = buildCalendarCompanionEventReply({
+      action: 'create_event',
+      title: 'check air filters',
+      startIso: '2026-04-09T00:00:00.000Z',
+      endIso: '2026-04-09T01:00:00.000Z',
+      allDay: false,
+      timeZone: 'America/Chicago',
+      calendarName: 'Jeff',
+      htmlLink: 'https://calendar.google.com/calendar/event?eid=abc',
+    });
+
+    expect(reply).toContain(
+      'Got it - I added "check air filters" to Jeff\'s calendar',
+    );
+    expect(reply).toContain('Open in Google Calendar: https://calendar.google.com/calendar/event?eid=abc');
+    expect(reply).not.toContain('Added "check air filters" to Jeff on');
+  });
+
+  it('formats reminder confirmations like the same assistant', () => {
+    const reply = buildCalendarCompanionReminderReply({
+      title: 'check air filters',
+      offsetLabel: '30 minutes before',
+      remindAtIso: '2026-04-08T23:30:00.000Z',
+      allDay: false,
+      timeZone: 'America/Chicago',
+    });
+
+    expect(reply).toContain(
+      "Done - I'll remind you 30 minutes before check air filters at",
+    );
+    expect(reply).not.toContain('Reminder:');
   });
 });

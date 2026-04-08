@@ -1,4 +1,10 @@
-import { createTask } from './db.js';
+import { createTask, getActionBundleSnapshot } from './db.js';
+import {
+  applyActionBundleOperation,
+  buildActionBundlePresentation,
+  buildActionBundleVoiceSummary,
+  rememberActionBundlePresentation,
+} from './action-bundles.js';
 import {
   executeAssistantCapability,
   type AssistantCapabilityContext,
@@ -18,6 +24,7 @@ import { handleRitualCommand, type RitualCommandResult } from './rituals.js';
 import { buildSignaturePostActionConfirmation } from './signature-flows.js';
 import type {
   AlexaConversationFollowupAction,
+  ActionBundleActionType,
   CompanionContinuationCandidate,
 } from './types.js';
 
@@ -90,6 +97,32 @@ function resolveCompletionText(
     params.conversationSummary?.trim() ||
     ''
   );
+}
+
+function resolveBundleId(
+  params: AssistantActionCompletionParams,
+  candidate: CompanionContinuationCandidate | undefined,
+): string | undefined {
+  return (
+    candidate?.actionBundleId ||
+    params.priorSubjectData?.actionBundleId ||
+    undefined
+  );
+}
+
+function resolveBundleActionType(
+  action: AlexaConversationFollowupAction,
+  utterance: string,
+): ActionBundleActionType | null {
+  if (
+    action === 'create_reminder' &&
+    /^(?:just|only) (?:the )?reminder\b|^(?:do|run) (?:just )?(?:the )?reminder\b/i.test(
+      utterance.trim(),
+    )
+  ) {
+    return 'create_reminder';
+  }
+  return null;
 }
 
 function extractTrackThreadTitle(
@@ -435,19 +468,149 @@ export async function completeAssistantActionFromAlexa(
 ): Promise<AssistantActionCompletionResult> {
   const candidate = parseContinuationCandidate(params.priorSubjectData);
   const completionText = resolveCompletionText(params, candidate);
+  const bundleId = resolveBundleId(params, candidate);
+
+  if (bundleId && params.action === 'show_bundle') {
+    const snapshot = getActionBundleSnapshot(bundleId);
+    if (!snapshot) {
+      return {
+        handled: true,
+        replyText: 'I do not have that action bundle handy anymore.',
+      };
+    }
+    return {
+      handled: true,
+      replyText: buildActionBundleVoiceSummary(snapshot).speech,
+    };
+  }
+
+  if (bundleId && params.action === 'approve_bundle') {
+    const result = await applyActionBundleOperation(
+      bundleId,
+      { kind: 'approve_all' },
+      {
+        groupFolder: params.groupFolder,
+        channel: 'alexa',
+        currentTime: params.now,
+        resolveTelegramMainChat: deps.resolveTelegramMainChat,
+        resolveBlueBubblesCompanionChat: deps.resolveBlueBubblesCompanionChat,
+        resolveHandoffTarget: deps.resolveHandoffTarget,
+        sendTelegramMessage: deps.sendTelegramMessage!,
+        sendBlueBubblesMessage: deps.sendBlueBubblesMessage,
+        sendHandoffMessage: deps.sendHandoffMessage,
+        sendTelegramArtifact: deps.sendTelegramArtifact,
+        sendHandoffArtifact: deps.sendHandoffArtifact,
+      },
+    );
+    if (result.handled) {
+      return {
+        handled: true,
+        replyText: result.replyText || 'Okay.',
+      };
+    }
+  }
+
+  if (bundleId) {
+    const bundleActionType = resolveBundleActionType(
+      params.action,
+      params.utterance,
+    );
+    if (bundleActionType) {
+      const result = await applyActionBundleOperation(
+        bundleId,
+        { kind: 'execute_action_type', actionType: bundleActionType },
+        {
+          groupFolder: params.groupFolder,
+          channel: 'alexa',
+          currentTime: params.now,
+          resolveTelegramMainChat: deps.resolveTelegramMainChat,
+          resolveBlueBubblesCompanionChat: deps.resolveBlueBubblesCompanionChat,
+          resolveHandoffTarget: deps.resolveHandoffTarget,
+          sendTelegramMessage: deps.sendTelegramMessage!,
+          sendBlueBubblesMessage: deps.sendBlueBubblesMessage,
+          sendHandoffMessage: deps.sendHandoffMessage,
+          sendTelegramArtifact: deps.sendTelegramArtifact,
+          sendHandoffArtifact: deps.sendHandoffArtifact,
+        },
+      );
+      if (result.handled) {
+        return {
+          handled: true,
+          replyText: result.replyText || 'Okay.',
+        };
+      }
+    }
+  }
 
   if (params.action === 'send_details') {
     const targetChannel = resolveRequestedHandoffTarget(params.utterance);
-    if (!hasHandoffRuntime(deps, targetChannel)) {
+    const canSendBundleToTelegram =
+      targetChannel === 'telegram' &&
+      Boolean(bundleId && deps.resolveTelegramMainChat && deps.sendTelegramMessage);
+    const hasCandidateDetails = Boolean(candidate?.handoffPayload || completionText);
+
+    let deliveryResult: AssistantActionCompletionResult | null = null;
+    if (hasCandidateDetails) {
+      if (!hasHandoffRuntime(deps, targetChannel)) {
+        return {
+          handled: true,
+          replyText:
+            targetChannel === 'bluebubbles'
+              ? 'I cannot send that to your messages from this runtime right now.'
+              : 'I cannot hand that off to Telegram from this runtime right now.',
+        };
+      }
+      deliveryResult = await deliverCandidateToChannel(params, candidate, deps);
+    }
+
+    if (canSendBundleToTelegram && bundleId) {
+      const snapshot = getActionBundleSnapshot(bundleId);
+      if (snapshot) {
+        const target = deps.resolveTelegramMainChat!(params.groupFolder);
+        if (!target?.chatJid) {
+          return {
+            handled: true,
+            replyText:
+              'I do not have a main Telegram chat set up for this account yet.',
+          };
+        }
+        const presentation = buildActionBundlePresentation(snapshot);
+        const sent = await deps.sendTelegramMessage!(
+          target.chatJid,
+          presentation.text,
+          { inlineActionRows: presentation.inlineActionRows },
+        );
+        rememberActionBundlePresentation({
+          bundleId,
+          messageId: sent.platformMessageId || null,
+          mode: presentation.mode,
+          now: params.now,
+        });
+        if (deliveryResult?.handled) {
+          return {
+            ...deliveryResult,
+            replyText:
+              'Okay. I sent the details to Telegram and lined up the action bundle there too.',
+          };
+        }
+        return {
+          handled: true,
+          replyText: 'Okay. I sent the action bundle to Telegram.',
+        };
+      }
+    }
+
+    if (deliveryResult?.handled) {
+      return deliveryResult;
+    }
+
+    if (!hasCandidateDetails) {
       return {
         handled: true,
         replyText:
-          targetChannel === 'bluebubbles'
-            ? 'I cannot send that to your messages from this runtime right now.'
-            : 'I cannot hand that off to Telegram from this runtime right now.',
+          'I do not have a fuller version of that ready to send yet. Ask me again after I answer something specific.',
       };
     }
-    return deliverCandidateToChannel(params, candidate, deps);
   }
 
   if (params.action === 'save_to_library') {
