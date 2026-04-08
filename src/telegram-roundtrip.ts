@@ -9,6 +9,11 @@ import {
   writeTelegramRoundtripState,
   assessTelegramRoundtripState,
 } from './host-control.js';
+import {
+  buildAndreaPingPresenceReply,
+  computeNextTelegramRoundtripDueAt,
+  matchesAndreaPingPresenceReply,
+} from './ping-presence.js';
 import type { TelegramLiveReply } from './telegram-user-session.js';
 
 export const TELEGRAM_PING_PROBE_MESSAGE = '/ping';
@@ -41,28 +46,35 @@ function computeNextDueAt(
   probeIntervalMs = DEFAULT_TELEGRAM_ROUNDTRIP_PROBE_INTERVAL_MS,
 ): string | null {
   if (!lastSuccessAt) return null;
-  const parsed = Date.parse(lastSuccessAt);
-  if (!Number.isFinite(parsed)) return null;
-  return new Date(parsed + probeIntervalMs).toISOString();
+  return (
+    computeNextTelegramRoundtripDueAt(lastSuccessAt) ??
+    (() => {
+      const parsed = Date.parse(lastSuccessAt);
+      if (!Number.isFinite(parsed)) return null;
+      return new Date(parsed + probeIntervalMs).toISOString();
+    })()
+  );
 }
 
 export function buildExpectedTelegramPingReply(
   assistantName = ASSISTANT_NAME,
+  reference?: Date | string | null,
 ): string {
-  return `${assistantName} is online.`;
+  return buildAndreaPingPresenceReply(assistantName, reference);
 }
 
 export function evaluateTelegramPingReplies(
   replies: TelegramLiveReply[],
   assistantName = ASSISTANT_NAME,
 ): TelegramPingProbeEvaluation {
-  const expectedReply = buildExpectedTelegramPingReply(assistantName);
   const matchedReply =
-    replies.find((reply) => reply.text.trim() === expectedReply) || null;
+    replies.find((reply) =>
+      matchesAndreaPingPresenceReply(reply.text.trim(), assistantName),
+    ) || null;
   if (matchedReply) {
     return {
       ok: true,
-      detail: `Received expected Telegram /ping reply: ${expectedReply}`,
+      detail: 'Received expected Telegram /ping reply.',
       matchedReply,
     };
   }
@@ -74,7 +86,7 @@ export function evaluateTelegramPingReplies(
     };
   }
   const unexpectedPreview = replies
-    .map((reply) => reply.text.trim())
+    .map((reply) => reply.text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).join(' / '))
     .filter(Boolean)
     .slice(0, 3)
     .join(' | ');
@@ -140,7 +152,7 @@ export function recordOrganicTelegramRoundtripSuccess(
         params.detail ||
         'Observed a real Telegram request/response exchange in the operator chat.',
       target: params.target ?? null,
-      expectedReply: buildExpectedTelegramPingReply(),
+      expectedReply: buildExpectedTelegramPingReply(undefined, params.observedAt),
       observedAt: params.observedAt,
       resetFailures: true,
     },
@@ -163,7 +175,7 @@ export function recordTelegramProbeSuccess(
       status: 'healthy',
       detail: 'Telegram roundtrip probe succeeded with the expected /ping reply.',
       target: params.target ?? null,
-      expectedReply: buildExpectedTelegramPingReply(),
+      expectedReply: buildExpectedTelegramPingReply(undefined, observedAt),
       observedAt,
       probeAt: observedAt,
       resetFailures: true,
@@ -188,7 +200,7 @@ export function recordTelegramProbeFailure(
       status: 'failed',
       detail: params.detail,
       target: params.target ?? null,
-      expectedReply: buildExpectedTelegramPingReply(),
+      expectedReply: buildExpectedTelegramPingReply(undefined, observedAt),
       observedAt,
       probeAt: observedAt,
     },
@@ -212,7 +224,7 @@ export function recordTelegramProbeUnconfigured(
       status: 'unconfigured',
       detail,
       target: options.target ?? null,
-      expectedReply: buildExpectedTelegramPingReply(),
+      expectedReply: buildExpectedTelegramPingReply(undefined, observedAt),
       observedAt,
       probeAt: observedAt,
       resetFailures: true,

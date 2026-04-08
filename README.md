@@ -66,10 +66,11 @@ Treat that flagship-flow suite and harness as the main product proof. The subsys
 Current host truth for the Windows field-trial machine:
 
 - Telegram is the richest **live-proven** surface.
-- Alexa is **near-live only** until one fresh signed `IntentRequest` is recorded on this host.
-- BlueBubbles is **externally blocked on this PC** because the real BlueBubbles server/webhook lives on the Mac-side environment and is not currently installed/configured here.
+- Alexa is **live-proven** on this host while one fresh handled signed `IntentRequest` remains within the 24-hour proof window.
+- BlueBubbles is **externally blocked in Andrea on this PC** until the `BLUEBUBBLES_*` host configuration is loaded and one real inbound -> reply -> follow-up roundtrip is reproved here.
 - the local Codex/OpenAI runtime backend and the unified `/cursor` work cockpit are live on this host
-- outward research and Telegram image generation remain **externally blocked** until a direct provider key with working quota/billing is restored
+- outward research and Telegram image generation are now **live-proven** on this host through the direct OpenAI provider path
+- the local Anthropic-compatible LiteLLM gateway is a separate internal compatibility lane; if it degrades later, operator surfaces should report that separately from direct OpenAI proof
 - `npm run services:status`, `npm run setup -- --step verify`, and `npm run debug:status` are the operator truth surfaces and should agree on service health, serving commit, and exact blockers
 - `npm run debug:pilot` is the pilot-mode proof surface for flagship journeys, proof freshness, degraded-but-usable fallback, recent flagged outcomes, and private dogfooding issues
 
@@ -233,9 +234,9 @@ Alexa is now a bounded companion channel for Andrea rather than a novelty skill.
 - personalization remains explicit and consent-based
 - use Node `22.22.2` for truthful Alexa validation on the operator host
 
-Alexa is repo-ready and near-live validated on this host. As of April 7, 2026, the local listener, OAuth flow, public ingress, and pinned Node 22 runtime are healthy, but the remaining full-live step is one fresh human-operated signed voice or authenticated simulator run after importing `docs/alexa/interaction-model.en-US.json` and running `Build Model`.
+Alexa is now live-proven on this host. As of April 7, 2026, the local listener, OAuth flow, public ingress, and pinned Node 22 runtime are healthy, and Andrea has a fresh handled signed `IntentRequest` recorded for `WhatAmIForgettingIntent` through `local_companion`.
 
-When you do that last human step, this is the target validation flow:
+When you want to refresh Alexa proof freshness, this is the validation flow:
 
 - `Open Andrea Assistant`
 - `What am I forgetting?`
@@ -244,13 +245,13 @@ When you do that last human step, this is the target validation flow:
 - `Be a little more direct.`
 - optional `What should I remember tonight?`
 
-Until that fresh signed run happens, do not call Alexa live-accepted on this host for this release-candidate pass.
+If that handled signed proof ages past 24 hours, operator surfaces will intentionally drop Alexa back to `near_live_only` until you run this flow again.
 
 Typed Alexa+ app chat is diagnosis-only right now. It may trigger a skill launch, but it does not count as live proof unless Andrea logs a real signed follow-up `IntentRequest` after launch.
 
 After any interaction-model change, re-import `docs/alexa/interaction-model.en-US.json` in the Alexa Developer Console and run `Build Model` before treating live fallback as a repo bug.
 
-For near-live conversation tuning on the operator host, use `npm run debug:alexa-conversation`.
+For repo-side conversation tuning on the operator host, use `npm run debug:alexa-conversation`.
 
 ## Andrea Pulse
 
@@ -272,7 +273,7 @@ BlueBubbles is now a real bounded Andrea messaging channel, not just prep work.
 - richer details and artifacts still hand off explicitly to Telegram when that is the safer surface
 - BlueBubbles does **not** become a main control chat and does not expose work-cockpit or admin/runtime controls
 
-On this host, BlueBubbles remains externally blocked for field-trial proof until a reachable Mac-side webhook/server is restored to this Windows machine.
+On this host, BlueBubbles remains externally blocked for field-trial proof until Andrea has the live `BLUEBUBBLES_*` host configuration loaded and one real same-host roundtrip is reproved.
 
 See [docs/BLUEBUBBLES_CHANNEL_PREP.md](docs/BLUEBUBBLES_CHANNEL_PREP.md) for the live V1 scope, config, webhook/send model, and exact current limits.
 

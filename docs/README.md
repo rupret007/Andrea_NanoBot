@@ -19,14 +19,15 @@ Use this shorthand when you need the current host story fast:
 
 - **live-proven on this Windows host**
   - Telegram companion surface
+  - Alexa conversational surface, while a fresh handled signed `IntentRequest` remains within the 24-hour proof window
   - unified work cockpit with Codex/OpenAI runtime
   - life-thread, communication-companion, mission, and chief-of-staff flows that ride on Telegram
-- **near-live only**
-  - Alexa, until one fresh signed live turn is recorded on this host
-- **externally blocked**
-  - BlueBubbles, because the real BlueBubbles server/webhook is not installed or connected on this PC
   - outward research
   - Telegram image generation
+- **near-live only**
+  - nothing currently; if Alexa proof ages past 24 hours, it drops back here until one fresh handled signed `IntentRequest` is recorded again
+- **externally blocked**
+  - BlueBubbles in Andrea on this PC, until the `BLUEBUBBLES_*` host configuration is loaded and one real same-host roundtrip is reproved
 
 When operator surfaces disagree, the release truth should come from:
 
@@ -104,9 +105,10 @@ Current Alexa truth:
 
 - `Andrea_NanoBot` is the only canonical repo now; the older `ANDREA/nanoclaw` checkout is non-authoritative reference only
 - Telegram ordinary chat and the main flagship follow-through journeys were live-proven on this host on April 7, 2026
-- Alexa repo-side and near-live proof are strong, but full live acceptance still means one fresh signed Alexa utterance on this host after importing the current interaction model and running `Build Model`
-- BlueBubbles is externally blocked on this Windows host because the real BlueBubbles server/webhook is not currently installed or connected here
-- outward-facing research is currently validated as a graceful blocked path on this host because direct provider credentials are not currently usable for live outward lookup, even though the local runtime backend remains healthy
+- Alexa is now live-proven on this host from a fresh handled signed `WhatAmIForgettingIntent`; if that proof ages past 24 hours, operator surfaces intentionally downgrade it back to `near_live_only`
+- BlueBubbles remains externally blocked in Andrea on this Windows host until the `BLUEBUBBLES_*` host configuration is loaded and one real inbound -> reply -> follow-up roundtrip is reproved here
+- outward-facing research and Telegram image generation are now live-proven on this host through the direct OpenAI provider path
+- the local Anthropic-compatible LiteLLM gateway remains a separate compatibility/runtime lane and should be reported separately if it degrades later
 
 ## Pilot Review Loop
 

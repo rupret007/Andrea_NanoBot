@@ -25,12 +25,13 @@ import { buildDirectAssistantContinuationPrompt } from '../src/direct-assistant-
 import { readEnvFile } from '../src/env.js';
 import { buildFieldTrialOperatorTruth } from '../src/field-trial-readiness.js';
 import {
+  assessAlexaLiveProof,
   buildRuntimeCommitTruth,
   detectWindowsInstallArtifacts,
   detectWindowsInstallMode,
   formatInstallModeLabel,
-  readAlexaLastSignedRequestState,
   reconcileWindowsHostState,
+  type AlexaLiveProofAssessment,
 } from '../src/host-control.js';
 import { logger } from '../src/logger.js';
 import { readProviderProofState } from '../src/provider-proof-state.js';
@@ -1060,7 +1061,7 @@ export function buildVerifyNextSteps(input: {
   runtimeBackendLocalExecutionState?: string;
   runtimeBackendAuthState?: string;
   alexaConfigured?: boolean;
-  alexaLastSignedRequestType?: string;
+  alexaProof?: AlexaLiveProofAssessment | null;
   outwardResearchStatus?:
     | 'not_configured'
     | 'misconfigured_native_openai_endpoint'
@@ -1072,7 +1073,19 @@ export function buildVerifyNextSteps(input: {
   const steps: string[] = [];
 
   if (input.missingRequirements.includes('credentials')) {
-    if (input.outwardResearchStatus === 'quota_blocked') {
+    if (input.outwardResearchStatus === 'available') {
+      if (input.hasNativeOpenAiEndpointMisconfig) {
+        steps.push(
+          'Direct OpenAI research and image generation are live on this host, but the Anthropic-compatible core runtime lane is misconfigured. Point OPENAI_BASE_URL/ANTHROPIC_BASE_URL at a compatible gateway or clear the endpoint override so the local gateway auto-binding can be used.',
+        );
+      } else {
+        steps.push(
+          input.runtimeBackendLocalExecutionState === 'available_authenticated'
+            ? 'Direct OpenAI research and image generation are live on this host, but the Anthropic-compatible core runtime lane is not configured yet. The local runtime backend is healthy, so work-cockpit flows can still run on this host.'
+            : 'Direct OpenAI research and image generation are live on this host, but the Anthropic-compatible core runtime lane is not configured yet. Configure the core runtime lane or rely on the local runtime backend for work-cockpit flows.',
+        );
+      }
+    } else if (input.outwardResearchStatus === 'quota_blocked') {
       steps.push(
         input.runtimeBackendLocalExecutionState === 'available_authenticated'
           ? 'Outward research is blocked because the direct provider account on this host is out of quota or billing. The local runtime backend is healthy, so work-cockpit flows can still run on this host.'
@@ -1138,7 +1151,21 @@ export function buildVerifyNextSteps(input: {
     );
   }
   if (input.missingRequirements.includes('credential_runtime_unusable')) {
-    if (input.credentialRuntimeProbeReason === 'insufficient_quota') {
+    if (input.outwardResearchStatus === 'available') {
+      if (input.credentialRuntimeProbeReason === 'insufficient_quota') {
+        steps.push(
+          'Direct OpenAI research and image generation are live, but the local LiteLLM/core-runtime gateway is still unhealthy on this host. Repair the local gateway lane, then rerun setup -- --step verify.',
+        );
+      } else if (input.credentialRuntimeProbeReason === 'invalid_model_alias') {
+        steps.push(
+          'The Anthropic-compatible core runtime lane is configured, but its model alias is invalid. Set NANOCLAW_AGENT_MODEL to a gateway-supported alias, then rerun setup -- --step verify.',
+        );
+      } else {
+        steps.push(
+          'The Anthropic-compatible core runtime lane is configured, but its runtime probe failed on this host. Repair the local gateway/auth path, then rerun setup -- --step verify.',
+        );
+      }
+    } else if (input.credentialRuntimeProbeReason === 'insufficient_quota') {
       steps.push(
         'Outward research is blocked because the OpenAI-compatible provider key is out of quota or billing. Top up billing, replace OPENAI_API_KEY, or switch to direct ANTHROPIC_* credentials.',
       );
@@ -1163,11 +1190,28 @@ export function buildVerifyNextSteps(input: {
 
   if (
     input.alexaConfigured &&
-    (input.alexaLastSignedRequestType || 'none') === 'none'
+    input.alexaProof?.proofState !== 'live_proven'
   ) {
-    steps.push(
-      'Alexa live proof still needs one signed turn. Import docs/alexa/interaction-model.en-US.json if needed, run Build Model, then do one real voice or authenticated simulator request and confirm services:status records an IntentRequest.',
-    );
+    if (input.alexaProof?.proofKind === 'launch_only') {
+      steps.push(
+        'Alexa has only recorded a signed LaunchRequest on this host. Use a real device or authenticated Alexa Developer Console simulator, say `Open Andrea Assistant`, then `What am I forgetting?`, and confirm `npm run services:status` shows `ALEXA_LAST_SIGNED_REQUEST_TYPE=IntentRequest` with `ALEXA_LIVE_PROOF_FRESHNESS=fresh`.',
+      );
+    } else if (input.alexaProof?.proofKind === 'signed_intent_unhandled') {
+      steps.push(
+        'Alexa recorded a signed IntentRequest, but it did not qualify as handled live proof. Repeat `Open Andrea Assistant` then `What am I forgetting?`, and confirm `npm run services:status` shows a handled response source instead of `received_trusted_request`, `barrier`, or `fallback`.',
+      );
+    } else if (
+      input.alexaProof?.proofKind === 'handled_intent' &&
+      input.alexaProof.proofFreshness === 'stale'
+    ) {
+      steps.push(
+        'Alexa has handled signed proof on this host, but it is stale. Run one fresh real voice or authenticated simulator turn with `Open Andrea Assistant` then `What am I forgetting?`, and confirm `npm run services:status` shows `ALEXA_LIVE_PROOF_FRESHNESS=fresh`.',
+      );
+    } else {
+      steps.push(
+        'Alexa live proof still needs one fresh handled signed turn. Use a real device or authenticated Alexa Developer Console simulator, say `Open Andrea Assistant` then `What am I forgetting?`, and confirm `npm run services:status` records a fresh handled `IntentRequest`.',
+      );
+    }
   }
 
   if (steps.length === 0) {
@@ -1185,9 +1229,10 @@ export function buildReportedMissingRequirements(input: {
     | 'missing_direct_provider_credentials'
     | 'quota_blocked'
     | 'degraded'
-    | 'available';
+      | 'available';
+  credentialRuntimeProbeReason?: string;
   alexaConfigured?: boolean;
-  alexaLastSignedRequestType?: string;
+  alexaProof?: AlexaLiveProofAssessment | null;
 }): string[] {
   const reported = new Set<string>();
 
@@ -1201,6 +1246,14 @@ export function buildReportedMissingRequirements(input: {
           : input.outwardResearchStatus === 'misconfigured_native_openai_endpoint'
             ? 'outward_research_endpoint_misconfigured'
             : null;
+  const coreRuntimeRequirement =
+    input.outwardResearchStatus === 'available'
+      ? input.credentialRuntimeProbeReason === 'invalid_model_alias'
+        ? 'core_runtime_model_alias_mismatch'
+        : input.credentialRuntimeProbeReason === 'insufficient_quota'
+          ? 'local_gateway_unhealthy'
+          : 'core_runtime_credentials_missing'
+      : null;
 
   for (const requirement of input.missingRequirements) {
     if (
@@ -1211,11 +1264,31 @@ export function buildReportedMissingRequirements(input: {
       reported.add(outwardResearchRequirement);
       continue;
     }
+    if (
+      (requirement === 'credentials' ||
+        requirement === 'credential_runtime_unusable') &&
+      coreRuntimeRequirement
+    ) {
+      reported.add(
+        requirement === 'credential_runtime_unusable' &&
+          !['local_gateway_unhealthy', 'core_runtime_model_alias_mismatch'].includes(
+            coreRuntimeRequirement,
+          )
+          ? 'core_runtime_runtime_probe_failed'
+          : coreRuntimeRequirement,
+      );
+      continue;
+    }
     reported.add(requirement);
   }
 
-  if (input.alexaConfigured && input.alexaLastSignedRequestType === 'none') {
-    reported.add('alexa_live_signed_turn_missing');
+  if (input.alexaConfigured && input.alexaProof?.proofState !== 'live_proven') {
+    reported.add(
+      input.alexaProof?.proofKind === 'handled_intent' &&
+        input.alexaProof.proofFreshness === 'stale'
+        ? 'alexa_live_signed_turn_stale'
+        : 'alexa_live_signed_turn_missing',
+    );
   }
 
   return [...reported];
@@ -1224,6 +1297,7 @@ export function buildReportedMissingRequirements(input: {
 export interface CredentialStatusInput {
   hasAnthropicDirectCredential: boolean;
   hasOpenAiCompatibleCredential: boolean;
+  hasAutoLocalGatewayCredential?: boolean;
   onecliReachable: boolean;
   onecliCredentialKeys: string[];
 }
@@ -1233,6 +1307,7 @@ export interface CredentialStatusResult {
   credentialMode:
     | 'anthropic'
     | 'openai_compat'
+    | 'openai_compat_local_gateway_auto'
     | 'anthropic_and_openai_compat'
     | 'onecli'
     | 'missing';
@@ -1247,28 +1322,33 @@ export function determineCredentialStatus(
   input: CredentialStatusInput,
 ): CredentialStatusResult {
   const hasOneCliCredential = input.onecliCredentialKeys.length > 0;
+  const hasOpenAiRuntimeCredential =
+    input.hasOpenAiCompatibleCredential ||
+    Boolean(input.hasAutoLocalGatewayCredential);
   const credentials =
     input.hasAnthropicDirectCredential ||
-    input.hasOpenAiCompatibleCredential ||
+    hasOpenAiRuntimeCredential ||
     hasOneCliCredential
       ? 'configured'
       : 'missing';
 
   const credentialMode = input.hasAnthropicDirectCredential
-    ? input.hasOpenAiCompatibleCredential
+    ? hasOpenAiRuntimeCredential
       ? 'anthropic_and_openai_compat'
       : 'anthropic'
     : input.hasOpenAiCompatibleCredential
       ? 'openai_compat'
+      : input.hasAutoLocalGatewayCredential
+        ? 'openai_compat_local_gateway_auto'
       : hasOneCliCredential
         ? 'onecli'
         : 'missing';
 
   const credentialSources = [
-    ...(input.hasAnthropicDirectCredential ||
-    input.hasOpenAiCompatibleCredential
+    ...(input.hasAnthropicDirectCredential || hasOpenAiRuntimeCredential
       ? ['env']
       : []),
+    ...(input.hasAutoLocalGatewayCredential ? ['runtime_state'] : []),
     ...(hasOneCliCredential ? ['onecli'] : []),
   ].join(',');
 
@@ -1357,9 +1437,11 @@ export async function run(_args: string[]): Promise<void> {
     projectRoot,
     runtimeAuditState: hostSnapshot?.runtimeAuditState,
   });
-  const alexaSignedRequest = readAlexaLastSignedRequestState(projectRoot);
-  const alexaLastSignedRequestType = alexaSignedRequest?.requestType || 'none';
-  const alexaLastSignedRequestAt = alexaSignedRequest?.updatedAt || 'none';
+  const alexaProof = assessAlexaLiveProof({ projectRoot });
+  const alexaLastSignedRequestType =
+    alexaProof.lastSignedRequest?.requestType || 'none';
+  const alexaLastSignedRequestAt =
+    alexaProof.lastSignedRequest?.updatedAt || 'none';
 
   if (!nodeOk && platform === 'windows' && hostSnapshot?.nodeRuntime) {
     nodeOk = hostSnapshot.nodeRuntime.version.startsWith('22.');
@@ -1490,29 +1572,62 @@ export async function run(_args: string[]): Promise<void> {
   const openAiApiKey =
     process.env.OPENAI_API_KEY || modelEnvVars.OPENAI_API_KEY;
 
-  const openAiCompatibleEndpoint = anthropicBaseUrl || openAiBaseUrl || '';
+  const hasDirectOpenAiProviderCredential = Boolean(openAiApiKey);
+  const localGatewayState = readLocalOpenAiGatewayState();
+  const configuredOpenAiCompatibleEndpoint =
+    anthropicBaseUrl || openAiBaseUrl || '';
   const nativeOpenAiEndpointMisconfig =
     Boolean(openAiApiKey) &&
-    Boolean(openAiCompatibleEndpoint) &&
-    isLikelyNativeOpenAiEndpoint(openAiCompatibleEndpoint);
+    Boolean(configuredOpenAiCompatibleEndpoint) &&
+    isLikelyNativeOpenAiEndpoint(configuredOpenAiCompatibleEndpoint);
 
   const hasAnthropicDirectCredential = Boolean(
     claudeCodeOauthToken || anthropicApiKey || anthropicAuthToken,
   );
+  const hasAutoLocalGatewayCredential = Boolean(
+    localGatewayState?.endpoint &&
+      hasDirectOpenAiProviderCredential &&
+      !nativeOpenAiEndpointMisconfig &&
+      !configuredOpenAiCompatibleEndpoint &&
+      !hasAnthropicDirectCredential,
+  );
+  const openAiCompatibleEndpoint =
+    configuredOpenAiCompatibleEndpoint ||
+    (hasAutoLocalGatewayCredential ? localGatewayState?.endpoint || '' : '');
   const hasOpenAiCompatibleCredential = Boolean(
-    openAiCompatibleEndpoint && openAiApiKey && !nativeOpenAiEndpointMisconfig,
+    configuredOpenAiCompatibleEndpoint &&
+      openAiApiKey &&
+      !nativeOpenAiEndpointMisconfig,
   );
   const onecliCredentialState = await detectOneCliCredentialKeys();
-  const credentialStatus = determineCredentialStatus({
+  const coreRuntimeCredentialStatus = determineCredentialStatus({
     hasAnthropicDirectCredential,
     hasOpenAiCompatibleCredential,
+    hasAutoLocalGatewayCredential,
     onecliReachable: onecliCredentialState.reachable,
     onecliCredentialKeys: onecliCredentialState.credentialKeys,
   });
-  const credentials = credentialStatus.credentials;
-  const credentialMode = credentialStatus.credentialMode;
-  const credentialSources = credentialStatus.credentialSources;
-  const onecliCredentialStatus = credentialStatus.onecliCredentialStatus;
+  const coreRuntimeCredentials = coreRuntimeCredentialStatus.credentials;
+  const coreRuntimeCredentialMode = coreRuntimeCredentialStatus.credentialMode;
+  const coreRuntimeCredentialSources =
+    coreRuntimeCredentialStatus.credentialSources;
+  const onecliCredentialStatus = coreRuntimeCredentialStatus.onecliCredentialStatus;
+  const credentials =
+    hasDirectOpenAiProviderCredential || coreRuntimeCredentials === 'configured'
+      ? 'configured'
+      : 'missing';
+  const credentialMode =
+    coreRuntimeCredentials === 'configured'
+      ? coreRuntimeCredentialMode
+      : hasDirectOpenAiProviderCredential
+        ? 'direct_openai'
+        : 'missing';
+  const credentialSources =
+    coreRuntimeCredentials === 'configured'
+      ? coreRuntimeCredentialSources
+      : hasDirectOpenAiProviderCredential
+        ? 'env'
+        : '';
   const configuredModelOverride =
     process.env.NANOCLAW_AGENT_MODEL ||
     process.env.CLAUDE_CODE_MODEL ||
@@ -1521,7 +1636,6 @@ export async function run(_args: string[]): Promise<void> {
     modelEnvVars.CLAUDE_CODE_MODEL ||
     modelEnvVars.CLAUDE_MODEL ||
     'claude-3-5-sonnet-latest';
-  const localGatewayState = readLocalOpenAiGatewayState();
   const probeEndpoints = resolveCredentialProbeEndpoints({
     configuredEndpoint: openAiCompatibleEndpoint,
     gatewayState: localGatewayState,
@@ -1532,7 +1646,7 @@ export async function run(_args: string[]): Promise<void> {
   );
 
   const credentialRuntimeProbe =
-    probeEndpoints.length > 0 && credentials !== 'missing'
+    probeEndpoints.length > 0 && coreRuntimeCredentials !== 'missing'
       ? await probeCredentialRuntime({
           endpoints: probeEndpoints,
           authToken: anthropicAuthToken || openAiApiKey || anthropicApiKey,
@@ -1540,10 +1654,17 @@ export async function run(_args: string[]): Promise<void> {
         })
       : ({
           status: 'skipped',
-          reason: 'not_applicable',
+          reason:
+            coreRuntimeCredentials === 'missing'
+              ? 'missing_core_runtime_credentials'
+              : 'not_applicable',
+          detail:
+            coreRuntimeCredentials === 'missing'
+              ? 'Skipped because the Anthropic-compatible core runtime lane is not configured on this host.'
+              : '',
         } as CredentialRuntimeProbeResult);
   const localGatewayHealth =
-    localGatewayState?.host_health && hasOpenAiCompatibleCredential
+    localGatewayState?.host_health && hasDirectOpenAiProviderCredential
       ? await probeLocalGatewayHealth({
           hostHealthUrl: localGatewayState.host_health,
         })
@@ -1556,7 +1677,7 @@ export async function run(_args: string[]): Promise<void> {
     credentialRuntimeProbe.status === 'failed' &&
     credentialRuntimeProbe.reason === 'network_error' &&
     platform === 'windows' &&
-    hasOpenAiCompatibleCredential &&
+    coreRuntimeCredentials === 'configured' &&
     hasLocalGatewayCandidate(probeEndpoints)
   ) {
     const bootstrap = await tryStartLocalGatewayForVerify(projectRoot);
@@ -1608,7 +1729,7 @@ export async function run(_args: string[]): Promise<void> {
   }
 
   const assistantExecutionProbe =
-    credentials !== 'missing'
+    coreRuntimeCredentials !== 'missing'
       ? credentialRuntimeProbe.status === 'failed'
         ? buildBlockedAssistantExecutionProbeResult({
             credentialRuntimeProbe,
@@ -1616,8 +1737,9 @@ export async function run(_args: string[]): Promise<void> {
         : await probeAssistantExecution()
       : ({
           status: 'skipped',
-          reason: 'missing_credentials',
-          detail: 'Skipped because no usable credentials are configured.',
+          reason: 'missing_core_runtime_credentials',
+          detail:
+            'Skipped because the Anthropic-compatible core runtime lane is not configured on this host.',
         } as AssistantExecutionProbeResult);
   if (
     assistantExecutionProbe.status === 'failed' &&
@@ -1705,13 +1827,13 @@ export async function run(_args: string[]): Promise<void> {
   const serviceHealthy = service === 'running' || service === 'running_ready';
   const serviceExpectedStopped =
     !serviceHealthy &&
-    credentials === 'missing' &&
+    coreRuntimeCredentials === 'missing' &&
     !anyChannelConfigured &&
     registeredGroups === 0;
 
   const missingRequirements: string[] = [];
   if (!nodeOk) missingRequirements.push('node_22');
-  if (credentials === 'missing') missingRequirements.push('credentials');
+  if (coreRuntimeCredentials === 'missing') missingRequirements.push('credentials');
   if (!anyChannelConfigured) missingRequirements.push('channel_auth');
   if (registeredGroups === 0) missingRequirements.push('registered_groups');
   if (service === 'config_failed') {
@@ -1729,7 +1851,7 @@ export async function run(_args: string[]): Promise<void> {
   let outwardResearchStatus = 'not_configured';
   if (nativeOpenAiEndpointMisconfig) {
     outwardResearchStatus = 'misconfigured_native_openai_endpoint';
-  } else if (credentials === 'missing') {
+  } else if (!hasDirectOpenAiProviderCredential) {
     outwardResearchStatus = 'missing_direct_provider_credentials';
   } else if (credentialRuntimeProbe.status === 'failed') {
     outwardResearchStatus =
@@ -1760,8 +1882,13 @@ export async function run(_args: string[]): Promise<void> {
   } else if (outwardResearchStatus === 'misconfigured_native_openai_endpoint') {
     externalBlockers.push('outward_research_endpoint_misconfigured');
   }
-  if (alexaConfigured && alexaLastSignedRequestType === 'none') {
-    externalBlockers.push('alexa_live_signed_turn_missing');
+  if (alexaConfigured && alexaProof.proofState !== 'live_proven') {
+    externalBlockers.push(
+      alexaProof.proofKind === 'handled_intent' &&
+        alexaProof.proofFreshness === 'stale'
+        ? 'alexa_live_signed_turn_stale'
+        : 'alexa_live_signed_turn_missing',
+    );
   }
 
   const nextSteps = buildVerifyNextSteps({
@@ -1774,7 +1901,7 @@ export async function run(_args: string[]): Promise<void> {
     runtimeBackendLocalExecutionState,
     runtimeBackendAuthState,
     alexaConfigured,
-    alexaLastSignedRequestType,
+    alexaProof,
     outwardResearchStatus: outwardResearchStatus as
       | 'not_configured'
       | 'misconfigured_native_openai_endpoint'
@@ -1800,19 +1927,21 @@ export async function run(_args: string[]): Promise<void> {
   const reportedMissingRequirements = buildReportedMissingRequirements({
     missingRequirements,
     outwardResearchStatus,
+    credentialRuntimeProbeReason: credentialRuntimeProbe.reason,
     alexaConfigured,
-    alexaLastSignedRequestType,
+    alexaProof,
   });
 
   // Determine overall status
   const status =
     nodeOk &&
     serviceHealthy &&
-    credentials !== 'missing' &&
+    coreRuntimeCredentials !== 'missing' &&
     anyChannelConfigured &&
     registeredGroups > 0 &&
     credentialRuntimeProbe.status !== 'failed' &&
-    assistantExecutionProbe.status !== 'failed'
+    assistantExecutionProbe.status !== 'failed' &&
+    externalBlockers.length === 0
       ? 'success'
       : 'failed';
 
@@ -1851,8 +1980,13 @@ export async function run(_args: string[]): Promise<void> {
     CREDENTIALS: credentials,
     CREDENTIAL_MODE: credentialMode,
     CREDENTIAL_SOURCES: credentialSources,
+    CORE_RUNTIME_CREDENTIALS: coreRuntimeCredentials,
+    CORE_RUNTIME_CREDENTIAL_MODE: coreRuntimeCredentialMode,
+    CORE_RUNTIME_CREDENTIAL_SOURCES: coreRuntimeCredentialSources,
     OPENAI_ENDPOINT_MODE: nativeOpenAiEndpointMisconfig
       ? 'native_openai_unsupported_for_core_runtime'
+      : hasAutoLocalGatewayCredential
+        ? 'local_gateway_auto'
       : openAiCompatibleEndpoint
         ? 'anthropic_compatible_or_custom'
         : 'not_configured',
@@ -1875,11 +2009,28 @@ export async function run(_args: string[]): Promise<void> {
     RUNTIME_BACKEND_DETAIL: runtimeBackendDetail,
     ALEXA_LAST_SIGNED_REQUEST_TYPE: alexaLastSignedRequestType,
     ALEXA_LAST_SIGNED_REQUEST_AT: alexaLastSignedRequestAt,
+    ALEXA_LAST_SIGNED_INTENT:
+      alexaProof.lastSignedRequest?.intentName || 'none',
+    ALEXA_LAST_SIGNED_RESPONSE_SOURCE:
+      alexaProof.lastSignedRequest?.responseSource || 'none',
     ALEXA_LIVE_PROOF: alexaConfigured
-      ? alexaLastSignedRequestType === 'none'
-        ? 'near_live_signed_turn_missing'
-        : 'live_signed_turn_recorded'
+      ? alexaProof.proofState
       : 'not_configured',
+    ALEXA_LIVE_PROOF_KIND: alexaConfigured
+      ? alexaProof.proofKind
+      : 'none',
+    ALEXA_LIVE_PROOF_FRESHNESS: alexaConfigured
+      ? alexaProof.proofFreshness
+      : 'none',
+    ALEXA_LIVE_PROOF_AGE_MINUTES:
+      alexaProof.proofAgeMinutes == null ? 'none' : alexaProof.proofAgeMinutes,
+    ALEXA_LIVE_PROOF_AGE_LABEL: alexaProof.proofAgeLabel,
+    ALEXA_LIVE_PROOF_RECOMMENDED_UTTERANCE:
+      fieldTrialTruth.alexa.recommendedUtterance,
+    ALEXA_LIVE_PROOF_CONFIRM_COMMAND: fieldTrialTruth.alexa.confirmCommand,
+    ALEXA_LIVE_PROOF_SUCCESS_SHAPE: fieldTrialTruth.alexa.successShape,
+    ALEXA_LIVE_PROOF_STALE_SHAPE: fieldTrialTruth.alexa.staleShape,
+    ALEXA_LIVE_PROOF_FAILURE_CHECKS: fieldTrialTruth.alexa.failureChecklist,
     ALEXA_LIVE_PROOF_BLOCKER: fieldTrialTruth.alexa.blocker,
     ALEXA_LIVE_PROOF_NEXT_ACTION: fieldTrialTruth.alexa.nextAction,
     TELEGRAM_LIVE_PROOF: fieldTrialTruth.telegram.proofState,

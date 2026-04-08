@@ -6,6 +6,7 @@ import {
   buildTelegramCommandsText,
   buildTelegramFeaturesText,
   buildTelegramHelpText,
+  buildTelegramPingText,
   buildTelegramUnregisteredDmText,
   buildTelegramWelcomeText,
   extractTelegramReplyRef,
@@ -173,6 +174,15 @@ describe('buildTelegramFeaturesText', () => {
     expect(features).not.toContain('Amazon shopping search');
     expect(features).not.toContain('Apple Calendar');
     expect(features).not.toContain('/cursor-results');
+  });
+});
+
+describe('buildTelegramPingText', () => {
+  it('returns the shared two-line witty ping response', () => {
+    const text = buildTelegramPingText('Andrea', new Date('2026-04-07T20:05:00.000Z'));
+
+    expect(text).toContain('Andrea is online.');
+    expect(text.split('\n')).toHaveLength(2);
   });
 });
 

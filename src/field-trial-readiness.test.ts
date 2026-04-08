@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { _closeDatabase, _initTestDatabase } from './db.js';
 import { buildFieldTrialOperatorTruth } from './field-trial-readiness.js';
 import {
+  getAlexaLastSignedRequestStatePath,
   resolveHostControlPaths,
   type HostControlSnapshot,
   type WindowsHostReconciliation,
@@ -135,8 +136,63 @@ describe('field-trial readiness', () => {
     const truth = buildFieldTrialOperatorTruth({ projectRoot: tempDir });
 
     expect(truth.alexa.proofState).toBe('near_live_only');
-    expect(truth.alexa.blocker).toContain('No fresh signed Alexa IntentRequest');
-    expect(truth.alexa.nextAction).toContain('Perform one real signed Alexa voice');
+    expect(truth.alexa.proofKind).toBe('none');
+    expect(truth.alexa.proofFreshness).toBe('none');
+    expect(truth.alexa.blocker).toContain('No handled signed Alexa IntentRequest');
+    expect(truth.alexa.nextAction).toContain('What am I forgetting?');
+    expect(truth.alexa.confirmCommand).toBe('npm run services:status');
+  });
+
+  it('keeps LaunchRequest-only Alexa proof below live_proven', () => {
+    vi.stubEnv('ALEXA_SKILL_ID', 'amzn1.ask.skill.test');
+    const alexaStatePath = getAlexaLastSignedRequestStatePath(tempDir);
+    fs.mkdirSync(path.dirname(alexaStatePath), { recursive: true });
+    fs.writeFileSync(
+      alexaStatePath,
+      JSON.stringify({
+        updatedAt: '2026-04-07T18:00:00.000Z',
+        requestId: 'launch-1',
+        requestType: 'LaunchRequest',
+        intentName: null,
+        applicationIdVerified: true,
+        linkingResolved: false,
+        groupFolder: null,
+        responseSource: 'launch',
+      }),
+    );
+
+    const truth = buildFieldTrialOperatorTruth({ projectRoot: tempDir });
+
+    expect(truth.alexa.proofState).toBe('near_live_only');
+    expect(truth.alexa.proofKind).toBe('launch_only');
+    expect(truth.alexa.lastSignedRequestType).toBe('LaunchRequest');
+  });
+
+  it('requires a handled fresh IntentRequest before Alexa becomes live_proven', () => {
+    vi.stubEnv('ALEXA_SKILL_ID', 'amzn1.ask.skill.test');
+    const alexaStatePath = getAlexaLastSignedRequestStatePath(tempDir);
+    fs.mkdirSync(path.dirname(alexaStatePath), { recursive: true });
+    fs.writeFileSync(
+      alexaStatePath,
+      JSON.stringify({
+        updatedAt: new Date().toISOString(),
+        requestId: 'intent-1',
+        requestType: 'IntentRequest',
+        intentName: 'WhatAmIForgettingIntent',
+        applicationIdVerified: true,
+        linkingResolved: true,
+        groupFolder: 'main',
+        responseSource: 'local_companion',
+      }),
+    );
+
+    const truth = buildFieldTrialOperatorTruth({ projectRoot: tempDir });
+
+    expect(truth.alexa.proofState).toBe('live_proven');
+    expect(truth.alexa.proofKind).toBe('handled_intent');
+    expect(truth.alexa.proofFreshness).toBe('fresh');
+    expect(truth.alexa.lastSignedIntent).toBe('WhatAmIForgettingIntent');
+    expect(truth.alexa.lastSignedResponseSource).toBe('local_companion');
   });
 
   it('treats BlueBubbles as externally blocked when it is not installed on this host', () => {
@@ -169,14 +225,43 @@ describe('field-trial readiness', () => {
     const truth = buildFieldTrialOperatorTruth({ projectRoot: tempDir });
 
     expect(truth.bluebubbles.proofState).toBe('externally_blocked');
-    expect(truth.bluebubbles.blocker).toContain('not installed or configured on this host');
-    expect(truth.bluebubbles.nextAction).toContain('Mac-side BlueBubbles server/webhook');
+    expect(truth.bluebubbles.blocker).toContain('not configured in Andrea on this host');
+    expect(truth.bluebubbles.nextAction).toContain('BLUEBUBBLES_*');
     expect(truth.research.proofState).toBe('externally_blocked');
     expect(truth.research.blocker).toContain('quota or billing limit');
     expect(truth.research.blockerOwner).toBe('external');
     expect(truth.imageGeneration.proofState).toBe('externally_blocked');
     expect(truth.imageGeneration.blocker).toContain('quota or billing limit');
     expect(truth.imageGeneration.blockerOwner).toBe('external');
+  });
+
+  it('keeps research and image generation live-proven from persisted provider proof', () => {
+    writeProviderProofState({
+      updatedAt: '2026-04-08T01:00:00.000Z',
+      research: {
+        proofState: 'live_proven',
+        blocker: '',
+        detail: 'OpenAI-backed outward research returned a live answer on this host.',
+        nextAction: '',
+        checkedAt: '2026-04-08T01:00:00.000Z',
+        source: 'debug_research_mode',
+      },
+      imageGeneration: {
+        proofState: 'live_proven',
+        blocker: '',
+        detail: 'Telegram image generation returned an image artifact.',
+        nextAction: '',
+        checkedAt: '2026-04-08T01:00:00.000Z',
+        source: 'debug_research_mode',
+      },
+    });
+
+    const truth = buildFieldTrialOperatorTruth({ projectRoot: tempDir });
+
+    expect(truth.research.proofState).toBe('live_proven');
+    expect(truth.research.detail).toContain('live answer');
+    expect(truth.imageGeneration.proofState).toBe('live_proven');
+    expect(truth.imageGeneration.detail).toContain('image artifact');
   });
 
   it('marks work cockpit live-proven from a recent pilot journey and surfaces pilot issue state', () => {

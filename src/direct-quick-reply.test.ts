@@ -5,6 +5,7 @@ import {
   maybeBuildDirectQuickReply,
   maybeBuildDirectRescueReply,
 } from './direct-quick-reply.js';
+import { buildAndreaPingPresenceReply } from './ping-presence.js';
 
 describe('direct quick reply', () => {
   it('returns 42 for meaning-of-life asks', () => {
@@ -145,10 +146,25 @@ describe('direct quick reply', () => {
     expect(reply).toContain("I'll take that as a win");
   });
 
-  it('returns a stable online response for plain ping', () => {
-    expect(maybeBuildDirectQuickReply([{ content: 'Ping' }])).toBe(
-      'Andrea is online.',
+  it('returns the shared witty online response for plain ping', () => {
+    const now = new Date('2026-04-07T20:05:00.000Z');
+
+    expect(maybeBuildDirectQuickReply([{ content: 'Ping' }], now)).toBe(
+      buildAndreaPingPresenceReply(undefined, now),
     );
+  });
+
+  it('keeps the ping one-liner stable within the same local hour', () => {
+    const first = maybeBuildDirectQuickReply(
+      [{ content: 'Ping' }],
+      new Date('2026-04-07T20:05:00.000Z'),
+    );
+    const second = maybeBuildDirectQuickReply(
+      [{ content: 'Ping' }],
+      new Date('2026-04-07T20:45:00.000Z'),
+    );
+
+    expect(first).toBe(second);
   });
 
   it('does not hijack mixed thank-you requests', () => {

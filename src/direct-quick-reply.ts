@@ -3,6 +3,7 @@ import {
   buildGracefulDegradedReply,
   type ConversationalChannel,
 } from './conversational-core.js';
+import { buildAndreaPingPresenceReply } from './ping-presence.js';
 
 const MAX_ABS_MATH_RESULT = 1_000_000_000_000;
 
@@ -306,7 +307,7 @@ export function maybeBuildDirectQuickReply(
   }
 
   if (/^ping[!. ]*$/.test(normalized)) {
-    return 'Andrea is online.';
+    return buildAndreaPingPresenceReply(undefined, now);
   }
 
   if (

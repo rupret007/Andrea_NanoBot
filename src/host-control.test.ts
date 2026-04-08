@@ -6,10 +6,12 @@ import path from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
+  assessAlexaLiveProof,
   assessAssistantHealthState,
   buildRuntimeCommitTruth,
   clearAssistantHealthState,
   clearAssistantReadyState,
+  formatAlexaProofAgeLabel,
   clearRuntimeAuditState,
   clearTelegramTransportState,
   detectWindowsInstallArtifacts,
@@ -396,6 +398,108 @@ describe('assistant health assessment', () => {
 
     expect(assessment.status).toBe('stale');
     expect(assessment.detail).toContain('stale');
+  });
+});
+
+describe('Alexa live-proof assessment', () => {
+  it('treats a missing signed request as near-live only', () => {
+    const assessment = assessAlexaLiveProof({
+      lastSignedRequest: null,
+      now: new Date('2026-04-07T18:00:00.000Z'),
+    });
+
+    expect(assessment.proofState).toBe('near_live_only');
+    expect(assessment.proofKind).toBe('none');
+    expect(assessment.proofFreshness).toBe('none');
+  });
+
+  it('treats a LaunchRequest as partial proof only', () => {
+    const assessment = assessAlexaLiveProof({
+      lastSignedRequest: {
+        updatedAt: '2026-04-07T17:55:00.000Z',
+        requestId: 'req-launch',
+        requestType: 'LaunchRequest',
+        intentName: null,
+        applicationIdVerified: true,
+        linkingResolved: false,
+        groupFolder: null,
+        responseSource: 'launch',
+      },
+      now: new Date('2026-04-07T18:00:00.000Z'),
+    });
+
+    expect(assessment.proofState).toBe('near_live_only');
+    expect(assessment.proofKind).toBe('launch_only');
+    expect(assessment.proofFreshness).toBe('none');
+  });
+
+  it('requires a handled response source for live proof', () => {
+    const assessment = assessAlexaLiveProof({
+      lastSignedRequest: {
+        updatedAt: '2026-04-07T17:55:00.000Z',
+        requestId: 'req-intent',
+        requestType: 'IntentRequest',
+        intentName: 'WhatAmIForgettingIntent',
+        applicationIdVerified: true,
+        linkingResolved: true,
+        groupFolder: 'main',
+        responseSource: 'received_trusted_request',
+      },
+      now: new Date('2026-04-07T18:00:00.000Z'),
+    });
+
+    expect(assessment.proofState).toBe('near_live_only');
+    expect(assessment.proofKind).toBe('signed_intent_unhandled');
+    expect(assessment.proofFreshness).toBe('none');
+  });
+
+  it('counts a fresh handled IntentRequest as live proof', () => {
+    const assessment = assessAlexaLiveProof({
+      lastSignedRequest: {
+        updatedAt: '2026-04-07T17:55:00.000Z',
+        requestId: 'req-handled',
+        requestType: 'IntentRequest',
+        intentName: 'WhatAmIForgettingIntent',
+        applicationIdVerified: true,
+        linkingResolved: true,
+        groupFolder: 'main',
+        responseSource: 'local_companion',
+      },
+      now: new Date('2026-04-07T18:00:00.000Z'),
+    });
+
+    expect(assessment.proofState).toBe('live_proven');
+    expect(assessment.proofKind).toBe('handled_intent');
+    expect(assessment.proofFreshness).toBe('fresh');
+    expect(assessment.proofAgeMinutes).toBe(5);
+    expect(assessment.proofAgeLabel).toBe('5m');
+  });
+
+  it('treats an old handled IntentRequest as stale near-live proof', () => {
+    const assessment = assessAlexaLiveProof({
+      lastSignedRequest: {
+        updatedAt: '2026-04-05T17:55:00.000Z',
+        requestId: 'req-stale',
+        requestType: 'IntentRequest',
+        intentName: 'WhatAmIForgettingIntent',
+        applicationIdVerified: true,
+        linkingResolved: true,
+        groupFolder: 'main',
+        responseSource: 'local_companion',
+      },
+      now: new Date('2026-04-07T18:00:00.000Z'),
+    });
+
+    expect(assessment.proofState).toBe('near_live_only');
+    expect(assessment.proofKind).toBe('handled_intent');
+    expect(assessment.proofFreshness).toBe('stale');
+    expect(assessment.proofAgeLabel).toContain('d');
+  });
+
+  it('formats Alexa proof age labels compactly', () => {
+    expect(formatAlexaProofAgeLabel(null)).toBe('none');
+    expect(formatAlexaProofAgeLabel(30_000)).toBe('<1m');
+    expect(formatAlexaProofAgeLabel(90 * 60_000)).toBe('1h 30m');
   });
 });
 

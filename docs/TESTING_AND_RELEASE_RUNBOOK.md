@@ -191,8 +191,8 @@ Confirm:
 Important truth for this host:
 
 - a healthy host can still report `STATUS: failed` if `EXTERNAL_BLOCKERS` are present
-- on the current host, that usually means `outward_research_direct_provider_credentials_missing` and/or `alexa_live_signed_turn_missing`, not a broken service
-- BlueBubbles is currently externally blocked on this Windows machine because the real BlueBubbles server/webhook is not installed or connected here
+- on the current host, that now usually means `alexa_live_signed_turn_missing`, not a broken service
+- BlueBubbles remains externally blocked in Andrea on this Windows machine until the `BLUEBUBBLES_*` host configuration is loaded and a same-host roundtrip is reproved
 - if `SERVICE: running_ready` and the blocker is external, treat that as an exact release-candidate caveat rather than a host failure
 
 Then validate the public-safe Telegram surface:
@@ -386,15 +386,16 @@ If any of those are missing, record Alexa as **code-ready but setup-blocked** in
 Current truthful closeout note:
 
 - Telegram is the live-proven release-candidate surface on this host for this pass
-- Alexa listener, OAuth, public ingress, and pinned Node 22 are healthy, but this pass has not yet reproven one fresh signed live voice `IntentRequest`
-- if `npm run services:status` still shows `alexa_last_signed_request_type=none`, the remaining Alexa blocker is one human-operated voice or authenticated simulator run after importing `docs/alexa/interaction-model.en-US.json` and running `Build Model`
-- BlueBubbles remains externally blocked on this host unless a reachable live webhook/server is restored here
-- outward-facing research is currently a graceful blocked-path proof on this host because the provider account is quota-blocked
+- Alexa listener, OAuth, public ingress, and pinned Node 22 are healthy, and Alexa is live-proven on this host from a fresh handled signed `IntentRequest`
+- if `npm run services:status` later shows `alexa_live_proof=near_live_only`, the remaining Alexa blocker is one human-operated voice or authenticated simulator run after importing `docs/alexa/interaction-model.en-US.json` and running `Build Model`
+- BlueBubbles remains externally blocked in Andrea on this host until the `BLUEBUBBLES_*` host configuration is loaded and a real same-host roundtrip is reproved
+- outward-facing research and Telegram image generation are now live-proven on this host through the direct OpenAI provider path
+- if the Anthropic-compatible LiteLLM gateway degrades later, report that separately as the core-runtime compatibility lane rather than as a direct OpenAI billing problem
 - typed Alexa+ app chat is not an authoritative proof surface unless Andrea logs a real signed follow-up `IntentRequest` after launch
 - interaction-model changes require a fresh import of `docs/alexa/interaction-model.en-US.json` plus `Build Model` in the Alexa Developer Console before live utterance failures count against the repo
 - if live voice still falls into `AMAZON.FallbackIntent` after that rebuild, use the Alexa Developer Console Utterance Profiler or Intent History to capture the exact recognized phrase before changing repo code
 - `npm run debug:daily-companion` is the local pinned-Node smoke path for comparing canonical daily-companion prompts like `what am I forgetting` or `what's still open with Candace` against real `groupFolder=main` data
-- `npm run debug:alexa-conversation` is the near-live pinned-Node harness for checking Alexa-style follow-ups like `anything else`, `what about Candace`, `remember that`, `why`, or `be a little more direct` against the real local routing stack before blaming the live voice surface
+- `npm run debug:alexa-conversation` is the repo-side pinned-Node harness for checking Alexa-style follow-ups like `anything else`, `what about Candace`, `remember that`, `why`, or `be a little more direct` against the real local routing stack before blaming the live voice surface
 
 When configured, validate in this order:
 
@@ -405,6 +406,31 @@ When configured, validate in this order:
    - if the live host is an `ngrok` `*.ngrok-free.dev` tunnel, use the `ngrok-skip-browser-warning: 1` header for browser-style checks
    - if the skill endpoint uses that host, confirm the Alexa console SSL setting is the wildcard-certificate option
 4. authoritative voice launch
+   - use a **real device** or the **authenticated Alexa Developer Console simulator**
+   - say `Open Andrea Assistant`
+   - then say `What am I forgetting?`
+5. rerun `npm run services:status`
+   - success:
+     - `alexa_last_signed_request_type=IntentRequest`
+     - `alexa_last_signed_intent=WhatAmIForgettingIntent`
+     - `alexa_last_signed_response_source=` a handled source such as `local_companion`
+     - `alexa_live_proof=live_proven`
+     - `alexa_live_proof_kind=handled_intent`
+     - `alexa_live_proof_freshness=fresh`
+   - stale:
+     - `alexa_live_proof=near_live_only`
+     - `alexa_live_proof_kind=handled_intent`
+     - `alexa_live_proof_freshness=stale`
+   - partial / missing:
+     - `alexa_last_signed_request_type=none`
+     - `alexa_last_signed_request_type=LaunchRequest`
+     - `alexa_last_signed_response_source=received_trusted_request`
+     - `alexa_last_signed_response_source=barrier`
+     - `alexa_last_signed_response_source=fallback`
+6. if the proof still does not upgrade, check in this order:
+   - stale interaction model -> re-import `docs/alexa/interaction-model.en-US.json` and run `Build Model`
+   - endpoint/account-link mismatch
+   - signed request never reached the current host
 
 ## 9. Research And Media Validation
 
@@ -426,6 +452,7 @@ Expect:
 Important truth:
 
 - OpenAI-backed research is only live when `OPENAI_API_KEY` is configured and the provider account has usable quota/billing
+- on the current host, that direct OpenAI research path is live-proven and should not be reported as blocked unless a fresh provider proof fails again
 - `web_search` is in scope for research; file search is not promised unless separate file-search plumbing is added
 - Telegram is the rich research and media surface
 - Alexa should stay concise and use handoffs when the result is too long or not voice-safe
@@ -443,7 +470,7 @@ Use this when the shared assistant core changes:
    - Telegram gets the richer research shape
    - `work.current_logs` remains blocked on Alexa and allowed only on the Telegram/operator side
 
-If `OPENAI_API_KEY` is configured and the provider account is usable, a comparative or outward-facing research prompt may use the OpenAI Responses path. If it is missing or the provider account is quota-blocked, the shared research proof should report that blocker honestly instead of pretending the external answer is live.
+If `OPENAI_API_KEY` is configured and the provider account is usable, a comparative or outward-facing research prompt may use the OpenAI Responses path. If it later becomes missing or quota-blocked again, the shared research proof should report that blocker honestly instead of pretending the external answer is live.
 
 Check:
 

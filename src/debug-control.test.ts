@@ -244,6 +244,9 @@ describe('debug log tails', () => {
     expect(status).toContain('Serving git commit: dc67cf98c6b2f3d19c6a3c70f3a6c54abe266794');
     expect(status).toContain('Serving commit aligned: no');
     expect(status).toContain('Alexa last signed request: none');
+    expect(status).toContain('Alexa proof kind: none');
+    expect(status).toContain('Alexa proof freshness: none');
+    expect(status).toContain('Alexa confirm command: npm run services:status');
   });
 
   it('surfaces pilot issue counts and journey truth in debug status', () => {

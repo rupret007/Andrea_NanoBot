@@ -759,12 +759,41 @@ function Get-AssistantHealthStatus {
   }
 }
 
+function Resolve-TelegramRoundtripNextDueAt {
+  param([string] $LastSuccessAt)
+
+  if ([string]::IsNullOrWhiteSpace($LastSuccessAt)) {
+    return $null
+  }
+
+  $tsxPath = Join-Path $projectRoot 'node_modules\tsx\dist\cli.mjs'
+  $scriptPath = Join-Path $projectRoot 'scripts\compute-telegram-roundtrip-next-due.ts'
+  if (!(Test-Path -LiteralPath $tsxPath) -or !(Test-Path -LiteralPath $scriptPath)) {
+    return $null
+  }
+
+  try {
+    $nodeExe = Resolve-PinnedNodeExecutable
+    $output = & $nodeExe $tsxPath $scriptPath $LastSuccessAt 2>$null
+    if ($LASTEXITCODE -ne 0) {
+      return $null
+    }
+    $text = ([string]::Join("`n", @($output))).Trim()
+    if ([string]::IsNullOrWhiteSpace($text)) {
+      return $null
+    }
+    return $text
+  } catch {
+    return $null
+  }
+}
+
 function Get-TelegramRoundtripStatus {
   param(
     [object] $AssistantHealthMarker = $null,
     [object] $HostState = $null,
     [object] $ReadyState = $null,
-    [int] $ProbeIntervalSeconds = 1800,
+    [int] $ProbeIntervalSeconds = 3600,
     [int] $StartupGraceSeconds = 300
   )
 
@@ -870,11 +899,17 @@ function Get-TelegramRoundtripStatus {
   if (-not [string]::IsNullOrWhiteSpace($nextDueAt) -and [DateTime]::TryParse($nextDueAt, [ref] $computedNextDue)) {
     $hasComputedNextDue = $true
   } elseif (-not [string]::IsNullOrWhiteSpace($lastOkAt)) {
+    $recomputedNextDueAt = Resolve-TelegramRoundtripNextDueAt -LastSuccessAt $lastOkAt
+    if (-not [string]::IsNullOrWhiteSpace($recomputedNextDueAt) -and [DateTime]::TryParse($recomputedNextDueAt, [ref] $computedNextDue)) {
+      $hasComputedNextDue = $true
+      $nextDueAt = $recomputedNextDueAt
+    } else {
     $lastSuccess = [DateTime]::MinValue
     if ([DateTime]::TryParse($lastOkAt, [ref] $lastSuccess)) {
       $computedNextDue = $lastSuccess.ToUniversalTime().AddSeconds($ProbeIntervalSeconds)
       $hasComputedNextDue = $true
       $nextDueAt = $computedNextDue.ToString('o')
+    }
     }
   }
 
@@ -1962,12 +1997,50 @@ function Show-Status {
   Write-Output ("HOST_STATUS: alexa_public_listener_detail={0}" -f ([string] $alexaPublic.listenerDetail))
   Write-Output ("HOST_STATUS: alexa_public_oauth_health={0}" -f ([string] $alexaPublic.oauthHealth))
   Write-Output ("HOST_STATUS: alexa_public_oauth_detail={0}" -f ([string] $alexaPublic.oauthDetail))
-  Write-Output ("HOST_STATUS: alexa_last_signed_request_at={0}" -f ($(if ($alexaLastSignedRequest -and $alexaLastSignedRequest.updatedAt) { [string] $alexaLastSignedRequest.updatedAt } else { 'none' })))
-  Write-Output ("HOST_STATUS: alexa_last_signed_request_type={0}" -f ($(if ($alexaLastSignedRequest -and $alexaLastSignedRequest.requestType) { [string] $alexaLastSignedRequest.requestType } else { 'none' })))
-  Write-Output ("HOST_STATUS: alexa_live_proof={0}" -f ($(if ($alexaLastSignedRequest -and $alexaLastSignedRequest.requestType) { 'live_signed_turn_recorded' } else { 'near_live_signed_turn_missing' })))
-  Write-Output ("HOST_STATUS: alexa_last_signed_intent={0}" -f ($(if ($alexaLastSignedRequest -and $alexaLastSignedRequest.intentName) { [string] $alexaLastSignedRequest.intentName } else { 'none' })))
+  $alexaProofState = if ($fieldTrialTruth -and $fieldTrialTruth.alexa -and $fieldTrialTruth.alexa.proofState) {
+    [string] $fieldTrialTruth.alexa.proofState
+  } elseif ($alexaLastSignedRequest -and $alexaLastSignedRequest.requestType) {
+    'near_live_only'
+  } else {
+    'near_live_only'
+  }
+  $alexaProofKind = if ($fieldTrialTruth -and $fieldTrialTruth.alexa -and $fieldTrialTruth.alexa.proofKind) {
+    [string] $fieldTrialTruth.alexa.proofKind
+  } elseif ($alexaLastSignedRequest -and [string] $alexaLastSignedRequest.requestType -eq 'LaunchRequest') {
+    'launch_only'
+  } elseif ($alexaLastSignedRequest -and [string] $alexaLastSignedRequest.requestType -eq 'IntentRequest') {
+    'signed_intent_unhandled'
+  } else {
+    'none'
+  }
+  $alexaProofFreshness = if ($fieldTrialTruth -and $fieldTrialTruth.alexa -and $fieldTrialTruth.alexa.proofFreshness) {
+    [string] $fieldTrialTruth.alexa.proofFreshness
+  } else {
+    'none'
+  }
+  $alexaProofAgeLabel = if ($fieldTrialTruth -and $fieldTrialTruth.alexa -and $fieldTrialTruth.alexa.proofAgeLabel) {
+    [string] $fieldTrialTruth.alexa.proofAgeLabel
+  } else {
+    'none'
+  }
+  Write-Output ("HOST_STATUS: alexa_last_signed_request_at={0}" -f ($(if ($fieldTrialTruth -and $fieldTrialTruth.alexa -and $fieldTrialTruth.alexa.lastSignedRequestAt) { [string] $fieldTrialTruth.alexa.lastSignedRequestAt } elseif ($alexaLastSignedRequest -and $alexaLastSignedRequest.updatedAt) { [string] $alexaLastSignedRequest.updatedAt } else { 'none' })))
+  Write-Output ("HOST_STATUS: alexa_last_signed_request_type={0}" -f ($(if ($fieldTrialTruth -and $fieldTrialTruth.alexa -and $fieldTrialTruth.alexa.lastSignedRequestType) { [string] $fieldTrialTruth.alexa.lastSignedRequestType } elseif ($alexaLastSignedRequest -and $alexaLastSignedRequest.requestType) { [string] $alexaLastSignedRequest.requestType } else { 'none' })))
+  Write-Output ("HOST_STATUS: alexa_live_proof={0}" -f $alexaProofState)
+  Write-Output ("HOST_STATUS: alexa_live_proof_kind={0}" -f $alexaProofKind)
+  Write-Output ("HOST_STATUS: alexa_live_proof_freshness={0}" -f $alexaProofFreshness)
+  Write-Output ("HOST_STATUS: alexa_live_proof_age={0}" -f $alexaProofAgeLabel)
+  Write-Output ("HOST_STATUS: alexa_last_signed_intent={0}" -f ($(if ($fieldTrialTruth -and $fieldTrialTruth.alexa -and $fieldTrialTruth.alexa.lastSignedIntent) { [string] $fieldTrialTruth.alexa.lastSignedIntent } elseif ($alexaLastSignedRequest -and $alexaLastSignedRequest.intentName) { [string] $alexaLastSignedRequest.intentName } else { 'none' })))
   Write-Output ("HOST_STATUS: alexa_last_signed_group_folder={0}" -f ($(if ($alexaLastSignedRequest -and $alexaLastSignedRequest.groupFolder) { [string] $alexaLastSignedRequest.groupFolder } else { 'none' })))
-  Write-Output ("HOST_STATUS: alexa_last_signed_response_source={0}" -f ($(if ($alexaLastSignedRequest -and $alexaLastSignedRequest.responseSource) { [string] $alexaLastSignedRequest.responseSource } else { 'none' })))
+  Write-Output ("HOST_STATUS: alexa_last_signed_response_source={0}" -f ($(if ($fieldTrialTruth -and $fieldTrialTruth.alexa -and $fieldTrialTruth.alexa.lastSignedResponseSource) { [string] $fieldTrialTruth.alexa.lastSignedResponseSource } elseif ($alexaLastSignedRequest -and $alexaLastSignedRequest.responseSource) { [string] $alexaLastSignedRequest.responseSource } else { 'none' })))
+  if ($fieldTrialTruth -and $fieldTrialTruth.alexa) {
+    Write-Output ("HOST_STATUS: alexa_live_proof_blocker={0}" -f ($(if ($fieldTrialTruth.alexa.blocker) { [string] $fieldTrialTruth.alexa.blocker } else { 'none' })))
+    Write-Output ("HOST_STATUS: alexa_live_proof_next_action={0}" -f ($(if ($fieldTrialTruth.alexa.nextAction) { [string] $fieldTrialTruth.alexa.nextAction } else { 'none' })))
+    Write-Output ("HOST_STATUS: alexa_live_proof_utterance={0}" -f ($(if ($fieldTrialTruth.alexa.recommendedUtterance) { [string] $fieldTrialTruth.alexa.recommendedUtterance } else { 'none' })))
+    Write-Output ("HOST_STATUS: alexa_live_proof_confirm_command={0}" -f ($(if ($fieldTrialTruth.alexa.confirmCommand) { [string] $fieldTrialTruth.alexa.confirmCommand } else { 'none' })))
+    Write-Output ("HOST_STATUS: alexa_live_proof_success_shape={0}" -f ($(if ($fieldTrialTruth.alexa.successShape) { [string] $fieldTrialTruth.alexa.successShape } else { 'none' })))
+    Write-Output ("HOST_STATUS: alexa_live_proof_stale_shape={0}" -f ($(if ($fieldTrialTruth.alexa.staleShape) { [string] $fieldTrialTruth.alexa.staleShape } else { 'none' })))
+    Write-Output ("HOST_STATUS: alexa_live_proof_failure_checks={0}" -f ($(if ($fieldTrialTruth.alexa.failureChecklist) { [string] $fieldTrialTruth.alexa.failureChecklist } else { 'none' })))
+  }
   Write-Output ("HOST_STATUS: telegram_transport_mode={0}" -f ([string] $telegramTransport.mode))
   Write-Output ("HOST_STATUS: telegram_transport_health={0}" -f ([string] $telegramTransport.status))
   Write-Output ("HOST_STATUS: telegram_transport_detail={0}" -f ([string] $telegramTransport.detail))

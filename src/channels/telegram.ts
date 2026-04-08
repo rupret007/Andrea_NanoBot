@@ -4,6 +4,7 @@ import { Api, Bot, InlineKeyboard, InputFile } from 'grammy';
 
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
 import { readEnvFile } from '../env.js';
+import { buildAndreaPingPresenceReply } from '../ping-presence.js';
 import {
   readNanoclawHostState,
   readTelegramTransportState,
@@ -166,6 +167,13 @@ export function buildTelegramFeaturesText(
     '- Project and coding help through Andrea, with `/cursor_status` as the safe readiness check and deeper Cursor plus Codex/OpenAI operator work kept in the admin path',
     "- Secure per-chat isolation so one chat does not automatically get another chat's skills or files",
   ].join('\n');
+}
+
+export function buildTelegramPingText(
+  assistantName = ASSISTANT_NAME,
+  now = new Date(),
+): string {
+  return buildAndreaPingPresenceReply(assistantName, now);
 }
 
 export function splitTelegramMessage(text: string, maxLength = 4096): string[] {
@@ -944,7 +952,7 @@ export class TelegramChannel implements Channel {
     this.bot.command('ping', (ctx) => {
       return replyAndTrack(
         ctx,
-        `${ASSISTANT_NAME} is online.`,
+        buildTelegramPingText(),
         undefined,
         'Observed a Telegram /ping roundtrip.',
       );

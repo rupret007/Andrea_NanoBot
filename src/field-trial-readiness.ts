@@ -4,12 +4,16 @@ import {
 } from './channels/bluebubbles.js';
 import { readEnvFile } from './env.js';
 import {
+  assessAlexaLiveProof,
   assessAssistantHealthState,
   assessTelegramRoundtripState,
+  formatAlexaProofAgeLabel,
   readAlexaLastSignedRequestState,
   readHostControlSnapshot,
   reconcileWindowsHostState,
   type HostControlSnapshot,
+  type AlexaLiveProofFreshness,
+  type AlexaLiveProofKind,
   type WindowsHostReconciliation,
 } from './host-control.js';
 import { getMediaProviderStatus } from './media-generation.js';
@@ -35,6 +39,22 @@ export interface FieldTrialSurfaceTruth {
   detail: string;
 }
 
+export interface FieldTrialAlexaTruth extends FieldTrialSurfaceTruth {
+  lastSignedRequestAt: string;
+  lastSignedRequestType: string;
+  lastSignedIntent: string;
+  lastSignedResponseSource: string;
+  proofKind: AlexaLiveProofKind;
+  proofFreshness: AlexaLiveProofFreshness;
+  proofAgeMinutes: number | null;
+  proofAgeLabel: string;
+  recommendedUtterance: string;
+  confirmCommand: string;
+  successShape: string;
+  staleShape: string;
+  failureChecklist: string;
+}
+
 export interface FieldTrialJourneyTruthMap {
   ordinary_chat: FieldTrialSurfaceTruth;
   daily_guidance: FieldTrialSurfaceTruth;
@@ -53,7 +73,7 @@ export interface FieldTrialPilotIssueTruth {
 
 export interface FieldTrialOperatorTruth {
   telegram: FieldTrialSurfaceTruth;
-  alexa: FieldTrialSurfaceTruth;
+  alexa: FieldTrialAlexaTruth;
   bluebubbles: FieldTrialSurfaceTruth;
   workCockpit: FieldTrialSurfaceTruth;
   lifeThreads: FieldTrialSurfaceTruth;
@@ -346,33 +366,83 @@ function buildTelegramTruth(
   });
 }
 
-function buildAlexaTruth(projectRoot: string): FieldTrialSurfaceTruth {
+function buildAlexaTruth(projectRoot: string): FieldTrialAlexaTruth {
   const env = readEnvFile(['ALEXA_SKILL_ID']);
   const configured = Boolean(process.env.ALEXA_SKILL_ID || env.ALEXA_SKILL_ID);
+  const recommendedUtterance =
+    '`Open Andrea Assistant` then `What am I forgetting?`';
+  const confirmCommand = 'npm run services:status';
+  const successShape =
+    'Success looks like IntentRequest + WhatAmIForgettingIntent + a handled response source + proof freshness=fresh.';
+  const staleShape =
+    'Stale looks like a handled IntentRequest is still present, but proof freshness=stale and Alexa remains near_live_only.';
+  const failureChecklist =
+    'Check for no IntentRequest, LaunchRequest only, responseSource=received_trusted_request, responseSource=barrier/fallback/help/launch, stale interaction model, endpoint/account-link mismatch, or the signed request never reaching this host.';
+
   if (!configured) {
-    return buildTruth({
-      proofState: 'not_intended_for_trial',
-      detail: 'Alexa is not configured on this host.',
-    });
+    return {
+      ...buildTruth({
+        proofState: 'not_intended_for_trial',
+        detail: 'Alexa is not configured on this host.',
+      }),
+      lastSignedRequestAt: 'none',
+      lastSignedRequestType: 'none',
+      lastSignedIntent: 'none',
+      lastSignedResponseSource: 'none',
+      proofKind: 'none',
+      proofFreshness: 'none',
+      proofAgeMinutes: null,
+      proofAgeLabel: 'none',
+      recommendedUtterance,
+      confirmCommand,
+      successShape,
+      staleShape,
+      failureChecklist,
+    };
   }
 
-  const lastSignedRequest = readAlexaLastSignedRequestState(projectRoot);
-  if (lastSignedRequest?.requestType) {
-    return buildTruth({
-      proofState: 'live_proven',
-      detail: `A signed Alexa ${lastSignedRequest.requestType} was recorded on this host.`,
-    });
-  }
-
-  return buildTruth({
-    proofState: 'near_live_only',
-    blocker: 'No fresh signed Alexa IntentRequest is recorded on this host.',
-    blockerOwner: 'external',
-    nextAction:
-      'Perform one real signed Alexa voice or authenticated simulator turn and confirm services:status records an IntentRequest.',
-    detail:
-      'Alexa listener, ingress, and account-link health can still be green even when no fresh signed live turn has been recorded on this host.',
+  const assessment = assessAlexaLiveProof({
+    projectRoot,
+    lastSignedRequest: readAlexaLastSignedRequestState(projectRoot),
   });
+  const lastSignedRequest = assessment.lastSignedRequest;
+  const detail =
+    assessment.proofState === 'live_proven'
+      ? assessment.detail
+      : assessment.proofKind === 'launch_only'
+        ? 'Alexa has only recorded a signed LaunchRequest here so far. Open the skill, then ask `What am I forgetting?` to produce a handled proof turn.'
+        : assessment.proofKind === 'signed_intent_unhandled'
+          ? `Alexa recorded a signed IntentRequest, but the latest response source was ${lastSignedRequest?.responseSource || 'none'}, so it does not qualify as handled live proof yet.`
+          : assessment.proofKind === 'handled_intent' &&
+              assessment.proofFreshness === 'stale'
+            ? `Alexa did record a handled signed intent ${assessment.proofAgeLabel} ago, but proof older than 24 hours is treated as stale.`
+            : 'Alexa listener, ingress, and account-link health can still be green even when no fresh handled signed live turn has been recorded on this host.';
+
+  return {
+    ...buildTruth({
+      proofState: assessment.proofState,
+      blocker: assessment.blocker,
+      blockerOwner:
+        assessment.proofState === 'live_proven' ? 'none' : 'external',
+      nextAction:
+        assessment.nextAction ||
+        'Use a real device or authenticated Alexa Developer Console simulator, say `Open Andrea Assistant`, then `What am I forgetting?`, and run `npm run services:status`.',
+      detail,
+    }),
+    lastSignedRequestAt: lastSignedRequest?.updatedAt || 'none',
+    lastSignedRequestType: lastSignedRequest?.requestType || 'none',
+    lastSignedIntent: lastSignedRequest?.intentName || 'none',
+    lastSignedResponseSource: lastSignedRequest?.responseSource || 'none',
+    proofKind: assessment.proofKind,
+    proofFreshness: assessment.proofFreshness,
+    proofAgeMinutes: assessment.proofAgeMinutes,
+    proofAgeLabel: formatAlexaProofAgeLabel(assessment.proofAgeMs),
+    recommendedUtterance,
+    confirmCommand,
+    successShape,
+    staleShape,
+    failureChecklist,
+  };
 }
 
 function buildBlueBubblesTruth(): FieldTrialSurfaceTruth {
@@ -387,12 +457,12 @@ function buildBlueBubblesTruth(): FieldTrialSurfaceTruth {
   ) {
     return buildTruth({
       proofState: 'externally_blocked',
-      blocker: 'BlueBubbles Server/webhook is not installed or configured on this host.',
+      blocker: 'BlueBubbles is not configured in Andrea on this host.',
       blockerOwner: 'external',
       nextAction:
-        'Reconnect the Mac-side BlueBubbles server/webhook and set the BLUEBUBBLES_* values on this Windows host.',
+        'Load the BLUEBUBBLES_* connection values on this Windows host and repro one real inbound -> reply -> follow-up flow.',
       detail:
-        'Repo-side BlueBubbles harnesses can still pass here, but this PC does not currently have a live BlueBubbles server/webhook connection.',
+        'Repo-side BlueBubbles harnesses can still pass here, but Andrea does not currently have a live BlueBubbles server/webhook configuration loaded on this PC.',
     });
   }
 

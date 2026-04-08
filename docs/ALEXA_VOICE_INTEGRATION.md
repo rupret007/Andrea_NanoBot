@@ -126,17 +126,66 @@ Current truthful host status:
 - live HTTPS ingress must still be current, reachable, and correctly wired in the Alexa Developer Console
 - if the live HTTPS host is an `ngrok` `*.ngrok-free.dev` tunnel, the Alexa endpoint SSL type must be set to the wildcard certificate option
 - issued access tokens resolve to `groupFolder=main`
-- repo-side and near-live Alexa proof are strong on this host
-- a **fresh signed live turn is still required** before calling Alexa fully live-proven here
-- pilot-mode operator surfaces (`services:status`, `setup verify`, `debug:status`, `debug:pilot`) should all continue to classify Alexa as `near_live_only` until that signed turn happens
-- current truthful blocker:
-  - `alexa_last_signed_request_type=none`
-  - no fresh signed `IntentRequest` has been recorded during the current closeout pass
-- the one remaining human step is:
-  - import [docs/alexa/interaction-model.en-US.json](./alexa/interaction-model.en-US.json) if needed
-  - run `Build Model`
-  - perform one real voice or authenticated simulator turn
-  - confirm `services:status` records an `IntentRequest`
+- Alexa is now live-proven on this host from a fresh handled signed `IntentRequest`
+- Alexa only counts as **live-proven** when the last handled signed `IntentRequest` is within **24 hours**
+- pilot-mode operator surfaces (`services:status`, `setup verify`, `debug:status`, `debug:pilot`) should classify Alexa as `live_proven` while that proof stays fresh, and intentionally drop it back to `near_live_only` if the proof becomes stale
+- current proof signal on this host:
+  - `alexa_last_signed_request_type=IntentRequest`
+  - `alexa_last_signed_intent=WhatAmIForgettingIntent`
+  - `alexa_last_signed_response_source=local_companion`
+  - `alexa_live_proof=live_proven`
+
+## 0D) Exact Live-Proof Rule
+
+Alexa becomes `live_proven` only when all of these are true on this host:
+
+- the last signed request type is `IntentRequest`
+- the last signed intent was actually handled, not just received
+- `alexa_last_signed_response_source` is a handled path such as `local_companion`, `life_thread_local`, `assistant_bridge`, or `bridge`
+- the handled proof is no older than **24 hours**
+
+These states do **not** count as live proof:
+
+- `LaunchRequest` only
+- `responseSource=received_trusted_request`
+- `responseSource=barrier`
+- `responseSource=fallback`
+- a handled proof older than 24 hours
+
+Fast operator close path:
+
+1. Use a **real device** or the **authenticated Alexa Developer Console simulator**
+2. Say:
+   - `Open Andrea Assistant`
+   - `What am I forgetting?`
+3. Run:
+   - `npm run services:status`
+
+Success should look like:
+
+- `alexa_last_signed_request_type=IntentRequest`
+- `alexa_last_signed_intent=WhatAmIForgettingIntent`
+- `alexa_last_signed_response_source=local_companion` or another handled source
+- `alexa_live_proof=live_proven`
+- `alexa_live_proof_kind=handled_intent`
+- `alexa_live_proof_freshness=fresh`
+
+Stale proof should look like:
+
+- a handled intent is still recorded
+- `alexa_live_proof=near_live_only`
+- `alexa_live_proof_kind=handled_intent`
+- `alexa_live_proof_freshness=stale`
+
+If the turn does not register, check:
+
+- no `IntentRequest` was recorded
+- only `LaunchRequest` was recorded
+- `alexa_last_signed_response_source=received_trusted_request`
+- `alexa_last_signed_response_source=barrier` or `fallback`
+- the live interaction model is stale and needs import + `Build Model`
+- endpoint or account-link config drift
+- the signed request never reached this host
 
 Important validation note:
 
@@ -452,7 +501,7 @@ Current truth:
 
 For operator-side conversation tuning, use:
 
-- `npm run debug:alexa-conversation` for a near-live multi-turn Alexa walkthrough
+- `npm run debug:alexa-conversation` for a repo-side multi-turn Alexa walkthrough that does not advance live proof
 - `npm run debug:daily-companion` for grounded local comparison against real `groupFolder=main` data
 - `npm run debug:shared-capabilities` for a shared Telegram/Alexa capability and research smoke pass
 
@@ -543,7 +592,7 @@ When the environment is configured, use this order:
 
 If you need one sentence for the current state, use this:
 
-- Alexa Companion Mode is repo-ready and near-live validated; as of April 7, 2026 the remaining full-live step on this host is one fresh signed Alexa utterance after the current interaction model is imported and `Build Model` has been run.
+- Alexa Companion Mode is now live-proven on this host; as of April 7, 2026 Andrea has a fresh handled signed `IntentRequest`, and operator surfaces will keep it live only while that proof remains within the 24-hour freshness window.
 
 ## 9) Incident Notes
 

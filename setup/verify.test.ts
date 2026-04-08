@@ -68,6 +68,23 @@ describe('determineCredentialStatus', () => {
       onecliCredentialStatus: 'unreachable',
     });
   });
+
+  it('treats auto local-gateway binding as configured core-runtime credentials', () => {
+    const status = determineCredentialStatus({
+      hasAnthropicDirectCredential: false,
+      hasOpenAiCompatibleCredential: false,
+      hasAutoLocalGatewayCredential: true,
+      onecliReachable: false,
+      onecliCredentialKeys: [],
+    });
+
+    expect(status).toEqual({
+      credentials: 'configured',
+      credentialMode: 'openai_compat_local_gateway_auto',
+      credentialSources: 'env,runtime_state',
+      onecliCredentialStatus: 'unreachable',
+    });
+  });
 });
 
 describe('buildVerifyNextSteps', () => {
@@ -108,14 +125,42 @@ describe('buildVerifyNextSteps', () => {
       missingRequirements: [],
       hasNativeOpenAiEndpointMisconfig: false,
       alexaConfigured: true,
-      alexaLastSignedRequestType: 'none',
+      alexaProof: {
+        lastSignedRequest: null,
+        proofState: 'near_live_only',
+        proofKind: 'none',
+        proofFreshness: 'none',
+        proofAgeMs: null,
+        proofAgeMinutes: null,
+        proofAgeLabel: 'none',
+        blocker: 'No handled signed Alexa IntentRequest is recorded on this host yet.',
+        detail: 'No signed Alexa request has been recorded on this host, so Alexa remains near-live only.',
+        nextAction:
+          'Use a real device or authenticated Alexa Developer Console simulator, say `Open Andrea Assistant`, then `What am I forgetting?`, and run `npm run services:status`.',
+      },
     });
 
     expect(steps).toContain(
-      'Alexa live proof still needs one signed turn.',
+      'Alexa live proof still needs one fresh handled signed turn.',
     );
     expect(steps).toContain(
-      'confirm services:status records an IntentRequest.',
+      'What am I forgetting?',
+    );
+  });
+
+  it('separates direct-provider success from missing core-runtime configuration', () => {
+    const steps = buildVerifyNextSteps({
+      missingRequirements: ['credentials'],
+      hasNativeOpenAiEndpointMisconfig: false,
+      outwardResearchStatus: 'available',
+      runtimeBackendLocalExecutionState: 'available_authenticated',
+    });
+
+    expect(steps).toContain(
+      'Direct OpenAI research and image generation are live on this host',
+    );
+    expect(steps).toContain(
+      'Anthropic-compatible core runtime lane is not configured yet',
     );
   });
 });
@@ -126,7 +171,19 @@ describe('buildReportedMissingRequirements', () => {
       missingRequirements: ['credentials'],
       outwardResearchStatus: 'missing_direct_provider_credentials',
       alexaConfigured: true,
-      alexaLastSignedRequestType: 'none',
+      alexaProof: {
+        lastSignedRequest: null,
+        proofState: 'near_live_only',
+        proofKind: 'none',
+        proofFreshness: 'none',
+        proofAgeMs: null,
+        proofAgeMinutes: null,
+        proofAgeLabel: 'none',
+        blocker: 'No handled signed Alexa IntentRequest is recorded on this host yet.',
+        detail: 'No signed Alexa request has been recorded on this host, so Alexa remains near-live only.',
+        nextAction:
+          'Use a real device or authenticated Alexa Developer Console simulator, say `Open Andrea Assistant`, then `What am I forgetting?`, and run `npm run services:status`.',
+      },
     });
 
     expect(requirements).toEqual([
@@ -145,6 +202,49 @@ describe('buildReportedMissingRequirements', () => {
       'outward_research_quota_blocked',
       'service_running',
     ]);
+  });
+
+  it('maps generic credential gaps to core-runtime blockers when direct provider proof is live', () => {
+    const requirements = buildReportedMissingRequirements({
+      missingRequirements: ['credentials'],
+      outwardResearchStatus: 'available',
+    });
+
+    expect(requirements).toEqual(['core_runtime_credentials_missing']);
+  });
+
+  it('marks stale handled Alexa proof separately from missing proof', () => {
+    const requirements = buildReportedMissingRequirements({
+      missingRequirements: [],
+      outwardResearchStatus: 'available',
+      alexaConfigured: true,
+      alexaProof: {
+        lastSignedRequest: {
+          updatedAt: '2026-04-05T18:00:00.000Z',
+          requestId: 'req-stale',
+          requestType: 'IntentRequest',
+          intentName: 'WhatAmIForgettingIntent',
+          applicationIdVerified: true,
+          linkingResolved: true,
+          groupFolder: 'main',
+          responseSource: 'local_companion',
+        },
+        proofState: 'near_live_only',
+        proofKind: 'handled_intent',
+        proofFreshness: 'stale',
+        proofAgeMs: 172800000,
+        proofAgeMinutes: 2880,
+        proofAgeLabel: '2d',
+        blocker:
+          'Alexa has handled signed Intent proof on this host, but it is older than 24 hours.',
+        detail:
+          'The latest handled signed Alexa intent was recorded at 2026-04-05T18:00:00.000Z, so the proof is now stale and Alexa remains near-live only.',
+        nextAction:
+          'Use a real device or authenticated Alexa Developer Console simulator, say `Open Andrea Assistant`, then `What am I forgetting?`, and run `npm run services:status`.',
+      },
+    });
+
+    expect(requirements).toEqual(['alexa_live_signed_turn_stale']);
   });
 });
 

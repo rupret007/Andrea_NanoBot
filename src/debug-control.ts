@@ -9,7 +9,6 @@ import {
   detectWindowsInstallMode,
   determineWindowsHostServiceState,
   formatInstallModeLabel,
-  readAlexaLastSignedRequestState,
   readHostControlSnapshot,
   reconcileWindowsHostState,
 } from './host-control.js';
@@ -391,7 +390,6 @@ export function formatDebugStatus(): string {
   const commitTruth = buildRuntimeCommitTruth({
     runtimeAuditState: hostSnapshot.runtimeAuditState,
   });
-  const alexaLastSignedRequest = readAlexaLastSignedRequestState();
   const windowsHost =
     process.platform === 'win32' ? reconcileWindowsHostState() : null;
   const fieldTrialTruth = buildFieldTrialOperatorTruth({
@@ -443,9 +441,14 @@ export function formatDebugStatus(): string {
       ? [`- Telegram next step: ${fieldTrialTruth.telegram.nextAction}`]
       : []),
     `- Alexa proof: ${fieldTrialTruth.alexa.proofState}`,
-    `- Alexa last signed request: ${alexaLastSignedRequest?.requestType || 'none'}`,
-    ...(alexaLastSignedRequest?.updatedAt
-      ? [`- Alexa last signed at: ${alexaLastSignedRequest.updatedAt}`]
+    `- Alexa proof kind: ${fieldTrialTruth.alexa.proofKind}`,
+    `- Alexa proof freshness: ${fieldTrialTruth.alexa.proofFreshness}`,
+    `- Alexa proof age: ${fieldTrialTruth.alexa.proofAgeLabel}`,
+    `- Alexa last signed request: ${fieldTrialTruth.alexa.lastSignedRequestType}`,
+    `- Alexa last signed intent: ${fieldTrialTruth.alexa.lastSignedIntent}`,
+    `- Alexa last signed response source: ${fieldTrialTruth.alexa.lastSignedResponseSource}`,
+    ...(fieldTrialTruth.alexa.lastSignedRequestAt !== 'none'
+      ? [`- Alexa last signed at: ${fieldTrialTruth.alexa.lastSignedRequestAt}`]
       : []),
     ...(fieldTrialTruth.alexa.blocker
       ? [`- Alexa blocker: ${fieldTrialTruth.alexa.blocker}`]
@@ -453,6 +456,11 @@ export function formatDebugStatus(): string {
     ...(fieldTrialTruth.alexa.nextAction
       ? [`- Alexa next step: ${fieldTrialTruth.alexa.nextAction}`]
       : []),
+    `- Alexa proof utterance: ${fieldTrialTruth.alexa.recommendedUtterance}`,
+    `- Alexa confirm command: ${fieldTrialTruth.alexa.confirmCommand}`,
+    `- Alexa success shape: ${fieldTrialTruth.alexa.successShape}`,
+    `- Alexa stale shape: ${fieldTrialTruth.alexa.staleShape}`,
+    `- Alexa failure checks: ${fieldTrialTruth.alexa.failureChecklist}`,
     `- BlueBubbles proof: ${fieldTrialTruth.bluebubbles.proofState}`,
     `- BlueBubbles proof detail: ${fieldTrialTruth.bluebubbles.detail}`,
     ...(fieldTrialTruth.bluebubbles.blocker

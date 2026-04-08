@@ -79,21 +79,44 @@ describe('telegram roundtrip health', () => {
   }
 
   it('evaluates the expected /ping reply text', () => {
+    const observedAt = '2026-04-04T12:10:00.000Z';
+
     expect(
       evaluateTelegramPingReplies([
-        { id: 1, text: buildExpectedTelegramPingReply() },
+        { id: 1, text: buildExpectedTelegramPingReply(undefined, observedAt) },
       ]),
     ).toEqual(
       expect.objectContaining({
         ok: true,
         matchedReply: expect.objectContaining({
-          text: buildExpectedTelegramPingReply(),
+          text: buildExpectedTelegramPingReply(undefined, observedAt),
         }),
       }),
     );
 
     expect(
-      evaluateTelegramPingReplies([{ id: 2, text: 'Something else' }]),
+      evaluateTelegramPingReplies([{ id: 2, text: 'Andrea is online.' }]),
+    ).toEqual(
+      expect.objectContaining({
+        ok: true,
+      }),
+    );
+
+    expect(
+      evaluateTelegramPingReplies([
+        {
+          id: 3,
+          text: `${buildExpectedTelegramPingReply(undefined, observedAt)}\nUnexpected extra line`,
+        },
+      ]),
+    ).toEqual(
+      expect.objectContaining({
+        ok: false,
+      }),
+    );
+
+    expect(
+      evaluateTelegramPingReplies([{ id: 4, text: 'Something else' }]),
     ).toEqual(
       expect.objectContaining({
         ok: false,
@@ -112,8 +135,19 @@ describe('telegram roundtrip health', () => {
     expect(state.status).toBe('healthy');
     expect(state.bootId).toBe('boot-roundtrip');
     expect(state.lastSuccessAt).toBe('2026-04-04T12:10:00.000Z');
-    expect(state.nextDueAt).toBe('2026-04-04T12:40:00.000Z');
+    expect(state.nextDueAt).toBe('2026-04-04T13:00:00.000Z');
     expect(readTelegramRoundtripState()?.chatTarget).toBe('tg:123');
+  });
+
+  it('rounds next-due timestamps to the next local top of hour near a boundary', () => {
+    seedRunningHost();
+
+    const state = recordOrganicTelegramRoundtripSuccess({
+      target: 'tg:123',
+      observedAt: '2026-04-04T12:59:59.000Z',
+    });
+
+    expect(state.nextDueAt).toBe('2026-04-04T13:00:00.000Z');
   });
 
   it('treats a missing roundtrip marker as pending during startup grace', () => {

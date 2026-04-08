@@ -2,6 +2,7 @@ import { execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
+import { computeNextTelegramRoundtripDueAt } from './ping-presence.js';
 import type { ChannelHealthSnapshot } from './types.js';
 
 export type NanoclawInstallMode =
@@ -170,6 +171,27 @@ export interface AlexaSignedRequestState {
   responseSource: string;
 }
 
+export type AlexaLiveProofKind =
+  | 'none'
+  | 'launch_only'
+  | 'signed_intent_unhandled'
+  | 'handled_intent';
+
+export type AlexaLiveProofFreshness = 'fresh' | 'stale' | 'none';
+
+export interface AlexaLiveProofAssessment {
+  lastSignedRequest: AlexaSignedRequestState | null;
+  proofState: 'live_proven' | 'near_live_only';
+  proofKind: AlexaLiveProofKind;
+  proofFreshness: AlexaLiveProofFreshness;
+  proofAgeMs: number | null;
+  proofAgeMinutes: number | null;
+  proofAgeLabel: string;
+  blocker: string;
+  detail: string;
+  nextAction: string;
+}
+
 export interface RuntimeCommitTruth {
   activeRepoRoot: string;
   activeGitBranch: string;
@@ -266,8 +288,9 @@ const DEPENDENCY_STATES = new Set<NanoclawDependencyState>([
   'unknown',
 ]);
 export const DEFAULT_ASSISTANT_HEALTH_STALE_AFTER_MS = 3 * 60 * 1000;
-export const DEFAULT_TELEGRAM_ROUNDTRIP_PROBE_INTERVAL_MS = 30 * 60 * 1000;
+export const DEFAULT_TELEGRAM_ROUNDTRIP_PROBE_INTERVAL_MS = 60 * 60 * 1000;
 export const DEFAULT_TELEGRAM_ROUNDTRIP_STARTUP_GRACE_MS = 5 * 60 * 1000;
+export const DEFAULT_ALEXA_LIVE_PROOF_FRESHNESS_MS = 24 * 60 * 60 * 1000;
 
 const TELEGRAM_ROUNDTRIP_SOURCES = new Set<TelegramRoundtripSource>([
   'organic',
@@ -304,6 +327,13 @@ const TELEGRAM_TRANSPORT_ERROR_CLASSES = new Set<TelegramTransportErrorClass>([
   'shared_token_suspected',
   'token_rotation_required',
   'local_start_failure',
+]);
+
+const ALEXA_HANDLED_LIVE_PROOF_RESPONSE_SOURCES = new Set([
+  'local_companion',
+  'life_thread_local',
+  'assistant_bridge',
+  'bridge',
 ]);
 
 function resolveProjectRoot(projectRoot = process.cwd()): string {
@@ -1180,6 +1210,142 @@ function parseTime(value: string | null | undefined): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+export function formatAlexaProofAgeLabel(
+  ageMs: number | null | undefined,
+): string {
+  if (ageMs == null || !Number.isFinite(ageMs) || ageMs < 0) return 'none';
+  const totalMinutes = Math.floor(ageMs / 60_000);
+  if (totalMinutes < 1) return '<1m';
+  if (totalMinutes < 60) return `${totalMinutes}m`;
+  const totalHours = Math.floor(totalMinutes / 60);
+  const remainderMinutes = totalMinutes % 60;
+  if (totalHours < 24) {
+    return remainderMinutes > 0
+      ? `${totalHours}h ${remainderMinutes}m`
+      : `${totalHours}h`;
+  }
+  const totalDays = Math.floor(totalHours / 24);
+  const remainderHours = totalHours % 24;
+  return remainderHours > 0
+    ? `${totalDays}d ${remainderHours}h`
+    : `${totalDays}d`;
+}
+
+export function assessAlexaLiveProof(input: {
+  projectRoot?: string;
+  lastSignedRequest?: AlexaSignedRequestState | null;
+  now?: Date;
+  freshnessMs?: number;
+} = {}): AlexaLiveProofAssessment {
+  const lastSignedRequest =
+    input.lastSignedRequest === undefined
+      ? readAlexaLastSignedRequestState(input.projectRoot)
+      : input.lastSignedRequest;
+  const now = input.now ?? new Date();
+  const freshnessMs =
+    input.freshnessMs ?? DEFAULT_ALEXA_LIVE_PROOF_FRESHNESS_MS;
+  const canonicalNextAction =
+    "Use a real device or authenticated Alexa Developer Console simulator, say `Open Andrea Assistant`, then `What am I forgetting?`, and run `npm run services:status`.";
+
+  if (!lastSignedRequest) {
+    return {
+      lastSignedRequest: null,
+      proofState: 'near_live_only',
+      proofKind: 'none',
+      proofFreshness: 'none',
+      proofAgeMs: null,
+      proofAgeMinutes: null,
+      proofAgeLabel: 'none',
+      blocker: 'No handled signed Alexa IntentRequest is recorded on this host yet.',
+      detail:
+        'No signed Alexa request has been recorded on this host, so Alexa remains near-live only.',
+      nextAction: canonicalNextAction,
+    };
+  }
+
+  const proofAgeMsRaw = parseTime(lastSignedRequest.updatedAt);
+  const proofAgeMs =
+    proofAgeMsRaw != null ? Math.max(0, now.getTime() - proofAgeMsRaw) : null;
+  const proofAgeMinutes =
+    proofAgeMs != null ? Math.floor(proofAgeMs / 60_000) : null;
+  const proofAgeLabel = formatAlexaProofAgeLabel(proofAgeMs);
+
+  if (lastSignedRequest.requestType !== 'IntentRequest') {
+    const isLaunch = lastSignedRequest.requestType === 'LaunchRequest';
+    return {
+      lastSignedRequest,
+      proofState: 'near_live_only',
+      proofKind: isLaunch ? 'launch_only' : 'none',
+      proofFreshness: 'none',
+      proofAgeMs,
+      proofAgeMinutes,
+      proofAgeLabel,
+      blocker: isLaunch
+        ? 'Alexa has only recorded a signed LaunchRequest on this host so far.'
+        : `Alexa has not recorded a qualifying signed IntentRequest on this host. The last signed request type was ${lastSignedRequest.requestType}.`,
+      detail: isLaunch
+        ? 'A launch-only Alexa request was recorded, but launch alone does not count as live proof.'
+        : `The latest signed Alexa request was ${lastSignedRequest.requestType}, which does not count as handled live proof.`,
+      nextAction: canonicalNextAction,
+    };
+  }
+
+  const handledIntent =
+    lastSignedRequest.applicationIdVerified &&
+    lastSignedRequest.linkingResolved &&
+    ALEXA_HANDLED_LIVE_PROOF_RESPONSE_SOURCES.has(
+      lastSignedRequest.responseSource,
+    );
+
+  if (!handledIntent) {
+    return {
+      lastSignedRequest,
+      proofState: 'near_live_only',
+      proofKind: 'signed_intent_unhandled',
+      proofFreshness: 'none',
+      proofAgeMs,
+      proofAgeMinutes,
+      proofAgeLabel,
+      blocker:
+        'Alexa recorded a signed IntentRequest, but it did not finish through a qualifying handled response path.',
+      detail: `The latest signed Alexa intent was ${lastSignedRequest.intentName || 'unknown'} with response source ${lastSignedRequest.responseSource}. Live proof requires a handled source such as local_companion, life_thread_local, assistant_bridge, or bridge.`,
+      nextAction: canonicalNextAction,
+    };
+  }
+
+  const proofFreshness: AlexaLiveProofFreshness =
+    proofAgeMs != null && proofAgeMs <= freshnessMs ? 'fresh' : 'stale';
+
+  if (proofFreshness === 'fresh') {
+    return {
+      lastSignedRequest,
+      proofState: 'live_proven',
+      proofKind: 'handled_intent',
+      proofFreshness,
+      proofAgeMs,
+      proofAgeMinutes,
+      proofAgeLabel,
+      blocker: '',
+      detail: `A fresh handled signed Alexa IntentRequest was recorded ${proofAgeLabel} ago on this host.`,
+      nextAction: '',
+    };
+  }
+
+  return {
+    lastSignedRequest,
+    proofState: 'near_live_only',
+    proofKind: 'handled_intent',
+    proofFreshness,
+    proofAgeMs,
+    proofAgeMinutes,
+    proofAgeLabel,
+    blocker:
+      'Alexa has handled signed Intent proof on this host, but it is older than 24 hours.',
+    detail: `The latest handled signed Alexa intent was recorded at ${lastSignedRequest.updatedAt}, so the proof is now stale and Alexa remains near-live only.`,
+    nextAction: canonicalNextAction,
+  };
+}
+
 export function assessTelegramRoundtripState(input: {
   assistantHealthState: AssistantHealthState | null;
   telegramRoundtripState: TelegramRoundtripState | null;
@@ -1266,9 +1432,16 @@ export function assessTelegramRoundtripState(input: {
 
   const nextDueAtMs = parseTime(roundtrip.nextDueAt);
   const lastSuccessAtMs = parseTime(roundtrip.lastSuccessAt);
+  const computedTopOfHourNextDueAt =
+    nextDueAtMs == null && roundtrip.lastSuccessAt
+      ? computeNextTelegramRoundtripDueAt(roundtrip.lastSuccessAt)
+      : null;
+  const computedTopOfHourNextDueAtMs = parseTime(computedTopOfHourNextDueAt);
   const computedNextDueAt =
     nextDueAtMs != null
       ? nextDueAtMs
+      : computedTopOfHourNextDueAtMs != null
+        ? computedTopOfHourNextDueAtMs
       : lastSuccessAtMs != null
         ? lastSuccessAtMs + probeIntervalMs
         : null;
