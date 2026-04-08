@@ -1763,7 +1763,10 @@ export class BlueBubblesChannel implements Channel {
       );
     }
 
-    const renderedText = formatBlueBubblesOutboundText(text);
+    const renderedText = options?.suppressSenderLabel
+      ? text.replace(/\r\n/g, '\n')
+      : formatBlueBubblesOutboundText(text);
+    const isCompanionLabeled = !options?.suppressSenderLabel;
 
     try {
       const result = await this.sendBlueBubblesReply(jid, renderedText, options);
@@ -1776,12 +1779,12 @@ export class BlueBubblesChannel implements Channel {
           result.platformMessageId ||
           `bb:outbound:${chatGuid}:${new Date().toISOString()}`,
         chat_jid: jid,
-        sender: 'Andrea',
-        sender_name: 'Andrea',
+        sender: isCompanionLabeled ? 'Andrea' : 'Me',
+        sender_name: isCompanionLabeled ? 'Andrea' : 'You',
         content: renderedText,
         timestamp: new Date().toISOString(),
         is_from_me: true,
-        is_bot_message: true,
+        is_bot_message: isCompanionLabeled,
         reply_to_id: options?.replyToMessageId || undefined,
       });
       this.emitHealth();

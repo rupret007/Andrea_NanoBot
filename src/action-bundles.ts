@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 
-import { draftCommunicationReply, formatCommunicationDraftReply } from './communication-companion.js';
+import { draftCommunicationReply } from './communication-companion.js';
 import {
   createTask,
   findLatestOpenActionBundleForChat,
@@ -29,6 +29,10 @@ import {
   recordDelegationRuleUsage,
   type RuleAwareActionPlan,
 } from './delegation-rules.js';
+import {
+  buildMessageActionPresentation,
+  createOrRefreshMessageActionFromDraft,
+} from './message-actions.js';
 import { handleRitualCommand } from './rituals.js';
 import type {
   ActionBundleActionRecord,
@@ -389,6 +393,9 @@ function synthesizeMissionActions(params: {
         },
       });
     } else if (action.kind === 'draft_follow_up') {
+      if (params.candidate.messageActionId) {
+        continue;
+      }
       actions.push({
         actionType: 'draft_follow_up',
         targetSystem: 'communication',
@@ -490,21 +497,23 @@ function synthesizeActions(params: {
   const threadTitle = params.candidate.threadTitle || null;
 
   if (params.originKind === 'communication') {
-    actions.push({
-      actionType: 'draft_follow_up',
-      targetSystem: 'communication',
-      summary: 'Draft the reply',
-      requiresConfirmation: true,
-      payload: {
-        type: 'draft_follow_up',
-        text: 'what should I say back',
-        threadTitle,
-        communicationThreadId: params.candidate.communicationThreadId || null,
-        communicationSubjectIds: params.candidate.communicationSubjectIds || [],
-        communicationLifeThreadIds: params.candidate.communicationLifeThreadIds || [],
-        lastCommunicationSummary: params.candidate.lastCommunicationSummary,
-      },
-    });
+    if (!params.candidate.messageActionId) {
+      actions.push({
+        actionType: 'draft_follow_up',
+        targetSystem: 'communication',
+        summary: 'Draft the reply',
+        requiresConfirmation: true,
+        payload: {
+          type: 'draft_follow_up',
+          text: 'what should I say back',
+          threadTitle,
+          communicationThreadId: params.candidate.communicationThreadId || null,
+          communicationSubjectIds: params.candidate.communicationSubjectIds || [],
+          communicationLifeThreadIds: params.candidate.communicationLifeThreadIds || [],
+          lastCommunicationSummary: params.candidate.lastCommunicationSummary,
+        },
+      });
+    }
     actions.push({
       actionType: 'create_reminder',
       targetSystem: 'reminders',
@@ -1096,12 +1105,43 @@ async function executeBundleAction(
           draft.clarificationQuestion || 'The draft still needs one more detail.',
       };
     }
+    const messagePresentationChannel =
+      deps.channel === 'bluebubbles' ? 'bluebubbles' : 'telegram';
+    const messageAction = createOrRefreshMessageActionFromDraft({
+      groupFolder: deps.groupFolder,
+      presentationChannel: messagePresentationChannel,
+      presentationChatJid: deps.chatJid || snapshot.bundle.presentationChatJid || '',
+      presentationThreadId:
+        snapshot.bundle.presentationThreadId || null,
+      sourceType: 'action_bundle',
+      sourceKey: snapshot.bundle.bundleId,
+      sourceSummary: draft.summaryText || snapshot.bundle.title,
+      draftText: draft.draftText || payload.text,
+      personName: draft.linkedSubjects[0]?.displayName || draft.thread?.title,
+      threadTitle: payload.threadTitle || draft.linkedLifeThreads[0]?.title || draft.thread?.title,
+      communicationThreadId: draft.thread?.id || payload.communicationThreadId || null,
+      threadId: draft.linkedLifeThreads[0]?.id || null,
+      missionId: relatedRefs.missionId,
+      actionBundleId: snapshot.bundle.bundleId,
+      communicationContext:
+        snapshot.bundle.originKind === 'communication'
+          ? 'reply_followthrough'
+          : 'general',
+      delegationRuleId: action.delegationRuleId || null,
+      delegationMode: action.delegationMode || null,
+      delegationExplanation: action.delegationExplanation || null,
+      now,
+    });
     return {
       ok: true,
       label: 'the draft',
-      detailText: formatCommunicationDraftReply(deps.channel, draft),
+      detailText: buildMessageActionPresentation(
+        messageAction,
+        messagePresentationChannel,
+      ).text,
       resultRefJson: JSON.stringify({
         communicationThreadId: draft.thread?.id || payload.communicationThreadId || null,
+        messageActionId: messageAction.messageActionId,
       }),
     };
   }

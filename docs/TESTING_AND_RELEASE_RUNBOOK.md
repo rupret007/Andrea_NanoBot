@@ -145,6 +145,21 @@ Treat that delegation suite as the fast proof that Andrea can:
 - explain when a usual rule fired
 - keep rule-driven actions visible in outcome review
 
+For messaging trust-ladder and live-delivery changes, add:
+
+```bash
+node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/message-actions.test.ts src/channels/bluebubbles.test.ts src/action-bundles.test.ts src/outcome-reviews.test.ts src/delegation-rules.test.ts src/alexa.test.ts
+npm run telegram:user:smoke
+```
+
+Treat that messaging suite as the fast proof that Andrea can:
+
+- persist a tracked message action from a draft
+- require approval before external send by default
+- send a BlueBubbles same-thread reply without the Andrea prefix
+- keep send-later distinct from remind-later
+- surface sent vs deferred messaging honestly in review
+
 For outcome tracking, carryover, and review-flow changes, add:
 
 ```bash

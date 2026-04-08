@@ -39,6 +39,8 @@ Andrea now supports:
   - `summarize this`
   - `do I owe a reply`
   - `draft a response`
+  - `send it`
+  - `send it later`
   - `remind me to reply later`
 - Candace and household follow-through
 - mission / chief-of-staff follow-through
@@ -165,6 +167,7 @@ Outbound:
 - auth is sent with compatible `guid`, `password`, and `token` query parameters
 - Andrea includes both `text` and `message` fields in the payload for compatibility
 - if reply threading is rejected, Andrea retries once without reply metadata
+- approved real outbound user messages bypass the `Andrea:` prefix so the delivered text reads like the user's reply, while Andrea-authored companion/status messages keep the label
 
 ## Proof Bar
 
@@ -174,6 +177,7 @@ BlueBubbles is `live_proven` only after all of these happen on this host:
 2. Andrea replies into that same BlueBubbles conversation
 3. one same-thread follow-up preserves continuity
 4. the flow stays companion-safe
+5. if the user approves a real reply, that same-thread outbound send lands without the companion prefix
 
 If config is present and the server/webhook are ready but that roundtrip has not happened yet, BlueBubbles stays `near_live_only`.
 
@@ -193,7 +197,10 @@ Use this exact proof sequence:
    - `summarize this`
 6. Optionally send:
    - `send me the fuller version on Telegram`
-7. Run:
+7. For live delivery proof, draft a reply and then send:
+   - `@Andrea what should I say back`
+   - `@Andrea send it`
+8. Run:
    - `npm run services:status`
 
 Success should show:

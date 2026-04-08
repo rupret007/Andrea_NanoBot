@@ -188,6 +188,13 @@ import {
   rememberActionBundlePresentation,
 } from './action-bundles.js';
 import {
+  applyMessageActionOperation,
+  buildMessageActionPresentation,
+  findLatestChatMessageAction,
+  interpretMessageActionFollowup,
+  type MessageActionOperation,
+} from './message-actions.js';
+import {
   applyOutcomeReviewControl,
   buildOutcomeReviewResponse,
   interpretOutcomeReviewControl,
@@ -205,7 +212,7 @@ import {
   saveDelegationRuleFromPreview,
   updateDelegationRuleMode,
 } from './delegation-rules.js';
-import { getDelegationRule, updateDelegationRule } from './db.js';
+import { getDelegationRule, updateDelegationRule, updateMessageAction } from './db.js';
 import {
   advancePendingCalendarAutomation,
   buildCalendarAutomationPersistInput,
@@ -1227,6 +1234,15 @@ function clearSharedAssistantCapabilitySeed(chatJid: string): void {
   deleteRouterState(getSharedAssistantContextKey(chatJid));
 }
 
+function parseJsonSafe<T>(value: string | null | undefined, fallback: T): T {
+  if (!value) return fallback;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+}
+
 function parseBundleCommand(rawText: string):
   | {
       bundleId: string;
@@ -1267,6 +1283,59 @@ function parseBundleCommand(rawText: string):
   }
   if (command === '/bundle-show') {
     return { bundleId, operation: { kind: 'show' } };
+  }
+  return null;
+}
+
+function parseMessageActionCommand(rawText: string):
+  | {
+      messageActionId: string;
+      operation: MessageActionOperation;
+    }
+  | null {
+  const trimmed = rawText.trim();
+  const parts = trimmed.split(/\s+/);
+  const command = parts[0]?.toLowerCase();
+  const messageActionId = parts[1];
+  if (!messageActionId) return null;
+  if (command === '/message-show') {
+    return { messageActionId, operation: { kind: 'show' } };
+  }
+  if (command === '/message-send') {
+    return { messageActionId, operation: { kind: 'send' } };
+  }
+  if (command === '/message-send-again') {
+    return { messageActionId, operation: { kind: 'send_again' } };
+  }
+  if (command === '/message-later') {
+    return { messageActionId, operation: { kind: 'defer' } };
+  }
+  if (command === '/message-remind') {
+    return { messageActionId, operation: { kind: 'remind_instead' } };
+  }
+  if (command === '/message-save-thread') {
+    return { messageActionId, operation: { kind: 'save_to_thread' } };
+  }
+  if (command === '/message-skip') {
+    return { messageActionId, operation: { kind: 'skip' } };
+  }
+  if (command === '/message-why') {
+    return { messageActionId, operation: { kind: 'why' } };
+  }
+  if (command === '/message-rewrite') {
+    const style = (parts[2] || '').toLowerCase();
+    if (style === 'shorter') {
+      return { messageActionId, operation: { kind: 'rewrite', style: 'shorter' } };
+    }
+    if (style === 'warmer') {
+      return { messageActionId, operation: { kind: 'rewrite', style: 'warmer' } };
+    }
+    if (style === 'direct') {
+      return {
+        messageActionId,
+        operation: { kind: 'rewrite', style: 'more_direct' },
+      };
+    }
   }
   return null;
 }
@@ -1432,6 +1501,65 @@ async function applyAndPresentActionBundle(params: {
     await channel.sendMessage(params.chatJid, result.replyText);
   }
 
+  return true;
+}
+
+async function applyAndPresentMessageAction(params: {
+  chatJid: string;
+  messageActionId: string;
+  operation: MessageActionOperation;
+  now?: Date;
+}): Promise<boolean> {
+  const group = resolveCompanionBinding(params.chatJid)?.group;
+  const channel = findChannel(channels, params.chatJid);
+  if (!group || !channel) return false;
+  const conversationChannel =
+    channel.name === 'bluebubbles'
+      ? 'bluebubbles'
+      : channel.name === 'telegram'
+        ? 'telegram'
+        : 'alexa';
+  const result = await applyMessageActionOperation(
+    params.messageActionId,
+    params.operation,
+    {
+      groupFolder: group.folder,
+      channel: conversationChannel,
+      chatJid: params.chatJid,
+      currentTime: params.now,
+      sendToTarget: (targetChannel, chatJid, text, options) =>
+        sendCompanionHandoffMessage(targetChannel, chatJid, text, options),
+    },
+  );
+  if (!result.handled) return false;
+
+  if (channel.name === 'telegram' && result.presentation) {
+    const messageId = result.action?.presentationMessageId || null;
+    if (messageId && channel.editMessage) {
+      await channel.editMessage(params.chatJid, messageId, result.presentation.text, {
+        inlineActionRows: result.presentation.inlineActionRows,
+      });
+    } else {
+      const sent = await channel.sendMessage(params.chatJid, result.presentation.text, {
+        inlineActionRows: result.presentation.inlineActionRows,
+      });
+      updateMessageAction(params.messageActionId, {
+        presentationMessageId: sent.platformMessageId || null,
+        presentationChatJid: params.chatJid,
+        lastUpdatedAt: (params.now || new Date()).toISOString(),
+      });
+    }
+    if (result.replyText && !['show', 'show_draft'].includes(params.operation.kind)) {
+      await channel.sendMessage(params.chatJid, result.replyText);
+    }
+    return true;
+  }
+
+  if (result.replyText) {
+    await channel.sendMessage(params.chatJid, result.replyText);
+  } else if (result.presentation) {
+    await channel.sendMessage(params.chatJid, result.presentation.text);
+  }
   return true;
 }
 
@@ -3071,6 +3199,21 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       now,
     });
   };
+  const tryHandleMessageActionFollowup = async (): Promise<boolean> => {
+    const messageAction = findLatestChatMessageAction({
+      groupFolder: group.folder,
+      chatJid,
+    });
+    if (!messageAction) return false;
+    const operation = interpretMessageActionFollowup(lastContent);
+    if (!operation) return false;
+    return applyAndPresentMessageAction({
+      chatJid,
+      messageActionId: messageAction.messageActionId,
+      operation,
+      now,
+    });
+  };
   const tryHandleOutcomeReview = async (): Promise<boolean> => {
     const reviewPrompt = matchOutcomeReviewPrompt(lastContent);
     if (reviewPrompt) {
@@ -3169,6 +3312,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       });
     }
 
+    const currentMessageAction = findLatestChatMessageAction({
+      groupFolder: group.folder,
+      chatJid,
+    });
     const currentBundle = findLatestChatActionBundle({
       groupFolder: group.folder,
       presentationChannel: conversationChannel,
@@ -3181,12 +3328,27 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         groupFolder: group.folder,
         channel: conversationChannel,
         currentBundle,
-        actionTypeHint: currentBundle?.actions.find((action) =>
-          ['approved', 'proposed'].includes(action.status),
-        )?.actionType,
+        actionTypeHint:
+          currentMessageAction?.sendStatus !== 'sent'
+            ? 'send_message'
+            : currentBundle?.actions.find((action) =>
+                ['approved', 'proposed'].includes(action.status),
+              )?.actionType,
         originKind: currentBundle?.bundle.originKind,
-        threadTitle: currentBundle?.bundle.title || null,
-        personName: currentBundle?.bundle.title || null,
+        threadTitle:
+          parseJsonSafe<{ personName?: string | null }>(
+            currentMessageAction?.linkedRefsJson,
+            {},
+          ).personName ||
+          currentBundle?.bundle.title ||
+          null,
+        personName:
+          parseJsonSafe<{ personName?: string | null }>(
+            currentMessageAction?.linkedRefsJson,
+            {},
+          ).personName ||
+          currentBundle?.bundle.title ||
+          null,
         communicationContext:
           currentBundle?.bundle.originKind === 'communication'
             ? 'reply_followthrough'
@@ -5317,7 +5479,26 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         if (!draftResult.handled) {
           return false;
         }
-        await channel.sendMessage(chatJid, draftResult.replyText || 'Okay.');
+        if (draftResult.messageAction) {
+          const presentation = buildMessageActionPresentation(
+            draftResult.messageAction,
+            conversationChannel === 'bluebubbles' ? 'bluebubbles' : 'telegram',
+          );
+          if (channel.name === 'telegram') {
+            const sent = await channel.sendMessage(chatJid, presentation.text, {
+              inlineActionRows: presentation.inlineActionRows,
+            });
+            updateMessageAction(draftResult.messageAction.messageActionId, {
+              presentationMessageId: sent.platformMessageId || null,
+              presentationChatJid: chatJid,
+              lastUpdatedAt: now.toISOString(),
+            });
+          } else {
+            await channel.sendMessage(chatJid, presentation.text);
+          }
+        } else {
+          await channel.sendMessage(chatJid, draftResult.replyText || 'Okay.');
+        }
         if (draftResult.conversationSeed) {
           setSharedAssistantCapabilitySeed(chatJid, draftResult.conversationSeed, now);
         } else {
@@ -5488,6 +5669,35 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         await channel.sendArtifact(chatJid, result.mediaResult.artifact, {
           caption: result.replyText || result.mediaResult.summaryText,
         });
+      } else if (result.messageAction) {
+        if (
+          result.messageAction.sendStatus === 'approved' &&
+          !result.messageAction.requiresApproval
+        ) {
+          await applyAndPresentMessageAction({
+            chatJid,
+            messageActionId: result.messageAction.messageActionId,
+            operation: { kind: 'send' },
+            now,
+          });
+        } else {
+          const presentation = buildMessageActionPresentation(
+            result.messageAction,
+            conversationChannel === 'bluebubbles' ? 'bluebubbles' : 'telegram',
+          );
+          if (channel.name === 'telegram') {
+            const sent = await channel.sendMessage(chatJid, presentation.text, {
+              inlineActionRows: presentation.inlineActionRows,
+            });
+            updateMessageAction(result.messageAction.messageActionId, {
+              presentationMessageId: sent.platformMessageId || null,
+              presentationChatJid: chatJid,
+              lastUpdatedAt: now.toISOString(),
+            });
+          } else {
+            await channel.sendMessage(chatJid, presentation.text);
+          }
+        }
       } else {
         await channel.sendMessage(chatJid, result.replyText || 'Okay.');
       }
@@ -5741,6 +5951,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       return true;
     }
     if (await tryHandleDelegationRules()) {
+      return true;
+    }
+    if (await tryHandleMessageActionFollowup()) {
       return true;
     }
     if (await tryHandleActionBundleFollowup()) {
@@ -10810,6 +11023,19 @@ async function main(): Promise<void> {
           now: new Date(),
         }).catch((err) =>
           logger.error({ err, chatJid }, 'Action bundle command error'),
+        );
+        return;
+      }
+
+      const messageActionCommand = parseMessageActionCommand(rawTrimmed);
+      if (messageActionCommand) {
+        applyAndPresentMessageAction({
+          chatJid,
+          messageActionId: messageActionCommand.messageActionId,
+          operation: messageActionCommand.operation,
+          now: new Date(),
+        }).catch((err) =>
+          logger.error({ err, chatJid }, 'Message action command error'),
         );
         return;
       }

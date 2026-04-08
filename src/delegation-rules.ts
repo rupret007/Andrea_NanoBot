@@ -168,6 +168,8 @@ function titleCaseAction(actionType: ActionBundleActionType): string {
       return 'reminder';
     case 'draft_follow_up':
       return 'draft';
+    case 'send_message':
+      return 'message send';
     case 'save_to_thread':
       return 'thread save';
     case 'save_to_library':
@@ -220,6 +222,7 @@ export function classifyDelegationSafety(
     case 'send_to_telegram':
     case 'draft_follow_up':
     case 'create_reminder':
+    case 'send_message':
       return 'safe_to_auto_after_delegation';
     default:
       return 'always_requires_fresh_approval';
@@ -884,4 +887,3 @@ export function retargetDelegationRuleChannels(
   });
   return getDelegationRule(ruleId);
 }
-

@@ -11,7 +11,7 @@ Communication companion is the core of journeys like:
 - `What should I say back?`
 - `Remind me to reply later tonight.`
 
-The flagship product goal is that Andrea can move from open loop -> draft -> save or remind without making the user restate the whole conversation.
+The flagship product goal is that Andrea can move from open loop -> draft -> approve/send or defer without making the user restate the whole conversation.
 Telegram and BlueBubbles should now preserve the same communication-thread context across that journey, with Telegram as the richer review/edit surface and BlueBubbles as the calmer message-help surface.
 
 This is not a full inbox app, not a CRM, and not an auto-reply system.
@@ -83,6 +83,7 @@ Current communication capabilities:
   - make it warmer
   - make it more direct
   - keep it short
+  - turn the draft into a tracked message action for send/defer/review
 - `communication.open_loops`
   - answer `what do I owe people`
   - answer `anything I need to reply to`
@@ -116,10 +117,13 @@ BlueBubbles:
 ## Safety And Trust
 
 - no outbound send without explicit user intent
+- live delivery now follows the Messaging Trust Ladder rather than ad hoc draft text
 - no passive message surveillance
 - no auto-reply
 - communication tracking can be turned manual-only or disabled
 - `mark that handled` and `stop tracking that` are first-class controls
+
+For the draft -> approve -> send boundary itself, see [MESSAGING_TRUST_LADDER_AND_LIVE_DELIVERY.md](MESSAGING_TRUST_LADDER_AND_LIVE_DELIVERY.md).
 
 ## Practical Prompts
 

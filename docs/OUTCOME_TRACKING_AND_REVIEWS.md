@@ -12,6 +12,7 @@ Examples:
 
 - a reminder was created, so the loop is deferred rather than solved
 - a draft reply exists, but the conversation is still open
+- a message was deferred to send later, so the reply is still owed
 - a mission step was completed, but the mission is still blocked
 - a handoff was delivered, but nothing has acted on it yet
 - a communication thread was marked handled, so the loop can drop out of review
@@ -69,6 +70,7 @@ Current statuses are:
 - `unknown`
 
 Those statuses are intentionally small and inspectable.
+For messaging specifically, outcomes can now link to a first-class message action so Andrea can distinguish drafted, deferred, failed, skipped, and sent follow-through.
 
 ## Closure Semantics
 
@@ -83,6 +85,8 @@ Examples:
 - mission progressed but still active -> `partial`
 
 That distinction is the whole point of the layer.
+
+For the draft -> approve -> send boundary itself, see [MESSAGING_TRUST_LADDER_AND_LIVE_DELIVERY.md](MESSAGING_TRUST_LADDER_AND_LIVE_DELIVERY.md).
 
 ## Daily And Weekly Reviews
 

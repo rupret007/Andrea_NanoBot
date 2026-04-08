@@ -44,6 +44,7 @@ The first bundle layer only wraps existing Andrea actions:
 
 - create reminder
 - draft follow-up
+- send message
 - save to thread
 - save to library
 - pin to ritual
@@ -117,6 +118,7 @@ If you want the full bundle from BlueBubbles, the intended path is an explicit T
 - Skipped, failed, and deferred actions stay visible in bundle state.
 - Partial execution is normal and must be reported honestly.
 - Guarded actions such as calendar-event creation or external sends still require fresh approval even if a related rule exists.
+- When a bundle includes a live message step, the draft/send/defer state is tracked in the messaging layer rather than disappearing as plain text.
 
 ## Partial Success And Failure
 
@@ -175,9 +177,11 @@ That handoff is intentional:
 
 - bundles = approval and execution
 - delegation rules = remembered safe defaults for repeated actions
+- message actions = draft / approve / send / defer delivery state
 - outcomes and reviews = closure and carryover
 
 See [OUTCOME_TRACKING_AND_REVIEWS.md](OUTCOME_TRACKING_AND_REVIEWS.md) for the review model and natural closure controls.
+See [MESSAGING_TRUST_LADDER_AND_LIVE_DELIVERY.md](MESSAGING_TRUST_LADDER_AND_LIVE_DELIVERY.md) for the live delivery boundary.
 
 ## Testing
 

@@ -23,6 +23,10 @@
 </p>
 
 <p align="center">
+  Andrea now also has a bounded messaging trust ladder, so draft, approve, send, defer, and review can happen in one explainable flow without slipping into uncontrolled auto-send.
+</p>
+
+<p align="center">
   <a href="docs/USER_GUIDE.md">User Guide</a>&nbsp; | &nbsp;
   <a href="docs/ADMIN_GUIDE.md">Admin Guide</a>&nbsp; | &nbsp;
   <a href="docs/ANDREA_OPENAI_BACKEND.md">OpenAI Backend</a>&nbsp; | &nbsp;
@@ -31,6 +35,7 @@
   <a href="docs/COMMUNICATION_COMPANION.md">Communication Companion</a>&nbsp; | &nbsp;
   <a href="docs/ACTION_BUNDLES.md">Action Bundles</a>&nbsp; | &nbsp;
   <a href="docs/DELEGATION_RULES_AND_SAFE_AUTOMATION.md">Delegation Rules</a>&nbsp; | &nbsp;
+  <a href="docs/MESSAGING_TRUST_LADDER_AND_LIVE_DELIVERY.md">Messaging Trust Ladder</a>&nbsp; | &nbsp;
   <a href="docs/OUTCOME_TRACKING_AND_REVIEWS.md">Reviews</a>&nbsp; | &nbsp;
   <a href="docs/CHIEF_OF_STAFF_MODE.md">Chief-of-Staff Mode</a>&nbsp; | &nbsp;
   <a href="docs/MISSIONS_AND_EXECUTION.md">Missions</a>&nbsp; | &nbsp;
@@ -56,6 +61,7 @@ The best way to understand Andrea now is through the flagship journeys it should
 - Alexa daily orientation -> Telegram richer follow-through
 - `What am I forgetting?` -> one open loop -> reminder, save, or tracking action
 - `What's still open with Candace?` -> draft reply -> save to thread or remind later
+- `What should I say back?` -> draft -> approve/send or send later -> honest review state
 - `Help me plan tonight / this weekend` -> mission proposal -> blocker -> confirmed next action
 - source-grounded research -> richer detail -> save to library
 - BlueBubbles message help -> summarize -> draft -> remind later -> optional Telegram escalation

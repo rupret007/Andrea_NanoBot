@@ -4,6 +4,7 @@ import {
   getCommunicationThread,
   getCompanionHandoff,
   getLifeThread,
+  getMessageAction,
   getMission,
   getOutcome,
   getOutcomeBySource,
@@ -13,12 +14,14 @@ import {
   listCommunicationThreadsForGroup,
   listCompanionHandoffsForGroup,
   listLifeThreadsForGroup,
+  listMessageActionsForGroup,
   listMissionSteps,
   listMissionsForGroup,
   listOutcomesForGroup,
   replaceMissionSteps,
   updateCommunicationThread,
   updateLifeThread,
+  updateMessageAction,
   updateMission,
   updateOutcome,
   upsertOutcome,
@@ -32,6 +35,7 @@ import type {
   CommunicationThreadRecord,
   CompanionHandoffRecord,
   LifeThread,
+  MessageActionRecord,
   MissionRecord,
   MissionStepRecord,
   OutcomeLinkedRefs,
@@ -246,6 +250,14 @@ function buildSourceLabel(
       'Action bundle'
     );
   }
+  if (outcome.sourceType === 'message_action') {
+    const messageAction = getMessageAction(outcome.sourceKey);
+    return (
+      linkedRefs.personName ||
+      clipText(messageAction?.sourceSummary, 72) ||
+      'Message draft'
+    );
+  }
   if (outcome.sourceType === 'reminder') {
     return clipText(getTaskById(outcome.sourceKey)?.prompt, 72) || 'Reminder';
   }
@@ -321,6 +333,9 @@ function clusterKey(item: OutcomeReviewItem): string {
   }
   if (item.linkedRefs.actionBundleId) {
     return `action_bundle:${item.linkedRefs.actionBundleId}`;
+  }
+  if (item.linkedRefs.messageActionId) {
+    return `message_action:${item.linkedRefs.messageActionId}`;
   }
   return `${item.outcome.sourceType}:${item.outcome.sourceKey}`;
 }
@@ -619,6 +634,63 @@ export function syncOutcomeFromBundleSnapshot(
   });
 }
 
+export function syncOutcomeFromMessageActionRecord(
+  action: MessageActionRecord,
+  now = new Date(),
+): OutcomeRecord {
+  const linkedRefs = parseJsonSafe<OutcomeLinkedRefs>(action.linkedRefsJson, {});
+  const status: OutcomeStatus =
+    action.sendStatus === 'sent'
+      ? 'completed'
+      : action.sendStatus === 'deferred'
+        ? 'deferred'
+        : action.sendStatus === 'failed'
+          ? 'failed'
+          : action.sendStatus === 'skipped'
+            ? 'skipped'
+            : 'partial';
+  const completionSummary =
+    action.sendStatus === 'sent'
+      ? clipText(action.sourceSummary || 'Sent the reply.', 140)
+      : action.sendStatus === 'failed'
+        ? clipText(action.sourceSummary || 'The message still needs to go out.', 140)
+        : clipText(action.sourceSummary || action.draftText, 140);
+  const nextFollowupText =
+    action.sendStatus === 'sent'
+      ? 'That message already went out.'
+      : action.sendStatus === 'deferred'
+        ? 'This draft is saved to revisit before sending.'
+        : action.sendStatus === 'failed'
+          ? 'The draft is still here if you want to retry or send it later.'
+          : action.sendStatus === 'approved'
+            ? 'This is approved and ready to send.'
+            : 'A reply is drafted, but it still needs your approval to send.';
+  return upsertOutcomeRecord({
+    groupFolder: action.groupFolder,
+    sourceType: 'message_action',
+    sourceKey: action.messageActionId,
+    status,
+    completionSummary,
+    nextFollowupText,
+    blockerText:
+      action.sendStatus === 'failed'
+        ? 'I could not send that right now.'
+        : null,
+    dueAt: action.followupAt || null,
+    reviewHorizon: action.followupAt
+      ? reviewHorizonFromDueAt(action.followupAt, now)
+      : action.sendStatus === 'sent'
+        ? 'none'
+        : 'today',
+    linkedRefs: {
+      ...linkedRefs,
+      messageActionId: action.messageActionId,
+      chatJid: action.presentationChatJid || linkedRefs.chatJid,
+    },
+    now,
+  });
+}
+
 export function syncOutcomeFromMissionRecord(
   mission: MissionRecord,
   steps = listMissionSteps(mission.missionId),
@@ -877,6 +949,14 @@ export function seedOutcomeRecordsForGroup(
     syncOutcomeFromCommunicationThreadRecord(thread, now);
   }
 
+  for (const messageAction of listMessageActionsForGroup({
+    groupFolder,
+    includeSent: true,
+    limit: 80,
+  })) {
+    syncOutcomeFromMessageActionRecord(messageAction, now);
+  }
+
   const lifeThreads = listLifeThreadsForGroup(groupFolder);
   for (const thread of lifeThreads) {
     syncOutcomeFromLifeThreadRecord(thread, now);
@@ -958,7 +1038,7 @@ function buildSections(
   const deferred = items.filter((item) => item.outcome.status === 'deferred');
   const owedReplies = items.filter(
     (item) =>
-      item.outcome.sourceType === 'communication_thread' &&
+      ['communication_thread', 'message_action'].includes(item.outcome.sourceType) &&
       item.outcome.status !== 'completed' &&
       item.outcome.status !== 'skipped',
   );
@@ -1261,7 +1341,7 @@ export function matchOutcomeReviewPrompt(
     return { kind: 'weekly_review' };
   }
   if (
-    /what still needs my attention|what(?:'s| is)? still open|what should i remember tonight/.test(
+    /what messages are still unsent|what do i still owe people|what still needs my attention|what(?:'s| is)? still open|what should i remember tonight/.test(
       normalized,
     )
   ) {
@@ -1378,6 +1458,22 @@ function buildShowReferenceReply(
           bundle.actions.find((action) =>
             ['proposed', 'approved'].includes(action.status),
           )?.summary || null,
+      });
+    }
+  }
+  if (linkedRefs.messageActionId) {
+    const messageAction = getMessageAction(linkedRefs.messageActionId);
+    if (messageAction) {
+      return buildSignatureFlowText({
+        lead: 'Andrea: Here is the current draft.',
+        detailLines: [
+          messageAction.draftText,
+          `Status: ${messageAction.sendStatus.replace(/_/g, ' ')}`,
+        ],
+        nextAction:
+          messageAction.sendStatus === 'sent'
+            ? null
+            : 'Send it, send it later, or remind yourself instead.',
       });
     }
   }
@@ -1510,6 +1606,24 @@ export function applyOutcomeReviewControl(params: {
         chatJid: reminderChatJid,
       }),
     });
+    if (linkedRefs.messageActionId) {
+      const messageAction = getMessageAction(linkedRefs.messageActionId);
+      if (messageAction) {
+        updateMessageAction(messageAction.messageActionId, {
+          sendStatus: 'deferred',
+          followupAt: planned.task.next_run,
+          lastUpdatedAt: now.toISOString(),
+          linkedRefsJson: JSON.stringify({
+            ...parseJsonSafe<OutcomeLinkedRefs>(messageAction.linkedRefsJson, {}),
+            reminderTaskId: planned.task.id,
+          }),
+        });
+        const updatedMessageAction = getMessageAction(messageAction.messageActionId);
+        if (updatedMessageAction) {
+          syncOutcomeFromMessageActionRecord(updatedMessageAction, now);
+        }
+      }
+    }
     return {
       handled: true,
       outcome: getOutcome(outcome.outcomeId),
@@ -1571,6 +1685,23 @@ export function applyOutcomeReviewControl(params: {
           syncOutcomeFromMissionRecord(updatedMission, refreshedSteps, now);
         }
       }
+    } else if (linkedRefs.messageActionId) {
+      const messageAction = getMessageAction(linkedRefs.messageActionId);
+      if (messageAction && messageAction.sendStatus !== 'sent') {
+        updateMessageAction(messageAction.messageActionId, {
+          sendStatus: 'skipped',
+          lastUpdatedAt: now.toISOString(),
+        });
+        const updatedAction = getMessageAction(messageAction.messageActionId);
+        if (updatedAction) {
+          syncOutcomeFromMessageActionRecord(updatedAction, now);
+        }
+      }
+      updateOutcome(outcome.outcomeId, {
+        status: 'completed',
+        updatedAt: now.toISOString(),
+        userConfirmed: true,
+      });
     } else {
       updateOutcome(outcome.outcomeId, {
         status: 'completed',

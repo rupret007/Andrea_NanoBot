@@ -985,6 +985,74 @@ describe('BlueBubbles channel', () => {
     }
   });
 
+  it('bypasses the Andrea label for approved external sends', async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    const apiStub = await startBlueBubblesApiStub(async (req, body, res) => {
+      if ((req.url || '').startsWith('/api/v1/webhook')) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(
+          JSON.stringify({
+            data: [
+              {
+                id: 1,
+                url: 'http://127.0.0.1:0/bluebubbles/webhook?secret=hook-secret',
+                events: ['new-message'],
+              },
+            ],
+          }),
+        );
+        return;
+      }
+      if ((req.url || '').startsWith('/api/v1/server/info')) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ data: { private_api: true } }));
+        return;
+      }
+      requests.push({
+        url: req.url || '',
+        body: JSON.parse(body || '{}') as Record<string, unknown>,
+      });
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ data: { guid: 'server-msg-external-1' } }));
+    });
+
+    const channel = new BlueBubblesChannel(
+      buildConfig({ baseUrl: apiStub.baseUrl }),
+      {
+        onMessage: vi.fn(),
+        onChatMetadata: vi.fn(),
+        registeredGroups: () => ({}),
+        onHealthUpdate: vi.fn(),
+      },
+    );
+
+    try {
+      await channel.connect();
+      await channel.sendMessage('bb:chat-1', 'Yes, tonight still works for me.', {
+        suppressSenderLabel: true,
+      });
+
+      expect(requests[0]?.body).toMatchObject({
+        chatGuid: 'chat-1',
+        message: 'Yes, tonight still works for me.',
+      });
+      expect(listRecentMessagesForChat('bb:chat-1', 1)).toContainEqual(
+        expect.objectContaining({
+          id: 'bb:server-msg-external-1',
+          content: 'Yes, tonight still works for me.',
+          is_from_me: 1,
+          is_bot_message: 0,
+        }),
+      );
+    } finally {
+      await channel.disconnect();
+      await apiStub.close();
+    }
+  });
+
   it('falls back to a plain same-chat send when reply threading is rejected', async () => {
     const requests: Array<Record<string, unknown>> = [];
     const apiStub = await startBlueBubblesApiStub(async (req, body, res) => {

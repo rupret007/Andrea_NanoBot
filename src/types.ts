@@ -648,6 +648,7 @@ export type ActionBundlePresentationMode = 'default' | 'selection';
 export type ActionBundleActionType =
   | 'create_reminder'
   | 'draft_follow_up'
+  | 'send_message'
   | 'save_to_thread'
   | 'save_to_library'
   | 'pin_to_ritual'
@@ -657,6 +658,7 @@ export type ActionBundleActionType =
 export type ActionBundleTargetSystem =
   | 'reminders'
   | 'communication'
+  | 'message_actions'
   | 'life_threads'
   | 'knowledge_library'
   | 'rituals'
@@ -819,6 +821,7 @@ export interface DelegationRuleRecord {
 export type OutcomeSourceType =
   | 'mission'
   | 'action_bundle'
+  | 'message_action'
   | 'reminder'
   | 'life_thread'
   | 'communication_thread'
@@ -844,6 +847,7 @@ export type OutcomeReviewHorizon =
 
 export interface OutcomeLinkedRefs {
   actionBundleId?: string;
+  messageActionId?: string;
   reminderTaskId?: string;
   threadId?: string;
   communicationThreadId?: string;
@@ -877,6 +881,85 @@ export interface OutcomeRecord {
   reviewSuppressedUntil?: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export type MessageActionSourceType =
+  | 'communication_thread'
+  | 'mission'
+  | 'life_thread'
+  | 'cross_channel_handoff'
+  | 'action_bundle'
+  | 'ritual_review';
+
+export type MessageActionTargetKind = 'external_thread' | 'self_companion';
+
+export type MessageActionTargetChannel = 'telegram' | 'bluebubbles';
+
+export type MessageActionTrustLevel =
+  | 'draft_only'
+  | 'suggest_and_ask'
+  | 'approve_before_send'
+  | 'schedule_send'
+  | 'delegated_safe_send'
+  | 'never_automate';
+
+export type MessageActionSendStatus =
+  | 'drafted'
+  | 'approved'
+  | 'sent'
+  | 'deferred'
+  | 'failed'
+  | 'skipped';
+
+export interface MessageActionLinkedRefs {
+  actionBundleId?: string;
+  communicationThreadId?: string;
+  threadId?: string;
+  missionId?: string;
+  handoffId?: string;
+  reminderTaskId?: string;
+  currentWorkRef?: string;
+  chatJid?: string;
+  personName?: string;
+  delegationRuleId?: string;
+  delegationMode?: DelegationApprovalMode | null;
+  delegationExplanation?: string | null;
+}
+
+export interface MessageActionExplanation {
+  sourceSummary?: string | null;
+  approvalReason?: string | null;
+  safetyReason?: string | null;
+  delegationNote?: string | null;
+  trustNote?: string | null;
+}
+
+export interface MessageActionRecord {
+  messageActionId: string;
+  groupFolder: string;
+  sourceType: MessageActionSourceType;
+  sourceKey: string;
+  sourceSummary?: string | null;
+  targetKind: MessageActionTargetKind;
+  targetChannel: MessageActionTargetChannel;
+  targetConversationJson: string;
+  draftText: string;
+  trustLevel: MessageActionTrustLevel;
+  sendStatus: MessageActionSendStatus;
+  followupAt?: string | null;
+  requiresApproval: boolean;
+  delegationRuleId?: string | null;
+  delegationMode?: DelegationApprovalMode | null;
+  explanationJson?: string | null;
+  linkedRefsJson?: string | null;
+  platformMessageId?: string | null;
+  dedupeKey: string;
+  presentationChatJid?: string | null;
+  presentationThreadId?: string | null;
+  presentationMessageId?: string | null;
+  createdAt: string;
+  lastUpdatedAt: string;
+  sentAt?: string | null;
 }
 
 export interface MissionSuggestedAction {
@@ -1185,6 +1268,8 @@ export interface CompanionContinuationCandidate {
   actionBundleId?: string;
   actionBundleTitle?: string;
   actionBundleSummary?: string;
+  messageActionId?: string;
+  messageActionSummary?: string;
 }
 
 export interface CompanionHandoffRecord {
@@ -1439,6 +1524,7 @@ export interface SendMessageOptions {
   replyToMessageId?: string;
   inlineActions?: ChannelInlineAction[];
   inlineActionRows?: ChannelInlineAction[][];
+  suppressSenderLabel?: boolean;
 }
 
 export interface SendArtifactOptions extends SendMessageOptions {

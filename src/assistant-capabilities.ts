@@ -48,6 +48,7 @@ import {
   formatCommunicationOpenLoopsReply,
   manageCommunicationTracking,
 } from './communication-companion.js';
+import { createOrRefreshMessageActionFromDraft } from './message-actions.js';
 import { buildChiefOfStaffTurn } from './chief-of-staff.js';
 import {
   buildMissionExecutionContext,
@@ -73,6 +74,7 @@ import type {
   CompanionToneProfile,
   KnowledgeSourceRecord,
   MediaGenerationResult,
+  MessageActionRecord,
   MissionExecutionContext,
   MissionPlanSnapshot,
   MissionSuggestedAction,
@@ -205,6 +207,8 @@ export interface AssistantCapabilityContext {
     actionBundleId?: string;
     actionBundleTitle?: string;
     actionBundleSummary?: string;
+    messageActionId?: string;
+    messageActionSummary?: string;
     delegationRulePreviewJson?: string;
     delegationRuleFocusRuleId?: string;
     delegationRuleExplanation?: string;
@@ -283,6 +287,8 @@ export interface AssistantCapabilityConversationSeed {
     actionBundleId?: string;
     actionBundleTitle?: string;
     actionBundleSummary?: string;
+    messageActionId?: string;
+    messageActionSummary?: string;
     delegationRulePreviewJson?: string;
     delegationRuleFocusRuleId?: string;
     delegationRuleExplanation?: string;
@@ -318,6 +324,7 @@ export interface AssistantCapabilityResult {
   followupActions?: AlexaConversationFollowupAction[];
   handoffPayload?: CompanionHandoffPayload;
   continuationCandidate?: CompanionContinuationCandidate;
+  messageAction?: MessageActionRecord;
 }
 
 export interface AssistantCapabilityDescriptor {
@@ -1422,6 +1429,8 @@ function buildCommunicationContinuationCandidate(input: {
   communicationThreadId?: string;
   communicationSubjectIds?: string[];
   communicationLifeThreadIds?: string[];
+  messageActionId?: string;
+  messageActionSummary?: string;
 }): CompanionContinuationCandidate {
   const followupSuggestions = ['what should I say back', 'remind me later'];
   return {
@@ -1444,6 +1453,8 @@ function buildCommunicationContinuationCandidate(input: {
     communicationLifeThreadIds: input.communicationLifeThreadIds,
     lastCommunicationSummary: input.summaryText,
     followupSuggestions,
+    messageActionId: input.messageActionId,
+    messageActionSummary: input.messageActionSummary,
   };
 }
 
@@ -1458,6 +1469,8 @@ function buildCommunicationConversationSeed(input: {
   communicationSubjectIds?: string[];
   communicationLifeThreadIds?: string[];
   lastCommunicationSummary?: string;
+  messageActionId?: string;
+  messageActionSummary?: string;
   continuationCandidate?: CompanionContinuationCandidate;
   supportedFollowups?: AlexaConversationFollowupAction[];
 }): AssistantCapabilityConversationSeed {
@@ -1477,6 +1490,8 @@ function buildCommunicationConversationSeed(input: {
       communicationLifeThreadIds: input.communicationLifeThreadIds,
       lastCommunicationSummary:
         input.lastCommunicationSummary || input.summaryText,
+      messageActionId: input.messageActionId,
+      messageActionSummary: input.messageActionSummary,
       companionContinuationJson: serializeCompanionContinuation(
         input.continuationCandidate,
       ),
@@ -2191,6 +2206,26 @@ async function runCommunicationDraftCapability(
     };
   }
 
+  const messageAction =
+    context.channel === 'alexa' || !context.chatJid || !draft.thread?.id
+      ? undefined
+      : createOrRefreshMessageActionFromDraft({
+          groupFolder: context.groupFolder,
+          presentationChannel: context.channel,
+          presentationChatJid: context.chatJid,
+          presentationThreadId: context.priorSubjectData?.threadId || null,
+          sourceType: 'communication_thread',
+          sourceKey: draft.thread.id,
+          sourceSummary: draft.summaryText || 'Drafted reply',
+          draftText: draft.draftText || replyText,
+          personName: draft.linkedSubjects[0]?.displayName || draft.thread.title,
+          threadTitle: draft.linkedLifeThreads[0]?.title || draft.thread.title,
+          communicationThreadId: draft.thread.id,
+          threadId: draft.linkedLifeThreads[0]?.id,
+          communicationContext: 'reply_followthrough',
+          now: context.now,
+        });
+
   const continuationCandidate = buildCommunicationContinuationCandidate({
     descriptor,
     summaryText: draft.summaryText || 'I drafted a reply.',
@@ -2202,6 +2237,8 @@ async function runCommunicationDraftCapability(
     communicationLifeThreadIds: draft.linkedLifeThreads.map(
       (thread) => thread.id,
     ),
+    messageActionId: messageAction?.messageActionId,
+    messageActionSummary: messageAction?.sourceSummary || undefined,
   });
   const supportedFollowups = extendCompanionFollowups(
     descriptor.followupActions,
@@ -2229,6 +2266,8 @@ async function runCommunicationDraftCapability(
         (thread) => thread.id,
       ),
       lastCommunicationSummary: draft.summaryText,
+      messageActionId: messageAction?.messageActionId,
+      messageActionSummary: messageAction?.sourceSummary || undefined,
       continuationCandidate,
       supportedFollowups,
     }),
@@ -2242,6 +2281,7 @@ async function runCommunicationDraftCapability(
     followupActions: supportedFollowups,
     handoffPayload: continuationCandidate.handoffPayload,
     continuationCandidate,
+    messageAction,
   };
 }
 

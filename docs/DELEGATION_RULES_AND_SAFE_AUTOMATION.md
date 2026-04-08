@@ -67,6 +67,7 @@ Andrea only evaluates rules while it is already handling a user-visible flow.
 - destructive privileged operations
 
 The rule engine can reduce friction, but it cannot bypass those safety classes.
+Messaging now uses that boundary explicitly through the Messaging Trust Ladder, including the rule that external send stays approval-first unless an extremely narrow BlueBubbles same-thread safe-send rule is in play.
 
 ## Rule Model
 
@@ -87,6 +88,7 @@ Each rule is stored as a compact DB record with fields such as:
 - last outcome status
 
 The goal is inspectable defaults, not hidden behavior.
+When a rule touches messaging, the resulting send/defer state should still remain visible in message actions and outcome review.
 
 ## Natural Rule Creation
 
@@ -217,3 +219,5 @@ V1 does not include:
 - privileged operator automation
 
 The point is smoother bounded follow-through, not less user control.
+
+For the live messaging boundary layered on top of these rules, see [MESSAGING_TRUST_LADDER_AND_LIVE_DELIVERY.md](MESSAGING_TRUST_LADDER_AND_LIVE_DELIVERY.md).

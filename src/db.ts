@@ -34,6 +34,7 @@ import {
   LifeThreadSignal,
   MissionRecord,
   MissionStepRecord,
+  MessageActionRecord,
   NewMessage,
   OutcomeRecord,
   ProfileFact,
@@ -621,6 +622,45 @@ function createSchema(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_delegation_rules_group_status
       ON delegation_rules(group_folder, status, last_used_at DESC, created_at DESC);
+    CREATE TABLE IF NOT EXISTS message_actions (
+      message_action_id TEXT PRIMARY KEY,
+      group_folder TEXT NOT NULL,
+      source_type TEXT NOT NULL,
+      source_key TEXT NOT NULL,
+      source_summary TEXT,
+      target_kind TEXT NOT NULL,
+      target_channel TEXT NOT NULL,
+      target_conversation_json TEXT NOT NULL,
+      draft_text TEXT NOT NULL,
+      trust_level TEXT NOT NULL,
+      send_status TEXT NOT NULL,
+      followup_at TEXT,
+      requires_approval INTEGER NOT NULL DEFAULT 1,
+      delegation_rule_id TEXT,
+      delegation_mode TEXT,
+      explanation_json TEXT,
+      linked_refs_json TEXT,
+      platform_message_id TEXT,
+      dedupe_key TEXT NOT NULL,
+      presentation_chat_jid TEXT,
+      presentation_thread_id TEXT,
+      presentation_message_id TEXT,
+      created_at TEXT NOT NULL,
+      last_updated_at TEXT NOT NULL,
+      sent_at TEXT
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_message_actions_dedupe
+      ON message_actions(group_folder, dedupe_key);
+    CREATE INDEX IF NOT EXISTS idx_message_actions_source
+      ON message_actions(group_folder, source_type, source_key, last_updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_message_actions_group_updated
+      ON message_actions(group_folder, last_updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_message_actions_group_status
+      ON message_actions(group_folder, send_status, last_updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_message_actions_chat_open
+      ON message_actions(group_folder, presentation_chat_jid, send_status, last_updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_message_actions_followup
+      ON message_actions(group_folder, followup_at, send_status);
     CREATE TABLE IF NOT EXISTS outcomes (
       outcome_id TEXT PRIMARY KEY,
       group_folder TEXT NOT NULL,
@@ -3516,6 +3556,449 @@ export function updateDelegationRule(
     channelApplicabilityJson:
       updates.channelApplicabilityJson ?? existing.channelApplicabilityJson,
     safetyLevel: updates.safetyLevel ?? existing.safetyLevel,
+  });
+}
+
+export function upsertMessageAction(record: MessageActionRecord): void {
+  assertValidGroupFolder(record.groupFolder);
+  db.prepare(
+    `
+      INSERT INTO message_actions (
+        message_action_id,
+        group_folder,
+        source_type,
+        source_key,
+        source_summary,
+        target_kind,
+        target_channel,
+        target_conversation_json,
+        draft_text,
+        trust_level,
+        send_status,
+        followup_at,
+        requires_approval,
+        delegation_rule_id,
+        delegation_mode,
+        explanation_json,
+        linked_refs_json,
+        platform_message_id,
+        dedupe_key,
+        presentation_chat_jid,
+        presentation_thread_id,
+        presentation_message_id,
+        created_at,
+        last_updated_at,
+        sent_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(message_action_id) DO UPDATE SET
+        group_folder = excluded.group_folder,
+        source_type = excluded.source_type,
+        source_key = excluded.source_key,
+        source_summary = excluded.source_summary,
+        target_kind = excluded.target_kind,
+        target_channel = excluded.target_channel,
+        target_conversation_json = excluded.target_conversation_json,
+        draft_text = excluded.draft_text,
+        trust_level = excluded.trust_level,
+        send_status = excluded.send_status,
+        followup_at = excluded.followup_at,
+        requires_approval = excluded.requires_approval,
+        delegation_rule_id = excluded.delegation_rule_id,
+        delegation_mode = excluded.delegation_mode,
+        explanation_json = excluded.explanation_json,
+        linked_refs_json = excluded.linked_refs_json,
+        platform_message_id = excluded.platform_message_id,
+        dedupe_key = excluded.dedupe_key,
+        presentation_chat_jid = excluded.presentation_chat_jid,
+        presentation_thread_id = excluded.presentation_thread_id,
+        presentation_message_id = excluded.presentation_message_id,
+        created_at = excluded.created_at,
+        last_updated_at = excluded.last_updated_at,
+        sent_at = excluded.sent_at
+    `,
+  ).run(
+    record.messageActionId,
+    record.groupFolder,
+    record.sourceType,
+    record.sourceKey,
+    record.sourceSummary || null,
+    record.targetKind,
+    record.targetChannel,
+    record.targetConversationJson,
+    record.draftText,
+    record.trustLevel,
+    record.sendStatus,
+    record.followupAt || null,
+    record.requiresApproval ? 1 : 0,
+    record.delegationRuleId || null,
+    record.delegationMode || null,
+    record.explanationJson || null,
+    record.linkedRefsJson || null,
+    record.platformMessageId || null,
+    record.dedupeKey,
+    record.presentationChatJid || null,
+    record.presentationThreadId || null,
+    record.presentationMessageId || null,
+    record.createdAt,
+    record.lastUpdatedAt,
+    record.sentAt || null,
+  );
+}
+
+function mapMessageActionRow(row: {
+  message_action_id: string;
+  group_folder: string;
+  source_type: MessageActionRecord['sourceType'];
+  source_key: string;
+  source_summary: string | null;
+  target_kind: MessageActionRecord['targetKind'];
+  target_channel: MessageActionRecord['targetChannel'];
+  target_conversation_json: string;
+  draft_text: string;
+  trust_level: MessageActionRecord['trustLevel'];
+  send_status: MessageActionRecord['sendStatus'];
+  followup_at: string | null;
+  requires_approval: number;
+  delegation_rule_id: string | null;
+  delegation_mode: MessageActionRecord['delegationMode'];
+  explanation_json: string | null;
+  linked_refs_json: string | null;
+  platform_message_id: string | null;
+  dedupe_key: string;
+  presentation_chat_jid: string | null;
+  presentation_thread_id: string | null;
+  presentation_message_id: string | null;
+  created_at: string;
+  last_updated_at: string;
+  sent_at: string | null;
+}): MessageActionRecord {
+  return {
+    messageActionId: row.message_action_id,
+    groupFolder: row.group_folder,
+    sourceType: row.source_type,
+    sourceKey: row.source_key,
+    sourceSummary: row.source_summary,
+    targetKind: row.target_kind,
+    targetChannel: row.target_channel,
+    targetConversationJson: row.target_conversation_json,
+    draftText: row.draft_text,
+    trustLevel: row.trust_level,
+    sendStatus: row.send_status,
+    followupAt: row.followup_at,
+    requiresApproval: row.requires_approval === 1,
+    delegationRuleId: row.delegation_rule_id,
+    delegationMode: row.delegation_mode,
+    explanationJson: row.explanation_json,
+    linkedRefsJson: row.linked_refs_json,
+    platformMessageId: row.platform_message_id,
+    dedupeKey: row.dedupe_key,
+    presentationChatJid: row.presentation_chat_jid,
+    presentationThreadId: row.presentation_thread_id,
+    presentationMessageId: row.presentation_message_id,
+    createdAt: row.created_at,
+    lastUpdatedAt: row.last_updated_at,
+    sentAt: row.sent_at,
+  };
+}
+
+export function getMessageAction(
+  messageActionId: string,
+): MessageActionRecord | undefined {
+  const row = db
+    .prepare(
+      `
+        SELECT *
+        FROM message_actions
+        WHERE message_action_id = ?
+        LIMIT 1
+      `,
+    )
+    .get(messageActionId) as
+    | {
+        message_action_id: string;
+        group_folder: string;
+        source_type: MessageActionRecord['sourceType'];
+        source_key: string;
+        source_summary: string | null;
+        target_kind: MessageActionRecord['targetKind'];
+        target_channel: MessageActionRecord['targetChannel'];
+        target_conversation_json: string;
+        draft_text: string;
+        trust_level: MessageActionRecord['trustLevel'];
+        send_status: MessageActionRecord['sendStatus'];
+        followup_at: string | null;
+        requires_approval: number;
+        delegation_rule_id: string | null;
+        delegation_mode: MessageActionRecord['delegationMode'];
+        explanation_json: string | null;
+        linked_refs_json: string | null;
+        platform_message_id: string | null;
+        dedupe_key: string;
+        presentation_chat_jid: string | null;
+        presentation_thread_id: string | null;
+        presentation_message_id: string | null;
+        created_at: string;
+        last_updated_at: string;
+        sent_at: string | null;
+      }
+    | undefined;
+  if (!row || !isValidGroupFolder(row.group_folder)) return undefined;
+  return mapMessageActionRow(row);
+}
+
+export function getMessageActionBySource(
+  groupFolder: string,
+  sourceType: MessageActionRecord['sourceType'],
+  sourceKey: string,
+): MessageActionRecord | undefined {
+  assertValidGroupFolder(groupFolder);
+  const row = db
+    .prepare(
+      `
+        SELECT *
+        FROM message_actions
+        WHERE group_folder = ?
+          AND source_type = ?
+          AND source_key = ?
+        ORDER BY last_updated_at DESC
+        LIMIT 1
+      `,
+    )
+    .get(groupFolder, sourceType, sourceKey) as
+    | {
+        message_action_id: string;
+        group_folder: string;
+        source_type: MessageActionRecord['sourceType'];
+        source_key: string;
+        source_summary: string | null;
+        target_kind: MessageActionRecord['targetKind'];
+        target_channel: MessageActionRecord['targetChannel'];
+        target_conversation_json: string;
+        draft_text: string;
+        trust_level: MessageActionRecord['trustLevel'];
+        send_status: MessageActionRecord['sendStatus'];
+        followup_at: string | null;
+        requires_approval: number;
+        delegation_rule_id: string | null;
+        delegation_mode: MessageActionRecord['delegationMode'];
+        explanation_json: string | null;
+        linked_refs_json: string | null;
+        platform_message_id: string | null;
+        dedupe_key: string;
+        presentation_chat_jid: string | null;
+        presentation_thread_id: string | null;
+        presentation_message_id: string | null;
+        created_at: string;
+        last_updated_at: string;
+        sent_at: string | null;
+      }
+    | undefined;
+  if (!row || !isValidGroupFolder(row.group_folder)) return undefined;
+  return mapMessageActionRow(row);
+}
+
+export function listMessageActionsForGroup(params: {
+  groupFolder: string;
+  statuses?: MessageActionRecord['sendStatus'][];
+  targetChannels?: MessageActionRecord['targetChannel'][];
+  includeSent?: boolean;
+  limit?: number;
+}): MessageActionRecord[] {
+  assertValidGroupFolder(params.groupFolder);
+  const clauses = ['group_folder = ?'];
+  const args: unknown[] = [params.groupFolder];
+  if (params.statuses?.length) {
+    clauses.push(`send_status IN (${params.statuses.map(() => '?').join(', ')})`);
+    args.push(...params.statuses);
+  } else if (!params.includeSent) {
+    clauses.push(`send_status != 'sent'`);
+  }
+  if (params.targetChannels?.length) {
+    clauses.push(
+      `target_channel IN (${params.targetChannels.map(() => '?').join(', ')})`,
+    );
+    args.push(...params.targetChannels);
+  }
+  args.push(Math.max(1, params.limit || 100));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM message_actions
+        WHERE ${clauses.join(' AND ')}
+        ORDER BY last_updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<{
+      message_action_id: string;
+      group_folder: string;
+      source_type: MessageActionRecord['sourceType'];
+      source_key: string;
+      source_summary: string | null;
+      target_kind: MessageActionRecord['targetKind'];
+      target_channel: MessageActionRecord['targetChannel'];
+      target_conversation_json: string;
+      draft_text: string;
+      trust_level: MessageActionRecord['trustLevel'];
+      send_status: MessageActionRecord['sendStatus'];
+      followup_at: string | null;
+      requires_approval: number;
+      delegation_rule_id: string | null;
+      delegation_mode: MessageActionRecord['delegationMode'];
+      explanation_json: string | null;
+      linked_refs_json: string | null;
+      platform_message_id: string | null;
+      dedupe_key: string;
+      presentation_chat_jid: string | null;
+      presentation_thread_id: string | null;
+      presentation_message_id: string | null;
+      created_at: string;
+      last_updated_at: string;
+      sent_at: string | null;
+    }>;
+  return rows
+    .filter((row) => isValidGroupFolder(row.group_folder))
+    .map((row) => mapMessageActionRow(row));
+}
+
+export function findLatestOpenMessageActionForChat(params: {
+  groupFolder: string;
+  chatJid: string;
+  statuses?: MessageActionRecord['sendStatus'][];
+}): MessageActionRecord | undefined {
+  assertValidGroupFolder(params.groupFolder);
+  const statuses =
+    params.statuses && params.statuses.length > 0
+      ? params.statuses
+      : ['drafted', 'approved', 'deferred', 'failed'];
+  const row = db
+    .prepare(
+      `
+        SELECT *
+        FROM message_actions
+        WHERE group_folder = ?
+          AND presentation_chat_jid = ?
+          AND send_status IN (${statuses.map(() => '?').join(', ')})
+        ORDER BY last_updated_at DESC
+        LIMIT 1
+      `,
+    )
+    .get(
+      params.groupFolder,
+      params.chatJid,
+      ...statuses,
+    ) as
+    | {
+        message_action_id: string;
+        group_folder: string;
+        source_type: MessageActionRecord['sourceType'];
+        source_key: string;
+        source_summary: string | null;
+        target_kind: MessageActionRecord['targetKind'];
+        target_channel: MessageActionRecord['targetChannel'];
+        target_conversation_json: string;
+        draft_text: string;
+        trust_level: MessageActionRecord['trustLevel'];
+        send_status: MessageActionRecord['sendStatus'];
+        followup_at: string | null;
+        requires_approval: number;
+        delegation_rule_id: string | null;
+        delegation_mode: MessageActionRecord['delegationMode'];
+        explanation_json: string | null;
+        linked_refs_json: string | null;
+        platform_message_id: string | null;
+        dedupe_key: string;
+        presentation_chat_jid: string | null;
+        presentation_thread_id: string | null;
+        presentation_message_id: string | null;
+        created_at: string;
+        last_updated_at: string;
+        sent_at: string | null;
+      }
+    | undefined;
+  if (!row || !isValidGroupFolder(row.group_folder)) return undefined;
+  return mapMessageActionRow(row);
+}
+
+export function updateMessageAction(
+  messageActionId: string,
+  updates: Partial<
+    Pick<
+      MessageActionRecord,
+      | 'sourceSummary'
+      | 'targetConversationJson'
+      | 'draftText'
+      | 'trustLevel'
+      | 'sendStatus'
+      | 'followupAt'
+      | 'requiresApproval'
+      | 'delegationRuleId'
+      | 'delegationMode'
+      | 'explanationJson'
+      | 'linkedRefsJson'
+      | 'platformMessageId'
+      | 'presentationChatJid'
+      | 'presentationThreadId'
+      | 'presentationMessageId'
+      | 'lastUpdatedAt'
+      | 'sentAt'
+    >
+  >,
+): void {
+  const existing = getMessageAction(messageActionId);
+  if (!existing) return;
+  upsertMessageAction({
+    ...existing,
+    sourceSummary:
+      updates.sourceSummary !== undefined
+        ? updates.sourceSummary
+        : existing.sourceSummary,
+    targetConversationJson:
+      updates.targetConversationJson ?? existing.targetConversationJson,
+    draftText: updates.draftText ?? existing.draftText,
+    trustLevel: updates.trustLevel ?? existing.trustLevel,
+    sendStatus: updates.sendStatus ?? existing.sendStatus,
+    followupAt:
+      updates.followupAt !== undefined ? updates.followupAt : existing.followupAt,
+    requiresApproval:
+      updates.requiresApproval !== undefined
+        ? updates.requiresApproval
+        : existing.requiresApproval,
+    delegationRuleId:
+      updates.delegationRuleId !== undefined
+        ? updates.delegationRuleId
+        : existing.delegationRuleId,
+    delegationMode:
+      updates.delegationMode !== undefined
+        ? updates.delegationMode
+        : existing.delegationMode,
+    explanationJson:
+      updates.explanationJson !== undefined
+        ? updates.explanationJson
+        : existing.explanationJson,
+    linkedRefsJson:
+      updates.linkedRefsJson !== undefined
+        ? updates.linkedRefsJson
+        : existing.linkedRefsJson,
+    platformMessageId:
+      updates.platformMessageId !== undefined
+        ? updates.platformMessageId
+        : existing.platformMessageId,
+    presentationChatJid:
+      updates.presentationChatJid !== undefined
+        ? updates.presentationChatJid
+        : existing.presentationChatJid,
+    presentationThreadId:
+      updates.presentationThreadId !== undefined
+        ? updates.presentationThreadId
+        : existing.presentationThreadId,
+    presentationMessageId:
+      updates.presentationMessageId !== undefined
+        ? updates.presentationMessageId
+        : existing.presentationMessageId,
+    lastUpdatedAt: updates.lastUpdatedAt ?? new Date().toISOString(),
+    sentAt: updates.sentAt !== undefined ? updates.sentAt : existing.sentAt,
   });
 }
 
