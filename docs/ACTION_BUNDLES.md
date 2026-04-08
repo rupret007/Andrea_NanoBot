@@ -119,9 +119,9 @@ Andrea should sound calm and plainspoken when bundle execution is mixed.
 
 Target style:
 
-- `Andrea: Done — I set the reminder and saved the thread.`
+- `Andrea: Done - I set the reminder and saved the thread.`
 - `Andrea: I handled the reminder, but the draft still needs attention.`
-- `Andrea: Okay — I left that bundle for later.`
+- `Andrea: Okay - I left that bundle for later.`
 
 Normal companion replies should stay human and useful.
 Technical detail belongs in logs and operator diagnostics, not in the bundle reply itself.
@@ -154,6 +154,24 @@ Andrea tracks:
 - related refs to missions, threads, reminders, and saved knowledge
 
 The goal is inspectable execution state, not a new task database.
+
+## What Happens After Execution
+
+Bundles do not own closure forever.
+
+Once actions are approved and run, Andrea's outcome-tracking layer takes over the follow-through story:
+
+- reminder created -> usually deferred, not solved
+- draft created -> progress happened, but the conversation may still be open
+- thread saved -> context is preserved, but the loop may still need attention
+- partial execution -> review should surface what is still unresolved
+
+That handoff is intentional:
+
+- bundles = approval and execution
+- outcomes and reviews = closure and carryover
+
+See [OUTCOME_TRACKING_AND_REVIEWS.md](OUTCOME_TRACKING_AND_REVIEWS.md) for the review model and natural closure controls.
 
 ## Testing
 

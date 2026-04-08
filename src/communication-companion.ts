@@ -19,6 +19,10 @@ import {
 import { findLifeThreadForExplicitLookup, handleLifeThreadCommand } from './life-threads.js';
 import { planContextualReminder } from './local-reminder.js';
 import {
+  syncOutcomeFromCommunicationThreadRecord,
+  syncOutcomeFromReminderTask,
+} from './outcome-reviews.js';
+import {
   buildSignatureFlowText,
   buildSignaturePostActionConfirmation,
 } from './signature-flows.js';
@@ -1006,6 +1010,13 @@ export function manageCommunicationTracking(
   const analysis = analyzeCommunicationMessage(input);
   const thread = analysis.thread;
   const utterance = normalizeText(input.text || '');
+  const readUpdatedThread = () => {
+    const updatedThread = getCommunicationThread(thread?.id || '');
+    if (updatedThread) {
+      syncOutcomeFromCommunicationThreadRecord(updatedThread, now);
+    }
+    return updatedThread;
+  };
   if (!thread || !analysis.ok) {
     return {
       ok: false,
@@ -1026,7 +1037,7 @@ export function manageCommunicationTracking(
         stillOpen: thread.lastInboundSummary || thread.lastOutboundSummary || null,
         nextSuggestion: 'Ask what is still open here whenever you want it back.',
       }),
-      thread: getCommunicationThread(thread.id),
+      thread: readUpdatedThread(),
     };
   }
   if (/stop tracking that|forget this conversation thread/i.test(utterance)) {
@@ -1041,7 +1052,7 @@ export function manageCommunicationTracking(
         didWhat: 'Okay. I will stop tracking that conversation thread.',
         nextSuggestion: 'Bring the message back if you want me to pick it up again.',
       }),
-      thread: getCommunicationThread(thread.id),
+      thread: readUpdatedThread(),
     };
   }
   if (/mark that handled/i.test(utterance)) {
@@ -1056,7 +1067,7 @@ export function manageCommunicationTracking(
         didWhat: 'Okay. I marked that conversation as handled.',
         nextSuggestion: 'If anything changes, ask what is still open here.',
       }),
-      thread: getCommunicationThread(thread.id),
+      thread: readUpdatedThread(),
     };
   }
   if (/forget this conversation thread completely/i.test(utterance)) {
@@ -1129,6 +1140,17 @@ export function manageCommunicationTracking(
       return { ok: false, replyText: 'I could not pin down a reminder time from that yet.', thread };
     }
     createTask(planned.task);
+    syncOutcomeFromReminderTask(planned.task, {
+      linkedRefs: {
+        reminderTaskId: planned.task.id,
+        communicationThreadId: thread.id,
+        threadId: thread.linkedLifeThreadIds[0],
+        chatJid: input.chatJid || thread.channelChatJid || undefined,
+        personName: analysis.linkedSubjects[0]?.displayName || thread.title,
+      },
+      summaryText: planned.confirmation,
+      now,
+    });
     updateCommunicationThread(thread.id, {
       linkedTaskId: planned.task.id,
       followupState: 'scheduled',
@@ -1142,11 +1164,11 @@ export function manageCommunicationTracking(
         didWhat: planned.confirmation,
         stillOpen:
           analysis.summaryText || thread.lastInboundSummary || thread.title,
-        nextSuggestion: 'I can also draft the reply when you are ready.',
-      }),
-      reminderTaskId: planned.task.id,
-      thread: getCommunicationThread(thread.id),
-    };
+          nextSuggestion: 'I can also draft the reply when you are ready.',
+        }),
+        reminderTaskId: planned.task.id,
+        thread: readUpdatedThread(),
+      };
   }
 
   return {

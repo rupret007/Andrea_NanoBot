@@ -188,6 +188,14 @@ import {
   rememberActionBundlePresentation,
 } from './action-bundles.js';
 import {
+  applyOutcomeReviewControl,
+  buildOutcomeReviewResponse,
+  interpretOutcomeReviewControl,
+  matchOutcomeReviewPrompt,
+  syncOutcomeFromReminderTask,
+  type OutcomeReviewPromptMatch,
+} from './outcome-reviews.js';
+import {
   advancePendingCalendarAutomation,
   buildCalendarAutomationPersistInput,
   computeCalendarAutomationNextRun,
@@ -548,6 +556,8 @@ const DAILY_COMPANION_CONTEXT_PREFIX = 'daily_companion_context:';
 const DAILY_COMPANION_CONTEXT_TTL_MS = 10 * 60 * 1000;
 const SHARED_ASSISTANT_CONTEXT_PREFIX = 'shared_assistant_context:';
 const SHARED_ASSISTANT_CONTEXT_TTL_MS = 10 * 60 * 1000;
+const OUTCOME_REVIEW_CONTEXT_PREFIX = 'outcome_review_context:';
+const OUTCOME_REVIEW_CONTEXT_TTL_MS = 30 * 60 * 1000;
 
 function getGoogleCalendarPendingStateKey(chatJid: string): string {
   return `${GOOGLE_CALENDAR_PENDING_STATE_PREFIX}${chatJid}`;
@@ -593,10 +603,23 @@ function getSharedAssistantContextKey(chatJid: string): string {
   return `${SHARED_ASSISTANT_CONTEXT_PREFIX}${chatJid}`;
 }
 
+function getOutcomeReviewContextKey(chatJid: string): string {
+  return `${OUTCOME_REVIEW_CONTEXT_PREFIX}${chatJid}`;
+}
+
 interface SharedAssistantContextState {
   version: 1;
   createdAt: string;
   seed: AssistantCapabilityConversationSeed;
+}
+
+interface OutcomeReviewContextState {
+  version: 1;
+  createdAt: string;
+  promptMatchJson: string;
+  focusOutcomeIds: string[];
+  primaryOutcomeId?: string | null;
+  presentationMessageId?: string | null;
 }
 
 const ACTIVE_REPO_ROOT = process.cwd();
@@ -1039,6 +1062,53 @@ function clearDailyCompanionContext(chatJid: string): void {
   deleteRouterState(getDailyCompanionContextKey(chatJid));
 }
 
+function getOutcomeReviewContext(
+  chatJid: string,
+  now = new Date(),
+): OutcomeReviewContextState | null {
+  const raw = getRouterState(getOutcomeReviewContextKey(chatJid));
+  if (!raw) return null;
+
+  try {
+    const parsed = JSON.parse(raw) as OutcomeReviewContextState;
+    if (
+      !parsed ||
+      parsed.version !== 1 ||
+      !parsed.createdAt ||
+      !parsed.promptMatchJson ||
+      !Array.isArray(parsed.focusOutcomeIds)
+    ) {
+      clearOutcomeReviewContext(chatJid);
+      return null;
+    }
+
+    const createdAtMs = Date.parse(parsed.createdAt);
+    if (
+      !Number.isFinite(createdAtMs) ||
+      createdAtMs + OUTCOME_REVIEW_CONTEXT_TTL_MS < now.getTime()
+    ) {
+      clearOutcomeReviewContext(chatJid);
+      return null;
+    }
+
+    return parsed;
+  } catch {
+    clearOutcomeReviewContext(chatJid);
+    return null;
+  }
+}
+
+function setOutcomeReviewContext(
+  chatJid: string,
+  state: OutcomeReviewContextState,
+): void {
+  setRouterState(getOutcomeReviewContextKey(chatJid), JSON.stringify(state));
+}
+
+function clearOutcomeReviewContext(chatJid: string): void {
+  deleteRouterState(getOutcomeReviewContextKey(chatJid));
+}
+
 function getSharedAssistantCapabilitySeed(
   chatJid: string,
   now = new Date(),
@@ -1136,6 +1206,40 @@ function parseBundleCommand(rawText: string):
   return null;
 }
 
+function parseReviewCommand(rawText: string):
+  | {
+      outcomeId: string;
+      control:
+        | { kind: 'mark_handled' }
+        | { kind: 'still_open' }
+        | { kind: 'remind_tomorrow' }
+        | { kind: 'hide' }
+        | { kind: 'show' };
+    }
+  | null {
+  const trimmed = rawText.trim();
+  const parts = trimmed.split(/\s+/);
+  const command = parts[0]?.toLowerCase();
+  const outcomeId = parts[1];
+  if (!outcomeId) return null;
+  if (command === '/review-handle') {
+    return { outcomeId, control: { kind: 'mark_handled' } };
+  }
+  if (command === '/review-open') {
+    return { outcomeId, control: { kind: 'still_open' } };
+  }
+  if (command === '/review-remind-tomorrow') {
+    return { outcomeId, control: { kind: 'remind_tomorrow' } };
+  }
+  if (command === '/review-hide') {
+    return { outcomeId, control: { kind: 'hide' } };
+  }
+  if (command === '/review-show') {
+    return { outcomeId, control: { kind: 'show' } };
+  }
+  return null;
+}
+
 async function applyAndPresentActionBundle(params: {
   chatJid: string;
   bundleId: string;
@@ -1193,6 +1297,109 @@ async function applyAndPresentActionBundle(params: {
   }
 
   if (result.replyText) {
+    await channel.sendMessage(params.chatJid, result.replyText);
+  }
+
+  return true;
+}
+
+async function applyAndPresentOutcomeReviewControl(params: {
+  chatJid: string;
+  outcomeId: string;
+  control:
+    | { kind: 'mark_handled' }
+    | { kind: 'still_open' }
+    | { kind: 'remind_tomorrow' }
+    | { kind: 'hide' }
+    | { kind: 'show' };
+  now?: Date;
+}): Promise<boolean> {
+  const group = resolveCompanionBinding(params.chatJid)?.group;
+  const channel = findChannel(channels, params.chatJid);
+  if (!group || !channel) return false;
+
+  const result = applyOutcomeReviewControl({
+    groupFolder: group.folder,
+    outcomeId: params.outcomeId,
+    control: params.control,
+    chatJid: params.chatJid,
+    now: params.now,
+  });
+  if (!result.handled) return false;
+
+  const context = getOutcomeReviewContext(params.chatJid, params.now || new Date());
+  let refreshedPresentation:
+    | ReturnType<typeof buildOutcomeReviewResponse>
+    | undefined;
+  let nextContext: OutcomeReviewContextState | null = null;
+
+  if (
+    channel.name === 'telegram' &&
+    context?.promptMatchJson &&
+    params.control.kind !== 'show'
+  ) {
+    try {
+      const promptMatch = JSON.parse(
+        context.promptMatchJson,
+      ) as OutcomeReviewPromptMatch;
+      refreshedPresentation = buildOutcomeReviewResponse({
+        groupFolder: group.folder,
+        match: promptMatch,
+        channel: 'telegram',
+        now: params.now,
+        timeZone: TIMEZONE,
+      });
+      nextContext = {
+        version: 1,
+        createdAt: (params.now || new Date()).toISOString(),
+        promptMatchJson: context.promptMatchJson,
+        focusOutcomeIds: refreshedPresentation.focusOutcomeIds,
+        primaryOutcomeId: refreshedPresentation.primaryOutcomeId || null,
+        presentationMessageId: context.presentationMessageId || null,
+      };
+    } catch {
+      nextContext = null;
+    }
+  }
+
+  if (
+    refreshedPresentation &&
+    context?.presentationMessageId &&
+    channel.editMessage
+  ) {
+    await channel.editMessage(
+      params.chatJid,
+      context.presentationMessageId,
+      refreshedPresentation.text,
+      { inlineActionRows: refreshedPresentation.inlineActionRows },
+    );
+    setOutcomeReviewContext(params.chatJid, {
+      ...(nextContext || context),
+      presentationMessageId: context.presentationMessageId,
+    });
+  } else if (refreshedPresentation && channel.name === 'telegram') {
+    const sent = await channel.sendMessage(
+      params.chatJid,
+      refreshedPresentation.text,
+      { inlineActionRows: refreshedPresentation.inlineActionRows },
+    );
+    setOutcomeReviewContext(params.chatJid, {
+      ...(nextContext || {
+        version: 1,
+        createdAt: (params.now || new Date()).toISOString(),
+        promptMatchJson: context?.promptMatchJson || '',
+        focusOutcomeIds: refreshedPresentation.focusOutcomeIds,
+        primaryOutcomeId: refreshedPresentation.primaryOutcomeId || null,
+        presentationMessageId: sent.platformMessageId || null,
+      }),
+      presentationMessageId: sent.platformMessageId || null,
+    });
+  }
+
+  if (
+    result.replyText &&
+    (params.control.kind === 'show' || !refreshedPresentation)
+  ) {
     await channel.sendMessage(params.chatJid, result.replyText);
   }
 
@@ -2632,6 +2839,48 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       now,
     });
   };
+  const tryHandleOutcomeReview = async (): Promise<boolean> => {
+    const reviewPrompt = matchOutcomeReviewPrompt(lastContent);
+    if (reviewPrompt) {
+      const presentation = buildOutcomeReviewResponse({
+        groupFolder: group.folder,
+        match: reviewPrompt,
+        channel:
+          channel.name === 'telegram'
+            ? 'telegram'
+            : channel.name === 'bluebubbles'
+              ? 'bluebubbles'
+              : 'telegram',
+        now,
+        timeZone: TIMEZONE,
+      });
+      const sent = await channel.sendMessage(chatJid, presentation.text, {
+        inlineActionRows: presentation.inlineActionRows,
+      });
+      setOutcomeReviewContext(chatJid, {
+        version: 1,
+        createdAt: now.toISOString(),
+        promptMatchJson: JSON.stringify(reviewPrompt),
+        focusOutcomeIds: presentation.focusOutcomeIds,
+        primaryOutcomeId: presentation.primaryOutcomeId || null,
+        presentationMessageId: sent.platformMessageId || null,
+      });
+      return true;
+    }
+
+    const control = interpretOutcomeReviewControl(lastContent);
+    if (!control) return false;
+    const context = getOutcomeReviewContext(chatJid, now);
+    const targetOutcomeId =
+      context?.primaryOutcomeId || context?.focusOutcomeIds?.[0] || null;
+    if (!targetOutcomeId) return false;
+    return applyAndPresentOutcomeReviewControl({
+      chatJid,
+      outcomeId: targetOutcomeId,
+      control,
+      now,
+    });
+  };
   const tryHandleLocalCalendarAutomation = async (): Promise<boolean> => {
     try {
       const pendingAutomation = getPendingCalendarAutomationState(chatJid);
@@ -4029,6 +4278,14 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           clearPendingActionReminderState(chatJid);
           if (continued.kind === 'created_reminder') {
             createTask(continued.task);
+            syncOutcomeFromReminderTask(continued.task, {
+              linkedRefs: {
+                reminderTaskId: continued.task.id,
+                chatJid,
+              },
+              summaryText: continued.confirmation,
+              now,
+            });
             refreshTaskSnapshots(registeredGroups);
             if (continued.actionContext) {
               setActionLayerContext(chatJid, continued.actionContext);
@@ -4171,6 +4428,14 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
       if (actionResult.kind === 'created_reminder') {
         createTask(actionResult.task);
+        syncOutcomeFromReminderTask(actionResult.task, {
+          linkedRefs: {
+            reminderTaskId: actionResult.task.id,
+            chatJid,
+          },
+          summaryText: actionResult.confirmation,
+          now,
+        });
         refreshTaskSnapshots(registeredGroups);
         if (actionResult.actionContext) {
           setActionLayerContext(chatJid, actionResult.actionContext);
@@ -5125,6 +5390,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     requestPolicy.route === 'direct_assistant' ||
     requestPolicy.route === 'protected_assistant'
   ) {
+    if (await tryHandleOutcomeReview()) {
+      return true;
+    }
     if (await tryHandleActionBundleFollowup()) {
       return true;
     }
@@ -5163,6 +5431,14 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (plannedReminder) {
       try {
         createTask(plannedReminder.task);
+        syncOutcomeFromReminderTask(plannedReminder.task, {
+          linkedRefs: {
+            reminderTaskId: plannedReminder.task.id,
+            chatJid,
+          },
+          summaryText: plannedReminder.confirmation,
+          now,
+        });
         refreshTaskSnapshots(registeredGroups);
         clearSharedAssistantCapabilitySeed(chatJid);
         await channel.sendMessage(chatJid, plannedReminder.confirmation);
@@ -10184,6 +10460,19 @@ async function main(): Promise<void> {
           now: new Date(),
         }).catch((err) =>
           logger.error({ err, chatJid }, 'Action bundle command error'),
+        );
+        return;
+      }
+
+      const reviewCommand = parseReviewCommand(rawTrimmed);
+      if (reviewCommand) {
+        applyAndPresentOutcomeReviewControl({
+          chatJid,
+          outcomeId: reviewCommand.outcomeId,
+          control: reviewCommand.control,
+          now: new Date(),
+        }).catch((err) =>
+          logger.error({ err, chatJid }, 'Outcome review command error'),
         );
         return;
       }

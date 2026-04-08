@@ -729,6 +729,66 @@ export interface ActionBundleSnapshot {
   actions: ActionBundleActionRecord[];
 }
 
+export type OutcomeSourceType =
+  | 'mission'
+  | 'action_bundle'
+  | 'reminder'
+  | 'life_thread'
+  | 'communication_thread'
+  | 'current_work'
+  | 'cross_channel_handoff';
+
+export type OutcomeStatus =
+  | 'completed'
+  | 'partial'
+  | 'skipped'
+  | 'failed'
+  | 'deferred'
+  | 'unknown';
+
+export type OutcomeReviewHorizon =
+  | 'today'
+  | 'tonight'
+  | 'tomorrow'
+  | 'this_week'
+  | 'weekend'
+  | 'later'
+  | 'none';
+
+export interface OutcomeLinkedRefs {
+  actionBundleId?: string;
+  reminderTaskId?: string;
+  threadId?: string;
+  communicationThreadId?: string;
+  missionId?: string;
+  handoffId?: string;
+  currentWorkRef?: string;
+  knowledgeSourceIds?: string[];
+  chatJid?: string;
+  personName?: string;
+}
+
+export interface OutcomeRecord {
+  outcomeId: string;
+  groupFolder: string;
+  sourceType: OutcomeSourceType;
+  sourceKey: string;
+  linkedRefsJson?: string | null;
+  status: OutcomeStatus;
+  completionSummary?: string | null;
+  nextFollowupText?: string | null;
+  blockerText?: string | null;
+  dueAt?: string | null;
+  reviewHorizon: OutcomeReviewHorizon;
+  lastCheckedAt: string;
+  userConfirmed: boolean;
+  showInDailyReview: boolean;
+  showInWeeklyReview: boolean;
+  reviewSuppressedUntil?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface MissionSuggestedAction {
   kind: MissionSuggestedActionKind;
   label: string;

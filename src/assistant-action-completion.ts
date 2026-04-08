@@ -20,6 +20,7 @@ import {
   type LifeThreadCommandResult,
 } from './life-threads.js';
 import { planContextualReminder } from './local-reminder.js';
+import { syncOutcomeFromReminderTask } from './outcome-reviews.js';
 import { handleRitualCommand, type RitualCommandResult } from './rituals.js';
 import { buildSignaturePostActionConfirmation } from './signature-flows.js';
 import type {
@@ -763,6 +764,16 @@ export async function completeAssistantActionFromAlexa(
       };
     }
     createTask(plannedReminder.task);
+    syncOutcomeFromReminderTask(plannedReminder.task, {
+      linkedRefs: {
+        reminderTaskId: plannedReminder.task.id,
+        threadId: candidate?.threadId,
+        communicationThreadId: candidate?.communicationThreadId,
+        missionId: candidate?.missionId,
+      },
+      summaryText: plannedReminder.confirmation,
+      now: params.now,
+    });
     return {
       handled: true,
       replyText: buildSignaturePostActionConfirmation({

@@ -130,6 +130,21 @@ Treat that bundle suite as the fast proof that Andrea can:
 - report partial success or failure calmly
 - keep Alexa and Telegram follow-up semantics aligned
 
+For outcome tracking, carryover, and review-flow changes, add:
+
+```bash
+node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/outcome-reviews.test.ts src/alexa.test.ts src/action-bundles.test.ts src/communication-companion.test.ts src/missions.test.ts
+npm run telegram:user:smoke
+```
+
+Treat that review suite as the fast proof that Andrea can:
+
+- record execution as `completed`, `partial`, or `deferred` honestly
+- surface unresolved loops in daily and weekly review
+- carry work into tomorrow without pretending it is closed
+- keep Alexa review orientation short and grounded
+- keep Telegram review controls bounded and inspectable
+
 ## 2. Major Suite
 
 ```bash
@@ -284,6 +299,21 @@ Preferred proof shape:
 - one richer Telegram chief-of-staff answer
 - one explainability turn
 - one daily-companion answer that still shows the shared chief-of-staff read
+
+If you are validating the closed-loop review layer on the live host, add:
+
+- `daily review`
+- `what got done today`
+- `what slipped`
+- `what am I carrying into tomorrow`
+- one review control such as `Mark handled` or `Remind tomorrow`
+- one person-scoped follow-through question such as `what's still open with Candace`
+
+Preferred proof shape:
+
+- one loop that is honestly `partial` or `deferred`
+- one review answer that surfaces it clearly
+- one control that changes the carryover state without deleting the source
 
 ## 6. Cursor Validation
 

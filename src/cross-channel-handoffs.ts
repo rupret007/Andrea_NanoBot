@@ -6,6 +6,7 @@ import {
   updateCompanionHandoff,
   upsertCompanionHandoff,
 } from './db.js';
+import { syncOutcomeFromHandoffRecord } from './outcome-reviews.js';
 import type {
   ChannelArtifact,
   CompanionHandoffPayload,
@@ -254,6 +255,7 @@ export function queueCompanionHandoff(
 ): CompanionHandoffRecord {
   const record = buildCompanionHandoffRecord(params, now);
   upsertCompanionHandoff(record);
+  syncOutcomeFromHandoffRecord(record, now);
   return record;
 }
 
@@ -276,6 +278,8 @@ export async function deliverCompanionHandoff(
       errorText,
       updatedAt: now.toISOString(),
     });
+    const updated = getCompanionHandoff(record.handoffId);
+    if (updated) syncOutcomeFromHandoffRecord(updated, now);
     return {
       ok: false,
       handoffId: record.handoffId,
@@ -292,6 +296,8 @@ export async function deliverCompanionHandoff(
     targetChatJid: target.chatJid,
     updatedAt: now.toISOString(),
   });
+  const targetedRecord = getCompanionHandoff(record.handoffId);
+  if (targetedRecord) syncOutcomeFromHandoffRecord(targetedRecord, now);
 
   const payload = params.payload;
   try {
@@ -307,6 +313,8 @@ export async function deliverCompanionHandoff(
         errorText,
         updatedAt: new Date().toISOString(),
       });
+      const updated = getCompanionHandoff(record.handoffId);
+      if (updated) syncOutcomeFromHandoffRecord(updated);
       return {
         ok: false,
         handoffId: record.handoffId,
@@ -344,6 +352,8 @@ export async function deliverCompanionHandoff(
         errorText,
         updatedAt: new Date().toISOString(),
       });
+      const updated = getCompanionHandoff(record.handoffId);
+      if (updated) syncOutcomeFromHandoffRecord(updated);
       return {
         ok: false,
         handoffId: record.handoffId,
@@ -361,6 +371,8 @@ export async function deliverCompanionHandoff(
       errorText: null,
       updatedAt: new Date().toISOString(),
     });
+    const updated = getCompanionHandoff(record.handoffId);
+    if (updated) syncOutcomeFromHandoffRecord(updated);
     return {
       ok: true,
       handoffId: record.handoffId,
@@ -382,6 +394,8 @@ export async function deliverCompanionHandoff(
       errorText,
       updatedAt: new Date().toISOString(),
     });
+    const updated = getCompanionHandoff(record.handoffId);
+    if (updated) syncOutcomeFromHandoffRecord(updated);
     return {
       ok: false,
       handoffId: record.handoffId,
@@ -404,5 +418,7 @@ export function cancelCompanionHandoff(
     errorText: reason || record.errorText || null,
     updatedAt: new Date().toISOString(),
   });
-  return getCompanionHandoff(handoffId);
+  const updated = getCompanionHandoff(handoffId);
+  if (updated) syncOutcomeFromHandoffRecord(updated);
+  return updated;
 }

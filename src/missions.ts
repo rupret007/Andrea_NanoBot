@@ -14,6 +14,7 @@ import { buildChiefOfStaffSnapshot } from './chief-of-staff.js';
 import { buildCommunicationOpenLoops } from './communication-companion.js';
 import { searchKnowledgeLibrary } from './knowledge-library.js';
 import { findLifeThreadForExplicitLookup } from './life-threads.js';
+import { syncOutcomeFromMissionRecord } from './outcome-reviews.js';
 import { buildSignatureFlowText } from './signature-flows.js';
 import type {
   ChiefOfStaffConfidence,
@@ -975,6 +976,7 @@ async function buildMissionSnapshot(
 function persistMissionSnapshot(snapshot: MissionPlanSnapshot): void {
   upsertMission(snapshot.mission);
   replaceMissionSteps(snapshot.mission.missionId, snapshot.steps);
+  syncOutcomeFromMissionRecord(snapshot.mission, snapshot.steps);
 }
 
 export async function buildMissionTurn(
@@ -1160,6 +1162,7 @@ export function updateMissionAfterExecution(params: {
       ),
     );
   }
+  syncOutcomeFromMissionRecord(updated, listMissionSteps(params.missionId));
   return updated;
 }
 

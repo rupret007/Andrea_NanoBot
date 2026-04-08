@@ -34,6 +34,7 @@ import {
   MissionRecord,
   MissionStepRecord,
   NewMessage,
+  OutcomeRecord,
   ProfileFact,
   ProfileFactWithSubject,
   ProfileSubject,
@@ -594,6 +595,38 @@ function createSchema(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_action_bundle_actions_bundle_order
       ON action_bundle_actions(bundle_id, order_index ASC);
+    CREATE TABLE IF NOT EXISTS outcomes (
+      outcome_id TEXT PRIMARY KEY,
+      group_folder TEXT NOT NULL,
+      source_type TEXT NOT NULL,
+      source_key TEXT NOT NULL,
+      linked_refs_json TEXT,
+      status TEXT NOT NULL,
+      completion_summary TEXT,
+      next_followup_text TEXT,
+      blocker_text TEXT,
+      due_at TEXT,
+      review_horizon TEXT NOT NULL,
+      last_checked_at TEXT NOT NULL,
+      user_confirmed INTEGER NOT NULL DEFAULT 0,
+      show_in_daily_review INTEGER NOT NULL DEFAULT 1,
+      show_in_weekly_review INTEGER NOT NULL DEFAULT 1,
+      review_suppressed_until TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_outcomes_source
+      ON outcomes(group_folder, source_type, source_key);
+    CREATE INDEX IF NOT EXISTS idx_outcomes_group_updated
+      ON outcomes(group_folder, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_outcomes_group_review
+      ON outcomes(
+        group_folder,
+        show_in_daily_review,
+        show_in_weekly_review,
+        review_horizon,
+        updated_at DESC
+      );
     CREATE TABLE IF NOT EXISTS life_threads (
       id TEXT PRIMARY KEY,
       group_folder TEXT NOT NULL,
@@ -3158,6 +3191,347 @@ export function purgeExpiredCompanionHandoffs(
   return result.changes;
 }
 
+export function listCompanionHandoffsForGroup(params: {
+  groupFolder: string;
+  statuses?: CompanionHandoffRecord['status'][];
+  limit?: number;
+}): CompanionHandoffRecord[] {
+  assertValidGroupFolder(params.groupFolder);
+  const clauses = ['group_folder = ?'];
+  const args: unknown[] = [params.groupFolder];
+  if (params.statuses?.length) {
+    clauses.push(`status IN (${params.statuses.map(() => '?').join(', ')})`);
+    args.push(...params.statuses);
+  }
+  args.push(Math.max(1, params.limit || 50));
+  const rows = db
+    .prepare(
+      `
+        SELECT handoff_id
+        FROM companion_handoffs
+        WHERE ${clauses.join(' AND ')}
+        ORDER BY updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<{ handoff_id: string }>;
+  return rows
+    .map((row) => getCompanionHandoff(row.handoff_id))
+    .filter((record): record is CompanionHandoffRecord => Boolean(record));
+}
+
+export function upsertOutcome(record: OutcomeRecord): void {
+  assertValidGroupFolder(record.groupFolder);
+  db.prepare(
+    `
+      INSERT INTO outcomes (
+        outcome_id,
+        group_folder,
+        source_type,
+        source_key,
+        linked_refs_json,
+        status,
+        completion_summary,
+        next_followup_text,
+        blocker_text,
+        due_at,
+        review_horizon,
+        last_checked_at,
+        user_confirmed,
+        show_in_daily_review,
+        show_in_weekly_review,
+        review_suppressed_until,
+        created_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(outcome_id) DO UPDATE SET
+        group_folder = excluded.group_folder,
+        source_type = excluded.source_type,
+        source_key = excluded.source_key,
+        linked_refs_json = excluded.linked_refs_json,
+        status = excluded.status,
+        completion_summary = excluded.completion_summary,
+        next_followup_text = excluded.next_followup_text,
+        blocker_text = excluded.blocker_text,
+        due_at = excluded.due_at,
+        review_horizon = excluded.review_horizon,
+        last_checked_at = excluded.last_checked_at,
+        user_confirmed = excluded.user_confirmed,
+        show_in_daily_review = excluded.show_in_daily_review,
+        show_in_weekly_review = excluded.show_in_weekly_review,
+        review_suppressed_until = excluded.review_suppressed_until,
+        created_at = excluded.created_at,
+        updated_at = excluded.updated_at
+    `,
+  ).run(
+    record.outcomeId,
+    record.groupFolder,
+    record.sourceType,
+    record.sourceKey,
+    record.linkedRefsJson || null,
+    record.status,
+    record.completionSummary || null,
+    record.nextFollowupText || null,
+    record.blockerText || null,
+    record.dueAt || null,
+    record.reviewHorizon,
+    record.lastCheckedAt,
+    record.userConfirmed ? 1 : 0,
+    record.showInDailyReview ? 1 : 0,
+    record.showInWeeklyReview ? 1 : 0,
+    record.reviewSuppressedUntil || null,
+    record.createdAt,
+    record.updatedAt,
+  );
+}
+
+function mapOutcomeRow(row: {
+  outcome_id: string;
+  group_folder: string;
+  source_type: OutcomeRecord['sourceType'];
+  source_key: string;
+  linked_refs_json: string | null;
+  status: OutcomeRecord['status'];
+  completion_summary: string | null;
+  next_followup_text: string | null;
+  blocker_text: string | null;
+  due_at: string | null;
+  review_horizon: OutcomeRecord['reviewHorizon'];
+  last_checked_at: string;
+  user_confirmed: number;
+  show_in_daily_review: number;
+  show_in_weekly_review: number;
+  review_suppressed_until: string | null;
+  created_at: string;
+  updated_at: string;
+}): OutcomeRecord {
+  return {
+    outcomeId: row.outcome_id,
+    groupFolder: row.group_folder,
+    sourceType: row.source_type,
+    sourceKey: row.source_key,
+    linkedRefsJson: row.linked_refs_json,
+    status: row.status,
+    completionSummary: row.completion_summary,
+    nextFollowupText: row.next_followup_text,
+    blockerText: row.blocker_text,
+    dueAt: row.due_at,
+    reviewHorizon: row.review_horizon,
+    lastCheckedAt: row.last_checked_at,
+    userConfirmed: row.user_confirmed === 1,
+    showInDailyReview: row.show_in_daily_review === 1,
+    showInWeeklyReview: row.show_in_weekly_review === 1,
+    reviewSuppressedUntil: row.review_suppressed_until,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export function getOutcome(outcomeId: string): OutcomeRecord | undefined {
+  const row = db
+    .prepare(
+      `
+        SELECT *
+        FROM outcomes
+        WHERE outcome_id = ?
+        LIMIT 1
+      `,
+    )
+    .get(outcomeId) as
+    | {
+        outcome_id: string;
+        group_folder: string;
+        source_type: OutcomeRecord['sourceType'];
+        source_key: string;
+        linked_refs_json: string | null;
+        status: OutcomeRecord['status'];
+        completion_summary: string | null;
+        next_followup_text: string | null;
+        blocker_text: string | null;
+        due_at: string | null;
+        review_horizon: OutcomeRecord['reviewHorizon'];
+        last_checked_at: string;
+        user_confirmed: number;
+        show_in_daily_review: number;
+        show_in_weekly_review: number;
+        review_suppressed_until: string | null;
+        created_at: string;
+        updated_at: string;
+      }
+    | undefined;
+  if (!row || !isValidGroupFolder(row.group_folder)) return undefined;
+  return mapOutcomeRow(row);
+}
+
+export function getOutcomeBySource(
+  groupFolder: string,
+  sourceType: OutcomeRecord['sourceType'],
+  sourceKey: string,
+): OutcomeRecord | undefined {
+  assertValidGroupFolder(groupFolder);
+  const row = db
+    .prepare(
+      `
+        SELECT *
+        FROM outcomes
+        WHERE group_folder = ?
+          AND source_type = ?
+          AND source_key = ?
+        LIMIT 1
+      `,
+    )
+    .get(groupFolder, sourceType, sourceKey) as
+    | {
+        outcome_id: string;
+        group_folder: string;
+        source_type: OutcomeRecord['sourceType'];
+        source_key: string;
+        linked_refs_json: string | null;
+        status: OutcomeRecord['status'];
+        completion_summary: string | null;
+        next_followup_text: string | null;
+        blocker_text: string | null;
+        due_at: string | null;
+        review_horizon: OutcomeRecord['reviewHorizon'];
+        last_checked_at: string;
+        user_confirmed: number;
+        show_in_daily_review: number;
+        show_in_weekly_review: number;
+        review_suppressed_until: string | null;
+        created_at: string;
+        updated_at: string;
+      }
+    | undefined;
+  if (!row || !isValidGroupFolder(row.group_folder)) return undefined;
+  return mapOutcomeRow(row);
+}
+
+export function listOutcomesForGroup(params: {
+  groupFolder: string;
+  sourceTypes?: OutcomeRecord['sourceType'][];
+  statuses?: OutcomeRecord['status'][];
+  includeSuppressed?: boolean;
+  limit?: number;
+  now?: string;
+}): OutcomeRecord[] {
+  assertValidGroupFolder(params.groupFolder);
+  const clauses = ['group_folder = ?'];
+  const args: unknown[] = [params.groupFolder];
+  if (params.sourceTypes?.length) {
+    clauses.push(`source_type IN (${params.sourceTypes.map(() => '?').join(', ')})`);
+    args.push(...params.sourceTypes);
+  }
+  if (params.statuses?.length) {
+    clauses.push(`status IN (${params.statuses.map(() => '?').join(', ')})`);
+    args.push(...params.statuses);
+  }
+  if (!params.includeSuppressed) {
+    clauses.push(
+      '(review_suppressed_until IS NULL OR review_suppressed_until <= ?)',
+    );
+    args.push(params.now || new Date().toISOString());
+  }
+  args.push(Math.max(1, params.limit || 200));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM outcomes
+        WHERE ${clauses.join(' AND ')}
+        ORDER BY updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<{
+        outcome_id: string;
+        group_folder: string;
+        source_type: OutcomeRecord['sourceType'];
+        source_key: string;
+        linked_refs_json: string | null;
+        status: OutcomeRecord['status'];
+        completion_summary: string | null;
+        next_followup_text: string | null;
+        blocker_text: string | null;
+        due_at: string | null;
+        review_horizon: OutcomeRecord['reviewHorizon'];
+        last_checked_at: string;
+        user_confirmed: number;
+        show_in_daily_review: number;
+        show_in_weekly_review: number;
+        review_suppressed_until: string | null;
+        created_at: string;
+        updated_at: string;
+      }>;
+  return rows
+    .filter((row) => isValidGroupFolder(row.group_folder))
+    .map((row) => mapOutcomeRow(row));
+}
+
+export function updateOutcome(
+  outcomeId: string,
+  updates: Partial<
+    Pick<
+      OutcomeRecord,
+      | 'linkedRefsJson'
+      | 'status'
+      | 'completionSummary'
+      | 'nextFollowupText'
+      | 'blockerText'
+      | 'dueAt'
+      | 'reviewHorizon'
+      | 'lastCheckedAt'
+      | 'userConfirmed'
+      | 'showInDailyReview'
+      | 'showInWeeklyReview'
+      | 'reviewSuppressedUntil'
+      | 'updatedAt'
+    >
+  >,
+): void {
+  const existing = getOutcome(outcomeId);
+  if (!existing) return;
+  upsertOutcome({
+    ...existing,
+    linkedRefsJson:
+      updates.linkedRefsJson !== undefined
+        ? updates.linkedRefsJson
+        : existing.linkedRefsJson,
+    status: updates.status ?? existing.status,
+    completionSummary:
+      updates.completionSummary !== undefined
+        ? updates.completionSummary
+        : existing.completionSummary,
+    nextFollowupText:
+      updates.nextFollowupText !== undefined
+        ? updates.nextFollowupText
+        : existing.nextFollowupText,
+    blockerText:
+      updates.blockerText !== undefined
+        ? updates.blockerText
+        : existing.blockerText,
+    dueAt: updates.dueAt !== undefined ? updates.dueAt : existing.dueAt,
+    reviewHorizon: updates.reviewHorizon ?? existing.reviewHorizon,
+    lastCheckedAt: updates.lastCheckedAt ?? existing.lastCheckedAt,
+    userConfirmed:
+      updates.userConfirmed !== undefined
+        ? updates.userConfirmed
+        : existing.userConfirmed,
+    showInDailyReview:
+      updates.showInDailyReview !== undefined
+        ? updates.showInDailyReview
+        : existing.showInDailyReview,
+    showInWeeklyReview:
+      updates.showInWeeklyReview !== undefined
+        ? updates.showInWeeklyReview
+        : existing.showInWeeklyReview,
+    reviewSuppressedUntil:
+      updates.reviewSuppressedUntil !== undefined
+        ? updates.reviewSuppressedUntil
+        : existing.reviewSuppressedUntil,
+    updatedAt: updates.updatedAt ?? new Date().toISOString(),
+  });
+}
+
 export function upsertActionBundle(record: ActionBundleRecord): void {
   assertValidGroupFolder(record.groupFolder);
   db.prepare(
@@ -3379,6 +3753,35 @@ export function getActionBundleSnapshot(
     bundle,
     actions: listActionBundleActions(bundleId),
   };
+}
+
+export function listActionBundlesForGroup(params: {
+  groupFolder: string;
+  statuses?: ActionBundleRecord['bundleStatus'][];
+  limit?: number;
+}): ActionBundleSnapshot[] {
+  assertValidGroupFolder(params.groupFolder);
+  const clauses = ['group_folder = ?'];
+  const args: unknown[] = [params.groupFolder];
+  if (params.statuses?.length) {
+    clauses.push(`bundle_status IN (${params.statuses.map(() => '?').join(', ')})`);
+    args.push(...params.statuses);
+  }
+  args.push(Math.max(1, params.limit || 25));
+  const rows = db
+    .prepare(
+      `
+        SELECT bundle_id
+        FROM action_bundles
+        WHERE ${clauses.join(' AND ')}
+        ORDER BY last_updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<{ bundle_id: string }>;
+  return rows
+    .map((row) => getActionBundleSnapshot(row.bundle_id))
+    .filter((snapshot): snapshot is ActionBundleSnapshot => Boolean(snapshot));
 }
 
 export function findOpenActionBundleBySource(

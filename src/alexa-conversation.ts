@@ -53,6 +53,10 @@ export interface AlexaConversationSubjectData {
   actionBundleId?: string;
   actionBundleTitle?: string;
   actionBundleSummary?: string;
+  outcomeReviewPromptJson?: string;
+  outcomeReviewFocusOutcomeIds?: string[];
+  outcomeReviewPrimaryOutcomeId?: string;
+  outcomeReviewSummary?: string;
 }
 
 export interface AlexaConversationState {

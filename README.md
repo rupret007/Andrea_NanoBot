@@ -26,6 +26,7 @@
   <a href="docs/KNOWLEDGE_LIBRARY.md">Knowledge Library</a>&nbsp; | &nbsp;
   <a href="docs/COMMUNICATION_COMPANION.md">Communication Companion</a>&nbsp; | &nbsp;
   <a href="docs/ACTION_BUNDLES.md">Action Bundles</a>&nbsp; | &nbsp;
+  <a href="docs/OUTCOME_TRACKING_AND_REVIEWS.md">Reviews</a>&nbsp; | &nbsp;
   <a href="docs/CHIEF_OF_STAFF_MODE.md">Chief-of-Staff Mode</a>&nbsp; | &nbsp;
   <a href="docs/MISSIONS_AND_EXECUTION.md">Missions</a>&nbsp; | &nbsp;
   <a href="docs/PROACTIVE_RITUALS.md">Proactive Rituals</a>&nbsp; | &nbsp;
@@ -366,6 +367,25 @@ Andrea now has a bounded Action Bundle layer so good advice can turn into explic
 - bundle execution is explicit, tracked, and honest about partial success or failure
 
 See [docs/ACTION_BUNDLES.md](docs/ACTION_BUNDLES.md) for the model, approval flow, and current limits.
+
+## Outcome Tracking And Reviews
+
+Andrea now has a bounded closed-loop review layer so execution does not stop at "I created a reminder" or "I ran that bundle."
+
+- outcomes track what actually happened after bundles, reminders, missions, communication follow-through, handoffs, and current-work moves
+- daily and weekly review stay on-demand and grounded in real state Andrea owns or can safely infer
+- Telegram is the richer review surface with grouped sections and bounded controls
+- Alexa stays concise and can orient you around what got done, what slipped, and what is carrying into tomorrow
+- BlueBubbles stays bounded and should hand off dense review to Telegram
+
+This layer stays distinct from:
+
+- missions as the plan structure
+- bundles as the approval-and-execution layer
+- reminders as future nudges
+- life threads as ongoing matters
+
+See [docs/OUTCOME_TRACKING_AND_REVIEWS.md](docs/OUTCOME_TRACKING_AND_REVIEWS.md) for the model, controls, and testing flow.
 
 ## Cross-Channel Companion Handoffs
 

@@ -128,6 +128,13 @@ import { buildGracefulDegradedReply } from './conversational-core.js';
 import { getUserFacingErrorDetail } from './user-facing-error.js';
 import { normalizeVoicePrompt } from './voice-ready.js';
 import type { CompanionHandoffDeps } from './cross-channel-handoffs.js';
+import {
+  applyOutcomeReviewControl,
+  buildOutcomeReviewResponse,
+  interpretOutcomeReviewControl,
+  matchOutcomeReviewPrompt,
+  type OutcomeReviewPromptMatch,
+} from './outcome-reviews.js';
 
 const ALEXA_REQUEST_LIMIT_BYTES = 256 * 1024;
 const DEFAULT_ALEXA_HOST = '127.0.0.1';
@@ -1575,6 +1582,67 @@ export function createAlexaSkill(
       .getResponse();
   };
 
+  const respondWithOutcomeReview = (
+    handlerInput: HandlerInput,
+    linked: Extract<ReturnType<typeof resolveAlexaLinkedAccount>, { ok: true }>,
+    conversationState: AlexaConversationState | undefined,
+    match: OutcomeReviewPromptMatch,
+    now = new Date(),
+  ) => {
+    const presentation = buildOutcomeReviewResponse({
+      groupFolder: linked.account.groupFolder,
+      match,
+      channel: 'alexa',
+      now,
+    });
+    const nextState = buildAlexaCompanionConversationState({
+      flowKey: `outcome_review_${match.kind}`,
+      subjectKind:
+        match.kind === 'still_open_person' ? 'person' : 'day_brief',
+      summaryText:
+        conversationState?.summaryText ||
+        presentation.summaryText ||
+        'review and follow-through',
+      guidanceGoal:
+        match.kind === 'weekly_review' || match.kind === 'review_weekend'
+          ? 'evening_reset'
+          : 'daily_brief',
+      subjectData: {
+        ...(conversationState?.subjectData || {}),
+        personName:
+          match.kind === 'still_open_person'
+            ? match.personName
+            : conversationState?.subjectData.personName,
+        outcomeReviewPromptJson: JSON.stringify(match),
+        outcomeReviewFocusOutcomeIds: presentation.focusOutcomeIds,
+        outcomeReviewPrimaryOutcomeId: presentation.primaryOutcomeId,
+        outcomeReviewSummary: presentation.summaryText,
+      },
+      responseSource: 'local_companion',
+      hasActionItem: presentation.focusOutcomeIds.length > 0,
+      hasRiskSignal:
+        match.kind === 'slipped' ||
+        match.kind === 'needs_attention' ||
+        match.kind === 'weekly_review' ||
+        match.kind === 'review_weekend',
+    });
+    saveAlexaConversationState(
+      linked.principalKey,
+      linked.account.accessTokenHash,
+      linked.account.groupFolder,
+      nextState,
+    );
+    recordHandledRequest(handlerInput.requestEnvelope, {
+      responseSource: 'local_companion',
+      linked: true,
+      groupFolder: linked.account.groupFolder,
+    });
+    return handlerInput.responseBuilder
+      .speak(presentation.text)
+      .reprompt(DEFAULT_ALEXA_REPROMPT)
+      .getResponse();
+  };
+
   const runLocalCompanionIntent = async (
     handlerInput: HandlerInput,
     linked: Extract<ReturnType<typeof resolveAlexaLinkedAccount>, { ok: true }>,
@@ -1583,6 +1651,15 @@ export function createAlexaSkill(
     priorContext?: DailyCompanionContext,
   ) => {
     clearAlexaPendingSession(linked.principalKey);
+    const reviewPrompt = matchOutcomeReviewPrompt(utterance);
+    if (reviewPrompt) {
+      return respondWithOutcomeReview(
+        handlerInput,
+        linked,
+        conversationState,
+        reviewPrompt,
+      );
+    }
     const response = await buildDailyCompanionResponse(utterance, {
       channel: 'alexa',
       groupFolder: linked.account.groupFolder,
@@ -2908,6 +2985,102 @@ export function createAlexaSkill(
             .reprompt('Say the follow-up in a few words.')
             .addElicitSlotDirective('followupText', requestIntent)
             .getResponse();
+        }
+
+        const reviewPrompt = matchOutcomeReviewPrompt(followupText);
+        if (reviewPrompt) {
+          return respondWithOutcomeReview(
+            handlerInput,
+            linked,
+            conversationState,
+            reviewPrompt,
+          );
+        }
+
+        const reviewControl = interpretOutcomeReviewControl(followupText);
+        const reviewOutcomeId =
+          conversationState?.subjectData.outcomeReviewPrimaryOutcomeId ||
+          conversationState?.subjectData.outcomeReviewFocusOutcomeIds?.[0];
+        const reviewPromptJson =
+          conversationState?.subjectData.outcomeReviewPromptJson?.trim();
+        if (reviewControl && reviewOutcomeId && reviewPromptJson) {
+          const controlResult = applyOutcomeReviewControl({
+            groupFolder: linked.account.groupFolder,
+            outcomeId: reviewOutcomeId,
+            control: reviewControl,
+            now: new Date(),
+          });
+          if (controlResult.handled) {
+            let refreshedPrompt: OutcomeReviewPromptMatch | null = null;
+            try {
+              refreshedPrompt = JSON.parse(
+                reviewPromptJson,
+              ) as OutcomeReviewPromptMatch;
+            } catch {
+              refreshedPrompt = null;
+            }
+
+            if (!refreshedPrompt) {
+              recordHandledRequest(handlerInput.requestEnvelope, {
+                responseSource: 'local_companion',
+                linked: true,
+                groupFolder: linked.account.groupFolder,
+              });
+              return handlerInput.responseBuilder
+                .speak(controlResult.replyText || 'Okay.')
+                .reprompt(DEFAULT_ALEXA_REPROMPT)
+                .getResponse();
+            }
+
+            const presentation = buildOutcomeReviewResponse({
+              groupFolder: linked.account.groupFolder,
+              match: refreshedPrompt,
+              channel: 'alexa',
+              now: new Date(),
+            });
+            saveAlexaConversationState(
+              linked.principalKey,
+              linked.account.accessTokenHash,
+              linked.account.groupFolder,
+              buildAlexaCompanionConversationState({
+                flowKey: `outcome_review_${refreshedPrompt.kind}`,
+                subjectKind:
+                  refreshedPrompt.kind === 'still_open_person'
+                    ? 'person'
+                    : 'day_brief',
+                summaryText: presentation.summaryText,
+                guidanceGoal:
+                  refreshedPrompt.kind === 'weekly_review' ||
+                  refreshedPrompt.kind === 'review_weekend'
+                    ? 'evening_reset'
+                    : 'daily_brief',
+                subjectData: {
+                  ...(conversationState?.subjectData || {}),
+                  personName:
+                    refreshedPrompt.kind === 'still_open_person'
+                      ? refreshedPrompt.personName
+                      : conversationState?.subjectData.personName,
+                  outcomeReviewPromptJson: JSON.stringify(refreshedPrompt),
+                  outcomeReviewFocusOutcomeIds: presentation.focusOutcomeIds,
+                  outcomeReviewPrimaryOutcomeId:
+                    presentation.primaryOutcomeId,
+                  outcomeReviewSummary: presentation.summaryText,
+                },
+                responseSource: 'local_companion',
+                hasActionItem: presentation.focusOutcomeIds.length > 0,
+                hasRiskSignal: true,
+              }),
+            );
+            recordHandledRequest(handlerInput.requestEnvelope, {
+              responseSource: 'local_companion',
+              linked: true,
+              groupFolder: linked.account.groupFolder,
+            });
+            return handlerInput.responseBuilder
+              .speak(controlResult.replyText || presentation.text)
+              .reprompt(DEFAULT_ALEXA_REPROMPT)
+              .getResponse();
+          }
         }
 
         const earlyResolution = resolveAlexaConversationFollowup(

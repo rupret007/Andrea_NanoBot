@@ -17,6 +17,11 @@ import { saveKnowledgeSource } from './knowledge-library.js';
 import { handleLifeThreadCommand } from './life-threads.js';
 import { planContextualReminder } from './local-reminder.js';
 import { updateMissionAfterExecution } from './missions.js';
+import {
+  syncOutcomeFromBundleSnapshot,
+  syncOutcomeFromCurrentWorkRef,
+  syncOutcomeFromReminderTask,
+} from './outcome-reviews.js';
 import { handleRitualCommand } from './rituals.js';
 import type {
   ActionBundleActionRecord,
@@ -738,7 +743,9 @@ export function createOrRefreshActionBundle(
 
   upsertActionBundle(record);
   replaceActionBundleActions(bundleId, actions);
-  return getActionBundleSnapshot(bundleId) || null;
+  const snapshot = getActionBundleSnapshot(bundleId) || null;
+  if (snapshot) syncOutcomeFromBundleSnapshot(snapshot, now);
+  return snapshot;
 }
 
 function statusPill(action: ActionBundleActionRecord, selectionMode: boolean): string {
@@ -938,7 +945,9 @@ function finalizeBundleUpdate(
     ...updates,
     lastUpdatedAt: now.toISOString(),
   });
-  return getActionBundleSnapshot(snapshot.bundle.bundleId);
+  const next = getActionBundleSnapshot(snapshot.bundle.bundleId);
+  if (next) syncOutcomeFromBundleSnapshot(next, now);
+  return next;
 }
 
 function describeExecutionOutcome(params: {
@@ -1013,6 +1022,17 @@ async function executeBundleAction(
       };
     }
     createTask(planned.task);
+    syncOutcomeFromReminderTask(planned.task, {
+      linkedRefs: {
+        actionBundleId: snapshot.bundle.bundleId,
+        missionId: relatedRefs.missionId,
+        threadId: relatedRefs.threadId,
+        communicationThreadId: relatedRefs.communicationThreadId,
+        chatJid: reminderChatJid,
+      },
+      summaryText: planned.confirmation,
+      now,
+    });
     if (relatedRefs.missionId) {
       updateMissionAfterExecution({
         missionId: relatedRefs.missionId,
@@ -1200,6 +1220,20 @@ async function executeBundleAction(
         missionId: payload.missionId,
         actionKind: 'reference_current_work',
         linkedCurrentWorkJson: payload.linkedCurrentWorkJson,
+      });
+    }
+    const currentWorkTitle = parseJsonSafe<{ title?: string }>(
+      payload.linkedCurrentWorkJson,
+      {},
+    ).title;
+    if (currentWorkTitle) {
+      syncOutcomeFromCurrentWorkRef({
+        groupFolder: deps.groupFolder,
+        sourceKey: snapshot.bundle.bundleId,
+        currentWorkRef: currentWorkTitle,
+        missionId: payload.missionId,
+        chatJid: deps.chatJid,
+        now,
       });
     }
     return {

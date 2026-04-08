@@ -33,8 +33,10 @@ import {
   getAllTasks,
   listKnowledgeSourcesForGroup,
   setRegisteredGroup,
+  upsertCommunicationThread,
 } from './db.js';
 import { ASSISTANT_NAME } from './config.js';
+import { syncOutcomeFromCommunicationThreadRecord } from './outcome-reviews.js';
 
 vi.mock('./alexa-bridge.js', async () => {
   const actual =
@@ -381,6 +383,69 @@ describe('createAlexaSkill', () => {
     );
     expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
     expect(extractSpeechText(response)).toContain('Today is light');
+  });
+
+  it('answers explicit Alexa review asks from the outcome review layer and carries follow-up control', async () => {
+    const thread = {
+      id: 'comm-candace-review',
+      groupFolder: 'main',
+      title: 'Candace',
+      linkedSubjectIds: [],
+      linkedLifeThreadIds: [],
+      channel: 'telegram' as const,
+      channelChatJid: 'tg:main',
+      lastInboundSummary: 'Candace still needs a dinner answer tonight.',
+      lastOutboundSummary: null,
+      followupState: 'reply_needed' as const,
+      urgency: 'tonight' as const,
+      followupDueAt: '2026-04-08T22:00:00.000Z',
+      suggestedNextAction: 'draft_reply' as const,
+      toneStyleHints: [],
+      lastContactAt: '2026-04-08T18:00:00.000Z',
+      lastMessageId: 'msg-candace-review',
+      linkedTaskId: null,
+      inferenceState: 'user_confirmed' as const,
+      trackingMode: 'default' as const,
+      createdAt: '2026-04-08T17:00:00.000Z',
+      updatedAt: '2026-04-08T18:00:00.000Z',
+      disabledAt: null,
+    };
+    upsertCommunicationThread(thread);
+    syncOutcomeFromCommunicationThreadRecord(
+      thread,
+      new Date('2026-04-08T19:00:00.000Z'),
+    );
+
+    const skill = createAlexaSkill(buildConfig());
+    const reviewResponse = await skill.invoke(
+      buildIntentEnvelope('ConversationalFollowupIntent', {
+        followupText: "what's still open with Candace",
+      }),
+    );
+
+    expect(mockedBuildDailyCompanionResponse).not.toHaveBeenCalled();
+    expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
+    expect(extractSpeechText(reviewResponse).toLowerCase()).toContain(
+      'candace',
+    );
+
+    const linked = seedLinkedAccount('main');
+    const state = loadAlexaConversationState(
+      getAlexaPrincipalKey({
+        userId: 'amzn1.ask.account.test-user',
+        personId: 'amzn1.ask.person.test-person',
+      }),
+      linked!.accessTokenHash,
+    );
+    expect(state?.subjectData.outcomeReviewPrimaryOutcomeId).toBeTruthy();
+
+    const deferResponse = await skill.invoke(
+      buildIntentEnvelope('ConversationalFollowupIntent', {
+        followupText: 'remind me tomorrow instead',
+      }),
+    );
+    expect(extractSpeechText(deferResponse)).toContain('remind');
+    expect(getAllTasks().length).toBeGreaterThan(0);
   });
 
   it('routes WhatMattersMostTodayIntent as measured Alexa companion guidance', async () => {
