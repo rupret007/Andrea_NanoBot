@@ -133,6 +133,10 @@ These are intentionally different:
 - `send later`
   - queue one specific approved draft for one-off later delivery in the same known BlueBubbles thread
   - you can still edit, cancel, or convert it to a reminder before it fires
+- `save under thread`
+  - keep the draft unsent, but attach it to the tracked thread so Andrea can bring it back in follow-through and review
+- `keep as draft`
+  - keep the text as a draft only, with no send queue and no implied reminder
 - `approve and send now`
   - real delivery through the live channel
 
@@ -163,6 +167,7 @@ That means Andrea can now distinguish:
 
 - draft exists
 - approved but unsent
+- saved under thread for later follow-through
 - deferred to later
 - failed to send
 - sent successfully

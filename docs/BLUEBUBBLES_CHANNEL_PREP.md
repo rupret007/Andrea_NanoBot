@@ -199,6 +199,8 @@ Use this exact proof sequence:
 6. Make one same-thread message-action decision:
    - `@Andrea send it`
    - or `@Andrea send it later tonight`
+   - or `@Andrea remind me later`
+   - or `@Andrea save that under the thread`
 7. Optionally send:
    - `send me the fuller version on Telegram`
 8. Run:
@@ -214,6 +216,11 @@ Success should show:
 - non-`none` `bluebubbles_last_outbound`
 - `message_action_proof_state=fresh`
 - `message_action_proof_chat` matching the same BlueBubbles thread
+
+If the proof still says `near_live_only`, treat that as honest host truth rather than a soft failure:
+
+- Andrea is still near-live if transport, webhook, and ordinary same-thread chat are healthy but the fresh same-thread message-action leg has not happened on this host yet
+- do not mark BlueBubbles `live_proven` until that same-thread message-action leg is actually recorded
 
 ## Testing
 

@@ -76,6 +76,7 @@ That now includes:
 - approved but still unsent
 - queued scheduled sends
 - reminder-backed defer instead of send
+- saved-under-thread follow-through that is still unsent
 - send failures that preserved the draft
 - sent today versus still-open communication carryover
 
@@ -207,6 +208,7 @@ Examples:
 
 - `Used your usual reminder rule here.`
 - `Saved under your usual Candace follow-up rule.`
+- `Kept unsent under the thread for later follow-through.`
 - `Marked as carryover using your usual evening-review rule.`
 
 That matters for trust:

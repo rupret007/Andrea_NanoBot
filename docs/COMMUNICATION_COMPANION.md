@@ -91,6 +91,7 @@ Current communication capabilities:
 - `communication.manage_tracking`
   - save under a life thread
   - remind me to reply later
+  - keep the draft unsent while saving it under the thread for later follow-through
   - don't surface this automatically
   - stop tracking that
   - mark that handled
@@ -135,6 +136,7 @@ For the draft -> approve -> send boundary itself, see [MESSAGING_TRUST_LADDER_AN
 - `What's still open with Candace?`
 - `Remind me to reply later tonight.`
 - `Save this conversation under the Candace thread.`
+- `Keep that as a draft for now.`
 - `Don't surface this automatically.`
 
 ## Testing

@@ -481,6 +481,79 @@ describe('outcome reviews', () => {
     expect(sentPresentation.text).toContain('*Sent Today*');
   });
 
+  it('distinguishes saved-under-thread drafts from reminder-backed message follow-through', () => {
+    const now = new Date('2026-04-08T20:15:00.000Z');
+    const baseFields = {
+      groupFolder: 'main',
+      sourceType: 'communication_thread' as const,
+      sourceKey: 'comm-candace',
+      sourceSummary: 'Candace follow-through',
+      targetKind: 'external_thread' as const,
+      targetChannel: 'bluebubbles' as const,
+      targetConversationJson: JSON.stringify({
+        kind: 'external_thread',
+        chatJid: 'bb:chat-1',
+        personName: 'Candace',
+      }),
+      requiresApproval: false,
+      delegationRuleId: null,
+      delegationMode: null,
+      explanationJson: null,
+      linkedRefsJson: JSON.stringify({
+        communicationThreadId: 'comm-candace',
+        personName: 'Candace',
+      }),
+      platformMessageId: null,
+      presentationChatJid: 'tg:main',
+      presentationThreadId: null,
+      presentationMessageId: null,
+      createdAt: now.toISOString(),
+      lastUpdatedAt: now.toISOString(),
+    };
+
+    upsertMessageAction({
+      ...baseFields,
+      messageActionId: 'msg-thread-save',
+      dedupeKey: 'msg-thread-save',
+      draftText: 'Yes, tonight still works for me.',
+      trustLevel: 'approve_before_send',
+      sendStatus: 'deferred',
+      followupAt: null,
+      scheduledTaskId: null,
+      approvedAt: null,
+      lastActionKind: 'save_to_thread',
+      lastActionAt: '2026-04-08T20:11:00.000Z',
+      sentAt: null,
+    });
+    upsertMessageAction({
+      ...baseFields,
+      messageActionId: 'msg-reminder-save',
+      dedupeKey: 'msg-reminder-save',
+      draftText: 'I can do 7 instead.',
+      trustLevel: 'approve_before_send',
+      sendStatus: 'deferred',
+      followupAt: '2026-04-09T14:00:00.000Z',
+      scheduledTaskId: null,
+      approvedAt: null,
+      lastActionKind: 'remind_instead',
+      lastActionAt: '2026-04-08T20:12:00.000Z',
+      sentAt: null,
+    });
+
+    syncOutcomeFromMessageActionRecord(getMessageAction('msg-thread-save')!, now);
+    syncOutcomeFromMessageActionRecord(getMessageAction('msg-reminder-save')!, now);
+
+    const presentation = buildOutcomeReviewResponse({
+      groupFolder: 'main',
+      match: { kind: 'messages_unsent' },
+      channel: 'telegram',
+      now,
+    });
+
+    expect(presentation.text).toContain('saved under the thread');
+    expect(presentation.text).toContain('Converted to a reminder');
+  });
+
   it('applies review controls to handle, defer, and suppress open loops', () => {
     const now = new Date('2026-04-08T20:30:00.000Z');
     const communication = seedCommunicationThread({

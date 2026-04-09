@@ -159,6 +159,7 @@ Treat that messaging suite as the fast proof that Andrea can:
 - require approval before external send by default
 - send a BlueBubbles same-thread reply without the Andrea prefix
 - keep one-off scheduled send distinct from remind-later
+- keep save-under-thread distinct from remind-later and scheduled send
 - surface sent vs deferred messaging honestly in review
 
 For outcome tracking, carryover, and review-flow changes, add:
@@ -254,6 +255,7 @@ Important truth for this host:
 - a healthy host can still report `STATUS: failed` if `EXTERNAL_BLOCKERS` are present
 - on the current host, that now usually means `alexa_live_signed_turn_missing`, not a broken service
 - BlueBubbles is near-live on this Windows machine once the `BLUEBUBBLES_*` host configuration is loaded, the server is reachable, and Andrea's public webhook is registered; it becomes live-proven only after a same-host roundtrip plus one same-thread message-action proof leg is reproved
+- after repo-side messaging changes, restart the local services before judging live proof so `SERVING_COMMIT_MATCHES_WORKSPACE_HEAD: true` reflects the current candidate
 - if `SERVICE: running_ready` and the blocker is external, treat that as an exact release-candidate caveat rather than a host failure
 
 Then validate the public-safe Telegram surface:

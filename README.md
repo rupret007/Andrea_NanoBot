@@ -61,7 +61,7 @@ The best way to understand Andrea now is through the flagship journeys it should
 - Alexa daily orientation -> Telegram richer follow-through
 - `What am I forgetting?` -> one open loop -> reminder, save, or tracking action
 - `What's still open with Candace?` -> draft reply -> save to thread or remind later
-- `What should I say back?` -> draft -> approve/send or queue a bounded send-later -> honest review state
+- `What should I say back?` -> draft -> approve/send, save under thread, remind later, or queue a bounded send-later -> honest review state
 - `Help me plan tonight / this weekend` -> mission proposal -> blocker -> confirmed next action
 - source-grounded research -> richer detail -> save to library
 - BlueBubbles message help -> summarize -> draft -> remind later -> optional Telegram escalation

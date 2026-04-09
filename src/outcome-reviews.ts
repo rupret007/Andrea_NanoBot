@@ -666,8 +666,10 @@ export function syncOutcomeFromMessageActionRecord(
     action.sendStatus === 'deferred' &&
     action.trustLevel === 'schedule_send' &&
     Boolean(action.scheduledTaskId);
+  const savedUnderThread =
+    action.sendStatus === 'deferred' && action.lastActionKind === 'save_to_thread';
   const reminderBackedDefer =
-    action.sendStatus === 'deferred' && !scheduledSend;
+    action.sendStatus === 'deferred' && !scheduledSend && !savedUnderThread;
   const status: OutcomeStatus =
     action.sendStatus === 'sent'
       ? 'completed'
@@ -683,6 +685,12 @@ export function syncOutcomeFromMessageActionRecord(
       ? clipText(action.sourceSummary || 'Sent the reply.', 140)
       : scheduledSend
         ? clipText(action.sourceSummary || 'Queued this reply to send later.', 140)
+        : savedUnderThread
+          ? clipText(
+              action.sourceSummary ||
+                'Saved this reply under the thread for later follow-through.',
+              140,
+            )
         : reminderBackedDefer
           ? action.lastActionKind === 'remind_instead'
             ? clipText(
@@ -706,6 +714,8 @@ export function syncOutcomeFromMessageActionRecord(
         ? `Queued to send around ${
             formatWhenLabel(action.followupAt) || action.followupAt || 'later'
           }.`
+        : savedUnderThread
+          ? 'This message is still unsent and saved under the thread for later follow-through.'
         : reminderBackedDefer
           ? action.lastActionKind === 'remind_instead'
             ? `Converted to a reminder${

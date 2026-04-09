@@ -106,6 +106,7 @@ export type MessageActionOperation =
   | { kind: 'defer'; timingHint?: string | null }
   | { kind: 'cancel_deferred' }
   | { kind: 'remind_instead'; timingHint?: string | null }
+  | { kind: 'keep_draft' }
   | { kind: 'save_to_thread' }
   | { kind: 'rewrite'; style: 'shorter' | 'warmer' | 'more_direct' }
   | { kind: 'rewrite_and_send'; style: 'shorter' | 'warmer' | 'more_direct' }
@@ -605,7 +606,7 @@ function inferUrgencyFromDueAt(
 function syncCommunicationThreadState(params: {
   action: MessageActionRecord;
   now: Date;
-  mode: 'sent' | 'scheduled_send' | 'reminder' | 'failed';
+  mode: 'sent' | 'scheduled_send' | 'reminder' | 'thread_saved' | 'drafted' | 'failed';
   platformMessageId?: string | null;
   dueAt?: string | null;
 }): void {
@@ -650,6 +651,24 @@ function syncCommunicationThreadState(params: {
         params.dueAt || params.action.followupAt || null,
         params.now,
       ),
+      updatedAt: params.now.toISOString(),
+    });
+    return;
+  }
+
+  if (params.mode === 'thread_saved') {
+    updateCommunicationThread(communicationThreadId, {
+      followupState: 'reply_needed',
+      suggestedNextAction: 'save_for_later',
+      updatedAt: params.now.toISOString(),
+    });
+    return;
+  }
+
+  if (params.mode === 'drafted') {
+    updateCommunicationThread(communicationThreadId, {
+      followupState: 'reply_needed',
+      suggestedNextAction: 'draft_reply',
       updatedAt: params.now.toISOString(),
     });
     return;
@@ -758,17 +777,22 @@ function buildActionLead(record: MessageActionRecord): string {
   if (isScheduledSendAction(record)) {
     return 'Andrea: I queued that to send later.';
   }
+  if (record.sendStatus === 'deferred' && record.lastActionKind === 'save_to_thread') {
+    return 'Andrea: I saved that under the thread.';
+  }
   switch (record.sendStatus) {
     case 'sent':
-      return 'Andrea: I sent that.';
+      return 'Andrea: That went out.';
     case 'deferred':
-      return 'Andrea: I saved that to send later.';
+      return record.lastActionKind === 'remind_instead'
+        ? 'Andrea: I kept that unsent and set a reminder.'
+        : 'Andrea: I saved that to revisit before sending.';
     case 'failed':
       return "Andrea: I couldn't send that right now.";
     case 'approved':
-      return 'Andrea: This is ready to go.';
+      return 'Andrea: This is approved and ready.';
     case 'skipped':
-      return 'Andrea: Okay — I left that unsent.';
+      return 'Andrea: Okay, I left that unsent.';
     case 'drafted':
     default:
       return 'Andrea: I drafted a reply.';
@@ -779,6 +803,16 @@ function buildStatusLine(record: MessageActionRecord): string {
   if (isScheduledSendAction(record)) {
     return `Status: queued to send around ${
       formatWhenLabel(record.followupAt) || record.followupAt || 'later'
+    }.`;
+  }
+  if (record.sendStatus === 'deferred' && record.lastActionKind === 'save_to_thread') {
+    return 'Status: saved under the thread for later follow-through.';
+  }
+  if (record.sendStatus === 'deferred' && record.lastActionKind === 'remind_instead') {
+    return `Status: kept unsent with a reminder${
+      formatWhenLabel(record.followupAt)
+        ? ` for ${formatWhenLabel(record.followupAt)}`
+        : ''
     }.`;
   }
   if (record.sendStatus === 'deferred' && record.followupAt) {
@@ -803,6 +837,28 @@ function buildStatusLine(record: MessageActionRecord): string {
     : 'Status: ready to send.';
 }
 
+function buildStateNote(record: MessageActionRecord): string | null {
+  if (record.sendStatus === 'sent') {
+    return null;
+  }
+  if (isScheduledSendAction(record)) {
+    return 'This draft is already approved. Andrea will send it at the scheduled time unless you revise it, cancel it, or switch to a reminder.';
+  }
+  if (record.sendStatus === 'deferred' && record.lastActionKind === 'remind_instead') {
+    return 'This message is still unsent. Andrea only set a reminder.';
+  }
+  if (record.sendStatus === 'deferred' && record.lastActionKind === 'save_to_thread') {
+    return 'This message is still unsent. Andrea saved it under the thread for later follow-through.';
+  }
+  if (record.sendStatus === 'approved') {
+    return 'This message is approved, but it has not gone out yet.';
+  }
+  if (record.sendStatus === 'drafted') {
+    return 'This message is still just a draft.';
+  }
+  return null;
+}
+
 function nextStepLine(record: MessageActionRecord): string {
   if (record.sendStatus === 'sent') {
     return 'Next: review it later if you want to track the follow-through.';
@@ -810,10 +866,16 @@ function nextStepLine(record: MessageActionRecord): string {
   if (isScheduledSendAction(record)) {
     return 'Next: send it now, cancel the scheduled send, remind yourself instead, or revise it.';
   }
+  if (record.sendStatus === 'deferred' && record.lastActionKind === 'save_to_thread') {
+    return 'Next: show the draft again, send it, send it later, or remind yourself instead.';
+  }
+  if (record.sendStatus === 'deferred' && record.lastActionKind === 'remind_instead') {
+    return 'Next: send it when you are ready, change the reminder, save it under the thread, or keep editing it.';
+  }
   if (record.sendStatus === 'deferred') {
     return 'Next: I can show the draft again, remind you instead, or send it when you are ready.';
   }
-  return 'Next: send it, send it later, remind me instead, or keep editing it.';
+  return 'Next: send it, send it later, remind me instead, save it under the thread, or keep editing it.';
 }
 
 function buildInlineRows(record: MessageActionRecord): ChannelInlineAction[][] {
@@ -874,6 +936,10 @@ export function buildMessageActionPresentation(
     '',
     buildStatusLine(record),
   ];
+  const stateNote = buildStateNote(record);
+  if (stateNote) {
+    lines.push(stateNote);
+  }
   if (linkedRefs.delegationRuleId) {
     lines.push(explanation.delegationNote || 'Used your usual rule here.');
   }
@@ -993,6 +1059,9 @@ export function interpretMessageActionFollowup(
       timingHint: parseTimingHintFromUtterance(rawText),
     };
   }
+  if (/^(keep (?:it|that)(?: as)? (?:a )?draft|keep as draft|leave it as draft)$/.test(normalized)) {
+    return { kind: 'keep_draft' };
+  }
   if (/^(save under (?:the )?thread|save it under (?:the )?thread)$/.test(normalized)) {
     return { kind: 'save_to_thread' };
   }
@@ -1082,7 +1151,7 @@ async function persistDeferredReminder(params: {
   const hint = formatWhenLabel(planned.task.next_run) || 'then';
   return {
     replyText: params.reminderOnly
-      ? `Andrea: I'll remind you about that around ${hint}.`
+      ? `Andrea: I kept the draft unsent and I'll remind you about it around ${hint}.`
       : `Andrea: I saved that to revisit before sending, and I'll bring it back around ${hint}.`,
     updatedAction,
   };
@@ -1215,6 +1284,39 @@ function cancelScheduledSend(params: {
   syncOutcomeFromMessageActionRecord(updatedAction, params.now);
   return {
     replyText: 'Andrea: Okay, I canceled the scheduled send and kept the draft ready.',
+    updatedAction,
+  };
+}
+
+function keepMessageAsDraft(params: {
+  action: MessageActionRecord;
+  now: Date;
+}): { replyText: string; updatedAction: MessageActionRecord } {
+  if (params.action.delegationRuleId) {
+    recordDelegationRuleOverride(params.action.delegationRuleId, params.now);
+  }
+  pauseScheduledTask(params.action.scheduledTaskId);
+  updateMessageAction(params.action.messageActionId, {
+    sendStatus: 'drafted',
+    followupAt: null,
+    scheduledTaskId: null,
+    requiresApproval: true,
+    trustLevel: normalizeTrustLevelAfterQueue(params.action),
+    approvedAt: null,
+    lastActionKind: 'drafted',
+    lastActionAt: params.now.toISOString(),
+    lastUpdatedAt: params.now.toISOString(),
+  });
+  const updatedAction = getMessageAction(params.action.messageActionId) || params.action;
+  syncCommunicationThreadState({
+    action: updatedAction,
+    now: params.now,
+    mode: 'drafted',
+  });
+  syncOutcomeFromMessageActionRecord(updatedAction, params.now);
+  return {
+    replyText:
+      'Andrea: Okay, I kept it as a draft. It will not send unless you come back to it.',
     updatedAction,
   };
 }
@@ -1535,7 +1637,7 @@ export async function applyMessageActionOperation(
     return {
       handled: true,
       action: updatedAction,
-      replyText: 'Andrea: Okay — I left that unsent.',
+      replyText: 'Andrea: Okay, I left that unsent.',
       presentation: buildMessageActionPresentation(
         updatedAction,
         deps.channel === 'bluebubbles' ? 'bluebubbles' : 'telegram',
@@ -1556,7 +1658,26 @@ export async function applyMessageActionOperation(
     };
   }
 
+  if (operation.kind === 'keep_draft') {
+    const kept = keepMessageAsDraft({
+      action,
+      now,
+    });
+    return {
+      handled: true,
+      action: kept.updatedAction,
+      replyText: kept.replyText,
+      presentation: buildMessageActionPresentation(
+        kept.updatedAction,
+        deps.channel === 'bluebubbles' ? 'bluebubbles' : 'telegram',
+      ),
+    };
+  }
+
   if (operation.kind === 'save_to_thread') {
+    if (action.delegationRuleId) {
+      recordDelegationRuleOverride(action.delegationRuleId, now);
+    }
     const result = handleLifeThreadCommand({
       groupFolder: action.groupFolder,
       channel: deps.channel,
@@ -1566,19 +1687,50 @@ export async function applyMessageActionOperation(
       conversationSummary: action.sourceSummary || 'Draft follow-through',
       now,
     });
+    if (!result.handled) {
+      return { handled: false };
+    }
+    const existingLinkedRefs = parseLinkedRefs(action);
+    const nextLinkedRefs = {
+      ...existingLinkedRefs,
+      threadId: result.referencedThread?.id || existingLinkedRefs.threadId || undefined,
+    };
+    updateMessageAction(action.messageActionId, {
+      sendStatus: 'deferred',
+      followupAt: null,
+      scheduledTaskId: null,
+      requiresApproval: false,
+      trustLevel: normalizeTrustLevelAfterQueue(action),
+      approvedAt: null,
+      lastActionKind: 'save_to_thread',
+      lastActionAt: now.toISOString(),
+      linkedRefsJson: JSON.stringify(nextLinkedRefs),
+      lastUpdatedAt: now.toISOString(),
+    });
+    const updatedAction = getMessageAction(action.messageActionId) || action;
+    syncCommunicationThreadState({
+      action: updatedAction,
+      now,
+      mode: 'thread_saved',
+    });
+    syncOutcomeFromMessageActionRecord(updatedAction, now);
     return {
       handled: Boolean(result.handled),
-      action,
+      action: updatedAction,
       replyText:
-        result.responseText || 'Andrea: I saved that under the thread.',
+        result.responseText ||
+        'Andrea: I saved that under the thread. The message is still unsent.',
       presentation: buildMessageActionPresentation(
-        action,
+        updatedAction,
         deps.channel === 'bluebubbles' ? 'bluebubbles' : 'telegram',
       ),
     };
   }
 
   if (operation.kind === 'defer') {
+    if (action.delegationRuleId) {
+      recordDelegationRuleOverride(action.delegationRuleId, now);
+    }
     const eligibility = validateScheduledSendEligibility(action);
     if (eligibility.ok) {
       const scheduled = await createScheduledSend({
@@ -1618,6 +1770,9 @@ export async function applyMessageActionOperation(
   }
 
   if (operation.kind === 'remind_instead') {
+    if (action.delegationRuleId) {
+      recordDelegationRuleOverride(action.delegationRuleId, now);
+    }
     const deferred = await persistDeferredReminder({
       action,
       timingHint: operation.timingHint || null,

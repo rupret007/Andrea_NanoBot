@@ -230,6 +230,7 @@ describe('message actions', () => {
     const reminderId = JSON.parse(updated.linkedRefsJson || '{}').reminderTaskId;
 
     expect(result.handled).toBe(true);
+    expect(result.replyText).toContain('kept the draft unsent');
     expect(updated.sendStatus).toBe('deferred');
     expect(updated.lastActionKind).toBe('remind_instead');
     expect(reminderId).toBeTruthy();
@@ -237,6 +238,49 @@ describe('message actions', () => {
     expect(
       getOutcomeBySource('main', 'message_action', action.messageActionId)?.status,
     ).toBe('deferred');
+  });
+
+  it('stores save-under-thread as a distinct unsent state', async () => {
+    const thread = seedCommunicationThread();
+    const action = createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'telegram',
+      presentationChatJid: 'tg:main',
+      sourceType: 'communication_thread',
+      sourceKey: thread.id,
+      sourceSummary: 'Candace still needs an answer if dinner is on.',
+      draftText: 'Yes, tonight still works for me.',
+      personName: 'Candace',
+      threadTitle: 'Candace',
+      communicationThreadId: thread.id,
+      communicationContext: 'reply_followthrough',
+      now: new Date('2026-04-08T19:17:00.000Z'),
+    });
+
+    const result = await applyMessageActionOperation(
+      action.messageActionId,
+      { kind: 'save_to_thread' },
+      {
+        groupFolder: 'main',
+        channel: 'telegram',
+        chatJid: 'tg:main',
+        currentTime: new Date('2026-04-08T19:18:00.000Z'),
+        sendToTarget: vi.fn(async () => ({ platformMessageId: 'unused' })),
+      },
+    );
+
+    const updated = getMessageAction(action.messageActionId)!;
+    const linkedRefs = JSON.parse(updated.linkedRefsJson || '{}');
+    const outcome = getOutcomeBySource('main', 'message_action', action.messageActionId)!;
+
+    expect(result.handled).toBe(true);
+    expect(updated.sendStatus).toBe('deferred');
+    expect(updated.lastActionKind).toBe('save_to_thread');
+    expect(updated.requiresApproval).toBe(false);
+    expect(linkedRefs.threadId).toBeTruthy();
+    expect(getCommunicationThread(thread.id)?.suggestedNextAction).toBe('save_for_later');
+    expect(outcome.status).toBe('deferred');
+    expect(outcome.nextFollowupText).toContain('saved under the thread');
   });
 
   it('prevents duplicate sends unless the user explicitly asks to send again', async () => {
@@ -401,6 +445,56 @@ describe('message actions', () => {
     expect(updated.requiresApproval).toBe(true);
     expect(updated.scheduledTaskId).toBeNull();
     expect(updated.lastActionKind).toBe('rewrite');
+    expect(getTaskById(scheduled.scheduledTaskId!)?.status).toBe('paused');
+  });
+
+  it('can keep a queued send as a draft without leaving it scheduled', async () => {
+    vi.stubEnv('BLUEBUBBLES_SEND_ENABLED', 'true');
+    const thread = seedCommunicationThread();
+    const action = createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'bluebubbles',
+      presentationChatJid: 'bb:chat-1',
+      sourceType: 'communication_thread',
+      sourceKey: thread.id,
+      sourceSummary: 'Candace still needs a quick dinner answer.',
+      draftText: 'Yes, tonight still works for me.',
+      personName: 'Candace',
+      threadTitle: 'Candace',
+      communicationThreadId: thread.id,
+      communicationContext: 'reply_followthrough',
+      now: new Date('2026-04-08T19:38:00.000Z'),
+    });
+
+    await applyMessageActionOperation(action.messageActionId, { kind: 'defer' }, {
+      groupFolder: 'main',
+      channel: 'bluebubbles',
+      chatJid: 'bb:chat-1',
+      currentTime: new Date('2026-04-08T19:39:00.000Z'),
+      sendToTarget: vi.fn(async () => ({ platformMessageId: 'unused' })),
+    });
+    const scheduled = getMessageAction(action.messageActionId)!;
+
+    const result = await applyMessageActionOperation(
+      scheduled.messageActionId,
+      { kind: 'keep_draft' },
+      {
+        groupFolder: 'main',
+        channel: 'bluebubbles',
+        chatJid: 'bb:chat-1',
+        currentTime: new Date('2026-04-08T19:40:00.000Z'),
+        sendToTarget: vi.fn(async () => ({ platformMessageId: 'unused' })),
+      },
+    );
+
+    const updated = getMessageAction(action.messageActionId)!;
+    expect(result.handled).toBe(true);
+    expect(result.replyText).toContain('kept it as a draft');
+    expect(updated.sendStatus).toBe('drafted');
+    expect(updated.requiresApproval).toBe(true);
+    expect(updated.scheduledTaskId).toBeNull();
+    expect(updated.approvedAt).toBeNull();
+    expect(updated.lastActionKind).toBe('drafted');
     expect(getTaskById(scheduled.scheduledTaskId!)?.status).toBe('paused');
   });
 
