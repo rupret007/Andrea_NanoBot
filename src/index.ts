@@ -255,7 +255,9 @@ import {
   type PendingGoogleCalendarCreateState,
 } from './google-calendar-create.js';
 import {
+  classifyGoogleCalendarFailureDetail,
   type GoogleCalendarEventRecord,
+  isGoogleCalendarAuthFailureKind,
   type GoogleCalendarMetadata,
   deleteGoogleCalendarEvent,
   listGoogleCalendarEvents,
@@ -1830,16 +1832,8 @@ function resolveConversationalChannelForChannelName(
 function isGoogleCalendarAuthOrConfigDetail(
   detail: string | null | undefined,
 ): boolean {
-  if (!detail) return false;
-  const normalized = detail.toLowerCase();
-  return (
-    normalized.includes('google_calendar_') ||
-    normalized.includes('access token') ||
-    normalized.includes('refresh token') ||
-    normalized.includes('client id') ||
-    normalized.includes('client secret') ||
-    normalized.includes('credentials') ||
-    normalized.includes('oauth')
+  return isGoogleCalendarAuthFailureKind(
+    classifyGoogleCalendarFailureDetail(detail),
   );
 }
 
@@ -1878,9 +1872,13 @@ function resolveCalendarCompanionFailureKind(params: {
   transientHostUnavailable?: boolean;
   fallbackKind?: Exclude<CalendarCompanionFailureKind, 'temporary_unavailable'>;
 }): CalendarCompanionFailureKind {
+  const classifiedFailure = classifyGoogleCalendarFailureDetail(
+    params.technicalDetail,
+  );
   if (
     params.transientHostUnavailable ||
-    isTransientCalendarFailureDetail(params.technicalDetail)
+    isTransientCalendarFailureDetail(params.technicalDetail) ||
+    classifiedFailure === 'temporary_unavailable'
   ) {
     return 'temporary_unavailable';
   }

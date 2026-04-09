@@ -56,6 +56,30 @@ Use these meanings consistently when reading `/cursor_status` and the setup docs
 - **conditional** = partially wired or environment-dependent; not the baseline promise
 - **unavailable** = missing config, unreachable dependency, or unsupported on this machine
 
+## Google Calendar Write Path
+
+Andrea's Google Calendar action path is intentionally separate from reminders and save-for-later:
+
+- `put this on my calendar` or `add this event tomorrow` should route to the Google Calendar create path
+- `remind me later` should stay a reminder
+- `save that for later` should stay a non-calendar carryover action
+
+Operator setup on the current repo:
+
+```bash
+npm run setup -- --step google-calendar auth --client-secret-json "C:\path\to\client_secret.json"
+npm run setup -- --step google-calendar discover --select all
+npm run setup -- --step google-calendar validate
+```
+
+Use `validate` as the source of truth for live calendar state on this host:
+
+- `FAILURE_KIND: missing_config` means the current repo does not have usable Google Calendar credentials yet
+- `FAILURE_KIND: invalid_refresh_token` means the refresh token is stale or revoked and the current repo needs a fresh OAuth consent
+- `FAILURE_KIND: token_refresh_failed` means refresh is failing for another OAuth reason
+
+Do not copy an older refresh token into a newer merged repo and assume writes are recovered. Re-run the current repo auth flow instead.
+
 ## What This Package Includes
 
 - `nanoclaw` runtime and isolation model as the base.

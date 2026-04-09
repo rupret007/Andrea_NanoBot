@@ -96,6 +96,16 @@ Current communication capabilities:
   - stop tracking that
   - mark that handled
 
+## Calendar vs Reminder vs Save
+
+Communication follow-through should keep these paths distinct:
+
+- `put this on my calendar` should go to the calendar create path when Google Calendar is configured
+- `remind me later` should create a reminder, not a calendar event
+- `save that for later` or `save that under the thread` should keep the follow-through unsent and non-calendar
+
+Andrea should never talk as if a calendar event was created when the real result was only a reminder or saved thread follow-through.
+
 ## Channel Behavior
 
 Alexa:

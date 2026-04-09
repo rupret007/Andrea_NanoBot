@@ -6,6 +6,7 @@ import path from 'path';
 import { spawn } from 'child_process';
 
 import {
+  classifyGoogleCalendarFailureDetail,
   listGoogleCalendars,
   resolveGoogleCalendarConfig,
   validateGoogleCalendarConfig,
@@ -32,6 +33,25 @@ interface GoogleCalendarSetupArgs {
   action: 'auth' | 'discover' | 'validate' | '';
   clientSecretJsonPath: string | null;
   select: string | null;
+}
+
+function toErrorDetail(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function emitGoogleCalendarFailureStatus(
+  action: GoogleCalendarSetupArgs['action'],
+  error: unknown,
+  extra: Record<string, string | number | boolean> = {},
+): void {
+  const detail = toErrorDetail(error);
+  emitStatus('GOOGLE_CALENDAR', {
+    ACTION: action || 'unknown',
+    STATUS: 'failed',
+    FAILURE_KIND: classifyGoogleCalendarFailureDetail(detail),
+    ERROR: detail,
+    ...extra,
+  });
 }
 
 function parseArgs(args: string[]): GoogleCalendarSetupArgs {
@@ -325,44 +345,44 @@ export function resolveCalendarSelection(
 
 async function runAuth(clientSecretJsonPath: string): Promise<void> {
   const absolutePath = path.resolve(clientSecretJsonPath);
-  const raw = fs.readFileSync(absolutePath, 'utf-8');
-  const client = parseGoogleInstalledClientSecretJson(raw);
-  const state = crypto.randomBytes(16).toString('hex');
-  const pkce = createGooglePkcePair();
-  const server = http.createServer();
-
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => resolve());
-  });
-
-  const address = server.address();
-  if (!address || typeof address === 'string') {
-    server.close();
-    throw new Error(
-      'Could not open a localhost callback server for Google OAuth.',
-    );
-  }
-
-  const redirectUri = `http://localhost:${address.port}`;
-  const authUrl = buildGoogleAuthUrl({
-    clientId: client.clientId,
-    redirectUri,
-    state,
-    codeChallenge: pkce.codeChallenge,
-  });
-
-  logger.info(
-    { redirectUri, hostname: os.hostname() },
-    'Starting Google Calendar OAuth bootstrap',
-  );
-  console.log(
-    'Open this URL in your browser if it does not launch automatically:',
-  );
-  console.log(authUrl);
-  openUrl(authUrl);
-
+  let server: http.Server | null = null;
   try {
+    const raw = fs.readFileSync(absolutePath, 'utf-8');
+    const client = parseGoogleInstalledClientSecretJson(raw);
+    const state = crypto.randomBytes(16).toString('hex');
+    const pkce = createGooglePkcePair();
+    server = http.createServer();
+
+    await new Promise<void>((resolve, reject) => {
+      server?.once('error', reject);
+      server?.listen(0, '127.0.0.1', () => resolve());
+    });
+
+    const address = server.address();
+    if (!address || typeof address === 'string') {
+      throw new Error(
+        'Could not open a localhost callback server for Google OAuth.',
+      );
+    }
+
+    const redirectUri = `http://localhost:${address.port}`;
+    const authUrl = buildGoogleAuthUrl({
+      clientId: client.clientId,
+      redirectUri,
+      state,
+      codeChallenge: pkce.codeChallenge,
+    });
+
+    logger.info(
+      { redirectUri, hostname: os.hostname() },
+      'Starting Google Calendar OAuth bootstrap',
+    );
+    console.log(
+      'Open this URL in your browser if it does not launch automatically:',
+    );
+    console.log(authUrl);
+    openUrl(authUrl);
+
     const code = await waitForAuthCode(server, state);
     const token = await exchangeAuthCode({
       code,
@@ -387,81 +407,104 @@ async function runAuth(clientSecretJsonPath: string): Promise<void> {
       STORED_REFRESH_TOKEN: 'true',
       SCOPES: GOOGLE_CALENDAR_SCOPES.join(' '),
     });
+  } catch (error) {
+    emitGoogleCalendarFailureStatus('auth', error, {
+      CLIENT_SECRET_JSON: absolutePath,
+    });
+    process.exit(1);
   } finally {
-    server.close();
+    server?.close();
   }
 }
 
 async function runDiscover(selection: string | null): Promise<void> {
-  const config = resolveGoogleCalendarConfig();
-  const calendars = await listGoogleCalendars(config);
-  if (calendars.length === 0) {
+  try {
+    const config = resolveGoogleCalendarConfig();
+    const calendars = await listGoogleCalendars(config);
+    if (calendars.length === 0) {
+      emitStatus('GOOGLE_CALENDAR', {
+        ACTION: 'discover',
+        STATUS: 'failed',
+        FAILURE_KIND: 'unknown',
+        ERROR: 'no_calendars_found',
+      });
+      process.exit(1);
+    }
+
+    console.log('Readable Google calendars:');
+    calendars.forEach((calendar, index) => {
+      console.log(formatCalendarSummaryLine(calendar, index + 1));
+    });
+
+    const hasNonPrimary = calendars.some((calendar) => !calendar.primary);
+    const selectedIds = selection
+      ? resolveCalendarSelection(selection, calendars)
+      : [];
+
+    if (selection && selectedIds.length === 0) {
+      emitStatus('GOOGLE_CALENDAR', {
+        ACTION: 'discover',
+        STATUS: 'failed',
+        FAILURE_KIND: 'calendar_not_found',
+        ERROR: 'selection_did_not_match_any_calendar',
+      });
+      process.exit(1);
+    }
+
+    if (selectedIds.length > 0) {
+      upsertEnvFileValues({
+        GOOGLE_CALENDAR_IDS: selectedIds.join(','),
+      });
+    }
+
     emitStatus('GOOGLE_CALENDAR', {
       ACTION: 'discover',
-      STATUS: 'failed',
-      ERROR: 'no_calendars_found',
+      STATUS: 'success',
+      CALENDARS_FOUND: calendars.length,
+      PRIMARY_PRESENT: calendars.some((calendar) => calendar.primary),
+      NON_PRIMARY_PRESENT: hasNonPrimary,
+      SELECTED_IDS:
+        selectedIds.length > 0 ? selectedIds.join(',') : 'unchanged',
     });
+  } catch (error) {
+    emitGoogleCalendarFailureStatus('discover', error);
     process.exit(1);
   }
-
-  console.log('Readable Google calendars:');
-  calendars.forEach((calendar, index) => {
-    console.log(formatCalendarSummaryLine(calendar, index + 1));
-  });
-
-  const hasNonPrimary = calendars.some((calendar) => !calendar.primary);
-  const selectedIds = selection
-    ? resolveCalendarSelection(selection, calendars)
-    : [];
-
-  if (selection && selectedIds.length === 0) {
-    emitStatus('GOOGLE_CALENDAR', {
-      ACTION: 'discover',
-      STATUS: 'failed',
-      ERROR: 'selection_did_not_match_any_calendar',
-    });
-    process.exit(1);
-  }
-
-  if (selectedIds.length > 0) {
-    upsertEnvFileValues({
-      GOOGLE_CALENDAR_IDS: selectedIds.join(','),
-    });
-  }
-
-  emitStatus('GOOGLE_CALENDAR', {
-    ACTION: 'discover',
-    STATUS: 'success',
-    CALENDARS_FOUND: calendars.length,
-    PRIMARY_PRESENT: calendars.some((calendar) => calendar.primary),
-    NON_PRIMARY_PRESENT: hasNonPrimary,
-    SELECTED_IDS: selectedIds.length > 0 ? selectedIds.join(',') : 'unchanged',
-  });
 }
 
 async function runValidate(): Promise<void> {
-  const config = resolveGoogleCalendarConfig();
-  const result = await validateGoogleCalendarConfig(config);
-  console.log('Configured Google calendar validation:');
-  result.validatedCalendars.forEach((calendar, index) => {
-    console.log(formatCalendarSummaryLine(calendar, index + 1));
-  });
-  if (result.failures.length > 0) {
-    console.log('Validation failures:');
-    for (const failure of result.failures) {
-      console.log(`- ${failure}`);
+  try {
+    const config = resolveGoogleCalendarConfig();
+    const result = await validateGoogleCalendarConfig(config);
+    console.log('Configured Google calendar validation:');
+    result.validatedCalendars.forEach((calendar, index) => {
+      console.log(formatCalendarSummaryLine(calendar, index + 1));
+    });
+    if (result.failures.length > 0) {
+      console.log('Validation failures:');
+      for (const failure of result.failures) {
+        console.log(`- ${failure}`);
+      }
     }
-  }
 
-  emitStatus('GOOGLE_CALENDAR', {
-    ACTION: 'validate',
-    STATUS: result.complete ? 'success' : 'failed',
-    VALIDATED_CALENDARS: result.validatedCalendars.length,
-    DISCOVERED_CALENDARS: result.discoveredCalendars.length,
-    FAILURES: result.failures.length > 0 ? result.failures.join(' | ') : 'none',
-  });
+    emitStatus('GOOGLE_CALENDAR', {
+      ACTION: 'validate',
+      STATUS: result.complete ? 'success' : 'failed',
+      FAILURE_KIND:
+        result.failures.length > 0
+          ? classifyGoogleCalendarFailureDetail(result.failures[0])
+          : 'unknown',
+      VALIDATED_CALENDARS: result.validatedCalendars.length,
+      DISCOVERED_CALENDARS: result.discoveredCalendars.length,
+      FAILURES:
+        result.failures.length > 0 ? result.failures.join(' | ') : 'none',
+    });
 
-  if (!result.complete) {
+    if (!result.complete) {
+      process.exit(1);
+    }
+  } catch (error) {
+    emitGoogleCalendarFailureStatus('validate', error);
     process.exit(1);
   }
 }

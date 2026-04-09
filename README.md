@@ -532,7 +532,11 @@ Notes:
 
 - while the Google OAuth app stays in Testing, the Google account must be listed as a test user
 - `GOOGLE_CALENDAR_IDS` should stay explicit so Andrea only reads the calendars you selected
+- `npm run setup -- --step google-calendar validate` is the operator truth surface for calendar access on the current host
+  - `FAILURE_KIND: missing_config` means the current repo does not have usable Google Calendar credentials yet
+  - `FAILURE_KIND: invalid_refresh_token` usually means an older refresh token went stale and you should rerun `auth` in the current repo instead of copying legacy tokens forward
 - reminder phrasing still creates reminders, not Google Calendar events
+- a host is only live-proven for Google Calendar writes after `auth`, `discover`, `validate`, and one disposable create-event proof all succeed on that host
 
 ## What Andrea Can Do
 

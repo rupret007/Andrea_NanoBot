@@ -10,6 +10,7 @@ An outcome is Andrea's current best closure state for one underlying loop.
 
 Examples:
 
+- a calendar event was created, so that scheduling action is actually completed
 - a reminder was created, so the loop is deferred rather than solved
 - a draft reply exists, but the conversation is still open
 - a message was deferred to send later, so the reply is still owed
@@ -86,6 +87,7 @@ Andrea should not assume that action execution means the underlying problem is s
 
 Examples:
 
+- calendar created -> usually `completed`
 - reminder created -> usually `deferred`
 - bundle executed partially -> `partial`
 - delivered handoff with no downstream closure -> `deferred` or `partial`

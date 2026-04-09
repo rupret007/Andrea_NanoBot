@@ -66,6 +66,17 @@ export interface GoogleCalendarValidationResult {
   complete: boolean;
 }
 
+export type GoogleCalendarFailureKind =
+  | 'missing_config'
+  | 'invalid_refresh_token'
+  | 'token_refresh_failed'
+  | 'calendar_access_denied'
+  | 'calendar_not_found'
+  | 'calendar_conflict'
+  | 'calendar_write_failed'
+  | 'temporary_unavailable'
+  | 'unknown';
+
 function resolveConfigValue(
   key: (typeof GOOGLE_CALENDAR_ENV_KEYS)[number],
   envFile: Record<string, string>,
@@ -92,6 +103,103 @@ function truncateDetail(value: string, max = 160): string {
   const compact = value.replace(/\s+/g, ' ').trim();
   if (!compact) return '';
   return compact.length <= max ? compact : `${compact.slice(0, max - 3)}...`;
+}
+
+function normalizeGoogleCalendarFailureDetail(
+  detail: string | null | undefined,
+): string {
+  return detail?.toLowerCase().replace(/\s+/g, ' ').trim() || '';
+}
+
+export function classifyGoogleCalendarFailureDetail(
+  detail: string | null | undefined,
+): GoogleCalendarFailureKind {
+  const normalized = normalizeGoogleCalendarFailureDetail(detail);
+  if (!normalized) {
+    return 'unknown';
+  }
+
+  if (
+    normalized.includes('timed out') ||
+    normalized.includes('timeout') ||
+    normalized.includes('temporarily unavailable') ||
+    normalized.includes('network') ||
+    normalized.includes('econnreset') ||
+    normalized.includes('enotfound') ||
+    normalized.includes('service unavailable')
+  ) {
+    return 'temporary_unavailable';
+  }
+
+  if (normalized.includes('invalid_grant')) {
+    return 'invalid_refresh_token';
+  }
+
+  if (
+    normalized.includes('set google_calendar_access_token') ||
+    normalized.includes('set google_calendar_refresh_token') ||
+    normalized.includes('google_calendar_client_id') ||
+    normalized.includes('google_calendar_client_secret') ||
+    normalized.includes('missing_client_secret_json_path')
+  ) {
+    return 'missing_config';
+  }
+
+  if (
+    normalized.includes('google token refresh') ||
+    normalized.includes('oauth token exchange')
+  ) {
+    return 'token_refresh_failed';
+  }
+
+  if (
+    normalized.includes('insufficient authentication scopes') ||
+    normalized.includes('insufficient permissions') ||
+    normalized.includes('permission denied') ||
+    normalized.includes('forbidden') ||
+    normalized.includes('access denied')
+  ) {
+    return 'calendar_access_denied';
+  }
+
+  if (
+    normalized.includes('not found in google calendar list') ||
+    normalized.includes('calendar not found') ||
+    (normalized.includes('not found') && normalized.includes('calendar')) ||
+    (normalized.includes('404') && normalized.includes('calendar'))
+  ) {
+    return 'calendar_not_found';
+  }
+
+  if (
+    normalized.includes('conflict') ||
+    normalized.includes('already exists') ||
+    normalized.includes('duplicate') ||
+    normalized.includes('409')
+  ) {
+    return 'calendar_conflict';
+  }
+
+  if (
+    normalized.includes('event create') ||
+    normalized.includes('event update') ||
+    normalized.includes('event move') ||
+    normalized.includes('event delete')
+  ) {
+    return 'calendar_write_failed';
+  }
+
+  return 'unknown';
+}
+
+export function isGoogleCalendarAuthFailureKind(
+  kind: GoogleCalendarFailureKind,
+): boolean {
+  return (
+    kind === 'missing_config' ||
+    kind === 'invalid_refresh_token' ||
+    kind === 'token_refresh_failed'
+  );
 }
 
 function extractJsonErrorDetail(

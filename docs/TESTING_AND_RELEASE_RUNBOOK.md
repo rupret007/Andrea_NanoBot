@@ -162,6 +162,20 @@ Treat that messaging suite as the fast proof that Andrea can:
 - keep save-under-thread distinct from remind-later and scheduled send
 - surface sent vs deferred messaging honestly in review
 
+For Google Calendar create, follow-through, or calendar-routing changes, add:
+
+```bash
+node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/google-calendar.test.ts src/google-calendar-create.test.ts src/google-calendar-followthrough.test.ts src/assistant-routing.test.ts setup/google-calendar.test.ts
+npm run setup -- --step google-calendar validate
+```
+
+Treat that calendar stack as the fast proof that Andrea can:
+
+- keep calendar create distinct from reminders and save-for-later
+- classify `missing_config` versus `invalid_refresh_token` honestly on the operator host
+- keep user-facing calendar failure copy humane without leaking OAuth or env jargon
+- preserve real calendar-write truth instead of masking a calendar failure as a reminder or save success
+
 For outcome tracking, carryover, and review-flow changes, add:
 
 ```bash
@@ -242,6 +256,12 @@ Run:
 npm run setup -- --step verify
 ```
 
+If Google Calendar writes are part of the release bar on that host, also run:
+
+```bash
+npm run setup -- --step google-calendar validate
+```
+
 Confirm:
 
 - `SERVICE: running_ready`
@@ -257,6 +277,7 @@ Important truth for this host:
 - BlueBubbles is near-live on this Windows machine once the `BLUEBUBBLES_*` host configuration is loaded, the server is reachable, and Andrea's public webhook is registered; it becomes live-proven only after a same-host roundtrip plus one same-thread message-action proof leg is reproved
 - after repo-side messaging changes, restart the local services before judging live proof so `SERVING_COMMIT_MATCHES_WORKSPACE_HEAD: true` reflects the current candidate
 - if `SERVICE: running_ready` and the blocker is external, treat that as an exact release-candidate caveat rather than a host failure
+- for Google Calendar specifically, `FAILURE_KIND: missing_config` means the current repo lacks usable credentials, and `FAILURE_KIND: invalid_refresh_token` means the stored refresh token is stale or revoked and you should rerun the current repo auth flow
 
 Then validate the public-safe Telegram surface:
 

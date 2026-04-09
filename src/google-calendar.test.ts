@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  classifyGoogleCalendarFailureDetail,
   createGoogleCalendarEvent,
   deleteGoogleCalendarEvent,
+  isGoogleCalendarAuthFailureKind,
   listGoogleCalendars,
   moveGoogleCalendarEvent,
   resolveGoogleCalendarConfig,
@@ -13,6 +15,33 @@ describe('resolveGoogleCalendarConfig', () => {
   it('defaults calendar ids to primary', () => {
     const config = resolveGoogleCalendarConfig({});
     expect(config.calendarIds).toEqual(['primary']);
+  });
+});
+
+describe('classifyGoogleCalendarFailureDetail', () => {
+  it('classifies missing config details', () => {
+    expect(
+      classifyGoogleCalendarFailureDetail(
+        'Set GOOGLE_CALENDAR_ACCESS_TOKEN or GOOGLE_CALENDAR_REFRESH_TOKEN plus GOOGLE_CALENDAR_CLIENT_ID and GOOGLE_CALENDAR_CLIENT_SECRET.',
+      ),
+    ).toBe('missing_config');
+  });
+
+  it('classifies invalid refresh token details', () => {
+    const kind = classifyGoogleCalendarFailureDetail(
+      'Google token refresh 400: invalid_grant',
+    );
+
+    expect(kind).toBe('invalid_refresh_token');
+    expect(isGoogleCalendarAuthFailureKind(kind)).toBe(true);
+  });
+
+  it('classifies calendar write failures distinctly', () => {
+    expect(
+      classifyGoogleCalendarFailureDetail(
+        'Google Calendar event create 409: Event already exists.',
+      ),
+    ).toBe('calendar_conflict');
   });
 });
 
