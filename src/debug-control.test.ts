@@ -192,6 +192,7 @@ describe('debug log tails', () => {
     expect(status).toContain('BlueBubbles private API available:');
     expect(status).toContain('BlueBubbles last metadata hydration:');
     expect(status).toContain('BlueBubbles attempted target sequence:');
+    expect(status).toContain('Google Calendar proof:');
     expect(status).toContain('Outward research proof:');
     expect(status).toContain('Image generation proof:');
     expect(status).toContain('Host health proof:');

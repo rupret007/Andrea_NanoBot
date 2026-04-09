@@ -373,6 +373,9 @@ function formatCalendarReference(calendarName: string): string {
   if (/calendar/i.test(trimmed)) {
     return trimmed;
   }
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+    return 'your calendar';
+  }
   if (/^(family|home|work|personal)$/i.test(trimmed)) {
     return `the ${trimmed} calendar`;
   }

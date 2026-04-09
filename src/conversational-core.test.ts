@@ -207,6 +207,22 @@ describe('graceful degraded replies', () => {
     expect(reply).not.toContain('Added "check air filters" to Jeff on');
   });
 
+  it('keeps primary-calendar email addresses out of the human confirmation copy', () => {
+    const reply = buildCalendarCompanionEventReply({
+      action: 'create_event',
+      title: 'check air filters',
+      startIso: '2026-04-09T00:00:00.000Z',
+      endIso: '2026-04-09T01:00:00.000Z',
+      allDay: false,
+      timeZone: 'America/Chicago',
+      calendarName: 'jeffstory007@gmail.com',
+      htmlLink: null,
+    });
+
+    expect(reply).toContain('to your calendar');
+    expect(reply).not.toContain('jeffstory007@gmail.com');
+  });
+
   it('formats reminder confirmations like the same assistant', () => {
     const reply = buildCalendarCompanionReminderReply({
       title: 'check air filters',

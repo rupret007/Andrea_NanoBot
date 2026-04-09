@@ -5,6 +5,7 @@ import {
   buildGoogleCalendarSchedulingContextState,
   buildPendingGoogleCalendarCreateState,
   formatGoogleCalendarCreatePrompt,
+  isExplicitGoogleCalendarCreateRequest,
   planGoogleCalendarCreate,
 } from './google-calendar-create.js';
 
@@ -28,6 +29,17 @@ const writableCalendars = [
 ] as const;
 
 describe('planGoogleCalendarCreate', () => {
+  it('recognizes self-contained explicit calendar create asks', () => {
+    expect(
+      isExplicitGoogleCalendarCreateRequest(
+        "Add check air filters to Jeff's calendar tomorrow at 4pm.",
+      ),
+    ).toBe(true);
+    expect(isExplicitGoogleCalendarCreateRequest('Remind me tomorrow at 3pm.')).toBe(
+      false,
+    );
+  });
+
   it('ignores reminder phrasing', () => {
     const plan = planGoogleCalendarCreate(
       'Remind me tomorrow at 3pm to call Sam.',
@@ -68,6 +80,43 @@ describe('planGoogleCalendarCreate', () => {
     expect(plan.draft.title).toBe('Mason birthday');
     expect(plan.draft.allDay).toBe(true);
     expect(plan.selectedCalendarId).toBe('family@group.calendar.google.com');
+  });
+
+  it("strips possessive calendar-target phrasing out of the event title", () => {
+    const plan = planGoogleCalendarCreate(
+      "Add Andrea calendar proof to Jeff's calendar tomorrow at 4pm.",
+      [...writableCalendars],
+      new Date('2026-04-09T09:00:00-05:00'),
+      'America/Chicago',
+    );
+
+    expect(plan.kind).toBe('draft');
+    if (plan.kind !== 'draft') return;
+    expect(plan.draft.title).toBe('Andrea calendar proof');
+    expect(plan.selectedCalendarId).toBe('primary');
+  });
+
+  it('strips possessive calendar-target phrasing even when only a primary calendar is selected', () => {
+    const plan = planGoogleCalendarCreate(
+      "Add check air filters to Jeff's calendar tomorrow at 4pm.",
+      [
+        {
+          id: 'jeffstory007@gmail.com',
+          summary: 'jeffstory007@gmail.com',
+          primary: true,
+          accessRole: 'owner',
+          writable: true,
+          selected: true,
+        },
+      ],
+      new Date('2026-04-09T09:00:00-05:00'),
+      'America/Chicago',
+    );
+
+    expect(plan.kind).toBe('draft');
+    if (plan.kind !== 'draft') return;
+    expect(plan.draft.title).toBe('check air filters');
+    expect(plan.selectedCalendarId).toBeNull();
   });
 
   it('accepts hyphenated all-day phrasing', () => {

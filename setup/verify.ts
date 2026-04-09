@@ -2108,6 +2108,10 @@ export async function run(_args: string[]): Promise<void> {
       fieldTrialTruth.bluebubbles.lastMetadataHydrationSource,
     BLUEBUBBLES_ATTEMPTED_TARGET_SEQUENCE:
       fieldTrialTruth.bluebubbles.attemptedTargetSequence,
+    GOOGLE_CALENDAR_PROOF: fieldTrialTruth.googleCalendar.proofState,
+    GOOGLE_CALENDAR_PROOF_DETAIL: fieldTrialTruth.googleCalendar.detail,
+    GOOGLE_CALENDAR_PROOF_BLOCKER: fieldTrialTruth.googleCalendar.blocker,
+    GOOGLE_CALENDAR_PROOF_NEXT_ACTION: fieldTrialTruth.googleCalendar.nextAction,
     IMAGE_GENERATION_PROOF: fieldTrialTruth.imageGeneration.proofState,
     IMAGE_GENERATION_PROOF_DETAIL: fieldTrialTruth.imageGeneration.detail,
     IMAGE_GENERATION_PROOF_BLOCKER: fieldTrialTruth.imageGeneration.blocker,

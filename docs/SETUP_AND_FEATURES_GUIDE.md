@@ -72,6 +72,12 @@ npm run setup -- --step google-calendar discover --select all
 npm run setup -- --step google-calendar validate
 ```
 
+If the browser reaches the localhost callback but the auth step still times out, finish the same current-repo OAuth run with:
+
+```bash
+npm run setup -- --step google-calendar auth-complete --callback-url "http://127.0.0.1:PORT/?state=...&code=..."
+```
+
 Use `validate` as the source of truth for live calendar state on this host:
 
 - `FAILURE_KIND: missing_config` means the current repo does not have usable Google Calendar credentials yet
@@ -79,6 +85,14 @@ Use `validate` as the source of truth for live calendar state on this host:
 - `FAILURE_KIND: token_refresh_failed` means refresh is failing for another OAuth reason
 
 Do not copy an older refresh token into a newer merged repo and assume writes are recovered. Re-run the current repo auth flow instead.
+
+For bounded live read/write proof on the operator host, run:
+
+```bash
+npm run debug:google-calendar
+```
+
+On this Windows host, Google Calendar read/write is now live-proven through that proof harness and a real assistant-style Telegram create flow.
 
 ## What This Package Includes
 

@@ -647,6 +647,47 @@ describe('field-trial readiness', () => {
     expect(truth.imageGeneration.detail).toContain('image artifact');
   });
 
+  it('treats Google Calendar as externally blocked when current-repo credentials are missing even if stale proof exists', () => {
+    writeProviderProofState({
+      updatedAt: '2026-04-08T01:00:00.000Z',
+      googleCalendar: {
+        proofState: 'live_proven',
+        blocker: '',
+        detail: 'Google Calendar used to be live-proven here.',
+        nextAction: '',
+        checkedAt: '2026-04-08T01:00:00.000Z',
+        source: 'debug_google_calendar',
+      },
+    });
+
+    const truth = buildFieldTrialOperatorTruth({ projectRoot: tempDir });
+
+    expect(truth.googleCalendar.proofState).toBe('externally_blocked');
+    expect(truth.googleCalendar.blocker).toContain('not connected');
+    expect(truth.googleCalendar.blockerOwner).toBe('external');
+  });
+
+  it('surfaces persisted Google Calendar live proof when current-repo credentials are present', () => {
+    vi.stubEnv('GOOGLE_CALENDAR_ACCESS_TOKEN', 'token');
+    vi.stubEnv('GOOGLE_CALENDAR_IDS', 'primary');
+    writeProviderProofState({
+      updatedAt: '2026-04-08T01:00:00.000Z',
+      googleCalendar: {
+        proofState: 'live_proven',
+        blocker: '',
+        detail: 'Google Calendar read/write is live-proven on this host.',
+        nextAction: '',
+        checkedAt: '2026-04-08T01:00:00.000Z',
+        source: 'debug_google_calendar',
+      },
+    });
+
+    const truth = buildFieldTrialOperatorTruth({ projectRoot: tempDir });
+
+    expect(truth.googleCalendar.proofState).toBe('live_proven');
+    expect(truth.googleCalendar.detail).toContain('live-proven');
+  });
+
   it('marks work cockpit live-proven from a recent pilot journey and surfaces pilot issue state', () => {
     const started = startPilotJourney({
       journeyId: 'work_cockpit',

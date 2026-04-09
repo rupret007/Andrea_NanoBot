@@ -87,6 +87,7 @@ function collectAttentionItems(
   push('Telegram', truth.telegram);
   push('Alexa', truth.alexa);
   push('BlueBubbles', truth.bluebubbles);
+  push('Google Calendar', truth.googleCalendar);
   push('Research', truth.research);
   push('Image generation', truth.imageGeneration);
 
@@ -159,6 +160,14 @@ async function main(): Promise<void> {
       : []),
     ...(truth.bluebubbles.nextAction
       ? [`  next_step=${truth.bluebubbles.nextAction}`]
+      : []),
+    `- Google Calendar: ${truth.googleCalendar.proofState}`,
+    `  detail=${truth.googleCalendar.detail}`,
+    ...(truth.googleCalendar.blocker
+      ? [`  blocker=${truth.googleCalendar.blocker}`]
+      : []),
+    ...(truth.googleCalendar.nextAction
+      ? [`  next_step=${truth.googleCalendar.nextAction}`]
       : []),
     `- Work cockpit: ${truth.workCockpit.proofState}`,
     `- Life threads: ${truth.lifeThreads.proofState}`,

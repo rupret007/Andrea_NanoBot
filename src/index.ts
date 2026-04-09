@@ -246,6 +246,7 @@ import {
   buildGoogleCalendarSchedulingContextState,
   buildPendingGoogleCalendarCreateState,
   formatGoogleCalendarCreatePrompt,
+  isExplicitGoogleCalendarCreateRequest,
   isGoogleCalendarSchedulingContextExpired,
   isPendingGoogleCalendarCreateExpired,
   planGoogleCalendarCreate,
@@ -4279,20 +4280,14 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       clearPendingGoogleCalendarCreateState(chatJid);
     }
 
-    const activePendingState = getPendingGoogleCalendarCreateState(chatJid);
-    if (!activePendingState) {
-      const activeSchedulingContext =
-        getGoogleCalendarSchedulingContext(chatJid);
-      const explicitCreate =
-        /\b(?:add|put)\b[\s\S]{0,140}\bcalendar\b/i.test(lastContent) ||
-        /\bcreate\b[\s\S]{0,50}\bevent\b/i.test(lastContent) ||
-        /\bschedule\b[\s\S]{0,80}\b(?:event|calendar)\b/i.test(lastContent);
-      if (!explicitCreate) {
-        return false;
-      }
+    let activePendingState = getPendingGoogleCalendarCreateState(chatJid);
+    const explicitCreate = isExplicitGoogleCalendarCreateRequest(lastContent);
+    let writableCalendars:
+      | Awaited<ReturnType<typeof listGoogleCalendars>>
+      | undefined;
+    let createPlan: ReturnType<typeof planGoogleCalendarCreate> | undefined;
 
-      let writableCalendars;
-      let createPlan;
+    if (activePendingState && explicitCreate) {
       try {
         const googleConfig = resolveGoogleCalendarConfig();
         const discoveredCalendars = await listGoogleCalendars(googleConfig);
@@ -4304,8 +4299,39 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           writableCalendars,
           now,
           TIMEZONE,
-          activeSchedulingContext,
+          null,
         );
+        if (createPlan.kind === 'draft') {
+          clearPendingGoogleCalendarCreateState(chatJid);
+          clearGoogleCalendarSchedulingContext(chatJid);
+          activePendingState = null;
+        }
+      } catch {
+        // Let the normal create path surface the underlying calendar failure.
+      }
+    }
+
+    if (!activePendingState) {
+      const activeSchedulingContext = getGoogleCalendarSchedulingContext(chatJid);
+      if (!explicitCreate) {
+        return false;
+      }
+
+      try {
+        if (!writableCalendars || !createPlan) {
+          const googleConfig = resolveGoogleCalendarConfig();
+          const discoveredCalendars = await listGoogleCalendars(googleConfig);
+          writableCalendars = discoveredCalendars.filter(
+            (calendar) => calendar.selected && calendar.writable,
+          );
+          createPlan = planGoogleCalendarCreate(
+            lastContent,
+            writableCalendars,
+            now,
+            TIMEZONE,
+            activeSchedulingContext,
+          );
+        }
       } catch (error) {
         try {
           const technicalDetail =

@@ -8,6 +8,7 @@ import {
   listGoogleCalendars,
   moveGoogleCalendarEvent,
   resolveGoogleCalendarConfig,
+  validateGoogleCalendarConfig,
   updateGoogleCalendarEvent,
 } from './google-calendar.js';
 
@@ -102,6 +103,100 @@ describe('listGoogleCalendars', () => {
     expect(calendars[1]?.selected).toBe(true);
     expect(calendars[1]?.writable).toBe(true);
     expect(calendars[2]?.writable).toBe(false);
+  });
+
+  it('marks the real primary calendar as selected when config uses the primary alias', async () => {
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes('oauth2.googleapis.com/token')) {
+        return new Response(JSON.stringify({ access_token: 'token' }), {
+          status: 200,
+        });
+      }
+
+      return new Response(
+        JSON.stringify({
+          items: [
+            {
+              id: 'jeffstory007@gmail.com',
+              summary: 'Jeff',
+              primary: true,
+              accessRole: 'owner',
+            },
+          ],
+        }),
+        { status: 200 },
+      );
+    });
+
+    const calendars = await listGoogleCalendars(
+      {
+        accessToken: null,
+        refreshToken: 'refresh',
+        clientId: 'client',
+        clientSecret: 'secret',
+        calendarIds: ['primary'],
+      },
+      fetchImpl,
+    );
+
+    expect(calendars).toHaveLength(1);
+    expect(calendars[0]).toMatchObject({
+      id: 'jeffstory007@gmail.com',
+      primary: true,
+      selected: true,
+    });
+  });
+});
+
+describe('validateGoogleCalendarConfig', () => {
+  it('accepts the primary alias when the readable primary calendar uses a concrete id', async () => {
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes('oauth2.googleapis.com/token')) {
+        return new Response(JSON.stringify({ access_token: 'token' }), {
+          status: 200,
+        });
+      }
+
+      if (url.includes('/users/me/calendarList')) {
+        return new Response(
+          JSON.stringify({
+            items: [
+              {
+                id: 'jeffstory007@gmail.com',
+                summary: 'Jeff',
+                primary: true,
+                accessRole: 'owner',
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+
+      if (url.includes('/calendars/jeffstory007%40gmail.com/events')) {
+        return new Response(JSON.stringify({ items: [] }), { status: 200 });
+      }
+
+      throw new Error(`Unhandled fetch call: ${url}`);
+    });
+
+    const result = await validateGoogleCalendarConfig(
+      {
+        accessToken: null,
+        refreshToken: 'refresh',
+        clientId: 'client',
+        clientSecret: 'secret',
+        calendarIds: ['primary'],
+      },
+      fetchImpl,
+    );
+
+    expect(result.complete).toBe(true);
+    expect(result.failures).toEqual([]);
+    expect(result.validatedCalendars).toHaveLength(1);
+    expect(result.validatedCalendars[0]?.id).toBe('jeffstory007@gmail.com');
   });
 });
 

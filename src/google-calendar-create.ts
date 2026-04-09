@@ -414,6 +414,14 @@ function looksLikeExplicitCalendarCreate(normalized: string): boolean {
   );
 }
 
+export function isExplicitGoogleCalendarCreateRequest(message: string): boolean {
+  const normalized = normalizeMessage(message).toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  return looksLikeExplicitCalendarCreate(normalized);
+}
+
 function extractTrailingField(
   working: string,
   label: 'location' | 'notes' | 'description',
@@ -492,7 +500,7 @@ function stripCreatePhrases(
       new RegExp(
         `\\b(?:to|on|in)?\\s*(?:the\\s+|my\\s+)?${escapeRegex(
           matchedCalendarSummary,
-        )}\\s+calendar\\b`,
+        )}(?:'s)?\\s+calendar\\b`,
         'i',
       ),
       ' ',
@@ -500,6 +508,10 @@ function stripCreatePhrases(
   }
 
   next = next
+    .replace(
+      /\b(?:to|on|in)\s+(?:the\s+|my\s+)?(?:[\w.&-]+\s+){0,3}[\w.&-]+'s\s+calendar\b/gi,
+      ' ',
+    )
     .replace(/\b(?:to|on|in)\s+(?:my\s+)?calendar\b/gi, ' ')
     .replace(/\b(?:please\s+)?(?:add|put|create|schedule)\b/gi, ' ')
     .replace(/\b(?:an?\s+)?event\b/gi, ' ')
@@ -574,8 +586,7 @@ export function planGoogleCalendarCreate(
   schedulingContext?: GoogleCalendarSchedulingContextState | null,
 ): GoogleCalendarCreatePlanResult {
   const normalizedMessage = normalizeMessage(message);
-  const normalizedLower = normalizedMessage.toLowerCase();
-  if (!normalizedLower || !looksLikeExplicitCalendarCreate(normalizedLower)) {
+  if (!isExplicitGoogleCalendarCreateRequest(normalizedMessage)) {
     return { kind: 'none' };
   }
 

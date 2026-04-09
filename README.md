@@ -535,8 +535,10 @@ Notes:
 - `npm run setup -- --step google-calendar validate` is the operator truth surface for calendar access on the current host
   - `FAILURE_KIND: missing_config` means the current repo does not have usable Google Calendar credentials yet
   - `FAILURE_KIND: invalid_refresh_token` usually means an older refresh token went stale and you should rerun `auth` in the current repo instead of copying legacy tokens forward
+- if the browser reaches the Google callback but `auth` still times out, finish the same current-repo OAuth run with `npm run setup -- --step google-calendar auth-complete --callback-url "http://127.0.0.1:PORT/?state=...&code=..."`
 - reminder phrasing still creates reminders, not Google Calendar events
 - a host is only live-proven for Google Calendar writes after `auth`, `discover`, `validate`, and one disposable create-event proof all succeed on that host
+- on this Windows host, Google Calendar read/write is now live-proven through `npm run debug:google-calendar` and a real Telegram assistant-style create confirmation flow
 
 ## What Andrea Can Do
 

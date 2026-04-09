@@ -260,6 +260,7 @@ If Google Calendar writes are part of the release bar on that host, also run:
 
 ```bash
 npm run setup -- --step google-calendar validate
+npm run debug:google-calendar
 ```
 
 Confirm:
@@ -278,6 +279,8 @@ Important truth for this host:
 - after repo-side messaging changes, restart the local services before judging live proof so `SERVING_COMMIT_MATCHES_WORKSPACE_HEAD: true` reflects the current candidate
 - if `SERVICE: running_ready` and the blocker is external, treat that as an exact release-candidate caveat rather than a host failure
 - for Google Calendar specifically, `FAILURE_KIND: missing_config` means the current repo lacks usable credentials, and `FAILURE_KIND: invalid_refresh_token` means the stored refresh token is stale or revoked and you should rerun the current repo auth flow
+- if the browser reaches the OAuth callback but `auth` still times out, finish the same run with `npm run setup -- --step google-calendar auth-complete --callback-url "http://127.0.0.1:PORT/?state=...&code=..."`
+- on this host, `npm run debug:google-calendar` is now the canonical live read/write proof surface and should report `PROOF_STATE: live_proven` when Google Calendar is healthy
 
 Then validate the public-safe Telegram surface:
 

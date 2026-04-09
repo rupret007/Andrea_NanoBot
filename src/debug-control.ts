@@ -489,6 +489,14 @@ export function formatDebugStatus(): string {
     ...(fieldTrialTruth.bluebubbles.nextAction
       ? [`- BlueBubbles next step: ${fieldTrialTruth.bluebubbles.nextAction}`]
       : []),
+    `- Google Calendar proof: ${fieldTrialTruth.googleCalendar.proofState}`,
+    `- Google Calendar detail: ${fieldTrialTruth.googleCalendar.detail}`,
+    ...(fieldTrialTruth.googleCalendar.blocker
+      ? [`- Google Calendar blocker: ${fieldTrialTruth.googleCalendar.blocker}`]
+      : []),
+    ...(fieldTrialTruth.googleCalendar.nextAction
+      ? [`- Google Calendar next step: ${fieldTrialTruth.googleCalendar.nextAction}`]
+      : []),
     `- Outward research proof: ${fieldTrialTruth.research.proofState}`,
     `- Outward research detail: ${fieldTrialTruth.research.detail}`,
     ...(fieldTrialTruth.research.blocker

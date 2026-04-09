@@ -285,6 +285,44 @@ function isWritableAccessRole(accessRole: string | null | undefined): boolean {
   return accessRole === 'owner' || accessRole === 'writer';
 }
 
+function findPrimaryCalendar(
+  calendars: GoogleCalendarMetadata[],
+): GoogleCalendarMetadata | null {
+  return calendars.find((calendar) => calendar.primary) || null;
+}
+
+function isSelectedCalendarId(
+  calendar: GoogleCalendarMetadata,
+  selectedIds: Set<string>,
+): boolean {
+  if (selectedIds.has(calendar.id)) {
+    return true;
+  }
+  return calendar.primary && selectedIds.has('primary');
+}
+
+function resolveGoogleCalendarAliasId(
+  calendarId: string,
+  calendars: GoogleCalendarMetadata[],
+): {
+  resolvedCalendarId: string;
+  metadata: GoogleCalendarMetadata | null;
+} {
+  if (calendarId === 'primary') {
+    const primaryCalendar = findPrimaryCalendar(calendars);
+    return {
+      resolvedCalendarId: primaryCalendar?.id || 'primary',
+      metadata: primaryCalendar,
+    };
+  }
+
+  const metadata = calendars.find((calendar) => calendar.id === calendarId) || null;
+  return {
+    resolvedCalendarId: calendarId,
+    metadata,
+  };
+}
+
 export function resolveGoogleCalendarConfig(
   env?: Record<string, string | undefined>,
 ): GoogleCalendarConfig {
@@ -407,14 +445,19 @@ export async function listGoogleCalendars(
         primary: Boolean(item.primary),
         accessRole: item.accessRole || 'unknown',
         writable: isWritableAccessRole(item.accessRole),
-        selected: selectedIds.has(item.id),
+        selected: false,
       });
     }
 
     pageToken = payload.nextPageToken || null;
   } while (pageToken);
 
-  return calendars.sort((left, right) => {
+  return calendars
+    .map((calendar) => ({
+      ...calendar,
+      selected: isSelectedCalendarId(calendar, selectedIds),
+    }))
+    .sort((left, right) => {
     if (left.primary !== right.primary) {
       return left.primary ? -1 : 1;
     }
@@ -427,9 +470,6 @@ export async function validateGoogleCalendarConfig(
   fetchImpl: FetchLike = globalThis.fetch,
 ): Promise<GoogleCalendarValidationResult> {
   const discoveredCalendars = await listGoogleCalendars(config, fetchImpl);
-  const discoveredById = new Map(
-    discoveredCalendars.map((calendar) => [calendar.id, calendar]),
-  );
   const accessToken = await getGoogleCalendarAccessToken(config, fetchImpl);
   const failures: string[] = [];
   const validatedCalendars: GoogleCalendarMetadata[] = [];
@@ -437,14 +477,17 @@ export async function validateGoogleCalendarConfig(
     config.calendarIds.length > 0 ? config.calendarIds : ['primary'];
 
   for (const calendarId of calendarIds) {
-    const metadata = discoveredById.get(calendarId);
+    const { resolvedCalendarId, metadata } = resolveGoogleCalendarAliasId(
+      calendarId,
+      discoveredCalendars,
+    );
     if (!metadata) {
       failures.push(`${calendarId}: not found in Google calendar list.`);
       continue;
     }
 
     const url = new URL(
-      `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`,
+      `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(resolvedCalendarId)}/events`,
     );
     url.searchParams.set('maxResults', '1');
     url.searchParams.set('singleEvents', 'true');

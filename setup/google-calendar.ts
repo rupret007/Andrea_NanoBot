@@ -11,6 +11,11 @@ import {
   resolveGoogleCalendarConfig,
   validateGoogleCalendarConfig,
 } from '../src/google-calendar.js';
+import {
+  buildGoogleCalendarBlockedProofSurface,
+  buildGoogleCalendarNearLiveSurface,
+} from '../src/google-calendar-proof.js';
+import { writeProviderProofSurface } from '../src/provider-proof-state.js';
 import { upsertEnvFileValues } from '../src/env.js';
 import { logger } from '../src/logger.js';
 import { emitStatus } from './status.js';
@@ -21,6 +26,7 @@ const GOOGLE_CALENDAR_SCOPES = [
 ] as const;
 
 const GOOGLE_NATIVE_AUTH_URI = 'https://accounts.google.com/o/oauth2/v2/auth';
+export const GOOGLE_CALENDAR_OAUTH_LOOPBACK_HOST = '127.0.0.1';
 
 interface InstalledGoogleClientSecret {
   clientId: string;
@@ -30,9 +36,18 @@ interface InstalledGoogleClientSecret {
 }
 
 interface GoogleCalendarSetupArgs {
-  action: 'auth' | 'discover' | 'validate' | '';
+  action: 'auth' | 'auth-complete' | 'discover' | 'validate' | '';
   clientSecretJsonPath: string | null;
   select: string | null;
+  callbackUrl: string | null;
+}
+
+interface PendingGoogleCalendarAuthState {
+  clientSecretJsonPath: string;
+  redirectUri: string;
+  state: string;
+  codeVerifier: string;
+  createdAt: string;
 }
 
 function toErrorDetail(error: unknown): string {
@@ -45,6 +60,15 @@ function emitGoogleCalendarFailureStatus(
   extra: Record<string, string | number | boolean> = {},
 ): void {
   const detail = toErrorDetail(error);
+  writeProviderProofSurface(
+    'googleCalendar',
+    buildGoogleCalendarBlockedProofSurface(
+      detail,
+      new Date().toISOString(),
+      'verify',
+    ),
+    process.cwd(),
+  );
   emitStatus('GOOGLE_CALENDAR', {
     ACTION: action || 'unknown',
     STATUS: 'failed',
@@ -59,6 +83,7 @@ function parseArgs(args: string[]): GoogleCalendarSetupArgs {
     action: (args[0] || '').toLowerCase() as GoogleCalendarSetupArgs['action'],
     clientSecretJsonPath: null,
     select: null,
+    callbackUrl: null,
   };
 
   for (let i = 1; i < args.length; i += 1) {
@@ -70,6 +95,11 @@ function parseArgs(args: string[]): GoogleCalendarSetupArgs {
     }
     if (current === '--select') {
       result.select = args[i + 1] || null;
+      i += 1;
+      continue;
+    }
+    if (current === '--callback-url') {
+      result.callbackUrl = args[i + 1] || null;
       i += 1;
     }
   }
@@ -156,6 +186,62 @@ function buildGoogleAuthUrl(input: {
   return url.toString();
 }
 
+export function buildGoogleCalendarLoopbackRedirectUri(
+  port: number,
+  host = GOOGLE_CALENDAR_OAUTH_LOOPBACK_HOST,
+): string {
+  return `http://${host}:${port}`;
+}
+
+export function getGoogleCalendarPendingAuthStatePath(
+  projectRoot = process.cwd(),
+): string {
+  return path.join(
+    projectRoot,
+    'data',
+    'runtime',
+    'google-calendar-auth-pending.json',
+  );
+}
+
+function writeGoogleCalendarPendingAuthState(
+  state: PendingGoogleCalendarAuthState,
+  projectRoot = process.cwd(),
+): void {
+  const targetPath = getGoogleCalendarPendingAuthStatePath(projectRoot);
+  fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+  fs.writeFileSync(`${targetPath}`, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
+}
+
+export function readGoogleCalendarPendingAuthState(
+  projectRoot = process.cwd(),
+): PendingGoogleCalendarAuthState | null {
+  const targetPath = getGoogleCalendarPendingAuthStatePath(projectRoot);
+  if (!fs.existsSync(targetPath)) {
+    return null;
+  }
+  return JSON.parse(fs.readFileSync(targetPath, 'utf8')) as PendingGoogleCalendarAuthState;
+}
+
+function clearGoogleCalendarPendingAuthState(projectRoot = process.cwd()): void {
+  fs.rmSync(getGoogleCalendarPendingAuthStatePath(projectRoot), { force: true });
+}
+
+export function parseGoogleCalendarAuthCallbackUrl(input: string): {
+  callbackUrl: string;
+  state: string | null;
+  code: string | null;
+  error: string | null;
+} {
+  const parsed = new URL(input.trim());
+  return {
+    callbackUrl: parsed.toString(),
+    state: parsed.searchParams.get('state'),
+    code: parsed.searchParams.get('code'),
+    error: parsed.searchParams.get('error'),
+  };
+}
+
 function toBase64Url(value: Buffer): string {
   return value
     .toString('base64')
@@ -224,7 +310,7 @@ async function exchangeAuthCode(input: {
   };
 }
 
-async function waitForAuthCode(
+export async function waitForAuthCode(
   server: http.Server,
   expectedState: string,
   timeoutMs = 5 * 60 * 1000,
@@ -236,7 +322,10 @@ async function waitForAuthCode(
 
     server.on('request', (req, res) => {
       try {
-        const parsed = new URL(req.url || '/', 'http://localhost');
+        const parsed = new URL(
+          req.url || '/',
+          buildGoogleCalendarLoopbackRedirectUri(80),
+        );
         const code = parsed.searchParams.get('code');
         const state = parsed.searchParams.get('state');
         const error = parsed.searchParams.get('error');
@@ -318,6 +407,14 @@ export function resolveCalendarSelection(
   const ids: string[] = [];
 
   for (const part of parts) {
+    if (part.toLowerCase() === 'primary') {
+      const primaryCalendar = calendars.find((calendar) => calendar.primary);
+      if (primaryCalendar) {
+        ids.push(primaryCalendar.id);
+      }
+      continue;
+    }
+
     if (/^\d+$/.test(part)) {
       const calendar = calendars[Number(part) - 1];
       if (calendar) {
@@ -346,6 +443,7 @@ export function resolveCalendarSelection(
 async function runAuth(clientSecretJsonPath: string): Promise<void> {
   const absolutePath = path.resolve(clientSecretJsonPath);
   let server: http.Server | null = null;
+  let redirectUri = '';
   try {
     const raw = fs.readFileSync(absolutePath, 'utf-8');
     const client = parseGoogleInstalledClientSecretJson(raw);
@@ -355,17 +453,24 @@ async function runAuth(clientSecretJsonPath: string): Promise<void> {
 
     await new Promise<void>((resolve, reject) => {
       server?.once('error', reject);
-      server?.listen(0, '127.0.0.1', () => resolve());
+      server?.listen(0, GOOGLE_CALENDAR_OAUTH_LOOPBACK_HOST, () => resolve());
     });
 
     const address = server.address();
     if (!address || typeof address === 'string') {
       throw new Error(
-        'Could not open a localhost callback server for Google OAuth.',
+        `Could not open a ${GOOGLE_CALENDAR_OAUTH_LOOPBACK_HOST} callback server for Google OAuth.`,
       );
     }
 
-    const redirectUri = `http://localhost:${address.port}`;
+    redirectUri = buildGoogleCalendarLoopbackRedirectUri(address.port);
+    writeGoogleCalendarPendingAuthState({
+      clientSecretJsonPath: absolutePath,
+      redirectUri,
+      state,
+      codeVerifier: pkce.codeVerifier,
+      createdAt: new Date().toISOString(),
+    });
     const authUrl = buildGoogleAuthUrl({
       clientId: client.clientId,
       redirectUri,
@@ -398,6 +503,7 @@ async function runAuth(clientSecretJsonPath: string): Promise<void> {
       GOOGLE_CALENDAR_CLIENT_SECRET: client.clientSecret,
       GOOGLE_CALENDAR_REFRESH_TOKEN: token.refreshToken,
     });
+    clearGoogleCalendarPendingAuthState();
 
     emitStatus('GOOGLE_CALENDAR', {
       ACTION: 'auth',
@@ -410,10 +516,92 @@ async function runAuth(clientSecretJsonPath: string): Promise<void> {
   } catch (error) {
     emitGoogleCalendarFailureStatus('auth', error, {
       CLIENT_SECRET_JSON: absolutePath,
+      CALLBACK_HOST: GOOGLE_CALENDAR_OAUTH_LOOPBACK_HOST,
+      CALLBACK_URL:
+        redirectUri ||
+        `${buildGoogleCalendarLoopbackRedirectUri(0).replace(/:0$/, '')}:<port>`,
+      CALLBACK_STATE_PATH: getGoogleCalendarPendingAuthStatePath(),
     });
     process.exit(1);
   } finally {
     server?.close();
+  }
+}
+
+export async function completeGoogleCalendarAuthFromCallbackUrl(
+  callbackUrl: string,
+  projectRoot = process.cwd(),
+): Promise<{
+  clientSecretJsonPath: string;
+  redirectUri: string;
+}> {
+  const pending = readGoogleCalendarPendingAuthState(projectRoot);
+  if (!pending) {
+    throw new Error(
+      'No pending Google Calendar OAuth session was found. Run `npm run setup -- --step google-calendar auth --client-secret-json "<client-secret.json>"` first.',
+    );
+  }
+
+  const parsed = parseGoogleCalendarAuthCallbackUrl(callbackUrl);
+  if (parsed.error) {
+    throw new Error(`Google OAuth returned error: ${parsed.error}`);
+  }
+  if (!parsed.code) {
+    throw new Error('The callback URL is missing the Google OAuth code.');
+  }
+  if (!parsed.state || parsed.state !== pending.state) {
+    throw new Error(
+      'The callback URL state does not match the pending Google OAuth session.',
+    );
+  }
+
+  const clientSecretJsonPath = path.resolve(
+    projectRoot,
+    pending.clientSecretJsonPath,
+  );
+  const raw = fs.readFileSync(clientSecretJsonPath, 'utf-8');
+  const client = parseGoogleInstalledClientSecretJson(raw);
+  const token = await exchangeAuthCode({
+    code: parsed.code,
+    clientId: client.clientId,
+    clientSecret: client.clientSecret,
+    redirectUri: pending.redirectUri,
+    tokenUri: client.tokenUri,
+    codeVerifier: pending.codeVerifier,
+  });
+
+  upsertEnvFileValues({
+    GOOGLE_CALENDAR_CLIENT_ID: client.clientId,
+    GOOGLE_CALENDAR_CLIENT_SECRET: client.clientSecret,
+    GOOGLE_CALENDAR_REFRESH_TOKEN: token.refreshToken,
+  });
+  clearGoogleCalendarPendingAuthState(projectRoot);
+
+  return {
+    clientSecretJsonPath,
+    redirectUri: pending.redirectUri,
+  };
+}
+
+async function runAuthComplete(callbackUrl: string): Promise<void> {
+  try {
+    const completed = await completeGoogleCalendarAuthFromCallbackUrl(callbackUrl);
+
+    emitStatus('GOOGLE_CALENDAR', {
+      ACTION: 'auth-complete',
+      STATUS: 'success',
+      CLIENT_SECRET_JSON: completed.clientSecretJsonPath,
+      CALLBACK_URL: completed.redirectUri,
+      STORED_CLIENT_ID: 'true',
+      STORED_REFRESH_TOKEN: 'true',
+      SCOPES: GOOGLE_CALENDAR_SCOPES.join(' '),
+    });
+  } catch (error) {
+    emitGoogleCalendarFailureStatus('auth-complete', error, {
+      CALLBACK_URL: callbackUrl,
+      CALLBACK_STATE_PATH: getGoogleCalendarPendingAuthStatePath(),
+    });
+    process.exit(1);
   }
 }
 
@@ -500,6 +688,28 @@ async function runValidate(): Promise<void> {
         result.failures.length > 0 ? result.failures.join(' | ') : 'none',
     });
 
+    if (result.complete) {
+      writeProviderProofSurface(
+        'googleCalendar',
+        buildGoogleCalendarNearLiveSurface({
+          checkedAt: new Date().toISOString(),
+          source: 'verify',
+          validatedCalendars: result.validatedCalendars,
+        }),
+        process.cwd(),
+      );
+    } else if (result.failures.length > 0) {
+      writeProviderProofSurface(
+        'googleCalendar',
+        buildGoogleCalendarBlockedProofSurface(
+          result.failures[0],
+          new Date().toISOString(),
+          'verify',
+        ),
+        process.cwd(),
+      );
+    }
+
     if (!result.complete) {
       process.exit(1);
     }
@@ -513,12 +723,12 @@ export async function run(args: string[]): Promise<void> {
   const parsed = parseArgs(args);
   if (
     !parsed.action ||
-    !['auth', 'discover', 'validate'].includes(parsed.action)
+    !['auth', 'auth-complete', 'discover', 'validate'].includes(parsed.action)
   ) {
     emitStatus('GOOGLE_CALENDAR', {
       STATUS: 'failed',
       ERROR:
-        'usage: setup --step google-calendar auth --client-secret-json <path> | discover [--select all|1,2|id,id] | validate',
+        'usage: setup --step google-calendar auth --client-secret-json <path> | auth-complete --callback-url <url> | discover [--select all|1,2|id,id] | validate',
     });
     process.exit(4);
   }
@@ -533,6 +743,19 @@ export async function run(args: string[]): Promise<void> {
       process.exit(4);
     }
     await runAuth(parsed.clientSecretJsonPath);
+    return;
+  }
+
+  if (parsed.action === 'auth-complete') {
+    if (!parsed.callbackUrl) {
+      emitStatus('GOOGLE_CALENDAR', {
+        ACTION: 'auth-complete',
+        STATUS: 'failed',
+        ERROR: 'missing_callback_url',
+      });
+      process.exit(4);
+    }
+    await runAuthComplete(parsed.callbackUrl);
     return;
   }
 

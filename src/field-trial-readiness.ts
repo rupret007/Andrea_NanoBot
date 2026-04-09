@@ -7,6 +7,12 @@ import {
 import { getAllChats, listMessageActionsForGroup, listRecentMessagesForChat } from './db.js';
 import { readEnvFile } from './env.js';
 import {
+  buildGoogleCalendarBlockedProofSurface,
+  buildGoogleCalendarNearLiveSurface,
+  hasGoogleCalendarCredentialMaterial,
+} from './google-calendar-proof.js';
+import { resolveGoogleCalendarConfig } from './google-calendar.js';
+import {
   assessAlexaLiveProof,
   assessAssistantHealthState,
   assessTelegramRoundtripState,
@@ -217,6 +223,7 @@ export interface FieldTrialOperatorTruth {
   telegram: FieldTrialSurfaceTruth;
   alexa: FieldTrialAlexaTruth;
   bluebubbles: FieldTrialBlueBubblesTruth;
+  googleCalendar: FieldTrialSurfaceTruth;
   workCockpit: FieldTrialSurfaceTruth;
   lifeThreads: FieldTrialSurfaceTruth;
   communicationCompanion: FieldTrialSurfaceTruth;
@@ -1117,6 +1124,50 @@ function buildImageGenerationTruth(projectRoot: string): FieldTrialSurfaceTruth 
   });
 }
 
+function buildGoogleCalendarTruth(projectRoot: string): FieldTrialSurfaceTruth {
+  const checkedAt = new Date().toISOString();
+  const persisted = readProviderProofState(projectRoot);
+  const config = resolveGoogleCalendarConfig();
+
+  if (!hasGoogleCalendarCredentialMaterial(config)) {
+    const blocked = buildGoogleCalendarBlockedProofSurface(
+      'Set GOOGLE_CALENDAR_ACCESS_TOKEN or GOOGLE_CALENDAR_REFRESH_TOKEN plus GOOGLE_CALENDAR_CLIENT_ID and GOOGLE_CALENDAR_CLIENT_SECRET.',
+      checkedAt,
+      'verify',
+    );
+    return buildTruth({
+      ...blocked,
+      blockerOwner: 'external',
+    });
+  }
+
+  if (persisted?.googleCalendar) {
+    return buildTruth({
+      ...persisted.googleCalendar,
+      blockerOwner:
+        persisted.googleCalendar.proofState === 'externally_blocked'
+          ? 'external'
+          : persisted.googleCalendar.proofState === 'degraded_but_usable'
+            ? 'repo_side'
+            : 'none',
+    });
+  }
+
+  return buildTruth({
+    ...buildGoogleCalendarNearLiveSurface({
+      checkedAt,
+      source: 'verify',
+      validatedCalendars: [],
+    }),
+    detail:
+      config.calendarIds.length > 0
+        ? `Google Calendar credentials are configured for ${config.calendarIds.join(', ')}, but this host still needs validate/read/write proof.`
+        : 'Google Calendar credentials look configured, but this host still needs validate/read/write proof.',
+    nextAction:
+      'Run `npm run setup -- --step google-calendar validate`, then `npm run debug:google-calendar`.',
+  });
+}
+
 function buildJourneyTruths(
   review: PilotReviewSnapshotLike,
   telegramTruth: FieldTrialSurfaceTruth,
@@ -1219,6 +1270,7 @@ export function buildFieldTrialOperatorTruth(
   const telegram = buildTelegramTruth(hostSnapshot, windowsHost);
   const alexa = buildAlexaTruth(projectRoot);
   const bluebubbles = buildBlueBubblesTruth(hostSnapshot, review);
+  const googleCalendar = buildGoogleCalendarTruth(projectRoot);
   const research = buildResearchTruth(projectRoot, options.outwardResearchStatus);
   const imageGeneration = buildImageGenerationTruth(projectRoot);
   const hostHealth = buildHostHealthTruth(hostSnapshot, windowsHost);
@@ -1285,6 +1337,7 @@ export function buildFieldTrialOperatorTruth(
     telegram,
     alexa,
     bluebubbles,
+    googleCalendar,
     workCockpit,
     lifeThreads,
     communicationCompanion,
