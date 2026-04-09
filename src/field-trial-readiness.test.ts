@@ -10,6 +10,7 @@ import {
   insertPilotJourneyEvent,
   storeChatMetadata,
   storeMessage,
+  upsertMessageAction,
 } from './db.js';
 import { buildFieldTrialOperatorTruth } from './field-trial-readiness.js';
 import {
@@ -357,6 +358,41 @@ describe('field-trial readiness', () => {
       completedAt: '2026-04-07T20:03:06.000Z',
       durationMs: 6000,
     });
+    upsertMessageAction({
+      messageActionId: 'msg-action-proof-1',
+      groupFolder: 'main',
+      sourceType: 'communication_thread',
+      sourceKey: 'comm-proof',
+      sourceSummary: 'Candace reply went out in the same thread.',
+      targetKind: 'external_thread',
+      targetChannel: 'bluebubbles',
+      targetConversationJson: JSON.stringify({
+        kind: 'external_thread',
+        chatJid: 'bb:iMessage;+;chat-proof',
+        personName: 'Candace',
+      }),
+      draftText: 'Yes, tonight still works for me.',
+      trustLevel: 'approve_before_send',
+      sendStatus: 'sent',
+      followupAt: null,
+      requiresApproval: false,
+      delegationRuleId: null,
+      delegationMode: null,
+      explanationJson: null,
+      linkedRefsJson: JSON.stringify({ communicationThreadId: 'comm-proof', personName: 'Candace' }),
+      platformMessageId: 'bb:sent-proof-1',
+      scheduledTaskId: null,
+      approvedAt: '2026-04-07T20:04:00.000Z',
+      lastActionKind: 'sent',
+      lastActionAt: '2026-04-07T20:04:30.000Z',
+      dedupeKey: 'proof-key-1',
+      presentationChatJid: 'bb:iMessage;+;chat-proof',
+      presentationThreadId: null,
+      presentationMessageId: null,
+      createdAt: '2026-04-07T20:04:00.000Z',
+      lastUpdatedAt: '2026-04-07T20:04:30.000Z',
+      sentAt: '2026-04-07T20:04:30.000Z',
+    });
 
     const truth = buildFieldTrialOperatorTruth({
       projectRoot: tempDir,
@@ -371,6 +407,130 @@ describe('field-trial readiness', () => {
     expect(truth.bluebubbles.publicWebhookUrl).toContain('secret=***');
     expect(truth.bluebubbles.lastInboundObservedAt).toBe('2026-04-07T20:00:00.000Z');
     expect(truth.bluebubbles.lastOutboundResult).toContain('bb:iMessage;+;chat-proof');
+    expect(truth.bluebubbles.messageActionProofState).toBe('fresh');
+    expect(truth.bluebubbles.messageActionProofChatJid).toBe('bb:iMessage;+;chat-proof');
+  });
+
+  it('keeps BlueBubbles near-live when same-chat pilot proof exists but message-action proof is missing', () => {
+    vi.stubEnv('BLUEBUBBLES_ENABLED', 'true');
+    vi.stubEnv('BLUEBUBBLES_BASE_URL', 'http://macbook-pro.local:1234');
+    vi.stubEnv('BLUEBUBBLES_PASSWORD', 'secret');
+    vi.stubEnv('BLUEBUBBLES_GROUP_FOLDER', 'main');
+    vi.stubEnv('BLUEBUBBLES_CHAT_SCOPE', 'all_synced');
+    vi.stubEnv('BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL', 'http://192.168.5.136:4305');
+    vi.stubEnv('BLUEBUBBLES_WEBHOOK_SECRET', 'hook-secret');
+    vi.stubEnv('BLUEBUBBLES_SEND_ENABLED', 'true');
+
+    const snapshot: HostControlSnapshot = {
+      paths: resolveHostControlPaths(tempDir),
+      nodeRuntime: null,
+      hostState: null,
+      readyState: null,
+      assistantHealthState: {
+        bootId: 'boot-blue',
+        pid: process.pid,
+        appVersion: '1.0.0-test',
+        updatedAt: '2026-04-07T20:10:00.000Z',
+        channels: [
+          {
+            name: 'bluebubbles',
+            configured: true,
+            state: 'ready',
+            updatedAt: '2026-04-07T20:10:00.000Z',
+            detail: 'listener 0.0.0.0:4305/bluebubbles/webhook | scope all_synced | reply gate mention_required | transport reachable/auth ok (200)',
+          },
+        ],
+      },
+      telegramRoundtripState: null,
+      telegramTransportState: null,
+      runtimeAuditState: null,
+    };
+
+    storeChatMetadata(
+      'bb:iMessage;+;chat-proof',
+      '2026-04-07T20:05:00.000Z',
+      'Candace',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'bb:msg-1',
+      chat_jid: 'bb:iMessage;+;chat-proof',
+      sender: 'bb:+15551234567',
+      sender_name: 'Candace',
+      content: '@Andrea hi',
+      timestamp: '2026-04-07T20:00:00.000Z',
+      is_from_me: false,
+      is_bot_message: false,
+    });
+    storeMessage({
+      id: 'bb:msg-2',
+      chat_jid: 'bb:iMessage;+;chat-proof',
+      sender: 'Andrea',
+      sender_name: 'Andrea',
+      content: 'Hi. I am here.',
+      timestamp: '2026-04-07T20:01:00.000Z',
+      is_from_me: true,
+      is_bot_message: true,
+    });
+    insertPilotJourneyEvent({
+      eventId: 'bb-proof-1',
+      journeyId: 'ordinary_chat',
+      channel: 'bluebubbles',
+      groupFolder: 'main',
+      chatJid: 'bb:iMessage;+;chat-proof',
+      threadId: null,
+      routeKey: 'direct_quick_reply',
+      systemsInvolved: ['assistant_shell'],
+      outcome: 'success',
+      blockerClass: null,
+      blockerOwner: 'none',
+      degradedPath: null,
+      handoffCreated: false,
+      missionCreated: false,
+      threadSaved: false,
+      reminderCreated: false,
+      librarySaved: false,
+      currentWorkRef: null,
+      summaryText: 'Ordinary chat greeting',
+      startedAt: '2026-04-07T20:00:00.000Z',
+      completedAt: '2026-04-07T20:00:02.000Z',
+      durationMs: 2000,
+    });
+    insertPilotJourneyEvent({
+      eventId: 'bb-proof-2',
+      journeyId: 'daily_guidance',
+      channel: 'bluebubbles',
+      groupFolder: 'main',
+      chatJid: 'bb:iMessage;+;chat-proof',
+      threadId: null,
+      routeKey: 'daily.loose_ends',
+      systemsInvolved: ['daily_companion'],
+      outcome: 'success',
+      blockerClass: null,
+      blockerOwner: 'none',
+      degradedPath: null,
+      handoffCreated: false,
+      missionCreated: false,
+      threadSaved: false,
+      reminderCreated: false,
+      librarySaved: false,
+      currentWorkRef: null,
+      summaryText: 'Daily loose-ends guidance',
+      startedAt: '2026-04-07T20:03:00.000Z',
+      completedAt: '2026-04-07T20:03:06.000Z',
+      durationMs: 6000,
+    });
+
+    const truth = buildFieldTrialOperatorTruth({
+      projectRoot: tempDir,
+      hostSnapshot: snapshot,
+      windowsHost: null,
+    });
+
+    expect(truth.bluebubbles.proofState).not.toBe('live_proven');
+    expect(truth.bluebubbles.messageActionProofState).toBe('none');
+    expect(truth.bluebubbles.blocker).toContain('message-action proof');
   });
 
   it('treats a self-authored @Andrea BlueBubbles message with failed reply-back as degraded-but-usable', () => {

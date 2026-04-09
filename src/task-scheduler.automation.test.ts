@@ -109,6 +109,7 @@ describe('task scheduler calendar automations', () => {
       } as any,
       onProcess: () => {},
       sendMessage,
+      sendToTarget: vi.fn(async () => ({ platformMessageId: 'unused' })),
     });
 
     await vi.advanceTimersByTimeAsync(10);

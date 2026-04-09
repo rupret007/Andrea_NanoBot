@@ -4,7 +4,7 @@ import {
   redactBlueBubblesWebhookUrl,
   resolveBlueBubblesConfig,
 } from './channels/bluebubbles.js';
-import { getAllChats, listRecentMessagesForChat } from './db.js';
+import { getAllChats, listMessageActionsForGroup, listRecentMessagesForChat } from './db.js';
 import { readEnvFile } from './env.js';
 import {
   assessAlexaLiveProof,
@@ -83,6 +83,10 @@ export interface FieldTrialBlueBubblesTruth extends FieldTrialSurfaceTruth {
   attemptedTargetSequence: string;
   transportState: string;
   transportDetail: string;
+  messageActionProofState: 'none' | 'fresh' | 'stale';
+  messageActionProofChatJid: string;
+  messageActionProofAt: string;
+  messageActionProofDetail: string;
 }
 
 function deriveBlueBubblesWebhookRegistrationTruth(detail: string): {
@@ -260,6 +264,32 @@ function buildTruth(
 function formatProofMoment(iso: string | null | undefined): string {
   if (!iso) return 'recently';
   return `on ${iso}`;
+}
+
+function parseJsonSafe<T>(value: string | null | undefined, fallback: T): T {
+  if (!value) return fallback;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function resolveBlueBubblesMessageActionProofTarget(action: {
+  presentationChatJid?: string | null;
+  targetConversationJson: string;
+}): string | null {
+  const target = parseJsonSafe<{ chatJid?: string | null }>(
+    action.targetConversationJson,
+    {},
+  );
+  if (target.chatJid?.startsWith('bb:')) {
+    return target.chatJid;
+  }
+  if (action.presentationChatJid?.startsWith('bb:')) {
+    return action.presentationChatJid;
+  }
+  return null;
 }
 
 function describeRecentJourney(
@@ -625,6 +655,37 @@ function buildBlueBubblesTruth(
   }
   const liveProofChatJid =
     [...successCounts.entries()].find(([, count]) => count >= 2)?.[0] || null;
+  const recentMessageActionProofs = listMessageActionsForGroup({
+    groupFolder: config.groupFolder || 'main',
+    includeSent: true,
+    limit: 80,
+  })
+    .map((action) => {
+      const proofChatJid = resolveBlueBubblesMessageActionProofTarget(action);
+      const proofAt = Date.parse(action.lastActionAt || action.sentAt || '');
+      return {
+        action,
+        proofChatJid,
+        proofAt,
+      };
+    })
+    .filter(
+      ({ action, proofChatJid, proofAt }) =>
+        action.targetChannel === 'bluebubbles' &&
+        action.targetKind === 'external_thread' &&
+        proofChatJid?.startsWith('bb:') === true &&
+        Number.isFinite(proofAt) &&
+        proofAt >= freshProofCutoff &&
+        ['sent', 'scheduled_send', 'remind_instead', 'save_to_thread'].includes(
+          action.lastActionKind || '',
+        ),
+    )
+    .sort((left, right) => right.proofAt - left.proofAt);
+  const matchingMessageActionProof = liveProofChatJid
+    ? recentMessageActionProofs.find(
+        (entry) => entry.proofChatJid === liveProofChatJid,
+      ) || null
+    : null;
 
   let lastInboundObservedAt = 'none';
   let lastOutboundResult = 'none';
@@ -680,6 +741,26 @@ function buildBlueBubblesTruth(
     attemptedTargetSequence: transportDiagnostics.attemptedTargetSequence,
     transportState: bluebubblesChannel?.state || snapshot.state,
     transportDetail: channelDetail,
+    messageActionProofState: matchingMessageActionProof
+      ? 'fresh'
+      : recentMessageActionProofs.length > 0
+        ? 'stale'
+        : 'none',
+    messageActionProofChatJid:
+      matchingMessageActionProof?.proofChatJid ||
+      recentMessageActionProofs[0]?.proofChatJid ||
+      'none',
+    messageActionProofAt:
+      matchingMessageActionProof?.action.lastActionAt ||
+      matchingMessageActionProof?.action.sentAt ||
+      recentMessageActionProofs[0]?.action.lastActionAt ||
+      recentMessageActionProofs[0]?.action.sentAt ||
+      'none',
+    messageActionProofDetail: matchingMessageActionProof
+      ? `Recent same-chat message action is recorded in ${matchingMessageActionProof.proofChatJid}.`
+      : recentMessageActionProofs.length > 0
+        ? `A recent BlueBubbles message-action decision exists in ${recentMessageActionProofs[0]!.proofChatJid}, but not in the same chat as the current proof chain.`
+        : 'No fresh BlueBubbles message-action decision is recorded yet.',
   };
 
   if (
@@ -853,12 +934,17 @@ function buildBlueBubblesTruth(
     };
   }
 
-  if (liveProofChatJid && lastInboundObservedAt !== 'none' && lastOutboundResult !== 'none') {
+  if (
+    liveProofChatJid &&
+    matchingMessageActionProof &&
+    lastInboundObservedAt !== 'none' &&
+    lastOutboundResult !== 'none'
+  ) {
     return {
       ...buildTruth({
         proofState: 'live_proven',
         detail:
-          `BlueBubbles is live-proven on this host. Recent same-thread proof is anchored in ${liveProofChatJid}.`,
+          `BlueBubbles is live-proven on this host. Recent same-thread proof is anchored in ${liveProofChatJid}, including a fresh message-action decision in that same chat.`,
       }),
       ...base,
     };
@@ -873,12 +959,18 @@ function buildBlueBubblesTruth(
       ...buildTruth({
         proofState: 'degraded_but_usable',
         blocker:
-          'BlueBubbles has real traffic on this host, but the full same-thread follow-up proof chain is not fresh enough yet.',
+          matchingMessageActionProof
+            ? 'BlueBubbles has real traffic on this host, but the full same-thread follow-up proof chain is not fresh enough yet.'
+            : 'BlueBubbles has real traffic on this host, but the same-thread message-action proof leg is still missing.',
         blockerOwner: 'repo_side',
         nextAction:
-          'Send one more same-thread BlueBubbles follow-up and confirm Andrea replies in that same conversation again.',
+          matchingMessageActionProof
+            ? 'Send one more same-thread BlueBubbles follow-up and confirm Andrea replies in that same conversation again.'
+            : 'In that same BlueBubbles chat, ask what you should say back and then use send it or send it later tonight so the message-action leg is proven too.',
         detail:
-          `Real BlueBubbles traffic is flowing on this host through ${recentEngagement.chatJid}, but the full follow-up proof bar still needs one fresh same-thread continuation.`,
+          matchingMessageActionProof
+            ? `Real BlueBubbles traffic is flowing on this host through ${recentEngagement.chatJid}, but the full follow-up proof bar still needs one fresh same-thread continuation.`
+            : `Real BlueBubbles traffic is flowing on this host through ${recentEngagement.chatJid}, but a fresh same-chat message-action decision is still missing. ${base.messageActionProofDetail}`,
       }),
       ...base,
     };
@@ -891,9 +983,9 @@ function buildBlueBubblesTruth(
         'A fresh real BlueBubbles inbound -> reply -> follow-up roundtrip has not been reproved on this host.',
       blockerOwner: 'external',
       nextAction:
-        'Send `@Andrea hi` from any synced BlueBubbles chat, then continue with `@Andrea what am I forgetting` in that same conversation.',
+        'Send `@Andrea hi`, then `@Andrea what am I forgetting`, then `@Andrea what should I say back`, and finally `@Andrea send it` or `@Andrea send it later tonight` in that same BlueBubbles conversation.',
       detail:
-        'BlueBubbles configuration is present, but this pass still needs a real same-host roundtrip before the surface can be called fully live-proven.',
+        `BlueBubbles configuration is present, but this pass still needs a real same-host roundtrip before the surface can be called fully live-proven. ${base.messageActionProofDetail}`,
     }),
     ...base,
   };

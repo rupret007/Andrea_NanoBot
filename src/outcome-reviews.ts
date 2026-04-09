@@ -58,7 +58,12 @@ export interface OutcomeReviewPromptMatch {
     | 'follow_up_tomorrow'
     | 'needs_attention'
     | 'review_weekend'
-    | 'still_open_person';
+    | 'still_open_person'
+    | 'messages_unsent'
+    | 'messages_sent_today'
+    | 'messages_scheduled'
+    | 'messages_failed'
+    | 'messages_after_approval';
   personName?: string;
 }
 
@@ -84,6 +89,12 @@ export interface OutcomeReviewSnapshot {
   reviewThisWeek: OutcomeReviewItem[];
   lingering: OutcomeReviewItem[];
   weeklyResolved: OutcomeReviewItem[];
+  messageSentToday: OutcomeReviewItem[];
+  messageWaitingApproval: OutcomeReviewItem[];
+  messageScheduled: OutcomeReviewItem[];
+  messageFailed: OutcomeReviewItem[];
+  messageUnsentDrafts: OutcomeReviewItem[];
+  messageChangedAfterApproval: OutcomeReviewItem[];
 }
 
 export interface OutcomeReviewPresentation {
@@ -153,6 +164,18 @@ function clipText(value: string | null | undefined, max = 140): string {
   if (!normalized) return '';
   if (normalized.length <= max) return normalized;
   return `${normalized.slice(0, max - 3).trimEnd()}...`;
+}
+
+function formatWhenLabel(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
 }
 
 function parseJsonSafe<T>(value: string | null | undefined, fallback: T): T {
@@ -639,6 +662,12 @@ export function syncOutcomeFromMessageActionRecord(
   now = new Date(),
 ): OutcomeRecord {
   const linkedRefs = parseJsonSafe<OutcomeLinkedRefs>(action.linkedRefsJson, {});
+  const scheduledSend =
+    action.sendStatus === 'deferred' &&
+    action.trustLevel === 'schedule_send' &&
+    Boolean(action.scheduledTaskId);
+  const reminderBackedDefer =
+    action.sendStatus === 'deferred' && !scheduledSend;
   const status: OutcomeStatus =
     action.sendStatus === 'sent'
       ? 'completed'
@@ -652,19 +681,44 @@ export function syncOutcomeFromMessageActionRecord(
   const completionSummary =
     action.sendStatus === 'sent'
       ? clipText(action.sourceSummary || 'Sent the reply.', 140)
-      : action.sendStatus === 'failed'
-        ? clipText(action.sourceSummary || 'The message still needs to go out.', 140)
-        : clipText(action.sourceSummary || action.draftText, 140);
+      : scheduledSend
+        ? clipText(action.sourceSummary || 'Queued this reply to send later.', 140)
+        : reminderBackedDefer
+          ? action.lastActionKind === 'remind_instead'
+            ? clipText(
+                action.sourceSummary ||
+                  'Converted this reply into a reminder instead of sending it.',
+                140,
+              )
+            : clipText(
+                action.sourceSummary || 'Saved this draft to revisit before sending.',
+                140,
+              )
+          : action.sendStatus === 'approved'
+            ? clipText(action.sourceSummary || 'Approved and ready to send.', 140)
+            : action.sendStatus === 'failed'
+              ? clipText(action.sourceSummary || 'The message still needs to go out.', 140)
+              : clipText(action.sourceSummary || action.draftText, 140);
   const nextFollowupText =
     action.sendStatus === 'sent'
       ? 'That message already went out.'
-      : action.sendStatus === 'deferred'
-        ? 'This draft is saved to revisit before sending.'
-        : action.sendStatus === 'failed'
-          ? 'The draft is still here if you want to retry or send it later.'
-          : action.sendStatus === 'approved'
-            ? 'This is approved and ready to send.'
-            : 'A reply is drafted, but it still needs your approval to send.';
+      : scheduledSend
+        ? `Queued to send around ${
+            formatWhenLabel(action.followupAt) || action.followupAt || 'later'
+          }.`
+        : reminderBackedDefer
+          ? action.lastActionKind === 'remind_instead'
+            ? `Converted to a reminder${
+                formatWhenLabel(action.followupAt)
+                  ? ` for ${formatWhenLabel(action.followupAt)}`
+                  : ''
+              }.`
+            : 'This draft is saved to revisit before sending.'
+          : action.sendStatus === 'failed'
+            ? 'The draft is still here if you want to retry or send it later.'
+            : action.sendStatus === 'approved'
+              ? 'This is approved but not sent yet.'
+              : 'A reply is drafted, but it still needs your approval to send.';
   return upsertOutcomeRecord({
     groupFolder: action.groupFolder,
     sourceType: 'message_action',
@@ -677,11 +731,16 @@ export function syncOutcomeFromMessageActionRecord(
         ? 'I could not send that right now.'
         : null,
     dueAt: action.followupAt || null,
-    reviewHorizon: action.followupAt
-      ? reviewHorizonFromDueAt(action.followupAt, now)
-      : action.sendStatus === 'sent'
+    reviewHorizon:
+      action.sendStatus === 'sent'
         ? 'none'
-        : 'today',
+        : action.followupAt
+          ? reviewHorizonFromDueAt(action.followupAt, now)
+          : action.sendStatus === 'failed'
+            ? 'today'
+            : action.sendStatus === 'approved'
+              ? 'today'
+              : 'today',
     linkedRefs: {
       ...linkedRefs,
       messageActionId: action.messageActionId,
@@ -1001,6 +1060,7 @@ export function seedOutcomeRecordsForGroup(
 
 function buildSections(
   items: OutcomeReviewItem[],
+  rawMessageItems: OutcomeReviewItem[],
   match: OutcomeReviewPromptMatch,
   now: Date,
   timeZone: string,
@@ -1060,6 +1120,47 @@ function buildSections(
       now.getTime() - Date.parse(item.outcome.updatedAt) <=
         7 * 24 * 60 * 60 * 1000,
   );
+  const messageSentToday = rawMessageItems.filter((item) => {
+    const action = getMessageAction(item.outcome.sourceKey);
+    return Boolean(
+      action &&
+        action.sendStatus === 'sent' &&
+        isSameLocalDay(action.sentAt || item.outcome.updatedAt, now, timeZone),
+    );
+  });
+  const messageWaitingApproval = rawMessageItems.filter((item) => {
+    const action = getMessageAction(item.outcome.sourceKey);
+    return Boolean(action && action.sendStatus === 'drafted' && action.requiresApproval);
+  });
+  const messageScheduled = rawMessageItems.filter((item) => {
+    const action = getMessageAction(item.outcome.sourceKey);
+    return Boolean(
+      action &&
+        action.sendStatus === 'deferred' &&
+        action.trustLevel === 'schedule_send' &&
+        action.scheduledTaskId,
+    );
+  });
+  const messageFailed = rawMessageItems.filter((item) => {
+    const action = getMessageAction(item.outcome.sourceKey);
+    return Boolean(action && action.sendStatus === 'failed');
+  });
+  const messageUnsentDrafts = rawMessageItems.filter((item) => {
+    const action = getMessageAction(item.outcome.sourceKey);
+    if (!action) return false;
+    if (action.sendStatus === 'drafted' || action.sendStatus === 'approved') return true;
+    return action.sendStatus === 'deferred' && !action.scheduledTaskId;
+  });
+  const messageChangedAfterApproval = rawMessageItems.filter((item) => {
+    const action = getMessageAction(item.outcome.sourceKey);
+    if (!action?.approvedAt || !action.lastActionAt || !action.lastActionKind) {
+      return false;
+    }
+    return (
+      Date.parse(action.lastActionAt) >= Date.parse(action.approvedAt) &&
+      action.lastActionKind !== 'approved'
+    );
+  });
 
   return {
     match,
@@ -1074,6 +1175,12 @@ function buildSections(
     reviewThisWeek: limitItems(reviewThisWeek),
     lingering: limitItems(lingering),
     weeklyResolved: limitItems(weeklyResolved),
+    messageSentToday: limitItems(messageSentToday),
+    messageWaitingApproval: limitItems(messageWaitingApproval),
+    messageScheduled: limitItems(messageScheduled),
+    messageFailed: limitItems(messageFailed),
+    messageUnsentDrafts: limitItems(messageUnsentDrafts),
+    messageChangedAfterApproval: limitItems(messageChangedAfterApproval),
   };
 }
 
@@ -1097,20 +1204,22 @@ export function buildReviewSnapshot(params: {
     return record.showInDailyReview;
   });
 
-  let items = dedupeReviewItems(
-    outcomes
-      .filter((record) => {
-        if (
-          record.reviewSuppressedUntil &&
-          Date.parse(record.reviewSuppressedUntil) > now.getTime()
-        ) {
-          return false;
-        }
-        return true;
-      })
-      .map((outcome) => buildReviewItem(outcome)),
-  );
+  let rawItems = outcomes
+    .filter((record) => {
+      if (
+        record.reviewSuppressedUntil &&
+        Date.parse(record.reviewSuppressedUntil) > now.getTime()
+      ) {
+        return false;
+      }
+      return true;
+    })
+    .map((outcome) => buildReviewItem(outcome));
+  let items = dedupeReviewItems(rawItems);
   if (params.match.kind === 'still_open_person' && params.match.personName) {
+    rawItems = rawItems.filter((item) =>
+      personScopeMatches(item, params.match.personName || ''),
+    );
     items = items.filter((item) =>
       personScopeMatches(item, params.match.personName || ''),
     );
@@ -1118,6 +1227,7 @@ export function buildReviewSnapshot(params: {
 
   return buildSections(
     items,
+    rawItems.filter((item) => item.outcome.sourceType === 'message_action'),
     params.match,
     now,
     params.timeZone || 'America/Chicago',
@@ -1134,29 +1244,66 @@ function buildTelegramReviewText(snapshot: OutcomeReviewSnapshot): string {
       '',
     );
   };
+  const addMessagingSections = () => {
+    addSection('Sent Today', snapshot.messageSentToday);
+    addSection('Waiting For Approval', snapshot.messageWaitingApproval);
+    addSection('Scheduled Sends', snapshot.messageScheduled);
+    addSection('Failed Sends', snapshot.messageFailed);
+    addSection('Unsent Drafts', snapshot.messageUnsentDrafts);
+    addSection('What I Still Owe People', snapshot.owedReplies);
+  };
 
   switch (snapshot.match.kind) {
     case 'done_today':
       addSection('Done Today', snapshot.completedToday);
+      addSection('Sent Today', snapshot.messageSentToday);
       addSection('Still Open Tonight', snapshot.stillOpenTonight);
+      break;
+    case 'messages_sent_today':
+      addSection('Sent Today', snapshot.messageSentToday);
+      addSection('What Changed After Approval', snapshot.messageChangedAfterApproval);
+      break;
+    case 'messages_unsent':
+      addSection('Waiting For Approval', snapshot.messageWaitingApproval);
+      addSection('Scheduled Sends', snapshot.messageScheduled);
+      addSection('Failed Sends', snapshot.messageFailed);
+      addSection('Unsent Drafts', snapshot.messageUnsentDrafts);
+      addSection('What I Still Owe People', snapshot.owedReplies);
+      break;
+    case 'messages_scheduled':
+      addSection('Scheduled Sends', snapshot.messageScheduled);
+      addSection('What I Still Owe People', snapshot.owedReplies);
+      break;
+    case 'messages_failed':
+      addSection('Failed Sends', snapshot.messageFailed);
+      addSection('Unsent Drafts', snapshot.messageUnsentDrafts);
+      break;
+    case 'messages_after_approval':
+      addSection('What Changed After Approval', snapshot.messageChangedAfterApproval);
+      addSection('Scheduled Sends', snapshot.messageScheduled);
+      addSection('Sent Today', snapshot.messageSentToday);
       break;
     case 'not_done_today':
       addSection('Still Open Tonight', snapshot.stillOpenTonight);
       addSection('Carry Into Tomorrow', snapshot.carryIntoTomorrow);
       addSection('Slipping', snapshot.slipping);
+      addSection('Waiting For Approval', snapshot.messageWaitingApproval);
       break;
     case 'slipped':
       addSection('Slipping', snapshot.slipping);
       addSection('Blocked', snapshot.blocked);
+      addSection('Failed Sends', snapshot.messageFailed);
       break;
     case 'carry_tomorrow':
     case 'follow_up_tomorrow':
       addSection('Carry Into Tomorrow', snapshot.carryIntoTomorrow);
+      addSection('Scheduled Sends', snapshot.messageScheduled);
       addSection('Owed Replies', snapshot.owedReplies);
       break;
     case 'weekly_review':
     case 'review_weekend':
       addSection('Closed This Week', snapshot.weeklyResolved);
+      addSection('Sent Today', snapshot.messageSentToday);
       addSection('Review This Week', snapshot.reviewThisWeek);
       addSection('Lingering', snapshot.lingering);
       addSection('Blocked', snapshot.blocked);
@@ -1166,9 +1313,18 @@ function buildTelegramReviewText(snapshot: OutcomeReviewSnapshot): string {
         snapshot.match.personName
           ? `Still Open With ${snapshot.match.personName}`
           : 'Still Open',
-        snapshot.owedReplies.length > 0
-          ? snapshot.owedReplies
-          : snapshot.carryIntoTomorrow,
+        snapshot.messageWaitingApproval.length > 0
+          ? snapshot.messageWaitingApproval
+          : snapshot.messageScheduled.length > 0
+            ? snapshot.messageScheduled
+            : snapshot.messageUnsentDrafts.length > 0
+              ? snapshot.messageUnsentDrafts
+              : snapshot.owedReplies,
+      );
+      addSection('Failed Sends', snapshot.messageFailed);
+      addSection(
+        'Carry Into Tomorrow',
+        snapshot.carryIntoTomorrow,
       );
       addSection('Blocked', snapshot.blocked);
       break;
@@ -1178,8 +1334,8 @@ function buildTelegramReviewText(snapshot: OutcomeReviewSnapshot): string {
       addSection('Done Today', snapshot.completedToday);
       addSection('Still Open Tonight', snapshot.stillOpenTonight);
       addSection('Carry Into Tomorrow', snapshot.carryIntoTomorrow);
+      addMessagingSections();
       addSection('Blocked', snapshot.blocked);
-      addSection('Owed Replies', snapshot.owedReplies);
       break;
   }
 
@@ -1187,15 +1343,27 @@ function buildTelegramReviewText(snapshot: OutcomeReviewSnapshot): string {
     return 'Andrea: Nothing important looks open enough to review right now.';
   }
 
-  const lead =
+  let lead = 'Andrea: Here is the current review.';
+  if (
     snapshot.match.kind === 'weekly_review' ||
     snapshot.match.kind === 'review_weekend'
-      ? 'Andrea: Here is the weekly review.'
-      : snapshot.match.kind === 'done_today'
-        ? 'Andrea: Here is what actually got done today.'
-        : snapshot.match.kind === 'slipped'
-          ? 'Andrea: Here is what looks like it slipped.'
-          : 'Andrea: Here is the current review.';
+  ) {
+    lead = 'Andrea: Here is the weekly review.';
+  } else if (snapshot.match.kind === 'done_today') {
+    lead = 'Andrea: Here is what actually got done today.';
+  } else if (snapshot.match.kind === 'messages_unsent') {
+    lead = 'Andrea: Here are the message loops that are still open.';
+  } else if (snapshot.match.kind === 'messages_sent_today') {
+    lead = 'Andrea: Here are the messages that went out today.';
+  } else if (snapshot.match.kind === 'messages_scheduled') {
+    lead = 'Andrea: Here is what is queued to send later.';
+  } else if (snapshot.match.kind === 'messages_failed') {
+    lead = 'Andrea: Here is what failed to send.';
+  } else if (snapshot.match.kind === 'messages_after_approval') {
+    lead = 'Andrea: Here is what changed after approval.';
+  } else if (snapshot.match.kind === 'slipped') {
+    lead = 'Andrea: Here is what looks like it slipped.';
+  }
   return [lead, '', ...sections].join('\n').trim();
 }
 
@@ -1247,20 +1415,51 @@ export function buildOutcomeReviewResponse(params: {
     now: params.now,
     timeZone: params.timeZone,
   });
-  const focusItems =
+  let focusItems: OutcomeReviewItem[];
+  if (
     snapshot.match.kind === 'weekly_review' ||
     snapshot.match.kind === 'review_weekend'
-      ? [
-          ...snapshot.reviewThisWeek,
-          ...snapshot.blocked,
-          ...snapshot.lingering,
-        ]
-      : [
-          ...snapshot.stillOpenTonight,
-          ...snapshot.carryIntoTomorrow,
-          ...snapshot.blocked,
-          ...snapshot.owedReplies,
-        ];
+  ) {
+    focusItems = [
+      ...snapshot.reviewThisWeek,
+      ...snapshot.blocked,
+      ...snapshot.lingering,
+      ...snapshot.messageScheduled,
+      ...snapshot.messageFailed,
+    ];
+  } else if (snapshot.match.kind === 'messages_sent_today') {
+    focusItems = [
+      ...snapshot.messageSentToday,
+      ...snapshot.messageChangedAfterApproval,
+    ];
+  } else if (snapshot.match.kind === 'messages_scheduled') {
+    focusItems = [...snapshot.messageScheduled, ...snapshot.owedReplies];
+  } else if (snapshot.match.kind === 'messages_failed') {
+    focusItems = [...snapshot.messageFailed, ...snapshot.messageUnsentDrafts];
+  } else if (snapshot.match.kind === 'messages_after_approval') {
+    focusItems = [
+      ...snapshot.messageChangedAfterApproval,
+      ...snapshot.messageScheduled,
+    ];
+  } else if (snapshot.match.kind === 'messages_unsent') {
+    focusItems = [
+      ...snapshot.messageWaitingApproval,
+      ...snapshot.messageScheduled,
+      ...snapshot.messageFailed,
+      ...snapshot.messageUnsentDrafts,
+      ...snapshot.owedReplies,
+    ];
+  } else {
+    focusItems = [
+      ...snapshot.stillOpenTonight,
+      ...snapshot.carryIntoTomorrow,
+      ...snapshot.blocked,
+      ...snapshot.owedReplies,
+      ...snapshot.messageWaitingApproval,
+      ...snapshot.messageScheduled,
+      ...snapshot.messageFailed,
+    ];
+  }
   const dedupedFocus = dedupeReviewItems(focusItems);
   const primaryOutcomeId = dedupedFocus[0]?.outcome.outcomeId;
 
@@ -1319,6 +1518,21 @@ export function matchOutcomeReviewPrompt(
   }
   if (/^daily review\b/.test(normalized)) return { kind: 'daily_review' };
   if (/^weekly review\b/.test(normalized)) return { kind: 'weekly_review' };
+  if (/what messages were sent today/.test(normalized)) {
+    return { kind: 'messages_sent_today' };
+  }
+  if (/what messages are still unsent|what unsent drafts/.test(normalized)) {
+    return { kind: 'messages_unsent' };
+  }
+  if (/what is scheduled to send later|what messages are scheduled|what is queued to send later/.test(normalized)) {
+    return { kind: 'messages_scheduled' };
+  }
+  if (/what failed to send|what messages failed to send/.test(normalized)) {
+    return { kind: 'messages_failed' };
+  }
+  if (/what changed after i approved something|what changed after approval/.test(normalized)) {
+    return { kind: 'messages_after_approval' };
+  }
   if (/what actually got done today|what got done today/.test(normalized)) {
     return { kind: 'done_today' };
   }
@@ -1341,7 +1555,7 @@ export function matchOutcomeReviewPrompt(
     return { kind: 'weekly_review' };
   }
   if (
-    /what messages are still unsent|what do i still owe people|what still needs my attention|what(?:'s| is)? still open|what should i remember tonight/.test(
+    /what do i still owe people|what still needs my attention|what(?:'s| is)? still open|what should i remember tonight/.test(
       normalized,
     )
   ) {

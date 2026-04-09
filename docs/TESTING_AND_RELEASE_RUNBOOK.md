@@ -148,8 +148,9 @@ Treat that delegation suite as the fast proof that Andrea can:
 For messaging trust-ladder and live-delivery changes, add:
 
 ```bash
-node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/message-actions.test.ts src/channels/bluebubbles.test.ts src/action-bundles.test.ts src/outcome-reviews.test.ts src/delegation-rules.test.ts src/alexa.test.ts
+node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/message-actions.test.ts src/channels/bluebubbles.test.ts src/action-bundles.test.ts src/outcome-reviews.test.ts src/delegation-rules.test.ts src/alexa.test.ts src/field-trial-readiness.test.ts src/task-scheduler.test.ts src/task-scheduler.automation.test.ts
 npm run telegram:user:smoke
+npm run debug:bluebubbles -- --live
 ```
 
 Treat that messaging suite as the fast proof that Andrea can:
@@ -157,7 +158,7 @@ Treat that messaging suite as the fast proof that Andrea can:
 - persist a tracked message action from a draft
 - require approval before external send by default
 - send a BlueBubbles same-thread reply without the Andrea prefix
-- keep send-later distinct from remind-later
+- keep one-off scheduled send distinct from remind-later
 - surface sent vs deferred messaging honestly in review
 
 For outcome tracking, carryover, and review-flow changes, add:
@@ -252,7 +253,7 @@ Important truth for this host:
 
 - a healthy host can still report `STATUS: failed` if `EXTERNAL_BLOCKERS` are present
 - on the current host, that now usually means `alexa_live_signed_turn_missing`, not a broken service
-- BlueBubbles is near-live on this Windows machine once the `BLUEBUBBLES_*` host configuration is loaded, the server is reachable, and Andrea's public webhook is registered; it becomes live-proven only after a same-host roundtrip is reproved
+- BlueBubbles is near-live on this Windows machine once the `BLUEBUBBLES_*` host configuration is loaded, the server is reachable, and Andrea's public webhook is registered; it becomes live-proven only after a same-host roundtrip plus one same-thread message-action proof leg is reproved
 - if `SERVICE: running_ready` and the blocker is external, treat that as an exact release-candidate caveat rather than a host failure
 
 Then validate the public-safe Telegram surface:
@@ -308,6 +309,7 @@ If BlueBubbles is configured on that host, add:
 - one real inbound BlueBubbles message
 - one real reply back into that same BlueBubbles conversation
 - one safe companion flow such as `what am I forgetting`
+- one same-thread message-action decision such as `send it` or `send it later tonight`
 - one explicit BlueBubbles -> Telegram handoff if you are validating cross-channel continuity
 - one explicit communication-companion flow such as:
   - `summarize this`

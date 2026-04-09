@@ -641,6 +641,10 @@ function createSchema(database: Database.Database): void {
       explanation_json TEXT,
       linked_refs_json TEXT,
       platform_message_id TEXT,
+      scheduled_task_id TEXT,
+      approved_at TEXT,
+      last_action_kind TEXT,
+      last_action_at TEXT,
       dedupe_key TEXT NOT NULL,
       presentation_chat_jid TEXT,
       presentation_thread_id TEXT,
@@ -1118,6 +1122,39 @@ function createSchema(database: Database.Database): void {
     );
   } catch {
     /* column already exists */
+  }
+
+  try {
+    database.exec(`ALTER TABLE message_actions ADD COLUMN scheduled_task_id TEXT`);
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(`ALTER TABLE message_actions ADD COLUMN approved_at TEXT`);
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(`ALTER TABLE message_actions ADD COLUMN last_action_kind TEXT`);
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(`ALTER TABLE message_actions ADD COLUMN last_action_at TEXT`);
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(`
+      CREATE INDEX IF NOT EXISTS idx_message_actions_scheduled_task
+        ON message_actions(scheduled_task_id)
+    `);
+  } catch {
+    /* index creation can fail until the migration column exists on very old DBs */
   }
 
   try {
@@ -3582,6 +3619,10 @@ export function upsertMessageAction(record: MessageActionRecord): void {
         explanation_json,
         linked_refs_json,
         platform_message_id,
+        scheduled_task_id,
+        approved_at,
+        last_action_kind,
+        last_action_at,
         dedupe_key,
         presentation_chat_jid,
         presentation_thread_id,
@@ -3589,7 +3630,7 @@ export function upsertMessageAction(record: MessageActionRecord): void {
         created_at,
         last_updated_at,
         sent_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(message_action_id) DO UPDATE SET
         group_folder = excluded.group_folder,
         source_type = excluded.source_type,
@@ -3608,6 +3649,10 @@ export function upsertMessageAction(record: MessageActionRecord): void {
         explanation_json = excluded.explanation_json,
         linked_refs_json = excluded.linked_refs_json,
         platform_message_id = excluded.platform_message_id,
+        scheduled_task_id = excluded.scheduled_task_id,
+        approved_at = excluded.approved_at,
+        last_action_kind = excluded.last_action_kind,
+        last_action_at = excluded.last_action_at,
         dedupe_key = excluded.dedupe_key,
         presentation_chat_jid = excluded.presentation_chat_jid,
         presentation_thread_id = excluded.presentation_thread_id,
@@ -3635,6 +3680,10 @@ export function upsertMessageAction(record: MessageActionRecord): void {
     record.explanationJson || null,
     record.linkedRefsJson || null,
     record.platformMessageId || null,
+    record.scheduledTaskId || null,
+    record.approvedAt || null,
+    record.lastActionKind || null,
+    record.lastActionAt || null,
     record.dedupeKey,
     record.presentationChatJid || null,
     record.presentationThreadId || null,
@@ -3664,6 +3713,10 @@ function mapMessageActionRow(row: {
   explanation_json: string | null;
   linked_refs_json: string | null;
   platform_message_id: string | null;
+  scheduled_task_id: string | null;
+  approved_at: string | null;
+  last_action_kind: MessageActionRecord['lastActionKind'];
+  last_action_at: string | null;
   dedupe_key: string;
   presentation_chat_jid: string | null;
   presentation_thread_id: string | null;
@@ -3691,6 +3744,10 @@ function mapMessageActionRow(row: {
     explanationJson: row.explanation_json,
     linkedRefsJson: row.linked_refs_json,
     platformMessageId: row.platform_message_id,
+    scheduledTaskId: row.scheduled_task_id,
+    approvedAt: row.approved_at,
+    lastActionKind: row.last_action_kind,
+    lastActionAt: row.last_action_at,
     dedupeKey: row.dedupe_key,
     presentationChatJid: row.presentation_chat_jid,
     presentationThreadId: row.presentation_thread_id,
@@ -3733,6 +3790,10 @@ export function getMessageAction(
         explanation_json: string | null;
         linked_refs_json: string | null;
         platform_message_id: string | null;
+        scheduled_task_id: string | null;
+        approved_at: string | null;
+        last_action_kind: MessageActionRecord['lastActionKind'];
+        last_action_at: string | null;
         dedupe_key: string;
         presentation_chat_jid: string | null;
         presentation_thread_id: string | null;
@@ -3784,6 +3845,10 @@ export function getMessageActionBySource(
         explanation_json: string | null;
         linked_refs_json: string | null;
         platform_message_id: string | null;
+        scheduled_task_id: string | null;
+        approved_at: string | null;
+        last_action_kind: MessageActionRecord['lastActionKind'];
+        last_action_at: string | null;
         dedupe_key: string;
         presentation_chat_jid: string | null;
         presentation_thread_id: string | null;
@@ -3849,6 +3914,10 @@ export function listMessageActionsForGroup(params: {
       explanation_json: string | null;
       linked_refs_json: string | null;
       platform_message_id: string | null;
+      scheduled_task_id: string | null;
+      approved_at: string | null;
+      last_action_kind: MessageActionRecord['lastActionKind'];
+      last_action_at: string | null;
       dedupe_key: string;
       presentation_chat_jid: string | null;
       presentation_thread_id: string | null;
@@ -3908,6 +3977,60 @@ export function findLatestOpenMessageActionForChat(params: {
         explanation_json: string | null;
         linked_refs_json: string | null;
         platform_message_id: string | null;
+        scheduled_task_id: string | null;
+        approved_at: string | null;
+        last_action_kind: MessageActionRecord['lastActionKind'];
+        last_action_at: string | null;
+        dedupe_key: string;
+        presentation_chat_jid: string | null;
+        presentation_thread_id: string | null;
+        presentation_message_id: string | null;
+        created_at: string;
+        last_updated_at: string;
+        sent_at: string | null;
+      }
+    | undefined;
+  if (!row || !isValidGroupFolder(row.group_folder)) return undefined;
+  return mapMessageActionRow(row);
+}
+
+export function getMessageActionByScheduledTaskId(
+  scheduledTaskId: string,
+): MessageActionRecord | undefined {
+  const row = db
+    .prepare(
+      `
+        SELECT *
+        FROM message_actions
+        WHERE scheduled_task_id = ?
+        ORDER BY last_updated_at DESC
+        LIMIT 1
+      `,
+    )
+    .get(scheduledTaskId) as
+    | {
+        message_action_id: string;
+        group_folder: string;
+        source_type: MessageActionRecord['sourceType'];
+        source_key: string;
+        source_summary: string | null;
+        target_kind: MessageActionRecord['targetKind'];
+        target_channel: MessageActionRecord['targetChannel'];
+        target_conversation_json: string;
+        draft_text: string;
+        trust_level: MessageActionRecord['trustLevel'];
+        send_status: MessageActionRecord['sendStatus'];
+        followup_at: string | null;
+        requires_approval: number;
+        delegation_rule_id: string | null;
+        delegation_mode: MessageActionRecord['delegationMode'];
+        explanation_json: string | null;
+        linked_refs_json: string | null;
+        platform_message_id: string | null;
+        scheduled_task_id: string | null;
+        approved_at: string | null;
+        last_action_kind: MessageActionRecord['lastActionKind'];
+        last_action_at: string | null;
         dedupe_key: string;
         presentation_chat_jid: string | null;
         presentation_thread_id: string | null;
@@ -3938,6 +4061,10 @@ export function updateMessageAction(
       | 'explanationJson'
       | 'linkedRefsJson'
       | 'platformMessageId'
+      | 'scheduledTaskId'
+      | 'approvedAt'
+      | 'lastActionKind'
+      | 'lastActionAt'
       | 'presentationChatJid'
       | 'presentationThreadId'
       | 'presentationMessageId'
@@ -3985,6 +4112,20 @@ export function updateMessageAction(
       updates.platformMessageId !== undefined
         ? updates.platformMessageId
         : existing.platformMessageId,
+    scheduledTaskId:
+      updates.scheduledTaskId !== undefined
+        ? updates.scheduledTaskId
+        : existing.scheduledTaskId,
+    approvedAt:
+      updates.approvedAt !== undefined ? updates.approvedAt : existing.approvedAt,
+    lastActionKind:
+      updates.lastActionKind !== undefined
+        ? updates.lastActionKind
+        : existing.lastActionKind,
+    lastActionAt:
+      updates.lastActionAt !== undefined
+        ? updates.lastActionAt
+        : existing.lastActionAt,
     presentationChatJid:
       updates.presentationChatJid !== undefined
         ? updates.presentationChatJid

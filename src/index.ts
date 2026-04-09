@@ -192,6 +192,7 @@ import {
   buildMessageActionPresentation,
   findLatestChatMessageAction,
   interpretMessageActionFollowup,
+  resolveMessageActionForFollowup,
   type MessageActionOperation,
 } from './message-actions.js';
 import {
@@ -1309,6 +1310,9 @@ function parseMessageActionCommand(rawText: string):
   }
   if (command === '/message-later') {
     return { messageActionId, operation: { kind: 'defer' } };
+  }
+  if (command === '/message-cancel-later') {
+    return { messageActionId, operation: { kind: 'cancel_deferred' } };
   }
   if (command === '/message-remind') {
     return { messageActionId, operation: { kind: 'remind_instead' } };
@@ -3200,13 +3204,14 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     });
   };
   const tryHandleMessageActionFollowup = async (): Promise<boolean> => {
-    const messageAction = findLatestChatMessageAction({
-      groupFolder: group.folder,
-      chatJid,
-    });
-    if (!messageAction) return false;
     const operation = interpretMessageActionFollowup(lastContent);
     if (!operation) return false;
+    const messageAction = resolveMessageActionForFollowup({
+      groupFolder: group.folder,
+      chatJid,
+      rawText: lastContent,
+    });
+    if (!messageAction) return false;
     return applyAndPresentMessageAction({
       chatJid,
       messageActionId: messageAction.messageActionId,
@@ -12014,6 +12019,8 @@ async function main(): Promise<void> {
       const text = formatOutbound(rawText);
       if (text) await channel.sendMessage(jid, text);
     },
+    sendToTarget: async (targetChannel, chatJid, text, options) =>
+      sendCompanionHandoffMessage(targetChannel, chatJid, text, options),
   });
   startIpcWatcher({
     sendMessage: async (jid, text) => {

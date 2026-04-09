@@ -123,11 +123,15 @@ async function runLiveMode(): Promise<void> {
     `last_outbound: ${truth.bluebubbles.lastOutboundResult}`,
       `last_outbound_target_kind: ${truth.bluebubbles.lastOutboundTargetKind}`,
       `last_outbound_target: ${truth.bluebubbles.lastOutboundTarget}`,
-      `last_send_error: ${truth.bluebubbles.lastSendErrorDetail}`,
-      `send_method: ${truth.bluebubbles.sendMethod}`,
-      `private_api_available: ${truth.bluebubbles.privateApiAvailable}`,
-      `last_metadata_hydration: ${truth.bluebubbles.lastMetadataHydrationSource}`,
-      `attempted_target_sequence: ${truth.bluebubbles.attemptedTargetSequence}`,
+    `last_send_error: ${truth.bluebubbles.lastSendErrorDetail}`,
+    `send_method: ${truth.bluebubbles.sendMethod}`,
+    `private_api_available: ${truth.bluebubbles.privateApiAvailable}`,
+    `last_metadata_hydration: ${truth.bluebubbles.lastMetadataHydrationSource}`,
+    `attempted_target_sequence: ${truth.bluebubbles.attemptedTargetSequence}`,
+    `message_action_proof_state: ${truth.bluebubbles.messageActionProofState}`,
+    `message_action_proof_chat: ${truth.bluebubbles.messageActionProofChatJid}`,
+    `message_action_proof_at: ${truth.bluebubbles.messageActionProofAt}`,
+    `message_action_proof_detail: ${truth.bluebubbles.messageActionProofDetail}`,
   ]);
 
   printBlock(

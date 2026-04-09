@@ -911,6 +911,17 @@ export type MessageActionSendStatus =
   | 'failed'
   | 'skipped';
 
+export type MessageActionLastActionKind =
+  | 'drafted'
+  | 'approved'
+  | 'sent'
+  | 'scheduled_send'
+  | 'remind_instead'
+  | 'save_to_thread'
+  | 'rewrite'
+  | 'skipped'
+  | 'failed';
+
 export interface MessageActionLinkedRefs {
   actionBundleId?: string;
   communicationThreadId?: string;
@@ -953,6 +964,10 @@ export interface MessageActionRecord {
   explanationJson?: string | null;
   linkedRefsJson?: string | null;
   platformMessageId?: string | null;
+  scheduledTaskId?: string | null;
+  approvedAt?: string | null;
+  lastActionKind?: MessageActionLastActionKind | null;
+  lastActionAt?: string | null;
   dedupeKey: string;
   presentationChatJid?: string | null;
   presentationThreadId?: string | null;

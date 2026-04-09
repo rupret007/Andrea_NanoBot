@@ -2,12 +2,17 @@ import { randomUUID } from 'crypto';
 
 import {
   createTask,
+  getTaskById,
   getCommunicationThread,
   getMessageAction,
+  getMessageActionByScheduledTaskId,
   getMessageActionBySource,
   findLatestOpenMessageActionForChat,
+  listCommunicationThreadsForGroup,
   listMessageActionsForGroup,
+  updateCommunicationThread,
   updateMessageAction,
+  updateTask,
   upsertMessageAction,
 } from './db.js';
 import {
@@ -21,6 +26,7 @@ import {
   syncOutcomeFromMessageActionRecord,
   syncOutcomeFromReminderTask,
 } from './outcome-reviews.js';
+import { resolveBlueBubblesConfig } from './channels/bluebubbles.js';
 import type {
   ChannelInlineAction,
   MessageActionExplanation,
@@ -31,6 +37,7 @@ import type {
   MessageActionTargetChannel,
   MessageActionTargetKind,
   MessageActionTrustLevel,
+  ScheduledTask,
   SendMessageOptions,
   SendMessageResult,
 } from './types.js';
@@ -97,9 +104,11 @@ export type MessageActionOperation =
   | { kind: 'send' }
   | { kind: 'send_again' }
   | { kind: 'defer'; timingHint?: string | null }
+  | { kind: 'cancel_deferred' }
   | { kind: 'remind_instead'; timingHint?: string | null }
   | { kind: 'save_to_thread' }
   | { kind: 'rewrite'; style: 'shorter' | 'warmer' | 'more_direct' }
+  | { kind: 'rewrite_and_send'; style: 'shorter' | 'warmer' | 'more_direct' }
   | { kind: 'skip' }
   | { kind: 'why' };
 
@@ -121,6 +130,19 @@ export interface MessageActionExecutionDeps {
     text: string,
     options?: SendMessageOptions,
   ) => Promise<SendMessageResult>;
+}
+
+interface SendExecutionResult {
+  action: MessageActionRecord;
+  replyText: string;
+  target: MessageTarget;
+  didSend: boolean;
+}
+
+export interface ResolveMessageActionForPromptParams {
+  groupFolder: string;
+  chatJid: string;
+  rawText: string;
 }
 
 function normalizeText(value: string | null | undefined): string {
@@ -396,6 +418,18 @@ export function createOrRefreshMessageActionFromDraft(
       }),
     ),
     platformMessageId: reuseExisting ? existing?.platformMessageId || null : null,
+    scheduledTaskId: reuseExisting ? existing?.scheduledTaskId || null : null,
+    approvedAt: reuseExisting
+      ? existing?.approvedAt || null
+      : sendStatus === 'approved'
+        ? now.toISOString()
+        : null,
+    lastActionKind: reuseExisting
+      ? existing?.lastActionKind || null
+      : sendStatus === 'approved'
+        ? 'approved'
+        : 'drafted',
+    lastActionAt: reuseExisting ? existing?.lastActionAt || null : now.toISOString(),
     dedupeKey: buildDedupeKey({
       groupFolder: params.groupFolder,
       sourceType: params.sourceType,
@@ -433,7 +467,297 @@ function parseExplanation(record: MessageActionRecord): MessageActionExplanation
   return parseJsonSafe<MessageActionExplanation>(record.explanationJson, {});
 }
 
+function formatWhenLabel(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+function normalizeReminderTimingHint(
+  rawHint: string | null | undefined,
+  fallbackHint: string,
+): { normalizedHint: string; usedDefault: boolean } {
+  const normalized = normalizeText(rawHint).toLowerCase();
+  if (!normalized) {
+    return {
+      normalizedHint: fallbackHint,
+      usedDefault: true,
+    };
+  }
+
+  switch (normalized) {
+    case 'tonight':
+    case 'later tonight':
+    case 'this evening':
+      return { normalizedHint: 'today tonight', usedDefault: false };
+    case 'this afternoon':
+    case 'later this afternoon':
+    case 'afternoon':
+      return { normalizedHint: 'today afternoon', usedDefault: false };
+    case 'this morning':
+    case 'morning':
+      return { normalizedHint: 'tomorrow morning', usedDefault: false };
+    case 'tomorrow':
+      return { normalizedHint: 'tomorrow morning', usedDefault: false };
+    default:
+      return { normalizedHint: normalized, usedDefault: false };
+  }
+}
+
+function planMessageFollowupTiming(params: {
+  timingHint?: string | null;
+  fallbackHint: string;
+  reminderBody: string;
+  groupFolder: string;
+  chatJid: string;
+  now: Date;
+}): { planned: ReturnType<typeof planContextualReminder>; normalizedHint: string } {
+  const { normalizedHint, usedDefault } = normalizeReminderTimingHint(
+    params.timingHint,
+    params.fallbackHint,
+  );
+  const candidateHints = [normalizedHint];
+  if (usedDefault && normalizedHint === 'today tonight') {
+    candidateHints.push('tomorrow morning');
+  }
+
+  for (const candidateHint of candidateHints) {
+    const planned = planContextualReminder(
+      candidateHint,
+      params.reminderBody,
+      params.groupFolder,
+      params.chatJid,
+      params.now,
+    );
+    if (planned) {
+      return {
+        planned,
+        normalizedHint: candidateHint,
+      };
+    }
+  }
+
+  return {
+    planned: null,
+    normalizedHint,
+  };
+}
+
+function isScheduledSendAction(record: MessageActionRecord): boolean {
+  return (
+    record.sendStatus === 'deferred' &&
+    record.trustLevel === 'schedule_send' &&
+    Boolean(record.scheduledTaskId)
+  );
+}
+
+function normalizeTrustLevelAfterQueue(
+  record: MessageActionRecord,
+): MessageActionTrustLevel {
+  if (
+    record.delegationMode === 'auto_apply_when_safe' &&
+    record.delegationRuleId &&
+    isNarrowSafeDelegatedSendCandidate(record, parseTarget(record))
+  ) {
+    return 'delegated_safe_send';
+  }
+  if (record.targetKind === 'external_thread' && record.targetChannel === 'bluebubbles') {
+    return 'approve_before_send';
+  }
+  return classifyTrustLevel({
+    draftText: record.draftText,
+    targetKind: record.targetKind,
+    targetChannel: record.targetChannel,
+    target: parseTarget(record),
+  });
+}
+
+function pauseScheduledTask(taskId: string | null | undefined): void {
+  if (!taskId) return;
+  const task = getTaskById(taskId);
+  if (!task) return;
+  updateTask(taskId, {
+    status: 'paused',
+    next_run: null,
+  });
+}
+
+function inferUrgencyFromDueAt(
+  dueAt: string | null | undefined,
+  now: Date,
+): 'none' | 'soon' | 'tonight' | 'tomorrow' | 'overdue' {
+  if (!dueAt) return 'soon';
+  const parsed = Date.parse(dueAt);
+  if (!Number.isFinite(parsed)) return 'soon';
+  const diffHours = (parsed - now.getTime()) / (60 * 60 * 1000);
+  if (diffHours < 0) return 'overdue';
+  if (diffHours <= 12) return 'tonight';
+  if (diffHours <= 36) return 'tomorrow';
+  return 'soon';
+}
+
+function syncCommunicationThreadState(params: {
+  action: MessageActionRecord;
+  now: Date;
+  mode: 'sent' | 'scheduled_send' | 'reminder' | 'failed';
+  platformMessageId?: string | null;
+  dueAt?: string | null;
+}): void {
+  const linkedRefs = parseLinkedRefs(params.action);
+  const communicationThreadId = linkedRefs.communicationThreadId;
+  if (!communicationThreadId) return;
+  const thread = getCommunicationThread(communicationThreadId);
+  if (!thread) return;
+
+  if (params.mode === 'sent') {
+    updateCommunicationThread(communicationThreadId, {
+      lastOutboundSummary: clipText(params.action.draftText, 220) || thread.lastOutboundSummary,
+      lastMessageId: params.platformMessageId || thread.lastMessageId,
+      followupState: 'waiting_on_them',
+      followupDueAt: null,
+      urgency: 'none',
+      suggestedNextAction: 'ignore',
+      updatedAt: params.now.toISOString(),
+    });
+    return;
+  }
+
+  if (params.mode === 'scheduled_send') {
+    updateCommunicationThread(communicationThreadId, {
+      followupState: 'scheduled',
+      followupDueAt: params.dueAt || params.action.followupAt || null,
+      urgency: inferUrgencyFromDueAt(
+        params.dueAt || params.action.followupAt || null,
+        params.now,
+      ),
+      updatedAt: params.now.toISOString(),
+    });
+    return;
+  }
+
+  if (params.mode === 'reminder') {
+    updateCommunicationThread(communicationThreadId, {
+      linkedTaskId: linkedRefs.reminderTaskId || thread.linkedTaskId || null,
+      followupState: 'scheduled',
+      followupDueAt: params.dueAt || params.action.followupAt || null,
+      urgency: inferUrgencyFromDueAt(
+        params.dueAt || params.action.followupAt || null,
+        params.now,
+      ),
+      updatedAt: params.now.toISOString(),
+    });
+    return;
+  }
+
+  updateCommunicationThread(communicationThreadId, {
+    followupState: 'reply_needed',
+    suggestedNextAction: 'draft_reply',
+    updatedAt: params.now.toISOString(),
+  });
+}
+
+function validateScheduledSendEligibility(
+  action: MessageActionRecord,
+): { ok: boolean; reason?: string; target: MessageTarget } {
+  const target = parseTarget(action);
+  if (action.targetChannel !== 'bluebubbles' || action.targetKind !== 'external_thread') {
+    return {
+      ok: false,
+      reason: 'This kind of message is safer as a draft or reminder than a queued send.',
+      target,
+    };
+  }
+  if (target.kind !== 'external_thread' || target.isGroup) {
+    return {
+      ok: false,
+      reason: 'Queued send is only available for an existing 1:1 Messages thread.',
+      target,
+    };
+  }
+  if (action.trustLevel === 'draft_only' || action.trustLevel === 'never_automate') {
+    return {
+      ok: false,
+      reason: 'This still looks too sensitive for scheduled delivery.',
+      target,
+    };
+  }
+  const linkedRefs = parseLinkedRefs(action);
+  const communicationThreadId = linkedRefs.communicationThreadId;
+  if (!communicationThreadId) {
+    return {
+      ok: false,
+      reason: 'I only queue sends for an existing linked conversation.',
+      target,
+    };
+  }
+  const thread = getCommunicationThread(communicationThreadId);
+  if (
+    !thread ||
+    thread.channel !== 'bluebubbles' ||
+    !thread.channelChatJid ||
+    thread.channelChatJid !== target.chatJid
+  ) {
+    return {
+      ok: false,
+      reason: 'I could not confirm the exact Messages thread for that queued send.',
+      target,
+    };
+  }
+  if (!resolveBlueBubblesConfig().sendEnabled) {
+    return {
+      ok: false,
+      reason: 'BlueBubbles send is not enabled on this host right now.',
+      target,
+    };
+  }
+  return { ok: true, target };
+}
+
+function buildTargetLine(record: MessageActionRecord): string {
+  const target = parseTarget(record);
+  if (target.kind === 'external_thread') {
+    return `Target: ${target.personName || 'that conversation'} in Messages.`;
+  }
+  return record.targetChannel === 'bluebubbles'
+    ? 'Target: your Messages companion.'
+    : 'Target: your Telegram companion.';
+}
+
+function extractExplicitPersonName(rawText: string): string | null {
+  const normalized = normalizeText(rawText);
+  const match = normalized.match(
+    /^send (?:(?:this|that|it)(?: reply)?|the (?:shorter|warmer|more direct|full) version) to ([a-z][a-z' -]+)$/i,
+  );
+  return match?.[1]?.trim() || null;
+}
+
+function actionMatchesPersonName(
+  action: MessageActionRecord,
+  personName: string,
+): boolean {
+  const normalizedPerson = personName.toLowerCase();
+  const target = parseTarget(action);
+  const linkedRefs = parseLinkedRefs(action);
+  const candidates = [
+    linkedRefs.personName,
+    action.sourceSummary,
+    target.kind === 'external_thread' ? target.personName : null,
+  ]
+    .map((value) => normalizeText(value).toLowerCase())
+    .filter(Boolean);
+  return candidates.some((value) => value.includes(normalizedPerson));
+}
+
 function buildActionLead(record: MessageActionRecord): string {
+  if (isScheduledSendAction(record)) {
+    return 'Andrea: I queued that to send later.';
+  }
   switch (record.sendStatus) {
     case 'sent':
       return 'Andrea: I sent that.';
@@ -452,8 +776,15 @@ function buildActionLead(record: MessageActionRecord): string {
 }
 
 function buildStatusLine(record: MessageActionRecord): string {
+  if (isScheduledSendAction(record)) {
+    return `Status: queued to send around ${
+      formatWhenLabel(record.followupAt) || record.followupAt || 'later'
+    }.`;
+  }
   if (record.sendStatus === 'deferred' && record.followupAt) {
-    return `Status: saved to revisit around ${record.followupAt}.`;
+    return `Status: saved to revisit around ${
+      formatWhenLabel(record.followupAt) || record.followupAt
+    }.`;
   }
   if (record.sendStatus === 'sent') {
     return 'Status: sent.';
@@ -476,6 +807,9 @@ function nextStepLine(record: MessageActionRecord): string {
   if (record.sendStatus === 'sent') {
     return 'Next: review it later if you want to track the follow-through.';
   }
+  if (isScheduledSendAction(record)) {
+    return 'Next: send it now, cancel the scheduled send, remind yourself instead, or revise it.';
+  }
   if (record.sendStatus === 'deferred') {
     return 'Next: I can show the draft again, remind you instead, or send it when you are ready.';
   }
@@ -488,6 +822,20 @@ function buildInlineRows(record: MessageActionRecord): ChannelInlineAction[][] {
       [
         { label: 'Show draft', actionId: `/message-show ${record.messageActionId}` },
         { label: 'Send again', actionId: `/message-send-again ${record.messageActionId}` },
+      ],
+    ];
+  }
+  if (isScheduledSendAction(record)) {
+    return [
+      [
+        { label: 'Show draft', actionId: `/message-show ${record.messageActionId}` },
+        { label: 'Send now', actionId: `/message-send ${record.messageActionId}` },
+        { label: 'Cancel send later', actionId: `/message-cancel-later ${record.messageActionId}` },
+      ],
+      [
+        { label: 'Shorter', actionId: `/message-rewrite ${record.messageActionId} shorter` },
+        { label: 'Warmer', actionId: `/message-rewrite ${record.messageActionId} warmer` },
+        { label: 'Remind me instead', actionId: `/message-remind ${record.messageActionId}` },
       ],
     ];
   }
@@ -518,6 +866,8 @@ export function buildMessageActionPresentation(
   const linkedRefs = parseLinkedRefs(record);
   const lines = [
     buildActionLead(record),
+    '',
+    buildTargetLine(record),
     '',
     'Draft:',
     record.draftText,
@@ -582,9 +932,21 @@ function describeSendSuccess(record: MessageActionRecord, target: MessageTarget)
 
 function parseTimingHintFromUtterance(rawText: string): string | null {
   const normalized = normalizeText(rawText).toLowerCase();
+  if (/^send it later tonight$/.test(normalized) || /^send it tonight$/.test(normalized)) {
+    return 'today tonight';
+  }
+  if (/^send it tomorrow$/.test(normalized)) {
+    return 'tomorrow morning';
+  }
+  if (/^remind me later tonight$/.test(normalized)) {
+    return 'today tonight';
+  }
+  if (/^remind me tomorrow$/.test(normalized)) {
+    return 'tomorrow morning';
+  }
   const explicit =
     normalized.match(/^send it later (.+)$/)?.[1] ||
-    normalized.match(/^send it (?:around|at|tomorrow|tonight) (.+)$/)?.[1] ||
+    normalized.match(/^send it (?:around|at) (.+)$/)?.[1] ||
     normalized.match(/^remind me later (.+)$/)?.[1];
   return explicit ? explicit.trim() : null;
 }
@@ -600,11 +962,30 @@ export function interpretMessageActionFollowup(
   if (/^send it again$/.test(normalized)) {
     return { kind: 'send_again' };
   }
-  if (/^(send it|send now|send that)$/.test(normalized)) {
+  if (
+    /^(send it|send now|send that|send that reply|send this reply)$/.test(normalized) ||
+    /^send (?:this|that|it)(?: reply)? to [a-z][a-z' -]+$/i.test(normalized)
+  ) {
     return { kind: 'send' };
+  }
+  if (/^send the shorter version(?: to [a-z][a-z' -]+)?$/i.test(normalized)) {
+    return { kind: 'rewrite_and_send', style: 'shorter' };
+  }
+  if (/^send the warmer version(?: to [a-z][a-z' -]+)?$/i.test(normalized)) {
+    return { kind: 'rewrite_and_send', style: 'warmer' };
+  }
+  if (/^send the more direct version(?: to [a-z][a-z' -]+)?$/i.test(normalized)) {
+    return { kind: 'rewrite_and_send', style: 'more_direct' };
   }
   if (/^send it later\b/.test(normalized)) {
     return { kind: 'defer', timingHint: parseTimingHintFromUtterance(rawText) };
+  }
+  if (
+    /^(cancel send later|cancel the scheduled send|don't send that later|unschedule that)\b/.test(
+      normalized,
+    )
+  ) {
+    return { kind: 'cancel_deferred' };
   }
   if (/^(remind me later|remind me instead)\b/.test(normalized)) {
     return {
@@ -640,14 +1021,14 @@ async function persistDeferredReminder(params: {
   now: Date;
   reminderOnly: boolean;
 }): Promise<{ replyText: string; updatedAction: MessageActionRecord }> {
-  const hint = params.timingHint || 'tomorrow morning';
-  const planned = planContextualReminder(
-    hint,
-    'Revisit this draft reply',
-    params.action.groupFolder,
-    params.action.presentationChatJid || params.deps.chatJid,
-    params.now,
-  );
+  const { planned } = planMessageFollowupTiming({
+    timingHint: params.timingHint,
+    fallbackHint: 'tomorrow morning',
+    reminderBody: 'Revisit this draft reply',
+    groupFolder: params.action.groupFolder,
+    chatJid: params.action.presentationChatJid || params.deps.chatJid,
+    now: params.now,
+  });
   if (!planned) {
     return {
       replyText: 'Andrea: I could not pin down the timing for that yet.',
@@ -660,13 +1041,25 @@ async function persistDeferredReminder(params: {
     reminderTaskId: planned.task.id,
     messageActionId: params.action.messageActionId,
   };
+  pauseScheduledTask(params.action.scheduledTaskId);
   updateMessageAction(params.action.messageActionId, {
     sendStatus: 'deferred',
     followupAt: planned.task.next_run || null,
+    scheduledTaskId: null,
+    trustLevel: normalizeTrustLevelAfterQueue(params.action),
+    approvedAt: params.reminderOnly ? null : params.action.approvedAt,
+    lastActionKind: 'remind_instead',
+    lastActionAt: params.now.toISOString(),
     linkedRefsJson: JSON.stringify(linkedRefs),
     lastUpdatedAt: params.now.toISOString(),
   });
   const updatedAction = getMessageAction(params.action.messageActionId) || params.action;
+  syncCommunicationThreadState({
+    action: updatedAction,
+    now: params.now,
+    mode: 'reminder',
+    dueAt: planned.task.next_run || null,
+  });
   syncOutcomeFromMessageActionRecord(updatedAction, params.now);
   syncOutcomeFromReminderTask(planned.task, {
     linkedRefs: {
@@ -686,11 +1079,339 @@ async function persistDeferredReminder(params: {
         : 'This draft is saved to revisit before sending.',
     now: params.now,
   });
+  const hint = formatWhenLabel(planned.task.next_run) || 'then';
+  return {
+    replyText: params.reminderOnly
+      ? `Andrea: I'll remind you about that around ${hint}.`
+      : `Andrea: I saved that to revisit before sending, and I'll bring it back around ${hint}.`,
+    updatedAction,
+  };
+  const replyText = params.reminderOnly
+    ? `Andrea: I'll remind you about that ${hint}.`
+    : `Andrea: I saved that to revisit before sending, and I'll bring it back ${hint}.`;
   return {
     replyText: params.reminderOnly
       ? `Andrea: I’ll remind you about that ${hint}.`
       : `Andrea: I saved that to send later and I’ll bring it back ${hint}.`,
     updatedAction,
+  };
+}
+
+function buildScheduledTask(params: {
+  action: MessageActionRecord;
+  dueAt: string;
+  now: Date;
+  deps: MessageActionExecutionDeps;
+}): ScheduledTask {
+  const linkedRefs = parseLinkedRefs(params.action);
+  const personName =
+    linkedRefs.personName || clipText(params.action.sourceSummary, 48) || 'that thread';
+  return {
+    id: randomUUID(),
+    group_folder: params.action.groupFolder,
+    chat_jid: params.action.presentationChatJid || params.deps.chatJid,
+    prompt: `Scheduled message send for ${personName}`,
+    schedule_type: 'once',
+    schedule_value: params.dueAt,
+    context_mode: 'isolated',
+    next_run: params.dueAt,
+    status: 'active',
+    created_at: params.now.toISOString(),
+    last_run: null,
+    last_result: null,
+  };
+}
+
+async function createScheduledSend(params: {
+  action: MessageActionRecord;
+  timingHint?: string | null;
+  deps: MessageActionExecutionDeps;
+  now: Date;
+}): Promise<{ replyText: string; updatedAction: MessageActionRecord }> {
+  const { planned } = planMessageFollowupTiming({
+    timingHint: params.timingHint,
+    fallbackHint: 'today tonight',
+    reminderBody: 'Send this draft later',
+    groupFolder: params.action.groupFolder,
+    chatJid: params.action.presentationChatJid || params.deps.chatJid,
+    now: params.now,
+  });
+  if (!planned?.task.next_run) {
+    return {
+      replyText: 'Andrea: I could not pin down the timing for that yet.',
+      updatedAction: params.action,
+    };
+  }
+
+  pauseScheduledTask(params.action.scheduledTaskId);
+  const scheduledTask = buildScheduledTask({
+    action: params.action,
+    dueAt: planned.task.next_run,
+    now: params.now,
+    deps: params.deps,
+  });
+  createTask(scheduledTask);
+
+  const linkedRefs = {
+    ...parseLinkedRefs(params.action),
+    messageActionId: params.action.messageActionId,
+    reminderTaskId: undefined,
+  };
+  updateMessageAction(params.action.messageActionId, {
+    sendStatus: 'deferred',
+    followupAt: planned.task.next_run,
+    scheduledTaskId: scheduledTask.id,
+    requiresApproval: false,
+    trustLevel: 'schedule_send',
+    approvedAt: params.action.approvedAt || params.now.toISOString(),
+    lastActionKind: 'scheduled_send',
+    lastActionAt: params.now.toISOString(),
+    linkedRefsJson: JSON.stringify(linkedRefs),
+    lastUpdatedAt: params.now.toISOString(),
+  });
+  const updatedAction = getMessageAction(params.action.messageActionId) || params.action;
+  syncCommunicationThreadState({
+    action: updatedAction,
+    now: params.now,
+    mode: 'scheduled_send',
+    dueAt: planned.task.next_run,
+  });
+  syncOutcomeFromMessageActionRecord(updatedAction, params.now);
+  const whenLabel = formatWhenLabel(planned.task.next_run) || 'then';
+  return {
+    replyText: `Andrea: I queued that to send around ${whenLabel}.`,
+    updatedAction,
+  };
+}
+
+function cancelScheduledSend(params: {
+  action: MessageActionRecord;
+  now: Date;
+}): { replyText: string; updatedAction: MessageActionRecord } {
+  if (!isScheduledSendAction(params.action)) {
+    return {
+      replyText: 'Andrea: There is no queued send on that right now.',
+      updatedAction: params.action,
+    };
+  }
+  pauseScheduledTask(params.action.scheduledTaskId);
+  updateMessageAction(params.action.messageActionId, {
+    sendStatus: 'approved',
+    followupAt: null,
+    scheduledTaskId: null,
+    requiresApproval: false,
+    trustLevel: normalizeTrustLevelAfterQueue(params.action),
+    approvedAt: params.action.approvedAt || params.now.toISOString(),
+    lastActionKind: 'approved',
+    lastActionAt: params.now.toISOString(),
+    lastUpdatedAt: params.now.toISOString(),
+  });
+  const updatedAction = getMessageAction(params.action.messageActionId) || params.action;
+  syncCommunicationThreadState({
+    action: updatedAction,
+    now: params.now,
+    mode: 'failed',
+  });
+  syncOutcomeFromMessageActionRecord(updatedAction, params.now);
+  return {
+    replyText: 'Andrea: Okay, I canceled the scheduled send and kept the draft ready.',
+    updatedAction,
+  };
+}
+
+async function markFailedSend(params: {
+  action: MessageActionRecord;
+  deps: MessageActionExecutionDeps;
+  now: Date;
+}): Promise<SendExecutionResult> {
+  const target = parseTarget(params.action);
+  pauseScheduledTask(params.action.scheduledTaskId);
+  updateMessageAction(params.action.messageActionId, {
+    sendStatus: 'failed',
+    followupAt: null,
+    scheduledTaskId: null,
+    requiresApproval: false,
+    trustLevel: normalizeTrustLevelAfterQueue(params.action),
+    approvedAt: params.action.approvedAt || params.now.toISOString(),
+    lastActionKind: 'failed',
+    lastActionAt: params.now.toISOString(),
+    lastUpdatedAt: params.now.toISOString(),
+  });
+  const updatedAction = getMessageAction(params.action.messageActionId) || params.action;
+  if (updatedAction.delegationRuleId) {
+    recordDelegationRuleUsage({
+      ruleId: updatedAction.delegationRuleId,
+      autoApplied:
+        updatedAction.delegationMode === 'auto_apply_when_safe' &&
+        params.action.trustLevel === 'delegated_safe_send',
+      outcomeStatus: 'failed',
+      now: params.now,
+    });
+  }
+  syncCommunicationThreadState({
+    action: updatedAction,
+    now: params.now,
+    mode: 'failed',
+  });
+  syncOutcomeFromMessageActionRecord(updatedAction, params.now);
+  return {
+    action: updatedAction,
+    replyText: humanSendFailure(),
+    target,
+    didSend: false,
+  };
+}
+
+async function executeSendOperation(params: {
+  action: MessageActionRecord;
+  deps: MessageActionExecutionDeps;
+  now: Date;
+}): Promise<SendExecutionResult> {
+  const target = parseTarget(params.action);
+  const sendOptions: SendMessageOptions =
+    target.kind === 'external_thread'
+      ? {
+          threadId: target.threadId || undefined,
+          replyToMessageId: target.replyToMessageId || undefined,
+          suppressSenderLabel: true,
+        }
+      : {
+          threadId: target.threadId || undefined,
+        };
+  try {
+    pauseScheduledTask(params.action.scheduledTaskId);
+    const receipt = await params.deps.sendToTarget(
+      params.action.targetChannel,
+      target.chatJid,
+      params.action.draftText,
+      sendOptions,
+    );
+    updateMessageAction(params.action.messageActionId, {
+      sendStatus: 'sent',
+      requiresApproval: false,
+      followupAt: null,
+      scheduledTaskId: null,
+      trustLevel: normalizeTrustLevelAfterQueue(params.action),
+      approvedAt: params.action.approvedAt || params.now.toISOString(),
+      platformMessageId:
+        receipt.platformMessageId || receipt.platformMessageIds?.[0] || null,
+      sentAt: params.now.toISOString(),
+      lastActionKind: 'sent',
+      lastActionAt: params.now.toISOString(),
+      lastUpdatedAt: params.now.toISOString(),
+    });
+    const updatedAction = getMessageAction(params.action.messageActionId) || params.action;
+    if (updatedAction.delegationRuleId) {
+      recordDelegationRuleUsage({
+        ruleId: updatedAction.delegationRuleId,
+        autoApplied:
+          updatedAction.delegationMode === 'auto_apply_when_safe' &&
+          params.action.trustLevel === 'delegated_safe_send',
+        outcomeStatus: 'completed',
+        now: params.now,
+      });
+    }
+    syncCommunicationThreadState({
+      action: updatedAction,
+      now: params.now,
+      mode: 'sent',
+      platformMessageId:
+        receipt.platformMessageId || receipt.platformMessageIds?.[0] || null,
+    });
+    syncOutcomeFromMessageActionRecord(updatedAction, params.now);
+    return {
+      action: updatedAction,
+      replyText: describeSendSuccess(updatedAction, target),
+      target,
+      didSend: true,
+    };
+  } catch {
+    return markFailedSend(params);
+  }
+}
+
+export async function runScheduledMessageActionByTaskId(
+  scheduledTaskId: string,
+  deps: MessageActionExecutionDeps,
+): Promise<{
+  handled: boolean;
+  resultSummary: string;
+  notificationChatJid?: string | null;
+  notificationText?: string | null;
+  action?: MessageActionRecord;
+}> {
+  const action = getMessageActionByScheduledTaskId(scheduledTaskId);
+  if (!action) {
+    return {
+      handled: false,
+      resultSummary: 'No linked scheduled message action was found.',
+    };
+  }
+  const now = deps.currentTime || new Date();
+  if (
+    action.sendStatus !== 'deferred' ||
+    action.scheduledTaskId !== scheduledTaskId ||
+    !isScheduledSendAction(action)
+  ) {
+    return {
+      handled: true,
+      action,
+      resultSummary: 'Scheduled message no longer needed to send.',
+    };
+  }
+
+  const eligibility = validateScheduledSendEligibility(action);
+  if (!eligibility.ok) {
+    const failed = await markFailedSend({
+      action,
+      deps,
+      now,
+    });
+    return {
+      handled: true,
+      action: failed.action,
+      resultSummary: `Scheduled message blocked: ${
+        eligibility.reason || 'unsafe to send now'
+      }`,
+      notificationChatJid:
+        failed.action.presentationChatJid &&
+        failed.action.presentationChatJid !== eligibility.target.chatJid
+          ? failed.action.presentationChatJid
+          : null,
+      notificationText:
+        failed.action.presentationChatJid &&
+        failed.action.presentationChatJid !== eligibility.target.chatJid
+          ? failed.replyText
+          : null,
+    };
+  }
+
+  const executed = await executeSendOperation({
+    action,
+    deps,
+    now,
+  });
+  return {
+    handled: true,
+    action: executed.action,
+    resultSummary: executed.didSend
+      ? `Sent scheduled message${
+          eligibility.target.kind === 'external_thread' &&
+          eligibility.target.personName
+            ? ` to ${eligibility.target.personName}`
+            : ''
+        }.`
+      : 'Scheduled message send failed.',
+    notificationChatJid:
+      executed.action.presentationChatJid &&
+      executed.action.presentationChatJid !== eligibility.target.chatJid
+        ? executed.action.presentationChatJid
+        : null,
+    notificationText:
+      executed.action.presentationChatJid &&
+      executed.action.presentationChatJid !== eligibility.target.chatJid
+        ? executed.replyText
+        : null,
   };
 }
 
@@ -739,12 +1460,25 @@ export async function applyMessageActionOperation(
           'Andrea: That one already went out. Ask me to draft a new version if you want to send another reply.',
       };
     }
+    pauseScheduledTask(action.scheduledTaskId);
     updateMessageAction(action.messageActionId, {
       draftText: rewriteDraft(action.draftText, operation.style),
-      sendStatus: action.sendStatus === 'failed' ? 'drafted' : action.sendStatus,
+      sendStatus: 'drafted',
+      requiresApproval: true,
+      followupAt: null,
+      scheduledTaskId: null,
+      trustLevel: normalizeTrustLevelAfterQueue(action),
+      approvedAt: null,
+      lastActionKind: 'rewrite',
+      lastActionAt: now.toISOString(),
       lastUpdatedAt: now.toISOString(),
     });
     const updatedAction = getMessageAction(action.messageActionId) || action;
+    syncCommunicationThreadState({
+      action: updatedAction,
+      now,
+      mode: 'failed',
+    });
     syncOutcomeFromMessageActionRecord(updatedAction, now);
     return {
       handled: true,
@@ -762,12 +1496,38 @@ export async function applyMessageActionOperation(
     };
   }
 
+  if (operation.kind === 'rewrite_and_send') {
+    const rewritten = await applyMessageActionOperation(
+      action.messageActionId,
+      { kind: 'rewrite', style: operation.style },
+      deps,
+    );
+    const refreshed = getMessageAction(action.messageActionId);
+    if (!rewritten.handled || !refreshed) {
+      return rewritten;
+    }
+    return applyMessageActionOperation(
+      refreshed.messageActionId,
+      { kind: 'send' },
+      {
+        ...deps,
+        currentTime: now,
+      },
+    );
+  }
+
   if (operation.kind === 'skip') {
     if (action.delegationRuleId) {
       recordDelegationRuleOverride(action.delegationRuleId, now);
     }
+    pauseScheduledTask(action.scheduledTaskId);
     updateMessageAction(action.messageActionId, {
       sendStatus: 'skipped',
+      followupAt: null,
+      scheduledTaskId: null,
+      trustLevel: normalizeTrustLevelAfterQueue(action),
+      lastActionKind: 'skipped',
+      lastActionAt: now.toISOString(),
       lastUpdatedAt: now.toISOString(),
     });
     const updatedAction = getMessageAction(action.messageActionId) || action;
@@ -778,6 +1538,19 @@ export async function applyMessageActionOperation(
       replyText: 'Andrea: Okay — I left that unsent.',
       presentation: buildMessageActionPresentation(
         updatedAction,
+        deps.channel === 'bluebubbles' ? 'bluebubbles' : 'telegram',
+      ),
+    };
+  }
+
+  if (operation.kind === 'cancel_deferred') {
+    const cancelled = cancelScheduledSend({ action, now });
+    return {
+      handled: true,
+      action: cancelled.updatedAction,
+      replyText: cancelled.replyText,
+      presentation: buildMessageActionPresentation(
+        cancelled.updatedAction,
         deps.channel === 'bluebubbles' ? 'bluebubbles' : 'telegram',
       ),
     };
@@ -805,13 +1578,52 @@ export async function applyMessageActionOperation(
     };
   }
 
-  if (operation.kind === 'defer' || operation.kind === 'remind_instead') {
+  if (operation.kind === 'defer') {
+    const eligibility = validateScheduledSendEligibility(action);
+    if (eligibility.ok) {
+      const scheduled = await createScheduledSend({
+        action,
+        timingHint: operation.timingHint || null,
+        deps,
+        now,
+      });
+      return {
+        handled: true,
+        action: scheduled.updatedAction,
+        replyText: scheduled.replyText,
+        presentation: buildMessageActionPresentation(
+          scheduled.updatedAction,
+          deps.channel === 'bluebubbles' ? 'bluebubbles' : 'telegram',
+        ),
+      };
+    }
     const deferred = await persistDeferredReminder({
       action,
       timingHint: operation.timingHint || null,
       deps,
       now,
-      reminderOnly: operation.kind === 'remind_instead',
+      reminderOnly: false,
+    });
+    return {
+      handled: true,
+      action: deferred.updatedAction,
+      replyText: eligibility.reason
+        ? `${deferred.replyText}\n\nAndrea: I kept this as a reminder because ${eligibility.reason.toLowerCase()}`
+        : deferred.replyText,
+      presentation: buildMessageActionPresentation(
+        deferred.updatedAction,
+        deps.channel === 'bluebubbles' ? 'bluebubbles' : 'telegram',
+      ),
+    };
+  }
+
+  if (operation.kind === 'remind_instead') {
+    const deferred = await persistDeferredReminder({
+      action,
+      timingHint: operation.timingHint || null,
+      deps,
+      now,
+      reminderOnly: true,
     });
     return {
       handled: true,
@@ -833,85 +1645,75 @@ export async function applyMessageActionOperation(
           'Andrea: That one already went out. Say send it again if you really want me to resend it.',
       };
     }
-    const target = parseTarget(action);
-    try {
-      const sendOptions: SendMessageOptions =
-        target.kind === 'external_thread'
-          ? {
-              threadId: target.threadId || undefined,
-              replyToMessageId: target.replyToMessageId || undefined,
-              suppressSenderLabel: true,
-            }
-          : {
-              threadId: target.threadId || undefined,
-            };
-      const receipt = await deps.sendToTarget(
-        action.targetChannel,
-        target.chatJid,
-        action.draftText,
-        sendOptions,
-      );
-      updateMessageAction(action.messageActionId, {
-        sendStatus: 'sent',
-        requiresApproval: false,
-        platformMessageId:
-          receipt.platformMessageId ||
-          receipt.platformMessageIds?.[0] ||
-          null,
-        sentAt: now.toISOString(),
-        lastUpdatedAt: now.toISOString(),
-      });
-      const updatedAction = getMessageAction(action.messageActionId) || action;
-      if (updatedAction.delegationRuleId) {
-        recordDelegationRuleUsage({
-          ruleId: updatedAction.delegationRuleId,
-          autoApplied:
-            updatedAction.delegationMode === 'auto_apply_when_safe' &&
-            action.trustLevel === 'delegated_safe_send',
-          outcomeStatus: 'completed',
-          now,
-        });
-      }
-      syncOutcomeFromMessageActionRecord(updatedAction, now);
-      return {
-        handled: true,
-        action: updatedAction,
-        replyText: describeSendSuccess(updatedAction, target),
-        presentation: buildMessageActionPresentation(
-          updatedAction,
-          deps.channel === 'bluebubbles' ? 'bluebubbles' : 'telegram',
-        ),
-      };
-    } catch {
-      updateMessageAction(action.messageActionId, {
-        sendStatus: 'failed',
-        lastUpdatedAt: now.toISOString(),
-      });
-      const updatedAction = getMessageAction(action.messageActionId) || action;
-      if (updatedAction.delegationRuleId) {
-        recordDelegationRuleUsage({
-          ruleId: updatedAction.delegationRuleId,
-          autoApplied:
-            updatedAction.delegationMode === 'auto_apply_when_safe' &&
-            action.trustLevel === 'delegated_safe_send',
-          outcomeStatus: 'failed',
-          now,
-        });
-      }
-      syncOutcomeFromMessageActionRecord(updatedAction, now);
-      return {
-        handled: true,
-        action: updatedAction,
-        replyText: humanSendFailure(),
-        presentation: buildMessageActionPresentation(
-          updatedAction,
-          deps.channel === 'bluebubbles' ? 'bluebubbles' : 'telegram',
-        ),
-      };
-    }
+    const executed = await executeSendOperation({
+      action,
+      deps,
+      now,
+    });
+    return {
+      handled: true,
+      action: executed.action,
+      replyText: executed.replyText,
+      presentation: buildMessageActionPresentation(
+        executed.action,
+        deps.channel === 'bluebubbles' ? 'bluebubbles' : 'telegram',
+      ),
+    };
   }
 
   return { handled: false };
+}
+
+export function resolveMessageActionForFollowup(
+  params: ResolveMessageActionForPromptParams,
+): MessageActionRecord | undefined {
+  const current = findLatestOpenMessageActionForChat({
+    groupFolder: params.groupFolder,
+    chatJid: params.chatJid,
+  });
+  const explicitPersonName = extractExplicitPersonName(params.rawText);
+  if (!explicitPersonName) {
+    return current;
+  }
+  if (current && actionMatchesPersonName(current, explicitPersonName)) {
+    return current;
+  }
+
+  const matchedAction = listOpenMessageActionsForGroup(params.groupFolder)
+    .filter((action) => action.sendStatus !== 'skipped')
+    .filter((action) => actionMatchesPersonName(action, explicitPersonName))
+    .sort(
+      (left, right) =>
+        Date.parse(right.lastUpdatedAt) - Date.parse(left.lastUpdatedAt),
+    )[0];
+  if (matchedAction) {
+    return matchedAction;
+  }
+
+  const matchedThread = listCommunicationThreadsForGroup({
+    groupFolder: params.groupFolder,
+    includeDisabled: false,
+    limit: 80,
+  })
+    .filter((thread) =>
+      normalizeText(thread.title)
+        .toLowerCase()
+        .includes(explicitPersonName.toLowerCase()),
+    )
+    .sort(
+      (left, right) =>
+        Date.parse(right.updatedAt) - Date.parse(left.updatedAt),
+    )[0];
+  if (!matchedThread) {
+    return current;
+  }
+  return (
+    getMessageActionBySource(
+      params.groupFolder,
+      'communication_thread',
+      matchedThread.id,
+    ) || current
+  );
 }
 
 export function findLatestChatMessageAction(params: {

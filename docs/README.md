@@ -25,7 +25,7 @@ Use this shorthand when you need the current host story fast:
   - outward research
   - Telegram image generation
 - **near-live only**
-  - BlueBubbles on this PC, because Andrea can reach the live server and the webhook is registered, but one real same-host inbound -> reply -> follow-up roundtrip still needs to be reproved
+- BlueBubbles on this PC, because Andrea can reach the live server and the webhook is registered, but one real same-host inbound -> reply -> follow-up roundtrip plus one same-thread message-action proof leg still needs to be reproved
 - **externally blocked**
   - nothing currently in the BlueBubbles lane; if the live server, auth, or webhook wiring regresses, operator surfaces should report that exact blocker again
 
@@ -66,7 +66,7 @@ Andrea's current flagship journeys are:
 - `What's still open with Candace?` -> draft reply -> save to thread or remind later
 - `Help me plan tonight / this weekend` -> mission -> blocker -> confirmed action
 - source-grounded research -> richer detail -> save to library
-- BlueBubbles message help -> summarize -> draft -> remind later -> optional Telegram escalation
+- BlueBubbles message help -> summarize -> draft -> send or queue send-later -> optional Telegram escalation
 
 Use these docs as the architecture behind those journeys, not as separate product silos.
 For repo-side proof, run `npm run debug:signature-flows`.
@@ -114,7 +114,7 @@ Current Alexa truth:
 - `Andrea_NanoBot` is the only canonical repo now; the older `ANDREA/nanoclaw` checkout is non-authoritative reference only
 - Telegram ordinary chat and the main flagship follow-through journeys were live-proven on this host on April 7, 2026
 - Alexa is now live-proven on this host from a fresh handled signed `WhatAmIForgettingIntent`; if that proof ages past 24 hours, operator surfaces intentionally downgrade it back to `near_live_only`
-- BlueBubbles is now near-live on this Windows host: the live `BLUEBUBBLES_*` configuration is loaded, the server is reachable, and the webhook is registered, but one real inbound -> reply -> follow-up roundtrip still needs to be reproved here
+- BlueBubbles is now near-live on this Windows host: the live `BLUEBUBBLES_*` configuration is loaded, the server is reachable, and the webhook is registered, but one real same-thread inbound -> reply -> follow-up roundtrip plus one same-thread message-action proof leg still needs to be reproved here
 - outward-facing research and Telegram image generation are now live-proven on this host through the direct OpenAI provider path
 - the local Anthropic-compatible LiteLLM gateway remains a separate compatibility/runtime lane and should be reported separately if it degrades later
 

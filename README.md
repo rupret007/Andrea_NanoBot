@@ -61,7 +61,7 @@ The best way to understand Andrea now is through the flagship journeys it should
 - Alexa daily orientation -> Telegram richer follow-through
 - `What am I forgetting?` -> one open loop -> reminder, save, or tracking action
 - `What's still open with Candace?` -> draft reply -> save to thread or remind later
-- `What should I say back?` -> draft -> approve/send or send later -> honest review state
+- `What should I say back?` -> draft -> approve/send or queue a bounded send-later -> honest review state
 - `Help me plan tonight / this weekend` -> mission proposal -> blocker -> confirmed next action
 - source-grounded research -> richer detail -> save to library
 - BlueBubbles message help -> summarize -> draft -> remind later -> optional Telegram escalation
@@ -80,7 +80,7 @@ Current host truth for the Windows field-trial machine:
 
 - Telegram is the richest **live-proven** surface.
 - Alexa is **live-proven** on this host while one fresh handled signed `IntentRequest` remains within the 24-hour proof window.
-- BlueBubbles is **near-live only on this PC**: Andrea can reach the live server and has a registered webhook, but it still needs one fresh real inbound -> reply -> follow-up roundtrip to count as live-proven.
+- BlueBubbles is **near-live only on this PC**: Andrea can reach the live server and has a registered webhook, but it still needs one fresh same-thread inbound -> reply -> follow-up roundtrip plus one same-thread message-action proof leg to count as live-proven.
 - the local Codex/OpenAI runtime backend and the unified `/cursor` work cockpit are live on this host
 - outward research and Telegram image generation are now **live-proven** on this host through the direct OpenAI provider path
 - the local Anthropic-compatible LiteLLM gateway is a separate internal compatibility lane; if it degrades later, operator surfaces should report that separately from direct OpenAI proof

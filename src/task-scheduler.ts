@@ -27,12 +27,19 @@ import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './logger.js';
 import { classifyScheduledTaskRequest } from './assistant-routing.js';
+import { runScheduledMessageActionByTaskId } from './message-actions.js';
 import { formatOutbound } from './router.js';
 import {
   executeCalendarAutomation,
   parseCalendarAutomationRecord,
 } from './calendar-automations.js';
-import { AgentThreadState, RegisteredGroup, ScheduledTask } from './types.js';
+import {
+  AgentThreadState,
+  RegisteredGroup,
+  ScheduledTask,
+  SendMessageOptions,
+  SendMessageResult,
+} from './types.js';
 
 /**
  * Compute the next run time for a recurring task, anchored to the
@@ -87,6 +94,12 @@ export interface SchedulerDependencies {
     groupFolder: string,
   ) => void;
   sendMessage: (jid: string, text: string) => Promise<void>;
+  sendToTarget: (
+    targetChannel: 'telegram' | 'bluebubbles',
+    chatJid: string,
+    text: string,
+    options?: SendMessageOptions,
+  ) => Promise<SendMessageResult>;
 }
 
 async function runTask(
@@ -185,6 +198,61 @@ async function runTask(
 
     const nextRun = computeNextRun(task);
     updateTaskAfterRun(task.id, nextRun, resultSummary);
+    return;
+  }
+
+  const scheduledMessageResult = await runScheduledMessageActionByTaskId(task.id, {
+    groupFolder: task.group_folder,
+    channel: task.chat_jid.startsWith('bb:') ? 'bluebubbles' : 'telegram',
+    chatJid: task.chat_jid,
+    currentTime: new Date(),
+    sendToTarget: deps.sendToTarget,
+  });
+  if (scheduledMessageResult.handled) {
+    if (
+      scheduledMessageResult.notificationChatJid &&
+      scheduledMessageResult.notificationText
+    ) {
+      await deps.sendMessage(
+        scheduledMessageResult.notificationChatJid,
+        scheduledMessageResult.notificationText,
+      );
+    }
+
+    const durationMs = Date.now() - startTime;
+    logTaskRun({
+      task_id: task.id,
+      run_at: new Date().toISOString(),
+      duration_ms: durationMs,
+      status:
+        scheduledMessageResult.action?.sendStatus === 'failed' ? 'error' : 'success',
+      result:
+        scheduledMessageResult.action?.sendStatus === 'failed'
+          ? null
+          : scheduledMessageResult.resultSummary,
+      error:
+        scheduledMessageResult.action?.sendStatus === 'failed'
+          ? scheduledMessageResult.resultSummary
+          : null,
+    });
+    updateTaskAfterRun(task.id, null, scheduledMessageResult.resultSummary);
+    return;
+  }
+  if (task.prompt.startsWith('Scheduled message send for ')) {
+    const durationMs = Date.now() - startTime;
+    logTaskRun({
+      task_id: task.id,
+      run_at: new Date().toISOString(),
+      duration_ms: durationMs,
+      status: 'error',
+      result: null,
+      error: 'Scheduled message task lost its linked message action.',
+    });
+    updateTaskAfterRun(
+      task.id,
+      null,
+      'Scheduled message task lost its linked message action.',
+    );
     return;
   }
 

@@ -44,6 +44,7 @@ describe('task scheduler', () => {
       queue: { enqueueTask } as any,
       onProcess: () => {},
       sendMessage: async () => {},
+      sendToTarget: async () => ({ platformMessageId: 'unused' }),
     });
 
     await vi.advanceTimersByTimeAsync(10);

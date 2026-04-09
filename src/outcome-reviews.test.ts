@@ -12,6 +12,8 @@ import {
   getAllTasks,
   getCommunicationThread,
   getLifeThread,
+  getMessageAction,
+  upsertMessageAction,
   getOutcomeBySource,
   listOutcomesForGroup,
   replaceMissionSteps,
@@ -28,6 +30,7 @@ import {
   seedOutcomeRecordsForGroup,
   syncOutcomeFromCommunicationThreadRecord,
   syncOutcomeFromLifeThreadRecord,
+  syncOutcomeFromMessageActionRecord,
   syncOutcomeFromMissionRecord,
   syncOutcomeFromReminderTask,
 } from './outcome-reviews.js';
@@ -365,6 +368,119 @@ describe('outcome reviews', () => {
     expect(presentation.text).toContain('usual reminder rule');
   });
 
+  it('separates message review sections for sent, scheduled, failed, and unsent drafts', () => {
+    const now = new Date('2026-04-08T20:10:00.000Z');
+    const baseFields = {
+      groupFolder: 'main',
+      sourceType: 'communication_thread' as const,
+      sourceKey: 'comm-candace',
+      sourceSummary: 'Candace follow-through',
+      targetKind: 'external_thread' as const,
+      targetChannel: 'bluebubbles' as const,
+      targetConversationJson: JSON.stringify({
+        kind: 'external_thread',
+        chatJid: 'bb:chat-1',
+        personName: 'Candace',
+      }),
+      requiresApproval: true,
+      delegationRuleId: null,
+      delegationMode: null,
+      explanationJson: null,
+      linkedRefsJson: JSON.stringify({
+        communicationThreadId: 'comm-candace',
+        personName: 'Candace',
+      }),
+      platformMessageId: null,
+      dedupeKey: 'msg-review-base',
+      presentationChatJid: 'tg:main',
+      presentationThreadId: null,
+      presentationMessageId: null,
+      createdAt: now.toISOString(),
+      lastUpdatedAt: now.toISOString(),
+    };
+
+    upsertMessageAction({
+      ...baseFields,
+      messageActionId: 'msg-sent',
+      dedupeKey: 'msg-review-sent',
+      draftText: 'Yes, tonight still works.',
+      trustLevel: 'approve_before_send',
+      sendStatus: 'sent',
+      followupAt: null,
+      scheduledTaskId: null,
+      approvedAt: '2026-04-08T19:55:00.000Z',
+      lastActionKind: 'sent',
+      lastActionAt: '2026-04-08T20:00:00.000Z',
+      sentAt: '2026-04-08T20:00:00.000Z',
+    });
+    upsertMessageAction({
+      ...baseFields,
+      messageActionId: 'msg-scheduled',
+      dedupeKey: 'msg-review-scheduled',
+      draftText: 'I can do 7 instead.',
+      trustLevel: 'schedule_send',
+      sendStatus: 'deferred',
+      followupAt: '2026-04-08T22:00:00.000Z',
+      scheduledTaskId: 'task-scheduled',
+      approvedAt: '2026-04-08T20:02:00.000Z',
+      lastActionKind: 'scheduled_send',
+      lastActionAt: '2026-04-08T20:02:00.000Z',
+      sentAt: null,
+    });
+    upsertMessageAction({
+      ...baseFields,
+      messageActionId: 'msg-failed',
+      dedupeKey: 'msg-review-failed',
+      draftText: 'Running a bit late.',
+      trustLevel: 'approve_before_send',
+      sendStatus: 'failed',
+      followupAt: null,
+      scheduledTaskId: null,
+      approvedAt: '2026-04-08T20:03:00.000Z',
+      lastActionKind: 'failed',
+      lastActionAt: '2026-04-08T20:04:00.000Z',
+      sentAt: null,
+    });
+    upsertMessageAction({
+      ...baseFields,
+      messageActionId: 'msg-draft',
+      dedupeKey: 'msg-review-draft',
+      draftText: 'Want to do dinner after rehearsal?',
+      trustLevel: 'approve_before_send',
+      sendStatus: 'drafted',
+      followupAt: null,
+      scheduledTaskId: null,
+      approvedAt: null,
+      lastActionKind: 'drafted',
+      lastActionAt: '2026-04-08T20:05:00.000Z',
+      sentAt: null,
+    });
+
+    syncOutcomeFromMessageActionRecord(getMessageAction('msg-sent')!, now);
+    syncOutcomeFromMessageActionRecord(getMessageAction('msg-scheduled')!, now);
+    syncOutcomeFromMessageActionRecord(getMessageAction('msg-failed')!, now);
+    syncOutcomeFromMessageActionRecord(getMessageAction('msg-draft')!, now);
+
+    const presentation = buildOutcomeReviewResponse({
+      groupFolder: 'main',
+      match: { kind: 'messages_unsent' },
+      channel: 'telegram',
+      now,
+    });
+    const sentPresentation = buildOutcomeReviewResponse({
+      groupFolder: 'main',
+      match: { kind: 'messages_sent_today' },
+      channel: 'telegram',
+      now,
+    });
+
+    expect(presentation.text).toContain('*Waiting For Approval*');
+    expect(presentation.text).toContain('*Scheduled Sends*');
+    expect(presentation.text).toContain('*Failed Sends*');
+    expect(presentation.text).toContain('*Unsent Drafts*');
+    expect(sentPresentation.text).toContain('*Sent Today*');
+  });
+
   it('applies review controls to handle, defer, and suppress open loops', () => {
     const now = new Date('2026-04-08T20:30:00.000Z');
     const communication = seedCommunicationThread({
@@ -453,6 +569,12 @@ describe('outcome reviews', () => {
   it('matches review prompts and natural review controls', () => {
     expect(matchOutcomeReviewPrompt('daily review')).toEqual({
       kind: 'daily_review',
+    });
+    expect(matchOutcomeReviewPrompt('what messages are still unsent')).toEqual({
+      kind: 'messages_unsent',
+    });
+    expect(matchOutcomeReviewPrompt('what messages were sent today')).toEqual({
+      kind: 'messages_sent_today',
     });
     expect(matchOutcomeReviewPrompt("what's still open with Candace")).toEqual({
       kind: 'still_open_person',

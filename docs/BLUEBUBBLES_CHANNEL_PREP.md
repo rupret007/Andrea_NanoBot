@@ -15,7 +15,7 @@ Current host reality for the Windows operator machine:
 - Andrea can reach and authenticate to the live BlueBubbles server
 - Andrea's public webhook is now registered on that server
 - BlueBubbles is therefore **near-live only**, not externally blocked
-- the exact remaining blocker is one fresh real inbound -> reply -> follow-up proof chain on this host
+- the exact remaining blocker is one fresh real same-thread inbound -> reply -> follow-up proof chain plus one same-thread message-action decision on this host
 
 Use these operator truth surfaces:
 
@@ -177,7 +177,8 @@ BlueBubbles is `live_proven` only after all of these happen on this host:
 2. Andrea replies into that same BlueBubbles conversation
 3. one same-thread follow-up preserves continuity
 4. the flow stays companion-safe
-5. if the user approves a real reply, that same-thread outbound send lands without the companion prefix
+5. one same-thread message-action decision is recorded in the same chat, such as `send it`, `send it later tonight`, `remind me instead`, or `save under thread`
+6. if the user approves a real reply, that same-thread outbound send lands without the companion prefix
 
 If config is present and the server/webhook are ready but that roundtrip has not happened yet, BlueBubbles stays `near_live_only`.
 
@@ -194,13 +195,15 @@ Use this exact proof sequence:
 4. Send a same-thread follow-up:
    - `@Andrea what am I forgetting`
 5. Send:
-   - `summarize this`
-6. Optionally send:
-   - `send me the fuller version on Telegram`
-7. For live delivery proof, draft a reply and then send:
    - `@Andrea what should I say back`
+6. Make one same-thread message-action decision:
    - `@Andrea send it`
+   - or `@Andrea send it later tonight`
+7. Optionally send:
+   - `send me the fuller version on Telegram`
 8. Run:
+   - `npm run debug:bluebubbles -- --live`
+9. Then run:
    - `npm run services:status`
 
 Success should show:
@@ -209,6 +212,8 @@ Success should show:
 - a recent `bluebubbles_most_recent_chat`
 - non-`none` `bluebubbles_last_inbound`
 - non-`none` `bluebubbles_last_outbound`
+- `message_action_proof_state=fresh`
+- `message_action_proof_chat` matching the same BlueBubbles thread
 
 ## Testing
 
@@ -228,7 +233,7 @@ npm run debug:bluebubbles -- --live
 ```
 
 Use the default harness for stubbed transport/regression checks.
-Use `--live` for the current host truth, webhook registration state, and exact remaining blocker.
+Use `--live` for the current host truth, webhook registration state, the same-thread message-action proof leg, and the exact remaining blocker.
 
 ## References
 

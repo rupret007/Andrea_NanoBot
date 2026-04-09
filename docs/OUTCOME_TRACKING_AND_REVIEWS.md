@@ -71,6 +71,13 @@ Current statuses are:
 
 Those statuses are intentionally small and inspectable.
 For messaging specifically, outcomes can now link to a first-class message action so Andrea can distinguish drafted, deferred, failed, skipped, and sent follow-through.
+That now includes:
+
+- approved but still unsent
+- queued scheduled sends
+- reminder-backed defer instead of send
+- send failures that preserved the draft
+- sent today versus still-open communication carryover
 
 ## Closure Semantics
 
@@ -119,6 +126,12 @@ When you explicitly ask for review, Andrea can show grouped sections such as:
 - what is still open
 - what slipped
 - what should move into tomorrow
+- sent today
+- waiting for approval
+- scheduled sends
+- failed sends
+- unsent drafts
+- what changed after approval
 
 Telegram can also show bounded controls for the top surfaced items:
 
@@ -228,12 +241,13 @@ npm run telegram:user:smoke
 
 For a practical review proof, use a flow like:
 
-1. create a bundle that only partially executes
-2. confirm the outcome is `partial` or `deferred`, not falsely `completed`
-3. ask `daily review` in Telegram
-4. confirm the unresolved loop appears
-5. use `Remind tomorrow` or `Mark handled`
-6. ask `what am I carrying into tomorrow` or `what got done today`
+1. create a message action from a communication thread
+2. send one reply now and queue one `send later`
+3. optionally convert one reply to `remind me instead`
+4. ask `what messages are still unsent` or `daily review` in Telegram
+5. confirm sent, scheduled, failed, and unsent states appear distinctly
+6. use `Remind tomorrow`, `Mark handled`, or `Hide from review`
+7. ask `what changed after I approved something` or `what got done today`
 
 For Alexa, use:
 

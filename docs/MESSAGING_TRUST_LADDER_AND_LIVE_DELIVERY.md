@@ -39,7 +39,8 @@ Andrea uses these messaging levels:
 3. `approve_before_send`
    - default for real external messaging
 4. `schedule_send`
-   - `send later` keeps the draft and schedules it to come back for final approval
+   - `send later` queues a one-off scheduled send for an already approved, existing-thread BlueBubbles reply
+   - Andrea revalidates the action at send time and only fires it if it is still safe and valid
 5. `delegated_safe_send`
    - only for narrow BlueBubbles same-thread low-risk replies with an explicit saved rule
 6. `never_automate`
@@ -65,7 +66,8 @@ Andrea uses these messaging levels:
 - Telegram-to-other-people sending
 - group-chat auto-send
 - first-contact auto-send
-- background auto-send at a scheduled time
+- broad background auto-send outside the bounded scheduled-send queue
+- recurring scheduled delivery
 - inbox/CRM behavior
 - operator/admin/runtime automation
 
@@ -83,6 +85,7 @@ Andrea can:
 - make it more direct
 - send now
 - send later
+- send this to an already known BlueBubbles conversation when the target is explicit
 - remind me instead
 - save it under the thread
 - explain why approval is still required
@@ -99,6 +102,7 @@ Andrea can:
 - let the user say `send it later`
 - let the user say `remind me later`
 - revise the draft with `shorter` or `make it warmer`
+- keep scheduled sends, failed sends, and unsent drafts visible in review instead of dropping them after draft time
 
 Important rule:
 
@@ -127,7 +131,8 @@ These are intentionally different:
 - `remind me later`
   - create a reminder without treating the message as scheduled-to-send
 - `send later`
-  - keep a specific draft message and resurface it later for final approval
+  - queue one specific approved draft for one-off later delivery in the same known BlueBubbles thread
+  - you can still edit, cancel, or convert it to a reminder before it fires
 - `approve and send now`
   - real delivery through the live channel
 
@@ -164,26 +169,32 @@ That means Andrea can now distinguish:
 
 This shows up in daily and weekly review, especially under:
 
-- owed replies
-- still open tonight
-- carry into tomorrow
+- `Sent Today`
+- `Waiting For Approval`
+- `Scheduled Sends`
+- `Failed Sends`
+- `Unsent Drafts`
+- `What I Still Owe People`
+- `What Changed After Approval`
 
 ## Testing
 
 Focused repo-side proof:
 
 ```bash
-node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/message-actions.test.ts src/action-bundles.test.ts src/outcome-reviews.test.ts src/channels/bluebubbles.test.ts
+node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/message-actions.test.ts src/action-bundles.test.ts src/outcome-reviews.test.ts src/channels/bluebubbles.test.ts src/field-trial-readiness.test.ts src/task-scheduler.test.ts src/task-scheduler.automation.test.ts
 npm run typecheck
 npm run build
 npm run test
 npm run telegram:user:smoke
+npm run debug:bluebubbles -- --live
 ```
 
 Strong near-live proof:
 
 1. draft a BlueBubbles reply
 2. approve and send it in the same thread
-3. create one `send later` case
-4. confirm review shows sent vs deferred honestly
-5. if a narrow send rule exists, confirm Andrea explains when it used it
+3. create one `send later` case and confirm it becomes a scheduled task
+4. confirm review shows sent vs scheduled vs failed vs unsent honestly
+5. rerun `npm run debug:bluebubbles -- --live` and check the same-thread message-action proof leg
+6. if a narrow send rule exists, confirm Andrea explains when it used it

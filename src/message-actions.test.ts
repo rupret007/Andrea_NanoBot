@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   _closeDatabase,
   _initTestDatabase,
+  getCommunicationThread,
   getMessageAction,
   getOutcomeBySource,
   getTaskById,
@@ -13,6 +14,8 @@ import {
   applyMessageActionOperation,
   createOrRefreshMessageActionFromDraft,
   findLatestChatMessageAction,
+  resolveMessageActionForFollowup,
+  runScheduledMessageActionByTaskId,
 } from './message-actions.js';
 import type { CommunicationThreadRecord, DelegationRuleRecord } from './types.js';
 
@@ -194,7 +197,7 @@ describe('message actions', () => {
     ).toBe('completed');
   });
 
-  it('defers a message action with a reminder-backed follow-up instead of auto-sending', async () => {
+  it('can convert a drafted reply into a reminder-backed follow-up instead of a queued send', async () => {
     const thread = seedCommunicationThread();
     const action = createOrRefreshMessageActionFromDraft({
       groupFolder: 'main',
@@ -211,19 +214,24 @@ describe('message actions', () => {
       now: new Date('2026-04-08T19:15:00.000Z'),
     });
 
-    const result = await applyMessageActionOperation(action.messageActionId, { kind: 'defer' }, {
-      groupFolder: 'main',
-      channel: 'telegram',
-      chatJid: 'tg:main',
-      currentTime: new Date('2026-04-08T19:16:00.000Z'),
-      sendToTarget: vi.fn(async () => ({ platformMessageId: 'unused' })),
-    });
+    const result = await applyMessageActionOperation(
+      action.messageActionId,
+      { kind: 'remind_instead' },
+      {
+        groupFolder: 'main',
+        channel: 'telegram',
+        chatJid: 'tg:main',
+        currentTime: new Date('2026-04-08T19:16:00.000Z'),
+        sendToTarget: vi.fn(async () => ({ platformMessageId: 'unused' })),
+      },
+    );
 
     const updated = getMessageAction(action.messageActionId)!;
     const reminderId = JSON.parse(updated.linkedRefsJson || '{}').reminderTaskId;
 
     expect(result.handled).toBe(true);
     expect(updated.sendStatus).toBe('deferred');
+    expect(updated.lastActionKind).toBe('remind_instead');
     expect(reminderId).toBeTruthy();
     expect(getTaskById(reminderId)?.prompt).toContain('Revisit this draft reply');
     expect(
@@ -270,5 +278,211 @@ describe('message actions', () => {
 
     expect(duplicate.replyText).toContain('already went out');
     expect(sendToTarget).toHaveBeenCalledTimes(1);
+  });
+
+  it('queues an eligible bluebubbles reply for scheduled send and tracks it separately from reminders', async () => {
+    vi.stubEnv('BLUEBUBBLES_SEND_ENABLED', 'true');
+    const thread = seedCommunicationThread();
+    const action = createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'bluebubbles',
+      presentationChatJid: 'bb:chat-1',
+      sourceType: 'communication_thread',
+      sourceKey: thread.id,
+      sourceSummary: 'Candace still needs a quick dinner answer.',
+      draftText: 'Yes, tonight still works for me.',
+      personName: 'Candace',
+      threadTitle: 'Candace',
+      communicationThreadId: thread.id,
+      communicationContext: 'reply_followthrough',
+      now: new Date('2026-04-08T19:25:00.000Z'),
+    });
+
+    const result = await applyMessageActionOperation(action.messageActionId, { kind: 'defer' }, {
+      groupFolder: 'main',
+      channel: 'bluebubbles',
+      chatJid: 'bb:chat-1',
+      currentTime: new Date('2026-04-08T19:26:00.000Z'),
+      sendToTarget: vi.fn(async () => ({ platformMessageId: 'unused' })),
+    });
+
+    const updated = getMessageAction(action.messageActionId)!;
+    expect(result.handled).toBe(true);
+    expect(updated.sendStatus).toBe('deferred');
+    expect(updated.trustLevel).toBe('schedule_send');
+    expect(updated.scheduledTaskId).toBeTruthy();
+    expect(updated.approvedAt).toBeTruthy();
+    expect(getTaskById(updated.scheduledTaskId!)?.next_run).toBeTruthy();
+    expect(getCommunicationThread(thread.id)?.followupState).toBe('scheduled');
+  });
+
+  it('cancels a scheduled send and keeps the draft ready', async () => {
+    vi.stubEnv('BLUEBUBBLES_SEND_ENABLED', 'true');
+    const thread = seedCommunicationThread();
+    const action = createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'bluebubbles',
+      presentationChatJid: 'bb:chat-1',
+      sourceType: 'communication_thread',
+      sourceKey: thread.id,
+      sourceSummary: 'Candace still needs a quick dinner answer.',
+      draftText: 'Yes, tonight still works for me.',
+      personName: 'Candace',
+      threadTitle: 'Candace',
+      communicationThreadId: thread.id,
+      communicationContext: 'reply_followthrough',
+      now: new Date('2026-04-08T19:30:00.000Z'),
+    });
+
+    await applyMessageActionOperation(action.messageActionId, { kind: 'defer' }, {
+      groupFolder: 'main',
+      channel: 'bluebubbles',
+      chatJid: 'bb:chat-1',
+      currentTime: new Date('2026-04-08T19:31:00.000Z'),
+      sendToTarget: vi.fn(async () => ({ platformMessageId: 'unused' })),
+    });
+    const scheduled = getMessageAction(action.messageActionId)!;
+
+    await applyMessageActionOperation(scheduled.messageActionId, { kind: 'cancel_deferred' }, {
+      groupFolder: 'main',
+      channel: 'bluebubbles',
+      chatJid: 'bb:chat-1',
+      currentTime: new Date('2026-04-08T19:32:00.000Z'),
+      sendToTarget: vi.fn(async () => ({ platformMessageId: 'unused' })),
+    });
+
+    const updated = getMessageAction(action.messageActionId)!;
+    expect(updated.sendStatus).toBe('approved');
+    expect(updated.scheduledTaskId).toBeNull();
+    expect(getTaskById(scheduled.scheduledTaskId!)?.status).toBe('paused');
+  });
+
+  it('rewriting a queued send cancels the queue and forces fresh approval', async () => {
+    vi.stubEnv('BLUEBUBBLES_SEND_ENABLED', 'true');
+    const thread = seedCommunicationThread();
+    const action = createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'bluebubbles',
+      presentationChatJid: 'bb:chat-1',
+      sourceType: 'communication_thread',
+      sourceKey: thread.id,
+      sourceSummary: 'Candace still needs a quick dinner answer.',
+      draftText: 'Yes, tonight still works for me.',
+      personName: 'Candace',
+      threadTitle: 'Candace',
+      communicationThreadId: thread.id,
+      communicationContext: 'reply_followthrough',
+      now: new Date('2026-04-08T19:35:00.000Z'),
+    });
+
+    await applyMessageActionOperation(action.messageActionId, { kind: 'defer' }, {
+      groupFolder: 'main',
+      channel: 'bluebubbles',
+      chatJid: 'bb:chat-1',
+      currentTime: new Date('2026-04-08T19:36:00.000Z'),
+      sendToTarget: vi.fn(async () => ({ platformMessageId: 'unused' })),
+    });
+    const scheduled = getMessageAction(action.messageActionId)!;
+
+    await applyMessageActionOperation(
+      scheduled.messageActionId,
+      { kind: 'rewrite', style: 'shorter' },
+      {
+        groupFolder: 'main',
+        channel: 'bluebubbles',
+        chatJid: 'bb:chat-1',
+        currentTime: new Date('2026-04-08T19:37:00.000Z'),
+        sendToTarget: vi.fn(async () => ({ platformMessageId: 'unused' })),
+      },
+    );
+
+    const updated = getMessageAction(action.messageActionId)!;
+    expect(updated.sendStatus).toBe('drafted');
+    expect(updated.requiresApproval).toBe(true);
+    expect(updated.scheduledTaskId).toBeNull();
+    expect(updated.lastActionKind).toBe('rewrite');
+    expect(getTaskById(scheduled.scheduledTaskId!)?.status).toBe('paused');
+  });
+
+  it('runs a scheduled send through the same shared send path', async () => {
+    vi.stubEnv('BLUEBUBBLES_SEND_ENABLED', 'true');
+    const thread = seedCommunicationThread();
+    const action = createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'bluebubbles',
+      presentationChatJid: 'bb:chat-1',
+      sourceType: 'communication_thread',
+      sourceKey: thread.id,
+      sourceSummary: 'Candace still needs a quick dinner answer.',
+      draftText: 'Yes, tonight still works for me.',
+      personName: 'Candace',
+      threadTitle: 'Candace',
+      communicationThreadId: thread.id,
+      communicationContext: 'reply_followthrough',
+      now: new Date('2026-04-08T19:40:00.000Z'),
+    });
+
+    await applyMessageActionOperation(action.messageActionId, { kind: 'defer' }, {
+      groupFolder: 'main',
+      channel: 'bluebubbles',
+      chatJid: 'bb:chat-1',
+      currentTime: new Date('2026-04-08T19:41:00.000Z'),
+      sendToTarget: vi.fn(async () => ({ platformMessageId: 'unused' })),
+    });
+    const scheduled = getMessageAction(action.messageActionId)!;
+    const sendToTarget = vi.fn(async () => ({ platformMessageId: 'bb:sent-scheduled' }));
+
+    const runResult = await runScheduledMessageActionByTaskId(scheduled.scheduledTaskId!, {
+      groupFolder: 'main',
+      channel: 'bluebubbles',
+      chatJid: 'bb:chat-1',
+      currentTime: new Date('2026-04-08T21:00:00.000Z'),
+      sendToTarget,
+    });
+
+    expect(runResult.handled).toBe(true);
+    expect(sendToTarget).toHaveBeenCalledWith(
+      'bluebubbles',
+      'bb:chat-1',
+      'Yes, tonight still works for me.',
+      expect.objectContaining({
+        suppressSenderLabel: true,
+      }),
+    );
+    expect(getMessageAction(action.messageActionId)?.sendStatus).toBe('sent');
+    expect(getCommunicationThread(thread.id)?.followupState).toBe('waiting_on_them');
+  });
+
+  it('resolves explicit person-targeted followups to an existing open message action', () => {
+    const candaceThread = seedCommunicationThread();
+    seedCommunicationThread({
+      id: 'comm-2',
+      title: 'Jenna',
+      channelChatJid: 'bb:chat-2',
+      lastMessageId: 'bb:last-msg-2',
+    });
+
+    const action = createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'telegram',
+      presentationChatJid: 'tg:main',
+      sourceType: 'communication_thread',
+      sourceKey: candaceThread.id,
+      sourceSummary: 'Candace still needs an answer.',
+      draftText: 'Yes, tonight still works for me.',
+      personName: 'Candace',
+      threadTitle: 'Candace',
+      communicationThreadId: candaceThread.id,
+      communicationContext: 'reply_followthrough',
+      now: new Date('2026-04-08T19:45:00.000Z'),
+    });
+
+    const resolved = resolveMessageActionForFollowup({
+      groupFolder: 'main',
+      chatJid: 'tg:main',
+      rawText: 'send this to Candace',
+    });
+
+    expect(resolved?.messageActionId).toBe(action.messageActionId);
   });
 });
