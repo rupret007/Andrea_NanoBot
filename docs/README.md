@@ -20,15 +20,15 @@ Use this shorthand when you need the current host story fast:
 - **live-proven on this Windows host**
   - Telegram companion surface
   - Google Calendar scheduling
-  - Alexa on this host while a fresh handled Andrea custom-skill proof remains inside the 24-hour window
+  - BlueBubbles on this PC, because the canonical same-thread roundtrip, message-action decision, and follow-up continuation are now recorded
   - unified work cockpit with Codex/OpenAI runtime
   - life-thread, communication-companion, mission, and chief-of-staff flows that ride on Telegram
   - outward research
   - Telegram image generation
 - **near-live only**
-  - nothing currently; Alexa intentionally drops back here if its fresh handled proof window expires
+  - Alexa on this host until a fresh handled Andrea custom-skill proof is recorded again
 - **degraded-but-usable**
-  - BlueBubbles on this PC, because Andrea can reach the live server, the webhook is registered, and bounded same-thread chat works, but one same-thread message-action proof leg still needs to be reproved
+  - nothing currently in the BlueBubbles lane; if the proof chain later goes stale while transport still works, operator surfaces should report the exact missing leg again
 - **externally blocked**
   - nothing currently in the BlueBubbles lane; if the live server, auth, or webhook wiring regresses, operator surfaces should report that exact blocker again
 
@@ -117,9 +117,9 @@ Current host-proof rule:
 
 - `Andrea_NanoBot` is the only canonical repo now; the older `ANDREA/nanoclaw` checkout is non-authoritative reference only
 - Telegram ordinary chat and the main flagship follow-through journeys were live-proven on this host on April 7, 2026
-- Alexa is status-led on this host: it is `live_proven` only while a fresh handled custom-skill proof remains inside the proof window, and otherwise should read as `near_live_only`
+- Alexa is status-led on this host: it should read as `near_live_only` until a fresh handled custom-skill proof is recorded again, and only then return to `live_proven`
 - after restart, operator surfaces may credit that Alexa proof either from the persisted handled signed-request markers or from a recent same-host `alexa_orientation` pilot success that already recorded the qualifying handled turn
-- BlueBubbles is status-led on this host: it is `degraded_but_usable` while bounded same-thread chat works but the fresh same-thread `message_action` proof leg is still missing
+- BlueBubbles is status-led on this host: it is now `live_proven` because the canonical same-thread roundtrip, message-action decision, and follow-up continuation are recorded in `bb:iMessage;-;+14695405551`
 - outward-facing research and Telegram image generation are now live-proven on this host through the direct OpenAI provider path
 - the local Anthropic-compatible LiteLLM gateway remains a separate compatibility/runtime lane and should be reported separately if it degrades later
 

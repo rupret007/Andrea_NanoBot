@@ -7,6 +7,7 @@ import {
   getMessageAction,
   getOutcomeBySource,
   getTaskById,
+  storeChatMetadata,
   upsertCommunicationThread,
   upsertDelegationRule,
 } from './db.js';
@@ -14,7 +15,10 @@ import {
   applyMessageActionOperation,
   createOrRefreshMessageActionFromDraft,
   findLatestChatMessageAction,
+  isBlueBubblesExplicitSendAlias,
   interpretMessageActionFollowup,
+  parseExplicitBlueBubblesThreadSendIntent,
+  resolveBlueBubblesThreadTargetByName,
   resolveMessageActionForFollowup,
   runScheduledMessageActionByTaskId,
 } from './message-actions.js';
@@ -579,6 +583,80 @@ describe('message actions', () => {
     });
 
     expect(resolved?.messageActionId).toBe(action.messageActionId);
+  });
+
+  it('treats BlueBubbles send-using phrasing as a send follow-up', () => {
+    expect(interpretMessageActionFollowup('send using blue bubbles')).toEqual({
+      kind: 'send',
+    });
+    expect(isBlueBubblesExplicitSendAlias('send that using blue bubbles')).toBe(true);
+  });
+
+  it('parses an explicit BlueBubbles text-message request with a named target', () => {
+    expect(
+      parseExplicitBlueBubblesThreadSendIntent(
+        'send a text message to Rad Dad: Hey everyone, just looping in.',
+      ),
+    ).toEqual({
+      targetLabel: 'Rad Dad',
+      draftText: 'Hey everyone, just looping in.',
+    });
+  });
+
+  it('resolves a unique synced BlueBubbles chat name for explicit thread sends', () => {
+    storeChatMetadata(
+      'bb:iMessage;+;chat-rad-dad',
+      '2026-04-10T18:59:25.530Z',
+      'Rad Dad',
+      'bluebubbles',
+      true,
+    );
+    storeChatMetadata(
+      'bb:iMessage;-;+14695405551',
+      '2026-04-10T19:01:34.886Z',
+      'Jeff',
+      'bluebubbles',
+      false,
+    );
+
+    const resolved = resolveBlueBubblesThreadTargetByName('the Rad Dad test thread');
+    expect(resolved.state).toBe('resolved');
+    if (resolved.state !== 'resolved') {
+      throw new Error('expected resolved target');
+    }
+    expect(resolved.target.chatJid).toBe('bb:iMessage;+;chat-rad-dad');
+    expect(resolved.target.displayName).toBe('Rad Dad');
+    expect(resolved.target.isGroup).toBe(true);
+  });
+
+  it('can create an explicit BlueBubbles thread draft without falling back to self-companion mode', () => {
+    const action = createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'bluebubbles',
+      presentationChatJid: 'bb:iMessage;-;+14695405551',
+      sourceType: 'manual_prompt',
+      sourceKey: 'bluebubbles-thread-send:bb:iMessage;+;chat-rad-dad:hey',
+      sourceSummary: 'Draft text message to Rad Dad.',
+      draftText: 'Hey everyone, I am Andrea.',
+      personName: 'Rad Dad',
+      threadTitle: 'Rad Dad',
+      communicationContext: 'general',
+      targetOverride: {
+        kind: 'external_thread',
+        chatJid: 'bb:iMessage;+;chat-rad-dad',
+        threadId: null,
+        replyToMessageId: null,
+        isGroup: true,
+        personName: 'Rad Dad',
+      },
+      targetChannelOverride: 'bluebubbles',
+      now: new Date('2026-04-10T19:05:00.000Z'),
+    });
+
+    expect(action.targetChannel).toBe('bluebubbles');
+    expect(action.targetKind).toBe('external_thread');
+    expect(action.sendStatus).toBe('drafted');
+    expect(action.trustLevel).toBe('draft_only');
   });
 
   it('treats natural show-draft phrasing as a message-action follow-up', () => {

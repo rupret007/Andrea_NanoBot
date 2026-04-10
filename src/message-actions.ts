@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 
 import {
   createTask,
+  getAllChats,
   getTaskById,
   getCommunicationThread,
   getMessageAction,
@@ -27,6 +28,10 @@ import {
   syncOutcomeFromReminderTask,
 } from './outcome-reviews.js';
 import { resolveBlueBubblesConfig } from './channels/bluebubbles.js';
+import {
+  BLUEBUBBLES_CANONICAL_SELF_THREAD_JID,
+  canonicalizeBlueBubblesSelfThreadJid,
+} from './bluebubbles-self-thread.js';
 import type {
   ChannelInlineAction,
   MessageActionExplanation,
@@ -61,6 +66,17 @@ interface SelfCompanionTarget {
 
 type MessageTarget = ExternalThreadTarget | SelfCompanionTarget;
 
+export interface BlueBubblesExplicitThreadSendIntent {
+  targetLabel: string;
+  draftText: string;
+}
+
+export interface ResolvedBlueBubblesThreadTarget {
+  chatJid: string;
+  displayName: string;
+  isGroup: boolean;
+}
+
 export interface CreateMessageActionFromDraftParams {
   groupFolder: string;
   presentationChannel: Exclude<PresentationChannel, 'alexa'>;
@@ -87,6 +103,8 @@ export interface CreateMessageActionFromDraftParams {
   delegationRuleId?: string | null;
   delegationMode?: MessageActionRecord['delegationMode'];
   delegationExplanation?: string | null;
+  targetOverride?: MessageTarget | null;
+  targetChannelOverride?: MessageActionTargetChannel | null;
   now?: Date;
 }
 
@@ -150,6 +168,30 @@ function normalizeText(value: string | null | undefined): string {
   return (value || '').replace(/\s+/g, ' ').trim();
 }
 
+function normalizeBlueBubblesChatLookup(value: string | null | undefined): string {
+  return normalizeText(value)
+    .toLowerCase()
+    .replace(/^the\s+/, '')
+    .replace(
+      /\b(?:thread|chat|conversation|group|text(?:\s+message)?s?|messages?|message|space)\b/g,
+      ' ',
+    )
+    .replace(/[“”"']/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function buildBlueBubblesChatDisplayName(params: {
+  jid: string;
+  name: string | null | undefined;
+}): string {
+  const normalizedName = normalizeText(params.name);
+  if (normalizedName && normalizedName !== params.jid) {
+    return normalizedName;
+  }
+  return params.jid.replace(/^bb:/, '');
+}
+
 function clipText(value: string | null | undefined, max = 140): string {
   const normalized = normalizeText(value);
   if (!normalized) return '';
@@ -202,6 +244,19 @@ function inferTarget(
   targetChannel: MessageActionTargetChannel;
   target: MessageTarget;
 } {
+  if (params.targetOverride) {
+    return {
+      targetKind:
+        params.targetOverride.kind === 'external_thread'
+          ? 'external_thread'
+          : 'self_companion',
+      targetChannel:
+        params.targetChannelOverride ||
+        (params.presentationChannel === 'bluebubbles' ? 'bluebubbles' : 'telegram'),
+      target: params.targetOverride,
+    };
+  }
+
   const thread =
     params.communicationThreadId
       ? getCommunicationThread(params.communicationThreadId)
@@ -1033,6 +1088,9 @@ export function interpretMessageActionFollowup(
     return { kind: 'send_again' };
   }
   if (
+    /^(send using blue bubbles|send (?:it|that|this)(?: reply)? using blue bubbles|send (?:it|that|this)(?: reply)? with blue bubbles)$/.test(
+      normalized,
+    ) ||
     /^(send it|send now|send that|send that reply|send this reply)$/.test(normalized) ||
     /^send (?:this|that|it)(?: reply)? to [a-z][a-z' -]+$/i.test(normalized)
   ) {
@@ -1085,6 +1143,114 @@ export function interpretMessageActionFollowup(
     return { kind: 'why' };
   }
   return null;
+}
+
+export function isBlueBubblesExplicitSendAlias(rawText: string): boolean {
+  const normalized = normalizeText(rawText).toLowerCase();
+  return /^(send using blue bubbles|send (?:it|that|this)(?: reply)? using blue bubbles|send (?:it|that|this)(?: reply)? with blue bubbles)$/.test(
+    normalized,
+  );
+}
+
+export function parseExplicitBlueBubblesThreadSendIntent(
+  rawText: string,
+): BlueBubblesExplicitThreadSendIntent | null {
+  const normalized = normalizeText(rawText);
+  if (!normalized) return null;
+  const patterns = [
+    /^send (?:a )?(?:text )?message to\s+(.+?):\s*(.+)$/i,
+    /^send (?:a )?(?:text )?to\s+(.+?):\s*(.+)$/i,
+    /^text\s+(.+?):\s*(.+)$/i,
+    /^send (?:a )?(?:text )?message to\s+(.+?)\s+saying\s+(.+)$/i,
+    /^send (?:a )?message to\s+(.+?)\s+saying\s+(.+)$/i,
+  ];
+  for (const pattern of patterns) {
+    const match = normalized.match(pattern);
+    const targetLabel = normalizeText(match?.[1]);
+    const draftText = normalizeText(match?.[2]);
+    if (targetLabel && draftText) {
+      return { targetLabel, draftText };
+    }
+  }
+  return null;
+}
+
+export function resolveBlueBubblesThreadTargetByName(
+  query: string,
+):
+  | { state: 'resolved'; target: ResolvedBlueBubblesThreadTarget }
+  | { state: 'ambiguous'; matches: ResolvedBlueBubblesThreadTarget[] }
+  | { state: 'missing' } {
+  const normalizedQuery = normalizeBlueBubblesChatLookup(query);
+  if (!normalizedQuery) return { state: 'missing' };
+
+  const candidates = getAllChats()
+    .filter((chat) => chat.channel === 'bluebubbles' || chat.jid.startsWith('bb:'))
+    .filter(
+      (chat) =>
+        canonicalizeBlueBubblesSelfThreadJid(chat.jid) !==
+        BLUEBUBBLES_CANONICAL_SELF_THREAD_JID,
+    )
+    .map((chat) => ({
+      chatJid: chat.jid,
+      displayName: buildBlueBubblesChatDisplayName({
+        jid: chat.jid,
+        name: chat.name,
+      }),
+      isGroup: Boolean(chat.is_group),
+      normalizedName: normalizeBlueBubblesChatLookup(
+        buildBlueBubblesChatDisplayName({ jid: chat.jid, name: chat.name }),
+      ),
+      lastMessageTime: chat.last_message_time,
+    }));
+
+  const exactMatches = candidates.filter(
+    (candidate) =>
+      candidate.normalizedName === normalizedQuery ||
+      candidate.chatJid.toLowerCase() === normalizedQuery,
+  );
+  if (exactMatches.length === 1) {
+    const { normalizedName: _normalizedName, lastMessageTime: _lastMessageTime, ...target } =
+      exactMatches[0]!;
+    return { state: 'resolved', target };
+  }
+  if (exactMatches.length > 1) {
+    return {
+      state: 'ambiguous',
+      matches: exactMatches
+        .sort(
+          (left, right) =>
+            Date.parse(right.lastMessageTime || '') - Date.parse(left.lastMessageTime || ''),
+        )
+        .slice(0, 3)
+        .map(({ normalizedName: _normalizedName, lastMessageTime: _lastMessageTime, ...target }) => target),
+    };
+  }
+
+  const fuzzyMatches = candidates.filter(
+    (candidate) =>
+      candidate.normalizedName.includes(normalizedQuery) ||
+      normalizedQuery.includes(candidate.normalizedName),
+  );
+  if (fuzzyMatches.length === 1) {
+    const { normalizedName: _normalizedName, lastMessageTime: _lastMessageTime, ...target } =
+      fuzzyMatches[0]!;
+    return { state: 'resolved', target };
+  }
+  if (fuzzyMatches.length > 1) {
+    return {
+      state: 'ambiguous',
+      matches: fuzzyMatches
+        .sort(
+          (left, right) =>
+            Date.parse(right.lastMessageTime || '') - Date.parse(left.lastMessageTime || ''),
+        )
+        .slice(0, 3)
+        .map(({ normalizedName: _normalizedName, lastMessageTime: _lastMessageTime, ...target }) => target),
+    };
+  }
+
+  return { state: 'missing' };
 }
 
 async function persistDeferredReminder(params: {

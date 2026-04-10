@@ -889,6 +889,7 @@ export type MessageActionSourceType =
   | 'life_thread'
   | 'cross_channel_handoff'
   | 'action_bundle'
+  | 'manual_prompt'
   | 'ritual_review';
 
 export type MessageActionTargetKind = 'external_thread' | 'self_companion';

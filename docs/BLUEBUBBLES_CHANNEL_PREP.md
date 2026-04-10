@@ -14,8 +14,9 @@ Current host reality for the Windows operator machine:
 - Andrea now has live `BLUEBUBBLES_*` config loaded on this host
 - Andrea can reach and authenticate to the live BlueBubbles server
 - Andrea's public webhook is now registered on that server
-- BlueBubbles is therefore **degraded_but_usable**, not externally blocked
-- the exact remaining blocker is one fresh real same-thread inbound -> reply -> follow-up proof chain plus one same-thread message-action decision on this host
+- BlueBubbles is therefore **live_proven** on this host
+- the canonical proof thread is `bb:iMessage;-;+14695405551`, and alias support remains enabled for `bb:iMessage;-;jeffstory007@gmail.com`
+- the proving chain now includes a same-thread inbound -> reply -> follow-up continuation plus a same-thread message-action decision on this host
 
 Use these operator truth surfaces:
 
@@ -180,7 +181,7 @@ BlueBubbles is `live_proven` only after all of these happen on this host:
 5. one same-thread message-action decision is recorded in the same chat, such as `send it`, `send it later tonight`, `remind me instead`, or `save under thread`
 6. if the user approves a real reply, that same-thread outbound send lands without the companion prefix
 
-If config is present and the server/webhook are ready but that roundtrip plus message-action leg has not happened yet, BlueBubbles stays below `live_proven` and should read as `degraded_but_usable` on this host.
+If config is present and the server/webhook are ready but that roundtrip plus message-action leg has not happened yet, BlueBubbles stays below `live_proven` and should read as `degraded_but_usable` on this host. On the current host, that proof bar is now satisfied in `bb:iMessage;-;+14695405551`.
 
 ## Operator Proof Steps
 

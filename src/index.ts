@@ -193,8 +193,12 @@ import {
 import {
   applyMessageActionOperation,
   buildMessageActionPresentation,
+  createOrRefreshMessageActionFromDraft,
   findLatestChatMessageAction,
+  isBlueBubblesExplicitSendAlias,
   interpretMessageActionFollowup,
+  parseExplicitBlueBubblesThreadSendIntent,
+  resolveBlueBubblesThreadTargetByName,
   resolveMessageActionForFollowup,
   type MessageActionOperation,
 } from './message-actions.js';
@@ -3228,13 +3232,75 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       chatJid,
       rawText: lastContent,
     });
-    if (!messageAction) return false;
+    if (!messageAction) {
+      if (
+        conversationChannel === 'bluebubbles' &&
+        operation.kind === 'send' &&
+        isBlueBubblesExplicitSendAlias(lastContent)
+      ) {
+        await channel.sendMessage(
+          chatJid,
+          'Andrea: I do not have a draft open here yet.\n\nAsk what you should say back, or say `send a text message to <chat name>: <message>`.',
+        );
+        return true;
+      }
+      return false;
+    }
     return applyAndPresentMessageAction({
       chatJid,
       messageActionId: messageAction.messageActionId,
       operation,
       now,
     });
+  };
+  const tryHandleExplicitBlueBubblesThreadSend = async (): Promise<boolean> => {
+    if (conversationChannel !== 'bluebubbles') return false;
+    const explicitSend = parseExplicitBlueBubblesThreadSendIntent(lastContent);
+    if (!explicitSend) return false;
+    const resolution = resolveBlueBubblesThreadTargetByName(explicitSend.targetLabel);
+    if (resolution.state === 'missing') {
+      await channel.sendMessage(
+        chatJid,
+        `Andrea: I could not match "${explicitSend.targetLabel}" to a synced Messages chat.\n\nUse the exact chat name, like \`send a text message to Rad Dad: <message>\`.`,
+      );
+      return true;
+    }
+    if (resolution.state === 'ambiguous') {
+      const options = resolution.matches.map((match) => match.displayName).join(', ');
+      await channel.sendMessage(
+        chatJid,
+        `Andrea: I found more than one Messages chat that could be "${explicitSend.targetLabel}".\n\nUse the exact chat name. Matches: ${options}.`,
+      );
+      return true;
+    }
+    const target = resolution.target;
+    const action = createOrRefreshMessageActionFromDraft({
+      groupFolder: group.folder,
+      presentationChannel: 'bluebubbles',
+      presentationChatJid: chatJid,
+      sourceType: 'manual_prompt',
+      sourceKey: `bluebubbles-thread-send:${target.chatJid}:${explicitSend.draftText
+        .toLowerCase()
+        .slice(0, 80)}`,
+      sourceSummary: `Draft text message to ${target.displayName}.`,
+      draftText: explicitSend.draftText,
+      personName: target.displayName,
+      threadTitle: target.displayName,
+      communicationContext: 'general',
+      targetOverride: {
+        kind: 'external_thread',
+        chatJid: target.chatJid,
+        threadId: null,
+        replyToMessageId: null,
+        isGroup: target.isGroup,
+        personName: target.displayName,
+      },
+      targetChannelOverride: 'bluebubbles',
+      now,
+    });
+    const presentation = buildMessageActionPresentation(action, 'bluebubbles');
+    await channel.sendMessage(chatJid, presentation.text);
+    return true;
   };
   const tryHandleOutcomeReview = async (): Promise<boolean> => {
     const reviewPrompt = matchOutcomeReviewPrompt(lastContent);
@@ -6025,6 +6091,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       return true;
     }
     if (await tryHandleMessageActionFollowup()) {
+      return true;
+    }
+    if (await tryHandleExplicitBlueBubblesThreadSend()) {
       return true;
     }
     if (await tryHandleActionBundleFollowup()) {

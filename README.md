@@ -81,8 +81,8 @@ Current host truth for the Windows field-trial machine:
 
 - Telegram is the richest **live-proven** surface.
 - Google Calendar scheduling is **live-proven** on this host.
-- Alexa is currently **live_proven** on this host because a fresh handled Andrea custom-skill proof remains inside the 24-hour proof window.
-- BlueBubbles is currently **degraded_but_usable** on this host: transport, webhook, and bounded same-thread chat are working, but one fresh same-thread `message_action` decision is still required before it counts as live-proven.
+- Alexa is status-led on this host and currently reads **near_live_only** until a fresh handled Andrea custom-skill proof is recorded again.
+- BlueBubbles is currently **live_proven** on this host: transport, webhook, bounded same-thread chat, a same-thread `message_action` decision, and a fresh same-thread continuation are all recorded in the canonical proof thread `bb:iMessage;-;+14695405551`.
 - the local Codex/OpenAI runtime backend and the unified `/cursor` work cockpit are live on this host
 - outward research and Telegram image generation are now **live-proven** on this host through the direct OpenAI provider path
 - the local Anthropic-compatible LiteLLM gateway is a separate internal compatibility lane; if it degrades later, operator surfaces should report that separately from direct OpenAI proof
@@ -294,7 +294,7 @@ BlueBubbles is now a real bounded Andrea messaging channel, not just prep work.
 - richer details still hand off explicitly to Telegram when that is the better surface
 - BlueBubbles does **not** become a main control chat and does not expose work-cockpit or admin/runtime controls
 
-On this host, BlueBubbles is now `degraded_but_usable`: Andrea has the live `BLUEBUBBLES_*` configuration loaded, the server is reachable, Andrea's public webhook is registered, and bounded same-thread chat is working, but one real same-thread `message_action` decision still needs to be recorded before BlueBubbles counts as `live_proven`.
+On this host, BlueBubbles is now `live_proven`: Andrea has the live `BLUEBUBBLES_*` configuration loaded, the server is reachable, Andrea's public webhook is registered, bounded same-thread chat is working, and the canonical proof thread `bb:iMessage;-;+14695405551` now has the full same-thread roundtrip, message-action decision, and follow-up continuation chain recorded.
 
 See [docs/BLUEBUBBLES_CHANNEL_PREP.md](docs/BLUEBUBBLES_CHANNEL_PREP.md) for the live V1 scope, config, webhook/send model, and exact current limits.
 

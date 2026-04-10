@@ -172,6 +172,43 @@ function isLikelyBlueBubblesDraftReply(content: string | null | undefined): bool
   );
 }
 
+function findBlueBubblesSameThreadContinuationAfterAction(
+  proofChatJid: string | null,
+  actionAt: string | null | undefined,
+  messages: Array<ReturnType<typeof listRecentMessagesForChat>[number]>,
+): { inboundAt: string; outboundAt: string } | null {
+  if (!proofChatJid) return null;
+  const actionTimestamp = parseFieldTrialIsoTime(actionAt);
+  if (actionTimestamp == null) return null;
+  const ordered = [...messages]
+    .filter(
+      (message) =>
+        canonicalizeBlueBubblesSelfThreadJid(message.chat_jid) === proofChatJid ||
+        message.chat_jid === proofChatJid,
+    )
+    .sort(
+      (left, right) => Date.parse(left.timestamp || '') - Date.parse(right.timestamp || ''),
+    );
+  let inboundAfterAction: { timestamp: string } | null = null;
+  for (const message of ordered) {
+    const messageTimestamp = parseFieldTrialIsoTime(message.timestamp);
+    if (messageTimestamp == null || messageTimestamp <= actionTimestamp) continue;
+    if (!inboundAfterAction) {
+      if (!message.is_bot_message) {
+        inboundAfterAction = { timestamp: message.timestamp };
+      }
+      continue;
+    }
+    if (message.is_bot_message && messageTimestamp > Date.parse(inboundAfterAction.timestamp)) {
+      return {
+        inboundAt: inboundAfterAction.timestamp,
+        outboundAt: message.timestamp,
+      };
+    }
+  }
+  return null;
+}
+
 function deriveBlueBubblesWebhookRegistrationTruth(detail: string): {
   state: string;
   detail: string;
@@ -940,6 +977,16 @@ function buildBlueBubblesTruth(
       ) || null;
   const draftLikeReplyWithoutAction =
     !matchingProofChainMessageAction && Boolean(draftLikeReplyMessage);
+  const sameThreadContinuationProof = matchingProofChainMessageAction
+    ? findBlueBubblesSameThreadContinuationAfterAction(
+        proofChainChatJid,
+        matchingProofChainMessageAction.action.lastActionAt ||
+          matchingProofChainMessageAction.action.sentAt,
+        recentProofChainMessages,
+      )
+    : null;
+  const creditedLiveProofChatJid =
+    sameThreadContinuationProof && proofChainChatJid ? proofChainChatJid : liveProofChatJid;
   const blueBubblesSelfThreadAliasDetail =
     isBlueBubblesSelfThreadAliasJid(lastInboundChatJid) ||
     isBlueBubblesSelfThreadAliasJid(lastOutboundChatJid) ||
@@ -1179,16 +1226,22 @@ function buildBlueBubblesTruth(
   }
 
   if (
-    liveProofChatJid &&
+    creditedLiveProofChatJid &&
     matchingProofChainMessageAction &&
-    lastInboundObservedAt !== 'none' &&
-    lastOutboundResult !== 'none'
+    (
+      sameThreadContinuationProof ||
+      (liveProofChatJid &&
+        lastInboundObservedAt !== 'none' &&
+        lastOutboundResult !== 'none')
+    )
   ) {
     return {
       ...buildTruth({
         proofState: 'live_proven',
         detail:
-          `BlueBubbles is live-proven on this host. Recent same-thread proof is anchored in ${liveProofChatJid}, including a fresh message-action decision in that same chat.`,
+          sameThreadContinuationProof
+            ? `BlueBubbles is live-proven on this host. Recent same-thread proof is anchored in ${creditedLiveProofChatJid}, including a fresh message-action decision and a fresh same-thread continuation after it.`
+            : `BlueBubbles is live-proven on this host. Recent same-thread proof is anchored in ${creditedLiveProofChatJid}, including a fresh message-action decision in that same chat.`,
       }),
       ...base,
     };

@@ -620,6 +620,139 @@ describe('field-trial readiness', () => {
     );
   });
 
+  it('credits a fresh same-thread continuation after a BlueBubbles message-action without needing two pilot success events', () => {
+    vi.stubEnv('BLUEBUBBLES_ENABLED', 'true');
+    vi.stubEnv('BLUEBUBBLES_BASE_URL', 'http://macbook-pro.local:1234');
+    vi.stubEnv('BLUEBUBBLES_PASSWORD', 'secret');
+    vi.stubEnv('BLUEBUBBLES_GROUP_FOLDER', 'main');
+    vi.stubEnv('BLUEBUBBLES_CHAT_SCOPE', 'all_synced');
+    vi.stubEnv('BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL', 'http://192.168.5.136:4305');
+    vi.stubEnv('BLUEBUBBLES_WEBHOOK_SECRET', 'hook-secret');
+    vi.stubEnv('BLUEBUBBLES_SEND_ENABLED', 'true');
+
+    const snapshot: HostControlSnapshot = {
+      paths: resolveHostControlPaths(tempDir),
+      nodeRuntime: null,
+      hostState: null,
+      readyState: null,
+      assistantHealthState: {
+        bootId: 'boot-blue-continuation-proof',
+        pid: process.pid,
+        appVersion: '1.0.0-test',
+        updatedAt: '2026-04-10T19:01:34.886Z',
+        channels: [
+          {
+            name: 'bluebubbles',
+            configured: true,
+            state: 'ready',
+            updatedAt: '2026-04-10T19:01:34.886Z',
+            detail:
+              'listener 0.0.0.0:4305/bluebubbles/webhook | scope all_synced | reply gate mention_required | transport reachable/auth ok (200) | last inbound 2026-04-10T19:01:27.147Z | last inbound chat bb:iMessage;-;+14695405551 | last inbound self_authored no | last outbound 2026-04-10T19:01:34.886Z (bb:iMessage;-;+14695405551) | last outbound target kind chat_guid | last outbound target value iMessage;-;+14695405551 | last send error none | send method apple-script | private api available no | last metadata hydration none | attempted target sequence chat_guid',
+          },
+        ],
+      },
+      telegramRoundtripState: null,
+      telegramTransportState: null,
+      runtimeAuditState: null,
+    };
+
+    storeChatMetadata(
+      'bb:iMessage;-;+14695405551',
+      '2026-04-10T19:01:34.886Z',
+      'Jeff',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'bb:continuation-action-user',
+      chat_jid: 'bb:iMessage;-;+14695405551',
+      sender: 'bb:+14695405551',
+      sender_name: 'Jeff',
+      content: '@Andrea send it',
+      timestamp: '2026-04-10T14:43:21.164Z',
+      is_from_me: true,
+      is_bot_message: false,
+    });
+    storeMessage({
+      id: 'bb:continuation-action-bot',
+      chat_jid: 'bb:iMessage;-;+14695405551',
+      sender: 'Andrea',
+      sender_name: 'Andrea',
+      content: 'Andrea: I sent that to Communication follow-up.',
+      timestamp: '2026-04-10T14:43:29.235Z',
+      is_from_me: true,
+      is_bot_message: true,
+    });
+    storeMessage({
+      id: 'bb:continuation-user',
+      chat_jid: 'bb:iMessage;-;+14695405551',
+      sender: 'bb:+14695405551',
+      sender_name: 'Jeff',
+      content: '@Andrea sounds good.',
+      timestamp: '2026-04-10T19:01:27.147Z',
+      is_from_me: true,
+      is_bot_message: false,
+    });
+    storeMessage({
+      id: 'bb:continuation-bot',
+      chat_jid: 'bb:iMessage;-;+14695405551',
+      sender: 'Andrea',
+      sender_name: 'Andrea',
+      content: 'Andrea: Okay.',
+      timestamp: '2026-04-10T19:01:34.886Z',
+      is_from_me: true,
+      is_bot_message: true,
+    });
+    upsertMessageAction({
+      messageActionId: 'msg-action-continuation-proof-1',
+      groupFolder: 'main',
+      sourceType: 'communication_thread',
+      sourceKey: 'comm-continuation-proof',
+      sourceSummary: 'Draft reply was sent from the canonical BlueBubbles proof chat.',
+      targetKind: 'external_thread',
+      targetChannel: 'bluebubbles',
+      targetConversationJson: JSON.stringify({
+        kind: 'external_thread',
+        chatJid: 'bb:iMessage;+;chat-rad-dad',
+        personName: 'Rad Dad',
+      }),
+      draftText: 'Hey, just following up.',
+      trustLevel: 'approve_before_send',
+      sendStatus: 'sent',
+      followupAt: null,
+      requiresApproval: false,
+      delegationRuleId: null,
+      delegationMode: null,
+      explanationJson: null,
+      linkedRefsJson: JSON.stringify({ personName: 'Rad Dad' }),
+      platformMessageId: 'bb:sent-continuation-proof-1',
+      scheduledTaskId: null,
+      approvedAt: '2026-04-10T14:43:24.000Z',
+      lastActionKind: 'sent',
+      lastActionAt: '2026-04-10T14:43:26.973Z',
+      dedupeKey: 'continuation-proof-key-1',
+      presentationChatJid: 'bb:iMessage;-;+14695405551',
+      presentationThreadId: null,
+      presentationMessageId: null,
+      createdAt: '2026-04-10T14:42:55.469Z',
+      lastUpdatedAt: '2026-04-10T14:43:26.973Z',
+      sentAt: '2026-04-10T14:43:26.973Z',
+    });
+
+    const truth = buildFieldTrialOperatorTruth({
+      projectRoot: tempDir,
+      hostSnapshot: snapshot,
+      windowsHost: null,
+    });
+
+    expect(truth.bluebubbles.proofState).toBe('live_proven');
+    expect(truth.bluebubbles.messageActionProofState).toBe('fresh');
+    expect(truth.bluebubbles.messageActionProofChatJid).toBe(
+      'bb:iMessage;-;+14695405551',
+    );
+    expect(truth.bluebubbles.detail).toContain('fresh same-thread continuation');
+  });
+
   it('keeps BlueBubbles near-live when same-chat pilot proof exists but message-action proof is missing', () => {
     vi.stubEnv('BLUEBUBBLES_ENABLED', 'true');
     vi.stubEnv('BLUEBUBBLES_BASE_URL', 'http://macbook-pro.local:1234');
