@@ -116,6 +116,16 @@ describe('assistant capability router', () => {
     ).toMatchObject({
       capabilityId: 'communication.manage_tracking',
     });
+    expect(
+      matchAssistantCapabilityRequest('@Andrea what should I say back?'),
+    ).toMatchObject({
+      capabilityId: 'communication.draft_reply',
+    });
+    expect(
+      matchAssistantCapabilityRequest('@Andrea summarize this'),
+    ).toMatchObject({
+      capabilityId: 'communication.understand_message',
+    });
   });
 
   it('matches chief-of-staff prioritization, prep, decision, and explainability prompts cleanly', () => {

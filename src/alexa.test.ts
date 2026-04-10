@@ -976,6 +976,79 @@ describe('createAlexaSkill', () => {
     expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
   });
 
+  it('uses the active Alexa companion frame for directness restyling even without saved priorContext json', async () => {
+    mockedBuildDailyCompanionResponse.mockResolvedValue(
+      buildCompanionResponse('Review the agenda, then send the short update.', {
+        mode: 'open_guidance',
+        context: {
+          ...buildCompanionResponse('x').context,
+          summaryText: 'review the agenda before the call',
+          recommendationText: 'Review the agenda, then send the short update.',
+          shortText: 'Review the agenda, then send the short update.',
+          usedThreadIds: ['thread-client-call'],
+          usedThreadTitles: ['Client call'],
+          threadSummaryLines: ['Client call prep still needs a quick review.'],
+        },
+      }),
+    );
+
+    const linked = seedLinkedAccount('main');
+    saveAlexaConversationState(
+      getAlexaPrincipalKey({
+        userId: 'amzn1.ask.account.test-user',
+        personId: 'amzn1.ask.person.test-person',
+      }),
+      linked!.accessTokenHash,
+      'main',
+      {
+        flowKey: 'what_am_i_forgetting',
+        subjectKind: 'day_brief',
+        summaryText: 'review the agenda before the call',
+        supportedFollowups: ['anything_else', 'say_more', 'memory_control'],
+        subjectData: {
+          lastAnswerSummary: 'review the agenda before the call',
+          lastRecommendation: 'Review the agenda, then send the short update.',
+          threadId: 'thread-client-call',
+          threadTitle: 'Client call',
+          threadSummaryLines: ['Client call prep still needs a quick review.'],
+        },
+        styleHints: {
+          channelMode: 'alexa_companion',
+          guidanceGoal: 'what_am_i_forgetting',
+          initiativeLevel: 'measured',
+          prioritizationLens: 'general',
+          hasActionItem: true,
+          hasRiskSignal: true,
+          responseSource: 'local_companion',
+        },
+      },
+    );
+
+    const skill = createAlexaSkill(buildConfig());
+    const response = await skill.invoke(
+      buildIntentEnvelope('MemoryControlIntent', {
+        memoryCommand: 'be a little more direct',
+      }),
+    );
+
+    expect(mockedBuildDailyCompanionResponse).toHaveBeenCalledWith(
+      'be a little more direct',
+      expect.objectContaining({
+        channel: 'alexa',
+        groupFolder: 'main',
+        priorContext: expect.objectContaining({
+          summaryText: 'review the agenda before the call',
+          usedThreadTitles: ['Client call'],
+          shortText: 'Review the agenda, then send the short update.',
+        }),
+      }),
+    );
+    expect(extractSpeechText(response)).toContain(
+      'Review the agenda, then send the short update.',
+    );
+    expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
+  });
+
   it('explains personalization briefly without routing explainability through the bridge', async () => {
     const skill = createAlexaSkill(buildConfig());
     const response = await skill.invoke(

@@ -54,6 +54,14 @@ describe('direct quick reply', () => {
     expect(reply?.toLowerCase()).toContain('what');
   });
 
+  it('keeps BlueBubbles @Andrea vibe checks local-first', () => {
+    const reply = maybeBuildDirectQuickReply([{ content: "@Andrea what's up?" }]);
+
+    expect(reply).toBeTruthy();
+    expect(reply?.toLowerCase()).not.toContain('candace');
+    expect(reply?.toLowerCase()).not.toContain('dinner');
+  });
+
   it('returns a calm what-are-you-doing response', () => {
     const reply = maybeBuildDirectQuickReply([{ content: 'what are you doing?' }]);
 
@@ -233,6 +241,49 @@ describe('direct quick reply', () => {
     expect(reply).toContain('Perth');
   });
 
+  it('returns a plain local time answer for simple time asks', () => {
+    const now = new Date('2026-04-06T12:34:00');
+    const reply = maybeBuildDirectQuickReply(
+      [{ content: 'What time is it?' }],
+      now,
+    );
+
+    expect(reply).toContain("Right now it's");
+    expect(reply).toContain(
+      now.toLocaleTimeString('en-US', {
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+      }),
+    );
+  });
+
+  it('returns a plain local time answer for BlueBubbles @Andrea time asks', () => {
+    const now = new Date('2026-04-06T12:34:00');
+    const reply = maybeBuildDirectQuickReply(
+      [{ content: '@Andrea what time is it?' }],
+      now,
+    );
+
+    expect(reply).toContain("Right now it's");
+    expect(reply).toContain(
+      now.toLocaleTimeString('en-US', {
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+      }),
+    );
+  });
+
+  it('returns a plain local date answer for simple date asks', () => {
+    const reply = maybeBuildDirectQuickReply(
+      [{ content: 'What day is it?' }],
+      new Date('2026-04-09T12:34:00.000Z'),
+    );
+
+    expect(reply).toBe('Today is Thursday, April 9.');
+  });
+
   it('solves simple math expressions', () => {
     const reply = maybeBuildDirectQuickReply([{ content: 'what is 56 + 778' }]);
 
@@ -347,6 +398,19 @@ describe('direct runtime failure reply', () => {
     );
 
     expect(reply).toBeTruthy();
+    expect(reply).not.toContain('setup verify');
+  });
+
+  it('prefers the local time answer over a degraded runtime reply for @Andrea time asks', () => {
+    const reply = buildDirectAssistantRuntimeFailureReply(
+      [{ content: '@Andrea what time is it?' }],
+      'Andrea cannot run that assistant turn right now because the runtime failed during startup or execution.',
+      new Date('2026-04-06T22:18:10.000Z'),
+      'bluebubbles',
+    );
+
+    expect(reply).toContain("Right now it's");
+    expect(reply).not.toContain("can't check that live right now");
     expect(reply).not.toContain('setup verify');
   });
 });

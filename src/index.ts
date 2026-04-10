@@ -51,6 +51,9 @@ import {
 import {
   createCalendarAutomation,
   createTask,
+  deleteAgentThread,
+  deleteSession,
+  deleteSessionStorageKey,
   deleteTask,
   getCursorMessageContext,
   deleteRuntimeBackendCardContext,
@@ -391,7 +394,10 @@ import {
   maybeBuildDirectQuickReply,
 } from './direct-quick-reply.js';
 import { buildDirectAssistantContinuationPrompt } from './direct-assistant-continuation.js';
-import { getAssistantSessionStorageKey } from './assistant-session.js';
+import {
+  getAssistantSessionStorageKey,
+  isDeadAssistantSessionErrorText,
+} from './assistant-session.js';
 import {
   decideMainChatRouting,
   shouldAvoidCombinedContextForMainChat,
@@ -2503,6 +2509,18 @@ function persistAgentThread(
   };
   agentThreads[groupFolder] = thread;
   setAgentThread(thread);
+}
+
+function clearPersistedAssistantSessionState(
+  groupFolder: string,
+  sessionStorageKey: string,
+): void {
+  delete sessions[sessionStorageKey];
+  deleteSessionStorageKey(sessionStorageKey);
+  delete sessions[groupFolder];
+  deleteSession(groupFolder);
+  delete agentThreads[groupFolder];
+  deleteAgentThread(groupFolder);
 }
 
 function registerGroup(jid: string, group: RegisteredGroup): void {
@@ -6546,9 +6564,17 @@ async function runAgent(
     new Set(Object.keys(registeredGroups)),
   );
 
+  let staleSessionOutputDetected = false;
+
   // Wrap onOutput to track session ID from streamed results
   const wrappedOnOutput = onOutput
     ? async (output: ContainerOutput) => {
+        const streamedText =
+          typeof output.result === 'string' ? output.result : null;
+        if (isDeadAssistantSessionErrorText(streamedText)) {
+          staleSessionOutputDetected = true;
+          return;
+        }
         if (output.newSessionId) {
           sessions[sessionStorageKey] = output.newSessionId;
           setSession(sessionStorageKey, output.newSessionId);
@@ -6584,6 +6610,59 @@ async function runAgent(
         queue.registerProcess(chatJid, proc, containerName, group.folder),
       wrappedOnOutput,
     );
+
+    const staleSessionDetected =
+      staleSessionOutputDetected ||
+      isDeadAssistantSessionErrorText(output.error) ||
+      isDeadAssistantSessionErrorText(
+        typeof output.result === 'string' ? output.result : null,
+      );
+
+    if (staleSessionDetected) {
+      if (!forceFreshSession) {
+        logger.warn(
+          {
+            component: 'assistant',
+            chatJid,
+            groupFolder: group.folder,
+            route: requestPolicy.route,
+            sessionId,
+          },
+          'Assistant detected stale session state, clearing stored conversation and retrying once',
+        );
+        clearPersistedAssistantSessionState(group.folder, sessionStorageKey);
+        const recovered = await runAgent(
+          group,
+          prompt,
+          chatJid,
+          requestPolicy,
+          idleTimeoutMs,
+          true,
+          onOutput,
+        );
+        return {
+          ...recovered,
+          recoveryAttempted: true,
+        };
+      }
+
+      logger.warn(
+        {
+          component: 'assistant',
+          chatJid,
+          groupFolder: group.folder,
+          route: requestPolicy.route,
+        },
+        'Assistant stale session retry was already attempted and still failed',
+      );
+      return {
+        status: 'error',
+        code: 'transient_or_unknown',
+        nonRetriable: false,
+        userMessage: null,
+        recoveryAttempted: true,
+      };
+    }
 
     if (output.newSessionId) {
       sessions[sessionStorageKey] = output.newSessionId;

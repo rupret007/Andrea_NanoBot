@@ -48,6 +48,12 @@ describe('pilot mode', () => {
 
   it('classifies flagship journey seeds', () => {
     expect(resolveOrdinaryChatPilotJourney('hi')?.journeyId).toBe('ordinary_chat');
+    expect(resolveOrdinaryChatPilotJourney('@Andrea hi')?.journeyId).toBe(
+      'ordinary_chat',
+    );
+    expect(resolveOrdinaryChatPilotJourney("@Andrea what's up")?.journeyId).toBe(
+      'ordinary_chat',
+    );
     expect(resolveCrossChannelPilotJourney('save that for later')?.journeyId).toBe(
       'cross_channel_handoff',
     );

@@ -750,9 +750,13 @@ export async function buildChiefOfStaffSnapshot(
     input.priorCommunicationSubjectIds,
   );
   const horizonCalendar =
-    horizon === 'today'
-      ? grounded.calendar
-      : await loadHorizonCalendarSnapshot(horizon, now);
+    input.groundedSnapshot
+      ? horizon === 'today'
+        ? grounded.calendar
+        : null
+      : horizon === 'today'
+        ? grounded.calendar
+        : await loadHorizonCalendarSnapshot(horizon, now);
   const primaryEvent =
     horizonCalendar?.nextTimedEvent ||
     horizonCalendar?.activeAllDayEvents?.[0] ||

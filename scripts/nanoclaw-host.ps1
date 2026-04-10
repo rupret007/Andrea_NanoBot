@@ -2033,6 +2033,9 @@ function Show-Status {
   Write-Output ("HOST_STATUS: alexa_last_signed_group_folder={0}" -f ($(if ($alexaLastSignedRequest -and $alexaLastSignedRequest.groupFolder) { [string] $alexaLastSignedRequest.groupFolder } else { 'none' })))
   Write-Output ("HOST_STATUS: alexa_last_signed_response_source={0}" -f ($(if ($fieldTrialTruth -and $fieldTrialTruth.alexa -and $fieldTrialTruth.alexa.lastSignedResponseSource) { [string] $fieldTrialTruth.alexa.lastSignedResponseSource } elseif ($alexaLastSignedRequest -and $alexaLastSignedRequest.responseSource) { [string] $alexaLastSignedRequest.responseSource } else { 'none' })))
   if ($fieldTrialTruth -and $fieldTrialTruth.alexa) {
+    Write-Output ("HOST_STATUS: alexa_last_handled_proof_at={0}" -f ($(if ($fieldTrialTruth.alexa.lastHandledProofAt) { [string] $fieldTrialTruth.alexa.lastHandledProofAt } else { 'none' })))
+    Write-Output ("HOST_STATUS: alexa_last_handled_proof_intent={0}" -f ($(if ($fieldTrialTruth.alexa.lastHandledProofIntent) { [string] $fieldTrialTruth.alexa.lastHandledProofIntent } else { 'none' })))
+    Write-Output ("HOST_STATUS: alexa_last_handled_proof_response_source={0}" -f ($(if ($fieldTrialTruth.alexa.lastHandledProofResponseSource) { [string] $fieldTrialTruth.alexa.lastHandledProofResponseSource } else { 'none' })))
     Write-Output ("HOST_STATUS: alexa_live_proof_blocker={0}" -f ($(if ($fieldTrialTruth.alexa.blocker) { [string] $fieldTrialTruth.alexa.blocker } else { 'none' })))
     Write-Output ("HOST_STATUS: alexa_live_proof_next_action={0}" -f ($(if ($fieldTrialTruth.alexa.nextAction) { [string] $fieldTrialTruth.alexa.nextAction } else { 'none' })))
     Write-Output ("HOST_STATUS: alexa_live_proof_utterance={0}" -f ($(if ($fieldTrialTruth.alexa.recommendedUtterance) { [string] $fieldTrialTruth.alexa.recommendedUtterance } else { 'none' })))

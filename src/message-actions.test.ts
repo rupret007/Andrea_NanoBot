@@ -14,6 +14,7 @@ import {
   applyMessageActionOperation,
   createOrRefreshMessageActionFromDraft,
   findLatestChatMessageAction,
+  interpretMessageActionFollowup,
   resolveMessageActionForFollowup,
   runScheduledMessageActionByTaskId,
 } from './message-actions.js';
@@ -578,5 +579,14 @@ describe('message actions', () => {
     });
 
     expect(resolved?.messageActionId).toBe(action.messageActionId);
+  });
+
+  it('treats natural show-draft phrasing as a message-action follow-up', () => {
+    expect(interpretMessageActionFollowup("ok let's see the draft again")).toEqual({
+      kind: 'show_draft',
+    });
+    expect(interpretMessageActionFollowup('show me the draft again')).toEqual({
+      kind: 'show_draft',
+    });
   });
 });

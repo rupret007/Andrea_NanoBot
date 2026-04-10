@@ -8,6 +8,7 @@ import {
 import {
   createTask,
   listKnowledgeSourcesForGroup,
+  listMessageActionsForGroup,
   _initTestDatabase,
 } from './db.js';
 
@@ -422,6 +423,16 @@ describe('assistant capabilities', () => {
     expect(draft.handled).toBe(true);
     expect(draft.replyText).toContain('Draft:');
     expect(draft.handoffPayload?.kind).toBe('message');
+    expect(draft.messageAction?.messageActionId).toBeTruthy();
+    expect(
+      listMessageActionsForGroup({ groupFolder: 'main', includeSent: true }),
+    ).toContainEqual(
+      expect.objectContaining({
+        messageActionId: draft.messageAction?.messageActionId,
+        presentationChatJid: 'bb:chat-1',
+        sendStatus: 'drafted',
+      }),
+    );
 
     const openLoops = await executeAssistantCapability({
       capabilityId: 'communication.open_loops',

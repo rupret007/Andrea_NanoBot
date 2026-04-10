@@ -34,11 +34,20 @@ export interface AssistantCapabilityContinuationSubjectData {
   activeCapabilityId?: AssistantCapabilityId;
 }
 
-function normalizeText(value: string | undefined): string {
-  return normalizeVoicePrompt(value || '')
+function stripAndreaAddressing(value: string): string {
+  return value
+    .replace(/(^|[\s([{\-])@andrea\b[,:;!?-]*/gi, '$1')
     .replace(/\s+/g, ' ')
-    .replace(/[!?]+$/g, '')
     .trim();
+}
+
+function normalizeText(value: string | undefined): string {
+  return stripAndreaAddressing(
+    normalizeVoicePrompt(value || '')
+      .replace(/\s+/g, ' ')
+      .replace(/[!?]+$/g, '')
+      .trim(),
+  );
 }
 
 function isSharedAssistantCompletionFollowup(lower: string): boolean {

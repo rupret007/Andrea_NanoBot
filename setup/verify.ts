@@ -1442,6 +1442,8 @@ export async function run(_args: string[]): Promise<void> {
     alexaProof.lastSignedRequest?.requestType || 'none';
   const alexaLastSignedRequestAt =
     alexaProof.lastSignedRequest?.updatedAt || 'none';
+  const alexaLastHandledProofAt =
+    alexaProof.lastHandledProofIntent?.updatedAt || 'none';
 
   if (!nodeOk && platform === 'windows' && hostSnapshot?.nodeRuntime) {
     nodeOk = hostSnapshot.nodeRuntime.version.startsWith('22.');
@@ -2013,6 +2015,11 @@ export async function run(_args: string[]): Promise<void> {
       alexaProof.lastSignedRequest?.intentName || 'none',
     ALEXA_LAST_SIGNED_RESPONSE_SOURCE:
       alexaProof.lastSignedRequest?.responseSource || 'none',
+    ALEXA_LAST_HANDLED_PROOF_AT: alexaLastHandledProofAt,
+    ALEXA_LAST_HANDLED_PROOF_INTENT:
+      alexaProof.lastHandledProofIntent?.intentName || 'none',
+    ALEXA_LAST_HANDLED_PROOF_RESPONSE_SOURCE:
+      alexaProof.lastHandledProofIntent?.responseSource || 'none',
     ALEXA_LIVE_PROOF: alexaConfigured
       ? alexaProof.proofState
       : 'not_configured',

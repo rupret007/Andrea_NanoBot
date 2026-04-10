@@ -184,6 +184,8 @@ interface BlueBubblesDirectChatMetadata {
   lastAddressedHandle: string | null;
   handleAddress: string | null;
   service: string | null;
+  lastObservedAt: string | null;
+  lastObservedWasSelfAuthored: boolean;
 }
 
 interface BlueBubblesOutboundTargetCandidate {
@@ -1048,6 +1050,7 @@ export class BlueBubblesChannel implements Channel {
     chatJid: string;
     chat: BlueBubblesChatRef;
     contact: BlueBubblesContactRef;
+    message?: Pick<NewMessage, 'is_from_me' | 'timestamp'>;
   }): BlueBubblesDirectChatMetadata {
     return {
       chatJid: input.chatJid,
@@ -1069,6 +1072,8 @@ export class BlueBubblesChannel implements Channel {
         normalizeBlueBubblesDirectTargetValue(input.contact.service) ||
         normalizeBlueBubblesDirectTargetValue(input.chat.service) ||
         extractBlueBubblesServiceFromChatGuid(input.chat.chatGuid),
+      lastObservedAt: input.message?.timestamp || null,
+      lastObservedWasSelfAuthored: Boolean(input.message?.is_from_me),
     };
   }
 
@@ -1091,6 +1096,12 @@ export class BlueBubblesChannel implements Channel {
         metadata.lastAddressedHandle || previous?.lastAddressedHandle || null,
       handleAddress: metadata.handleAddress || previous?.handleAddress || null,
       service: metadata.service || previous?.service || null,
+      lastObservedAt:
+        metadata.lastObservedAt || previous?.lastObservedAt || null,
+      lastObservedWasSelfAuthored:
+        metadata.lastObservedAt != null
+          ? metadata.lastObservedWasSelfAuthored
+          : previous?.lastObservedWasSelfAuthored || false,
     };
     const changed =
       !previous ||
@@ -1098,7 +1109,9 @@ export class BlueBubblesChannel implements Channel {
       previous.chatIdentifier !== next.chatIdentifier ||
       previous.lastAddressedHandle !== next.lastAddressedHandle ||
       previous.handleAddress !== next.handleAddress ||
-      previous.service !== next.service;
+      previous.service !== next.service ||
+      previous.lastObservedAt !== next.lastObservedAt ||
+      previous.lastObservedWasSelfAuthored !== next.lastObservedWasSelfAuthored;
     this.directChatMetadataByJid.set(metadata.chatJid, next);
     return changed;
   }
@@ -1144,6 +1157,8 @@ export class BlueBubblesChannel implements Channel {
       lastAddressedHandle: null,
       handleAddress: inferredIdentifier,
       service: extractBlueBubblesServiceFromChatGuid(chatGuid),
+      lastObservedAt: null,
+      lastObservedWasSelfAuthored: false,
     };
   }
 
@@ -1195,14 +1210,20 @@ export class BlueBubblesChannel implements Channel {
       candidates.push({ kind, chatGuid: normalized });
     };
 
+    const metadata = this.getDirectChatMetadata(chatJid, chatGuid);
+    const preferActiveChatGuid = metadata.lastObservedWasSelfAuthored;
     const cached = this.successfulOutboundTargetByJid.get(chatJid);
-    if (cached) {
+
+    if (!preferActiveChatGuid && cached) {
       push(cached.kind, cached.chatGuid);
     }
 
     push('chat_guid', chatGuid);
 
-    const metadata = this.getDirectChatMetadata(chatJid, chatGuid);
+    if (preferActiveChatGuid && cached) {
+      push(cached.kind, cached.chatGuid);
+    }
+
     if (metadata.isGroup) {
       return candidates;
     }

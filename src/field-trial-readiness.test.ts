@@ -205,6 +205,49 @@ describe('field-trial readiness', () => {
     expect(truth.alexa.lastSignedResponseSource).toBe('local_companion');
   });
 
+  it('keeps Alexa live-proven when a later signed request follows an earlier handled proof intent', () => {
+    vi.stubEnv('ALEXA_SKILL_ID', 'amzn1.ask.skill.test');
+    const alexaStatePath = getAlexaLastSignedRequestStatePath(tempDir);
+    fs.mkdirSync(path.dirname(alexaStatePath), { recursive: true });
+    fs.writeFileSync(
+      alexaStatePath,
+      JSON.stringify({
+        lastSignedRequest: {
+          updatedAt: new Date().toISOString(),
+          requestId: 'session-ended-1',
+          requestType: 'SessionEndedRequest',
+          intentName: null,
+          applicationIdVerified: true,
+          linkingResolved: false,
+          groupFolder: null,
+          responseSource: 'fallback',
+        },
+        lastHandledProofIntent: {
+          updatedAt: new Date(Date.now() - 5 * 60_000).toISOString(),
+          requestId: 'intent-1',
+          requestType: 'IntentRequest',
+          intentName: 'WhatAmIForgettingIntent',
+          applicationIdVerified: true,
+          linkingResolved: true,
+          groupFolder: 'main',
+          responseSource: 'local_companion',
+        },
+      }),
+    );
+
+    const truth = buildFieldTrialOperatorTruth({ projectRoot: tempDir });
+
+    expect(truth.alexa.proofState).toBe('live_proven');
+    expect(truth.alexa.lastSignedRequestType).toBe('SessionEndedRequest');
+    expect(truth.alexa.lastHandledProofIntent).toBe(
+      'WhatAmIForgettingIntent',
+    );
+    expect(truth.alexa.lastHandledProofResponseSource).toBe(
+      'local_companion',
+    );
+    expect(truth.alexa.lastHandledProofAt).not.toBe('none');
+  });
+
   it('treats BlueBubbles as externally blocked when it is not installed on this host', () => {
     vi.stubEnv('BLUEBUBBLES_ENABLED', '');
     vi.stubEnv('BLUEBUBBLES_BASE_URL', '');
@@ -615,6 +658,217 @@ describe('field-trial readiness', () => {
     expect(truth.bluebubbles.lastMetadataHydrationSource).toBe('history');
     expect(truth.bluebubbles.attemptedTargetSequence).toBe(
       'chat_guid -> last_addressed_handle -> service_specific_last_addressed_handle',
+    );
+  });
+
+  it('prefers the newest real BlueBubbles traffic chat over a stale earlier proof chat in degraded status', () => {
+    vi.stubEnv('BLUEBUBBLES_ENABLED', 'true');
+    vi.stubEnv('BLUEBUBBLES_BASE_URL', 'http://macbook-pro.local:1234');
+    vi.stubEnv('BLUEBUBBLES_PASSWORD', 'secret');
+    vi.stubEnv('BLUEBUBBLES_GROUP_FOLDER', 'main');
+    vi.stubEnv('BLUEBUBBLES_CHAT_SCOPE', 'all_synced');
+    vi.stubEnv('BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL', 'http://192.168.5.136:4305');
+    vi.stubEnv('BLUEBUBBLES_WEBHOOK_SECRET', 'hook-secret');
+    vi.stubEnv('BLUEBUBBLES_SEND_ENABLED', 'true');
+
+    const snapshot: HostControlSnapshot = {
+      paths: resolveHostControlPaths(tempDir),
+      nodeRuntime: null,
+      hostState: null,
+      readyState: null,
+      assistantHealthState: {
+        bootId: 'boot-blue-latest',
+        pid: process.pid,
+        appVersion: '1.0.0-test',
+        updatedAt: '2026-04-09T23:45:38.000Z',
+        channels: [
+          {
+            name: 'bluebubbles',
+            configured: true,
+            state: 'ready',
+            updatedAt: '2026-04-09T23:45:38.000Z',
+            detail:
+              'listener 0.0.0.0:4305/bluebubbles/webhook | scope all_synced | reply gate mention_required | transport reachable/auth ok (200) | last inbound 2026-04-09T23:45:19.881Z | last inbound chat bb:iMessage;-;+14695405551 | last inbound self_authored yes | last outbound 2026-04-09T23:45:38.765Z (bb:iMessage;-;+14695405551) | last outbound target kind chat_guid | last outbound target value iMessage;-;+14695405551 | last send error none | send method apple-script | private api available no | last metadata hydration none | attempted target sequence chat_guid',
+          },
+        ],
+      },
+      telegramRoundtripState: null,
+      telegramTransportState: null,
+      runtimeAuditState: null,
+    };
+
+    storeChatMetadata(
+      'bb:iMessage;-;+14695405551',
+      '2026-04-09T23:45:38.765Z',
+      'Jeff',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'bb:msg-active-1',
+      chat_jid: 'bb:iMessage;-;+14695405551',
+      sender: 'bb:+14695405551',
+      sender_name: 'Jeff',
+      content: '@Andrea what should I say back',
+      timestamp: '2026-04-09T23:45:19.881Z',
+      is_from_me: true,
+      is_bot_message: false,
+    });
+    storeMessage({
+      id: 'bb:msg-active-2',
+      chat_jid: 'bb:iMessage;-;+14695405551',
+      sender: 'Andrea',
+      sender_name: 'Andrea',
+      content: 'Here is a draft you can send.',
+      timestamp: '2026-04-09T23:45:38.765Z',
+      is_from_me: true,
+      is_bot_message: true,
+    });
+    insertPilotJourneyEvent({
+      eventId: 'bb-stale-proof-1',
+      journeyId: 'ordinary_chat',
+      channel: 'bluebubbles',
+      groupFolder: 'main',
+      chatJid: 'bb:iMessage;-;jeffstory007@gmail.com',
+      threadId: null,
+      routeKey: 'direct_quick_reply',
+      systemsInvolved: ['assistant_shell'],
+      outcome: 'success',
+      blockerClass: null,
+      blockerOwner: 'none',
+      degradedPath: null,
+      handoffCreated: false,
+      missionCreated: false,
+      threadSaved: false,
+      reminderCreated: false,
+      librarySaved: false,
+      currentWorkRef: null,
+      summaryText: 'Older ordinary-chat proof',
+      startedAt: '2026-04-09T19:00:20.000Z',
+      completedAt: '2026-04-09T19:00:23.072Z',
+      durationMs: 3000,
+    });
+
+    const truth = buildFieldTrialOperatorTruth({
+      projectRoot: tempDir,
+      hostSnapshot: snapshot,
+      windowsHost: null,
+    });
+
+    expect(truth.bluebubbles.proofState).toBe('degraded_but_usable');
+    expect(truth.bluebubbles.mostRecentEngagedChatJid).toBe(
+      'bb:iMessage;-;+14695405551',
+    );
+    expect(truth.bluebubbles.mostRecentEngagedAt).toBe(
+      '2026-04-09T23:45:38.765Z',
+    );
+    expect(truth.bluebubbles.detail).toContain('bb:iMessage;-;+14695405551');
+    expect(truth.bluebubbles.detail).not.toContain(
+      'bb:iMessage;-;jeffstory007@gmail.com, but a fresh same-chat message-action decision is still missing',
+    );
+  });
+
+  it('keeps the active self-thread anchored when another BlueBubbles chat pings later', () => {
+    vi.stubEnv('BLUEBUBBLES_ENABLED', 'true');
+    vi.stubEnv('BLUEBUBBLES_BASE_URL', 'http://macbook-pro.local:1234');
+    vi.stubEnv('BLUEBUBBLES_PASSWORD', 'secret');
+    vi.stubEnv('BLUEBUBBLES_GROUP_FOLDER', 'main');
+    vi.stubEnv('BLUEBUBBLES_CHAT_SCOPE', 'all_synced');
+    vi.stubEnv('BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL', 'http://192.168.5.136:4305');
+    vi.stubEnv('BLUEBUBBLES_WEBHOOK_SECRET', 'hook-secret');
+    vi.stubEnv('BLUEBUBBLES_SEND_ENABLED', 'true');
+
+    const snapshot: HostControlSnapshot = {
+      paths: resolveHostControlPaths(tempDir),
+      nodeRuntime: null,
+      hostState: null,
+      readyState: null,
+      assistantHealthState: {
+        bootId: 'boot-blue-self-thread',
+        pid: process.pid,
+        appVersion: '1.0.0-test',
+        updatedAt: '2026-04-10T00:32:10.000Z',
+        channels: [
+          {
+            name: 'bluebubbles',
+            configured: true,
+            state: 'ready',
+            updatedAt: '2026-04-10T00:32:10.000Z',
+            detail:
+              'listener 0.0.0.0:4305/bluebubbles/webhook | scope all_synced | reply gate mention_required | transport reachable/auth ok (200) | last inbound 2026-04-10T00:32:06.334Z | last inbound chat bb:RCS;-;+14696881303 | last inbound self_authored no | last outbound 2026-04-10T00:11:29.973Z (bb:iMessage;-;jeffstory007@gmail.com) | last outbound target kind chat_guid | last outbound target value iMessage;-;jeffstory007@gmail.com | last send error none | send method apple-script | private api available no | last metadata hydration none | attempted target sequence chat_guid',
+          },
+        ],
+      },
+      telegramRoundtripState: null,
+      telegramTransportState: null,
+      runtimeAuditState: null,
+    };
+
+    storeChatMetadata(
+      'bb:iMessage;-;jeffstory007@gmail.com',
+      '2026-04-10T00:11:29.973Z',
+      'Jeff',
+      'bluebubbles',
+      false,
+    );
+    storeChatMetadata(
+      'bb:RCS;-;+14696881303',
+      '2026-04-10T00:32:06.334Z',
+      'RCS;-;+14696881303',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'bb:self-thread-user-1',
+      chat_jid: 'bb:iMessage;-;jeffstory007@gmail.com',
+      sender: 'bb:jeffstory007@gmail.com',
+      sender_name: 'Jeff',
+      content: '@Andrea what should I say back',
+      timestamp: '2026-04-10T00:08:15.455Z',
+      is_from_me: true,
+      is_bot_message: false,
+    });
+    storeMessage({
+      id: 'bb:self-thread-bot-1',
+      chat_jid: 'bb:iMessage;-;jeffstory007@gmail.com',
+      sender: 'Andrea',
+      sender_name: 'Andrea',
+      content: 'Sure! Here is your draft text you can send.',
+      timestamp: '2026-04-10T00:11:29.973Z',
+      is_from_me: true,
+      is_bot_message: true,
+    });
+    storeMessage({
+      id: 'bb:other-chat-1',
+      chat_jid: 'bb:RCS;-;+14696881303',
+      sender: 'bb:+14696881303',
+      sender_name: '+14696881303',
+      content: "I'm home",
+      timestamp: '2026-04-10T00:32:06.334Z',
+      is_from_me: false,
+      is_bot_message: false,
+    });
+
+    const truth = buildFieldTrialOperatorTruth({
+      projectRoot: tempDir,
+      hostSnapshot: snapshot,
+      windowsHost: null,
+    });
+
+    expect(truth.bluebubbles.proofState).toBe('degraded_but_usable');
+    expect(truth.bluebubbles.mostRecentEngagedChatJid).toBe(
+      'bb:iMessage;-;jeffstory007@gmail.com',
+    );
+    expect(truth.bluebubbles.mostRecentEngagedAt).toBe(
+      '2026-04-10T00:11:29.973Z',
+    );
+    expect(truth.bluebubbles.lastInboundChatJid).toBe('bb:RCS;-;+14696881303');
+    expect(truth.bluebubbles.messageActionProofState).toBe('none');
+    expect(truth.bluebubbles.messageActionProofDetail).toContain(
+      'Andrea drafted in bb:iMessage;-;jeffstory007@gmail.com',
+    );
+    expect(truth.bluebubbles.detail).toContain(
+      'bb:iMessage;-;jeffstory007@gmail.com',
     );
   });
 

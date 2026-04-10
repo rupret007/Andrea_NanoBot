@@ -171,6 +171,11 @@ export interface AlexaSignedRequestState {
   responseSource: string;
 }
 
+export interface AlexaSignedRequestProofState {
+  lastSignedRequest: AlexaSignedRequestState | null;
+  lastHandledProofIntent: AlexaSignedRequestState | null;
+}
+
 export type AlexaLiveProofKind =
   | 'none'
   | 'launch_only'
@@ -181,6 +186,7 @@ export type AlexaLiveProofFreshness = 'fresh' | 'stale' | 'none';
 
 export interface AlexaLiveProofAssessment {
   lastSignedRequest: AlexaSignedRequestState | null;
+  lastHandledProofIntent?: AlexaSignedRequestState | null;
   proofState: 'live_proven' | 'near_live_only';
   proofKind: AlexaLiveProofKind;
   proofFreshness: AlexaLiveProofFreshness;
@@ -778,6 +784,51 @@ function normalizeAlexaSignedRequestState(
   };
 }
 
+function isQualifyingHandledAlexaLiveProofIntent(
+  value: AlexaSignedRequestState | null | undefined,
+): value is AlexaSignedRequestState {
+  return Boolean(
+    value &&
+      value.requestType === 'IntentRequest' &&
+      value.applicationIdVerified &&
+      value.linkingResolved &&
+      ALEXA_HANDLED_LIVE_PROOF_RESPONSE_SOURCES.has(value.responseSource),
+  );
+}
+
+function normalizeAlexaSignedRequestProofState(
+  value: unknown,
+): AlexaSignedRequestProofState {
+  if (!value || typeof value !== 'object') {
+    return {
+      lastSignedRequest: null,
+      lastHandledProofIntent: null,
+    };
+  }
+
+  const input = value as {
+    lastSignedRequest?: unknown;
+    lastHandledProofIntent?: unknown;
+  };
+  const lastSignedRequest = normalizeAlexaSignedRequestState(
+    'lastSignedRequest' in input ? input.lastSignedRequest : value,
+  );
+  const explicitHandledProof = normalizeAlexaSignedRequestState(
+    input.lastHandledProofIntent,
+  );
+
+  return {
+    lastSignedRequest,
+    lastHandledProofIntent:
+      (isQualifyingHandledAlexaLiveProofIntent(explicitHandledProof)
+        ? explicitHandledProof
+        : null) ||
+      (isQualifyingHandledAlexaLiveProofIntent(lastSignedRequest)
+        ? lastSignedRequest
+        : null),
+  };
+}
+
 function normalizeHostState(
   value: unknown,
   projectRoot = process.cwd(),
@@ -847,9 +898,23 @@ export function readRuntimeAuditState(
 export function readAlexaLastSignedRequestState(
   projectRoot = process.cwd(),
 ): AlexaSignedRequestState | null {
-  return normalizeAlexaSignedRequestState(
+  return normalizeAlexaSignedRequestProofState(
+    readJsonFile<unknown>(getAlexaLastSignedRequestStatePath(projectRoot)),
+  ).lastSignedRequest;
+}
+
+export function readAlexaSignedRequestProofState(
+  projectRoot = process.cwd(),
+): AlexaSignedRequestProofState {
+  return normalizeAlexaSignedRequestProofState(
     readJsonFile<unknown>(getAlexaLastSignedRequestStatePath(projectRoot)),
   );
+}
+
+export function readAlexaLastHandledProofIntentState(
+  projectRoot = process.cwd(),
+): AlexaSignedRequestState | null {
+  return readAlexaSignedRequestProofState(projectRoot).lastHandledProofIntent;
 }
 
 export function readNanoclawHostState(
@@ -1234,22 +1299,109 @@ export function formatAlexaProofAgeLabel(
 export function assessAlexaLiveProof(input: {
   projectRoot?: string;
   lastSignedRequest?: AlexaSignedRequestState | null;
+  lastHandledProofIntent?: AlexaSignedRequestState | null;
   now?: Date;
   freshnessMs?: number;
 } = {}): AlexaLiveProofAssessment {
+  const persistedProofState =
+    input.lastSignedRequest === undefined &&
+    input.lastHandledProofIntent === undefined
+      ? readAlexaSignedRequestProofState(input.projectRoot)
+      : null;
   const lastSignedRequest =
     input.lastSignedRequest === undefined
-      ? readAlexaLastSignedRequestState(input.projectRoot)
+      ? (persistedProofState?.lastSignedRequest ?? null)
       : input.lastSignedRequest;
+  const handledProofCandidate =
+    input.lastHandledProofIntent === undefined
+      ? (persistedProofState?.lastHandledProofIntent ??
+          (isQualifyingHandledAlexaLiveProofIntent(lastSignedRequest)
+            ? lastSignedRequest
+            : null))
+      : input.lastHandledProofIntent;
+  const lastHandledProofIntent = isQualifyingHandledAlexaLiveProofIntent(
+    handledProofCandidate,
+  )
+    ? handledProofCandidate
+    : null;
   const now = input.now ?? new Date();
   const freshnessMs =
     input.freshnessMs ?? DEFAULT_ALEXA_LIVE_PROOF_FRESHNESS_MS;
   const canonicalNextAction =
     "Use a real device or authenticated Alexa Developer Console simulator, say `Open Andrea Assistant`, then `What am I forgetting?`, and run `npm run services:status`.";
 
+  if (!lastSignedRequest && !lastHandledProofIntent) {
+    return {
+      lastSignedRequest: null,
+      lastHandledProofIntent: null,
+      proofState: 'near_live_only',
+      proofKind: 'none',
+      proofFreshness: 'none',
+      proofAgeMs: null,
+      proofAgeMinutes: null,
+      proofAgeLabel: 'none',
+      blocker: 'No handled signed Alexa IntentRequest is recorded on this host yet.',
+      detail:
+        'No signed Alexa request has been recorded on this host, so Alexa remains near-live only.',
+      nextAction: canonicalNextAction,
+    };
+  }
+
+  if (lastHandledProofIntent) {
+    const handledProofAgeMsRaw = parseTime(lastHandledProofIntent.updatedAt);
+    const handledProofAgeMs =
+      handledProofAgeMsRaw != null
+        ? Math.max(0, now.getTime() - handledProofAgeMsRaw)
+        : null;
+    const handledProofAgeMinutes =
+      handledProofAgeMs != null ? Math.floor(handledProofAgeMs / 60_000) : null;
+    const handledProofAgeLabel = formatAlexaProofAgeLabel(handledProofAgeMs);
+    const proofFreshness: AlexaLiveProofFreshness =
+      handledProofAgeMs != null && handledProofAgeMs <= freshnessMs
+        ? 'fresh'
+        : 'stale';
+    const laterSignedDetail =
+      lastSignedRequest &&
+      lastSignedRequest.requestId !== lastHandledProofIntent.requestId
+        ? ` The latest signed request is ${lastSignedRequest.requestType}${lastSignedRequest.intentName ? ` / ${lastSignedRequest.intentName}` : ''} with response source ${lastSignedRequest.responseSource}.`
+        : '';
+
+    if (proofFreshness === 'fresh') {
+      return {
+        lastSignedRequest,
+        lastHandledProofIntent,
+        proofState: 'live_proven',
+        proofKind: 'handled_intent',
+        proofFreshness,
+        proofAgeMs: handledProofAgeMs,
+        proofAgeMinutes: handledProofAgeMinutes,
+        proofAgeLabel: handledProofAgeLabel,
+        blocker: '',
+        detail: `A fresh handled signed Alexa IntentRequest was recorded ${handledProofAgeLabel} ago on this host.${laterSignedDetail}`,
+        nextAction: '',
+      };
+    }
+
+    return {
+      lastSignedRequest,
+      lastHandledProofIntent,
+      proofState: 'near_live_only',
+      proofKind: 'handled_intent',
+      proofFreshness,
+      proofAgeMs: handledProofAgeMs,
+      proofAgeMinutes: handledProofAgeMinutes,
+      proofAgeLabel: handledProofAgeLabel,
+      blocker:
+        'Alexa has handled signed Intent proof on this host, but it is older than 24 hours.',
+      detail: `The latest handled signed Alexa intent was recorded at ${lastHandledProofIntent.updatedAt}, so the proof is now stale and Alexa remains near-live only.${laterSignedDetail}`,
+      nextAction: canonicalNextAction,
+    };
+  }
+
   if (!lastSignedRequest) {
     return {
       lastSignedRequest: null,
+      lastHandledProofIntent: null,
       proofState: 'near_live_only',
       proofKind: 'none',
       proofFreshness: 'none',
@@ -1274,6 +1426,7 @@ export function assessAlexaLiveProof(input: {
     const isLaunch = lastSignedRequest.requestType === 'LaunchRequest';
     return {
       lastSignedRequest,
+      lastHandledProofIntent: null,
       proofState: 'near_live_only',
       proofKind: isLaunch ? 'launch_only' : 'none',
       proofFreshness: 'none',
@@ -1290,58 +1443,18 @@ export function assessAlexaLiveProof(input: {
     };
   }
 
-  const handledIntent =
-    lastSignedRequest.applicationIdVerified &&
-    lastSignedRequest.linkingResolved &&
-    ALEXA_HANDLED_LIVE_PROOF_RESPONSE_SOURCES.has(
-      lastSignedRequest.responseSource,
-    );
-
-  if (!handledIntent) {
-    return {
-      lastSignedRequest,
-      proofState: 'near_live_only',
-      proofKind: 'signed_intent_unhandled',
-      proofFreshness: 'none',
-      proofAgeMs,
-      proofAgeMinutes,
-      proofAgeLabel,
-      blocker:
-        'Alexa recorded a signed IntentRequest, but it did not finish through a qualifying handled response path.',
-      detail: `The latest signed Alexa intent was ${lastSignedRequest.intentName || 'unknown'} with response source ${lastSignedRequest.responseSource}. Live proof requires a handled source such as local_companion, life_thread_local, assistant_bridge, or bridge.`,
-      nextAction: canonicalNextAction,
-    };
-  }
-
-  const proofFreshness: AlexaLiveProofFreshness =
-    proofAgeMs != null && proofAgeMs <= freshnessMs ? 'fresh' : 'stale';
-
-  if (proofFreshness === 'fresh') {
-    return {
-      lastSignedRequest,
-      proofState: 'live_proven',
-      proofKind: 'handled_intent',
-      proofFreshness,
-      proofAgeMs,
-      proofAgeMinutes,
-      proofAgeLabel,
-      blocker: '',
-      detail: `A fresh handled signed Alexa IntentRequest was recorded ${proofAgeLabel} ago on this host.`,
-      nextAction: '',
-    };
-  }
-
   return {
     lastSignedRequest,
+    lastHandledProofIntent: null,
     proofState: 'near_live_only',
-    proofKind: 'handled_intent',
-    proofFreshness,
+    proofKind: 'signed_intent_unhandled',
+    proofFreshness: 'none',
     proofAgeMs,
     proofAgeMinutes,
     proofAgeLabel,
     blocker:
-      'Alexa has handled signed Intent proof on this host, but it is older than 24 hours.',
-    detail: `The latest handled signed Alexa intent was recorded at ${lastSignedRequest.updatedAt}, so the proof is now stale and Alexa remains near-live only.`,
+      'Alexa recorded a signed IntentRequest, but it did not finish through a qualifying handled response path.',
+    detail: `The latest signed Alexa intent was ${lastSignedRequest.intentName || 'unknown'} with response source ${lastSignedRequest.responseSource}. Live proof requires a handled source such as local_companion, life_thread_local, assistant_bridge, or bridge.`,
     nextAction: canonicalNextAction,
   };
 }

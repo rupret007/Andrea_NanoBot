@@ -450,6 +450,13 @@ export function formatDebugStatus(): string {
     ...(fieldTrialTruth.alexa.lastSignedRequestAt !== 'none'
       ? [`- Alexa last signed at: ${fieldTrialTruth.alexa.lastSignedRequestAt}`]
       : []),
+    ...(fieldTrialTruth.alexa.lastHandledProofIntent !== 'none'
+      ? [
+          `- Alexa last handled proof intent: ${fieldTrialTruth.alexa.lastHandledProofIntent}`,
+          `- Alexa last handled proof source: ${fieldTrialTruth.alexa.lastHandledProofResponseSource}`,
+          `- Alexa last handled proof at: ${fieldTrialTruth.alexa.lastHandledProofAt}`,
+        ]
+      : []),
     ...(fieldTrialTruth.alexa.blocker
       ? [`- Alexa blocker: ${fieldTrialTruth.alexa.blocker}`]
       : []),

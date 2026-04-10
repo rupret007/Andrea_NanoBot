@@ -542,7 +542,7 @@ describe('BlueBubbles channel', () => {
       );
 
       expect(first.platformMessageId).toBe('bb:server-msg-3');
-      expect(second.platformMessageId).toBe('bb:server-msg-4');
+      expect(second.platformMessageId).toBe('bb:server-msg-5');
       expect(historyRequests).toHaveLength(1);
       expect(historyRequests[0]).toContain(
         '/api/v1/chat/iMessage%3B-%3B%2B14695405551/message',
@@ -551,6 +551,7 @@ describe('BlueBubbles channel', () => {
         'iMessage;-;+14695405551',
         'any;-;jeffstory007@gmail.com',
         'iMessage;-;jeffstory007@gmail.com',
+        'iMessage;-;+14695405551',
         'iMessage;-;jeffstory007@gmail.com',
       ]);
       expect(requests.every((request) => request.method === 'apple-script')).toBe(
@@ -569,11 +570,11 @@ describe('BlueBubbles channel', () => {
           'iMessage;-;+14695405551',
         ),
       ).toEqual([
+        { kind: 'chat_guid', chatGuid: 'iMessage;-;+14695405551' },
         {
           kind: 'service_specific_last_addressed_handle',
           chatGuid: 'iMessage;-;jeffstory007@gmail.com',
         },
-        { kind: 'chat_guid', chatGuid: 'iMessage;-;+14695405551' },
         { kind: 'last_addressed_handle', chatGuid: 'any;-;jeffstory007@gmail.com' },
         { kind: 'chat_identifier', chatGuid: 'any;-;+14695405551' },
       ]);

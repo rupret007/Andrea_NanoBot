@@ -17,7 +17,6 @@ import {
   assessAssistantHealthState,
   assessTelegramRoundtripState,
   formatAlexaProofAgeLabel,
-  readAlexaLastSignedRequestState,
   readHostControlSnapshot,
   reconcileWindowsHostState,
   type HostControlSnapshot,
@@ -53,6 +52,9 @@ export interface FieldTrialAlexaTruth extends FieldTrialSurfaceTruth {
   lastSignedRequestType: string;
   lastSignedIntent: string;
   lastSignedResponseSource: string;
+  lastHandledProofAt: string;
+  lastHandledProofIntent: string;
+  lastHandledProofResponseSource: string;
   proofKind: AlexaLiveProofKind;
   proofFreshness: AlexaLiveProofFreshness;
   proofAgeMinutes: number | null;
@@ -93,6 +95,45 @@ export interface FieldTrialBlueBubblesTruth extends FieldTrialSurfaceTruth {
   messageActionProofChatJid: string;
   messageActionProofAt: string;
   messageActionProofDetail: string;
+}
+
+function parseFieldTrialIsoTime(value: string | null | undefined): number | null {
+  if (!value || value === 'none') return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function pickMostRecentBlueBubblesChat(
+  candidates: Array<{
+    chatJid: string | null | undefined;
+    at: string | null | undefined;
+  }>,
+): { chatJid: string; at: string } | null {
+  let best: { chatJid: string; at: string; timestamp: number } | null = null;
+  for (const candidate of candidates) {
+    if (!candidate.chatJid || candidate.chatJid === 'none') continue;
+    const timestamp = parseFieldTrialIsoTime(candidate.at);
+    if (timestamp == null) continue;
+    if (!best || timestamp > best.timestamp) {
+      best = {
+        chatJid: candidate.chatJid,
+        at: candidate.at as string,
+        timestamp,
+      };
+    }
+  }
+  return best ? { chatJid: best.chatJid, at: best.at } : null;
+}
+
+function isLikelyBlueBubblesDraftReply(content: string | null | undefined): boolean {
+  const normalized = (content || '').toLowerCase();
+  if (!normalized) return false;
+  return (
+    /\bdraft\b/.test(normalized) ||
+    /^andrea:\s*(sure|here)/.test(normalized) ||
+    normalized.includes('what you can send') ||
+    normalized.includes('what you could send')
+  );
 }
 
 function deriveBlueBubblesWebhookRegistrationTruth(detail: string): {
@@ -564,6 +605,9 @@ function buildAlexaTruth(projectRoot: string): FieldTrialAlexaTruth {
       lastSignedRequestType: 'none',
       lastSignedIntent: 'none',
       lastSignedResponseSource: 'none',
+      lastHandledProofAt: 'none',
+      lastHandledProofIntent: 'none',
+      lastHandledProofResponseSource: 'none',
       proofKind: 'none',
       proofFreshness: 'none',
       proofAgeMinutes: null,
@@ -578,9 +622,9 @@ function buildAlexaTruth(projectRoot: string): FieldTrialAlexaTruth {
 
   const assessment = assessAlexaLiveProof({
     projectRoot,
-    lastSignedRequest: readAlexaLastSignedRequestState(projectRoot),
   });
   const lastSignedRequest = assessment.lastSignedRequest;
+  const lastHandledProofIntent = assessment.lastHandledProofIntent || null;
   const detail =
     assessment.proofState === 'live_proven'
       ? assessment.detail
@@ -608,6 +652,10 @@ function buildAlexaTruth(projectRoot: string): FieldTrialAlexaTruth {
     lastSignedRequestType: lastSignedRequest?.requestType || 'none',
     lastSignedIntent: lastSignedRequest?.intentName || 'none',
     lastSignedResponseSource: lastSignedRequest?.responseSource || 'none',
+    lastHandledProofAt: lastHandledProofIntent?.updatedAt || 'none',
+    lastHandledProofIntent: lastHandledProofIntent?.intentName || 'none',
+    lastHandledProofResponseSource:
+      lastHandledProofIntent?.responseSource || 'none',
     proofKind: assessment.proofKind,
     proofFreshness: assessment.proofFreshness,
     proofAgeMinutes: assessment.proofAgeMinutes,
@@ -696,6 +744,8 @@ function buildBlueBubblesTruth(
 
   let lastInboundObservedAt = 'none';
   let lastOutboundResult = 'none';
+  let lastOutboundObservedAt = 'none';
+  let lastOutboundChatJid = 'none';
   let lastInboundChatJid = transportDiagnostics.lastInboundChatJid;
   let lastInboundWasSelfAuthored =
     transportDiagnostics.lastInboundWasSelfAuthored ?? false;
@@ -712,8 +762,64 @@ function buildBlueBubblesTruth(
     }
     if (outbound && (lastOutboundResult === 'none' || outbound.timestamp > lastOutboundResult)) {
       lastOutboundResult = `${outbound.timestamp} (${chat.jid})`;
+      lastOutboundObservedAt = outbound.timestamp;
+      lastOutboundChatJid = chat.jid;
     }
   }
+
+  const activeSelfThreadChat =
+    pickMostRecentBlueBubblesChat([
+      {
+        chatJid: recentEngagement?.chatJid || null,
+        at: recentEngagement?.completedAt || recentEngagement?.startedAt || null,
+      },
+      {
+        chatJid: lastOutboundChatJid,
+        at: lastOutboundObservedAt,
+      },
+      lastInboundWasSelfAuthored
+        ? {
+            chatJid: lastInboundChatJid,
+            at: lastInboundObservedAt,
+          }
+        : {
+            chatJid: null,
+            at: null,
+          },
+    ]) || null;
+  const freshestObservedTrafficChat =
+    pickMostRecentBlueBubblesChat([
+      {
+        chatJid: lastInboundChatJid,
+        at: lastInboundObservedAt,
+      },
+      {
+        chatJid: lastOutboundChatJid,
+        at: lastOutboundObservedAt,
+      },
+      {
+        chatJid: recentEngagement?.chatJid || null,
+        at: recentEngagement?.completedAt || recentEngagement?.startedAt || null,
+      },
+    ]) || null;
+  const activeProofChat = activeSelfThreadChat || freshestObservedTrafficChat;
+  const proofChainChatJid =
+    liveProofChatJid || activeProofChat?.chatJid || recentEngagement?.chatJid || null;
+  const recentProofChainMessages = proofChainChatJid
+    ? listRecentMessagesForChat(proofChainChatJid, 8)
+    : [];
+  const matchingProofChainMessageAction = proofChainChatJid
+    ? recentMessageActionProofs.find(
+        (entry) => entry.proofChatJid === proofChainChatJid,
+      ) || null
+    : null;
+  const draftLikeReplyWithoutAction =
+    !matchingProofChainMessageAction &&
+    recentProofChainMessages.some(
+      (message) =>
+        message.is_bot_message &&
+        isLikelyBlueBubblesDraftReply(message.content),
+    );
 
   const base: Omit<FieldTrialBlueBubblesTruth, keyof FieldTrialSurfaceTruth> = {
     configured: snapshot.configured,
@@ -728,9 +834,12 @@ function buildBlueBubblesTruth(
     webhookRegistrationDetail: webhookRegistration.detail,
     chatScope: config.chatScope,
     replyGateMode: 'mention_required',
-    mostRecentEngagedChatJid: recentEngagement?.chatJid || 'none',
+    mostRecentEngagedChatJid: activeProofChat?.chatJid || recentEngagement?.chatJid || 'none',
     mostRecentEngagedAt:
-      recentEngagement?.completedAt || recentEngagement?.startedAt || 'none',
+      activeProofChat?.at ||
+      recentEngagement?.completedAt ||
+      recentEngagement?.startedAt ||
+      'none',
     lastInboundObservedAt,
     lastInboundChatJid,
     lastInboundWasSelfAuthored,
@@ -748,23 +857,25 @@ function buildBlueBubblesTruth(
     attemptedTargetSequence: transportDiagnostics.attemptedTargetSequence,
     transportState: bluebubblesChannel?.state || snapshot.state,
     transportDetail: channelDetail,
-    messageActionProofState: matchingMessageActionProof
+    messageActionProofState: matchingProofChainMessageAction
       ? 'fresh'
       : recentMessageActionProofs.length > 0
         ? 'stale'
         : 'none',
     messageActionProofChatJid:
-      matchingMessageActionProof?.proofChatJid ||
+      matchingProofChainMessageAction?.proofChatJid ||
       recentMessageActionProofs[0]?.proofChatJid ||
       'none',
     messageActionProofAt:
-      matchingMessageActionProof?.action.lastActionAt ||
-      matchingMessageActionProof?.action.sentAt ||
+      matchingProofChainMessageAction?.action.lastActionAt ||
+      matchingProofChainMessageAction?.action.sentAt ||
       recentMessageActionProofs[0]?.action.lastActionAt ||
       recentMessageActionProofs[0]?.action.sentAt ||
       'none',
-    messageActionProofDetail: matchingMessageActionProof
-      ? `Recent same-chat message action is recorded in ${matchingMessageActionProof.proofChatJid}.`
+    messageActionProofDetail: matchingProofChainMessageAction
+      ? `Recent same-chat message action is recorded in ${matchingProofChainMessageAction.proofChatJid}.`
+      : draftLikeReplyWithoutAction && proofChainChatJid
+        ? `Andrea drafted in ${proofChainChatJid}, but no fresh message-action record was created yet.`
       : recentMessageActionProofs.length > 0
         ? `A recent BlueBubbles message-action decision exists in ${recentMessageActionProofs[0]!.proofChatJid}, but not in the same chat as the current proof chain.`
         : 'No fresh BlueBubbles message-action decision is recorded yet.',
@@ -943,7 +1054,7 @@ function buildBlueBubblesTruth(
 
   if (
     liveProofChatJid &&
-    matchingMessageActionProof &&
+    matchingProofChainMessageAction &&
     lastInboundObservedAt !== 'none' &&
     lastOutboundResult !== 'none'
   ) {
@@ -958,26 +1069,28 @@ function buildBlueBubblesTruth(
   }
 
   if (
-    recentEngagement?.chatJid &&
+    (activeProofChat?.chatJid || recentEngagement?.chatJid) &&
     lastInboundObservedAt !== 'none' &&
     lastOutboundResult !== 'none'
   ) {
+    const activeChatJid =
+      activeProofChat?.chatJid || recentEngagement?.chatJid || 'that same BlueBubbles chat';
     return {
       ...buildTruth({
         proofState: 'degraded_but_usable',
         blocker:
-          matchingMessageActionProof
+          matchingProofChainMessageAction
             ? 'BlueBubbles has real traffic on this host, but the full same-thread follow-up proof chain is not fresh enough yet.'
             : 'BlueBubbles has real traffic on this host, but the same-thread message-action proof leg is still missing.',
         blockerOwner: 'repo_side',
         nextAction:
-          matchingMessageActionProof
+          matchingProofChainMessageAction
             ? 'Send one more same-thread BlueBubbles follow-up and confirm Andrea replies in that same conversation again.'
             : 'In that same BlueBubbles chat, ask what you should say back and then use send it or send it later tonight so the message-action leg is proven too.',
         detail:
-          matchingMessageActionProof
-            ? `Real BlueBubbles traffic is flowing on this host through ${recentEngagement.chatJid}, but the full follow-up proof bar still needs one fresh same-thread continuation.`
-            : `Real BlueBubbles traffic is flowing on this host through ${recentEngagement.chatJid}, but a fresh same-chat message-action decision is still missing. ${base.messageActionProofDetail}`,
+          matchingProofChainMessageAction
+            ? `Real BlueBubbles traffic is flowing on this host through ${activeChatJid}, but the full follow-up proof bar still needs one fresh same-thread continuation.`
+            : `Real BlueBubbles traffic is flowing on this host through ${activeChatJid}, but a fresh same-chat message-action decision is still missing. ${base.messageActionProofDetail}`,
       }),
       ...base,
     };

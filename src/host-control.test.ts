@@ -496,6 +496,72 @@ describe('Alexa live-proof assessment', () => {
     expect(assessment.proofAgeLabel).toContain('d');
   });
 
+  it('keeps a fresh handled proof turn even when a later SessionEndedRequest is recorded', () => {
+    const assessment = assessAlexaLiveProof({
+      lastSignedRequest: {
+        updatedAt: '2026-04-07T17:59:30.000Z',
+        requestId: 'req-session-ended',
+        requestType: 'SessionEndedRequest',
+        intentName: null,
+        applicationIdVerified: true,
+        linkingResolved: false,
+        groupFolder: null,
+        responseSource: 'fallback',
+      },
+      lastHandledProofIntent: {
+        updatedAt: '2026-04-07T17:55:00.000Z',
+        requestId: 'req-handled',
+        requestType: 'IntentRequest',
+        intentName: 'WhatAmIForgettingIntent',
+        applicationIdVerified: true,
+        linkingResolved: true,
+        groupFolder: 'main',
+        responseSource: 'local_companion',
+      },
+      now: new Date('2026-04-07T18:00:00.000Z'),
+    });
+
+    expect(assessment.proofState).toBe('live_proven');
+    expect(assessment.proofKind).toBe('handled_intent');
+    expect(assessment.lastSignedRequest?.requestType).toBe('SessionEndedRequest');
+    expect(assessment.lastHandledProofIntent?.intentName).toBe(
+      'WhatAmIForgettingIntent',
+    );
+  });
+
+  it('keeps a fresh handled proof turn even when a later fallback intent is recorded', () => {
+    const assessment = assessAlexaLiveProof({
+      lastSignedRequest: {
+        updatedAt: '2026-04-07T17:59:30.000Z',
+        requestId: 'req-fallback',
+        requestType: 'IntentRequest',
+        intentName: 'MemoryControlIntent',
+        applicationIdVerified: true,
+        linkingResolved: true,
+        groupFolder: 'main',
+        responseSource: 'fallback',
+      },
+      lastHandledProofIntent: {
+        updatedAt: '2026-04-07T17:55:00.000Z',
+        requestId: 'req-handled',
+        requestType: 'IntentRequest',
+        intentName: 'WhatAmIForgettingIntent',
+        applicationIdVerified: true,
+        linkingResolved: true,
+        groupFolder: 'main',
+        responseSource: 'local_companion',
+      },
+      now: new Date('2026-04-07T18:00:00.000Z'),
+    });
+
+    expect(assessment.proofState).toBe('live_proven');
+    expect(assessment.proofKind).toBe('handled_intent');
+    expect(assessment.lastSignedRequest?.intentName).toBe('MemoryControlIntent');
+    expect(assessment.lastHandledProofIntent?.intentName).toBe(
+      'WhatAmIForgettingIntent',
+    );
+  });
+
   it('formats Alexa proof age labels compactly', () => {
     expect(formatAlexaProofAgeLabel(null)).toBe('none');
     expect(formatAlexaProofAgeLabel(30_000)).toBe('<1m');

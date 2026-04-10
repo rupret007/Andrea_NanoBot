@@ -125,6 +125,7 @@ export function sanitizePilotSummary(
 
 function normalizeText(value: string | null | undefined): string {
   return (value || '')
+    .replace(/(^|[\s([{\-])@andrea\b[,:;!?-]*/gi, '$1')
     .replace(/\s+/g, ' ')
     .trim()
     .toLowerCase();

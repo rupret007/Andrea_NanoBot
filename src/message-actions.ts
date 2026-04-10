@@ -1022,7 +1022,11 @@ export function interpretMessageActionFollowup(
 ): MessageActionOperation | null {
   const normalized = normalizeText(rawText).toLowerCase();
   if (!normalized) return null;
-  if (/^(show (?:the )?draft|show it again)$/.test(normalized)) {
+  if (
+    /^(show (?:the )?draft|show it again|(?:ok|okay)\s+(?:let'?s|lets)\s+see (?:the )?draft again|(?:let'?s|lets)\s+see (?:the )?draft again|show me (?:the )?draft again|let me see (?:the )?draft again)$/.test(
+      normalized,
+    )
+  ) {
     return { kind: 'show_draft' };
   }
   if (/^send it again$/.test(normalized)) {

@@ -2,8 +2,10 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
   _initTestDatabase,
+  deleteSessionStorageKey,
   getAgentThread,
   getAllAgentThreads,
+  getSession,
   setAgentThread,
   setSession,
 } from './db.js';
@@ -42,5 +44,13 @@ describe('db agent thread persistence', () => {
       updated_at: '',
     });
     expect(getAllAgentThreads().legacy?.runtime).toBe('claude_legacy');
+  });
+
+  it('can clear assistant session storage keys without treating them as group folders', () => {
+    setSession('main::direct_assistant', 'sess_789');
+
+    deleteSessionStorageKey('main::direct_assistant');
+
+    expect(getSession('main::direct_assistant')).toBeUndefined();
   });
 });

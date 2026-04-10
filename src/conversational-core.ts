@@ -33,6 +33,7 @@ export type CalendarCompanionSuccessAction =
 function normalizeText(input: string): string {
   return input
     .toLowerCase()
+    .replace(/(^|[\s([{\-])@andrea\b[,:;!?-]*/g, '$1')
     .replace(/\s+/g, ' ')
     .replace(/[\u201c\u201d]/g, '"')
     .replace(/[\u2018\u2019]/g, "'")
@@ -72,6 +73,9 @@ function isLocalUtilityPrompt(normalized: string): boolean {
       normalized,
     ) ||
     /^(?:what time is it|what('?s| is) the time|time)(?: right now)?\b/.test(
+      normalized,
+    ) ||
+    /^(?:what day is it|what day is today|what day is it today|what('?s| is) the date|what('?s| is) today'?s date|date)(?: today| right now)?\b/.test(
       normalized,
     ) ||
     /\btime in\b/.test(normalized) ||

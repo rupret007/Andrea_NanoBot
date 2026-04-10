@@ -7,13 +7,22 @@ import { buildAndreaPingPresenceReply } from './ping-presence.js';
 
 const MAX_ABS_MATH_RESULT = 1_000_000_000_000;
 
-function normalizeText(input: string): string {
-  return input
-    .toLowerCase()
+function stripAndreaAddressing(normalized: string): string {
+  return normalized
+    .replace(/(^|[\s([{\-])@andrea\b[,:;!?-]*/g, '$1')
     .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function normalizeText(input: string): string {
+  return stripAndreaAddressing(
+    input
+    .toLowerCase()
     .replace(/[\u201c\u201d]/g, '"')
     .replace(/[\u2018\u2019]/g, "'")
-    .trim();
+    .replace(/\s+/g, ' ')
+    .trim(),
+  );
 }
 
 function formatNumber(value: number): string {
@@ -92,16 +101,39 @@ function formatClockInZone(date: Date, timeZone: string): string {
   });
 }
 
+function formatLocalClock(date: Date): string {
+  return date.toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  });
+}
+
+function formatLocalDate(date: Date): string {
+  return date.toLocaleDateString('en-US', {
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+  });
+}
+
 function buildQuickTimeReply(message: string, now: Date): string | null {
   const normalized = normalizeText(message);
-
-  if (
-    !/^(?:what time is it|what's the time|whats the time|time)(?: right now)?\b/.test(
+  const isPlainLocalTimeAsk =
+    /^(?:what time is it|what's the time|whats the time|time)(?: right now)?[?.! ]*$/.test(
       normalized,
-    ) &&
-    !/\btime in\b/.test(normalized)
-  ) {
+    );
+  const isLocationTimeAsk =
+    /^(?:what time is it|what's the time|whats the time)(?: right now)? in\b/.test(
+      normalized,
+    ) || /\btime in\b/.test(normalized);
+
+  if (!isPlainLocalTimeAsk && !isLocationTimeAsk) {
     return null;
+  }
+
+  if (isPlainLocalTimeAsk) {
+    return `Right now it's ${formatLocalClock(now)}.`;
   }
 
   if (/\baustralia\b/.test(normalized)) {
@@ -148,6 +180,20 @@ function buildQuickTimeReply(message: string, now: Date): string | null {
   if (!match) return null;
 
   return `Right now it's ${formatClockInZone(now, match.timeZone)} in ${match.label}.`;
+}
+
+function buildQuickDateReply(message: string, now: Date): string | null {
+  const normalized = normalizeText(message);
+
+  if (
+    !/^(?:what day is it|what day is today|what day is it today|what's the date|whats the date|what is the date|what is today's date|what's today's date|what day is it right now|date)(?: today| right now)?[?.! ]*$/.test(
+      normalized,
+    )
+  ) {
+    return null;
+  }
+
+  return `Today is ${formatLocalDate(now)}.`;
 }
 
 export function maybeBuildDirectQuickReply(
@@ -392,6 +438,9 @@ export function maybeBuildDirectQuickReply(
 
   const quickTimeReply = buildQuickTimeReply(lastContent, now);
   if (quickTimeReply) return quickTimeReply;
+
+  const quickDateReply = buildQuickDateReply(lastContent, now);
+  if (quickDateReply) return quickDateReply;
 
   return buildQuickMathReply(lastContent);
 }

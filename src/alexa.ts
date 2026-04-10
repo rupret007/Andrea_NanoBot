@@ -213,6 +213,11 @@ interface AlexaSignedRequestState {
   responseSource: string;
 }
 
+interface AlexaSignedRequestProofState {
+  lastSignedRequest?: AlexaSignedRequestState | null;
+  lastHandledProofIntent?: AlexaSignedRequestState | null;
+}
+
 type SkillLike = {
   invoke(
     requestEnvelope: RequestEnvelope,
@@ -243,43 +248,87 @@ const ALEXA_LAST_SIGNED_REQUEST_STATE_PATH = `${RUNTIME_STATE_DIR}\\alexa-last-s
 function readAlexaLastSignedRequestState():
   | AlexaSignedRequestState
   | undefined {
+  return readAlexaSignedRequestProofState().lastSignedRequest ?? undefined;
+}
+
+function isQualifyingHandledAlexaProofState(
+  state: AlexaSignedRequestState | undefined | null,
+): state is AlexaSignedRequestState {
+  return Boolean(
+    state &&
+      state.requestType === 'IntentRequest' &&
+      state.applicationIdVerified &&
+      state.linkingResolved &&
+      ['local_companion', 'life_thread_local', 'assistant_bridge', 'bridge'].includes(
+        state.responseSource,
+      ),
+  );
+}
+
+function normalizeAlexaSignedRequestState(
+  value: unknown,
+): AlexaSignedRequestState | undefined {
+  if (!value || typeof value !== 'object') {
+    return undefined;
+  }
+  const parsed = value as Partial<AlexaSignedRequestState>;
+  if (
+    typeof parsed.updatedAt !== 'string' ||
+    typeof parsed.requestId !== 'string' ||
+    typeof parsed.requestType !== 'string' ||
+    typeof parsed.responseSource !== 'string'
+  ) {
+    return undefined;
+  }
+  return {
+    updatedAt: parsed.updatedAt,
+    requestId: parsed.requestId,
+    requestType: parsed.requestType,
+    intentName:
+      typeof parsed.intentName === 'string' ? parsed.intentName : undefined,
+    applicationIdVerified: parsed.applicationIdVerified === true,
+    linkingResolved: parsed.linkingResolved === true,
+    groupFolder:
+      typeof parsed.groupFolder === 'string' ? parsed.groupFolder : undefined,
+    responseSource: parsed.responseSource,
+  };
+}
+
+function readAlexaSignedRequestProofState(): AlexaSignedRequestProofState {
   try {
     if (!fs.existsSync(ALEXA_LAST_SIGNED_REQUEST_STATE_PATH)) {
-      return undefined;
+      return {};
     }
     const raw = fs
       .readFileSync(ALEXA_LAST_SIGNED_REQUEST_STATE_PATH, 'utf8')
       .trim();
-    if (!raw) return undefined;
-    const parsed = JSON.parse(raw) as Partial<AlexaSignedRequestState>;
-    if (
-      !parsed ||
-      typeof parsed.updatedAt !== 'string' ||
-      typeof parsed.requestId !== 'string' ||
-      typeof parsed.requestType !== 'string' ||
-      typeof parsed.responseSource !== 'string'
-    ) {
-      return undefined;
-    }
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as AlexaSignedRequestProofState;
+    const lastSignedRequest = normalizeAlexaSignedRequestState(
+      'lastSignedRequest' in parsed
+        ? parsed.lastSignedRequest
+        : (parsed as unknown),
+    );
+    const explicitHandledProof = normalizeAlexaSignedRequestState(
+      parsed.lastHandledProofIntent,
+    );
     return {
-      updatedAt: parsed.updatedAt,
-      requestId: parsed.requestId,
-      requestType: parsed.requestType,
-      intentName:
-        typeof parsed.intentName === 'string' ? parsed.intentName : undefined,
-      applicationIdVerified: parsed.applicationIdVerified === true,
-      linkingResolved: parsed.linkingResolved === true,
-      groupFolder:
-        typeof parsed.groupFolder === 'string' ? parsed.groupFolder : undefined,
-      responseSource: parsed.responseSource,
+      lastSignedRequest,
+      lastHandledProofIntent:
+        (isQualifyingHandledAlexaProofState(explicitHandledProof)
+          ? explicitHandledProof
+          : undefined) ||
+        (isQualifyingHandledAlexaProofState(lastSignedRequest)
+          ? lastSignedRequest
+          : undefined),
     };
   } catch {
-    return undefined;
+    return {};
   }
 }
 
-function writeAlexaLastSignedRequestState(
-  state: AlexaSignedRequestState,
+function writeAlexaSignedRequestProofState(
+  state: AlexaSignedRequestProofState,
 ): void {
   try {
     fs.mkdirSync(RUNTIME_STATE_DIR, { recursive: true });
@@ -329,7 +378,13 @@ function recordHandledRequest(
     groupFolder: options.groupFolder,
     responseSource: options.responseSource,
   });
-  writeAlexaLastSignedRequestState(state);
+  const existingState = readAlexaSignedRequestProofState();
+  writeAlexaSignedRequestProofState({
+    lastSignedRequest: state,
+    lastHandledProofIntent: isQualifyingHandledAlexaProofState(state)
+      ? state
+      : existingState.lastHandledProofIntent,
+  });
   logger.info(
     {
       requestId: state.requestId,
@@ -870,6 +925,105 @@ function parseDailyCompanionContext(
     return undefined;
   }
   return undefined;
+}
+
+function inferDailyCompanionModeFromAlexaState(
+  state: AlexaConversationState,
+): DailyCompanionContext['mode'] {
+  switch (state.styleHints.guidanceGoal) {
+    case 'family_guidance':
+    case 'shared_plans':
+      return 'household_guidance';
+    case 'evening_reset':
+      return 'evening_reset';
+    default:
+      return 'open_guidance';
+  }
+}
+
+function buildFallbackDailyCompanionContextFromAlexaState(
+  state: AlexaConversationState | undefined,
+): DailyCompanionContext | undefined {
+  if (!state || state.styleHints.responseSource !== 'local_companion') {
+    return undefined;
+  }
+
+  const summaryText =
+    state.subjectData.lastAnswerSummary?.trim() || state.summaryText.trim();
+  if (!summaryText) {
+    return undefined;
+  }
+
+  const recommendationText =
+    state.subjectData.lastRecommendation?.trim() ||
+    state.subjectData.pendingActionText?.trim() ||
+    null;
+  const threadId = state.subjectData.threadId?.trim();
+  const threadTitle = state.subjectData.threadTitle?.trim();
+  const shortText = recommendationText || summaryText;
+  const extendedText = recommendationText || summaryText;
+  const focusText =
+    state.subjectData.conversationFocus?.trim() ||
+    state.subjectData.personName?.trim() ||
+    threadTitle ||
+    state.subjectKind;
+
+  return {
+    version: 1,
+    mode: inferDailyCompanionModeFromAlexaState(state),
+    channel: 'alexa',
+    generatedAt: new Date().toISOString(),
+    summaryText,
+    shortText,
+    extendedText,
+    leadReason: 'conversation_followup',
+    signalsUsed: [],
+    signalsOmitted: [],
+    householdSignals: [],
+    recommendationKind: recommendationText ? 'do_now' : 'none',
+    recommendationText,
+    subjectKind: state.subjectKind,
+    supportedFollowups: state.supportedFollowups,
+    subjectData: {
+      personName: state.subjectData.personName,
+      activePeople: state.subjectData.activePeople,
+      householdFocus: state.subjectData.householdFocus,
+    },
+    extraDetails:
+      state.subjectData.threadSummaryLines?.length
+        ? state.subjectData.threadSummaryLines
+        : recommendationText && recommendationText !== summaryText
+          ? [summaryText]
+          : [],
+    memoryLines: [],
+    usedThreadIds: threadId ? [threadId] : [],
+    usedThreadTitles: threadTitle ? [threadTitle] : [],
+    usedThreadReasons:
+      threadTitle || threadId ? ['it was the active thread in the last answer'] : [],
+    threadSummaryLines: state.subjectData.threadSummaryLines || [],
+    comparisonKeys: {
+      nextEvent: null,
+      nextReminder: null,
+      recommendation: recommendationText,
+      household: state.subjectData.householdFocus ? focusText : null,
+      focus: focusText || null,
+      thread: threadTitle || threadId || null,
+    },
+    toneProfile: state.styleHints.toneProfile || 'balanced',
+    ritualType: null,
+    ritualToneStyle: null,
+    ritualTriggerStyle: null,
+    personalityCooldown: state.styleHints.personalityCooldown,
+  };
+}
+
+function resolveAlexaCompanionPriorContext(
+  state: AlexaConversationState | undefined,
+): DailyCompanionContext | undefined {
+  return (
+    parseDailyCompanionContext(state) ||
+    buildFallbackDailyCompanionContextFromAlexaState(state)
+  );
 }
 
 function buildAlexaStateFromDailyCompanion(
@@ -3604,7 +3758,13 @@ export function createAlexaSkill(
             .getResponse();
         }
 
-        if (priorCompanionContext && isDirectnessMemoryCommand(memoryCommand)) {
+        const directnessPriorContext =
+          resolveAlexaCompanionPriorContext(conversationState);
+        if (
+          directnessPriorContext &&
+          conversationState &&
+          isDirectnessMemoryCommand(memoryCommand)
+        ) {
           const localResponse = await buildDailyCompanionResponse(
             'be a little more direct',
             {
@@ -3613,10 +3773,10 @@ export function createAlexaSkill(
               tasks: getAllTasks().filter(
                 (task) => task.group_folder === linked.account.groupFolder,
               ),
-              priorContext: priorCompanionContext,
+              priorContext: directnessPriorContext,
             },
           );
-          if (localResponse && conversationState) {
+          if (localResponse) {
             const nextState = preserveAlexaConversationFrameForStyleChange(
               conversationState,
               buildAlexaStateFromDailyCompanion(
@@ -4316,7 +4476,11 @@ async function invokeAlexaSkill(
     applicationIdVerified: true,
     responseSource: 'received_trusted_request',
   });
-  writeAlexaLastSignedRequestState(receivedState);
+  const existingState = readAlexaSignedRequestProofState();
+  writeAlexaSignedRequestProofState({
+    lastSignedRequest: receivedState,
+    lastHandledProofIntent: existingState.lastHandledProofIntent,
+  });
   logger.info(
     {
       requestId: receivedState.requestId,

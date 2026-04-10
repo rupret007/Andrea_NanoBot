@@ -14,6 +14,9 @@ describe('conversational core classifier', () => {
     expect(classifyConversationalTurn("Hey, what's up?")).toBe(
       'greeting_or_vibe_check',
     );
+    expect(classifyConversationalTurn("@Andrea what's up?")).toBe(
+      'greeting_or_vibe_check',
+    );
     expect(classifyConversationalTurn("How's it going?")).toBe(
       'greeting_or_vibe_check',
     );
@@ -79,6 +82,7 @@ describe('research eligibility classifier', () => {
     expect(
       isResearchEligibleConversationalPrompt('What time is it in Australia?'),
     ).toBe(false);
+    expect(isResearchEligibleConversationalPrompt('What day is it?')).toBe(false);
     expect(
       isResearchEligibleConversationalPrompt("What's still open with Candace?"),
     ).toBe(false);
