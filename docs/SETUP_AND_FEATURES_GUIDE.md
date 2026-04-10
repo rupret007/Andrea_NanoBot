@@ -752,6 +752,7 @@ Practical notes:
 - The Andrea OAuth server now mints the linked access token and maps it to one Andrea `groupFolder`.
 - that OAuth target `groupFolder` must already exist as a valid Andrea registered group
 - Alexa now supports short-lived multi-turn follow-ups like `anything else`, `what about Candace`, `make that shorter`, and `remind me before that`.
+- Alexa Companion Mode now uses a smaller set of broader intent families with carrier-phrase capture, so phrasing like `tell me about ...`, `help me with ...`, `what should I know about ...`, `compare ...`, `save ...`, and `what should I say back about ...` can route more naturally through the shared assistant core.
 - Alexa Companion Mode also supports broader daily-life guidance like `what matters most today`, `what am I forgetting`, `anything I should know`, `what should I remember tonight`, and family guidance such as `what does the family have going on`.
 - person follow-ups can now stay voice-natural with prompts like `what about Travis`, `say more`, `what should I do about that`, `why`, and `should I be worried about anything`.
 - Alexa can also handle explicit memory controls like `remember this`, `remember that`, `forget that`, `don't bring that up automatically`, `be a little more direct`, and `what do you remember about me`.
@@ -760,6 +761,7 @@ Practical notes:
 - authoritative live proof should use voice in the Alexa app, voice on device, or the authenticated Alexa simulator
 - if you change `docs/alexa/interaction-model.en-US.json`, you must re-import it in the Alexa Developer Console and run `Build Model`
 - `npm run debug:alexa-conversation` is the near-live operator harness for tuning the multi-turn Alexa flow locally before or after a live voice attempt
+- `npm run debug:alexa-conversation -- --review` groups recent fallback misses, weak clarifiers, and carrier-phrase gaps so operator tuning can follow real phrasing instead of guesswork
 
 Recommended setup order:
 

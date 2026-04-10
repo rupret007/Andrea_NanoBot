@@ -239,6 +239,7 @@ Alexa is now a bounded companion channel for Andrea rather than a novelty skill.
 
 - it reuses the same Andrea core, account-linking, and trust boundaries
 - it now maps core daily, household, memory, thread, and bounded research asks through the shared assistant capability graph
+- it now captures broader natural speech through a small set of carrier-phrase intent families instead of leaning only on narrow one-off intents
 - it is shorter, warmer, more spoken-first, and less menu-like than Telegram
 - it now has a small bounded personality layer for softer transitions in low-stakes moments
 - it supports daily guidance like morning brief, what matters most today, anything important, what am I forgetting, evening reset, and family-upcoming flows
@@ -248,6 +249,7 @@ Alexa is now a bounded companion channel for Andrea rather than a novelty skill.
 - it can now orient you around open conversations, owed replies, and communication follow-through without turning Alexa into a full messaging client
 - personalization remains explicit and consent-based
 - use Node `22.22.2` for truthful Alexa validation on the operator host
+- use `npm run debug:alexa-conversation -- --review` to see repeated Alexa misses, weak clarifiers, and carrier phrases worth adding from real use
 
 Alexa proof on this host is now status-led:
 

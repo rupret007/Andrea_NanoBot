@@ -15,6 +15,11 @@ import {
 import type { AssistantCapabilityId } from './assistant-capabilities.js';
 
 export interface AlexaConversationSubjectData {
+  lastIntentFamily?: string;
+  lastRouteOutcome?: string;
+  lastUserUtterance?: string;
+  clarifierHints?: string[];
+  activeSubjectLabel?: string;
   personName?: string;
   activePeople?: string[];
   householdFocus?: boolean;
@@ -198,7 +203,7 @@ export function resolveAlexaConversationFollowup(
     return {
       ok: false,
       speech:
-        "Give me one quick anchor first. Ask what you're forgetting, what's still open with Candace, or what to remember tonight.",
+        "I am not fully sure what you mean yet. I can help with your plans, open loops, or a reminder. Say it again a little more simply and I'll keep the thread.",
     };
   }
 
@@ -265,6 +270,9 @@ export function resolveAlexaConversationFollowup(
   ) {
     return resolveSupported('send_details');
   }
+  if (/^(send me the full version|send me the fuller version)\b/i.test(normalized)) {
+    return resolveSupported('send_details');
+  }
   if (/^(do that|do all that|approve all)\b/i.test(normalized)) {
     return resolveSupported('approve_bundle');
   }
@@ -308,6 +316,9 @@ export function resolveAlexaConversationFollowup(
       normalized,
     )
   ) {
+    return resolveSupported('create_reminder');
+  }
+  if (/^(remind me later|remind me about that later)\b/i.test(normalized)) {
     return resolveSupported('create_reminder');
   }
   if (
@@ -370,7 +381,7 @@ export function resolveAlexaConversationFollowup(
   return {
     ok: false,
     speech: state.subjectData.personName
-      ? `I am not quite sure which part you mean yet. You can ask what is still open with ${state.subjectData.personName}, say more, or ask it a different way.`
-      : 'I did not catch that follow-up yet. You can say anything else, say more, or ask it a different way.',
+      ? `I am not fully sure which part you mean yet. You can ask what's still open with ${state.subjectData.personName}, say more, or ask it a different way.`
+      : 'I am not fully sure which part you mean yet. You can say anything else, say more, or ask it a different way.',
   };
 }

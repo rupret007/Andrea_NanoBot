@@ -1,3 +1,9 @@
+export const ALEXA_COMPANION_GUIDANCE_INTENT = 'CompanionGuidanceIntent';
+export const ALEXA_PEOPLE_HOUSEHOLD_INTENT = 'PeopleHouseholdIntent';
+export const ALEXA_PLANNING_ORIENTATION_INTENT = 'PlanningOrientationIntent';
+export const ALEXA_SAVE_REMIND_HANDOFF_INTENT = 'SaveRemindHandoffIntent';
+export const ALEXA_OPEN_ASK_INTENT = 'OpenAskIntent';
+export const ALEXA_CONVERSATION_CONTROL_INTENT = 'ConversationControlIntent';
 export const ALEXA_MY_DAY_INTENT = 'MyDayIntent';
 export const ALEXA_UPCOMING_SOON_INTENT = 'UpcomingSoonIntent';
 export const ALEXA_WHAT_NEXT_INTENT = 'WhatNextIntent';
@@ -19,9 +25,15 @@ export const ALEXA_CONVERSATIONAL_FOLLOWUP_INTENT =
   'ConversationalFollowupIntent';
 export const ALEXA_MEMORY_CONTROL_INTENT = 'MemoryControlIntent';
 export const ALEXA_DEFAULT_REPROMPT =
-  "Ask what you're forgetting, what matters today, what's still open with Candace, or what to remember tonight.";
+  "Ask what you're forgetting, what matters today, tell me about something, or ask what's still open with Candace.";
 
 export const ALEXA_V1_PERSONAL_INTENTS = new Set<string>([
+  ALEXA_COMPANION_GUIDANCE_INTENT,
+  ALEXA_PEOPLE_HOUSEHOLD_INTENT,
+  ALEXA_PLANNING_ORIENTATION_INTENT,
+  ALEXA_SAVE_REMIND_HANDOFF_INTENT,
+  ALEXA_OPEN_ASK_INTENT,
+  ALEXA_CONVERSATION_CONTROL_INTENT,
   ALEXA_MY_DAY_INTENT,
   ALEXA_UPCOMING_SOON_INTENT,
   ALEXA_WHAT_NEXT_INTENT,
@@ -64,6 +76,18 @@ export function buildAlexaPersonalPrompt(
   } = {},
 ): string {
   switch (intentName) {
+    case ALEXA_COMPANION_GUIDANCE_INTENT:
+      return `Stay in Andrea Alexa companion mode. Help with practical guidance about today, loose ends, what matters most, what to do next, or what to remember tonight. Lead with the main thing first, then only one or two useful supporting points.${SPOKEN_STYLE_SUFFIX}`;
+    case ALEXA_PEOPLE_HOUSEHOLD_INTENT:
+      return `Stay in Andrea Alexa companion mode. Help with people, household follow-through, or relationship-sensitive guidance using this focus: ${trimSingleLine(values.captureText) || 'the current person or household topic'}. Be warm, grounded, and practical.${SPOKEN_STYLE_SUFFIX}`;
+    case ALEXA_PLANNING_ORIENTATION_INTENT:
+      return `Stay in Andrea Alexa companion mode. Help me orient around this plan or blocker: ${trimSingleLine(values.captureText) || 'the current plan'}. Keep it short, useful, and action-first.${SPOKEN_STYLE_SUFFIX}`;
+    case ALEXA_SAVE_REMIND_HANDOFF_INTENT:
+      return `Stay in Andrea Alexa companion mode. Help me save, remind, draft, or hand off this item safely: ${trimSingleLine(values.captureText) || 'the current item'}. If more detail belongs in Telegram, say that naturally.${SPOKEN_STYLE_SUFFIX}`;
+    case ALEXA_OPEN_ASK_INTENT:
+      return `Stay in Andrea Alexa companion mode. Answer this open question naturally and briefly: ${trimSingleLine(values.captureText) || 'the current question'}. Use shared Andrea context when it genuinely helps.${SPOKEN_STYLE_SUFFIX}`;
+    case ALEXA_CONVERSATION_CONTROL_INTENT:
+      return `Stay in Andrea Alexa companion mode. Handle this follow-up or conversation-control request naturally: ${trimSingleLine(values.captureText) || 'continue the current thread'}.${SPOKEN_STYLE_SUFFIX}`;
     case ALEXA_MY_DAY_INTENT:
       return `Give me a practical morning brief for today. Focus on calendar timing, obligations, reminders, and what matters most right now. Lead with the main thing first, then only one or two useful follow-through points.${SPOKEN_STYLE_SUFFIX}`;
     case ALEXA_UPCOMING_SOON_INTENT:
@@ -134,6 +158,8 @@ export function buildAlexaConversationalFollowupPrompt(
     case 'save_that':
     case 'save_for_later':
       return `Save the key follow-through item from this context for later: ${summary}. Confirm briefly once it is captured.${SPOKEN_STYLE_SUFFIX}`;
+    case 'memory_control':
+      return `Stay with the same Alexa thread, but handle this preference or memory-control change briefly and naturally. Use this context: ${summary}.${SPOKEN_STYLE_SUFFIX}`;
     case 'draft_followup':
     case 'draft_follow_up':
       return `Draft a short follow-up for the meeting or topic described here: ${summary}. Keep it concise and spoken.${SPOKEN_STYLE_SUFFIX}`;
@@ -160,15 +186,15 @@ export function buildAlexaOpenConversationPrompt(
 }
 
 export function buildAlexaHelpSpeech(assistantName: string): string {
-  return `This is ${assistantName}. Ask what you're forgetting, what matters today, what's still open with Candace, or what to remember tonight. If you want the fuller version, I can send it to Telegram.`;
+  return `This is ${assistantName}. Ask what you're forgetting, what matters today, tell me about something, or ask what's still open with Candace. If it needs the fuller version, I can send it to Telegram.`;
 }
 
 export function buildAlexaWelcomeSpeech(assistantName: string): string {
-  return `This is ${assistantName}. Ask what you're forgetting, what's still open with Candace, what matters today, or what to remember tonight. If you want the fuller version, I can send it to Telegram.`;
+  return `This is ${assistantName}. Ask what you're forgetting, what's still open with Candace, help me plan tonight, or tell me about something. If you want the fuller version, I can send it to Telegram.`;
 }
 
 export function buildAlexaFallbackSpeech(assistantName: string): string {
-  return `This is ${assistantName}. I did not quite catch that. Try asking what you're forgetting, what's still open with Candace, or what to remember tonight.`;
+  return `This is ${assistantName}. I did not quite catch that. Try asking what you're forgetting, what matters today, or tell me what you want help with.`;
 }
 
 export function buildReminderLeadTimeQuestion(assistantName: string): string {

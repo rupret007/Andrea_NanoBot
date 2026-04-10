@@ -8,6 +8,7 @@ import {
   listRecentPilotJourneyEvents,
 } from './db.js';
 import {
+  buildAlexaUtteranceReviewDigest,
   buildPilotReviewDigest,
   capturePilotIssue,
   classifyPilotIssueKind,
@@ -237,5 +238,80 @@ describe('pilot mode', () => {
       'degraded_usable',
     );
     expect(digest.recentProblemEvents).toHaveLength(1);
+  });
+
+  it('builds a lightweight Alexa utterance review digest from pilot journey events', () => {
+    const first = startPilotJourney({
+      journeyId: 'alexa_orientation',
+      systemsInvolved: ['alexa', 'voice_router'],
+      summaryText: 'help me think through the school fundraiser note',
+      routeKey: 'alexa_voice_router:open_ask:assistant_bridge',
+      channel: 'alexa',
+      groupFolder: 'main',
+      startedAt: '2026-04-07T18:00:00.000Z',
+    });
+    completePilotJourney({
+      eventId: first!.eventId,
+      outcome: 'degraded_usable',
+      blockerClass: 'fallback_unmatched_open_utterance',
+      blockerOwner: 'repo_side',
+      completedAt: '2026-04-07T18:00:02.000Z',
+      summaryText: 'help me think through the school fundraiser note',
+    });
+
+    const second = startPilotJourney({
+      journeyId: 'alexa_orientation',
+      systemsInvolved: ['alexa', 'voice_router'],
+      summaryText: 'help me think through the school fundraiser note',
+      routeKey: 'alexa_voice_router:open_ask:assistant_bridge',
+      channel: 'alexa',
+      groupFolder: 'main',
+      startedAt: '2026-04-07T18:05:00.000Z',
+    });
+    completePilotJourney({
+      eventId: second!.eventId,
+      outcome: 'degraded_usable',
+      blockerClass: 'fallback_unmatched_open_utterance',
+      blockerOwner: 'repo_side',
+      completedAt: '2026-04-07T18:05:03.000Z',
+      summaryText: 'help me think through the school fundraiser note',
+    });
+
+    const third = startPilotJourney({
+      journeyId: 'alexa_orientation',
+      systemsInvolved: ['alexa', 'voice_router'],
+      summaryText: 'what should I know',
+      routeKey: 'alexa_voice_router:open_ask:clarify',
+      channel: 'alexa',
+      groupFolder: 'main',
+      startedAt: '2026-04-07T18:10:00.000Z',
+    });
+    completePilotJourney({
+      eventId: third!.eventId,
+      outcome: 'degraded_usable',
+      blockerClass: 'weak_clarifier_recovery',
+      blockerOwner: 'repo_side',
+      completedAt: '2026-04-07T18:10:01.000Z',
+      summaryText: 'what should I know',
+    });
+
+    const digest = buildAlexaUtteranceReviewDigest(
+      new Date('2026-04-07T18:30:00.000Z'),
+    );
+
+    expect(digest.totalSignals).toBe(3);
+    expect(digest.groupedPatterns[0]).toMatchObject({
+      utterance: 'help me think through the school fundraiser note',
+      family: 'open_ask',
+      routeOutcome: 'assistant_bridge',
+      blockerClass: 'fallback_unmatched_open_utterance',
+      attempts: 2,
+    });
+    expect(digest.repeatedPatterns).toHaveLength(1);
+    expect(digest.clarifierRecoveries[0]).toMatchObject({
+      utterance: 'what should I know',
+      routeOutcome: 'clarify',
+      blockerClass: 'weak_clarifier_recovery',
+    });
   });
 });

@@ -1,6 +1,7 @@
 import { initDatabase } from '../src/db.js';
 import { buildFieldTrialOperatorTruth } from '../src/field-trial-readiness.js';
 import {
+  buildAlexaUtteranceReviewDigest,
   buildPilotReviewDigest,
   FLAGSHIP_PILOT_JOURNEYS,
 } from '../src/pilot-mode.js';
@@ -120,10 +121,24 @@ function formatOpenIssues(review: ReturnType<typeof buildPilotReviewDigest>): st
   });
 }
 
+function formatAlexaUtteranceReview(
+  digest: ReturnType<typeof buildAlexaUtteranceReviewDigest>,
+): string[] {
+  if (digest.groupedPatterns.length === 0) {
+    return ['- none'];
+  }
+
+  return digest.groupedPatterns.slice(0, 8).flatMap((item) => [
+    `- ${item.utterance} / family=${item.family} / route=${item.routeOutcome} / blocker=${item.blockerClass} / attempts=${item.attempts} / latest=${item.latestAt}`,
+    `  suggestion: ${item.operatorHint}`,
+  ]);
+}
+
 async function main(): Promise<void> {
   initDatabase();
   const truth = buildFieldTrialOperatorTruth();
   const review = buildPilotReviewDigest();
+  const alexaReview = buildAlexaUtteranceReviewDigest();
   const attention = collectAttentionItems(truth);
   const lines = [
     '*Pilot Review*',
@@ -194,6 +209,14 @@ async function main(): Promise<void> {
     '',
     '*Open Pilot Issues*',
     ...formatOpenIssues(review),
+    '',
+    '*Alexa Utterance Review*',
+    `- Signals tracked: ${alexaReview.totalSignals}`,
+    `- Repeated patterns: ${alexaReview.repeatedPatterns.length}`,
+    `- Fallback misses: ${alexaReview.fallbackMisses.length}`,
+    `- Clarifier recoveries: ${alexaReview.clarifierRecoveries.length}`,
+    `- Carrier-phrase gaps: ${alexaReview.carrierPhraseGaps.length}`,
+    ...formatAlexaUtteranceReview(alexaReview),
   ];
   process.stdout.write(`${lines.join('\n')}\n`);
 }

@@ -254,6 +254,37 @@ describe('assistant capability router', () => {
     });
   });
 
+  it('maps broad Alexa intent families into shared capabilities when carrier phrases are strong', () => {
+    expect(
+      resolveAlexaIntentToCapability('CompanionGuidanceIntent', {
+        slotValue: 'am i forgetting',
+      }),
+    ).toMatchObject({
+      capabilityId: 'daily.loose_ends',
+    });
+    expect(
+      resolveAlexaIntentToCapability('PeopleHouseholdIntent', {
+        slotValue: 'Candace',
+      }),
+    ).toMatchObject({
+      capabilityId: 'household.candace_upcoming',
+    });
+    expect(
+      resolveAlexaIntentToCapability('PlanningOrientationIntent', {
+        slotValue: 'tonight',
+      }),
+    ).toMatchObject({
+      capabilityId: 'missions.propose',
+    });
+    expect(
+      resolveAlexaIntentToCapability('OpenAskIntent', {
+        slotValue: 'Jar Jar Binks',
+      }),
+    ).toMatchObject({
+      capabilityId: 'research.topic',
+    });
+  });
+
   it('continues the active capability for Alexa follow-ups when context is strong', () => {
     const state: AlexaConversationState = {
       flowKey: 'research_topic',

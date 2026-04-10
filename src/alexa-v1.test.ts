@@ -3,12 +3,18 @@ import { describe, expect, it } from 'vitest';
 import {
   ALEXA_DEFAULT_REPROMPT,
   ALEXA_ANYTHING_IMPORTANT_INTENT,
+  ALEXA_COMPANION_GUIDANCE_INTENT,
+  ALEXA_CONVERSATION_CONTROL_INTENT,
   ALEXA_DRAFT_FOLLOW_UP_INTENT,
   ALEXA_EVENING_RESET_INTENT,
   ALEXA_FAMILY_UPCOMING_INTENT,
   ALEXA_MY_DAY_INTENT,
+  ALEXA_OPEN_ASK_INTENT,
+  ALEXA_PEOPLE_HOUSEHOLD_INTENT,
+  ALEXA_PLANNING_ORIENTATION_INTENT,
   ALEXA_REMIND_BEFORE_NEXT_MEETING_INTENT,
   ALEXA_SAVE_FOR_LATER_INTENT,
+  ALEXA_SAVE_REMIND_HANDOFF_INTENT,
   ALEXA_WHAT_AM_I_FORGETTING_INTENT,
   ALEXA_WHAT_MATTERS_MOST_TODAY_INTENT,
   buildAlexaFallbackSpeech,
@@ -27,10 +33,42 @@ import {
 describe('alexa v1 prompt mapping', () => {
   it('marks the bounded personal intents as supported', () => {
     expect(isAlexaPersonalIntent(ALEXA_MY_DAY_INTENT)).toBe(true);
+    expect(isAlexaPersonalIntent(ALEXA_COMPANION_GUIDANCE_INTENT)).toBe(true);
+    expect(isAlexaPersonalIntent(ALEXA_OPEN_ASK_INTENT)).toBe(true);
     expect(isAlexaPersonalIntent('AskAndreaIntent')).toBe(false);
   });
 
   it('builds focused personal prompts for Alexa v1 intents', () => {
+    expect(
+      buildAlexaPersonalPrompt(ALEXA_COMPANION_GUIDANCE_INTENT, {
+        captureText: 'what am I forgetting',
+      }),
+    ).toContain('practical guidance');
+    expect(
+      buildAlexaPersonalPrompt(ALEXA_PEOPLE_HOUSEHOLD_INTENT, {
+        captureText: 'Candace',
+      }),
+    ).toContain('people, household follow-through');
+    expect(
+      buildAlexaPersonalPrompt(ALEXA_PLANNING_ORIENTATION_INTENT, {
+        captureText: 'tonight',
+      }),
+    ).toContain('plan or blocker');
+    expect(
+      buildAlexaPersonalPrompt(ALEXA_SAVE_REMIND_HANDOFF_INTENT, {
+        captureText: 'the fuller version',
+      }),
+    ).toContain('save, remind, draft, or hand off');
+    expect(
+      buildAlexaPersonalPrompt(ALEXA_OPEN_ASK_INTENT, {
+        captureText: 'Jar Jar Binks',
+      }),
+    ).toContain('open question naturally and briefly');
+    expect(
+      buildAlexaPersonalPrompt(ALEXA_CONVERSATION_CONTROL_INTENT, {
+        captureText: 'a little more direct',
+      }),
+    ).toContain('conversation-control request naturally');
     expect(buildAlexaPersonalPrompt(ALEXA_MY_DAY_INTENT)).toContain(
       'practical morning brief',
     );

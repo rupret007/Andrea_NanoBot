@@ -138,6 +138,7 @@ That operator-only view shows:
 - proof freshness and 24h / 7d usage by flagship journey
 - recent flagged outcomes, including degraded-but-usable fallback
 - open private pilot issues
+- grouped Alexa utterance-review patterns through the Alexa router when those review signals exist
 
 Private pilot issue capture is explicit and local-only. During dogfooding, you can say:
 
@@ -152,6 +153,11 @@ Important limits:
 - this does not create a public bug tracker
 - raw transcripts are not stored in pilot instrumentation
 - set `ANDREA_PILOT_LOGGING_ENABLED=0` if you need to disable journey logging and explicit pilot issue capture on a host
+
+For Alexa-specific router tuning, also use:
+
+- `npm run debug:alexa-conversation`
+- `npm run debug:alexa-conversation -- --review`
 
 ## Operations, Security, And Release
 

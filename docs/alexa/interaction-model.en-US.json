@@ -4,293 +4,113 @@
       "invocationName": "andrea assistant",
       "intents": [
         {
-          "name": "MyDayIntent",
-          "slots": [],
+          "name": "CompanionGuidanceIntent",
+          "slots": [
+            {
+              "name": "guidanceText",
+              "type": "AMAZON.SearchQuery"
+            }
+          ],
           "samples": [
-            "give me my day",
-            "what should I know about today",
-            "how does today look",
-            "how's my day looking",
-            "what's my day looking like",
-            "what is on my calendar today",
-            "what matters today",
-            "give me a morning brief",
-            "walk me through today",
-            "give me a quick brief for today",
-            "what's the shape of today"
+            "what {guidanceText}",
+            "what should I {guidanceText}",
+            "what am I {guidanceText}",
+            "give me {guidanceText}",
+            "walk me through {guidanceText}",
+            "how does {guidanceText} look"
           ]
         },
         {
-          "name": "UpcomingSoonIntent",
-          "slots": [],
+          "name": "PeopleHouseholdIntent",
+          "slots": [
+            {
+              "name": "subject",
+              "type": "AMAZON.SearchQuery"
+            }
+          ],
           "samples": [
-            "what do I have coming up soon",
-            "what is coming up soon",
-            "what is next on my calendar soon",
-            "what do I have coming up",
-            "what should I know about the next few things",
-            "what is coming up for me"
+            "what about {subject}",
+            "what's still open with {subject}",
+            "what is still open with {subject}",
+            "what should I say back about {subject}",
+            "help me with {subject}",
+            "what should I know about {subject}",
+            "what do I need to follow up on with {subject}"
           ]
         },
         {
-          "name": "WhatNextIntent",
-          "slots": [],
+          "name": "PlanningOrientationIntent",
+          "slots": [
+            {
+              "name": "topic",
+              "type": "AMAZON.SearchQuery"
+            }
+          ],
           "samples": [
-            "what should I do next",
-            "what is next",
-            "what should I do now",
-            "what do I do next",
-            "what should I handle next",
-            "what should I do after that",
-            "what is next after that",
-            "what matters next",
-            "what should I handle now",
-            "what should I tackle next",
-            "where should I put my attention next"
+            "help me plan {topic}",
+            "what's the next step for {topic}",
+            "what is the next step for {topic}",
+            "what's blocking {topic}",
+            "what is blocking {topic}",
+            "what should I do about {topic}",
+            "what should I handle about {topic}"
           ]
         },
         {
-          "name": "BeforeNextMeetingIntent",
-          "slots": [],
+          "name": "SaveRemindHandoffIntent",
+          "slots": [
+            {
+              "name": "item",
+              "type": "AMAZON.SearchQuery"
+            }
+          ],
           "samples": [
-            "what should I handle before my next meeting",
-            "what do I need to do before my next meeting",
-            "what should I do before my next meeting",
-            "what should I handle before that",
-            "what should I remember before my next meeting",
-            "what should I do before that"
+            "save {item}",
+            "save {item} for later",
+            "remind me about {item}",
+            "remind me about {item} later",
+            "draft {item}",
+            "send {item} to Telegram",
+            "send {item} to messages",
+            "send me the full version",
+            "send me the fuller version"
           ]
         },
         {
-          "name": "WhatMattersMostTodayIntent",
-          "slots": [],
+          "name": "OpenAskIntent",
+          "slots": [
+            {
+              "name": "query",
+              "type": "AMAZON.SearchQuery"
+            }
+          ],
           "samples": [
-            "what matters most today",
-            "what is the main thing today",
-            "what should I prioritize today",
-            "what should I focus on first today",
-            "what is the biggest thing I should handle today"
+            "tell me about {query}",
+            "help me with {query}",
+            "what should I know about {query}",
+            "compare {query}",
+            "explain {query}",
+            "summarize {query}"
           ]
         },
         {
-          "name": "AnythingImportantIntent",
-          "slots": [],
-          "samples": [
-            "anything I should know",
-            "anything important",
-            "anything I need to know",
-            "is there anything important today",
-            "should I be worried about anything",
-            "what should I keep in mind",
-            "what should be on my radar",
-            "anything else I should keep in mind"
-          ]
-        },
-        {
-          "name": "WhatAmIForgettingIntent",
-          "slots": [],
-          "samples": [
-            "what am I forgetting",
-            "what exactly am I forgetting",
-            "exactly what am I forgetting",
-            "tell me what I'm forgetting",
-            "what am I missing",
-            "what am I overlooking",
-            "what have I not handled yet",
-            "what loose ends do I have"
-          ]
-        },
-        {
-          "name": "TomorrowCalendarIntent",
-          "slots": [],
-          "samples": [
-            "what is on my calendar tomorrow",
-            "what do I have tomorrow",
-            "what is tomorrow looking like",
-            "what should I know about tomorrow",
-            "walk me through tomorrow",
-            "how busy am I tomorrow"
-          ]
-        },
-        {
-          "name": "EveningResetIntent",
-          "slots": [],
-          "samples": [
-            "give me an evening reset",
-            "what should I remember tonight",
-            "what do I need to remember tonight",
-            "what should I wrap up today",
-            "what should I handle before I leave",
-            "what should I tee up for tomorrow",
-            "what should I remember before tonight",
-            "what should I wrap before tomorrow"
-          ]
-        },
-        {
-          "name": "CandaceUpcomingIntent",
-          "slots": [],
-          "samples": [
-            "what do Candace and I have coming up",
-            "what do Candace and I have soon",
-            "what is coming up for Candace and me",
-            "what about Candace",
-            "what's still open with Candace",
-            "what is still open with Candace",
-            "what still open with Candace",
-            "anything still open with Candace",
-            "what do Candace and I have going on",
-            "what should Candace and I know about soon",
-            "what do Candace and I have this weekend",
-            "what should I talk to Candace about",
-            "what do I need to follow up on with Candace"
-          ]
-        },
-        {
-          "name": "FamilyUpcomingIntent",
-          "slots": [],
-          "samples": [
-            "what does the family have going on",
-            "anything the family needs from me today",
-            "anything for the family I'm forgetting",
-            "what do we have this weekend",
-            "what should I remember before tonight",
-            "what does our family have coming up",
-            "what do I need to follow up on at home"
-          ]
-        },
-        {
-          "name": "AnythingElseIntent",
-          "slots": [],
+          "name": "ConversationControlIntent",
+          "slots": [
+            {
+              "name": "controlText",
+              "type": "AMAZON.SearchQuery"
+            }
+          ],
           "samples": [
             "anything else",
-            "what else",
-            "anything more",
-            "what else should I know",
-            "say more",
-            "tell me more",
-            "give me more detail",
-            "give me a little more detail",
-            "go on",
-            "what happens next",
-            "what comes after that"
-          ]
-        },
-        {
-          "name": "ConversationalFollowupIntent",
-          "slots": [
-            {
-              "name": "followupText",
-              "type": "AMAZON.SearchQuery"
-            }
-          ],
-          "samples": [
-            "what about {followupText}",
-            "about {followupText}",
-            "make that {followupText}",
-            "tell me {followupText}",
-            "follow up with {followupText}",
-            "say more about {followupText}",
-            "help me with {followupText}",
-            "can you help with {followupText}",
-            "can you help me think through {followupText}",
-            "what should I do about {followupText}",
-            "what should I remember about {followupText}",
-            "what do I need to know about {followupText}",
-            "tell me about {followupText}",
-            "walk me through {followupText}",
-            "I need help with {followupText}",
-            "research {followupText}",
-            "look into {followupText}",
-            "compare {followupText}",
-            "summarize {followupText}",
-            "explain the tradeoffs around {followupText}",
-            "what's the best choice about {followupText}",
-            "what is the best choice about {followupText}",
-            "can you {followupText}",
-            "could you {followupText}",
-            "send me {followupText}",
-            "send {followupText} to telegram",
-            "send {followupText} to messages",
-            "save {followupText} in my library",
-            "save {followupText} to my library",
-            "turn {followupText} into a reminder",
-            "turn {followupText} into a reminder tonight",
-            "remind me about {followupText}",
-            "remind me about {followupText} tonight",
-            "keep track of {followupText}",
-            "keep track of {followupText} for tonight",
-            "track {followupText}",
-            "draft {followupText} for me",
-            "draft a message about {followupText}"
-          ]
-        },
-        {
-          "name": "MemoryControlIntent",
-          "slots": [
-            {
-              "name": "memoryCommand",
-              "type": "AMAZON.SearchQuery"
-            }
-          ],
-          "samples": [
-            "remember {memoryCommand}",
-            "forget {memoryCommand}",
-            "be {memoryCommand}",
-            "keep {memoryCommand} in mind",
-            "stop bringing {memoryCommand} up",
-            "what do you remember about {memoryCommand}",
-            "why did you say {memoryCommand}",
-            "what are you using to personalize {memoryCommand}",
-            "don't bring up {memoryCommand}",
-            "why did you say that",
-            "what are you using to personalize this",
-            "be more direct",
-            "be a little more direct",
-            "be calmer",
-            "don't bring that up automatically",
-            "stop bringing that up"
-          ]
-        },
-        {
-          "name": "RemindBeforeNextMeetingIntent",
-          "slots": [
-            {
-              "name": "leadTime",
-              "type": "AMAZON.SearchQuery"
-            }
-          ],
-          "samples": [
-            "remind me before my next meeting",
-            "remind me {leadTime} before my next meeting",
-            "set a reminder {leadTime} before my next meeting"
-          ]
-        },
-        {
-          "name": "SaveForLaterIntent",
-          "slots": [
-            {
-              "name": "captureText",
-              "type": "AMAZON.SearchQuery"
-            }
-          ],
-          "samples": [
-            "save that for later",
-            "save {captureText} for later",
-            "remember {captureText} for later"
-          ]
-        },
-        {
-          "name": "DraftFollowUpIntent",
-          "slots": [
-            {
-              "name": "meetingReference",
-              "type": "AMAZON.SearchQuery"
-            }
-          ],
-          "samples": [
-            "draft a follow up",
-            "draft a follow up for this meeting",
-            "draft a follow up for {meetingReference}"
+            "say {controlText}",
+            "make it {controlText}",
+            "be {controlText}",
+            "what about {controlText}",
+            "remember {controlText}",
+            "don't bring {controlText} up automatically",
+            "why are you bringing {controlText} up",
+            "why did you say {controlText}"
           ]
         },
         {

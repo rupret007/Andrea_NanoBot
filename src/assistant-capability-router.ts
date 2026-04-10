@@ -1,4 +1,6 @@
 import {
+  ALEXA_COMPANION_GUIDANCE_INTENT,
+  ALEXA_CONVERSATION_CONTROL_INTENT,
   ALEXA_ANYTHING_ELSE_INTENT,
   ALEXA_ANYTHING_IMPORTANT_INTENT,
   ALEXA_BEFORE_NEXT_MEETING_INTENT,
@@ -8,8 +10,12 @@ import {
   ALEXA_FAMILY_UPCOMING_INTENT,
   ALEXA_MEMORY_CONTROL_INTENT,
   ALEXA_MY_DAY_INTENT,
+  ALEXA_OPEN_ASK_INTENT,
+  ALEXA_PEOPLE_HOUSEHOLD_INTENT,
+  ALEXA_PLANNING_ORIENTATION_INTENT,
   ALEXA_TOMORROW_CALENDAR_INTENT,
   ALEXA_UPCOMING_SOON_INTENT,
+  ALEXA_SAVE_REMIND_HANDOFF_INTENT,
   ALEXA_WHAT_AM_I_FORGETTING_INTENT,
   ALEXA_WHAT_MATTERS_MOST_TODAY_INTENT,
   ALEXA_WHAT_NEXT_INTENT,
@@ -48,6 +54,118 @@ function normalizeText(value: string | undefined): string {
       .replace(/[!?]+$/g, '')
       .trim(),
   );
+}
+
+function matchFirstCapabilityCandidate(
+  candidates: string[],
+): AssistantCapabilityMatch | null {
+  for (const candidate of candidates) {
+    const match = matchAssistantCapabilityRequest(candidate);
+    if (match) {
+      return match;
+    }
+  }
+  return null;
+}
+
+function buildBroadAlexaCandidates(
+  intentName: string,
+  slotValue: string,
+): string[] {
+  const trimmed = normalizeText(slotValue);
+  const lower = trimmed.toLowerCase();
+  if (intentName === ALEXA_COMPANION_GUIDANCE_INTENT) {
+    if (
+      /\b(forget|forgetting|forgot|missing|overlook|loose end|loose ends|not handled)\b/.test(
+        lower,
+      )
+    ) {
+      return ['what am I forgetting'];
+    }
+    if (/\b(remember tonight|tonight|wrap up|tee up|leave)\b/.test(lower)) {
+      return ['what should I remember tonight', 'give me an evening reset'];
+    }
+    if (/\b(next|do next|do now|handle next|tackle next)\b/.test(lower)) {
+      return ['what should I do next'];
+    }
+    if (/\b(matter|priority|prioritize|focus)\b/.test(lower)) {
+      return ['what matters today'];
+    }
+    if (/\b(today|my day|morning brief)\b/.test(lower)) {
+      return ['what should I know about today'];
+    }
+    if (/\btomorrow\b/.test(lower)) {
+      return ['what is on my calendar tomorrow'];
+    }
+    if (/\b(next meeting|before that|before .*meeting)\b/.test(lower)) {
+      return ['what should I handle before my next meeting'];
+    }
+    return [`what should I know about ${trimmed}`];
+  }
+
+  if (intentName === ALEXA_PEOPLE_HOUSEHOLD_INTENT) {
+    return [
+      `what about ${trimmed}`,
+      `what's still open with ${trimmed}`,
+      `what should I say back about ${trimmed}`,
+      `help me with ${trimmed}`,
+    ];
+  }
+
+  if (intentName === ALEXA_PLANNING_ORIENTATION_INTENT) {
+    return [
+      `help me plan ${trimmed}`,
+      `what's the next step for ${trimmed}`,
+      `what's blocking ${trimmed}`,
+      `what should I do about ${trimmed}`,
+    ];
+  }
+
+  if (intentName === ALEXA_SAVE_REMIND_HANDOFF_INTENT) {
+    if (!trimmed) {
+      return ['send me the full version'];
+    }
+    return [
+      `save ${trimmed}`,
+      `remind me about ${trimmed}`,
+      `draft ${trimmed}`,
+      `send ${trimmed} to Telegram`,
+    ];
+  }
+
+  if (intentName === ALEXA_OPEN_ASK_INTENT) {
+    if (/\b(vs|versus)\b/.test(lower) || lower.includes(' and ')) {
+      return [`compare ${trimmed}`];
+    }
+    return [
+      `what should I know about ${trimmed}`,
+      `tell me about ${trimmed}`,
+      `explain ${trimmed}`,
+      `help me with ${trimmed}`,
+    ];
+  }
+
+  if (intentName === ALEXA_CONVERSATION_CONTROL_INTENT) {
+    if (!trimmed) {
+      return ['anything else'];
+    }
+    if (/\bshort/.test(lower)) {
+      return [`make it ${trimmed}`];
+    }
+    if (/\b(more|detail|deeper)\b/.test(lower)) {
+      return [`say ${trimmed}`];
+    }
+    if (/\b(direct|calm|warmer|balanced|plain)\b/.test(lower)) {
+      return [`be ${trimmed}`];
+    }
+    return [
+      `what about ${trimmed}`,
+      `remember ${trimmed}`,
+      `why did you say ${trimmed}`,
+    ];
+  }
+
+  return [];
 }
 
 function isSharedAssistantCompletionFollowup(lower: string): boolean {
@@ -939,6 +1057,35 @@ export function resolveAlexaIntentToCapability(
     conversationState?: AlexaConversationState;
   } = {},
 ): AssistantCapabilityMatch | null {
+  if (
+    intentName === ALEXA_COMPANION_GUIDANCE_INTENT ||
+    intentName === ALEXA_PEOPLE_HOUSEHOLD_INTENT ||
+    intentName === ALEXA_PLANNING_ORIENTATION_INTENT ||
+    intentName === ALEXA_SAVE_REMIND_HANDOFF_INTENT ||
+    intentName === ALEXA_OPEN_ASK_INTENT ||
+    intentName === ALEXA_CONVERSATION_CONTROL_INTENT
+  ) {
+    const candidates = buildBroadAlexaCandidates(
+      intentName,
+      options.slotValue || '',
+    );
+    if (
+      intentName === ALEXA_CONVERSATION_CONTROL_INTENT &&
+      options.conversationState
+    ) {
+      for (const candidate of candidates) {
+        const continuation = continueAssistantCapabilityFromAlexaState(
+          candidate,
+          options.conversationState,
+        );
+        if (continuation) {
+          return continuation;
+        }
+      }
+    }
+    return matchFirstCapabilityCandidate(candidates);
+  }
+
   switch (intentName) {
     case ALEXA_MY_DAY_INTENT:
       return {

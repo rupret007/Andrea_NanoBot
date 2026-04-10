@@ -27,8 +27,10 @@ Alexa now sits on top of the same Andrea assistant capability graph used by Tele
 In practice, that means:
 
 - explicit Alexa intents still exist where the interaction model needs them
-- those intents now map into shared Andrea capabilities first whenever possible
-- `ConversationalFollowupIntent` and `AnythingElseIntent` first try shared capability continuation before broader fallback paths
+- the live model is now organized around a small number of broader intent families instead of a long list of brittle one-phrase silos
+- those broader intents map into shared Andrea capabilities first whenever possible
+- open captured carrier phrases now reach the same shared assistant graph before Alexa falls back to a narrower bridge path
+- `ConversationControlIntent`, legacy `ConversationalFollowupIntent`, and `AnythingElseIntent` first try shared capability continuation before broader fallback paths
 - Alexa keeps voice-first shaping at the edge instead of letting internal capability labels leak into spoken output
 
 Examples of shared actions now routed this way:
@@ -208,25 +210,41 @@ Treat typed Alexa+ app chat as diagnosis-only unless Andrea logs a real signed f
 
 ## 2) Alexa Surface
 
-The interaction model keeps the Alexa surface intentionally bounded:
+The interaction model now keeps Alexa bounded through a small set of broader custom intent families:
 
-- `MyDayIntent`
-- `UpcomingSoonIntent`
-- `WhatNextIntent`
-- `BeforeNextMeetingIntent`
-- `WhatMattersMostTodayIntent`
-- `AnythingImportantIntent`
-- `WhatAmIForgettingIntent`
-- `TomorrowCalendarIntent`
-- `EveningResetIntent`
-- `CandaceUpcomingIntent`
-- `FamilyUpcomingIntent`
-- `AnythingElseIntent`
-- `ConversationalFollowupIntent`
-- `MemoryControlIntent`
-- `RemindBeforeNextMeetingIntent`
-- `SaveForLaterIntent`
-- `DraftFollowUpIntent`
+- `CompanionGuidanceIntent`
+  - `what matters today`
+  - `what am I forgetting`
+  - `what should I do next`
+  - `what should I remember tonight`
+- `PeopleHouseholdIntent`
+  - `what about Candace`
+  - `what's still open with Candace`
+  - `what should I say back about Candace`
+  - `help me with Candace`
+- `PlanningOrientationIntent`
+  - `help me plan tonight`
+  - `what's the next step for tonight`
+  - `what's blocking this`
+- `SaveRemindHandoffIntent`
+  - `save that`
+  - `remind me about that`
+  - `send me the full version`
+  - `send that to Telegram`
+- `OpenAskIntent`
+  - `tell me about X`
+  - `help me with X`
+  - `what should I know about X`
+  - `compare X and Y`
+- `ConversationControlIntent`
+  - `anything else`
+  - `say more`
+  - `make it shorter`
+  - `be a little more direct`
+  - `what about that`
+  - `remember that`
+
+Legacy intent names still remain supported in runtime code for one compatibility window, so a stale live interaction model does not immediately hard-fail during rollout.
 
 Standard Alexa intents still apply:
 
@@ -245,6 +263,29 @@ Out of scope:
 - operator-shell commands
 - hidden long-term memory
 - multi-user household routing
+
+### 2A) Open-Utterance Capture
+
+Alexa is still interaction-model driven, but Andrea now captures more natural phrasing through bounded carrier-phrase slots instead of asking users to memorize one exact utterance.
+
+Current carrier-style openings include:
+
+- `tell me about ...`
+- `help me with ...`
+- `what should I know about ...`
+- `compare ...`
+- `explain ...`
+- `remind me about ...`
+- `save ...`
+- `draft ...`
+- `what should I say back about ...`
+
+Important limits:
+
+- no bare giant catch-all slot
+- no unrestricted freeform Alexa chat
+- if the utterance is too underspecified, Andrea asks for one anchor and keeps the thread alive
+- when the request is valid but too rich for voice, Andrea stays concise and hands the fuller continuation to Telegram
 
 Pulse is intentionally separate from health and diagnostics:
 
@@ -502,8 +543,10 @@ Current truth:
 For operator-side conversation tuning, use:
 
 - `npm run debug:alexa-conversation` for a repo-side multi-turn Alexa walkthrough that does not advance live proof
+- `npm run debug:alexa-conversation -- --review` for grouped utterance misses, weak clarifiers, and carrier-phrase gaps from recent Alexa pilot events
 - `npm run debug:daily-companion` for grounded local comparison against real `groupFolder=main` data
 - `npm run debug:shared-capabilities` for a shared Telegram/Alexa capability and research smoke pass
+- `npm run debug:pilot` for the higher-level proof surface plus the Alexa utterance-review summary
 
 ## 6) Daily Guidance And Household Context
 

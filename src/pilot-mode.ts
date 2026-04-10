@@ -104,6 +104,27 @@ export interface PilotReviewDigest extends PilotReviewSnapshot {
   recentProblemEvents: PilotJourneyEventRecord[];
 }
 
+export interface AlexaUtteranceReviewItem {
+  utterance: string;
+  family: string;
+  routeOutcome: string;
+  blockerClass: string;
+  attempts: number;
+  latestAt: string;
+  latestOutcome: PilotJourneyOutcome;
+  operatorHint: string;
+}
+
+export interface AlexaUtteranceReviewDigest {
+  totalSignals: number;
+  groupedPatterns: AlexaUtteranceReviewItem[];
+  repeatedPatterns: AlexaUtteranceReviewItem[];
+  fallbackMisses: AlexaUtteranceReviewItem[];
+  clarifierRecoveries: AlexaUtteranceReviewItem[];
+  carrierPhraseGaps: AlexaUtteranceReviewItem[];
+  handoffRequired: AlexaUtteranceReviewItem[];
+}
+
 export function isPilotLoggingEnabled(): boolean {
   const raw = (process.env.ANDREA_PILOT_LOGGING_ENABLED || '').trim().toLowerCase();
   if (!raw) return true;
@@ -530,6 +551,121 @@ export function buildPilotReviewDigest(now = new Date()): PilotReviewDigest {
         event.outcome === 'degraded_usable' ||
         event.outcome === 'externally_blocked' ||
         event.outcome === 'internal_failure',
+    ),
+  };
+}
+
+function parseAlexaVoiceRouterKey(routeKey: string | null | undefined): {
+  family: string;
+  routeOutcome: string;
+} | null {
+  if (!routeKey) return null;
+  const match = routeKey.match(/^alexa_voice_router:([^:]+):([^:]+)$/);
+  if (!match) return null;
+  return {
+    family: match[1] || 'unknown',
+    routeOutcome: match[2] || 'unknown',
+  };
+}
+
+function buildAlexaOperatorHint(
+  blockerClass: string,
+  routeOutcome: string,
+): string {
+  if (blockerClass === 'carrier_phrase_missing') {
+    return 'Add or refine a carrier phrase for this utterance family in the Alexa interaction model.';
+  }
+  if (blockerClass === 'weak_clarifier_recovery') {
+    return 'Tighten the Alexa clarifier so it asks for one concrete anchor without resetting the thread.';
+  }
+  if (blockerClass === 'operator_handoff_required') {
+    return 'Keep this request on Telegram or another richer surface; it is not a voice-safe Alexa action.';
+  }
+  if (
+    blockerClass === 'fallback_unmatched_open_utterance' &&
+    routeOutcome === 'assistant_bridge'
+  ) {
+    return 'Consider adding a carrier phrase or explicit shared-capability mapping if users repeat this wording.';
+  }
+  if (blockerClass === 'fallback_unmatched_open_utterance') {
+    return 'Review whether this utterance should map into a broader Alexa carrier phrase or shared capability.';
+  }
+  return 'Review the recent Alexa recovery path and decide whether this pattern needs a stronger carrier phrase or clarifier.';
+}
+
+export function buildAlexaUtteranceReviewDigest(
+  now = new Date(),
+): AlexaUtteranceReviewDigest {
+  const snapshot = buildPilotReviewSnapshot(now);
+  const grouped = new Map<string, AlexaUtteranceReviewItem>();
+
+  for (const event of snapshot.recentEvents) {
+    if (event.channel !== 'alexa') continue;
+    const parsedRoute = parseAlexaVoiceRouterKey(event.routeKey);
+    if (!parsedRoute) continue;
+    const utterance = sanitizePilotSummary(
+      event.summaryText,
+      'unknown alexa utterance',
+    );
+    const blockerClass = event.blockerClass || 'none';
+    const latestAt = event.completedAt || event.startedAt;
+    const key = [
+      normalizeText(utterance),
+      parsedRoute.family,
+      parsedRoute.routeOutcome,
+      blockerClass,
+    ].join('::');
+
+    const existing = grouped.get(key);
+    if (!existing) {
+      grouped.set(key, {
+        utterance,
+        family: parsedRoute.family,
+        routeOutcome: parsedRoute.routeOutcome,
+        blockerClass,
+        attempts: 1,
+        latestAt,
+        latestOutcome: event.outcome,
+        operatorHint: buildAlexaOperatorHint(
+          blockerClass,
+          parsedRoute.routeOutcome,
+        ),
+      });
+      continue;
+    }
+
+    existing.attempts += 1;
+    if (Date.parse(latestAt) >= Date.parse(existing.latestAt)) {
+      existing.latestAt = latestAt;
+      existing.latestOutcome = event.outcome;
+    }
+  }
+
+  const groupedPatterns = Array.from(grouped.values()).sort((left, right) => {
+    if (right.attempts !== left.attempts) {
+      return right.attempts - left.attempts;
+    }
+    return Date.parse(right.latestAt) - Date.parse(left.latestAt);
+  });
+
+  return {
+    totalSignals: groupedPatterns.reduce(
+      (total, item) => total + item.attempts,
+      0,
+    ),
+    groupedPatterns,
+    repeatedPatterns: groupedPatterns.filter((item) => item.attempts > 1),
+    fallbackMisses: groupedPatterns.filter(
+      (item) => item.blockerClass === 'fallback_unmatched_open_utterance',
+    ),
+    clarifierRecoveries: groupedPatterns.filter(
+      (item) => item.blockerClass === 'weak_clarifier_recovery',
+    ),
+    carrierPhraseGaps: groupedPatterns.filter(
+      (item) => item.blockerClass === 'carrier_phrase_missing',
+    ),
+    handoffRequired: groupedPatterns.filter(
+      (item) => item.blockerClass === 'operator_handoff_required',
     ),
   };
 }

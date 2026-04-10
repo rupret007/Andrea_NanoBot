@@ -5,15 +5,24 @@ import {
   getAlexaStatus,
   type AlexaConfig,
 } from '../src/alexa.js';
+import { buildAlexaUtteranceReviewDigest } from '../src/pilot-mode.js';
 import {
   getAlexaPrincipalKey,
   seedConfiguredAlexaLinkedAccount,
 } from '../src/alexa-identity.js';
 import { loadAlexaConversationState } from '../src/alexa-conversation.js';
-import { _initTestDatabase, setRegisteredGroup } from '../src/db.js';
+import { _initTestDatabase, initDatabase, setRegisteredGroup } from '../src/db.js';
 import { getAlexaLastSignedRequestStatePath } from '../src/host-control.js';
 import { handleLifeThreadCommand } from '../src/life-threads.js';
 import type { RequestEnvelope, ResponseEnvelope } from 'ask-sdk-model';
+
+function parseArgs(argv: string[]): {
+  review: boolean;
+} {
+  return {
+    review: argv.includes('--review'),
+  };
+}
 
 function buildConfig(): AlexaConfig {
   return {
@@ -110,6 +119,31 @@ function extractSpeechText(responseEnvelope: ResponseEnvelope): string {
 }
 
 async function main(): Promise<void> {
+  const args = parseArgs(process.argv.slice(2));
+  if (args.review) {
+    initDatabase();
+    const review = buildAlexaUtteranceReviewDigest();
+    const lines = [
+      '*Alexa Utterance Review*',
+      `- Signals tracked: ${review.totalSignals}`,
+      `- Repeated patterns: ${review.repeatedPatterns.length}`,
+      `- Fallback misses: ${review.fallbackMisses.length}`,
+      `- Clarifier recoveries: ${review.clarifierRecoveries.length}`,
+      `- Carrier-phrase gaps: ${review.carrierPhraseGaps.length}`,
+      `- Handoff-required patterns: ${review.handoffRequired.length}`,
+      '',
+      '*Top Patterns*',
+      ...(review.groupedPatterns.length > 0
+        ? review.groupedPatterns.slice(0, 10).flatMap((item) => [
+            `- ${item.utterance} / family=${item.family} / route=${item.routeOutcome} / blocker=${item.blockerClass} / attempts=${item.attempts} / latest=${item.latestAt}`,
+            `  suggestion: ${item.operatorHint}`,
+          ])
+        : ['- none']),
+    ];
+    process.stdout.write(`${lines.join('\n')}\n`);
+    return;
+  }
+
   const signedRequestStatePath = getAlexaLastSignedRequestStatePath();
   const previousSignedRequestState = fs.existsSync(signedRequestStatePath)
     ? fs.readFileSync(signedRequestStatePath, 'utf8')
@@ -157,27 +191,43 @@ async function main(): Promise<void> {
         envelope: buildBaseEnvelope(),
       },
       {
-        label: 'Forgetting',
-        envelope: buildIntentEnvelope('WhatAmIForgettingIntent'),
+        label: 'Fallback recovery',
+        envelope: buildIntentEnvelope('ConversationControlIntent', {
+          controlText: 'that',
+        }),
+      },
+      {
+        label: 'Guidance',
+        envelope: buildIntentEnvelope('CompanionGuidanceIntent', {
+          guidanceText: 'am i forgetting',
+        }),
       },
       {
         label: 'Anything else',
-        envelope: buildIntentEnvelope('AnythingElseIntent'),
+        envelope: buildIntentEnvelope('ConversationControlIntent'),
       },
       {
         label: 'Candace follow-up',
-        envelope: buildIntentEnvelope('ConversationalFollowupIntent', {
-          followupText: 'what about Candace',
+        envelope: buildIntentEnvelope('PeopleHouseholdIntent', {
+          subject: 'Candace',
         }),
       },
       {
         label: 'Tonight',
-        envelope: buildIntentEnvelope('EveningResetIntent'),
+        envelope: buildIntentEnvelope('CompanionGuidanceIntent', {
+          guidanceText: 'should i remember tonight',
+        }),
       },
       {
         label: 'Directness',
-        envelope: buildIntentEnvelope('MemoryControlIntent', {
-          memoryCommand: 'a little more direct',
+        envelope: buildIntentEnvelope('ConversationControlIntent', {
+          controlText: 'a little more direct',
+        }),
+      },
+      {
+        label: 'Open ask',
+        envelope: buildIntentEnvelope('OpenAskIntent', {
+          query: 'meal delivery options for this week',
         }),
       },
     ];
@@ -207,6 +257,13 @@ async function main(): Promise<void> {
       );
       process.stdout.write(
         `STATE: ${state?.subjectKind || 'none'} / ${state?.summaryText || 'none'}\n`,
+      );
+      process.stdout.write(
+        `FRAME: family=${state?.subjectData.lastIntentFamily || 'none'} / route=${
+          state?.subjectData.lastRouteOutcome || 'none'
+        } / subject=${state?.subjectData.activeSubjectLabel || 'none'} / utterance=${
+          state?.subjectData.lastUserUtterance || 'none'
+        }\n`,
       );
       process.stdout.write(
         `COMPANION: ${dailyContext?.mode || 'none'} / ${

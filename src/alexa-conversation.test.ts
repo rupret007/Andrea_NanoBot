@@ -18,10 +18,10 @@ describe('alexa conversation state', () => {
   it('asks for a clearer anchor when a follow-up arrives with no Alexa context', () => {
     expect(
       resolveAlexaConversationFollowup('anything else', undefined).speech,
-    ).toContain("what you're forgetting");
+    ).toContain('plans, open loops, or a reminder');
     expect(
       resolveAlexaConversationFollowup('anything else', undefined).speech,
-    ).toContain("what's still open with Candace");
+    ).toContain("Say it again a little more simply");
   });
 
   it('stores, loads, and clears short-lived Alexa context', () => {
