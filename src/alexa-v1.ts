@@ -19,7 +19,7 @@ export const ALEXA_CONVERSATIONAL_FOLLOWUP_INTENT =
   'ConversationalFollowupIntent';
 export const ALEXA_MEMORY_CONTROL_INTENT = 'MemoryControlIntent';
 export const ALEXA_DEFAULT_REPROMPT =
-  "Ask what matters today, what's still open with Candace, what you should remember tonight, or say Andrea Pulse.";
+  "Ask what you're forgetting, what matters today, what's still open with Candace, or what to remember tonight.";
 
 export const ALEXA_V1_PERSONAL_INTENTS = new Set<string>([
   ALEXA_MY_DAY_INTENT,
@@ -75,7 +75,7 @@ export function buildAlexaPersonalPrompt(
     case ALEXA_TOMORROW_CALENDAR_INTENT:
       return `What does tomorrow look like? Mention timed events, whether it feels busy or open, and the main thing to keep in mind.${SPOKEN_STYLE_SUFFIX}`;
     case ALEXA_CANDACE_UPCOMING_INTENT:
-      return `What do Candace and I have coming up? Focus on shared plans, weekend logistics, family context, and anything useful to keep in mind or talk through.${SPOKEN_STYLE_SUFFIX}`;
+      return `What do Candace and I have coming up? Start with the most important human thing between us right now, then shared plans, weekend logistics, family context, or anything useful to talk through.${SPOKEN_STYLE_SUFFIX}`;
     case ALEXA_EVENING_RESET_INTENT:
       return `Give me an evening reset. Focus on what to wrap up today, what to remember tonight, and anything worth teeing up for tomorrow.${SPOKEN_STYLE_SUFFIX}`;
     case ALEXA_WHAT_AM_I_FORGETTING_INTENT:
@@ -160,15 +160,15 @@ export function buildAlexaOpenConversationPrompt(
 }
 
 export function buildAlexaHelpSpeech(assistantName: string): string {
-  return `This is ${assistantName}. Ask about today, Candace, tonight, or say Andrea Pulse. If you want more detail, I can send it to Telegram.`;
+  return `This is ${assistantName}. Ask what you're forgetting, what matters today, what's still open with Candace, or what to remember tonight. If you want the fuller version, I can send it to Telegram.`;
 }
 
 export function buildAlexaWelcomeSpeech(assistantName: string): string {
-  return `This is ${assistantName}. What do you want help with? We can look at today, what's still open with Candace, what you should remember tonight, or I can give you Andrea Pulse. If you want the fuller version, I can send it to Telegram.`;
+  return `This is ${assistantName}. Ask what you're forgetting, what's still open with Candace, what matters today, or what to remember tonight. If you want the fuller version, I can send it to Telegram.`;
 }
 
 export function buildAlexaFallbackSpeech(assistantName: string): string {
-  return `This is ${assistantName}. I did not quite catch that. Try asking what matters today, what's still open with Candace, or say Andrea Pulse.`;
+  return `This is ${assistantName}. I did not quite catch that. Try asking what you're forgetting, what's still open with Candace, or what to remember tonight.`;
 }
 
 export function buildReminderLeadTimeQuestion(assistantName: string): string {

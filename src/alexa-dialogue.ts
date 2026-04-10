@@ -41,19 +41,19 @@ function buildClarificationSpeech(
 ): string {
   const personName = state?.subjectData.personName?.trim();
   if (personName) {
-    return `I am not totally sure what you mean yet. Was that still about ${personName}, or something else?`;
+    return `I am not totally sure what you mean yet. Is that still about ${personName}, or something else?`;
   }
   if (state?.subjectKind === 'household') {
-    return 'I am not totally sure which part you mean. Was that about home stuff or what to remember tonight?';
+    return 'I am not totally sure which part you mean yet. Is that about home stuff, or what to remember tonight?';
   }
-  return 'I need one quick anchor first. Ask about today, Candace, or what to remember tonight.';
+  return "Give me one quick anchor first. Ask what you're forgetting, what's still open with Candace, or what to remember tonight.";
 }
 
 function buildBlockedRouteSpeech(normalized: string): string {
   if (/\b(cursor|runtime|job|agent|repo|repository|code|branch|commit)\b/i.test(normalized)) {
-    return 'I can help with personal planning, reminders, messages, and home stuff here. For code or work-cockpit controls, use Telegram.';
+    return 'I can help here with planning, reminders, messages, and home stuff. For code or system controls, Telegram is the better place.';
   }
-  return 'I can help with personal planning, reminders, messages, and household follow-through here. For heavier system controls, use Telegram.';
+  return 'I can help here with planning, reminders, messages, and household follow-through. For bigger system controls, Telegram is the better place.';
 }
 
 export function planAlexaDialogueTurn(

@@ -198,7 +198,7 @@ export function resolveAlexaConversationFollowup(
     return {
       ok: false,
       speech:
-        'I need one quick anchor first. Ask about today, Candace, or what to remember tonight.',
+        "Give me one quick anchor first. Ask what you're forgetting, what's still open with Candace, or what to remember tonight.",
     };
   }
 
@@ -220,8 +220,8 @@ export function resolveAlexaConversationFollowup(
       : {
           ok: false,
           speech: state.subjectData.personName
-            ? `I am not quite sure which part you mean. Was that still about ${state.subjectData.personName}, or something else?`
-            : 'I am not quite sure which part you mean yet. Please say it a little more directly.',
+            ? `I am not quite sure which part you mean yet. Is that still about ${state.subjectData.personName}, or something else?`
+            : 'I am not quite sure which part you mean yet. Say a little more, or ask it a different way.',
         };
 
   if (/^(anything else|anything more|what else)\b/i.test(normalized)) {
@@ -370,7 +370,7 @@ export function resolveAlexaConversationFollowup(
   return {
     ok: false,
     speech: state.subjectData.personName
-      ? `I am not quite sure which part you mean. You can ask what is still open with ${state.subjectData.personName}, say more, or ask it a different way.`
-      : 'I did not quite get that follow-up. You can say anything else, say more, or ask it a different way.',
+      ? `I am not quite sure which part you mean yet. You can ask what is still open with ${state.subjectData.personName}, say more, or ask it a different way.`
+      : 'I did not catch that follow-up yet. You can say anything else, say more, or ask it a different way.',
   };
 }

@@ -146,10 +146,11 @@ describe('command surface docs', () => {
     expect(alexaGuide).toContain('services:status');
     expect(alexaGuide).not.toContain('Alexa is now live-proven on this host');
 
+    expect(bluebubblesGuide).toContain('live_proven');
     expect(bluebubblesGuide).toContain('degraded_but_usable');
-    expect(docsIndex).toContain('degraded-but-usable');
+    expect(docsIndex).toContain('BlueBubbles is status-led on this host: it is now `live_proven`');
     expect(runbook).toContain(
-      'Alexa is currently `live_proven` on this host while a fresh handled Andrea custom-skill proof remains in the 24-hour window',
+      'Alexa listener, OAuth, public ingress, and pinned Node 22 are healthy; Alexa is status-led on this host and should return to `live_proven` only after a fresh handled Andrea custom-skill proof is recorded again',
     );
     expect(runbook).toContain(
       'after restart, operator surfaces may credit that Alexa proof either from the persisted handled signed-request markers',

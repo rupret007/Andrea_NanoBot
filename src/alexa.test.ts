@@ -740,6 +740,17 @@ describe('createAlexaSkill', () => {
     expect(extractSpeechText(response)).toContain('free stretch');
   });
 
+  it('nudges the user back to a clear anchor when anything else has no Alexa context yet', async () => {
+    const skill = createAlexaSkill(buildConfig());
+    const response = await skill.invoke(buildIntentEnvelope('AnythingElseIntent'));
+
+    expect(extractSpeechText(response)).toContain(
+      "Start with what you want to check",
+    );
+    expect(extractSpeechText(response)).toContain("what you're forgetting");
+    expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
+  });
+
   it('maps conversational follow-ups like say more onto the current Alexa context', async () => {
     mockedBuildDailyCompanionResponse
       .mockResolvedValueOnce(
@@ -1625,7 +1636,9 @@ describe('createAlexaSkill', () => {
       }),
     );
 
-    expect(extractSpeechText(response)).toContain('use Telegram');
+    expect(extractSpeechText(response)).toContain(
+      'Telegram is the better place',
+    );
     expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
   });
 });

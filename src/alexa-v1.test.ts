@@ -75,19 +75,27 @@ describe('alexa v1 prompt mapping', () => {
 
 describe('alexa v1 speech helpers', () => {
   it('keeps help and welcome copy short and voice-first', () => {
-    expect(buildAlexaHelpSpeech('Andrea')).toContain('Ask about today, Candace');
-    expect(buildAlexaHelpSpeech('Andrea')).toContain('Andrea Pulse');
+    expect(buildAlexaHelpSpeech('Andrea')).toContain("what you're forgetting");
+    expect(buildAlexaHelpSpeech('Andrea')).toContain("what's still open with Candace");
     expect(buildAlexaHelpSpeech('Andrea')).toContain('Telegram');
+    expect(buildAlexaHelpSpeech('Andrea')).not.toContain('Andrea Pulse');
     expect(buildAlexaWelcomeSpeech('Andrea')).toContain(
       'This is Andrea.',
     );
     expect(buildAlexaWelcomeSpeech('Andrea')).toContain('fuller version');
+    expect(buildAlexaWelcomeSpeech('Andrea')).toContain(
+      "what's still open with Candace",
+    );
     expect(buildAlexaFallbackSpeech('Andrea')).toContain(
       'did not quite catch that',
+    );
+    expect(buildAlexaFallbackSpeech('Andrea')).toContain(
+      "what you're forgetting",
     );
     expect(ALEXA_DEFAULT_REPROMPT).toContain(
       "what's still open with Candace",
     );
+    expect(ALEXA_DEFAULT_REPROMPT).toContain("what you're forgetting");
   });
 
   it('builds short clarification and confirmation questions', () => {

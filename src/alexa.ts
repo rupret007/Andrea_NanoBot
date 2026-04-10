@@ -2697,7 +2697,7 @@ export function createAlexaSkill(
       return handlerInput.responseBuilder
         .speak(
           plan.clarificationSpeech ||
-            'I need one quick anchor first. Ask about today, Candace, or what to remember tonight.',
+            "Give me one quick anchor first. Ask what you're forgetting, what's still open with Candace, or what to remember tonight.",
         )
         .reprompt(DEFAULT_ALEXA_REPROMPT)
         .getResponse();
@@ -3090,7 +3090,7 @@ export function createAlexaSkill(
           });
           return handlerInput.responseBuilder
             .speak(
-              'I can do that once we have a little more context. Start with what you want to know first.',
+              "Start with what you want to check, like what you're forgetting, what matters today, or what to remember tonight.",
             )
             .reprompt(DEFAULT_ALEXA_REPROMPT)
             .getResponse();
@@ -3751,7 +3751,7 @@ export function createAlexaSkill(
           });
           return handlerInput.responseBuilder
             .speak(
-              'You can say remember this, what do you remember about me, why did you say that, or be more direct.',
+              'You can say be more direct, remember this, or ask why I said that.',
             )
             .reprompt(DEFAULT_ALEXA_REPROMPT)
             .addElicitSlotDirective('memoryCommand', requestIntent)

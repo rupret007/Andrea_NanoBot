@@ -691,7 +691,7 @@ export function handlePersonalizationCommand(
     return {
       handled: true,
       responseText:
-        'Sure. I can keep my answers shorter and more direct by default.',
+        'Okay. I will keep my answers shorter and more direct.',
       referencedFactId: fact.id,
     };
   }
