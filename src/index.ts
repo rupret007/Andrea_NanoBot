@@ -4820,6 +4820,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             return true;
           }
           clearPendingActionReminderState(chatJid);
+          if (continued.kind === 'none') {
+            return false;
+          }
           if (continued.kind === 'created_reminder') {
             createTask(continued.task);
             syncOutcomeFromReminderTask(continued.task, {
@@ -4831,6 +4834,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               now,
             });
             refreshTaskSnapshots(registeredGroups);
+            if (continued.state) {
+              setPendingActionReminderState(chatJid, continued.state);
+            }
             if (continued.actionContext) {
               setActionLayerContext(chatJid, continued.actionContext);
             }
@@ -4981,6 +4987,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           now,
         });
         refreshTaskSnapshots(registeredGroups);
+        if (actionResult.state) {
+          setPendingActionReminderState(chatJid, actionResult.state);
+        } else {
+          clearPendingActionReminderState(chatJid);
+        }
         if (actionResult.actionContext) {
           setActionLayerContext(chatJid, actionResult.actionContext);
         }
@@ -5933,6 +5944,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     getPendingActionReminderState(chatJid) ||
     getPendingActionDraftState(chatJid),
   );
+  const freshProtectedActionLayerIntent =
+    requestPolicy.route === 'protected_assistant'
+      ? planActionLayerIntent(lastContent)
+      : null;
+  const shouldPreferProtectedReminderCapture =
+    freshProtectedActionLayerIntent?.kind === 'capture_reminder' &&
+    Boolean(freshProtectedActionLayerIntent.explicitTopic);
 
   if (hasPendingActionLayerContinuation) {
     if (
@@ -5940,6 +5958,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         requestPolicy.route === 'direct_assistant' ? 'direct' : 'protected',
       )
     ) {
+      return true;
+    }
+  }
+
+  if (shouldPreferProtectedReminderCapture) {
+    if (await tryHandleLocalActionLayer('protected')) {
       return true;
     }
   }

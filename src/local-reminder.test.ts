@@ -138,4 +138,20 @@ describe('planContextualReminder', () => {
     );
     expect(planned?.task.schedule_value).toBe('2026-04-01T17:00:00');
   });
+
+  it('supports time-before-day follow-up phrasing for action-layer reminder capture', () => {
+    const planned = planContextualReminder(
+      "I'd like it to be at 12:00PM today.",
+      "create an adoption barrier for Wintrust's new defect with agent login",
+      'main',
+      'bb:iMessage;-;jeffstory007@gmail.com',
+      new Date('2026-04-10T10:56:00-05:00'),
+    );
+
+    expect(planned).not.toBeNull();
+    expect(planned?.confirmation).toContain(
+      "today at 12pm to create an adoption barrier for Wintrust's new defect with agent login",
+    );
+    expect(planned?.task.schedule_value).toBe('2026-04-10T12:00:00');
+  });
 });

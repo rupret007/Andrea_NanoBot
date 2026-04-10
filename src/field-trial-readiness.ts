@@ -5,6 +5,12 @@ import {
   resolveBlueBubblesConfig,
 } from './channels/bluebubbles.js';
 import { getAllChats, listMessageActionsForGroup, listRecentMessagesForChat } from './db.js';
+import {
+  BLUEBUBBLES_CANONICAL_SELF_THREAD_JID,
+  canonicalizeBlueBubblesSelfThreadJid,
+  expandBlueBubblesLogicalSelfThreadJids,
+  isBlueBubblesSelfThreadAliasJid,
+} from './bluebubbles-self-thread.js';
 import { readEnvFile } from './env.js';
 import {
   buildGoogleCalendarBlockedProofSurface,
@@ -124,6 +130,35 @@ function pickMostRecentBlueBubblesChat(
     }
   }
   return best ? { chatJid: best.chatJid, at: best.at } : null;
+}
+
+function canonicalizeBlueBubblesProofCandidate(
+  candidate: {
+    chatJid: string | null | undefined;
+    at: string | null | undefined;
+  },
+): {
+  chatJid: string | null;
+  at: string | null | undefined;
+} {
+  return {
+    chatJid: canonicalizeBlueBubblesSelfThreadJid(candidate.chatJid),
+    at: candidate.at,
+  };
+}
+
+function listRecentMessagesForBlueBubblesProofChat(
+  proofChatJid: string | null,
+  limit: number,
+): Array<ReturnType<typeof listRecentMessagesForChat>[number]> {
+  if (!proofChatJid) return [];
+  const scopedChats = expandBlueBubblesLogicalSelfThreadJids(proofChatJid);
+  const merged = scopedChats.flatMap((chatJid) => listRecentMessagesForChat(chatJid, limit));
+  return merged
+    .sort(
+      (left, right) => Date.parse(right.timestamp || '') - Date.parse(left.timestamp || ''),
+    )
+    .slice(0, limit);
 }
 
 function isLikelyBlueBubblesDraftReply(content: string | null | undefined): boolean {
@@ -778,7 +813,7 @@ function buildBlueBubblesTruth(
   });
   const successCounts = new Map<string, number>();
   for (const event of recentSuccesses) {
-    const chatJid = event.chatJid || '';
+    const chatJid = canonicalizeBlueBubblesSelfThreadJid(event.chatJid) || '';
     if (!chatJid) continue;
     successCounts.set(chatJid, (successCounts.get(chatJid) || 0) + 1);
   }
@@ -790,10 +825,14 @@ function buildBlueBubblesTruth(
     limit: 80,
   })
     .map((action) => {
-      const proofChatJid = resolveBlueBubblesMessageActionProofTarget(action);
+      const observedProofChatJid = resolveBlueBubblesMessageActionProofTarget(action);
+      const proofChatJid =
+        canonicalizeBlueBubblesSelfThreadJid(observedProofChatJid) ||
+        observedProofChatJid;
       const proofAt = Date.parse(action.lastActionAt || action.sentAt || '');
       return {
         action,
+        observedProofChatJid,
         proofChatJid,
         proofAt,
       };
@@ -843,19 +882,19 @@ function buildBlueBubblesTruth(
 
   const activeSelfThreadChat =
     pickMostRecentBlueBubblesChat([
-      {
+      canonicalizeBlueBubblesProofCandidate({
         chatJid: recentEngagement?.chatJid || null,
         at: recentEngagement?.completedAt || recentEngagement?.startedAt || null,
-      },
-      {
+      }),
+      canonicalizeBlueBubblesProofCandidate({
         chatJid: lastOutboundChatJid,
         at: lastOutboundObservedAt,
-      },
+      }),
       lastInboundWasSelfAuthored
-        ? {
+        ? canonicalizeBlueBubblesProofCandidate({
             chatJid: lastInboundChatJid,
             at: lastInboundObservedAt,
-          }
+          })
         : {
             chatJid: null,
             at: null,
@@ -863,37 +902,50 @@ function buildBlueBubblesTruth(
     ]) || null;
   const freshestObservedTrafficChat =
     pickMostRecentBlueBubblesChat([
-      {
+      canonicalizeBlueBubblesProofCandidate({
         chatJid: lastInboundChatJid,
         at: lastInboundObservedAt,
-      },
-      {
+      }),
+      canonicalizeBlueBubblesProofCandidate({
         chatJid: lastOutboundChatJid,
         at: lastOutboundObservedAt,
-      },
-      {
+      }),
+      canonicalizeBlueBubblesProofCandidate({
         chatJid: recentEngagement?.chatJid || null,
         at: recentEngagement?.completedAt || recentEngagement?.startedAt || null,
-      },
+      }),
     ]) || null;
   const activeProofChat = activeSelfThreadChat || freshestObservedTrafficChat;
   const proofChainChatJid =
-    liveProofChatJid || activeProofChat?.chatJid || recentEngagement?.chatJid || null;
-  const recentProofChainMessages = proofChainChatJid
-    ? listRecentMessagesForChat(proofChainChatJid, 8)
-    : [];
+    liveProofChatJid ||
+    activeProofChat?.chatJid ||
+    canonicalizeBlueBubblesSelfThreadJid(recentEngagement?.chatJid) ||
+    recentEngagement?.chatJid ||
+    null;
+  const recentProofChainMessages = listRecentMessagesForBlueBubblesProofChat(
+    proofChainChatJid,
+    8,
+  );
   const matchingProofChainMessageAction = proofChainChatJid
     ? recentMessageActionProofs.find(
         (entry) => entry.proofChatJid === proofChainChatJid,
       ) || null
     : null;
+  const draftLikeReplyMessage = matchingProofChainMessageAction
+    ? null
+    : recentProofChainMessages.find(
+        (message) =>
+          message.is_bot_message &&
+          isLikelyBlueBubblesDraftReply(message.content),
+      ) || null;
   const draftLikeReplyWithoutAction =
-    !matchingProofChainMessageAction &&
-    recentProofChainMessages.some(
-      (message) =>
-        message.is_bot_message &&
-        isLikelyBlueBubblesDraftReply(message.content),
-    );
+    !matchingProofChainMessageAction && Boolean(draftLikeReplyMessage);
+  const blueBubblesSelfThreadAliasDetail =
+    isBlueBubblesSelfThreadAliasJid(lastInboundChatJid) ||
+    isBlueBubblesSelfThreadAliasJid(lastOutboundChatJid) ||
+    isBlueBubblesSelfThreadAliasJid(recentEngagement?.chatJid)
+      ? ` Canonical self-thread: ${BLUEBUBBLES_CANONICAL_SELF_THREAD_JID}. Alias support stays enabled for bb:iMessage;-;jeffstory007@gmail.com.`
+      : '';
 
   const base: Omit<FieldTrialBlueBubblesTruth, keyof FieldTrialSurfaceTruth> = {
     configured: snapshot.configured,
@@ -947,12 +999,12 @@ function buildBlueBubblesTruth(
       recentMessageActionProofs[0]?.action.sentAt ||
       'none',
     messageActionProofDetail: matchingProofChainMessageAction
-      ? `Recent same-chat message action is recorded in ${matchingProofChainMessageAction.proofChatJid}.`
+      ? `Recent same-chat message action is recorded in ${matchingProofChainMessageAction.proofChatJid}.${blueBubblesSelfThreadAliasDetail}`
       : draftLikeReplyWithoutAction && proofChainChatJid
-        ? `Andrea drafted in ${proofChainChatJid}, but no fresh message-action record was created yet.`
+        ? `Andrea drafted in ${draftLikeReplyMessage?.chat_jid || proofChainChatJid}, but no fresh message-action record was created yet.${blueBubblesSelfThreadAliasDetail}`
       : recentMessageActionProofs.length > 0
-        ? `A recent BlueBubbles message-action decision exists in ${recentMessageActionProofs[0]!.proofChatJid}, but not in the same chat as the current proof chain.`
-        : 'No fresh BlueBubbles message-action decision is recorded yet.',
+        ? `A recent BlueBubbles message-action decision exists in ${recentMessageActionProofs[0]!.proofChatJid}, but not in the same chat as the current proof chain.${blueBubblesSelfThreadAliasDetail}`
+        : `No fresh BlueBubbles message-action decision is recorded yet.${blueBubblesSelfThreadAliasDetail}`,
   };
 
   if (

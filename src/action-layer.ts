@@ -20,6 +20,7 @@ import {
   type PlannedReminder,
 } from './local-reminder.js';
 import { buildVoiceReply, normalizeVoicePrompt } from './voice-ready.js';
+import { canonicalizeBlueBubblesSelfThreadJid } from './bluebubbles-self-thread.js';
 
 const DEFAULT_PENDING_TTL_MS = 30 * 60 * 1000;
 const CANCEL_PATTERN = /^(?:cancel|never mind|nevermind|stop|no)\b/i;
@@ -66,6 +67,11 @@ export interface PendingActionReminderState {
   version: 1;
   createdAt: string;
   label: string;
+  status?: 'awaiting_time' | 'created';
+  originChatJid?: string | null;
+  canonicalChatJid?: string | null;
+  confirmation?: string | null;
+  taskId?: string | null;
 }
 
 export interface PendingActionDraftState {
@@ -113,6 +119,7 @@ export type ActionLayerResult =
       confirmation: string;
       task: PlannedReminder['task'];
       actionContext: ActionLayerContextState | null;
+      state?: PendingActionReminderState;
     }
   | {
       kind: 'awaiting_draft_input';
@@ -129,11 +136,48 @@ function normalizeMessage(message: string): string {
     .replace(/[\u201C\u201D]/g, '"')
     .trim()
     .replace(
-      /^(?:(?:hi|hello|hey|thanks|thank you|ok|okay|please)[,!. ]+)*(?:andrea[,!. ]+)?/i,
+      /^(?:(?:hi|hello|hey|thanks|thank you|ok|okay|please)[,!. ]+)*(?:@?andrea[,!. ]+)?/i,
       '',
     )
     .trim()
     .replace(/\s+/g, ' ');
+}
+
+function hasExplicitReminderTimingTail(message: string): boolean {
+  return (
+    /\b(?:today|tomorrow|sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b(?:\s+(?:morning|afternoon|evening|tonight|at\b.*))?\s*[.?!]*$/i.test(
+      message,
+    ) ||
+    /\bat\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?(?:\s+(?:today|tomorrow|sunday|monday|tuesday|wednesday|thursday|friday|saturday))?\s*[.?!]*$/i.test(
+      message,
+    )
+  );
+}
+
+function buildPendingReminderState(params: {
+  label: string;
+  now: Date;
+  chatJid?: string | null;
+  status?: 'awaiting_time' | 'created';
+  confirmation?: string | null;
+  taskId?: string | null;
+}): PendingActionReminderState {
+  return {
+    version: 1,
+    createdAt: params.now.toISOString(),
+    label: params.label,
+    status: params.status || 'awaiting_time',
+    originChatJid: params.chatJid || null,
+    canonicalChatJid: canonicalizeBlueBubblesSelfThreadJid(params.chatJid) || null,
+    confirmation: params.confirmation || null,
+    taskId: params.taskId || null,
+  };
+}
+
+function isReminderConfirmationPrompt(message: string): boolean {
+  return /^(?:you get that|did you get that|you got that|got that|got it|you get it|did you get it|is that set|is that saved|sounds good|thanks|thank you)[?.! ]*$/i.test(
+    message,
+  );
 }
 
 function trimTrailingPunctuation(value: string): string {
@@ -191,6 +235,7 @@ export function planActionLayerIntent(
 ): ActionLayerIntent | null {
   const normalized = normalizeVoicePrompt(message);
   if (!normalized) return null;
+  const reminderNormalized = normalizeMessage(message);
 
   if (/^what can i knock out in my next free window\??$/i.test(normalized)) {
     return {
@@ -216,6 +261,21 @@ export function planActionLayerIntent(
       explicitRecipient: null,
       explicitTopic: null,
     };
+  }
+
+  const directReminderMatch = reminderNormalized.match(
+    /^(?:remind me|help me remember)\s+to\s+(.+?)\s*$/i,
+  );
+  if (directReminderMatch) {
+    const reminderTopic = trimTrailingPunctuation(directReminderMatch[1] || '');
+    if (reminderTopic && !hasExplicitReminderTimingTail(reminderTopic)) {
+      return {
+        kind: 'capture_reminder',
+        reminderTimeHint: null,
+        explicitRecipient: null,
+        explicitTopic: reminderTopic,
+      };
+    }
   }
 
   const noteToMatch = normalized.match(
@@ -1176,6 +1236,44 @@ export function advancePendingActionReminder(
 ): ActionLayerResult {
   const now = deps.now || new Date();
   const normalized = normalizeMessage(message);
+  if (state.status === 'created') {
+    if (!normalized) {
+      return {
+        kind: 'reply',
+        reply:
+          state.confirmation ||
+          `Yes. I'll remind you to ${state.label}.`,
+        actionContext: buildActionSuggestionContext(state.label, now),
+        activeEventContext: null,
+      };
+    }
+    if (isReminderConfirmationPrompt(normalized)) {
+      return {
+        kind: 'reply',
+        reply:
+          state.confirmation ||
+          `Yes. I'll remind you to ${state.label}.`,
+        actionContext: buildActionSuggestionContext(state.label, now),
+        activeEventContext: null,
+      };
+    }
+    const repeatedReminder = planContextualReminder(
+      normalized,
+      state.label,
+      deps.groupFolder,
+      deps.chatJid,
+      now,
+    );
+    if (repeatedReminder) {
+      return {
+        kind: 'reply',
+        reply: state.confirmation || repeatedReminder.confirmation,
+        actionContext: buildActionSuggestionContext(state.label, now),
+        activeEventContext: null,
+      };
+    }
+    return { kind: 'none' };
+  }
   if (!normalized) {
     return {
       kind: 'awaiting_reminder_time',
@@ -1213,6 +1311,14 @@ export function advancePendingActionReminder(
     confirmation: plannedReminder.confirmation,
     task: plannedReminder.task,
     actionContext: buildActionSuggestionContext(state.label, now),
+    state: buildPendingReminderState({
+      label: state.label,
+      now,
+      chatJid: state.originChatJid || deps.chatJid,
+      status: 'created',
+      confirmation: plannedReminder.confirmation,
+      taskId: plannedReminder.task.id,
+    }),
   };
 }
 
@@ -1406,7 +1512,10 @@ export async function buildActionLayerResponse(
       };
     }
     case 'capture_reminder': {
-      if (!actionReference) {
+      const reminderLabel =
+        intent.explicitTopic ||
+        (actionReference ? buildCaptureReminderLabel(actionReference, now) : null);
+      if (!reminderLabel) {
         return {
           kind: 'reply',
           reply: 'What do you want me to save as a reminder?',
@@ -1414,7 +1523,6 @@ export async function buildActionLayerResponse(
           activeEventContext: null,
         };
       }
-      const reminderLabel = buildCaptureReminderLabel(actionReference, now);
       if (intent.reminderTimeHint && deps.groupFolder && deps.chatJid) {
         const plannedReminder = planContextualReminder(
           intent.reminderTimeHint,
@@ -1428,18 +1536,27 @@ export async function buildActionLayerResponse(
             kind: 'created_reminder',
             confirmation: plannedReminder.confirmation,
             task: plannedReminder.task,
-            actionContext: actionReference,
+            actionContext:
+              actionReference || buildActionSuggestionContext(reminderLabel, now),
+            state: buildPendingReminderState({
+              label: reminderLabel,
+              now,
+              chatJid: deps.chatJid,
+              status: 'created',
+              confirmation: plannedReminder.confirmation,
+              taskId: plannedReminder.task.id,
+            }),
           };
         }
       }
       return {
         kind: 'awaiting_reminder_time',
         message: `I can save a reminder for ${reminderLabel}. What time should I use?`,
-        state: {
-          version: 1,
-          createdAt: now.toISOString(),
+        state: buildPendingReminderState({
           label: reminderLabel,
-        },
+          now,
+          chatJid: deps.chatJid,
+        }),
       };
     }
     case 'draft_message':

@@ -247,6 +247,39 @@ describe('buildActionLayerResponse', () => {
     expect(response.message).toContain('come back to Ship docs');
   });
 
+  it('captures a direct reminder ask before the broader assistant path and keeps BlueBubbles self-thread linkage', async () => {
+    const fetchImpl = createGoogleCalendarFetchMock({
+      eventsByCalendar: { primary: { items: [] } },
+    });
+
+    const response = await buildActionLayerResponse(
+      "@Andrea remind me to create an adoption barrier for Wintrust's new defect with agent login.",
+      {
+        now: new Date('2026-04-10T10:56:00-05:00'),
+        timeZone: 'America/Chicago',
+        env: baseEnv,
+        fetchImpl,
+        groupFolder: 'main',
+        chatJid: 'bb:iMessage;-;jeffstory007@gmail.com',
+      },
+    );
+
+    expect(response.kind).toBe('awaiting_reminder_time');
+    if (response.kind !== 'awaiting_reminder_time') return;
+    expect(response.message).toContain(
+      "create an adoption barrier for Wintrust's new defect with agent login",
+    );
+    expect(response.state.label).toContain(
+      "create an adoption barrier for Wintrust's new defect with agent login",
+    );
+    expect(response.state.originChatJid).toBe(
+      'bb:iMessage;-;jeffstory007@gmail.com',
+    );
+    expect(response.state.canonicalChatJid).toBe(
+      'bb:iMessage;-;+14695405551',
+    );
+  });
+
   it('leaves broad summarize-my-actions asks to the shared chief-of-staff layer', async () => {
     const fetchImpl = createGoogleCalendarFetchMock({
       eventsByCalendar: {
@@ -518,6 +551,78 @@ describe('action-layer pending flows', () => {
       'today at 5pm to prepare for Google timed proof',
     );
     expect(result.task.schedule_value).toBe('2026-04-01T17:00:00');
+  });
+
+  it('keeps the reminder subject on a natural time-only follow-up and stores an idempotent created state', () => {
+    const result = advancePendingActionReminder(
+      "I'd like it to be at 12:00PM today.",
+      {
+        version: 1,
+        createdAt: '2026-04-10T10:55:00.000Z',
+        label: "create an adoption barrier for Wintrust's new defect with agent login",
+        originChatJid: 'bb:iMessage;-;jeffstory007@gmail.com',
+        canonicalChatJid: 'bb:iMessage;-;+14695405551',
+      },
+      {
+        groupFolder: 'main',
+        chatJid: 'bb:iMessage;-;jeffstory007@gmail.com',
+        now: new Date('2026-04-10T10:56:00-05:00'),
+      },
+    );
+
+    expect(result.kind).toBe('created_reminder');
+    if (result.kind !== 'created_reminder') return;
+    expect(result.confirmation).toContain(
+      "today at 12pm to create an adoption barrier for Wintrust's new defect with agent login",
+    );
+    expect(result.state?.status).toBe('created');
+    expect(result.state?.confirmation).toContain(
+      "today at 12pm to create an adoption barrier for Wintrust's new defect with agent login",
+    );
+  });
+
+  it('treats duplicate timing replies and "you get that" follow-ups as idempotent reminder confirmation', () => {
+    const createdState = {
+      version: 1 as const,
+      createdAt: '2026-04-10T10:56:00.000Z',
+      label: "create an adoption barrier for Wintrust's new defect with agent login",
+      status: 'created' as const,
+      originChatJid: 'bb:iMessage;-;jeffstory007@gmail.com',
+      canonicalChatJid: 'bb:iMessage;-;+14695405551',
+      confirmation:
+        "Okay. I'll remind you today at 12pm to create an adoption barrier for Wintrust's new defect with agent login.",
+      taskId: 'task-proof-1',
+    };
+
+    const duplicateTiming = advancePendingActionReminder(
+      "I'd like it to be at 12:00PM today.",
+      createdState,
+      {
+        groupFolder: 'main',
+        chatJid: 'bb:iMessage;-;jeffstory007@gmail.com',
+        now: new Date('2026-04-10T10:57:00-05:00'),
+      },
+    );
+    expect(duplicateTiming.kind).toBe('reply');
+    if (duplicateTiming.kind !== 'reply') return;
+    expect(duplicateTiming.reply).toContain(
+      "today at 12pm to create an adoption barrier for Wintrust's new defect with agent login",
+    );
+
+    const confirmation = advancePendingActionReminder(
+      '@andrea you get that?',
+      createdState,
+      {
+        groupFolder: 'main',
+        chatJid: 'bb:iMessage;-;jeffstory007@gmail.com',
+        now: new Date('2026-04-10T10:58:00-05:00'),
+      },
+    );
+    expect(confirmation.kind).toBe('reply');
+    if (confirmation.kind !== 'reply') return;
+    expect(confirmation.reply).toContain(
+      "today at 12pm to create an adoption barrier for Wintrust's new defect with agent login",
+    );
   });
 
   it('keeps asking when the timing reply is still incomplete', () => {

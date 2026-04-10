@@ -613,7 +613,10 @@ describe('field-trial readiness', () => {
     expect(truth.bluebubbles.proofState).toBe('live_proven');
     expect(truth.bluebubbles.messageActionProofState).toBe('fresh');
     expect(truth.bluebubbles.messageActionProofChatJid).toBe(
-      'bb:iMessage;-;jeffstory007@gmail.com',
+      'bb:iMessage;-;+14695405551',
+    );
+    expect(truth.bluebubbles.mostRecentEngagedChatJid).toBe(
+      'bb:iMessage;-;+14695405551',
     );
   });
 
@@ -1020,7 +1023,7 @@ describe('field-trial readiness', () => {
 
     expect(truth.bluebubbles.proofState).toBe('degraded_but_usable');
     expect(truth.bluebubbles.mostRecentEngagedChatJid).toBe(
-      'bb:iMessage;-;jeffstory007@gmail.com',
+      'bb:iMessage;-;+14695405551',
     );
     expect(truth.bluebubbles.mostRecentEngagedAt).toBe(
       '2026-04-10T00:11:29.973Z',
@@ -1030,8 +1033,11 @@ describe('field-trial readiness', () => {
     expect(truth.bluebubbles.messageActionProofDetail).toContain(
       'Andrea drafted in bb:iMessage;-;jeffstory007@gmail.com',
     );
+    expect(truth.bluebubbles.messageActionProofDetail).toContain(
+      'Canonical self-thread: bb:iMessage;-;+14695405551.',
+    );
     expect(truth.bluebubbles.detail).toContain(
-      'bb:iMessage;-;jeffstory007@gmail.com',
+      'bb:iMessage;-;+14695405551',
     );
   });
 

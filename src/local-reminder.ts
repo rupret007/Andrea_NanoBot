@@ -189,6 +189,11 @@ export function planContextualReminder(
   const explicitMatch = timingText.match(
     /^(?:(later)\s+)?(today|tomorrow|sunday|monday|tuesday|wednesday|thursday|friday|saturday)\s+at\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/i,
   );
+  const timeBeforeDayMatch = explicitMatch
+    ? null
+    : timingText.match(
+        /^(?:i(?: would|'d)\s+like\s+it\s+to\s+be\s+|set it for\s+|for\s+)?(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s+(today|tomorrow|sunday|monday|tuesday|wednesday|thursday|friday|saturday)\s*[.?!]*$/i,
+      );
   if (explicitMatch) {
     const [, laterModifier, dayPhrase, hourText, minuteText, meridiem] =
       explicitMatch;
@@ -212,6 +217,41 @@ export function planContextualReminder(
         ) {
           return null;
         }
+        if (
+          dayPhrase.toLowerCase() === 'today' &&
+          scheduledAt.getTime() <= now.getTime()
+        ) {
+          return null;
+        }
+        const displayHour = hour24 % 12 || 12;
+        const suffix = hour24 >= 12 ? 'pm' : 'am';
+        const timeLabel =
+          minute === 0
+            ? `${displayHour}${suffix}`
+            : `${displayHour}:${pad(minute)}${suffix}`;
+        timing = {
+          scheduledAt,
+          whenLabel: formatExplicitWhenLabel(dayPhrase, timeLabel, now),
+        };
+      }
+    }
+  }
+
+  if (!timing && timeBeforeDayMatch) {
+    const [, hourText, minuteText, meridiem, dayPhrase] = timeBeforeDayMatch;
+    const rawHour = Number.parseInt(hourText, 10);
+    const minute = minuteText ? Number.parseInt(minuteText, 10) : 0;
+    if (
+      Number.isInteger(rawHour) &&
+      Number.isInteger(minute) &&
+      minute >= 0 &&
+      minute <= 59
+    ) {
+      const hour24 = meridiem
+        ? normalizeMeridiem(rawHour, meridiem)
+        : inferClockHourWithoutMeridiem(rawHour);
+      if (hour24 !== null) {
+        const scheduledAt = resolveReminderDate(dayPhrase, hour24, minute, now);
         if (
           dayPhrase.toLowerCase() === 'today' &&
           scheduledAt.getTime() <= now.getTime()
