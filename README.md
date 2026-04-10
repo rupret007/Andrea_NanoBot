@@ -43,6 +43,7 @@
   <a href="docs/CROSS_CHANNEL_HANDOFFS.md">Cross-Channel Handoffs</a>&nbsp; | &nbsp;
   <a href="docs/BLUEBUBBLES_CHANNEL_PREP.md">BlueBubbles</a>&nbsp; | &nbsp;
   <a href="docs/CHANNEL_COMMANDS_AND_ONBOARDING.md">Chat Commands</a>&nbsp; | &nbsp;
+  <a href="docs/COMMAND_SURFACE_REFERENCE.md">Command Surface</a>&nbsp; | &nbsp;
   <a href="docs/BACKEND_LANES_ARCHITECTURE.md">Backend Lanes</a>&nbsp; | &nbsp;
   <a href="docs/ASSISTANT_CAPABILITY_GRAPH.md">Capability Graph</a>&nbsp; | &nbsp;
   <a href="docs/DEMO_CHECKLIST.md">Demo Checklist</a>&nbsp; | &nbsp;
@@ -79,8 +80,9 @@ Treat that flagship-flow suite and harness as the main product proof. The subsys
 Current host truth for the Windows field-trial machine:
 
 - Telegram is the richest **live-proven** surface.
-- Alexa is **live-proven** on this host while one fresh handled signed `IntentRequest` remains within the 24-hour proof window.
-- BlueBubbles is **near-live only on this PC**: Andrea can reach the live server and has a registered webhook, but it still needs one fresh same-thread inbound -> reply -> follow-up roundtrip plus one same-thread message-action proof leg to count as live-proven.
+- Google Calendar scheduling is **live-proven** on this host.
+- Alexa is currently **near_live_only** on this host until a fresh handled signed Andrea custom-skill `IntentRequest` is recorded.
+- BlueBubbles is currently **degraded_but_usable** on this host: transport, webhook, and bounded same-thread chat are working, but one fresh same-thread `message_action` decision is still required before it counts as live-proven.
 - the local Codex/OpenAI runtime backend and the unified `/cursor` work cockpit are live on this host
 - outward research and Telegram image generation are now **live-proven** on this host through the direct OpenAI provider path
 - the local Anthropic-compatible LiteLLM gateway is a separate internal compatibility lane; if it degrades later, operator surfaces should report that separately from direct OpenAI proof
@@ -112,7 +114,7 @@ The product is conversation-first in Telegram, with deeper operator tooling behi
 
 What normal users should expect:
 
-- reminders, follow-ups, and simple task help
+- reminders, follow-ups, calendar help, and simple task support
 - research, summaries, and project help
 - fast direct replies for simple questions, playful prompts, and basic math
 - warm ordinary chat plus graceful degraded replies when deeper runtime or live research is unavailable
@@ -247,7 +249,11 @@ Alexa is now a bounded companion channel for Andrea rather than a novelty skill.
 - personalization remains explicit and consent-based
 - use Node `22.22.2` for truthful Alexa validation on the operator host
 
-Alexa is now live-proven on this host. As of April 7, 2026, the local listener, OAuth flow, public ingress, and pinned Node 22 runtime are healthy, and Andrea has a fresh handled signed `IntentRequest` recorded for `WhatAmIForgettingIntent` through `local_companion`.
+Alexa proof on this host is now status-led:
+
+- treat `npm run services:status`, `npm run debug:status`, and `npm run setup -- --step verify` as the live authority
+- Alexa only becomes `live_proven` when a fresh handled signed Andrea custom-skill `IntentRequest` is recorded
+- if that handled proof ages out or a fresh live turn has not been recorded on this host, Alexa should read as `near_live_only`
 
 When you want to refresh Alexa proof freshness, this is the validation flow:
 
@@ -287,7 +293,7 @@ BlueBubbles is now a real bounded Andrea messaging channel, not just prep work.
 - richer details still hand off explicitly to Telegram when that is the better surface
 - BlueBubbles does **not** become a main control chat and does not expose work-cockpit or admin/runtime controls
 
-On this host, BlueBubbles is now near-live: Andrea has the live `BLUEBUBBLES_*` configuration loaded, the server is reachable, and Andrea's public webhook is registered, but one real same-host inbound -> reply -> follow-up roundtrip still needs to be reproved.
+On this host, BlueBubbles is now `degraded_but_usable`: Andrea has the live `BLUEBUBBLES_*` configuration loaded, the server is reachable, Andrea's public webhook is registered, and bounded same-thread chat is working, but one real same-thread `message_action` decision still needs to be recorded before BlueBubbles counts as `live_proven`.
 
 See [docs/BLUEBUBBLES_CHANNEL_PREP.md](docs/BLUEBUBBLES_CHANNEL_PREP.md) for the live V1 scope, config, webhook/send model, and exact current limits.
 

@@ -38,6 +38,8 @@ Operators own:
 - startup, restart, verify, and troubleshooting
 - release validation and docs accuracy
 
+For the full slash-command, hidden button-backing, and operator-script inventory, use [COMMAND_SURFACE_REFERENCE.md](COMMAND_SURFACE_REFERENCE.md).
+
 ## Rituals And Follow-Through
 
 Andrea now has a bounded rituals layer for day rhythm and carryover guidance.
@@ -350,6 +352,8 @@ If `/cursor_status` says `Cursor-backed runtime route: not configured`, that doe
 ## Operator-Only Commands
 
 Keep these in the registered main control chat shown by `registered_main_chat_jid` in `npm run services:status`:
+
+If you need the formal full inventory, including hidden `/cursor-ui *` and `/bundle-*` backing commands, use [COMMAND_SURFACE_REFERENCE.md](COMMAND_SURFACE_REFERENCE.md).
 
 - Readiness and reference:
   - `/cursor`

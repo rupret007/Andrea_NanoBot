@@ -126,14 +126,11 @@ Current truthful host status:
 - live HTTPS ingress must still be current, reachable, and correctly wired in the Alexa Developer Console
 - if the live HTTPS host is an `ngrok` `*.ngrok-free.dev` tunnel, the Alexa endpoint SSL type must be set to the wildcard certificate option
 - issued access tokens resolve to `groupFolder=main`
-- Alexa is now live-proven on this host from a fresh handled signed `IntentRequest`
-- Alexa only counts as **live-proven** when the last handled signed `IntentRequest` is within **24 hours**
+- Alexa proof on this host is status-led rather than a static doc claim
+- Alexa only counts as **live_proven** when the last handled signed `IntentRequest` is within **24 hours**
 - pilot-mode operator surfaces (`services:status`, `setup verify`, `debug:status`, `debug:pilot`) should classify Alexa as `live_proven` while that proof stays fresh, and intentionally drop it back to `near_live_only` if the proof becomes stale
-- current proof signal on this host:
-  - `alexa_last_signed_request_type=IntentRequest`
-  - `alexa_last_signed_intent=WhatAmIForgettingIntent`
-  - `alexa_last_signed_response_source=local_companion`
-  - `alexa_live_proof=live_proven`
+- if there is no fresh handled signed custom-skill turn on this host, Alexa should read as `near_live_only`
+- use current operator surfaces for the exact proof markers instead of treating this guide as the live authority
 
 ## 0D) Exact Live-Proof Rule
 
@@ -592,7 +589,7 @@ When the environment is configured, use this order:
 
 If you need one sentence for the current state, use this:
 
-- Alexa Companion Mode is now live-proven on this host; as of April 7, 2026 Andrea has a fresh handled signed `IntentRequest`, and operator surfaces will keep it live only while that proof remains within the 24-hour freshness window.
+- Alexa Companion Mode is status-led on this host: operator surfaces should show `live_proven` only while a fresh handled signed `IntentRequest` remains inside the 24-hour proof window, and otherwise should show `near_live_only`.
 
 ## 9) Incident Notes
 

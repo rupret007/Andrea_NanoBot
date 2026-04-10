@@ -19,13 +19,15 @@ Use this shorthand when you need the current host story fast:
 
 - **live-proven on this Windows host**
   - Telegram companion surface
-  - Alexa conversational surface, while a fresh handled signed `IntentRequest` remains within the 24-hour proof window
+  - Google Calendar scheduling
   - unified work cockpit with Codex/OpenAI runtime
   - life-thread, communication-companion, mission, and chief-of-staff flows that ride on Telegram
   - outward research
   - Telegram image generation
 - **near-live only**
-- BlueBubbles on this PC, because Andrea can reach the live server and the webhook is registered, but one real same-host inbound -> reply -> follow-up roundtrip plus one same-thread message-action proof leg still needs to be reproved
+  - Alexa on this host until a fresh handled signed Andrea custom-skill `IntentRequest` is recorded
+- **degraded-but-usable**
+  - BlueBubbles on this PC, because Andrea can reach the live server, the webhook is registered, and bounded same-thread chat works, but one same-thread message-action proof leg still needs to be reproved
 - **externally blocked**
   - nothing currently in the BlueBubbles lane; if the live server, auth, or webhook wiring regresses, operator surfaces should report that exact blocker again
 
@@ -83,6 +85,7 @@ Use these when you are enabling or validating specific capabilities:
 | Feature                            | Read this                                                                |
 | ---------------------------------- | ------------------------------------------------------------------------ |
 | Telegram onboarding and command UX | [CHANNEL_COMMANDS_AND_ONBOARDING.md](CHANNEL_COMMANDS_AND_ONBOARDING.md) |
+| Formal command inventory           | [COMMAND_SURFACE_REFERENCE.md](COMMAND_SURFACE_REFERENCE.md)             |
 | Telegram operator live testing     | [TELEGRAM_OPERATOR_LIVE_TESTING.md](TELEGRAM_OPERATOR_LIVE_TESTING.md)   |
 | Approval Center / Action Bundles   | [ACTION_BUNDLES.md](ACTION_BUNDLES.md)                                   |
 | Delegation Rules / Safe Automation | [DELEGATION_RULES_AND_SAFE_AUTOMATION.md](DELEGATION_RULES_AND_SAFE_AUTOMATION.md) |
@@ -109,12 +112,12 @@ For the productized flagship-flow view specifically:
 
 For the default live demo, stay on Telegram conversation + direct replies + reminders/tasks + `/help` + `/cursor_status` unless you validated optional integrations that same day.
 
-Current Alexa truth:
+Current host-proof rule:
 
 - `Andrea_NanoBot` is the only canonical repo now; the older `ANDREA/nanoclaw` checkout is non-authoritative reference only
 - Telegram ordinary chat and the main flagship follow-through journeys were live-proven on this host on April 7, 2026
-- Alexa is now live-proven on this host from a fresh handled signed `WhatAmIForgettingIntent`; if that proof ages past 24 hours, operator surfaces intentionally downgrade it back to `near_live_only`
-- BlueBubbles is now near-live on this Windows host: the live `BLUEBUBBLES_*` configuration is loaded, the server is reachable, and the webhook is registered, but one real same-thread inbound -> reply -> follow-up roundtrip plus one same-thread message-action proof leg still needs to be reproved here
+- Alexa is status-led on this host: it is `live_proven` only while a fresh handled signed custom-skill intent remains inside the proof window, and otherwise should read as `near_live_only`
+- BlueBubbles is status-led on this host: it is `degraded_but_usable` while bounded same-thread chat works but the fresh same-thread `message_action` proof leg is still missing
 - outward-facing research and Telegram image generation are now live-proven on this host through the direct OpenAI provider path
 - the local Anthropic-compatible LiteLLM gateway remains a separate compatibility/runtime lane and should be reported separately if it degrades later
 

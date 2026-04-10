@@ -18,6 +18,14 @@ import {
   normalizeTelegramWebhookInfo,
 } from '../telegram-transport.js';
 import {
+  buildTelegramCommandLines,
+  buildTelegramDescription,
+  buildTelegramFeatureLines,
+  buildTelegramShortDescription,
+  buildTelegramWelcomeLines,
+  getTelegramBotMenuCommands,
+} from '../command-surface-registry.js';
+import {
   ChannelArtifact,
   ChannelSendReceipt,
   Channel,
@@ -108,36 +116,11 @@ export function buildTelegramHelpText(assistantName = ASSISTANT_NAME): string {
 export function buildTelegramWelcomeText(
   assistantName = ASSISTANT_NAME,
 ): string {
-  return [
-    `*Welcome to ${assistantName}*`,
-    '',
-    '- Start with a normal request in plain language.',
-    '- In a direct chat: send normal messages or slash commands.',
-    '- In a group: mention my Telegram username when you want me to act.',
-    '- First-time Telegram setup: DM me and run `/registermain`.',
-    '- Use `/commands` for the safe command list and `/features` for the short capability guide, including Andrea’s deeper operator work lanes.',
-    '',
-    '*Quick Start*',
-    "- `What's the meaning of life?`",
-    '- `Remind me tomorrow at 3pm to call Sam`',
-    '- `Summarize my tasks for today`',
-  ].join('\n');
+  return buildTelegramWelcomeLines(assistantName).join('\n');
 }
 
 export function buildTelegramCommandsText(): string {
-  return [
-    '*Commands*',
-    '',
-    '- `/start` - show the quick-start welcome message',
-    '- `/help` - show the full guide',
-    '- `/commands` - show the command reference',
-    '- `/features` - show capability overview',
-    '- `/ping` - check bot health',
-    '- `/chatid` - show chat ID and chat type',
-    '- `/registermain` - bootstrap main control chat (DM only)',
-    '- `/cursor_status` - safe readiness check for Cursor Cloud, desktop bridge terminal control, and optional runtime-route wiring',
-    '- Deeper operator work lanes stay operator/admin-only and are documented in the admin guide.',
-  ].join('\n');
+  return buildTelegramCommandLines().join('\n');
 }
 
 export function buildTelegramChatIdText(
@@ -157,16 +140,7 @@ export function buildTelegramUnregisteredDmText(
 export function buildTelegramFeaturesText(
   assistantName = ASSISTANT_NAME,
 ): string {
-  return [
-    `*What ${assistantName} Can Do*`,
-    '',
-    '- Conversation-first help for everyday questions and follow-through',
-    '- To-do lists, reminders, and recurring tasks',
-    '- Research and summaries',
-    '- Fast replies for simple questions, playful prompts, and basic math',
-    '- Project and coding help through Andrea, with `/cursor_status` as the safe readiness check and deeper Cursor plus Codex/OpenAI operator work kept in the admin path',
-    "- Secure per-chat isolation so one chat does not automatically get another chat's skills or files",
-  ].join('\n');
+  return buildTelegramFeatureLines(assistantName).join('\n');
 }
 
 export function buildTelegramPingText(
@@ -216,13 +190,13 @@ export function splitTelegramMessage(text: string, maxLength = 4096): string[] {
 }
 
 function buildTelegramDescriptionText(assistantName = ASSISTANT_NAME): string {
-  return `${assistantName} helps with reminders, research, project help, and clear everyday assistance. In DM, use /registermain to set up your main control chat.`;
+  return buildTelegramDescription(assistantName);
 }
 
 function buildTelegramShortDescriptionText(
   assistantName = ASSISTANT_NAME,
 ): string {
-  return `${assistantName}: conversation-first help, reminders, research, and quick everyday answers.`;
+  return buildTelegramShortDescription(assistantName);
 }
 
 async function sendTelegramMessage(
@@ -251,6 +225,7 @@ async function sendTelegramMessage(
     return { platformMessageId: sent.message_id.toString() };
   }
 }
+
 
 async function sendTelegramArtifact(
   api: { sendPhoto: Api['sendPhoto'] },
@@ -620,28 +595,7 @@ export class TelegramChannel implements Channel {
       });
 
     this.bot.api
-      .setMyCommands([
-        { command: 'start', description: 'Quick start for new users' },
-        {
-          command: 'help',
-          description: 'How Andrea works in this chat',
-        },
-        {
-          command: 'commands',
-          description: 'List the demo-safe command set',
-        },
-        { command: 'features', description: 'Show what Andrea can do' },
-        { command: 'ping', description: 'Check if the bot is online' },
-        { command: 'chatid', description: 'Show current chat ID/type' },
-        {
-          command: 'cursor_status',
-          description: 'Show Cursor integration status',
-        },
-        {
-          command: 'registermain',
-          description: 'Register this DM as main control chat',
-        },
-      ])
+      .setMyCommands(getTelegramBotMenuCommands())
       .catch((err) => {
         logger.warn(
           { component: 'telegram', err },

@@ -290,9 +290,9 @@ export function maybeBuildDirectQuickReply(
     )
   ) {
     return pickDeterministicVariant(normalized, [
-      'Not much. I am here if you need anything.',
-      "Keeping an eye on things. What's up on your side?",
-      'Pretty calm over here. What do you need from me?',
+      'Not much. I am here if you need me.',
+      "Pretty calm here. What's going on with you?",
+      'Just here and ready to help.',
     ]);
   }
 
@@ -387,7 +387,7 @@ export function maybeBuildDirectQuickReply(
       5,
     )
   ) {
-    return "I'm Andrea. I'm strongest on tasks, reminders, research, status checks, and careful approvals without turning the chat into a control panel.";
+    return "I'm Andrea. I'm strongest on reminders, calendar help, research, follow-through, and careful messaging help. Telegram is my richest surface, BlueBubbles is for bounded messaging, and Alexa is for short voice follow-up when it's enabled.";
   }
 
   if (

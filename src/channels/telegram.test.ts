@@ -13,6 +13,10 @@ import {
   extractTelegramLeadingCommand,
   splitTelegramMessage,
 } from './telegram.js';
+import {
+  PUBLIC_TELEGRAM_COMMAND_SURFACES,
+  getTelegramBotMenuCommands,
+} from '../command-surface-registry.js';
 
 describe('extractTelegramLeadingCommand', () => {
   it('extracts plain slash commands', () => {
@@ -61,16 +65,13 @@ describe('buildTelegramHelpText', () => {
     const help = buildTelegramHelpText('Andrea');
 
     expect(help).toContain('*Welcome to Andrea*');
-    expect(help).toContain('/help');
-    expect(help).toContain('/commands');
-    expect(help).toContain('/features');
-    expect(help).toContain('/ping');
-    expect(help).toContain('/chatid');
-    expect(help).toContain('/registermain');
-    expect(help).toContain('/cursor_status');
-    expect(help).toContain('To-do lists, reminders, and recurring tasks');
-    expect(help).toContain('Fast replies for simple questions');
-    expect(help).toContain('deeper operator work lanes');
+    for (const entry of PUBLIC_TELEGRAM_COMMAND_SURFACES) {
+      expect(help).toContain(entry.preferredAlias);
+    }
+    expect(help).toContain('calendar scheduling');
+    expect(help).toContain('source-grounded library help');
+    expect(help).toContain('Telegram is the richest surface');
+    expect(help).toContain('BlueBubbles is a bounded personal messaging companion');
     expect(help).not.toContain('/alexa_status');
     expect(help).not.toContain('/amazon_status');
     expect(help).not.toContain('/amazon_search');
@@ -116,6 +117,7 @@ describe('buildTelegramWelcomeText', () => {
     expect(welcome).toContain('/commands');
     expect(welcome).toContain('/features');
     expect(welcome).toContain('mention my Telegram username');
+    expect(welcome).toContain('What should I say back?');
     expect(welcome).not.toContain('@Andrea');
   });
 });
@@ -129,9 +131,9 @@ describe('buildTelegramCommandsText', () => {
     expect(commands).toContain('/commands');
     expect(commands).toContain('/features');
     expect(commands).toContain('/cursor_status');
-    expect(commands).toContain('safe readiness check');
+    expect(commands).toContain('Safe readiness check');
     expect(commands).toContain(
-      'Deeper operator work lanes stay operator/admin-only',
+      'Deeper operator/admin controls stay out of normal help',
     );
     expect(commands).not.toContain('/cursor_models [filter]');
     expect(commands).not.toContain('/cursor_create [options] <prompt>');
@@ -167,10 +169,11 @@ describe('buildTelegramFeaturesText', () => {
   it('keeps the feature list focused on the stable demo surface', () => {
     const features = buildTelegramFeaturesText('Andrea');
 
-    expect(features).toContain('Secure per-chat isolation');
-    expect(features).toContain('Conversation-first help');
-    expect(features).toContain('Fast replies for simple questions');
-    expect(features).toContain('deeper Cursor plus Codex/OpenAI operator work');
+    expect(features).toContain('calendar scheduling');
+    expect(features).toContain('source-grounded library help');
+    expect(features).toContain('Life-thread follow-through');
+    expect(features).toContain('BlueBubbles is a bounded personal messaging companion');
+    expect(features).toContain('Alexa is a short voice surface');
     expect(features).not.toContain('Amazon shopping search');
     expect(features).not.toContain('Apple Calendar');
     expect(features).not.toContain('/cursor-results');
@@ -255,6 +258,15 @@ describe('TelegramChannel polling hardening', () => {
     expect(setMyDescription).toHaveBeenCalledTimes(1);
     expect(setMyShortDescription).toHaveBeenCalledTimes(1);
     expect(setMyCommands).toHaveBeenCalledTimes(1);
+  });
+
+  it('registers the Telegram bot menu from the shared public registry', async () => {
+    expect(getTelegramBotMenuCommands()).toEqual(
+      PUBLIC_TELEGRAM_COMMAND_SURFACES.map((entry) => ({
+        command: entry.preferredAlias.replace(/^\//, ''),
+        description: entry.menuDescription ?? entry.summary,
+      })),
+    );
   });
 });
 

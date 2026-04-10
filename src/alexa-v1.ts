@@ -160,11 +160,11 @@ export function buildAlexaOpenConversationPrompt(
 }
 
 export function buildAlexaHelpSpeech(assistantName: string): string {
-  return `This is ${assistantName}. Ask about today, Candace, tonight, or say Andrea Pulse if you want one interesting little thing.`;
+  return `This is ${assistantName}. Ask about today, Candace, tonight, or say Andrea Pulse. If you want more detail, I can send it to Telegram.`;
 }
 
 export function buildAlexaWelcomeSpeech(assistantName: string): string {
-  return `This is ${assistantName}. What do you want help with? We can look at today, what's still open with Candace, what you should remember tonight, or I can give you Andrea Pulse.`;
+  return `This is ${assistantName}. What do you want help with? We can look at today, what's still open with Candace, what you should remember tonight, or I can give you Andrea Pulse. If you want the fuller version, I can send it to Telegram.`;
 }
 
 export function buildAlexaFallbackSpeech(assistantName: string): string {

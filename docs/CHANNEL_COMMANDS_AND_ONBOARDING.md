@@ -15,9 +15,16 @@ Stable user-safe behaviors:
 - direct conversation in DMs
 - mention-based requests in groups
 - reminders and follow-ups
+- calendar scheduling when that path is enabled
 - fast direct replies for simple questions and basic math
 - research and summaries in normal language
 - a small public-safe command set
+
+Surface roles:
+
+- Telegram is Andrea's richest day-to-day companion surface.
+- Alexa is the shorter voice surface when your operator enabled the custom skill.
+- BlueBubbles is the bounded personal messaging surface and stays mention-required.
 
 ## First-Time Telegram Onboarding
 
@@ -65,6 +72,7 @@ Important boundary:
 
 - `/cursor_status` is the only public-safe Cursor command.
 - Deeper Cursor work, result retrieval, and desktop terminal commands are operator-only and should stay in the admin guide.
+- The full operator and internal command inventory lives in [COMMAND_SURFACE_REFERENCE.md](COMMAND_SURFACE_REFERENCE.md).
 
 ## What `/cursor_status` Means For Users
 

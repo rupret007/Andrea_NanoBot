@@ -77,9 +77,11 @@ describe('alexa v1 speech helpers', () => {
   it('keeps help and welcome copy short and voice-first', () => {
     expect(buildAlexaHelpSpeech('Andrea')).toContain('Ask about today, Candace');
     expect(buildAlexaHelpSpeech('Andrea')).toContain('Andrea Pulse');
+    expect(buildAlexaHelpSpeech('Andrea')).toContain('Telegram');
     expect(buildAlexaWelcomeSpeech('Andrea')).toContain(
       'This is Andrea.',
     );
+    expect(buildAlexaWelcomeSpeech('Andrea')).toContain('fuller version');
     expect(buildAlexaFallbackSpeech('Andrea')).toContain(
       'did not quite catch that',
     );

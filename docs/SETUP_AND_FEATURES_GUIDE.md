@@ -900,6 +900,7 @@ Preferred operator command style:
 
 - use hyphen aliases in Telegram for deeper operator commands
 - underscore aliases still work for compatibility, but docs and examples standardize on the hyphen form
+- for the full command and feature inventory, including hidden button-backed command families, see [COMMAND_SURFACE_REFERENCE.md](COMMAND_SURFACE_REFERENCE.md)
 
 Architecture note:
 

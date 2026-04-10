@@ -51,7 +51,8 @@ describe('direct quick reply', () => {
     const reply = maybeBuildDirectQuickReply([{ content: "what's up?" }]);
 
     expect(reply).toBeTruthy();
-    expect(reply?.toLowerCase()).toContain('what');
+    expect(reply?.toLowerCase()).not.toContain('candace');
+    expect(reply?.toLowerCase()).not.toContain('dinner');
   });
 
   it('keeps BlueBubbles @Andrea vibe checks local-first', () => {
@@ -110,7 +111,9 @@ describe('direct quick reply', () => {
     const reply = maybeBuildDirectQuickReply([{ content: 'what can you do?' }]);
 
     expect(reply).toContain("I'm Andrea");
-    expect(reply).toContain('tasks');
+    expect(reply).toContain('Telegram');
+    expect(reply).toContain('BlueBubbles');
+    expect(reply).toContain('Alexa');
   });
 
   it('returns a bounded coding-capability response for cursor and codex asks', () => {

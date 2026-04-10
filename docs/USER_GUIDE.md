@@ -12,6 +12,7 @@ Andrea is strongest at:
 
 - everyday questions and quick answers
 - reminders, follow-ups, and simple task help
+- calendar scheduling when your admin enabled that path
 - ongoing life-thread continuity for people, household, and work topics
 - summaries and light research
 - project help in normal language
@@ -52,6 +53,12 @@ Important Cursor rule:
 
 - `/cursor_status` is safe to use.
 - Deeper Cursor work, result-file retrieval, and terminal controls are operator-only and live in the admin guide.
+
+Surface shorthand:
+
+- Telegram is the richest surface for normal day-to-day use.
+- Alexa stays shorter and voice-first when it is enabled.
+- BlueBubbles is the bounded personal messaging surface and stays mention-required.
 
 ## Best Ways To Ask
 

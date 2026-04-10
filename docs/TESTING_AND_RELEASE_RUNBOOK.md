@@ -275,7 +275,7 @@ Important truth for this host:
 
 - a healthy host can still report `STATUS: failed` if `EXTERNAL_BLOCKERS` are present
 - on the current host, that now usually means `alexa_live_signed_turn_missing`, not a broken service
-- BlueBubbles is near-live on this Windows machine once the `BLUEBUBBLES_*` host configuration is loaded, the server is reachable, and Andrea's public webhook is registered; it becomes live-proven only after a same-host roundtrip plus one same-thread message-action proof leg is reproved
+- BlueBubbles is `degraded_but_usable` on this Windows machine once the `BLUEBUBBLES_*` host configuration is loaded, the server is reachable, Andrea's public webhook is registered, and bounded same-thread chat works; it becomes live-proven only after a same-host roundtrip plus one same-thread message-action proof leg is reproved
 - after repo-side messaging changes, restart the local services before judging live proof so `SERVING_COMMIT_MATCHES_WORKSPACE_HEAD: true` reflects the current candidate
 - if `SERVICE: running_ready` and the blocker is external, treat that as an exact release-candidate caveat rather than a host failure
 - for Google Calendar specifically, `FAILURE_KIND: missing_config` means the current repo lacks usable credentials, and `FAILURE_KIND: invalid_refresh_token` means the stored refresh token is stale or revoked and you should rerun the current repo auth flow
@@ -503,9 +503,9 @@ If any of those are missing, record Alexa as **code-ready but setup-blocked** in
 Current truthful closeout note:
 
 - Telegram is the live-proven release-candidate surface on this host for this pass
-- Alexa listener, OAuth, public ingress, and pinned Node 22 are healthy, and Alexa is live-proven on this host from a fresh handled signed `IntentRequest`
+- Alexa listener, OAuth, public ingress, and pinned Node 22 are healthy; Alexa should read as `live_proven` only while `npm run services:status` shows a fresh handled signed `IntentRequest`, and otherwise should read as `near_live_only`
 - if `npm run services:status` later shows `alexa_live_proof=near_live_only`, the remaining Alexa blocker is one human-operated voice or authenticated simulator run after importing `docs/alexa/interaction-model.en-US.json` and running `Build Model`
-- BlueBubbles is now near-live on this host once the `BLUEBUBBLES_*` config is loaded, the server is reachable, and Andrea's public webhook is registered; it remains below live-proven until one real same-host roundtrip is reproved
+- BlueBubbles is now `degraded_but_usable` on this host once the `BLUEBUBBLES_*` config is loaded, the server is reachable, Andrea's public webhook is registered, and bounded same-thread chat works; it remains below live-proven until one real same-host roundtrip plus one same-thread message-action proof leg is reproved
 - outward-facing research and Telegram image generation are now live-proven on this host through the direct OpenAI provider path
 - if the Anthropic-compatible LiteLLM gateway degrades later, report that separately as the core-runtime compatibility lane rather than as a direct OpenAI billing problem
 - typed Alexa+ app chat is not an authoritative proof surface unless Andrea logs a real signed follow-up `IntentRequest` after launch
