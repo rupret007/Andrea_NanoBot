@@ -19,6 +19,7 @@ import {
   buildExpectedTelegramPingReply,
   evaluateTelegramPingReplies,
   recordOrganicTelegramRoundtripSuccess,
+  recordTelegramProbeSuccess,
   recordTelegramProbeFailure,
   recordTelegramProbeUnconfigured,
 } from './telegram-roundtrip.js';
@@ -212,6 +213,41 @@ describe('telegram roundtrip health', () => {
     expect(assessment.status).toBe('degraded');
     expect(assessment.due).toBe(true);
     expect(assessment.detail).toContain('timeout');
+  });
+
+  it('keeps a just-proved roundtrip healthy briefly after the scheduled due boundary', () => {
+    const hostState = seedRunningHost('2026-04-04T12:00:00.000Z');
+    const readyState = writeAssistantReadyState('1.2.42');
+    const assistantHealthState = writeAssistantHealthState({
+      appVersion: '1.2.42',
+      channelHealth: [
+        {
+          name: 'telegram',
+          configured: true,
+          state: 'ready',
+          updatedAt: '2026-04-04T12:59:58.000Z',
+          lastReadyAt: '2026-04-04T12:59:58.000Z',
+          detail: 'Telegram polling connected.',
+        },
+      ],
+    });
+
+    const roundtrip = recordTelegramProbeSuccess({
+      source: 'live_smoke',
+      target: 'tg:123',
+      observedAt: '2026-04-04T12:59:58.000Z',
+    });
+
+    const assessment = assessTelegramRoundtripState({
+      assistantHealthState,
+      telegramRoundtripState: roundtrip,
+      hostState,
+      readyState,
+      now: new Date('2026-04-04T13:03:00.000Z'),
+    });
+
+    expect(assessment.status).toBe('healthy');
+    expect(assessment.due).toBe(false);
   });
 
   it('records unconfigured probes with the attempted timestamp', () => {

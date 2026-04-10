@@ -4,6 +4,7 @@ import { resolveCompanionToneProfileFromFacts } from './companion-personality.js
 import {
   createTask,
   deleteCommunicationThread,
+  getAllChats,
   getCommunicationThread,
   getProfileSubjectByKey,
   listCommunicationThreadsForGroup,
@@ -228,10 +229,16 @@ function slugifyName(value: string): string {
 function stripCommandPrefix(raw: string): string {
   return raw
     .replace(
-      /^(?:summarize this(?: message)?|what did they mean|what still needs a reply here|what should i say back|draft a response|draft a reply(?: to [a-z][a-z' -]+)?|give me a short reply|make it warmer|make it more direct|make it sound like me|save this conversation under [^:]+|remind me to reply later|don't surface this automatically|dont surface this automatically|stop tracking that|forget this conversation thread|mark that handled)[:,-]?\s*/i,
+      /^(?:summarize this(?: message)?|what did they mean|what still needs a reply here|what should i say back|what should i send back|draft a response|draft a reply(?: to [a-z][a-z' -]+)?|give me a short reply|make it warmer|make it more direct|make it sound like me|save this conversation under [^:]+|remind me to reply later|don't surface this automatically|dont surface this automatically|stop tracking that|forget this conversation thread|mark that handled)[:,-]?\s*/i,
       '',
     )
     .trim();
+}
+
+function isCommandOnlyCommunicationPrompt(value: string): boolean {
+  return /^(?:summari[sz]e this(?: message)?|what did they mean|what still needs a reply here|what should i (?:say|send) back|draft a response|draft a reply(?: to [a-z][a-z' -]+)?|give me a short reply|make it warmer|make it more direct|make it sound like me|save this conversation under [^:]+|remind me to reply later|don't surface this automatically|dont surface this automatically|stop tracking that|forget this conversation thread|mark that handled)[?.! ]*$/i.test(
+    value.trim(),
+  );
 }
 
 function cleanMessageBody(value: string): string {
@@ -265,6 +272,54 @@ function extractLatestInboundMessage(chatJid: string | undefined): {
   };
 }
 
+function extractLatestBlueBubblesSelfCompanionContext(
+  chatJid: string | undefined,
+  now: Date,
+): {
+  text?: string;
+  messageId?: string;
+  timestamp?: string;
+} {
+  if (!chatJid?.startsWith('bb:')) return {};
+  const cutoffMs = now.getTime() - 12 * 60 * 60 * 1000;
+  const chats = getAllChats()
+    .filter(
+      (chat) =>
+        chat.channel === 'bluebubbles' &&
+        chat.is_group === 0 &&
+        chat.jid.startsWith('bb:') &&
+        chat.jid !== chatJid &&
+        Date.parse(chat.last_message_time || '') >= cutoffMs,
+    )
+    .sort(
+      (a, b) =>
+        Date.parse(b.last_message_time || '') - Date.parse(a.last_message_time || ''),
+    );
+
+  for (const chat of chats) {
+    const recentMessages = listRecentMessagesForChat(chat.jid, 12);
+    const hasCompanionTraffic = recentMessages.some(
+      (message) =>
+        (message.is_from_me && /@andrea\b/i.test(message.content || '')) ||
+        message.is_bot_message,
+    );
+    if (!hasCompanionTraffic) continue;
+
+    for (const message of recentMessages) {
+      if (message.is_bot_message || !message.content?.trim()) continue;
+      const cleaned = cleanMessageBody(message.content);
+      if (!cleaned || isCommandOnlyCommunicationPrompt(cleaned)) continue;
+      return {
+        text: cleaned,
+        messageId: message.id,
+        timestamp: message.timestamp,
+      };
+    }
+  }
+
+  return {};
+}
+
 function extractMessageText(input: CommunicationContextInput): {
   text?: string;
   messageId?: string;
@@ -288,7 +343,18 @@ function extractMessageText(input: CommunicationContextInput): {
   if (prior) {
     return { text: prior, source: 'prior' };
   }
-  return { ...extractLatestInboundMessage(input.chatJid), source: 'chat' };
+  const sameChat = extractLatestInboundMessage(input.chatJid);
+  if (sameChat.text) {
+    return { ...sameChat, source: 'chat' };
+  }
+  const siblingBlueBubblesContext =
+    input.channel === 'bluebubbles'
+      ? extractLatestBlueBubblesSelfCompanionContext(
+          input.chatJid,
+          input.now || new Date(),
+        )
+      : {};
+  return { ...siblingBlueBubblesContext, source: 'chat' };
 }
 
 function ensureProfileSubject(

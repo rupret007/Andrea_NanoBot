@@ -138,6 +138,68 @@ describe('communication companion', () => {
     expect(result.messageText).not.toContain('summarize this');
   });
 
+  it('can reuse recent self-chat context across BlueBubbles self handles for draft replies', () => {
+    storeChatMetadata(
+      'bb:iMessage;-;+14695405551',
+      '2026-04-10T00:03:20.633Z',
+      'Jeff',
+      'bluebubbles',
+      false,
+    );
+    storeChatMetadata(
+      'bb:iMessage;-;jeffstory007@gmail.com',
+      '2026-04-10T00:04:05.518Z',
+      'Jeff',
+      'bluebubbles',
+      false,
+    );
+    storeMessageDirect({
+      id: 'bb:self-handle-source-1',
+      chat_jid: 'bb:iMessage;-;+14695405551',
+      sender: 'bb:+14695405551',
+      sender_name: 'Jeff',
+      content:
+        '@Andrea Che is saying this.\n\nSo we’re pretty sure about Saturday right? I’m just making sure you’ve got a few mixed messages lol.',
+      timestamp: '2026-04-10T00:03:03.567Z',
+      is_from_me: true,
+      is_bot_message: false,
+    });
+    storeMessageDirect({
+      id: 'bb:self-handle-source-2',
+      chat_jid: 'bb:iMessage;-;+14695405551',
+      sender: 'Andrea',
+      sender_name: 'Andrea',
+      content: 'Andrea: Here is the latest show summary.',
+      timestamp: '2026-04-10T00:03:20.633Z',
+      is_from_me: true,
+      is_bot_message: true,
+    });
+    storeMessageDirect({
+      id: 'bb:self-handle-ask-1',
+      chat_jid: 'bb:iMessage;-;jeffstory007@gmail.com',
+      sender: 'bb:jeffstory007@gmail.com',
+      sender_name: 'Jeff',
+      content: '@Andrea what should I send back?',
+      timestamp: '2026-04-10T00:04:05.518Z',
+      is_from_me: true,
+      is_bot_message: false,
+    });
+
+    const result = draftCommunicationReply({
+      channel: 'bluebubbles',
+      groupFolder: 'main',
+      chatJid: 'bb:iMessage;-;jeffstory007@gmail.com',
+      text: 'what should I send back',
+      now: new Date('2026-04-10T00:04:30.000Z'),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.summaryText).toContain('Saturday');
+    expect(result.thread?.channelChatJid).toBe(
+      'bb:iMessage;-;jeffstory007@gmail.com',
+    );
+  });
+
   it('builds warmer drafts from relationship-aware message context', () => {
     seedCandace();
 

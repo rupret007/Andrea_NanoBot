@@ -296,6 +296,7 @@ const DEPENDENCY_STATES = new Set<NanoclawDependencyState>([
 export const DEFAULT_ASSISTANT_HEALTH_STALE_AFTER_MS = 3 * 60 * 1000;
 export const DEFAULT_TELEGRAM_ROUNDTRIP_PROBE_INTERVAL_MS = 60 * 60 * 1000;
 export const DEFAULT_TELEGRAM_ROUNDTRIP_STARTUP_GRACE_MS = 5 * 60 * 1000;
+export const DEFAULT_TELEGRAM_ROUNDTRIP_OVERDUE_GRACE_MS = 10 * 60 * 1000;
 export const DEFAULT_ALEXA_LIVE_PROOF_FRESHNESS_MS = 24 * 60 * 60 * 1000;
 
 const TELEGRAM_ROUNDTRIP_SOURCES = new Set<TelegramRoundtripSource>([
@@ -1467,12 +1468,15 @@ export function assessTelegramRoundtripState(input: {
   now?: Date;
   probeIntervalMs?: number;
   startupGraceMs?: number;
+  overdueGraceMs?: number;
 }): TelegramRoundtripAssessment {
   const now = input.now ?? new Date();
   const probeIntervalMs =
     input.probeIntervalMs ?? DEFAULT_TELEGRAM_ROUNDTRIP_PROBE_INTERVAL_MS;
   const startupGraceMs =
     input.startupGraceMs ?? DEFAULT_TELEGRAM_ROUNDTRIP_STARTUP_GRACE_MS;
+  const overdueGraceMs =
+    input.overdueGraceMs ?? DEFAULT_TELEGRAM_ROUNDTRIP_OVERDUE_GRACE_MS;
   const assistantHealthState = input.assistantHealthState;
   const roundtrip = input.telegramRoundtripState;
   const readyState = input.readyState || null;
@@ -1560,8 +1564,15 @@ export function assessTelegramRoundtripState(input: {
         : null;
   const due =
     computedNextDueAt == null ? roundtrip.status !== 'healthy' : now.getTime() >= computedNextDueAt;
+  const overdueRecently =
+    roundtrip.status === 'healthy' &&
+    due &&
+    computedNextDueAt != null &&
+    now.getTime() - computedNextDueAt < overdueGraceMs &&
+    lastSuccessAtMs != null &&
+    now.getTime() - lastSuccessAtMs < probeIntervalMs;
 
-  if (roundtrip.status === 'healthy' && !due) {
+  if (roundtrip.status === 'healthy' && (!due || overdueRecently)) {
     return {
       status: 'healthy',
       detail:

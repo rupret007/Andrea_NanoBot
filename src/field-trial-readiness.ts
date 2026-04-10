@@ -1086,7 +1086,7 @@ function buildBlueBubblesTruth(
         nextAction:
           matchingProofChainMessageAction
             ? 'Send one more same-thread BlueBubbles follow-up and confirm Andrea replies in that same conversation again.'
-            : 'In that same BlueBubbles chat, ask what you should say back and then use send it or send it later tonight so the message-action leg is proven too.',
+            : 'In that same BlueBubbles chat, ask what you should say back or send back, then use send it or send it later tonight so the message-action leg is proven too.',
         detail:
           matchingProofChainMessageAction
             ? `Real BlueBubbles traffic is flowing on this host through ${activeChatJid}, but the full follow-up proof bar still needs one fresh same-thread continuation.`
@@ -1103,7 +1103,7 @@ function buildBlueBubblesTruth(
         'A fresh real BlueBubbles inbound -> reply -> follow-up roundtrip has not been reproved on this host.',
       blockerOwner: 'external',
       nextAction:
-        'Send `@Andrea hi`, then `@Andrea what am I forgetting`, then `@Andrea what should I say back`, and finally `@Andrea send it` or `@Andrea send it later tonight` in that same BlueBubbles conversation.',
+        'Send `@Andrea hi`, then `@Andrea what am I forgetting`, then `@Andrea what should I say back` or `@Andrea what should I send back`, and finally `@Andrea send it` or `@Andrea send it later tonight` in that same BlueBubbles conversation.',
       detail:
         `BlueBubbles configuration is present, but this pass still needs a real same-host roundtrip before the surface can be called fully live-proven. ${base.messageActionProofDetail}`,
     }),

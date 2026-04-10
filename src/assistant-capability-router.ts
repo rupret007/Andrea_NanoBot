@@ -360,6 +360,7 @@ function matchCommunicationPrompt(
   }
   if (
     /^what should i say back\b/.test(lower) ||
+    /^what should i send back\b/.test(lower) ||
     /^draft a response\b/.test(lower) ||
     /^draft a reply\b/.test(lower) ||
     /^draft a reply to\b/.test(lower) ||
@@ -864,7 +865,7 @@ function continueAssistantCapabilityFromActiveCapability(
   }
 
   if (
-    /^(what should i say back|draft that for me|give me a short reply|make it warmer|make it more direct)\b/.test(
+    /^(what should i say back|what should i send back|draft that for me|give me a short reply|make it warmer|make it more direct)\b/.test(
       lower,
     ) &&
     activeCapabilityId?.startsWith('communication.')

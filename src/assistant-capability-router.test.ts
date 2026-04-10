@@ -97,6 +97,11 @@ describe('assistant capability router', () => {
       capabilityId: 'communication.draft_reply',
     });
     expect(
+      matchAssistantCapabilityRequest('What should I send back to Candace?'),
+    ).toMatchObject({
+      capabilityId: 'communication.draft_reply',
+    });
+    expect(
       matchAssistantCapabilityRequest('What do I owe people right now?'),
     ).toMatchObject({
       capabilityId: 'communication.open_loops',
@@ -118,6 +123,11 @@ describe('assistant capability router', () => {
     });
     expect(
       matchAssistantCapabilityRequest('@Andrea what should I say back?'),
+    ).toMatchObject({
+      capabilityId: 'communication.draft_reply',
+    });
+    expect(
+      matchAssistantCapabilityRequest('@Andrea what should I send back?'),
     ).toMatchObject({
       capabilityId: 'communication.draft_reply',
     });

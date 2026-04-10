@@ -290,9 +290,9 @@ export function maybeBuildDirectQuickReply(
     )
   ) {
     return pickDeterministicVariant(normalized, [
-      'Not much. I am here and ready if you want to work through something.',
+      'Not much. I am here if you need anything.',
       "Keeping an eye on things. What's up on your side?",
-      "Pretty calm over here. What do you want to get moving?",
+      'Pretty calm over here. What do you need from me?',
     ]);
   }
 
