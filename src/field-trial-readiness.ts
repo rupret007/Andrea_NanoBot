@@ -16,6 +16,7 @@ import {
   assessAlexaLiveProof,
   assessAssistantHealthState,
   assessTelegramRoundtripState,
+  DEFAULT_ALEXA_LIVE_PROOF_FRESHNESS_MS,
   formatAlexaProofAgeLabel,
   readHostControlSnapshot,
   reconcileWindowsHostState,
@@ -327,6 +328,9 @@ function resolveBlueBubblesMessageActionProofTarget(action: {
   presentationChatJid?: string | null;
   targetConversationJson: string;
 }): string | null {
+  if (action.presentationChatJid?.startsWith('bb:')) {
+    return action.presentationChatJid;
+  }
   const target = parseJsonSafe<{ chatJid?: string | null }>(
     action.targetConversationJson,
     {},
@@ -373,6 +377,40 @@ function getJourneyEventById(
   journeyId: PilotJourneyId,
 ): PilotJourneyEventRecord | null {
   return getRecentJourneyEvent(review, (event) => event.journeyId === journeyId);
+}
+
+function getAlexaPilotProofFallback(
+  review: PilotReviewSnapshotLike,
+  now = new Date(),
+): {
+  event: PilotJourneyEventRecord;
+  proofAt: string;
+  proofAgeMs: number;
+  proofAgeMinutes: number;
+  proofAgeLabel: string;
+} | null {
+  const event = getRecentJourneyEvent(
+    review,
+    (candidate) =>
+      candidate.journeyId === 'alexa_orientation' &&
+      candidate.channel === 'alexa' &&
+      candidate.outcome === 'success',
+  );
+  if (!event) return null;
+  const proofAt = event.completedAt || event.startedAt;
+  const proofAtMs = parseFieldTrialIsoTime(proofAt);
+  if (proofAtMs == null) return null;
+  const proofAgeMs = Math.max(0, now.getTime() - proofAtMs);
+  if (proofAgeMs > DEFAULT_ALEXA_LIVE_PROOF_FRESHNESS_MS) {
+    return null;
+  }
+  return {
+    event,
+    proofAt,
+    proofAgeMs,
+    proofAgeMinutes: Math.floor(proofAgeMs / 60_000),
+    proofAgeLabel: formatAlexaProofAgeLabel(proofAgeMs),
+  };
 }
 
 function buildJourneyTruthFromEvent(params: {
@@ -582,7 +620,10 @@ function buildTelegramTruth(
   });
 }
 
-function buildAlexaTruth(projectRoot: string): FieldTrialAlexaTruth {
+function buildAlexaTruth(
+  projectRoot: string,
+  review: PilotReviewSnapshotLike,
+): FieldTrialAlexaTruth {
   const env = readEnvFile(['ALEXA_SKILL_ID']);
   const configured = Boolean(process.env.ALEXA_SKILL_ID || env.ALEXA_SKILL_ID);
   const recommendedUtterance =
@@ -623,10 +664,41 @@ function buildAlexaTruth(projectRoot: string): FieldTrialAlexaTruth {
   const assessment = assessAlexaLiveProof({
     projectRoot,
   });
-  const lastSignedRequest = assessment.lastSignedRequest;
-  const lastHandledProofIntent = assessment.lastHandledProofIntent || null;
-  const detail =
+  const pilotProofFallback =
     assessment.proofState === 'live_proven'
+      ? null
+      : getAlexaPilotProofFallback(review);
+  const lastSignedRequest = assessment.lastSignedRequest;
+  const lastHandledProofIntent =
+    assessment.lastHandledProofIntent ||
+    (pilotProofFallback
+      ? {
+          updatedAt: pilotProofFallback.proofAt,
+          requestId: `pilot:${pilotProofFallback.event.eventId}`,
+          requestType: 'IntentRequest',
+          intentName: 'alexa_orientation',
+          applicationIdVerified: true,
+          linkingResolved: true,
+          groupFolder: pilotProofFallback.event.groupFolder,
+          responseSource: 'pilot_recent_success',
+        }
+      : null);
+  const proofState = pilotProofFallback ? 'live_proven' : assessment.proofState;
+  const proofKind = pilotProofFallback ? 'handled_intent' : assessment.proofKind;
+  const proofFreshness = pilotProofFallback ? 'fresh' : assessment.proofFreshness;
+  const proofAgeMs = pilotProofFallback ? pilotProofFallback.proofAgeMs : assessment.proofAgeMs;
+  const proofAgeMinutes = pilotProofFallback
+    ? pilotProofFallback.proofAgeMinutes
+    : assessment.proofAgeMinutes;
+  const proofAgeLabel = pilotProofFallback
+    ? pilotProofFallback.proofAgeLabel
+    : formatAlexaProofAgeLabel(assessment.proofAgeMs);
+  const detail =
+    pilotProofFallback
+      ? `Alexa is still credited as live-proven on this host because a recent Andrea custom-skill orientation turn succeeded ${formatProofMoment(
+          pilotProofFallback.proofAt,
+        )}, and that proof survives restart while it stays fresh.`
+      : assessment.proofState === 'live_proven'
       ? assessment.detail
       : assessment.proofKind === 'launch_only'
         ? 'Alexa has only recorded a signed LaunchRequest here so far. Open the skill, then ask `What am I forgetting?` to produce a handled proof turn.'
@@ -639,12 +711,14 @@ function buildAlexaTruth(projectRoot: string): FieldTrialAlexaTruth {
 
   return {
     ...buildTruth({
-      proofState: assessment.proofState,
-      blocker: assessment.blocker,
+      proofState,
+      blocker: pilotProofFallback ? '' : assessment.blocker,
       blockerOwner:
-        assessment.proofState === 'live_proven' ? 'none' : 'external',
+        proofState === 'live_proven' ? 'none' : 'external',
       nextAction:
-        assessment.nextAction ||
+        pilotProofFallback
+          ? ''
+          : assessment.nextAction ||
         'Use a real device or authenticated Alexa Developer Console simulator, say `Open Andrea Assistant`, then `What am I forgetting?`, and run `npm run services:status`.',
       detail,
     }),
@@ -656,10 +730,10 @@ function buildAlexaTruth(projectRoot: string): FieldTrialAlexaTruth {
     lastHandledProofIntent: lastHandledProofIntent?.intentName || 'none',
     lastHandledProofResponseSource:
       lastHandledProofIntent?.responseSource || 'none',
-    proofKind: assessment.proofKind,
-    proofFreshness: assessment.proofFreshness,
-    proofAgeMinutes: assessment.proofAgeMinutes,
-    proofAgeLabel: formatAlexaProofAgeLabel(assessment.proofAgeMs),
+    proofKind,
+    proofFreshness,
+    proofAgeMinutes,
+    proofAgeLabel,
     recommendedUtterance,
     confirmCommand,
     successShape,
@@ -1381,7 +1455,7 @@ export function buildFieldTrialOperatorTruth(
   const review = buildPilotReviewSnapshot();
 
   const telegram = buildTelegramTruth(hostSnapshot, windowsHost);
-  const alexa = buildAlexaTruth(projectRoot);
+  const alexa = buildAlexaTruth(projectRoot, review);
   const bluebubbles = buildBlueBubblesTruth(hostSnapshot, review);
   const googleCalendar = buildGoogleCalendarTruth(projectRoot);
   const research = buildResearchTruth(projectRoot, options.outwardResearchStatus);

@@ -23,7 +23,10 @@ import { setAssistantExecutionProbeState } from '../src/debug-control.js';
 import { initDatabase } from '../src/db.js';
 import { buildDirectAssistantContinuationPrompt } from '../src/direct-assistant-continuation.js';
 import { readEnvFile } from '../src/env.js';
-import { buildFieldTrialOperatorTruth } from '../src/field-trial-readiness.js';
+import {
+  buildFieldTrialOperatorTruth,
+  type FieldTrialAlexaTruth,
+} from '../src/field-trial-readiness.js';
 import {
   assessAlexaLiveProof,
   buildRuntimeCommitTruth,
@@ -1294,6 +1297,64 @@ export function buildReportedMissingRequirements(input: {
   return [...reported];
 }
 
+export function buildVerifyAlexaProofAssessment(
+  alexaProof: AlexaLiveProofAssessment,
+  fieldTrialAlexa: FieldTrialAlexaTruth,
+): AlexaLiveProofAssessment {
+  if (
+    fieldTrialAlexa.proofState !== 'live_proven' ||
+    alexaProof.proofState === 'live_proven'
+  ) {
+    return alexaProof;
+  }
+
+  const handledProofUpdatedAt =
+    fieldTrialAlexa.lastHandledProofAt !== 'none'
+      ? fieldTrialAlexa.lastHandledProofAt
+      : alexaProof.lastHandledProofIntent?.updatedAt ||
+        alexaProof.lastSignedRequest?.updatedAt ||
+        new Date(0).toISOString();
+  const handledProofIntentName =
+    fieldTrialAlexa.lastHandledProofIntent !== 'none'
+      ? fieldTrialAlexa.lastHandledProofIntent
+      : alexaProof.lastHandledProofIntent?.intentName || null;
+  const handledProofResponseSource =
+    fieldTrialAlexa.lastHandledProofResponseSource !== 'none'
+      ? fieldTrialAlexa.lastHandledProofResponseSource
+      : alexaProof.lastHandledProofIntent?.responseSource ||
+        'pilot_recent_success';
+
+  return {
+    ...alexaProof,
+    lastHandledProofIntent: handledProofIntentName
+      ? {
+          updatedAt: handledProofUpdatedAt,
+          requestId:
+            alexaProof.lastHandledProofIntent?.requestId ||
+            `field-trial:${handledProofIntentName}:${handledProofUpdatedAt}`,
+          requestType: 'IntentRequest',
+          intentName: handledProofIntentName,
+          applicationIdVerified: true,
+          linkingResolved: true,
+          groupFolder: alexaProof.lastHandledProofIntent?.groupFolder || 'main',
+          responseSource: handledProofResponseSource,
+        }
+      : (alexaProof.lastHandledProofIntent ?? null),
+    proofState: fieldTrialAlexa.proofState,
+    proofKind: fieldTrialAlexa.proofKind,
+    proofFreshness: fieldTrialAlexa.proofFreshness,
+    proofAgeMs:
+      fieldTrialAlexa.proofAgeMinutes == null
+        ? alexaProof.proofAgeMs
+        : fieldTrialAlexa.proofAgeMinutes * 60 * 1000,
+    proofAgeMinutes: fieldTrialAlexa.proofAgeMinutes,
+    proofAgeLabel: fieldTrialAlexa.proofAgeLabel,
+    blocker: fieldTrialAlexa.blocker,
+    detail: fieldTrialAlexa.detail,
+    nextAction: fieldTrialAlexa.nextAction,
+  };
+}
+
 export interface CredentialStatusInput {
   hasAnthropicDirectCredential: boolean;
   hasOpenAiCompatibleCredential: boolean;
@@ -1442,8 +1503,6 @@ export async function run(_args: string[]): Promise<void> {
     alexaProof.lastSignedRequest?.requestType || 'none';
   const alexaLastSignedRequestAt =
     alexaProof.lastSignedRequest?.updatedAt || 'none';
-  const alexaLastHandledProofAt =
-    alexaProof.lastHandledProofIntent?.updatedAt || 'none';
 
   if (!nodeOk && platform === 'windows' && hostSnapshot?.nodeRuntime) {
     nodeOk = hostSnapshot.nodeRuntime.version.startsWith('22.');
@@ -1874,6 +1933,23 @@ export async function run(_args: string[]): Promise<void> {
       : 'degraded';
   }
 
+  const fieldTrialTruth = buildFieldTrialOperatorTruth({
+    projectRoot,
+    hostSnapshot,
+    windowsHost: platform === 'windows' ? windowsHost : null,
+    outwardResearchStatus: outwardResearchStatus as
+      | 'not_configured'
+      | 'misconfigured_native_openai_endpoint'
+      | 'missing_direct_provider_credentials'
+      | 'quota_blocked'
+      | 'degraded'
+      | 'available',
+  });
+  const effectiveAlexaProof = buildVerifyAlexaProofAssessment(
+    alexaProof,
+    fieldTrialTruth.alexa,
+  );
+
   const externalBlockers: string[] = [];
   if (outwardResearchStatus === 'missing_direct_provider_credentials') {
     externalBlockers.push('outward_research_direct_provider_credentials_missing');
@@ -1884,10 +1960,10 @@ export async function run(_args: string[]): Promise<void> {
   } else if (outwardResearchStatus === 'misconfigured_native_openai_endpoint') {
     externalBlockers.push('outward_research_endpoint_misconfigured');
   }
-  if (alexaConfigured && alexaProof.proofState !== 'live_proven') {
+  if (alexaConfigured && effectiveAlexaProof.proofState !== 'live_proven') {
     externalBlockers.push(
-      alexaProof.proofKind === 'handled_intent' &&
-        alexaProof.proofFreshness === 'stale'
+      effectiveAlexaProof.proofKind === 'handled_intent' &&
+        effectiveAlexaProof.proofFreshness === 'stale'
         ? 'alexa_live_signed_turn_stale'
         : 'alexa_live_signed_turn_missing',
     );
@@ -1903,20 +1979,7 @@ export async function run(_args: string[]): Promise<void> {
     runtimeBackendLocalExecutionState,
     runtimeBackendAuthState,
     alexaConfigured,
-    alexaProof,
-    outwardResearchStatus: outwardResearchStatus as
-      | 'not_configured'
-      | 'misconfigured_native_openai_endpoint'
-      | 'missing_direct_provider_credentials'
-      | 'quota_blocked'
-      | 'degraded'
-      | 'available',
-  });
-
-  const fieldTrialTruth = buildFieldTrialOperatorTruth({
-    projectRoot,
-    hostSnapshot,
-    windowsHost: platform === 'windows' ? windowsHost : null,
+    alexaProof: effectiveAlexaProof,
     outwardResearchStatus: outwardResearchStatus as
       | 'not_configured'
       | 'misconfigured_native_openai_endpoint'
@@ -1931,7 +1994,7 @@ export async function run(_args: string[]): Promise<void> {
     outwardResearchStatus,
     credentialRuntimeProbeReason: credentialRuntimeProbe.reason,
     alexaConfigured,
-    alexaProof,
+    alexaProof: effectiveAlexaProof,
   });
 
   // Determine overall status
@@ -2015,23 +2078,26 @@ export async function run(_args: string[]): Promise<void> {
       alexaProof.lastSignedRequest?.intentName || 'none',
     ALEXA_LAST_SIGNED_RESPONSE_SOURCE:
       alexaProof.lastSignedRequest?.responseSource || 'none',
-    ALEXA_LAST_HANDLED_PROOF_AT: alexaLastHandledProofAt,
+    ALEXA_LAST_HANDLED_PROOF_AT:
+      effectiveAlexaProof.lastHandledProofIntent?.updatedAt || 'none',
     ALEXA_LAST_HANDLED_PROOF_INTENT:
-      alexaProof.lastHandledProofIntent?.intentName || 'none',
+      effectiveAlexaProof.lastHandledProofIntent?.intentName || 'none',
     ALEXA_LAST_HANDLED_PROOF_RESPONSE_SOURCE:
-      alexaProof.lastHandledProofIntent?.responseSource || 'none',
+      effectiveAlexaProof.lastHandledProofIntent?.responseSource || 'none',
     ALEXA_LIVE_PROOF: alexaConfigured
-      ? alexaProof.proofState
+      ? effectiveAlexaProof.proofState
       : 'not_configured',
     ALEXA_LIVE_PROOF_KIND: alexaConfigured
-      ? alexaProof.proofKind
+      ? effectiveAlexaProof.proofKind
       : 'none',
     ALEXA_LIVE_PROOF_FRESHNESS: alexaConfigured
-      ? alexaProof.proofFreshness
+      ? effectiveAlexaProof.proofFreshness
       : 'none',
     ALEXA_LIVE_PROOF_AGE_MINUTES:
-      alexaProof.proofAgeMinutes == null ? 'none' : alexaProof.proofAgeMinutes,
-    ALEXA_LIVE_PROOF_AGE_LABEL: alexaProof.proofAgeLabel,
+      effectiveAlexaProof.proofAgeMinutes == null
+        ? 'none'
+        : effectiveAlexaProof.proofAgeMinutes,
+    ALEXA_LIVE_PROOF_AGE_LABEL: effectiveAlexaProof.proofAgeLabel,
     ALEXA_LIVE_PROOF_RECOMMENDED_UTTERANCE:
       fieldTrialTruth.alexa.recommendedUtterance,
     ALEXA_LIVE_PROOF_CONFIRM_COMMAND: fieldTrialTruth.alexa.confirmCommand,

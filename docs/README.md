@@ -20,12 +20,13 @@ Use this shorthand when you need the current host story fast:
 - **live-proven on this Windows host**
   - Telegram companion surface
   - Google Calendar scheduling
+  - Alexa on this host while a fresh handled Andrea custom-skill proof remains inside the 24-hour window
   - unified work cockpit with Codex/OpenAI runtime
   - life-thread, communication-companion, mission, and chief-of-staff flows that ride on Telegram
   - outward research
   - Telegram image generation
 - **near-live only**
-  - Alexa on this host until a fresh handled signed Andrea custom-skill `IntentRequest` is recorded
+  - nothing currently; Alexa intentionally drops back here if its fresh handled proof window expires
 - **degraded-but-usable**
   - BlueBubbles on this PC, because Andrea can reach the live server, the webhook is registered, and bounded same-thread chat works, but one same-thread message-action proof leg still needs to be reproved
 - **externally blocked**
@@ -116,7 +117,8 @@ Current host-proof rule:
 
 - `Andrea_NanoBot` is the only canonical repo now; the older `ANDREA/nanoclaw` checkout is non-authoritative reference only
 - Telegram ordinary chat and the main flagship follow-through journeys were live-proven on this host on April 7, 2026
-- Alexa is status-led on this host: it is `live_proven` only while a fresh handled signed custom-skill intent remains inside the proof window, and otherwise should read as `near_live_only`
+- Alexa is status-led on this host: it is `live_proven` only while a fresh handled custom-skill proof remains inside the proof window, and otherwise should read as `near_live_only`
+- after restart, operator surfaces may credit that Alexa proof either from the persisted handled signed-request markers or from a recent same-host `alexa_orientation` pilot success that already recorded the qualifying handled turn
 - BlueBubbles is status-led on this host: it is `degraded_but_usable` while bounded same-thread chat works but the fresh same-thread `message_action` proof leg is still missing
 - outward-facing research and Telegram image generation are now live-proven on this host through the direct OpenAI provider path
 - the local Anthropic-compatible LiteLLM gateway remains a separate compatibility/runtime lane and should be reported separately if it degrades later

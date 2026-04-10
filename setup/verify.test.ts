@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  buildVerifyAlexaProofAssessment,
   buildBlockedAssistantExecutionProbeResult,
   buildCredentialProbeMessagesUrl,
   buildReportedMissingRequirements,
@@ -245,6 +246,61 @@ describe('buildReportedMissingRequirements', () => {
     });
 
     expect(requirements).toEqual(['alexa_live_signed_turn_stale']);
+  });
+});
+
+describe('buildVerifyAlexaProofAssessment', () => {
+  it('upgrades verify Alexa proof from recent field-trial truth after restart', () => {
+    const effectiveProof = buildVerifyAlexaProofAssessment(
+      {
+        lastSignedRequest: null,
+        lastHandledProofIntent: null,
+        proofState: 'near_live_only',
+        proofKind: 'none',
+        proofFreshness: 'none',
+        proofAgeMs: null,
+        proofAgeMinutes: null,
+        proofAgeLabel: 'none',
+        blocker: 'No handled signed Alexa IntentRequest is recorded on this host yet.',
+        detail:
+          'No signed Alexa request has been recorded on this host, so Alexa remains near-live only.',
+        nextAction:
+          'Use a real device or authenticated Alexa Developer Console simulator, say `Open Andrea Assistant`, then `What am I forgetting?`, and run `npm run services:status`.',
+      },
+      {
+        proofState: 'live_proven',
+        blocker: '',
+        blockerOwner: 'none',
+        nextAction: '',
+        detail: 'Alexa orientation was recently successful on this host.',
+        lastSignedRequestAt: 'none',
+        lastSignedRequestType: 'none',
+        lastSignedIntent: 'none',
+        lastSignedResponseSource: 'none',
+        lastHandledProofAt: '2026-04-09T19:02:50.929Z',
+        lastHandledProofIntent: 'alexa_orientation',
+        lastHandledProofResponseSource: 'pilot_recent_success',
+        proofKind: 'handled_intent',
+        proofFreshness: 'fresh',
+        proofAgeMinutes: 37,
+        proofAgeLabel: '37m',
+        recommendedUtterance: '`Open Andrea Assistant` then `What am I forgetting?`',
+        confirmCommand: 'npm run services:status',
+        successShape: 'Handled IntentRequest + fresh proof.',
+        staleShape: 'Handled IntentRequest exists but is stale.',
+        failureChecklist: 'Check the real skill path.',
+      },
+    );
+
+    expect(effectiveProof.proofState).toBe('live_proven');
+    expect(effectiveProof.proofKind).toBe('handled_intent');
+    expect(effectiveProof.proofFreshness).toBe('fresh');
+    expect(effectiveProof.lastHandledProofIntent?.intentName).toBe(
+      'alexa_orientation',
+    );
+    expect(effectiveProof.lastHandledProofIntent?.responseSource).toBe(
+      'pilot_recent_success',
+    );
   });
 });
 

@@ -454,6 +454,169 @@ describe('field-trial readiness', () => {
     expect(truth.bluebubbles.messageActionProofChatJid).toBe('bb:iMessage;+;chat-proof');
   });
 
+  it('anchors BlueBubbles proof to the presentation chat when a linked-thread action was decided from self-chat', () => {
+    vi.stubEnv('BLUEBUBBLES_ENABLED', 'true');
+    vi.stubEnv('BLUEBUBBLES_BASE_URL', 'http://macbook-pro.local:1234');
+    vi.stubEnv('BLUEBUBBLES_PASSWORD', 'secret');
+    vi.stubEnv('BLUEBUBBLES_GROUP_FOLDER', 'main');
+    vi.stubEnv('BLUEBUBBLES_CHAT_SCOPE', 'all_synced');
+    vi.stubEnv('BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL', 'http://192.168.5.136:4305');
+    vi.stubEnv('BLUEBUBBLES_WEBHOOK_SECRET', 'hook-secret');
+    vi.stubEnv('BLUEBUBBLES_SEND_ENABLED', 'true');
+
+    const snapshot: HostControlSnapshot = {
+      paths: resolveHostControlPaths(tempDir),
+      nodeRuntime: null,
+      hostState: null,
+      readyState: null,
+      assistantHealthState: {
+        bootId: 'boot-blue-self-proof',
+        pid: process.pid,
+        appVersion: '1.0.0-test',
+        updatedAt: '2026-04-10T00:12:00.000Z',
+        channels: [
+          {
+            name: 'bluebubbles',
+            configured: true,
+            state: 'ready',
+            updatedAt: '2026-04-10T00:12:00.000Z',
+            detail:
+              'listener 0.0.0.0:4305/bluebubbles/webhook | scope all_synced | reply gate mention_required | transport reachable/auth ok (200) | last inbound 2026-04-10T00:10:00.000Z | last inbound chat bb:iMessage;-;jeffstory007@gmail.com | last inbound self_authored yes | last outbound 2026-04-10T00:11:00.000Z (bb:iMessage;-;jeffstory007@gmail.com) | last outbound target kind chat_guid | last outbound target value iMessage;-;jeffstory007@gmail.com | last send error none | send method apple-script | private api available no | last metadata hydration none | attempted target sequence chat_guid',
+          },
+        ],
+      },
+      telegramRoundtripState: null,
+      telegramTransportState: null,
+      runtimeAuditState: null,
+    };
+
+    storeChatMetadata(
+      'bb:iMessage;-;jeffstory007@gmail.com',
+      '2026-04-10T00:11:00.000Z',
+      'Jeff',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'bb:self-proof-user-1',
+      chat_jid: 'bb:iMessage;-;jeffstory007@gmail.com',
+      sender: 'bb:jeffstory007@gmail.com',
+      sender_name: 'Jeff',
+      content: '@Andrea what should I send back?',
+      timestamp: '2026-04-10T00:10:00.000Z',
+      is_from_me: true,
+      is_bot_message: false,
+    });
+    storeMessage({
+      id: 'bb:self-proof-bot-1',
+      chat_jid: 'bb:iMessage;-;jeffstory007@gmail.com',
+      sender: 'Andrea',
+      sender_name: 'Andrea',
+      content: 'Andrea: Here is a draft you can send.',
+      timestamp: '2026-04-10T00:11:00.000Z',
+      is_from_me: true,
+      is_bot_message: true,
+    });
+    insertPilotJourneyEvent({
+      eventId: 'bb-self-proof-1',
+      journeyId: 'ordinary_chat',
+      channel: 'bluebubbles',
+      groupFolder: 'main',
+      chatJid: 'bb:iMessage;-;jeffstory007@gmail.com',
+      threadId: null,
+      routeKey: 'direct_quick_reply',
+      systemsInvolved: ['assistant_shell'],
+      outcome: 'success',
+      blockerClass: null,
+      blockerOwner: 'none',
+      degradedPath: null,
+      handoffCreated: false,
+      missionCreated: false,
+      threadSaved: false,
+      reminderCreated: false,
+      librarySaved: false,
+      currentWorkRef: null,
+      summaryText: 'Ordinary self-chat proof',
+      startedAt: '2026-04-10T00:10:00.000Z',
+      completedAt: '2026-04-10T00:10:02.000Z',
+      durationMs: 2000,
+    });
+    insertPilotJourneyEvent({
+      eventId: 'bb-self-proof-2',
+      journeyId: 'daily_guidance',
+      channel: 'bluebubbles',
+      groupFolder: 'main',
+      chatJid: 'bb:iMessage;-;jeffstory007@gmail.com',
+      threadId: null,
+      routeKey: 'communication.draft_reply',
+      systemsInvolved: ['communication_companion'],
+      outcome: 'success',
+      blockerClass: null,
+      blockerOwner: 'none',
+      degradedPath: null,
+      handoffCreated: false,
+      missionCreated: false,
+      threadSaved: false,
+      reminderCreated: false,
+      librarySaved: false,
+      currentWorkRef: null,
+      summaryText: 'Drafted a same-thread reply from self-chat.',
+      startedAt: '2026-04-10T00:11:00.000Z',
+      completedAt: '2026-04-10T00:11:06.000Z',
+      durationMs: 6000,
+    });
+    upsertMessageAction({
+      messageActionId: 'msg-action-self-proof-1',
+      groupFolder: 'main',
+      sourceType: 'communication_thread',
+      sourceKey: 'comm-self-proof',
+      sourceSummary: 'Draft reply was decided from the self-chat proof thread.',
+      targetKind: 'external_thread',
+      targetChannel: 'bluebubbles',
+      targetConversationJson: JSON.stringify({
+        kind: 'external_thread',
+        chatJid: 'bb:iMessage;+;external-thread',
+        personName: 'Che',
+      }),
+      draftText: 'Yes, Saturday is still the plan.',
+      trustLevel: 'approve_before_send',
+      sendStatus: 'sent',
+      followupAt: null,
+      requiresApproval: false,
+      delegationRuleId: null,
+      delegationMode: null,
+      explanationJson: null,
+      linkedRefsJson: JSON.stringify({
+        communicationThreadId: 'comm-self-proof',
+        personName: 'Che',
+      }),
+      platformMessageId: 'bb:sent-self-proof-1',
+      scheduledTaskId: null,
+      approvedAt: '2026-04-10T00:11:30.000Z',
+      lastActionKind: 'sent',
+      lastActionAt: '2026-04-10T00:11:40.000Z',
+      dedupeKey: 'proof-key-self-1',
+      presentationChatJid: 'bb:iMessage;-;jeffstory007@gmail.com',
+      presentationThreadId: null,
+      presentationMessageId: null,
+      createdAt: '2026-04-10T00:11:20.000Z',
+      lastUpdatedAt: '2026-04-10T00:11:40.000Z',
+      sentAt: '2026-04-10T00:11:40.000Z',
+    });
+
+    const truth = buildFieldTrialOperatorTruth({
+      projectRoot: tempDir,
+      hostSnapshot: snapshot,
+      windowsHost: null,
+    });
+
+    expect(truth.bluebubbles.proofState).toBe('live_proven');
+    expect(truth.bluebubbles.messageActionProofState).toBe('fresh');
+    expect(truth.bluebubbles.messageActionProofChatJid).toBe(
+      'bb:iMessage;-;jeffstory007@gmail.com',
+    );
+  });
+
   it('keeps BlueBubbles near-live when same-chat pilot proof exists but message-action proof is missing', () => {
     vi.stubEnv('BLUEBUBBLES_ENABLED', 'true');
     vi.stubEnv('BLUEBUBBLES_BASE_URL', 'http://macbook-pro.local:1234');
@@ -940,6 +1103,38 @@ describe('field-trial readiness', () => {
 
     expect(truth.googleCalendar.proofState).toBe('live_proven');
     expect(truth.googleCalendar.detail).toContain('live-proven');
+  });
+
+  it('keeps Alexa live-proven from a recent successful pilot journey when restart cleared the signed-request file', () => {
+    vi.stubEnv('ALEXA_SKILL_ID', 'amzn1.ask.skill.test');
+    const started = startPilotJourney({
+      journeyId: 'alexa_orientation',
+      systemsInvolved: ['alexa', 'assistant_capabilities'],
+      summaryText: 'What am I forgetting?',
+      routeKey: 'WhatAmIForgettingIntent',
+      channel: 'alexa',
+      groupFolder: 'main',
+      chatJid: null,
+      threadId: null,
+      startedAt: '2026-04-08T11:55:00.000Z',
+    });
+    expect(started).toBeTruthy();
+    completePilotJourney({
+      eventId: started!.eventId,
+      outcome: 'success',
+      blockerOwner: 'none',
+      completedAt: '2026-04-08T11:55:12.000Z',
+      summaryText: 'The conversation most likely to slip is Candace.',
+    });
+
+    const truth = buildFieldTrialOperatorTruth({ projectRoot: tempDir });
+
+    expect(truth.alexa.proofState).toBe('live_proven');
+    expect(truth.alexa.lastSignedRequestAt).toBe('none');
+    expect(truth.alexa.lastHandledProofAt).toBe('2026-04-08T11:55:12.000Z');
+    expect(truth.alexa.lastHandledProofIntent).toBe('alexa_orientation');
+    expect(truth.alexa.lastHandledProofResponseSource).toBe('pilot_recent_success');
+    expect(truth.journeys.alexa_orientation.proofState).toBe('live_proven');
   });
 
   it('marks work cockpit live-proven from a recent pilot journey and surfaces pilot issue state', () => {

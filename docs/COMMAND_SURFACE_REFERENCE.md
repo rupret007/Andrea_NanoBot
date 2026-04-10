@@ -71,7 +71,7 @@ Important boundary:
 | Surface | Truth | Best for | Important boundary |
 | --- | --- | --- | --- |
 | Telegram | `live_proven` | Richest companion use, reminders, calendar scheduling, follow-through, research, messaging review, and operator work | Public-safe commands stay small; deeper control lives in the main control chat |
-| Alexa | `near_live_only` on this host | Short voice orientation, follow-up, and Telegram handoff | Real proof must come from the Andrea custom skill, not generic Alexa+ Preview chat |
+| Alexa | `live_proven` on this host | Short voice orientation, follow-up, and Telegram handoff | Real proof must come from the Andrea custom skill, not generic Alexa+ Preview chat |
 | BlueBubbles | `degraded_but_usable` on this host | Bounded personal messaging companion in the active thread | Mention-required, messaging-first, and still needs a fresh same-thread message-action proof leg before it counts as `live_proven` |
 
 ## Natural-Language Discovery Surfaces
@@ -123,7 +123,7 @@ These are formal command families, but they belong in the main control chat and 
 | `/debug-level` | `/debug-level`, `/debug_level` | `operator_only` | Temporary debug override |
 | `/debug-reset` | `/debug-reset`, `/debug_reset` | `operator_only` | Reset debug overrides |
 | `/debug-logs` | `/debug-logs`, `/debug_logs` | `operator_only` | Recent sanitized logs |
-| `/alexa-status` | `/alexa`, `/alexa-status`, `/alexa_status` | `near_live_only` on this host | Alexa status and proof truth |
+| `/alexa-status` | `/alexa`, `/alexa-status`, `/alexa_status` | `live_proven` on this host | Alexa status and proof truth |
 | `/amazon-status` | `/amazon-status`, `/amazon_status` | `bounded` | Amazon integration status |
 | `/amazon-search` | `/amazon-search`, `/amazon_search` | `bounded` | Amazon Business search |
 | `/purchase-request` | `/purchase-request`, `/purchase_request` | `bounded` | Open a purchase request |

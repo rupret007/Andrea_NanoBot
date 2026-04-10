@@ -127,8 +127,9 @@ Current truthful host status:
 - if the live HTTPS host is an `ngrok` `*.ngrok-free.dev` tunnel, the Alexa endpoint SSL type must be set to the wildcard certificate option
 - issued access tokens resolve to `groupFolder=main`
 - Alexa proof on this host is status-led rather than a static doc claim
-- Alexa only counts as **live_proven** when the last handled signed `IntentRequest` is within **24 hours**
+- Alexa only counts as **live_proven** when a fresh handled Andrea custom-skill proof remains within **24 hours**
 - pilot-mode operator surfaces (`services:status`, `setup verify`, `debug:status`, `debug:pilot`) should classify Alexa as `live_proven` while that proof stays fresh, and intentionally drop it back to `near_live_only` if the proof becomes stale
+- after restart, those operator surfaces may credit the proof either from the persisted handled signed-request markers or from a recent same-host `alexa_orientation` pilot success that already recorded the qualifying handled turn
 - if there is no fresh handled signed custom-skill turn on this host, Alexa should read as `near_live_only`
 - use current operator surfaces for the exact proof markers instead of treating this guide as the live authority
 
@@ -136,9 +137,11 @@ Current truthful host status:
 
 Alexa becomes `live_proven` only when all of these are true on this host:
 
-- the last signed request type is `IntentRequest`
-- the last signed intent was actually handled, not just received
-- `alexa_last_signed_response_source` is a handled path such as `local_companion`, `life_thread_local`, `assistant_bridge`, or `bridge`
+- a fresh handled Andrea custom-skill proof exists on this host
+- that proof comes from either the persisted handled signed-request state or a recent same-host `alexa_orientation` pilot success after restart
+- when the signed-request markers are still present, the last signed request type is `IntentRequest`
+- when the signed-request markers are still present, the last signed intent was actually handled, not just received
+- when the signed-request markers are still present, `alexa_last_signed_response_source` is a handled path such as `local_companion`, `life_thread_local`, `assistant_bridge`, or `bridge`
 - the handled proof is no older than **24 hours**
 
 These states do **not** count as live proof:
@@ -589,7 +592,7 @@ When the environment is configured, use this order:
 
 If you need one sentence for the current state, use this:
 
-- Alexa Companion Mode is status-led on this host: operator surfaces should show `live_proven` only while a fresh handled signed `IntentRequest` remains inside the 24-hour proof window, and otherwise should show `near_live_only`.
+- Alexa Companion Mode is status-led on this host: operator surfaces should show `live_proven` only while a fresh handled Andrea custom-skill proof remains inside the 24-hour proof window, and otherwise should show `near_live_only`.
 
 ## 9) Incident Notes
 

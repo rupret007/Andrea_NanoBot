@@ -148,8 +148,12 @@ describe('command surface docs', () => {
 
     expect(bluebubblesGuide).toContain('degraded_but_usable');
     expect(docsIndex).toContain('degraded-but-usable');
-    expect(runbook).toContain('Alexa should read as `live_proven` only while');
-    expect(runbook).not.toContain('Alexa is live-proven on this host from a fresh handled signed');
+    expect(runbook).toContain(
+      'Alexa is currently `live_proven` on this host while a fresh handled Andrea custom-skill proof remains in the 24-hour window',
+    );
+    expect(runbook).toContain(
+      'after restart, operator surfaces may credit that Alexa proof either from the persisted handled signed-request markers',
+    );
   });
 
   it('documents hidden backing commands in the operator reference', () => {

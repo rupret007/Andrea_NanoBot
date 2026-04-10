@@ -7,14 +7,14 @@ Use this as the canonical demo and field-trial checklist for the current Windows
 | Surface | Status | Exact blocker | Blocker owner | Smallest next action |
 | --- | --- | --- | --- | --- |
 | Telegram companion surface | `live_proven` | none | none | Keep `npm run telegram:user:smoke` current before demos |
-| Alexa conversational surface | `near_live_only` | No fresh signed `IntentRequest` is recorded on this host | external | Perform one real signed Alexa voice or authenticated simulator turn and confirm `services:status` records an `IntentRequest` |
-| BlueBubbles companion surface | `externally_blocked` | BlueBubbles Server/webhook is not installed or connected on this PC | external | Reconnect the Mac-side BlueBubbles server/webhook and restore the `BLUEBUBBLES_*` connection values here |
+| Alexa conversational surface | `live_proven` | none while the fresh handled proof window stays current | none | Confirm `services:status` still shows fresh Alexa proof before demos |
+| BlueBubbles companion surface | `degraded_but_usable` | One fresh same-thread `message_action` decision is still missing on this host | external | In the active proof chat, ask what Andrea should say back or send back, then use `send it` or `send it later tonight` |
 | Unified work cockpit (`/cursor` + Codex/OpenAI runtime) | `live_proven` | none | none | Re-run one `/cursor` sanity flow after restart |
 | Life threads / communication companion | `live_proven` | none | none | Re-run the Candace flagship chain in Telegram |
 | Chief-of-staff / missions | `live_proven` | none | none | Re-run the nightly planning chain in Telegram |
 | Knowledge library | `live_proven` | none for local saved-material answers | none | Re-run one saved-material answer and one save flow |
-| Research mode | `externally_blocked` | Direct provider credentials / quota are not currently usable for outward research | external | Restore a working direct provider key with billing/quota, then re-prove one outward fact lookup |
-| Image generation | `externally_blocked` | Direct provider credentials / quota are not currently usable for Telegram image generation | external | Restore a working direct provider key with image access, then re-prove one Telegram image request |
+| Research mode | `live_proven` | none | none | Keep one recent outward fact lookup on hand for demos |
+| Image generation | `live_proven` | none | none | Keep one recent Telegram image request on hand for demos |
 | Startup / host-control / watchdog / health | `live_proven` | none | none | Keep `services:status`, `setup verify`, and `debug:status` aligned after each restart |
 
 ## Operator Preflight
@@ -173,7 +173,8 @@ Use this when Andrea is being dogfooded day to day instead of formally demoed.
 3. Confirm flagship journey proof shows:
    - Telegram `live_proven`
    - ordinary chat, daily guidance, Candace follow-through, mission planning, work cockpit, and cross-channel handoff `live_proven`
-   - Alexa `near_live_only` unless a fresh signed turn happened today
+   - Alexa `live_proven` while the fresh handled proof window remains current
+   - BlueBubbles `degraded_but_usable` until the same-thread `message_action` proof leg is rerun
 4. Re-run one short Telegram chain:
    - `hi`
    - `what am I forgetting`

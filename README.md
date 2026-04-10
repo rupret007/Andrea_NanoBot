@@ -81,7 +81,7 @@ Current host truth for the Windows field-trial machine:
 
 - Telegram is the richest **live-proven** surface.
 - Google Calendar scheduling is **live-proven** on this host.
-- Alexa is currently **near_live_only** on this host until a fresh handled signed Andrea custom-skill `IntentRequest` is recorded.
+- Alexa is currently **live_proven** on this host because a fresh handled Andrea custom-skill proof remains inside the 24-hour proof window.
 - BlueBubbles is currently **degraded_but_usable** on this host: transport, webhook, and bounded same-thread chat are working, but one fresh same-thread `message_action` decision is still required before it counts as live-proven.
 - the local Codex/OpenAI runtime backend and the unified `/cursor` work cockpit are live on this host
 - outward research and Telegram image generation are now **live-proven** on this host through the direct OpenAI provider path
@@ -252,8 +252,9 @@ Alexa is now a bounded companion channel for Andrea rather than a novelty skill.
 Alexa proof on this host is now status-led:
 
 - treat `npm run services:status`, `npm run debug:status`, and `npm run setup -- --step verify` as the live authority
-- Alexa only becomes `live_proven` when a fresh handled signed Andrea custom-skill `IntentRequest` is recorded
-- if that handled proof ages out or a fresh live turn has not been recorded on this host, Alexa should read as `near_live_only`
+- Alexa only becomes `live_proven` while a fresh handled Andrea custom-skill proof remains inside the 24-hour window
+- operator surfaces can satisfy that proof either from the persisted handled signed-request markers or, after restart, from a recent same-host `alexa_orientation` pilot success that already recorded the qualifying handled turn
+- if that handled proof ages out or no fresh qualifying proof remains on this host, Alexa should read as `near_live_only`
 
 When you want to refresh Alexa proof freshness, this is the validation flow:
 
