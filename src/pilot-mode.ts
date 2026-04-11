@@ -102,6 +102,19 @@ export interface PilotReviewDigest extends PilotReviewSnapshot {
   totalUsage7d: number;
   journeyDigests: Record<PilotJourneyId, PilotJourneyReviewDigest>;
   recentProblemEvents: PilotJourneyEventRecord[];
+  currentActionableProblemEvents: PilotJourneyEventRecord[];
+  historicalRecurringFailures: PilotRecurringProblemDigest[];
+}
+
+export interface PilotRecurringProblemDigest {
+  journeyId: PilotJourneyId;
+  channel: PilotJourneyEventRecord['channel'];
+  outcome: PilotJourneyOutcome;
+  blockerOwner: PilotBlockerOwner;
+  blockerClass: string;
+  occurrences: number;
+  latestAt: string;
+  latestSummaryText: string;
 }
 
 export interface AlexaUtteranceReviewItem {
@@ -518,6 +531,71 @@ function buildJourneyReviewDigest(
   };
 }
 
+function isProblemPilotOutcome(outcome: PilotJourneyOutcome): boolean {
+  return (
+    outcome === 'degraded_usable' ||
+    outcome === 'externally_blocked' ||
+    outcome === 'internal_failure'
+  );
+}
+
+function getPilotEventOccurredAt(event: PilotJourneyEventRecord): string {
+  return event.completedAt || event.startedAt;
+}
+
+function buildHistoricalRecurringFailures(
+  events: PilotJourneyEventRecord[],
+): PilotRecurringProblemDigest[] {
+  const grouped = new Map<string, PilotRecurringProblemDigest>();
+
+  for (const event of events) {
+    const blockerClass = event.blockerClass || 'none';
+    const latestAt = getPilotEventOccurredAt(event);
+    const key = [
+      event.journeyId,
+      event.channel,
+      event.outcome,
+      event.blockerOwner,
+      blockerClass,
+    ].join('::');
+    const existing = grouped.get(key);
+    if (!existing) {
+      grouped.set(key, {
+        journeyId: event.journeyId,
+        channel: event.channel,
+        outcome: event.outcome,
+        blockerOwner: event.blockerOwner,
+        blockerClass,
+        occurrences: 1,
+        latestAt,
+        latestSummaryText: sanitizePilotSummary(
+          event.summaryText,
+          'pilot journey',
+        ),
+      });
+      continue;
+    }
+
+    existing.occurrences += 1;
+    if (Date.parse(latestAt) >= Date.parse(existing.latestAt)) {
+      existing.latestAt = latestAt;
+      existing.latestSummaryText = sanitizePilotSummary(
+        event.summaryText,
+        'pilot journey',
+      );
+    }
+  }
+
+  return Array.from(grouped.values())
+    .sort((left, right) => {
+      if (right.occurrences !== left.occurrences) {
+        return right.occurrences - left.occurrences;
+      }
+      return Date.parse(right.latestAt) - Date.parse(left.latestAt);
+    })
+    .slice(0, 8);
+}
+
 export function buildPilotReviewDigest(now = new Date()): PilotReviewDigest {
   const snapshot = buildPilotReviewSnapshot(now);
   const usage24hCutoffIso = new Date(
@@ -541,6 +619,20 @@ export function buildPilotReviewDigest(now = new Date()): PilotReviewDigest {
       ];
     }),
   ) as Record<PilotJourneyId, PilotJourneyReviewDigest>;
+  const recentProblemEvents = snapshot.recentEvents.filter((event) =>
+    isProblemPilotOutcome(event.outcome),
+  );
+  const currentActionableCutoffIso = new Date(
+    now.getTime() - 48 * 60 * 60 * 1000,
+  ).toISOString();
+  const currentActionableProblemEvents = recentProblemEvents.filter(
+    (event) => getPilotEventOccurredAt(event) >= currentActionableCutoffIso,
+  );
+  const historicalRecurringFailures = buildHistoricalRecurringFailures(
+    recentProblemEvents.filter(
+      (event) => getPilotEventOccurredAt(event) < currentActionableCutoffIso,
+    ),
+  );
 
   return {
     ...snapshot,
@@ -551,12 +643,9 @@ export function buildPilotReviewDigest(now = new Date()): PilotReviewDigest {
       (event) => event.startedAt >= usage7dCutoffIso,
     ).length,
     journeyDigests,
-    recentProblemEvents: snapshot.recentEvents.filter(
-      (event) =>
-        event.outcome === 'degraded_usable' ||
-        event.outcome === 'externally_blocked' ||
-        event.outcome === 'internal_failure',
-    ),
+    recentProblemEvents,
+    currentActionableProblemEvents,
+    historicalRecurringFailures,
   };
 }
 

@@ -102,12 +102,23 @@ function collectAttentionItems(
 function formatProblemEvents(
   review: ReturnType<typeof buildPilotReviewDigest>,
 ): string[] {
-  if (review.recentProblemEvents.length === 0) {
-    return ['- none'];
+  if (review.currentActionableProblemEvents.length === 0) {
+    return ['- none beyond the standing proof gaps below'];
   }
-  return review.recentProblemEvents.slice(0, 8).map((event) => {
+  return review.currentActionableProblemEvents.slice(0, 8).map((event) => {
     const completedAt = event.completedAt || event.startedAt || 'in_progress';
     return `- ${event.journeyId} [${event.channel}] ${event.outcome} / owner=${event.blockerOwner} / blocker=${event.blockerClass || 'none'} at ${completedAt} :: ${event.summaryText}`;
+  });
+}
+
+function formatHistoricalRecurringFailures(
+  review: ReturnType<typeof buildPilotReviewDigest>,
+): string[] {
+  if (review.historicalRecurringFailures.length === 0) {
+    return ['- none'];
+  }
+  return review.historicalRecurringFailures.map((failure) => {
+    return `- ${failure.journeyId} [${failure.channel}] ${failure.occurrences}x ${failure.outcome} / owner=${failure.blockerOwner} / blocker=${failure.blockerClass} / latest=${failure.latestAt} :: ${failure.latestSummaryText}`;
   });
 }
 
@@ -129,7 +140,10 @@ function formatAlexaUtteranceReview(
   digest: ReturnType<typeof buildAlexaUtteranceReviewDigest>,
 ): string[] {
   if (digest.groupedPatterns.length === 0) {
-    return ['- none'];
+    return [
+      '- No recent grouped Alexa utterance misses are available on this host yet.',
+      '- Seed new evidence with `npm run debug:alexa-conversation` or `npm run debug:alexa-conversation -- --review` after simulator or live turns.',
+    ];
   }
 
   return digest.groupedPatterns.slice(0, 8).flatMap((item) => [
@@ -224,11 +238,15 @@ async function main(): Promise<void> {
     ...(attention.repoSide.length > 0 ? attention.repoSide : ['- none']),
     '- External blockers:',
     ...(attention.external.length > 0 ? attention.external : ['- none']),
-    '- Fresh proof gaps:',
+    '',
+    '*Current Actionable Friction*',
+    ...formatProblemEvents(review),
+    '',
+    '*Proof Freshness Gaps*',
     ...(attention.proofGaps.length > 0 ? attention.proofGaps : ['- none']),
     '',
-    '*Recent Flagged Outcomes*',
-    ...formatProblemEvents(review),
+    '*Historical Recurring Failures*',
+    ...formatHistoricalRecurringFailures(review),
     '',
     '*Open Pilot Issues*',
     ...formatOpenIssues(review),

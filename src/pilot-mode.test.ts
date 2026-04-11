@@ -238,6 +238,80 @@ describe('pilot mode', () => {
       'degraded_usable',
     );
     expect(digest.recentProblemEvents).toHaveLength(1);
+    expect(digest.currentActionableProblemEvents).toHaveLength(1);
+    expect(digest.historicalRecurringFailures).toHaveLength(0);
+  });
+
+  it('separates fresh actionable friction from older recurring failures', () => {
+    const olderOne = startPilotJourney({
+      journeyId: 'daily_guidance',
+      systemsInvolved: ['daily_companion'],
+      summaryText: 'Daily guidance in BlueBubbles self-thread',
+      routeKey: 'daily.loose_ends',
+      channel: 'bluebubbles',
+      groupFolder: 'main',
+      chatJid: 'bb:self',
+      startedAt: '2026-04-08T10:00:00.000Z',
+    });
+    completePilotJourney({
+      eventId: olderOne!.eventId,
+      outcome: 'degraded_usable',
+      blockerClass: 'message_action_missing',
+      blockerOwner: 'repo_side',
+      completedAt: '2026-04-08T10:00:04.000Z',
+      summaryText: 'Daily guidance still needs a same-thread message action.',
+    });
+
+    const olderTwo = startPilotJourney({
+      journeyId: 'daily_guidance',
+      systemsInvolved: ['daily_companion'],
+      summaryText: 'Daily guidance in BlueBubbles self-thread',
+      routeKey: 'daily.loose_ends',
+      channel: 'bluebubbles',
+      groupFolder: 'main',
+      chatJid: 'bb:self',
+      startedAt: '2026-04-08T11:00:00.000Z',
+    });
+    completePilotJourney({
+      eventId: olderTwo!.eventId,
+      outcome: 'degraded_usable',
+      blockerClass: 'message_action_missing',
+      blockerOwner: 'repo_side',
+      completedAt: '2026-04-08T11:00:03.000Z',
+      summaryText: 'Daily guidance still needs a same-thread message action.',
+    });
+
+    const current = startPilotJourney({
+      journeyId: 'cross_channel_handoff',
+      systemsInvolved: ['cross_channel_handoffs'],
+      summaryText: 'Cross-channel handoff or save',
+      routeKey: 'assistant_completion',
+      channel: 'telegram',
+      groupFolder: 'main',
+      chatJid: 'tg:main',
+      startedAt: '2026-04-11T09:00:00.000Z',
+    });
+    completePilotJourney({
+      eventId: current!.eventId,
+      outcome: 'degraded_usable',
+      blockerClass: 'local_degraded_path',
+      blockerOwner: 'repo_side',
+      completedAt: '2026-04-11T09:00:05.000Z',
+      summaryText: "I can't check that live right now.",
+    });
+
+    const digest = buildPilotReviewDigest(new Date('2026-04-11T10:00:00.000Z'));
+
+    expect(digest.currentActionableProblemEvents).toHaveLength(1);
+    expect(digest.currentActionableProblemEvents[0]?.journeyId).toBe(
+      'cross_channel_handoff',
+    );
+    expect(digest.historicalRecurringFailures[0]).toMatchObject({
+      journeyId: 'daily_guidance',
+      channel: 'bluebubbles',
+      blockerClass: 'message_action_missing',
+      occurrences: 2,
+    });
   });
 
   it('builds a lightweight Alexa utterance review digest from pilot journey events', () => {

@@ -178,7 +178,7 @@ export function buildSignaturePostActionConfirmation(input: {
   if (input.channel === 'alexa') {
     return [
       didWhat,
-      stillOpen ? `The open piece is ${stripTrailingPunctuation(stillOpen)}.` : null,
+      stillOpen ? `That still leaves ${stripTrailingPunctuation(stillOpen)}.` : null,
       nextSuggestion
         ? `If you want, I can ${stripTrailingPunctuation(nextSuggestion).replace(/^(?:i can|you can)\s+/i, '')}.`
         : null,

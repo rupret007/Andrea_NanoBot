@@ -395,6 +395,17 @@ describe('Alexa speech shaping', () => {
     expect(shaped).not.toContain('pin it into the evening reset');
   });
 
+  it('turns keep-in-view phrasing into a more natural next move', () => {
+    const shaped = shapeAlexaSpeech(
+      'Keep Candace in view, but it can wait for a calmer moment.',
+    );
+
+    expect(shaped).toContain(
+      'A quick check-in with Candace is the next useful move',
+    );
+    expect(shaped).not.toContain('Keep Candace in view');
+  });
+
   it('trims robotic research and calendar address wording for voice', () => {
     const normalized = normalizeAlexaSpeech(
       "I can't check that live right now. Narrow the question and I'll keep it grounded. If you want, I can send the fuller version to telegram, save the key result to the library, and remind me to revisit this. Tomorrow has 2 timed events. 2:00 PM-3:00 PM Appointment with Lifetime Dental Flower Mound @ Lifetime Dental Flower Mound, 3208 Long Prairie Road, Flower Mound, Texas, 75022, US 7:00 PM-8:00 PM dinner with Candace",
@@ -403,9 +414,24 @@ describe('Alexa speech shaping', () => {
     expect(normalized).toContain(
       "I can't check that live right now. If you want, I can send the fuller version to Telegram.",
     );
-    expect(normalized).toContain('at Lifetime Dental Flower Mound');
+    expect(normalized).toContain(
+      'At 2:00 PM to 3:00 PM, Appointment with Lifetime Dental Flower Mound.',
+    );
+    expect(normalized).toContain(
+      'At 7:00 PM to 8:00 PM, dinner with Candace',
+    );
     expect(normalized).not.toContain('3208 Long Prairie Road');
     expect(normalized).not.toContain('save the key result to the library');
+  });
+
+  it('trims alternate blocked-research boilerplate when the fallback offers a reminder', () => {
+    const normalized = normalizeAlexaSpeech(
+      "I can't check that live right now. Narrow the question and I'll keep it grounded. If you want, I can send the fuller version to telegram, save the key result to the library, and set a reminder to come back to this.",
+    );
+
+    expect(normalized).toBe(
+      "I can't check that live right now. If you want, I can send the fuller version to Telegram.",
+    );
   });
 });
 
@@ -1626,7 +1652,9 @@ describe('createAlexaSkill', () => {
       'tg:main',
       expect.stringContaining('pickup works better after rehearsal'),
     );
-    expect(extractSpeechText(response)).toContain('sent the details to Telegram');
+    expect(extractSpeechText(response)).toContain(
+      'sent the fuller version to Telegram',
+    );
     expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
   });
 

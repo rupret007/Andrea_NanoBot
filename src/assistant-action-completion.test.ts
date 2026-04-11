@@ -149,7 +149,7 @@ describe('assistant action completion', () => {
     );
 
     expect(result.handled).toBe(true);
-    expect(result.replyText).toContain('sent the details to Telegram');
+    expect(result.replyText).toContain('sent the fuller version to Telegram');
     expect(result.handoffResult?.ok).toBe(true);
     expect(sendTelegramMessage).toHaveBeenCalledWith(
       'tg:main',

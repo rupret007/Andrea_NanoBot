@@ -213,6 +213,49 @@ function formatList(items: string[]): string {
   return `${items.slice(0, -1).join(', ')}, and ${items[items.length - 1]}`;
 }
 
+function describeVoiceAction(
+  action: ActionBundleSnapshot['actions'][number],
+  originKind: ActionBundleOriginKind,
+): string {
+  switch (action.actionType) {
+    case 'draft_follow_up':
+      return 'draft the reply';
+    case 'send_to_telegram':
+      return 'send the fuller version to Telegram';
+    case 'save_to_thread':
+      return originKind === 'research' || originKind === 'handoff'
+        ? 'save this for later'
+        : 'save it for later';
+    case 'save_to_library':
+      return originKind === 'research' || originKind === 'handoff'
+        ? 'save this to the library'
+        : 'save it to the library';
+    case 'create_reminder':
+      return 'set a reminder';
+    case 'pin_to_ritual':
+      return 'add it to your evening reset';
+    case 'reference_current_work':
+      return 'keep current work in view';
+    default:
+      return action.summary.toLowerCase();
+  }
+}
+
+function buildVoiceCommandHints(snapshot: ActionBundleSnapshot): string[] {
+  const hints: string[] = ['do that'];
+  const actionTypes = new Set(
+    pendingActions(snapshot).map((action) => action.actionType),
+  );
+
+  if (actionTypes.has('draft_follow_up')) hints.push('draft it');
+  if (actionTypes.has('send_to_telegram')) hints.push('send it to Telegram');
+  if (actionTypes.has('save_to_thread')) hints.push('save it for later');
+  if (actionTypes.has('save_to_library')) hints.push('save it');
+  if (actionTypes.has('create_reminder')) hints.push('remind me later');
+
+  return [...new Set(hints)].slice(0, 4);
+}
+
 function buildSourceContextKey(params: {
   originKind: ActionBundleOriginKind;
   capabilityId?: string;
@@ -621,7 +664,7 @@ function synthesizeActions(params: {
     actions.push({
       actionType: 'create_reminder',
       targetSystem: 'reminders',
-      summary: 'Remind me to revisit this',
+      summary: 'Set a reminder to come back to this',
       requiresConfirmation: true,
       payload: {
         type: 'create_reminder',
@@ -860,15 +903,23 @@ export function buildActionBundlePresentation(
 export function buildActionBundleVoiceSummary(
   snapshot: ActionBundleSnapshot,
 ): ActionBundleVoiceSummary {
-  const actions = pendingActions(snapshot).slice(0, 3).map((action) => action.summary.toLowerCase());
+  const actions = pendingActions(snapshot)
+    .slice(0, 3)
+    .map((action) => describeVoiceAction(action, snapshot.bundle.originKind));
   const usedRule = snapshot.actions.some((action) => action.delegationRuleId);
   const summary =
     actions.length > 0
-      ? `I have ${actions.length === 1 ? 'one next step' : `${actions.length} next steps`} ready: ${formatList(actions)}.`
-      : 'I have a bundle ready if you want me to go over it again.';
+      ? `If you want, I can ${formatList(actions)}.`
+      : 'If you want, I can go over the next options again.';
+  const ruleNote = usedRule ? ' I used one of your usual rules here.' : '';
+  const commandHints = buildVoiceCommandHints(snapshot);
+  const followupPrompt =
+    commandHints.length > 0
+      ? ` Say ${formatList(commandHints)}, or not now.`
+      : ' Say do that or not now.';
   return {
-    summary: usedRule ? `${summary} I used one of your usual rules here.` : summary,
-    speech: `${usedRule ? `${summary} I used one of your usual rules here.` : summary} Say do that, just the reminder, save it for later, or send the details to Telegram.`,
+    summary: `${summary}${ruleNote}`.trim(),
+    speech: `${summary}${ruleNote}${followupPrompt}`.trim(),
   };
 }
 

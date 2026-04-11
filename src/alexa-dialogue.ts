@@ -251,14 +251,12 @@ function buildSaveRemindCandidates(item: string): string[] {
   if (isBareReference(normalized)) {
     return [
       `save ${item}`,
-      `remind me about ${item}`,
       'send me the full version',
       `draft ${item}`,
     ];
   }
   return [
     `save ${item}`,
-    `remind me about ${item}`,
     `draft ${item}`,
     `send ${item} to Telegram`,
   ];

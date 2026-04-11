@@ -416,7 +416,8 @@ describe('communication companion', () => {
       now: new Date('2026-04-06T09:05:00.000Z'),
     });
 
-    expect(openLoops.summaryText).toContain('open conversation');
+    expect(openLoops.summaryText).toContain('still needs attention');
+    expect(openLoops.bestNextStep).toContain('Candace');
     expect(openLoops.items[0]?.personName).toBe('Candace');
 
     const suppressed = manageCommunicationTracking({

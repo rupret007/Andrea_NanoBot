@@ -286,7 +286,7 @@ export async function deliverCompanionHandoff(
       status: 'failed',
       speech:
         targetChannel === 'bluebubbles'
-          ? 'I do not have a recent BlueBubbles conversation to send that into yet. Start from BlueBubbles first.'
+          ? 'I do not have a recent BlueBubbles conversation to send that into yet. Start in BlueBubbles first and I can use that thread.'
           : 'I do not have a main Telegram chat set up for this account yet.',
       errorText,
     };
@@ -379,8 +379,8 @@ export async function deliverCompanionHandoff(
       status: 'delivered',
       speech:
         payload.kind === 'artifact'
-          ? `Okay. I sent it to ${getTargetLabel(targetChannel)}.`
-          : `Okay. I sent the details to ${getTargetLabel(targetChannel)}.`,
+          ? `Okay. I sent the image to ${getTargetLabel(targetChannel)}.`
+          : `Okay. I sent the fuller version to ${getTargetLabel(targetChannel)}.`,
       targetChatJid: target.chatJid,
       platformMessageId,
     };

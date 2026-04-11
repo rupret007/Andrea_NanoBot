@@ -782,6 +782,68 @@ describe('buildDailyCompanionResponse', () => {
     );
   });
 
+  it('prefers thread context over keep-in-view phrasing for Alexa follow-ups', async () => {
+    const priorContext: DailyCompanionContext = {
+      version: 1,
+      mode: 'open_guidance',
+      channel: 'alexa',
+      generatedAt: '2026-04-04T17:00:00.000Z',
+      summaryText: 'Dinner plans tonight still need a clean answer.',
+      shortText: 'Dinner plans tonight still need a clean answer.',
+      extendedText: 'Dinner plans tonight still need a clean answer.',
+      leadReason: 'communication_carryover',
+      signalsUsed: ['communication_threads'],
+      signalsOmitted: [],
+      householdSignals: [],
+      recommendationKind: 'do_now',
+      recommendationText:
+        'Keep Candace in view, but it can wait for a calmer moment.',
+      subjectKind: 'household',
+      supportedFollowups: ['anything_else', 'shorter', 'say_more'],
+      subjectData: {
+        personName: 'Candace',
+        activePeople: ['Candace'],
+        householdFocus: true,
+      },
+      extraDetails: [],
+      memoryLines: [],
+      usedThreadIds: ['thread-candace'],
+      usedThreadTitles: ['Candace'],
+      usedThreadReasons: ['communication carryover'],
+      threadSummaryLines: ['Candace still needs a dinner answer.'],
+      comparisonKeys: {
+        nextEvent: null,
+        nextReminder: null,
+        recommendation: 'Keep Candace in view, but it can wait for a calmer moment.',
+        household: 'Candace',
+        focus: 'Dinner plans tonight',
+        thread: 'Candace',
+      },
+      toneProfile: 'balanced',
+    };
+
+    const response = await buildDailyCompanionResponse('Anything else?', {
+      channel: 'alexa',
+      groupFolder: 'main',
+      now: new Date('2026-04-04T17:05:00-05:00'),
+      timeZone: 'America/Chicago',
+      env: baseEnv,
+      fetchImpl: createGoogleCalendarFetchMock({
+        eventsByCalendar: {
+          primary: {
+            items: [],
+          },
+        },
+      }),
+      tasks: [],
+      priorContext,
+    });
+
+    expect(response?.reply.startsWith('Candace still needs a dinner answer.')).toBe(
+      true,
+    );
+  });
+
   it('surfaces slipping thread pressure during midday re-grounding', async () => {
     handleLifeThreadCommand({
       groupFolder: 'main',
@@ -809,7 +871,9 @@ describe('buildDailyCompanionResponse', () => {
 
     expect(response?.mode).toBe('midday_reground');
     expect(response?.leadReason).toBe('thread_followup');
-    expect(response?.reply).toContain('The main loose end right now is Candace');
+    expect(response?.reply).toContain(
+      'The next thing that still needs attention is Candace',
+    );
     expect(response?.reply).toContain('Thread follow-up: Candace');
     expect(response?.context.usedThreadTitles).toContain('Candace');
   });

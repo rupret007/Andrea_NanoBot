@@ -236,7 +236,7 @@ function resolveNextSuggestion(
   candidate: CompanionContinuationCandidate | undefined,
 ): string | undefined {
   if (candidate?.missionId || params.priorSubjectData?.missionId) {
-    return 'ask what happens next or have me turn the next step into a reminder';
+    return 'talk through what happens next or let me turn the next step into a reminder';
   }
   if (
     candidate?.communicationThreadId ||
@@ -244,12 +244,12 @@ function resolveNextSuggestion(
     params.priorSubjectData?.communicationThreadId ||
     params.priorSubjectData?.lastCommunicationSummary
   ) {
-    return 'draft the reply or remind yourself later';
+    return 'draft the reply, save it for later, or set a reminder';
   }
   if (candidate?.handoffPayload) {
-    return 'send the fuller version in text';
+    return 'send the fuller version to Telegram';
   }
-  return 'save it for later or turn it into a reminder';
+  return 'save it for later or set a reminder';
 }
 
 function resolveDraftReference(
@@ -633,7 +633,7 @@ export async function completeAssistantActionFromAlexa(
           return {
             ...deliveryResult,
             replyText:
-              'Okay. I sent the details to Telegram and lined up the action bundle there too.',
+              'Okay. I sent the fuller version to Telegram and lined up the action bundle there too.',
           };
         }
         return {

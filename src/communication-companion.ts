@@ -843,7 +843,7 @@ function buildRelationshipAwareDraft(input: {
       : '') ||
     (companionTone === 'plain'
       ? 'Here is the main thing from my side.'
-      : 'I think the clearest next step is this.');
+      : "Here's what I'm thinking.");
   const closer =
     input.style === 'short'
       ? 'Let me know what works.'
@@ -1080,19 +1080,19 @@ export function buildCommunicationOpenLoops(
   const summaryText = personScope
     ? items.length === 0
       ? `Nothing important looks open with ${personScope.displayName} right now.`
-      : `${personScope.displayName} has ${items.length === 1 ? 'one conversation' : `${items.length} conversations`} still open.`
+      : `With ${personScope.displayName}, ${items.length === 1 ? 'one conversation still needs attention' : `${items.length} conversations still need attention`}.`
     : items.length === 0
       ? 'Nothing important is standing out as an owed reply right now.'
-      : `You have ${items.length === 1 ? 'one open conversation that still looks active' : `${items.length} open conversations that still look active`}.`;
+      : `You have ${items.length === 1 ? 'one conversation that still needs attention' : `${items.length} conversations that still need attention`}.`;
 
   return {
     ok: true,
     summaryText,
     bestNextStep:
       items[0]?.suggestedNextAction === 'draft_reply'
-        ? `Draft the reply for ${items[0].personName || items[0].title} next.`
+        ? `Start with a reply to ${items[0].personName || items[0].title}.`
         : items[0]
-          ? `Keep ${items[0].personName || items[0].title} in view next.`
+          ? `${items[0].personName || items[0].title} is the next conversation worth checking back on.`
           : undefined,
     items: items.slice(0, 3),
   };
@@ -1350,7 +1350,7 @@ export function formatCommunicationDraftReply(
   return buildSignatureFlowText({
     lead: result.summaryText || 'I drafted a reply.',
     bodyText: [`Draft:`, result.draftText].filter(Boolean).join('\n'),
-    nextAction: 'Save it, send the fuller version, or remind yourself later.',
+    nextAction: 'Save it, send the fuller version, or set a reminder.',
     whyLine:
       result.linkedSubjects[0]?.displayName
         ? `This is shaped around ${result.linkedSubjects[0].displayName} and the current conversation.`

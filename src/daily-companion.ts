@@ -921,8 +921,13 @@ function pickAlexaContinuationDetails(
   context: DailyCompanionContext,
 ): { summary: string; detail?: string } {
   const seen = [context.summaryText];
+  const preferredThreadSummary = context.threadSummaryLines
+    .map((line) => humanizeAlexaDetailLine(line))
+    .find((line) => isDistinctAlexaVoicePoint(line, seen));
   const candidates = [
     ...context.extraDetails,
+    ...context.threadSummaryLines,
+    ...context.householdSignals,
     context.recommendationText,
   ].filter((line): line is string => Boolean(line?.trim()));
   const selected: string[] = [];
@@ -937,9 +942,24 @@ function pickAlexaContinuationDetails(
   }
 
   if (selected.length > 0) {
+    if (
+      preferredThreadSummary &&
+      /^(?:Keep|Touch)\b/i.test(selected[0]!)
+    ) {
+      return {
+        summary: preferredThreadSummary,
+        detail: selected[0],
+      };
+    }
     return {
       summary: selected[0]!,
       detail: selected[1],
+    };
+  }
+
+  if (preferredThreadSummary) {
+    return {
+      summary: preferredThreadSummary,
     };
   }
 
@@ -950,7 +970,7 @@ function pickAlexaContinuationDetails(
   }
 
   return {
-    summary: 'Nothing else feels especially pressing beyond the main read.',
+    summary: 'That is the main thing. Nothing else feels especially urgent right now.',
   };
 }
 
@@ -1604,7 +1624,7 @@ function buildMiddayDraft(params: {
     lead = `The best next move is still ${snapshot.selectedWork.title}.`;
     leadReason = 'selected_work';
   } else if (dueThread) {
-    lead = `The main loose end right now is ${dueThread.title}.`;
+    lead = `The next thing that still needs attention is ${dueThread.title}.`;
     leadReason = 'thread_followup';
   } else if (slippingThread) {
     lead = `The thing most likely to slip is ${slippingThread.title}.`;
@@ -1896,9 +1916,9 @@ function buildHouseholdDraft(params: {
           : `I do not see one strong thing to bring up with ${personDisplayName} right now.`
       : askStyle === 'still_open' || askStyle === 'home_followup'
         ? personLeadDetail
-          ? `With ${personDisplayName}, the main loose end is ${personLeadDetail}.`
+          ? `With ${personDisplayName}, ${personLeadDetail}.`
           : householdLines[0]
-            ? `With ${personDisplayName}, the main thing on deck is ${householdLines[0]}.`
+            ? `With ${personDisplayName}, ${householdLines[0]}.`
             : `I do not see a strong shared signal with ${personDisplayName} right now.`
         : personLeadDetail
           ? `With ${personDisplayName}, I would stay with ${personLeadDetail}.`
@@ -1913,9 +1933,9 @@ function buildHouseholdDraft(params: {
           : 'I do not see one strong family loose end right now.'
       : askStyle === 'home_followup'
         ? summarizeThread(relatedThread)
-          ? `At home, the main loose end is ${summarizeThread(relatedThread)}.`
+          ? `At home, ${summarizeThread(relatedThread)}.`
           : householdLines[0]
-            ? `At home, the main thing on deck is ${householdLines[0]}.`
+            ? `At home, ${householdLines[0]}.`
             : 'I do not see one strong home follow-up right now.'
         : summarizeThread(relatedThread)
           ? `The main family thing coming up is ${summarizeThread(relatedThread)}.`

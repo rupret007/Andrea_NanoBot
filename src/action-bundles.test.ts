@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   applyActionBundleOperation,
+  buildActionBundleVoiceSummary,
   buildActionBundlePresentation,
   createOrRefreshActionBundle,
   interpretActionBundleFollowup,
@@ -129,6 +130,41 @@ describe('action bundles', () => {
       'create_reminder',
       'save_to_thread',
     ]);
+  });
+
+  it('uses more natural voice phrasing for research bundles', () => {
+    const continuationCandidate = {
+      capabilityId: 'research.answer',
+      voiceSummary: 'Meal delivery saves time, but grocery delivery costs less.',
+      handoffPayload: {
+        kind: 'message' as const,
+        title: 'Busy week tradeoffs',
+        text: 'Meal delivery saves time, but grocery delivery costs less.',
+        followupSuggestions: ['Send the fuller version to Telegram'],
+      },
+      completionText: 'meal delivery and grocery delivery for a busy week',
+      followupSuggestions: ['send me the fuller version'],
+    };
+
+    const bundle = createOrRefreshActionBundle({
+      groupFolder: 'main',
+      presentationChannel: 'alexa',
+      capabilityId: 'research.answer',
+      continuationCandidate,
+      summaryText: 'Busy week tradeoffs',
+      utterance: 'compare meal delivery and grocery delivery for a busy week',
+      now: new Date('2026-04-08T10:10:00.000Z'),
+    });
+
+    expect(bundle).toBeTruthy();
+    const voiceSummary = buildActionBundleVoiceSummary(bundle!);
+    expect(voiceSummary.summary).toContain(
+      'If you want, I can send the fuller version to Telegram, save this to the library, and set a reminder.',
+    );
+    expect(voiceSummary.summary).not.toContain('I have 3 next steps ready');
+    expect(voiceSummary.speech).toContain('send it to Telegram');
+    expect(voiceSummary.speech).toContain('save it');
+    expect(voiceSummary.speech).toContain('remind me later');
   });
 
   it('renders bundle cards and interprets conversational follow-ups', () => {

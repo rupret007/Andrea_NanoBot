@@ -770,8 +770,36 @@ export function normalizeAlexaSpeech(text: string): string {
     'If you want, I can make that more direct.',
   );
   normalized = normalized.replace(
+    /\bIf you want, I can send the fuller version to telegram,[^.]*\./gi,
+    'If you want, I can send the fuller version to Telegram.',
+  );
+  normalized = normalized.replace(
+    /\bIf you want, I can send the fuller version to Telegram,[^.]*\./gi,
+    'If you want, I can send the fuller version to Telegram.',
+  );
+  normalized = normalized.replace(
+    /\bI can't check that live right now\. Narrow the question and I'll keep it grounded\. If you want, I can send the fuller version to telegram\./gi,
+    "I can't check that live right now. If you want, I can send the fuller version to Telegram.",
+  );
+  normalized = normalized.replace(
+    /\bI can't check that live right now\. Narrow the question and I'll keep it grounded\. If you want, I can send the fuller version to Telegram\./gi,
+    "I can't check that live right now. If you want, I can send the fuller version to Telegram.",
+  );
+  normalized = normalized.replace(
     /\bI can't check that live right now\. Narrow the question and I'll keep it grounded\. If you want, I can send the fuller version to telegram, save the key result to the library, and remind me to revisit this\./gi,
     "I can't check that live right now. If you want, I can send the fuller version to Telegram.",
+  );
+  normalized = normalized.replace(
+    /\bI can't check that live right now\. Narrow the question and I'll keep it grounded\. If you want, I can send the fuller version to telegram, save the key result to the library, and set a reminder to come back to this\./gi,
+    "I can't check that live right now. If you want, I can send the fuller version to Telegram.",
+  );
+  normalized = normalized.replace(
+    /\bIf you want, I can send the fuller version to Telegram, save the key result to the library, and remind me to revisit this\./gi,
+    'If you want, I can send the fuller version to Telegram.',
+  );
+  normalized = normalized.replace(
+    /\bIf you want, I can send the fuller version to Telegram, save the key result to the library, and set a reminder to come back to this\./gi,
+    'If you want, I can send the fuller version to Telegram.',
   );
   normalized = normalized.replace(
     /\bIf you want, I can set a reminder for the follow-through, save it under ([A-Za-z][A-Za-z' -]+), and pin it into the evening reset\./gi,
@@ -779,6 +807,45 @@ export function normalizeAlexaSpeech(text: string): string {
       `If you want, I can remind you about ${name
         .trim()
         .replace(/\bcandace\b/gi, 'Candace')} later tonight.`,
+  );
+  normalized = normalized.replace(
+    /\bKeep ([A-Za-z][A-Za-z' -]+) in view, but it can wait for a calmer moment\./gi,
+    (_match, name: string) => {
+      const displayName = name
+        .trim()
+        .split(/\s+/)
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+        .join(' ');
+      return `A quick check-in with ${displayName} is the next useful move, and it can wait for a calmer moment.`;
+    },
+  );
+  normalized = normalized.replace(
+    /\bsend the fuller version in text\b/gi,
+    'send the fuller version to Telegram',
+  );
+  normalized = normalized.replace(
+    /\bremind yourself later\b/gi,
+    'set a reminder',
+  );
+  normalized = normalized.replace(
+    /\bturn it into a reminder\b/gi,
+    'set a reminder',
+  );
+  normalized = normalized.replace(
+    /\bAppointment with ([A-Za-z0-9'& .-]+?) at \1\b/gi,
+    'Appointment with $1',
+  );
+  normalized = normalized.replace(
+    /(\d{1,2}:\d{2}\s*(?:AM|PM)-\d{1,2}:\d{2}\s*(?:AM|PM)\s+[^.]+?)(?=\s+\d{1,2}:\d{2}\s*(?:AM|PM)-\d{1,2}:\d{2}\s*(?:AM|PM))/g,
+    '$1. ',
+  );
+  normalized = normalized.replace(
+    /\b(\d{1,2}:\d{2}\s*(?:AM|PM))-(\d{1,2}:\d{2}\s*(?:AM|PM))\b/g,
+    '$1 to $2',
+  );
+  normalized = normalized.replace(
+    /(^|[.!?]\s+)(\d{1,2}:\d{2}\s*(?:AM|PM)\s+to\s+\d{1,2}:\d{2}\s*(?:AM|PM))\s+/g,
+    (_match, prefix: string, range: string) => `${prefix}At ${range}, `,
   );
   normalized = normalized.replace(/\bcandace\b/g, 'Candace');
   normalized = normalized.replace(/[*_#>|]/g, ' ');
@@ -4246,7 +4313,8 @@ export function createAlexaSkill(
         .speak(
           buildSaveForLaterConfirmationSpeech(
             assistantName,
-            result.bridgeSaveForLaterText,
+            shapeAlexaSpeech(result.bridgeSaveForLaterText) ||
+              result.bridgeSaveForLaterText,
           ),
         )
         .reprompt('Say yes to save it, or no to cancel.')
@@ -6193,7 +6261,10 @@ export function createAlexaSkill(
         });
         return handlerInput.responseBuilder
           .speak(
-            buildSaveForLaterConfirmationSpeech(assistantName, captureText),
+            buildSaveForLaterConfirmationSpeech(
+              assistantName,
+              shapeAlexaSpeech(captureText) || captureText,
+            ),
           )
           .reprompt('Say yes to save it, or no to cancel.')
           .getResponse();

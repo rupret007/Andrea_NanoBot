@@ -446,7 +446,7 @@ describe('assistant capabilities', () => {
     });
 
     expect(openLoops.handled).toBe(true);
-    expect(openLoops.replyText).toContain('open conversation');
+    expect(openLoops.replyText).toContain('needs attention');
   });
 
   it('preserves explicit library titles and explains matched sources by topic', async () => {

@@ -95,6 +95,15 @@ describe('alexa dialogue', () => {
     });
 
     expect(
+      extractAlexaVoiceIntentCapture('SaveRemindHandoffIntent', {
+        item: 'that',
+      }),
+    ).toMatchObject({
+      preferredText: 'save that',
+      candidateTexts: ['save that', 'send me the full version', 'draft that'],
+    });
+
+    expect(
       extractAlexaVoiceIntentCapture('OpenAskIntent', {
         query: 'meal delivery and grocery pickup',
       }),

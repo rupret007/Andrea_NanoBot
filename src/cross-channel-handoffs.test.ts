@@ -166,4 +166,40 @@ describe('cross-channel handoffs', () => {
       deliveredMessageId: 'bb-msg-1',
     });
   });
+
+  it('uses a more specific confirmation for artifact handoffs', async () => {
+    const sendTelegramArtifact = vi.fn(async () => ({
+      platformMessageId: 'tg-artifact-1',
+    }));
+
+    const result = await deliverCompanionHandoff(
+      {
+        groupFolder: 'main',
+        originChannel: 'alexa',
+        voiceSummary: 'Reading nook concept.',
+        payload: {
+          kind: 'artifact',
+          title: 'Reading nook',
+          text: 'Reading nook concept.',
+          caption: 'Reading nook concept.',
+          artifact: {
+            kind: 'image',
+            filename: 'reading-nook.png',
+            mimeType: 'image/png',
+            bytesBase64: 'ZmFrZQ==',
+          },
+          followupSuggestions: [],
+        },
+      },
+      {
+        resolveTelegramMainChat: () => ({ chatJid: 'tg:main' }),
+        sendTelegramMessage: vi.fn(),
+        sendTelegramArtifact,
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.speech).toBe('Okay. I sent the image to Telegram.');
+    expect(sendTelegramArtifact).toHaveBeenCalled();
+  });
 });

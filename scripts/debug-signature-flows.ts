@@ -178,7 +178,11 @@ async function main(): Promise<void> {
   printBlock('OPEN-LOOPS RECOVERY', [
     `prompt: remind me about that tonight`,
     `reply: ${openLoopReminder.replyText || 'none'}`,
-    `still_open: ${openLoopReminder.replyText?.includes('The open piece is') ? openLoopReminder.replyText.split('The open piece is ')[1]?.split('. ')[0] || 'none' : 'none'}`,
+    `still_open: ${
+      openLoopReminder.replyText?.match(
+        /(?:The open piece is|That still leaves)\s+(.+?)(?:\.|$)/i,
+      )?.[1] || 'none'
+    }`,
     `task_count: ${getAllTasks().filter((task) => task.group_folder === dailyGroup).length}`,
   ]);
 
