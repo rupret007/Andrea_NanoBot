@@ -244,7 +244,7 @@ export const OPERATOR_SLASH_COMMAND_SURFACES: readonly CommandSurfaceEntry[] = [
   family('debug_level', '/debug-level', DEBUG_LEVEL_COMMANDS, 'Apply a temporary live debug override.', 'operator', 'operator_only'),
   family('debug_reset', '/debug-reset', DEBUG_RESET_COMMANDS, 'Clear one or all debug overrides.', 'operator', 'operator_only'),
   family('debug_logs', '/debug-logs', DEBUG_LOGS_COMMANDS, 'Read recent sanitized troubleshooting logs.', 'operator', 'operator_only'),
-  family('alexa_status', '/alexa-status', ALEXA_STATUS_COMMANDS, 'Show Alexa listener and proof status.', 'operator', 'near_live_only'),
+  family('alexa_status', '/alexa-status', ALEXA_STATUS_COMMANDS, 'Show Alexa listener, model-sync, and proof status.', 'operator', 'operator_only'),
   family('amazon_status', '/amazon-status', AMAZON_STATUS_COMMANDS, 'Show Amazon Business integration status.', 'operator', 'bounded'),
   family('amazon_search', '/amazon-search', AMAZON_SEARCH_COMMANDS, 'Search Amazon Business offers.', 'operator', 'bounded'),
   family('purchase_request', '/purchase-request', PURCHASE_REQUEST_COMMANDS, 'Open a purchase request.', 'operator', 'bounded'),
@@ -349,12 +349,12 @@ export const NATURAL_LANGUAGE_DISCOVERY_SURFACES: readonly CommandSurfaceEntry[]
     surfaceKind: 'natural_language',
     channelScope: ['alexa'],
     discoverability: ['/help', '/features', 'operator_docs'],
-    truthClass: 'near_live_only',
-    summary: 'Short voice orientation and follow-up when the real custom-skill path is healthy.',
+    truthClass: 'bounded',
+    summary: 'Concise voice help for your day, calendar, reminders, and short follow-up.',
     description:
-      'Voice-first orientation, short follow-ups, and Telegram handoff when the answer needs more room.',
+      'Best for voice orientation, calendar and reminder asks, short planning follow-up, and quick reply help.',
     statusAuthority:
-      'Check npm run services:status or npm run debug:status for the current custom-skill proof state.',
+      'Check npm run services:status or npm run debug:status for the current live proof and model-sync state.',
   },
   {
     id: 'bluebubbles_bounded_surface',
@@ -364,7 +364,7 @@ export const NATURAL_LANGUAGE_DISCOVERY_SURFACES: readonly CommandSurfaceEntry[]
     surfaceKind: 'natural_language',
     channelScope: ['bluebubbles'],
     discoverability: ['/help', '/features', 'operator_docs'],
-    truthClass: 'degraded_but_usable',
+    truthClass: 'bounded',
     summary: 'Bounded personal messaging help in the current thread.',
     description:
       'Mention-required personal messaging companion for summarizing, drafting, reminding later, and same-thread send/defer decisions.',
@@ -668,8 +668,9 @@ export function buildTelegramFeatureLines(assistantName: string): string[] {
     '',
     '*Surface Map*',
     '- Telegram is the richest surface for detailed answers and action completion.',
-    '- Alexa is a short voice surface for orientation and follow-up when your admin enabled it.',
-    '- BlueBubbles is a bounded personal messaging companion; mention `@Andrea` there.',
+    '- Alexa is concise voice help for calendar, reminders, orientation, and short follow-up.',
+    '- BlueBubbles is bounded Messages help in the current thread; mention `@Andrea` there.',
+    '- Research and image generation are optional lanes when those provider paths are available.',
     '- `/cursor_status` is the safe readiness check for coding and work help. Deeper operator controls stay in Telegram admin surfaces.',
   ];
 }

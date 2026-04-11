@@ -173,8 +173,12 @@ describe('buildTelegramFeaturesText', () => {
     expect(features).toContain('calendar scheduling');
     expect(features).toContain('source-grounded summaries');
     expect(features).toContain('people, projects, and household follow-through');
-    expect(features).toContain('BlueBubbles is a bounded personal messaging companion');
-    expect(features).toContain('Alexa is a short voice surface');
+    expect(features).toContain(
+      'BlueBubbles is bounded Messages help in the current thread',
+    );
+    expect(features).toContain(
+      'Alexa is concise voice help for calendar, reminders, orientation, and short follow-up',
+    );
     expect(features).not.toContain('Amazon shopping search');
     expect(features).not.toContain('Apple Calendar');
     expect(features).not.toContain('/cursor-results');

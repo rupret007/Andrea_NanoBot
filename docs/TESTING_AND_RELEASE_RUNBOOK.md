@@ -273,15 +273,19 @@ Confirm:
 
 Important truth for this host:
 
-- a healthy host can still report `STATUS: failed` if `EXTERNAL_BLOCKERS` are present
-- on the current host, `STATUS: success` is the normal outcome while Alexa's fresh handled proof window stays current
+- `setup -- --step verify` now follows **pass core, warn extras**
+- on the current host, `STATUS: success` is the normal outcome when launch readiness is `core_ready`, `core_ready_with_manual_surface_sync`, or `provider_blocked_but_core_usable`
+- use `LAUNCH_CANDIDATE_STATUS`, `CORE_STATUS`, `MANUAL_SYNC_STEPS`, `OPTIONAL_PROVIDER_BLOCKERS`, `OPTIONAL_PROVIDER_NEXT_ACTIONS`, and `PROOF_FRESHNESS_GAPS` as the primary operator truth
+- keep `EXTERNAL_BLOCKERS` and `MISSING_REQUIREMENTS` only as compatibility aliases, not as the whole product story
+- Alexa can be `live_proven` while the latest repo interaction-model hash still needs one local sync confirmation; that should read as `core_ready_with_manual_surface_sync`, not `near_live_only`
 - if Alexa ages out later, the likely blocker becomes `alexa_live_signed_turn_missing` or `alexa_live_signed_turn_stale`, not a broken service
-- BlueBubbles is `live_proven` on this Windows machine once the `BLUEBUBBLES_*` host configuration is loaded, the server is reachable, Andrea's public webhook is registered, and the canonical same-host roundtrip plus same-thread message-action proof leg are recorded
+- BlueBubbles is currently `degraded_but_usable` on this Windows machine: transport and webhook are healthy, but the canonical same-thread `message_action` leg still needs one fresh repro
 - after repo-side messaging changes, restart the local services before judging live proof so `SERVING_COMMIT_MATCHES_WORKSPACE_HEAD: true` reflects the current candidate
 - if `SERVICE: running_ready` and the blocker is external, treat that as an exact release-candidate caveat rather than a host failure
 - for Google Calendar specifically, `FAILURE_KIND: missing_config` means the current repo lacks usable credentials, and `FAILURE_KIND: invalid_refresh_token` means the stored refresh token is stale or revoked and you should rerun the current repo auth flow
 - if the browser reaches the OAuth callback but `auth` still times out, finish the same run with `npm run setup -- --step google-calendar auth-complete --callback-url "http://127.0.0.1:PORT/?state=...&code=..."`
 - on this host, `npm run debug:google-calendar` is now the canonical live read/write proof surface and should report `PROOF_STATE: live_proven` when Google Calendar is healthy
+- if you changed `docs/alexa/interaction-model.en-US.json`, finish the console import/build and then run `npm run setup -- --step alexa-model-sync mark-synced`
 
 Then validate the public-safe Telegram surface:
 
@@ -504,11 +508,12 @@ If any of those are missing, record Alexa as **code-ready but setup-blocked** in
 Current truthful closeout note:
 
 - Telegram is the live-proven release-candidate surface on this host for this pass
-- Alexa listener, OAuth, public ingress, and pinned Node 22 are healthy; Alexa is status-led on this host and should return to `live_proven` only after a fresh handled Andrea custom-skill proof is recorded again
+- Alexa listener, OAuth, public ingress, and pinned Node 22 are healthy; Alexa proof is currently `live_proven` on this host while the handled custom-skill proof stays fresh
 - after restart, operator surfaces may credit that Alexa proof either from the persisted handled signed-request markers or from a recent same-host `alexa_orientation` pilot success that already recorded the qualifying handled turn
-- if `npm run services:status` later shows `alexa_live_proof=near_live_only`, the remaining Alexa blocker is one human-operated voice or authenticated simulator run after importing `docs/alexa/interaction-model.en-US.json` and running `Build Model`
-- BlueBubbles is now `live_proven` on this host because the `BLUEBUBBLES_*` config is loaded, the server is reachable, Andrea's public webhook is registered, and the canonical same-host roundtrip plus same-thread message-action proof leg are recorded
-- outward-facing research and Telegram image generation are now live-proven on this host through the direct OpenAI provider path
+- if the repo Alexa model changed, the remaining release-candidate step is to import `docs/alexa/interaction-model.en-US.json`, run `Build Model`, and then run `npm run setup -- --step alexa-model-sync mark-synced`
+- if `npm run services:status` later shows `alexa_live_proof=near_live_only`, the remaining Alexa blocker is one human-operated voice or authenticated simulator run
+- BlueBubbles is currently `degraded_but_usable` on this host because the canonical same-thread `message_action` leg still needs a fresh repro even though transport and webhook are healthy
+- outward-facing research and Telegram image generation are currently optional provider-blocked lanes on this host
 - if the Anthropic-compatible LiteLLM gateway degrades later, report that separately as the core-runtime compatibility lane rather than as a direct OpenAI billing problem
 - typed Alexa+ app chat is not an authoritative proof surface unless Andrea logs a real signed follow-up `IntentRequest` after launch
 - interaction-model changes require a fresh import of `docs/alexa/interaction-model.en-US.json` plus `Build Model` in the Alexa Developer Console before live utterance failures count against the repo

@@ -4,6 +4,7 @@ import {
   redactBlueBubblesWebhookUrl,
   resolveBlueBubblesConfig,
 } from './channels/bluebubbles.js';
+import { getAlexaModelSyncStatus } from './alexa-model-sync-state.js';
 import { getAllChats, listMessageActionsForGroup, listRecentMessagesForChat } from './db.js';
 import {
   BLUEBUBBLES_CANONICAL_SELF_THREAD_JID,
@@ -23,6 +24,7 @@ import {
   assessAssistantHealthState,
   assessTelegramRoundtripState,
   DEFAULT_ALEXA_LIVE_PROOF_FRESHNESS_MS,
+  DEFAULT_TELEGRAM_ROUNDTRIP_PROBE_INTERVAL_MS,
   formatAlexaProofAgeLabel,
   readHostControlSnapshot,
   reconcileWindowsHostState,
@@ -52,6 +54,45 @@ export interface FieldTrialSurfaceTruth {
   blockerOwner: FieldTrialBlockerOwner;
   nextAction: string;
   detail: string;
+}
+
+export type FieldTrialLaunchCandidateStatus =
+  | 'core_ready'
+  | 'core_ready_with_manual_surface_sync'
+  | 'provider_blocked_but_core_usable'
+  | 'near_live_only'
+  | 'externally_blocked';
+
+export type FieldTrialCoreStatus =
+  | 'healthy'
+  | 'manual_sync_pending'
+  | 'fresh_proof_gap'
+  | 'blocked';
+
+export interface FieldTrialManualSurfaceSyncTruth {
+  surfaceId: 'alexa';
+  syncStatus: 'synced' | 'pending' | 'not_tracked';
+  interactionModelPath: string;
+  interactionModelHash: string;
+  lastSyncedHash: string;
+  lastSyncedAt: string;
+  lastSyncedBy: string;
+  detail: string;
+  nextAction: string;
+}
+
+export interface FieldTrialLaunchReadinessTruth {
+  status: FieldTrialLaunchCandidateStatus;
+  coreStatus: FieldTrialCoreStatus;
+  summary: string;
+  coreBlockers: string[];
+  manualSyncSteps: string[];
+  optionalProviderBlockers: string[];
+  optionalProviderNextActions: string[];
+  proofFreshnessGaps: string[];
+  manualSurfaceSyncs: {
+    alexa: FieldTrialManualSurfaceSyncTruth;
+  };
 }
 
 export interface FieldTrialAlexaTruth extends FieldTrialSurfaceTruth {
@@ -343,11 +384,13 @@ export interface FieldTrialOperatorTruth {
   communicationCompanion: FieldTrialSurfaceTruth;
   chiefOfStaffMissions: FieldTrialSurfaceTruth;
   knowledgeLibrary: FieldTrialSurfaceTruth;
+  actionBundlesDelegationOutcomeReview: FieldTrialSurfaceTruth;
   research: FieldTrialSurfaceTruth;
   imageGeneration: FieldTrialSurfaceTruth;
   hostHealth: FieldTrialSurfaceTruth;
   journeys: FieldTrialJourneyTruthMap;
   pilotIssues: FieldTrialPilotIssueTruth;
+  launchReadiness: FieldTrialLaunchReadinessTruth;
 }
 
 export interface BuildFieldTrialOperatorTruthOptions {
@@ -379,6 +422,261 @@ function buildTruth(
     nextAction: '',
     detail: '',
     ...truth,
+  };
+}
+
+function formatLaunchSurfaceLabel(label: string): string {
+  return label.replace(/_/g, ' ');
+}
+
+function summarizeTruthLine(label: string, state: FieldTrialSurfaceTruth): string {
+  const prefix = `${formatLaunchSurfaceLabel(label)}:`;
+  if (state.blocker) {
+    return `${prefix} ${state.blocker}${state.nextAction ? ` Next: ${state.nextAction}` : ''}`;
+  }
+  if (state.detail) {
+    return `${prefix} ${state.detail}${state.nextAction ? ` Next: ${state.nextAction}` : ''}`;
+  }
+  return `${prefix} ${state.proofState}`;
+}
+
+function buildAlexaManualSyncTruth(projectRoot: string): FieldTrialManualSurfaceSyncTruth {
+  const status = getAlexaModelSyncStatus(projectRoot);
+  if (status.syncStatus === 'synced') {
+    return {
+      surfaceId: 'alexa',
+      syncStatus: 'synced',
+      interactionModelPath: status.interactionModelPath,
+      interactionModelHash: status.interactionModelHash,
+      lastSyncedHash: status.lastSyncedHash,
+      lastSyncedAt: status.lastSyncedAt,
+      lastSyncedBy: status.lastSyncedBy,
+      detail:
+        'Alexa interaction model hash is marked as synced with the current repo model.',
+      nextAction: '',
+    };
+  }
+
+  if (status.syncStatus === 'pending') {
+    return {
+      surfaceId: 'alexa',
+      syncStatus: 'pending',
+      interactionModelPath: status.interactionModelPath,
+      interactionModelHash: status.interactionModelHash,
+      lastSyncedHash: status.lastSyncedHash,
+      lastSyncedAt: status.lastSyncedAt,
+      lastSyncedBy: status.lastSyncedBy,
+      detail:
+        'Alexa proof is separate from the latest console model sync. The current repo interaction model hash has not been marked as synced yet.',
+      nextAction:
+        'Import docs/alexa/interaction-model.en-US.json in the Alexa Developer Console, run Build Model, then run npm run setup -- --step alexa-model-sync mark-synced.',
+    };
+  }
+
+  return {
+    surfaceId: 'alexa',
+    syncStatus: 'not_tracked',
+    interactionModelPath: status.interactionModelPath,
+    interactionModelHash: status.interactionModelHash,
+    lastSyncedHash: status.lastSyncedHash,
+    lastSyncedAt: status.lastSyncedAt,
+    lastSyncedBy: status.lastSyncedBy,
+    detail:
+      'Alexa model sync is not being tracked from this repo root yet because the interaction-model file is missing here.',
+    nextAction: '',
+  };
+}
+
+function buildActionBundlesDelegationOutcomeReviewTruth(
+  review: PilotReviewSnapshotLike,
+): FieldTrialSurfaceTruth {
+  const matchingEvent = getRecentJourneyEvent(review, (event) => {
+    const summary = (event.summaryText || '').toLowerCase();
+    const routeKey = (event.routeKey || '').toLowerCase();
+    return (
+      summary.includes('bundle') ||
+      summary.includes('review') ||
+      routeKey.includes('bundle') ||
+      routeKey.includes('review') ||
+      event.systemsInvolved.includes('cross_channel_handoffs')
+    );
+  });
+
+  if (matchingEvent && isLiveProvenPilotOutcome(matchingEvent.outcome)) {
+    return buildTruth({
+      proofState: 'live_proven',
+      detail: describeRecentJourney(
+        'Action bundles / delegation / outcome review',
+        matchingEvent,
+        'live-proven',
+      ),
+    });
+  }
+
+  if (matchingEvent && matchingEvent.outcome === 'degraded_usable') {
+    return buildTruth({
+      proofState: 'degraded_but_usable',
+      blocker:
+        'Action bundles or outcome review stayed usable, but the latest host proof still used a degraded path.',
+      blockerOwner:
+        matchingEvent.blockerOwner === 'none'
+          ? 'repo_side'
+          : matchingEvent.blockerOwner,
+      nextAction:
+        'Run one clean approve or partial-review chain and confirm the outcome review updates without fallback.',
+      detail: describeRecentJourney(
+        'Action bundles / delegation / outcome review',
+        matchingEvent,
+        'degraded but usable',
+      ),
+    });
+  }
+
+  return buildTruth({
+    proofState: 'near_live_only',
+    blocker:
+      'Action bundles, delegation rules, and outcome review are implemented and well-covered, but this host still needs one fresh approve or partial-review proof chain.',
+    blockerOwner: 'repo_side',
+    nextAction:
+      'Run one bundle approval flow, let it land in outcome review, then rerun npm run debug:pilot.',
+    detail:
+      'This composite launch surface is repo-ready, but it still needs one first-class host proof chain so it does not disappear from the RC story.',
+  });
+}
+
+function buildLaunchReadinessTruth(params: {
+  projectRoot: string;
+  hostSnapshot: HostControlSnapshot;
+  windowsHost: WindowsHostReconciliation | null;
+  telegram: FieldTrialSurfaceTruth;
+  alexa: FieldTrialAlexaTruth;
+  bluebubbles: FieldTrialSurfaceTruth;
+  googleCalendar: FieldTrialSurfaceTruth;
+  workCockpit: FieldTrialSurfaceTruth;
+  lifeThreads: FieldTrialSurfaceTruth;
+  communicationCompanion: FieldTrialSurfaceTruth;
+  chiefOfStaffMissions: FieldTrialSurfaceTruth;
+  knowledgeLibrary: FieldTrialSurfaceTruth;
+  research: FieldTrialSurfaceTruth;
+  imageGeneration: FieldTrialSurfaceTruth;
+  hostHealth: FieldTrialSurfaceTruth;
+  journeys: FieldTrialJourneyTruthMap;
+  actionBundlesDelegationOutcomeReview: FieldTrialSurfaceTruth;
+}): FieldTrialLaunchReadinessTruth {
+  const alexaManualSync = buildAlexaManualSyncTruth(params.projectRoot);
+  const coreSurfaces: Array<[string, FieldTrialSurfaceTruth]> = [
+    ['telegram', params.telegram],
+    ['alexa', params.alexa],
+    ['bluebubbles', params.bluebubbles],
+    ['google_calendar', params.googleCalendar],
+    ['work_cockpit', params.workCockpit],
+    ['life_threads', params.lifeThreads],
+    ['communication_companion', params.communicationCompanion],
+    ['chief_of_staff_missions', params.chiefOfStaffMissions],
+    ['knowledge_library', params.knowledgeLibrary],
+    ['host_health', params.hostHealth],
+  ];
+
+  const blockedCoreSurfaces = coreSurfaces.filter(([, state]) =>
+    state.proofState === 'externally_blocked',
+  );
+  const nearLiveCoreSurfaces = coreSurfaces.filter(([, state]) =>
+    state.proofState === 'near_live_only',
+  );
+  const degradedUsableCoreSurfaces = coreSurfaces.filter(([, state]) =>
+    state.proofState === 'degraded_but_usable',
+  );
+  const manualSyncSteps =
+    params.alexa.proofState === 'live_proven' && alexaManualSync.syncStatus === 'pending'
+      ? [alexaManualSync.nextAction]
+      : [];
+
+  const optionalProviderBlockers: string[] = [];
+  const optionalProviderNextActions: string[] = [];
+  if (params.research.proofState === 'externally_blocked') {
+    optionalProviderBlockers.push(summarizeTruthLine('outward_research', params.research));
+    if (params.research.nextAction) {
+      optionalProviderNextActions.push(params.research.nextAction);
+    }
+  }
+  if (params.imageGeneration.proofState === 'externally_blocked') {
+    optionalProviderBlockers.push(
+      summarizeTruthLine('image_generation', params.imageGeneration),
+    );
+    if (params.imageGeneration.nextAction) {
+      optionalProviderNextActions.push(params.imageGeneration.nextAction);
+    }
+  }
+  const dependencyState =
+    params.windowsHost?.dependencyState ||
+    params.hostSnapshot.hostState?.dependencyState ||
+    'unknown';
+  const dependencyError =
+    params.windowsHost?.dependencyError ||
+    params.hostSnapshot.hostState?.dependencyError ||
+    '';
+  if (dependencyState === 'degraded' && dependencyError) {
+    optionalProviderBlockers.push(
+      `local_gateway_compatibility_lane: ${dependencyError}`,
+    );
+    optionalProviderNextActions.push(
+      'Repair the local Anthropic-compatible gateway lane, then rerun npm run setup -- --step verify.',
+    );
+  }
+
+  const proofFreshnessGaps = (
+    Object.entries(params.journeys) as Array<[keyof FieldTrialJourneyTruthMap, FieldTrialSurfaceTruth]>
+  )
+    .filter(([, state]) => state.proofState === 'near_live_only')
+    .map(([label, state]) => summarizeTruthLine(label, state))
+    .concat(
+      degradedUsableCoreSurfaces.map(([label, state]) =>
+        summarizeTruthLine(label, state),
+      ),
+    );
+
+  const coreBlockers = blockedCoreSurfaces
+    .concat(nearLiveCoreSurfaces)
+    .map(([label, state]) => summarizeTruthLine(label, state));
+
+  let coreStatus: FieldTrialCoreStatus = 'healthy';
+  let status: FieldTrialLaunchCandidateStatus = 'core_ready';
+  let summary = 'Andrea core companion is launch-ready on this host.';
+
+  if (blockedCoreSurfaces.length > 0) {
+    coreStatus = 'blocked';
+    status = 'externally_blocked';
+    summary =
+      'A core Andrea launch surface is currently blocked or degraded on this host.';
+  } else if (nearLiveCoreSurfaces.length > 0) {
+    coreStatus = 'fresh_proof_gap';
+    status = 'near_live_only';
+    summary =
+      'Andrea core companion is close, but one core surface still needs a same-host fresh proof step.';
+  } else if (manualSyncSteps.length > 0) {
+    coreStatus = 'manual_sync_pending';
+    status = 'core_ready_with_manual_surface_sync';
+    summary =
+      'Andrea core companion is ready, but one manual surface sync step is still pending.';
+  } else if (optionalProviderBlockers.length > 0) {
+    coreStatus = 'healthy';
+    status = 'provider_blocked_but_core_usable';
+    summary =
+      'Andrea core companion is ready. Optional provider-backed lanes are blocked, but the core product remains usable.';
+  }
+
+  return {
+    status,
+    coreStatus,
+    summary,
+    coreBlockers,
+    manualSyncSteps,
+    optionalProviderBlockers,
+    optionalProviderNextActions: [...new Set(optionalProviderNextActions)],
+    proofFreshnessGaps,
+    manualSurfaceSyncs: {
+      alexa: alexaManualSync,
+    },
   };
 }
 
@@ -626,6 +924,16 @@ function buildTelegramTruth(
     readyState: hostSnapshot.readyState,
   });
   const transport = hostSnapshot.telegramTransportState;
+  const hostBootId = hostSnapshot.hostState?.bootId || hostSnapshot.readyState?.bootId || null;
+  const roundtripBootId = hostSnapshot.telegramRoundtripState?.bootId || null;
+  const sameBootRoundtrip =
+    Boolean(hostBootId) &&
+    Boolean(roundtripBootId) &&
+    hostBootId === roundtripBootId;
+  const lastOkTimestamp = parseFieldTrialIsoTime(roundtrip.lastOkAt);
+  const recentlyConfirmed =
+    lastOkTimestamp != null &&
+    Date.now() - lastOkTimestamp <= DEFAULT_TELEGRAM_ROUNDTRIP_PROBE_INTERVAL_MS * 2;
 
   if (transport?.status === 'ready' && roundtrip.status === 'healthy') {
     return buildTruth({
@@ -670,6 +978,22 @@ function buildTelegramTruth(
         'Wait for the first post-startup Telegram roundtrip or rerun npm run telegram:user:smoke.',
       detail:
         'Telegram routing is up, but the latest live-proof marker is still pending after startup.',
+    });
+  }
+
+  if (
+    transport?.status === 'ready' &&
+    assistantHealth.status === 'healthy' &&
+    sameBootRoundtrip &&
+    recentlyConfirmed
+  ) {
+    return buildTruth({
+      proofState: 'live_proven',
+      detail:
+        roundtrip.detail ||
+        'Telegram routing is healthy on this host and the most recent same-boot roundtrip confirmation is still recent.',
+      nextAction:
+        'Rerun npm run telegram:user:smoke if you want to refresh the Telegram live-proof marker immediately.',
     });
   }
 
@@ -1624,8 +1948,12 @@ export function buildFieldTrialOperatorTruth(
     nearLiveNextAction:
       'Run one `use only my saved material` or `save this to my library` proof turn on this host.',
   });
-
-  return {
+  const actionBundlesDelegationOutcomeReview =
+    buildActionBundlesDelegationOutcomeReviewTruth(review);
+  const launchReadiness = buildLaunchReadinessTruth({
+    projectRoot,
+    hostSnapshot,
+    windowsHost,
     telegram,
     alexa,
     bluebubbles,
@@ -1639,10 +1967,29 @@ export function buildFieldTrialOperatorTruth(
     imageGeneration,
     hostHealth,
     journeys,
+    actionBundlesDelegationOutcomeReview,
+  });
+
+  return {
+    telegram,
+    alexa,
+    bluebubbles,
+    googleCalendar,
+    workCockpit,
+    lifeThreads,
+    communicationCompanion,
+    chiefOfStaffMissions,
+    knowledgeLibrary,
+    actionBundlesDelegationOutcomeReview,
+    research,
+    imageGeneration,
+    hostHealth,
+    journeys,
     pilotIssues: {
       loggingEnabled: review.loggingEnabled,
       openCount: review.openIssueCount,
       latestSummary: review.latestOpenIssue?.summaryText || '',
     },
+    launchReadiness,
   };
 }

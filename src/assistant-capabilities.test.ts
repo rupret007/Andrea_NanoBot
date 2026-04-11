@@ -546,7 +546,9 @@ describe('assistant capabilities', () => {
 
     expect(result.handled).toBe(true);
     expect(result.mediaResult?.providerStatus.provider).toBe('openai_images');
-    expect(result.replyText).toContain('quota or billing limit');
+    expect(result.replyText).toContain("I can't make that image right now");
+    expect(result.replyText).toContain('tighten the prompt');
+    expect(result.mediaResult?.blocker?.toLowerCase()).toMatch(/quota|billing/);
     expect(result.trace?.responseSource).toBe('unavailable');
   });
 

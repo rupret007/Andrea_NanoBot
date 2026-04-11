@@ -17,26 +17,33 @@ Start with exactly one document based on your role:
 
 Use this shorthand when you need the current host story fast:
 
-- **live-proven on this Windows host**
+- **launch-candidate overlay on this Windows host**
+  - `core_ready_with_manual_surface_sync`
+- **core live-proven**
   - Telegram companion surface
+  - Alexa companion while the fresh handled proof remains current
   - Google Calendar scheduling
-  - BlueBubbles on this PC, because the canonical same-thread roundtrip, message-action decision, and follow-up continuation are now recorded
   - unified work cockpit with Codex/OpenAI runtime
-  - life-thread, communication-companion, mission, and chief-of-staff flows that ride on Telegram
+  - life-thread, communication-companion, mission, chief-of-staff, knowledge-library, and action-bundle / outcome-review flows
+  - startup / host-control / watchdog / health
+- **manual surface sync still pending**
+  - Alexa's latest repo interaction-model hash has not been marked as synced locally yet
+  - after the Developer Console import/build, run `npm run setup -- --step alexa-model-sync mark-synced`
+- **degraded-but-usable**
+  - BlueBubbles on this PC: transport and real traffic are healthy, but the canonical self-thread still needs one fresh same-thread `message_action` proof leg
+- **externally blocked but optional**
   - outward research
   - Telegram image generation
-- **near-live only**
-  - Alexa on this host until a fresh handled Andrea custom-skill proof is recorded again
-- **degraded-but-usable**
-  - nothing currently in the BlueBubbles lane; if the proof chain later goes stale while transport still works, operator surfaces should report the exact missing leg again
-- **externally blocked**
-  - nothing currently in the BlueBubbles lane; if the live server, auth, or webhook wiring regresses, operator surfaces should report that exact blocker again
+  - the local Anthropic-compatible LiteLLM compatibility lane
+- **fresh-proof gaps, not host failure**
+  - daily guidance still needs one fresh same-host proof turn
 
 When operator surfaces disagree, the release truth should come from:
 
 1. `npm run services:status`
 2. `npm run setup -- --step verify`
 3. `npm run debug:status`
+4. `npm run debug:pilot`
 
 ## Product Shape In One Minute
 
@@ -117,10 +124,10 @@ Current host-proof rule:
 
 - `Andrea_NanoBot` is the only canonical repo now; the older `ANDREA/nanoclaw` checkout is non-authoritative reference only
 - Telegram ordinary chat and the main flagship follow-through journeys were live-proven on this host on April 7, 2026
-- Alexa is status-led on this host: it should read as `near_live_only` until a fresh handled custom-skill proof is recorded again, and only then return to `live_proven`
+- Alexa is status-led on this host: it is currently `live_proven` while the handled proof stays fresh, and the latest repo model is tracked separately through the local Alexa model-sync marker
 - after restart, operator surfaces may credit that Alexa proof either from the persisted handled signed-request markers or from a recent same-host `alexa_orientation` pilot success that already recorded the qualifying handled turn
-- BlueBubbles is status-led on this host: it is now `live_proven` because the canonical same-thread roundtrip, message-action decision, and follow-up continuation are recorded in `bb:iMessage;-;+14695405551`
-- outward-facing research and Telegram image generation are now live-proven on this host through the direct OpenAI provider path
+- BlueBubbles is status-led on this host: it is currently `degraded_but_usable` because transport is healthy but the canonical same-thread `message_action` leg still needs a fresh repro in `bb:iMessage;-;+14695405551`
+- outward-facing research and Telegram image generation are currently optional provider-blocked lanes on this host
 - the local Anthropic-compatible LiteLLM gateway remains a separate compatibility/runtime lane and should be reported separately if it degrades later
 
 ## Pilot Review Loop

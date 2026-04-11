@@ -3,6 +3,7 @@ import type {
   MediaGenerationResult,
   MediaProviderStatus,
 } from './types.js';
+import { buildGracefulDegradedReply } from './conversational-core.js';
 import {
   describeOpenAiConfigBlocker,
   describeOpenAiProviderFailure,
@@ -22,15 +23,17 @@ function buildUnavailableResult(
   message: string,
   debugPath: string[],
 ): MediaGenerationResult {
+  const replyText = buildGracefulDegradedReply({
+    kind: 'image_generation_unavailable',
+    channel: request.channel,
+    text: request.prompt,
+  });
   return {
     handled: true,
     providerStatus: status,
     blocker: message,
-    summaryText: message,
-    replyText:
-      request.channel === 'alexa'
-        ? message
-        : `${message}\n\nIf you want, I can still help tighten the prompt first.`,
+    summaryText: replyText,
+    replyText,
     routeExplanation:
       request.channel === 'alexa'
         ? 'I kept this voice-safe and stayed at the handoff layer.'
@@ -85,7 +88,7 @@ export async function runImageGeneration(
     return buildUnavailableResult(
       request,
       status,
-      `Image generation is wired, but ${describeOpenAiConfigBlocker(status.missing)}`,
+      `Image generation is unavailable here because ${describeOpenAiConfigBlocker(status.missing)}`,
       [`media.image_generate:blocked:${status.missing.join(',') || 'unknown'}`],
     );
   }
@@ -123,7 +126,7 @@ export async function runImageGeneration(
       return buildUnavailableResult(
         request,
         status,
-        providerFailure,
+        `Image generation is unavailable here because ${providerFailure}`,
         [
           `media.image_generate:provider_error:${response.status}`,
           requestId ? `request_id:${requestId}` : 'request_id:missing',
@@ -177,7 +180,7 @@ export async function runImageGeneration(
     return buildUnavailableResult(
       request,
       status,
-      'The image generation request errored before a result came back.',
+      'Image generation is unavailable here because the provider request errored before a result came back.',
       ['media.image_generate:request_exception'],
     );
   }

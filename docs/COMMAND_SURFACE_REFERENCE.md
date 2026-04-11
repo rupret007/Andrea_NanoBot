@@ -40,6 +40,14 @@ Andrea also separates capability truth this way:
 - `disabled`
   - accepted for compatibility but intentionally turned off
 
+For launch-readiness specifically, operator surfaces also expose an overlay:
+
+- `core_ready`
+- `core_ready_with_manual_surface_sync`
+- `provider_blocked_but_core_usable`
+- `near_live_only`
+- `externally_blocked`
+
 Static docs should not overrule live host truth. When proof state matters, use:
 
 1. `npm run services:status`
@@ -71,7 +79,7 @@ Important boundary:
 | Surface | Truth | Best for | Important boundary |
 | --- | --- | --- | --- |
 | Telegram | `live_proven` | Richest companion use, reminders, calendar scheduling, follow-through, research, messaging review, and operator work | Public-safe commands stay small; deeper control lives in the main control chat |
-| Alexa | `live_proven` on this host | Short voice orientation, follow-up, and Telegram handoff | Real proof must come from the Andrea custom skill, not generic Alexa+ Preview chat |
+| Alexa | `live_proven` proof on this host, with model sync tracked separately | Short voice orientation, follow-up, and Telegram handoff | Real proof must come from the Andrea custom skill, and latest model changes should be confirmed with `setup -- --step alexa-model-sync` |
 | BlueBubbles | `degraded_but_usable` on this host | Bounded personal messaging companion in the active thread | Mention-required, messaging-first, and still needs a fresh same-thread message-action proof leg before it counts as `live_proven` |
 
 ## Natural-Language Discovery Surfaces
@@ -123,7 +131,7 @@ These are formal command families, but they belong in the main control chat and 
 | `/debug-level` | `/debug-level`, `/debug_level` | `operator_only` | Temporary debug override |
 | `/debug-reset` | `/debug-reset`, `/debug_reset` | `operator_only` | Reset debug overrides |
 | `/debug-logs` | `/debug-logs`, `/debug_logs` | `operator_only` | Recent sanitized logs |
-| `/alexa-status` | `/alexa`, `/alexa-status`, `/alexa_status` | `live_proven` on this host | Alexa status and proof truth |
+| `/alexa-status` | `/alexa`, `/alexa-status`, `/alexa_status` | `operator_only` | Alexa status, proof, and model-sync truth |
 | `/amazon-status` | `/amazon-status`, `/amazon_status` | `bounded` | Amazon integration status |
 | `/amazon-search` | `/amazon-search`, `/amazon_search` | `bounded` | Amazon Business search |
 | `/purchase-request` | `/purchase-request`, `/purchase_request` | `bounded` | Open a purchase request |
@@ -150,6 +158,8 @@ These are real product surface, but they should not show up in public slash help
 | --- | --- |
 | `npm run services:status` | Canonical host and proof summary |
 | `npm run setup -- --step verify` | Canonical setup and external-blocker verifier |
+| `npm run setup -- --step alexa-model-sync status` | Show the current Alexa interaction-model hash and local sync marker |
+| `npm run setup -- --step alexa-model-sync mark-synced` | Mark the current repo Alexa model as console-synced after import/build |
 | `npm run debug:status` | Detailed proof and debug surface |
 | `npm run debug:pilot` | Flagship journey proof and pilot review surface |
 | `npm run debug:bluebubbles -- --live` | Live BlueBubbles transport and proof view |

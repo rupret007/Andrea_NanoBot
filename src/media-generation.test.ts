@@ -42,7 +42,9 @@ describe('media generation', () => {
 
     expect(status.configured).toBe(false);
     expect(status.missing).toContain('OPENAI_API_KEY');
-    expect(result.replyText).toContain('OPENAI_API_KEY');
+    expect(result.replyText).toContain("I can't make that image right now");
+    expect(result.replyText).toContain('tighten the prompt');
+    expect(result.blocker).toContain('OPENAI_API_KEY');
     expect(result.artifact).toBeUndefined();
   });
 
@@ -113,7 +115,9 @@ describe('media generation', () => {
       channel: 'telegram',
     });
 
-    expect(result.replyText).toContain('quota or billing limit');
+    expect(result.replyText).toContain("I can't make that image right now");
+    expect(result.replyText).toContain('help plan the shot');
+    expect(result.blocker?.toLowerCase()).toMatch(/quota|billing/);
     expect(result.debugPath).toContain('request_id:req_image_limit');
     expect(result.artifact).toBeUndefined();
   });

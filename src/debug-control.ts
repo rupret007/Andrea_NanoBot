@@ -432,6 +432,34 @@ export function formatDebugStatus(): string {
     `- Workspace branch: ${commitTruth.workspaceGitBranch}`,
     `- Workspace HEAD: ${commitTruth.workspaceGitCommit}`,
     `- Serving commit aligned: ${commitTruth.servingCommitMatchesWorkspaceHead ? 'yes' : 'no'}`,
+    `- Launch status: ${fieldTrialTruth.launchReadiness.status}`,
+    `- Core status: ${fieldTrialTruth.launchReadiness.coreStatus}`,
+    `- Launch summary: ${fieldTrialTruth.launchReadiness.summary}`,
+    `- Alexa model sync: ${fieldTrialTruth.launchReadiness.manualSurfaceSyncs.alexa.syncStatus}`,
+    `- Alexa model hash: ${fieldTrialTruth.launchReadiness.manualSurfaceSyncs.alexa.interactionModelHash}`,
+    ...(fieldTrialTruth.launchReadiness.manualSurfaceSyncs.alexa.lastSyncedAt !== 'none'
+      ? [
+          `- Alexa model last synced at: ${fieldTrialTruth.launchReadiness.manualSurfaceSyncs.alexa.lastSyncedAt}`,
+          `- Alexa model last synced by: ${fieldTrialTruth.launchReadiness.manualSurfaceSyncs.alexa.lastSyncedBy}`,
+        ]
+      : []),
+    ...(fieldTrialTruth.launchReadiness.coreBlockers.length > 0
+      ? [`- Core blockers: ${fieldTrialTruth.launchReadiness.coreBlockers.join(' | ')}`]
+      : []),
+    ...(fieldTrialTruth.launchReadiness.manualSyncSteps.length > 0
+      ? [`- Manual sync steps: ${fieldTrialTruth.launchReadiness.manualSyncSteps.join(' | ')}`]
+      : []),
+    ...(fieldTrialTruth.launchReadiness.optionalProviderBlockers.length > 0
+      ? [
+          `- Optional provider blockers: ${fieldTrialTruth.launchReadiness.optionalProviderBlockers.join(' | ')}`,
+          `- Optional provider next steps: ${fieldTrialTruth.launchReadiness.optionalProviderNextActions.join(' | ')}`,
+        ]
+      : []),
+    ...(fieldTrialTruth.launchReadiness.proofFreshnessGaps.length > 0
+      ? [
+          `- Proof freshness gaps: ${fieldTrialTruth.launchReadiness.proofFreshnessGaps.join(' | ')}`,
+        ]
+      : []),
     `- Telegram proof: ${fieldTrialTruth.telegram.proofState}`,
     `- Telegram proof detail: ${fieldTrialTruth.telegram.detail}`,
     ...(fieldTrialTruth.telegram.blocker
@@ -535,6 +563,18 @@ export function formatDebugStatus(): string {
     `- Missions detail: ${fieldTrialTruth.chiefOfStaffMissions.detail}`,
     `- Knowledge proof: ${fieldTrialTruth.knowledgeLibrary.proofState}`,
     `- Knowledge detail: ${fieldTrialTruth.knowledgeLibrary.detail}`,
+    `- Action bundles / delegation / outcome review: ${fieldTrialTruth.actionBundlesDelegationOutcomeReview.proofState}`,
+    `- Action bundle detail: ${fieldTrialTruth.actionBundlesDelegationOutcomeReview.detail}`,
+    ...(fieldTrialTruth.actionBundlesDelegationOutcomeReview.blocker
+      ? [
+          `- Action bundle blocker: ${fieldTrialTruth.actionBundlesDelegationOutcomeReview.blocker}`,
+        ]
+      : []),
+    ...(fieldTrialTruth.actionBundlesDelegationOutcomeReview.nextAction
+      ? [
+          `- Action bundle next step: ${fieldTrialTruth.actionBundlesDelegationOutcomeReview.nextAction}`,
+        ]
+      : []),
     `- Pilot logging enabled: ${fieldTrialTruth.pilotIssues.loggingEnabled ? 'yes' : 'no'}`,
     `- Open pilot issues: ${fieldTrialTruth.pilotIssues.openCount}`,
     ...(fieldTrialTruth.pilotIssues.latestSummary

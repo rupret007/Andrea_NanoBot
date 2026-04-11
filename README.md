@@ -79,15 +79,27 @@ Treat that flagship-flow suite and harness as the main product proof. The subsys
 
 Current host truth for the Windows field-trial machine:
 
-- Telegram is the richest **live-proven** surface.
-- Google Calendar scheduling is **live-proven** on this host.
-- Alexa is status-led on this host and currently reads **near_live_only** until a fresh handled Andrea custom-skill proof is recorded again.
-- BlueBubbles is currently **live_proven** on this host: transport, webhook, bounded same-thread chat, a same-thread `message_action` decision, and a fresh same-thread continuation are all recorded in the canonical proof thread `bb:iMessage;-;+14695405551`.
-- the local Codex/OpenAI runtime backend and the unified `/cursor` work cockpit are live on this host
-- outward research and Telegram image generation are now **live-proven** on this host through the direct OpenAI provider path
-- the local Anthropic-compatible LiteLLM gateway is a separate internal compatibility lane; if it degrades later, operator surfaces should report that separately from direct OpenAI proof
-- `npm run services:status`, `npm run setup -- --step verify`, and `npm run debug:status` are the operator truth surfaces and should agree on service health, serving commit, and exact blockers
-- `npm run debug:pilot` is the pilot-mode proof surface for flagship journeys, proof freshness, degraded-but-usable fallback, recent flagged outcomes, and private dogfooding issues
+- `LAUNCH_CANDIDATE_STATUS=core_ready_with_manual_surface_sync` is the current honest launch overlay on this host.
+- Core live-proven surfaces:
+  - Telegram companion
+  - Alexa companion while the handled proof stays fresh
+  - Google Calendar write path
+  - unified `/cursor` work cockpit plus the Codex/OpenAI runtime lane
+  - life threads, communication companion, chief-of-staff / missions, knowledge library, and action-bundle / outcome-review flows
+  - startup / watchdog / host health
+- Manual human sync still pending:
+  - the latest repo Alexa interaction model hash has not been marked as synced locally yet
+  - after importing and building `docs/alexa/interaction-model.en-US.json` in the Alexa Developer Console, run `npm run setup -- --step alexa-model-sync mark-synced`
+- Degraded but usable:
+  - BlueBubbles transport and real traffic are healthy, but the canonical self-thread still needs one fresh same-thread `message_action` proof leg before it returns to `live_proven`
+- Optional provider-blocked lanes:
+  - outward research
+  - Telegram image generation
+  - the local Anthropic-compatible LiteLLM compatibility lane
+- Freshness gaps that should not be confused with host failure:
+  - `journey_daily_guidance=near_live_only` until one fresh `what am I forgetting` or `what should I remember tonight` turn lands on this host
+- `npm run services:status`, `npm run setup -- --step verify`, and `npm run debug:status` are the operator truth surfaces and should agree on the same core/manual-sync/provider-blocked story
+- `npm run debug:pilot` is the proof-freshness and dogfooding surface for flagship journeys, degraded-but-usable fallback, and exact next steps
 
 For the current demo/field-trial script, use [docs/DEMO_CHECKLIST.md](docs/DEMO_CHECKLIST.md).
 
@@ -257,6 +269,7 @@ Alexa proof on this host is now status-led:
 - Alexa only becomes `live_proven` while a fresh handled Andrea custom-skill proof remains inside the 24-hour window
 - operator surfaces can satisfy that proof either from the persisted handled signed-request markers or, after restart, from a recent same-host `alexa_orientation` pilot success that already recorded the qualifying handled turn
 - if that handled proof ages out or no fresh qualifying proof remains on this host, Alexa should read as `near_live_only`
+- if the latest repo interaction-model hash has not been marked synced yet, launch-readiness should read `core_ready_with_manual_surface_sync` even while Alexa proof itself remains `live_proven`
 
 When you want to refresh Alexa proof freshness, this is the validation flow:
 
@@ -271,7 +284,7 @@ If that handled signed proof ages past 24 hours, operator surfaces will intentio
 
 Typed Alexa+ app chat is diagnosis-only right now. It may trigger a skill launch, but it does not count as live proof unless Andrea logs a real signed follow-up `IntentRequest` after launch.
 
-After any interaction-model change, re-import `docs/alexa/interaction-model.en-US.json` in the Alexa Developer Console and run `Build Model` before treating live fallback as a repo bug.
+After any interaction-model change, re-import `docs/alexa/interaction-model.en-US.json` in the Alexa Developer Console, run `Build Model`, then run `npm run setup -- --step alexa-model-sync mark-synced` before treating live fallback as a repo bug.
 
 For repo-side conversation tuning on the operator host, use `npm run debug:alexa-conversation`.
 
@@ -296,7 +309,7 @@ BlueBubbles is now a real bounded Andrea messaging channel, not just prep work.
 - richer details still hand off explicitly to Telegram when that is the better surface
 - BlueBubbles does **not** become a main control chat and does not expose work-cockpit or admin/runtime controls
 
-On this host, BlueBubbles is now `live_proven`: Andrea has the live `BLUEBUBBLES_*` configuration loaded, the server is reachable, Andrea's public webhook is registered, bounded same-thread chat is working, and the canonical proof thread `bb:iMessage;-;+14695405551` now has the full same-thread roundtrip, message-action decision, and follow-up continuation chain recorded.
+On this host, BlueBubbles is currently `degraded_but_usable`: Andrea has the live `BLUEBUBBLES_*` configuration loaded, the server is reachable, Andrea's public webhook is registered, and real traffic is flowing, but the canonical proof thread `bb:iMessage;-;+14695405551` still needs one fresh same-thread `message_action` leg before the surface returns to `live_proven`.
 
 See [docs/BLUEBUBBLES_CHANNEL_PREP.md](docs/BLUEBUBBLES_CHANNEL_PREP.md) for the live V1 scope, config, webhook/send model, and exact current limits.
 

@@ -152,7 +152,29 @@ Current truthful host status:
 - pilot-mode operator surfaces (`services:status`, `setup verify`, `debug:status`, `debug:pilot`) should classify Alexa as `live_proven` while that proof stays fresh, and intentionally drop it back to `near_live_only` if the proof becomes stale
 - after restart, those operator surfaces may credit the proof either from the persisted handled signed-request markers or from a recent same-host `alexa_orientation` pilot success that already recorded the qualifying handled turn
 - if there is no fresh handled signed custom-skill turn on this host, Alexa should read as `near_live_only`
+- the latest repo interaction-model hash is tracked separately from proof freshness
+- if the repo model changed and the local sync marker was not refreshed yet, launch-readiness should read `core_ready_with_manual_surface_sync`, not `near_live_only`
 - use current operator surfaces for the exact proof markers instead of treating this guide as the live authority
+
+### Local Model-Sync Marker
+
+Use this repo-side marker after you import the current model in the Alexa Developer Console:
+
+```bash
+npm run setup -- --step alexa-model-sync status
+npm run setup -- --step alexa-model-sync mark-synced
+```
+
+Use `mark-synced` only after all three are true:
+
+1. `docs/alexa/interaction-model.en-US.json` is the file you imported
+2. the Alexa Developer Console model was saved
+3. `Build Model` succeeded
+
+This keeps the launch story honest:
+
+- fresh Alexa voice proof tells us the skill is working
+- the model-sync marker tells us the live console build matches the current repo model
 
 ## 0D) Exact Live-Proof Rule
 

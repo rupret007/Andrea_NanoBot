@@ -1969,7 +1969,7 @@ export async function run(_args: string[]): Promise<void> {
     );
   }
 
-  const nextSteps = buildVerifyNextSteps({
+  const legacyNextSteps = buildVerifyNextSteps({
     missingRequirements,
     hasNativeOpenAiEndpointMisconfig: nativeOpenAiEndpointMisconfig,
     credentialRuntimeProbeReason: credentialRuntimeProbe.reason,
@@ -1997,16 +1997,23 @@ export async function run(_args: string[]): Promise<void> {
     alexaProof: effectiveAlexaProof,
   });
 
+  const launchCandidateStatus = fieldTrialTruth.launchReadiness.status;
+  const launchNextSteps = [
+    ...fieldTrialTruth.launchReadiness.coreBlockers,
+    ...fieldTrialTruth.launchReadiness.manualSyncSteps,
+    ...fieldTrialTruth.launchReadiness.optionalProviderNextActions,
+    ...fieldTrialTruth.launchReadiness.proofFreshnessGaps,
+  ];
+  const nextSteps =
+    launchNextSteps.length > 0
+      ? launchNextSteps.join(' | ')
+      : legacyNextSteps;
+
   // Determine overall status
   const status =
-    nodeOk &&
-    serviceHealthy &&
-    coreRuntimeCredentials !== 'missing' &&
-    anyChannelConfigured &&
-    registeredGroups > 0 &&
-    credentialRuntimeProbe.status !== 'failed' &&
-    assistantExecutionProbe.status !== 'failed' &&
-    externalBlockers.length === 0
+    launchCandidateStatus === 'core_ready' ||
+    launchCandidateStatus === 'core_ready_with_manual_surface_sync' ||
+    launchCandidateStatus === 'provider_blocked_but_core_usable'
       ? 'success'
       : 'failed';
 
@@ -2065,6 +2072,27 @@ export async function run(_args: string[]): Promise<void> {
     OUTWARD_RESEARCH_PROOF: fieldTrialTruth.research.proofState,
     OUTWARD_RESEARCH_BLOCKER: fieldTrialTruth.research.blocker,
     OUTWARD_RESEARCH_NEXT_ACTION: fieldTrialTruth.research.nextAction,
+    LAUNCH_CANDIDATE_STATUS: fieldTrialTruth.launchReadiness.status,
+    CORE_STATUS: fieldTrialTruth.launchReadiness.coreStatus,
+    LAUNCH_CANDIDATE_SUMMARY: fieldTrialTruth.launchReadiness.summary,
+    MANUAL_SYNC_STEPS:
+      fieldTrialTruth.launchReadiness.manualSyncSteps.join(' | ') || 'none',
+    OPTIONAL_PROVIDER_BLOCKERS:
+      fieldTrialTruth.launchReadiness.optionalProviderBlockers.join(' | ') ||
+      'none',
+    OPTIONAL_PROVIDER_NEXT_ACTIONS:
+      fieldTrialTruth.launchReadiness.optionalProviderNextActions.join(' | ') ||
+      'none',
+    PROOF_FRESHNESS_GAPS:
+      fieldTrialTruth.launchReadiness.proofFreshnessGaps.join(' | ') || 'none',
+    ALEXA_MODEL_SYNC_STATUS:
+      fieldTrialTruth.launchReadiness.manualSurfaceSyncs.alexa.syncStatus,
+    ALEXA_MODEL_HASH:
+      fieldTrialTruth.launchReadiness.manualSurfaceSyncs.alexa.interactionModelHash,
+    ALEXA_MODEL_LAST_SYNCED_HASH:
+      fieldTrialTruth.launchReadiness.manualSurfaceSyncs.alexa.lastSyncedHash,
+    ALEXA_MODEL_LAST_SYNCED_AT:
+      fieldTrialTruth.launchReadiness.manualSurfaceSyncs.alexa.lastSyncedAt,
     LOCAL_GATEWAY_HEALTH: localGatewayHealth.status,
     LOCAL_GATEWAY_HEALTH_REASON: localGatewayHealth.reason,
     LOCAL_GATEWAY_HEALTH_DETAIL: localGatewayHealth.detail || '',
@@ -2128,6 +2156,14 @@ export async function run(_args: string[]): Promise<void> {
       fieldTrialTruth.chiefOfStaffMissions.detail,
     KNOWLEDGE_LIBRARY_PROOF: fieldTrialTruth.knowledgeLibrary.proofState,
     KNOWLEDGE_LIBRARY_PROOF_DETAIL: fieldTrialTruth.knowledgeLibrary.detail,
+    ACTION_BUNDLES_DELEGATION_OUTCOME_REVIEW_PROOF:
+      fieldTrialTruth.actionBundlesDelegationOutcomeReview.proofState,
+    ACTION_BUNDLES_DELEGATION_OUTCOME_REVIEW_DETAIL:
+      fieldTrialTruth.actionBundlesDelegationOutcomeReview.detail,
+    ACTION_BUNDLES_DELEGATION_OUTCOME_REVIEW_BLOCKER:
+      fieldTrialTruth.actionBundlesDelegationOutcomeReview.blocker,
+    ACTION_BUNDLES_DELEGATION_OUTCOME_REVIEW_NEXT_ACTION:
+      fieldTrialTruth.actionBundlesDelegationOutcomeReview.nextAction,
     PILOT_LOGGING_ENABLED: fieldTrialTruth.pilotIssues.loggingEnabled,
     PILOT_OPEN_ISSUES: fieldTrialTruth.pilotIssues.openCount,
     PILOT_LATEST_ISSUE_SUMMARY: fieldTrialTruth.pilotIssues.latestSummary,

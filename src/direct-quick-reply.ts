@@ -387,7 +387,7 @@ export function maybeBuildDirectQuickReply(
       5,
     )
   ) {
-    return "I'm Andrea. I'm strongest on reminders, calendar help, research, follow-through, and careful messaging help. Telegram is my richest surface, BlueBubbles is for bounded messaging, and Alexa is for short voice follow-up when it's enabled.";
+    return "I'm Andrea. I'm strongest on planning, reminders, calendar help, careful messaging help, and keeping follow-through clean. Telegram is my richest surface, Alexa is for concise voice help, BlueBubbles is for bounded Messages help, and research or images are available when those provider lanes are up.";
   }
 
   if (

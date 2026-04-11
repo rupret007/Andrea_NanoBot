@@ -18,6 +18,7 @@ const STEPS: Record<
   service: () => import('./service.js'),
   verify: () => import('./verify.js'),
   'google-calendar': () => import('./google-calendar.js'),
+  'alexa-model-sync': () => import('./alexa-model-sync.js'),
 };
 
 async function main(): Promise<void> {

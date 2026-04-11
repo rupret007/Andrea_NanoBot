@@ -24,6 +24,51 @@ Keep this split in mind while reading the rest of the setup guide:
 - Cursor-backed runtime routing is a separate optional diagnostic/runtime surface
 - the shell increasingly presents one task model with lane-specific capabilities, while keeping Cursor as the stronger validated lane
 
+## Launch-Candidate Truth Model
+
+Andrea now separates proof truth from launch readiness.
+
+Operator surfaces should use these launch-candidate states:
+
+- `core_ready`
+  - core companion surfaces are healthy and no manual sync step is pending
+- `core_ready_with_manual_surface_sync`
+  - core companion surfaces are healthy, but one manual surface sync step still needs to be confirmed locally
+- `provider_blocked_but_core_usable`
+  - the core product is healthy, but optional provider-backed lanes are blocked
+- `near_live_only`
+  - a core surface or flagship proof still needs one fresh same-host proof step
+- `externally_blocked`
+  - the host or a core launch surface is genuinely unavailable
+
+On this host, `npm run setup -- --step verify` now follows **pass core, warn extras**:
+
+- it exits success for `core_ready`, `core_ready_with_manual_surface_sync`, and `provider_blocked_but_core_usable`
+- it exits non-zero only for `near_live_only` and `externally_blocked`
+
+Important commands:
+
+```bash
+npm run services:status
+npm run setup -- --step verify
+npm run debug:status
+npm run debug:pilot
+```
+
+When Alexa model changes are involved, also use:
+
+```bash
+npm run setup -- --step alexa-model-sync status
+npm run setup -- --step alexa-model-sync mark-synced
+```
+
+That local sync marker is how this repo distinguishes:
+
+- Alexa proof is current
+- latest console model build is confirmed
+
+Those are related, but they are not the same thing.
+
 ## Signature Flows
 
 The current productization target is not more primitives. It is a short list of journeys Andrea should feel exceptional at:
@@ -203,6 +248,13 @@ Current media truth:
 - Alexa keeps image generation at the request-and-deliver handoff layer
 - `media.image_edit` and `media.video_generate` remain prepared-only
 - if OpenAI is not configured, Andrea now reports the exact blocker honestly instead of pretending the provider is live
+
+Current operator truth on this host:
+
+- the core companion is healthy
+- outward research and Telegram image generation are currently blocked by provider quota/billing
+- the local Anthropic-compatible LiteLLM lane is a degraded compatibility path, not the same thing as total host failure
+- BlueBubbles is usable but still wants one fresh same-thread `message_action` proof leg
 
 Research output shape now differs intentionally by channel:
 

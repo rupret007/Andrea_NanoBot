@@ -89,6 +89,10 @@ function collectAttentionItems(
   push('Alexa', truth.alexa);
   push('BlueBubbles', truth.bluebubbles);
   push('Google Calendar', truth.googleCalendar);
+  push(
+    'Action bundles / delegation / outcome review',
+    truth.actionBundlesDelegationOutcomeReview,
+  );
   push('Research', truth.research);
   push('Image generation', truth.imageGeneration);
 
@@ -151,6 +155,24 @@ async function main(): Promise<void> {
       : []),
     '',
     '*Pilot Readiness*',
+    `- Launch status: ${truth.launchReadiness.status}`,
+    `- Core status: ${truth.launchReadiness.coreStatus}`,
+    `- Launch summary: ${truth.launchReadiness.summary}`,
+    `- Alexa model sync: ${truth.launchReadiness.manualSurfaceSyncs.alexa.syncStatus}`,
+    ...(truth.launchReadiness.manualSyncSteps.length > 0
+      ? [`  manual_sync=${truth.launchReadiness.manualSyncSteps.join(' | ')}`]
+      : []),
+    ...(truth.launchReadiness.optionalProviderBlockers.length > 0
+      ? [
+          `  optional_provider_blockers=${truth.launchReadiness.optionalProviderBlockers.join(' | ')}`,
+          `  optional_provider_next_steps=${truth.launchReadiness.optionalProviderNextActions.join(' | ')}`,
+        ]
+      : []),
+    ...(truth.launchReadiness.proofFreshnessGaps.length > 0
+      ? [
+          `  proof_freshness_gaps=${truth.launchReadiness.proofFreshnessGaps.join(' | ')}`,
+        ]
+      : []),
     `- Telegram: ${truth.telegram.proofState}`,
     `- Alexa: ${truth.alexa.proofState}`,
     `  kind=${truth.alexa.proofKind} / freshness=${truth.alexa.proofFreshness} / age=${truth.alexa.proofAgeLabel}`,
@@ -189,6 +211,7 @@ async function main(): Promise<void> {
     `- Communication companion: ${truth.communicationCompanion.proofState}`,
     `- Chief-of-staff / missions: ${truth.chiefOfStaffMissions.proofState}`,
     `- Knowledge library: ${truth.knowledgeLibrary.proofState}`,
+    `- Action bundles / delegation / outcome review: ${truth.actionBundlesDelegationOutcomeReview.proofState}`,
     `- Research: ${truth.research.proofState}`,
     `- Image generation: ${truth.imageGeneration.proofState}`,
     `- Host health: ${truth.hostHealth.proofState}`,

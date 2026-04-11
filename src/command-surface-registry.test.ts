@@ -162,18 +162,20 @@ describe('command surface docs', () => {
     const docsIndex = readDoc('docs', 'README.md');
     const runbook = readDoc('docs', 'TESTING_AND_RELEASE_RUNBOOK.md');
 
-    expect(alexaGuide).toContain('near_live_only');
+    expect(alexaGuide).toContain('core_ready_with_manual_surface_sync');
+    expect(alexaGuide).toContain('alexa-model-sync mark-synced');
     expect(alexaGuide).toContain('services:status');
     expect(alexaGuide).not.toContain('Alexa is now live-proven on this host');
 
-    expect(bluebubblesGuide).toContain('live_proven');
     expect(bluebubblesGuide).toContain('degraded_but_usable');
-    expect(docsIndex).toContain('BlueBubbles is status-led on this host: it is now `live_proven`');
+    expect(bluebubblesGuide).toContain('same-thread `message_action`');
+    expect(docsIndex).toContain('core_ready_with_manual_surface_sync');
+    expect(docsIndex).toContain('BlueBubbles on this PC: transport and real traffic are healthy');
     expect(runbook).toContain(
-      'Alexa listener, OAuth, public ingress, and pinned Node 22 are healthy; Alexa is status-led on this host and should return to `live_proven` only after a fresh handled Andrea custom-skill proof is recorded again',
+      'setup -- --step verify` now follows **pass core, warn extras**',
     );
     expect(runbook).toContain(
-      'after restart, operator surfaces may credit that Alexa proof either from the persisted handled signed-request markers',
+      'if you changed `docs/alexa/interaction-model.en-US.json`, finish the console import/build and then run `npm run setup -- --step alexa-model-sync mark-synced`',
     );
   });
 

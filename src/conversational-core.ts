@@ -271,11 +271,11 @@ export function buildGracefulDegradedReply(params: {
   if (params.kind === 'image_generation_unavailable') {
     return buildChannelVariant(channel, {
       telegram:
-        "I can't generate that image right now. I can still help refine the prompt or plan the shot.",
+        "I can't make that image right now. I can still tighten the prompt or help plan the shot.",
       alexa:
-        "I can't generate that image right now. I can still help refine the prompt.",
+        "I can't make that image right now. I can still tighten the prompt.",
       bluebubbles:
-        "I can't generate that image right now. I can still help refine the prompt.",
+        "I can't make that image right now. I can still tighten the prompt.",
     });
   }
 
