@@ -969,18 +969,6 @@ function buildTelegramTruth(
     });
   }
 
-  if (roundtrip.status === 'pending') {
-    return buildTruth({
-      proofState: 'near_live_only',
-      blocker: roundtrip.detail,
-      blockerOwner: 'none',
-      nextAction:
-        'Wait for the first post-startup Telegram roundtrip or rerun npm run telegram:user:smoke.',
-      detail:
-        'Telegram routing is up, but the latest live-proof marker is still pending after startup.',
-    });
-  }
-
   if (
     transport?.status === 'ready' &&
     assistantHealth.status === 'healthy' &&
@@ -994,6 +982,18 @@ function buildTelegramTruth(
         'Telegram routing is healthy on this host and the most recent same-boot roundtrip confirmation is still recent.',
       nextAction:
         'Rerun npm run telegram:user:smoke if you want to refresh the Telegram live-proof marker immediately.',
+    });
+  }
+
+  if (roundtrip.status === 'pending') {
+    return buildTruth({
+      proofState: 'near_live_only',
+      blocker: roundtrip.detail,
+      blockerOwner: 'none',
+      nextAction:
+        'Wait for the first post-startup Telegram roundtrip or rerun npm run telegram:user:smoke.',
+      detail:
+        'Telegram routing is up, but the latest live-proof marker is still pending after startup.',
     });
   }
 

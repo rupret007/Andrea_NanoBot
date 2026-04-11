@@ -236,6 +236,103 @@ describe('field-trial readiness', () => {
     expect(truth.telegram.nextAction).toContain('telegram:user:smoke');
   });
 
+  it('keeps Telegram live-proven after restart when a same-boot smoke succeeded but the roundtrip marker is still pending', () => {
+    const recentSuccessAt = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+    const snapshot: HostControlSnapshot = {
+      paths: resolveHostControlPaths(tempDir),
+      nodeRuntime: null,
+      hostState: {
+        bootId: 'boot-telegram-pending',
+        phase: 'running_ready',
+        pid: process.pid,
+        installMode: 'manual_host_control',
+        nodePath: 'C:\\node.exe',
+        nodeVersion: '22.22.2',
+        startedAt: recentSuccessAt,
+        readyAt: recentSuccessAt,
+        lastError: '',
+        dependencyState: 'ok',
+        dependencyError: '',
+        stdoutLogPath: path.join(tempDir, 'logs', 'nanoclaw.log'),
+        stderrLogPath: path.join(tempDir, 'logs', 'nanoclaw.error.log'),
+        hostLogPath: path.join(tempDir, 'logs', 'nanoclaw.host.log'),
+      },
+      readyState: {
+        bootId: 'boot-telegram-pending',
+        pid: process.pid,
+        readyAt: recentSuccessAt,
+        appVersion: '1.0.0-test',
+      },
+      assistantHealthState: {
+        bootId: 'boot-telegram-pending',
+        pid: process.pid,
+        appVersion: '1.0.0-test',
+        updatedAt: recentSuccessAt,
+        channels: [
+          {
+            name: 'telegram',
+            configured: true,
+            state: 'ready',
+            updatedAt: recentSuccessAt,
+            detail: 'Telegram channel ready',
+          },
+        ],
+      },
+      telegramRoundtripState: {
+        bootId: 'boot-telegram-pending',
+        pid: process.pid,
+        status: 'pending',
+        source: 'live_smoke',
+        detail: 'Telegram roundtrip is waiting for post-startup confirmation.',
+        chatTarget: 'Andrea',
+        expectedReply: '/ping',
+        updatedAt: recentSuccessAt,
+        lastSuccessAt: recentSuccessAt,
+        lastProbeAt: recentSuccessAt,
+        nextDueAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+        consecutiveFailures: 0,
+      },
+      telegramTransportState: {
+        bootId: 'boot-telegram-pending',
+        pid: process.pid,
+        mode: 'long_polling',
+        status: 'ready',
+        detail: 'Telegram long polling is ready.',
+        updatedAt: recentSuccessAt,
+        lastError: null,
+        lastErrorClass: 'none',
+        webhookPresent: false,
+        webhookUrl: null,
+        lastWebhookCheckAt: null,
+        lastPollConflictAt: null,
+        externalConsumerSuspected: false,
+        tokenRotationRequired: false,
+        consecutiveExternalConflicts: 0,
+      },
+      runtimeAuditState: null,
+    };
+    const windowsHost: WindowsHostReconciliation = {
+      snapshot,
+      runtimePid: process.pid,
+      processRunning: true,
+      readyMatchesHost: true,
+      serviceState: 'running_ready',
+      activeLaunchMode: 'manual_host_control',
+      launcherError: '',
+      dependencyState: 'ok',
+      dependencyError: '',
+    };
+
+    const truth = buildFieldTrialOperatorTruth({
+      projectRoot: tempDir,
+      hostSnapshot: snapshot,
+      windowsHost,
+    });
+
+    expect(truth.telegram.proofState).toBe('live_proven');
+    expect(truth.telegram.blocker).toBe('');
+  });
+
   it('reduces Alexa to one exact next step when no signed turn is recorded', () => {
     vi.stubEnv('ALEXA_SKILL_ID', 'amzn1.ask.skill.test');
 
