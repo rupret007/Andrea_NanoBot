@@ -21,8 +21,10 @@ import {
   buildTelegramCommandLines,
   buildTelegramDescription,
   buildTelegramFeatureLines,
+  buildTelegramHelpLines,
   buildTelegramShortDescription,
   buildTelegramWelcomeLines,
+  getTelegramBotGroupMenuCommands,
   getTelegramBotMenuCommands,
 } from '../command-surface-registry.js';
 import {
@@ -104,13 +106,7 @@ export function extractTelegramLeadingCommand(
 }
 
 export function buildTelegramHelpText(assistantName = ASSISTANT_NAME): string {
-  return [
-    buildTelegramWelcomeText(assistantName),
-    '',
-    buildTelegramCommandsText(),
-    '',
-    buildTelegramFeaturesText(assistantName),
-  ].join('\n');
+  return buildTelegramHelpLines(assistantName).join('\n');
 }
 
 export function buildTelegramWelcomeText(
@@ -595,11 +591,21 @@ export class TelegramChannel implements Channel {
       });
 
     this.bot.api
-      .setMyCommands(getTelegramBotMenuCommands())
+      .setMyCommands(getTelegramBotGroupMenuCommands())
       .catch((err) => {
         logger.warn(
           { component: 'telegram', err },
-          'Failed to register Telegram command menu',
+          'Failed to register Telegram default command menu',
+        );
+      });
+    this.bot.api
+      .setMyCommands(getTelegramBotMenuCommands(), {
+        scope: { type: 'all_private_chats' },
+      })
+      .catch((err) => {
+        logger.warn(
+          { component: 'telegram', err },
+          'Failed to register Telegram private-chat command menu',
         );
       });
   }

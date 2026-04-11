@@ -26,6 +26,14 @@ Surface roles:
 - Alexa is the shorter voice surface when your operator enabled the custom skill.
 - BlueBubbles is the bounded personal messaging surface and stays mention-required.
 
+UX defaults for Telegram:
+
+- `/start` should feel like a quick welcome and example launcher, not a wall of help text
+- `/help` should explain how to use Andrea here in one screen
+- `/commands` should stay focused on setup and status, not become the primary way to talk to Andrea
+- `/features` should answer what Andrea is best at here and when another surface is better
+- group menus should stay slimmer than DM menus so the bot feels lighter in shared chats
+
 ## First-Time Telegram Onboarding
 
 Recommended direct-message flow:
@@ -38,9 +46,9 @@ Recommended direct-message flow:
 
 Good first requests:
 
-- `What's the meaning of life?`
+- `What am I forgetting today?`
 - `Remind me tomorrow at 3pm to call Sam`
-- `Summarize my tasks for today`
+- `What should I say back?`
 - `Research the best standing desks for small apartments`
 
 ## Group Behavior
@@ -50,6 +58,7 @@ In groups:
 - mention Andrea when you want action
 - use her for reminders, summaries, research, and project help
 - keep high-trust admin actions in the main control chat
+- keep the visible command menu small; group chats should mostly feel conversation-first
 
 Examples:
 
@@ -59,14 +68,22 @@ Examples:
 
 ## Public-Safe Command Reference
 
+These commands are for onboarding, setup, and status.
+Most users should still start with a plain-language request.
+
 - `/start` - quick-start welcome
-- `/help` - short in-chat guide
-- `/commands` - safe command list
-- `/features` - short capability overview
+- `/help` - one-screen "how Andrea works here" guide
+- `/commands` - setup and status commands
+- `/features` - what Andrea is best at in Telegram
 - `/ping` - basic health check
 - `/chatid` - show the current Telegram chat ID and type
 - `/registermain` - register this DM as the main control chat
 - `/cursor_status` - safe Cursor readiness check only
+
+Menu behavior:
+
+- in DMs, the command menu can stay a little richer because setup and status are more relevant
+- in groups, the command menu should stay intentionally smaller and push people toward mention-based conversation
 
 Important boundary:
 

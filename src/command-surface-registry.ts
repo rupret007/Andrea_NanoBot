@@ -123,8 +123,8 @@ export const PUBLIC_TELEGRAM_COMMAND_SURFACES: readonly CommandSurfaceEntry[] = 
     channelScope: ['telegram'],
     discoverability: ['/start', '/help', '/commands'],
     truthClass: 'live_proven',
-    summary: 'Quick onboarding for the safe Telegram surface.',
-    menuDescription: 'Quick start for new users',
+    summary: 'Quick start for new chats and first asks.',
+    menuDescription: 'Quick start and example asks',
   },
   {
     id: 'telegram_help',
@@ -135,8 +135,8 @@ export const PUBLIC_TELEGRAM_COMMAND_SURFACES: readonly CommandSurfaceEntry[] = 
     channelScope: ['telegram'],
     discoverability: ['/start', '/help', '/commands'],
     truthClass: 'live_proven',
-    summary: 'Short in-chat guide for this Telegram surface.',
-    menuDescription: 'How Andrea works in this chat',
+    summary: 'How Andrea works in Telegram, in one screen.',
+    menuDescription: 'How Andrea works here',
   },
   {
     id: 'telegram_commands',
@@ -147,8 +147,8 @@ export const PUBLIC_TELEGRAM_COMMAND_SURFACES: readonly CommandSurfaceEntry[] = 
     channelScope: ['telegram'],
     discoverability: ['/start', '/help', '/commands'],
     truthClass: 'live_proven',
-    summary: 'Safe Telegram command list.',
-    menuDescription: 'List the safe Telegram commands',
+    summary: 'Setup and status commands for this safe Telegram surface.',
+    menuDescription: 'Setup and status commands',
   },
   {
     id: 'telegram_features',
@@ -159,8 +159,8 @@ export const PUBLIC_TELEGRAM_COMMAND_SURFACES: readonly CommandSurfaceEntry[] = 
     channelScope: ['telegram'],
     discoverability: ['/start', '/help', '/features'],
     truthClass: 'live_proven',
-    summary: 'Short capability guide and surface map.',
-    menuDescription: 'Show what Andrea is best at',
+    summary: 'What Andrea is best at here and where other surfaces fit.',
+    menuDescription: 'What Andrea is best at',
   },
   {
     id: 'telegram_ping',
@@ -171,8 +171,8 @@ export const PUBLIC_TELEGRAM_COMMAND_SURFACES: readonly CommandSurfaceEntry[] = 
     channelScope: ['telegram'],
     discoverability: ['/commands', '/help'],
     truthClass: 'live_proven',
-    summary: 'Basic bot health check.',
-    menuDescription: 'Check if the bot is online',
+    summary: 'Quick online check.',
+    menuDescription: 'Check if Andrea is online',
   },
   {
     id: 'telegram_chatid',
@@ -184,7 +184,7 @@ export const PUBLIC_TELEGRAM_COMMAND_SURFACES: readonly CommandSurfaceEntry[] = 
     discoverability: ['/commands'],
     truthClass: 'live_proven',
     summary: 'Show the current Telegram chat ID and type.',
-    menuDescription: 'Show current chat ID/type',
+    menuDescription: "Show this chat's ID",
   },
   {
     id: 'telegram_registermain',
@@ -195,8 +195,8 @@ export const PUBLIC_TELEGRAM_COMMAND_SURFACES: readonly CommandSurfaceEntry[] = 
     channelScope: ['telegram'],
     discoverability: ['/start', '/help', '/commands'],
     truthClass: 'live_proven',
-    summary: "Register this DM as Andrea's main control chat.",
-    menuDescription: 'Register this DM as main control chat',
+    summary: "Make this DM Andrea's main control chat.",
+    menuDescription: 'Make this DM your main chat',
   },
   {
     id: 'telegram_cursor_status',
@@ -207,8 +207,8 @@ export const PUBLIC_TELEGRAM_COMMAND_SURFACES: readonly CommandSurfaceEntry[] = 
     channelScope: ['telegram'],
     discoverability: ['/commands', '/help', '/features'],
     truthClass: 'live_proven',
-    summary: 'Safe readiness check for coding and work help.',
-    menuDescription: 'Show coding/work readiness',
+    summary: 'Check whether coding and work help are ready right now.',
+    menuDescription: 'Coding and work readiness',
   },
 ] as const;
 
@@ -560,18 +560,37 @@ export function getTelegramBotMenuCommands(): Array<{
   }));
 }
 
+export function getTelegramBotGroupMenuCommands(): Array<{
+  command: string;
+  description: string;
+}> {
+  const groupMenuIds = new Set([
+    'telegram_help',
+    'telegram_commands',
+    'telegram_features',
+    'telegram_ping',
+  ]);
+  return PUBLIC_TELEGRAM_COMMAND_SURFACES.filter((entry) =>
+    groupMenuIds.has(entry.id),
+  ).map((entry) => ({
+    command: entry.preferredAlias.replace(/^\//, ''),
+    description: entry.menuDescription ?? entry.summary,
+  }));
+}
+
 export function buildTelegramWelcomeLines(assistantName: string): string[] {
   return [
     `*Welcome to ${assistantName}*`,
     '',
     '- Start with a normal request in plain language.',
-    "- Telegram is Andrea's richest day-to-day surface.",
-    '- In a direct chat: send normal messages or safe slash commands.',
-    '- In a group: mention my Telegram username when you want me to jump in.',
-    '- First-time Telegram setup: DM me and run `/registermain`.',
-    '- Use `/commands` for the safe command list and `/features` for the short capability guide.',
+    "- Telegram is Andrea's richest surface for day-to-day help, follow-through, and deeper answers.",
     '',
-    '*Good First Asks*',
+    '*Start Here*',
+    '- In a direct chat: send a normal message. If this will be your main Andrea chat, run `/registermain` once.',
+    '- In a group: mention my Telegram username when you want me to jump in.',
+    '- Use `/commands` for setup and status commands, and `/features` for the short capability guide.',
+    '',
+    '*Try One Of These*',
     '- `What am I forgetting today?`',
     '- `Add dinner with Candace tomorrow at 6:30 PM`',
     '- `What should I say back?`',
@@ -579,13 +598,57 @@ export function buildTelegramWelcomeLines(assistantName: string): string[] {
   ];
 }
 
-export function buildTelegramCommandLines(): string[] {
+export function buildTelegramHelpLines(assistantName: string): string[] {
   return [
-    '*Commands*',
+    `*How ${assistantName} Works Here*`,
     '',
-    ...PUBLIC_TELEGRAM_COMMAND_SURFACES.map(
-      (entry) => `- \`${entry.preferredAlias}\` - ${entry.summary}`,
-    ),
+    '- Most people should just send a normal message.',
+    "- Telegram is Andrea's richest surface for planning, reminders, research, and follow-through.",
+    '',
+    '*Best Habits*',
+    '- In a DM: ask normally, or run `/registermain` once if this should be your main Andrea chat.',
+    '- In a group: mention my Telegram username when you want a reply.',
+    '- Use `/commands` for setup and status commands.',
+    '- Use `/features` for the short guide to what Andrea is best at here.',
+    '',
+    '*Good Next Messages*',
+    '- `What am I forgetting today?`',
+    '- `What should I say back?`',
+    '- `Help me plan tonight`',
+  ];
+}
+
+export function buildTelegramCommandLines(): string[] {
+  const surfaceById = new Map(
+    PUBLIC_TELEGRAM_COMMAND_SURFACES.map((entry) => [entry.id, entry] as const),
+  );
+  const render = (id: string): string => {
+    const entry = surfaceById.get(id);
+    if (!entry) {
+      throw new Error(`Missing Telegram command surface: ${id}`);
+    }
+    return `- \`${entry.preferredAlias}\` - ${entry.summary}`;
+  };
+  return [
+    '*Telegram Commands*',
+    '',
+    '- Most people can ignore commands and just type normally. Commands are mainly for onboarding, setup, and status.',
+    '',
+    '*Start Here*',
+    render('telegram_start'),
+    render('telegram_help'),
+    render('telegram_registermain'),
+    '',
+    '*Useful Checks*',
+    render('telegram_commands'),
+    render('telegram_features'),
+    render('telegram_ping'),
+    render('telegram_chatid'),
+    render('telegram_cursor_status'),
+    '',
+    '*In Groups*',
+    '- Mention my Telegram username when you want me to jump in. The group command menu stays intentionally small.',
+    '',
     '- Deeper operator/admin controls stay out of normal help and live in the admin path.',
   ];
 }
@@ -594,24 +657,29 @@ export function buildTelegramFeatureLines(assistantName: string): string[] {
   return [
     `*What ${assistantName} Is Best At*`,
     '',
-    '- Telegram is the richest surface for day-to-day help, follow-through, and deeper execution.',
-    '- Reminders, recurring tasks, and calendar scheduling when that path is enabled.',
-    '- Research, summaries, and source-grounded library help.',
-    '- Life-thread follow-through like `what am I forgetting` and people/household carryover.',
-    '- Drafting, save/remind-later, and bounded messaging help across Telegram and BlueBubbles.',
-    '- Missions, planning, and calm next-step guidance.',
+    '- Telegram is the deepest day-to-day surface. Use it when you want a real answer, a plan, or follow-through.',
+    '',
+    '*Best Here*',
+    "- Figure out what matters today and what you're forgetting.",
+    '- Capture reminders, recurring tasks, and calendar scheduling when that path is enabled.',
+    '- Research options, compare them, and get source-grounded summaries.',
+    '- Draft replies, save things for later, and plan the next step.',
+    '- Keep track of people, projects, and household follow-through.',
+    '',
+    '*Surface Map*',
+    '- Telegram is the richest surface for detailed answers and action completion.',
     '- Alexa is a short voice surface for orientation and follow-up when your admin enabled it.',
     '- BlueBubbles is a bounded personal messaging companion; mention `@Andrea` there.',
-    '- `/cursor_status` is the safe readiness check for coding/work help. Deeper operator controls stay in Telegram admin surfaces.',
+    '- `/cursor_status` is the safe readiness check for coding and work help. Deeper operator controls stay in Telegram admin surfaces.',
   ];
 }
 
 export function buildTelegramDescription(assistantName: string): string {
-  return `${assistantName} helps with reminders, calendar planning, research, follow-through, and calm everyday assistance. In DM, use /registermain to set up your main control chat.`;
+  return `${assistantName} helps with planning, reminders, research, and calm follow-through. Start with a normal message. In DM, run /registermain once to make it your main Andrea chat.`;
 }
 
 export function buildTelegramShortDescription(assistantName: string): string {
-  return `${assistantName}: reminders, calendar help, research, and calm everyday answers.`;
+  return `${assistantName}: planning, reminders, research, and calm follow-through.`;
 }
 
 

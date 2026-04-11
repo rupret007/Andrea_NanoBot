@@ -9,6 +9,7 @@ import {
   INTERNAL_BUTTON_COMMAND_SURFACES,
   OPERATOR_SLASH_COMMAND_SURFACES,
   PUBLIC_TELEGRAM_COMMAND_SURFACES,
+  getTelegramBotGroupMenuCommands,
   getTelegramBotMenuCommands,
 } from './command-surface-registry.js';
 
@@ -37,6 +38,25 @@ describe('command surface registry', () => {
         description: entry.menuDescription ?? entry.summary,
       })),
     );
+
+    expect(getTelegramBotGroupMenuCommands()).toEqual([
+      {
+        command: 'help',
+        description: 'How Andrea works here',
+      },
+      {
+        command: 'commands',
+        description: 'Setup and status commands',
+      },
+      {
+        command: 'features',
+        description: 'What Andrea is best at',
+      },
+      {
+        command: 'ping',
+        description: 'Check if Andrea is online',
+      },
+    ]);
   });
 
   it('represents every taught operator command family in the registry', () => {

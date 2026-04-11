@@ -15,6 +15,7 @@ import {
 } from './telegram.js';
 import {
   PUBLIC_TELEGRAM_COMMAND_SURFACES,
+  getTelegramBotGroupMenuCommands,
   getTelegramBotMenuCommands,
 } from '../command-surface-registry.js';
 
@@ -61,17 +62,15 @@ describe('extractTelegramLeadingCommand', () => {
 });
 
 describe('buildTelegramHelpText', () => {
-  it('includes key commands and capability guidance', () => {
+  it('keeps help short and focused on how to use Telegram well', () => {
     const help = buildTelegramHelpText('Andrea');
 
-    expect(help).toContain('*Welcome to Andrea*');
-    for (const entry of PUBLIC_TELEGRAM_COMMAND_SURFACES) {
-      expect(help).toContain(entry.preferredAlias);
-    }
-    expect(help).toContain('calendar scheduling');
-    expect(help).toContain('source-grounded library help');
-    expect(help).toContain('Telegram is the richest surface');
-    expect(help).toContain('BlueBubbles is a bounded personal messaging companion');
+    expect(help).toContain('*How Andrea Works Here*');
+    expect(help).toContain('/registermain');
+    expect(help).toContain('/commands');
+    expect(help).toContain('/features');
+    expect(help).toContain('Most people should just send a normal message.');
+    expect(help).toContain('Help me plan tonight');
     expect(help).not.toContain('/alexa_status');
     expect(help).not.toContain('/amazon_status');
     expect(help).not.toContain('/amazon_search');
@@ -116,6 +115,7 @@ describe('buildTelegramWelcomeText', () => {
     expect(welcome).toContain('/registermain');
     expect(welcome).toContain('/commands');
     expect(welcome).toContain('/features');
+    expect(welcome).toContain('*Start Here*');
     expect(welcome).toContain('mention my Telegram username');
     expect(welcome).toContain('What should I say back?');
     expect(welcome).not.toContain('@Andrea');
@@ -123,15 +123,15 @@ describe('buildTelegramWelcomeText', () => {
 });
 
 describe('buildTelegramCommandsText', () => {
-  it('keeps the public command list focused on the demo-safe surface', () => {
+  it('groups the public command list around setup and status instead of a flat dump', () => {
     const commands = buildTelegramCommandsText();
 
-    expect(commands).toContain('/start');
-    expect(commands).toContain('/help');
-    expect(commands).toContain('/commands');
-    expect(commands).toContain('/features');
+    expect(commands).toContain('*Telegram Commands*');
+    expect(commands).toContain('*Start Here*');
+    expect(commands).toContain('*Useful Checks*');
+    expect(commands).toContain('*In Groups*');
     expect(commands).toContain('/cursor_status');
-    expect(commands).toContain('Safe readiness check');
+    expect(commands).toContain('Most people can ignore commands and just type normally.');
     expect(commands).toContain(
       'Deeper operator/admin controls stay out of normal help',
     );
@@ -169,9 +169,10 @@ describe('buildTelegramFeaturesText', () => {
   it('keeps the feature list focused on the stable demo surface', () => {
     const features = buildTelegramFeaturesText('Andrea');
 
+    expect(features).toContain('*Best Here*');
     expect(features).toContain('calendar scheduling');
-    expect(features).toContain('source-grounded library help');
-    expect(features).toContain('Life-thread follow-through');
+    expect(features).toContain('source-grounded summaries');
+    expect(features).toContain('people, projects, and household follow-through');
     expect(features).toContain('BlueBubbles is a bounded personal messaging companion');
     expect(features).toContain('Alexa is a short voice surface');
     expect(features).not.toContain('Amazon shopping search');
@@ -257,7 +258,11 @@ describe('TelegramChannel polling hardening', () => {
 
     expect(setMyDescription).toHaveBeenCalledTimes(1);
     expect(setMyShortDescription).toHaveBeenCalledTimes(1);
-    expect(setMyCommands).toHaveBeenCalledTimes(1);
+    expect(setMyCommands).toHaveBeenCalledTimes(2);
+    expect(setMyCommands).toHaveBeenNthCalledWith(1, getTelegramBotGroupMenuCommands());
+    expect(setMyCommands).toHaveBeenNthCalledWith(2, getTelegramBotMenuCommands(), {
+      scope: { type: 'all_private_chats' },
+    });
   });
 
   it('registers the Telegram bot menu from the shared public registry', async () => {
