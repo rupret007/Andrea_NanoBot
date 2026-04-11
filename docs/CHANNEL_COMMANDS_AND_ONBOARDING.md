@@ -15,7 +15,8 @@ Stable user-safe behaviors:
 - direct conversation in DMs
 - mention-based requests in groups
 - reminders and follow-ups
-- calendar scheduling when that path is enabled
+- calendar scheduling and schedule questions
+- planning, review, and reply help
 - fast direct replies for simple questions and basic math
 - research and summaries in normal language
 - a small public-safe command set
@@ -46,10 +47,10 @@ Recommended direct-message flow:
 
 Good first requests:
 
-- `What am I forgetting today?`
+- `What's on my calendar tomorrow?`
 - `Remind me tomorrow at 3pm to call Sam`
 - `What should I say back?`
-- `Research the best standing desks for small apartments`
+- `Help me plan tonight`
 
 ## Group Behavior
 
@@ -64,7 +65,7 @@ Examples:
 
 - `@your_bot_username remind the team every Monday at 9am to post weekly updates`
 - `@your_bot_username summarize this thread and list action items`
-- `@your_bot_username research the best ergonomic keyboards under $150`
+- `@your_bot_username what still needs attention here`
 
 ## Public-Safe Command Reference
 

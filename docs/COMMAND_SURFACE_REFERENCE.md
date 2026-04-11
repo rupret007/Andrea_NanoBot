@@ -78,8 +78,8 @@ Important boundary:
 
 | Surface | Truth | Best for | Important boundary |
 | --- | --- | --- | --- |
-| Telegram | `live_proven` | Richest companion use, reminders, calendar scheduling, follow-through, research, messaging review, and operator work | Public-safe commands stay small; deeper control lives in the main control chat |
-| Alexa | `live_proven` proof on this host, with model sync tracked separately | Short voice orientation, follow-up, and Telegram handoff | Real proof must come from the Andrea custom skill, and latest model changes should be confirmed with `setup -- --step alexa-model-sync` |
+| Telegram | `live_proven` | Richest companion use for schedule, reminders, planning, review, research, messaging review, and operator work | Public-safe commands stay small; deeper control lives in the main control chat |
+| Alexa | `live_proven` proof on this host, with model sync tracked separately | Short voice help for calendar, reminders, planning, review, and quick reply help | Real proof must come from the Andrea custom skill, and latest model changes should be confirmed with `setup -- --step alexa-model-sync` |
 | BlueBubbles | `degraded_but_usable` on this host | Bounded personal messaging companion in the active thread | Mention-required, messaging-first, and still needs a fresh same-thread message-action proof leg before it counts as `live_proven` |
 
 ## Natural-Language Discovery Surfaces
@@ -89,11 +89,12 @@ These are discoverable by normal language rather than slash commands.
 | Surface | Channel | Truth | Typical asks |
 | --- | --- | --- | --- |
 | Ordinary chat and simple local asks | Telegram, Alexa, BlueBubbles | `live_proven` | `hi`, `what's up`, `what time is it`, `what day is it`, `thanks` |
-| Reminders and calendar scheduling | Telegram | `live_proven` | `remind me later`, `put this on my calendar` |
-| Research and knowledge library | Telegram | `live_proven` | `research this`, `save this to my library` |
-| Life threads and follow-through | Telegram, Alexa, BlueBubbles | `live_proven` | `what am I forgetting`, `what's still open with Candace` |
-| Communication companion | Telegram, BlueBubbles | `bounded` | `what should I say back`, `summarize this`, `save under thread` |
-| Missions and chief-of-staff guidance | Telegram, Alexa | `bounded` | `help me plan tonight`, `what matters most today` |
+| Calendar and schedule | Telegram, Alexa | `live_proven` | `what's on my calendar tomorrow`, `what's next on my calendar`, `move that to 7` |
+| Reminders and save-for-later | Telegram, Alexa, BlueBubbles | `live_proven` | `remind me later`, `save that for later`, `send me the fuller version` |
+| Planning and next steps | Telegram, Alexa | `live_proven` | `what am I forgetting`, `what matters today`, `help me plan tonight` |
+| Communication and reply help | Telegram, Alexa, BlueBubbles | `bounded` | `what should I say back`, `what do I owe people`, `summarize this message` |
+| Compare, explain, and saved context | Telegram, Alexa | `bounded` | `what should I know before deciding`, `compare these options`, `tell me something interesting` |
+| Open follow-through and people | Telegram, Alexa, BlueBubbles | `live_proven` | `what's still open`, `what still needs attention`, `what about Candace` |
 | Coding and work help | Telegram | `live_proven` | natural-language project help plus `/cursor_status` |
 
 ## Operator-Only Telegram Slash Families

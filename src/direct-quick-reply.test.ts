@@ -111,9 +111,12 @@ describe('direct quick reply', () => {
     const reply = maybeBuildDirectQuickReply([{ content: 'what can you do?' }]);
 
     expect(reply).toContain("I'm Andrea");
+    expect(reply).toContain('calendar help');
+    expect(reply).toContain('what should I say back');
     expect(reply).toContain('Telegram');
     expect(reply).toContain('BlueBubbles');
     expect(reply).toContain('Alexa');
+    expect(reply).not.toContain('Candace');
   });
 
   it('returns a bounded coding-capability response for cursor and codex asks', () => {
@@ -139,8 +142,8 @@ describe('direct quick reply', () => {
       { content: 'what are you best at?' },
     ]);
 
-    expect(reply).toContain('tasks');
-    expect(reply).toContain('research');
+    expect(reply).toContain('Calendar and schedule help');
+    expect(reply).toContain('reply drafting');
   });
 
   it('returns a stable response for funny-or-pretending asks', () => {

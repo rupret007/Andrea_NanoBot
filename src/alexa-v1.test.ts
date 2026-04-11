@@ -43,7 +43,7 @@ describe('alexa v1 prompt mapping', () => {
       buildAlexaPersonalPrompt(ALEXA_COMPANION_GUIDANCE_INTENT, {
         captureText: 'what am I forgetting',
       }),
-    ).toContain('practical guidance');
+    ).toContain('practical daily assistant jobs');
     expect(
       buildAlexaPersonalPrompt(ALEXA_PEOPLE_HOUSEHOLD_INTENT, {
         captureText: 'Candace',
@@ -58,12 +58,12 @@ describe('alexa v1 prompt mapping', () => {
       buildAlexaPersonalPrompt(ALEXA_SAVE_REMIND_HANDOFF_INTENT, {
         captureText: 'the fuller version',
       }),
-    ).toContain('save, remind, draft, or hand off');
+    ).toContain('add, move, remind, save, or hand off');
     expect(
       buildAlexaPersonalPrompt(ALEXA_OPEN_ASK_INTENT, {
         captureText: 'Jar Jar Binks',
       }),
-    ).toContain('open question naturally and briefly');
+    ).toContain('practical question naturally and briefly');
     expect(
       buildAlexaPersonalPrompt(ALEXA_CONVERSATION_CONTROL_INTENT, {
         captureText: 'a little more direct',
@@ -113,25 +113,33 @@ describe('alexa v1 prompt mapping', () => {
 
 describe('alexa v1 speech helpers', () => {
   it('keeps help and welcome copy short and voice-first', () => {
-    expect(buildAlexaHelpSpeech('Andrea')).toContain('check your day');
-    expect(buildAlexaHelpSpeech('Andrea')).toContain('add dinner with Candace tomorrow at 6:30 PM');
+    expect(buildAlexaHelpSpeech('Andrea')).toContain('check your schedule');
+    expect(buildAlexaHelpSpeech('Andrea')).toContain(
+      'remind me to call Sam tomorrow at 3',
+    );
     expect(buildAlexaHelpSpeech('Andrea')).toContain('Telegram');
     expect(buildAlexaHelpSpeech('Andrea')).not.toContain('Andrea Pulse');
+    expect(buildAlexaHelpSpeech('Andrea')).not.toContain('Candace');
     expect(buildAlexaWelcomeSpeech('Andrea')).toContain(
       'This is Andrea.',
     );
     expect(buildAlexaWelcomeSpeech('Andrea')).toContain('calendar');
-    expect(buildAlexaWelcomeSpeech('Andrea')).toContain('remind me at 4 to text Candace');
+    expect(buildAlexaWelcomeSpeech('Andrea')).toContain(
+      'remind me to call Sam tomorrow at 3',
+    );
+    expect(buildAlexaWelcomeSpeech('Andrea')).not.toContain('Candace');
     expect(buildAlexaFallbackSpeech('Andrea')).toContain(
       'did not quite catch that',
     );
     expect(buildAlexaFallbackSpeech('Andrea')).toContain(
       'your calendar',
     );
+    expect(buildAlexaFallbackSpeech('Andrea')).toContain('still open');
     expect(ALEXA_DEFAULT_REPROMPT).toContain(
-      'add dinner with Candace tomorrow at 6:30 PM',
+      'remind me to call Sam tomorrow at 3',
     );
-    expect(ALEXA_DEFAULT_REPROMPT).toContain("what's on your calendar today");
+    expect(ALEXA_DEFAULT_REPROMPT).toContain("what's on my calendar tomorrow");
+    expect(ALEXA_DEFAULT_REPROMPT).not.toContain('Candace');
   });
 
   it('builds short clarification and confirmation questions', () => {

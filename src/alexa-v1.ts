@@ -25,7 +25,7 @@ export const ALEXA_CONVERSATIONAL_FOLLOWUP_INTENT =
   'ConversationalFollowupIntent';
 export const ALEXA_MEMORY_CONTROL_INTENT = 'MemoryControlIntent';
 export const ALEXA_DEFAULT_REPROMPT =
-  "Ask what's on your calendar today, add dinner with Candace tomorrow at 6:30 PM, set a reminder, help me figure out tonight, or ask what you should say back.";
+  "Ask what's on my calendar tomorrow, remind me to call Sam tomorrow at 3, help me plan tonight, what should I say back, or what should I remember tonight.";
 
 export const ALEXA_V1_PERSONAL_INTENTS = new Set<string>([
   ALEXA_COMPANION_GUIDANCE_INTENT,
@@ -77,15 +77,15 @@ export function buildAlexaPersonalPrompt(
 ): string {
   switch (intentName) {
     case ALEXA_COMPANION_GUIDANCE_INTENT:
-      return `Stay in Andrea Alexa companion mode. Help with practical guidance about today, loose ends, what matters most, what to do next, or what to remember tonight. Lead with the main thing first, then only one or two useful supporting points.${SPOKEN_STYLE_SUFFIX}`;
+      return `Stay in Andrea Alexa companion mode. Help with practical daily assistant jobs like checking the schedule, what matters today, what to do next, what is still open, or what to remember tonight. Lead with the main thing first, then only one or two useful supporting points.${SPOKEN_STYLE_SUFFIX}`;
     case ALEXA_PEOPLE_HOUSEHOLD_INTENT:
       return `Stay in Andrea Alexa companion mode. Help with people, household follow-through, or relationship-sensitive guidance using this focus: ${trimSingleLine(values.captureText) || 'the current person or household topic'}. Be warm, grounded, and practical.${SPOKEN_STYLE_SUFFIX}`;
     case ALEXA_PLANNING_ORIENTATION_INTENT:
       return `Stay in Andrea Alexa companion mode. Help me orient around this plan or blocker: ${trimSingleLine(values.captureText) || 'the current plan'}. Keep it short, useful, and action-first.${SPOKEN_STYLE_SUFFIX}`;
     case ALEXA_SAVE_REMIND_HANDOFF_INTENT:
-      return `Stay in Andrea Alexa companion mode. Help me save, remind, draft, or hand off this item safely: ${trimSingleLine(values.captureText) || 'the current item'}. If more detail belongs in Telegram, say that naturally.${SPOKEN_STYLE_SUFFIX}`;
+      return `Stay in Andrea Alexa companion mode. Help me add, move, remind, save, or hand off this item safely: ${trimSingleLine(values.captureText) || 'the current item'}. Finish the obvious voice step when it is clear. If more detail belongs in Telegram, say that naturally.${SPOKEN_STYLE_SUFFIX}`;
     case ALEXA_OPEN_ASK_INTENT:
-      return `Stay in Andrea Alexa companion mode. Answer this open question naturally and briefly: ${trimSingleLine(values.captureText) || 'the current question'}. Use shared Andrea context when it genuinely helps.${SPOKEN_STYLE_SUFFIX}`;
+      return `Stay in Andrea Alexa companion mode. Answer this practical question naturally and briefly: ${trimSingleLine(values.captureText) || 'the current question'}. This may be reply help, compare-and-explain help, or something the user should know before deciding. Use shared Andrea context when it genuinely helps.${SPOKEN_STYLE_SUFFIX}`;
     case ALEXA_CONVERSATION_CONTROL_INTENT:
       return `Stay in Andrea Alexa companion mode. Handle this follow-up or conversation-control request naturally: ${trimSingleLine(values.captureText) || 'continue the current thread'}.${SPOKEN_STYLE_SUFFIX}`;
     case ALEXA_MY_DAY_INTENT:
@@ -186,15 +186,15 @@ export function buildAlexaOpenConversationPrompt(
 }
 
 export function buildAlexaHelpSpeech(assistantName: string): string {
-  return `This is ${assistantName}. I can check your day, add or move something on your calendar, set a reminder, help you figure out tonight, or help you say something back. Try asking what's on my calendar tomorrow, add dinner with Candace tomorrow at 6:30 PM, remind me at 4 to text Candace, or what should I say back. If you want, I can send the fuller version to Telegram after we get the first step done here.`;
+  return `This is ${assistantName}. I can check your schedule, add or move something on your calendar, set a reminder, help you plan tonight, or help you draft a reply. Try asking what's on my calendar tomorrow, remind me to call Sam tomorrow at 3, help me plan tonight, or what should I say back. If you want, I can send the fuller version to Telegram after we do the first useful step here.`;
 }
 
 export function buildAlexaWelcomeSpeech(assistantName: string): string {
-  return `This is ${assistantName}. I can check your day, add or move something on your calendar, set a reminder, help you figure out tonight, or help you say something back. Try what's on my calendar today or remind me at 4 to text Candace.`;
+  return `This is ${assistantName}. I can help with your calendar, reminders, planning, review, and quick reply help. Try what's on my calendar tomorrow, remind me to call Sam tomorrow at 3, or what should I say back.`;
 }
 
 export function buildAlexaFallbackSpeech(assistantName: string): string {
-  return `This is ${assistantName}. I did not quite catch that. Try asking about your calendar, setting a reminder, figuring out tonight, or what you should say back.`;
+  return `This is ${assistantName}. I did not quite catch that. Try asking about your calendar, setting a reminder, planning tonight, what is still open, or what you should say back.`;
 }
 
 export function buildReminderLeadTimeQuestion(assistantName: string): string {

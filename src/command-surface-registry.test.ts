@@ -5,10 +5,15 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildTelegramFeatureLines,
+  buildTelegramHelpLines,
+  buildTelegramWelcomeLines,
   COMMAND_SURFACE_REGISTRY,
   INTERNAL_BUTTON_COMMAND_SURFACES,
   OPERATOR_SLASH_COMMAND_SURFACES,
+  PRACTICAL_COMMAND_INVENTORY,
   PUBLIC_TELEGRAM_COMMAND_SURFACES,
+  getPracticalDiscoverySpotlights,
   getTelegramBotGroupMenuCommands,
   getTelegramBotMenuCommands,
 } from './command-surface-registry.js';
@@ -132,6 +137,42 @@ describe('command surface registry', () => {
       ),
     ).toBe(true);
   });
+
+  it('keeps a practical public command inventory without leading with person-specific prompts', () => {
+    expect(PRACTICAL_COMMAND_INVENTORY).toHaveLength(58);
+
+    const alexaSpotlights = getPracticalDiscoverySpotlights('alexa').map(
+      (entry) => entry.prompt,
+    );
+    expect(alexaSpotlights).toEqual([
+      "what's on my calendar tomorrow",
+      'remind me to call Sam tomorrow at 3',
+      'help me plan tonight',
+      'what should I say back',
+      'what should I remember tonight',
+    ]);
+    expect(alexaSpotlights.join(' ')).not.toContain('Candace');
+    expect(alexaSpotlights.join(' ')).not.toContain('save that');
+  });
+
+  it('keeps public Telegram discovery focused on practical jobs first', () => {
+    const welcome = buildTelegramWelcomeLines('Andrea').join('\n');
+    const help = buildTelegramHelpLines('Andrea').join('\n');
+    const features = buildTelegramFeatureLines('Andrea').join('\n');
+
+    expect(welcome).toContain("what's on my calendar tomorrow");
+    expect(welcome).toContain('remind me to call Sam tomorrow at 3');
+    expect(welcome).not.toContain('Candace');
+
+    expect(help).toContain('scheduling');
+    expect(help).toContain('reply help');
+    expect(help).not.toContain('missions and chief-of-staff');
+
+    expect(features).toContain('calendar');
+    expect(features).toContain('planning');
+    expect(features).toContain('quick reply help');
+    expect(features).not.toContain('life threads and follow-through');
+  });
 });
 
 describe('command surface docs', () => {
@@ -149,6 +190,8 @@ describe('command surface docs', () => {
     const publicGuide = readDoc('docs', 'CHANNEL_COMMANDS_AND_ONBOARDING.md');
 
     expect(publicGuide).toContain('/cursor_status');
+    expect(publicGuide).toContain("What's on my calendar tomorrow?");
+    expect(publicGuide).toContain('Help me plan tonight');
     expect(publicGuide).not.toContain('/alexa-status');
     expect(publicGuide).not.toContain('/debug-status');
     expect(publicGuide).not.toContain('/amazon-search');
@@ -187,5 +230,7 @@ describe('command surface docs', () => {
     expect(commandReference).toContain('/remote-control');
     expect(commandReference).toContain('internal');
     expect(commandReference).toContain('operator-only');
+    expect(commandReference).toContain('Calendar and schedule');
+    expect(commandReference).toContain('Communication and reply help');
   });
 });

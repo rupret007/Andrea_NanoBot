@@ -51,7 +51,7 @@ Andrea has two different documentation audiences on purpose:
 
 - **User-safe surface**
   - normal conversation
-  - reminders, quick replies, summaries, and project help
+  - calendar help, reminders, planning, quick replies, summaries, and project help
   - the narrow public Telegram command set
   - `/cursor_status` as the only public-safe Cursor readiness check
 - **Operator-only surface**
@@ -71,10 +71,12 @@ Cursor-specific docs also split into three surfaces:
 
 Andrea's current flagship journeys are:
 
-- Alexa daily orientation -> Telegram richer follow-through
+- Alexa or Telegram schedule check -> reminder, move, or richer follow-through
+- `What's on my calendar tomorrow?` -> short read -> add, move, or reminder
 - `What am I forgetting?` -> one concrete open loop -> reminder, save, or tracking
-- `What's still open with Candace?` -> draft reply -> save to thread or remind later
+- `What should I say back?` -> draft reply -> save, remind later, or continue in-thread
 - `Help me plan tonight / this weekend` -> mission -> blocker -> confirmed action
+- `What do I owe people?` -> communication review -> reminder or thread follow-up
 - source-grounded research -> richer detail -> save to library
 - BlueBubbles message help -> summarize -> draft -> send or queue send-later -> optional Telegram escalation
 

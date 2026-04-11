@@ -222,6 +222,24 @@ async function main(): Promise<void> {
         }),
       },
       {
+        label: 'What can you do',
+        envelope: buildIntentEnvelope('CompanionGuidanceIntent', {
+          guidanceText: 'what can you do',
+        }),
+      },
+      {
+        label: 'Next on my calendar',
+        envelope: buildIntentEnvelope('CompanionGuidanceIntent', {
+          guidanceText: 'next on my calendar',
+        }),
+      },
+      {
+        label: 'First meeting tomorrow',
+        envelope: buildIntentEnvelope('CompanionGuidanceIntent', {
+          guidanceText: 'first meeting tomorrow',
+        }),
+      },
+      {
         label: 'Anything else',
         envelope: buildIntentEnvelope('ConversationControlIntent'),
       },
@@ -247,6 +265,12 @@ async function main(): Promise<void> {
         label: 'Communication gap',
         envelope: buildIntentEnvelope('OpenAskIntent', {
           query: 'what should i say back',
+        }),
+      },
+      {
+        label: 'Owed replies',
+        envelope: buildIntentEnvelope('OpenAskIntent', {
+          query: 'what do i owe people',
         }),
       },
       {
@@ -315,6 +339,12 @@ async function main(): Promise<void> {
           query: 'meal delivery and grocery delivery for a busy week',
         }),
       },
+      {
+        label: 'Decision help',
+        envelope: buildIntentEnvelope('OpenAskIntent', {
+          query: 'what should i know before deciding',
+        }),
+      },
     ];
 
     for (const turn of turns) {
@@ -365,11 +395,15 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((error) => {
-  process.stderr.write(
-    `debug-alexa-conversation failed: ${
-      error instanceof Error ? error.stack || error.message : String(error)
-    }\n`,
-  );
-  process.exitCode = 1;
-});
+main()
+  .then(() => {
+    process.exit(0);
+  })
+  .catch((error) => {
+    process.stderr.write(
+      `debug-alexa-conversation failed: ${
+        error instanceof Error ? error.stack || error.message : String(error)
+      }\n`,
+    );
+    process.exit(1);
+  });

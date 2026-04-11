@@ -3,6 +3,7 @@ import {
   buildGracefulDegradedReply,
   type ConversationalChannel,
 } from './conversational-core.js';
+import { getPracticalDiscoverySpotlights } from './command-surface-registry.js';
 import { buildAndreaPingPresenceReply } from './ping-presence.js';
 
 const MAX_ABS_MATH_RESULT = 1_000_000_000_000;
@@ -217,7 +218,7 @@ export function maybeBuildDirectQuickReply(
   if (
     isStandalonePrompt(normalized, /^what are you (?:best|good) at[?.! ]*$/, 6)
   ) {
-    return "Keeping tasks, reminders, research, and messy decisions clean and calm. Give me one concrete ask and I'll keep it moving.";
+    return 'Calendar and schedule help, reminders, planning, reply drafting, and keeping follow-through clean. Give me one concrete ask and I will keep it moving.';
   }
 
   if (
@@ -387,7 +388,11 @@ export function maybeBuildDirectQuickReply(
       5,
     )
   ) {
-    return "I'm Andrea. I'm strongest on planning, reminders, calendar help, careful messaging help, and keeping follow-through clean. Telegram is my richest surface, Alexa is for concise voice help, BlueBubbles is for bounded Messages help, and research or images are available when those provider lanes are up.";
+    const spotlight = getPracticalDiscoverySpotlights('telegram')
+      .slice(0, 3)
+      .map((entry) => entry.prompt)
+      .join(', ');
+    return `I'm Andrea. I'm strongest on calendar help, reminders, planning, quick reply help, and keeping follow-through clean. Telegram is my richest surface, Alexa is for concise voice help, and BlueBubbles is for bounded Messages help in the current thread. Good asks are ${spotlight}.`;
   }
 
   if (

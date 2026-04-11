@@ -296,6 +296,11 @@ describe('assistant capability router', () => {
         slotValue: 'time is it',
       }),
     ).toBeNull();
+    expect(
+      resolveAlexaIntentToCapability('CompanionGuidanceIntent', {
+        slotValue: 'what can you do',
+      }),
+    ).toBeNull();
   });
 
   it('continues the active capability for Alexa follow-ups when context is strong', () => {

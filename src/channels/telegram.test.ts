@@ -70,7 +70,8 @@ describe('buildTelegramHelpText', () => {
     expect(help).toContain('/commands');
     expect(help).toContain('/features');
     expect(help).toContain('Most people should just send a normal message.');
-    expect(help).toContain('Help me plan tonight');
+    expect(help).toContain('help me plan tonight');
+    expect(help).toContain('reply help');
     expect(help).not.toContain('/alexa_status');
     expect(help).not.toContain('/amazon_status');
     expect(help).not.toContain('/amazon_search');
@@ -117,7 +118,9 @@ describe('buildTelegramWelcomeText', () => {
     expect(welcome).toContain('/features');
     expect(welcome).toContain('*Start Here*');
     expect(welcome).toContain('mention my Telegram username');
-    expect(welcome).toContain('What should I say back?');
+    expect(welcome).toContain("what's on my calendar tomorrow");
+    expect(welcome).toContain('what should I say back');
+    expect(welcome).not.toContain('Candace');
     expect(welcome).not.toContain('@Andrea');
   });
 });
@@ -170,14 +173,14 @@ describe('buildTelegramFeaturesText', () => {
     const features = buildTelegramFeaturesText('Andrea');
 
     expect(features).toContain('*Best Here*');
-    expect(features).toContain('calendar scheduling');
+    expect(features).toContain('calendar');
     expect(features).toContain('source-grounded summaries');
-    expect(features).toContain('people, projects, and household follow-through');
+    expect(features).toContain('open follow-through across people, projects, and home');
     expect(features).toContain(
       'BlueBubbles is bounded Messages help in the current thread',
     );
     expect(features).toContain(
-      'Alexa is concise voice help for calendar, reminders, orientation, and short follow-up',
+      'Alexa is concise voice help for calendar, reminders, planning, review, and quick reply help',
     );
     expect(features).not.toContain('Amazon shopping search');
     expect(features).not.toContain('Apple Calendar');

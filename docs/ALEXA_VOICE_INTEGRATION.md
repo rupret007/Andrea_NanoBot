@@ -61,13 +61,17 @@ The strongest everyday assistant jobs are:
 - `what's on my calendar today`
 - `what's on my calendar tomorrow`
 - `what do I have this afternoon`
-- `add dinner with Candace tomorrow at 6:30 PM`
-- `move dinner to 7`
+- `when is my first meeting tomorrow`
+- `what's next on my calendar`
+- `add dinner tomorrow at 6:30 PM`
+- `move that to 7`
 - `cancel dinner tomorrow`
-- `remind me at 4 to text Candace`
+- `remind me to call Sam tomorrow at 3`
 - `remind me about that tonight`
 - `what should I say back`
-- `help me figure out tonight`
+- `what do I owe people`
+- `help me plan tonight`
+- `what should I know before deciding`
 
 Good Alexa asks in this layer:
 
@@ -119,7 +123,7 @@ The strongest Alexa-first flows are:
 - `add dinner with Candace tomorrow at 6:30 PM`
 - `move dinner to 7`
 - `remind me at 4 to text Candace`
-- `what's still open with Candace`
+- `what's still open`
 - `help me plan tonight`
 
 In those flows Alexa should:
@@ -129,6 +133,8 @@ In those flows Alexa should:
 - mention one next step or blocker
 - keep the same context alive for `anything else`, `what happens next`, `remind me`, `save that`, or `send me the fuller plan`
 - hand richer detail to Telegram instead of trying to read the whole plan, research answer, or conversation aloud
+
+Person-specific prompts like `what about Candace` and `what's still open with Candace` still matter, but they should feel like secondary continuations, not the top public discovery story.
 
 ## 0) Current Truth
 

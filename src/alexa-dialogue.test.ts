@@ -57,6 +57,44 @@ describe('alexa dialogue', () => {
     });
 
     expect(
+      extractAlexaVoiceIntentCapture('CompanionGuidanceIntent', {
+        guidanceText: 'what can you do',
+      }),
+    ).toMatchObject({
+      preferredText: 'what can you do',
+      candidateTexts: ['what can you do', 'help me'],
+    });
+
+    expect(
+      extractAlexaVoiceIntentCapture('CompanionGuidanceIntent', {
+        guidanceText: 'next on my calendar',
+      }),
+    ).toMatchObject({
+      preferredText: "what's next on my calendar",
+      candidateTexts: ["what's next on my calendar", "what's coming up"],
+    });
+
+    expect(
+      extractAlexaVoiceIntentCapture('CompanionGuidanceIntent', {
+        guidanceText: 'first meeting tomorrow',
+      }),
+    ).toMatchObject({
+      preferredText: 'when is my first meeting tomorrow',
+      candidateTexts: [
+        'when is my first meeting tomorrow',
+        'what is on my calendar tomorrow',
+      ],
+    });
+
+    expect(
+      extractAlexaVoiceIntentCapture('CompanionGuidanceIntent', {
+        guidanceText: 'do i owe people',
+      }),
+    ).toMatchObject({
+      preferredText: 'what do I owe people',
+    });
+
+    expect(
       extractAlexaVoiceIntentCapture('PeopleHouseholdIntent', {
         subject: 'Candace',
       }),
@@ -209,6 +247,10 @@ describe('alexa dialogue', () => {
       route: 'local',
       localKind: 'help',
     });
+    expect(planAlexaDialogueTurn('what can you do')).toMatchObject({
+      route: 'local',
+      localKind: 'help',
+    });
   });
 
   it('clarifies underspecified asks instead of failing hard', () => {
@@ -240,6 +282,14 @@ describe('alexa dialogue', () => {
     expect(planAlexaDialogueTurn('what should I say back')).toMatchObject({
       route: 'shared_capability',
       capabilityId: 'communication.draft_reply',
+    });
+    expect(planAlexaDialogueTurn('what do I owe people')).toMatchObject({
+      route: 'shared_capability',
+      capabilityId: 'communication.open_loops',
+    });
+    expect(planAlexaDialogueTurn("what's still open")).toMatchObject({
+      route: 'shared_capability',
+      capabilityId: 'daily.loose_ends',
     });
     expect(planAlexaDialogueTurn('figure out tonight')).toMatchObject({
       route: 'shared_capability',

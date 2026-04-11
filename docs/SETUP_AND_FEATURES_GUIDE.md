@@ -73,10 +73,12 @@ Those are related, but they are not the same thing.
 
 The current productization target is not more primitives. It is a short list of journeys Andrea should feel exceptional at:
 
-- Alexa daily orientation -> Telegram richer follow-through
+- Alexa or Telegram schedule check -> reminder, move, or richer follow-through
+- `What's on my calendar tomorrow?` -> short read -> add, move, or reminder
 - `What am I forgetting?` -> one open loop -> reminder, save, or tracking
-- `What's still open with Candace?` -> draft reply -> save to thread or remind later
+- `What should I say back?` -> draft reply -> save, remind later, or keep as a thread continuation
 - `Help me plan tonight / this weekend` -> mission -> blocker -> confirmed action
+- `What do I owe people?` -> communication review -> reminder or thread follow-up
 - source-grounded research -> deeper answer -> save to library
 - BlueBubbles message help -> summarize -> draft -> remind later -> optional Telegram escalation
 
@@ -88,7 +90,7 @@ npm run debug:signature-flows
 
 Default product shape:
 
-- Alexa gives the short orientation
+- Alexa gives short voice help for schedule, reminders, planning, review, and quick reply help
 - Telegram is the richer execution and follow-through surface
 - BlueBubbles stays calm and text-first across synced chats, only replies when a message explicitly mentions `@Andrea`, and escalates explicitly to Telegram when the fuller answer is better there
 

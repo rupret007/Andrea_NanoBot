@@ -177,8 +177,25 @@ function buildCompanionGuidanceCandidates(slotValue: string): string[] {
   if (/^(up|up right now)$/i.test(lower)) {
     return ["what's up"];
   }
-  if (/^(help|help me)$/i.test(lower)) {
-    return ['can you help me'];
+  if (/^(can you do|what can you do)$/i.test(lower)) {
+    return ['what can you do', 'can you help me'];
+  }
+  if (/^(help|help me|can you help me)$/i.test(lower)) {
+    return ['can you help me', 'what can you do'];
+  }
+  if (
+    /\b(next on my calendar|next calendar item|next event)\b/.test(lower)
+  ) {
+    return ["what's next on my calendar", "what's coming up"];
+  }
+  if (/\b(first meeting tomorrow|first meeting)\b/.test(lower)) {
+    return ['when is my first meeting tomorrow', 'what is on my calendar tomorrow'];
+  }
+  if (/\b(owe people|owe a reply|owe replies|owe someone a reply)\b/.test(lower)) {
+    return ['what do I owe people'];
+  }
+  if (/\b(still open|still needs attention|needs attention)\b/.test(lower)) {
+    return ["what's still open", 'what still needs attention'];
   }
   if (
     /\b(forget|forgetting|forgot|missing|overlook|loose end|loose ends|not handled)\b/.test(
@@ -265,6 +282,17 @@ function buildSaveRemindCandidates(item: string): string[] {
 function buildOpenAskCandidates(query: string): string[] {
   const normalized = query.toLowerCase();
   if (isCommunicationDraftPrompt(normalized)) {
+    return [query];
+  }
+  if (
+    /^what do i owe people\b/.test(normalized) ||
+    /^who do i still owe a reply\b/.test(normalized) ||
+    /^what should i know before deciding\b/.test(normalized) ||
+    /^explain this simply\b/.test(normalized) ||
+    /^tell me something interesting\b/.test(normalized) ||
+    /^summari[sz]e this\b/.test(normalized) ||
+    /^help me think through this choice\b/.test(normalized)
+  ) {
     return [query];
   }
   const figureOutTopic = extractFigureOutTopic(query);
@@ -652,7 +680,11 @@ export function planAlexaDialogueTurn(
   if (/^(what'?s up|whats up)\b/.test(lower)) {
     return { family, normalizedText, route: 'local', localKind: 'whats_up' };
   }
-  if (lower === 'can you help me' || lower === 'help me') {
+  if (
+    lower === 'can you help me' ||
+    lower === 'help me' ||
+    lower === 'what can you do'
+  ) {
     return { family, normalizedText, route: 'local', localKind: 'help' };
   }
   if (lower === 'what should i know') {

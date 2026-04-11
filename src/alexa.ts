@@ -1039,13 +1039,13 @@ function buildAlexaLocalVoiceResponse(
   if (kind === 'whats_up') {
     return {
       speech:
-        "I'm here. We can look at what matters today, what you're forgetting, or one thing you want help with.",
+        "I'm here. We can check your schedule, figure out what matters today, or handle one reminder or reply.",
       reprompt: DEFAULT_ALEXA_REPROMPT,
     };
   }
   return {
     speech:
-      'Yes. I can help with plans, open loops, people stuff, reminders, and I can send the fuller version to Telegram when voice gets too tight.',
+      'Yes. I can help with your calendar, reminders, planning, what is still open, and quick reply help. If you want more detail after that, I can send the fuller version to Telegram.',
     reprompt: DEFAULT_ALEXA_REPROMPT,
   };
 }
@@ -1553,7 +1553,7 @@ function looksLikeAlexaCalendarReadRequest(utterance: string): boolean {
   ) {
     return false;
   }
-  return /^(?:what(?:'s| is)\s+on\s+my\s+(?:calendar|schedule)|what\s+do\s+i\s+have\b|what\s+have\s+i\s+got\b|anything\s+on\s+my\s+(?:calendar|schedule)\b|what(?:'s| is)\s+coming\s+up\b|coming up soon\b)/.test(
+  return /^(?:what(?:'s| is)\s+on\s+my\s+(?:calendar|schedule)|what\s+do\s+i\s+have\b|what\s+have\s+i\s+got\b|anything\s+on\s+my\s+(?:calendar|schedule)\b|what(?:'s| is)\s+coming\s+up\b|coming up soon\b|what(?:'s| is)\s+next on my calendar\b|when is my first meeting tomorrow\b)/.test(
     normalized,
   );
 }

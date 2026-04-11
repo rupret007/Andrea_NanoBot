@@ -73,7 +73,7 @@ function isReferenceBoundSavePrompt(value: string): boolean {
 }
 
 function isAlexaLocalVoiceAsk(value: string): boolean {
-  return /^(what time is it|what day is it|what'?s up|whats up|can you help me|help me)$/i.test(
+  return /^(what time is it|what day is it|what'?s up|whats up|can you help me|help me|what can you do)$/i.test(
     value.trim(),
   );
 }
@@ -139,8 +139,17 @@ function buildBroadAlexaCandidates(
     if (/^(up|up right now)$/i.test(lower)) {
       return ["what's up"];
     }
-    if (/^(help|help me)$/i.test(lower)) {
-      return ['can you help me'];
+    if (/^(what can you do|can you do)$/i.test(lower)) {
+      return ['what can you do', 'can you help me'];
+    }
+    if (/^(help|help me|can you help me)$/i.test(lower)) {
+      return ['can you help me', 'what can you do'];
+    }
+    if (/\b(next on my calendar|next calendar item|next event)\b/.test(lower)) {
+      return ["what's next on my calendar", "what's coming up"];
+    }
+    if (/\b(first meeting tomorrow|first meeting)\b/.test(lower)) {
+      return ['when is my first meeting tomorrow', 'what is on my calendar tomorrow'];
     }
     if (
       /\b(forget|forgetting|forgot|missing|overlook|loose end|loose ends|not handled)\b/.test(
