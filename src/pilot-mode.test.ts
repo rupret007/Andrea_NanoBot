@@ -295,11 +295,47 @@ describe('pilot mode', () => {
       summaryText: 'what should I know',
     });
 
+    const fourth = startPilotJourney({
+      journeyId: 'alexa_orientation',
+      systemsInvolved: ['alexa', 'voice_router'],
+      summaryText: 'what about that',
+      routeKey: 'alexa_voice_router:conversation_control:clarify',
+      channel: 'alexa',
+      groupFolder: 'main',
+      startedAt: '2026-04-07T18:12:00.000Z',
+    });
+    completePilotJourney({
+      eventId: fourth!.eventId,
+      outcome: 'degraded_usable',
+      blockerClass: 'no_context_reference',
+      blockerOwner: 'repo_side',
+      completedAt: '2026-04-07T18:12:01.000Z',
+      summaryText: 'what about that',
+    });
+
+    const fifth = startPilotJourney({
+      journeyId: 'alexa_orientation',
+      systemsInvolved: ['alexa', 'voice_router'],
+      summaryText: 'figure out tonight',
+      routeKey: 'alexa_voice_router:open_ask:assistant_bridge',
+      channel: 'alexa',
+      groupFolder: 'main',
+      startedAt: '2026-04-07T18:14:00.000Z',
+    });
+    completePilotJourney({
+      eventId: fifth!.eventId,
+      outcome: 'degraded_usable',
+      blockerClass: 'planning_should_route',
+      blockerOwner: 'repo_side',
+      completedAt: '2026-04-07T18:14:01.000Z',
+      summaryText: 'figure out tonight',
+    });
+
     const digest = buildAlexaUtteranceReviewDigest(
       new Date('2026-04-07T18:30:00.000Z'),
     );
 
-    expect(digest.totalSignals).toBe(3);
+    expect(digest.totalSignals).toBe(5);
     expect(digest.groupedPatterns[0]).toMatchObject({
       utterance: 'help me think through the school fundraiser note',
       family: 'open_ask',
@@ -312,6 +348,16 @@ describe('pilot mode', () => {
       utterance: 'what should I know',
       routeOutcome: 'clarify',
       blockerClass: 'weak_clarifier_recovery',
+    });
+    expect(digest.noContextReferences[0]).toMatchObject({
+      utterance: 'what about that',
+      routeOutcome: 'clarify',
+      blockerClass: 'no_context_reference',
+    });
+    expect(digest.planningShouldRoute[0]).toMatchObject({
+      utterance: 'figure out tonight',
+      routeOutcome: 'assistant_bridge',
+      blockerClass: 'planning_should_route',
     });
   });
 });

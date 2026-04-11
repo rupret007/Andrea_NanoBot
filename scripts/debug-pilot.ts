@@ -216,6 +216,10 @@ async function main(): Promise<void> {
     `- Fallback misses: ${alexaReview.fallbackMisses.length}`,
     `- Clarifier recoveries: ${alexaReview.clarifierRecoveries.length}`,
     `- Carrier-phrase gaps: ${alexaReview.carrierPhraseGaps.length}`,
+    `- No-context references: ${alexaReview.noContextReferences.length}`,
+    `- Follow-up binding failures: ${alexaReview.followupBindingFailures.length}`,
+    `- Communication should-route misses: ${alexaReview.communicationShouldRoute.length}`,
+    `- Planning should-route misses: ${alexaReview.planningShouldRoute.length}`,
     ...formatAlexaUtteranceReview(alexaReview),
   ];
   process.stdout.write(`${lines.join('\n')}\n`);

@@ -19,6 +19,9 @@ export interface AlexaConversationSubjectData {
   lastRouteOutcome?: string;
   lastUserUtterance?: string;
   clarifierHints?: string[];
+  activeVoiceFamily?: string;
+  activeVoiceAnchor?: string;
+  activeVoiceActionSummary?: string;
   activeSubjectLabel?: string;
   personName?: string;
   activePeople?: string[];
@@ -193,6 +196,18 @@ export function getAlexaConversationReferencedFactId(
   return state?.subjectData.profileFactId?.trim() || undefined;
 }
 
+function resolveAlexaConversationAnchor(
+  state: AlexaConversationState | undefined,
+): string | undefined {
+  return (
+    state?.subjectData.activeVoiceAnchor?.trim() ||
+    state?.subjectData.personName?.trim() ||
+    state?.subjectData.activeSubjectLabel?.trim() ||
+    state?.subjectData.conversationFocus?.trim() ||
+    undefined
+  );
+}
+
 export function resolveAlexaConversationFollowup(
   rawText: string,
   state: AlexaConversationState | undefined,
@@ -203,7 +218,7 @@ export function resolveAlexaConversationFollowup(
     return {
       ok: false,
       speech:
-        "I am not fully sure what you mean yet. I can help with your plans, open loops, or a reminder. Say it again a little more simply and I'll keep the thread.",
+        'Was that about a person, a plan, or something you want me to remember?',
     };
   }
 
@@ -211,9 +226,11 @@ export function resolveAlexaConversationFollowup(
   const hasCompanionCompletionContext = Boolean(
     state.subjectData.companionContinuationJson?.trim() ||
     state.subjectData.pendingActionText?.trim() ||
+    state.subjectData.activeVoiceActionSummary?.trim() ||
     state.subjectData.lastAnswerSummary?.trim() ||
     state.summaryText?.trim(),
   );
+  const activeAnchor = resolveAlexaConversationAnchor(state);
   const resolveSupported = (
     action: AlexaConversationFollowupAction,
     nextText = text,
@@ -224,9 +241,9 @@ export function resolveAlexaConversationFollowup(
       ? { ok: true, action, text: nextText }
       : {
           ok: false,
-          speech: state.subjectData.personName
-            ? `I am not quite sure which part you mean yet. Is that still about ${state.subjectData.personName}, or something else?`
-            : 'I am not quite sure which part you mean yet. Say a little more, or ask it a different way.',
+          speech: activeAnchor
+            ? `Is that still about ${activeAnchor}, or do you mean something else?`
+            : 'Give me one quick anchor first, like a person, a plan, or something to remember.',
         };
 
   if (/^(anything else|anything more|what else)\b/i.test(normalized)) {
@@ -298,18 +315,18 @@ export function resolveAlexaConversationFollowup(
     return resolveSupported('save_to_library');
   }
   if (
-    /^(save that for later|save that|help me remember that tonight|remember that|remember this)\b/i.test(
-      normalized,
-    )
-  ) {
-    return resolveSupported('save_that');
-  }
-  if (
     /^(track (?:that|it|this)(?: under .+)?|keep track of (?:that|it|this)(?: under .+)?|save (?:that|it|this) under .+ thread)\b/i.test(
       normalized,
     )
   ) {
     return resolveSupported('track_thread');
+  }
+  if (
+    /^(save that for later|save that|help me remember that tonight|remember that|remember this)\b/i.test(
+      normalized,
+    )
+  ) {
+    return resolveSupported('save_that');
   }
   if (
     /^(turn (?:that|it|this) into a reminder|remind me about (?:that|it|this)(?: tonight)?|save (?:that|it|this) for later tonight|just the reminder|only the reminder|do the reminder)\b/i.test(
@@ -380,8 +397,8 @@ export function resolveAlexaConversationFollowup(
 
   return {
     ok: false,
-    speech: state.subjectData.personName
-      ? `I am not fully sure which part you mean yet. You can ask what's still open with ${state.subjectData.personName}, say more, or ask it a different way.`
-      : 'I am not fully sure which part you mean yet. You can say anything else, say more, or ask it a different way.',
+    speech: activeAnchor
+      ? `I am not quite sure which part you mean yet. Is that still about ${activeAnchor}, or something else?`
+      : 'Give me one quick anchor first, like a person, a plan, or something to remember.',
   };
 }

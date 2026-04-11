@@ -99,6 +99,7 @@ function resolveCompletionText(
     candidate?.completionText?.trim() ||
     params.replyText?.trim() ||
     params.priorSubjectData?.saveForLaterCandidate?.trim() ||
+    params.priorSubjectData?.activeVoiceActionSummary?.trim() ||
     params.priorSubjectData?.lastAnswerSummary?.trim() ||
     params.conversationSummary?.trim() ||
     ''

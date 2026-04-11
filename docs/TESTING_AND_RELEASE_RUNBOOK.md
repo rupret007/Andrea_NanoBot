@@ -515,6 +515,8 @@ Current truthful closeout note:
 - if live voice still falls into `AMAZON.FallbackIntent` after that rebuild, use the Alexa Developer Console Utterance Profiler or Intent History to capture the exact recognized phrase before changing repo code
 - `npm run debug:daily-companion` is the local pinned-Node smoke path for comparing canonical daily-companion prompts like `what am I forgetting` or `what's still open with Candace` against real `groupFolder=main` data
 - `npm run debug:alexa-conversation` is the repo-side pinned-Node harness for checking Alexa-style follow-ups like `anything else`, `what about Candace`, `remember that`, `why`, or `be a little more direct` against the real local routing stack before blaming the live voice surface
+  - include gap-closing turns like `what about that`, `what should I say back`, `help me figure out tonight`, and `save that` when validating recent Alexa router changes
+  - `npm run debug:alexa-conversation -- --review` now groups Alexa misses by blocker class, including no-context references, follow-up binding failures, and communication/planning should-route misses
 
 When configured, validate in this order:
 

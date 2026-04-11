@@ -131,6 +131,10 @@ async function main(): Promise<void> {
       `- Clarifier recoveries: ${review.clarifierRecoveries.length}`,
       `- Carrier-phrase gaps: ${review.carrierPhraseGaps.length}`,
       `- Handoff-required patterns: ${review.handoffRequired.length}`,
+      `- No-context references: ${review.noContextReferences.length}`,
+      `- Follow-up binding failures: ${review.followupBindingFailures.length}`,
+      `- Communication should-route misses: ${review.communicationShouldRoute.length}`,
+      `- Planning should-route misses: ${review.planningShouldRoute.length}`,
       '',
       '*Top Patterns*',
       ...(review.groupedPatterns.length > 0
@@ -191,9 +195,15 @@ async function main(): Promise<void> {
         envelope: buildBaseEnvelope(),
       },
       {
-        label: 'Fallback recovery',
+        label: 'No-context reference',
         envelope: buildIntentEnvelope('ConversationControlIntent', {
           controlText: 'that',
+        }),
+      },
+      {
+        label: 'Planning gap',
+        envelope: buildIntentEnvelope('OpenAskIntent', {
+          query: 'figure out tonight',
         }),
       },
       {
@@ -207,9 +217,21 @@ async function main(): Promise<void> {
         envelope: buildIntentEnvelope('ConversationControlIntent'),
       },
       {
+        label: 'Save that',
+        envelope: buildIntentEnvelope('SaveRemindHandoffIntent', {
+          item: 'that',
+        }),
+      },
+      {
         label: 'Candace follow-up',
         envelope: buildIntentEnvelope('PeopleHouseholdIntent', {
           subject: 'Candace',
+        }),
+      },
+      {
+        label: 'Communication gap',
+        envelope: buildIntentEnvelope('OpenAskIntent', {
+          query: 'what should i say back',
         }),
       },
       {

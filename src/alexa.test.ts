@@ -340,6 +340,15 @@ describe('Alexa speech shaping', () => {
     );
     expect(shaped).toBe('First sentence. Second sentence. Third sentence.');
   });
+
+  it('softens repetitive action-bundle boilerplate before Alexa speaks it', () => {
+    const shaped = shapeAlexaSpeech(
+      'Candace still needs a dinner answer tonight. I have 3 next steps ready: send a short reply, save it for later, or turn it into a reminder.',
+    );
+
+    expect(shaped).toContain('If you want, I can');
+    expect(shaped).not.toContain('I have 3 next steps ready');
+  });
 });
 
 describe('createAlexaSkill', () => {
@@ -748,6 +757,20 @@ describe('createAlexaSkill', () => {
       "Start with what you want to check",
     );
     expect(extractSpeechText(response)).toContain("what you're forgetting");
+    expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
+  });
+
+  it('clarifies a bare voice reference instead of treating it like a memory command when there is no Alexa context', async () => {
+    const skill = createAlexaSkill(buildConfig());
+    const response = await skill.invoke(
+      buildIntentEnvelope('ConversationControlIntent', {
+        controlText: 'that',
+      }),
+    );
+
+    expect(extractSpeechText(response)).toContain(
+      'a person, a plan, or something you want me to remember',
+    );
     expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
   });
 
@@ -1295,7 +1318,7 @@ describe('createAlexaSkill', () => {
     const skill = createAlexaSkill(buildConfig());
     const response = await skill.invoke(
       buildIntentEnvelope('ConversationalFollowupIntent', {
-        followupText: 'help me figure out what to text Candace about dinner',
+        followupText: 'help me think through the school fundraiser note',
       }),
     );
 

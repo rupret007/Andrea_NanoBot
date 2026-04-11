@@ -64,7 +64,12 @@ export interface AlexaDialoguePlan {
     | 'fallback_unmatched_open_utterance'
     | 'weak_clarifier_recovery'
     | 'carrier_phrase_missing'
-    | 'operator_handoff_required';
+    | 'operator_handoff_required'
+    | 'no_context_reference'
+    | 'followup_binding_failed'
+    | 'communication_should_route'
+    | 'planning_should_route'
+    | 'voice_shape_repetition';
 }
 
 export interface AlexaVoiceIntentCapture {
@@ -113,22 +118,41 @@ function isWeakReference(normalized: string): boolean {
   );
 }
 
+function isFollowupBindingPrompt(normalized: string): boolean {
+  return /^(save that|save this|save it|remind me later|remind me about that later|send me (?:the )?(?:details|full version|fuller version)|send that to telegram|send it to telegram|send me the plan)\b/i.test(
+    normalized,
+  );
+}
+
+function isCommunicationDraftPrompt(normalized: string): boolean {
+  return /^(what should i say back|what should i send back|draft a reply|draft a response|give me a short reply)\b/i.test(
+    normalized,
+  );
+}
+
+function extractFigureOutTopic(normalized: string): string | undefined {
+  return normalized.match(/^(?:help me )?figure out (.+)$/i)?.[1]?.trim();
+}
+
 function buildClarificationSpeech(
   state: AlexaConversationState | undefined,
   hint?: string,
 ): string {
   const personName = state?.subjectData.personName?.trim();
-  const activeSubject =
-    personName ||
+  const activeAnchor =
+    state?.subjectData.activeVoiceAnchor?.trim() ||
     state?.subjectData.activeSubjectLabel?.trim() ||
     state?.subjectData.conversationFocus?.trim();
+  const activeSubject =
+    personName ||
+    activeAnchor;
   if (activeSubject) {
-    return `I am not fully sure what you mean yet. Is that still about ${activeSubject}, or something else?`;
+    return `Is that still about ${activeSubject}, or something else?`;
   }
   if (hint === 'household') {
     return 'Was that about Candace, home stuff, or something you want to remember?';
   }
-  return "I am not fully sure what you meant, but I can help with your plans, open loops, or a reminder. Say it again a little more simply and I'll keep the thread.";
+  return 'Was that about a person, a plan, or something you want me to remember?';
 }
 
 function buildBlockedRouteSpeech(normalized: string): string {
@@ -187,6 +211,8 @@ function buildPeopleHouseholdCandidates(subject: string): string[] {
 function buildPlanningCandidates(topic: string): string[] {
   return [
     `help me plan ${topic}`,
+    `help me figure out ${topic}`,
+    `figure out ${topic}`,
     `what's the next step for ${topic}`,
     `what's blocking ${topic}`,
     `what should I do about ${topic}`,
@@ -200,9 +226,9 @@ function buildSaveRemindCandidates(item: string): string[] {
   }
   if (isBareReference(normalized)) {
     return [
-      'send me the full version',
       `save ${item}`,
       `remind me about ${item}`,
+      'send me the full version',
       `draft ${item}`,
     ];
   }
@@ -216,6 +242,17 @@ function buildSaveRemindCandidates(item: string): string[] {
 
 function buildOpenAskCandidates(query: string): string[] {
   const normalized = query.toLowerCase();
+  if (isCommunicationDraftPrompt(normalized)) {
+    return [query];
+  }
+  const figureOutTopic = extractFigureOutTopic(query);
+  if (figureOutTopic) {
+    return [
+      `help me plan ${figureOutTopic}`,
+      `what's the next step for ${figureOutTopic}`,
+      `what should I do about ${figureOutTopic}`,
+    ];
+  }
   if (
     /\b(vs|versus)\b/.test(normalized) ||
     (normalized.includes(' and ') && normalized.split(' and ').length === 2)
@@ -550,6 +587,25 @@ export function planAlexaDialogueTurn(
       blockerClass: 'weak_clarifier_recovery',
     };
   }
+  if (isCommunicationDraftPrompt(lower)) {
+    return {
+      family,
+      normalizedText,
+      route: 'shared_capability',
+      capabilityId: 'communication.draft_reply',
+      capabilityText: normalizedText,
+    };
+  }
+  const figureOutTopic = extractFigureOutTopic(normalizedText);
+  if (figureOutTopic) {
+    return {
+      family,
+      normalizedText,
+      route: 'shared_capability',
+      capabilityId: 'missions.propose',
+      capabilityText: `help me plan ${figureOutTopic}`,
+    };
+  }
 
   if (state) {
     const resolution = resolveAlexaConversationFollowup(normalizedText, state);
@@ -562,13 +618,26 @@ export function planAlexaDialogueTurn(
         followupText: resolution.text || normalizedText,
       };
     }
+    if (isWeakReference(lower) || isFollowupBindingPrompt(lower)) {
+      return {
+        family,
+        normalizedText,
+        route: 'clarify',
+        clarificationSpeech: buildClarificationSpeech(state),
+        blockerClass: isFollowupBindingPrompt(lower)
+          ? 'followup_binding_failed'
+          : 'no_context_reference',
+      };
+    }
   } else if (isWeakReference(lower)) {
     return {
       family,
       normalizedText,
       route: 'clarify',
       clarificationSpeech: buildClarificationSpeech(state),
-      blockerClass: 'weak_clarifier_recovery',
+      blockerClass: isFollowupBindingPrompt(lower)
+        ? 'followup_binding_failed'
+        : 'no_context_reference',
     };
   }
 
@@ -595,6 +664,23 @@ export function planAlexaDialogueTurn(
       route: 'blocked',
       blockedSpeech: buildBlockedRouteSpeech(normalizedText),
       blockerClass: 'operator_handoff_required',
+    };
+  }
+
+  if (isCommunicationDraftPrompt(lower)) {
+    return {
+      family,
+      normalizedText,
+      route: 'assistant_bridge',
+      blockerClass: 'communication_should_route',
+    };
+  }
+  if (figureOutTopic) {
+    return {
+      family,
+      normalizedText,
+      route: 'assistant_bridge',
+      blockerClass: 'planning_should_route',
     };
   }
 

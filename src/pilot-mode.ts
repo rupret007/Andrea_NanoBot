@@ -123,6 +123,11 @@ export interface AlexaUtteranceReviewDigest {
   clarifierRecoveries: AlexaUtteranceReviewItem[];
   carrierPhraseGaps: AlexaUtteranceReviewItem[];
   handoffRequired: AlexaUtteranceReviewItem[];
+  noContextReferences: AlexaUtteranceReviewItem[];
+  followupBindingFailures: AlexaUtteranceReviewItem[];
+  communicationShouldRoute: AlexaUtteranceReviewItem[];
+  planningShouldRoute: AlexaUtteranceReviewItem[];
+  voiceShapeRepetition: AlexaUtteranceReviewItem[];
 }
 
 export function isPilotLoggingEnabled(): boolean {
@@ -572,6 +577,21 @@ function buildAlexaOperatorHint(
   blockerClass: string,
   routeOutcome: string,
 ): string {
+  if (blockerClass === 'no_context_reference') {
+    return 'Ask for one concrete anchor, like a person, a plan, or something to remember, instead of collapsing into memory save.';
+  }
+  if (blockerClass === 'followup_binding_failed') {
+    return 'Bind this follow-up to the active Alexa frame so save, remind, and handoff requests use the last actionable context.';
+  }
+  if (blockerClass === 'communication_should_route') {
+    return 'Map this phrasing directly into the communication companion instead of treating it like a generic open ask.';
+  }
+  if (blockerClass === 'planning_should_route') {
+    return 'Map this phrasing into planning or daily guidance before the assistant bridge fallback.';
+  }
+  if (blockerClass === 'voice_shape_repetition') {
+    return 'Tighten the Alexa voice shaping so the lead and supporting lines do not repeat the same point.';
+  }
   if (blockerClass === 'carrier_phrase_missing') {
     return 'Add or refine a carrier phrase for this utterance family in the Alexa interaction model.';
   }
@@ -666,6 +686,21 @@ export function buildAlexaUtteranceReviewDigest(
     ),
     handoffRequired: groupedPatterns.filter(
       (item) => item.blockerClass === 'operator_handoff_required',
+    ),
+    noContextReferences: groupedPatterns.filter(
+      (item) => item.blockerClass === 'no_context_reference',
+    ),
+    followupBindingFailures: groupedPatterns.filter(
+      (item) => item.blockerClass === 'followup_binding_failed',
+    ),
+    communicationShouldRoute: groupedPatterns.filter(
+      (item) => item.blockerClass === 'communication_should_route',
+    ),
+    planningShouldRoute: groupedPatterns.filter(
+      (item) => item.blockerClass === 'planning_should_route',
+    ),
+    voiceShapeRepetition: groupedPatterns.filter(
+      (item) => item.blockerClass === 'voice_shape_repetition',
     ),
   };
 }

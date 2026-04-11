@@ -701,8 +701,34 @@ export function normalizeAlexaSpeech(text: string): string {
   return normalized;
 }
 
+function softenAlexaBundleBoilerplate(text: string): string {
+  return text
+    .replace(
+      /\bI have (?:one next step|\d+ next steps) ready:\s*([^.]+)\./gi,
+      (_match, actions: string) => `If you want, I can ${actions}.`,
+    )
+    .replace(
+      /\bI have a bundle ready if you want me to go over it again\./gi,
+      'If you want, I can go over the next options again.',
+    );
+}
+
+function normalizeAlexaSentenceKey(sentence: string): string {
+  return sentence
+    .toLowerCase()
+    .replace(/^[\s,]+/, '')
+    .replace(
+      /^(the main thing (?:still open with [a-z' -]+ )?is |so the main thing is |also keep in mind |at home, |one loose end is |the conversation most likely to slip is )/i,
+      '',
+    )
+    .replace(/^[a-z' -]+:\s+/i, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 export function shapeAlexaSpeech(text: string): string {
-  const normalized = normalizeAlexaSpeech(text);
+  const normalized = softenAlexaBundleBoilerplate(normalizeAlexaSpeech(text));
   if (!normalized) return '';
 
   const sentences =
@@ -711,13 +737,27 @@ export function shapeAlexaSpeech(text: string): string {
       .map((sentence) => sentence.trim())
       .filter(Boolean) || [];
   const selected: string[] = [];
+  const selectedKeys: string[] = [];
   let totalLength = 0;
 
   for (const sentence of sentences) {
+    const key = normalizeAlexaSentenceKey(sentence);
+    if (
+      key &&
+      selectedKeys.some(
+        (existing) =>
+          existing === key ||
+          existing.includes(key) ||
+          key.includes(existing),
+      )
+    ) {
+      continue;
+    }
     const nextLength =
       totalLength + sentence.length + (selected.length > 0 ? 1 : 0);
     if (selected.length >= 3 || nextLength > 320) break;
     selected.push(sentence);
+    if (key) selectedKeys.push(key);
     totalLength = nextLength;
   }
 
@@ -1140,6 +1180,17 @@ function buildAlexaStateFromDailyCompanion(
       lastAnswerSummary: context.summaryText,
       lastRecommendation: context.recommendationText || undefined,
       pendingActionText: context.recommendationText || undefined,
+      activeVoiceFamily:
+        baseState.subjectData.activeVoiceFamily ||
+        baseState.subjectData.lastIntentFamily ||
+        baseState.flowKey,
+      activeVoiceAnchor:
+        context.subjectData.personName ||
+        context.usedThreadTitles?.[0] ||
+        baseState.subjectData.activeVoiceAnchor ||
+        context.subjectKind,
+      activeVoiceActionSummary:
+        context.recommendationText || context.summaryText,
       activeSubjectLabel:
         context.subjectData.personName ||
         context.usedThreadTitles?.[0] ||
@@ -1210,6 +1261,23 @@ function preserveAlexaConversationFrameForStyleChange(
       pendingActionText:
         nextState.subjectData.pendingActionText ||
         previousState.subjectData.pendingActionText,
+      activeVoiceFamily:
+        nextState.subjectData.activeVoiceFamily ||
+        previousState.subjectData.activeVoiceFamily ||
+        previousState.subjectData.lastIntentFamily,
+      activeVoiceAnchor:
+        nextState.subjectData.activeVoiceAnchor ||
+        previousState.subjectData.activeVoiceAnchor ||
+        previousState.subjectData.personName ||
+        previousState.subjectData.threadTitle ||
+        previousState.subjectKind,
+      activeVoiceActionSummary:
+        nextState.subjectData.activeVoiceActionSummary ||
+        previousState.subjectData.activeVoiceActionSummary ||
+        nextState.subjectData.pendingActionText ||
+        previousState.subjectData.pendingActionText ||
+        nextState.subjectData.lastAnswerSummary ||
+        previousState.subjectData.lastAnswerSummary,
       conversationFocus:
         nextState.subjectData.conversationFocus ||
         previousState.subjectData.conversationFocus ||
@@ -1256,6 +1324,21 @@ function buildAlexaStateFromCapabilitySeed(
         options.userUtterance || seedSubjectData.lastUserUtterance,
       clarifierHints:
         options.clarifierHints || seedSubjectData.clarifierHints,
+      activeVoiceFamily:
+        options.intentFamily ||
+        seedSubjectData.activeVoiceFamily ||
+        seedSubjectData.lastIntentFamily,
+      activeVoiceAnchor:
+        seedSubjectData.activeVoiceAnchor ||
+        seedSubjectData.personName ||
+        seedSubjectData.activeSubjectLabel ||
+        seedSubjectData.threadTitle ||
+        seed.subjectKind,
+      activeVoiceActionSummary:
+        seedSubjectData.activeVoiceActionSummary ||
+        seedSubjectData.pendingActionText ||
+        seedSubjectData.lastAnswerSummary ||
+        seed.summaryText,
     },
     supportedFollowups: seed.supportedFollowups,
     prioritizationLens: seed.prioritizationLens,
@@ -1297,6 +1380,21 @@ function buildAlexaNextStateForFollowupAction(
     lastUserUtterance: normalizedFollowup,
     clarifierHints:
       options.clarifierHints || conversationState?.subjectData.clarifierHints,
+    activeVoiceFamily:
+      options.intentFamily ||
+      conversationState?.subjectData.activeVoiceFamily ||
+      conversationState?.subjectData.lastIntentFamily,
+    activeVoiceAnchor:
+      personName ||
+      conversationState?.subjectData.activeVoiceAnchor ||
+      conversationState?.subjectData.activeSubjectLabel ||
+      conversationState?.subjectData.threadTitle ||
+      conversationState?.subjectData.conversationFocus,
+    activeVoiceActionSummary:
+      conversationState?.subjectData.pendingActionText ||
+      conversationState?.subjectData.activeVoiceActionSummary ||
+      conversationState?.subjectData.lastAnswerSummary ||
+      conversationState?.summaryText,
   };
 
   if (action === 'shorter') {
@@ -1687,6 +1785,22 @@ function buildAlexaBridgeConversationState(
       clarifierHints:
         options.clarifierHints || conversationState?.subjectData.clarifierHints,
       fallbackCount: 0,
+      activeVoiceFamily:
+        options.intentFamily ||
+        conversationState?.subjectData.activeVoiceFamily ||
+        conversationState?.subjectData.lastIntentFamily,
+      activeVoiceAnchor:
+        personName ||
+        conversationState?.subjectData.activeVoiceAnchor ||
+        conversationState?.subjectData.threadTitle ||
+        conversationState?.subjectData.conversationFocus ||
+        conversationState?.subjectKind,
+      activeVoiceActionSummary:
+        conversationState?.subjectData.pendingActionText ||
+        conversationState?.subjectData.activeVoiceActionSummary ||
+        conversationState?.subjectData.lastAnswerSummary ||
+        normalizeVoicePrompt(utterance) ||
+        utterance,
       activeSubjectLabel:
         personName ||
         conversationState?.subjectData.activeSubjectLabel ||
@@ -1971,6 +2085,10 @@ export function createAlexaSkill(
     conversationState: AlexaConversationState,
     response: NonNullable<Awaited<ReturnType<typeof buildDailyCompanionResponse>>>,
   ) => {
+    const speech =
+      shapeAlexaSpeech(response.reply) ||
+      response.reply ||
+      `${assistantName} is thinking, but the answer came back empty.`;
     const nextState = buildAlexaStateFromDailyCompanion(
       conversationState,
       response,
@@ -2004,7 +2122,7 @@ export function createAlexaSkill(
       groupFolder: linked.account.groupFolder,
     });
     return handlerInput.responseBuilder
-      .speak(response.reply)
+      .speak(speech)
       .reprompt(DEFAULT_ALEXA_REPROMPT)
       .getResponse();
   };
@@ -2065,7 +2183,7 @@ export function createAlexaSkill(
       groupFolder: linked.account.groupFolder,
     });
     return handlerInput.responseBuilder
-      .speak(presentation.text)
+      .speak(shapeAlexaSpeech(presentation.text) || presentation.text)
       .reprompt(DEFAULT_ALEXA_REPROMPT)
       .getResponse();
   };
@@ -2544,11 +2662,13 @@ export function createAlexaSkill(
     utterance: string,
     conversationState?: AlexaConversationState,
   ) => {
+    const completionAction =
+      action === 'save_that' ? 'save_for_later' : action;
     const pilotRecord = startPilotJourney({
       journeyId: 'cross_channel_handoff',
       systemsInvolved: ['alexa', 'cross_channel_handoffs'],
-      summaryText: `Alexa companion action ${action}`,
-      routeKey: `alexa_completion:${action}`,
+      summaryText: `Alexa companion action ${completionAction}`,
+      routeKey: `alexa_completion:${completionAction}`,
       channel: 'alexa',
       groupFolder: linked.account.groupFolder,
     });
@@ -2557,7 +2677,7 @@ export function createAlexaSkill(
       result = await completeAssistantActionFromAlexa(
         {
           groupFolder: linked.account.groupFolder,
-          action,
+          action: completionAction,
           utterance,
           conversationSummary: conversationState?.summaryText,
           priorSubjectData: conversationState?.subjectData,
@@ -2714,7 +2834,7 @@ export function createAlexaSkill(
 
     recordHandledRequest(handlerInput.requestEnvelope, {
       responseSource:
-        action === 'send_details'
+        completionAction === 'send_details'
           ? conversationState?.subjectData.activeCapabilityId ===
             'media.image_generate'
             ? 'media_handoff'
@@ -2730,7 +2850,7 @@ export function createAlexaSkill(
       });
     }
     return handlerInput.responseBuilder
-      .speak(result.replyText || 'Okay.')
+      .speak(shapeAlexaSpeech(result.replyText || 'Okay.') || 'Okay.')
       .reprompt(DEFAULT_ALEXA_REPROMPT)
       .getResponse();
   };
@@ -2961,7 +3081,7 @@ export function createAlexaSkill(
       });
     }
     return handlerInput.responseBuilder
-      .speak(result.replyText || 'Okay.')
+      .speak(shapeAlexaSpeech(result.replyText || 'Okay.') || 'Okay.')
       .reprompt(DEFAULT_ALEXA_REPROMPT)
       .getResponse();
   };
@@ -3070,6 +3190,7 @@ export function createAlexaSkill(
 
     if (plan.route === 'handoff' && plan.followupAction) {
       if (
+        plan.followupAction === 'save_that' ||
         plan.followupAction === 'send_details' ||
         plan.followupAction === 'save_to_library' ||
         plan.followupAction === 'track_thread' ||
@@ -3742,7 +3863,8 @@ export function createAlexaSkill(
         );
         if (
           earlyResolution.ok &&
-          (earlyResolution.action === 'send_details' ||
+          (earlyResolution.action === 'save_that' ||
+            earlyResolution.action === 'send_details' ||
             earlyResolution.action === 'save_to_library' ||
             earlyResolution.action === 'track_thread' ||
             earlyResolution.action === 'create_reminder' ||
@@ -4074,6 +4196,7 @@ export function createAlexaSkill(
         }
 
         if (
+          resolution.action === 'save_that' ||
           resolution.action === 'send_details' ||
           resolution.action === 'save_to_library' ||
           resolution.action === 'track_thread' ||

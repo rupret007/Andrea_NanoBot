@@ -179,6 +179,13 @@ export interface AssistantCapabilityContext {
   factIdHint?: string;
   threadHint?: string;
   priorSubjectData?: {
+    lastIntentFamily?: string;
+    lastRouteOutcome?: string;
+    lastUserUtterance?: string;
+    clarifierHints?: string[];
+    activeVoiceFamily?: string;
+    activeVoiceAnchor?: string;
+    activeVoiceActionSummary?: string;
     lastAnswerSummary?: string;
     lastRecommendation?: string;
     conversationFocus?: string;

@@ -48,6 +48,8 @@
           ],
           "samples": [
             "help me plan {topic}",
+            "help me figure out {topic}",
+            "figure out {topic}",
             "what's the next step for {topic}",
             "what is the next step for {topic}",
             "what's blocking {topic}",
@@ -85,6 +87,7 @@
             }
           ],
           "samples": [
+            "what should I say back",
             "tell me about {query}",
             "help me with {query}",
             "what should I know about {query}",

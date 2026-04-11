@@ -224,6 +224,8 @@ The interaction model now keeps Alexa bounded through a small set of broader cus
   - `help me with Candace`
 - `PlanningOrientationIntent`
   - `help me plan tonight`
+  - `help me figure out tonight`
+  - `figure out tonight`
   - `what's the next step for tonight`
   - `what's blocking this`
 - `SaveRemindHandoffIntent`
@@ -232,6 +234,7 @@ The interaction model now keeps Alexa bounded through a small set of broader cus
   - `send me the full version`
   - `send that to Telegram`
 - `OpenAskIntent`
+  - `what should I say back`
   - `tell me about X`
   - `help me with X`
   - `what should I know about X`
@@ -270,6 +273,7 @@ Alexa is still interaction-model driven, but Andrea now captures more natural ph
 
 Current carrier-style openings include:
 
+- `what should I say back`
 - `tell me about ...`
 - `help me with ...`
 - `what should I know about ...`
@@ -543,7 +547,7 @@ Current truth:
 For operator-side conversation tuning, use:
 
 - `npm run debug:alexa-conversation` for a repo-side multi-turn Alexa walkthrough that does not advance live proof
-- `npm run debug:alexa-conversation -- --review` for grouped utterance misses, weak clarifiers, and carrier-phrase gaps from recent Alexa pilot events
+- `npm run debug:alexa-conversation -- --review` for grouped utterance misses, including no-context references, follow-up binding failures, should-have-routed communication/planning asks, weak clarifiers, and carrier-phrase gaps from recent Alexa pilot events
 - `npm run debug:daily-companion` for grounded local comparison against real `groupFolder=main` data
 - `npm run debug:shared-capabilities` for a shared Telegram/Alexa capability and research smoke pass
 - `npm run debug:pilot` for the higher-level proof surface plus the Alexa utterance-review summary

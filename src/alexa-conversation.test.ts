@@ -18,10 +18,7 @@ describe('alexa conversation state', () => {
   it('asks for a clearer anchor when a follow-up arrives with no Alexa context', () => {
     expect(
       resolveAlexaConversationFollowup('anything else', undefined).speech,
-    ).toContain('plans, open loops, or a reminder');
-    expect(
-      resolveAlexaConversationFollowup('anything else', undefined).speech,
-    ).toContain("Say it again a little more simply");
+    ).toContain('a person, a plan, or something you want me to remember');
   });
 
   it('stores, loads, and clears short-lived Alexa context', () => {
@@ -258,7 +255,28 @@ describe('alexa conversation state', () => {
     ).toMatchObject({ ok: true, action: 'memory_control' });
     expect(
       resolveAlexaConversationFollowup('what is the weather', state).speech,
-    ).toContain('say more');
+    ).toContain('still about Candace');
+  });
+
+  it('uses the active Alexa anchor when a follow-up binding is too weak to complete safely', () => {
+    const state: AlexaConversationState = {
+      flowKey: 'candace_followthrough',
+      subjectKind: 'person',
+      subjectData: {
+        personName: 'Candace',
+        activeVoiceAnchor: 'Candace dinner plans',
+      },
+      summaryText: 'Candace still needs a dinner answer tonight.',
+      supportedFollowups: ['anything_else'],
+      styleHints: {},
+    };
+
+    expect(
+      resolveAlexaConversationFollowup('save that', state),
+    ).toMatchObject({
+      ok: false,
+      speech: expect.stringContaining('Candace dinner plans'),
+    });
   });
 
   it('exposes referenced fact ids for memory-control follow-ups', () => {

@@ -56,6 +56,55 @@ function normalizeText(value: string | undefined): string {
   );
 }
 
+function isBareAlexaReference(value: string): boolean {
+  return /^(that|this|it|there|something)$/i.test(value.trim());
+}
+
+function isWeakAlexaReference(value: string): boolean {
+  return /^(that|this|it|there|something|what about it|what about that|what should i know|why)\b/i.test(
+    value.trim(),
+  );
+}
+
+function isReferenceBoundSavePrompt(value: string): boolean {
+  return /^(that|this|it|the details|details|the full version|the fuller version|the plan)$/i.test(
+    value.trim(),
+  );
+}
+
+function buildOpenAskCandidates(query: string): string[] {
+  const trimmed = normalizeText(query);
+  const lower = trimmed.toLowerCase();
+  if (
+    /^what should i say back\b/.test(lower) ||
+    /^what should i send back\b/.test(lower)
+  ) {
+    return [trimmed];
+  }
+
+  const figureOutTopic =
+    trimmed.match(/^(?:help me )?figure out (.+)$/i)?.[1]?.trim() ||
+    undefined;
+  if (figureOutTopic) {
+    return [
+      `help me plan ${figureOutTopic}`,
+      `what's the next step for ${figureOutTopic}`,
+      `what should I do about ${figureOutTopic}`,
+    ];
+  }
+
+  if (/\b(vs|versus)\b/.test(lower) || lower.includes(' and ')) {
+    return [`compare ${trimmed}`];
+  }
+
+  return [
+    `what should I know about ${trimmed}`,
+    `tell me about ${trimmed}`,
+    `explain ${trimmed}`,
+    `help me with ${trimmed}`,
+  ];
+}
+
 function matchFirstCapabilityCandidate(
   candidates: string[],
 ): AssistantCapabilityMatch | null {
@@ -115,6 +164,8 @@ function buildBroadAlexaCandidates(
   if (intentName === ALEXA_PLANNING_ORIENTATION_INTENT) {
     return [
       `help me plan ${trimmed}`,
+      `help me figure out ${trimmed}`,
+      `figure out ${trimmed}`,
       `what's the next step for ${trimmed}`,
       `what's blocking ${trimmed}`,
       `what should I do about ${trimmed}`,
@@ -125,6 +176,14 @@ function buildBroadAlexaCandidates(
     if (!trimmed) {
       return ['send me the full version'];
     }
+    if (isBareAlexaReference(trimmed)) {
+      return [
+        `save ${trimmed}`,
+        `remind me about ${trimmed}`,
+        'send me the full version',
+        `draft ${trimmed}`,
+      ];
+    }
     return [
       `save ${trimmed}`,
       `remind me about ${trimmed}`,
@@ -134,15 +193,7 @@ function buildBroadAlexaCandidates(
   }
 
   if (intentName === ALEXA_OPEN_ASK_INTENT) {
-    if (/\b(vs|versus)\b/.test(lower) || lower.includes(' and ')) {
-      return [`compare ${trimmed}`];
-    }
-    return [
-      `what should I know about ${trimmed}`,
-      `tell me about ${trimmed}`,
-      `explain ${trimmed}`,
-      `help me with ${trimmed}`,
-    ];
+    return buildOpenAskCandidates(trimmed);
   }
 
   if (intentName === ALEXA_CONVERSATION_CONTROL_INTENT) {
@@ -1065,6 +1116,32 @@ export function resolveAlexaIntentToCapability(
     intentName === ALEXA_OPEN_ASK_INTENT ||
     intentName === ALEXA_CONVERSATION_CONTROL_INTENT
   ) {
+    const normalizedSlot = normalizeText(options.slotValue || '');
+    if (
+      intentName === ALEXA_CONVERSATION_CONTROL_INTENT &&
+      isWeakAlexaReference(normalizedSlot)
+    ) {
+      if (options.conversationState) {
+        const candidates = buildBroadAlexaCandidates(intentName, normalizedSlot);
+        for (const candidate of candidates) {
+          const continuation = continueAssistantCapabilityFromAlexaState(
+            candidate,
+            options.conversationState,
+          );
+          if (continuation) {
+            return continuation;
+          }
+        }
+      }
+      return null;
+    }
+    if (
+      intentName === ALEXA_SAVE_REMIND_HANDOFF_INTENT &&
+      options.conversationState &&
+      isReferenceBoundSavePrompt(normalizedSlot)
+    ) {
+      return null;
+    }
     const candidates = buildBroadAlexaCandidates(
       intentName,
       options.slotValue || '',

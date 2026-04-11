@@ -58,6 +58,8 @@ describe('alexa dialogue', () => {
       preferredText: 'help me plan tonight',
       candidateTexts: expect.arrayContaining([
         'help me plan tonight',
+        'help me figure out tonight',
+        'figure out tonight',
         "what's the next step for tonight",
       ]),
     });
@@ -143,6 +145,11 @@ describe('alexa dialogue', () => {
       route: 'handoff',
       followupAction: 'switch_person',
     });
+
+    expect(planAlexaDialogueTurn('save that', state)).toMatchObject({
+      route: 'handoff',
+      followupAction: 'save_that',
+    });
   });
 
   it('keeps simple local questions out of unsupported-command failure paths', () => {
@@ -169,6 +176,10 @@ describe('alexa dialogue', () => {
       route: 'clarify',
       blockerClass: 'weak_clarifier_recovery',
     });
+    expect(planAlexaDialogueTurn('what about that')).toMatchObject({
+      route: 'clarify',
+      blockerClass: 'no_context_reference',
+    });
     expect(planAlexaDialogueTurn('')).toMatchObject({
       route: 'clarify',
       blockerClass: 'carrier_phrase_missing',
@@ -185,6 +196,14 @@ describe('alexa dialogue', () => {
     ).toMatchObject({
       route: 'shared_capability',
       capabilityId: 'research.compare',
+    });
+    expect(planAlexaDialogueTurn('what should I say back')).toMatchObject({
+      route: 'shared_capability',
+      capabilityId: 'communication.draft_reply',
+    });
+    expect(planAlexaDialogueTurn('figure out tonight')).toMatchObject({
+      route: 'shared_capability',
+      capabilityId: 'missions.propose',
     });
     expect(planAlexaDialogueTurn('check runtime job status')).toMatchObject({
       route: 'blocked',

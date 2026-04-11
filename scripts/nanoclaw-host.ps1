@@ -1619,7 +1619,7 @@ function Wait-ForReadyState {
   param(
     [string] $BootId,
     [int] $ProcessId,
-    [int] $TimeoutSeconds = 30
+    [int] $TimeoutSeconds = 60
   )
 
   $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
@@ -1642,6 +1642,32 @@ function Wait-ForReadyState {
   }
 
   return $null
+}
+
+function Test-InStartupGrace {
+  param(
+    [object] $HostState = $null,
+    [object] $ReadyState = $null,
+    [int] $StartupGraceSeconds = 90
+  )
+
+  $readyAtText = if ($ReadyState -and $ReadyState.readyAt) {
+    [string] $ReadyState.readyAt
+  } elseif ($HostState -and $HostState.readyAt) {
+    [string] $HostState.readyAt
+  } else {
+    ''
+  }
+
+  $readyAt = [DateTime]::MinValue
+  $hasReadyAt =
+    -not [string]::IsNullOrWhiteSpace($readyAtText) -and
+    [DateTime]::TryParse($readyAtText, [ref] $readyAt)
+  if (-not $hasReadyAt) {
+    return $false
+  }
+
+  return (([DateTime]::UtcNow - $readyAt.ToUniversalTime()).TotalSeconds -lt $StartupGraceSeconds)
 }
 
 function Start-NanoClaw {
@@ -1685,7 +1711,7 @@ function Start-NanoClaw {
   Set-Content -LiteralPath $pidFile -Value $proc.Id -NoNewline
   Write-HostState -Phase 'starting' -BootId $bootId -ProcessId $proc.Id -NodePath $nodeExe -NodeVersion $nodeVersion -StartedAt $startedAt
 
-  $readyState = Wait-ForReadyState -BootId $bootId -ProcessId $proc.Id -TimeoutSeconds 30
+  $readyState = Wait-ForReadyState -BootId $bootId -ProcessId $proc.Id -TimeoutSeconds 60
   if ($readyState) {
     Start-Sleep -Milliseconds 3000
     $gatewayState = Read-JsonFile $gatewayStatePath
@@ -1731,7 +1757,7 @@ function Start-NanoClaw {
     return
   }
 
-  $lastError = 'NanoClaw did not reach running_ready within 30 seconds.'
+  $lastError = 'NanoClaw did not reach running_ready within 60 seconds.'
   if (-not (Test-RepoProcess -ProcessId $proc.Id)) {
     $lastError = 'NanoClaw exited before writing its readiness marker.'
   }
@@ -1810,6 +1836,7 @@ function Ensure-NanoClaw {
   $telegramTransport = Get-TelegramTransportStatus -AssistantHealthMarker $assistantHealthMarker
   $telegramRoundtrip = Get-TelegramRoundtripStatus -AssistantHealthMarker $assistantHealthMarker -HostState $hostState -ReadyState $readyState
   $telegramProbeConfig = Get-TelegramLiveProbeConfigStatus
+  $inStartupGrace = Test-InStartupGrace -HostState $hostState -ReadyState $readyState
   $dotEnv = Read-DotEnv
   $backendSnapshot = Get-AndreaOpenAiBackendSnapshot -DotEnv $dotEnv
   if ($backendSnapshot.shouldManage -and ([string] $backendSnapshot.health -ne 'healthy' -or -not [bool] $backendSnapshot.running)) {
@@ -1885,6 +1912,13 @@ function Ensure-NanoClaw {
     Write-HostStep ("Periodic ensure check detected Telegram degradation caused by an external consumer; leaving the current process running. {0}" -f ([string] $telegramTransport.detail))
     Start-Watchdog
     Write-Output ("HOST_ENSURE: status=degraded pid={0} telegram_transport={1} telegram_roundtrip={2} blocker={3}" -f $runtimePid, ([string] $telegramTransport.status), ([string] $telegramRoundtrip.status), ([string] $telegramTransport.externalBlocker))
+    return
+  }
+
+  if ([string] $assistantHealth.status -eq 'degraded' -and $inStartupGrace) {
+    Write-HostStep ("Periodic ensure check detected assistant health degradation during startup grace; leaving the current process running: {0}" -f ([string] $assistantHealth.detail))
+    Start-Watchdog
+    Write-Output ("HOST_ENSURE: status=degraded pid={0} telegram_transport={1} telegram_roundtrip={2} startup_grace=true" -f $runtimePid, ([string] $telegramTransport.status), ([string] $telegramRoundtrip.status))
     return
   }
 
