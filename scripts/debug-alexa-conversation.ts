@@ -186,7 +186,9 @@ async function main(): Promise<void> {
       personId: 'amzn1.ask.person.debug-person',
     });
 
-    const skill = createAlexaSkill(buildConfig());
+    const skill = createAlexaSkill(buildConfig(), {
+      resolveTelegramMainChat: () => ({ chatJid: 'tg:main' }),
+    });
     const turns: Array<{
       label: string;
       envelope: RequestEnvelope;
@@ -205,6 +207,18 @@ async function main(): Promise<void> {
         label: 'Guidance',
         envelope: buildIntentEnvelope('CompanionGuidanceIntent', {
           guidanceText: 'am i forgetting',
+        }),
+      },
+      {
+        label: 'Calendar tomorrow',
+        envelope: buildIntentEnvelope('CompanionGuidanceIntent', {
+          calendarReadText: 'tomorrow',
+        }),
+      },
+      {
+        label: 'Calendar afternoon',
+        envelope: buildIntentEnvelope('CompanionGuidanceIntent', {
+          calendarReadText: 'this afternoon',
         }),
       },
       {
@@ -239,6 +253,36 @@ async function main(): Promise<void> {
         label: 'Planning gap',
         envelope: buildIntentEnvelope('PlanningOrientationIntent', {
           topic: 'tonight',
+        }),
+      },
+      {
+        label: 'Calendar create',
+        envelope: buildIntentEnvelope('SaveRemindHandoffIntent', {
+          calendarCreateText: 'dinner with Candace tomorrow at 6:30 PM',
+        }),
+      },
+      {
+        label: 'Calendar move',
+        envelope: buildIntentEnvelope('SaveRemindHandoffIntent', {
+          calendarMoveText: 'dinner to 7',
+        }),
+      },
+      {
+        label: 'Calendar cancel',
+        envelope: buildIntentEnvelope('SaveRemindHandoffIntent', {
+          calendarCancelText: 'dinner tomorrow',
+        }),
+      },
+      {
+        label: 'Reminder create',
+        envelope: buildIntentEnvelope('SaveRemindHandoffIntent', {
+          reminderText: '4 to text Candace',
+        }),
+      },
+      {
+        label: 'Reminder follow-up',
+        envelope: buildIntentEnvelope('SaveRemindHandoffIntent', {
+          item: 'that tonight',
         }),
       },
       {

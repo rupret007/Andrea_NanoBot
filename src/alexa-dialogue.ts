@@ -193,6 +193,18 @@ function buildCompanionGuidanceCandidates(slotValue: string): string[] {
   if (/\b(tomorrow)\b/.test(lower)) {
     return ['what is on my calendar tomorrow'];
   }
+  if (
+    /\b(calendar|schedule)\b/.test(lower) &&
+    /\b(today|this afternoon|this evening|tonight)\b/.test(lower)
+  ) {
+    return [
+      `what is on my calendar ${slotValue}`,
+      `what do I have ${slotValue.replace(/\b(?:on my )?(?:calendar|schedule)\b/i, '').trim()}`,
+    ];
+  }
+  if (/^(this afternoon|this evening|tonight)$/i.test(lower)) {
+    return [`what do I have ${slotValue}`];
+  }
   if (/\b(next|do next|do now|handle next|tackle next)\b/.test(lower)) {
     return ['what should I do next'];
   }
@@ -352,9 +364,14 @@ export function extractAlexaVoiceIntentCapture(
   intentName: string,
   slotValues: {
     guidanceText?: string;
+    calendarReadText?: string;
     subject?: string;
     topic?: string;
     item?: string;
+    calendarCreateText?: string;
+    calendarMoveText?: string;
+    calendarCancelText?: string;
+    reminderText?: string;
     query?: string;
     controlText?: string;
     followupText?: string;
@@ -370,8 +387,13 @@ export function extractAlexaVoiceIntentCapture(
   const slotValue =
     normalizeText(
       slotValues.guidanceText ||
+        slotValues.calendarReadText ||
         slotValues.subject ||
         slotValues.topic ||
+        slotValues.calendarCreateText ||
+        slotValues.calendarMoveText ||
+        slotValues.calendarCancelText ||
+        slotValues.reminderText ||
         slotValues.item ||
         slotValues.query ||
         slotValues.controlText ||
@@ -413,6 +435,51 @@ export function extractAlexaVoiceIntentCapture(
       };
     }
     case ALEXA_SAVE_REMIND_HANDOFF_INTENT: {
+      if (slotValues.calendarCreateText) {
+        const value = normalizeText(slotValues.calendarCreateText) || slotValues.calendarCreateText;
+        return {
+          family,
+          slotValue: value,
+          preferredText: `add ${value}`,
+          candidateTexts: dedupe([
+            `add ${value}`,
+            `schedule ${value}`,
+            `put ${value} on my calendar`,
+          ]),
+        };
+      }
+      if (slotValues.calendarMoveText) {
+        const value = normalizeText(slotValues.calendarMoveText) || slotValues.calendarMoveText;
+        return {
+          family,
+          slotValue: value,
+          preferredText: `move ${value}`,
+          candidateTexts: dedupe([`move ${value}`, `reschedule ${value}`]),
+        };
+      }
+      if (slotValues.calendarCancelText) {
+        const value = normalizeText(slotValues.calendarCancelText) || slotValues.calendarCancelText;
+        return {
+          family,
+          slotValue: value,
+          preferredText: `cancel ${value}`,
+          candidateTexts: dedupe([`cancel ${value}`, `delete ${value}`]),
+        };
+      }
+      if (slotValues.reminderText) {
+        const value = normalizeText(slotValues.reminderText) || slotValues.reminderText;
+        return {
+          family,
+          slotValue: value,
+          preferredText: `remind me ${value}`,
+          candidateTexts: dedupe([
+            `remind me ${value}`,
+            `remind me to ${value}`,
+            `remind me at ${value}`,
+            `remind me about ${value}`,
+          ]),
+        };
+      }
       const candidates = dedupe(buildSaveRemindCandidates(slotValue || ''));
       return {
         family,
@@ -422,12 +489,12 @@ export function extractAlexaVoiceIntentCapture(
       };
     }
     case ALEXA_OPEN_ASK_INTENT: {
-      const query = slotValue || 'that';
+      const query = slotValue || 'what should I say back';
       const candidates = dedupe(buildOpenAskCandidates(query));
       return {
         family,
         slotValue: query,
-        preferredText: candidates[0] || `tell me about ${query}`,
+        preferredText: candidates[0] || query,
         candidateTexts: candidates,
       };
     }

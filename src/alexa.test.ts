@@ -30,6 +30,11 @@ import {
   seedConfiguredAlexaLinkedAccount,
 } from './alexa-identity.js';
 import {
+  createGoogleCalendarEvent,
+  listGoogleCalendarEvents,
+  listGoogleCalendars,
+} from './google-calendar.js';
+import {
   _initTestDatabase,
   getAllTasks,
   listDelegationRulesForGroup,
@@ -64,8 +69,27 @@ vi.mock('./daily-companion.js', async () => {
   };
 });
 
+vi.mock('./google-calendar.js', async () => {
+  const actual =
+    await vi.importActual<typeof import('./google-calendar.js')>(
+      './google-calendar.js',
+    );
+  return {
+    ...actual,
+    createGoogleCalendarEvent: vi.fn(),
+    listGoogleCalendarEvents: vi.fn(),
+    listGoogleCalendars: vi.fn(),
+    deleteGoogleCalendarEvent: vi.fn(),
+    moveGoogleCalendarEvent: vi.fn(),
+    updateGoogleCalendarEvent: vi.fn(),
+  };
+});
+
 const mockedRunAlexaAssistantTurn = vi.mocked(runAlexaAssistantTurn);
 const mockedBuildDailyCompanionResponse = vi.mocked(buildDailyCompanionResponse);
+const mockedCreateGoogleCalendarEvent = vi.mocked(createGoogleCalendarEvent);
+const mockedListGoogleCalendarEvents = vi.mocked(listGoogleCalendarEvents);
+const mockedListGoogleCalendars = vi.mocked(listGoogleCalendars);
 const ALEXA_LAST_SIGNED_REQUEST_STATE_SUFFIX = process.env.VITEST_WORKER_ID
   ? `-${process.env.VITEST_WORKER_ID}`
   : '';
@@ -349,6 +373,40 @@ describe('Alexa speech shaping', () => {
     expect(shaped).toContain('If you want, I can');
     expect(shaped).not.toContain('I have 3 next steps ready');
   });
+
+  it('strips visual calendar links and UI-ish dashes out of spoken confirmations', () => {
+    const shaped = shapeAlexaSpeech(
+      'Got it - I added "Dinner with Candace" to your calendar for Monday at 6:30 PM. Open in Google Calendar: https://calendar.google.com/calendar/event?eid=abc',
+    );
+
+    expect(shaped).toContain('Got it. I added "Dinner with Candace"');
+    expect(shaped).not.toContain('Open in Google Calendar');
+    expect(shaped).not.toContain('https://');
+  });
+
+  it('humanizes repetitive Alexa companion phrasing into one cleaner next move', () => {
+    const shaped = shapeAlexaSpeech(
+      'Dinner plans tonight still need a clean answer. So the main thing is fairly clear. If you want, I can set a reminder for the follow-through, save it under candace, and pin it into the evening reset.',
+    );
+
+    expect(shaped).toContain('Dinner plans tonight still need a clean answer.');
+    expect(shaped).toContain('remind you about Candace later tonight');
+    expect(shaped).not.toContain('fairly clear');
+    expect(shaped).not.toContain('pin it into the evening reset');
+  });
+
+  it('trims robotic research and calendar address wording for voice', () => {
+    const normalized = normalizeAlexaSpeech(
+      "I can't check that live right now. Narrow the question and I'll keep it grounded. If you want, I can send the fuller version to telegram, save the key result to the library, and remind me to revisit this. Tomorrow has 2 timed events. 2:00 PM-3:00 PM Appointment with Lifetime Dental Flower Mound @ Lifetime Dental Flower Mound, 3208 Long Prairie Road, Flower Mound, Texas, 75022, US 7:00 PM-8:00 PM dinner with Candace",
+    );
+
+    expect(normalized).toContain(
+      "I can't check that live right now. If you want, I can send the fuller version to Telegram.",
+    );
+    expect(normalized).toContain('at Lifetime Dental Flower Mound');
+    expect(normalized).not.toContain('3208 Long Prairie Road');
+    expect(normalized).not.toContain('save the key result to the library');
+  });
 });
 
 describe('createAlexaSkill', () => {
@@ -359,6 +417,9 @@ describe('createAlexaSkill', () => {
     _initTestDatabase();
     mockedRunAlexaAssistantTurn.mockReset();
     mockedBuildDailyCompanionResponse.mockReset();
+    mockedCreateGoogleCalendarEvent.mockReset();
+    mockedListGoogleCalendarEvents.mockReset();
+    mockedListGoogleCalendars.mockReset();
     mockedBuildDailyCompanionResponse.mockImplementation(async (message, deps) =>
       buildCompanionResponse(`Local companion: ${message}`, {
         channel: deps.channel,
@@ -772,6 +833,133 @@ describe('createAlexaSkill', () => {
       'a person, a plan, or something you want me to remember',
     );
     expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
+  });
+
+  it('creates a clear calendar event directly from a natural assistant-style request', async () => {
+    mockedListGoogleCalendars.mockResolvedValue([
+      {
+        id: 'primary',
+        summary: 'Personal',
+        primary: true,
+        accessRole: 'owner',
+        writable: true,
+        selected: true,
+      },
+    ]);
+    mockedCreateGoogleCalendarEvent.mockResolvedValue({
+      id: 'evt-1',
+      title: 'Dinner with Candace',
+      startIso: '2026-04-04T23:30:00.000Z',
+      endIso: '2026-04-05T00:30:00.000Z',
+      allDay: false,
+      calendarId: 'primary',
+      calendarName: 'Personal',
+      htmlLink: null,
+    });
+
+    const skill = createAlexaSkill(buildConfig());
+    const response = await skill.invoke(
+      buildIntentEnvelope('SaveRemindHandoffIntent', {
+        calendarCreateText: 'dinner with Candace tomorrow at 6:30 PM',
+      }),
+    );
+
+    expect(mockedCreateGoogleCalendarEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        calendarId: 'primary',
+        title: 'dinner with Candace',
+        start: expect.any(Date),
+        end: expect.any(Date),
+      }),
+      expect.anything(),
+    );
+    expect(extractSpeechText(response)).toContain('added');
+    expect(extractSpeechText(response)).toContain('Dinner with Candace');
+    expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
+  });
+
+  it('asks for confirmation before cancelling a calendar event from voice', async () => {
+    mockedListGoogleCalendars.mockResolvedValue([
+      {
+        id: 'primary',
+        summary: 'Personal',
+        primary: true,
+        accessRole: 'owner',
+        writable: true,
+        selected: true,
+      },
+    ]);
+    mockedListGoogleCalendarEvents.mockResolvedValue({
+      events: [
+        {
+          id: 'evt-1',
+          title: 'Dinner with Candace',
+          startIso: '2026-04-04T23:30:00.000Z',
+          endIso: '2026-04-05T00:30:00.000Z',
+          allDay: false,
+          calendarId: 'primary',
+          calendarName: 'Personal',
+          htmlLink: null,
+        },
+      ],
+    } as Awaited<ReturnType<typeof listGoogleCalendarEvents>>);
+
+    const skill = createAlexaSkill(buildConfig());
+    const response = await skill.invoke(
+      buildIntentEnvelope('SaveRemindHandoffIntent', {
+        calendarCancelText: 'dinner tomorrow',
+      }),
+    );
+
+    expect(extractSpeechText(response)).toContain('Do you want me to');
+    expect(extractSpeechText(response)).toContain('Dinner with Candace');
+    expect(mockedCreateGoogleCalendarEvent).not.toHaveBeenCalled();
+    expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
+  });
+
+  it('creates a reminder directly from a natural assistant-style request', async () => {
+    const skill = createAlexaSkill(buildConfig(), {
+      resolveTelegramMainChat: () => ({ chatJid: 'tg:main' }),
+    });
+    const startingTaskCount = getAllTasks().length;
+
+    const response = await skill.invoke(
+      buildIntentEnvelope('SaveRemindHandoffIntent', {
+        reminderText: '4 to text Candace',
+      }),
+    );
+
+    const tasks = getAllTasks();
+    expect(tasks.length).toBe(startingTaskCount + 1);
+    expect(tasks.at(-1)?.prompt).toContain('text Candace');
+    expect(extractSpeechText(response)).toContain("I'll remind you");
+    expect(extractSpeechText(response)).toContain('text Candace');
+    expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
+  });
+
+  it('keeps what should I remember tonight on the guidance path instead of treating it like a calendar lookup', async () => {
+    mockedBuildDailyCompanionResponse.mockResolvedValue(
+      buildCompanionResponse('Tonight is mostly about closing the dinner loop.', {
+        mode: 'evening_reset',
+      }),
+    );
+
+    const skill = createAlexaSkill(buildConfig());
+    const response = await skill.invoke(
+      buildIntentEnvelope('CompanionGuidanceIntent', {
+        guidanceText: 'should i remember tonight',
+      }),
+    );
+
+    expect(mockedBuildDailyCompanionResponse).toHaveBeenCalledWith(
+      'what should I remember tonight',
+      expect.objectContaining({
+        channel: 'alexa',
+        groupFolder: 'main',
+      }),
+    );
+    expect(mockedListGoogleCalendarEvents).not.toHaveBeenCalled();
+    expect(extractSpeechText(response)).toContain('Tonight is mostly about');
   });
 
   it('maps conversational follow-ups like say more onto the current Alexa context', async () => {
@@ -1503,6 +1691,47 @@ describe('createAlexaSkill', () => {
       true,
     );
     expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
+  });
+
+  it('uses a cleaner reminder prompt when the active Alexa frame is person-focused', async () => {
+    const linked = seedLinkedAccount('main');
+    saveAlexaConversationState(
+      getAlexaPrincipalKey({
+        userId: 'amzn1.ask.account.test-user',
+        personId: 'amzn1.ask.person.test-person',
+      }),
+      linked!.accessTokenHash,
+      'main',
+      {
+        flowKey: 'open_guidance',
+        subjectKind: 'person',
+        summaryText: 'Keep Candace in view, but it can wait for a calmer moment.',
+        subjectData: {
+          personName: 'Candace',
+          activeEntityLabel: 'Candace',
+          activeTaskKind: 'planning_guidance',
+          activeTaskSummary:
+            'Keep Candace in view, but it can wait for a calmer moment.',
+        },
+        supportedFollowups: ['save_that', 'anything_else'],
+        styleHints: {
+          channelMode: 'alexa_companion',
+          responseSource: 'local_companion',
+        },
+      },
+    );
+
+    const skill = createAlexaSkill(buildConfig());
+    const response = await skill.invoke(
+      buildIntentEnvelope('ConversationalFollowupIntent', {
+        followupText: 'remind me later',
+      }),
+    );
+
+    expect(extractSpeechText(response)).toContain('follow up with Candace');
+    expect(extractSpeechText(response)).not.toContain(
+      'Keep Candace in view, but it can wait for a calmer moment',
+    );
   });
 
   it('keeps save-for-later follow-ups in a local Alexa confirmation flow', async () => {

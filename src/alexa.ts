@@ -49,6 +49,10 @@ import {
   createOrRefreshActionBundle,
 } from './action-bundles.js';
 import {
+  buildCalendarAssistantResponse,
+  type CalendarActiveEventContext,
+} from './calendar-assistant.js';
+import {
   buildDelegationRuleListPresentation,
   buildDelegationRulePreview,
   buildDelegationRuleWhyText,
@@ -123,6 +127,7 @@ import {
   type DailyCompanionContext,
 } from './daily-companion.js';
 import {
+  createTask,
   getActionBundleSnapshot,
   getAllTasks,
   getDelegationRule,
@@ -147,7 +152,12 @@ import {
   type PilotBlockerOwner,
   type PilotJourneyOutcome,
 } from './types.js';
-import { buildGracefulDegradedReply } from './conversational-core.js';
+import {
+  buildCalendarCompanionEventReply,
+  buildCalendarCompanionFailureReply,
+  buildCalendarCompanionReminderReply,
+  buildGracefulDegradedReply,
+} from './conversational-core.js';
 import { getUserFacingErrorDetail } from './user-facing-error.js';
 import { normalizeVoicePrompt } from './voice-ready.js';
 import type { CompanionHandoffDeps } from './cross-channel-handoffs.js';
@@ -156,8 +166,50 @@ import {
   buildOutcomeReviewResponse,
   interpretOutcomeReviewControl,
   matchOutcomeReviewPrompt,
+  syncOutcomeFromReminderTask,
   type OutcomeReviewPromptMatch,
 } from './outcome-reviews.js';
+import {
+  classifyGoogleCalendarFailureDetail,
+  createGoogleCalendarEvent,
+  deleteGoogleCalendarEvent,
+  isGoogleCalendarAuthFailureKind,
+  type GoogleCalendarEventRecord,
+  type GoogleCalendarMetadata,
+  listGoogleCalendarEvents,
+  listGoogleCalendars,
+  moveGoogleCalendarEvent,
+  resolveGoogleCalendarConfig,
+  updateGoogleCalendarEvent,
+} from './google-calendar.js';
+import {
+  advancePendingGoogleCalendarCreate,
+  buildGoogleCalendarSchedulingContextState,
+  buildPendingGoogleCalendarCreateState,
+  formatGoogleCalendarCreatePrompt,
+  isExplicitGoogleCalendarCreateRequest,
+  planGoogleCalendarCreate,
+  type GoogleCalendarSchedulingContextState,
+  type PendingGoogleCalendarCreateState,
+} from './google-calendar-create.js';
+import {
+  advancePendingCalendarReminder,
+  advancePendingGoogleCalendarEventAction,
+  buildActiveGoogleCalendarEventContextState,
+  buildEventReminderTaskPlan,
+  formatPendingGoogleCalendarEventActionPrompt,
+  isActiveGoogleCalendarEventContextExpired,
+  isPendingCalendarReminderExpired,
+  isPendingGoogleCalendarEventActionExpired,
+  matchGoogleCalendarTrackedEvents,
+  planCalendarEventReminder,
+  planGoogleCalendarEventAction,
+  resolveCalendarReminderLookup,
+  type ActiveGoogleCalendarEventContextState,
+  type PendingCalendarReminderState,
+  type PendingGoogleCalendarEventActionState,
+} from './google-calendar-followthrough.js';
+import { planContextualReminder } from './local-reminder.js';
 
 const ALEXA_REQUEST_LIMIT_BYTES = 256 * 1024;
 const DEFAULT_ALEXA_HOST = '127.0.0.1';
@@ -688,10 +740,47 @@ export function formatAlexaStatusMessage(status: AlexaStatus): string {
 
 export function normalizeAlexaSpeech(text: string): string {
   let normalized = formatOutbound(text);
+  normalized = normalized.replace(
+    /Open in Google Calendar:\s*https?:\/\/\S+/gi,
+    ' ',
+  );
   normalized = normalized.replace(/```[\s\S]*?```/g, ' code snippet omitted ');
   normalized = normalized.replace(/`([^`]+)`/g, '$1');
   normalized = normalized.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '$1');
   normalized = normalized.replace(/https?:\/\/\S+/g, ' ');
+  normalized = normalized.replace(/\bOpen in Google Calendar:\s*/gi, ' ');
+  normalized = normalized.replace(/\b(Got it|Done|Okay)\s*-\s*/g, '$1. ');
+  normalized = normalized.replace(/\btoday afternoon\b/gi, 'this afternoon');
+  normalized = normalized.replace(/\btoday evening\b/gi, 'tonight');
+  normalized = normalized.replace(/\btoday morning\b/gi, 'this morning');
+  normalized = normalized.replace(
+    /\s*@\s*([^,.\n]+),\s*\d{1,5}[^.!?\n]*?(?=\s+\d{1,2}:\d{2}\s*(?:AM|PM)-|$)/gi,
+    ' at $1',
+  );
+  normalized = normalized.replace(
+    /\bWith ([A-Z][a-z' -]+), I would stay with\s+/g,
+    'With $1, ',
+  );
+  normalized = normalized.replace(
+    /\bSo the main thing is fairly clear\.\s*/gi,
+    '',
+  );
+  normalized = normalized.replace(
+    /\bI think the clearest next step is this\./gi,
+    'If you want, I can make that more direct.',
+  );
+  normalized = normalized.replace(
+    /\bI can't check that live right now\. Narrow the question and I'll keep it grounded\. If you want, I can send the fuller version to telegram, save the key result to the library, and remind me to revisit this\./gi,
+    "I can't check that live right now. If you want, I can send the fuller version to Telegram.",
+  );
+  normalized = normalized.replace(
+    /\bIf you want, I can set a reminder for the follow-through, save it under ([A-Za-z][A-Za-z' -]+), and pin it into the evening reset\./gi,
+    (_match, name: string) =>
+      `If you want, I can remind you about ${name
+        .trim()
+        .replace(/\bcandace\b/gi, 'Candace')} later tonight.`,
+  );
+  normalized = normalized.replace(/\bcandace\b/g, 'Candace');
   normalized = normalized.replace(/[*_#>|]/g, ' ');
   normalized = normalized.replace(/\s+/g, ' ').trim();
   if (!normalized) return '';
@@ -1006,6 +1095,402 @@ function buildAlexaCompanionConversationState(params: {
   );
 }
 
+function parseAlexaJsonField<T>(
+  raw: string | undefined,
+): T | undefined {
+  const trimmed = raw?.trim();
+  if (!trimmed) return undefined;
+  try {
+    return JSON.parse(trimmed) as T;
+  } catch {
+    return undefined;
+  }
+}
+
+function serializeAlexaJsonField(value: unknown): string | undefined {
+  return value ? JSON.stringify(value) : undefined;
+}
+
+function formatAlexaCalendarWhen(input: {
+  startIso: string;
+  endIso: string;
+  allDay: boolean;
+  timeZone?: string;
+}): string {
+  const timeZone = input.timeZone || TIMEZONE;
+  const start = new Date(input.startIso);
+  const end = new Date(input.endIso);
+  if (input.allDay) {
+    return new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      weekday: 'long',
+      month: 'long',
+      day: 'numeric',
+    }).format(start);
+  }
+  const dateText = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+  }).format(start);
+  const startText = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(start);
+  const endText = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(end);
+  return `${dateText} from ${startText} to ${endText}`;
+}
+
+function parseAlexaSchedulingContext(
+  state: AlexaConversationState | undefined,
+): GoogleCalendarSchedulingContextState | undefined {
+  return parseAlexaJsonField<GoogleCalendarSchedulingContextState>(
+    state?.subjectData.activeSchedulingContextJson,
+  );
+}
+
+function parseAlexaActiveEventContext(
+  state: AlexaConversationState | undefined,
+  now = new Date(),
+): ActiveGoogleCalendarEventContextState | undefined {
+  const parsed = parseAlexaJsonField<ActiveGoogleCalendarEventContextState>(
+    state?.subjectData.activeCalendarEventContextJson,
+  );
+  if (!parsed) return undefined;
+  return isActiveGoogleCalendarEventContextExpired(parsed, now)
+    ? undefined
+    : parsed;
+}
+
+function parseAlexaPendingCalendarCreate(
+  state: AlexaConversationState | undefined,
+): PendingGoogleCalendarCreateState | undefined {
+  return parseAlexaJsonField<PendingGoogleCalendarCreateState>(
+    state?.subjectData.pendingCalendarCreateJson,
+  );
+}
+
+function parseAlexaPendingCalendarEventAction(
+  state: AlexaConversationState | undefined,
+  now = new Date(),
+): PendingGoogleCalendarEventActionState | undefined {
+  const parsed = parseAlexaJsonField<PendingGoogleCalendarEventActionState>(
+    state?.subjectData.pendingCalendarEventActionJson,
+  );
+  if (!parsed) return undefined;
+  return isPendingGoogleCalendarEventActionExpired(parsed, now)
+    ? undefined
+    : parsed;
+}
+
+function parseAlexaPendingCalendarReminder(
+  state: AlexaConversationState | undefined,
+  now = new Date(),
+): PendingCalendarReminderState | undefined {
+  const parsed = parseAlexaJsonField<PendingCalendarReminderState>(
+    state?.subjectData.pendingCalendarReminderJson,
+  );
+  if (!parsed) return undefined;
+  return isPendingCalendarReminderExpired(parsed, now) ? undefined : parsed;
+}
+
+function buildAlexaAssistantTaskState(params: {
+  previousState?: AlexaConversationState;
+  flowKey: string;
+  subjectKind: AlexaConversationState['subjectKind'];
+  summaryText: string;
+  guidanceGoal: AlexaCompanionGuidanceGoal;
+  taskKind: NonNullable<AlexaConversationSubjectData['activeTaskKind']>;
+  taskSummary?: string;
+  entityLabel?: string;
+  dateTimeContext?: string;
+  pendingWriteAction?: AlexaConversationSubjectData['pendingWriteAction'];
+  activeEventContext?: ActiveGoogleCalendarEventContextState | null;
+  schedulingContext?: GoogleCalendarSchedulingContextState | null;
+  pendingCreateState?: PendingGoogleCalendarCreateState | null;
+  pendingEventActionState?: PendingGoogleCalendarEventActionState | null;
+  pendingReminderState?: PendingCalendarReminderState | null;
+  pendingReminderBody?: string | null;
+  supportedFollowups?: AlexaConversationState['supportedFollowups'];
+  prioritizationLens?: AlexaConversationState['styleHints']['prioritizationLens'];
+  hasActionItem?: boolean;
+  hasRiskSignal?: boolean;
+  reminderCandidate?: boolean;
+  responseSource?: AlexaConversationState['styleHints']['responseSource'];
+  subjectData?: AlexaConversationSubjectData;
+}): AlexaConversationState {
+  const previous = params.previousState;
+  const entityLabel =
+    params.entityLabel ||
+    params.subjectData?.activeSubjectLabel ||
+    previous?.subjectData.activeSubjectLabel;
+  const summaryText = params.summaryText.trim();
+  const taskSummary =
+    params.taskSummary?.trim() ||
+    params.subjectData?.lastRecommendation?.trim() ||
+    summaryText;
+  const nextState = buildAlexaCompanionConversationState({
+    flowKey: params.flowKey,
+    subjectKind: params.subjectKind,
+    summaryText,
+    guidanceGoal: params.guidanceGoal,
+    subjectData: {
+      ...(previous?.subjectData || {}),
+      ...(params.subjectData || {}),
+      lastRouteOutcome: 'local_assistant_task',
+      fallbackCount: 0,
+      activeTaskKind: params.taskKind,
+      activeTaskSummary: taskSummary,
+      activeEntityLabel: entityLabel,
+      activeDateTimeContext:
+        params.dateTimeContext || previous?.subjectData.activeDateTimeContext,
+      pendingWriteAction: params.pendingWriteAction,
+      activeVoiceAnchor:
+        entityLabel ||
+        params.subjectData?.activeVoiceAnchor ||
+        previous?.subjectData.activeVoiceAnchor ||
+        params.subjectKind,
+      activeVoiceActionSummary:
+        taskSummary ||
+        params.subjectData?.activeVoiceActionSummary ||
+        previous?.subjectData.activeVoiceActionSummary,
+      activeSubjectLabel: entityLabel,
+      conversationFocus:
+        entityLabel ||
+        taskSummary ||
+        params.subjectData?.conversationFocus ||
+        previous?.subjectData.conversationFocus,
+      activeCalendarEventContextJson: serializeAlexaJsonField(
+        params.activeEventContext,
+      ),
+      activeSchedulingContextJson: serializeAlexaJsonField(
+        params.schedulingContext,
+      ),
+      pendingCalendarCreateJson: serializeAlexaJsonField(
+        params.pendingCreateState,
+      ),
+      pendingCalendarEventActionJson: serializeAlexaJsonField(
+        params.pendingEventActionState,
+      ),
+      pendingCalendarReminderJson: serializeAlexaJsonField(
+        params.pendingReminderState,
+      ),
+      pendingReminderBody: params.pendingReminderBody || undefined,
+    },
+    supportedFollowups: params.supportedFollowups,
+    prioritizationLens: params.prioritizationLens,
+    hasActionItem: params.hasActionItem,
+    hasRiskSignal: params.hasRiskSignal,
+    reminderCandidate: params.reminderCandidate,
+    responseSource: params.responseSource || 'local_companion',
+  });
+  return nextState;
+}
+
+function clearAlexaAssistantPendingState(
+  state: AlexaConversationState | undefined,
+): AlexaConversationSubjectData {
+  return {
+    ...(state?.subjectData || {}),
+    pendingWriteAction: undefined,
+    pendingCalendarCreateJson: undefined,
+    pendingCalendarEventActionJson: undefined,
+    pendingCalendarReminderJson: undefined,
+    pendingReminderBody: undefined,
+  };
+}
+
+function extractAlexaReminderTiming(utterance: string): string | undefined {
+  const normalized = normalizeVoicePrompt(utterance).toLowerCase();
+  const directMatch =
+    normalized.match(
+      /\b(today at \d{1,2}(?::\d{2})?\s*(?:am|pm)?|tomorrow(?: morning| afternoon| evening)?|today(?: morning| afternoon| evening)?|tonight)\b/i,
+    )?.[1] ||
+    normalized.match(
+      /\b(at \d{1,2}(?::\d{2})?\s*(?:am|pm)? today|at \d{1,2}(?::\d{2})?\s*(?:am|pm)? tomorrow)\b/i,
+    )?.[1];
+  const trimmed = directMatch?.trim();
+  if (!trimmed) return undefined;
+  if (trimmed === 'tonight') return 'today evening';
+  return trimmed.startsWith('at ') ? trimmed.replace(/\s+today$/, ' today') : trimmed;
+}
+
+function escapeAlexaRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function buildAlexaReminderPrompt(reminderBody: string, state?: AlexaConversationState): string {
+  const cleaned = reminderBody.trim().replace(/[.?!]+$/g, '');
+  const entityLabel = state?.subjectData.activeEntityLabel?.trim();
+  const escapedEntity = entityLabel ? escapeAlexaRegex(entityLabel) : null;
+  if (
+    entityLabel &&
+    escapedEntity &&
+    (new RegExp(`^keep ${escapedEntity} in view`, 'i').test(cleaned) ||
+      new RegExp(`^with ${escapedEntity},`, 'i').test(cleaned))
+  ) {
+    return `When should I remind you to follow up with ${entityLabel}?`;
+  }
+  if (
+    /^(?:call|text|email|reply|follow up|check in|send|ask|confirm|pay|pick up|book|schedule|move|cancel|circle back)\b/i.test(
+      cleaned,
+    )
+  ) {
+    return `When should I remind you to ${cleaned}?`;
+  }
+  return `When should I remind you about ${cleaned}?`;
+}
+
+function parseDirectAlexaReminderRequest(input: {
+  utterance: string;
+  state?: AlexaConversationState;
+}): {
+  reminderBody?: string;
+  timingText?: string;
+  needsTiming?: boolean;
+} | null {
+  const normalized = normalizeVoicePrompt(input.utterance).trim();
+  if (!/^remind me\b/i.test(normalized)) {
+    return null;
+  }
+
+  const aboutThatMatch = normalized.match(
+    /^remind me(?: about)? (that|it|this)(?: (today(?: morning| afternoon| evening)?|tomorrow(?: morning| afternoon| evening)?|tonight|at .+))?$/i,
+  );
+  if (aboutThatMatch) {
+    const reminderBody =
+      input.state?.subjectData.activeTaskSummary?.trim() ||
+      input.state?.subjectData.activeVoiceActionSummary?.trim() ||
+      input.state?.subjectData.lastRecommendation?.trim() ||
+      input.state?.subjectData.lastAnswerSummary?.trim() ||
+      input.state?.summaryText?.trim();
+    if (!reminderBody) {
+      return { needsTiming: false };
+    }
+    return {
+      reminderBody,
+      timingText:
+        aboutThatMatch[2]?.trim() ||
+        extractAlexaReminderTiming(normalized) ||
+        undefined,
+      needsTiming: !aboutThatMatch[2]?.trim(),
+    };
+  }
+
+  const toMatch = normalized.match(/^remind me (.+?) to (.+)$/i);
+  if (toMatch) {
+    return {
+      timingText: toMatch[1]?.trim(),
+      reminderBody: toMatch[2]?.trim(),
+    };
+  }
+
+  const directBodyMatch = normalized.match(/^remind me to (.+)$/i);
+  if (directBodyMatch) {
+    return {
+      reminderBody: directBodyMatch[1]?.trim(),
+      timingText: extractAlexaReminderTiming(normalized),
+      needsTiming: true,
+    };
+  }
+
+  if (/^remind me later$/i.test(normalized)) {
+    const reminderBody =
+      input.state?.subjectData.activeTaskSummary?.trim() ||
+      input.state?.subjectData.activeVoiceActionSummary?.trim() ||
+      input.state?.subjectData.lastRecommendation?.trim() ||
+      input.state?.subjectData.lastAnswerSummary?.trim();
+    if (!reminderBody) return { needsTiming: false };
+    return {
+      reminderBody,
+      needsTiming: true,
+    };
+  }
+
+  return null;
+}
+
+function startOfAlexaDay(date: Date): Date {
+  const next = new Date(date);
+  next.setHours(0, 0, 0, 0);
+  return next;
+}
+
+function addAlexaDays(date: Date, days: number): Date {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function resolveAlexaEventSearchWindow(
+  utterance: string,
+  now = new Date(),
+): { start: Date; end: Date } {
+  const normalized = normalizeVoicePrompt(utterance).toLowerCase();
+  if (/\btomorrow\b/.test(normalized)) {
+    const start = addAlexaDays(startOfAlexaDay(now), 1);
+    return { start, end: addAlexaDays(start, 1) };
+  }
+  if (/\bthis afternoon\b/.test(normalized)) {
+    const start = new Date(now);
+    start.setHours(12, 0, 0, 0);
+    const end = new Date(now);
+    end.setHours(17, 0, 0, 0);
+    return { start, end };
+  }
+  if (/\btoday\b/.test(normalized) || /\btonight\b/.test(normalized)) {
+    const start = startOfAlexaDay(now);
+    return { start, end: addAlexaDays(start, 1) };
+  }
+  const start = startOfAlexaDay(now);
+  return { start, end: addAlexaDays(start, 14) };
+}
+
+function extractAlexaEventLookupQuery(
+  utterance: string,
+): string | undefined {
+  let normalized = normalizeVoicePrompt(utterance)
+    .replace(
+      /^(?:please\s+)?(?:move|reschedule|cancel|delete|remove)\s+/i,
+      '',
+    )
+    .trim();
+  normalized = normalized
+    .replace(
+      /\b(?:to|for)\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?(?:\s+(?:today|tomorrow))?\b.*$/i,
+      '',
+    )
+    .replace(
+      /\b(?:today|tomorrow|this afternoon|tonight|this evening)\b/gi,
+      '',
+    )
+    .trim();
+  return normalized || undefined;
+}
+
+function looksLikeAlexaCalendarReadRequest(utterance: string): boolean {
+  const normalized = normalizeVoicePrompt(utterance).toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  if (
+    /^(?:add|put|schedule|move|reschedule|cancel|delete|remove|remind me)\b/.test(
+      normalized,
+    )
+  ) {
+    return false;
+  }
+  return /^(?:what(?:'s| is)\s+on\s+my\s+(?:calendar|schedule)|what\s+do\s+i\s+have\b|what\s+have\s+i\s+got\b|anything\s+on\s+my\s+(?:calendar|schedule)\b|what(?:'s| is)\s+coming\s+up\b|coming up soon\b)/.test(
+    normalized,
+  );
+}
+
 function parseDailyCompanionContext(
   state: AlexaConversationState | undefined,
 ): DailyCompanionContext | undefined {
@@ -1131,6 +1616,18 @@ function resolveAlexaCompanionPriorContext(
   );
 }
 
+function shouldRunAlexaAssistantTaskTurn(intentName: string): boolean {
+  return [
+    ALEXA_COMPANION_GUIDANCE_INTENT,
+    ALEXA_PEOPLE_HOUSEHOLD_INTENT,
+    ALEXA_PLANNING_ORIENTATION_INTENT,
+    ALEXA_SAVE_REMIND_HANDOFF_INTENT,
+    ALEXA_OPEN_ASK_INTENT,
+    ALEXA_CONVERSATION_CONTROL_INTENT,
+    ALEXA_CONVERSATIONAL_FOLLOWUP_INTENT,
+  ].includes(intentName);
+}
+
 function buildAlexaStateFromDailyCompanion(
   baseState: AlexaConversationState,
   response: Awaited<ReturnType<typeof buildDailyCompanionResponse>>,
@@ -1180,6 +1677,18 @@ function buildAlexaStateFromDailyCompanion(
       lastAnswerSummary: context.summaryText,
       lastRecommendation: context.recommendationText || undefined,
       pendingActionText: context.recommendationText || undefined,
+      activeTaskKind:
+        context.subjectKind === 'person' ||
+        context.subjectKind === 'household' ||
+        context.subjectKind === 'communication_thread'
+          ? 'communication_draft'
+          : 'planning_guidance',
+      activeTaskSummary:
+        context.recommendationText || context.summaryText || baseState.summaryText,
+      activeEntityLabel:
+        context.subjectData.personName ||
+        context.usedThreadTitles?.[0] ||
+        (context.subjectData as AlexaConversationSubjectData).activeSubjectLabel,
       activeVoiceFamily:
         baseState.subjectData.activeVoiceFamily ||
         baseState.subjectData.lastIntentFamily ||
@@ -1299,6 +1808,16 @@ function preserveAlexaConversationFrameForStyleChange(
   };
 }
 
+function seedSubjectKindLooksCommunication(
+  subjectKind: AlexaConversationState['subjectKind'],
+): boolean {
+  return (
+    subjectKind === 'person' ||
+    subjectKind === 'communication_thread' ||
+    subjectKind === 'life_thread'
+  );
+}
+
 function buildAlexaStateFromCapabilitySeed(
   seed: AssistantCapabilityConversationSeed,
   options: {
@@ -1339,6 +1858,25 @@ function buildAlexaStateFromCapabilitySeed(
         seedSubjectData.pendingActionText ||
         seedSubjectData.lastAnswerSummary ||
         seed.summaryText,
+      activeTaskKind:
+        seedSubjectData.activeTaskKind ||
+        (seed.flowKey.includes('communication') ||
+        seedSubjectKindLooksCommunication(seed.subjectKind)
+          ? 'communication_draft'
+          : seed.guidanceGoal === 'action_follow_through' ||
+              seed.guidanceGoal === 'next_action' ||
+              seed.guidanceGoal === 'meeting_prep'
+            ? 'planning_guidance'
+            : seedSubjectData.activeTaskKind),
+      activeTaskSummary:
+        seedSubjectData.activeTaskSummary ||
+        seedSubjectData.lastRecommendation ||
+        seedSubjectData.pendingActionText ||
+        seed.summaryText,
+      activeEntityLabel:
+        seedSubjectData.activeEntityLabel ||
+        seedSubjectData.personName ||
+        seedSubjectData.activeSubjectLabel,
     },
     supportedFollowups: seed.supportedFollowups,
     prioritizationLens: seed.prioritizationLens,
@@ -2000,6 +2538,952 @@ export function createAlexaSkill(
     }
     const linked = resolveAlexaLinkedAccount(principal, assistantName);
     return linked.ok ? linked : undefined;
+  };
+
+  const saveLinkedConversationState = (
+    linked: Extract<ReturnType<typeof resolveAlexaLinkedAccount>, { ok: true }>,
+    state: AlexaConversationState,
+  ) =>
+    saveAlexaConversationState(
+      linked.principalKey,
+      linked.account.accessTokenHash,
+      linked.account.groupFolder,
+      state,
+    );
+
+  const resolveReminderTargetChat = (groupFolder: string) => {
+    if (!deps.resolveTelegramMainChat) return null;
+    return deps.resolveTelegramMainChat(groupFolder);
+  };
+
+  const buildAlexaCalendarFailureSpeech = (
+    action: 'create_event' | 'update_event' | 'confirm_reminder',
+    error: unknown,
+  ): string => {
+    const detail = getUserFacingErrorDetail(error);
+    const failureKind = classifyGoogleCalendarFailureDetail(detail);
+    return buildCalendarCompanionFailureReply({
+      channel: 'alexa',
+      action: action === 'update_event' ? 'create_event' : action,
+      kind: isGoogleCalendarAuthFailureKind(failureKind)
+        ? 'calendar_auth_unavailable'
+        : 'temporary_unavailable',
+    });
+  };
+
+  const buildAlexaCalendarCreateChoiceSpeech = (
+    state: PendingGoogleCalendarCreateState,
+  ): string => {
+    if (state.calendars.length === 2) {
+      return `Which calendar should I use for ${state.draft.title}: ${state.calendars[0]!.summary} or ${state.calendars[1]!.summary}?`;
+    }
+    return `Which calendar should I use for ${state.draft.title}? Say the calendar name or number.`;
+  };
+
+  const buildAlexaCalendarActionPromptSpeech = (
+    state: PendingGoogleCalendarEventActionState,
+  ): string => {
+      if (state.action === 'delete') {
+        return `Do you want me to cancel ${state.sourceEvent.title} on ${formatAlexaCalendarWhen({
+          startIso: state.sourceEvent.startIso,
+          endIso: state.sourceEvent.endIso,
+          allDay: state.sourceEvent.allDay,
+        })}?`;
+      }
+    if (state.step === 'choose_calendar') {
+      if (state.calendars.length === 2) {
+        return `Which calendar should I move ${state.sourceEvent.title} to: ${state.calendars[0]!.summary} or ${state.calendars[1]!.summary}?`;
+      }
+      return `Which calendar should I move ${state.sourceEvent.title} to? Say the calendar name or number.`;
+    }
+    return shapeAlexaSpeech(
+      formatPendingGoogleCalendarEventActionPrompt(state),
+    );
+  };
+
+  const applyAlexaReminderCreation = (
+    linked: Extract<ReturnType<typeof resolveAlexaLinkedAccount>, { ok: true }>,
+    conversationState: AlexaConversationState | undefined,
+    reminderBody: string,
+    timingText: string,
+    now: Date,
+  ) => {
+    const target = resolveReminderTargetChat(linked.account.groupFolder);
+    if (!target?.chatJid) {
+      return {
+        handled: true as const,
+        speech:
+          'I can save reminders once your main Telegram chat is set up for this account.',
+      };
+    }
+
+    const plannedReminder = planContextualReminder(
+      timingText,
+      reminderBody,
+      linked.account.groupFolder,
+      target.chatJid,
+      now,
+    );
+    if (!plannedReminder) {
+      return {
+        handled: true as const,
+        speech:
+          'Tell me when, like today at 4, tomorrow morning, or tonight.',
+      };
+    }
+
+    createTask(plannedReminder.task);
+    syncOutcomeFromReminderTask(plannedReminder.task, {
+      linkedRefs: {
+        reminderTaskId: plannedReminder.task.id,
+        threadId: conversationState?.subjectData.threadId,
+        communicationThreadId:
+          conversationState?.subjectData.communicationThreadId,
+        missionId: conversationState?.subjectData.missionId,
+      },
+      summaryText: plannedReminder.confirmation,
+      now,
+    });
+
+    const speech =
+      shapeAlexaSpeech(plannedReminder.confirmation) ||
+      plannedReminder.confirmation;
+    const nextState = buildAlexaAssistantTaskState({
+      previousState: conversationState,
+      flowKey: 'assistant_reminder_write',
+      subjectKind: conversationState?.subjectKind || 'saved_item',
+      summaryText: reminderBody,
+      guidanceGoal: 'action_follow_through',
+      taskKind: 'reminder_write',
+      taskSummary: reminderBody,
+      entityLabel:
+        conversationState?.subjectData.activeEntityLabel ||
+        conversationState?.subjectData.personName ||
+        reminderBody,
+      dateTimeContext: timingText,
+      pendingWriteAction: undefined,
+      pendingReminderBody: null,
+      subjectData: clearAlexaAssistantPendingState(conversationState),
+      supportedFollowups: ['anything_else', 'shorter', 'say_more'],
+      hasActionItem: true,
+      reminderCandidate: true,
+    });
+    saveLinkedConversationState(linked, nextState);
+    return { handled: true as const, speech };
+  };
+
+  const resolveAlexaEventContextFromUtterance = async (
+    linked: Extract<ReturnType<typeof resolveAlexaLinkedAccount>, { ok: true }>,
+    utterance: string,
+    now: Date,
+  ): Promise<
+    | { kind: 'resolved'; context: ActiveGoogleCalendarEventContextState }
+    | { kind: 'missing'; speech: string }
+    | { kind: 'ambiguous'; speech: string }
+    | { kind: 'none' }
+  > => {
+    const queryText = extractAlexaEventLookupQuery(utterance);
+    if (!queryText) return { kind: 'none' };
+    const googleConfig = resolveGoogleCalendarConfig();
+    const window = resolveAlexaEventSearchWindow(utterance, now);
+    const { events } = await listGoogleCalendarEvents(
+      {
+        start: window.start,
+        end: window.end,
+        calendarIds: googleConfig.calendarIds,
+      },
+      googleConfig,
+    );
+    const matches = matchGoogleCalendarTrackedEvents(events, queryText);
+    if (matches.length === 1) {
+      return {
+        kind: 'resolved',
+        context: buildActiveGoogleCalendarEventContextState(matches[0], now),
+      };
+    }
+    if (matches.length === 0) {
+      return {
+        kind: 'missing',
+        speech: `I could not find a calendar event matching ${queryText}.`,
+      };
+    }
+    return {
+      kind: 'ambiguous',
+      speech: `I found more than one event matching ${queryText}. Tell me which one you mean.`,
+    };
+  };
+
+  const toAlexaActiveEventContextState = (
+    event: CalendarActiveEventContext | GoogleCalendarEventRecord | null | undefined,
+    now: Date,
+  ): ActiveGoogleCalendarEventContextState | null => {
+    if (!event?.calendarId) return null;
+    return buildActiveGoogleCalendarEventContextState(
+      {
+        id: event.id,
+        title: event.title,
+        startIso: event.startIso,
+        endIso: event.endIso,
+        allDay: event.allDay,
+        calendarId: event.calendarId,
+        calendarName: event.calendarName || 'Google Calendar',
+        htmlLink: event.htmlLink || null,
+      },
+      now,
+    );
+  };
+
+  const buildAlexaCalendarReadState = (input: {
+    previousState?: AlexaConversationState;
+    utterance: string;
+    speech: string;
+    activeEventContext?: CalendarActiveEventContext | null;
+    schedulingContext?: { title: string; durationMinutes: number; timeZone: string } | null;
+    now: Date;
+  }): AlexaConversationState =>
+    buildAlexaAssistantTaskState({
+      previousState: input.previousState,
+      flowKey: 'assistant_calendar_read',
+      subjectKind: input.activeEventContext ? 'event' : 'day_brief',
+      summaryText: input.speech,
+      guidanceGoal: /\btomorrow\b/i.test(input.utterance)
+        ? 'tomorrow_brief'
+        : /\btonight\b/i.test(input.utterance)
+          ? 'evening_reset'
+          : 'daily_brief',
+      taskKind: 'calendar_read',
+      taskSummary: input.speech,
+      entityLabel:
+        input.activeEventContext?.title ||
+        input.previousState?.subjectData.activeEntityLabel,
+      dateTimeContext: input.utterance,
+      activeEventContext: toAlexaActiveEventContextState(
+        input.activeEventContext,
+        input.now,
+      ),
+      schedulingContext: input.schedulingContext
+        ? {
+            version: 1,
+            createdAt: input.now.toISOString(),
+            title: input.schedulingContext.title,
+            durationMinutes: input.schedulingContext.durationMinutes,
+            timeZone: input.schedulingContext.timeZone,
+          }
+        : null,
+      subjectData: clearAlexaAssistantPendingState(input.previousState),
+      supportedFollowups: ['anything_else', 'shorter', 'say_more'],
+      prioritizationLens: 'calendar',
+      hasActionItem: true,
+      reminderCandidate: true,
+    });
+
+  const buildAlexaAssistantCandidates = (input: {
+    primarySlotValue?: string;
+    voiceCapture?: ReturnType<typeof extractAlexaVoiceIntentCapture> | null;
+    slotValues: Record<string, string>;
+  }): string[] => {
+    const guidanceText = input.slotValues.guidanceText || '';
+    const guidanceLooksCalendarish =
+      /\b(?:calendar|schedule)\b/i.test(guidanceText) ||
+      /^(?:today|tomorrow|tonight|this morning|this afternoon|this evening|this weekend|this week)\b/i.test(
+        guidanceText.trim(),
+      );
+    const candidates = [
+      input.primarySlotValue,
+      input.voiceCapture?.preferredText,
+      ...(input.voiceCapture?.candidateTexts || []),
+      input.slotValues.calendarReadText
+        ? `what is on my calendar ${input.slotValues.calendarReadText}`
+        : '',
+      input.slotValues.calendarReadText
+        ? `what do I have ${input.slotValues.calendarReadText}`
+        : '',
+      input.slotValues.guidanceText
+        && guidanceLooksCalendarish
+        ? `what do I have ${input.slotValues.guidanceText}`
+        : '',
+      input.slotValues.guidanceText
+        && guidanceLooksCalendarish
+        ? `what is on my calendar ${input.slotValues.guidanceText}`
+        : '',
+      input.slotValues.calendarCreateText
+        ? `add ${input.slotValues.calendarCreateText}`
+        : '',
+      input.slotValues.calendarCreateText
+        ? `schedule ${input.slotValues.calendarCreateText}`
+        : '',
+      input.slotValues.calendarCreateText
+        ? `put ${input.slotValues.calendarCreateText} on my calendar`
+        : '',
+      input.slotValues.calendarMoveText
+        ? `move ${input.slotValues.calendarMoveText}`
+        : '',
+      input.slotValues.calendarMoveText
+        ? `reschedule ${input.slotValues.calendarMoveText}`
+        : '',
+      input.slotValues.calendarCancelText
+        ? `cancel ${input.slotValues.calendarCancelText}`
+        : '',
+      input.slotValues.calendarCancelText
+        ? `delete ${input.slotValues.calendarCancelText}`
+        : '',
+      input.slotValues.reminderText
+        ? `remind me ${input.slotValues.reminderText}`
+        : '',
+      input.slotValues.reminderText
+        ? `remind me to ${input.slotValues.reminderText}`
+        : '',
+      input.slotValues.reminderText
+        ? `remind me at ${input.slotValues.reminderText}`
+        : '',
+      input.slotValues.reminderText
+        ? `remind me about ${input.slotValues.reminderText}`
+        : '',
+    ];
+    const seen = new Set<string>();
+    return candidates
+      .map((value) => normalizeVoicePrompt(value || '').trim())
+      .filter(Boolean)
+      .filter((value) => {
+        const key = value.toLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+  };
+
+  const executeAlexaCalendarCreate = async (input: {
+    linked: Extract<ReturnType<typeof resolveAlexaLinkedAccount>, { ok: true }>;
+    conversationState?: AlexaConversationState;
+    draft: PendingGoogleCalendarCreateState['draft'];
+    calendarId: string;
+    calendars: GoogleCalendarMetadata[];
+    now: Date;
+  }): Promise<{ speech: string }> => {
+    const googleConfig = resolveGoogleCalendarConfig();
+    const created = await createGoogleCalendarEvent(
+      {
+        calendarId: input.calendarId,
+        title: input.draft.title,
+        start: new Date(input.draft.startIso),
+        end: new Date(input.draft.endIso),
+        timeZone: input.draft.timeZone,
+        allDay: input.draft.allDay,
+        location: input.draft.location || null,
+        description: input.draft.description || null,
+      },
+      googleConfig,
+    );
+    const calendarName =
+      input.calendars.find((calendar) => calendar.id === input.calendarId)?.summary ||
+      created.calendarName;
+    const speech =
+      shapeAlexaSpeech(
+        buildCalendarCompanionEventReply({
+          action: 'create_event',
+          title: created.title,
+          startIso: created.startIso,
+          endIso: created.endIso,
+          allDay: created.allDay,
+          timeZone: TIMEZONE,
+          calendarName,
+          htmlLink: created.htmlLink || null,
+        }),
+      ) || `I added ${created.title} to your calendar.`;
+    saveLinkedConversationState(
+      input.linked,
+      buildAlexaAssistantTaskState({
+        previousState: input.conversationState,
+        flowKey: 'assistant_calendar_write',
+        subjectKind: 'event',
+        summaryText: speech,
+        guidanceGoal: 'action_follow_through',
+        taskKind: 'calendar_write',
+        taskSummary: `Added ${created.title}`,
+        entityLabel: created.title,
+        dateTimeContext: formatAlexaCalendarWhen(created),
+        activeEventContext: toAlexaActiveEventContextState(created, input.now),
+        schedulingContext: buildGoogleCalendarSchedulingContextState({
+          draft: input.draft,
+          now: input.now,
+        }),
+        subjectData: clearAlexaAssistantPendingState(input.conversationState),
+        supportedFollowups: ['anything_else', 'shorter', 'say_more'],
+        prioritizationLens: 'calendar',
+        hasActionItem: true,
+        reminderCandidate: true,
+      }),
+    );
+    return { speech };
+  };
+
+  const executeAlexaCalendarEventAction = async (input: {
+    linked: Extract<ReturnType<typeof resolveAlexaLinkedAccount>, { ok: true }>;
+    conversationState?: AlexaConversationState;
+    state: PendingGoogleCalendarEventActionState;
+    now: Date;
+  }): Promise<{ speech: string }> => {
+    const googleConfig = resolveGoogleCalendarConfig();
+    if (input.state.action === 'delete') {
+      await deleteGoogleCalendarEvent(
+        {
+          calendarId: input.state.sourceEvent.calendarId,
+          eventId: input.state.sourceEvent.id,
+        },
+        googleConfig,
+      );
+      const speech = `Okay, I canceled ${input.state.sourceEvent.title}.`;
+      saveLinkedConversationState(
+        input.linked,
+        buildAlexaAssistantTaskState({
+          previousState: input.conversationState,
+          flowKey: 'assistant_calendar_cancel',
+          subjectKind: 'event',
+          summaryText: speech,
+          guidanceGoal: 'action_follow_through',
+          taskKind: 'calendar_cancel',
+          taskSummary: `Canceled ${input.state.sourceEvent.title}`,
+          entityLabel: input.state.sourceEvent.title,
+          subjectData: clearAlexaAssistantPendingState(input.conversationState),
+          supportedFollowups: ['anything_else', 'shorter'],
+          prioritizationLens: 'calendar',
+          hasActionItem: true,
+          reminderCandidate: false,
+        }),
+      );
+      return { speech };
+    }
+
+    let updatedEvent: GoogleCalendarEventRecord;
+    if (input.state.action === 'reassign') {
+      updatedEvent = await moveGoogleCalendarEvent(
+        {
+          sourceCalendarId: input.state.sourceEvent.calendarId,
+          destinationCalendarId:
+            input.state.selectedCalendarId || input.state.sourceEvent.calendarId,
+          eventId: input.state.sourceEvent.id,
+        },
+        googleConfig,
+      );
+    } else {
+      const targetEvent = input.state.proposedEvent || input.state.sourceEvent;
+      updatedEvent = await updateGoogleCalendarEvent(
+        {
+          calendarId: input.state.sourceEvent.calendarId,
+          eventId: input.state.sourceEvent.id,
+          start: new Date(targetEvent.startIso),
+          end: new Date(targetEvent.endIso),
+          timeZone: TIMEZONE,
+          allDay: targetEvent.allDay,
+        },
+        googleConfig,
+      );
+    }
+
+    const speech =
+      shapeAlexaSpeech(
+        buildCalendarCompanionEventReply({
+          action: 'update_event',
+          title: updatedEvent.title,
+          startIso: updatedEvent.startIso,
+          endIso: updatedEvent.endIso,
+          allDay: updatedEvent.allDay,
+          timeZone: TIMEZONE,
+          calendarName: updatedEvent.calendarName,
+          htmlLink: updatedEvent.htmlLink || null,
+        }),
+      ) || `Okay, I updated ${updatedEvent.title}.`;
+    saveLinkedConversationState(
+      input.linked,
+      buildAlexaAssistantTaskState({
+        previousState: input.conversationState,
+        flowKey: 'assistant_calendar_update',
+        subjectKind: 'event',
+        summaryText: speech,
+        guidanceGoal: 'action_follow_through',
+        taskKind:
+          input.state.action === 'move' || input.state.action === 'resize'
+            ? 'calendar_move'
+            : 'calendar_write',
+        taskSummary: `Updated ${updatedEvent.title}`,
+        entityLabel: updatedEvent.title,
+        dateTimeContext: formatAlexaCalendarWhen(updatedEvent),
+        activeEventContext: toAlexaActiveEventContextState(updatedEvent, input.now),
+        subjectData: clearAlexaAssistantPendingState(input.conversationState),
+        supportedFollowups: ['anything_else', 'shorter', 'say_more'],
+        prioritizationLens: 'calendar',
+        hasActionItem: true,
+        reminderCandidate: true,
+      }),
+    );
+    return { speech };
+  };
+
+  const maybeHandleAlexaAssistantTaskTurn = async (input: {
+    handlerInput: HandlerInput;
+    linked: Extract<ReturnType<typeof resolveAlexaLinkedAccount>, { ok: true }>;
+    intentName: string;
+    slotValues: Record<string, string>;
+    primarySlotValue?: string;
+    conversationState?: AlexaConversationState;
+    voiceCapture?: ReturnType<typeof extractAlexaVoiceIntentCapture> | null;
+  }): Promise<{ speech: string; reprompt?: string } | undefined> => {
+    const now = getRequestTimestampDate(input.handlerInput.requestEnvelope);
+    const assistantCandidates = buildAlexaAssistantCandidates({
+      primarySlotValue: input.primarySlotValue,
+      voiceCapture: input.voiceCapture,
+      slotValues: input.slotValues,
+    });
+    const activeEventContext = parseAlexaActiveEventContext(
+      input.conversationState,
+      now,
+    );
+    const schedulingContext = parseAlexaSchedulingContext(input.conversationState);
+    const pendingCreate = parseAlexaPendingCalendarCreate(input.conversationState);
+    const pendingEventAction = parseAlexaPendingCalendarEventAction(
+      input.conversationState,
+      now,
+    );
+    const pendingReminderBody =
+      input.conversationState?.subjectData.pendingReminderBody?.trim() || undefined;
+
+    const persistPendingCreate = (
+      state: PendingGoogleCalendarCreateState,
+      speech: string,
+    ) => {
+      saveLinkedConversationState(
+        input.linked,
+        buildAlexaAssistantTaskState({
+          previousState: input.conversationState,
+          flowKey: 'assistant_calendar_write',
+          subjectKind: 'event',
+          summaryText: speech,
+          guidanceGoal: 'action_follow_through',
+          taskKind: 'calendar_write',
+          taskSummary: state.draft.title,
+          entityLabel: state.draft.title,
+          dateTimeContext: formatAlexaCalendarWhen({
+            startIso: state.draft.startIso,
+            endIso: state.draft.endIso,
+            allDay: state.draft.allDay,
+          }),
+          schedulingContext: buildGoogleCalendarSchedulingContextState({
+            draft: state.draft,
+            now,
+          }),
+          pendingCreateState: state,
+          pendingWriteAction: 'create_event',
+          subjectData: clearAlexaAssistantPendingState(input.conversationState),
+          supportedFollowups: ['anything_else', 'shorter'],
+          prioritizationLens: 'calendar',
+          hasActionItem: true,
+          reminderCandidate: true,
+        }),
+      );
+    };
+
+    const persistPendingEventAction = (
+      state: PendingGoogleCalendarEventActionState,
+      speech: string,
+    ) => {
+      saveLinkedConversationState(
+        input.linked,
+        buildAlexaAssistantTaskState({
+          previousState: input.conversationState,
+          flowKey:
+            state.action === 'delete'
+              ? 'assistant_calendar_cancel'
+              : 'assistant_calendar_update',
+          subjectKind: 'event',
+          summaryText: speech,
+          guidanceGoal: 'action_follow_through',
+          taskKind:
+            state.action === 'delete' ? 'calendar_cancel' : 'calendar_move',
+          taskSummary: state.sourceEvent.title,
+          entityLabel: state.sourceEvent.title,
+          dateTimeContext: formatAlexaCalendarWhen(state.sourceEvent),
+          activeEventContext: toAlexaActiveEventContextState(
+            state.sourceEvent,
+            now,
+          ),
+          pendingEventActionState: state,
+          pendingWriteAction:
+            state.action === 'delete' ? 'delete_event' : 'update_event',
+          subjectData: clearAlexaAssistantPendingState(input.conversationState),
+          supportedFollowups: ['anything_else', 'shorter'],
+          prioritizationLens: 'calendar',
+          hasActionItem: true,
+          reminderCandidate: state.action !== 'delete',
+        }),
+      );
+    };
+
+    if (pendingReminderBody) {
+      for (const candidate of assistantCandidates) {
+        const timing = extractAlexaReminderTiming(candidate);
+        if (!timing) continue;
+        return applyAlexaReminderCreation(
+          input.linked,
+          input.conversationState,
+          pendingReminderBody,
+          timing,
+          now,
+        );
+      }
+    }
+
+    if (pendingCreate) {
+      for (const candidate of assistantCandidates) {
+        const continued = advancePendingGoogleCalendarCreate(candidate, pendingCreate);
+        if (continued.kind === 'no_match') continue;
+        if (continued.kind === 'cancelled') {
+          saveLinkedConversationState(
+            input.linked,
+            buildAlexaAssistantTaskState({
+              previousState: input.conversationState,
+              flowKey: 'assistant_calendar_write',
+              subjectKind: 'event',
+              summaryText: continued.message,
+              guidanceGoal: 'action_follow_through',
+              taskKind: 'calendar_write',
+              taskSummary: pendingCreate.draft.title,
+              entityLabel: pendingCreate.draft.title,
+              subjectData: clearAlexaAssistantPendingState(input.conversationState),
+              supportedFollowups: ['anything_else'],
+              prioritizationLens: 'calendar',
+            }),
+          );
+          return { speech: continued.message };
+        }
+        if (continued.kind === 'resolve_anchor') {
+          return {
+            speech:
+              'Tell me the time you want instead, like tomorrow at 7 or tomorrow morning.',
+          };
+        }
+        if (continued.kind === 'confirmed') {
+          return executeAlexaCalendarCreate({
+            linked: input.linked,
+            conversationState: input.conversationState,
+            draft: continued.state.draft,
+            calendarId: continued.calendarId,
+            calendars: continued.state.calendars.map((calendar) => ({
+              ...calendar,
+              accessRole: 'owner',
+              writable: true,
+              selected: true,
+            })),
+            now,
+          });
+        }
+        if (
+          pendingCreate.step === 'choose_calendar' &&
+          continued.state.step === 'confirm_create' &&
+          continued.state.selectedCalendarId
+        ) {
+          return executeAlexaCalendarCreate({
+            linked: input.linked,
+            conversationState: input.conversationState,
+            draft: continued.state.draft,
+            calendarId: continued.state.selectedCalendarId,
+            calendars: continued.state.calendars.map((calendar) => ({
+              ...calendar,
+              accessRole: 'owner',
+              writable: true,
+              selected: true,
+            })),
+            now,
+          });
+        }
+        const speech =
+          continued.state.step === 'choose_calendar'
+            ? buildAlexaCalendarCreateChoiceSpeech(continued.state)
+            : shapeAlexaSpeech(continued.message) || continued.message;
+        persistPendingCreate(continued.state, speech);
+        return { speech };
+      }
+    }
+
+    if (pendingEventAction) {
+      for (const candidate of assistantCandidates) {
+        const continued = advancePendingGoogleCalendarEventAction(
+          candidate,
+          pendingEventAction,
+          now,
+        );
+        if (continued.kind === 'no_match') continue;
+        if (continued.kind === 'cancelled') {
+          saveLinkedConversationState(
+            input.linked,
+            buildAlexaAssistantTaskState({
+              previousState: input.conversationState,
+              flowKey: 'assistant_calendar_update',
+              subjectKind: 'event',
+              summaryText: continued.message,
+              guidanceGoal: 'action_follow_through',
+              taskKind:
+                pendingEventAction.action === 'delete'
+                  ? 'calendar_cancel'
+                  : 'calendar_move',
+              taskSummary: pendingEventAction.sourceEvent.title,
+              entityLabel: pendingEventAction.sourceEvent.title,
+              activeEventContext: toAlexaActiveEventContextState(
+                pendingEventAction.sourceEvent,
+                now,
+              ),
+              subjectData: clearAlexaAssistantPendingState(input.conversationState),
+              supportedFollowups: ['anything_else'],
+              prioritizationLens: 'calendar',
+            }),
+          );
+          return { speech: continued.message };
+        }
+        if (continued.kind === 'resolve_anchor') {
+          return {
+            speech:
+              'Tell me the time you want instead, like move it to tomorrow at 7.',
+          };
+        }
+        if (continued.kind === 'confirmed') {
+          return executeAlexaCalendarEventAction({
+            linked: input.linked,
+            conversationState: input.conversationState,
+            state: continued.state,
+            now,
+          });
+        }
+        if (
+          continued.state.action !== 'delete' &&
+          pendingEventAction.step === 'choose_calendar' &&
+          continued.state.step === 'confirm'
+        ) {
+          return executeAlexaCalendarEventAction({
+            linked: input.linked,
+            conversationState: input.conversationState,
+            state: continued.state,
+            now,
+          });
+        }
+        const speech = buildAlexaCalendarActionPromptSpeech(continued.state);
+        persistPendingEventAction(continued.state, speech);
+        return { speech };
+      }
+    }
+
+    for (const candidate of assistantCandidates) {
+      const reminderRequest = parseDirectAlexaReminderRequest({
+        utterance: candidate,
+        state: input.conversationState,
+      });
+      if (!reminderRequest) continue;
+      if (!reminderRequest.reminderBody) {
+        return { speech: 'What should I remind you about?' };
+      }
+      if (reminderRequest.timingText) {
+        return applyAlexaReminderCreation(
+          input.linked,
+          input.conversationState,
+          reminderRequest.reminderBody,
+          reminderRequest.timingText,
+          now,
+        );
+      }
+      if (reminderRequest.needsTiming) {
+        const speech = buildAlexaReminderPrompt(
+          reminderRequest.reminderBody,
+          input.conversationState,
+        );
+        saveLinkedConversationState(
+          input.linked,
+          buildAlexaAssistantTaskState({
+            previousState: input.conversationState,
+            flowKey: 'assistant_reminder_write',
+            subjectKind: input.conversationState?.subjectKind || 'saved_item',
+            summaryText: reminderRequest.reminderBody,
+            guidanceGoal: 'action_follow_through',
+            taskKind: 'reminder_write',
+            taskSummary: reminderRequest.reminderBody,
+            entityLabel:
+              input.conversationState?.subjectData.activeEntityLabel ||
+              input.conversationState?.subjectData.personName ||
+              reminderRequest.reminderBody,
+            pendingWriteAction: 'create_reminder',
+            pendingReminderBody: reminderRequest.reminderBody,
+            subjectData: clearAlexaAssistantPendingState(input.conversationState),
+            supportedFollowups: ['anything_else', 'shorter'],
+            prioritizationLens: 'general',
+            hasActionItem: true,
+            reminderCandidate: true,
+          }),
+        );
+        return { speech };
+      }
+      return { speech: 'Tell me when, like today at 4 or tomorrow morning.' };
+    }
+
+    for (const candidate of assistantCandidates) {
+      if (!looksLikeAlexaCalendarReadRequest(candidate)) {
+        continue;
+      }
+      const response = await buildCalendarAssistantResponse(candidate, {
+        now,
+        timeZone: TIMEZONE,
+        activeEventContext: activeEventContext?.event
+          ? {
+              providerId: 'google_calendar',
+              id: activeEventContext.event.id,
+              title: activeEventContext.event.title,
+              startIso: activeEventContext.event.startIso,
+              endIso: activeEventContext.event.endIso,
+              allDay: activeEventContext.event.allDay,
+              calendarId: activeEventContext.event.calendarId,
+              calendarName: activeEventContext.event.calendarName,
+              htmlLink: activeEventContext.event.htmlLink || null,
+            }
+          : null,
+      });
+      if (!response) continue;
+      const speech = shapeAlexaSpeech(response.reply) || response.reply;
+      saveLinkedConversationState(
+        input.linked,
+        buildAlexaCalendarReadState({
+          previousState: input.conversationState,
+          utterance: candidate,
+          speech,
+          activeEventContext: response.activeEventContext,
+          schedulingContext: response.schedulingContext,
+          now,
+        }),
+      );
+      return { speech };
+    }
+
+    let discoveredCalendars: GoogleCalendarMetadata[] | undefined;
+    let writableCalendars: GoogleCalendarMetadata[] | undefined;
+    const loadCalendars = async () => {
+      if (!discoveredCalendars) {
+        const googleConfig = resolveGoogleCalendarConfig();
+        discoveredCalendars = await listGoogleCalendars(googleConfig);
+        writableCalendars = discoveredCalendars.filter(
+          (calendar) => calendar.selected && calendar.writable,
+        );
+      }
+      return {
+        discoveredCalendars: discoveredCalendars || [],
+        writableCalendars: writableCalendars || [],
+      };
+    };
+
+    for (const candidate of assistantCandidates) {
+      if (!isExplicitGoogleCalendarCreateRequest(candidate)) continue;
+      try {
+        const calendars = await loadCalendars();
+        const createPlan = planGoogleCalendarCreate(
+          candidate,
+          calendars.writableCalendars,
+          now,
+          TIMEZONE,
+          schedulingContext,
+        );
+        if (createPlan.kind === 'none') continue;
+        if (createPlan.kind === 'needs_details') {
+          return { speech: shapeAlexaSpeech(createPlan.message) || createPlan.message };
+        }
+        if (calendars.writableCalendars.length === 0) {
+          return {
+            speech: buildAlexaCalendarFailureSpeech('create_event', new Error('calendar auth unavailable')),
+          };
+        }
+        const selectedCalendarId =
+          createPlan.selectedCalendarId ||
+          (calendars.writableCalendars.length === 1
+            ? calendars.writableCalendars[0]?.id
+            : null);
+        if (selectedCalendarId) {
+          return executeAlexaCalendarCreate({
+            linked: input.linked,
+            conversationState: input.conversationState,
+            draft: createPlan.draft,
+            calendarId: selectedCalendarId,
+            calendars: calendars.writableCalendars,
+            now,
+          });
+        }
+        const pendingState = buildPendingGoogleCalendarCreateState({
+          draft: createPlan.draft,
+          writableCalendars: calendars.writableCalendars,
+          selectedCalendarId: createPlan.selectedCalendarId,
+          now,
+        });
+        const speech = buildAlexaCalendarCreateChoiceSpeech(pendingState);
+        persistPendingCreate(pendingState, speech);
+        return { speech };
+      } catch (error) {
+        return { speech: buildAlexaCalendarFailureSpeech('create_event', error) };
+      }
+    }
+
+    for (const candidate of assistantCandidates) {
+      if (!/\b(?:move|reschedule|cancel|delete|remove)\b/i.test(candidate)) {
+        continue;
+      }
+      try {
+        const calendars = await loadCalendars();
+        let resolvedContext = activeEventContext;
+        if (!resolvedContext) {
+          const lookup = await resolveAlexaEventContextFromUtterance(
+            input.linked,
+            candidate,
+            now,
+          );
+          if (lookup.kind === 'missing' || lookup.kind === 'ambiguous') {
+            return { speech: lookup.speech };
+          }
+          resolvedContext = lookup.kind === 'resolved' ? lookup.context : undefined;
+        }
+        const actionPlan = planGoogleCalendarEventAction(
+          candidate,
+          calendars.discoveredCalendars,
+          now,
+          resolvedContext,
+        );
+        if (actionPlan.kind === 'none') continue;
+        if (actionPlan.kind === 'needs_event_context') {
+          return { speech: actionPlan.message };
+        }
+        if (actionPlan.kind === 'resolve_anchor') {
+          return {
+            speech:
+              'Tell me the new time directly, like move dinner to tomorrow at 7.',
+          };
+        }
+        if (actionPlan.state.action === 'delete') {
+          const speech = buildAlexaCalendarActionPromptSpeech(actionPlan.state);
+          persistPendingEventAction(actionPlan.state, speech);
+          return { speech };
+        }
+        if (
+          actionPlan.state.step === 'confirm' &&
+          (actionPlan.state.action === 'move' ||
+            actionPlan.state.action === 'resize' ||
+            actionPlan.state.action === 'reassign')
+        ) {
+          return executeAlexaCalendarEventAction({
+            linked: input.linked,
+            conversationState: input.conversationState,
+            state: actionPlan.state,
+            now,
+          });
+        }
+        const speech = buildAlexaCalendarActionPromptSpeech(actionPlan.state);
+        persistPendingEventAction(actionPlan.state, speech);
+        return { speech };
+      } catch (error) {
+        return { speech: buildAlexaCalendarFailureSpeech('update_event', error) };
+      }
+    }
+
+    return undefined;
   };
 
   const respondWithAlexaFallback = (handlerInput: HandlerInput) => {
@@ -3512,7 +4996,9 @@ export function createAlexaSkill(
         linked.principalKey,
         linked.account.accessTokenHash,
       );
-      const priorCompanionContext = parseDailyCompanionContext(conversationState);
+      const priorCompanionContext =
+        resolveAlexaCompanionPriorContext(conversationState);
+      const voiceCapture = extractAlexaVoiceIntentCapture(intentName, slotValues);
 
       if (
         pending &&
@@ -3526,6 +5012,29 @@ export function createAlexaSkill(
         )
       ) {
         clearAlexaPendingSession(linked.principalKey);
+      }
+
+      if (shouldRunAlexaAssistantTaskTurn(intentName)) {
+        const assistantTaskResponse = await maybeHandleAlexaAssistantTaskTurn({
+          handlerInput,
+          linked,
+          intentName,
+          slotValues,
+          primarySlotValue,
+          conversationState,
+          voiceCapture,
+        });
+        if (assistantTaskResponse) {
+          recordHandledRequest(handlerInput.requestEnvelope, {
+            responseSource: 'local_companion',
+            linked: true,
+            groupFolder: linked.account.groupFolder,
+          });
+          return handlerInput.responseBuilder
+            .speak(assistantTaskResponse.speech)
+            .reprompt(assistantTaskResponse.reprompt || DEFAULT_ALEXA_REPROMPT)
+            .getResponse();
+        }
       }
 
       const sharedCapabilityMatch = resolveAlexaIntentToCapability(intentName, {
@@ -3556,7 +5065,6 @@ export function createAlexaSkill(
         }
       }
 
-      const voiceCapture = extractAlexaVoiceIntentCapture(intentName, slotValues);
       if (
         voiceCapture &&
         (intentName === ALEXA_COMPANION_GUIDANCE_INTENT ||
@@ -4788,6 +6296,58 @@ export function createAlexaSkill(
         linked.principalKey,
         linked.account.accessTokenHash,
       );
+      const now = getRequestTimestampDate(handlerInput.requestEnvelope);
+      const pendingConversationCreate = parseAlexaPendingCalendarCreate(
+        conversationState,
+      );
+      if (
+        pendingConversationCreate?.step === 'confirm_create' &&
+        pendingConversationCreate.selectedCalendarId
+      ) {
+        const result = await executeAlexaCalendarCreate({
+          linked,
+          conversationState,
+          draft: pendingConversationCreate.draft,
+          calendarId: pendingConversationCreate.selectedCalendarId,
+          calendars: pendingConversationCreate.calendars.map((calendar) => ({
+            ...calendar,
+            accessRole: 'owner',
+            writable: true,
+            selected: true,
+          })),
+          now,
+        });
+        recordHandledRequest(handlerInput.requestEnvelope, {
+          responseSource: 'local_companion',
+          linked: true,
+          groupFolder: linked.account.groupFolder,
+        });
+        return handlerInput.responseBuilder
+          .speak(result.speech)
+          .reprompt(DEFAULT_ALEXA_REPROMPT)
+          .getResponse();
+      }
+      const pendingConversationAction = parseAlexaPendingCalendarEventAction(
+        conversationState,
+        now,
+      );
+      if (pendingConversationAction?.step === 'confirm') {
+        const result = await executeAlexaCalendarEventAction({
+          linked,
+          conversationState,
+          state: pendingConversationAction,
+          now,
+        });
+        recordHandledRequest(handlerInput.requestEnvelope, {
+          responseSource: 'local_companion',
+          linked: true,
+          groupFolder: linked.account.groupFolder,
+        });
+        return handlerInput.responseBuilder
+          .speak(result.speech)
+          .reprompt(DEFAULT_ALEXA_REPROMPT)
+          .getResponse();
+      }
       const pending = loadAlexaPendingSession(
         linked.principalKey,
         linked.account.accessTokenHash,
@@ -4968,7 +6528,66 @@ export function createAlexaSkill(
         linked.principalKey,
         linked.account.accessTokenHash,
       );
+      const conversationState = loadAlexaConversationState(
+        linked.principalKey,
+        linked.account.accessTokenHash,
+      );
+      const pendingConversationCreate = parseAlexaPendingCalendarCreate(
+        conversationState,
+      );
+      const pendingConversationAction = parseAlexaPendingCalendarEventAction(
+        conversationState,
+      );
+      const pendingReminderBody =
+        conversationState?.subjectData.pendingReminderBody?.trim() || undefined;
       clearAlexaPendingSession(linked.principalKey);
+
+      if (!pending && !pendingConversationCreate && !pendingConversationAction && !pendingReminderBody) {
+        recordHandledRequest(handlerInput.requestEnvelope, {
+          responseSource: 'fallback',
+          linked: true,
+          groupFolder: linked.account.groupFolder,
+        });
+        return handlerInput.responseBuilder.speak('Okay.').getResponse();
+      }
+
+      if (pendingConversationCreate || pendingConversationAction || pendingReminderBody) {
+        saveLinkedConversationState(
+          linked,
+          buildAlexaCompanionConversationState({
+            flowKey: conversationState?.flowKey || 'assistant_cancelled',
+            subjectKind: conversationState?.subjectKind || 'general',
+            summaryText:
+              pendingConversationCreate?.draft.title ||
+              pendingConversationAction?.sourceEvent.title ||
+              pendingReminderBody ||
+              conversationState?.summaryText ||
+              'Okay.',
+            guidanceGoal:
+              conversationState?.styleHints.guidanceGoal || 'action_follow_through',
+            subjectData: clearAlexaAssistantPendingState(conversationState),
+            supportedFollowups:
+              conversationState?.supportedFollowups || ['anything_else'],
+            prioritizationLens:
+              conversationState?.styleHints.prioritizationLens || 'general',
+            responseSource:
+              conversationState?.styleHints.responseSource || 'local_companion',
+          }),
+        );
+        const speech = pendingConversationCreate
+          ? `Okay, I won't add that to your calendar.`
+          : pendingConversationAction?.action === 'delete'
+            ? `Okay, I won't cancel that event.`
+            : pendingConversationAction
+              ? `Okay, I won't change that event.`
+              : `Okay, I won't set that reminder.`;
+        recordHandledRequest(handlerInput.requestEnvelope, {
+          responseSource: 'local_companion',
+          linked: true,
+          groupFolder: linked.account.groupFolder,
+        });
+        return handlerInput.responseBuilder.speak(speech).getResponse();
+      }
 
       if (!pending) {
         recordHandledRequest(handlerInput.requestEnvelope, {

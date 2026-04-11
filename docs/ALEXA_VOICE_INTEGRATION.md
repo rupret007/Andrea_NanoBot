@@ -7,6 +7,7 @@ Andrea now uses an internal **Alexa Companion Mode**:
 - shorter, warmer, spoken-first replies
 - one main thing first
 - one or two short supporting lines
+- direct in-voice handling for clear low-risk assistant jobs like calendar reads, simple event adds or moves, and reminders
 - shared assistant capabilities for daily guidance, household questions, memory controls, explicit thread lookup, and bounded research
 - measured guidance for open-ended daily questions
 - short-lived conversational continuity
@@ -18,7 +19,7 @@ Andrea now uses an internal **Alexa Companion Mode**:
 - request-driven Andrea Pulse turns for light interesting facts or surprises
 
 Telegram remains the primary operator surface. Alexa reuses the same trust boundaries, schedule intelligence, reminders, drafting, and follow-through logic.
-In flagship journeys, Alexa should orient quickly, give one best next move, and hand off richer detail to Telegram without making the user restate the whole topic.
+In flagship journeys, Alexa should orient quickly, finish one useful voice step when it safely can, and only then hand off richer detail to Telegram without making the user restate the whole topic.
 
 ## 0A) Shared Capability Routing
 
@@ -53,7 +54,20 @@ The shared capability graph does **not** make Alexa and Telegram identical.
 
 ## 0B) Chief-of-Staff Orientation
 
-Alexa is now a bounded chief-of-staff orientation surface.
+Alexa is now a bounded chief-of-staff and practical assistant surface.
+
+The strongest everyday assistant jobs are:
+
+- `what's on my calendar today`
+- `what's on my calendar tomorrow`
+- `what do I have this afternoon`
+- `add dinner with Candace tomorrow at 6:30 PM`
+- `move dinner to 7`
+- `cancel dinner tomorrow`
+- `remind me at 4 to text Candace`
+- `remind me about that tonight`
+- `what should I say back`
+- `help me figure out tonight`
 
 Good Alexa asks in this layer:
 
@@ -93,7 +107,7 @@ Important limits:
 
 ## 0C) Signature Flow Role
 
-Alexa's job in the flagship journeys is orientation, not exhaustiveness.
+Alexa's job in the flagship journeys is useful orientation plus one clear assistant step, not exhaustiveness.
 
 The strongest Alexa-first flows are:
 
@@ -101,12 +115,17 @@ The strongest Alexa-first flows are:
 - `what am I forgetting`
 - `what should I remember tonight`
 - `what should I do next`
+- `what's on my calendar tomorrow`
+- `add dinner with Candace tomorrow at 6:30 PM`
+- `move dinner to 7`
+- `remind me at 4 to text Candace`
 - `what's still open with Candace`
 - `help me plan tonight`
 
 In those flows Alexa should:
 
 - give one lead read
+- finish the obvious low-risk voice action directly when the request is clear
 - mention one next step or blocker
 - keep the same context alive for `anything else`, `what happens next`, `remind me`, `save that`, or `send me the fuller plan`
 - hand richer detail to Telegram instead of trying to read the whole plan, research answer, or conversation aloud
@@ -283,6 +302,12 @@ Alexa is still interaction-model driven, but Andrea now captures more natural ph
 
 Current carrier-style openings include:
 
+- `what's on my calendar ...`
+- `what do I have ...`
+- `add ...`
+- `schedule ...`
+- `move ...`
+- `cancel ...`
 - `what should I say back`
 - `tell me about ...`
 - `help me with ...`

@@ -405,12 +405,17 @@ function getDraftDurationMinutes(draft: GoogleCalendarCreateDraft): number {
 }
 
 function looksLikeExplicitCalendarCreate(normalized: string): boolean {
+  const assistantStyleSchedulingCue =
+    /\b(?:today|tomorrow|tonight|this morning|this afternoon|this evening|all day|monday|tuesday|wednesday|thursday|friday|saturday|sunday|jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?|at \d{1,2}(?::\d{2})?\s*(?:am|pm)?)\b/i;
   return (
     /\b(?:add|put)\b[\s\S]{0,140}\b(?:to|on|in)\b[\s\S]{0,60}\bcalendar\b/.test(
       normalized,
     ) ||
+    (/^\s*add\b/.test(normalized) && assistantStyleSchedulingCue.test(normalized)) ||
     /\bcreate\b[\s\S]{0,50}\bevent\b/.test(normalized) ||
-    /\bschedule\b[\s\S]{0,80}\b(?:event|calendar)\b/.test(normalized)
+    /\bschedule\b[\s\S]{0,80}\b(?:event|calendar)\b/.test(normalized) ||
+    (/^\s*schedule\b/.test(normalized) &&
+      assistantStyleSchedulingCue.test(normalized))
   );
 }
 

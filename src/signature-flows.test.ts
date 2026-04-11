@@ -352,7 +352,7 @@ describe('signature flows', () => {
 
     expect(executed.handled).toBe(true);
     expect(executed.replyText).toContain('Still open:');
-    expect(executed.replyText).toContain('get aligned with Candace');
+    expect(executed.replyText).toContain('check in with Candace');
     expect(getMission(missionId!)?.linkedReminderIds.length || 0).toBeGreaterThan(
       0,
     );

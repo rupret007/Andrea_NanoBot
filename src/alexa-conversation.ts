@@ -19,10 +19,32 @@ export interface AlexaConversationSubjectData {
   lastRouteOutcome?: string;
   lastUserUtterance?: string;
   clarifierHints?: string[];
+  activeTaskKind?:
+    | 'calendar_read'
+    | 'calendar_write'
+    | 'calendar_move'
+    | 'calendar_cancel'
+    | 'reminder_write'
+    | 'communication_draft'
+    | 'planning_guidance';
+  activeTaskSummary?: string;
+  activeEntityLabel?: string;
+  activeDateTimeContext?: string;
+  pendingWriteAction?:
+    | 'create_event'
+    | 'update_event'
+    | 'delete_event'
+    | 'create_reminder';
   activeVoiceFamily?: string;
   activeVoiceAnchor?: string;
   activeVoiceActionSummary?: string;
   activeSubjectLabel?: string;
+  activeCalendarEventContextJson?: string;
+  activeSchedulingContextJson?: string;
+  pendingCalendarCreateJson?: string;
+  pendingCalendarEventActionJson?: string;
+  pendingCalendarReminderJson?: string;
+  pendingReminderBody?: string;
   personName?: string;
   activePeople?: string[];
   householdFocus?: boolean;

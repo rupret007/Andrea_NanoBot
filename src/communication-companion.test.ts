@@ -365,7 +365,7 @@ describe('communication companion', () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(result.draftText).toContain('follow up about dinner plans tonight');
+    expect(result.draftText).toContain('circle back on dinner plans tonight');
     expect(result.draftText).not.toContain('The main thing still open with Candace');
   });
 

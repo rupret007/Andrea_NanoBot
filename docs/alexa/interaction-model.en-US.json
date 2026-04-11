@@ -9,6 +9,10 @@
             {
               "name": "guidanceText",
               "type": "AMAZON.SearchQuery"
+            },
+            {
+              "name": "calendarReadText",
+              "type": "AMAZON.SearchQuery"
             }
           ],
           "samples": [
@@ -19,7 +23,12 @@
             "can you {guidanceText}",
             "give me {guidanceText}",
             "walk me through {guidanceText}",
-            "how does {guidanceText} look"
+            "how does {guidanceText} look",
+            "what do I have {calendarReadText}",
+            "what's on my calendar {calendarReadText}",
+            "what is on my calendar {calendarReadText}",
+            "what's on my schedule {calendarReadText}",
+            "what is on my schedule {calendarReadText}"
           ]
         },
         {
@@ -66,13 +75,41 @@
             {
               "name": "item",
               "type": "AMAZON.SearchQuery"
+            },
+            {
+              "name": "calendarCreateText",
+              "type": "AMAZON.SearchQuery"
+            },
+            {
+              "name": "calendarMoveText",
+              "type": "AMAZON.SearchQuery"
+            },
+            {
+              "name": "calendarCancelText",
+              "type": "AMAZON.SearchQuery"
+            },
+            {
+              "name": "reminderText",
+              "type": "AMAZON.SearchQuery"
             }
           ],
           "samples": [
+            "add {calendarCreateText}",
+            "schedule {calendarCreateText}",
+            "put {calendarCreateText} on my calendar",
+            "move {calendarMoveText}",
+            "reschedule {calendarMoveText}",
+            "cancel {calendarCancelText}",
+            "delete {calendarCancelText}",
+            "remind me to {reminderText}",
+            "remind me at {reminderText}",
+            "remind me about {reminderText}",
             "save {item}",
             "save {item} for later",
             "remind me about {item}",
             "remind me about {item} later",
+            "save that",
+            "remind me later",
             "draft {item}",
             "send {item} to Telegram",
             "send {item} to messages",

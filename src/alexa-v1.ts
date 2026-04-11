@@ -25,7 +25,7 @@ export const ALEXA_CONVERSATIONAL_FOLLOWUP_INTENT =
   'ConversationalFollowupIntent';
 export const ALEXA_MEMORY_CONTROL_INTENT = 'MemoryControlIntent';
 export const ALEXA_DEFAULT_REPROMPT =
-  "Ask what you're forgetting, what matters today, tell me about something, or ask what's still open with Candace.";
+  "Ask what's on your calendar today, add dinner with Candace tomorrow at 6:30 PM, set a reminder, help me figure out tonight, or ask what you should say back.";
 
 export const ALEXA_V1_PERSONAL_INTENTS = new Set<string>([
   ALEXA_COMPANION_GUIDANCE_INTENT,
@@ -186,15 +186,15 @@ export function buildAlexaOpenConversationPrompt(
 }
 
 export function buildAlexaHelpSpeech(assistantName: string): string {
-  return `This is ${assistantName}. Ask what you're forgetting, what matters today, tell me about something, or ask what's still open with Candace. If it needs the fuller version, I can send it to Telegram.`;
+  return `This is ${assistantName}. I can check your day, add or move something on your calendar, set a reminder, help you figure out tonight, or help you say something back. Try asking what's on my calendar tomorrow, add dinner with Candace tomorrow at 6:30 PM, remind me at 4 to text Candace, or what should I say back. If you want, I can send the fuller version to Telegram after we get the first step done here.`;
 }
 
 export function buildAlexaWelcomeSpeech(assistantName: string): string {
-  return `This is ${assistantName}. Ask what you're forgetting, what's still open with Candace, help me plan tonight, or tell me about something. If you want the fuller version, I can send it to Telegram.`;
+  return `This is ${assistantName}. I can check your day, add or move something on your calendar, set a reminder, help you figure out tonight, or help you say something back. Try what's on my calendar today or remind me at 4 to text Candace.`;
 }
 
 export function buildAlexaFallbackSpeech(assistantName: string): string {
-  return `This is ${assistantName}. I did not quite catch that. Try asking what you're forgetting, what matters today, or tell me what you want help with.`;
+  return `This is ${assistantName}. I did not quite catch that. Try asking about your calendar, setting a reminder, figuring out tonight, or what you should say back.`;
 }
 
 export function buildReminderLeadTimeQuestion(assistantName: string): string {

@@ -136,6 +136,8 @@ function normalizeDraftTopicSummary(value: string): string {
   const normalized = value
     .replace(/^[A-Z][a-z]+ wants a follow-up about\s+/i, '')
     .replace(/^[A-Z][a-z]+ said\s+/i, '')
+    .replace(/^with [a-z][a-z' -]+, i would stay with\s+/i, '')
+    .replace(/^with [a-z][a-z' -]+, the next thing worth handling is\s+/i, '')
     .replace(/^the main thing still open with [a-z][a-z' -]+ is\s+/i, '')
     .replace(/^the main thing still open is\s+/i, '')
     .replace(/^the main thing is\s+/i, '')
@@ -823,7 +825,7 @@ function buildRelationshipAwareDraft(input: {
         : `On my side, ${draftTopic}.`
       : draftTopic.startsWith('whether ')
         ? `I wanted to check in about ${draftTopic}.`
-        : `I wanted to follow up about ${draftTopic}.`;
+        : `I wanted to circle back on ${draftTopic}.`;
   const rawSupportLine =
     input.linkedLifeThreads[0]?.nextAction ||
     input.linkedLifeThreads[0]?.summary ||
@@ -841,7 +843,7 @@ function buildRelationshipAwareDraft(input: {
       : '') ||
     (companionTone === 'plain'
       ? 'Here is the main thing from my side.'
-      : 'I wanted to keep it simple.');
+      : 'I think the clearest next step is this.');
   const closer =
     input.style === 'short'
       ? 'Let me know what works.'

@@ -35,6 +35,16 @@ describe('planGoogleCalendarCreate', () => {
         "Add check air filters to Jeff's calendar tomorrow at 4pm.",
       ),
     ).toBe(true);
+    expect(
+      isExplicitGoogleCalendarCreateRequest(
+        'Add dinner with Candace tomorrow at 6:30 PM.',
+      ),
+    ).toBe(true);
+    expect(
+      isExplicitGoogleCalendarCreateRequest(
+        'Schedule dinner with Candace tomorrow at 6:30 PM.',
+      ),
+    ).toBe(true);
     expect(isExplicitGoogleCalendarCreateRequest('Remind me tomorrow at 3pm.')).toBe(
       false,
     );

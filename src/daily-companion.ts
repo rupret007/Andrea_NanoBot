@@ -819,6 +819,18 @@ function humanizeAlexaDetailLine(line: string): string {
   const trimmed = line.trim();
   if (!trimmed) return trimmed;
 
+  const followThroughBundleMatch = trimmed.match(
+    /^If you want, I can set a reminder for the follow-through, save it under ([A-Za-z][A-Za-z' -]+), and pin it into the evening reset\.$/i,
+  );
+  if (followThroughBundleMatch?.[1]) {
+    const threadLabel = followThroughBundleMatch[1]
+      .trim()
+      .split(/\s+/)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(' ');
+    return `If you want, I can remind you about ${threadLabel} later tonight.`;
+  }
+
   const replacements: Array<[RegExp, (value: string) => string]> = [
     [/^Next:\s+/i, (value) => `Next up is ${value}`],
     [/^Reminder:\s+/i, (value) => `You have ${value}`],
@@ -1889,9 +1901,9 @@ function buildHouseholdDraft(params: {
             ? `With ${personDisplayName}, the main thing on deck is ${householdLines[0]}.`
             : `I do not see a strong shared signal with ${personDisplayName} right now.`
         : personLeadDetail
-          ? `The main thing still open with ${personDisplayName} is ${personLeadDetail}.`
+          ? `With ${personDisplayName}, I would stay with ${personLeadDetail}.`
           : householdLines[0]
-            ? `The main shared thing with ${personDisplayName} is ${householdLines[0]}.`
+            ? `With ${personDisplayName}, the next thing worth handling is ${householdLines[0]}.`
             : `I do not see a strong shared signal with ${personDisplayName} right now.`
     : askStyle === 'family_forgetting'
       ? summarizeThread(relatedThread)
@@ -2020,7 +2032,7 @@ function buildLooseEndsDraft(params: {
     lead = `The easiest thing to forget right now is ${dueReminder.label}.`;
     leadReason = 'due_reminder';
   } else if (dueThread) {
-    lead = `The thread most likely to slip is ${dueThread.title}.`;
+    lead = `Don't let ${dueThread.title} drift.`;
     leadReason = 'thread_followup';
   } else if (tomorrowPressure) {
     lead = `The next thing worth remembering is ${tomorrowPressure.title}${
@@ -2030,7 +2042,7 @@ function buildLooseEndsDraft(params: {
     }`;
     leadReason = 'tomorrow_pressure';
   } else if (slippingThread) {
-    lead = `The thread most likely to drift is ${slippingThread.title}.`;
+    lead = `Keep ${slippingThread.title} moving so it does not drift.`;
     leadReason = 'slipping_thread';
   } else if (currentWork) {
     lead = `The thing most likely to drift is ${currentWork.title} if you do not touch it again today.`;

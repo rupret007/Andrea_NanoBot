@@ -520,7 +520,7 @@ function buildBestNextAction(signal: ChiefOfStaffSignal | null): string | null {
     case 'drop':
       return `Let ${signal.title} stop taking up attention if it is no longer real.`;
     case 'watch':
-      return `Keep ${signal.title} in view, but it does not need force right now.`;
+      return `Keep ${signal.title} in view, but it can wait for a calmer moment.`;
     default:
       return `Handle ${signal.title} next.`;
   }

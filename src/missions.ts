@@ -483,7 +483,7 @@ function buildMissionSteps(params: {
   if (params.linkedSubjects.length > 0) {
     const firstPerson = params.linkedSubjects[0]!;
     rawSteps.push({
-      title: `Get aligned with ${firstPerson.displayName}`,
+      title: `Check in with ${firstPerson.displayName}`,
       detail: `Pin down the timing, expectation, or open question with ${firstPerson.displayName}.`,
       requiresUserJudgment: false,
       suggestedActionKind: 'draft_follow_up',
@@ -718,6 +718,8 @@ function formatMissionReply(
 ): string {
   const blocker = snapshot.blockers[0];
   const action = snapshot.suggestedActions[0]?.label;
+  const lowerFirst = (value: string) =>
+    value ? `${value.charAt(0).toLowerCase()}${value.slice(1)}` : value;
   if (
     input.mode === 'explain' &&
     isMissionBlockerExplainRequest(input.text || '')
@@ -729,7 +731,7 @@ function formatMissionReply(
           : `The main blocker right now is this: ${blocker}`;
       }
       return action
-        ? `I do not see a major blocker right now. Next, ${action.toLowerCase()}.`
+        ? `I do not see a major blocker right now. Next, ${lowerFirst(action)}.`
         : 'I do not see a major blocker right now.';
     }
 
@@ -747,7 +749,7 @@ function formatMissionReply(
     const parts = [snapshot.mission.summary];
     const summaryKey = snapshot.mission.summary.toLowerCase();
     if (stepFocus) {
-      const stepTitle = stepFocus.title.toLowerCase();
+      const stepTitle = lowerFirst(stepFocus.title);
       if (!summaryKey.includes(stepTitle)) {
         parts.push(`Next, ${stepTitle}.`);
       }
@@ -757,7 +759,7 @@ function formatMissionReply(
         `The main blocker is ${blocker.replace(/\.$/, '').toLowerCase()}.`,
       );
     } else if (action) {
-      parts.push(`If you want, I can ${action.toLowerCase()}.`);
+      parts.push(`If you want, I can ${lowerFirst(action)}.`);
     }
     return parts.join(' ');
   }
