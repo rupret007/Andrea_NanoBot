@@ -400,10 +400,11 @@ function buildMissionSummary(params: {
 }): string {
   const subject = params.title.replace(/^plan\s+/i, '').trim() || params.title;
   const firstMove = params.canDoNow
-    ? `to ${params.canDoNow.charAt(0).toLowerCase()}${params.canDoNow.slice(1)}`
+    ? params.canDoNow.replace(/^to\s+/i, '').trim()
     : null;
-  if (params.canDoNow) {
-    return `For ${subject}, the first move is ${firstMove}.`;
+  if (firstMove) {
+    const normalizedFirstMove = `${firstMove.charAt(0).toLowerCase()}${firstMove.slice(1)}`;
+    return `For ${subject}, the first move is to ${normalizedFirstMove}.`;
   }
   if (params.blockers.length > 0) {
     return `For ${subject}, clear ${params.blockers[0]!.replace(/\.$/, '').toLowerCase()}.`;
@@ -744,8 +745,12 @@ function formatMissionReply(
 
   if (channel === 'alexa') {
     const parts = [snapshot.mission.summary];
+    const summaryKey = snapshot.mission.summary.toLowerCase();
     if (stepFocus) {
-      parts.push(`Next, ${stepFocus.title.toLowerCase()}.`);
+      const stepTitle = stepFocus.title.toLowerCase();
+      if (!summaryKey.includes(stepTitle)) {
+        parts.push(`Next, ${stepTitle}.`);
+      }
     }
     if (blocker) {
       parts.push(

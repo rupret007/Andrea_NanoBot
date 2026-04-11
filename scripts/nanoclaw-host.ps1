@@ -1900,6 +1900,10 @@ function Ensure-NanoClaw {
     [string] $assistantHealth.status -eq 'degraded' -and
     -not [string]::IsNullOrWhiteSpace($assistantHealthDetail) -and
     $assistantHealthDetail.StartsWith('telegram:', [System.StringComparison]::OrdinalIgnoreCase)
+  $blueBubblesOnlyIssue =
+    [string] $assistantHealth.status -eq 'degraded' -and
+    -not [string]::IsNullOrWhiteSpace($assistantHealthDetail) -and
+    $assistantHealthDetail.StartsWith('bluebubbles:', [System.StringComparison]::OrdinalIgnoreCase)
 
   if ($telegramOnlyIssue -and [string] $telegramRoundtrip.status -eq 'unconfigured') {
     Write-HostStep 'Periodic ensure check detected Telegram degradation, but live roundtrip probing is unconfigured; leaving the current process running and reporting degraded truthfully'
@@ -1912,6 +1916,13 @@ function Ensure-NanoClaw {
     Write-HostStep ("Periodic ensure check detected Telegram degradation caused by an external consumer; leaving the current process running. {0}" -f ([string] $telegramTransport.detail))
     Start-Watchdog
     Write-Output ("HOST_ENSURE: status=degraded pid={0} telegram_transport={1} telegram_roundtrip={2} blocker={3}" -f $runtimePid, ([string] $telegramTransport.status), ([string] $telegramRoundtrip.status), ([string] $telegramTransport.externalBlocker))
+    return
+  }
+
+  if ($blueBubblesOnlyIssue) {
+    Write-HostStep ("Periodic ensure check detected BlueBubbles degradation; leaving the current process running and reporting degraded truthfully. {0}" -f $assistantHealthDetail)
+    Start-Watchdog
+    Write-Output ("HOST_ENSURE: status=degraded pid={0} telegram_transport={1} telegram_roundtrip={2} bluebubbles_degraded=true" -f $runtimePid, ([string] $telegramTransport.status), ([string] $telegramRoundtrip.status))
     return
   }
 

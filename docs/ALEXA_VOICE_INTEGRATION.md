@@ -217,6 +217,9 @@ The interaction model now keeps Alexa bounded through a small set of broader cus
   - `what am I forgetting`
   - `what should I do next`
   - `what should I remember tonight`
+  - `what's up`
+  - `what time is it`
+  - `can you help me`
 - `PeopleHouseholdIntent`
   - `what about Candace`
   - `what's still open with Candace`
@@ -248,6 +251,13 @@ The interaction model now keeps Alexa bounded through a small set of broader cus
   - `remember that`
 
 Legacy intent names still remain supported in runtime code for one compatibility window, so a stale live interaction model does not immediately hard-fail during rollout.
+
+The current broadened model also includes lighter carrier coverage for simple voice turns through `CompanionGuidanceIntent`, including patterns like:
+
+- `what's up`
+- `what's X`
+- `can you help me`
+- `can you X`
 
 Standard Alexa intents still apply:
 

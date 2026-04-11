@@ -24,6 +24,7 @@ const DEFAULT_BLUEBUBBLES_HOST = '127.0.0.1';
 const DEFAULT_BLUEBUBBLES_PORT = 4305;
 const DEFAULT_BLUEBUBBLES_CHAT_SCOPE: BlueBubblesChatScope = 'allowlist';
 const BLUEBUBBLES_OUTBOUND_SENDER_LABEL = 'Andrea:';
+const BLUEBUBBLES_STARTUP_FETCH_TIMEOUT_MS = 5_000;
 
 function parseBool(value: string | undefined, fallback = false): boolean {
   if (value == null) return fallback;
@@ -399,6 +400,28 @@ function parseBlueBubblesJson(value: string): unknown {
   }
 }
 
+async function fetchBlueBubblesWithTimeout(
+  input: string | URL,
+  init?: RequestInit,
+  timeoutMs = BLUEBUBBLES_STARTUP_FETCH_TIMEOUT_MS,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, {
+      ...init,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error(`BlueBubbles request timed out after ${timeoutMs} ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function extractBlueBubblesErrorText(status: number, body: string): string {
   const trimmed = body.trim();
   if (!trimmed) {
@@ -740,7 +763,7 @@ export async function inspectBlueBubblesWebhookRegistration(
   }
 
   try {
-    const response = await fetch(url);
+    const response = await fetchBlueBubblesWithTimeout(url);
     const responseText = await response.text();
     if (response.status === 401 || response.status === 403) {
       return {
@@ -1372,7 +1395,7 @@ export class BlueBubblesChannel implements Channel {
     }
 
     try {
-      const response = await fetch(url);
+      const response = await fetchBlueBubblesWithTimeout(url);
       const responseText = await response.text();
       if (response.ok) {
         this.transportProbeStatus = 'reachable';
@@ -1416,7 +1439,7 @@ export class BlueBubblesChannel implements Channel {
     }
 
     try {
-      const response = await fetch(url);
+      const response = await fetchBlueBubblesWithTimeout(url);
       const responseText = await response.text();
       if (!response.ok) {
         this.privateApiAvailable = null;

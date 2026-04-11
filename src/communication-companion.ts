@@ -133,13 +133,38 @@ function clipText(value: string, max = 180): string {
 }
 
 function normalizeDraftTopicSummary(value: string): string {
-  return value
+  const normalized = value
     .replace(/^[A-Z][a-z]+ wants a follow-up about\s+/i, '')
     .replace(/^[A-Z][a-z]+ said\s+/i, '')
+    .replace(/^the main thing still open with [a-z][a-z' -]+ is\s+/i, '')
+    .replace(/^the main thing still open is\s+/i, '')
+    .replace(/^the main thing is\s+/i, '')
     .replace(/\bplease reply about\s+/i, '')
     .replace(/\s+/g, ' ')
     .trim()
     .replace(/\.$/, '');
+
+  const stillNeedsMatch = normalized.match(
+    /^(.*?) still need(?:s)? (?:a |an )?(.+)$/i,
+  );
+  if (stillNeedsMatch?.[1]?.trim()) {
+    return stillNeedsMatch[1].trim();
+  }
+
+  return normalized;
+}
+
+function normalizeSpokenPersonName(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  if (!/^[a-z][a-z' -]*$/i.test(trimmed) || /[A-Z]/.test(trimmed)) {
+    return trimmed;
+  }
+  return trimmed
+    .split(/\s+/)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
 }
 
 function normalizeCommunicationFocus(value: string): string {
@@ -777,7 +802,9 @@ function buildRelationshipAwareDraft(input: {
   summaryText: string;
   style: CommunicationDraftResult['style'];
 }): string {
-  const personName = input.linkedSubjects[0]?.displayName;
+  const personName = normalizeSpokenPersonName(
+    input.linkedSubjects[0]?.displayName,
+  );
   const opener =
     input.style === 'direct'
       ? personName

@@ -72,6 +72,12 @@ function isReferenceBoundSavePrompt(value: string): boolean {
   );
 }
 
+function isAlexaLocalVoiceAsk(value: string): boolean {
+  return /^(what time is it|what day is it|what'?s up|whats up|can you help me|help me)$/i.test(
+    value.trim(),
+  );
+}
+
 function buildOpenAskCandidates(query: string): string[] {
   const trimmed = normalizeText(query);
   const lower = trimmed.toLowerCase();
@@ -124,6 +130,18 @@ function buildBroadAlexaCandidates(
   const trimmed = normalizeText(slotValue);
   const lower = trimmed.toLowerCase();
   if (intentName === ALEXA_COMPANION_GUIDANCE_INTENT) {
+    if (/^(time is it(?: now)?|the time)$/i.test(lower)) {
+      return ['what time is it'];
+    }
+    if (/^(day is it(?: today)?|date is it)$/i.test(lower)) {
+      return ['what day is it'];
+    }
+    if (/^(up|up right now)$/i.test(lower)) {
+      return ["what's up"];
+    }
+    if (/^(help|help me)$/i.test(lower)) {
+      return ['can you help me'];
+    }
     if (
       /\b(forget|forgetting|forgot|missing|overlook|loose end|loose ends|not handled)\b/.test(
         lower,
@@ -1117,12 +1135,18 @@ export function resolveAlexaIntentToCapability(
     intentName === ALEXA_CONVERSATION_CONTROL_INTENT
   ) {
     const normalizedSlot = normalizeText(options.slotValue || '');
+    const candidates = buildBroadAlexaCandidates(
+      intentName,
+      options.slotValue || '',
+    );
+    if (candidates.some((candidate) => isAlexaLocalVoiceAsk(candidate))) {
+      return null;
+    }
     if (
       intentName === ALEXA_CONVERSATION_CONTROL_INTENT &&
       isWeakAlexaReference(normalizedSlot)
     ) {
       if (options.conversationState) {
-        const candidates = buildBroadAlexaCandidates(intentName, normalizedSlot);
         for (const candidate of candidates) {
           const continuation = continueAssistantCapabilityFromAlexaState(
             candidate,
@@ -1142,10 +1166,6 @@ export function resolveAlexaIntentToCapability(
     ) {
       return null;
     }
-    const candidates = buildBroadAlexaCandidates(
-      intentName,
-      options.slotValue || '',
-    );
     if (
       intentName === ALEXA_CONVERSATION_CONTROL_INTENT &&
       options.conversationState

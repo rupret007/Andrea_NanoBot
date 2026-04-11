@@ -706,6 +706,82 @@ describe('buildDailyCompanionResponse', () => {
     expect(alexa?.reply).not.toContain('Thread:');
   });
 
+  it('makes Alexa anything-else follow-ups add a new point before recapping', async () => {
+    const priorContext: DailyCompanionContext = {
+      version: 1,
+      mode: 'open_guidance',
+      channel: 'alexa',
+      generatedAt: '2026-04-04T17:00:00.000Z',
+      summaryText: 'Dinner plans tonight still need a clean answer.',
+      shortText: 'Dinner plans tonight still need a clean answer.',
+      extendedText:
+        'Dinner plans tonight still need a clean answer. Pickup after rehearsal keeps it simpler. A reminder before 6 would help.',
+      leadReason: 'communication_carryover',
+      signalsUsed: ['communication_threads'],
+      signalsOmitted: [],
+      householdSignals: ['Candace still needs a dinner answer.'],
+      recommendationKind: 'do_now',
+      recommendationText: 'A reminder before 6 would help.',
+      subjectKind: 'household',
+      supportedFollowups: [
+        'anything_else',
+        'shorter',
+        'say_more',
+        'save_that',
+        'save_for_later',
+        'create_reminder',
+        'send_details',
+      ],
+      subjectData: {
+        personName: 'Candace',
+        activePeople: ['Candace'],
+        householdFocus: true,
+      },
+      extraDetails: [
+        'Dinner plans tonight still need a clean answer.',
+        'Pickup after rehearsal keeps it simpler.',
+      ],
+      memoryLines: [],
+      usedThreadIds: ['thread-candace'],
+      usedThreadTitles: ['Candace'],
+      usedThreadReasons: ['communication carryover'],
+      threadSummaryLines: ['Candace still needs a dinner answer.'],
+      comparisonKeys: {
+        nextEvent: null,
+        nextReminder: null,
+        recommendation: 'A reminder before 6 would help.',
+        household: 'Candace',
+        focus: 'Dinner plans tonight',
+        thread: 'Candace',
+      },
+      toneProfile: 'balanced',
+    };
+
+    const response = await buildDailyCompanionResponse('Anything else?', {
+      channel: 'alexa',
+      groupFolder: 'main',
+      now: new Date('2026-04-04T17:05:00-05:00'),
+      timeZone: 'America/Chicago',
+      env: baseEnv,
+      fetchImpl: createGoogleCalendarFetchMock({
+        eventsByCalendar: {
+          primary: {
+            items: [],
+          },
+        },
+      }),
+      tasks: [],
+      priorContext,
+    });
+
+    expect(response?.reply.startsWith('Pickup after rehearsal keeps it simpler.')).toBe(
+      true,
+    );
+    expect(response?.reply).not.toContain(
+      'Dinner plans tonight still need a clean answer. Dinner plans tonight still need a clean answer.',
+    );
+  });
+
   it('surfaces slipping thread pressure during midday re-grounding', async () => {
     handleLifeThreadCommand({
       groupFolder: 'main',

@@ -13,8 +13,10 @@
           ],
           "samples": [
             "what {guidanceText}",
+            "what's {guidanceText}",
             "what should I {guidanceText}",
             "what am I {guidanceText}",
+            "can you {guidanceText}",
             "give me {guidanceText}",
             "walk me through {guidanceText}",
             "how does {guidanceText} look"

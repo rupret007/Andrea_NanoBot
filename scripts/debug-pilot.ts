@@ -220,6 +220,7 @@ async function main(): Promise<void> {
     `- Follow-up binding failures: ${alexaReview.followupBindingFailures.length}`,
     `- Communication should-route misses: ${alexaReview.communicationShouldRoute.length}`,
     `- Planning should-route misses: ${alexaReview.planningShouldRoute.length}`,
+    `- Voice-shape repetition: ${alexaReview.voiceShapeRepetition.length}`,
     ...formatAlexaUtteranceReview(alexaReview),
   ];
   process.stdout.write(`${lines.join('\n')}\n`);

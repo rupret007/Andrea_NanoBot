@@ -168,6 +168,18 @@ function buildBlockedRouteSpeech(normalized: string): string {
 
 function buildCompanionGuidanceCandidates(slotValue: string): string[] {
   const lower = slotValue.toLowerCase();
+  if (/^(time is it(?: now)?|the time)$/i.test(lower)) {
+    return ['what time is it'];
+  }
+  if (/^(day is it(?: today)?|date is it)$/i.test(lower)) {
+    return ['what day is it'];
+  }
+  if (/^(up|up right now)$/i.test(lower)) {
+    return ["what's up"];
+  }
+  if (/^(help|help me)$/i.test(lower)) {
+    return ['can you help me'];
+  }
   if (
     /\b(forget|forgetting|forgot|missing|overlook|loose end|loose ends|not handled)\b/.test(
       lower,
@@ -272,7 +284,7 @@ function buildConversationControlCandidates(controlText: string): string[] {
   if (!normalized) {
     return ['anything else'];
   }
-  if (isBareReference(normalized)) {
+  if (isBareReference(normalized) || isWeakReference(normalized)) {
     return [
       'what about that',
       'remember that',

@@ -854,6 +854,94 @@ function humanizeAlexaDetailLine(line: string): string {
   return ensureSentence(trimmed);
 }
 
+function normalizeAlexaVoiceComparisonText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function isDistinctAlexaVoicePoint(
+  candidate: string,
+  existing: string[],
+): boolean {
+  const normalizedCandidate = normalizeAlexaVoiceComparisonText(candidate);
+  if (!normalizedCandidate) return false;
+  return !existing.some((existingLine) => {
+    const normalizedExisting = normalizeAlexaVoiceComparisonText(existingLine);
+    if (!normalizedExisting) return false;
+    return (
+      normalizedCandidate === normalizedExisting ||
+      normalizedCandidate.includes(normalizedExisting) ||
+      normalizedExisting.includes(normalizedCandidate)
+    );
+  });
+}
+
+function buildAlexaVoiceDetailLines(params: {
+  lead: string;
+  lines: string[];
+  recommendation: string | null;
+  directMode?: boolean;
+  personalityLine?: string | null;
+}): string[] {
+  const selected: string[] = [];
+  const seen = [params.lead];
+  const candidates = [
+    params.personalityLine,
+    ...params.lines.slice(0, params.directMode ? 1 : 2),
+    params.recommendation,
+  ].filter((line): line is string => Boolean(line?.trim()));
+
+  for (const candidate of candidates) {
+    const humanized = humanizeAlexaDetailLine(candidate);
+    if (!isDistinctAlexaVoicePoint(humanized, seen)) {
+      continue;
+    }
+    selected.push(humanized);
+    seen.push(humanized);
+  }
+
+  return selected;
+}
+
+function pickAlexaContinuationDetails(
+  context: DailyCompanionContext,
+): { summary: string; detail?: string } {
+  const seen = [context.summaryText];
+  const candidates = [
+    ...context.extraDetails,
+    context.recommendationText,
+  ].filter((line): line is string => Boolean(line?.trim()));
+  const selected: string[] = [];
+
+  for (const candidate of candidates) {
+    const humanized = humanizeAlexaDetailLine(candidate);
+    if (!isDistinctAlexaVoicePoint(humanized, seen)) {
+      continue;
+    }
+    selected.push(humanized);
+    seen.push(humanized);
+  }
+
+  if (selected.length > 0) {
+    return {
+      summary: selected[0]!,
+      detail: selected[1],
+    };
+  }
+
+  if (context.recommendationText?.trim()) {
+    return {
+      summary: humanizeAlexaDetailLine(context.recommendationText),
+    };
+  }
+
+  return {
+    summary: 'Nothing else feels especially pressing beyond the main read.',
+  };
+}
+
 function formatAlexaReply(
   lead: string,
   lines: string[],
@@ -863,13 +951,13 @@ function formatAlexaReply(
 ): string {
   return buildVoiceReply({
     summary: ensureSentence(lead),
-    details: [
-      personalityLine,
-      ...lines.slice(0, directMode ? 1 : 2),
+    details: buildAlexaVoiceDetailLines({
+      lead,
+      lines,
       recommendation,
-    ]
-      .filter((line): line is string => Boolean(line))
-      .map((line) => humanizeAlexaDetailLine(line)),
+      directMode,
+      personalityLine,
+    }),
     maxDetails: directMode ? 1 : 2,
   });
 }
@@ -1427,6 +1515,10 @@ function buildMorningDraft(params: {
       'action_guidance',
       'risk_check',
       'memory_control',
+      'save_that',
+      'save_for_later',
+      'create_reminder',
+      'send_details',
     ],
     lead,
     leadReason,
@@ -1542,6 +1634,10 @@ function buildMiddayDraft(params: {
       'action_guidance',
       'risk_check',
       'memory_control',
+      'save_that',
+      'save_for_later',
+      'create_reminder',
+      'send_details',
     ],
     lead,
     leadReason,
@@ -1666,6 +1762,10 @@ function buildEveningDraft(params: {
       'action_guidance',
       'risk_check',
       'memory_control',
+      'save_that',
+      'save_for_later',
+      'create_reminder',
+      'send_details',
     ],
     lead,
     leadReason: tonightReminder ? 'unfinished_today' : 'tomorrow_pressure',
@@ -1835,6 +1935,10 @@ function buildHouseholdDraft(params: {
       'switch_person',
       'action_guidance',
       'memory_control',
+      'save_that',
+      'save_for_later',
+      'create_reminder',
+      'send_details',
     ],
     lead,
     leadReason: 'household_scope',
@@ -1977,6 +2081,10 @@ function buildLooseEndsDraft(params: {
       'action_guidance',
       'risk_check',
       'memory_control',
+      'save_that',
+      'save_for_later',
+      'create_reminder',
+      'send_details',
     ],
     lead,
     leadReason,
@@ -2094,6 +2202,10 @@ function buildTomorrowDraft(params: {
       'say_more',
       'action_guidance',
       'memory_control',
+      'save_that',
+      'save_for_later',
+      'create_reminder',
+      'send_details',
     ],
     lead,
     leadReason: firstEvent ? 'tomorrow_overview' : 'tomorrow_clear',
@@ -2324,6 +2436,7 @@ export async function buildDailyCompanionResponse(
       };
     }
     if (isAnythingElsePrompt(normalized) || isSayMorePrompt(normalized)) {
+      const continuation = pickAlexaContinuationDetails(deps.priorContext);
       const extra =
         deps.priorContext.extraDetails.length > 0
           ? deps.priorContext.extraDetails
@@ -2333,8 +2446,8 @@ export async function buildDailyCompanionResponse(
       const reply =
         deps.channel === 'alexa'
           ? buildVoiceReply({
-              summary: extra[0]!,
-              details: [extra[1] || null],
+              summary: continuation.summary,
+              details: [continuation.detail || null],
               maxDetails: 1,
             })
           : [

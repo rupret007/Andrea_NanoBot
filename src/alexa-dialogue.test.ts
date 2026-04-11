@@ -39,6 +39,24 @@ describe('alexa dialogue', () => {
     });
 
     expect(
+      extractAlexaVoiceIntentCapture('CompanionGuidanceIntent', {
+        guidanceText: 'time is it',
+      }),
+    ).toMatchObject({
+      preferredText: 'what time is it',
+      candidateTexts: ['what time is it'],
+    });
+
+    expect(
+      extractAlexaVoiceIntentCapture('CompanionGuidanceIntent', {
+        guidanceText: 'up',
+      }),
+    ).toMatchObject({
+      preferredText: "what's up",
+      candidateTexts: ["what's up"],
+    });
+
+    expect(
       extractAlexaVoiceIntentCapture('PeopleHouseholdIntent', {
         subject: 'Candace',
       }),
@@ -91,6 +109,19 @@ describe('alexa dialogue', () => {
     ).toMatchObject({
       preferredText: 'be a little more direct',
       candidateTexts: ['be a little more direct'],
+    });
+
+    expect(
+      extractAlexaVoiceIntentCapture('ConversationControlIntent', {
+        controlText: 'what about that',
+      }),
+    ).toMatchObject({
+      preferredText: 'what about that',
+      candidateTexts: expect.arrayContaining([
+        'what about that',
+        'remember that',
+        'save that',
+      ]),
     });
   });
 

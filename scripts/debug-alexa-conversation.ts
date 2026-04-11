@@ -135,6 +135,7 @@ async function main(): Promise<void> {
       `- Follow-up binding failures: ${review.followupBindingFailures.length}`,
       `- Communication should-route misses: ${review.communicationShouldRoute.length}`,
       `- Planning should-route misses: ${review.planningShouldRoute.length}`,
+      `- Voice-shape repetition: ${review.voiceShapeRepetition.length}`,
       '',
       '*Top Patterns*',
       ...(review.groupedPatterns.length > 0
@@ -197,13 +198,7 @@ async function main(): Promise<void> {
       {
         label: 'No-context reference',
         envelope: buildIntentEnvelope('ConversationControlIntent', {
-          controlText: 'that',
-        }),
-      },
-      {
-        label: 'Planning gap',
-        envelope: buildIntentEnvelope('OpenAskIntent', {
-          query: 'figure out tonight',
+          controlText: 'what about that',
         }),
       },
       {
@@ -223,6 +218,12 @@ async function main(): Promise<void> {
         }),
       },
       {
+        label: 'Remind me later',
+        envelope: buildIntentEnvelope('ConversationalFollowupIntent', {
+          followupText: 'remind me later',
+        }),
+      },
+      {
         label: 'Candace follow-up',
         envelope: buildIntentEnvelope('PeopleHouseholdIntent', {
           subject: 'Candace',
@@ -235,9 +236,27 @@ async function main(): Promise<void> {
         }),
       },
       {
+        label: 'Planning gap',
+        envelope: buildIntentEnvelope('PlanningOrientationIntent', {
+          topic: 'tonight',
+        }),
+      },
+      {
         label: 'Tonight',
         envelope: buildIntentEnvelope('CompanionGuidanceIntent', {
           guidanceText: 'should i remember tonight',
+        }),
+      },
+      {
+        label: "What's up",
+        envelope: buildIntentEnvelope('CompanionGuidanceIntent', {
+          guidanceText: 'up',
+        }),
+      },
+      {
+        label: 'What time is it',
+        envelope: buildIntentEnvelope('CompanionGuidanceIntent', {
+          guidanceText: 'time is it',
         }),
       },
       {
@@ -249,7 +268,7 @@ async function main(): Promise<void> {
       {
         label: 'Open ask',
         envelope: buildIntentEnvelope('OpenAskIntent', {
-          query: 'meal delivery options for this week',
+          query: 'meal delivery and grocery delivery for a busy week',
         }),
       },
     ];

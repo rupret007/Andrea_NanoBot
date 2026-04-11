@@ -347,6 +347,58 @@ describe('communication companion', () => {
     ).toHaveLength(1);
   });
 
+  it('strips programmatic open-loop phrasing out of Alexa-safe draft topics', () => {
+    seedCandace();
+
+    const result = draftCommunicationReply({
+      channel: 'alexa',
+      groupFolder: 'main',
+      text: 'what should I say back',
+      conversationSummary:
+        'The main thing still open with Candace is dinner plans tonight still need a clean answer.',
+      priorContext: {
+        personName: 'Candace',
+        lastCommunicationSummary:
+          'The main thing still open with Candace is dinner plans tonight still need a clean answer.',
+      },
+      now: new Date('2026-04-06T09:00:00.000Z'),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.draftText).toContain('follow up about dinner plans tonight');
+    expect(result.draftText).not.toContain('The main thing still open with Candace');
+  });
+
+  it('normalizes lowercase person names into cleaner Alexa-safe draft speech', () => {
+    upsertProfileSubject({
+      id: 'subject-candace-lower',
+      groupFolder: 'main',
+      kind: 'person',
+      canonicalName: 'candace',
+      displayName: 'candace',
+      createdAt: '2026-04-06T08:00:00.000Z',
+      updatedAt: '2026-04-06T08:00:00.000Z',
+      disabledAt: null,
+    });
+
+    const result = draftCommunicationReply({
+      channel: 'alexa',
+      groupFolder: 'main',
+      text: 'what should I say back',
+      conversationSummary:
+        'candace said dinner plans tonight still need a clean answer.',
+      priorContext: {
+        personName: 'candace',
+        lastCommunicationSummary:
+          'candace said dinner plans tonight still need a clean answer.',
+      },
+      now: new Date('2026-04-06T09:00:00.000Z'),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.draftText).toContain('Hey Candace,');
+  });
+
   it('summarizes what is still owed and respects manual-only carryover suppression', () => {
     seedCandace();
     analyzeCommunicationMessage({

@@ -285,6 +285,19 @@ describe('assistant capability router', () => {
     });
   });
 
+  it('leaves broad Alexa local voice asks for the Alexa dialogue layer', () => {
+    expect(
+      resolveAlexaIntentToCapability('CompanionGuidanceIntent', {
+        slotValue: 'up',
+      }),
+    ).toBeNull();
+    expect(
+      resolveAlexaIntentToCapability('CompanionGuidanceIntent', {
+        slotValue: 'time is it',
+      }),
+    ).toBeNull();
+  });
+
   it('continues the active capability for Alexa follow-ups when context is strong', () => {
     const state: AlexaConversationState = {
       flowKey: 'research_topic',

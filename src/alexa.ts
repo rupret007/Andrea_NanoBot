@@ -883,7 +883,7 @@ function buildAlexaLocalVoiceResponse(
   if (kind === 'whats_up') {
     return {
       speech:
-        "I'm here and keeping the thread. Ask what matters today, what you're forgetting, or tell me what you want help with.",
+        "I'm here. We can look at what matters today, what you're forgetting, or one thing you want help with.",
       reprompt: DEFAULT_ALEXA_REPROMPT,
     };
   }
@@ -2710,44 +2710,63 @@ export function createAlexaSkill(
     }
 
     if (result.bridgeSaveForLaterText) {
-      return runLinkedAlexaTurn(
-        handlerInput,
-        config,
-        assistantName,
-        authorization.principal,
-        linked,
-        buildAlexaPersonalPrompt(ALEXA_SAVE_FOR_LATER_INTENT, {
-          captureText: result.bridgeSaveForLaterText,
+      saveAlexaConversationState(
+        linked.principalKey,
+        linked.account.accessTokenHash,
+        linked.account.groupFolder,
+        buildAlexaCompanionConversationState({
+          flowKey: 'save_for_later',
+          subjectKind: 'saved_item',
+          summaryText: result.bridgeSaveForLaterText,
+          guidanceGoal: 'action_follow_through',
+          subjectData: {
+            ...(conversationState?.subjectData || {}),
+            savedText: result.bridgeSaveForLaterText,
+            lastAnswerSummary: result.bridgeSaveForLaterText,
+            pendingActionText: result.bridgeSaveForLaterText,
+          },
+          supportedFollowups: [
+            'anything_else',
+            'shorter',
+            'say_more',
+            'send_details',
+            'save_to_library',
+            'track_thread',
+            'create_reminder',
+            'memory_control',
+          ],
+          prioritizationLens:
+            conversationState?.styleHints.prioritizationLens || 'general',
+          hasActionItem: true,
+          responseSource: 'local_companion',
         }),
-        {
-          conversationState: buildAlexaCompanionConversationState({
-            flowKey: 'save_for_later',
-            subjectKind: 'saved_item',
-            summaryText: result.bridgeSaveForLaterText,
-            guidanceGoal: 'action_follow_through',
-            subjectData: {
-              ...(conversationState?.subjectData || {}),
-              savedText: result.bridgeSaveForLaterText,
-              lastAnswerSummary: result.bridgeSaveForLaterText,
-              pendingActionText: result.bridgeSaveForLaterText,
-            },
-            supportedFollowups: [
-              'anything_else',
-              'shorter',
-              'say_more',
-              'send_details',
-              'save_to_library',
-              'track_thread',
-              'create_reminder',
-              'memory_control',
-            ],
-            prioritizationLens:
-              conversationState?.styleHints.prioritizationLens || 'general',
-            hasActionItem: true,
-            responseSource: 'local_companion',
-          }),
-        },
       );
+      saveAlexaPendingSession(
+        linked.principalKey,
+        linked.account.accessTokenHash,
+        'confirm_save_for_later',
+        { captureText: result.bridgeSaveForLaterText },
+      );
+      recordHandledRequest(handlerInput.requestEnvelope, {
+        responseSource: 'barrier',
+        linked: true,
+        groupFolder: linked.account.groupFolder,
+      });
+      if (pilotRecord) {
+        completePilotJourney({
+          eventId: pilotRecord.eventId,
+          ...buildAlexaCompletionPilotOutcome(result),
+        });
+      }
+      return handlerInput.responseBuilder
+        .speak(
+          buildSaveForLaterConfirmationSpeech(
+            assistantName,
+            result.bridgeSaveForLaterText,
+          ),
+        )
+        .reprompt('Say yes to save it, or no to cancel.')
+        .getResponse();
     }
 
     if (result.bridgeDraftReference) {
@@ -3189,6 +3208,90 @@ export function createAlexaSkill(
     }
 
     if (plan.route === 'handoff' && plan.followupAction) {
+      if (plan.followupAction === 'memory_control') {
+        const memoryResult = handlePersonalizationCommand({
+          groupFolder: linked.account.groupFolder,
+          channel: 'alexa',
+          text: plan.followupText || plan.normalizedText,
+          conversationSummary: conversationState?.summaryText,
+          factIdHint: getAlexaConversationReferencedFactId(conversationState),
+        });
+        if (memoryResult.handled) {
+          const priorCompanionContext =
+            resolveAlexaCompanionPriorContext(conversationState);
+          if (
+            priorCompanionContext &&
+            /be (?:a little |a bit )?more direct/i.test(
+              plan.followupText || plan.normalizedText,
+            )
+          ) {
+            return runLocalCompanionIntent(
+              handlerInput,
+              linked,
+              'be a little more direct',
+              preserveAlexaConversationFrameForStyleChange(
+                conversationState ||
+                  buildAlexaCompanionConversationState({
+                    flowKey: 'memory_control',
+                    subjectKind: 'memory_fact',
+                    summaryText: memoryResult.responseText || 'memory control',
+                    guidanceGoal: 'explainability',
+                    supportedFollowups: ['memory_control'],
+                  }),
+                buildAlexaCompanionConversationState({
+                  flowKey: conversationState?.flowKey || 'memory_control',
+                  subjectKind:
+                    conversationState?.subjectKind || 'memory_fact',
+                  summaryText:
+                    conversationState?.summaryText ||
+                    memoryResult.responseText ||
+                    'memory control',
+                  guidanceGoal:
+                    conversationState?.styleHints.guidanceGoal ||
+                    'open_conversation',
+                  supportedFollowups:
+                    conversationState?.supportedFollowups || ['memory_control'],
+                  responseSource: 'local_companion',
+                  subjectData: {
+                    ...(conversationState?.subjectData || {}),
+                    lastAnswerSummary:
+                      conversationState?.subjectData.lastAnswerSummary ||
+                      conversationState?.summaryText,
+                    pendingActionText:
+                      conversationState?.subjectData.pendingActionText,
+                  },
+                }),
+              ),
+              priorCompanionContext,
+            );
+          }
+          if (memoryResult.referencedFactId) {
+            saveAlexaConversationState(
+              linked.principalKey,
+              linked.account.accessTokenHash,
+              linked.account.groupFolder,
+              buildAlexaCompanionConversationState({
+                flowKey: 'memory_control',
+                subjectKind: 'memory_fact',
+                summaryText: memoryResult.responseText || 'memory control',
+                guidanceGoal: 'explainability',
+                supportedFollowups: ['memory_control'],
+                subjectData: { profileFactId: memoryResult.referencedFactId },
+              }),
+            );
+          }
+          recordHandledRequest(handlerInput.requestEnvelope, {
+            responseSource: 'barrier',
+            linked: true,
+            groupFolder: linked.account.groupFolder,
+          });
+          return handlerInput.responseBuilder
+            .speak(memoryResult.responseText || 'Okay.')
+            .reprompt(DEFAULT_ALEXA_REPROMPT)
+            .getResponse();
+        }
+      }
+
       if (
         plan.followupAction === 'save_that' ||
         plan.followupAction === 'send_details' ||
