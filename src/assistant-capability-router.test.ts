@@ -161,10 +161,33 @@ describe('assistant capability router', () => {
     ).toMatchObject({
       capabilityId: 'staff.explain',
     });
+  });
+
+  it('routes personalized setup and everyday capture prompts before broader planning logic', () => {
+    expect(
+      matchAssistantCapabilityRequest('Help me set this up'),
+    ).toMatchObject({
+      capabilityId: 'capture.profile_setup',
+    });
+    expect(
+      matchAssistantCapabilityRequest('Show me my current setup'),
+    ).toMatchObject({
+      capabilityId: 'capture.profile_review',
+    });
+    expect(
+      matchAssistantCapabilityRequest('Add milk to my shopping list'),
+    ).toMatchObject({
+      capabilityId: 'capture.add_item',
+    });
     expect(
       matchAssistantCapabilityRequest('What bills do I need to pay this week?'),
     ).toMatchObject({
-      capabilityId: 'staff.plan_horizon',
+      capabilityId: 'capture.read_items',
+    });
+    expect(
+      matchAssistantCapabilityRequest('What meals have I planned this week?'),
+    ).toMatchObject({
+      capabilityId: 'capture.read_items',
     });
   });
 
@@ -256,6 +279,33 @@ describe('assistant capability router', () => {
       resolveAlexaIntentToCapability('CandaceUpcomingIntent'),
     ).toMatchObject({
       capabilityId: 'household.candace_upcoming',
+    });
+  });
+
+  it('continues everyday capture from prior subject data for updates, conversions, and setup approval', () => {
+    expect(
+      continueAssistantCapabilityFromPriorSubjectData('mark that done', {
+        activeCapabilityId: 'capture.read_items',
+      }),
+    ).toMatchObject({
+      capabilityId: 'capture.update_item',
+    });
+    expect(
+      continueAssistantCapabilityFromPriorSubjectData(
+        'turn that into a reminder',
+        {
+          activeCapabilityId: 'capture.add_item',
+        },
+      ),
+    ).toMatchObject({
+      capabilityId: 'capture.convert_item',
+    });
+    expect(
+      continueAssistantCapabilityFromPriorSubjectData('approve that', {
+        activeCapabilityId: 'capture.profile_setup',
+      }),
+    ).toMatchObject({
+      capabilityId: 'capture.profile_setup',
     });
   });
 

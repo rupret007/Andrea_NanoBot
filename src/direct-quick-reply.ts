@@ -392,7 +392,7 @@ export function maybeBuildDirectQuickReply(
       .slice(0, 5)
       .map((entry) => entry.prompt)
       .join(', ');
-    return `I'm Andrea. I'm strongest on schedule help, reminders, meal and week planning, quick reply help, and keeping follow-through like pills, bills, and open loops clean. Telegram is my richest surface, Alexa is for concise voice help, and BlueBubbles is for bounded Messages help in the current thread. Good asks are ${spotlight}.`;
+    return `I'm Andrea. I'm strongest on schedule help, reminders, shopping and errands, meal and week planning, quick reply help, and keeping follow-through like pills, bills, and open loops clean. Telegram is my richest surface, Alexa is for concise voice help, and BlueBubbles is for bounded Messages help in the current thread. Good asks are ${spotlight}.`;
   }
 
   if (

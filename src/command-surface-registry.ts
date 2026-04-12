@@ -216,6 +216,7 @@ export type PracticalCommandFamilyId =
   | 'local_basics'
   | 'calendar_schedule'
   | 'reminders_save'
+  | 'capture_lists'
   | 'orientation_planning'
   | 'communication_help'
   | 'compare_explain'
@@ -234,6 +235,7 @@ export type PracticalCommandRoutingTarget =
   | 'calendar_read'
   | 'calendar_write'
   | 'reminder_write'
+  | 'capture'
   | 'daily_guidance'
   | 'planning'
   | 'communication'
@@ -338,6 +340,14 @@ export const PRACTICAL_COMMAND_FAMILY_FINDINGS: readonly PracticalCommandFamilyF
   },
   {
     rank: 3,
+    family: 'capture_lists',
+    label: 'Lists, groceries, bills, and everyday capture',
+    whyItMatters:
+      'Daily usefulness goes up fast when capture is low-friction and the open list is easy to review.',
+    routeStrategy: 'capability-first',
+  },
+  {
+    rank: 4,
     family: 'communication_help',
     label: 'Messages and reply help',
     whyItMatters:
@@ -345,7 +355,7 @@ export const PRACTICAL_COMMAND_FAMILY_FINDINGS: readonly PracticalCommandFamilyF
     routeStrategy: 'capability-first',
   },
   {
-    rank: 4,
+    rank: 5,
     family: 'orientation_planning',
     label: 'Daily orientation and planning',
     whyItMatters:
@@ -353,7 +363,7 @@ export const PRACTICAL_COMMAND_FAMILY_FINDINGS: readonly PracticalCommandFamilyF
     routeStrategy: 'capability-first',
   },
   {
-    rank: 5,
+    rank: 6,
     family: 'review_followthrough',
     label: 'Review and open follow-through',
     whyItMatters:
@@ -361,7 +371,7 @@ export const PRACTICAL_COMMAND_FAMILY_FINDINGS: readonly PracticalCommandFamilyF
     routeStrategy: 'capability-first',
   },
   {
-    rank: 6,
+    rank: 7,
     family: 'reminders_save',
     label: 'Save, notes, and remember-this',
     whyItMatters:
@@ -369,7 +379,7 @@ export const PRACTICAL_COMMAND_FAMILY_FINDINGS: readonly PracticalCommandFamilyF
     routeStrategy: 'capability-first',
   },
   {
-    rank: 7,
+    rank: 8,
     family: 'local_basics',
     label: 'Time and date',
     whyItMatters:
@@ -377,7 +387,7 @@ export const PRACTICAL_COMMAND_FAMILY_FINDINGS: readonly PracticalCommandFamilyF
     routeStrategy: 'local-first',
   },
   {
-    rank: 8,
+    rank: 9,
     family: 'compare_explain',
     label: 'Compare, explain, and what should I know',
     whyItMatters:
@@ -385,7 +395,7 @@ export const PRACTICAL_COMMAND_FAMILY_FINDINGS: readonly PracticalCommandFamilyF
     routeStrategy: 'research-first',
   },
   {
-    rank: 9,
+    rank: 10,
     family: 'orientation_planning',
     label: 'Routines like good morning, tonight, and review',
     whyItMatters:
@@ -393,7 +403,7 @@ export const PRACTICAL_COMMAND_FAMILY_FINDINGS: readonly PracticalCommandFamilyF
     routeStrategy: 'capability-first',
   },
   {
-    rank: 10,
+    rank: 11,
     family: 'household_coordination',
     label: 'Household and family coordination',
     whyItMatters:
@@ -433,6 +443,19 @@ export const PRACTICAL_COMMAND_INVENTORY: readonly PracticalCommandEntry[] = [
   practicalCommand('reminders_save', 'remember this', 'alexa', ['telegram'], 'review'),
   practicalCommand('reminders_save', 'add this to my evening reset', 'alexa', ['telegram'], 'reminder_write'),
   practicalCommand('reminders_save', 'send me the fuller version', 'handoff', ['alexa', 'telegram', 'bluebubbles'], 'telegram_handoff'),
+
+  practicalCommand('capture_lists', 'add milk to my shopping list', 'alexa', ['telegram', 'bluebubbles'], 'capture'),
+  practicalCommand('capture_lists', 'put batteries on my list', 'alexa', ['telegram', 'bluebubbles'], 'capture'),
+  practicalCommand('capture_lists', 'save this as an errand', 'alexa', ['telegram', 'bluebubbles'], 'capture'),
+  practicalCommand('capture_lists', 'add pay water bill to my list', 'alexa', ['telegram'], 'capture'),
+  practicalCommand('capture_lists', 'add dinner idea for Friday', 'alexa', ['telegram'], 'capture'),
+  practicalCommand('capture_lists', 'add my pills to tonight', 'alexa', ['telegram'], 'capture'),
+  practicalCommand('capture_lists', "what's on my list", 'alexa', ['telegram', 'bluebubbles'], 'capture'),
+  practicalCommand('capture_lists', 'what do I still need to buy', 'alexa', ['telegram', 'bluebubbles'], 'capture'),
+  practicalCommand('capture_lists', 'what errands do I have', 'alexa', ['telegram'], 'capture'),
+  practicalCommand('capture_lists', 'what meals have I planned this week', 'telegram', ['alexa'], 'capture'),
+  practicalCommand('capture_lists', 'mark that done', 'alexa', ['telegram', 'bluebubbles'], 'capture'),
+  practicalCommand('capture_lists', 'turn that into a reminder', 'alexa', ['telegram'], 'capture'),
 
   practicalCommand('orientation_planning', 'what am I forgetting', 'alexa', ['telegram'], 'daily_guidance'),
   practicalCommand('orientation_planning', 'what matters today', 'alexa', ['telegram'], 'planning'),
@@ -682,6 +705,7 @@ const PRACTICAL_DISCOVERY_FAMILY_LABELS: Record<PracticalCommandFamilyId, string
   local_basics: 'local basics',
   calendar_schedule: 'calendar and schedule',
   reminders_save: 'reminders and save-for-later',
+  capture_lists: 'lists, groceries, bills, and capture',
   orientation_planning: 'planning and what matters today',
   communication_help: 'communication and quick reply help',
   compare_explain: 'compare, explain, and what to know',
@@ -898,7 +922,7 @@ export const NATURAL_LANGUAGE_DISCOVERY_SURFACES: readonly CommandSurfaceEntry[]
     truthClass: 'live_proven',
     summary: "Andrea's richest day-to-day companion and operator surface.",
     description:
-      'Best for schedule help, reminders, meal and week planning, bills and other follow-through, messaging review, and richer execution.',
+      'Best for schedule help, reminders, groceries and errands, pills and bills, meal and week planning, messaging review, and richer execution.',
   },
   {
     id: 'alexa_voice_surface',
@@ -911,7 +935,7 @@ export const NATURAL_LANGUAGE_DISCOVERY_SURFACES: readonly CommandSurfaceEntry[]
     truthClass: 'bounded',
     summary: 'Concise voice help for your day, schedule, reminders, and short follow-up.',
     description:
-      'Best for voice orientation, schedule and reminder asks, meal or tonight planning, bill follow-through, and quick reply help.',
+      'Best for voice orientation, schedule and reminder asks, groceries and errands, pills and bills, meal or tonight planning, and quick reply help.',
     statusAuthority:
       'Check npm run services:status or npm run debug:status for the current live proof and model-sync state.',
   },
@@ -1186,7 +1210,7 @@ export function buildTelegramWelcomeLines(assistantName: string): string[] {
     `*Welcome to ${assistantName}*`,
     '',
     '- Start with a normal request in plain language.',
-    "- Telegram is Andrea's richest surface for schedule help, reminders, meal and week planning, bill follow-through, reply help, and deeper answers.",
+    "- Telegram is Andrea's richest surface for schedule help, reminders, groceries and errands, meal and week planning, bill follow-through, reply help, and deeper answers.",
     '',
     '*Start Here*',
     '- In a direct chat: send a normal message. If this will be your main Andrea chat, run `/registermain` once.',
@@ -1206,7 +1230,7 @@ export function buildTelegramHelpLines(assistantName: string): string[] {
     `*How ${assistantName} Works Here*`,
     '',
     '- Most people should just send a normal message.',
-    "- Telegram is Andrea's richest surface for scheduling, reminders, meal and week planning, bill follow-through, reply help, review, and richer detail.",
+    "- Telegram is Andrea's richest surface for scheduling, reminders, groceries and errands, meal and week planning, bill follow-through, reply help, review, and richer detail.",
     '',
     '*Best Habits*',
     '- In a DM: ask normally, or run `/registermain` once if this should be your main Andrea chat.',
@@ -1263,14 +1287,14 @@ export function buildTelegramFeatureLines(assistantName: string): string[] {
     '*Best Here*',
     '- Check your schedule, add or move something on your calendar, and set reminders that actually stick.',
     '- Figure out what matters today, what bills or other follow-through are still open, and what to do next.',
-    '- Plan tonight, the week, or meals without turning it into a giant planning ritual.',
+    '- Keep groceries, errands, meals, pills, and household checklists in view without turning it into a giant planning ritual.',
     '- Draft replies, summarize messages, and keep communication follow-through clean.',
     '- Compare options, explain a decision, and get source-grounded summaries when those lanes are available.',
     '- Keep track of open follow-through across people, home, pills, bills, and projects without making that the whole public story.',
     '',
     '*Surface Map*',
     '- Telegram is the richest surface for detailed answers and action completion.',
-    '- Alexa is concise voice help for schedule, reminders, planning, open follow-through, and quick reply help.',
+    '- Alexa is concise voice help for schedule, reminders, list capture and readout, planning, open follow-through, and quick reply help.',
     '- BlueBubbles is bounded Messages help in the current thread; mention `@Andrea` there for summaries, drafts, and remind-later decisions.',
     '- Research and image generation are optional lanes when those provider paths are available.',
     '- `/cursor_status` is the safe readiness check for coding and work help. Deeper operator controls stay in Telegram admin surfaces.',
@@ -1278,11 +1302,11 @@ export function buildTelegramFeatureLines(assistantName: string): string[] {
 }
 
 export function buildTelegramDescription(assistantName: string): string {
-  return `${assistantName} helps with schedule questions, reminders, planning meals or the week, reply help, and calm follow-through for things like bills and open loops. Start with a normal message. In DM, run /registermain once to make it your main Andrea chat.`;
+  return `${assistantName} helps with schedule questions, reminders, groceries and errands, pills and bills, planning meals or the week, reply help, and calm follow-through. Start with a normal message. In DM, run /registermain once to make it your main Andrea chat.`;
 }
 
 export function buildTelegramShortDescription(assistantName: string): string {
-  return `${assistantName}: schedule, reminders, planning, replies, and follow-through.`;
+  return `${assistantName}: schedule, reminders, lists, planning, replies, and follow-through.`;
 }
 
 

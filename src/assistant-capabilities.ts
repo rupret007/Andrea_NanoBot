@@ -64,6 +64,7 @@ import {
   buildSignatureFlowText,
 } from './signature-flows.js';
 import { capturePilotIssue } from './pilot-mode.js';
+import { handleEverydayCaptureCommand } from './everyday-capture.js';
 import type {
   AlexaCompanionGuidanceGoal,
   AlexaConversationFollowupAction,
@@ -72,6 +73,7 @@ import type {
   CompanionContinuationCandidate,
   CompanionHandoffPayload,
   CompanionToneProfile,
+  EverydayListScope,
   KnowledgeSourceRecord,
   MediaGenerationResult,
   MessageActionRecord,
@@ -135,7 +137,13 @@ export type AssistantCapabilityId =
   | 'work.current_logs'
   | 'media.image_generate'
   | 'media.image_edit'
-  | 'media.video_generate';
+  | 'media.video_generate'
+  | 'capture.profile_setup'
+  | 'capture.profile_review'
+  | 'capture.add_item'
+  | 'capture.read_items'
+  | 'capture.update_item'
+  | 'capture.convert_item';
 
 export type AssistantCapabilityCategory =
   | 'daily'
@@ -152,7 +160,8 @@ export type AssistantCapabilityCategory =
   | 'staff'
   | 'research'
   | 'work'
-  | 'media';
+  | 'media'
+  | 'capture';
 
 export type AssistantCapabilityOutputShape =
   | 'voice_brief'
@@ -166,6 +175,19 @@ export type AssistantCapabilityHandlerKind =
   | 'research'
   | 'backend_lane'
   | 'edge_only';
+
+type AssistantConversationTaskKind =
+  | 'calendar_read'
+  | 'calendar_write'
+  | 'calendar_move'
+  | 'calendar_cancel'
+  | 'reminder_write'
+  | 'communication_draft'
+  | 'planning_guidance'
+  | 'list_capture'
+  | 'list_read'
+  | 'list_update'
+  | 'profile_setup';
 
 export interface AssistantCapabilityContext {
   channel: 'alexa' | 'telegram' | 'bluebubbles';
@@ -219,6 +241,11 @@ export interface AssistantCapabilityContext {
     delegationRulePreviewJson?: string;
     delegationRuleFocusRuleId?: string;
     delegationRuleExplanation?: string;
+    activeListGroupId?: string;
+    activeListItemIds?: string[];
+    activeListScope?: EverydayListScope;
+    activeOperatingProfileId?: string;
+    activeTaskKind?: AssistantConversationTaskKind;
   };
 }
 
@@ -299,6 +326,11 @@ export interface AssistantCapabilityConversationSeed {
     delegationRulePreviewJson?: string;
     delegationRuleFocusRuleId?: string;
     delegationRuleExplanation?: string;
+    activeListGroupId?: string;
+    activeListItemIds?: string[];
+    activeListScope?: EverydayListScope;
+    activeOperatingProfileId?: string;
+    activeTaskKind?: AssistantConversationTaskKind;
   };
   supportedFollowups?: AlexaConversationFollowupAction[];
   prioritizationLens?:
@@ -3037,6 +3069,94 @@ async function runPilotCaptureCapability(
   };
 }
 
+async function runEverydayCaptureCapability(
+  descriptor: AssistantCapabilityDescriptor,
+  context: AssistantCapabilityContext,
+  input: AssistantCapabilityInput,
+): Promise<AssistantCapabilityResult> {
+  if (!context.groupFolder) {
+    return {
+      handled: true,
+      capabilityId: descriptor.id,
+      replyText: 'I need your registered Andrea context before I can manage lists for you.',
+      outputShape: descriptor.preferredOutputShape[context.channel],
+      trace: buildCapabilityTrace(
+        descriptor,
+        context,
+        'unavailable',
+        'everyday capture requires a registered assistant context',
+      ),
+    };
+  }
+
+  const utterance = input.canonicalText || input.text || '';
+  const result = await handleEverydayCaptureCommand({
+    channel: context.channel,
+    groupFolder: context.groupFolder,
+    chatJid: context.chatJid,
+    text: utterance,
+    replyText: context.replyText,
+    conversationSummary: context.conversationSummary,
+      priorContext: {
+        activeListGroupId: context.priorSubjectData?.activeListGroupId,
+        activeListItemIds: context.priorSubjectData?.activeListItemIds,
+        activeListScope: context.priorSubjectData?.activeListScope,
+        activeOperatingProfileId: context.priorSubjectData?.activeOperatingProfileId,
+        activeTaskKind: context.priorSubjectData?.activeTaskKind,
+        conversationFocus: context.priorSubjectData?.conversationFocus,
+        lastAnswerSummary: context.priorSubjectData?.lastAnswerSummary,
+        threadId: context.priorSubjectData?.threadId,
+      threadTitle: context.priorSubjectData?.threadTitle,
+    },
+    now: context.now,
+  });
+  if (!result.handled) {
+    return { handled: false };
+  }
+
+  const supportedFollowups = result.supportedFollowups || descriptor.followupActions;
+  return {
+    handled: true,
+    capabilityId: descriptor.id,
+    replyText: result.replyText,
+    outputShape:
+      result.mode === 'read_items' && context.channel === 'telegram'
+        ? 'chat_rich'
+        : descriptor.preferredOutputShape[context.channel],
+    conversationSeed: {
+      flowKey: descriptor.id.replace(/\./g, '_'),
+      subjectKind: result.subjectKind || 'saved_item',
+      summaryText: result.summaryText || result.replyText || descriptor.label,
+      guidanceGoal:
+        result.mode === 'profile_setup' || result.mode === 'profile_review'
+          ? 'open_conversation'
+          : 'action_follow_through',
+      subjectData: {
+        activeCapabilityId: descriptor.id,
+        lastAnswerSummary: result.summaryText || result.replyText || descriptor.label,
+        conversationFocus: result.summaryText || utterance,
+          activeListGroupId: result.conversationData?.activeListGroupId,
+          activeListItemIds: result.conversationData?.activeListItemIds,
+          activeListScope: result.conversationData?.activeListScope,
+          activeOperatingProfileId: result.conversationData?.activeOperatingProfileId,
+          activeTaskKind: result.conversationData?.activeTaskKind,
+        },
+      supportedFollowups,
+      responseSource: 'local_companion',
+    },
+    handoffOffer:
+      context.channel === 'alexa' ? result.handoffOffer || undefined : undefined,
+    trace: buildCapabilityTrace(
+      descriptor,
+      context,
+      'local_companion',
+      `handled by everyday capture in ${result.mode || 'unknown'} mode`,
+      result.listItems?.slice(0, 3).map((item) => item.title) || [],
+    ),
+    followupActions: supportedFollowups,
+  };
+}
+
 const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
   {
     id: 'daily.morning_brief',
@@ -4608,6 +4728,162 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     execute: (context, input) =>
       runPilotCaptureCapability(
         CAPABILITY_DESCRIPTORS[53]!,
+        cloneContext(context),
+        input,
+      ),
+  },
+  {
+    id: 'capture.profile_setup',
+    label: 'Everyday Setup',
+    category: 'capture',
+    requiredInputs: ['text'],
+    optionalInputs: [],
+    requiresLinkedAccount: true,
+    requiresConfirmation: false,
+    safeForAlexa: true,
+    safeForTelegram: true,
+    safeForBlueBubbles: true,
+    operatorOnly: false,
+    preferredOutputShape: {
+      alexa: 'voice_brief',
+      telegram: 'chat_rich',
+      bluebubbles: 'chat_brief',
+    },
+    followupActions: ['say_more', 'anything_else'],
+    handlerKind: 'local',
+    execute: (context, input) =>
+      runEverydayCaptureCapability(
+        CAPABILITY_DESCRIPTORS[54]!,
+        cloneContext(context),
+        input,
+      ),
+  },
+  {
+    id: 'capture.profile_review',
+    label: 'Everyday Setup Review',
+    category: 'capture',
+    requiredInputs: ['text'],
+    optionalInputs: [],
+    requiresLinkedAccount: true,
+    requiresConfirmation: false,
+    safeForAlexa: true,
+    safeForTelegram: true,
+    safeForBlueBubbles: true,
+    operatorOnly: false,
+    preferredOutputShape: {
+      alexa: 'voice_brief',
+      telegram: 'chat_rich',
+      bluebubbles: 'chat_brief',
+    },
+    followupActions: ['say_more', 'anything_else'],
+    handlerKind: 'local',
+    execute: (context, input) =>
+      runEverydayCaptureCapability(
+        CAPABILITY_DESCRIPTORS[55]!,
+        cloneContext(context),
+        input,
+      ),
+  },
+  {
+    id: 'capture.add_item',
+    label: 'Add Everyday Item',
+    category: 'capture',
+    requiredInputs: ['text'],
+    optionalInputs: [],
+    requiresLinkedAccount: true,
+    requiresConfirmation: false,
+    safeForAlexa: true,
+    safeForTelegram: true,
+    safeForBlueBubbles: true,
+    operatorOnly: false,
+    preferredOutputShape: {
+      alexa: 'voice_brief',
+      telegram: 'chat_brief',
+      bluebubbles: 'chat_brief',
+    },
+    followupActions: ['anything_else', 'create_reminder', 'save_for_later'],
+    handlerKind: 'local',
+    execute: (context, input) =>
+      runEverydayCaptureCapability(
+        CAPABILITY_DESCRIPTORS[56]!,
+        cloneContext(context),
+        input,
+      ),
+  },
+  {
+    id: 'capture.read_items',
+    label: 'Read Everyday Items',
+    category: 'capture',
+    requiredInputs: ['text'],
+    optionalInputs: [],
+    requiresLinkedAccount: true,
+    requiresConfirmation: false,
+    safeForAlexa: true,
+    safeForTelegram: true,
+    safeForBlueBubbles: true,
+    operatorOnly: false,
+    preferredOutputShape: {
+      alexa: 'voice_brief',
+      telegram: 'chat_rich',
+      bluebubbles: 'chat_brief',
+    },
+    followupActions: ['anything_else', 'create_reminder', 'send_details'],
+    handlerKind: 'local',
+    execute: (context, input) =>
+      runEverydayCaptureCapability(
+        CAPABILITY_DESCRIPTORS[57]!,
+        cloneContext(context),
+        input,
+      ),
+  },
+  {
+    id: 'capture.update_item',
+    label: 'Update Everyday Item',
+    category: 'capture',
+    requiredInputs: ['text'],
+    optionalInputs: [],
+    requiresLinkedAccount: true,
+    requiresConfirmation: false,
+    safeForAlexa: true,
+    safeForTelegram: true,
+    safeForBlueBubbles: true,
+    operatorOnly: false,
+    preferredOutputShape: {
+      alexa: 'voice_brief',
+      telegram: 'chat_brief',
+      bluebubbles: 'chat_brief',
+    },
+    followupActions: ['anything_else', 'create_reminder'],
+    handlerKind: 'local',
+    execute: (context, input) =>
+      runEverydayCaptureCapability(
+        CAPABILITY_DESCRIPTORS[58]!,
+        cloneContext(context),
+        input,
+      ),
+  },
+  {
+    id: 'capture.convert_item',
+    label: 'Convert Everyday Item',
+    category: 'capture',
+    requiredInputs: ['text'],
+    optionalInputs: [],
+    requiresLinkedAccount: true,
+    requiresConfirmation: false,
+    safeForAlexa: true,
+    safeForTelegram: true,
+    safeForBlueBubbles: true,
+    operatorOnly: false,
+    preferredOutputShape: {
+      alexa: 'voice_brief',
+      telegram: 'chat_brief',
+      bluebubbles: 'chat_brief',
+    },
+    followupActions: ['anything_else', 'create_reminder', 'send_details'],
+    handlerKind: 'local',
+    execute: (context, input) =>
+      runEverydayCaptureCapability(
+        CAPABILITY_DESCRIPTORS[59]!,
         cloneContext(context),
         input,
       ),

@@ -25,7 +25,7 @@ export const ALEXA_CONVERSATIONAL_FOLLOWUP_INTENT =
   'ConversationalFollowupIntent';
 export const ALEXA_MEMORY_CONTROL_INTENT = 'MemoryControlIntent';
 export const ALEXA_DEFAULT_REPROMPT =
-  "Ask what's on my calendar tomorrow, remind me to take my pills at 9, help me plan tonight, what bills do I need to pay this week, or what should I say back.";
+  "Ask what's on my calendar tomorrow, add milk to my shopping list, remind me to take my pills at 9, what bills do I need to pay this week, or what should I say back.";
 
 export const ALEXA_V1_PERSONAL_INTENTS = new Set<string>([
   ALEXA_COMPANION_GUIDANCE_INTENT,
@@ -186,15 +186,15 @@ export function buildAlexaOpenConversationPrompt(
 }
 
 export function buildAlexaHelpSpeech(assistantName: string): string {
-  return `This is ${assistantName}. I can check your schedule, add or move something on your calendar, set a reminder, help you plan tonight or the week, keep up with open follow-through like bills, or help you draft a reply. Try asking what's on my calendar tomorrow, remind me to take my pills at 9, what bills do I need to pay this week, help me plan tonight, or what should I say back. If you want, I can send the fuller version to Telegram after we do the first useful step here.`;
+  return `This is ${assistantName}. I can check your schedule, add or move something on your calendar, capture groceries or errands, set a reminder, help you plan tonight or the week, keep up with open follow-through like bills, or help you draft a reply. Try asking what's on my calendar tomorrow, add milk to my shopping list, remind me to take my pills at 9, what bills do I need to pay this week, help me plan tonight, or what should I say back. If you want, I can send the fuller version to Telegram after we do the first useful step here.`;
 }
 
 export function buildAlexaWelcomeSpeech(assistantName: string): string {
-  return `This is ${assistantName}. I can help with your schedule, reminders, planning, open follow-through, and quick reply help. Try what's on my calendar tomorrow, remind me to take my pills at 9, what bills do I need to pay this week, or what should I say back.`;
+  return `This is ${assistantName}. I can help with your schedule, reminders, lists, planning, open follow-through, and quick reply help. Try what's on my calendar tomorrow, add milk to my shopping list, remind me to take my pills at 9, what bills do I need to pay this week, or what should I say back.`;
 }
 
 export function buildAlexaFallbackSpeech(assistantName: string): string {
-  return `This is ${assistantName}. I did not quite catch that. Try asking about your schedule, setting a reminder, planning tonight, what bills are still open, or what you should say back.`;
+  return `This is ${assistantName}. I did not quite catch that. Try asking about your schedule, your list, setting a reminder, planning tonight, what bills are still open, or what you should say back.`;
 }
 
 export function buildReminderLeadTimeQuestion(assistantName: string): string {

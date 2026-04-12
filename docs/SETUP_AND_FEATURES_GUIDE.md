@@ -75,6 +75,8 @@ The current productization target is not more primitives. It is a short list of 
 
 - Alexa or Telegram schedule check -> reminder, move, or richer follow-through
 - `What's on my calendar tomorrow?` -> short read -> add, move, or reminder
+- `Help me set this up` -> proposed Andrea setup -> approved default lists and routines
+- `Add milk to my shopping list` -> quick capture -> readout, remind-later, or mark-done follow-up
 - `Remind me to take my pills at 9` -> reminder -> one practical next step
 - `What bills do I need to pay this week?` -> open follow-through -> reminder or plan
 - `What am I forgetting?` -> one open loop -> reminder, save, or tracking
@@ -93,8 +95,8 @@ npm run debug:signature-flows
 Default product shape:
 
 - Alexa gives short voice help for schedule, reminders, planning, review, and quick reply help
-- Alexa is also a good first stop for pill reminders, open bills, and quick tonight planning
-- Telegram is the richer execution and follow-through surface
+- Alexa is also a good first stop for pill reminders, open bills, grocery capture, and quick tonight planning
+- Telegram is the richer execution and follow-through surface, including setup, grouped list views, and edits
 - BlueBubbles stays calm and text-first across synced chats, only replies when a message explicitly mentions `@Andrea`, and escalates explicitly to Telegram when the fuller answer is better there
 
 ## Status Terms

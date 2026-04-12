@@ -1384,6 +1384,148 @@ export interface ProfileFactWithSubject extends ProfileFact {
   subjectDisplayName: string;
 }
 
+export type OperatingProfileStatus = 'draft' | 'active' | 'superseded';
+
+export type OperatingProfileLearningMode = 'suggest_then_confirm';
+
+export interface OperatingProfileIntake {
+  rawText: string;
+  routines: string[];
+  trackingPriorities: string[];
+  defaultGroups: string[];
+  integrationsWanted: string[];
+  richerSurface: 'telegram' | 'alexa' | 'bluebubbles';
+  scope: 'personal' | 'household' | 'family' | 'mixed';
+  notes: string[];
+}
+
+export interface OperatingProfilePlanGroup {
+  title: string;
+  kind:
+    | 'shopping'
+    | 'errands'
+    | 'bills'
+    | 'meals'
+    | 'household'
+    | 'checklist'
+    | 'general';
+  scope: 'personal' | 'household' | 'family' | 'mixed';
+  purpose: string;
+}
+
+export interface OperatingProfilePlanIntegration {
+  name: string;
+  readiness: 'connected' | 'missing_manual' | 'not_requested';
+  note?: string | null;
+}
+
+export interface OperatingProfilePlan {
+  summary: string;
+  trackedAreas: string[];
+  defaultGroups: OperatingProfilePlanGroup[];
+  routines: string[];
+  reminderSuggestions: string[];
+  richerSurface: 'telegram' | 'alexa' | 'bluebubbles';
+  desiredIntegrations: OperatingProfilePlanIntegration[];
+  learningPolicy: OperatingProfileLearningMode;
+}
+
+export interface OperatingProfile {
+  profileId: string;
+  groupFolder: string;
+  status: OperatingProfileStatus;
+  version: number;
+  basedOnProfileId?: string | null;
+  intakeJson: string;
+  planJson: string;
+  sourceChannel: 'telegram' | 'alexa' | 'bluebubbles' | 'system';
+  createdAt: string;
+  updatedAt: string;
+  approvedAt?: string | null;
+  supersededAt?: string | null;
+}
+
+export type OperatingProfileSuggestionState =
+  | 'proposed'
+  | 'accepted'
+  | 'rejected'
+  | 'dismissed';
+
+export interface OperatingProfileSuggestion {
+  suggestionId: string;
+  groupFolder: string;
+  profileId?: string | null;
+  title: string;
+  summary: string;
+  suggestionJson: string;
+  state: OperatingProfileSuggestionState;
+  sourceChannel: 'telegram' | 'alexa' | 'bluebubbles' | 'system';
+  createdAt: string;
+  updatedAt: string;
+  decidedAt?: string | null;
+}
+
+export type EverydayListGroupKind =
+  | 'shopping'
+  | 'errands'
+  | 'bills'
+  | 'meals'
+  | 'household'
+  | 'checklist'
+  | 'general';
+
+export type EverydayListItemKind =
+  | 'shopping_item'
+  | 'errand'
+  | 'bill'
+  | 'meal_entry'
+  | 'checklist_item'
+  | 'general_item';
+
+export type EverydayListItemState =
+  | 'open'
+  | 'done'
+  | 'snoozed'
+  | 'deferred'
+  | 'converted_to_reminder'
+  | 'converted_to_mission';
+
+export type EverydayListScope = 'personal' | 'household' | 'family' | 'mixed';
+
+export interface EverydayListGroup {
+  groupId: string;
+  groupFolder: string;
+  operatingProfileId?: string | null;
+  title: string;
+  kind: EverydayListGroupKind;
+  scope: EverydayListScope;
+  sourceSummary?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  archivedAt?: string | null;
+}
+
+export interface EverydayListItem {
+  itemId: string;
+  groupFolder: string;
+  groupId: string;
+  operatingProfileId?: string | null;
+  title: string;
+  itemKind: EverydayListItemKind;
+  state: EverydayListItemState;
+  scope: EverydayListScope;
+  sourceChannel: 'telegram' | 'alexa' | 'bluebubbles' | 'system';
+  sourceSummary: string;
+  detailJson?: string | null;
+  linkageJson?: string | null;
+  dueAt?: string | null;
+  scheduledFor?: string | null;
+  deferUntil?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string | null;
+}
+
 export type LifeThreadStatus = 'active' | 'paused' | 'closed' | 'archived';
 
 export type LifeThreadScope =

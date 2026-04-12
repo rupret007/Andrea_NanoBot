@@ -8,6 +8,7 @@ import {
 } from './daily-companion.js';
 import { _initTestDatabase } from './db.js';
 import { analyzeCommunicationMessage } from './communication-companion.js';
+import { handleEverydayCaptureCommand } from './everyday-capture.js';
 import { handleLifeThreadCommand } from './life-threads.js';
 import { handleRitualCommand } from './rituals.js';
 import type { ScheduledTask } from './types.js';
@@ -262,6 +263,50 @@ describe('buildDailyCompanionResponse', () => {
 
     expect(response?.mode).toBe('open_guidance');
     expect(response?.signalsUsed).toContain('chief_of_staff');
+  });
+
+  it('can surface relevant everyday capture items without turning guidance into a list dump', async () => {
+    const now = new Date('2026-04-04T18:00:00-05:00');
+    const fetchImpl = createGoogleCalendarFetchMock({
+      eventsByCalendar: {
+        primary: {
+          items: [],
+        },
+      },
+    });
+
+    await handleEverydayCaptureCommand({
+      channel: 'telegram',
+      groupFolder: 'main',
+      chatJid: 'tg:8004355504',
+      text: 'add pay water bill to my list',
+      now,
+    });
+    await handleEverydayCaptureCommand({
+      channel: 'telegram',
+      groupFolder: 'main',
+      chatJid: 'tg:8004355504',
+      text: 'add my pills to tonight',
+      now,
+    });
+
+    const response = await buildDailyCompanionResponse(
+      'What should I remember tonight?',
+      {
+        channel: 'telegram',
+        groupFolder: 'main',
+        now,
+        timeZone: 'America/Chicago',
+        env: baseEnv,
+        fetchImpl,
+        tasks: [],
+      },
+    );
+
+    expect(response?.signalsUsed).toContain('everyday_capture');
+    expect(response?.reply).toContain('List:');
+    expect(response?.reply).toContain('Take pills');
+    expect(response?.reply).not.toContain('*Groceries*');
   });
 
   it('can include one open communication carryover in daily guidance', async () => {

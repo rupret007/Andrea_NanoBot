@@ -183,7 +183,7 @@ describe('buildTelegramFeaturesText', () => {
       'BlueBubbles is bounded Messages help in the current thread',
     );
     expect(features).toContain(
-      'Alexa is concise voice help for schedule, reminders, planning, open follow-through, and quick reply help',
+      'Alexa is concise voice help for schedule, reminders, list capture and readout, planning, open follow-through, and quick reply help',
     );
     expect(features).not.toContain('Amazon shopping search');
     expect(features).not.toContain('Apple Calendar');

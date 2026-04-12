@@ -24,6 +24,12 @@ import {
   CommunicationThreadRecord,
   CompanionHandoffRecord,
   DelegationRuleRecord,
+  EverydayListGroup,
+  EverydayListGroupKind,
+  EverydayListItem,
+  EverydayListItemKind,
+  EverydayListItemState,
+  EverydayListScope,
   KnowledgeChunkRecord,
   KnowledgeIndexState,
   KnowledgeRetrievalHit,
@@ -37,6 +43,10 @@ import {
   MessageActionRecord,
   NewMessage,
   OutcomeRecord,
+  OperatingProfile,
+  OperatingProfileStatus,
+  OperatingProfileSuggestion,
+  OperatingProfileSuggestionState,
   ProfileFact,
   ProfileFactWithSubject,
   ProfileSubject,
@@ -306,6 +316,77 @@ function createSchema(database: Database.Database): void {
       ON profile_facts(group_folder, subject_id, category, fact_key);
     CREATE INDEX IF NOT EXISTS idx_profile_facts_group
       ON profile_facts(group_folder, state, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS operating_profiles (
+      profile_id TEXT PRIMARY KEY,
+      group_folder TEXT NOT NULL,
+      status TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      based_on_profile_id TEXT,
+      intake_json TEXT NOT NULL,
+      plan_json TEXT NOT NULL,
+      source_channel TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      approved_at TEXT,
+      superseded_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_operating_profiles_group
+      ON operating_profiles(group_folder, status, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS operating_profile_suggestions (
+      suggestion_id TEXT PRIMARY KEY,
+      group_folder TEXT NOT NULL,
+      profile_id TEXT,
+      title TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      suggestion_json TEXT NOT NULL,
+      state TEXT NOT NULL,
+      source_channel TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      decided_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_operating_profile_suggestions_group
+      ON operating_profile_suggestions(group_folder, state, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS everyday_list_groups (
+      group_id TEXT PRIMARY KEY,
+      group_folder TEXT NOT NULL,
+      operating_profile_id TEXT,
+      title TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      source_summary TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      archived_at TEXT
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_everyday_list_groups_unique
+      ON everyday_list_groups(group_folder, title);
+    CREATE INDEX IF NOT EXISTS idx_everyday_list_groups_group
+      ON everyday_list_groups(group_folder, kind, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS everyday_list_items (
+      item_id TEXT PRIMARY KEY,
+      group_folder TEXT NOT NULL,
+      group_id TEXT NOT NULL,
+      operating_profile_id TEXT,
+      title TEXT NOT NULL,
+      item_kind TEXT NOT NULL,
+      state TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      source_channel TEXT NOT NULL,
+      source_summary TEXT NOT NULL,
+      detail_json TEXT,
+      linkage_json TEXT,
+      due_at TEXT,
+      scheduled_for TEXT,
+      defer_until TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      completed_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_everyday_list_items_group
+      ON everyday_list_items(group_folder, state, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_everyday_list_items_list
+      ON everyday_list_items(group_id, state, updated_at DESC);
     CREATE TABLE IF NOT EXISTS knowledge_sources (
       source_id TEXT PRIMARY KEY,
       group_folder TEXT NOT NULL,
@@ -6519,6 +6600,665 @@ export function listProfileFactsForGroup(
     subjectCanonicalName: row.subject_canonical_name,
     subjectDisplayName: row.subject_display_name,
   }));
+}
+
+function mapOperatingProfileRow(row: {
+  profile_id: string;
+  group_folder: string;
+  status: OperatingProfileStatus;
+  version: number;
+  based_on_profile_id: string | null;
+  intake_json: string;
+  plan_json: string;
+  source_channel: OperatingProfile['sourceChannel'];
+  created_at: string;
+  updated_at: string;
+  approved_at: string | null;
+  superseded_at: string | null;
+}): OperatingProfile {
+  return {
+    profileId: row.profile_id,
+    groupFolder: row.group_folder,
+    status: row.status,
+    version: row.version,
+    basedOnProfileId: row.based_on_profile_id,
+    intakeJson: row.intake_json,
+    planJson: row.plan_json,
+    sourceChannel: row.source_channel,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    approvedAt: row.approved_at,
+    supersededAt: row.superseded_at,
+  };
+}
+
+function mapOperatingProfileSuggestionRow(row: {
+  suggestion_id: string;
+  group_folder: string;
+  profile_id: string | null;
+  title: string;
+  summary: string;
+  suggestion_json: string;
+  state: OperatingProfileSuggestionState;
+  source_channel: OperatingProfileSuggestion['sourceChannel'];
+  created_at: string;
+  updated_at: string;
+  decided_at: string | null;
+}): OperatingProfileSuggestion {
+  return {
+    suggestionId: row.suggestion_id,
+    groupFolder: row.group_folder,
+    profileId: row.profile_id,
+    title: row.title,
+    summary: row.summary,
+    suggestionJson: row.suggestion_json,
+    state: row.state,
+    sourceChannel: row.source_channel,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    decidedAt: row.decided_at,
+  };
+}
+
+function mapEverydayListGroupRow(row: {
+  group_id: string;
+  group_folder: string;
+  operating_profile_id: string | null;
+  title: string;
+  kind: EverydayListGroupKind;
+  scope: EverydayListScope;
+  source_summary: string | null;
+  created_at: string;
+  updated_at: string;
+  archived_at: string | null;
+}): EverydayListGroup {
+  return {
+    groupId: row.group_id,
+    groupFolder: row.group_folder,
+    operatingProfileId: row.operating_profile_id,
+    title: row.title,
+    kind: row.kind,
+    scope: row.scope,
+    sourceSummary: row.source_summary,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    archivedAt: row.archived_at,
+  };
+}
+
+function mapEverydayListItemRow(row: {
+  item_id: string;
+  group_folder: string;
+  group_id: string;
+  operating_profile_id: string | null;
+  title: string;
+  item_kind: EverydayListItemKind;
+  state: EverydayListItemState;
+  scope: EverydayListScope;
+  source_channel: EverydayListItem['sourceChannel'];
+  source_summary: string;
+  detail_json: string | null;
+  linkage_json: string | null;
+  due_at: string | null;
+  scheduled_for: string | null;
+  defer_until: string | null;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+}): EverydayListItem {
+  return {
+    itemId: row.item_id,
+    groupFolder: row.group_folder,
+    groupId: row.group_id,
+    operatingProfileId: row.operating_profile_id,
+    title: row.title,
+    itemKind: row.item_kind,
+    state: row.state,
+    scope: row.scope,
+    sourceChannel: row.source_channel,
+    sourceSummary: row.source_summary,
+    detailJson: row.detail_json,
+    linkageJson: row.linkage_json,
+    dueAt: row.due_at,
+    scheduledFor: row.scheduled_for,
+    deferUntil: row.defer_until,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    completedAt: row.completed_at,
+  };
+}
+
+export function upsertOperatingProfile(record: OperatingProfile): void {
+  assertValidGroupFolder(record.groupFolder);
+  db.prepare(
+    `
+      INSERT INTO operating_profiles (
+        profile_id,
+        group_folder,
+        status,
+        version,
+        based_on_profile_id,
+        intake_json,
+        plan_json,
+        source_channel,
+        created_at,
+        updated_at,
+        approved_at,
+        superseded_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(profile_id) DO UPDATE SET
+        group_folder = excluded.group_folder,
+        status = excluded.status,
+        version = excluded.version,
+        based_on_profile_id = excluded.based_on_profile_id,
+        intake_json = excluded.intake_json,
+        plan_json = excluded.plan_json,
+        source_channel = excluded.source_channel,
+        created_at = excluded.created_at,
+        updated_at = excluded.updated_at,
+        approved_at = excluded.approved_at,
+        superseded_at = excluded.superseded_at
+    `,
+  ).run(
+    record.profileId,
+    record.groupFolder,
+    record.status,
+    record.version,
+    record.basedOnProfileId || null,
+    record.intakeJson,
+    record.planJson,
+    record.sourceChannel,
+    record.createdAt,
+    record.updatedAt,
+    record.approvedAt || null,
+    record.supersededAt || null,
+  );
+}
+
+export function getOperatingProfile(
+  profileId: string,
+): OperatingProfile | undefined {
+  const row = db
+    .prepare(
+      `
+        SELECT *
+        FROM operating_profiles
+        WHERE profile_id = ?
+        LIMIT 1
+      `,
+    )
+    .get(profileId) as Parameters<typeof mapOperatingProfileRow>[0] | undefined;
+  return row ? mapOperatingProfileRow(row) : undefined;
+}
+
+export function getActiveOperatingProfile(
+  groupFolder: string,
+): OperatingProfile | undefined {
+  assertValidGroupFolder(groupFolder);
+  const row = db
+    .prepare(
+      `
+        SELECT *
+        FROM operating_profiles
+        WHERE group_folder = ?
+          AND status = 'active'
+        ORDER BY updated_at DESC
+        LIMIT 1
+      `,
+    )
+    .get(groupFolder) as Parameters<typeof mapOperatingProfileRow>[0] | undefined;
+  return row ? mapOperatingProfileRow(row) : undefined;
+}
+
+export function listOperatingProfilesForGroup(
+  groupFolder: string,
+  statuses?: OperatingProfileStatus[],
+): OperatingProfile[] {
+  assertValidGroupFolder(groupFolder);
+  const args: unknown[] = [groupFolder];
+  const statusClause =
+    statuses && statuses.length
+      ? `AND status IN (${statuses.map(() => '?').join(', ')})`
+      : '';
+  if (statuses?.length) {
+    args.push(...statuses);
+  }
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM operating_profiles
+        WHERE group_folder = ?
+          ${statusClause}
+        ORDER BY version DESC, updated_at DESC
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapOperatingProfileRow>[0]>;
+  return rows.map(mapOperatingProfileRow);
+}
+
+export function supersedeActiveOperatingProfiles(
+  groupFolder: string,
+  now: string,
+  exceptProfileId?: string,
+): void {
+  assertValidGroupFolder(groupFolder);
+  if (exceptProfileId) {
+    db.prepare(
+      `
+        UPDATE operating_profiles
+        SET status = 'superseded',
+            updated_at = ?,
+            superseded_at = ?
+        WHERE group_folder = ?
+          AND status = 'active'
+          AND profile_id != ?
+      `,
+    ).run(now, now, groupFolder, exceptProfileId);
+    return;
+  }
+
+  db.prepare(
+    `
+      UPDATE operating_profiles
+      SET status = 'superseded',
+          updated_at = ?,
+          superseded_at = ?
+      WHERE group_folder = ?
+        AND status = 'active'
+    `,
+  ).run(now, now, groupFolder);
+}
+
+export function upsertOperatingProfileSuggestion(
+  record: OperatingProfileSuggestion,
+): void {
+  assertValidGroupFolder(record.groupFolder);
+  db.prepare(
+    `
+      INSERT INTO operating_profile_suggestions (
+        suggestion_id,
+        group_folder,
+        profile_id,
+        title,
+        summary,
+        suggestion_json,
+        state,
+        source_channel,
+        created_at,
+        updated_at,
+        decided_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(suggestion_id) DO UPDATE SET
+        group_folder = excluded.group_folder,
+        profile_id = excluded.profile_id,
+        title = excluded.title,
+        summary = excluded.summary,
+        suggestion_json = excluded.suggestion_json,
+        state = excluded.state,
+        source_channel = excluded.source_channel,
+        created_at = excluded.created_at,
+        updated_at = excluded.updated_at,
+        decided_at = excluded.decided_at
+    `,
+  ).run(
+    record.suggestionId,
+    record.groupFolder,
+    record.profileId || null,
+    record.title,
+    record.summary,
+    record.suggestionJson,
+    record.state,
+    record.sourceChannel,
+    record.createdAt,
+    record.updatedAt,
+    record.decidedAt || null,
+  );
+}
+
+export function listOperatingProfileSuggestions(
+  groupFolder: string,
+  states?: OperatingProfileSuggestionState[],
+): OperatingProfileSuggestion[] {
+  assertValidGroupFolder(groupFolder);
+  const args: unknown[] = [groupFolder];
+  const stateClause =
+    states && states.length
+      ? `AND state IN (${states.map(() => '?').join(', ')})`
+      : '';
+  if (states?.length) {
+    args.push(...states);
+  }
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM operating_profile_suggestions
+        WHERE group_folder = ?
+          ${stateClause}
+        ORDER BY updated_at DESC
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapOperatingProfileSuggestionRow>[0]>;
+  return rows.map(mapOperatingProfileSuggestionRow);
+}
+
+export function updateOperatingProfileSuggestionState(
+  suggestionId: string,
+  state: OperatingProfileSuggestionState,
+  updatedAt: string,
+  decidedAt: string | null = updatedAt,
+): boolean {
+  const result = db
+    .prepare(
+      `
+        UPDATE operating_profile_suggestions
+        SET state = ?, updated_at = ?, decided_at = ?
+        WHERE suggestion_id = ?
+      `,
+    )
+    .run(state, updatedAt, decidedAt, suggestionId);
+  return result.changes === 1;
+}
+
+export function upsertEverydayListGroup(record: EverydayListGroup): void {
+  assertValidGroupFolder(record.groupFolder);
+  db.prepare(
+    `
+      INSERT INTO everyday_list_groups (
+        group_id,
+        group_folder,
+        operating_profile_id,
+        title,
+        kind,
+        scope,
+        source_summary,
+        created_at,
+        updated_at,
+        archived_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(group_id) DO UPDATE SET
+        group_folder = excluded.group_folder,
+        operating_profile_id = excluded.operating_profile_id,
+        title = excluded.title,
+        kind = excluded.kind,
+        scope = excluded.scope,
+        source_summary = excluded.source_summary,
+        created_at = excluded.created_at,
+        updated_at = excluded.updated_at,
+        archived_at = excluded.archived_at
+    `,
+  ).run(
+    record.groupId,
+    record.groupFolder,
+    record.operatingProfileId || null,
+    record.title,
+    record.kind,
+    record.scope,
+    record.sourceSummary || null,
+    record.createdAt,
+    record.updatedAt,
+    record.archivedAt || null,
+  );
+}
+
+export function getEverydayListGroup(
+  groupId: string,
+): EverydayListGroup | undefined {
+  const row = db
+    .prepare(
+      `
+        SELECT *
+        FROM everyday_list_groups
+        WHERE group_id = ?
+        LIMIT 1
+      `,
+    )
+    .get(groupId) as Parameters<typeof mapEverydayListGroupRow>[0] | undefined;
+  return row ? mapEverydayListGroupRow(row) : undefined;
+}
+
+export function findEverydayListGroupByTitle(
+  groupFolder: string,
+  title: string,
+): EverydayListGroup | undefined {
+  assertValidGroupFolder(groupFolder);
+  const row = db
+    .prepare(
+      `
+        SELECT *
+        FROM everyday_list_groups
+        WHERE group_folder = ?
+          AND lower(title) = lower(?)
+          AND archived_at IS NULL
+        LIMIT 1
+      `,
+    )
+    .get(groupFolder, title) as Parameters<typeof mapEverydayListGroupRow>[0] | undefined;
+  return row ? mapEverydayListGroupRow(row) : undefined;
+}
+
+export function findEverydayListGroupByKind(
+  groupFolder: string,
+  kind: EverydayListGroupKind,
+  scope?: EverydayListScope,
+): EverydayListGroup | undefined {
+  assertValidGroupFolder(groupFolder);
+  const row = db
+    .prepare(
+      `
+        SELECT *
+        FROM everyday_list_groups
+        WHERE group_folder = ?
+          AND kind = ?
+          ${scope ? 'AND scope = ?' : ''}
+          AND archived_at IS NULL
+        ORDER BY updated_at DESC
+        LIMIT 1
+      `,
+    )
+    .get(
+      ...(scope ? [groupFolder, kind, scope] : [groupFolder, kind]),
+    ) as Parameters<typeof mapEverydayListGroupRow>[0] | undefined;
+  return row ? mapEverydayListGroupRow(row) : undefined;
+}
+
+export function listEverydayListGroups(
+  groupFolder: string,
+  options: { includeArchived?: boolean } = {},
+): EverydayListGroup[] {
+  assertValidGroupFolder(groupFolder);
+  const clauses = ['group_folder = ?'];
+  if (!options.includeArchived) {
+    clauses.push('archived_at IS NULL');
+  }
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM everyday_list_groups
+        WHERE ${clauses.join(' AND ')}
+        ORDER BY title COLLATE NOCASE ASC
+      `,
+    )
+    .all(groupFolder) as Array<Parameters<typeof mapEverydayListGroupRow>[0]>;
+  return rows.map(mapEverydayListGroupRow);
+}
+
+export function upsertEverydayListItem(record: EverydayListItem): void {
+  assertValidGroupFolder(record.groupFolder);
+  db.prepare(
+    `
+      INSERT INTO everyday_list_items (
+        item_id,
+        group_folder,
+        group_id,
+        operating_profile_id,
+        title,
+        item_kind,
+        state,
+        scope,
+        source_channel,
+        source_summary,
+        detail_json,
+        linkage_json,
+        due_at,
+        scheduled_for,
+        defer_until,
+        created_at,
+        updated_at,
+        completed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(item_id) DO UPDATE SET
+        group_folder = excluded.group_folder,
+        group_id = excluded.group_id,
+        operating_profile_id = excluded.operating_profile_id,
+        title = excluded.title,
+        item_kind = excluded.item_kind,
+        state = excluded.state,
+        scope = excluded.scope,
+        source_channel = excluded.source_channel,
+        source_summary = excluded.source_summary,
+        detail_json = excluded.detail_json,
+        linkage_json = excluded.linkage_json,
+        due_at = excluded.due_at,
+        scheduled_for = excluded.scheduled_for,
+        defer_until = excluded.defer_until,
+        created_at = excluded.created_at,
+        updated_at = excluded.updated_at,
+        completed_at = excluded.completed_at
+    `,
+  ).run(
+    record.itemId,
+    record.groupFolder,
+    record.groupId,
+    record.operatingProfileId || null,
+    record.title,
+    record.itemKind,
+    record.state,
+    record.scope,
+    record.sourceChannel,
+    record.sourceSummary,
+    record.detailJson || null,
+    record.linkageJson || null,
+    record.dueAt || null,
+    record.scheduledFor || null,
+    record.deferUntil || null,
+    record.createdAt,
+    record.updatedAt,
+    record.completedAt || null,
+  );
+}
+
+export function getEverydayListItem(
+  itemId: string,
+): EverydayListItem | undefined {
+  const row = db
+    .prepare(
+      `
+        SELECT *
+        FROM everyday_list_items
+        WHERE item_id = ?
+        LIMIT 1
+      `,
+    )
+    .get(itemId) as Parameters<typeof mapEverydayListItemRow>[0] | undefined;
+  return row ? mapEverydayListItemRow(row) : undefined;
+}
+
+export function listEverydayListItems(
+  groupFolder: string,
+  options: {
+    groupId?: string;
+    groupKind?: EverydayListGroupKind;
+    states?: EverydayListItemState[];
+    includeDone?: boolean;
+    limit?: number;
+    scope?: EverydayListScope;
+  } = {},
+): EverydayListItem[] {
+  assertValidGroupFolder(groupFolder);
+  const clauses = ['i.group_folder = ?'];
+  const args: unknown[] = [groupFolder];
+
+  if (options.groupId) {
+    clauses.push('i.group_id = ?');
+    args.push(options.groupId);
+  }
+  if (options.groupKind) {
+    clauses.push('g.kind = ?');
+    args.push(options.groupKind);
+  }
+  if (options.scope) {
+    clauses.push('i.scope = ?');
+    args.push(options.scope);
+  }
+  if (options.states?.length) {
+    clauses.push(`i.state IN (${options.states.map(() => '?').join(', ')})`);
+    args.push(...options.states);
+  } else if (!options.includeDone) {
+    clauses.push(`i.state NOT IN ('done')`);
+  }
+
+  const limitClause =
+    typeof options.limit === 'number' && options.limit > 0 ? 'LIMIT ?' : '';
+  if (limitClause) {
+    args.push(options.limit as number);
+  }
+
+  const rows = db
+    .prepare(
+      `
+        SELECT i.*
+        FROM everyday_list_items i
+        JOIN everyday_list_groups g ON g.group_id = i.group_id
+        WHERE ${clauses.join(' AND ')}
+        ORDER BY
+          CASE i.state
+            WHEN 'open' THEN 0
+            WHEN 'snoozed' THEN 1
+            WHEN 'deferred' THEN 2
+            ELSE 3
+          END,
+          COALESCE(i.due_at, i.scheduled_for, i.defer_until, i.updated_at) ASC,
+          i.updated_at DESC
+        ${limitClause}
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapEverydayListItemRow>[0]>;
+
+  return rows.map(mapEverydayListItemRow);
+}
+
+export function updateEverydayListItem(
+  itemId: string,
+  patch: Partial<
+    Omit<
+      EverydayListItem,
+      'itemId' | 'groupFolder' | 'groupId' | 'createdAt' | 'sourceChannel'
+    >
+  > & { groupId?: string },
+): boolean {
+  const existing = getEverydayListItem(itemId);
+  if (!existing) return false;
+  upsertEverydayListItem({
+    ...existing,
+    ...patch,
+    updatedAt: patch.updatedAt || new Date().toISOString(),
+  });
+  return true;
+}
+
+export function deleteEverydayListItem(itemId: string): boolean {
+  const result = db
+    .prepare(
+      `
+        DELETE FROM everyday_list_items
+        WHERE item_id = ?
+      `,
+    )
+    .run(itemId);
+  return result.changes === 1;
 }
 
 function mapKnowledgeSourceRow(row: {

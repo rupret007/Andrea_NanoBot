@@ -684,7 +684,7 @@ describe('createAlexaSkill', () => {
     );
 
     expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
-    expect(extractSpeechText(response)).toContain('saved that under Family');
+    expect(extractSpeechText(response)).toContain('added that to the family thread');
   });
 
   it('routes AnythingImportantIntent as risk-aware guidance', async () => {

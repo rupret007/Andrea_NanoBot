@@ -94,6 +94,21 @@ node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/r
 npm run debug:rituals
 ```
 
+For personalized setup, groceries, errands, bills, meals, pills, and lightweight list management changes, add:
+
+```bash
+node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/everyday-capture.test.ts src/assistant-capabilities.test.ts src/assistant-capability-router.test.ts src/daily-companion.test.ts src/command-surface-registry.test.ts src/alexa-v1.test.ts
+npm run telegram:user:smoke
+```
+
+Treat that capture/profile suite as the fast proof that Andrea can:
+
+- build a proposed setup from a guided intake
+- keep learned changes suggestion-first
+- capture groceries, errands, bills, meals, and tonight items cleanly
+- read back the useful slice instead of dumping lists
+- convert a list item into a reminder, plan, or household thread without collapsing those systems together
+
 For communication-companion and relationship-follow-through changes, add:
 
 ```bash

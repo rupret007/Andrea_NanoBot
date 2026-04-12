@@ -47,12 +47,24 @@ describe('assistant capabilities', () => {
     expect(registry.some((entry) => entry.id === 'media.video_generate')).toBe(
       true,
     );
+    expect(registry.some((entry) => entry.id === 'capture.add_item')).toBe(
+      true,
+    );
+    expect(registry.some((entry) => entry.id === 'capture.read_items')).toBe(
+      true,
+    );
 
     expect(getAssistantCapability('work.current_logs')).toMatchObject({
       operatorOnly: true,
       safeForAlexa: false,
       safeForTelegram: true,
       safeForBlueBubbles: false,
+    });
+    expect(getAssistantCapability('capture.add_item')).toMatchObject({
+      category: 'capture',
+      safeForAlexa: true,
+      safeForTelegram: true,
+      safeForBlueBubbles: true,
     });
     expect(getAssistantCapability('pulse.surprise_me')).toMatchObject({
       category: 'pulse',
@@ -195,6 +207,43 @@ describe('assistant capabilities', () => {
     expect(result.capabilityId).toBe('daily.loose_ends');
     expect(result.trace?.responseSource).toBe('local_companion');
     expect(result.dailyResponse?.context.subjectData).toBeDefined();
+  });
+
+  it('runs everyday capture execution and carries list continuation context forward', async () => {
+    const add = await executeAssistantCapability({
+      capabilityId: 'capture.add_item',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:8004355504',
+        now: new Date('2026-04-12T09:00:00-05:00'),
+      },
+      input: {
+        canonicalText: 'add milk to my shopping list',
+      },
+    });
+
+    expect(add.handled).toBe(true);
+    expect(add.replyText).toContain('groceries');
+    expect(add.conversationSeed?.subjectData?.activeListItemIds).toHaveLength(1);
+
+    const read = await executeAssistantCapability({
+      capabilityId: 'capture.read_items',
+      context: {
+        channel: 'alexa',
+        groupFolder: 'main',
+        chatJid: 'tg:8004355504',
+        now: new Date('2026-04-12T09:05:00-05:00'),
+        priorSubjectData: add.conversationSeed?.subjectData,
+      },
+      input: {
+        canonicalText: 'what do I still need to buy',
+      },
+    });
+
+    expect(read.handled).toBe(true);
+    expect(read.replyText?.toLowerCase()).toContain('milk');
+    expect(read.conversationSeed?.subjectData?.activeTaskKind).toBe('list_read');
   });
 
   it('adds companion continuation payloads to Alexa-safe daily answers', async () => {

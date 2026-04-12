@@ -141,7 +141,7 @@ describe('command surface registry', () => {
   });
 
   it('keeps a practical public command inventory without leading with person-specific prompts', () => {
-    expect(PRACTICAL_COMMAND_INVENTORY).toHaveLength(63);
+    expect(PRACTICAL_COMMAND_INVENTORY).toHaveLength(75);
     expect(getEverydayJobSpecs({ jobTier: 'flagship' })).toHaveLength(10);
     expect(
       EVERYDAY_JOB_SPECS.find((job) => job.jobId === 'planning_horizon')

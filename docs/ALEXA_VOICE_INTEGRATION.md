@@ -63,6 +63,9 @@ The strongest everyday assistant jobs are:
 - `what do I have this afternoon`
 - `when is my first meeting tomorrow`
 - `what's next on my calendar`
+- `add milk to my shopping list`
+- `what's on my list`
+- `what do I still need to buy`
 - `add dinner tomorrow at 6:30 PM`
 - `move that to 7`
 - `cancel dinner tomorrow`
@@ -74,6 +77,13 @@ The strongest everyday assistant jobs are:
 - `help me plan tonight`
 - `help me plan meals this week`
 - `what should I know before deciding`
+
+Alexa should treat these list asks as practical voice slices, not long readouts:
+
+- capture one item quickly
+- read the top two or three useful items
+- offer Telegram only when the list is longer or editing is richer
+- rely on the user's approved Telegram setup for default groups like groceries, bills, meals, and tonight
 
 Good Alexa asks in this layer:
 

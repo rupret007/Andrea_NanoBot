@@ -10,6 +10,7 @@ import {
   type AlexaConversationFollowupAction,
   type AlexaConversationSubjectKind,
   type CompanionToneProfile,
+  type EverydayListScope,
   type PersonalityCooldownState,
 } from './types.js';
 import type { AssistantCapabilityId } from './assistant-capabilities.js';
@@ -26,7 +27,11 @@ export interface AlexaConversationSubjectData {
     | 'calendar_cancel'
     | 'reminder_write'
     | 'communication_draft'
-    | 'planning_guidance';
+    | 'planning_guidance'
+    | 'list_capture'
+    | 'list_read'
+    | 'list_update'
+    | 'profile_setup';
   activeTaskSummary?: string;
   activeEntityLabel?: string;
   activeDateTimeContext?: string;
@@ -90,6 +95,10 @@ export interface AlexaConversationSubjectData {
   delegationRulePreviewJson?: string;
   delegationRuleFocusRuleId?: string;
   delegationRuleExplanation?: string;
+  activeListGroupId?: string;
+  activeListItemIds?: string[];
+  activeListScope?: EverydayListScope;
+  activeOperatingProfileId?: string;
 }
 
 export interface AlexaConversationState {

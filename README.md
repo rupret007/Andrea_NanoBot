@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-Andrea is designed to be practically useful every day: schedule help, reminders, meal and week planning, reply drafting, pill and bill follow-through, research, coding help, guarded shopping approvals, and secure chat-based automation across multiple backend lanes.
+Andrea is designed to be practically useful every day: schedule help, reminders, groceries and errands, meal and week planning, reply drafting, pill and bill follow-through, personalized daily setup, research, coding help, guarded shopping approvals, and secure chat-based automation across multiple backend lanes.
 </p>
 
 <p align="center">
@@ -61,6 +61,8 @@ The best way to understand Andrea now is through the flagship journeys it should
 
 - Alexa or Telegram schedule check -> calendar move/add/remind follow-up
 - `What's on my calendar tomorrow?` -> short read -> add, move, or reminder continuation
+- `Help me set this up` -> proposed Andrea setup -> approved default lists, routines, and surfaces
+- `Add milk to my shopping list` -> short confirmation -> `what do I still need to buy`
 - `Remind me to take my pills at 9` -> saved reminder -> one practical next step
 - `What bills do I need to pay this week?` -> open follow-through -> reminder or plan
 - `What am I forgetting?` -> one open loop -> reminder, save, or tracking action
@@ -131,7 +133,8 @@ What normal users should expect:
 
 - calendar help, reminders, follow-ups, and simple task support
 - daily planning, meal planning, what-next guidance, and open-loop review
-- pill reminders, bill follow-through, and save-for-later capture
+- pill reminders, bill follow-through, groceries, errands, meals, and save-for-later capture
+- guided personalized setup so Andrea can learn what to track, which lists matter, and where richer detail should go
 - quick reply help and message summaries
 - research, summaries, and project help
 - fast direct replies for simple questions, playful prompts, and basic math

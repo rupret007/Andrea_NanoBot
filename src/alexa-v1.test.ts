@@ -118,6 +118,9 @@ describe('alexa v1 speech helpers', () => {
       'remind me to take my pills at 9',
     );
     expect(buildAlexaHelpSpeech('Andrea')).toContain(
+      'add milk to my shopping list',
+    );
+    expect(buildAlexaHelpSpeech('Andrea')).toContain(
       'what bills do I need to pay this week',
     );
     expect(buildAlexaHelpSpeech('Andrea')).toContain('Telegram');
@@ -131,6 +134,9 @@ describe('alexa v1 speech helpers', () => {
       'remind me to take my pills at 9',
     );
     expect(buildAlexaWelcomeSpeech('Andrea')).toContain(
+      'add milk to my shopping list',
+    );
+    expect(buildAlexaWelcomeSpeech('Andrea')).toContain(
       'what bills do I need to pay this week',
     );
     expect(buildAlexaWelcomeSpeech('Andrea')).not.toContain('Candace');
@@ -140,9 +146,13 @@ describe('alexa v1 speech helpers', () => {
     expect(buildAlexaFallbackSpeech('Andrea')).toContain(
       'your schedule',
     );
+    expect(buildAlexaFallbackSpeech('Andrea')).toContain('your list');
     expect(buildAlexaFallbackSpeech('Andrea')).toContain('bills are still open');
     expect(ALEXA_DEFAULT_REPROMPT).toContain(
       'remind me to take my pills at 9',
+    );
+    expect(ALEXA_DEFAULT_REPROMPT).toContain(
+      'add milk to my shopping list',
     );
     expect(ALEXA_DEFAULT_REPROMPT).toContain(
       'what bills do I need to pay this week',

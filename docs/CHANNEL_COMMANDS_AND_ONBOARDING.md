@@ -13,10 +13,11 @@ Most people should start with a normal message, not a command.
 Stable user-safe behaviors:
 
 - direct conversation in DMs
+- guided setup for what Andrea should track for you
 - mention-based requests in groups
 - reminders and follow-ups
 - calendar scheduling and schedule questions
-- planning, meal planning, bill follow-through, and reply help
+- planning, meal planning, groceries, errands, bill follow-through, and reply help
 - fast direct replies for simple questions and basic math
 - research and summaries in normal language
 - a small public-safe command set
@@ -47,7 +48,9 @@ Recommended direct-message flow:
 
 Good first requests:
 
+- `Help me set this up`
 - `What's on my calendar tomorrow?`
+- `Add milk to my shopping list`
 - `Remind me to take my pills at 9`
 - `What bills do I need to pay this week?`
 - `What should I say back?`

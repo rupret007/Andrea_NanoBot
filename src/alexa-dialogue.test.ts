@@ -319,7 +319,7 @@ describe('alexa dialogue', () => {
       planAlexaDialogueTurn('what bills do I need to pay this week'),
     ).toMatchObject({
       route: 'shared_capability',
-      capabilityId: 'staff.plan_horizon',
+      capabilityId: 'capture.read_items',
     });
     expect(planAlexaDialogueTurn('figure out tonight')).toMatchObject({
       route: 'shared_capability',

@@ -78,6 +78,69 @@ function isAlexaLocalVoiceAsk(value: string): boolean {
   );
 }
 
+function matchProfileSetupPrompt(
+  normalized: string,
+): AssistantCapabilityMatch | null {
+  const lower = normalized.toLowerCase();
+  if (
+    /^help me set this up\b/.test(lower) ||
+    /^walk me through what you should track for me\b/.test(lower) ||
+    /^update my setup\b/.test(lower) ||
+    /^change what you track\b/.test(lower)
+  ) {
+    return {
+      capabilityId: 'capture.profile_setup',
+      normalizedText: normalized,
+      canonicalText: normalized,
+      reason: 'matched personal operating profile setup phrasing',
+    };
+  }
+  if (/^show me my current setup\b/.test(lower)) {
+    return {
+      capabilityId: 'capture.profile_review',
+      normalizedText: normalized,
+      canonicalText: normalized,
+      reason: 'matched operating profile review phrasing',
+    };
+  }
+  return null;
+}
+
+function matchEverydayCapturePrompt(
+  normalized: string,
+): AssistantCapabilityMatch | null {
+  const lower = normalized.toLowerCase();
+  if (
+    /^(add milk to my shopping list|put batteries on my list|save this as an errand|add pay water bill to my list|add dinner idea for friday|add my pills to tonight|track that for the household)\b/.test(
+      lower,
+    ) ||
+    /^(?:add|put)\b.+\b(?:shopping list|on my list|to tonight|under groceries|under household|under bills|under meals)\b/.test(
+      lower,
+    ) ||
+    /^save (?:this|that).+\b(?:as an errand|under)\b/.test(lower)
+  ) {
+    return {
+      capabilityId: 'capture.add_item',
+      normalizedText: normalized,
+      canonicalText: normalized,
+      reason: 'matched everyday capture phrasing',
+    };
+  }
+  if (
+    /^(what('?s| is) on my list|what do i still need to buy|what errands do i have|what bills do i need to pay(?: this week| soon)?|what meals have i planned(?: this week)?|what should i remember to get tonight)\b/.test(
+      lower,
+    )
+  ) {
+    return {
+      capabilityId: 'capture.read_items',
+      normalizedText: normalized,
+      canonicalText: normalized,
+      reason: 'matched everyday list readout phrasing',
+    };
+  }
+  return null;
+}
+
 function buildOpenAskCandidates(query: string): string[] {
   const trimmed = normalizeText(query);
   const lower = trimmed.toLowerCase();
@@ -152,13 +215,16 @@ function buildBroadAlexaCandidates(
       return ['when is my first meeting tomorrow', 'what is on my calendar tomorrow'];
     }
     if (/\b(pills?|meds?|medication|medicine)\b/.test(lower)) {
-      return ['remind me to take my pills at 9'];
+      return ['remind me to take my pills at 9', 'add my pills to tonight'];
     }
     if (/\b(bill|bills|rent|utilities|pay)\b/.test(lower)) {
-      return ['what bills do I need to pay this week', "what's still open"];
+      return ['what bills do I need to pay this week', "what's on my list"];
+    }
+    if (/\b(list|groceries|shopping|errands)\b/.test(lower)) {
+      return ["what's on my list", 'what do I still need to buy'];
     }
     if (/\b(meal|meals|meal plan)\b/.test(lower)) {
-      return ['help me plan meals this week', 'help me plan tonight'];
+      return ['help me plan meals this week', 'what meals have I planned this week'];
     }
     if (
       /\b(forget|forgetting|forgot|missing|overlook|loose end|loose ends|not handled)\b/.test(
@@ -211,6 +277,9 @@ function buildBroadAlexaCandidates(
   if (intentName === ALEXA_SAVE_REMIND_HANDOFF_INTENT) {
     if (!trimmed) {
       return ['send me the full version'];
+    }
+    if (/\b(list|groceries)\b/.test(lower)) {
+      return [`add ${trimmed} to my shopping list`, `save ${trimmed} for later`];
     }
     if (isBareAlexaReference(trimmed)) {
       return [
@@ -904,6 +973,8 @@ export function matchAssistantCapabilityRequest(
 
   return (
     matchPilotPrompt(normalized) ||
+    matchProfileSetupPrompt(normalized) ||
+    matchEverydayCapturePrompt(normalized) ||
     matchMissionPrompt(normalized) ||
     matchStaffPrompt(normalized) ||
     matchDailyPrompt(normalized) ||
@@ -951,6 +1022,45 @@ function continueAssistantCapabilityFromActiveCapability(
         continuation: true,
       };
     }
+  }
+
+  if (
+    activeCapabilityId?.startsWith('capture.') &&
+    (/^(mark that done|check that off|mark this done|check this off|remove that|remove this|delete that|delete this|move that to next week|move this to next week|remind me about that tomorrow|remind me about this tomorrow)\b/.test(
+      lower,
+    ) ||
+      /^(turn that into a reminder|turn this into a reminder|make this part of my plan|make that part of my plan|save that under the household thread|save this under the household thread)\b/.test(
+        lower,
+      ) ||
+      /^(approve that|approve|use that|yes)\b/.test(lower))
+  ) {
+    return {
+      capabilityId:
+        /^(turn that into a reminder|turn this into a reminder|make this part of my plan|make that part of my plan|save that under the household thread|save this under the household thread)\b/.test(
+          lower,
+        )
+          ? 'capture.convert_item'
+          : /^(approve that|approve|use that|yes)\b/.test(lower)
+            ? 'capture.profile_setup'
+            : 'capture.update_item',
+      normalizedText: normalized,
+      canonicalText: normalized,
+      reason: 'continuing the active everyday capture context',
+      continuation: true,
+    };
+  }
+
+  if (
+    activeCapabilityId === 'capture.profile_setup' ||
+    activeCapabilityId === 'capture.profile_review'
+  ) {
+    return {
+      capabilityId: 'capture.profile_setup',
+      normalizedText: normalized,
+      canonicalText: normalized,
+      reason: 'continuing the operating-profile setup flow',
+      continuation: true,
+    };
   }
 
   if (/^what about candace\b/.test(lower)) {
@@ -1120,7 +1230,10 @@ export function continueAssistantCapabilityFromPriorSubjectData(
   if (!normalized) return null;
   const pilotMatch = matchPilotPrompt(normalized);
   if (pilotMatch) return pilotMatch;
-  if (isSharedAssistantCompletionFollowup(normalized.toLowerCase())) {
+  if (
+    !subjectData.activeCapabilityId?.startsWith('capture.') &&
+    isSharedAssistantCompletionFollowup(normalized.toLowerCase())
+  ) {
     return null;
   }
   return continueAssistantCapabilityFromActiveCapability(

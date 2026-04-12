@@ -27,6 +27,7 @@ import {
 } from './life-threads.js';
 import { getCommunicationCarryoverSignal } from './communication-companion.js';
 import { buildChiefOfStaffSnapshot } from './chief-of-staff.js';
+import { getEverydayCaptureSignal } from './everyday-capture.js';
 import { getMissionCarryoverSignal } from './missions.js';
 import { getResolvedRitualProfile } from './rituals.js';
 import { buildSignatureFlowText } from './signature-flows.js';
@@ -1574,7 +1575,7 @@ function buildMorningDraft(params: {
     usedThreadTitles: threadContext.usedThreadTitles,
     usedThreadReasons: threadContext.usedThreadReasons,
     threadSummaryLines: threadContext.threadSummaryLines,
-    comparisonKeys: {
+  comparisonKeys: {
       nextEvent: nextEvent ? `${nextEvent.id}:${nextEvent.startIso}` : null,
       nextReminder: nextReminder
         ? `${nextReminder.id}:${nextReminder.nextRunIso}`
@@ -1584,6 +1585,42 @@ function buildMorningDraft(params: {
       focus: recommendation.focusKey,
       thread: threadContext.threadSummaryLines[0] || null,
     },
+  };
+}
+
+function applyEverydayCaptureSignalToDraft(
+  draft: CompanionDraft,
+  groupFolder: string | undefined,
+  now: Date,
+): CompanionDraft {
+  if (!groupFolder) return draft;
+  const focus =
+    draft.mode === 'evening_reset'
+      ? 'tonight'
+      : draft.mode === 'morning_brief'
+        ? 'weekly'
+        : 'general';
+  const signals = getEverydayCaptureSignal({
+    groupFolder,
+    focus,
+    now,
+    limit: 1,
+  });
+  const firstSignal = signals[0];
+  if (!firstSignal) return draft;
+  const line = `List: ${firstSignal}`;
+  if (
+    draft.detailLines.some((existing) => existing.toLowerCase() === line.toLowerCase())
+  ) {
+    return draft;
+  }
+  return {
+    ...draft,
+    detailLines: [...draft.detailLines, line],
+    extraDetails: [...draft.extraDetails, line],
+    signalsUsed: draft.signalsUsed.includes('everyday_capture')
+      ? draft.signalsUsed
+      : [...draft.signalsUsed, 'everyday_capture'],
   };
 }
 
@@ -2640,8 +2677,13 @@ export async function buildDailyCompanionResponse(
     const ritualizedDraft = ritualProfile
       ? applyRitualProfileToDraft(staffedDraft, ritualProfile, deps.channel)
       : staffedDraft;
-    const current = finalizeDraft(
+    const captureAwareDraft = applyEverydayCaptureSignalToDraft(
       ritualizedDraft,
+      deps.groupFolder,
+      now,
+    );
+    const current = finalizeDraft(
+      captureAwareDraft,
       deps.channel,
       now,
       snapshot,
@@ -2717,9 +2759,14 @@ export async function buildDailyCompanionResponse(
   const ritualizedDraft = ritualProfile
     ? applyRitualProfileToDraft(staffedDraft, ritualProfile, deps.channel)
     : staffedDraft;
+  const captureAwareDraft = applyEverydayCaptureSignalToDraft(
+    ritualizedDraft,
+    deps.groupFolder,
+    now,
+  );
 
   return finalizeDraft(
-    ritualizedDraft,
+    captureAwareDraft,
     deps.channel,
     now,
     snapshot,

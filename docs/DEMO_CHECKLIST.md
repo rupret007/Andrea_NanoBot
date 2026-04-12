@@ -79,7 +79,21 @@ Important truth:
 - If an optional dependency is blocked:
   - Andrea should still answer locally and briefly; no provider dependency is required
 
-### 3. Candace / household follow-through
+### 3. Telegram personalized setup and everyday capture
+
+- Best prompts:
+  - `help me set this up`
+  - `add milk to my shopping list`
+  - `what do I still need to buy`
+  - `mark that done`
+- Expected behavior:
+  - Andrea proposes a practical setup, then handles quick list capture and short readout without turning into a project manager
+- What makes it impressive:
+  - the assistant adapts to the person instead of assuming one fixed life template
+- If an optional dependency is blocked:
+  - setup should fall back to the deterministic starter plan and core list CRUD should still work locally
+
+### 4. Candace / household follow-through
 
 - Best prompts:
   - `what's still open with Candace`
@@ -92,7 +106,7 @@ Important truth:
 - If an optional dependency is blocked:
   - keep it in-thread; do not pivot to research or media lanes
 
-### 4. Mission / chief-of-staff planning
+### 5. Mission / chief-of-staff planning
 
 - Best prompts:
   - `help me plan tonight`
@@ -106,7 +120,7 @@ Important truth:
 - If an optional dependency is blocked:
   - stay in local planning guidance and avoid research-heavy branches
 
-### 5. Work cockpit continuity
+### 6. Work cockpit continuity
 
 - Best prompts:
   - `/cursor`
@@ -119,7 +133,7 @@ Important truth:
 - If an optional dependency is blocked:
   - the local runtime backend still supports the core cockpit story on this host
 
-### 6. Alexa orientation and follow-up
+### 7. Alexa orientation and follow-up
 
 - Best prompts:
   - `What am I forgetting?`
@@ -135,7 +149,7 @@ Important truth:
 - If an optional dependency is blocked:
   - if the latest model hash is not marked synced, say the exact console/build step and show the current status output
 
-### 7. Cross-channel handoff
+### 8. Cross-channel handoff
 
 - Best prompts:
   - `send me the full version`
@@ -147,7 +161,7 @@ Important truth:
 - If an optional dependency is blocked:
   - keep the shorter version in-channel and say that the richer provider-backed lane is unavailable right now
 
-### 8. Knowledge-library grounded answer
+### 9. Knowledge-library grounded answer
 
 - Best prompts:
   - `use only my saved material for this`
@@ -159,7 +173,7 @@ Important truth:
 - If an optional dependency is blocked:
   - this flow still works because it stays local/library-first
 
-### 9. Calendar add vs remind vs save
+### 10. Calendar add vs remind vs save
 
 - Best prompts:
   - `add dinner with Candace tomorrow at 6:30 PM`
@@ -178,13 +192,14 @@ Default showable story on this host:
 
 1. Telegram ordinary conversation
 2. Telegram daily guidance
-3. Candace follow-through
-4. Mission / chief-of-staff planning
-5. Work cockpit continuity
-6. Alexa orientation if you want voice
-7. Cross-channel handoff
-8. Knowledge-library grounded answer
-9. Calendar add / remind / save distinction
+3. Telegram personalized setup and everyday capture
+4. Candace follow-through
+5. Mission / chief-of-staff planning
+6. Work cockpit continuity
+7. Alexa orientation if you want voice
+8. Cross-channel handoff
+9. Knowledge-library grounded answer
+10. Calendar add / remind / save distinction
 
 Optional lanes that should be described honestly:
 
