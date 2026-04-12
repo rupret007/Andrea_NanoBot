@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-Andrea is designed to be practically useful every day: calendar help, reminders, planning, reply drafting, follow-through, research, coding help, guarded shopping approvals, and secure chat-based automation across multiple backend lanes.
+Andrea is designed to be practically useful every day: schedule help, reminders, meal and week planning, reply drafting, pill and bill follow-through, research, coding help, guarded shopping approvals, and secure chat-based automation across multiple backend lanes.
 </p>
 
 <p align="center">
@@ -61,9 +61,11 @@ The best way to understand Andrea now is through the flagship journeys it should
 
 - Alexa or Telegram schedule check -> calendar move/add/remind follow-up
 - `What's on my calendar tomorrow?` -> short read -> add, move, or reminder continuation
+- `Remind me to take my pills at 9` -> saved reminder -> one practical next step
+- `What bills do I need to pay this week?` -> open follow-through -> reminder or plan
 - `What am I forgetting?` -> one open loop -> reminder, save, or tracking action
 - `What should I say back?` -> draft -> approve/send, save under thread, remind later, or queue a bounded send-later -> honest review state
-- `Help me plan tonight / tomorrow morning` -> next step -> blocker -> confirmed action
+- `Help me plan tonight / tomorrow morning / meals this week` -> next step -> blocker -> confirmed action
 - `What do I owe people?` -> open communication loop -> remind later or thread follow-up
 - source-grounded research -> richer detail -> save to library
 - BlueBubbles message help -> summarize -> draft -> remind later -> optional Telegram escalation
@@ -128,7 +130,8 @@ The product is conversation-first in Telegram, with deeper operator tooling behi
 What normal users should expect:
 
 - calendar help, reminders, follow-ups, and simple task support
-- daily planning, what-next guidance, and open-loop review
+- daily planning, meal planning, what-next guidance, and open-loop review
+- pill reminders, bill follow-through, and save-for-later capture
 - quick reply help and message summaries
 - research, summaries, and project help
 - fast direct replies for simple questions, playful prompts, and basic math

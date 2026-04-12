@@ -1370,9 +1370,7 @@ function finalizeDraft(
           draft.lead,
           [
             ...draft.detailLines,
-            draft.recommendationText
-              ? `Suggestion: ${draft.recommendationText}`
-              : null,
+            draft.recommendationText || null,
           ].filter(Boolean) as string[],
           personalityLine,
         );
@@ -1392,9 +1390,7 @@ function finalizeDraft(
             draft.lead,
             [
               ...draft.detailLines,
-              draft.recommendationText
-                ? `Suggestion: ${draft.recommendationText}`
-                : null,
+              draft.recommendationText || null,
             ].filter(Boolean) as string[],
             personalityLine,
           )
@@ -1755,7 +1751,7 @@ function buildEveningDraft(params: {
   const lead = tonightReminder
     ? `Tonight's loose end is ${tonightReminder.label}.`
     : dueThread
-      ? `The open thread to close tonight is ${dueThread.title}.`
+      ? `The thing worth closing tonight is ${dueThread.title}.`
       : slippingThread
         ? `The thing still most likely to slip tonight is ${slippingThread.title}.`
         : tomorrowPressure
@@ -1921,15 +1917,15 @@ function buildHouseholdDraft(params: {
             ? `With ${personDisplayName}, ${householdLines[0]}.`
             : `I do not see a strong shared signal with ${personDisplayName} right now.`
         : personLeadDetail
-          ? `With ${personDisplayName}, I would stay with ${personLeadDetail}.`
+          ? `With ${personDisplayName}, I'd stay with ${personLeadDetail}.`
           : householdLines[0]
-            ? `With ${personDisplayName}, the next thing worth handling is ${householdLines[0]}.`
+            ? `With ${personDisplayName}, the next thing to handle is ${householdLines[0]}.`
             : `I do not see a strong shared signal with ${personDisplayName} right now.`
     : askStyle === 'family_forgetting'
       ? summarizeThread(relatedThread)
-        ? `The main family thing to keep in mind is ${summarizeThread(relatedThread)}.`
+        ? `The family thing to keep in mind is ${summarizeThread(relatedThread)}.`
         : householdLines[0]
-          ? `The main family thing to keep in mind is ${householdLines[0]}.`
+          ? `The family thing to keep in mind is ${householdLines[0]}.`
           : 'I do not see one strong family loose end right now.'
       : askStyle === 'home_followup'
         ? summarizeThread(relatedThread)

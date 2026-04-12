@@ -70,7 +70,8 @@ describe('buildTelegramHelpText', () => {
     expect(help).toContain('/commands');
     expect(help).toContain('/features');
     expect(help).toContain('Most people should just send a normal message.');
-    expect(help).toContain('help me plan tonight');
+    expect(help).toContain('help me plan meals this week');
+    expect(help).toContain('what bills do I need to pay this week');
     expect(help).toContain('reply help');
     expect(help).not.toContain('/alexa_status');
     expect(help).not.toContain('/amazon_status');
@@ -175,12 +176,14 @@ describe('buildTelegramFeaturesText', () => {
     expect(features).toContain('*Best Here*');
     expect(features).toContain('calendar');
     expect(features).toContain('source-grounded summaries');
-    expect(features).toContain('open follow-through across people, projects, and home');
+    expect(features).toContain(
+      'open follow-through across people, home, pills, bills, and projects',
+    );
     expect(features).toContain(
       'BlueBubbles is bounded Messages help in the current thread',
     );
     expect(features).toContain(
-      'Alexa is concise voice help for calendar, reminders, planning, review, and quick reply help',
+      'Alexa is concise voice help for schedule, reminders, planning, open follow-through, and quick reply help',
     );
     expect(features).not.toContain('Amazon shopping search');
     expect(features).not.toContain('Apple Calendar');

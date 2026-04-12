@@ -16,7 +16,7 @@ Stable user-safe behaviors:
 - mention-based requests in groups
 - reminders and follow-ups
 - calendar scheduling and schedule questions
-- planning, review, and reply help
+- planning, meal planning, bill follow-through, and reply help
 - fast direct replies for simple questions and basic math
 - research and summaries in normal language
 - a small public-safe command set
@@ -48,9 +48,11 @@ Recommended direct-message flow:
 Good first requests:
 
 - `What's on my calendar tomorrow?`
-- `Remind me tomorrow at 3pm to call Sam`
+- `Remind me to take my pills at 9`
+- `What bills do I need to pay this week?`
 - `What should I say back?`
 - `Help me plan tonight`
+- `Help me plan meals this week`
 
 ## Group Behavior
 

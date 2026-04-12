@@ -51,7 +51,7 @@ Andrea has two different documentation audiences on purpose:
 
 - **User-safe surface**
   - normal conversation
-  - calendar help, reminders, planning, quick replies, summaries, and project help
+  - schedule help, reminders, meal planning, quick replies, summaries, bill follow-through, and project help
   - the narrow public Telegram command set
   - `/cursor_status` as the only public-safe Cursor readiness check
 - **Operator-only surface**
@@ -73,9 +73,11 @@ Andrea's current flagship journeys are:
 
 - Alexa or Telegram schedule check -> reminder, move, or richer follow-through
 - `What's on my calendar tomorrow?` -> short read -> add, move, or reminder
+- `Remind me to take my pills at 9` -> clear reminder confirmation -> one next move
+- `What bills do I need to pay this week?` -> open follow-through -> reminder or plan
 - `What am I forgetting?` -> one concrete open loop -> reminder, save, or tracking
 - `What should I say back?` -> draft reply -> save, remind later, or continue in-thread
-- `Help me plan tonight / this weekend` -> mission -> blocker -> confirmed action
+- `Help me plan tonight / this weekend / meals this week` -> mission -> blocker -> confirmed action
 - `What do I owe people?` -> communication review -> reminder or thread follow-up
 - source-grounded research -> richer detail -> save to library
 - BlueBubbles message help -> summarize -> draft -> send or queue send-later -> optional Telegram escalation

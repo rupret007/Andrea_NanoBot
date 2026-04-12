@@ -115,7 +115,10 @@ describe('alexa v1 speech helpers', () => {
   it('keeps help and welcome copy short and voice-first', () => {
     expect(buildAlexaHelpSpeech('Andrea')).toContain('check your schedule');
     expect(buildAlexaHelpSpeech('Andrea')).toContain(
-      'remind me to call Sam tomorrow at 3',
+      'remind me to take my pills at 9',
+    );
+    expect(buildAlexaHelpSpeech('Andrea')).toContain(
+      'what bills do I need to pay this week',
     );
     expect(buildAlexaHelpSpeech('Andrea')).toContain('Telegram');
     expect(buildAlexaHelpSpeech('Andrea')).not.toContain('Andrea Pulse');
@@ -123,20 +126,26 @@ describe('alexa v1 speech helpers', () => {
     expect(buildAlexaWelcomeSpeech('Andrea')).toContain(
       'This is Andrea.',
     );
-    expect(buildAlexaWelcomeSpeech('Andrea')).toContain('calendar');
+    expect(buildAlexaWelcomeSpeech('Andrea')).toContain('schedule');
     expect(buildAlexaWelcomeSpeech('Andrea')).toContain(
-      'remind me to call Sam tomorrow at 3',
+      'remind me to take my pills at 9',
+    );
+    expect(buildAlexaWelcomeSpeech('Andrea')).toContain(
+      'what bills do I need to pay this week',
     );
     expect(buildAlexaWelcomeSpeech('Andrea')).not.toContain('Candace');
     expect(buildAlexaFallbackSpeech('Andrea')).toContain(
       'did not quite catch that',
     );
     expect(buildAlexaFallbackSpeech('Andrea')).toContain(
-      'your calendar',
+      'your schedule',
     );
-    expect(buildAlexaFallbackSpeech('Andrea')).toContain('still open');
+    expect(buildAlexaFallbackSpeech('Andrea')).toContain('bills are still open');
     expect(ALEXA_DEFAULT_REPROMPT).toContain(
-      'remind me to call Sam tomorrow at 3',
+      'remind me to take my pills at 9',
+    );
+    expect(ALEXA_DEFAULT_REPROMPT).toContain(
+      'what bills do I need to pay this week',
     );
     expect(ALEXA_DEFAULT_REPROMPT).toContain("what's on my calendar tomorrow");
     expect(ALEXA_DEFAULT_REPROMPT).not.toContain('Candace');

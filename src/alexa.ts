@@ -1039,13 +1039,13 @@ function buildAlexaLocalVoiceResponse(
   if (kind === 'whats_up') {
     return {
       speech:
-        "I'm here. We can check your schedule, figure out what matters today, or handle one reminder or reply.",
+        "I'm here. We can check your schedule, handle one reminder, figure out what matters today, or help with a quick reply.",
       reprompt: DEFAULT_ALEXA_REPROMPT,
     };
   }
   return {
     speech:
-      'Yes. I can help with your calendar, reminders, planning, what is still open, and quick reply help. If you want more detail after that, I can send the fuller version to Telegram.',
+      'Yes. I can help with your schedule, reminders, planning, open follow-through like bills, and quick reply help. If you want more detail after that, I can send the fuller version to Telegram.',
     reprompt: DEFAULT_ALEXA_REPROMPT,
   };
 }

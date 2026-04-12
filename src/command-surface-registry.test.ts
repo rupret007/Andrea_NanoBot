@@ -9,10 +9,12 @@ import {
   buildTelegramHelpLines,
   buildTelegramWelcomeLines,
   COMMAND_SURFACE_REGISTRY,
+  EVERYDAY_JOB_SPECS,
   INTERNAL_BUTTON_COMMAND_SURFACES,
   OPERATOR_SLASH_COMMAND_SURFACES,
   PRACTICAL_COMMAND_INVENTORY,
   PUBLIC_TELEGRAM_COMMAND_SURFACES,
+  getEverydayJobSpecs,
   getPracticalDiscoverySpotlights,
   getTelegramBotGroupMenuCommands,
   getTelegramBotMenuCommands,
@@ -139,20 +141,36 @@ describe('command surface registry', () => {
   });
 
   it('keeps a practical public command inventory without leading with person-specific prompts', () => {
-    expect(PRACTICAL_COMMAND_INVENTORY).toHaveLength(58);
+    expect(PRACTICAL_COMMAND_INVENTORY).toHaveLength(63);
+    expect(getEverydayJobSpecs({ jobTier: 'flagship' })).toHaveLength(10);
+    expect(
+      EVERYDAY_JOB_SPECS.find((job) => job.jobId === 'planning_horizon')
+        ?.promptVariants,
+    ).toContain('help me plan meals this week');
 
     const alexaSpotlights = getPracticalDiscoverySpotlights('alexa').map(
       (entry) => entry.prompt,
     );
     expect(alexaSpotlights).toEqual([
       "what's on my calendar tomorrow",
-      'remind me to call Sam tomorrow at 3',
-      'help me plan tonight',
+      'remind me to take my pills at 9',
       'what should I say back',
-      'what should I remember tonight',
+      'help me plan tonight',
+      'what am I forgetting',
+    ]);
+    const telegramSpotlights = getPracticalDiscoverySpotlights('telegram').map(
+      (entry) => entry.prompt,
+    );
+    expect(telegramSpotlights).toEqual([
+      "what's on my calendar tomorrow",
+      'remind me to take my pills at 9',
+      'what bills do I need to pay this week',
+      'what should I say back',
+      'help me plan meals this week',
     ]);
     expect(alexaSpotlights.join(' ')).not.toContain('Candace');
     expect(alexaSpotlights.join(' ')).not.toContain('save that');
+    expect(telegramSpotlights.join(' ')).not.toContain('Candace');
   });
 
   it('keeps public Telegram discovery focused on practical jobs first', () => {
@@ -161,16 +179,19 @@ describe('command surface registry', () => {
     const features = buildTelegramFeatureLines('Andrea').join('\n');
 
     expect(welcome).toContain("what's on my calendar tomorrow");
-    expect(welcome).toContain('remind me to call Sam tomorrow at 3');
+    expect(welcome).toContain('remind me to take my pills at 9');
+    expect(welcome).toContain('what bills do I need to pay this week');
     expect(welcome).not.toContain('Candace');
 
     expect(help).toContain('scheduling');
     expect(help).toContain('reply help');
+    expect(help).toContain('bill follow-through');
     expect(help).not.toContain('missions and chief-of-staff');
 
     expect(features).toContain('calendar');
     expect(features).toContain('planning');
     expect(features).toContain('quick reply help');
+    expect(features).toContain('pills');
     expect(features).not.toContain('life threads and follow-through');
   });
 });
@@ -191,6 +212,7 @@ describe('command surface docs', () => {
 
     expect(publicGuide).toContain('/cursor_status');
     expect(publicGuide).toContain("What's on my calendar tomorrow?");
+    expect(publicGuide).toContain('Remind me to take my pills at 9');
     expect(publicGuide).toContain('Help me plan tonight');
     expect(publicGuide).not.toContain('/alexa-status');
     expect(publicGuide).not.toContain('/debug-status');

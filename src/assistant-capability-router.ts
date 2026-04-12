@@ -151,6 +151,15 @@ function buildBroadAlexaCandidates(
     if (/\b(first meeting tomorrow|first meeting)\b/.test(lower)) {
       return ['when is my first meeting tomorrow', 'what is on my calendar tomorrow'];
     }
+    if (/\b(pills?|meds?|medication|medicine)\b/.test(lower)) {
+      return ['remind me to take my pills at 9'];
+    }
+    if (/\b(bill|bills|rent|utilities|pay)\b/.test(lower)) {
+      return ['what bills do I need to pay this week', "what's still open"];
+    }
+    if (/\b(meal|meals|meal plan)\b/.test(lower)) {
+      return ['help me plan meals this week', 'help me plan tonight'];
+    }
     if (
       /\b(forget|forgetting|forgot|missing|overlook|loose end|loose ends|not handled)\b/.test(
         lower,
@@ -699,7 +708,10 @@ function matchStaffPrompt(normalized: string): AssistantCapabilityMatch | null {
     /^what should i not let slip this week\b/.test(lower) ||
     /^what('?s| is) the smart plan for tomorrow\b/.test(lower) ||
     /^what should i line up this weekend\b/.test(lower) ||
-    /^what are the biggest open loops right now\b/.test(lower)
+    /^what are the biggest open loops right now\b/.test(lower) ||
+    /^what bills do i need to pay(?: this week| this month| soon)?\b/.test(lower) ||
+    /^what bills are coming up\b/.test(lower) ||
+    /^what do i need to pay(?: this week| this month)?\b/.test(lower)
   ) {
     return {
       capabilityId: 'staff.plan_horizon',

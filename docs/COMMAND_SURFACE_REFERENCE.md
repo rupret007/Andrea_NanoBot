@@ -90,11 +90,11 @@ These are discoverable by normal language rather than slash commands.
 | --- | --- | --- | --- |
 | Ordinary chat and simple local asks | Telegram, Alexa, BlueBubbles | `live_proven` | `hi`, `what's up`, `what time is it`, `what day is it`, `thanks` |
 | Calendar and schedule | Telegram, Alexa | `live_proven` | `what's on my calendar tomorrow`, `what's next on my calendar`, `move that to 7` |
-| Reminders and save-for-later | Telegram, Alexa, BlueBubbles | `live_proven` | `remind me later`, `save that for later`, `send me the fuller version` |
-| Planning and next steps | Telegram, Alexa | `live_proven` | `what am I forgetting`, `what matters today`, `help me plan tonight` |
+| Reminders and save-for-later | Telegram, Alexa, BlueBubbles | `live_proven` | `remind me to take my pills at 9`, `remind me later`, `save that for later` |
+| Planning and next steps | Telegram, Alexa | `live_proven` | `what am I forgetting`, `help me plan tonight`, `help me plan meals this week` |
 | Communication and reply help | Telegram, Alexa, BlueBubbles | `bounded` | `what should I say back`, `what do I owe people`, `summarize this message` |
 | Compare, explain, and saved context | Telegram, Alexa | `bounded` | `what should I know before deciding`, `compare these options`, `tell me something interesting` |
-| Open follow-through and people | Telegram, Alexa, BlueBubbles | `live_proven` | `what's still open`, `what still needs attention`, `what about Candace` |
+| Open follow-through and people | Telegram, Alexa, BlueBubbles | `live_proven` | `what's still open`, `what bills do I need to pay this week`, `what about Candace` |
 | Coding and work help | Telegram | `live_proven` | natural-language project help plus `/cursor_status` |
 
 ## Operator-Only Telegram Slash Families

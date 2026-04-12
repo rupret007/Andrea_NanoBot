@@ -161,6 +161,11 @@ describe('assistant capability router', () => {
     ).toMatchObject({
       capabilityId: 'staff.explain',
     });
+    expect(
+      matchAssistantCapabilityRequest('What bills do I need to pay this week?'),
+    ).toMatchObject({
+      capabilityId: 'staff.plan_horizon',
+    });
   });
 
   it('matches mission planning and mission control prompts cleanly', () => {

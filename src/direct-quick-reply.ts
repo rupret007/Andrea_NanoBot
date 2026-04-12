@@ -218,7 +218,7 @@ export function maybeBuildDirectQuickReply(
   if (
     isStandalonePrompt(normalized, /^what are you (?:best|good) at[?.! ]*$/, 6)
   ) {
-    return 'Calendar and schedule help, reminders, planning, reply drafting, and keeping follow-through clean. Give me one concrete ask and I will keep it moving.';
+    return 'Schedule help, reminders, meal and week planning, reply drafting, and keeping follow-through like pills, bills, and open loops clean. Give me one concrete ask and I will keep it moving.';
   }
 
   if (
@@ -389,10 +389,10 @@ export function maybeBuildDirectQuickReply(
     )
   ) {
     const spotlight = getPracticalDiscoverySpotlights('telegram')
-      .slice(0, 3)
+      .slice(0, 5)
       .map((entry) => entry.prompt)
       .join(', ');
-    return `I'm Andrea. I'm strongest on calendar help, reminders, planning, quick reply help, and keeping follow-through clean. Telegram is my richest surface, Alexa is for concise voice help, and BlueBubbles is for bounded Messages help in the current thread. Good asks are ${spotlight}.`;
+    return `I'm Andrea. I'm strongest on schedule help, reminders, meal and week planning, quick reply help, and keeping follow-through like pills, bills, and open loops clean. Telegram is my richest surface, Alexa is for concise voice help, and BlueBubbles is for bounded Messages help in the current thread. Good asks are ${spotlight}.`;
   }
 
   if (

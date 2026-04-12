@@ -71,6 +71,7 @@ Important truth:
 - Best prompts:
   - `what am I forgetting`
   - `what should I remember tonight`
+  - `what bills do I need to pay this week`
 - Expected behavior:
   - one grounded open loop or nightly reminder, with a follow-through option
 - What makes it impressive:
@@ -95,6 +96,7 @@ Important truth:
 
 - Best prompts:
   - `help me plan tonight`
+  - `help me plan meals this week`
   - `what's the next step`
   - `what's blocking this`
 - Expected behavior:
@@ -121,6 +123,8 @@ Important truth:
 
 - Best prompts:
   - `What am I forgetting?`
+  - `Remind me to take my pills at 9`
+  - `What bills do I need to pay this week?`
   - `Anything else?`
   - `What about Candace?`
   - `What should I remember tonight?`

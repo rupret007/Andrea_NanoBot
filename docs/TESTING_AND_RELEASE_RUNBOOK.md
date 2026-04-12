@@ -517,11 +517,11 @@ Current truthful closeout note:
 - if the Anthropic-compatible LiteLLM gateway degrades later, report that separately as the core-runtime compatibility lane rather than as a direct OpenAI billing problem
 - typed Alexa+ app chat is not an authoritative proof surface unless Andrea logs a real signed follow-up `IntentRequest` after launch
 - interaction-model changes require a fresh import of `docs/alexa/interaction-model.en-US.json` plus `Build Model` in the Alexa Developer Console before live utterance failures count against the repo
-- after this model update, re-test at least one simple local ask like `what's up` or `what time is it` and one broad routed ask like `what should I say back` or `help me figure out tonight`
+- after this model update, re-test at least one simple local ask like `what's up` or `what time is it` and one broad routed ask like `what should I say back`, `what bills do I need to pay this week`, or `help me figure out tonight`
 - if live voice still falls into `AMAZON.FallbackIntent` after that rebuild, use the Alexa Developer Console Utterance Profiler or Intent History to capture the exact recognized phrase before changing repo code
 - `npm run debug:daily-companion` is the local pinned-Node smoke path for comparing canonical daily-companion prompts like `what am I forgetting` or `what's still open with Candace` against real `groupFolder=main` data
 - `npm run debug:alexa-conversation` is the repo-side pinned-Node harness for checking Alexa-style follow-ups like `anything else`, `what about Candace`, `remember that`, `why`, or `be a little more direct` against the real local routing stack before blaming the live voice surface
-  - include practical assistant turns like `what's on my calendar tomorrow`, `add dinner with Candace tomorrow at 6:30 PM`, `move dinner to 7`, `remind me at 4 to text Candace`, `what's up`, `what time is it`, `what about that`, `what should I say back`, `help me figure out tonight`, and `save that` when validating recent Alexa router changes
+  - include practical assistant turns like `what's on my calendar tomorrow`, `remind me to take my pills at 9`, `what bills do I need to pay this week`, `add dinner with Candace tomorrow at 6:30 PM`, `move dinner to 7`, `what's up`, `what time is it`, `what about that`, `what should I say back`, `help me plan meals this week`, and `save that` when validating recent Alexa router changes
   - `npm run debug:alexa-conversation -- --review` now groups Alexa misses by blocker class, including no-context references, follow-up binding failures, and communication/planning should-route misses
 
 When configured, validate in this order:

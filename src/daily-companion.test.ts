@@ -164,7 +164,7 @@ describe('buildDailyCompanionResponse', () => {
     expect(response?.reply).toContain('The first thing I would keep in mind is');
     expect(response?.reply).toContain('Next: 4:00 PM-5:00 PM Team sync');
     expect(response?.reply).toContain('Reminder: 1:30 PM check on the demo');
-    expect(response?.reply).toContain('Suggestion:');
+    expect(response?.reply).toContain('Next:');
     expect(response?.grounded?.selectedWork?.title).toBe('Ship docs');
   });
 

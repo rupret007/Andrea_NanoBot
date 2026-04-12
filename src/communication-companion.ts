@@ -599,6 +599,27 @@ function pickSuggestedActions(
   }
 }
 
+function formatSuggestedActionLabel(
+  action: CommunicationSuggestedAction | undefined,
+): string | null {
+  switch (action) {
+    case 'draft_reply':
+      return 'Draft the reply next.';
+    case 'create_reminder':
+      return 'Set a reminder for it.';
+    case 'save_for_later':
+      return 'Save it for later.';
+    case 'link_thread':
+      return 'Keep it tied to this thread.';
+    case 'reply_now':
+      return 'Reply now.';
+    case 'ignore':
+      return 'Leave it alone for now.';
+    default:
+      return null;
+  }
+}
+
 function buildSummaryText(
   messageText: string,
   linkedSubjects: ProfileSubject[],
@@ -1200,7 +1221,7 @@ export function manageCommunicationTracking(
             result.responseText ||
             `Okay. I linked that under ${result.referencedThread.title}.`,
           stillOpen: analysis.summaryText || thread.lastInboundSummary || null,
-          nextSuggestion: 'I can also remind you later or draft the reply.',
+          nextSuggestion: 'If you want, I can remind you about the reply later.',
         }),
         thread: getCommunicationThread(thread.id),
       };
@@ -1259,7 +1280,7 @@ export function manageCommunicationTracking(
         didWhat: planned.confirmation,
         stillOpen:
           analysis.summaryText || thread.lastInboundSummary || thread.title,
-          nextSuggestion: 'I can also draft the reply when you are ready.',
+          nextSuggestion: "If you want, I can draft the reply when you're ready.",
         }),
         reminderTaskId: planned.task.id,
         thread: readUpdatedThread(),
@@ -1268,7 +1289,7 @@ export function manageCommunicationTracking(
 
   return {
     ok: true,
-    replyText: 'I can link it to a thread, remind you later, stop surfacing it, or mark it handled.',
+    replyText: 'I can remind you later, keep it tied to this thread, or mark it handled.',
     thread,
   };
 }
@@ -1322,12 +1343,7 @@ export function formatCommunicationAnalysisReply(
         ? `Urgency: ${result.urgency}`
         : null,
     ],
-    nextAction: result.suggestedActions.length
-      ? result.suggestedActions
-          .slice(0, 2)
-          .map((action) => action.replace(/_/g, ' '))
-          .join(', ')
-      : null,
+    nextAction: formatSuggestedActionLabel(result.suggestedActions[0]),
     whyLine: result.explanation,
   });
 }
@@ -1350,7 +1366,7 @@ export function formatCommunicationDraftReply(
   return buildSignatureFlowText({
     lead: result.summaryText || 'I drafted a reply.',
     bodyText: [`Draft:`, result.draftText].filter(Boolean).join('\n'),
-    nextAction: 'Save it, send the fuller version, or set a reminder.',
+    nextAction: 'If you want, I can remind you to send it later.',
     whyLine:
       result.linkedSubjects[0]?.displayName
         ? `This is shaped around ${result.linkedSubjects[0].displayName} and the current conversation.`

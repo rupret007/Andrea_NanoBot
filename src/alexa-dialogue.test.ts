@@ -95,6 +95,30 @@ describe('alexa dialogue', () => {
     });
 
     expect(
+      extractAlexaVoiceIntentCapture('CompanionGuidanceIntent', {
+        guidanceText: 'bills this week',
+      }),
+    ).toMatchObject({
+      preferredText: 'what bills do I need to pay this week',
+    });
+
+    expect(
+      extractAlexaVoiceIntentCapture('CompanionGuidanceIntent', {
+        guidanceText: 'meal plan',
+      }),
+    ).toMatchObject({
+      preferredText: 'help me plan meals this week',
+    });
+
+    expect(
+      extractAlexaVoiceIntentCapture('CompanionGuidanceIntent', {
+        guidanceText: 'take my pills at 9',
+      }),
+    ).toMatchObject({
+      preferredText: 'remind me to take my pills at 9',
+    });
+
+    expect(
       extractAlexaVoiceIntentCapture('PeopleHouseholdIntent', {
         subject: 'Candace',
       }),
@@ -290,6 +314,12 @@ describe('alexa dialogue', () => {
     expect(planAlexaDialogueTurn("what's still open")).toMatchObject({
       route: 'shared_capability',
       capabilityId: 'daily.loose_ends',
+    });
+    expect(
+      planAlexaDialogueTurn('what bills do I need to pay this week'),
+    ).toMatchObject({
+      route: 'shared_capability',
+      capabilityId: 'staff.plan_horizon',
     });
     expect(planAlexaDialogueTurn('figure out tonight')).toMatchObject({
       route: 'shared_capability',

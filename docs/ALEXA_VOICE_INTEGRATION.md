@@ -66,11 +66,13 @@ The strongest everyday assistant jobs are:
 - `add dinner tomorrow at 6:30 PM`
 - `move that to 7`
 - `cancel dinner tomorrow`
-- `remind me to call Sam tomorrow at 3`
+- `remind me to take my pills at 9`
+- `what bills do I need to pay this week`
 - `remind me about that tonight`
 - `what should I say back`
 - `what do I owe people`
 - `help me plan tonight`
+- `help me plan meals this week`
 - `what should I know before deciding`
 
 Good Alexa asks in this layer:
@@ -120,6 +122,8 @@ The strongest Alexa-first flows are:
 - `what should I remember tonight`
 - `what should I do next`
 - `what's on my calendar tomorrow`
+- `remind me to take my pills at 9`
+- `what bills do I need to pay this week`
 - `add dinner with Candace tomorrow at 6:30 PM`
 - `move dinner to 7`
 - `remind me at 4 to text Candace`
