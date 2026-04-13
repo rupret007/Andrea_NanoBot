@@ -1,6 +1,13 @@
 import { randomUUID } from 'crypto';
 import http, { type IncomingMessage, type Server, type ServerResponse } from 'http';
 
+import {
+  createDefaultBlueBubblesMonitorState,
+  type BlueBubblesDetectionState,
+  readBlueBubblesMonitorState,
+  type BlueBubblesMonitorState,
+  writeBlueBubblesMonitorState,
+} from '../bluebubbles-monitor-state.js';
 import { hasStoredMessage, storeChatMetadata, storeMessageDirect } from '../db.js';
 import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
@@ -25,6 +32,11 @@ const DEFAULT_BLUEBUBBLES_PORT = 4305;
 const DEFAULT_BLUEBUBBLES_CHAT_SCOPE: BlueBubblesChatScope = 'allowlist';
 const BLUEBUBBLES_OUTBOUND_SENDER_LABEL = 'Andrea:';
 const BLUEBUBBLES_STARTUP_FETCH_TIMEOUT_MS = 5_000;
+const BLUEBUBBLES_SHADOW_POLL_INTERVAL_MS = 75_000;
+const BLUEBUBBLES_MISSED_INBOUND_GRACE_MS = 2 * 60 * 1_000;
+const BLUEBUBBLES_EVIDENCE_WINDOW_MS = 10 * 60 * 1_000;
+const BLUEBUBBLES_FALLBACK_COOLDOWN_MS = 6 * 60 * 60 * 1_000;
+const BLUEBUBBLES_FALLBACK_EVIDENCE_THRESHOLD = 2;
 
 function parseBool(value: string | undefined, fallback = false): boolean {
   if (value == null) return fallback;
@@ -933,6 +945,53 @@ async function fetchNormalizedBlueBubblesHistoryRows(
     );
 }
 
+async function fetchNormalizedBlueBubblesRecentMessages(
+  config: Pick<BlueBubblesConfig, 'baseUrl' | 'password'>,
+  limit = 12,
+): Promise<NormalizedBlueBubblesHistoryRow[]> {
+  if (!config.baseUrl || !config.password) {
+    return [];
+  }
+
+  const url = new URL('/api/v1/message', config.baseUrl);
+  for (const [key, value] of buildAuthSearchParams(config.password).entries()) {
+    url.searchParams.set(key, value);
+  }
+  url.searchParams.set('limit', String(Math.max(1, limit)));
+  url.searchParams.set('offset', '0');
+  url.searchParams.set('sort', 'DESC');
+
+  const response = await fetchBlueBubblesWithTimeout(url);
+  const responseText = await response.text();
+  if (!response.ok) {
+    throw new Error(extractBlueBubblesErrorText(response.status, responseText));
+  }
+
+  return normalizeBlueBubblesHistoryRows(parseBlueBubblesJson(responseText))
+    .map((row) => {
+      const rowRecord = asRecord(row);
+      const chats = Array.isArray(rowRecord.chats)
+        ? rowRecord.chats.map((item) => asRecord(item))
+        : [];
+      const chat = chats[0] || {};
+      const chatGuid =
+        firstString(
+          rowRecord.chatGuid,
+          chat.guid,
+          chat.chatGuid,
+          rowRecord.guid,
+        ) || null;
+      if (!chatGuid) return null;
+      return normalizeBlueBubblesIncomingMessage(
+        normalizeBlueBubblesHistoryPayload(chatGuid, rowRecord),
+      );
+    })
+    .filter((row): row is NormalizedBlueBubblesHistoryRow => row !== null)
+    .sort((left, right) =>
+      left.message.timestamp.localeCompare(right.message.timestamp),
+    );
+}
+
 export async function primeBlueBubblesChatHistory(
   config: Pick<BlueBubblesConfig, 'baseUrl' | 'password'>,
   chatJid: string,
@@ -1061,6 +1120,10 @@ export class BlueBubblesChannel implements Channel {
   private sendMethod: BlueBubblesSendMethod = 'private-api';
 
   private privateApiAvailable: boolean | null = null;
+
+  private shadowPollTimer: ReturnType<typeof setInterval> | null = null;
+
+  private monitorState: BlueBubblesMonitorState = readBlueBubblesMonitorState();
 
   constructor(
     private readonly config: BlueBubblesConfig,
@@ -1307,6 +1370,323 @@ export class BlueBubblesChannel implements Channel {
     return /message send error/i.test(errorText);
   }
 
+  private persistMonitorState(): void {
+    this.monitorState.updatedAt = new Date().toISOString();
+    writeBlueBubblesMonitorState(this.monitorState);
+  }
+
+  private pruneRecentEvidence(nowMs = Date.now()): void {
+    this.monitorState.recentEvidence = this.monitorState.recentEvidence.filter(
+      (entry) => {
+        const parsed = Date.parse(entry.observedAt);
+        return Number.isFinite(parsed) && nowMs - parsed <= BLUEBUBBLES_EVIDENCE_WINDOW_MS;
+      },
+    );
+  }
+
+  private setDetectionState(
+    state: BlueBubblesDetectionState,
+    detail: string | null,
+    nextAction: string | null,
+  ): void {
+    this.monitorState.detectionState = state;
+    this.monitorState.detectionDetail = detail;
+    this.monitorState.detectionNextAction = nextAction;
+  }
+
+  private noteWebhookObserved(chatJid: string, timestamp: string): void {
+    const previous = this.monitorState.perChatWebhookObserved[chatJid];
+    if (!previous || previous < timestamp) {
+      this.monitorState.perChatWebhookObserved[chatJid] = timestamp;
+    }
+    if (
+      !this.monitorState.mostRecentWebhookObservedAt ||
+      this.monitorState.mostRecentWebhookObservedAt < timestamp
+    ) {
+      this.monitorState.mostRecentWebhookObservedAt = timestamp;
+      this.monitorState.mostRecentWebhookObservedChatJid = chatJid;
+    }
+    if (this.monitorState.lastIgnoredChatJid === chatJid) {
+      this.monitorState.lastIgnoredAt = null;
+      this.monitorState.lastIgnoredChatJid = null;
+      this.monitorState.lastIgnoredReason = null;
+    }
+    this.persistMonitorState();
+  }
+
+  private noteIgnoredWebhook(
+    chatJid: string,
+    at: string,
+    reason: 'mention_required' | 'chat_scope',
+  ): void {
+    this.monitorState.lastIgnoredAt = at;
+    this.monitorState.lastIgnoredChatJid = chatJid;
+    this.monitorState.lastIgnoredReason = reason;
+    this.setDetectionState(
+      'ignored_by_gate_or_scope',
+      reason === 'mention_required'
+        ? `Andrea saw a Messages turn in ${chatJid}, but it was intentionally ignored because the thread still requires @Andrea.`
+        : `Andrea saw a Messages turn in ${chatJid}, but it was intentionally ignored because that chat is outside the configured scope.`,
+      reason === 'mention_required'
+        ? 'Use @Andrea in that thread, or relax the reply gate if you want Andrea to answer ordinary chatter there.'
+        : 'Use a chat that is inside the configured Messages scope, or widen the BlueBubbles scope on this host.',
+    );
+    this.persistMonitorState();
+  }
+
+  private noteReplySendFailure(chatJid: string, errorText: string): void {
+    const observedAt = new Date().toISOString();
+    this.monitorState.lastReplySendFailureAt = observedAt;
+    this.monitorState.lastReplySendFailureChatJid = chatJid;
+    this.monitorState.lastReplySendFailureStage =
+      this.lastOutboundTargetKind || 'reply_send';
+    const signature = [
+      'reply',
+      chatJid,
+      this.lastOutboundTargetKind || 'none',
+      errorText,
+    ].join(':');
+    if (
+      !this.monitorState.recentEvidence.some(
+        (entry) => entry.kind === 'reply_delivery_failed' && entry.signature === signature,
+      )
+    ) {
+      this.monitorState.recentEvidence.push({
+        kind: 'reply_delivery_failed',
+        chatJid,
+        signature,
+        observedAt,
+      });
+    }
+    this.pruneRecentEvidence(Date.parse(observedAt));
+    this.persistMonitorState();
+  }
+
+  private async maybeEscalateCrossSurfaceFallback(): Promise<void> {
+    const recentQualifyingEvidence = this.monitorState.recentEvidence.filter(
+      (entry) =>
+        entry.kind === 'missed_inbound' || entry.kind === 'reply_delivery_failed',
+    );
+    const nowMs = Date.now();
+    const lastSentMs = this.monitorState.crossSurfaceFallbackLastSentAt
+      ? Date.parse(this.monitorState.crossSurfaceFallbackLastSentAt)
+      : NaN;
+    const inCooldown =
+      Number.isFinite(lastSentMs) &&
+      nowMs - lastSentMs < BLUEBUBBLES_FALLBACK_COOLDOWN_MS;
+
+    if (recentQualifyingEvidence.length === 0) {
+      this.monitorState.crossSurfaceFallbackState = 'idle';
+      this.persistMonitorState();
+      return;
+    }
+
+    if (inCooldown) {
+      this.monitorState.crossSurfaceFallbackState = 'cooldown';
+      this.persistMonitorState();
+      return;
+    }
+
+    if (
+      recentQualifyingEvidence.length < BLUEBUBBLES_FALLBACK_EVIDENCE_THRESHOLD ||
+      !this.opts.onCrossSurfaceFallback
+    ) {
+      this.monitorState.crossSurfaceFallbackState = 'armed';
+      this.persistMonitorState();
+      return;
+    }
+
+    const detail =
+      this.monitorState.detectionDetail ||
+      'Messages looks unreliable right now, so use Telegram for the moment.';
+    const result = await this.opts.onCrossSurfaceFallback({
+      sourceChannel: 'bluebubbles',
+      detail,
+      chatJid:
+        this.monitorState.mostRecentServerSeenChatJid ||
+        this.monitorState.lastReplySendFailureChatJid ||
+        null,
+    });
+    if (result.sent) {
+      this.monitorState.crossSurfaceFallbackState = 'sent';
+      this.monitorState.crossSurfaceFallbackLastSentAt = new Date().toISOString();
+      this.monitorState.crossSurfaceFallbackLastDetail = result.detail;
+    } else {
+      this.monitorState.crossSurfaceFallbackState = 'armed';
+      this.monitorState.crossSurfaceFallbackLastDetail = result.detail;
+    }
+    this.persistMonitorState();
+  }
+
+  private async runShadowMonitorOnce(): Promise<void> {
+    const nowMs = Date.now();
+    this.pruneRecentEvidence(nowMs);
+    try {
+      const recentMessages = await fetchNormalizedBlueBubblesRecentMessages(
+        this.config,
+        8,
+      );
+      this.monitorState.shadowPollLastOkAt = new Date(nowMs).toISOString();
+      this.monitorState.shadowPollLastError = null;
+      const newest = recentMessages[recentMessages.length - 1] || null;
+      if (newest) {
+        this.monitorState.shadowPollMostRecentChat = newest.chatJid;
+        this.monitorState.mostRecentServerSeenChatJid = newest.chatJid;
+        this.monitorState.mostRecentServerSeenAt = newest.message.timestamp;
+        this.monitorState.mostRecentServerSeenMessageId = newest.message.id;
+      }
+
+      let latestIgnored:
+        | {
+            chatJid: string;
+            at: string;
+            reason: 'mention_required' | 'chat_scope';
+          }
+        | null = null;
+      let latestMissed:
+        | {
+            chatJid: string;
+            at: string;
+            id: string;
+            reason: string;
+            nextAction: string;
+          }
+        | null = null;
+
+      for (let index = recentMessages.length - 1; index >= 0; index -= 1) {
+        const row = recentMessages[index]!;
+        const previous = this.monitorState.perChatServerSeen[row.chatJid];
+        if (!previous || previous < row.message.timestamp) {
+          this.monitorState.perChatServerSeen[row.chatJid] = row.message.timestamp;
+        }
+
+        const eligible = isBlueBubblesChatEligible(
+          this.config,
+          row.chat.chatGuid,
+          row.chat.isGroup,
+        );
+        const mentionsAndrea = hasBlueBubblesAndreaMention(row.message.content);
+        const ignoredReason =
+          !eligible
+            ? 'chat_scope'
+            : row.message.is_from_me && !mentionsAndrea
+              ? 'mention_required'
+              : null;
+        if (ignoredReason) {
+          if (!latestIgnored || latestIgnored.at < row.message.timestamp) {
+            latestIgnored = {
+              chatJid: row.chatJid,
+              at: row.message.timestamp,
+              reason: ignoredReason,
+            };
+          }
+          continue;
+        }
+
+        const observedAt = this.monitorState.perChatWebhookObserved[row.chatJid];
+        const observed =
+          (observedAt && observedAt >= row.message.timestamp) ||
+          hasStoredMessage(row.chatJid, row.message.id);
+        const ageMs = nowMs - Date.parse(row.message.timestamp);
+        if (!observed && Number.isFinite(ageMs) && ageMs >= BLUEBUBBLES_MISSED_INBOUND_GRACE_MS) {
+          if (!latestMissed) {
+            latestMissed = {
+              chatJid: row.chatJid,
+              at: row.message.timestamp,
+              id: row.message.id,
+              reason: row.chat.isGroup
+                ? `BlueBubbles server saw newer group-chat activity in ${row.chatJid}, but Andrea has not observed that inbound on the webhook side yet.`
+                : `BlueBubbles server saw newer 1:1 chat activity in ${row.chatJid}, but Andrea has not observed that inbound on the webhook side yet.`,
+              nextAction:
+                'Check the Mac-side BlueBubbles webhook target and whether this Windows listener is reachable from the Mac, then repro the same text thread.',
+            };
+          }
+          if (
+            !this.monitorState.recentEvidence.some(
+              (entry) =>
+                entry.kind === 'missed_inbound' && entry.signature === row.message.id,
+            )
+          ) {
+            this.monitorState.recentEvidence.push({
+              kind: 'missed_inbound',
+              chatJid: row.chatJid,
+              signature: row.message.id,
+              observedAt: row.message.timestamp,
+            });
+          }
+        }
+      }
+
+      const hasRecentReplyFailure = this.monitorState.recentEvidence.some(
+        (entry) => entry.kind === 'reply_delivery_failed',
+      );
+
+      if (latestMissed && hasRecentReplyFailure) {
+        this.setDetectionState(
+          'mixed_degraded',
+          `${latestMissed.reason} A recent reply-back attempt also failed from Andrea.`,
+          latestMissed.nextAction,
+        );
+      } else if (latestMissed) {
+        this.setDetectionState(
+          'suspected_missed_inbound',
+          latestMissed.reason,
+          latestMissed.nextAction,
+        );
+      } else if (hasRecentReplyFailure) {
+        const chatLabel = this.monitorState.lastReplySendFailureChatJid || 'that same chat';
+        this.setDetectionState(
+          'reply_delivery_broken',
+          `Andrea observed a Messages turn in ${chatLabel}, but reply delivery failed before anything came back to the thread.`,
+          'Inspect the BlueBubbles reply target and send method on this host, then retry the same thread.',
+        );
+      } else if (latestIgnored) {
+        this.setDetectionState(
+          'ignored_by_gate_or_scope',
+          latestIgnored.reason === 'mention_required'
+            ? `The newest Messages turn in ${latestIgnored.chatJid} would be ignored until it includes @Andrea.`
+            : `The newest Messages turn in ${latestIgnored.chatJid} is outside Andrea's configured BlueBubbles scope.`,
+          latestIgnored.reason === 'mention_required'
+            ? 'Use @Andrea in that thread, or relax the reply gate if that chat should behave conversationally.'
+            : 'Use a chat inside the configured scope, or widen the BlueBubbles scope on this host.',
+        );
+      } else {
+        this.setDetectionState('healthy', null, null);
+      }
+
+      await this.maybeEscalateCrossSurfaceFallback();
+      this.persistMonitorState();
+    } catch (error) {
+      const errorText =
+        error instanceof Error ? error.message : 'BlueBubbles shadow poll failed';
+      this.monitorState.shadowPollLastError = errorText;
+      if (this.monitorState.recentEvidence.length === 0) {
+        this.setDetectionState(
+          'healthy',
+          `Andrea could not read recent BlueBubbles server activity because the shadow poll failed (${errorText}).`,
+          'Check BlueBubbles server reachability and the Mac-side webhook target, then retry the same Messages thread.',
+        );
+      }
+      this.persistMonitorState();
+    }
+  }
+
+  private startShadowMonitor(): void {
+    this.stopShadowMonitor();
+    this.shadowPollTimer = setInterval(() => {
+      this.runShadowMonitorOnce().catch((error) => {
+        logger.warn({ err: error }, 'BlueBubbles shadow monitor iteration failed');
+      });
+    }, BLUEBUBBLES_SHADOW_POLL_INTERVAL_MS);
+  }
+
+  private stopShadowMonitor(): void {
+    if (this.shadowPollTimer) {
+      clearInterval(this.shadowPollTimer);
+      this.shadowPollTimer = null;
+    }
+  }
+
   private emitHealth(overrides: Partial<ChannelHealthSnapshot> = {}): void {
     const configured = isBlueBubblesRoutingConfigured(this.config);
     const readyForTraffic =
@@ -1354,6 +1734,13 @@ export class BlueBubblesChannel implements Channel {
           ? this.lastAttemptedTargetSequence.join(' -> ')
           : 'none'
       }`,
+      `detection ${this.monitorState.detectionState}`,
+      `shadow poll last ok ${this.monitorState.shadowPollLastOkAt || 'none'}`,
+      `shadow poll error ${this.monitorState.shadowPollLastError || 'none'}`,
+      `server seen chat ${this.monitorState.mostRecentServerSeenChatJid || 'none'}`,
+      `server seen at ${this.monitorState.mostRecentServerSeenAt || 'none'}`,
+      `fallback ${this.monitorState.crossSurfaceFallbackState}`,
+      `fallback last sent ${this.monitorState.crossSurfaceFallbackLastSentAt || 'none'}`,
     ];
     this.opts.onHealthUpdate?.(
       buildBlueBubblesHealthSnapshot(this.config, {
@@ -1543,6 +1930,11 @@ export class BlueBubblesChannel implements Channel {
         },
         'Ignoring BlueBubbles message outside the configured chat scope',
       );
+      this.noteIgnoredWebhook(
+        normalized.chatJid,
+        normalized.message.timestamp,
+        'chat_scope',
+      );
       writeResponse(res, 202, 'Ignored chat outside configured scope');
       return;
     }
@@ -1550,6 +1942,11 @@ export class BlueBubblesChannel implements Channel {
       normalized.message.is_from_me &&
       !hasBlueBubblesAndreaMention(normalized.message.content)
     ) {
+      this.noteIgnoredWebhook(
+        normalized.chatJid,
+        normalized.message.timestamp,
+        'mention_required',
+      );
       writeResponse(res, 202, 'Ignored outgoing message without @Andrea mention');
       return;
     }
@@ -1567,6 +1964,7 @@ export class BlueBubblesChannel implements Channel {
       contact: normalized.contact,
       message: normalized.message,
     });
+    this.noteWebhookObserved(normalized.chatJid, normalized.message.timestamp);
 
     this.inflightMessageIds.add(normalized.message.id);
     try {
@@ -1783,6 +2181,10 @@ export class BlueBubblesChannel implements Channel {
       this.webhookRegistrationStatus === 'registered'
         ? null
         : this.webhookRegistrationDetail || this.transportProbeDetail;
+    await this.runShadowMonitorOnce().catch((error) => {
+      logger.warn({ err: error }, 'Initial BlueBubbles shadow monitor run failed');
+    });
+    this.startShadowMonitor();
     this.emitHealth();
   }
 
@@ -1817,6 +2219,18 @@ export class BlueBubblesChannel implements Channel {
       this.lastOutboundResult = result.platformMessageId || 'sent without message id';
       this.lastErrorText = null;
       this.lastSendErrorDetail = null;
+      if (this.monitorState.lastReplySendFailureChatJid === jid) {
+        this.monitorState.lastReplySendFailureAt = null;
+        this.monitorState.lastReplySendFailureChatJid = null;
+        this.monitorState.lastReplySendFailureStage = null;
+        this.monitorState.recentEvidence = this.monitorState.recentEvidence.filter(
+          (entry) =>
+            !(
+              entry.kind === 'reply_delivery_failed' && entry.chatJid === jid
+            ),
+        );
+        this.persistMonitorState();
+      }
       storeChatMetadata(jid, new Date().toISOString(), jid, 'bluebubbles');
       storeMessageDirect({
         id:
@@ -1836,6 +2250,8 @@ export class BlueBubblesChannel implements Channel {
     } catch (error) {
       this.lastErrorText =
         error instanceof Error ? error.message : 'Unknown BlueBubbles send error';
+      this.noteReplySendFailure(jid, this.lastErrorText);
+      await this.maybeEscalateCrossSurfaceFallback();
       this.emitHealth({ state: 'degraded' });
       throw error;
     }
@@ -1877,6 +2293,7 @@ export class BlueBubblesChannel implements Channel {
   }
 
   async disconnect(): Promise<void> {
+    this.stopShadowMonitor();
     if (this.server) {
       await new Promise<void>((resolve, reject) => {
         this.server?.close((error) => {

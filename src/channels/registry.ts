@@ -10,6 +10,11 @@ export interface ChannelOpts {
   onMessage: OnInboundMessage;
   onChatMetadata: OnChatMetadata;
   registeredGroups: () => Record<string, RegisteredGroup>;
+  onCrossSurfaceFallback?: (params: {
+    sourceChannel: 'bluebubbles';
+    detail: string;
+    chatJid: string | null;
+  }) => Promise<{ sent: boolean; detail: string }>;
   onRegisterMainChat?: (
     chatJid: string,
     chatName: string,

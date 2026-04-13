@@ -4,6 +4,7 @@ import {
   redactBlueBubblesWebhookUrl,
   resolveBlueBubblesConfig,
 } from './channels/bluebubbles.js';
+import { readBlueBubblesMonitorState } from './bluebubbles-monitor-state.js';
 import { getAlexaModelSyncStatus } from './alexa-model-sync-state.js';
 import { getAllChats, listMessageActionsForGroup, listRecentMessagesForChat } from './db.js';
 import {
@@ -139,6 +140,21 @@ export interface FieldTrialBlueBubblesTruth extends FieldTrialSurfaceTruth {
   attemptedTargetSequence: string;
   transportState: string;
   transportDetail: string;
+  detectionState: string;
+  detectionDetail: string;
+  detectionNextAction: string;
+  shadowPollLastOkAt: string;
+  shadowPollLastError: string;
+  shadowPollMostRecentChat: string;
+  mostRecentServerSeenAt: string;
+  mostRecentServerSeenChatJid: string;
+  mostRecentWebhookObservedAt: string;
+  mostRecentWebhookObservedChatJid: string;
+  lastIgnoredAt: string;
+  lastIgnoredChatJid: string;
+  lastIgnoredReason: string;
+  crossSurfaceFallbackState: string;
+  crossSurfaceFallbackLastSentAt: string;
   messageActionProofState: 'none' | 'fresh' | 'stale';
   messageActionProofChatJid: string;
   messageActionProofAt: string;
@@ -1139,10 +1155,12 @@ function buildAlexaTruth(
 }
 
 function buildBlueBubblesTruth(
+  projectRoot: string,
   hostSnapshot: HostControlSnapshot,
   review: PilotReviewSnapshotLike,
 ): FieldTrialBlueBubblesTruth {
   const config = resolveBlueBubblesConfig();
+  const monitorState = readBlueBubblesMonitorState(projectRoot);
   const snapshot = buildBlueBubblesHealthSnapshot(config);
   const bluebubblesChannel =
     hostSnapshot.assistantHealthState?.channels.find(
@@ -1354,6 +1372,24 @@ function buildBlueBubblesTruth(
     attemptedTargetSequence: transportDiagnostics.attemptedTargetSequence,
     transportState: bluebubblesChannel?.state || snapshot.state,
     transportDetail: channelDetail,
+    detectionState: monitorState.detectionState,
+    detectionDetail: monitorState.detectionDetail || 'none',
+    detectionNextAction: monitorState.detectionNextAction || 'none',
+    shadowPollLastOkAt: monitorState.shadowPollLastOkAt || 'none',
+    shadowPollLastError: monitorState.shadowPollLastError || 'none',
+    shadowPollMostRecentChat: monitorState.shadowPollMostRecentChat || 'none',
+    mostRecentServerSeenAt: monitorState.mostRecentServerSeenAt || 'none',
+    mostRecentServerSeenChatJid: monitorState.mostRecentServerSeenChatJid || 'none',
+    mostRecentWebhookObservedAt:
+      monitorState.mostRecentWebhookObservedAt || 'none',
+    mostRecentWebhookObservedChatJid:
+      monitorState.mostRecentWebhookObservedChatJid || 'none',
+    lastIgnoredAt: monitorState.lastIgnoredAt || 'none',
+    lastIgnoredChatJid: monitorState.lastIgnoredChatJid || 'none',
+    lastIgnoredReason: monitorState.lastIgnoredReason || 'none',
+    crossSurfaceFallbackState: monitorState.crossSurfaceFallbackState,
+    crossSurfaceFallbackLastSentAt:
+      monitorState.crossSurfaceFallbackLastSentAt || 'none',
     messageActionProofState: matchingProofChainMessageAction
       ? 'fresh'
       : recentMessageActionProofs.length > 0
@@ -1457,6 +1493,66 @@ function buildBlueBubblesTruth(
         'Enable BLUEBUBBLES_SEND_ENABLED and repro one real inbound -> reply -> follow-up flow.',
       detail:
         'Inbound webhook handling is configured, but this host cannot yet prove a full live reply-back flow.',
+      }),
+      ...base,
+    };
+  }
+
+  if (
+    monitorState.detectionState === 'suspected_missed_inbound' ||
+    monitorState.detectionState === 'mixed_degraded'
+  ) {
+    const blocker =
+      monitorState.detectionState === 'mixed_degraded'
+        ? 'BlueBubbles is seeing newer chat activity than Andrea on the webhook side, and a recent reply-back attempt failed too.'
+        : 'BlueBubbles server is seeing newer chat activity than Andrea on the webhook side.';
+    const detailParts = [
+      base.detectionDetail !== 'none' ? base.detectionDetail : null,
+      base.shadowPollMostRecentChat !== 'none'
+        ? `Most recent server-seen chat: ${base.shadowPollMostRecentChat}.`
+        : null,
+      base.mostRecentWebhookObservedChatJid !== 'none'
+        ? `Most recent webhook-observed chat: ${base.mostRecentWebhookObservedChatJid}.`
+        : null,
+      base.crossSurfaceFallbackState !== 'idle'
+        ? `Telegram fallback: ${base.crossSurfaceFallbackState}${
+            base.crossSurfaceFallbackLastSentAt !== 'none'
+              ? ` at ${base.crossSurfaceFallbackLastSentAt}`
+              : ''
+          }.`
+        : null,
+      channelDetail,
+    ].filter(Boolean);
+    return {
+      ...buildTruth({
+        proofState: 'degraded_but_usable',
+        blocker,
+        blockerOwner: 'external',
+        nextAction:
+          base.detectionNextAction !== 'none'
+            ? base.detectionNextAction
+            : 'Check the Mac-side webhook target and Windows listener reachability, then retry the same Messages thread.',
+        detail: detailParts.join(' '),
+      }),
+      ...base,
+    };
+  }
+
+  if (
+    monitorState.detectionState === 'reply_delivery_broken' &&
+    !bluebubblesChannel?.lastError
+  ) {
+    return {
+      ...buildTruth({
+        proofState: 'degraded_but_usable',
+        blocker:
+          'BlueBubbles observed a Messages turn, but reply delivery is currently breaking before Andrea can answer back.',
+        blockerOwner: 'repo_side',
+        nextAction:
+          base.detectionNextAction !== 'none'
+            ? base.detectionNextAction
+            : 'Inspect the BlueBubbles reply target and send method, then retry that same Messages thread.',
+        detail: `${base.detectionDetail !== 'none' ? `${base.detectionDetail} ` : ''}${channelDetail}`,
       }),
       ...base,
     };
@@ -1885,7 +1981,7 @@ export function buildFieldTrialOperatorTruth(
 
   const telegram = buildTelegramTruth(hostSnapshot, windowsHost);
   const alexa = buildAlexaTruth(projectRoot, review);
-  const bluebubbles = buildBlueBubblesTruth(hostSnapshot, review);
+  const bluebubbles = buildBlueBubblesTruth(projectRoot, hostSnapshot, review);
   const googleCalendar = buildGoogleCalendarTruth(projectRoot);
   const research = buildResearchTruth(projectRoot, options.outwardResearchStatus);
   const imageGeneration = buildImageGenerationTruth(projectRoot);

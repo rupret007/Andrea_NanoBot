@@ -3,6 +3,10 @@ import http from 'http';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  clearBlueBubblesMonitorState,
+  readBlueBubblesMonitorState,
+} from '../bluebubbles-monitor-state.js';
+import {
   _initTestDatabase,
   listRecentMessagesForChat,
   storeChatMetadata,
@@ -87,10 +91,13 @@ function buildConfig(
 describe('BlueBubbles channel', () => {
   beforeEach(() => {
     _initTestDatabase();
+    clearBlueBubblesMonitorState();
   });
 
   afterEach(async () => {
     vi.restoreAllMocks();
+    vi.useRealTimers();
+    clearBlueBubblesMonitorState();
   });
 
   it('resolves config with the live V1 BlueBubbles fields', () => {
@@ -442,6 +449,15 @@ describe('BlueBubbles channel', () => {
         );
         return;
       }
+      if (
+        (req.method || 'GET').toUpperCase() === 'GET' &&
+        (req.url || '').startsWith('/api/v1/message')
+      ) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ data: [] }));
+        return;
+      }
       const parsed = JSON.parse(body) as Record<string, unknown>;
       requests.push(parsed);
       if (parsed.chatGuid === 'iMessage;-;+14695405551') {
@@ -634,6 +650,15 @@ describe('BlueBubbles channel', () => {
       }
       if ((req.url || '').startsWith('/api/v1/chat/')) {
         historyRequests.push(req.url || '');
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ data: [] }));
+        return;
+      }
+      if (
+        (req.method || 'GET').toUpperCase() === 'GET' &&
+        (req.url || '').startsWith('/api/v1/message')
+      ) {
         res.statusCode = 200;
         res.setHeader('Content-Type', 'application/json');
         res.end(JSON.stringify({ data: [] }));
@@ -868,6 +893,15 @@ describe('BlueBubbles channel', () => {
         res.end(JSON.stringify({ data: { private_api: true } }));
         return;
       }
+      if (
+        (req.method || 'GET').toUpperCase() === 'GET' &&
+        (req.url || '').startsWith('/api/v1/message')
+      ) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ data: [] }));
+        return;
+      }
       requests.push({
         url: req.url || '',
         body: JSON.parse(body) as Record<string, unknown>,
@@ -942,6 +976,15 @@ describe('BlueBubbles channel', () => {
         res.end(JSON.stringify({ data: { private_api: true } }));
         return;
       }
+      if (
+        (req.method || 'GET').toUpperCase() === 'GET' &&
+        (req.url || '').startsWith('/api/v1/message')
+      ) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ data: [] }));
+        return;
+      }
       requests.push(JSON.parse(body) as Record<string, unknown>);
       res.statusCode = 200;
       res.setHeader('Content-Type', 'application/json');
@@ -1011,6 +1054,15 @@ describe('BlueBubbles channel', () => {
         res.end(JSON.stringify({ data: { private_api: true } }));
         return;
       }
+      if (
+        (req.method || 'GET').toUpperCase() === 'GET' &&
+        (req.url || '').startsWith('/api/v1/message')
+      ) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ data: [] }));
+        return;
+      }
       requests.push({
         url: req.url || '',
         body: JSON.parse(body || '{}') as Record<string, unknown>,
@@ -1077,6 +1129,15 @@ describe('BlueBubbles channel', () => {
         res.statusCode = 200;
         res.setHeader('Content-Type', 'application/json');
         res.end(JSON.stringify({ data: { private_api: true } }));
+        return;
+      }
+      if (
+        (req.method || 'GET').toUpperCase() === 'GET' &&
+        (req.url || '').startsWith('/api/v1/message')
+      ) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ data: [] }));
         return;
       }
       const parsed = JSON.parse(body) as Record<string, unknown>;
@@ -1197,6 +1258,15 @@ describe('BlueBubbles channel', () => {
         res.end(JSON.stringify({ data: { private_api: true } }));
         return;
       }
+      if (
+        (req.method || 'GET').toUpperCase() === 'GET' &&
+        (req.url || '').startsWith('/api/v1/message')
+      ) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ data: [] }));
+        return;
+      }
       requests.push(JSON.parse(body) as Record<string, unknown>);
       res.statusCode = 200;
       res.setHeader('Content-Type', 'application/json');
@@ -1263,6 +1333,288 @@ describe('BlueBubbles channel', () => {
       );
       expect(sendResult.platformMessageId).toBe('bb:server-msg-1');
       expect(requests[0]?.chatGuid).toBe('iMessage;+;chat-2');
+    } finally {
+      await channel.disconnect();
+      await apiStub.close();
+    }
+  });
+
+  it('marks newer 1:1 server activity as suspected missed inbound when Andrea never saw the webhook', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-04-12T20:10:00.000Z'));
+
+    const apiStub = await startBlueBubblesApiStub(async (req, _body, res) => {
+      if ((req.url || '').startsWith('/api/v1/webhook')) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ data: [] }));
+        return;
+      }
+      if ((req.url || '').startsWith('/api/v1/server/info')) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ data: { private_api: true } }));
+        return;
+      }
+      if ((req.url || '').startsWith('/api/v1/message')) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(
+          JSON.stringify({
+            data: [
+              {
+                guid: 'missed-msg-1',
+                text: 'Are you there?',
+                senderName: 'Jeff',
+                handle: { address: '+14695550123', displayName: 'Jeff' },
+                dateCreated: '2026-04-12T20:06:30.000Z',
+                isFromMe: false,
+                chats: [
+                  {
+                    guid: 'iMessage;-;+14695550123',
+                    displayName: 'Jeff',
+                    isGroup: false,
+                    participants: [{ address: '+14695550123' }],
+                  },
+                ],
+              },
+            ],
+          }),
+        );
+        return;
+      }
+      res.statusCode = 404;
+      res.end('not found');
+    });
+
+    const channel = new BlueBubblesChannel(
+      buildConfig({
+        baseUrl: apiStub.baseUrl,
+        chatScope: 'all_synced',
+        allowedChatGuids: [],
+        allowedChatGuid: null,
+      }),
+      {
+        onMessage: vi.fn(),
+        onChatMetadata: vi.fn(),
+        registeredGroups: () => ({}),
+        onHealthUpdate: vi.fn(),
+      },
+    );
+
+    try {
+      await channel.connect();
+
+      const monitorState = readBlueBubblesMonitorState();
+      expect(monitorState.detectionState).toBe('suspected_missed_inbound');
+      expect(monitorState.detectionDetail).toContain('newer 1:1 chat activity');
+      expect(monitorState.mostRecentServerSeenChatJid).toBe(
+        'bb:iMessage;-;+14695550123',
+      );
+      expect(monitorState.mostRecentWebhookObservedChatJid).toBeNull();
+      expect(monitorState.crossSurfaceFallbackState).toBe('armed');
+    } finally {
+      await channel.disconnect();
+      await apiStub.close();
+    }
+  });
+
+  it('sends one Telegram fallback notice after repeated missed inbound evidence and then enters cooldown', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-04-12T20:10:00.000Z'));
+
+    const onCrossSurfaceFallback = vi.fn(async () => ({
+      sent: true,
+      detail: 'sent fallback notice to tg:main',
+    }));
+    const apiStub = await startBlueBubblesApiStub(async (req, _body, res) => {
+      if ((req.url || '').startsWith('/api/v1/webhook')) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ data: [] }));
+        return;
+      }
+      if ((req.url || '').startsWith('/api/v1/server/info')) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ data: { private_api: true } }));
+        return;
+      }
+      if (
+        (req.method || 'GET').toUpperCase() === 'GET' &&
+        (req.url || '').startsWith('/api/v1/message')
+      ) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(
+          JSON.stringify({
+            data: [
+              {
+                guid: 'missed-msg-1',
+                text: 'Checking in once',
+                senderName: 'Jeff',
+                handle: { address: '+14695550123', displayName: 'Jeff' },
+                dateCreated: '2026-04-12T20:06:00.000Z',
+                isFromMe: false,
+                chats: [
+                  {
+                    guid: 'iMessage;-;+14695550123',
+                    displayName: 'Jeff',
+                    isGroup: false,
+                    participants: [{ address: '+14695550123' }],
+                  },
+                ],
+              },
+              {
+                guid: 'missed-msg-2',
+                text: 'Checking in twice',
+                senderName: 'Jeff',
+                handle: { address: '+14695550123', displayName: 'Jeff' },
+                dateCreated: '2026-04-12T20:07:00.000Z',
+                isFromMe: false,
+                chats: [
+                  {
+                    guid: 'iMessage;-;+14695550123',
+                    displayName: 'Jeff',
+                    isGroup: false,
+                    participants: [{ address: '+14695550123' }],
+                  },
+                ],
+              },
+            ],
+          }),
+        );
+        return;
+      }
+      res.statusCode = 404;
+      res.end('not found');
+    });
+
+    const channel = new BlueBubblesChannel(
+      buildConfig({
+        baseUrl: apiStub.baseUrl,
+        chatScope: 'all_synced',
+        allowedChatGuids: [],
+        allowedChatGuid: null,
+      }),
+      {
+        onMessage: vi.fn(),
+        onChatMetadata: vi.fn(),
+        registeredGroups: () => ({}),
+        onHealthUpdate: vi.fn(),
+        onCrossSurfaceFallback,
+      },
+    );
+
+    try {
+      await channel.connect();
+
+      expect(onCrossSurfaceFallback).toHaveBeenCalledTimes(1);
+      expect(onCrossSurfaceFallback).toHaveBeenCalledWith({
+        sourceChannel: 'bluebubbles',
+        detail: expect.stringContaining('newer 1:1 chat activity'),
+        chatJid: 'bb:iMessage;-;+14695550123',
+      });
+
+      let monitorState = readBlueBubblesMonitorState();
+      expect(monitorState.crossSurfaceFallbackState).toBe('sent');
+      expect(monitorState.crossSurfaceFallbackLastSentAt).toBe(
+        '2026-04-12T20:10:00.000Z',
+      );
+
+      vi.setSystemTime(new Date('2026-04-12T20:11:15.000Z'));
+      await (channel as any).runShadowMonitorOnce();
+
+      monitorState = readBlueBubblesMonitorState();
+      expect(onCrossSurfaceFallback).toHaveBeenCalledTimes(1);
+      expect(monitorState.crossSurfaceFallbackState).toBe('cooldown');
+    } finally {
+      await channel.disconnect();
+      await apiStub.close();
+    }
+  });
+
+  it('records mention-gated Messages turns as ignored by gate or scope without triggering fallback', async () => {
+    const onCrossSurfaceFallback = vi.fn(async () => ({
+      sent: true,
+      detail: 'sent fallback notice to tg:main',
+    }));
+    const apiStub = await startBlueBubblesApiStub(async (req, _body, res) => {
+      if ((req.url || '').startsWith('/api/v1/webhook')) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ data: [] }));
+        return;
+      }
+      if ((req.url || '').startsWith('/api/v1/server/info')) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ data: { private_api: true } }));
+        return;
+      }
+      if (
+        (req.method || 'GET').toUpperCase() === 'GET' &&
+        (req.url || '').startsWith('/api/v1/message')
+      ) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ data: [] }));
+        return;
+      }
+      res.statusCode = 404;
+      res.end('not found');
+    });
+
+    const channel = new BlueBubblesChannel(
+      buildConfig({
+        baseUrl: apiStub.baseUrl,
+        chatScope: 'all_synced',
+        allowedChatGuids: [],
+        allowedChatGuid: null,
+      }),
+      {
+        onMessage: vi.fn(),
+        onChatMetadata: vi.fn(),
+        registeredGroups: () => ({}),
+        onHealthUpdate: vi.fn(),
+        onCrossSurfaceFallback,
+      },
+    );
+
+    try {
+      await channel.connect();
+      const response = await fetch(channel.getWebhookUrl(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'new-message',
+          data: {
+            chatGuid: 'iMessage;-;+14695550123',
+            chat: {
+              guid: 'iMessage;-;+14695550123',
+              displayName: 'Jeff',
+              participants: [{ address: '+14695550123' }],
+              isGroup: false,
+            },
+            message: {
+              guid: 'ignored-self-msg-1',
+              body: 'just checking in',
+              senderName: 'Jeff',
+              isFromMe: true,
+              handle: { address: '+14695550123', displayName: 'Jeff' },
+              dateCreated: '2026-04-12T20:08:00.000Z',
+            },
+          },
+        }),
+      });
+
+      const monitorState = readBlueBubblesMonitorState();
+      expect(response.status).toBe(202);
+      expect(monitorState.detectionState).toBe('ignored_by_gate_or_scope');
+      expect(monitorState.lastIgnoredChatJid).toBe('bb:iMessage;-;+14695550123');
+      expect(monitorState.lastIgnoredReason).toBe('mention_required');
+      expect(monitorState.crossSurfaceFallbackState).toBe('idle');
+      expect(onCrossSurfaceFallback).not.toHaveBeenCalled();
     } finally {
       await channel.disconnect();
       await apiStub.close();

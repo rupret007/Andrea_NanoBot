@@ -5,6 +5,11 @@ import path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  clearBlueBubblesMonitorState,
+  createDefaultBlueBubblesMonitorState,
+  writeBlueBubblesMonitorState,
+} from './bluebubbles-monitor-state.js';
+import {
   _closeDatabase,
   _initTestDatabase,
   insertPilotJourneyEvent,
@@ -33,11 +38,13 @@ describe('field-trial readiness', () => {
     vi.unstubAllEnvs();
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-04-08T12:00:00.000Z'));
+    clearBlueBubblesMonitorState(tempDir);
     _initTestDatabase();
   });
 
   afterEach(() => {
     _closeDatabase();
+    clearBlueBubblesMonitorState(tempDir);
     process.chdir(previousCwd);
     fs.rmSync(tempDir, { recursive: true, force: true });
     vi.unstubAllEnvs();
@@ -1365,6 +1372,118 @@ describe('field-trial readiness', () => {
     expect(truth.bluebubbles.detail).toContain(
       'bb:iMessage;-;+14695405551',
     );
+  });
+
+  it('surfaces suspected missed 1:1 inbound detection and Telegram fallback state in BlueBubbles truth', () => {
+    vi.stubEnv('BLUEBUBBLES_ENABLED', 'true');
+    vi.stubEnv('BLUEBUBBLES_BASE_URL', 'http://macbook-pro.local:1234');
+    vi.stubEnv('BLUEBUBBLES_PASSWORD', 'secret');
+    vi.stubEnv('BLUEBUBBLES_GROUP_FOLDER', 'main');
+    vi.stubEnv('BLUEBUBBLES_CHAT_SCOPE', 'all_synced');
+    vi.stubEnv(
+      'BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL',
+      'http://192.168.5.136:4305',
+    );
+    vi.stubEnv('BLUEBUBBLES_WEBHOOK_SECRET', 'hook-secret');
+    vi.stubEnv('BLUEBUBBLES_SEND_ENABLED', 'true');
+
+    writeBlueBubblesMonitorState(
+      {
+        ...createDefaultBlueBubblesMonitorState('2026-04-08T11:58:00.000Z'),
+        updatedAt: '2026-04-08T11:58:00.000Z',
+        detectionState: 'suspected_missed_inbound',
+        detectionDetail:
+          'BlueBubbles server saw newer 1:1 chat activity in bb:iMessage;-;+14695550123, but Andrea has not observed that inbound on the webhook side yet.',
+        detectionNextAction:
+          'Check the Mac-side BlueBubbles webhook target and whether this Windows listener is reachable from the Mac, then repro the same text thread.',
+        shadowPollLastOkAt: '2026-04-08T11:58:00.000Z',
+        shadowPollMostRecentChat: 'bb:iMessage;-;+14695550123',
+        mostRecentServerSeenAt: '2026-04-08T11:56:30.000Z',
+        mostRecentServerSeenChatJid: 'bb:iMessage;-;+14695550123',
+        mostRecentServerSeenMessageId: 'bb:missed-msg-1',
+        mostRecentWebhookObservedAt: '2026-04-08T11:40:00.000Z',
+        mostRecentWebhookObservedChatJid: 'bb:RCS;-;+14696881303',
+        crossSurfaceFallbackState: 'sent',
+        crossSurfaceFallbackLastSentAt: '2026-04-08T11:58:00.000Z',
+        crossSurfaceFallbackLastDetail: 'sent fallback notice to tg:main',
+        recentEvidence: [
+          {
+            kind: 'missed_inbound',
+            chatJid: 'bb:iMessage;-;+14695550123',
+            signature: 'bb:missed-msg-1',
+            observedAt: '2026-04-08T11:56:30.000Z',
+          },
+          {
+            kind: 'missed_inbound',
+            chatJid: 'bb:iMessage;-;+14695550123',
+            signature: 'bb:missed-msg-2',
+            observedAt: '2026-04-08T11:57:00.000Z',
+          },
+        ],
+        perChatServerSeen: {
+          'bb:iMessage;-;+14695550123': '2026-04-08T11:56:30.000Z',
+        },
+        perChatWebhookObserved: {
+          'bb:RCS;-;+14696881303': '2026-04-08T11:40:00.000Z',
+        },
+      },
+      tempDir,
+    );
+
+    const snapshot: HostControlSnapshot = {
+      paths: resolveHostControlPaths(tempDir),
+      nodeRuntime: null,
+      hostState: null,
+      readyState: null,
+      assistantHealthState: {
+        bootId: 'boot-blue-missed',
+        pid: process.pid,
+        appVersion: '1.0.0-test',
+        updatedAt: '2026-04-08T11:58:00.000Z',
+        channels: [
+          {
+            name: 'bluebubbles',
+            configured: true,
+            state: 'ready',
+            updatedAt: '2026-04-08T11:58:00.000Z',
+            detail:
+              'listener 0.0.0.0:4305/bluebubbles/webhook | scope all_synced | reply gate mention_required | transport reachable/auth ok (200) | last inbound 2026-04-08T11:40:00.000Z | last inbound chat bb:RCS;-;+14696881303 | last inbound self_authored no | last outbound 2026-04-08T11:32:00.000Z (bb:iMessage;-;+14695405551) | last outbound target kind chat_guid | last outbound target value iMessage;-;+14695405551 | last send error none | send method apple-script | private api available no | last metadata hydration none | attempted target sequence chat_guid',
+          },
+        ],
+      },
+      telegramRoundtripState: null,
+      telegramTransportState: null,
+      runtimeAuditState: null,
+    };
+
+    const truth = buildFieldTrialOperatorTruth({
+      projectRoot: tempDir,
+      hostSnapshot: snapshot,
+    });
+
+    expect(truth.bluebubbles.proofState).toBe('degraded_but_usable');
+    expect(truth.bluebubbles.blocker).toContain('newer chat activity');
+    expect(truth.bluebubbles.detectionState).toBe('suspected_missed_inbound');
+    expect(truth.bluebubbles.shadowPollMostRecentChat).toBe(
+      'bb:iMessage;-;+14695550123',
+    );
+    expect(truth.bluebubbles.mostRecentServerSeenChatJid).toBe(
+      'bb:iMessage;-;+14695550123',
+    );
+    expect(truth.bluebubbles.mostRecentWebhookObservedChatJid).toBe(
+      'bb:RCS;-;+14696881303',
+    );
+    expect(truth.bluebubbles.crossSurfaceFallbackState).toBe('sent');
+    expect(truth.bluebubbles.crossSurfaceFallbackLastSentAt).toBe(
+      '2026-04-08T11:58:00.000Z',
+    );
+    expect(truth.bluebubbles.detail).toContain(
+      'Most recent server-seen chat: bb:iMessage;-;+14695550123.',
+    );
+    expect(truth.bluebubbles.detail).toContain(
+      'Most recent webhook-observed chat: bb:RCS;-;+14696881303.',
+    );
+    expect(truth.bluebubbles.detail).toContain('Telegram fallback: sent');
   });
 
   it('keeps research and image generation live-proven from persisted provider proof', () => {

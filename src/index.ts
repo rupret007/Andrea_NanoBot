@@ -11129,6 +11129,67 @@ async function main(): Promise<void> {
       channelHealthByName.set(snapshot.name, snapshot);
       writeCurrentAssistantHealth();
     },
+    onCrossSurfaceFallback: async (params: {
+      sourceChannel: 'bluebubbles';
+      detail: string;
+      chatJid: string | null;
+    }) => {
+      if (params.sourceChannel !== 'bluebubbles') {
+        return {
+          sent: false,
+          detail: 'unsupported source channel',
+        };
+      }
+      const mainTelegramEntry = Object.entries(registeredGroups).find(
+        ([jid, group]) =>
+          group.isMain === true && findChannel(channels, jid)?.name === 'telegram',
+      );
+      if (!mainTelegramEntry) {
+        return {
+          sent: false,
+          detail: 'registered main Telegram chat is missing',
+        };
+      }
+      const [telegramChatJid] = mainTelegramEntry;
+      const telegramChannel = findChannel(channels, telegramChatJid);
+      const telegramHealth = channelHealthByName.get('telegram');
+      if (
+        !telegramChannel ||
+        telegramChannel.name !== 'telegram' ||
+        !telegramChannel.isConnected()
+      ) {
+        return {
+          sent: false,
+          detail: 'telegram channel is not connected',
+        };
+      }
+      if (telegramHealth?.state && telegramHealth.state !== 'ready') {
+        return {
+          sent: false,
+          detail: `telegram health is ${telegramHealth.state}`,
+        };
+      }
+      const notice =
+        params.chatJid && params.detail.includes(params.chatJid)
+          ? 'Messages looks unreliable right now, so use me here in Telegram for the moment. I am still tracking the issue on the phone side.'
+          : 'Messages looks unreliable right now, so use me here in Telegram for the moment. I am still tracking the issue on the phone side.';
+      try {
+        await telegramChannel.sendMessage(telegramChatJid, notice);
+        return {
+          sent: true,
+          detail: `sent fallback notice to ${telegramChatJid}`,
+        };
+      } catch (err) {
+        logger.warn(
+          { err, telegramChatJid, sourceChannel: params.sourceChannel },
+          'Failed to send cross-surface fallback notice',
+        );
+        return {
+          sent: false,
+          detail: err instanceof Error ? err.message : 'fallback send failed',
+        };
+      }
+    },
     onRoundtripActivity: (event: {
       kind: 'organic_success';
       chatJid: string;
