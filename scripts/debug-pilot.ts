@@ -198,6 +198,8 @@ async function main(): Promise<void> {
     `  scope=${truth.bluebubbles.chatScope} / reply_gate=${truth.bluebubbles.replyGateMode} / transport=${truth.bluebubbles.transportState}`,
     `  detection=${truth.bluebubbles.detectionState} / fallback=${truth.bluebubbles.crossSurfaceFallbackState}`,
     `  server=${truth.bluebubbles.serverBaseUrl}`,
+    `  active_endpoint=${truth.bluebubbles.activeServerBaseUrl}`,
+    `  candidate_results=${truth.bluebubbles.serverBaseUrlCandidateResults}`,
     `  webhook=${truth.bluebubbles.publicWebhookUrl}`,
     `  listener=${truth.bluebubbles.listenerHost}:${truth.bluebubbles.listenerPort}`,
     `  most_recent_chat=${truth.bluebubbles.mostRecentEngagedChatJid} / engaged_at=${truth.bluebubbles.mostRecentEngagedAt}`,

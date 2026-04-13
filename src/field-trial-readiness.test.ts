@@ -1486,6 +1486,96 @@ describe('field-trial readiness', () => {
     expect(truth.bluebubbles.detail).toContain('Telegram fallback: sent');
   });
 
+  it('surfaces transport-unreachable BlueBubbles truth with active endpoint and candidate results', () => {
+    vi.stubEnv('BLUEBUBBLES_ENABLED', 'true');
+    vi.stubEnv('BLUEBUBBLES_BASE_URL', 'http://macbook-pro.local:1234');
+    vi.stubEnv(
+      'BLUEBUBBLES_BASE_URL_CANDIDATES',
+      'http://192.168.5.22:1234,http://macbook-pro.local:1234',
+    );
+    vi.stubEnv('BLUEBUBBLES_PASSWORD', 'secret');
+    vi.stubEnv('BLUEBUBBLES_GROUP_FOLDER', 'main');
+    vi.stubEnv('BLUEBUBBLES_CHAT_SCOPE', 'all_synced');
+    vi.stubEnv(
+      'BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL',
+      'http://192.168.5.136:4305',
+    );
+    vi.stubEnv('BLUEBUBBLES_WEBHOOK_SECRET', 'hook-secret');
+    vi.stubEnv('BLUEBUBBLES_SEND_ENABLED', 'true');
+
+    writeBlueBubblesMonitorState(
+      {
+        ...createDefaultBlueBubblesMonitorState('2026-04-08T11:58:00.000Z'),
+        updatedAt: '2026-04-08T11:58:00.000Z',
+        detectionState: 'transport_unreachable',
+        detectionDetail:
+          'Andrea could not reach the BlueBubbles server from this host, so Messages may be missing inbound texts before Andrea ever sees them. no reachable BlueBubbles endpoint (http://macbook-pro.local:1234 => unreachable (fetch failed) | http://192.168.5.22:1234 => unreachable (fetch failed))',
+        detectionNextAction:
+          'Check the BlueBubbles server endpoint for this Windows host, prefer a stable IP or explicit candidate list over a .local hostname, then retry the same 1:1 Messages thread.',
+        shadowPollLastError: 'fetch failed',
+        activeBaseUrl: null,
+        candidateProbeResults: {
+          'http://macbook-pro.local:1234': 'unreachable (fetch failed)',
+          'http://192.168.5.22:1234': 'unreachable (fetch failed)',
+        },
+        crossSurfaceFallbackState: 'armed',
+        recentEvidence: [
+          {
+            kind: 'transport_unreachable',
+            chatJid: 'bluebubbles:transport',
+            signature: 'none:2026-04-08T11:58:00.000Z',
+            observedAt: '2026-04-08T11:58:00.000Z',
+          },
+        ],
+      },
+      tempDir,
+    );
+
+    const snapshot: HostControlSnapshot = {
+      paths: resolveHostControlPaths(tempDir),
+      nodeRuntime: null,
+      hostState: null,
+      readyState: null,
+      assistantHealthState: {
+        bootId: 'boot-blue-transport',
+        pid: process.pid,
+        appVersion: '1.0.0-test',
+        updatedAt: '2026-04-08T11:58:00.000Z',
+        channels: [
+          {
+            name: 'bluebubbles',
+            configured: true,
+            state: 'degraded',
+            updatedAt: '2026-04-08T11:58:00.000Z',
+            detail:
+              'listener 0.0.0.0:4305/bluebubbles/webhook | configured base url http://macbook-pro.local:1234 | active endpoint none | candidate endpoints http://macbook-pro.local:1234, http://192.168.5.22:1234 | candidate probe results http://macbook-pro.local:1234 => unreachable (fetch failed) | http://192.168.5.22:1234 => unreachable (fetch failed) | transport no reachable BlueBubbles endpoint | webhook registration skipped because no reachable BlueBubbles endpoint is available yet',
+          },
+        ],
+      },
+      telegramRoundtripState: null,
+      telegramTransportState: null,
+      runtimeAuditState: null,
+    };
+
+    const truth = buildFieldTrialOperatorTruth({
+      projectRoot: tempDir,
+      hostSnapshot: snapshot,
+    });
+
+    expect(truth.bluebubbles.proofState).toBe('externally_blocked');
+    expect(truth.bluebubbles.detectionState).toBe('transport_unreachable');
+    expect(truth.bluebubbles.activeServerBaseUrl).toBe('none');
+    expect(truth.bluebubbles.serverBaseUrlCandidates).toContain(
+      'http://192.168.5.22:1234',
+    );
+    expect(truth.bluebubbles.serverBaseUrlCandidateResults).toContain(
+      'http://macbook-pro.local:1234 => unreachable',
+    );
+    expect(truth.bluebubbles.blocker).toContain(
+      'cannot currently reach the BlueBubbles server',
+    );
+  });
+
   it('keeps research and image generation live-proven from persisted provider proof', () => {
     writeProviderProofState({
       updatedAt: '2026-04-08T01:00:00.000Z',

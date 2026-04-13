@@ -990,7 +990,12 @@ function getIntentSlotValue(
   return slot?.value?.trim() || '';
 }
 
-function getIntentSlotValues(
+interface AlexaIntentSlotValuesResult {
+  slotValues: Record<string, string>;
+  clarificationSpeech?: string;
+}
+
+function getRawIntentSlotValues(
   requestEnvelope: RequestEnvelope,
 ): Record<string, string> {
   const request = requestEnvelope.request;
@@ -1001,6 +1006,241 @@ function getIntentSlotValues(
       slot?.value?.trim() || '',
     ]),
   );
+}
+
+function formatAlexaStructuredClockTime(value: string): string | undefined {
+  const trimmed = value.trim().toUpperCase();
+  if (!trimmed) return undefined;
+  const normalized = trimmed.startsWith('T') ? trimmed.slice(1) : trimmed;
+  if (normalized === 'MO') return 'morning';
+  if (normalized === 'AF') return 'afternoon';
+  if (normalized === 'EV') return 'evening';
+  if (normalized === 'NI') return 'tonight';
+  const match = normalized.match(/^(\d{2}):(\d{2})(?::\d{2})?$/);
+  if (!match) return undefined;
+  const hours = Number.parseInt(match[1]!, 10);
+  const minutes = Number.parseInt(match[2]!, 10);
+  if (
+    !Number.isInteger(hours) ||
+    !Number.isInteger(minutes) ||
+    hours < 0 ||
+    hours > 23 ||
+    minutes < 0 ||
+    minutes > 59
+  ) {
+    return undefined;
+  }
+  const displayHour = hours % 12 || 12;
+  const suffix = hours >= 12 ? 'PM' : 'AM';
+  return minutes === 0
+    ? `${displayHour} ${suffix}`
+    : `${displayHour}:${String(minutes).padStart(2, '0')} ${suffix}`;
+}
+
+function resolveAlexaIsoWeekDate(
+  year: number,
+  week: number,
+  dayOfWeek: number,
+): Date | undefined {
+  if (
+    !Number.isInteger(year) ||
+    !Number.isInteger(week) ||
+    !Number.isInteger(dayOfWeek) ||
+    week < 1 ||
+    week > 53 ||
+    dayOfWeek < 1 ||
+    dayOfWeek > 7
+  ) {
+    return undefined;
+  }
+  const januaryFourth = new Date(Date.UTC(year, 0, 4, 12, 0, 0));
+  const januaryFourthDay = januaryFourth.getUTCDay() || 7;
+  const mondayOfWeekOne = new Date(januaryFourth);
+  mondayOfWeekOne.setUTCDate(
+    januaryFourth.getUTCDate() - januaryFourthDay + 1,
+  );
+  mondayOfWeekOne.setUTCDate(
+    mondayOfWeekOne.getUTCDate() + (week - 1) * 7 + (dayOfWeek - 1),
+  );
+  return mondayOfWeekOne;
+}
+
+function formatAlexaStructuredDate(
+  value: string,
+  referenceDate: Date,
+  mode: 'calendar' | 'reminder',
+): string | undefined {
+  const trimmed = value.trim().toUpperCase();
+  if (!trimmed) return undefined;
+  if (trimmed === 'PRESENT_REF') {
+    return mode === 'reminder' ? 'today' : 'today';
+  }
+
+  let resolvedDate: Date | undefined;
+  const fullDateMatch = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (fullDateMatch) {
+    const year = Number.parseInt(fullDateMatch[1]!, 10);
+    const monthIndex = Number.parseInt(fullDateMatch[2]!, 10) - 1;
+    const day = Number.parseInt(fullDateMatch[3]!, 10);
+    resolvedDate = new Date(Date.UTC(year, monthIndex, day, 12, 0, 0));
+  }
+
+  const weekDateMatch =
+    resolvedDate ||
+    !trimmed.match(/^(\d{4})-W(\d{2})-(\d)$/)
+      ? null
+      : trimmed.match(/^(\d{4})-W(\d{2})-(\d)$/);
+  if (!resolvedDate && weekDateMatch) {
+    resolvedDate = resolveAlexaIsoWeekDate(
+      Number.parseInt(weekDateMatch[1]!, 10),
+      Number.parseInt(weekDateMatch[2]!, 10),
+      Number.parseInt(weekDateMatch[3]!, 10),
+    );
+  }
+
+  if (!resolvedDate || Number.isNaN(resolvedDate.getTime())) {
+    return undefined;
+  }
+
+  const referenceMidday = new Date(
+    referenceDate.getFullYear(),
+    referenceDate.getMonth(),
+    referenceDate.getDate(),
+    12,
+    0,
+    0,
+    0,
+  );
+  const resolvedMidday = new Date(
+    resolvedDate.getUTCFullYear(),
+    resolvedDate.getUTCMonth(),
+    resolvedDate.getUTCDate(),
+    12,
+    0,
+    0,
+    0,
+  );
+  const diffDays = Math.round(
+    (resolvedMidday.getTime() - referenceMidday.getTime()) / 86_400_000,
+  );
+
+  if (diffDays === 0) return 'today';
+  if (diffDays === 1) return 'tomorrow';
+  if (diffDays > 1 && diffDays < 7) {
+    return new Intl.DateTimeFormat('en-US', {
+      weekday: 'long',
+    })
+      .format(resolvedMidday)
+      .toLowerCase();
+  }
+  if (mode === 'reminder') {
+    return undefined;
+  }
+
+  const sameYear = resolvedMidday.getFullYear() === referenceMidday.getFullYear();
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'long',
+    day: 'numeric',
+    ...(sameYear ? {} : { year: 'numeric' }),
+  }).format(resolvedMidday);
+}
+
+function isAlexaDaypartLabel(value: string | undefined): boolean {
+  return /^(morning|afternoon|evening|tonight)$/i.test(value || '');
+}
+
+function buildAlexaStructuredDateClarification(input: {
+  needsDate?: boolean;
+  needsTime?: boolean;
+}): string | undefined {
+  if (input.needsDate && input.needsTime) {
+    return 'Tell me the day and time more clearly, like Friday at 7 PM.';
+  }
+  if (input.needsDate) {
+    return 'Tell me the day more clearly, like today, tomorrow, or Friday.';
+  }
+  if (input.needsTime) {
+    return 'Tell me the time more clearly, like 7 PM or 6:30 PM.';
+  }
+  return undefined;
+}
+
+function getIntentSlotValues(
+  requestEnvelope: RequestEnvelope,
+): AlexaIntentSlotValuesResult {
+  const slotValues = getRawIntentSlotValues(requestEnvelope);
+  const request = requestEnvelope.request;
+  if (request.type !== 'IntentRequest') {
+    return { slotValues };
+  }
+  if (request.intent.name !== ALEXA_SAVE_REMIND_HANDOFF_INTENT) {
+    return { slotValues };
+  }
+
+  const referenceDate = getRequestTimestampDate(requestEnvelope);
+  let clarificationSpeech: string | undefined;
+
+  if (
+    !slotValues.calendarMoveText &&
+    (slotValues.calendarMoveSourceTime ||
+      slotValues.calendarMoveTargetDate ||
+      slotValues.calendarMoveTargetTime)
+  ) {
+    const sourceTime = slotValues.calendarMoveSourceTime
+      ? formatAlexaStructuredClockTime(slotValues.calendarMoveSourceTime)
+      : undefined;
+    const targetDate = slotValues.calendarMoveTargetDate
+      ? formatAlexaStructuredDate(
+          slotValues.calendarMoveTargetDate,
+          referenceDate,
+          'calendar',
+        )
+      : undefined;
+    const targetTime = slotValues.calendarMoveTargetTime
+      ? formatAlexaStructuredClockTime(slotValues.calendarMoveTargetTime)
+      : undefined;
+    clarificationSpeech =
+      clarificationSpeech ||
+      buildAlexaStructuredDateClarification({
+        needsDate: Boolean(slotValues.calendarMoveTargetDate && !targetDate),
+        needsTime: Boolean(
+          (slotValues.calendarMoveSourceTime && !sourceTime) ||
+            (slotValues.calendarMoveTargetTime && !targetTime),
+        ),
+      });
+    if (!clarificationSpeech) {
+      let synthesized = '';
+      if (sourceTime && targetDate) {
+        synthesized = `my ${sourceTime} to ${targetDate}`;
+        if (targetTime) {
+          synthesized = isAlexaDaypartLabel(targetTime)
+            ? `${synthesized} ${targetTime}`
+            : `${synthesized} at ${targetTime}`;
+        }
+      } else {
+        const destinationParts: string[] = [];
+        if (targetDate) {
+          destinationParts.push(targetDate);
+        }
+        if (targetTime) {
+          destinationParts.push(
+            isAlexaDaypartLabel(targetTime) ? targetTime : `at ${targetTime}`,
+          );
+        }
+        if (destinationParts.length > 0) {
+          synthesized = `that to ${destinationParts.join(' ')}`.trim();
+        }
+      }
+      if (synthesized) {
+        slotValues.calendarMoveText = synthesized;
+      }
+    }
+  }
+
+  return {
+    slotValues,
+    clarificationSpeech,
+  };
 }
 
 function getRequestTimestampDate(requestEnvelope: RequestEnvelope): Date {
@@ -1377,14 +1617,17 @@ function extractAlexaReminderTiming(utterance: string): string | undefined {
   const normalized = normalizeVoicePrompt(utterance).toLowerCase();
   const directMatch =
     normalized.match(
-      /\b(today at \d{1,2}(?::\d{2})?\s*(?:am|pm)?|tomorrow(?: morning| afternoon| evening)?|today(?: morning| afternoon| evening)?|tonight)\b/i,
+      /\b((?:today|tomorrow|sunday|monday|tuesday|wednesday|thursday|friday|saturday)\s+at\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?|(?:today|tomorrow|sunday|monday|tuesday|wednesday|thursday|friday|saturday)(?: morning| afternoon| evening)?|tonight)\b/i,
     )?.[1] ||
     normalized.match(
-      /\b(at \d{1,2}(?::\d{2})?\s*(?:am|pm)? today|at \d{1,2}(?::\d{2})?\s*(?:am|pm)? tomorrow)\b/i,
+      /\b(at \d{1,2}(?::\d{2})?\s*(?:am|pm)? (?:today|tomorrow|sunday|monday|tuesday|wednesday|thursday|friday|saturday)|\d{1,2}(?::\d{2})?\s*(?:am|pm)? to\b)/i,
     )?.[1];
   const trimmed = directMatch?.trim();
   if (!trimmed) return undefined;
   if (trimmed === 'tonight') return 'today evening';
+  if (trimmed.endsWith(' to')) {
+    return trimmed.replace(/\s+to$/, '');
+  }
   return trimmed.startsWith('at ') ? trimmed.replace(/\s+today$/, ' today') : trimmed;
 }
 
@@ -5042,7 +5285,8 @@ export function createAlexaSkill(
       }
 
       const intentName = requestIntent.name;
-      const slotValues = getIntentSlotValues(handlerInput.requestEnvelope);
+      const slotValueResult = getIntentSlotValues(handlerInput.requestEnvelope);
+      const slotValues = slotValueResult.slotValues;
       const primarySlotValue =
         slotValues.followupText ||
         slotValues.memoryCommand ||
@@ -5050,6 +5294,10 @@ export function createAlexaSkill(
         slotValues.subject ||
         slotValues.topic ||
         slotValues.item ||
+        slotValues.calendarCreateText ||
+        slotValues.calendarMoveText ||
+        slotValues.calendarCancelText ||
+        slotValues.reminderText ||
         slotValues.query ||
         slotValues.controlText ||
         slotValues.captureText ||
@@ -5067,6 +5315,18 @@ export function createAlexaSkill(
       const priorCompanionContext =
         resolveAlexaCompanionPriorContext(conversationState);
       const voiceCapture = extractAlexaVoiceIntentCapture(intentName, slotValues);
+
+      if (slotValueResult.clarificationSpeech) {
+        recordHandledRequest(handlerInput.requestEnvelope, {
+          responseSource: 'local_companion',
+          linked: true,
+          groupFolder: linked.account.groupFolder,
+        });
+        return handlerInput.responseBuilder
+          .speak(slotValueResult.clarificationSpeech)
+          .reprompt(DEFAULT_ALEXA_REPROMPT)
+          .getResponse();
+      }
 
       if (
         pending &&

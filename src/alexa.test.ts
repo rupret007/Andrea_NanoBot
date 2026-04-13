@@ -33,6 +33,7 @@ import {
   createGoogleCalendarEvent,
   listGoogleCalendarEvents,
   listGoogleCalendars,
+  updateGoogleCalendarEvent,
 } from './google-calendar.js';
 import {
   _initTestDatabase,
@@ -90,6 +91,7 @@ const mockedBuildDailyCompanionResponse = vi.mocked(buildDailyCompanionResponse)
 const mockedCreateGoogleCalendarEvent = vi.mocked(createGoogleCalendarEvent);
 const mockedListGoogleCalendarEvents = vi.mocked(listGoogleCalendarEvents);
 const mockedListGoogleCalendars = vi.mocked(listGoogleCalendars);
+const mockedUpdateGoogleCalendarEvent = vi.mocked(updateGoogleCalendarEvent);
 const ALEXA_LAST_SIGNED_REQUEST_STATE_SUFFIX = process.env.VITEST_WORKER_ID
   ? `-${process.env.VITEST_WORKER_ID}`
   : '';
@@ -446,6 +448,7 @@ describe('createAlexaSkill', () => {
     mockedCreateGoogleCalendarEvent.mockReset();
     mockedListGoogleCalendarEvents.mockReset();
     mockedListGoogleCalendars.mockReset();
+    mockedUpdateGoogleCalendarEvent.mockReset();
     mockedBuildDailyCompanionResponse.mockImplementation(async (message, deps) =>
       buildCompanionResponse(`Local companion: ${message}`, {
         channel: deps.channel,
@@ -904,6 +907,92 @@ describe('createAlexaSkill', () => {
     expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
   });
 
+  it('uses structured move slots to keep the active calendar event in frame', async () => {
+    mockedListGoogleCalendars.mockResolvedValue([
+      {
+        id: 'primary',
+        summary: 'Personal',
+        primary: true,
+        accessRole: 'owner',
+        writable: true,
+        selected: true,
+      },
+    ]);
+    mockedUpdateGoogleCalendarEvent.mockResolvedValue({
+      id: 'evt-1',
+      title: 'Dinner with Candace',
+      startIso: '2026-04-05T00:00:00.000Z',
+      endIso: '2026-04-05T01:00:00.000Z',
+      allDay: false,
+      calendarId: 'primary',
+      calendarName: 'Personal',
+      htmlLink: null,
+    });
+    const linked = seedLinkedAccount('main');
+    saveAlexaConversationState(
+      getAlexaPrincipalKey({
+        userId: 'amzn1.ask.account.test-user',
+        personId: 'amzn1.ask.person.test-person',
+      }),
+      linked!.accessTokenHash,
+      'main',
+      {
+        flowKey: 'assistant_calendar_read',
+        subjectKind: 'event',
+        summaryText: 'Dinner with Candace is tomorrow at 6:30 PM.',
+        supportedFollowups: ['anything_else', 'shorter', 'say_more'],
+        subjectData: {
+          activeCalendarEventContextJson: JSON.stringify({
+            version: 1,
+            createdAt: new Date().toISOString(),
+            event: {
+              id: 'evt-1',
+              title: 'Dinner with Candace',
+              startIso: '2026-04-04T23:30:00.000Z',
+              endIso: '2026-04-05T00:30:00.000Z',
+              allDay: false,
+              calendarId: 'primary',
+              calendarName: 'Personal',
+              htmlLink: null,
+            },
+          }),
+          activeTaskKind: 'calendar_read',
+          activeTaskSummary: 'Dinner with Candace tomorrow at 6:30 PM',
+          activeEntityLabel: 'Dinner with Candace',
+          activeDateTimeContext: 'tomorrow at 6:30 PM',
+        },
+        styleHints: {
+          channelMode: 'alexa_companion',
+          guidanceGoal: 'tomorrow_brief',
+          initiativeLevel: 'measured',
+          prioritizationLens: 'calendar',
+          hasActionItem: true,
+          responseSource: 'local_companion',
+        },
+      },
+    );
+
+    const skill = createAlexaSkill(buildConfig());
+    const response = await skill.invoke(
+      buildIntentEnvelope('SaveRemindHandoffIntent', {
+        calendarMoveTargetTime: '19:00',
+      }),
+    );
+
+    expect(extractSpeechText(response)).toContain('Dinner with Candace');
+    expect(extractSpeechText(response)).toContain('7:00 PM');
+    expect(mockedUpdateGoogleCalendarEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        calendarId: 'primary',
+        eventId: 'evt-1',
+        start: expect.any(Date),
+        end: expect.any(Date),
+      }),
+      expect.anything(),
+    );
+    expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
+  });
+
   it('asks for confirmation before cancelling a calendar event from voice', async () => {
     mockedListGoogleCalendars.mockResolvedValue([
       {
@@ -961,6 +1050,78 @@ describe('createAlexaSkill', () => {
     expect(extractSpeechText(response)).toContain("I'll remind you");
     expect(extractSpeechText(response)).toContain('text Candace');
     expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
+  });
+
+  it('rejects literal digits in Alexa interaction-model sample utterances', () => {
+    const interactionModel = JSON.parse(
+      fs.readFileSync(
+        'docs/alexa/interaction-model.en-US.json',
+        'utf8',
+      ),
+    ) as {
+      interactionModel?: {
+        languageModel?: {
+          intents?: Array<{
+            name?: string;
+            samples?: string[];
+          }>;
+        };
+      };
+    };
+
+    const invalidSamples =
+      interactionModel.interactionModel?.languageModel?.intents
+        ?.flatMap((intent) =>
+          (intent.samples || [])
+            .filter((sample) => /\d/.test(sample))
+            .map((sample) => `${intent.name}: ${sample}`),
+        ) || [];
+
+    expect(invalidSamples).toEqual([]);
+  });
+
+  it('rejects AMAZON.SearchQuery samples that mix a phrase slot with any other slot', () => {
+    const interactionModel = JSON.parse(
+      fs.readFileSync(
+        'docs/alexa/interaction-model.en-US.json',
+        'utf8',
+      ),
+    ) as {
+      interactionModel?: {
+        languageModel?: {
+          intents?: Array<{
+            name?: string;
+            slots?: Array<{
+              name?: string;
+              type?: string;
+            }>;
+            samples?: string[];
+          }>;
+        };
+      };
+    };
+
+    const invalidSamples =
+      interactionModel.interactionModel?.languageModel?.intents
+        ?.flatMap((intent) => {
+          const slotTypes = Object.fromEntries(
+            (intent.slots || []).map((slot) => [slot.name || '', slot.type || '']),
+          );
+          return (intent.samples || []).flatMap((sample) => {
+            const slotNames = [...sample.matchAll(/\{([^}]+)\}/g)].map(
+              (match) => match[1] || '',
+            );
+            if (slotNames.length <= 1) {
+              return [];
+            }
+            const mixesSearchQuery = slotNames.some(
+              (slotName) => slotTypes[slotName] === 'AMAZON.SearchQuery',
+            );
+            return mixesSearchQuery ? [`${intent.name}: ${sample}`] : [];
+          });
+        }) || [];
+
+    expect(invalidSamples).toEqual([]);
   });
 
   it('keeps what should I remember tonight on the guidance path instead of treating it like a calendar lookup', async () => {

@@ -107,6 +107,18 @@
               "type": "AMAZON.SearchQuery"
             },
             {
+              "name": "calendarMoveSourceTime",
+              "type": "AMAZON.TIME"
+            },
+            {
+              "name": "calendarMoveTargetDate",
+              "type": "AMAZON.DATE"
+            },
+            {
+              "name": "calendarMoveTargetTime",
+              "type": "AMAZON.TIME"
+            },
+            {
               "name": "calendarCancelText",
               "type": "AMAZON.SearchQuery"
             },
@@ -119,23 +131,21 @@
             "add {calendarCreateText}",
             "schedule {calendarCreateText}",
             "put {calendarCreateText} on my calendar",
-            "add dinner tomorrow at 6:30 PM",
-            "put workout on my calendar Friday at 7",
             "schedule lunch tomorrow at noon",
             "move {calendarMoveText}",
             "reschedule {calendarMoveText}",
-            "move that to 7",
-            "move my 3 PM to tomorrow",
+            "move that to {calendarMoveTargetTime}",
+            "move my {calendarMoveSourceTime} to {calendarMoveTargetDate}",
+            "move that to {calendarMoveTargetDate}",
+            "move that to {calendarMoveTargetDate} at {calendarMoveTargetTime}",
+            "move my {calendarMoveSourceTime} to {calendarMoveTargetDate} at {calendarMoveTargetTime}",
             "cancel {calendarCancelText}",
             "delete {calendarCancelText}",
             "cancel dinner tomorrow",
             "remind me to {reminderText}",
             "remind me at {reminderText}",
             "remind me about {reminderText}",
-            "remind me to call Sam tomorrow at 3",
-            "remind me to take my pills at 9",
             "remind me to pay the water bill Friday",
-            "remind me at 4 to text Mom",
             "remind me about that tonight",
             "save {item}",
             "save {item} for later",

@@ -4,6 +4,7 @@ import { resolveHostControlPaths } from './host-control.js';
 
 export type BlueBubblesDetectionState =
   | 'healthy'
+  | 'transport_unreachable'
   | 'reply_delivery_broken'
   | 'suspected_missed_inbound'
   | 'ignored_by_gate_or_scope'
@@ -15,6 +16,7 @@ export type BlueBubblesIgnoredReason = 'mention_required' | 'chat_scope';
 
 export type BlueBubblesEvidenceKind =
   | 'missed_inbound'
+  | 'transport_unreachable'
   | 'reply_delivery_failed';
 
 export interface BlueBubblesMonitorEvidence {
@@ -32,6 +34,8 @@ export interface BlueBubblesMonitorState {
   shadowPollLastOkAt: string | null;
   shadowPollLastError: string | null;
   shadowPollMostRecentChat: string | null;
+  activeBaseUrl: string | null;
+  candidateProbeResults: Record<string, string>;
   mostRecentServerSeenAt: string | null;
   mostRecentServerSeenChatJid: string | null;
   mostRecentServerSeenMessageId: string | null;
@@ -65,7 +69,9 @@ function normalizeEvidence(
   if (!value || typeof value !== 'object') return null;
   const input = value as Partial<BlueBubblesMonitorEvidence>;
   const kind =
-    input.kind === 'missed_inbound' || input.kind === 'reply_delivery_failed'
+    input.kind === 'missed_inbound' ||
+    input.kind === 'reply_delivery_failed' ||
+    input.kind === 'transport_unreachable'
       ? input.kind
       : null;
   if (
@@ -104,6 +110,8 @@ export function createDefaultBlueBubblesMonitorState(
     shadowPollLastOkAt: null,
     shadowPollLastError: null,
     shadowPollMostRecentChat: null,
+    activeBaseUrl: null,
+    candidateProbeResults: {},
     mostRecentServerSeenAt: null,
     mostRecentServerSeenChatJid: null,
     mostRecentServerSeenMessageId: null,
@@ -130,6 +138,7 @@ function normalizeState(value: unknown): BlueBubblesMonitorState | null {
     recentEvidence?: unknown[];
   };
   const detectionState: BlueBubblesDetectionState =
+    input.detectionState === 'transport_unreachable' ||
     input.detectionState === 'reply_delivery_broken' ||
     input.detectionState === 'suspected_missed_inbound' ||
     input.detectionState === 'ignored_by_gate_or_scope' ||
@@ -165,6 +174,10 @@ function normalizeState(value: unknown): BlueBubblesMonitorState | null {
     shadowPollMostRecentChat: isNonEmptyString(input.shadowPollMostRecentChat)
       ? input.shadowPollMostRecentChat
       : null,
+    activeBaseUrl: isNonEmptyString(input.activeBaseUrl)
+      ? input.activeBaseUrl
+      : null,
+    candidateProbeResults: normalizeStringMap(input.candidateProbeResults),
     mostRecentServerSeenAt: isNonEmptyString(input.mostRecentServerSeenAt)
       ? input.mostRecentServerSeenAt
       : null,

@@ -118,6 +118,9 @@ export interface FieldTrialAlexaTruth extends FieldTrialSurfaceTruth {
 export interface FieldTrialBlueBubblesTruth extends FieldTrialSurfaceTruth {
   configured: boolean;
   serverBaseUrl: string;
+  activeServerBaseUrl: string;
+  serverBaseUrlCandidates: string;
+  serverBaseUrlCandidateResults: string;
   listenerHost: string;
   listenerPort: number;
   publicWebhookUrl: string;
@@ -1339,6 +1342,17 @@ function buildBlueBubblesTruth(
   const base: Omit<FieldTrialBlueBubblesTruth, keyof FieldTrialSurfaceTruth> = {
     configured: snapshot.configured,
     serverBaseUrl: config.baseUrl || 'none',
+    activeServerBaseUrl: monitorState.activeBaseUrl || 'none',
+    serverBaseUrlCandidates:
+      config.baseUrlCandidates.length > 0
+        ? config.baseUrlCandidates.join(' | ')
+        : config.baseUrl || 'none',
+    serverBaseUrlCandidateResults:
+      Object.entries(monitorState.candidateProbeResults).length > 0
+        ? Object.entries(monitorState.candidateProbeResults)
+            .map(([baseUrl, detail]) => `${baseUrl} => ${detail}`)
+            .join(' | ')
+        : 'none',
     listenerHost: config.host,
     listenerPort: config.port,
     publicWebhookUrl:
@@ -1493,6 +1507,43 @@ function buildBlueBubblesTruth(
         'Enable BLUEBUBBLES_SEND_ENABLED and repro one real inbound -> reply -> follow-up flow.',
       detail:
         'Inbound webhook handling is configured, but this host cannot yet prove a full live reply-back flow.',
+      }),
+      ...base,
+    };
+  }
+
+  if (monitorState.detectionState === 'transport_unreachable') {
+    const detailParts = [
+      base.detectionDetail !== 'none' ? base.detectionDetail : null,
+      base.activeServerBaseUrl !== 'none'
+        ? `Active endpoint: ${base.activeServerBaseUrl}.`
+        : null,
+      base.serverBaseUrlCandidates !== 'none'
+        ? `Configured endpoints: ${base.serverBaseUrlCandidates}.`
+        : null,
+      base.serverBaseUrlCandidateResults !== 'none'
+        ? `Probe results: ${base.serverBaseUrlCandidateResults}.`
+        : null,
+      base.crossSurfaceFallbackState !== 'idle'
+        ? `Telegram fallback: ${base.crossSurfaceFallbackState}${
+            base.crossSurfaceFallbackLastSentAt !== 'none'
+              ? ` at ${base.crossSurfaceFallbackLastSentAt}`
+              : ''
+          }.`
+        : null,
+      channelDetail,
+    ].filter(Boolean);
+    return {
+      ...buildTruth({
+        proofState: 'externally_blocked',
+        blocker:
+          'Andrea cannot currently reach the BlueBubbles server from this Windows host, so Messages may miss 1:1 texts before Andrea ever sees them.',
+        blockerOwner: 'external',
+        nextAction:
+          base.detectionNextAction !== 'none'
+            ? base.detectionNextAction
+            : 'Set a reachable BlueBubbles endpoint for this host, prefer a stable IP or explicit candidate list over a .local hostname, then retry the same 1:1 Messages thread.',
+        detail: detailParts.join(' '),
       }),
       ...base,
     };

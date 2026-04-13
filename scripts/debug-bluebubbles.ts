@@ -95,6 +95,11 @@ async function runLiveMode(): Promise<void> {
   printBlock('BLUEBUBBLES LIVE CONFIG', [
     `enabled: ${config.enabled}`,
     `base_url: ${config.baseUrl || 'missing'}`,
+    `base_url_candidates: ${
+      config.baseUrlCandidates.length > 0
+        ? config.baseUrlCandidates.join(' | ')
+        : 'missing'
+    }`,
     `public_webhook_url: ${
       config.enabled
         ? redactBlueBubblesWebhookUrl(buildBlueBubblesWebhookUrl(config))
@@ -114,6 +119,8 @@ async function runLiveMode(): Promise<void> {
     `detection_state: ${truth.bluebubbles.detectionState}`,
     `detection_detail: ${truth.bluebubbles.detectionDetail}`,
     `detection_next_action: ${truth.bluebubbles.detectionNextAction}`,
+    `active_base_url: ${truth.bluebubbles.activeServerBaseUrl}`,
+    `candidate_probe_results: ${truth.bluebubbles.serverBaseUrlCandidateResults}`,
     `transport: ${truth.bluebubbles.transportState}`,
     `transport_detail: ${truth.bluebubbles.transportDetail}`,
     `webhook_registration: ${truth.bluebubbles.webhookRegistrationState}`,

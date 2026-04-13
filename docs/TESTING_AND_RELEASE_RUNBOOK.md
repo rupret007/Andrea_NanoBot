@@ -87,6 +87,8 @@ node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/c
 npm run debug:bluebubbles
 ```
 
+On Windows, prefer a stable IP or an explicit `BLUEBUBBLES_BASE_URL_CANDIDATES` list over Bonjour-only `.local` discovery. If Andrea cannot resolve the Mac host, `debug:bluebubbles -- --live` should read as `transport_unreachable`, not a generic healthy/degraded blur.
+
 For ritual and follow-through changes, add:
 
 ```bash
@@ -294,7 +296,8 @@ Important truth for this host:
 - keep `EXTERNAL_BLOCKERS` and `MISSING_REQUIREMENTS` only as compatibility aliases, not as the whole product story
 - Alexa can be `live_proven` while the latest repo interaction-model hash still needs one local sync confirmation; that should read as `core_ready_with_manual_surface_sync`, not `near_live_only`
 - if Alexa ages out later, the likely blocker becomes `alexa_live_signed_turn_missing` or `alexa_live_signed_turn_stale`, not a broken service
-- BlueBubbles is currently `degraded_but_usable` on this Windows machine: transport and webhook are healthy, but the canonical same-thread `message_action` leg still needs one fresh repro
+- BlueBubbles may now surface `transport_unreachable` separately when the Mac endpoint itself is not reachable from Windows; do not confuse that with same-thread proof freshness
+- when Windows name resolution is brittle, prefer `BLUEBUBBLES_BASE_URL_CANDIDATES` with a stable IP first and `.local` as a fallback candidate, not the only endpoint
 - after repo-side messaging changes, restart the local services before judging live proof so `SERVING_COMMIT_MATCHES_WORKSPACE_HEAD: true` reflects the current candidate
 - if `SERVICE: running_ready` and the blocker is external, treat that as an exact release-candidate caveat rather than a host failure
 - for Google Calendar specifically, `FAILURE_KIND: missing_config` means the current repo lacks usable credentials, and `FAILURE_KIND: invalid_refresh_token` means the stored refresh token is stale or revoked and you should rerun the current repo auth flow

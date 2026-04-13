@@ -148,6 +148,16 @@ In those flows Alexa should:
 - keep the same context alive for `anything else`, `what happens next`, `remind me`, `save that`, or `send me the fuller plan`
 - hand richer detail to Telegram instead of trying to read the whole plan, research answer, or conversation aloud
 
+Implementation note for the interaction model:
+
+- user-facing prompt examples can still use ordinary speech like `add dinner tomorrow at 6:30 PM`
+- the Alexa JSON sample utterances themselves must not contain literal digits
+- for `SaveRemindHandoffIntent`, same-turn create and remind requests stay on the legacy free-text `AMAZON.SearchQuery` slots
+- only the move / reschedule path uses structured `AMAZON.DATE` and `AMAZON.TIME` slots, because ASK does not allow `AMAZON.SearchQuery` phrase slots to appear in the same sample utterance as other slots
+- if you update the interaction model, keep two guardrails in mind:
+  - no literal digits in the JSON samples
+  - no sample that mixes `AMAZON.SearchQuery` with any other slot
+
 Person-specific prompts like `what about Candace` and `what's still open with Candace` still matter, but they should feel like secondary continuations, not the top public discovery story.
 
 ## 0) Current Truth
@@ -297,6 +307,7 @@ The interaction model now keeps Alexa bounded through a small set of broader cus
   - `remind me about that`
   - `send me the full version`
   - `send that to Telegram`
+  - structured calendar/reminder slot samples now carry time/date examples, not literal numeric samples
 - `OpenAskIntent`
   - `what should I say back`
   - `tell me about X`

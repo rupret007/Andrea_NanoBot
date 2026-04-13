@@ -348,6 +348,7 @@ export type BlueBubblesChatScope =
 export interface BlueBubblesConfig {
   enabled: boolean;
   baseUrl: string | null;
+  baseUrlCandidates: string[];
   password: string | null;
   host: string;
   port: number;

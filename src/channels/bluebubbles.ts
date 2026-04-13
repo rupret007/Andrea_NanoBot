@@ -54,6 +54,25 @@ function normalizeBaseUrl(value: string | undefined): string | null {
   return trimmed.replace(/\/+$/, '');
 }
 
+function normalizeBaseUrlCandidates(
+  primaryValue: string | undefined,
+  candidatesValue: string | undefined,
+): string[] {
+  const normalized = new Set<string>();
+  const push = (value: string | null): void => {
+    if (value) {
+      normalized.add(value);
+    }
+  };
+
+  push(normalizeBaseUrl(primaryValue));
+  for (const candidate of (candidatesValue || '').split(',')) {
+    push(normalizeBaseUrl(candidate));
+  }
+
+  return [...normalized];
+}
+
 function normalizeChatScope(value: string | undefined): BlueBubblesChatScope {
   const normalized = value?.trim().toLowerCase();
   if (normalized === 'all_synced') return 'all_synced';
@@ -260,6 +279,7 @@ export function resolveBlueBubblesConfig(
   env = readEnvFile([
     'BLUEBUBBLES_ENABLED',
     'BLUEBUBBLES_BASE_URL',
+    'BLUEBUBBLES_BASE_URL_CANDIDATES',
     'BLUEBUBBLES_PASSWORD',
     'BLUEBUBBLES_HOST',
     'BLUEBUBBLES_PORT',
@@ -277,11 +297,15 @@ export function resolveBlueBubblesConfig(
     process.env.BLUEBUBBLES_ENABLED || env.BLUEBUBBLES_ENABLED,
     false,
   );
+  const baseUrlCandidates = normalizeBaseUrlCandidates(
+    process.env.BLUEBUBBLES_BASE_URL || env.BLUEBUBBLES_BASE_URL,
+    process.env.BLUEBUBBLES_BASE_URL_CANDIDATES ||
+      env.BLUEBUBBLES_BASE_URL_CANDIDATES,
+  );
   return {
     enabled,
-    baseUrl: normalizeBaseUrl(
-      process.env.BLUEBUBBLES_BASE_URL || env.BLUEBUBBLES_BASE_URL,
-    ),
+    baseUrl: baseUrlCandidates[0] || null,
+    baseUrlCandidates,
     password:
       process.env.BLUEBUBBLES_PASSWORD || env.BLUEBUBBLES_PASSWORD || null,
     host:
@@ -356,6 +380,16 @@ export function buildBlueBubblesHealthSnapshot(
     detail: defaultDetail,
     ...overrides,
   };
+}
+
+function summarizeBlueBubblesCandidateProbeResults(
+  results: Record<string, string>,
+): string {
+  const entries = Object.entries(results);
+  if (entries.length === 0) {
+    return 'none';
+  }
+  return entries.map(([baseUrl, detail]) => `${baseUrl} => ${detail}`).join(' | ');
 }
 
 function firstString(...values: unknown[]): string | null {
@@ -1132,6 +1166,33 @@ export class BlueBubblesChannel implements Channel {
     this.activePort = config.port;
   }
 
+  private getConfiguredBaseUrlCandidates(): string[] {
+    return this.config.baseUrlCandidates.length > 0
+      ? this.config.baseUrlCandidates
+      : this.config.baseUrl
+        ? [this.config.baseUrl]
+        : [];
+  }
+
+  private getActiveBaseUrl(): string | null {
+    return this.monitorState.activeBaseUrl;
+  }
+
+  private buildConfigForBaseUrl(baseUrl: string | null): BlueBubblesConfig {
+    return {
+      ...this.config,
+      baseUrl,
+    };
+  }
+
+  private async ensureActiveBaseUrl(): Promise<string | null> {
+    if (this.getActiveBaseUrl()) {
+      return this.getActiveBaseUrl();
+    }
+    await this.probeBlueBubblesTransport();
+    return this.getActiveBaseUrl();
+  }
+
   private buildDirectChatMetadata(input: {
     chatJid: string;
     chat: BlueBubblesChatRef;
@@ -1258,8 +1319,13 @@ export class BlueBubblesChannel implements Channel {
       return false;
     }
 
+    const activeBaseUrl = await this.ensureActiveBaseUrl();
+    if (!activeBaseUrl) {
+      return false;
+    }
+
     const rows = await fetchNormalizedBlueBubblesHistoryRows(
-      this.config,
+      this.buildConfigForBaseUrl(activeBaseUrl),
       chatGuid,
       limit,
     );
@@ -1465,7 +1531,9 @@ export class BlueBubblesChannel implements Channel {
   private async maybeEscalateCrossSurfaceFallback(): Promise<void> {
     const recentQualifyingEvidence = this.monitorState.recentEvidence.filter(
       (entry) =>
-        entry.kind === 'missed_inbound' || entry.kind === 'reply_delivery_failed',
+        entry.kind === 'missed_inbound' ||
+        entry.kind === 'reply_delivery_failed' ||
+        entry.kind === 'transport_unreachable',
     );
     const nowMs = Date.now();
     const lastSentMs = this.monitorState.crossSurfaceFallbackLastSentAt
@@ -1522,12 +1590,20 @@ export class BlueBubblesChannel implements Channel {
     const nowMs = Date.now();
     this.pruneRecentEvidence(nowMs);
     try {
+      const activeBaseUrl = await this.ensureActiveBaseUrl();
+      if (!activeBaseUrl) {
+        throw new Error(
+          this.transportProbeDetail ||
+            'Andrea could not reach any configured BlueBubbles endpoint.',
+        );
+      }
       const recentMessages = await fetchNormalizedBlueBubblesRecentMessages(
-        this.config,
+        this.buildConfigForBaseUrl(activeBaseUrl),
         8,
       );
       this.monitorState.shadowPollLastOkAt = new Date(nowMs).toISOString();
       this.monitorState.shadowPollLastError = null;
+      this.monitorState.activeBaseUrl = activeBaseUrl;
       const newest = recentMessages[recentMessages.length - 1] || null;
       if (newest) {
         this.monitorState.shadowPollMostRecentChat = newest.chatJid;
@@ -1659,13 +1735,36 @@ export class BlueBubblesChannel implements Channel {
     } catch (error) {
       const errorText =
         error instanceof Error ? error.message : 'BlueBubbles shadow poll failed';
-      this.monitorState.shadowPollLastError = errorText;
-      if (this.monitorState.recentEvidence.length === 0) {
-        this.setDetectionState(
-          'healthy',
-          `Andrea could not read recent BlueBubbles server activity because the shadow poll failed (${errorText}).`,
-          'Check BlueBubbles server reachability and the Mac-side webhook target, then retry the same Messages thread.',
+      try {
+        await this.probeBlueBubblesTransport();
+        await this.refreshServerInfo();
+        await this.refreshWebhookRegistration();
+      } catch (probeError) {
+        logger.warn(
+          { err: probeError },
+          'BlueBubbles transport reprobe failed after shadow poll error',
         );
+      }
+
+      const detail =
+        this.transportProbeDetail ||
+        `Andrea could not read recent BlueBubbles server activity because the shadow poll failed (${errorText}).`;
+      const nowIso = new Date(nowMs).toISOString();
+      this.monitorState.shadowPollLastError = errorText;
+      this.monitorState.recentEvidence.push({
+        kind: 'transport_unreachable',
+        chatJid: 'bluebubbles:transport',
+        signature: `${this.getActiveBaseUrl() || 'none'}:${nowIso}`,
+        observedAt: nowIso,
+      });
+      this.setDetectionState(
+        'transport_unreachable',
+        `Andrea could not reach the BlueBubbles server from this host, so Messages may be missing inbound texts before Andrea ever sees them. ${detail}`,
+        'Check the BlueBubbles server endpoint for this Windows host, prefer a stable IP or explicit candidate list over a .local hostname, then retry the same 1:1 Messages thread.',
+      );
+      await this.maybeEscalateCrossSurfaceFallback();
+      if (this.monitorState.crossSurfaceFallbackState === 'idle') {
+        this.monitorState.crossSurfaceFallbackState = 'armed';
       }
       this.persistMonitorState();
     }
@@ -1698,6 +1797,16 @@ export class BlueBubblesChannel implements Channel {
       this.connected
         ? `listener ${this.config.host}:${this.activePort}${this.config.webhookPath}`
         : 'listener stopped',
+      `configured base url ${this.config.baseUrl || 'none'}`,
+      `active endpoint ${this.monitorState.activeBaseUrl || 'none'}`,
+      `candidate endpoints ${
+        this.getConfiguredBaseUrlCandidates().length > 0
+          ? this.getConfiguredBaseUrlCandidates().join(', ')
+          : 'none'
+      }`,
+      `candidate probe results ${summarizeBlueBubblesCandidateProbeResults(
+        this.monitorState.candidateProbeResults,
+      )}`,
       `scope ${this.config.chatScope}`,
       `reply gate mention_required`,
       `webhook ${this.getPublicWebhookDisplayUrl()}`,
@@ -1770,57 +1879,105 @@ export class BlueBubblesChannel implements Channel {
   }
 
   private async probeBlueBubblesTransport(): Promise<void> {
-    if (!this.config.baseUrl || !this.config.password) {
+    const candidates = this.getConfiguredBaseUrlCandidates();
+    if (candidates.length === 0 || !this.config.password) {
       this.transportProbeStatus = 'not_checked';
       this.transportProbeDetail = 'not configured';
+      this.monitorState.activeBaseUrl = null;
+      this.monitorState.candidateProbeResults = {};
       return;
     }
 
-    const url = new URL('/api/v1/ping', this.config.baseUrl);
-    for (const [key, value] of buildAuthSearchParams(this.config.password).entries()) {
-      url.searchParams.set(key, value);
+    const candidateProbeResults: Record<string, string> = {};
+    let firstAuthFailed:
+      | {
+          baseUrl: string;
+          detail: string;
+        }
+      | null = null;
+
+    for (const candidate of candidates) {
+      const url = new URL('/api/v1/ping', candidate);
+      for (const [key, value] of buildAuthSearchParams(this.config.password).entries()) {
+        url.searchParams.set(key, value);
+      }
+
+      try {
+        const response = await fetchBlueBubblesWithTimeout(url);
+        const responseText = await response.text();
+        if (response.ok) {
+          const detail = `reachable/auth ok (${response.status})`;
+          candidateProbeResults[candidate] = detail;
+          this.transportProbeStatus = 'reachable';
+          this.transportProbeDetail = `${detail} via ${candidate}`;
+          this.monitorState.activeBaseUrl = candidate;
+          this.monitorState.candidateProbeResults = candidateProbeResults;
+          return;
+        }
+        if (response.status === 401 || response.status === 403) {
+          const detail = extractBlueBubblesErrorText(response.status, responseText);
+          candidateProbeResults[candidate] = `auth failed (${detail})`;
+          if (!firstAuthFailed) {
+            firstAuthFailed = {
+              baseUrl: candidate,
+              detail,
+            };
+          }
+          continue;
+        }
+        candidateProbeResults[candidate] = `unreachable (${extractBlueBubblesErrorText(
+          response.status,
+          responseText,
+        )})`;
+      } catch (error) {
+        candidateProbeResults[candidate] = `unreachable (${
+          error instanceof Error ? error.message : 'transport probe failed'
+        })`;
+      }
     }
 
-    try {
-      const response = await fetchBlueBubblesWithTimeout(url);
-      const responseText = await response.text();
-      if (response.ok) {
-        this.transportProbeStatus = 'reachable';
-        this.transportProbeDetail = `reachable/auth ok (${response.status})`;
-        return;
-      }
-      if (response.status === 401 || response.status === 403) {
-        this.transportProbeStatus = 'auth_failed';
-        this.transportProbeDetail =
-          extractBlueBubblesErrorText(response.status, responseText);
-        return;
-      }
-      this.transportProbeStatus = 'unreachable';
-      this.transportProbeDetail = extractBlueBubblesErrorText(
-        response.status,
-        responseText,
-      );
-    } catch (error) {
-      this.transportProbeStatus = 'unreachable';
-      this.transportProbeDetail =
-        error instanceof Error ? error.message : 'transport probe failed';
+    this.monitorState.candidateProbeResults = candidateProbeResults;
+    if (firstAuthFailed) {
+      this.transportProbeStatus = 'auth_failed';
+      this.transportProbeDetail = `${firstAuthFailed.detail} via ${firstAuthFailed.baseUrl}`;
+      this.monitorState.activeBaseUrl = firstAuthFailed.baseUrl;
+      return;
     }
+
+    this.transportProbeStatus = 'unreachable';
+    this.transportProbeDetail =
+      candidates.length === 1
+        ? candidateProbeResults[candidates[0]] || 'transport probe failed'
+        : `no reachable BlueBubbles endpoint (${summarizeBlueBubblesCandidateProbeResults(
+            candidateProbeResults,
+          )})`;
+    this.monitorState.activeBaseUrl = null;
   }
 
   private async refreshWebhookRegistration(): Promise<void> {
-    const inspection = await inspectBlueBubblesWebhookRegistration(this.config);
+    const activeBaseUrl = this.getActiveBaseUrl();
+    if (!activeBaseUrl && this.getConfiguredBaseUrlCandidates().length > 0) {
+      this.webhookRegistrationStatus = 'unreachable';
+      this.webhookRegistrationDetail =
+        'skipped because no reachable BlueBubbles endpoint is available yet';
+      return;
+    }
+    const inspection = await inspectBlueBubblesWebhookRegistration(
+      this.buildConfigForBaseUrl(activeBaseUrl),
+    );
     this.webhookRegistrationStatus = inspection.state;
     this.webhookRegistrationDetail = inspection.detail;
   }
 
   private async refreshServerInfo(): Promise<void> {
-    if (!this.config.baseUrl || !this.config.password) {
+    const activeBaseUrl = this.getActiveBaseUrl();
+    if (!activeBaseUrl || !this.config.password) {
       this.privateApiAvailable = null;
       this.sendMethod = 'private-api';
       return;
     }
 
-    const url = new URL('/api/v1/server/info', this.config.baseUrl);
+    const url = new URL('/api/v1/server/info', activeBaseUrl);
     for (const [key, value] of buildAuthSearchParams(this.config.password).entries()) {
       url.searchParams.set(key, value);
     }
@@ -1997,10 +2154,14 @@ export class BlueBubblesChannel implements Channel {
     text: string,
     replyToGuid?: string,
   ): Promise<SendMessageResult> {
-    if (!this.config.baseUrl || !this.config.password || !chatGuid) {
-      throw new Error('BlueBubbles transport is missing base URL, password, or chat target');
+    const activeBaseUrl = await this.ensureActiveBaseUrl();
+    if (!activeBaseUrl || !this.config.password || !chatGuid) {
+      throw new Error(
+        this.transportProbeDetail ||
+          'BlueBubbles transport is missing a reachable endpoint, password, or chat target',
+      );
     }
-    const url = new URL('/api/v1/message/text', this.config.baseUrl);
+    const url = new URL('/api/v1/message/text', activeBaseUrl);
     for (const [key, value] of buildAuthSearchParams(this.config.password).entries()) {
       url.searchParams.set(key, value);
     }

@@ -70,9 +70,10 @@ async function startBlueBubblesApiStub(
 function buildConfig(
   overrides: Partial<BlueBubblesConfig> = {},
 ): BlueBubblesConfig {
-  return {
+  const config: BlueBubblesConfig = {
     enabled: true,
     baseUrl: 'http://127.0.0.1:9999',
+    baseUrlCandidates: ['http://127.0.0.1:9999'],
     password: 'secret',
     host: '127.0.0.1',
     port: 0,
@@ -86,6 +87,10 @@ function buildConfig(
     sendEnabled: true,
     ...overrides,
   };
+  if (!overrides.baseUrlCandidates) {
+    config.baseUrlCandidates = config.baseUrl ? [config.baseUrl] : [];
+  }
+  return config;
 }
 
 describe('BlueBubbles channel', () => {
@@ -104,6 +109,8 @@ describe('BlueBubbles channel', () => {
     const config = resolveBlueBubblesConfig({
       BLUEBUBBLES_ENABLED: 'true',
       BLUEBUBBLES_BASE_URL: 'https://blue.example.com/',
+      BLUEBUBBLES_BASE_URL_CANDIDATES:
+        'http://192.168.5.40:1234, https://blue-alt.example.com/',
       BLUEBUBBLES_PASSWORD: 'secret',
       BLUEBUBBLES_HOST: '0.0.0.0',
       BLUEBUBBLES_PORT: '4315',
@@ -120,6 +127,11 @@ describe('BlueBubbles channel', () => {
     expect(config).toMatchObject({
       enabled: true,
       baseUrl: 'https://blue.example.com',
+      baseUrlCandidates: [
+        'https://blue.example.com',
+        'http://192.168.5.40:1234',
+        'https://blue-alt.example.com',
+      ],
       host: '0.0.0.0',
       port: 4315,
       groupFolder: 'main',
@@ -1531,6 +1543,150 @@ describe('BlueBubbles channel', () => {
     } finally {
       await channel.disconnect();
       await apiStub.close();
+    }
+  });
+
+  it('fails over to the first reachable BlueBubbles endpoint candidate', async () => {
+    const apiStub = await startBlueBubblesApiStub(async (req, _body, res) => {
+      if ((req.url || '').startsWith('/api/v1/webhook')) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ data: [] }));
+        return;
+      }
+      if ((req.url || '').startsWith('/api/v1/server/info')) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ data: { private_api: true } }));
+        return;
+      }
+      if ((req.url || '').startsWith('/api/v1/message')) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ data: [] }));
+        return;
+      }
+      res.statusCode = 404;
+      res.end('not found');
+    });
+
+    const channel = new BlueBubblesChannel(
+      buildConfig({
+        baseUrl: 'http://127.0.0.1:9',
+        baseUrlCandidates: ['http://127.0.0.1:9', apiStub.baseUrl],
+        chatScope: 'all_synced',
+        allowedChatGuids: [],
+        allowedChatGuid: null,
+      }),
+      {
+        onMessage: vi.fn(),
+        onChatMetadata: vi.fn(),
+        registeredGroups: () => ({}),
+        onHealthUpdate: vi.fn(),
+      },
+    );
+
+    try {
+      await channel.connect();
+
+      const monitorState = readBlueBubblesMonitorState();
+      expect(monitorState.activeBaseUrl).toBe(apiStub.baseUrl);
+      expect(monitorState.candidateProbeResults['http://127.0.0.1:9']).toContain(
+        'unreachable',
+      );
+      expect(monitorState.candidateProbeResults[apiStub.baseUrl]).toBe(
+        'reachable/auth ok (200)',
+      );
+      expect(monitorState.detectionState).toBe('healthy');
+    } finally {
+      await channel.disconnect();
+      await apiStub.close();
+    }
+  });
+
+  it('marks BlueBubbles transport as unreachable instead of healthy when the server cannot be polled', async () => {
+    const channel = new BlueBubblesChannel(
+      buildConfig({
+        baseUrl: 'http://127.0.0.1:9',
+        baseUrlCandidates: ['http://127.0.0.1:9'],
+        chatScope: 'all_synced',
+        allowedChatGuids: [],
+        allowedChatGuid: null,
+      }),
+      {
+        onMessage: vi.fn(),
+        onChatMetadata: vi.fn(),
+        registeredGroups: () => ({}),
+        onHealthUpdate: vi.fn(),
+      },
+    );
+
+    try {
+      await channel.connect();
+
+      const monitorState = readBlueBubblesMonitorState();
+      expect(monitorState.detectionState).toBe('transport_unreachable');
+      expect(monitorState.detectionDetail).toContain(
+        'could not reach the BlueBubbles server',
+      );
+      expect(monitorState.crossSurfaceFallbackState).toBe('armed');
+      expect(monitorState.activeBaseUrl).toBeNull();
+    } finally {
+      await channel.disconnect();
+    }
+  });
+
+  it('sends one Telegram fallback notice after repeated transport failures and then enters cooldown', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-04-12T20:10:00.000Z'));
+
+    const onCrossSurfaceFallback = vi.fn(async () => ({
+      sent: true,
+      detail: 'sent fallback notice to tg:main',
+    }));
+    const channel = new BlueBubblesChannel(
+      buildConfig({
+        baseUrl: 'http://127.0.0.1:9',
+        baseUrlCandidates: ['http://127.0.0.1:9'],
+        chatScope: 'all_synced',
+        allowedChatGuids: [],
+        allowedChatGuid: null,
+      }),
+      {
+        onMessage: vi.fn(),
+        onChatMetadata: vi.fn(),
+        registeredGroups: () => ({}),
+        onHealthUpdate: vi.fn(),
+        onCrossSurfaceFallback,
+      },
+    );
+
+    try {
+      await channel.connect();
+
+      let monitorState = readBlueBubblesMonitorState();
+      expect(onCrossSurfaceFallback).not.toHaveBeenCalled();
+      expect(monitorState.crossSurfaceFallbackState).toBe('armed');
+
+      vi.setSystemTime(new Date('2026-04-12T20:11:20.000Z'));
+      await (channel as any).runShadowMonitorOnce();
+
+      monitorState = readBlueBubblesMonitorState();
+      expect(onCrossSurfaceFallback).toHaveBeenCalledTimes(1);
+      expect(onCrossSurfaceFallback).toHaveBeenCalledWith({
+        sourceChannel: 'bluebubbles',
+        detail: expect.stringContaining('could not reach the BlueBubbles server'),
+        chatJid: null,
+      });
+      expect(monitorState.crossSurfaceFallbackState).toBe('sent');
+
+      vi.setSystemTime(new Date('2026-04-12T20:12:40.000Z'));
+      await (channel as any).runShadowMonitorOnce();
+      monitorState = readBlueBubblesMonitorState();
+      expect(onCrossSurfaceFallback).toHaveBeenCalledTimes(1);
+      expect(monitorState.crossSurfaceFallbackState).toBe('cooldown');
+    } finally {
+      await channel.disconnect();
     }
   });
 
