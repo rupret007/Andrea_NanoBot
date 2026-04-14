@@ -51,6 +51,45 @@ describe('everyday capture', () => {
     _initTestDatabase();
   });
 
+  it('supports zero-setup capture and calm empty readouts before profile approval', async () => {
+    const empty = await handleEverydayCaptureCommand(buildInput("what's on my list"));
+
+    expect(empty.handled).toBe(true);
+    expect(empty.replyText).toContain('Your list looks clear right now.');
+    expect(empty.sendOptions?.inlineActionRows?.[0]).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ label: 'Groceries' }),
+        expect.objectContaining({ label: 'Bills' }),
+        expect.objectContaining({ label: 'Tonight' }),
+      ]),
+    );
+
+    const add = await handleEverydayCaptureCommand(
+      buildInput('add milk to my shopping list'),
+    );
+
+    expect(add.handled).toBe(true);
+    expect(add.replyText).toContain('groceries');
+    expect(listEverydayListGroups('main').map((group) => group.title)).toEqual(
+      expect.arrayContaining([
+        'Groceries',
+        'Errands',
+        'Bills',
+        'Meals',
+        'Household',
+        'Tonight',
+        'General',
+      ]),
+    );
+    expect(add.sendOptions?.inlineActionRows?.flat()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ label: 'Done' }),
+        expect.objectContaining({ label: 'Groceries' }),
+        expect.objectContaining({ label: 'Plan' }),
+      ]),
+    );
+  });
+
   it('creates a draft operating profile and seeds starter groups after approval', async () => {
     const start = await handleEverydayCaptureCommand(
       buildInput('help me set this up'),
@@ -190,6 +229,70 @@ describe('everyday capture', () => {
     expect(getTasksForGroup('main')).toHaveLength(1);
   });
 
+  it('supports recurring obligations, group moves, and reopen flows without turning into a second task system', async () => {
+    const recurringBill = await handleEverydayCaptureCommand(
+      buildInput('add pay water bill to my list every month'),
+    );
+    const billId = recurringBill.listItems?.[0]?.itemId;
+
+    expect(getEverydayListItem(billId!)?.recurrenceKind).toBe('monthly');
+
+    const done = await handleEverydayCaptureCommand(
+      buildInput('mark that done', {
+        priorContext: recurringBill.conversationData,
+        now: new Date('2026-04-12T09:00:00-05:00'),
+      }),
+    );
+
+    expect(done.replyText).toContain('marked pay water bill done');
+    expect(getEverydayListItem(billId!)?.state).toBe('done');
+    expect(getEverydayListItem(billId!)?.recurrenceNextDueAt).toBeTruthy();
+
+    const refreshed = await handleEverydayCaptureCommand(
+      buildInput('what bills do I need to pay this week', {
+        now: new Date('2026-05-20T09:00:00-05:00'),
+      }),
+    );
+
+    expect(refreshed.replyText).toContain('pay water bill');
+    expect(getEverydayListItem(billId!)?.state).toBe('open');
+
+    const moveToWeekend = await handleEverydayCaptureCommand(
+      buildInput('make this part of my weekend list', {
+        priorContext: recurringBill.conversationData,
+      }),
+    );
+    const movedItem = getEverydayListItem(billId!);
+    expect(moveToWeekend.replyText).toContain('moved pay water bill to weekend');
+    expect(movedItem?.groupId).toBeTruthy();
+    expect(
+      listEverydayListGroups('main').find(
+        (group) => group.groupId === movedItem?.groupId,
+      )?.title,
+    ).toBe('Weekend');
+
+    const reopen = await handleEverydayCaptureCommand(
+      buildInput('reopen that', {
+        priorContext: {
+          ...(recurringBill.conversationData || {}),
+          activeListItemIds: [billId!],
+        },
+      }),
+    );
+    expect(reopen.replyText).toContain('reopened pay water bill');
+
+    const stopRepeating = await handleEverydayCaptureCommand(
+      buildInput('stop repeating that', {
+        priorContext: {
+          ...(recurringBill.conversationData || {}),
+          activeListItemIds: [billId!],
+        },
+      }),
+    );
+    expect(stopRepeating.replyText).toContain('will stop repeating');
+    expect(getEverydayListItem(billId!)?.recurrenceKind).toBe('none');
+  });
+
   it('can convert items into a plan or a household thread without collapsing the systems together', async () => {
     await approveStarterProfile();
 
@@ -252,8 +355,147 @@ describe('everyday capture', () => {
       buildInput('what do I still need to buy', { channel: 'alexa' }),
     );
 
-    expect(readout.replyText).toContain('You still need');
+    expect(readout.replyText).toContain('From the store');
     expect(readout.replyText).toContain('Want the fuller list in Telegram?');
     expect(readout.handoffOffer).toContain('fuller list to Telegram');
+  });
+
+  it('returns grouped Telegram readouts with contextual inline actions', async () => {
+    await handleEverydayCaptureCommand(buildInput('add milk to my shopping list'));
+    await handleEverydayCaptureCommand(buildInput('save this as an errand', {
+      replyText: 'Pick up batteries',
+    }));
+    await handleEverydayCaptureCommand(buildInput('add pay water bill to my list'));
+
+    const readout = await handleEverydayCaptureCommand(
+      buildInput("what's still open"),
+    );
+
+    expect(readout.replyText).toContain('*Groceries*');
+    expect(readout.replyText).toContain('*Errands*');
+    expect(readout.replyText).toContain('*Bills This Week*');
+    expect(readout.sendOptions?.inlineActionRows?.flat()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ label: 'Groceries' }),
+        expect.objectContaining({ label: 'Done' }),
+        expect.objectContaining({ label: 'Plan' }),
+      ]),
+    );
+  });
+
+  it('builds practical household smart views for store, bills, tonight, weekend, meals, and dinner gaps', async () => {
+    const fridayMorning = new Date('2026-04-17T09:00:00-05:00');
+
+    await handleEverydayCaptureCommand(
+      buildInput('add tortillas to my shopping list', { now: fridayMorning }),
+    );
+    await handleEverydayCaptureCommand(
+      buildInput('add salsa to my shopping list', { now: fridayMorning }),
+    );
+    await handleEverydayCaptureCommand(
+      buildInput('add tortillas and salsa dinner for Friday', {
+        now: fridayMorning,
+      }),
+    );
+    await handleEverydayCaptureCommand(
+      buildInput('add pay water bill to my list', { now: fridayMorning }),
+    );
+    const household = await handleEverydayCaptureCommand(
+      buildInput('track that for the household', {
+        replyText: 'Replace the air filter',
+        now: fridayMorning,
+      }),
+    );
+    await handleEverydayCaptureCommand(
+      buildInput('make this part of my weekend list', {
+        priorContext: household.conversationData,
+        now: fridayMorning,
+      }),
+    );
+
+    const store = await handleEverydayCaptureCommand(
+      buildInput('what do we need from the store', { now: fridayMorning }),
+    );
+    expect(store.replyText).toContain('From the store');
+    expect(store.replyText).toContain('*Groceries*');
+
+    const bills = await handleEverydayCaptureCommand(
+      buildInput('what bills are due this week', {
+        channel: 'alexa',
+        now: fridayMorning,
+      }),
+    );
+    expect(bills.replyText).toContain('pay water bill');
+
+    const tonight = await handleEverydayCaptureCommand(
+      buildInput("what's left for tonight", {
+        channel: 'alexa',
+        now: fridayMorning,
+      }),
+    );
+    expect(tonight.replyText).toContain('For tonight');
+
+    const weekend = await handleEverydayCaptureCommand(
+      buildInput('what should I handle this weekend', { now: fridayMorning }),
+    );
+    expect(weekend.replyText).toContain('*Weekend*');
+    expect(weekend.replyText).toContain('Replace the air filter');
+
+    const meals = await handleEverydayCaptureCommand(
+      buildInput('what meal ideas do I have this week', { now: fridayMorning }),
+    );
+    expect(meals.replyText).toContain('*Meals This Week*');
+    expect(meals.replyText).toContain('tortillas and salsa dinner');
+
+    const dinner = await handleEverydayCaptureCommand(
+      buildInput("what's missing for dinner", { now: fridayMorning }),
+    );
+    expect(dinner.replyText || '').toContain('Dinner looks planned');
+    expect((dinner.replyText || '').toLowerCase()).toContain('tortillas');
+    expect((dinner.replyText || '').toLowerCase()).toContain('salsa');
+  });
+
+  it('tracks recently completed and slipping items for household review', async () => {
+    const bill = await handleEverydayCaptureCommand(
+      buildInput('add pay internet bill to my list'),
+    );
+    const done = await handleEverydayCaptureCommand(
+      buildInput('mark that done', {
+        priorContext: bill.conversationData,
+      }),
+    );
+    expect(done.replyText).toContain('marked pay internet bill done');
+
+    const recent = await handleEverydayCaptureCommand(
+      buildInput('what did I finish lately'),
+    );
+    expect(recent.replyText).toContain('Recently finished');
+    expect(recent.replyText).toContain('pay internet bill');
+
+    const errand = await handleEverydayCaptureCommand(
+      buildInput('save this as an errand', {
+        replyText: 'Return the router',
+      }),
+    );
+    const firstDefer = await handleEverydayCaptureCommand(
+      buildInput('move that to next week', {
+        priorContext: errand.conversationData,
+      }),
+    );
+    const reopen = await handleEverydayCaptureCommand(
+      buildInput('reopen that', {
+        priorContext: firstDefer.conversationData,
+      }),
+    );
+    await handleEverydayCaptureCommand(
+      buildInput('move that to next week', {
+        priorContext: reopen.conversationData,
+      }),
+    );
+
+    const slipping = await handleEverydayCaptureCommand(
+      buildInput("what's slipping"),
+    );
+    expect(slipping.replyText).toContain('Return the router');
   });
 });

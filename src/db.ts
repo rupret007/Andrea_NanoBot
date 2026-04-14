@@ -379,6 +379,12 @@ function createSchema(database: Database.Database): void {
       due_at TEXT,
       scheduled_for TEXT,
       defer_until TEXT,
+      recurrence_kind TEXT NOT NULL DEFAULT 'none',
+      recurrence_interval INTEGER NOT NULL DEFAULT 1,
+      recurrence_days_json TEXT,
+      recurrence_day_of_month INTEGER,
+      recurrence_anchor_at TEXT,
+      recurrence_next_due_at TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       completed_at TEXT
@@ -1241,6 +1247,54 @@ function createSchema(database: Database.Database): void {
   try {
     database.exec(
       `ALTER TABLE cursor_message_contexts ADD COLUMN lane_id TEXT`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(
+      `ALTER TABLE everyday_list_items ADD COLUMN recurrence_kind TEXT NOT NULL DEFAULT 'none'`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(
+      `ALTER TABLE everyday_list_items ADD COLUMN recurrence_interval INTEGER NOT NULL DEFAULT 1`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(
+      `ALTER TABLE everyday_list_items ADD COLUMN recurrence_days_json TEXT`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(
+      `ALTER TABLE everyday_list_items ADD COLUMN recurrence_day_of_month INTEGER`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(
+      `ALTER TABLE everyday_list_items ADD COLUMN recurrence_anchor_at TEXT`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(
+      `ALTER TABLE everyday_list_items ADD COLUMN recurrence_next_due_at TEXT`,
     );
   } catch {
     /* column already exists */
@@ -6702,6 +6756,12 @@ function mapEverydayListItemRow(row: {
   due_at: string | null;
   scheduled_for: string | null;
   defer_until: string | null;
+  recurrence_kind: EverydayListItem['recurrenceKind'];
+  recurrence_interval: number;
+  recurrence_days_json: string | null;
+  recurrence_day_of_month: number | null;
+  recurrence_anchor_at: string | null;
+  recurrence_next_due_at: string | null;
   created_at: string;
   updated_at: string;
   completed_at: string | null;
@@ -6722,6 +6782,12 @@ function mapEverydayListItemRow(row: {
     dueAt: row.due_at,
     scheduledFor: row.scheduled_for,
     deferUntil: row.defer_until,
+    recurrenceKind: row.recurrence_kind || 'none',
+    recurrenceInterval: row.recurrence_interval || 1,
+    recurrenceDaysJson: row.recurrence_days_json,
+    recurrenceDayOfMonth: row.recurrence_day_of_month,
+    recurrenceAnchorAt: row.recurrence_anchor_at,
+    recurrenceNextDueAt: row.recurrence_next_due_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     completedAt: row.completed_at,
@@ -7105,10 +7171,16 @@ export function upsertEverydayListItem(record: EverydayListItem): void {
         due_at,
         scheduled_for,
         defer_until,
+        recurrence_kind,
+        recurrence_interval,
+        recurrence_days_json,
+        recurrence_day_of_month,
+        recurrence_anchor_at,
+        recurrence_next_due_at,
         created_at,
         updated_at,
         completed_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(item_id) DO UPDATE SET
         group_folder = excluded.group_folder,
         group_id = excluded.group_id,
@@ -7124,6 +7196,12 @@ export function upsertEverydayListItem(record: EverydayListItem): void {
         due_at = excluded.due_at,
         scheduled_for = excluded.scheduled_for,
         defer_until = excluded.defer_until,
+        recurrence_kind = excluded.recurrence_kind,
+        recurrence_interval = excluded.recurrence_interval,
+        recurrence_days_json = excluded.recurrence_days_json,
+        recurrence_day_of_month = excluded.recurrence_day_of_month,
+        recurrence_anchor_at = excluded.recurrence_anchor_at,
+        recurrence_next_due_at = excluded.recurrence_next_due_at,
         created_at = excluded.created_at,
         updated_at = excluded.updated_at,
         completed_at = excluded.completed_at
@@ -7144,6 +7222,12 @@ export function upsertEverydayListItem(record: EverydayListItem): void {
     record.dueAt || null,
     record.scheduledFor || null,
     record.deferUntil || null,
+    record.recurrenceKind || 'none',
+    record.recurrenceInterval || 1,
+    record.recurrenceDaysJson || null,
+    record.recurrenceDayOfMonth || null,
+    record.recurrenceAnchorAt || null,
+    record.recurrenceNextDueAt || null,
     record.createdAt,
     record.updatedAt,
     record.completedAt || null,

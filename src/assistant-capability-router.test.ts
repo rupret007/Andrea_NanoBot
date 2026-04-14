@@ -189,6 +189,46 @@ describe('assistant capability router', () => {
     ).toMatchObject({
       capabilityId: 'capture.read_items',
     });
+    expect(
+      matchAssistantCapabilityRequest("what's on groceries"),
+    ).toMatchObject({
+      capabilityId: 'capture.read_items',
+    });
+    expect(
+      matchAssistantCapabilityRequest("what's left for tonight"),
+    ).toMatchObject({
+      capabilityId: 'capture.read_items',
+    });
+    expect(
+      matchAssistantCapabilityRequest('What do we need from the store?'),
+    ).toMatchObject({
+      capabilityId: 'capture.read_items',
+    });
+    expect(
+      matchAssistantCapabilityRequest("What's missing for dinner?"),
+    ).toMatchObject({
+      capabilityId: 'capture.read_items',
+    });
+    expect(
+      matchAssistantCapabilityRequest('What should I handle this weekend?'),
+    ).toMatchObject({
+      capabilityId: 'capture.read_items',
+    });
+    expect(
+      matchAssistantCapabilityRequest('What meal ideas do I have this week?'),
+    ).toMatchObject({
+      capabilityId: 'capture.read_items',
+    });
+    expect(
+      matchAssistantCapabilityRequest('repeat that every Friday'),
+    ).toMatchObject({
+      capabilityId: 'capture.update_item',
+    });
+    expect(
+      matchAssistantCapabilityRequest('make this part of my weekend list'),
+    ).toMatchObject({
+      capabilityId: 'capture.update_item',
+    });
   });
 
   it('matches mission planning and mission control prompts cleanly', () => {
@@ -289,6 +329,16 @@ describe('assistant capability router', () => {
       }),
     ).toMatchObject({
       capabilityId: 'capture.update_item',
+    });
+    expect(
+      continueAssistantCapabilityFromPriorSubjectData(
+        'save that under the household thread',
+        {
+          activeCapabilityId: 'capture.read_items',
+        },
+      ),
+    ).toMatchObject({
+      capabilityId: 'capture.convert_item',
     });
     expect(
       continueAssistantCapabilityFromPriorSubjectData(

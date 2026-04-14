@@ -110,14 +110,39 @@ function matchEverydayCapturePrompt(
   normalized: string,
 ): AssistantCapabilityMatch | null {
   const lower = normalized.toLowerCase();
+  if (lower.startsWith('ev:v:')) {
+    return {
+      capabilityId: 'capture.read_items',
+      normalizedText: normalized,
+      canonicalText: normalized,
+      reason: 'matched everyday capture view action',
+    };
+  }
+  if (lower.startsWith('ev:c:')) {
+    return {
+      capabilityId: 'capture.convert_item',
+      normalizedText: normalized,
+      canonicalText: normalized,
+      reason: 'matched everyday capture convert action',
+    };
+  }
+  if (lower.startsWith('ev:')) {
+    return {
+      capabilityId: 'capture.update_item',
+      normalizedText: normalized,
+      canonicalText: normalized,
+      reason: 'matched everyday capture item action',
+    };
+  }
   if (
-    /^(add milk to my shopping list|put batteries on my list|save this as an errand|add pay water bill to my list|add dinner idea for friday|add my pills to tonight|track that for the household)\b/.test(
+    /^(add milk to my shopping list|put batteries on my list|save this as an errand|add pay water bill to my list|add dinner idea for friday|add my pills to tonight|track that for the household|put that on the weekend list)\b/.test(
       lower,
     ) ||
-    /^(?:add|put)\b.+\b(?:shopping list|on my list|to tonight|under groceries|under household|under bills|under meals)\b/.test(
+    /^(?:add|put)\b.+\b(?:shopping list|on my list|to tonight|to groceries|under groceries|under household|under bills|under meals|weekend list)\b/.test(
       lower,
     ) ||
-    /^save (?:this|that).+\b(?:as an errand|under)\b/.test(lower)
+    /^save (?:this|that).+\b(?:as an errand|under)\b/.test(lower) ||
+    /^(?:remember this|save this as a list item)\b/.test(lower)
   ) {
     return {
       capabilityId: 'capture.add_item',
@@ -126,20 +151,32 @@ function matchEverydayCapturePrompt(
       reason: 'matched everyday capture phrasing',
     };
   }
-  if (
-    /^(what('?s| is) on my list|what do i still need to buy|what errands do i have|what bills do i need to pay(?: this week| soon)?|what meals have i planned(?: this week)?|what should i remember to get tonight)\b/.test(
-      lower,
-    )
-  ) {
+    if (
+      /^(what('?s| is) on my list|what('?s| is) on groceries|what do we need from the store|what do i still need to buy|what errands do i have|what bills do i need to pay(?: this week| soon)?|what bills are due this week|what meals have i planned(?: this week)?|what meal ideas do i have this week|what meal do i have planned|what household (?:items|things|stuff) (?:are )?(?:still open|do i have)|what should i remember to get tonight|what('?s| is) left for tonight|what should i handle this weekend|what('?s| is) missing for dinner|what recurring (?:things|items) (?:are )?(?:coming back|coming up)(?: soon)?)\b/.test(
+        lower,
+      )
+    ) {
     return {
       capabilityId: 'capture.read_items',
       normalizedText: normalized,
       canonicalText: normalized,
       reason: 'matched everyday list readout phrasing',
     };
+    }
+    if (
+      /^(repeat (?:this|that) (?:every day|daily|every week|weekly|every month|monthly|every (?:monday|tuesday|wednesday|thursday|friday|saturday|sunday))|stop repeating (?:this|that)|reopen (?:this|that)|move (?:this|that) to groceries|save (?:this|that) under groceries|make (?:this|that) part of my weekend list|put (?:this|that) in tonight'?s plan)\b/.test(
+        lower,
+      )
+    ) {
+      return {
+        capabilityId: 'capture.update_item',
+        normalizedText: normalized,
+        canonicalText: normalized,
+        reason: 'matched everyday list update phrasing',
+      };
+    }
+    return null;
   }
-  return null;
-}
 
 function buildOpenAskCandidates(query: string): string[] {
   const trimmed = normalizeText(query);

@@ -34,10 +34,12 @@ import { syncOutcomeFromReminderTask } from './outcome-reviews.js';
 import type {
   AlexaConversationFollowupAction,
   AlexaConversationSubjectKind,
+  ChannelInlineAction,
   EverydayListGroup,
   EverydayListGroupKind,
   EverydayListItem,
   EverydayListItemKind,
+  EverydayListRecurrenceKind,
   EverydayListItemState,
   EverydayListScope,
   OperatingProfile,
@@ -108,6 +110,10 @@ export interface EverydayCaptureCommandResult {
   subjectKind?: AlexaConversationSubjectKind;
   conversationData?: EverydayCaptureConversationData;
   supportedFollowups?: AlexaConversationFollowupAction[];
+  sendOptions?: {
+    inlineActions?: ChannelInlineAction[];
+    inlineActionRows?: ChannelInlineAction[][];
+  };
   listGroup?: EverydayListGroup | null;
   listItems?: EverydayListItem[];
   operatingProfile?: OperatingProfile | null;
@@ -129,7 +135,19 @@ interface PendingReminderState {
 }
 
 interface ReadTarget {
-  kind: 'all' | 'shopping' | 'errands' | 'bills' | 'meals' | 'tonight';
+  kind:
+    | 'all'
+    | 'shopping'
+    | 'errands'
+    | 'bills'
+    | 'meals'
+    | 'household'
+    | 'tonight'
+    | 'weekend'
+    | 'recurring'
+    | 'recently_completed'
+    | 'slipping'
+    | 'dinner_missing';
   summary: string;
 }
 
@@ -142,10 +160,63 @@ interface CaptureTarget {
   dueAt?: string | null;
   scheduledFor?: string | null;
   detail?: Record<string, unknown>;
+  recurrence?: EverydayListRecurrence;
+}
+
+interface EverydayListRecurrence {
+  kind: EverydayListRecurrenceKind;
+  interval: number;
+  days?: number[];
+  dayOfMonth?: number | null;
+  anchorAt?: string | null;
+  nextDueAt?: string | null;
+}
+
+interface EverydayActionToken {
+  targetMode: 'read' | 'update' | 'convert';
+  action:
+    | 'view_all'
+    | 'view_group'
+    | 'view_recurring'
+    | 'done'
+    | 'reopen'
+    | 'remove'
+    | 'defer_week'
+    | 'remind'
+    | 'move'
+    | 'stop_repeat'
+    | 'convert_reminder'
+    | 'convert_plan'
+    | 'convert_thread';
+  itemId?: string;
+  groupKind?: ReadTarget['kind'];
+  moveGroupKind?: EverydayListGroupKind;
+  moveGroupTitle?: string;
+}
+
+interface EverydayItemDetailMeta {
+  deferCount?: number;
+  lastDeferredAt?: string | null;
+  mealHints?: string[] | null;
+}
+
+interface HouseholdSmartViewSection {
+  title: string;
+  items: EverydayListItem[];
+}
+
+interface HouseholdSmartView {
+  lead: string | null;
+  emptyLine: string;
+  items: EverydayListItem[];
+  sections: HouseholdSmartViewSection[];
+  handoffOffer?: string;
+  nextStep?: string;
 }
 
 const PROFILE_SETUP_STATE_PREFIX = 'everyday_capture:profile_setup:';
 const REMINDER_STATE_PREFIX = 'everyday_capture:pending_reminder:';
+const EVERYDAY_ACTION_PREFIX = 'ev:';
 const DEFAULT_LEARNING_POLICY: OperatingProfileLearningMode =
   'suggest_then_confirm';
 const DEFAULT_GROUP_TEMPLATES: Record<
@@ -181,6 +252,51 @@ const DEFAULT_GROUP_TEMPLATES: Record<
     purpose: 'Everyday capture that does not fit somewhere tighter yet.',
   },
 };
+
+const WEEKDAY_INDEX: Record<string, number> = {
+  sunday: 0,
+  monday: 1,
+  tuesday: 2,
+  wednesday: 3,
+  thursday: 4,
+  friday: 5,
+  saturday: 6,
+};
+
+function defaultScopeForGroupKind(kind: EverydayListGroupKind): EverydayListScope {
+  return kind === 'household' ? 'household' : 'personal';
+}
+
+function buildDefaultListGroups(
+  groupFolder: string,
+  nowIso: string,
+  operatingProfileId?: string | null,
+): EverydayListGroup[] {
+  const defaultKinds: EverydayListGroupKind[] = [
+    'shopping',
+    'errands',
+    'bills',
+    'meals',
+    'household',
+    'checklist',
+    'general',
+  ];
+  return defaultKinds.map((kind) => {
+    const template = DEFAULT_GROUP_TEMPLATES[kind];
+    return {
+      groupId: crypto.randomUUID(),
+      groupFolder,
+      operatingProfileId: operatingProfileId || null,
+      title: template.title,
+      kind,
+      scope: defaultScopeForGroupKind(kind),
+      sourceSummary: template.purpose,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      archivedAt: null,
+    };
+  });
+}
 
 function safeJsonParse<T>(value: string | null | undefined, fallback: T): T {
   if (!value) return fallback;
@@ -651,6 +767,40 @@ function seedGroupsFromPlan(
   });
 }
 
+function ensureBaselineListGroups(params: {
+  groupFolder: string;
+  nowIso: string;
+  activeProfile?: OperatingProfile | null;
+}): EverydayListGroup[] {
+  const existing = listEverydayListGroups(params.groupFolder);
+  if (existing.length > 0) return existing;
+
+  if (params.activeProfile?.planJson) {
+    const plan = safeJsonParse<OperatingProfilePlan | null>(
+      params.activeProfile.planJson,
+      null,
+    );
+    if (plan?.defaultGroups?.length) {
+      return seedGroupsFromPlan(
+        params.groupFolder,
+        params.activeProfile.profileId,
+        plan,
+        params.nowIso,
+      );
+    }
+  }
+
+  const groups = buildDefaultListGroups(
+    params.groupFolder,
+    params.nowIso,
+    params.activeProfile?.profileId,
+  );
+  for (const group of groups) {
+    upsertEverydayListGroup(group);
+  }
+  return groups;
+}
+
 function proposeStarterSuggestion(
   groupFolder: string,
   profileId: string | null,
@@ -723,6 +873,422 @@ function upcomingFridayOrNull(now: Date, raw: string): string | null {
   return target.toISOString();
 }
 
+function nextWeekdayAt(reference: Date, weekday: number, hour = 9): Date {
+  const target = new Date(reference);
+  const offset = (weekday - target.getDay() + 7) % 7 || 7;
+  target.setDate(target.getDate() + offset);
+  target.setHours(hour, 0, 0, 0);
+  return target;
+}
+
+function addDays(reference: Date, days: number): Date {
+  const target = new Date(reference);
+  target.setDate(target.getDate() + days);
+  return target;
+}
+
+function addMonths(reference: Date, months: number, dayOfMonth?: number | null): Date {
+  const target = new Date(reference);
+  const preferredDay = dayOfMonth || target.getDate();
+  target.setMonth(target.getMonth() + months, 1);
+  const lastDay = new Date(
+    target.getFullYear(),
+    target.getMonth() + 1,
+    0,
+  ).getDate();
+  target.setDate(Math.min(preferredDay, lastDay));
+  return target;
+}
+
+function parseItemDetailMeta(item: Pick<EverydayListItem, 'detailJson'>): EverydayItemDetailMeta {
+  return safeJsonParse<EverydayItemDetailMeta>(item.detailJson, {});
+}
+
+function buildDeferDetailPatch(item: Pick<EverydayListItem, 'detailJson'>, nowIso: string) {
+  const detail = parseItemDetailMeta(item);
+  return {
+    deferCount: (detail.deferCount || 0) + 1,
+    lastDeferredAt: nowIso,
+  };
+}
+
+function resetDeferDetailPatch(item: Pick<EverydayListItem, 'detailJson'>) {
+  const detail = parseItemDetailMeta(item);
+  if (!detail.deferCount && !detail.lastDeferredAt) return item.detailJson || null;
+  return mergeDetailJson(item.detailJson, {
+    deferCount: 0,
+    lastDeferredAt: null,
+  });
+}
+
+function isActionableItem(item: EverydayListItem): boolean {
+  return item.state === 'open' || item.state === 'snoozed' || item.state === 'deferred';
+}
+
+function parseIsoOrNull(value: string | null | undefined): number | null {
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function startOfDay(reference: Date): Date {
+  const target = new Date(reference);
+  target.setHours(0, 0, 0, 0);
+  return target;
+}
+
+function endOfDay(reference: Date): Date {
+  const target = new Date(reference);
+  target.setHours(23, 59, 59, 999);
+  return target;
+}
+
+function getItemTargetMoment(item: EverydayListItem): number | null {
+  return (
+    parseIsoOrNull(item.dueAt) ||
+    parseIsoOrNull(item.scheduledFor) ||
+    parseIsoOrNull(item.deferUntil) ||
+    parseIsoOrNull(item.recurrenceNextDueAt)
+  );
+}
+
+function isOverdue(item: EverydayListItem, now: Date): boolean {
+  const target = parseIsoOrNull(item.dueAt) || parseIsoOrNull(item.recurrenceNextDueAt);
+  return target !== null && target < now.getTime();
+}
+
+function isDueWithinDays(
+  item: EverydayListItem,
+  now: Date,
+  days: number,
+  includeOverdue = true,
+): boolean {
+  const target = getItemTargetMoment(item);
+  if (target === null) return false;
+  const upper = endOfDay(addDays(now, days)).getTime();
+  if (includeOverdue) return target <= upper;
+  return target >= now.getTime() && target <= upper;
+}
+
+function isWithinRecentDays(
+  value: string | null | undefined,
+  now: Date,
+  days: number,
+): boolean {
+  const parsed = parseIsoOrNull(value);
+  if (parsed === null) return false;
+  return parsed >= startOfDay(addDays(now, -days)).getTime();
+}
+
+function itemTokenSet(value: string): Set<string> {
+  return new Set(
+    normalizeText(value)
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .split(/\s+/)
+      .map((token) => token.trim())
+      .filter(
+        (token) =>
+          token.length > 2 &&
+          !['for', 'the', 'and', 'with', 'from', 'that', 'this', 'idea', 'meal', 'dinner'].includes(token),
+      ),
+  );
+}
+
+function buildGroupMap(groups: EverydayListGroup[]): Map<string, EverydayListGroup> {
+  return new Map(groups.map((group) => [group.groupId, group]));
+}
+
+function isGroupTitle(group: EverydayListGroup | undefined, title: string): boolean {
+  return (group?.title || '').toLowerCase() === title.toLowerCase();
+}
+
+function isWeekendItem(
+  item: EverydayListItem,
+  groupsById: Map<string, EverydayListGroup>,
+  now: Date,
+): boolean {
+  const group = groupsById.get(item.groupId);
+  if (isGroupTitle(group, 'Weekend')) return true;
+  const target = getItemTargetMoment(item);
+  return target !== null && target <= upcomingWeekEnd(now).getTime();
+}
+
+function isTonightItem(
+  item: EverydayListItem,
+  groupsById: Map<string, EverydayListGroup>,
+  now: Date,
+): boolean {
+  const group = groupsById.get(item.groupId);
+  if (isGroupTitle(group, 'Tonight')) return true;
+  const target = parseIsoOrNull(item.scheduledFor) || parseIsoOrNull(item.dueAt);
+  return target !== null && target <= endOfDay(now).getTime();
+}
+
+function sortItemsByUrgency(items: EverydayListItem[], now: Date): EverydayListItem[] {
+  return [...items].sort((left, right) => {
+    const leftOverdue = isOverdue(left, now) ? 0 : 1;
+    const rightOverdue = isOverdue(right, now) ? 0 : 1;
+    if (leftOverdue !== rightOverdue) return leftOverdue - rightOverdue;
+    const leftTime = getItemTargetMoment(left) ?? Number.MAX_SAFE_INTEGER;
+    const rightTime = getItemTargetMoment(right) ?? Number.MAX_SAFE_INTEGER;
+    if (leftTime !== rightTime) return leftTime - rightTime;
+    return Date.parse(right.updatedAt) - Date.parse(left.updatedAt);
+  });
+}
+
+function summarizeSlice(items: EverydayListItem[], count = 3): string {
+  return joinNaturalLanguage(
+    items.slice(0, count).map((item) => item.title.replace(/[.!?]+$/g, '')),
+  );
+}
+
+function resolveRecurrenceBaseDate(
+  now: Date,
+  item: Pick<
+    EverydayListItem,
+    'dueAt' | 'scheduledFor' | 'deferUntil' | 'recurrenceAnchorAt' | 'createdAt'
+  >,
+): Date {
+  const candidate =
+    item.recurrenceAnchorAt ||
+    item.dueAt ||
+    item.scheduledFor ||
+    item.deferUntil ||
+    item.createdAt;
+  const parsed = candidate ? Date.parse(candidate) : Number.NaN;
+  return Number.isFinite(parsed) ? new Date(parsed) : new Date(now);
+}
+
+function buildRecurrenceDetail(recurrence: EverydayListRecurrence): Record<string, unknown> {
+  return {
+    recurrenceKind: recurrence.kind,
+    recurrenceInterval: recurrence.interval,
+    recurrenceDays: recurrence.days || [],
+    recurrenceDayOfMonth: recurrence.dayOfMonth || null,
+    recurrenceAnchorAt: recurrence.anchorAt || null,
+    recurrenceNextDueAt: recurrence.nextDueAt || null,
+  };
+}
+
+function mergeDetailJson(
+  existing: string | null | undefined,
+  patch: Record<string, unknown>,
+): string {
+  const base = safeJsonParse<Record<string, unknown>>(existing, {});
+  return JSON.stringify({
+    ...base,
+    ...patch,
+  });
+}
+
+function extractRecurrence(text: string, now: Date): EverydayListRecurrence | null {
+  const normalized = normalizeText(text).toLowerCase();
+  if (/\b(?:every day|daily)\b/.test(normalized)) {
+    return {
+      kind: 'daily',
+      interval: 1,
+      anchorAt: now.toISOString(),
+      nextDueAt: addDays(now, 1).toISOString(),
+    };
+  }
+  const weekdayMatch = normalized.match(
+    /\bevery (monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/,
+  );
+  if (weekdayMatch?.[1]) {
+    const weekday = WEEKDAY_INDEX[weekdayMatch[1]];
+    return {
+      kind: 'weekly',
+      interval: 1,
+      days: [weekday],
+      anchorAt: now.toISOString(),
+      nextDueAt: nextWeekdayAt(now, weekday).toISOString(),
+    };
+  }
+  if (/\b(?:every week|weekly)\b/.test(normalized)) {
+    return {
+      kind: 'weekly',
+      interval: 1,
+      anchorAt: now.toISOString(),
+      nextDueAt: addDays(now, 7).toISOString(),
+    };
+  }
+  if (/\b(?:every month|monthly)\b/.test(normalized)) {
+    return {
+      kind: 'monthly',
+      interval: 1,
+      dayOfMonth: now.getDate(),
+      anchorAt: now.toISOString(),
+      nextDueAt: addMonths(now, 1, now.getDate()).toISOString(),
+    };
+  }
+  return null;
+}
+
+function computeNextRecurrenceDueAt(
+  item: Pick<
+    EverydayListItem,
+    | 'dueAt'
+    | 'scheduledFor'
+    | 'deferUntil'
+    | 'recurrenceKind'
+    | 'recurrenceInterval'
+    | 'recurrenceDaysJson'
+    | 'recurrenceDayOfMonth'
+    | 'recurrenceAnchorAt'
+    | 'createdAt'
+  >,
+  completedAt: Date,
+): string | null {
+  const recurrenceKind = item.recurrenceKind || 'none';
+  const recurrenceInterval = Math.max(1, item.recurrenceInterval || 1);
+  if (recurrenceKind === 'none') return null;
+
+  const base = resolveRecurrenceBaseDate(completedAt, item);
+  if (recurrenceKind === 'daily') {
+    return addDays(base, recurrenceInterval).toISOString();
+  }
+  if (recurrenceKind === 'weekly') {
+    const days = safeJsonParse<number[]>(item.recurrenceDaysJson, []).filter(
+      (day) => Number.isInteger(day) && day >= 0 && day <= 6,
+    );
+    if (days.length > 0) {
+      return nextWeekdayAt(completedAt, days[0]!, base.getHours() || 9).toISOString();
+    }
+    return addDays(base, 7 * recurrenceInterval).toISOString();
+  }
+  if (recurrenceKind === 'monthly') {
+    return addMonths(base, recurrenceInterval, item.recurrenceDayOfMonth).toISOString();
+  }
+  return null;
+}
+
+function refreshRecurringItems(groupFolder: string, now: Date): void {
+  const items = listEverydayListItems(groupFolder, {
+    includeDone: true,
+    limit: 500,
+  });
+  const nowMs = now.getTime();
+  for (const item of items) {
+    if ((item.recurrenceKind || 'none') === 'none') continue;
+    if (!item.recurrenceNextDueAt) continue;
+    if (Date.parse(item.recurrenceNextDueAt) > nowMs) continue;
+    if (item.state === 'open') continue;
+    updateEverydayListItem(item.itemId, {
+      state: 'open',
+      dueAt: item.recurrenceNextDueAt,
+      deferUntil: null,
+      detailJson: resetDeferDetailPatch(item),
+      completedAt: null,
+      updatedAt: now.toISOString(),
+    });
+  }
+}
+
+function parseEverydayActionToken(text: string): EverydayActionToken | null {
+  const normalized = normalizeText(text);
+  if (!normalized.startsWith(EVERYDAY_ACTION_PREFIX)) return null;
+
+  const parts = normalized.split(':');
+  if (parts.length < 2) return null;
+  const codeToGroup = (
+    code: string,
+  ): { kind: ReadTarget['kind']; title?: string } | null => {
+    switch (code) {
+      case 'a':
+        return { kind: 'all' };
+      case 's':
+        return { kind: 'shopping', title: 'Groceries' };
+      case 'e':
+        return { kind: 'errands', title: 'Errands' };
+      case 'b':
+        return { kind: 'bills', title: 'Bills' };
+      case 'm':
+        return { kind: 'meals', title: 'Meals' };
+      case 'h':
+        return { kind: 'household', title: 'Household' };
+      case 't':
+        return { kind: 'tonight', title: 'Tonight' };
+      case 'w':
+      case 'wk':
+        return { kind: 'weekend', title: 'Weekend' };
+      case 'r':
+        return { kind: 'recurring' };
+      case 'rc':
+        return { kind: 'recently_completed', title: 'Recently completed' };
+      case 'sl':
+        return { kind: 'slipping', title: 'Slipping' };
+      case 'dn':
+        return { kind: 'dinner_missing', title: 'Dinner' };
+      default:
+        return null;
+    }
+  };
+
+  if (parts[1] === 'v') {
+    const group = codeToGroup(parts[2] || '');
+    if (!group) return null;
+    if (group.kind === 'recurring') {
+      return { targetMode: 'read', action: 'view_recurring', groupKind: 'recurring' };
+    }
+    return { targetMode: 'read', action: 'view_group', groupKind: group.kind };
+  }
+
+  if (parts[1] === 'd' || parts[1] === 'o' || parts[1] === 'x') {
+    return {
+      targetMode: 'update',
+      action:
+        parts[1] === 'd' ? 'done' : parts[1] === 'o' ? 'reopen' : 'remove',
+      itemId: parts[2],
+    };
+  }
+
+  if (parts[1] === 'w' || parts[1] === 'n' || parts[1] === 'q') {
+    return {
+      targetMode: 'update',
+      action:
+        parts[1] === 'w'
+          ? 'defer_week'
+          : parts[1] === 'n'
+            ? 'remind'
+            : 'stop_repeat',
+      itemId: parts[2],
+    };
+  }
+
+  if (parts[1] === 'g') {
+    const code = parts[2] || '';
+    const group = codeToGroup(code);
+    if (!group) return null;
+    return {
+      targetMode: 'update',
+      action: 'move',
+      moveGroupKind:
+        code === 'w'
+          ? 'checklist'
+          : group.kind === 'tonight'
+            ? 'checklist'
+            : (group.kind as EverydayListGroupKind),
+      moveGroupTitle: group.title,
+      itemId: parts[3],
+    };
+  }
+
+  if (parts[1] === 'c') {
+    return {
+      targetMode: 'convert',
+      action:
+        parts[2] === 'r'
+          ? 'convert_reminder'
+          : parts[2] === 'p'
+            ? 'convert_plan'
+            : 'convert_thread',
+      itemId: parts[3],
+    };
+  }
+  return null;
+}
+
 function ensureListGroup(params: {
   groupFolder: string;
   operatingProfileId?: string | null;
@@ -734,9 +1300,13 @@ function ensureListGroup(params: {
 }): EverydayListGroup {
   const title =
     params.title?.trim() || DEFAULT_GROUP_TEMPLATES[params.kind].title;
-  const existing =
-    findEverydayListGroupByTitle(params.groupFolder, title) ||
-    findEverydayListGroupByKind(params.groupFolder, params.kind, params.scope);
+  const shouldPreferExplicitTitle =
+    Boolean(params.title?.trim()) &&
+    title.toLowerCase() !== DEFAULT_GROUP_TEMPLATES[params.kind].title.toLowerCase();
+  const existing = shouldPreferExplicitTitle
+    ? findEverydayListGroupByTitle(params.groupFolder, title)
+    : findEverydayListGroupByTitle(params.groupFolder, title) ||
+      findEverydayListGroupByKind(params.groupFolder, params.kind, params.scope);
   const record: EverydayListGroup = existing
     ? {
         ...existing,
@@ -765,8 +1335,169 @@ function formatGroupLabel(group: EverydayListGroup): string {
   return group.title.toLowerCase();
 }
 
-function formatItemLine(item: EverydayListItem): string {
-  return item.title.replace(/[.!?]+$/g, '');
+function formatItemLine(item: EverydayListItem, now: Date): string {
+  const base = item.title.replace(/[.!?]+$/g, '');
+  const labels: string[] = [];
+  if (item.state === 'done' && isWithinRecentDays(item.completedAt, now, 3)) {
+    labels.push('done');
+  } else if (isOverdue(item, now)) {
+    labels.push('overdue');
+  } else if (item.itemKind === 'bill' && isDueWithinDays(item, now, 7, false)) {
+    labels.push('due this week');
+  } else if (item.state === 'snoozed' && item.deferUntil) {
+    labels.push('tomorrow');
+  } else if (item.state === 'deferred' && item.deferUntil) {
+    labels.push('next horizon');
+  }
+  if (item.recurrenceKind && item.recurrenceKind !== 'none') {
+    labels.push(item.recurrenceKind);
+  }
+  return labels.length > 0 ? `${base} (${labels.join(', ')})` : base;
+}
+
+function buildEverydayActionId(
+  action:
+    | 'done'
+    | 'reopen'
+    | 'remove'
+    | 'defer_week'
+    | 'remind'
+    | 'stop_repeat'
+    | 'convert_reminder'
+    | 'convert_plan'
+    | 'convert_thread',
+  itemId: string,
+): string {
+  const code =
+    action === 'done'
+      ? 'd'
+      : action === 'reopen'
+        ? 'o'
+        : action === 'remove'
+          ? 'x'
+          : action === 'defer_week'
+            ? 'w'
+            : action === 'remind'
+              ? 'n'
+              : action === 'stop_repeat'
+                ? 'q'
+                : action === 'convert_reminder'
+                  ? 'c:r'
+                  : action === 'convert_plan'
+                    ? 'c:p'
+                    : 'c:t';
+  return `${EVERYDAY_ACTION_PREFIX}${code}:${itemId}`;
+}
+
+function buildEverydayMoveActionId(
+  groupKind: EverydayListGroupKind,
+  itemId: string,
+): string {
+  const code =
+    groupKind === 'shopping'
+      ? 's'
+      : groupKind === 'errands'
+        ? 'e'
+        : groupKind === 'bills'
+          ? 'b'
+          : groupKind === 'meals'
+            ? 'm'
+            : groupKind === 'household'
+              ? 'h'
+              : 't';
+  return `${EVERYDAY_ACTION_PREFIX}g:${code}:${itemId}`;
+}
+
+function buildViewActionId(target: ReadTarget['kind'] | 'all'): string {
+  const code =
+    target === 'all'
+      ? 'a'
+      : target === 'shopping'
+        ? 's'
+        : target === 'errands'
+          ? 'e'
+          : target === 'bills'
+            ? 'b'
+            : target === 'meals'
+              ? 'm'
+              : target === 'household'
+                ? 'h'
+                : target === 'tonight'
+                  ? 't'
+                  : target === 'weekend'
+                    ? 'wk'
+                    : target === 'recently_completed'
+                      ? 'rc'
+                      : target === 'slipping'
+                        ? 'sl'
+                        : target === 'dinner_missing'
+                          ? 'dn'
+                          : 'r';
+  return `${EVERYDAY_ACTION_PREFIX}v:${code}`;
+}
+
+function buildTelegramEverydayInlineActionRows(params: {
+  target: ReadTarget;
+  items: EverydayListItem[];
+}): ChannelInlineAction[][] {
+  const rows: ChannelInlineAction[][] = [];
+  const primary = params.items[0];
+  if (params.target.kind === 'all') {
+    rows.push([
+      { label: 'Groceries', actionId: buildViewActionId('shopping') },
+      { label: 'Errands', actionId: buildViewActionId('errands') },
+      { label: 'Bills', actionId: buildViewActionId('bills') },
+    ]);
+    rows.push([
+      { label: 'Tonight', actionId: buildViewActionId('tonight') },
+      { label: 'Weekend', actionId: buildViewActionId('weekend') },
+      { label: 'Household', actionId: buildViewActionId('household') },
+    ]);
+    rows.push([
+      { label: 'Meals', actionId: buildViewActionId('meals') },
+      { label: 'Recurring', actionId: buildViewActionId('recurring') },
+      { label: 'Recent', actionId: buildViewActionId('recently_completed') },
+    ]);
+  } else {
+    rows.push([
+      { label: 'All', actionId: buildViewActionId('all') },
+      { label: 'Tonight', actionId: buildViewActionId('tonight') },
+      { label: 'Weekend', actionId: buildViewActionId('weekend') },
+    ]);
+    rows.push([
+      { label: 'Groceries', actionId: buildViewActionId('shopping') },
+      { label: 'Bills', actionId: buildViewActionId('bills') },
+      { label: 'Recurring', actionId: buildViewActionId('recurring') },
+    ]);
+    rows.push([
+      { label: 'Household', actionId: buildViewActionId('household') },
+      { label: 'Meals', actionId: buildViewActionId('meals') },
+      { label: 'Recent', actionId: buildViewActionId('recently_completed') },
+    ]);
+  }
+
+  if (!primary) return rows;
+
+  rows.push([
+    primary.state === 'done'
+      ? { label: 'Reopen', actionId: buildEverydayActionId('reopen', primary.itemId) }
+      : { label: 'Done', actionId: buildEverydayActionId('done', primary.itemId) },
+    { label: 'Defer', actionId: buildEverydayActionId('defer_week', primary.itemId) },
+    { label: 'Remind', actionId: buildEverydayActionId('convert_reminder', primary.itemId) },
+  ]);
+  rows.push([
+    { label: 'Groceries', actionId: buildEverydayMoveActionId('shopping', primary.itemId) },
+    { label: 'Tonight', actionId: buildEverydayMoveActionId('checklist', primary.itemId) },
+    { label: 'Weekend', actionId: `${EVERYDAY_ACTION_PREFIX}g:w:${primary.itemId}` },
+  ]);
+  rows.push([
+    { label: 'Plan', actionId: buildEverydayActionId('convert_plan', primary.itemId) },
+    { label: 'Thread', actionId: buildEverydayActionId('convert_thread', primary.itemId) },
+    ...(primary.recurrenceKind && primary.recurrenceKind !== 'none'
+      ? [{ label: 'Stop repeat', actionId: buildEverydayActionId('stop_repeat', primary.itemId) }]
+      : []),
+  ]);
+  return rows.filter((row) => row.length > 0);
 }
 
 function createListItem(params: {
@@ -781,6 +1512,7 @@ function createListItem(params: {
   detail?: Record<string, unknown>;
   dueAt?: string | null;
   scheduledFor?: string | null;
+  recurrence?: EverydayListRecurrence | null;
   nowIso: string;
 }): EverydayListItem {
   const item: EverydayListItem = {
@@ -794,11 +1526,27 @@ function createListItem(params: {
     scope: params.scope,
     sourceChannel: params.channel,
     sourceSummary: params.sourceSummary,
-    detailJson: params.detail ? JSON.stringify(params.detail) : null,
+    detailJson:
+      params.detail || params.recurrence
+        ? JSON.stringify({
+            ...(params.detail || {}),
+            ...(params.recurrence
+              ? buildRecurrenceDetail(params.recurrence)
+              : {}),
+          })
+        : null,
     linkageJson: null,
     dueAt: params.dueAt || null,
     scheduledFor: params.scheduledFor || null,
     deferUntil: null,
+    recurrenceKind: params.recurrence?.kind || 'none',
+    recurrenceInterval: params.recurrence?.interval || 1,
+    recurrenceDaysJson: params.recurrence?.days
+      ? JSON.stringify(params.recurrence.days)
+      : null,
+    recurrenceDayOfMonth: params.recurrence?.dayOfMonth || null,
+    recurrenceAnchorAt: params.recurrence?.anchorAt || null,
+    recurrenceNextDueAt: params.recurrence?.nextDueAt || null,
     createdAt: params.nowIso,
     updatedAt: params.nowIso,
     completedAt: null,
@@ -812,74 +1560,118 @@ function parseCaptureTarget(
   input: EverydayCaptureCommandInput,
 ): CaptureTarget | null {
   const raw = normalizeText(text);
-  const lower = raw.toLowerCase();
-  const scope = inferScope(raw);
   const now = input.now || new Date();
+  const recurrence = extractRecurrence(raw, now);
+
+  const stripRecurrenceLanguage = (value: string): string =>
+    clip(
+      value
+        .replace(/\b(?:every day|daily|every week|weekly|every month|monthly)\b/gi, '')
+        .replace(
+          /\bevery (monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi,
+          '',
+        )
+        .replace(/\s+/g, ' ')
+        .trim(),
+      );
+
+  const rawWithoutRecurrence = stripRecurrenceLanguage(raw);
+  const lower = rawWithoutRecurrence.toLowerCase();
+  const scope = inferScope(rawWithoutRecurrence || raw);
 
   const shoppingMatch =
-    raw.match(/^(?:add|put)\s+(.+?)\s+to\s+(?:my\s+)?shopping list$/i) ||
-    raw.match(/^(?:add|put)\s+(.+?)\s+on\s+(?:my\s+)?list$/i);
+    rawWithoutRecurrence.match(/^(?:add|put)\s+(.+?)\s+to\s+(?:my\s+)?shopping list$/i) ||
+    rawWithoutRecurrence.match(/^(?:add|put)\s+(.+?)\s+on\s+(?:my\s+)?list$/i) ||
+    rawWithoutRecurrence.match(/^(?:add|put)\s+(.+?)\s+to groceries$/i);
   if (shoppingMatch?.[1]) {
     return {
-      title: clip(shoppingMatch[1]),
+      title: stripRecurrenceLanguage(shoppingMatch[1]),
       groupKind: 'shopping',
       itemKind: 'shopping_item',
       scope,
+      recurrence: recurrence || undefined,
     };
   }
 
-  const errandMatch = raw.match(/^save (?:this|that|(.+?)) as an errand$/i);
+  const errandMatch =
+    rawWithoutRecurrence.match(/^save (?:this|that|(.+?)) as an errand$/i) ||
+    rawWithoutRecurrence.match(/^save (?:this|that|(.+?)) as errands?$/i);
   if (errandMatch) {
     return {
-      title: clip(resolveReferenceText(input, errandMatch[1] || null)),
+      title: stripRecurrenceLanguage(
+        resolveReferenceText(input, errandMatch[1] || null),
+      ),
       groupKind: 'errands',
       itemKind: 'errand',
       scope,
+      recurrence: recurrence || undefined,
     };
   }
 
   const billMatch =
-    raw.match(/^add (.+?) to (?:my\s+)?list$/i) &&
-    /\bbill|pay\b/i.test(raw)
-      ? raw.match(/^add (.+?) to (?:my\s+)?list$/i)
-      : raw.match(/^add (.+?) to bills$/i);
+      rawWithoutRecurrence.match(/^add (.+?) to (?:my\s+)?list$/i) &&
+      /\bbill|pay\b/i.test(rawWithoutRecurrence)
+        ? rawWithoutRecurrence.match(/^add (.+?) to (?:my\s+)?list$/i)
+        : rawWithoutRecurrence.match(/^add (.+?) to bills$/i) ||
+          raw.match(/^make (?:this|that) a monthly bill$/i);
   if (billMatch?.[1]) {
+    const title = stripRecurrenceLanguage(billMatch[1]);
     return {
-      title: clip(billMatch[1]),
+      title,
       groupKind: 'bills',
       itemKind: 'bill',
       scope,
-      dueAt: /\bthis week\b/i.test(raw) ? upcomingWeekEnd(now).toISOString() : null,
+        dueAt: /\bthis week\b/i.test(rawWithoutRecurrence)
+          ? upcomingWeekEnd(now).toISOString()
+          : null,
+      recurrence:
+        recurrence || /\bmonthly bill\b/i.test(raw)
+          ? recurrence || {
+              kind: 'monthly',
+              interval: 1,
+              dayOfMonth: now.getDate(),
+              anchorAt: now.toISOString(),
+              nextDueAt: addMonths(now, 1, now.getDate()).toISOString(),
+            }
+          : undefined,
     };
   }
 
   const mealMatch =
-    raw.match(/^add (.+?) for friday$/i) ||
-    raw.match(/^add (.+?) to meals$/i) ||
-    raw.match(/^add dinner idea for friday$/i);
+      rawWithoutRecurrence.match(/^add (.+?) for friday$/i) ||
+      rawWithoutRecurrence.match(/^add (.+?) to meals$/i) ||
+      rawWithoutRecurrence.match(/^add (.+?) for this week$/i) ||
+      rawWithoutRecurrence.match(/^add dinner idea for friday$/i);
   if (mealMatch) {
     const title =
-      /^add dinner idea for friday$/i.test(raw)
-        ? 'Dinner idea'
-        : clip(mealMatch[1] || 'Meal');
+        /^add dinner idea for friday$/i.test(rawWithoutRecurrence)
+          ? 'Dinner idea'
+          : stripRecurrenceLanguage(mealMatch[1] || 'Meal');
     return {
       title,
       groupKind: 'meals',
       itemKind: 'meal_entry',
       scope,
-      scheduledFor: upcomingFridayOrNull(now, raw),
+      scheduledFor:
+          /\bfriday\b/i.test(rawWithoutRecurrence) ||
+          /^add dinner idea for friday$/i.test(rawWithoutRecurrence)
+            ? upcomingFridayOrNull(now, rawWithoutRecurrence)
+            : /\bthis week\b/i.test(rawWithoutRecurrence)
+              ? upcomingWeekEnd(now).toISOString()
+              : null,
+      recurrence: recurrence || undefined,
     };
   }
 
   const tonightMatch =
-    raw.match(/^add (.+?) to tonight$/i) ||
-    raw.match(/^put (.+?) in tonight'?s plan$/i) ||
-    raw.match(/^add my pills to tonight$/i);
+      rawWithoutRecurrence.match(/^add (.+?) to tonight$/i) ||
+      rawWithoutRecurrence.match(/^put (.+?) in tonight'?s plan$/i) ||
+      rawWithoutRecurrence.match(/^add my pills to tonight$/i);
   if (tonightMatch) {
     const title =
-      /^add my pills to tonight$/i.test(raw)
-        ? 'Take pills'
-        : clip(tonightMatch[1] || resolveReferenceText(input));
+        /^add my pills to tonight$/i.test(rawWithoutRecurrence)
+          ? 'Take pills'
+          : clip(tonightMatch[1] || resolveReferenceText(input));
     return {
       title,
       groupKind: 'checklist',
@@ -889,22 +1681,44 @@ function parseCaptureTarget(
       groupTitle: 'Tonight',
       scope,
       scheduledFor: tomorrowAtHour(now, 19).toISOString(),
+      recurrence: recurrence || undefined,
+    };
+  }
+
+  const weekendMatch =
+      rawWithoutRecurrence.match(/^put (?:this|that|(.+?)) on the weekend list$/i) ||
+      rawWithoutRecurrence.match(/^make (?:this|that|(.+?)) part of my weekend list$/i);
+  if (weekendMatch) {
+    const title = stripRecurrenceLanguage(
+      resolveReferenceText(input, weekendMatch[1] || null),
+    );
+    if (!title) return null;
+    return {
+      title,
+      groupKind: 'checklist',
+      itemKind: 'general_item',
+      groupTitle: 'Weekend',
+      scope,
+      scheduledFor: startOfNextWeek(now).toISOString(),
+      recurrence: recurrence || undefined,
     };
   }
 
   if (
-    /^save that under the household thread$/i.test(raw) ||
-    /^save this under the household thread$/i.test(raw)
+      /^save that under the household thread$/i.test(rawWithoutRecurrence) ||
+      /^save this under the household thread$/i.test(rawWithoutRecurrence)
   ) {
     return null;
   }
 
-  const saveUnderMatch = raw.match(
-    /^(?:save|track) (?:this|that|(.+?)) under ([a-z][a-z0-9' -]+)$/i,
-  );
+    const saveUnderMatch = rawWithoutRecurrence.match(
+      /^(?:save|track) (?:this|that|(.+?)) under ([a-z][a-z0-9' -]+)$/i,
+    );
   if (saveUnderMatch) {
     return {
-      title: clip(resolveReferenceText(input, saveUnderMatch[1] || null)),
+      title: stripRecurrenceLanguage(
+        resolveReferenceText(input, saveUnderMatch[1] || null),
+      ),
       groupKind:
         /grocery|grocer|shopping/i.test(saveUnderMatch[2])
           ? 'shopping'
@@ -916,30 +1730,36 @@ function parseCaptureTarget(
       itemKind: 'general_item',
       groupTitle: toTitleCase(saveUnderMatch[2]),
       scope,
+      recurrence: recurrence || undefined,
     };
   }
 
-  if (/^track that for the household$/i.test(raw)) {
+  if (/^track that for the household$/i.test(rawWithoutRecurrence)) {
     return {
-      title: clip(resolveReferenceText(input)),
+      title: stripRecurrenceLanguage(resolveReferenceText(input)),
       groupKind: 'household',
       itemKind: 'general_item',
       scope: 'household',
+      recurrence: recurrence || undefined,
     };
   }
 
-  if (/^remember this$/i.test(raw) || /^save this as a list item$/i.test(raw)) {
-    const title = clip(resolveReferenceText(input));
+  if (
+    /^remember this$/i.test(rawWithoutRecurrence) ||
+    /^save this as a list item$/i.test(rawWithoutRecurrence)
+  ) {
+    const title = stripRecurrenceLanguage(resolveReferenceText(input));
     if (!title) return null;
     return {
       title,
       groupKind: 'general',
       itemKind: 'general_item',
       scope,
+      recurrence: recurrence || undefined,
     };
   }
 
-  if (/^put batteries on my list$/i.test(raw)) {
+  if (/^put batteries on my list$/i.test(rawWithoutRecurrence)) {
     return {
       title: 'Batteries',
       groupKind: 'shopping',
@@ -948,7 +1768,7 @@ function parseCaptureTarget(
     };
   }
 
-  if (/^add milk to my shopping list$/i.test(raw)) {
+  if (/^add milk to my shopping list$/i.test(rawWithoutRecurrence)) {
     return {
       title: 'Milk',
       groupKind: 'shopping',
@@ -965,9 +1785,38 @@ function parseCaptureTarget(
 }
 
 function parseReadTarget(text: string): ReadTarget | null {
+  const actionToken = parseEverydayActionToken(text);
+  if (actionToken?.targetMode === 'read') {
+    if (actionToken.groupKind && actionToken.groupKind !== 'all') {
+      return {
+        kind: actionToken.groupKind,
+        summary:
+          actionToken.groupKind === 'shopping'
+            ? 'groceries'
+            : actionToken.groupKind === 'bills'
+              ? 'bills this week'
+              : actionToken.groupKind === 'meals'
+                ? 'meals this week'
+            : actionToken.groupKind === 'household'
+              ? 'household'
+              : actionToken.groupKind === 'weekend'
+                ? 'this weekend'
+                : actionToken.groupKind === 'recently_completed'
+                  ? 'recently completed'
+                  : actionToken.groupKind === 'dinner_missing'
+                    ? 'dinner'
+              : actionToken.groupKind,
+      };
+    }
+    return { kind: 'all', summary: 'your list' };
+  }
+
   const normalized = normalizeText(text).toLowerCase();
   if (/^what('?s| is) on my list\b/.test(normalized)) {
     return { kind: 'all', summary: 'your list' };
+  }
+  if (/^(what('?s| is) on groceries|what do we need from the store)\b/.test(normalized)) {
+    return { kind: 'shopping', summary: 'groceries' };
   }
   if (/^what do i still need to buy\b/.test(normalized)) {
     return { kind: 'shopping', summary: 'groceries' };
@@ -975,14 +1824,47 @@ function parseReadTarget(text: string): ReadTarget | null {
   if (/^what errands do i have\b/.test(normalized)) {
     return { kind: 'errands', summary: 'errands' };
   }
-  if (/^what bills do i need to pay(?: this week| soon)?\b/.test(normalized)) {
-    return { kind: 'bills', summary: 'bills' };
+  if (
+    /^(what bills do i need to pay(?: this week| soon)?|what bills are due this week)\b/.test(
+      normalized,
+    )
+  ) {
+    return { kind: 'bills', summary: 'bills this week' };
   }
-  if (/^what meals have i planned(?: this week)?\b/.test(normalized)) {
-    return { kind: 'meals', summary: 'meals' };
+  if (
+    /^(what meals have i planned(?: this week)?|what meal ideas do i have this week|what meal do i have planned)\b/.test(
+      normalized,
+    )
+  ) {
+    return { kind: 'meals', summary: 'meals this week' };
+  }
+  if (
+    /^what household (?:items|things|stuff) (?:are )?(?:still open|do i have)\b/.test(
+      normalized,
+    )
+  ) {
+    return { kind: 'household', summary: 'household' };
   }
   if (/^what should i remember to get tonight\b/.test(normalized)) {
     return { kind: 'tonight', summary: 'tonight' };
+  }
+  if (/^what('?s| is) left for tonight\b/.test(normalized)) {
+    return { kind: 'tonight', summary: 'tonight' };
+  }
+  if (/^what should i handle this weekend\b/.test(normalized)) {
+    return { kind: 'weekend', summary: 'this weekend' };
+  }
+  if (/^what('?s| is) missing for dinner\b/.test(normalized)) {
+    return { kind: 'dinner_missing', summary: 'dinner' };
+  }
+  if (/^what recurring (?:things|items) (?:are )?(?:coming back|coming up)(?: soon)?\b/.test(normalized)) {
+    return { kind: 'recurring', summary: 'recurring items' };
+  }
+  if (/^what did i (?:finish|get done) lately\b/.test(normalized)) {
+    return { kind: 'recently_completed', summary: 'recently completed' };
+  }
+  if (/^what('?s| is) slipping\b/.test(normalized)) {
+    return { kind: 'slipping', summary: 'slipping items' };
   }
   if (/^what('?s| is) still open\b/.test(normalized)) {
     return { kind: 'all', summary: 'still open' };
@@ -991,42 +1873,176 @@ function parseReadTarget(text: string): ReadTarget | null {
 }
 
 function parseMarkDoneRequest(text: string): boolean {
+  const actionToken = parseEverydayActionToken(text);
+  if (actionToken?.targetMode === 'update' && actionToken.action === 'done') {
+    return true;
+  }
   return /^(mark that done|check that off|mark this done|check this off)$/i.test(
     normalizeText(text),
   );
 }
 
+function parseReopenRequest(text: string): boolean {
+  const actionToken = parseEverydayActionToken(text);
+  if (actionToken?.targetMode === 'update' && actionToken.action === 'reopen') {
+    return true;
+  }
+  return /^(reopen that|reopen this)$/i.test(normalizeText(text));
+}
+
 function parseRemoveRequest(text: string): boolean {
+  const actionToken = parseEverydayActionToken(text);
+  if (actionToken?.targetMode === 'update' && actionToken.action === 'remove') {
+    return true;
+  }
   return /^(remove that|remove this|delete that|delete this)$/i.test(
     normalizeText(text),
   );
 }
 
 function parseMoveToNextWeekRequest(text: string): boolean {
+  const actionToken = parseEverydayActionToken(text);
+  if (
+    actionToken?.targetMode === 'update' &&
+    actionToken.action === 'defer_week'
+  ) {
+    return true;
+  }
   return /^(move that to next week|move this to next week)$/i.test(
     normalizeText(text),
   );
 }
 
 function parseRemindLaterRequest(text: string): boolean {
+  const actionToken = parseEverydayActionToken(text);
+  if (actionToken?.targetMode === 'update' && actionToken.action === 'remind') {
+    return true;
+  }
   return /^(remind me about that tomorrow|remind me about this tomorrow)$/i.test(
     normalizeText(text),
   );
 }
 
+function parseMoveGroupRequest(
+  text: string,
+): { groupKind: EverydayListGroupKind; groupTitle?: string } | null {
+  const actionToken = parseEverydayActionToken(text);
+  if (
+    actionToken?.targetMode === 'update' &&
+    actionToken.action === 'move' &&
+    actionToken.moveGroupKind
+  ) {
+    return {
+      groupKind: actionToken.moveGroupKind,
+      groupTitle: actionToken.moveGroupTitle,
+    };
+  }
+
+  const normalized = normalizeText(text);
+  if (/^save (?:that|this) under the household thread$/i.test(normalized)) {
+    return null;
+  }
+  const moveMatch =
+    normalized.match(/^(?:move|save|add) (?:that|this) to ([a-z][a-z0-9' -]+)$/i) ||
+    normalized.match(/^(?:save) (?:that|this) under ([a-z][a-z0-9' -]+)$/i) ||
+    normalized.match(/^make (?:that|this) part of my ([a-z][a-z0-9' -]+) list$/i) ||
+    normalized.match(/^put (?:that|this) in tonight'?s plan$/i);
+
+  if (!moveMatch) return null;
+  const rawTarget =
+    /^put (?:that|this) in tonight'?s plan$/i.test(normalized)
+      ? 'Tonight'
+      : moveMatch[1];
+  const lower = rawTarget.toLowerCase();
+  if (/grocery|grocer|shopping/.test(lower)) {
+    return { groupKind: 'shopping', groupTitle: 'Groceries' };
+  }
+  if (/weekend/.test(lower)) {
+    return { groupKind: 'checklist', groupTitle: 'Weekend' };
+  }
+  if (/tonight/.test(lower)) {
+    return { groupKind: 'checklist', groupTitle: 'Tonight' };
+  }
+  if (/household|home/.test(lower)) {
+    return { groupKind: 'household', groupTitle: 'Household' };
+  }
+  if (/bill/.test(lower)) {
+    return { groupKind: 'bills', groupTitle: 'Bills' };
+  }
+  if (/meal/.test(lower)) {
+    return { groupKind: 'meals', groupTitle: 'Meals' };
+  }
+  if (/errand/.test(lower)) {
+    return { groupKind: 'errands', groupTitle: 'Errands' };
+  }
+  return { groupKind: 'general', groupTitle: toTitleCase(rawTarget) };
+}
+
+function parseStopRepeatingRequest(text: string): boolean {
+  const actionToken = parseEverydayActionToken(text);
+  if (
+    actionToken?.targetMode === 'update' &&
+    actionToken.action === 'stop_repeat'
+  ) {
+    return true;
+  }
+  return /^(stop repeating that|stop repeating this)$/i.test(normalizeText(text));
+}
+
+function parseRecurringUpdate(
+  text: string,
+  now: Date,
+): EverydayListRecurrence | null {
+  const normalized = normalizeText(text);
+  if (/^make (?:this|that) a monthly bill$/i.test(normalized)) {
+    return {
+      kind: 'monthly',
+      interval: 1,
+      dayOfMonth: now.getDate(),
+      anchorAt: now.toISOString(),
+      nextDueAt: addMonths(now, 1, now.getDate()).toISOString(),
+    };
+  }
+  if (/^repeat (?:this|that) /i.test(normalized)) {
+    return extractRecurrence(normalized, now);
+  }
+  return null;
+}
+
 function parseConvertReminderRequest(text: string): boolean {
+  const actionToken = parseEverydayActionToken(text);
+  if (
+    actionToken?.targetMode === 'convert' &&
+    actionToken.action === 'convert_reminder'
+  ) {
+    return true;
+  }
   return /^(turn that into a reminder|turn this into a reminder)$/i.test(
     normalizeText(text),
   );
 }
 
 function parseConvertMissionRequest(text: string): boolean {
+  const actionToken = parseEverydayActionToken(text);
+  if (
+    actionToken?.targetMode === 'convert' &&
+    actionToken.action === 'convert_plan'
+  ) {
+    return true;
+  }
   return /^(make this part of my plan|make that part of my plan)$/i.test(
     normalizeText(text),
   );
 }
 
 function parseSaveUnderThreadRequest(text: string): boolean {
+  const actionToken = parseEverydayActionToken(text);
+  if (
+    actionToken?.targetMode === 'convert' &&
+    actionToken.action === 'convert_thread'
+  ) {
+    return true;
+  }
   return /^(save that under the household thread|save this under the household thread)$/i.test(
     normalizeText(text),
   );
@@ -1035,6 +2051,13 @@ function parseSaveUnderThreadRequest(text: string): boolean {
 function resolveActiveItem(
   input: EverydayCaptureCommandInput,
 ): EverydayListItem | null {
+  const actionToken = parseEverydayActionToken(input.text);
+  if (actionToken?.itemId) {
+    const directItem = getEverydayListItem(actionToken.itemId);
+    if (directItem && directItem.groupFolder === input.groupFolder) {
+      return directItem;
+    }
+  }
   const candidateIds = input.priorContext?.activeListItemIds || [];
   for (const itemId of candidateIds) {
     const item = getEverydayListItem(itemId);
@@ -1049,62 +2072,451 @@ function resolveActiveItem(
   return fallback || null;
 }
 
+function buildSection(title: string, items: EverydayListItem[]): HouseholdSmartViewSection | null {
+  return items.length > 0 ? { title, items } : null;
+}
+
+function flattenSectionItems(
+  sections: HouseholdSmartViewSection[],
+  limit = 5,
+): EverydayListItem[] {
+  return sections.flatMap((section) => section.items).slice(0, limit);
+}
+
+function buildHouseholdSmartView(params: {
+  groupFolder: string;
+  target: ReadTarget;
+  groups: EverydayListGroup[];
+  now: Date;
+}): HouseholdSmartView {
+  const { groupFolder, target, groups, now } = params;
+  const groupsById = buildGroupMap(groups);
+  const allItems = listEverydayListItems(groupFolder, {
+    includeDone: true,
+    limit: 300,
+  });
+  const actionableItems = allItems.filter(isActionableItem);
+  const recentlyCompleted = sortItemsByUrgency(
+    allItems.filter(
+      (item) => item.state === 'done' && isWithinRecentDays(item.completedAt, now, 3),
+    ),
+    now,
+  );
+  const groceries = [...actionableItems]
+    .filter((item) => {
+      const group = groupsById.get(item.groupId);
+      return group?.kind === 'shopping' || item.itemKind === 'shopping_item';
+    })
+    .sort((left, right) => {
+      const leftPriority = left.scope === 'household' ? 0 : 1;
+      const rightPriority = right.scope === 'household' ? 0 : 1;
+      if (leftPriority !== rightPriority) return leftPriority - rightPriority;
+      return Date.parse(right.updatedAt) - Date.parse(left.updatedAt);
+    });
+  const errands = sortItemsByUrgency(
+    actionableItems.filter((item) => {
+      const group = groupsById.get(item.groupId);
+      return group?.kind === 'errands' || item.itemKind === 'errand';
+    }),
+    now,
+  );
+  const bills = [...actionableItems]
+    .filter((item) => {
+      const group = groupsById.get(item.groupId);
+      return group?.kind === 'bills' || item.itemKind === 'bill';
+    })
+    .filter((item) => !item.dueAt || isDueWithinDays(item, now, 7))
+    .sort((left, right) => {
+      const leftBucket = isOverdue(left, now)
+        ? 0
+        : isDueWithinDays(left, now, 7, false)
+          ? 1
+          : 2;
+      const rightBucket = isOverdue(right, now)
+        ? 0
+        : isDueWithinDays(right, now, 7, false)
+          ? 1
+          : 2;
+      if (leftBucket !== rightBucket) return leftBucket - rightBucket;
+      return sortItemsByUrgency([left, right], now)[0] === left ? -1 : 1;
+    });
+  const meals = [...actionableItems]
+    .filter((item) => {
+      const group = groupsById.get(item.groupId);
+      return group?.kind === 'meals' || item.itemKind === 'meal_entry';
+    })
+    .filter((item) => !item.scheduledFor || isDueWithinDays(item, now, 7))
+    .sort((left, right) => {
+      const leftTime = parseIsoOrNull(left.scheduledFor) ?? Number.MAX_SAFE_INTEGER;
+      const rightTime = parseIsoOrNull(right.scheduledFor) ?? Number.MAX_SAFE_INTEGER;
+      if (leftTime !== rightTime) return leftTime - rightTime;
+      return Date.parse(right.updatedAt) - Date.parse(left.updatedAt);
+    });
+  const household = sortItemsByUrgency(
+    actionableItems.filter((item) => {
+      const group = groupsById.get(item.groupId);
+      return item.scope === 'household' || group?.kind === 'household';
+    }),
+    now,
+  );
+  const tonight = sortItemsByUrgency(
+    actionableItems.filter((item) => {
+      if (isTonightItem(item, groupsById, now)) return true;
+      if (item.itemKind === 'bill' && isDueWithinDays(item, now, 2)) return true;
+      return false;
+    }),
+    now,
+  );
+  const weekend = sortItemsByUrgency(
+    actionableItems.filter((item) => isWeekendItem(item, groupsById, now)),
+    now,
+  );
+  const recurringSoon = sortItemsByUrgency(
+    actionableItems.filter(
+      (item) =>
+        (item.recurrenceKind || 'none') !== 'none' &&
+        (!item.recurrenceNextDueAt || isDueWithinDays(item, now, 7)),
+    ),
+    now,
+  );
+  const slipping = sortItemsByUrgency(
+    actionableItems.filter((item) => {
+      const detail = parseItemDetailMeta(item);
+      const deferCount = detail.deferCount || 0;
+      const targetTime = getItemTargetMoment(item);
+      return (
+        deferCount >= 2 ||
+        (targetTime !== null && targetTime < startOfDay(addDays(now, -2)).getTime())
+      );
+    }),
+    now,
+  );
+
+  const tonightMeal =
+    meals.find((item) => isTonightItem(item, groupsById, now)) ||
+    meals.find((item) => isDueWithinDays(item, now, 3)) ||
+    meals[0];
+  const dinnerMissing = tonightMeal
+    ? groceries.filter((item) => {
+        const mealHints = parseItemDetailMeta(tonightMeal).mealHints || [];
+        const itemTitle = normalizeText(item.title).toLowerCase();
+        const mealTitle = normalizeText(tonightMeal.title).toLowerCase();
+        if (mealHints.some((hint) => itemTitle.includes(hint.toLowerCase()))) return true;
+        if (mealTitle.includes(itemTitle)) return true;
+        const groceryTokens = itemTokenSet(item.title);
+        const mealTokens = itemTokenSet(tonightMeal.title);
+        return [...groceryTokens].some((token) => mealTokens.has(token));
+      })
+    : [];
+
+  const allSections = [
+    buildSection('Tonight', tonight.slice(0, 3)),
+    buildSection('Bills This Week', bills.slice(0, 3)),
+    buildSection('Groceries', groceries.slice(0, 4)),
+    buildSection('Errands', errands.slice(0, 3)),
+    buildSection('Meals This Week', meals.slice(0, 3)),
+    buildSection('Household Open', household.slice(0, 3)),
+    buildSection('Recurring Soon', recurringSoon.slice(0, 3)),
+  ].filter((section): section is HouseholdSmartViewSection => Boolean(section));
+
+  switch (target.kind) {
+    case 'shopping':
+      return {
+        lead:
+          groceries.length > 0
+            ? `From the store, you still need ${summarizeSlice(groceries)}.`
+            : null,
+        emptyLine: 'You do not have anything left to buy right now.',
+        items: groceries,
+        sections: [buildSection('Groceries', groceries)].filter(
+          (section): section is HouseholdSmartViewSection => Boolean(section),
+        ),
+        handoffOffer:
+          groceries.length > 4 ? 'I can send the fuller store list to Telegram.' : undefined,
+        nextStep:
+          tonight.length > 0 ? 'I can tell you what matters most for tonight too.' : undefined,
+      };
+    case 'errands':
+      return {
+        lead:
+          errands.length > 0
+            ? `You still have ${errands.length} errand${errands.length === 1 ? '' : 's'} left. ${summarizeSlice(errands)}.`
+            : null,
+        emptyLine: 'You do not have any open errands right now.',
+        items: errands,
+        sections: [buildSection('Errands', errands)].filter(
+          (section): section is HouseholdSmartViewSection => Boolean(section),
+        ),
+        handoffOffer:
+          errands.length > 4 ? 'I can send the fuller errand list to Telegram.' : undefined,
+      };
+    case 'bills':
+      return {
+        lead:
+          bills.length > 0
+            ? isOverdue(bills[0]!, now)
+              ? `The biggest household thing still open this week is ${bills[0]!.title}.`
+              : `The biggest bill in view this week is ${bills[0]!.title}.`
+            : null,
+        emptyLine: 'I do not see any open bills in view right now.',
+        items: bills,
+        sections: [buildSection('Bills This Week', bills)].filter(
+          (section): section is HouseholdSmartViewSection => Boolean(section),
+        ),
+        handoffOffer:
+          bills.length > 3 ? 'I can send the fuller bills view to Telegram.' : undefined,
+      };
+    case 'meals':
+      return {
+        lead:
+          meals.length > 0
+            ? `For this week, meals in view are ${summarizeSlice(meals)}.`
+            : null,
+        emptyLine: 'You do not have meal plans in view right now.',
+        items: meals,
+        sections: [buildSection('Meals This Week', meals)].filter(
+          (section): section is HouseholdSmartViewSection => Boolean(section),
+        ),
+        handoffOffer:
+          meals.length > 3 ? 'I can send the fuller meal view to Telegram.' : undefined,
+        nextStep:
+          groceries.length > 0 ? "I can check what's missing for dinner too." : undefined,
+      };
+    case 'household':
+      return {
+        lead:
+          household.length > 0
+            ? `Around the house, ${summarizeSlice(household, 2)} are the main loose ends.`
+            : null,
+        emptyLine: 'Your household list looks clear right now.',
+        items: household,
+        sections: [buildSection('Household Open', household)].filter(
+          (section): section is HouseholdSmartViewSection => Boolean(section),
+        ),
+        handoffOffer:
+          household.length > 4 ? 'I can send the fuller household view to Telegram.' : undefined,
+      };
+    case 'tonight':
+      {
+        const tonightCarryover = [
+          ...tonight,
+          ...bills.slice(0, 2),
+          ...groceries.slice(0, 3),
+        ].filter(
+          (item, index, all) => all.findIndex((candidate) => candidate.itemId === item.itemId) === index,
+        );
+        return {
+          lead:
+            tonight.length > 0
+              ? `For tonight, ${summarizeSlice(tonight, 2)} are the main loose ends.`
+              : groceries.length > 0
+                ? 'For tonight, the store run is the main loose end.'
+                : bills.length > 0
+                  ? `For tonight, the biggest thing still hanging over the week is ${bills[0]!.title}.`
+            : null,
+        emptyLine: 'Tonight looks fairly clear right now.',
+        items: tonightCarryover,
+        sections: [
+          buildSection('Tonight', tonight.filter((item) => isTonightItem(item, groupsById, now)).slice(0, 4)),
+          buildSection('Bills This Week', bills.slice(0, 2)),
+          buildSection('Groceries', groceries.slice(0, 3)),
+        ].filter((section): section is HouseholdSmartViewSection => Boolean(section)),
+        handoffOffer:
+          tonightCarryover.length > 3 ? 'I can send the fuller tonight view to Telegram.' : undefined,
+      };
+      }
+    case 'weekend':
+      return {
+        lead:
+          weekend.length > 0
+            ? `For the weekend, ${summarizeSlice(weekend, 2)} are the main things to handle.`
+            : null,
+        emptyLine: 'This weekend looks fairly clear right now.',
+        items: weekend,
+        sections: [
+          buildSection('Weekend', weekend.filter((item) => isGroupTitle(groupsById.get(item.groupId), 'Weekend')).slice(0, 4)),
+          buildSection('Errands', errands.filter((item) => isWeekendItem(item, groupsById, now)).slice(0, 3)),
+          buildSection('Household Open', household.filter((item) => isWeekendItem(item, groupsById, now)).slice(0, 3)),
+        ].filter((section): section is HouseholdSmartViewSection => Boolean(section)),
+        handoffOffer:
+          weekend.length > 4 ? 'I can send the fuller weekend view to Telegram.' : undefined,
+      };
+    case 'recurring':
+      return {
+        lead:
+          recurringSoon.length > 0
+            ? `Coming up soon, ${summarizeSlice(recurringSoon, 2)} are coming back into view.`
+            : null,
+        emptyLine: 'Nothing recurring is coming back into view right now.',
+        items: recurringSoon,
+        sections: [buildSection('Recurring Soon', recurringSoon)].filter(
+          (section): section is HouseholdSmartViewSection => Boolean(section),
+        ),
+      };
+    case 'recently_completed':
+      return {
+        lead:
+          recentlyCompleted.length > 0
+            ? `Recently finished, you closed ${summarizeSlice(recentlyCompleted, 2)}.`
+            : null,
+        emptyLine: 'Nothing was completed recently enough to call out right now.',
+        items: recentlyCompleted,
+        sections: [buildSection('Recently Completed', recentlyCompleted)].filter(
+          (section): section is HouseholdSmartViewSection => Boolean(section),
+        ),
+      };
+    case 'slipping':
+      return {
+        lead:
+          slipping.length > 0
+            ? `The things most likely to slip are ${summarizeSlice(slipping, 2)}.`
+            : null,
+        emptyLine: 'Nothing looks like it is slipping badly right now.',
+        items: slipping,
+        sections: [buildSection('Slipping', slipping)].filter(
+          (section): section is HouseholdSmartViewSection => Boolean(section),
+        ),
+      };
+    case 'dinner_missing':
+      if (!tonightMeal) {
+        return {
+          lead: 'I do not see a dinner plan locked in for tonight yet.',
+          emptyLine: 'I do not see a dinner plan locked in for tonight yet.',
+          items: meals.slice(0, 2),
+          sections: [buildSection('Meals This Week', meals.slice(0, 3))].filter(
+            (section): section is HouseholdSmartViewSection => Boolean(section),
+          ),
+          nextStep:
+            meals.length > 0 ? 'I can show the meal ideas you do have this week.' : undefined,
+        };
+      }
+      if (dinnerMissing.length === 0) {
+        return {
+          lead: 'Dinner looks planned, and nothing specific is flagged as missing.',
+          emptyLine: 'Dinner looks planned, and nothing specific is flagged as missing.',
+          items: [tonightMeal],
+          sections: [buildSection('Dinner Tonight', [tonightMeal])].filter(
+            (section): section is HouseholdSmartViewSection => Boolean(section),
+          ),
+          nextStep:
+            groceries.length > 0 ? 'I can still show the store list if you want.' : undefined,
+        };
+      }
+      return {
+        lead: `Dinner looks planned, but you're still missing ${summarizeSlice(dinnerMissing, 3)}.`,
+        emptyLine: 'Dinner looks planned, and nothing specific is flagged as missing.',
+        items: dinnerMissing,
+        sections: [
+          buildSection('Dinner Tonight', [tonightMeal]),
+          buildSection('Still Missing', dinnerMissing),
+        ].filter((section): section is HouseholdSmartViewSection => Boolean(section)),
+        handoffOffer:
+          dinnerMissing.length > 3 ? 'I can send the fuller dinner breakdown to Telegram.' : undefined,
+      };
+    case 'all':
+    default:
+      return {
+        lead:
+          allSections[0]?.title === 'Tonight'
+            ? `For tonight, ${summarizeSlice(allSections[0].items, 2)} are the main loose ends.`
+            : bills[0]
+              ? `The main household loose end this week is ${bills[0].title}.`
+              : groceries[0]
+                ? `From the store, you still need ${summarizeSlice(groceries, 3)}.`
+                : null,
+        emptyLine: 'Your list looks clear right now.',
+        items: flattenSectionItems(allSections),
+        sections: allSections,
+        handoffOffer:
+          flattenSectionItems(allSections, 20).length > 6
+            ? 'I can send the fuller household review to Telegram.'
+            : undefined,
+        nextStep:
+          tonight.length > 0 ? "I can tell you what's left for tonight next." : undefined,
+      };
+  }
+}
+
 function formatReadout(params: {
   channel: EverydayCaptureCommandInput['channel'];
   target: ReadTarget;
-  items: EverydayListItem[];
-  groups: EverydayListGroup[];
-}): { replyText: string; handoffOffer?: string } {
-  if (params.items.length === 0) {
-    const emptyLine =
-      params.target.kind === 'shopping'
-        ? 'You do not have anything left to buy right now.'
-        : params.target.kind === 'errands'
-          ? 'You do not have any open errands right now.'
-          : params.target.kind === 'bills'
-            ? 'I do not see any open bills in view right now.'
-            : params.target.kind === 'meals'
-              ? 'You do not have meal plans in view right now.'
-              : 'Your list looks clear right now.';
-    return { replyText: emptyLine };
+  view: HouseholdSmartView;
+  now: Date;
+}): {
+  replyText: string;
+  handoffOffer?: string;
+  sendOptions?: EverydayCaptureCommandResult['sendOptions'];
+} {
+  if (params.view.sections.length === 0 && params.view.items.length === 0) {
+    return {
+      replyText:
+        params.channel === 'telegram'
+          ? `${params.view.emptyLine}\n\nYou can add groceries, errands, bills, meal ideas, or something for tonight.`
+          : params.view.emptyLine,
+      sendOptions:
+        params.channel === 'telegram'
+          ? {
+              inlineActionRows: [
+                [
+                  { label: 'Groceries', actionId: buildViewActionId('shopping') },
+                  { label: 'Bills', actionId: buildViewActionId('bills') },
+                  { label: 'Tonight', actionId: buildViewActionId('tonight') },
+                ],
+              ],
+            }
+          : undefined,
+    };
   }
 
   if (params.channel === 'alexa') {
-    const slice = params.items.slice(0, 3).map(formatItemLine);
+    const slice = params.view.items
+      .slice(0, 3)
+      .map((item) => item.title.replace(/[.!?]+$/g, ''));
     const summary =
-      params.target.kind === 'shopping'
+      params.view.lead ||
+      (params.target.kind === 'shopping'
         ? `You still need ${joinNaturalLanguage(slice)}.`
         : params.target.kind === 'bills'
           ? `The biggest thing still open is ${slice[0]}.`
           : params.target.kind === 'errands'
-            ? `You have ${params.items.length} errands left. ${joinNaturalLanguage(slice)}.`
-            : `You still have ${joinNaturalLanguage(slice)}.`;
+            ? `You have ${params.view.items.length} errands left. ${joinNaturalLanguage(slice)}.`
+            : params.target.kind === 'recurring'
+              ? `Coming back soon, you have ${joinNaturalLanguage(slice)}.`
+              : `You still have ${joinNaturalLanguage(slice)}.`);
     return {
       replyText:
-        params.items.length > 3
+        params.view.items.length > 3 || Boolean(params.view.handoffOffer)
           ? `${summary} Want the fuller list in Telegram?`
           : summary,
-      handoffOffer:
-        params.items.length > 3 ? 'I can send the fuller list to Telegram.' : undefined,
+      handoffOffer: params.view.handoffOffer || (params.view.items.length > 3
+        ? 'I can send the fuller list to Telegram.'
+        : undefined),
     };
   }
 
-  const grouped = new Map<string, string[]>();
-  for (const item of params.items) {
-    const group = params.groups.find((candidate) => candidate.groupId === item.groupId);
-    const label = group?.title || 'General';
-    const bucket = grouped.get(label) || [];
-    bucket.push(`- ${formatItemLine(item)}`);
-    grouped.set(label, bucket);
-  }
   const lines: string[] = [];
-  for (const [group, bucket] of grouped.entries()) {
-    lines.push(`*${group}*`);
-    lines.push(...bucket);
+  if (params.view.lead) {
+    lines.push(params.view.lead);
     lines.push('');
   }
+  for (const section of params.view.sections) {
+    lines.push(`*${section.title}*`);
+    lines.push(...section.items.map((item) => `- ${formatItemLine(item, params.now)}`));
+    lines.push('');
+  }
+  if (params.view.nextStep) lines.push(params.view.nextStep);
   return {
     replyText: lines.join('\n').trim(),
+    handoffOffer: params.view.handoffOffer,
+    sendOptions:
+      params.channel === 'telegram'
+        ? {
+            inlineActionRows: buildTelegramEverydayInlineActionRows({
+              target: params.target,
+              items: params.view.items,
+            }),
+          }
+        : undefined,
   };
 }
 
@@ -1295,6 +2707,11 @@ async function handleAddItem(
   if (!target) return { handled: false };
   const nowIso = (input.now || new Date()).toISOString();
   const activeProfile = getActiveOperatingProfile(input.groupFolder);
+  ensureBaselineListGroups({
+    groupFolder: input.groupFolder,
+    nowIso,
+    activeProfile,
+  });
   const group = ensureListGroup({
     groupFolder: input.groupFolder,
     operatingProfileId: activeProfile?.profileId,
@@ -1316,6 +2733,7 @@ async function handleAddItem(
     detail: target.detail,
     dueAt: target.dueAt,
     scheduledFor: target.scheduledFor,
+    recurrence: target.recurrence,
     nowIso,
   });
   maybeCreateSuggestionForItem(
@@ -1338,46 +2756,18 @@ async function handleAddItem(
       activeOperatingProfileId: activeProfile?.profileId,
     },
     supportedFollowups: ['anything_else', 'create_reminder', 'save_for_later'],
+    sendOptions:
+      input.channel === 'telegram'
+        ? {
+            inlineActionRows: buildTelegramEverydayInlineActionRows({
+              target: { kind: 'all', summary: 'your list' },
+              items: [item],
+            }),
+          }
+        : undefined,
     listGroup: group,
     listItems: [item],
   });
-}
-
-function filterReadItemsForTarget(
-  input: EverydayCaptureCommandInput,
-  target: ReadTarget,
-): EverydayListItem[] {
-  const now = input.now || new Date();
-  if (target.kind === 'shopping') {
-    return listEverydayListItems(input.groupFolder, { groupKind: 'shopping' });
-  }
-  if (target.kind === 'errands') {
-    return listEverydayListItems(input.groupFolder, { groupKind: 'errands' });
-  }
-  if (target.kind === 'bills') {
-    return listEverydayListItems(input.groupFolder, { groupKind: 'bills' }).filter(
-      (item) => {
-        if (!item.dueAt) return true;
-        return Date.parse(item.dueAt) <= upcomingWeekEnd(now).getTime();
-      },
-    );
-  }
-  if (target.kind === 'meals') {
-    return listEverydayListItems(input.groupFolder, { groupKind: 'meals' }).filter(
-      (item) => {
-        if (!item.scheduledFor) return true;
-        return Date.parse(item.scheduledFor) <= upcomingWeekEnd(now).getTime();
-      },
-    );
-  }
-  if (target.kind === 'tonight') {
-    return listEverydayListItems(input.groupFolder, {
-      groupKind: 'shopping',
-      includeDone: false,
-      limit: 5,
-    });
-  }
-  return listEverydayListItems(input.groupFolder, { includeDone: false, limit: 12 });
 }
 
 async function handleReadItems(
@@ -1385,13 +2775,26 @@ async function handleReadItems(
 ): Promise<EverydayCaptureCommandResult> {
   const target = parseReadTarget(input.text);
   if (!target) return { handled: false };
-  const items = filterReadItemsForTarget(input, target);
+  const now = input.now || new Date();
+  const activeProfile = getActiveOperatingProfile(input.groupFolder);
+  ensureBaselineListGroups({
+    groupFolder: input.groupFolder,
+    nowIso: now.toISOString(),
+    activeProfile,
+  });
+  refreshRecurringItems(input.groupFolder, now);
   const groups = listEverydayListGroups(input.groupFolder);
+  const view = buildHouseholdSmartView({
+    groupFolder: input.groupFolder,
+    target,
+    groups,
+    now,
+  });
   const formatted = formatReadout({
     channel: input.channel,
     target,
-    items,
-    groups,
+    view,
+    now,
   });
   return buildResult({
     mode: 'read_items',
@@ -1399,16 +2802,17 @@ async function handleReadItems(
     handoffOffer: formatted.handoffOffer,
     summaryText: target.summary,
     subjectKind: 'saved_item',
+    sendOptions: formatted.sendOptions,
     conversationData: {
       activeTaskKind: 'list_read',
-      activeListGroupId: items[0]?.groupId,
-      activeListItemIds: items.slice(0, 5).map((item) => item.itemId),
-      activeListScope: items[0]?.scope,
-      activeOperatingProfileId: getActiveOperatingProfile(input.groupFolder)?.profileId,
+      activeListGroupId: view.items[0]?.groupId,
+      activeListItemIds: view.items.slice(0, 5).map((item) => item.itemId),
+      activeListScope: view.items[0]?.scope,
+      activeOperatingProfileId: activeProfile?.profileId,
     },
     supportedFollowups: ['anything_else', 'create_reminder', 'send_details'],
-    listGroup: items[0] ? getEverydayListGroup(items[0].groupId) || null : null,
-    listItems: items,
+    listGroup: view.items[0] ? getEverydayListGroup(view.items[0].groupId) || null : null,
+    listItems: view.items,
   });
 }
 
@@ -1427,14 +2831,38 @@ async function handleUpdateItem(
   const now = input.now || new Date();
   const nowIso = now.toISOString();
   if (parseMarkDoneRequest(input.text)) {
+    const recurrenceNextDueAt = computeNextRecurrenceDueAt(item, now);
     updateEverydayListItem(item.itemId, {
       state: 'done',
+      detailJson: resetDeferDetailPatch(item),
+      recurrenceNextDueAt,
       completedAt: nowIso,
       updatedAt: nowIso,
     });
     return buildResult({
       mode: 'update_item',
       replyText: `Okay. I marked ${item.title} done.`,
+      summaryText: item.title,
+      subjectKind: 'saved_item',
+      conversationData: {
+        activeTaskKind: 'list_update',
+        activeListGroupId: item.groupId,
+        activeListItemIds: [item.itemId],
+        activeListScope: item.scope,
+      },
+      supportedFollowups: ['anything_else'],
+    });
+  }
+  if (parseReopenRequest(input.text)) {
+    updateEverydayListItem(item.itemId, {
+      state: 'open',
+      deferUntil: null,
+      completedAt: null,
+      updatedAt: nowIso,
+    });
+    return buildResult({
+      mode: 'update_item',
+      replyText: `Okay. I reopened ${item.title}.`,
       summaryText: item.title,
       subjectKind: 'saved_item',
       conversationData: {
@@ -1460,6 +2888,7 @@ async function handleUpdateItem(
     updateEverydayListItem(item.itemId, {
       state: 'deferred',
       deferUntil: startOfNextWeek(now).toISOString(),
+      detailJson: mergeDetailJson(item.detailJson, buildDeferDetailPatch(item, nowIso)),
       updatedAt: nowIso,
     });
     return buildResult({
@@ -1476,10 +2905,141 @@ async function handleUpdateItem(
       supportedFollowups: ['anything_else', 'create_reminder'],
     });
   }
+  const moveGroup = parseMoveGroupRequest(input.text);
+  if (moveGroup) {
+    const targetGroup = ensureListGroup({
+      groupFolder: input.groupFolder,
+      operatingProfileId: item.operatingProfileId,
+      title: moveGroup.groupTitle,
+      kind: moveGroup.groupKind,
+      scope:
+        moveGroup.groupKind === 'household' ? 'household' : item.scope,
+      sourceSummary: `Organized from ${input.channel} everyday capture`,
+      nowIso,
+    });
+    updateEverydayListItem(item.itemId, {
+      groupId: targetGroup.groupId,
+      state: 'open',
+      scope: targetGroup.scope,
+      itemKind:
+        targetGroup.kind === 'shopping'
+          ? 'shopping_item'
+          : targetGroup.kind === 'errands'
+            ? 'errand'
+            : targetGroup.kind === 'bills'
+              ? 'bill'
+              : targetGroup.kind === 'meals'
+                ? 'meal_entry'
+                : item.itemKind,
+      updatedAt: nowIso,
+    });
+    return buildResult({
+      mode: 'update_item',
+      replyText: `Okay. I moved ${item.title} to ${formatGroupLabel(targetGroup)}.`,
+      summaryText: item.title,
+      subjectKind: 'saved_item',
+      conversationData: {
+        activeTaskKind: 'list_update',
+        activeListGroupId: targetGroup.groupId,
+        activeListItemIds: [item.itemId],
+        activeListScope: targetGroup.scope,
+      },
+      supportedFollowups: ['anything_else', 'create_reminder'],
+    });
+  }
+  const recurrence = parseRecurringUpdate(input.text, now);
+  if (recurrence) {
+    const targetGroup =
+      /^make (?:this|that) a monthly bill$/i.test(normalizeText(input.text))
+        ? ensureListGroup({
+            groupFolder: input.groupFolder,
+            operatingProfileId: item.operatingProfileId,
+            title: 'Bills',
+            kind: 'bills',
+            scope: item.scope,
+            sourceSummary: 'Recurring bills',
+            nowIso,
+          })
+        : null;
+    updateEverydayListItem(item.itemId, {
+      groupId: targetGroup?.groupId || item.groupId,
+      itemKind: targetGroup ? 'bill' : item.itemKind,
+      state: 'open',
+      detailJson: mergeDetailJson(item.detailJson, buildRecurrenceDetail(recurrence)),
+      recurrenceKind: recurrence.kind,
+      recurrenceInterval: recurrence.interval,
+      recurrenceDaysJson: recurrence.days
+        ? JSON.stringify(recurrence.days)
+        : null,
+      recurrenceDayOfMonth: recurrence.dayOfMonth || null,
+      recurrenceAnchorAt: recurrence.anchorAt || nowIso,
+      recurrenceNextDueAt: recurrence.nextDueAt || null,
+      updatedAt: nowIso,
+    });
+    return buildResult({
+      mode: 'update_item',
+      replyText:
+        recurrence.kind === 'monthly'
+          ? `Okay. I will keep ${item.title} as a monthly bill.`
+          : `Okay. I will repeat ${item.title} ${
+              recurrence.kind === 'weekly'
+                ? recurrence.days?.length
+                  ? `every ${
+                      Object.entries(WEEKDAY_INDEX).find(
+                        ([, value]) => value === recurrence.days?.[0],
+                      )?.[0] || 'week'
+                    }`
+                  : 'every week'
+                : 'daily'
+            }.`,
+      summaryText: item.title,
+      subjectKind: 'saved_item',
+      conversationData: {
+        activeTaskKind: 'list_update',
+        activeListGroupId: targetGroup?.groupId || item.groupId,
+        activeListItemIds: [item.itemId],
+        activeListScope: item.scope,
+      },
+      supportedFollowups: ['anything_else', 'create_reminder'],
+    });
+  }
+  if (parseStopRepeatingRequest(input.text)) {
+    updateEverydayListItem(item.itemId, {
+      recurrenceKind: 'none',
+      recurrenceInterval: 1,
+      recurrenceDaysJson: null,
+      recurrenceDayOfMonth: null,
+      recurrenceAnchorAt: null,
+      recurrenceNextDueAt: null,
+      detailJson: mergeDetailJson(item.detailJson, {
+        recurrenceKind: 'none',
+        recurrenceInterval: 1,
+        recurrenceDays: [],
+        recurrenceDayOfMonth: null,
+        recurrenceAnchorAt: null,
+        recurrenceNextDueAt: null,
+      }),
+      updatedAt: nowIso,
+    });
+    return buildResult({
+      mode: 'update_item',
+      replyText: `Okay. ${item.title} will stop repeating.`,
+      summaryText: item.title,
+      subjectKind: 'saved_item',
+      conversationData: {
+        activeTaskKind: 'list_update',
+        activeListGroupId: item.groupId,
+        activeListItemIds: [item.itemId],
+        activeListScope: item.scope,
+      },
+      supportedFollowups: ['anything_else'],
+    });
+  }
   if (parseRemindLaterRequest(input.text)) {
     updateEverydayListItem(item.itemId, {
       state: 'snoozed',
       deferUntil: tomorrowAtHour(now, 9).toISOString(),
+      detailJson: mergeDetailJson(item.detailJson, buildDeferDetailPatch(item, nowIso)),
       updatedAt: nowIso,
     });
     return buildResult({
@@ -1623,27 +3183,36 @@ export function getEverydayCaptureSignal(params: {
   const focus = params.focus || 'general';
   const limit = params.limit || 2;
   const now = params.now || new Date();
-  const items = listEverydayListItems(params.groupFolder, {
-    includeDone: false,
-    limit: 12,
-  }).filter((item) => {
-    if (focus === 'weekly') {
-      return (
-        item.itemKind === 'bill' ||
-        item.groupId ===
-          findEverydayListGroupByKind(params.groupFolder!, 'bills')?.groupId
-      );
-    }
-    if (focus === 'tonight') {
-      return (
-        item.groupId ===
-          findEverydayListGroupByTitle(params.groupFolder!, 'Tonight')?.groupId ||
-        /pills?|meds?|trash|batteries|groceries/i.test(item.title)
-      );
-    }
-    return true;
+  ensureBaselineListGroups({
+    groupFolder: params.groupFolder,
+    nowIso: now.toISOString(),
+    activeProfile: getActiveOperatingProfile(params.groupFolder),
   });
-  return items.slice(0, limit).map((item) => {
+  refreshRecurringItems(params.groupFolder, now);
+  const groups = listEverydayListGroups(params.groupFolder);
+  const targets =
+    focus === 'weekly'
+      ? ([
+          { kind: 'bills', summary: 'bills this week' },
+          { kind: 'weekend', summary: 'this weekend' },
+          { kind: 'recurring', summary: 'recurring items' },
+        ] as ReadTarget[])
+      : focus === 'tonight'
+        ? ([
+            { kind: 'tonight', summary: 'tonight' },
+            { kind: 'shopping', summary: 'groceries' },
+          ] as ReadTarget[])
+        : ([{ kind: 'all', summary: 'your list' }] as ReadTarget[]);
+  const items = targets.flatMap((target) =>
+    buildHouseholdSmartView({
+      groupFolder: params.groupFolder!,
+      target,
+      groups,
+      now,
+    }).items,
+  );
+  const unique = [...new Map(items.map((item) => [item.itemId, item])).values()];
+  return unique.slice(0, limit).map((item) => {
     if (item.itemKind === 'bill') return `Bill: ${item.title}`;
     if (item.itemKind === 'meal_entry') return `Meal: ${item.title}`;
     if (/pills?|meds?|medication/i.test(item.title)) return `Tonight: ${item.title}`;

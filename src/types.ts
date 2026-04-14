@@ -1492,6 +1492,11 @@ export type EverydayListItemState =
   | 'converted_to_mission';
 
 export type EverydayListScope = 'personal' | 'household' | 'family' | 'mixed';
+export type EverydayListRecurrenceKind =
+  | 'none'
+  | 'daily'
+  | 'weekly'
+  | 'monthly';
 
 export interface EverydayListGroup {
   groupId: string;
@@ -1522,6 +1527,12 @@ export interface EverydayListItem {
   dueAt?: string | null;
   scheduledFor?: string | null;
   deferUntil?: string | null;
+  recurrenceKind?: EverydayListRecurrenceKind;
+  recurrenceInterval?: number;
+  recurrenceDaysJson?: string | null;
+  recurrenceDayOfMonth?: number | null;
+  recurrenceAnchorAt?: string | null;
+  recurrenceNextDueAt?: string | null;
   createdAt: string;
   updatedAt: string;
   completedAt?: string | null;
