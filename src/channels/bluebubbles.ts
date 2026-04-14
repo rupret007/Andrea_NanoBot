@@ -4,6 +4,7 @@ import http, { type IncomingMessage, type Server, type ServerResponse } from 'ht
 import {
   createDefaultBlueBubblesMonitorState,
   type BlueBubblesDetectionState,
+  type BlueBubblesEvidenceKind,
   readBlueBubblesMonitorState,
   type BlueBubblesMonitorState,
   writeBlueBubblesMonitorState,
@@ -18,6 +19,10 @@ import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
 import { buildBlueBubblesChatJid } from '../companion-conversation-binding.js';
 import { hasBlueBubblesAndreaMention } from '../bluebubbles-companion.js';
+import {
+  BLUEBUBBLES_CANONICAL_SELF_THREAD_JID,
+  expandBlueBubblesLogicalSelfThreadJids,
+} from '../bluebubbles-self-thread.js';
 import {
   buildBlueBubblesIngressFingerprint,
   isBlueBubblesAndreaBotEcho,
@@ -1044,9 +1049,16 @@ class BlueBubblesMessagesProvider implements AppleMessagesProvider {
 
   async inspectRecentActivity(
     config: Pick<BlueBubblesConfig, 'baseUrl' | 'password'>,
-    limit = 12,
+    options?: {
+      limit?: number;
+      candidateChatJids?: string[];
+    },
   ): Promise<NormalizedBlueBubblesHistoryRow[]> {
-    return fetchNormalizedBlueBubblesRecentMessages(config, limit);
+    return fetchNormalizedBlueBubblesRecentMessages(
+      config,
+      options?.limit ?? 12,
+      options?.candidateChatJids || [],
+    );
   }
 
   async sendText(
@@ -1217,6 +1229,7 @@ async function fetchNormalizedBlueBubblesHistoryRows(
 async function fetchNormalizedBlueBubblesRecentMessages(
   config: Pick<BlueBubblesConfig, 'baseUrl' | 'password'>,
   limit = 12,
+  candidateChatJids: string[] = [],
 ): Promise<NormalizedBlueBubblesHistoryRow[]> {
   if (!config.baseUrl || !config.password) {
     return [];
@@ -1233,7 +1246,16 @@ async function fetchNormalizedBlueBubblesRecentMessages(
   const response = await fetchBlueBubblesWithTimeout(url);
   const responseText = await response.text();
   if (!response.ok) {
-    throw new Error(extractBlueBubblesErrorText(response.status, responseText));
+    const errorText = extractBlueBubblesErrorText(response.status, responseText);
+    if (response.status !== 404 || candidateChatJids.length === 0) {
+      throw new Error(errorText);
+    }
+    return fetchNormalizedBlueBubblesRecentMessagesFromRecentChats(
+      config,
+      candidateChatJids,
+      limit,
+      errorText,
+    );
   }
 
   return normalizeBlueBubblesHistoryRows(parseBlueBubblesJson(responseText))
@@ -1259,6 +1281,54 @@ async function fetchNormalizedBlueBubblesRecentMessages(
     .sort((left, right) =>
       left.message.timestamp.localeCompare(right.message.timestamp),
     );
+}
+
+async function fetchNormalizedBlueBubblesRecentMessagesFromRecentChats(
+  config: Pick<BlueBubblesConfig, 'baseUrl' | 'password'>,
+  candidateChatJids: string[],
+  limit: number,
+  originalErrorText: string,
+): Promise<NormalizedBlueBubblesHistoryRow[]> {
+  const uniqueChatJids = [...new Set(candidateChatJids.filter((chatJid) => chatJid.startsWith('bb:')))];
+  const mergedRows = new Map<string, NormalizedBlueBubblesHistoryRow>();
+  const errors: string[] = [];
+
+  for (const chatJid of uniqueChatJids) {
+    const chatGuid = extractBlueBubblesChatGuid(chatJid);
+    if (!chatGuid) {
+      continue;
+    }
+    try {
+      const rows = await fetchNormalizedBlueBubblesHistoryRows(
+        config,
+        chatGuid,
+        Math.min(Math.max(2, limit), 4),
+      );
+      for (const row of rows) {
+        mergedRows.set(row.message.id, row);
+      }
+    } catch (error) {
+      errors.push(
+        `${chatJid}: ${
+          error instanceof Error ? error.message : 'recent chat history probe failed'
+        }`,
+      );
+    }
+  }
+
+  if (mergedRows.size === 0) {
+    throw new Error(
+      errors.length > 0
+        ? `BlueBubbles recent activity probe failed (${originalErrorText}; ${errors.join(' | ')})`
+        : originalErrorText,
+    );
+  }
+
+  return [...mergedRows.values()]
+    .sort((left, right) =>
+      left.message.timestamp.localeCompare(right.message.timestamp),
+    )
+    .slice(-Math.max(1, limit));
 }
 
 export async function primeBlueBubblesChatHistory(
@@ -1406,6 +1476,31 @@ export class BlueBubblesChannel implements Channel {
     private readonly opts: ChannelOpts,
   ) {
     this.activePort = config.port;
+    this.rehydrateRuntimeStateFromMonitor();
+  }
+
+  private rehydrateRuntimeStateFromMonitor(): void {
+    this.lastInboundObservedAt = this.monitorState.lastInboundObservedAt;
+    this.lastInboundChatJid = this.monitorState.lastInboundChatJid;
+    this.lastInboundWasSelfAuthored = Boolean(
+      this.monitorState.lastInboundWasSelfAuthored,
+    );
+    this.lastOutboundTargetKind = this.monitorState.lastOutboundTargetKind;
+    this.lastOutboundTargetValue = this.monitorState.lastOutboundTargetValue;
+    this.lastSendErrorDetail = this.monitorState.lastSendErrorDetail;
+    this.lastMetadataHydrationSource =
+      this.monitorState.lastMetadataHydrationSource === 'history'
+        ? 'history'
+        : 'none';
+    this.lastAttemptedTargetSequence = [
+      ...this.monitorState.lastAttemptedTargetSequence,
+    ];
+    if (
+      this.monitorState.lastOutboundObservedAt &&
+      this.monitorState.lastOutboundObservedChatJid
+    ) {
+      this.lastOutboundResult = `${this.monitorState.lastOutboundObservedAt} (${this.monitorState.lastOutboundObservedChatJid})`;
+    }
   }
 
   private getConfiguredBaseUrlCandidates(): string[] {
@@ -1501,13 +1596,123 @@ export class BlueBubblesChannel implements Channel {
     });
   }
 
+  private getRepresentativeHealthChatJid(): string | null {
+    return (
+      this.monitorState.lastOutboundObservedChatJid ||
+      this.lastInboundChatJid ||
+      this.monitorState.lastInboundChatJid ||
+      this.monitorState.mostRecentWebhookObservedChatJid ||
+      this.monitorState.mostRecentServerSeenChatJid ||
+      null
+    );
+  }
+
   private getHealthReplyGateMode(): BlueBubblesReplyGateMode {
+    const chatJid = this.getRepresentativeHealthChatJid();
+    const matchedChat = chatJid
+      ? getAllChats().find((chat) => chat.jid === chatJid)
+      : null;
     return this.getReplyGateModeForChat({
-      chatJid: this.lastInboundChatJid,
-      isGroup: this.lastInboundChatJid
-        ? getAllChats().find((chat) => chat.jid === this.lastInboundChatJid)?.is_group !== 0
-        : null,
+      chatJid,
+      isGroup:
+        matchedChat && typeof matchedChat.is_group === 'number'
+          ? matchedChat.is_group !== 0
+          : null,
     });
+  }
+
+  private rememberLastInboundObservation(
+    chatJid: string,
+    timestamp: string,
+    isSelfAuthored: boolean,
+  ): void {
+    this.lastInboundObservedAt = timestamp;
+    this.lastInboundChatJid = chatJid;
+    this.lastInboundWasSelfAuthored = isSelfAuthored;
+    this.monitorState.lastInboundObservedAt = timestamp;
+    this.monitorState.lastInboundChatJid = chatJid;
+    this.monitorState.lastInboundWasSelfAuthored = isSelfAuthored;
+  }
+
+  private rememberLastOutboundObservation(
+    chatJid: string,
+    timestamp: string,
+  ): void {
+    this.lastOutboundResult = `${timestamp} (${chatJid})`;
+    this.monitorState.lastOutboundObservedAt = timestamp;
+    this.monitorState.lastOutboundObservedChatJid = chatJid;
+  }
+
+  private syncRuntimeStateToMonitor(): void {
+    this.monitorState.lastInboundObservedAt = this.lastInboundObservedAt;
+    this.monitorState.lastInboundChatJid = this.lastInboundChatJid;
+    this.monitorState.lastInboundWasSelfAuthored = this.lastInboundChatJid
+      ? this.lastInboundWasSelfAuthored
+      : null;
+    this.monitorState.lastOutboundTargetKind = this.lastOutboundTargetKind;
+    this.monitorState.lastOutboundTargetValue = this.lastOutboundTargetValue;
+    this.monitorState.lastSendErrorDetail = this.lastSendErrorDetail;
+    this.monitorState.lastMetadataHydrationSource =
+      this.lastMetadataHydrationSource === 'none'
+        ? null
+        : this.lastMetadataHydrationSource;
+    this.monitorState.lastAttemptedTargetSequence = [
+      ...this.lastAttemptedTargetSequence,
+    ];
+  }
+
+  private noteRecentEvidence(
+    kind: BlueBubblesEvidenceKind,
+    chatJid: string,
+    signature: string,
+    observedAt: string,
+  ): void {
+    if (
+      this.monitorState.recentEvidence.some(
+        (entry) => entry.kind === kind && entry.signature === signature,
+      )
+    ) {
+      return;
+    }
+    this.monitorState.recentEvidence.push({
+      kind,
+      chatJid,
+      signature,
+      observedAt,
+    });
+  }
+
+  private getShadowPollCandidateChatJids(limit = 8): string[] {
+    const candidates = new Set<string>();
+    const push = (chatJid: string | null | undefined): void => {
+      if (!chatJid || !chatJid.startsWith('bb:')) {
+        return;
+      }
+      for (const expanded of expandBlueBubblesLogicalSelfThreadJids(chatJid)) {
+        candidates.add(expanded);
+      }
+      if (!expandBlueBubblesLogicalSelfThreadJids(chatJid).length) {
+        candidates.add(chatJid);
+      }
+    };
+
+    push(BLUEBUBBLES_CANONICAL_SELF_THREAD_JID);
+    push(this.lastInboundChatJid);
+    push(this.monitorState.lastInboundChatJid);
+    push(this.monitorState.lastOutboundObservedChatJid);
+    push(this.monitorState.mostRecentWebhookObservedChatJid);
+    push(this.monitorState.mostRecentServerSeenChatJid);
+    push(this.monitorState.lastIgnoredChatJid);
+
+    for (const chat of getAllChats()) {
+      if (!chat.jid.startsWith('bb:')) continue;
+      push(chat.jid);
+      if (candidates.size >= limit) {
+        break;
+      }
+    }
+
+    return [...candidates].slice(0, limit);
   }
 
   private cacheDirectChatMetadata(
@@ -1555,9 +1760,11 @@ export class BlueBubblesChannel implements Channel {
     contact: BlueBubblesContactRef;
     message: Pick<NewMessage, 'is_from_me' | 'timestamp'>;
   }): void {
-    this.lastInboundChatJid = input.chatJid;
-    this.lastInboundWasSelfAuthored = Boolean(input.message.is_from_me);
-    this.lastInboundObservedAt = input.message.timestamp;
+    this.rememberLastInboundObservation(
+      input.chatJid,
+      input.message.timestamp,
+      Boolean(input.message.is_from_me),
+    );
 
     const isGroup = inferBlueBubblesGroupChat(
       input.chat.chatGuid,
@@ -1705,6 +1912,8 @@ export class BlueBubblesChannel implements Channel {
   ): void {
     this.lastOutboundTargetKind = candidate.kind;
     this.lastOutboundTargetValue = candidate.chatGuid;
+    this.monitorState.lastOutboundTargetKind = candidate.kind;
+    this.monitorState.lastOutboundTargetValue = candidate.chatGuid;
   }
 
   private buildBlueBubblesSendFailureMessage(
@@ -1723,6 +1932,7 @@ export class BlueBubblesChannel implements Channel {
   }
 
   private persistMonitorState(): void {
+    this.syncRuntimeStateToMonitor();
     this.monitorState.updatedAt = new Date().toISOString();
     writeBlueBubblesMonitorState(this.monitorState);
   }
@@ -1854,7 +2064,8 @@ export class BlueBubblesChannel implements Channel {
       (entry) =>
         entry.kind === 'missed_inbound' ||
         entry.kind === 'reply_delivery_failed' ||
-        entry.kind === 'transport_unreachable',
+        entry.kind === 'transport_unreachable' ||
+        entry.kind === 'shadow_poll_unstable',
     );
     const nowMs = Date.now();
     const lastSentMs = this.monitorState.crossSurfaceFallbackLastSentAt
@@ -1923,7 +2134,10 @@ export class BlueBubblesChannel implements Channel {
       }
       const recentMessages = await this.bridgeProvider.inspectRecentActivity(
         this.buildConfigForBaseUrl(activeBaseUrl),
-        8,
+        {
+          limit: 8,
+          candidateChatJids: this.getShadowPollCandidateChatJids(),
+        },
       );
       this.monitorState.shadowPollLastOkAt = new Date(nowMs).toISOString();
       this.monitorState.shadowPollLastError = null;
@@ -1999,19 +2213,12 @@ export class BlueBubblesChannel implements Channel {
                 'Check the Mac-side BlueBubbles webhook target and whether this Windows listener is reachable from the Mac, then repro the same text thread.',
             };
           }
-          if (
-            !this.monitorState.recentEvidence.some(
-              (entry) =>
-                entry.kind === 'missed_inbound' && entry.signature === row.message.id,
-            )
-          ) {
-            this.monitorState.recentEvidence.push({
-              kind: 'missed_inbound',
-              chatJid: row.chatJid,
-              signature: row.message.id,
-              observedAt: row.message.timestamp,
-            });
-          }
+          this.noteRecentEvidence(
+            'missed_inbound',
+            row.chatJid,
+            row.message.id,
+            row.message.timestamp,
+          );
         }
       }
 
@@ -2057,6 +2264,7 @@ export class BlueBubblesChannel implements Channel {
     } catch (error) {
       const errorText =
         error instanceof Error ? error.message : 'BlueBubbles shadow poll failed';
+      const nowIso = new Date(nowMs).toISOString();
       try {
         await this.probeBlueBubblesTransport();
         await this.refreshBridgeReadiness();
@@ -2067,22 +2275,37 @@ export class BlueBubblesChannel implements Channel {
         );
       }
 
-      const detail =
-        this.transportProbeDetail ||
-        `Andrea could not read recent BlueBubbles server activity because the shadow poll failed (${errorText}).`;
-      const nowIso = new Date(nowMs).toISOString();
       this.monitorState.shadowPollLastError = errorText;
-      this.monitorState.recentEvidence.push({
-        kind: 'transport_unreachable',
-        chatJid: 'bluebubbles:transport',
-        signature: `${this.getActiveBaseUrl() || 'none'}:${nowIso}`,
-        observedAt: nowIso,
-      });
-      this.setDetectionState(
-        'transport_unreachable',
-        `Andrea could not reach the BlueBubbles server from this host, so Messages may be missing inbound texts before Andrea ever sees them. ${detail}`,
-        'Check the BlueBubbles server endpoint for this Windows host, prefer a stable IP or explicit candidate list over a .local hostname, then retry the same 1:1 Messages thread.',
-      );
+      const transportReachable = this.transportProbeStatus === 'reachable';
+      const webhookReady = this.webhookRegistrationStatus === 'registered';
+      if (transportReachable && webhookReady) {
+        this.noteRecentEvidence(
+          'shadow_poll_unstable',
+          'bluebubbles:shadow-poll',
+          `${this.getActiveBaseUrl() || 'none'}:${errorText}`,
+          nowIso,
+        );
+        this.setDetectionState(
+          'mixed_degraded',
+          `Andrea can reach the BlueBubbles bridge from this PC, but the recent-activity shadow poll failed (${errorText}), so the same-thread health check is not trustworthy yet.`,
+          'Check the BlueBubbles recent-message shadow poll for this Windows host, then retry the same 1:1 Messages thread.',
+        );
+      } else {
+        const detail =
+          this.transportProbeDetail ||
+          `Andrea could not read recent BlueBubbles server activity because the shadow poll failed (${errorText}).`;
+        this.noteRecentEvidence(
+          'transport_unreachable',
+          'bluebubbles:transport',
+          `${this.getActiveBaseUrl() || 'none'}:${nowIso}`,
+          nowIso,
+        );
+        this.setDetectionState(
+          'transport_unreachable',
+          `Andrea could not reach the BlueBubbles server from this host, so Messages may be missing inbound texts before Andrea ever sees them. ${detail}`,
+          'Check the BlueBubbles server endpoint for this Windows host, prefer a stable IP or explicit candidate list over a .local hostname, then retry the same 1:1 Messages thread.',
+        );
+      }
       await this.maybeEscalateCrossSurfaceFallback();
       if (this.monitorState.crossSurfaceFallbackState === 'idle') {
         this.monitorState.crossSurfaceFallbackState = 'armed';
@@ -2114,6 +2337,37 @@ export class BlueBubblesChannel implements Channel {
       this.config.sendEnabled &&
       this.transportProbeStatus === 'reachable' &&
       this.webhookRegistrationStatus === 'registered';
+    const healthReplyGateMode = this.getHealthReplyGateMode();
+    const lastInboundObservedAt =
+      this.lastInboundObservedAt || this.monitorState.lastInboundObservedAt;
+    const lastInboundChatJid =
+      this.lastInboundChatJid || this.monitorState.lastInboundChatJid;
+    const lastInboundWasSelfAuthored =
+      lastInboundChatJid != null
+        ? this.lastInboundChatJid
+          ? this.lastInboundWasSelfAuthored
+          : Boolean(this.monitorState.lastInboundWasSelfAuthored)
+        : false;
+    const lastOutboundResult =
+      this.lastOutboundResult ||
+      (this.monitorState.lastOutboundObservedAt &&
+      this.monitorState.lastOutboundObservedChatJid
+        ? `${this.monitorState.lastOutboundObservedAt} (${this.monitorState.lastOutboundObservedChatJid})`
+        : null);
+    const lastOutboundTargetKind =
+      this.lastOutboundTargetKind || this.monitorState.lastOutboundTargetKind;
+    const lastOutboundTargetValue =
+      this.lastOutboundTargetValue || this.monitorState.lastOutboundTargetValue;
+    const lastSendErrorDetail =
+      this.lastSendErrorDetail || this.monitorState.lastSendErrorDetail;
+    const lastMetadataHydrationSource =
+      this.lastMetadataHydrationSource !== 'none'
+        ? this.lastMetadataHydrationSource
+        : this.monitorState.lastMetadataHydrationSource || 'none';
+    const attemptedTargetSequence =
+      this.lastAttemptedTargetSequence.length > 0
+        ? this.lastAttemptedTargetSequence
+        : this.monitorState.lastAttemptedTargetSequence;
     const detailParts = [
       this.connected
         ? `listener ${this.config.host}:${this.activePort}${this.config.webhookPath}`
@@ -2130,8 +2384,8 @@ export class BlueBubblesChannel implements Channel {
         this.monitorState.candidateProbeResults,
       )}`,
       `scope ${this.config.chatScope}`,
-      `reply gate ${this.getHealthReplyGateMode()}`,
-      this.getHealthReplyGateMode() === 'mention_required'
+      `reply gate ${healthReplyGateMode}`,
+      healthReplyGateMode === 'mention_required'
         ? 'group trigger required yes'
         : '1:1 conversational yes',
       `webhook ${this.getPublicWebhookDisplayUrl()}`,
@@ -2143,19 +2397,19 @@ export class BlueBubblesChannel implements Channel {
       this.transportProbeDetail
         ? `transport ${this.transportProbeDetail}`
         : 'transport not checked yet',
-      this.lastInboundObservedAt
-        ? `last inbound ${this.lastInboundObservedAt}`
+      lastInboundObservedAt
+        ? `last inbound ${lastInboundObservedAt}`
         : 'no inbound observed yet',
-      `last inbound chat ${this.lastInboundChatJid || 'none'}`,
-      `last inbound self_authored ${this.lastInboundWasSelfAuthored ? 'yes' : 'no'}`,
-      this.lastOutboundResult
-        ? `last outbound ${this.lastOutboundResult}`
+      `last inbound chat ${lastInboundChatJid || 'none'}`,
+      `last inbound self_authored ${lastInboundWasSelfAuthored ? 'yes' : 'no'}`,
+      lastOutboundResult
+        ? `last outbound ${lastOutboundResult}`
         : this.config.sendEnabled
           ? 'no outbound sent yet'
           : 'outbound disabled',
-      `last outbound target kind ${this.lastOutboundTargetKind || 'none'}`,
-      `last outbound target value ${this.lastOutboundTargetValue || 'none'}`,
-      `last send error ${this.lastSendErrorDetail || 'none'}`,
+      `last outbound target kind ${lastOutboundTargetKind || 'none'}`,
+      `last outbound target value ${lastOutboundTargetValue || 'none'}`,
+      `last send error ${lastSendErrorDetail || 'none'}`,
       `send method ${this.sendMethod}`,
       `private api available ${
         this.privateApiAvailable == null
@@ -2164,10 +2418,10 @@ export class BlueBubblesChannel implements Channel {
             ? 'yes'
             : 'no'
       }`,
-      `last metadata hydration ${this.lastMetadataHydrationSource}`,
+      `last metadata hydration ${lastMetadataHydrationSource}`,
       `attempted target sequence ${
-        this.lastAttemptedTargetSequence.length > 0
-          ? this.lastAttemptedTargetSequence.join(' -> ')
+        attemptedTargetSequence.length > 0
+          ? attemptedTargetSequence.join(' -> ')
           : 'none'
       }`,
       `detection ${this.monitorState.detectionState}`,
@@ -2589,9 +2843,11 @@ export class BlueBubblesChannel implements Channel {
 
     try {
       const result = await this.sendBlueBubblesReply(jid, renderedText, options);
-      this.lastOutboundResult = result.platformMessageId || 'sent without message id';
+      const sentAt = new Date().toISOString();
+      this.rememberLastOutboundObservation(jid, sentAt);
       this.lastErrorText = null;
       this.lastSendErrorDetail = null;
+      this.monitorState.lastSendErrorDetail = null;
       if (this.monitorState.lastReplySendFailureChatJid === jid) {
         this.monitorState.lastReplySendFailureAt = null;
         this.monitorState.lastReplySendFailureChatJid = null;
@@ -2604,20 +2860,21 @@ export class BlueBubblesChannel implements Channel {
         );
         this.persistMonitorState();
       }
-      storeChatMetadata(jid, new Date().toISOString(), jid, 'bluebubbles');
+      storeChatMetadata(jid, sentAt, jid, 'bluebubbles');
       storeMessageDirect({
         id:
           result.platformMessageId ||
-          `bb:outbound:${chatGuid}:${new Date().toISOString()}`,
+          `bb:outbound:${chatGuid}:${sentAt}`,
         chat_jid: jid,
         sender: isCompanionLabeled ? 'Andrea' : 'Me',
         sender_name: isCompanionLabeled ? 'Andrea' : 'You',
         content: renderedText,
-        timestamp: new Date().toISOString(),
+        timestamp: sentAt,
         is_from_me: true,
         is_bot_message: isCompanionLabeled,
         reply_to_id: options?.replyToMessageId || undefined,
       });
+      this.persistMonitorState();
       this.emitHealth();
       return result;
     } catch (error) {

@@ -700,6 +700,70 @@ describe('field-trial readiness', () => {
     expect(truth.bluebubbles.detail).toContain('Messages bridge configuration is present');
   });
 
+  it('uses persisted outbound diagnostics when the live bridge detail has not rehydrated them yet', () => {
+    vi.stubEnv('BLUEBUBBLES_ENABLED', 'true');
+    vi.stubEnv('BLUEBUBBLES_BASE_URL', 'http://macbook-pro.local:1234');
+    vi.stubEnv('BLUEBUBBLES_PASSWORD', 'secret');
+    vi.stubEnv('BLUEBUBBLES_GROUP_FOLDER', 'main');
+    vi.stubEnv('BLUEBUBBLES_CHAT_SCOPE', 'all_synced');
+    vi.stubEnv('BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL', 'http://192.168.5.136:4305');
+    vi.stubEnv('BLUEBUBBLES_WEBHOOK_SECRET', 'hook-secret');
+    vi.stubEnv('BLUEBUBBLES_SEND_ENABLED', 'true');
+
+    writeBlueBubblesMonitorState(
+      {
+        ...createDefaultBlueBubblesMonitorState('2026-04-10T00:12:00.000Z'),
+        updatedAt: '2026-04-10T00:12:00.000Z',
+        lastOutboundObservedAt: '2026-04-10T00:11:00.000Z',
+        lastOutboundObservedChatJid: 'bb:iMessage;-;+14695405551',
+        lastOutboundTargetKind: 'chat_guid',
+        lastOutboundTargetValue: 'iMessage;-;+14695405551',
+        lastMetadataHydrationSource: 'history',
+        lastAttemptedTargetSequence: ['chat_guid', 'service_specific_direct'],
+      },
+      tempDir,
+    );
+
+    const snapshot: HostControlSnapshot = {
+      paths: resolveHostControlPaths(tempDir),
+      nodeRuntime: null,
+      hostState: null,
+      readyState: null,
+      assistantHealthState: {
+        bootId: 'boot-blue-persisted-outbound',
+        pid: process.pid,
+        appVersion: '1.0.0-test',
+        updatedAt: '2026-04-10T00:12:00.000Z',
+        channels: [
+          {
+            name: 'bluebubbles',
+            configured: true,
+            state: 'ready',
+            updatedAt: '2026-04-10T00:12:00.000Z',
+            detail:
+              'listener 0.0.0.0:4305/bluebubbles/webhook | provider bluebubbles | configured base url http://macbook-pro.local:1234 | active endpoint http://macbook-pro.local:1234 | candidate endpoints http://macbook-pro.local:1234 | candidate probe results http://macbook-pro.local:1234 => reachable/auth ok (200) | scope all_synced | reply gate mention_required | webhook http://192.168.5.136:4305/bluebubbles/webhook?secret=*** | webhook registration registered on the BlueBubbles server as webhook 1 | webhook registration state registered | transport probe state reachable | transport reachable/auth ok (200) via http://macbook-pro.local:1234 | no inbound observed yet | last inbound chat none | last inbound self_authored no | no outbound sent yet | last outbound target kind none | last outbound target value none | last send error none | send method apple-script | private api available no | last metadata hydration none | attempted target sequence none | detection healthy | detection detail none | detection next action none | shadow poll last ok 2026-04-10T00:11:55.000Z | shadow poll error none | server seen chat none | server seen at none | fallback idle | fallback last sent none',
+          },
+        ],
+      },
+      telegramRoundtripState: null,
+      telegramTransportState: null,
+      runtimeAuditState: null,
+    };
+
+    const truth = buildFieldTrialOperatorTruth({
+      projectRoot: tempDir,
+      hostSnapshot: snapshot,
+      windowsHost: null,
+    });
+
+    expect(truth.bluebubbles.lastOutboundTargetKind).toBe('chat_guid');
+    expect(truth.bluebubbles.lastOutboundTarget).toBe('iMessage;-;+14695405551');
+    expect(truth.bluebubbles.lastMetadataHydrationSource).toBe('history');
+    expect(truth.bluebubbles.attemptedTargetSequence).toBe(
+      'chat_guid -> service_specific_direct',
+    );
+  });
+
   it('anchors BlueBubbles proof to the presentation chat when a linked-thread action was decided from self-chat', () => {
     vi.stubEnv('BLUEBUBBLES_ENABLED', 'true');
     vi.stubEnv('BLUEBUBBLES_BASE_URL', 'http://macbook-pro.local:1234');

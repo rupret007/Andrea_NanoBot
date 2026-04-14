@@ -8,7 +8,7 @@ Use this as the canonical demo and dogfood checklist for the current Windows hos
 | --- | --- | --- | --- | --- |
 | Telegram companion | `live_proven` | none | none | Keep `npm run telegram:user:smoke` current before demos |
 | Alexa companion | `live_proven` with manual sync pending | latest repo interaction-model hash is not marked synced locally yet | external/manual | Import/build `docs/alexa/interaction-model.en-US.json`, then run `npm run setup -- --step alexa-model-sync mark-synced` |
-| BlueBubbles companion | `degraded_but_usable` | recent-activity shadow poll is failing, so same-thread bridge health is not trustworthy yet | repo-side bridge health | Check the recent-message endpoint and shadow-poll path with `npm run debug:bluebubbles -- --live`, then retry the same 1:1 thread |
+| BlueBubbles companion | `degraded_but_usable` | fresh same-thread `message_action` proof leg still missing in the canonical self-thread | repo-side bridge health | In the canonical self-thread, ask what to say back or send back, then use `send it` or `send it later tonight`, and rerun `npm run debug:bluebubbles -- --live` |
 | Google Calendar | `live_proven` | none | none | Keep `npm run debug:google-calendar` current |
 | Work cockpit | `live_proven` | none | none | Re-run one `/cursor` sanity flow after restart |
 | Life threads / communication | `live_proven` | none | none | Re-run one Candace chain in Telegram |
@@ -49,7 +49,7 @@ Important truth:
 - on this host today, the normal story is:
   - core companion is ready
   - Alexa still wants one local model-sync marker
-  - BlueBubbles is reachable, but the same-thread shadow-poll health check is still failing
+  - BlueBubbles is reachable and shadow-poll healthy, but the fresh same-thread `message_action` proof leg is still missing
   - OpenBubbles is not a live provider here; it stays an operator-only feasibility track until a supported Windows-native observation/reply surface is proven
   - research and image generation are optional provider-blocked lanes
 
@@ -205,7 +205,7 @@ Default showable story on this host:
 Optional lanes that should be described honestly:
 
 - Alexa latest-model sync may still need one manual console/build confirmation
-- BlueBubbles is reachable, but the recent-activity shadow poll is still failing, so same-thread bridge health is not trustworthy yet
+- BlueBubbles is reachable and shadow-poll healthy, but the fresh same-thread `message_action` proof leg is still missing
 - outward research and image generation are provider-blocked and should be framed as optional premium lanes, not core failure
 
 ## Short Pilot Checklist
@@ -215,7 +215,7 @@ Optional lanes that should be described honestly:
 3. Confirm the launch story is still:
    - core companion ready
    - Alexa proof live with manual sync pending only if applicable
-   - BlueBubbles `degraded_but_usable` unless the recent-activity shadow poll and same-thread bridge health are both healthy again
+   - BlueBubbles `degraded_but_usable` unless the fresh same-thread `message_action` proof leg has been recorded in the canonical self-thread
    - optional provider blockers explicit
 4. Re-run one short Telegram chain:
    - `hi`

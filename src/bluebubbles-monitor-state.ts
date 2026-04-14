@@ -17,6 +17,7 @@ export type BlueBubblesIgnoredReason = 'mention_required' | 'chat_scope';
 export type BlueBubblesEvidenceKind =
   | 'missed_inbound'
   | 'transport_unreachable'
+  | 'shadow_poll_unstable'
   | 'reply_delivery_failed';
 
 export interface BlueBubblesMonitorEvidence {
@@ -31,6 +32,16 @@ export interface BlueBubblesMonitorState {
   detectionState: BlueBubblesDetectionState;
   detectionDetail: string | null;
   detectionNextAction: string | null;
+  lastInboundObservedAt: string | null;
+  lastInboundChatJid: string | null;
+  lastInboundWasSelfAuthored: boolean | null;
+  lastOutboundObservedAt: string | null;
+  lastOutboundObservedChatJid: string | null;
+  lastOutboundTargetKind: string | null;
+  lastOutboundTargetValue: string | null;
+  lastSendErrorDetail: string | null;
+  lastMetadataHydrationSource: string | null;
+  lastAttemptedTargetSequence: string[];
   shadowPollLastOkAt: string | null;
   shadowPollLastError: string | null;
   shadowPollMostRecentChat: string | null;
@@ -71,6 +82,7 @@ function normalizeEvidence(
   const kind =
     input.kind === 'missed_inbound' ||
     input.kind === 'reply_delivery_failed' ||
+    input.kind === 'shadow_poll_unstable' ||
     input.kind === 'transport_unreachable'
       ? input.kind
       : null;
@@ -107,6 +119,16 @@ export function createDefaultBlueBubblesMonitorState(
     detectionState: 'healthy',
     detectionDetail: null,
     detectionNextAction: null,
+    lastInboundObservedAt: null,
+    lastInboundChatJid: null,
+    lastInboundWasSelfAuthored: null,
+    lastOutboundObservedAt: null,
+    lastOutboundObservedChatJid: null,
+    lastOutboundTargetKind: null,
+    lastOutboundTargetValue: null,
+    lastSendErrorDetail: null,
+    lastMetadataHydrationSource: null,
+    lastAttemptedTargetSequence: [],
     shadowPollLastOkAt: null,
     shadowPollLastError: null,
     shadowPollMostRecentChat: null,
@@ -165,6 +187,39 @@ function normalizeState(value: unknown): BlueBubblesMonitorState | null {
     detectionNextAction: isNonEmptyString(input.detectionNextAction)
       ? input.detectionNextAction
       : null,
+    lastInboundObservedAt: isNonEmptyString(input.lastInboundObservedAt)
+      ? input.lastInboundObservedAt
+      : null,
+    lastInboundChatJid: isNonEmptyString(input.lastInboundChatJid)
+      ? input.lastInboundChatJid
+      : null,
+    lastInboundWasSelfAuthored:
+      typeof input.lastInboundWasSelfAuthored === 'boolean'
+        ? input.lastInboundWasSelfAuthored
+        : null,
+    lastOutboundObservedAt: isNonEmptyString(input.lastOutboundObservedAt)
+      ? input.lastOutboundObservedAt
+      : null,
+    lastOutboundObservedChatJid: isNonEmptyString(input.lastOutboundObservedChatJid)
+      ? input.lastOutboundObservedChatJid
+      : null,
+    lastOutboundTargetKind: isNonEmptyString(input.lastOutboundTargetKind)
+      ? input.lastOutboundTargetKind
+      : null,
+    lastOutboundTargetValue: isNonEmptyString(input.lastOutboundTargetValue)
+      ? input.lastOutboundTargetValue
+      : null,
+    lastSendErrorDetail: isNonEmptyString(input.lastSendErrorDetail)
+      ? input.lastSendErrorDetail
+      : null,
+    lastMetadataHydrationSource: isNonEmptyString(input.lastMetadataHydrationSource)
+      ? input.lastMetadataHydrationSource
+      : null,
+    lastAttemptedTargetSequence: Array.isArray(input.lastAttemptedTargetSequence)
+      ? input.lastAttemptedTargetSequence.filter(
+          (entry): entry is string => isNonEmptyString(entry),
+        )
+      : [],
     shadowPollLastOkAt: isNonEmptyString(input.shadowPollLastOkAt)
       ? input.shadowPollLastOkAt
       : null,

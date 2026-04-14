@@ -1290,6 +1290,34 @@ function buildBlueBubblesTruth(
     channelDetail,
   );
   const transportDiagnostics = deriveBlueBubblesTransportDiagnostics(channelDetail);
+  const effectiveLastInboundChatFromDiagnostics =
+    transportDiagnostics.lastInboundChatJid !== 'none'
+      ? transportDiagnostics.lastInboundChatJid
+      : monitorState.lastInboundChatJid || 'none';
+  const effectiveLastInboundWasSelfAuthored =
+    transportDiagnostics.lastInboundWasSelfAuthored != null
+      ? transportDiagnostics.lastInboundWasSelfAuthored
+      : monitorState.lastInboundWasSelfAuthored ?? false;
+  const effectiveLastOutboundTargetKind =
+    transportDiagnostics.lastOutboundTargetKind !== 'none'
+      ? transportDiagnostics.lastOutboundTargetKind
+      : monitorState.lastOutboundTargetKind || 'none';
+  const effectiveLastOutboundTarget =
+    transportDiagnostics.lastOutboundTarget !== 'none'
+      ? transportDiagnostics.lastOutboundTarget
+      : monitorState.lastOutboundTargetValue || 'none';
+  const effectiveLastSendErrorDetail =
+    transportDiagnostics.lastSendErrorDetail !== 'none'
+      ? transportDiagnostics.lastSendErrorDetail
+      : monitorState.lastSendErrorDetail || 'none';
+  const effectiveLastMetadataHydrationSource =
+    transportDiagnostics.lastMetadataHydrationSource !== 'none'
+      ? transportDiagnostics.lastMetadataHydrationSource
+      : monitorState.lastMetadataHydrationSource || 'none';
+  const effectiveAttemptedTargetSequence =
+    transportDiagnostics.attemptedTargetSequence !== 'none'
+      ? transportDiagnostics.attemptedTargetSequence
+      : monitorState.lastAttemptedTargetSequence.join(' -> ') || 'none';
   const bluebubblesChats = getAllChats().filter((chat) => chat.jid.startsWith('bb:'));
   const recentEngagement = review.recentEvents.find(
     (event) =>
@@ -1354,11 +1382,10 @@ function buildBlueBubblesTruth(
 
   let lastInboundObservedAt = 'none';
   let lastOutboundResult = 'none';
-  let lastOutboundObservedAt = 'none';
-  let lastOutboundChatJid = 'none';
-  let lastInboundChatJid = transportDiagnostics.lastInboundChatJid;
-  let lastInboundWasSelfAuthored =
-    transportDiagnostics.lastInboundWasSelfAuthored ?? false;
+  let lastOutboundObservedAt = monitorState.lastOutboundObservedAt || 'none';
+  let lastOutboundChatJid = monitorState.lastOutboundObservedChatJid || 'none';
+  let lastInboundChatJid = effectiveLastInboundChatFromDiagnostics;
+  let lastInboundWasSelfAuthored = effectiveLastInboundWasSelfAuthored;
   for (const chat of bluebubblesChats) {
     const recentMessages = listRecentMessagesForChat(chat.jid, 12);
     const inbound = recentMessages.find(
@@ -1645,17 +1672,16 @@ function buildBlueBubblesTruth(
     lastInboundChatJid,
     lastInboundWasSelfAuthored,
     lastOutboundResult,
-    lastOutboundTargetKind: transportDiagnostics.lastOutboundTargetKind,
-    lastOutboundTarget: transportDiagnostics.lastOutboundTarget,
+    lastOutboundTargetKind: effectiveLastOutboundTargetKind,
+    lastOutboundTarget: effectiveLastOutboundTarget,
     lastSendErrorDetail:
-      transportDiagnostics.lastSendErrorDetail !== 'none'
-        ? transportDiagnostics.lastSendErrorDetail
+      effectiveLastSendErrorDetail !== 'none'
+        ? effectiveLastSendErrorDetail
         : bluebubblesChannel?.lastError || 'none',
     sendMethod: transportDiagnostics.sendMethod,
     privateApiAvailable: transportDiagnostics.privateApiAvailable,
-    lastMetadataHydrationSource:
-      transportDiagnostics.lastMetadataHydrationSource,
-    attemptedTargetSequence: transportDiagnostics.attemptedTargetSequence,
+    lastMetadataHydrationSource: effectiveLastMetadataHydrationSource,
+    attemptedTargetSequence: effectiveAttemptedTargetSequence,
     transportState: bluebubblesChannel?.state || snapshot.state,
     transportDetail: channelDetail,
     detectionState: effectiveDetectionState,

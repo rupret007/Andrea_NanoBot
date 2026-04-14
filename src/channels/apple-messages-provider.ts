@@ -41,7 +41,10 @@ export interface AppleMessagesProvider {
   probe(config: BlueBubblesConfig): Promise<AppleMessagesProbeResult>;
   inspectRecentActivity(
     config: Pick<BlueBubblesConfig, 'baseUrl' | 'password'>,
-    limit?: number,
+    options?: {
+      limit?: number;
+      candidateChatJids?: string[];
+    },
   ): Promise<AppleMessagesRecentActivityRow[]>;
   sendText(
     config: Pick<BlueBubblesConfig, 'baseUrl' | 'password'>,

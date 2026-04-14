@@ -30,7 +30,7 @@ Use this shorthand when you need the current host story fast:
   - Alexa's latest repo interaction-model hash has not been marked as synced locally yet
   - after the Developer Console import/build, run `npm run setup -- --step alexa-model-sync mark-synced`
 - **optional Messages bridge**
-  - BlueBubbles on this PC is currently `degraded_but_usable`: transport and webhook registration are healthy, but the same-thread health check is not trustworthy yet because the recent-activity shadow poll is failing
+  - BlueBubbles on this PC is currently `degraded_but_usable`: transport, webhook registration, and the recent-activity shadow poll are healthy, but the canonical same-thread `message_action` proof leg is still missing
   - Telegram stays the dependable main messaging surface while that bridge is unstable
 - **externally blocked but optional**
   - outward research
