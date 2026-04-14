@@ -443,6 +443,10 @@ function humanizePersonThreadDetail(
     .replace(new RegExp(`^talk to ${escapedName} about\\s+`, 'i'), '')
     .replace(new RegExp(`^talk with ${escapedName} about\\s+`, 'i'), '')
     .replace(new RegExp(`^follow up with ${escapedName} about\\s+`, 'i'), '')
+    .replace(
+      new RegExp(`^${escapedName}\\s+wants a follow-up about\\s+`, 'i'),
+      'the follow-up about ',
+    )
     .trim();
 }
 
@@ -468,6 +472,10 @@ function normalizeHouseholdDetail(value: string | null): string | null {
 function buildPersonRecommendationPhrase(detail: string | null): string | null {
   const normalized = normalizeHouseholdDetail(detail);
   if (!normalized) return null;
+  const followupMatch = normalized.match(/^the follow-up about\s+(.+)$/i);
+  if (followupMatch) {
+    return `about ${followupMatch[1]!.trim()}`;
+  }
   const unresolvedMatch = normalized.match(
     /^(.+?)\s+(still need|still needs|needs|need)\b/i,
   );

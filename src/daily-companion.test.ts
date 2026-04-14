@@ -685,6 +685,68 @@ describe('buildDailyCompanionResponse', () => {
     expect(response?.context.usedThreadTitles).toContain('Candace');
   });
 
+  it('drops duplicated person names from Candace household guidance leads', async () => {
+    handleLifeThreadCommand({
+      groupFolder: 'main',
+      channel: 'telegram',
+      chatJid: 'tg:8004355504',
+      text: 'save this under the Candace thread',
+      replyText: 'Candace wants a follow-up about whether dinner still works tonight.',
+      now: new Date('2026-04-04T10:00:00-05:00'),
+    });
+
+    const explicit = await buildDailyCompanionResponse(
+      "What's still open with Candace?",
+      {
+        channel: 'telegram',
+        groupFolder: 'main',
+        now: new Date('2026-04-04T12:30:00-05:00'),
+        timeZone: 'America/Chicago',
+        env: baseEnv,
+        fetchImpl: createGoogleCalendarFetchMock({
+          eventsByCalendar: {
+            primary: {
+              items: [],
+            },
+          },
+        }),
+        tasks: [],
+      },
+    );
+
+    const sharedPlans = await buildDailyCompanionResponse(
+      'What do Candace and I have coming up?',
+      {
+        channel: 'telegram',
+        groupFolder: 'main',
+        now: new Date('2026-04-04T12:35:00-05:00'),
+        timeZone: 'America/Chicago',
+        env: baseEnv,
+        fetchImpl: createGoogleCalendarFetchMock({
+          eventsByCalendar: {
+            primary: {
+              items: [],
+            },
+          },
+        }),
+        tasks: [],
+      },
+    );
+
+    expect(explicit?.reply).toContain(
+      'With Candace, the follow-up about whether dinner still works tonight.',
+    );
+    expect(explicit?.reply).not.toContain(
+      'With Candace, Candace wants a follow-up',
+    );
+    expect(sharedPlans?.reply).toContain(
+      "With Candace, I'd stay with the follow-up about whether dinner still works tonight.",
+    );
+    expect(sharedPlans?.reply).not.toContain(
+      "I'd stay with Candace wants a follow-up",
+    );
+  });
+
   it('renders Alexa shorter than Telegram while using the same grounded snapshot', async () => {
     const fetchImpl = createGoogleCalendarFetchMock({
       eventsByCalendar: {

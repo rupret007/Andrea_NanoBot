@@ -625,8 +625,20 @@ describe('communication companion', () => {
 
     expect(result.ok).toBe(true);
     expect(result.reminderTaskId).toBeTruthy();
+    expect(result.replyText).toContain(
+      "I'll remind you tonight to reply to Candace about whether dinner still works tonight.",
+    );
     expect(getAllTasks().some((task) => task.id === result.reminderTaskId)).toBe(
       true,
     );
+    expect(
+      getAllTasks().some(
+        (task) =>
+          task.id === result.reminderTaskId &&
+          task.prompt.includes(
+            'reply to Candace about whether dinner still works tonight',
+          ),
+      ),
+    ).toBe(true);
   });
 });

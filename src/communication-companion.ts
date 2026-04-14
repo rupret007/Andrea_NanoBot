@@ -173,6 +173,20 @@ function normalizeSpokenPersonName(value: string | undefined): string | undefine
     .join(' ');
 }
 
+function buildReplyReminderTopic(
+  analysis: CommunicationAnalysisResult,
+  thread: CommunicationThreadRecord,
+): string {
+  const summaryTopic = normalizeDraftTopicSummary(
+    analysis.summaryText || thread.lastInboundSummary || '',
+  );
+  if (summaryTopic) return summaryTopic;
+  const messageTopic = normalizeText(
+    analysis.messageText || thread.lastInboundSummary || 'this conversation',
+  );
+  return messageTopic ? clipText(messageTopic, 60) : 'this conversation';
+}
+
 function normalizeCommunicationFocus(value: string): string {
   return value
     .replace(/^confirm\b\s+/i, 'whether ')
@@ -1401,9 +1415,9 @@ export function manageCommunicationTracking(
     const planned = planContextualReminder(
       timing.toLowerCase() === 'tonight' ? 'today evening' : timing,
       analysis.linkedSubjects[0]?.displayName
-        ? `reply to ${analysis.linkedSubjects[0].displayName} about ${clipText(
-            analysis.messageText || thread.lastInboundSummary || 'this conversation',
-            60,
+        ? `reply to ${analysis.linkedSubjects[0].displayName} about ${buildReplyReminderTopic(
+            analysis,
+            thread,
           )}`
         : analysis.summaryText ||
             thread.lastInboundSummary ||
