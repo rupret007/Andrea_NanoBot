@@ -353,6 +353,25 @@ describe('field-trial readiness', () => {
     expect(truth.alexa.confirmCommand).toBe('npm run services:status');
   });
 
+  it('folds the pending Alexa model sync step into the exact next action when no signed turn is recorded', () => {
+    vi.stubEnv('ALEXA_SKILL_ID', 'amzn1.ask.skill.test');
+    const modelSyncPath = path.join(
+      tempDir,
+      'docs',
+      'alexa',
+      'interaction-model.en-US.json',
+    );
+    fs.mkdirSync(path.dirname(modelSyncPath), { recursive: true });
+    fs.writeFileSync(modelSyncPath, '{"interactionModel":{"languageModel":{"invocationName":"andrea assistant"}}}');
+
+    const truth = buildFieldTrialOperatorTruth({ projectRoot: tempDir });
+
+    expect(truth.launchReadiness.manualSurfaceSyncs.alexa.syncStatus).toBe('pending');
+    expect(truth.alexa.detail).toContain('interaction model');
+    expect(truth.alexa.nextAction).toContain('alexa-model-sync mark-synced');
+    expect(truth.alexa.nextAction).toContain('What am I forgetting?');
+  });
+
   it('keeps LaunchRequest-only Alexa proof below live_proven', () => {
     vi.stubEnv('ALEXA_SKILL_ID', 'amzn1.ask.skill.test');
     const alexaStatePath = getAlexaLastSignedRequestStatePath(tempDir);

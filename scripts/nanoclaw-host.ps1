@@ -339,7 +339,39 @@ function Invoke-PublicHealthProbe {
     }
   } catch {
     $detail = [string] $_.Exception.Message
-    if ($detail -match 'ERR_NGROK_6024') {
+    $errorDetails = ''
+    try {
+      if ($_.ErrorDetails -and $_.ErrorDetails.Message) {
+        $errorDetails = [string] $_.ErrorDetails.Message
+      }
+    } catch {
+      $errorDetails = ''
+    }
+    $responseBody = ''
+    try {
+      $response = $_.Exception.Response
+      if ($response -and $response.GetResponseStream) {
+        $stream = $response.GetResponseStream()
+        if ($stream) {
+          try {
+            $reader = New-Object System.IO.StreamReader($stream)
+            try {
+              $responseBody = [string] $reader.ReadToEnd()
+            } finally {
+              $reader.Dispose()
+            }
+          } finally {
+            $stream.Dispose()
+          }
+        }
+      }
+    } catch {
+      $responseBody = ''
+    }
+    $ngrokErrorContext = "$detail`n$errorDetails`n$responseBody"
+    if ($ngrokErrorContext -match 'ERR_NGROK_3200') {
+      $detail = 'The public ngrok Alexa endpoint is offline. Restart or refresh the tunnel, update ALEXA_PUBLIC_BASE_URL if it changed, and confirm the Alexa Developer Console endpoint and account-link URLs point to the current live host.'
+    } elseif ($ngrokErrorContext -match 'ERR_NGROK_6024') {
       $detail = 'ngrok browser warning page intercepted the request. Use the ngrok-skip-browser-warning header for browser-style checks.'
     }
     return [pscustomobject]@{

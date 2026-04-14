@@ -908,7 +908,7 @@ function buildSaveConfirmation(
 function normalizeLifeThreadSummaryLine(value: string): string {
   return normalizeText(value)
     .replace(/^[*-]\s*/, '')
-    .replace(/^still open:\s*/i, '')
+    .replace(/^(?:still open|still in view):\s*/i, '')
     .replace(/^summary:\s*/i, '')
     .replace(/^save (?:that|it|this)(?: for later)?[:,-]?\s*/i, '')
     .replace(/^keep track of (?:that|it|this)(?: for (?:later|tonight))?[:,-]?\s*/i, '')
@@ -925,7 +925,7 @@ function extractLifeThreadSummaryCandidate(value: string | undefined): string {
     if (/^draft:/i.test(line)) {
       break;
     }
-    if (/^(?:next|why this came up|follow-up|urgency):/i.test(line)) {
+    if (/^(?:next|why this came up|keep in mind|follow-up|urgency):/i.test(line)) {
       continue;
     }
     const normalized = normalizeLifeThreadSummaryLine(line);

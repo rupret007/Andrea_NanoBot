@@ -366,7 +366,7 @@ describe('life threads', () => {
       'Draft:',
       'Hey Candace, I wanted to check in about whether dinner still works tonight. Candace wants a follow-up about whether dinner still works tonight.',
       'Next: Save it, send the fuller version, or remind yourself later.',
-      'Why this came up: This is shaped around Candace and the current conversation.',
+      'Keep in mind: This is shaped around Candace and the current conversation.',
     ].join('\n');
 
     const result = handleLifeThreadCommand({

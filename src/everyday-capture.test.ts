@@ -356,7 +356,7 @@ describe('everyday capture', () => {
     );
 
     expect(readout.replyText).toContain('From the store');
-    expect(readout.replyText).toContain('Want the fuller list in Telegram?');
+    expect(readout.replyText).toContain('If you want, I can send the fuller list to Telegram.');
     expect(readout.handoffOffer).toContain('fuller list to Telegram');
   });
 
@@ -444,6 +444,7 @@ describe('everyday capture', () => {
     const meals = await handleEverydayCaptureCommand(
       buildInput('what meal ideas do I have this week', { now: fridayMorning }),
     );
+    expect(meals.replyText).toContain("This week's meal plan starts with");
     expect(meals.replyText).toContain('*Meals This Week*');
     expect(meals.replyText).toContain('tortillas and salsa dinner');
 

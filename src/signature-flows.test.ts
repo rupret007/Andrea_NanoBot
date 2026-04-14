@@ -134,7 +134,7 @@ describe('signature flows', () => {
     expect(daily.handled).toBe(true);
     expect(daily.continuationCandidate?.handoffPayload?.text).toContain('Next:');
     expect(daily.continuationCandidate?.handoffPayload?.text).toContain(
-      'Why this came up:',
+      'Keep in mind:',
     );
     expect(daily.continuationCandidate?.handoffPayload?.text).not.toContain(
       'Conversation carryover:',
@@ -170,7 +170,7 @@ describe('signature flows', () => {
     expect(handoff.handoffResult?.ok).toBe(true);
     expect(sendTelegramMessage).toHaveBeenCalledWith(
       chatJid,
-      expect.stringContaining('Why this came up:'),
+      expect.stringContaining('Keep in mind:'),
     );
   });
 
@@ -298,7 +298,7 @@ describe('signature flows', () => {
 
     expect(tracked.handled).toBe(true);
     expect(tracked.replyText).toContain('Candace thread');
-    expect(tracked.replyText).toContain('Still open:');
+    expect(tracked.replyText).toContain('Still in view:');
   });
 
   it('moves from mission proposal to blocker read to confirmed action', async () => {
@@ -351,7 +351,7 @@ describe('signature flows', () => {
     });
 
     expect(executed.handled).toBe(true);
-    expect(executed.replyText).toContain('Still open:');
+    expect(executed.replyText).toContain('Still in view:');
     expect(executed.replyText).toContain('check in with Candace');
     expect(getMission(missionId!)?.linkedReminderIds.length || 0).toBeGreaterThan(
       0,
@@ -632,7 +632,7 @@ describe('signature flows', () => {
 
     expect(understand.handled).toBe(true);
     expect(draft.replyText).toContain('Draft:');
-    expect(reminder.replyText).toContain('That still leaves');
+    expect(reminder.replyText).not.toContain('That still leaves');
     expect(handoff.ok).toBe(true);
     expect(sendTelegramMessage).toHaveBeenCalledWith(
       tgChatJid,

@@ -337,7 +337,7 @@ describe('buildDailyCompanionResponse', () => {
     });
 
     expect(response?.reply).toContain('Candace wants a follow-up');
-    expect(response?.reply).toContain('Why this came up:');
+    expect(response?.reply).toContain('Keep in mind:');
     expect(response?.signalsUsed).toContain('communication_threads');
   });
 
@@ -744,7 +744,7 @@ describe('buildDailyCompanionResponse', () => {
       alexa?.grounded?.currentFocus.reason,
     );
     expect(telegram?.reply).toContain('Next:');
-    expect(telegram?.reply).toContain('Why this came up:');
+    expect(telegram?.reply).toContain('Keep in mind:');
     expect(alexa?.reply).not.toContain('- ');
     expect((alexa?.reply.split('\n').length || 0) <= 3).toBe(true);
     expect(alexa?.reply).not.toContain('Reminder:');

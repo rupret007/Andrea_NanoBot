@@ -113,7 +113,7 @@ describe('alexa v1 prompt mapping', () => {
 
 describe('alexa v1 speech helpers', () => {
   it('keeps help and welcome copy short and voice-first', () => {
-    expect(buildAlexaHelpSpeech('Andrea')).toContain('check your schedule');
+    expect(buildAlexaHelpSpeech('Andrea')).toContain('your schedule');
     expect(buildAlexaHelpSpeech('Andrea')).toContain(
       'remind me to take my pills at 9',
     );
@@ -141,12 +141,12 @@ describe('alexa v1 speech helpers', () => {
     );
     expect(buildAlexaWelcomeSpeech('Andrea')).not.toContain('Candace');
     expect(buildAlexaFallbackSpeech('Andrea')).toContain(
-      'did not quite catch that',
+      "didn't catch that",
     );
     expect(buildAlexaFallbackSpeech('Andrea')).toContain(
       'your schedule',
     );
-    expect(buildAlexaFallbackSpeech('Andrea')).toContain('your list');
+    expect(buildAlexaFallbackSpeech('Andrea')).toContain('your grocery list');
     expect(buildAlexaFallbackSpeech('Andrea')).toContain('bills are still open');
     expect(ALEXA_DEFAULT_REPROMPT).toContain(
       'remind me to take my pills at 9',

@@ -392,7 +392,7 @@ export function maybeBuildDirectQuickReply(
       .slice(0, 5)
       .map((entry) => entry.prompt)
       .join(', ');
-    return `I'm Andrea. I'm strongest on schedule moves, reminders and save-for-later, groceries, bills, and household follow-through, planning tonight or this week, and quick reply help. Telegram is my richest and most dependable main surface, Alexa is for concise voice help, and Messages is a bounded bridge when it's healthy. Good asks are ${spotlight}.`;
+    return `I'm Andrea. I help most with schedule moves, reminders and save-for-later, groceries, bills, household follow-through, planning tonight or this week, and quick reply help. Good starting asks are ${spotlight}. Telegram is my richest lane, Alexa is best for short voice check-ins, and Messages is a bounded bridge when it's healthy.`;
   }
 
   if (

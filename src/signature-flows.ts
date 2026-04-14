@@ -129,7 +129,7 @@ export function buildSignatureFlowText(input: {
   }
 
   const nextLine = formatLabelLine('Next', nextAction);
-  const whyLine = formatLabelLine('Why this came up', input.whyLine);
+  const whyLine = formatLabelLine('Keep in mind', input.whyLine);
   if (nextLine) {
     lines.push('', nextLine);
   }
@@ -184,7 +184,6 @@ export function buildSignaturePostActionConfirmation(input: {
   if (input.channel === 'alexa') {
     return [
       didWhat,
-      stillOpen ? `That still leaves ${stripTrailingPunctuation(stillOpen)}.` : null,
       conversationalNextSuggestion
         ? `If you want, I can ${conversationalNextSuggestion}.`
         : null,
@@ -196,7 +195,6 @@ export function buildSignaturePostActionConfirmation(input: {
   if (input.channel === 'bluebubbles') {
     return [
       didWhat,
-      stillOpen ? `That still leaves ${stripTrailingPunctuation(stillOpen)}.` : null,
       conversationalNextSuggestion
         ? `If you want, I can ${conversationalNextSuggestion}.`
         : null,
@@ -207,7 +205,7 @@ export function buildSignaturePostActionConfirmation(input: {
 
   return [
     didWhat,
-    stillOpen ? `Still open: ${ensureSentence(stillOpen)}` : null,
+    stillOpen ? `Still in view: ${ensureSentence(stillOpen)}` : null,
     nextSuggestion ? `Next: ${ensureSentence(nextSuggestion)}` : null,
   ]
     .filter(Boolean)

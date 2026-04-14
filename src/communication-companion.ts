@@ -199,7 +199,7 @@ function normalizeCommunicationSupportLine(value: string): string {
     .replace(/^save this (?:note )?to my library:\s*/i, '')
     .replace(/^save (?:that|it|this)(?: for later)?[:,-]?\s*/i, '')
     .replace(/^keep track of (?:that|it|this)(?: for (?:later|tonight))?[:,-]?\s*/i, '')
-    .replace(/^still open:\s*/i, '')
+    .replace(/^(?:still open|still in view):\s*/i, '')
     .replace(/^summary:\s*/i, '')
     .replace(/\bdraft:\s*[\s\S]*$/i, '')
     .replace(/\s+tags:\s*[^.]+$/i, '')
@@ -925,7 +925,12 @@ function inferPersonScopeFromText(
 
 function formatOpenLoopLine(item: CommunicationOpenLoopItem): string {
   const prefix = item.personName || item.title;
-  return `${prefix}: ${item.summaryText}`;
+  const summary = normalizeText(item.summaryText) || 'This conversation still looks open.';
+  if (!prefix) return summary;
+  if (summary.toLowerCase().startsWith(prefix.toLowerCase())) {
+    return summary;
+  }
+  return `${prefix}: ${summary}`;
 }
 
 function toSignalChannel(

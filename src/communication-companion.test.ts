@@ -15,6 +15,7 @@ import {
   draftCommunicationReply,
   draftCommunicationReplyWithChannelFluidity,
   formatCommunicationDraftReply,
+  formatCommunicationOpenLoopsReply,
   getCommunicationCarryoverSignal,
   manageCommunicationTracking,
 } from './communication-companion.js';
@@ -543,6 +544,12 @@ describe('communication companion', () => {
     expect(openLoops.summaryText).toContain('still needs attention');
     expect(openLoops.bestNextStep).toContain('Candace');
     expect(openLoops.items[0]?.personName).toBe('Candace');
+    expect(formatCommunicationOpenLoopsReply('telegram', openLoops)).toContain(
+      'Candace wants a follow-up about whether dinner still works tonight.',
+    );
+    expect(formatCommunicationOpenLoopsReply('telegram', openLoops)).not.toContain(
+      'Candace: Candace wants a follow-up',
+    );
 
     const suppressed = manageCommunicationTracking({
       channel: 'telegram',

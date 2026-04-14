@@ -456,7 +456,7 @@ describe('assistant capabilities', () => {
       'Candace wants a follow-up about whether dinner still works tonight.',
     );
     expect(understand.replyText).toContain('Next:');
-    expect(understand.replyText).toContain('Why this came up:');
+    expect(understand.replyText).toContain('Keep in mind:');
     expect(
       understand.continuationCandidate?.communicationThreadId,
     ).toBeTruthy();

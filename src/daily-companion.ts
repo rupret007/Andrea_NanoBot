@@ -1286,7 +1286,7 @@ async function applyPrioritizedCarryoverFocus(params: {
     chosen.detailLine,
     ...params.draft.detailLines.filter(
       (line) =>
-          !/^Conversation carryover: |^Mission carryover: |^Chief-of-staff read: |^Why this came up: |^Open conversation: |^Plan carryover: /i.test(
+          !/^Conversation carryover: |^Mission carryover: |^Chief-of-staff read: |^(?:Why this came up|Keep in mind): |^Open conversation: |^Plan carryover: /i.test(
             line,
           ),
       ),
@@ -1295,7 +1295,7 @@ async function applyPrioritizedCarryoverFocus(params: {
     chosen.detailLine,
     ...params.draft.extraDetails.filter(
       (line) =>
-        !/^Conversation carryover: |^Mission carryover: |^Chief-of-staff read: |^Why this came up: |^Open conversation: |^Plan carryover: /i.test(
+        !/^Conversation carryover: |^Mission carryover: |^Chief-of-staff read: |^(?:Why this came up|Keep in mind): |^Open conversation: |^Plan carryover: /i.test(
           line,
         ),
     ),

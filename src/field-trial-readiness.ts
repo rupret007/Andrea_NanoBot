@@ -1165,6 +1165,11 @@ function buildAlexaTruth(
     'Stale looks like a handled IntentRequest is still present, but proof freshness=stale and Alexa remains near_live_only.';
   const failureChecklist =
     'Check for no IntentRequest, LaunchRequest only, responseSource=received_trusted_request, responseSource=barrier/fallback/help/launch, stale interaction model, endpoint/account-link mismatch, or the signed request never reaching this host.';
+  const alexaModelSync = getAlexaModelSyncStatus(projectRoot);
+  const modelSyncStep =
+    alexaModelSync.syncStatus === 'pending'
+      ? 'Import docs/alexa/interaction-model.en-US.json in the Alexa Developer Console, run Build Model, then run npm run setup -- --step alexa-model-sync mark-synced.'
+      : '';
 
   if (!configured) {
     return {
@@ -1223,6 +1228,16 @@ function buildAlexaTruth(
   const proofAgeLabel = pilotProofFallback
     ? pilotProofFallback.proofAgeLabel
     : formatAlexaProofAgeLabel(assessment.proofAgeMs);
+  const combinedNextAction =
+    pilotProofFallback
+      ? ''
+      : [
+          modelSyncStep,
+          assessment.nextAction ||
+            'Use a real device or authenticated Alexa Developer Console simulator, say `Open Andrea Assistant`, then `What am I forgetting?`, and run `npm run services:status`.',
+        ]
+          .filter(Boolean)
+          .join(' Then ');
   const detail =
     pilotProofFallback
       ? `Alexa is still credited as live-proven on this host because a recent Andrea custom-skill orientation turn succeeded ${formatProofMoment(
@@ -1237,6 +1252,8 @@ function buildAlexaTruth(
           : assessment.proofKind === 'handled_intent' &&
               assessment.proofFreshness === 'stale'
             ? `Alexa did record a handled signed intent ${assessment.proofAgeLabel} ago, but proof older than 24 hours is treated as stale.`
+            : assessment.proofKind === 'none' && modelSyncStep
+              ? 'Alexa has not recorded a fresh handled signed turn on this host yet, and the latest repo interaction model still has not been marked as synced in the Alexa Developer Console.'
             : 'Alexa listener, ingress, and account-link health can still be green even when no fresh handled signed live turn has been recorded on this host.';
 
   return {
@@ -1245,11 +1262,7 @@ function buildAlexaTruth(
       blocker: pilotProofFallback ? '' : assessment.blocker,
       blockerOwner:
         proofState === 'live_proven' ? 'none' : 'external',
-      nextAction:
-        pilotProofFallback
-          ? ''
-          : assessment.nextAction ||
-        'Use a real device or authenticated Alexa Developer Console simulator, say `Open Andrea Assistant`, then `What am I forgetting?`, and run `npm run services:status`.',
+      nextAction: combinedNextAction,
       detail,
     }),
     lastSignedRequestAt: lastSignedRequest?.updatedAt || 'none',

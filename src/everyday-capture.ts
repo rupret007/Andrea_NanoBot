@@ -2232,7 +2232,7 @@ function buildHouseholdSmartView(params: {
           (section): section is HouseholdSmartViewSection => Boolean(section),
         ),
         handoffOffer:
-          groceries.length > 4 ? 'I can send the fuller store list to Telegram.' : undefined,
+          groceries.length > 4 ? 'If you want, I can send the fuller store list to Telegram.' : undefined,
         nextStep:
           tonight.length > 0 ? 'I can tell you what matters most for tonight too.' : undefined,
       };
@@ -2248,7 +2248,7 @@ function buildHouseholdSmartView(params: {
           (section): section is HouseholdSmartViewSection => Boolean(section),
         ),
         handoffOffer:
-          errands.length > 4 ? 'I can send the fuller errand list to Telegram.' : undefined,
+          errands.length > 4 ? 'If you want, I can send the fuller errand list to Telegram.' : undefined,
       };
     case 'bills':
       return {
@@ -2264,13 +2264,13 @@ function buildHouseholdSmartView(params: {
           (section): section is HouseholdSmartViewSection => Boolean(section),
         ),
         handoffOffer:
-          bills.length > 3 ? 'I can send the fuller bills view to Telegram.' : undefined,
+          bills.length > 3 ? 'If you want, I can send the fuller bills view to Telegram.' : undefined,
       };
     case 'meals':
       return {
         lead:
           meals.length > 0
-            ? `For this week, meals in view are ${summarizeSlice(meals)}.`
+            ? `This week's meal plan starts with ${summarizeSlice(meals)}.`
             : null,
         emptyLine: 'You do not have meal plans in view right now.',
         items: meals,
@@ -2278,7 +2278,7 @@ function buildHouseholdSmartView(params: {
           (section): section is HouseholdSmartViewSection => Boolean(section),
         ),
         handoffOffer:
-          meals.length > 3 ? 'I can send the fuller meal view to Telegram.' : undefined,
+          meals.length > 3 ? 'If you want, I can send the fuller meal view to Telegram.' : undefined,
         nextStep:
           groceries.length > 0 ? "I can check what's missing for dinner too." : undefined,
       };
@@ -2286,7 +2286,7 @@ function buildHouseholdSmartView(params: {
       return {
         lead:
           household.length > 0
-            ? `Around the house, ${summarizeSlice(household, 2)} are the main loose ends.`
+            ? `Around the house, the main things still open are ${summarizeSlice(household, 2)}.`
             : null,
         emptyLine: 'Your household list looks clear right now.',
         items: household,
@@ -2294,7 +2294,7 @@ function buildHouseholdSmartView(params: {
           (section): section is HouseholdSmartViewSection => Boolean(section),
         ),
         handoffOffer:
-          household.length > 4 ? 'I can send the fuller household view to Telegram.' : undefined,
+          household.length > 4 ? 'If you want, I can send the fuller household view to Telegram.' : undefined,
       };
     case 'tonight':
       {
@@ -2322,7 +2322,7 @@ function buildHouseholdSmartView(params: {
           buildSection('Groceries', groceries.slice(0, 3)),
         ].filter((section): section is HouseholdSmartViewSection => Boolean(section)),
         handoffOffer:
-          tonightCarryover.length > 3 ? 'I can send the fuller tonight view to Telegram.' : undefined,
+          tonightCarryover.length > 3 ? 'If you want, I can send the fuller tonight view to Telegram.' : undefined,
       };
       }
     case 'weekend':
@@ -2339,7 +2339,7 @@ function buildHouseholdSmartView(params: {
           buildSection('Household Open', household.filter((item) => isWeekendItem(item, groupsById, now)).slice(0, 3)),
         ].filter((section): section is HouseholdSmartViewSection => Boolean(section)),
         handoffOffer:
-          weekend.length > 4 ? 'I can send the fuller weekend view to Telegram.' : undefined,
+          weekend.length > 4 ? 'If you want, I can send the fuller weekend view to Telegram.' : undefined,
       };
     case 'recurring':
       return {
@@ -2411,7 +2411,7 @@ function buildHouseholdSmartView(params: {
           buildSection('Still Missing', dinnerMissing),
         ].filter((section): section is HouseholdSmartViewSection => Boolean(section)),
         handoffOffer:
-          dinnerMissing.length > 3 ? 'I can send the fuller dinner breakdown to Telegram.' : undefined,
+          dinnerMissing.length > 3 ? 'If you want, I can send the fuller dinner breakdown to Telegram.' : undefined,
       };
     case 'all':
     default:
@@ -2429,7 +2429,7 @@ function buildHouseholdSmartView(params: {
         sections: allSections,
         handoffOffer:
           flattenSectionItems(allSections, 20).length > 6
-            ? 'I can send the fuller household review to Telegram.'
+            ? 'If you want, I can send the fuller household review to Telegram.'
             : undefined,
         nextStep:
           tonight.length > 0 ? "I can tell you what's left for tonight next." : undefined,
@@ -2486,10 +2486,10 @@ function formatReadout(params: {
     return {
       replyText:
         params.view.items.length > 3 || Boolean(params.view.handoffOffer)
-          ? `${summary} Want the fuller list in Telegram?`
+          ? `${summary} ${params.view.handoffOffer || 'If you want, I can send the fuller list to Telegram.'}`
           : summary,
       handoffOffer: params.view.handoffOffer || (params.view.items.length > 3
-        ? 'I can send the fuller list to Telegram.'
+        ? 'If you want, I can send the fuller list to Telegram.'
         : undefined),
     };
   }
