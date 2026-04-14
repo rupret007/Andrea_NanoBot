@@ -50,6 +50,24 @@ describe('planSimpleReminder', () => {
     expect(planned?.task.prompt).toContain('call Brian');
   });
 
+  it('parses direct reminder asks that include on + daypart + explicit time', () => {
+    const planned = planSimpleReminder(
+      'Remind me on Thursday evening 7PM to ask Lucky about in the jungle changes.',
+      'main',
+      'tg:123',
+      new Date('2026-04-14T16:00:00-05:00'),
+    );
+
+    expect(planned).not.toBeNull();
+    expect(planned?.confirmation).toContain(
+      "Okay. I'll remind you Thursday evening at 7pm",
+    );
+    expect(planned?.task.schedule_value).toBe('2026-04-16T19:00:00');
+    expect(planned?.task.prompt).toContain(
+      'ask Lucky about in the jungle changes',
+    );
+  });
+
   it('parses reminder asks with a leading greeting', () => {
     const planned = planSimpleReminder(
       'Hi, can you remind me tomorrow at 3pm to call Sam?',

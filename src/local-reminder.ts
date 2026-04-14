@@ -14,6 +14,8 @@ const WEEKDAY_INDEX: Record<string, number> = {
 
 const REMINDER_PATTERN =
   /^(?:can you\s+)?remind me\s+(tomorrow|sunday|monday|tuesday|wednesday|thursday|friday|saturday)\s+at\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)\s+to\s+(.+?)\s*[.?!]*$/i;
+const DAYPART_TIME_REMINDER_PATTERN =
+  /^(?:can you\s+)?remind me\s+(?:on\s+)?(today|tomorrow|sunday|monday|tuesday|wednesday|thursday|friday|saturday)\s+(morning|afternoon|evening|tonight)\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\s+to\s+(.+?)\s*[.?!]*$/i;
 const FLEXIBLE_REMINDER_PATTERN =
   /^(?:can you\s+)?(?:help me\s+)?remember to\s+(.+?)\s+(tomorrow|sunday|monday|tuesday|wednesday|thursday|friday|saturday)\s+(morning|afternoon|evening|tonight)\s*[.?!]*$/i;
 const DAYPART_HOURS: Record<string, number> = {
@@ -367,10 +369,13 @@ export function planSimpleReminder(
 ): PlannedReminder | null {
   const normalizedMessage = normalizeReminderInput(message);
   const explicitMatch = normalizedMessage.match(REMINDER_PATTERN);
-  const flexibleMatch = explicitMatch
+  const daypartTimeMatch = explicitMatch
+    ? null
+    : normalizedMessage.match(DAYPART_TIME_REMINDER_PATTERN);
+  const flexibleMatch = explicitMatch || daypartTimeMatch
     ? null
     : normalizedMessage.match(FLEXIBLE_REMINDER_PATTERN);
-  if (!explicitMatch && !flexibleMatch) return null;
+  if (!explicitMatch && !daypartTimeMatch && !flexibleMatch) return null;
 
   let dayPhrase: string;
   let hour24: number;
@@ -392,6 +397,25 @@ export function planSimpleReminder(
       dayPhrase.toLowerCase() === 'tomorrow'
         ? `tomorrow at ${timeLabel}`
         : `${dayPhrase[0].toUpperCase()}${dayPhrase.slice(1).toLowerCase()} at ${timeLabel}`;
+    reminderBodyRaw = explicitBody;
+  } else if (daypartTimeMatch) {
+    const [, explicitDayPhrase, dayPart, hourText, minuteText, meridiem, explicitBody] =
+      daypartTimeMatch;
+    const hour = Number.parseInt(hourText, 10);
+    minute = minuteText ? Number.parseInt(minuteText, 10) : 0;
+    if (!Number.isInteger(hour) || hour < 1 || hour > 12) return null;
+    if (!Number.isInteger(minute) || minute < 0 || minute > 59) return null;
+    dayPhrase = explicitDayPhrase;
+    hour24 = normalizeMeridiem(hour, meridiem);
+    const timeLabel = `${hour}${minute === 0 ? '' : `:${pad(minute)}`}${meridiem.toLowerCase()}`;
+    const normalizedDayPart = dayPart.toLowerCase();
+    if (dayPhrase.toLowerCase() === 'today') {
+      whenLabel = `today ${normalizedDayPart} at ${timeLabel}`;
+    } else if (dayPhrase.toLowerCase() === 'tomorrow') {
+      whenLabel = `tomorrow ${normalizedDayPart} at ${timeLabel}`;
+    } else {
+      whenLabel = `${dayPhrase[0].toUpperCase()}${dayPhrase.slice(1).toLowerCase()} ${normalizedDayPart} at ${timeLabel}`;
+    }
     reminderBodyRaw = explicitBody;
   } else {
     const [, flexibleBody, flexibleDayPhrase, dayPart] = flexibleMatch!;
