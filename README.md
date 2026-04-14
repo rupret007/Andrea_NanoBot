@@ -62,9 +62,12 @@ The best way to understand Andrea now is through the flagship journeys it should
 - Alexa or Telegram schedule check -> calendar move/add/remind follow-up
 - `What's on my calendar tomorrow?` -> short read -> add, move, or reminder continuation
 - `Help me set this up` -> proposed Andrea setup -> approved default lists, routines, and surfaces
-- `Add milk to my shopping list` -> short confirmation -> `what do I still need to buy`
+- `Add milk to my shopping list` -> zero-setup capture -> grouped list readout -> done, defer, remind, move, or plan
+- `What do we need from the store?` / `What's left for tonight?` -> household smart view -> one useful slice -> Telegram continuation when needed
 - `Remind me to take my pills at 9` -> saved reminder -> one practical next step
 - `What bills do I need to pay this week?` -> open follow-through -> reminder or plan
+- `What's missing for dinner?` / `What should I handle this weekend?` -> meal or weekend smart view -> one practical next move
+- `Make this a monthly bill` -> recurring obligation -> resurfaces when due instead of disappearing into a second task system
 - `What am I forgetting?` -> one open loop -> reminder, save, or tracking action
 - `What should I say back?` -> draft -> approve/send, save under thread, remind later, or queue a bounded send-later -> honest review state
 - `Help me plan tonight / tomorrow morning / meals this week` -> next step -> blocker -> confirmed action
@@ -95,8 +98,8 @@ Current host truth for the Windows field-trial machine:
 - Manual human sync still pending:
   - the latest repo Alexa interaction model hash has not been marked as synced locally yet
   - after importing and building `docs/alexa/interaction-model.en-US.json` in the Alexa Developer Console, run `npm run setup -- --step alexa-model-sync mark-synced`
-- Degraded but usable:
-  - BlueBubbles transport and real traffic are healthy, but the canonical self-thread still needs one fresh same-thread `message_action` proof leg before it returns to `live_proven`
+- Optional Messages bridge:
+  - BlueBubbles is currently `degraded_but_usable` on this Windows host: transport and webhook registration are healthy, but the recent-activity shadow poll is failing, so Telegram stays the dependable main messaging surface while the bridge is unstable
 - Optional provider-blocked lanes:
   - outward research
   - Telegram image generation
@@ -133,7 +136,7 @@ What normal users should expect:
 
 - calendar help, reminders, follow-ups, and simple task support
 - daily planning, meal planning, what-next guidance, and open-loop review
-- pill reminders, bill follow-through, groceries, errands, meals, and save-for-later capture
+- pill reminders, bill follow-through, groceries, errands, meals, recurring household obligations, and save-for-later capture
 - guided personalized setup so Andrea can learn what to track, which lists matter, and where richer detail should go
 - quick reply help and message summaries
 - research, summaries, and project help
@@ -309,7 +312,7 @@ Andrea Pulse is a separate request-driven personality feature. It is not a healt
 
 ## BlueBubbles Companion Channel
 
-BlueBubbles is now a real bounded Andrea messaging channel, not just prep work.
+BlueBubbles is now Andrea's optional bounded Messages bridge, not a core requirement for day-to-day use.
 
 - BlueBubbles V1 now supports all synced personal and group chats, not one pinned linked thread
 - Andrea replies only when a message explicitly mentions `@Andrea`, so ordinary social chatter does not trigger assistant replies
@@ -318,7 +321,9 @@ BlueBubbles is now a real bounded Andrea messaging channel, not just prep work.
 - richer details still hand off explicitly to Telegram when that is the better surface
 - BlueBubbles does **not** become a main control chat and does not expose work-cockpit or admin/runtime controls
 
-On this host, BlueBubbles is currently `degraded_but_usable`: Andrea has the live `BLUEBUBBLES_*` configuration loaded, the server is reachable, Andrea's public webhook is registered, and real traffic is flowing, but the canonical proof thread `bb:iMessage;-;+14695405551` still needs one fresh same-thread `message_action` leg before the surface returns to `live_proven`.
+On this host, the Messages bridge is currently `degraded_but_usable`: Andrea has the live `BLUEBUBBLES_*` configuration loaded, the Mac-side endpoint is reachable, and the webhook is registered, but the recent-activity shadow poll is still failing on this Windows machine, so same-thread health is not trustworthy yet and Telegram remains the dependable main messaging surface while the bridge is unstable.
+
+OpenBubbles is still not an active Andrea provider on this PC. Its official docs support the Mac-offline goal after activation or renewal, but Andrea does not yet have a supported Windows-native observation/reply surface to bind to there.
 
 See [docs/BLUEBUBBLES_CHANNEL_PREP.md](docs/BLUEBUBBLES_CHANNEL_PREP.md) for the live V1 scope, config, webhook/send model, and exact current limits.
 
@@ -602,6 +607,10 @@ Andrea now has a bounded **life thread** layer for ongoing matters like Candace,
 - compare saved notes, summaries, and imported reference material with visible provenance
 - keep Alexa concise while Telegram carries the richer structured research surface
 - monitor or re-check information through scheduled tasks
+- capture groceries, errands, bills, meal ideas, and household checklists without setup friction
+- reopen recurring bills and household items when they come due, then convert the current cycle into a reminder, plan, or household thread when that helps
+- turn those lists into practical household views like store run, bills this week, tonight, weekend, recurring soon, recently completed, and slipping carryover
+- use Telegram as the richer list-management surface with grouped sections and bounded inline actions, while Alexa and BlueBubbles stay concise
 - organize output per chat or group context
 
 ### Coding And Operator Work

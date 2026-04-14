@@ -141,12 +141,17 @@ describe('command surface registry', () => {
   });
 
   it('keeps a practical public command inventory without leading with person-specific prompts', () => {
-    expect(PRACTICAL_COMMAND_INVENTORY).toHaveLength(75);
+    expect(PRACTICAL_COMMAND_INVENTORY).toHaveLength(80);
     expect(getEverydayJobSpecs({ jobTier: 'flagship' })).toHaveLength(10);
     expect(
       EVERYDAY_JOB_SPECS.find((job) => job.jobId === 'planning_horizon')
         ?.promptVariants,
     ).toContain('help me plan meals this week');
+    expect(
+      PRACTICAL_COMMAND_INVENTORY.some(
+        (entry) => entry.prompt === 'what do we need from the store',
+      ),
+    ).toBe(true);
 
     const alexaSpotlights = getPracticalDiscoverySpotlights('alexa').map(
       (entry) => entry.prompt,
@@ -232,13 +237,14 @@ describe('command surface docs', () => {
     expect(alexaGuide).toContain('services:status');
     expect(alexaGuide).not.toContain('Alexa is now live-proven on this host');
 
-    expect(bluebubblesGuide).toContain('degraded_but_usable');
-    expect(bluebubblesGuide).toContain('same-thread `message_action`');
+    expect(bluebubblesGuide).toContain('externally_blocked');
+    expect(bluebubblesGuide).toContain('transport_unreachable');
     expect(docsIndex).toContain('core_ready_with_manual_surface_sync');
-    expect(docsIndex).toContain('BlueBubbles on this PC: transport and real traffic are healthy');
+    expect(docsIndex).toContain('Telegram stays the dependable main messaging surface');
     expect(runbook).toContain(
       'setup -- --step verify` now follows **pass core, warn extras**',
     );
+    expect(runbook).toContain('debug:openbubbles-feasibility');
     expect(runbook).toContain(
       'if you changed `docs/alexa/interaction-model.en-US.json`, finish the console import/build and then run `npm run setup -- --step alexa-model-sync mark-synced`',
     );

@@ -8,12 +8,23 @@ import {
   type BlueBubblesMonitorState,
   writeBlueBubblesMonitorState,
 } from '../bluebubbles-monitor-state.js';
-import { hasStoredMessage, storeChatMetadata, storeMessageDirect } from '../db.js';
+import {
+  getAllChats,
+  hasStoredMessage,
+  storeChatMetadata,
+  storeMessageDirect,
+} from '../db.js';
 import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
 import { buildBlueBubblesChatJid } from '../companion-conversation-binding.js';
 import { hasBlueBubblesAndreaMention } from '../bluebubbles-companion.js';
+import {
+  buildBlueBubblesIngressFingerprint,
+  isBlueBubblesAndreaBotEcho,
+  resolveBlueBubblesReplyGateMode,
+} from '../messages-fluidity.js';
 import type {
+  BlueBubblesReplyGateMode,
   BlueBubblesChatScope,
   BlueBubblesChatRef,
   BlueBubblesConfig,
@@ -25,6 +36,11 @@ import type {
   SendMessageOptions,
   SendMessageResult,
 } from '../types.js';
+import type {
+  AppleMessagesProvider,
+  AppleMessagesProbeResult,
+  AppleMessagesReadinessResult,
+} from './apple-messages-provider.js';
 import { ChannelOpts, registerChannel } from './registry.js';
 
 const DEFAULT_BLUEBUBBLES_HOST = '127.0.0.1';
@@ -37,6 +53,7 @@ const BLUEBUBBLES_MISSED_INBOUND_GRACE_MS = 2 * 60 * 1_000;
 const BLUEBUBBLES_EVIDENCE_WINDOW_MS = 10 * 60 * 1_000;
 const BLUEBUBBLES_FALLBACK_COOLDOWN_MS = 6 * 60 * 60 * 1_000;
 const BLUEBUBBLES_FALLBACK_EVIDENCE_THRESHOLD = 2;
+const BLUEBUBBLES_INGRESS_FINGERPRINT_WINDOW_MS = 2 * 60 * 1_000;
 
 function parseBool(value: string | undefined, fallback = false): boolean {
   if (value == null) return fallback;
@@ -389,7 +406,7 @@ function summarizeBlueBubblesCandidateProbeResults(
   if (entries.length === 0) {
     return 'none';
   }
-  return entries.map(([baseUrl, detail]) => `${baseUrl} => ${detail}`).join(' | ');
+  return entries.map(([baseUrl, detail]) => `${baseUrl} => ${detail}`).join(' || ');
 }
 
 function firstString(...values: unknown[]): string | null {
@@ -932,6 +949,224 @@ type NormalizedBlueBubblesHistoryRow = {
   contact: BlueBubblesContactRef;
 };
 
+class BlueBubblesMessagesProvider implements AppleMessagesProvider {
+  readonly name = 'bluebubbles' as const;
+
+  async probe(config: BlueBubblesConfig): Promise<AppleMessagesProbeResult> {
+    const candidates =
+      config.baseUrlCandidates.length > 0
+        ? config.baseUrlCandidates
+        : config.baseUrl
+          ? [config.baseUrl]
+          : [];
+    if (candidates.length === 0 || !config.password) {
+      return {
+        provider: this.name,
+        status: 'not_configured',
+        detail: 'not configured',
+        activeEndpoint: null,
+        candidateResults: {},
+      };
+    }
+
+    const candidateResults: Record<string, string> = {};
+    let firstAuthFailed:
+      | {
+          baseUrl: string;
+          detail: string;
+        }
+      | null = null;
+
+    for (const candidate of candidates) {
+      const url = new URL('/api/v1/ping', candidate);
+      for (const [key, value] of buildAuthSearchParams(config.password).entries()) {
+        url.searchParams.set(key, value);
+      }
+
+      try {
+        const response = await fetchBlueBubblesWithTimeout(url);
+        const responseText = await response.text();
+        if (response.ok) {
+          candidateResults[candidate] = `reachable/auth ok (${response.status})`;
+          return {
+            provider: this.name,
+            status: 'reachable',
+            detail: `reachable/auth ok (${response.status}) via ${candidate}`,
+            activeEndpoint: candidate,
+            candidateResults,
+          };
+        }
+        if (response.status === 401 || response.status === 403) {
+          const detail = extractBlueBubblesErrorText(response.status, responseText);
+          candidateResults[candidate] = `auth failed (${detail})`;
+          if (!firstAuthFailed) {
+            firstAuthFailed = {
+              baseUrl: candidate,
+              detail,
+            };
+          }
+          continue;
+        }
+        candidateResults[candidate] = `unreachable (${extractBlueBubblesErrorText(
+          response.status,
+          responseText,
+        )})`;
+      } catch (error) {
+        candidateResults[candidate] = `unreachable (${
+          error instanceof Error ? error.message : 'transport probe failed'
+        })`;
+      }
+    }
+
+    if (firstAuthFailed) {
+      return {
+        provider: this.name,
+        status: 'auth_failed',
+        detail: `${firstAuthFailed.detail} via ${firstAuthFailed.baseUrl}`,
+        activeEndpoint: firstAuthFailed.baseUrl,
+        candidateResults,
+      };
+    }
+
+    return {
+      provider: this.name,
+      status: 'unreachable',
+      detail:
+        candidates.length === 1
+          ? candidateResults[candidates[0]] || 'transport probe failed'
+          : `no reachable BlueBubbles endpoint (${summarizeBlueBubblesCandidateProbeResults(
+              candidateResults,
+            )})`,
+      activeEndpoint: null,
+      candidateResults,
+    };
+  }
+
+  async inspectRecentActivity(
+    config: Pick<BlueBubblesConfig, 'baseUrl' | 'password'>,
+    limit = 12,
+  ): Promise<NormalizedBlueBubblesHistoryRow[]> {
+    return fetchNormalizedBlueBubblesRecentMessages(config, limit);
+  }
+
+  async sendText(
+    config: Pick<BlueBubblesConfig, 'baseUrl' | 'password'>,
+    request: {
+      chatGuid: string;
+      text: string;
+      replyToGuid?: string;
+      sendMethod: string;
+    },
+  ): Promise<SendMessageResult> {
+    if (!config.baseUrl || !config.password || !request.chatGuid) {
+      throw new Error(
+        'BlueBubbles transport is missing a reachable endpoint, password, or chat target',
+      );
+    }
+
+    const url = new URL('/api/v1/message/text', config.baseUrl);
+    for (const [key, value] of buildAuthSearchParams(config.password).entries()) {
+      url.searchParams.set(key, value);
+    }
+
+    const body: Record<string, unknown> = {
+      chatGuid: request.chatGuid,
+      message: request.text,
+      tempGuid: randomUUID(),
+      method: request.sendMethod,
+    };
+    if (request.replyToGuid) {
+      body.selectedMessageGuid = request.replyToGuid;
+    }
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+    const responseText = await response.text();
+    if (!response.ok) {
+      throw new Error(extractBlueBubblesErrorText(response.status, responseText));
+    }
+    const parsed = parseBlueBubblesJson(responseText);
+    const receiptId = extractBlueBubblesReceiptId(parsed);
+    if (!receiptId) {
+      throw new Error('BlueBubbles did not return a delivery receipt.');
+    }
+    return {
+      platformMessageId: `bb:${receiptId}`,
+    };
+  }
+
+  async describeReadiness(
+    config: Pick<
+      BlueBubblesConfig,
+      | 'enabled'
+      | 'baseUrl'
+      | 'password'
+      | 'host'
+      | 'port'
+      | 'webhookPath'
+      | 'webhookSecret'
+      | 'webhookPublicBaseUrl'
+    >,
+  ): Promise<AppleMessagesReadinessResult> {
+    if (!config.baseUrl || !config.password) {
+      return {
+        provider: this.name,
+        webhookRegistrationState: 'unreachable',
+        webhookRegistrationDetail:
+          'skipped because no reachable BlueBubbles endpoint is available yet',
+        privateApiAvailable: null,
+        sendMethod: 'private-api',
+      };
+    }
+
+    const webhookInspection = await inspectBlueBubblesWebhookRegistration(config);
+    let privateApiAvailable: boolean | null = null;
+    let sendMethod: BlueBubblesSendMethod = 'private-api';
+
+    const url = new URL('/api/v1/server/info', config.baseUrl);
+    for (const [key, value] of buildAuthSearchParams(config.password).entries()) {
+      url.searchParams.set(key, value);
+    }
+
+    try {
+      const response = await fetchBlueBubblesWithTimeout(url);
+      const responseText = await response.text();
+      if (response.ok) {
+        privateApiAvailable = extractBlueBubblesPrivateApiState(
+          parseBlueBubblesJson(responseText),
+        );
+        sendMethod = privateApiAvailable === false ? 'apple-script' : 'private-api';
+      } else {
+        logger.info(
+          {
+            status: response.status,
+            detail: extractBlueBubblesErrorText(response.status, responseText),
+          },
+          'BlueBubbles server info probe failed; keeping private-api send mode',
+        );
+      }
+    } catch (error) {
+      logger.info(
+        { err: error },
+        'BlueBubbles server info probe failed; keeping private-api send mode',
+      );
+    }
+
+    return {
+      provider: this.name,
+      webhookRegistrationState: webhookInspection.state,
+      webhookRegistrationDetail: webhookInspection.detail,
+      privateApiAvailable,
+      sendMethod,
+    };
+  }
+}
+
 async function fetchNormalizedBlueBubblesHistoryRows(
   config: Pick<BlueBubblesConfig, 'baseUrl' | 'password'>,
   chatGuid: string,
@@ -1098,6 +1333,8 @@ export function createBlueBubblesWebhookAdapter(opts: {
 export class BlueBubblesChannel implements Channel {
   readonly name = 'bluebubbles';
 
+  readonly appleMessagesProvider = 'bluebubbles' as const;
+
   private connected = false;
 
   private server?: Server;
@@ -1126,6 +1363,8 @@ export class BlueBubblesChannel implements Channel {
   private webhookRegistrationDetail: string | null = null;
 
   private readonly inflightMessageIds = new Set<string>();
+
+  private readonly recentIngressFingerprints = new Map<string, number>();
 
   private readonly directChatMetadataByJid = new Map<
     string,
@@ -1159,6 +1398,9 @@ export class BlueBubblesChannel implements Channel {
 
   private monitorState: BlueBubblesMonitorState = readBlueBubblesMonitorState();
 
+  private readonly bridgeProvider: AppleMessagesProvider =
+    new BlueBubblesMessagesProvider();
+
   constructor(
     private readonly config: BlueBubblesConfig,
     private readonly opts: ChannelOpts,
@@ -1185,12 +1427,37 @@ export class BlueBubblesChannel implements Channel {
     };
   }
 
-  private async ensureActiveBaseUrl(): Promise<string | null> {
-    if (this.getActiveBaseUrl()) {
-      return this.getActiveBaseUrl();
+  private async ensureActiveBaseUrl(options?: {
+    recheck?: boolean;
+    refreshReadiness?: boolean;
+  }): Promise<string | null> {
+    const previous = this.getActiveBaseUrl();
+    if (previous && !options?.recheck) {
+      return previous;
     }
     await this.probeBlueBubblesTransport();
-    return this.getActiveBaseUrl();
+    const activeBaseUrl = this.getActiveBaseUrl();
+    if (
+      options?.refreshReadiness &&
+      (activeBaseUrl !== previous || this.webhookRegistrationDetail == null)
+    ) {
+      await this.refreshBridgeReadiness();
+    }
+    if (options?.recheck) {
+      this.persistMonitorState();
+    }
+    return activeBaseUrl;
+  }
+
+  private async refreshBridgeReadiness(): Promise<void> {
+    const readiness = await this.bridgeProvider.describeReadiness(
+      this.buildConfigForBaseUrl(this.getActiveBaseUrl()),
+    );
+    this.webhookRegistrationStatus =
+      readiness.webhookRegistrationState as BlueBubblesWebhookRegistrationState;
+    this.webhookRegistrationDetail = readiness.webhookRegistrationDetail;
+    this.privateApiAvailable = readiness.privateApiAvailable;
+    this.sendMethod = readiness.sendMethod as BlueBubblesSendMethod;
   }
 
   private buildDirectChatMetadata(input: {
@@ -1222,6 +1489,25 @@ export class BlueBubblesChannel implements Channel {
       lastObservedAt: input.message?.timestamp || null,
       lastObservedWasSelfAuthored: Boolean(input.message?.is_from_me),
     };
+  }
+
+  private getReplyGateModeForChat(params: {
+    chatJid: string | null | undefined;
+    isGroup?: boolean | null;
+  }): BlueBubblesReplyGateMode {
+    return resolveBlueBubblesReplyGateMode({
+      chatJid: params.chatJid,
+      isGroup: params.isGroup,
+    });
+  }
+
+  private getHealthReplyGateMode(): BlueBubblesReplyGateMode {
+    return this.getReplyGateModeForChat({
+      chatJid: this.lastInboundChatJid,
+      isGroup: this.lastInboundChatJid
+        ? getAllChats().find((chat) => chat.jid === this.lastInboundChatJid)?.is_group !== 0
+        : null,
+    });
   }
 
   private cacheDirectChatMetadata(
@@ -1480,6 +1766,41 @@ export class BlueBubblesChannel implements Channel {
     this.persistMonitorState();
   }
 
+  private pruneRecentIngressFingerprints(nowMs = Date.now()): void {
+    for (const [fingerprint, observedAtMs] of this.recentIngressFingerprints.entries()) {
+      if (nowMs - observedAtMs > BLUEBUBBLES_INGRESS_FINGERPRINT_WINDOW_MS) {
+        this.recentIngressFingerprints.delete(fingerprint);
+      }
+    }
+  }
+
+  private hasRecentIngressFingerprint(
+    chatJid: string,
+    message: Pick<NewMessage, 'content' | 'timestamp' | 'sender' | 'is_from_me'>,
+  ): boolean {
+    this.pruneRecentIngressFingerprints();
+    return this.recentIngressFingerprints.has(
+      buildBlueBubblesIngressFingerprint({
+        chatJid,
+        message,
+      }),
+    );
+  }
+
+  private noteIngressFingerprint(
+    chatJid: string,
+    message: Pick<NewMessage, 'content' | 'timestamp' | 'sender' | 'is_from_me'>,
+  ): void {
+    this.pruneRecentIngressFingerprints();
+    this.recentIngressFingerprints.set(
+      buildBlueBubblesIngressFingerprint({
+        chatJid,
+        message,
+      }),
+      Date.now(),
+    );
+  }
+
   private noteIgnoredWebhook(
     chatJid: string,
     at: string,
@@ -1491,10 +1812,10 @@ export class BlueBubblesChannel implements Channel {
     this.setDetectionState(
       'ignored_by_gate_or_scope',
       reason === 'mention_required'
-        ? `Andrea saw a Messages turn in ${chatJid}, but it was intentionally ignored because the thread still requires @Andrea.`
+        ? `Andrea saw a Messages turn in ${chatJid}, but it was intentionally ignored because that thread still requires @Andrea.`
         : `Andrea saw a Messages turn in ${chatJid}, but it was intentionally ignored because that chat is outside the configured scope.`,
       reason === 'mention_required'
-        ? 'Use @Andrea in that thread, or relax the reply gate if you want Andrea to answer ordinary chatter there.'
+        ? 'Use @Andrea in that group thread, or relax the reply gate if that chat should behave conversationally.'
         : 'Use a chat that is inside the configured Messages scope, or widen the BlueBubbles scope on this host.',
     );
     this.persistMonitorState();
@@ -1590,14 +1911,17 @@ export class BlueBubblesChannel implements Channel {
     const nowMs = Date.now();
     this.pruneRecentEvidence(nowMs);
     try {
-      const activeBaseUrl = await this.ensureActiveBaseUrl();
+      const activeBaseUrl = await this.ensureActiveBaseUrl({
+        recheck: true,
+        refreshReadiness: true,
+      });
       if (!activeBaseUrl) {
         throw new Error(
           this.transportProbeDetail ||
             'Andrea could not reach any configured BlueBubbles endpoint.',
         );
       }
-      const recentMessages = await fetchNormalizedBlueBubblesRecentMessages(
+      const recentMessages = await this.bridgeProvider.inspectRecentActivity(
         this.buildConfigForBaseUrl(activeBaseUrl),
         8,
       );
@@ -1642,12 +1966,10 @@ export class BlueBubblesChannel implements Channel {
           row.chat.isGroup,
         );
         const mentionsAndrea = hasBlueBubblesAndreaMention(row.message.content);
-        const ignoredReason =
-          !eligible
-            ? 'chat_scope'
-            : row.message.is_from_me && !mentionsAndrea
-              ? 'mention_required'
-              : null;
+        if (row.message.is_from_me && !mentionsAndrea) {
+          continue;
+        }
+        const ignoredReason = !eligible ? 'chat_scope' : null;
         if (ignoredReason) {
           if (!latestIgnored || latestIgnored.at < row.message.timestamp) {
             latestIgnored = {
@@ -1720,10 +2042,10 @@ export class BlueBubblesChannel implements Channel {
         this.setDetectionState(
           'ignored_by_gate_or_scope',
           latestIgnored.reason === 'mention_required'
-            ? `The newest Messages turn in ${latestIgnored.chatJid} would be ignored until it includes @Andrea.`
+            ? `The newest Messages turn in ${latestIgnored.chatJid} would still be ignored until it includes @Andrea.`
             : `The newest Messages turn in ${latestIgnored.chatJid} is outside Andrea's configured BlueBubbles scope.`,
           latestIgnored.reason === 'mention_required'
-            ? 'Use @Andrea in that thread, or relax the reply gate if that chat should behave conversationally.'
+            ? 'Use @Andrea in that group thread, or relax the reply gate if that chat should behave conversationally.'
             : 'Use a chat inside the configured scope, or widen the BlueBubbles scope on this host.',
         );
       } else {
@@ -1737,8 +2059,7 @@ export class BlueBubblesChannel implements Channel {
         error instanceof Error ? error.message : 'BlueBubbles shadow poll failed';
       try {
         await this.probeBlueBubblesTransport();
-        await this.refreshServerInfo();
-        await this.refreshWebhookRegistration();
+        await this.refreshBridgeReadiness();
       } catch (probeError) {
         logger.warn(
           { err: probeError },
@@ -1797,6 +2118,7 @@ export class BlueBubblesChannel implements Channel {
       this.connected
         ? `listener ${this.config.host}:${this.activePort}${this.config.webhookPath}`
         : 'listener stopped',
+      `provider ${this.appleMessagesProvider}`,
       `configured base url ${this.config.baseUrl || 'none'}`,
       `active endpoint ${this.monitorState.activeBaseUrl || 'none'}`,
       `candidate endpoints ${
@@ -1808,11 +2130,16 @@ export class BlueBubblesChannel implements Channel {
         this.monitorState.candidateProbeResults,
       )}`,
       `scope ${this.config.chatScope}`,
-      `reply gate mention_required`,
+      `reply gate ${this.getHealthReplyGateMode()}`,
+      this.getHealthReplyGateMode() === 'mention_required'
+        ? 'group trigger required yes'
+        : '1:1 conversational yes',
       `webhook ${this.getPublicWebhookDisplayUrl()}`,
       this.webhookRegistrationDetail
         ? `webhook registration ${this.webhookRegistrationDetail}`
         : 'webhook registration not checked yet',
+      `webhook registration state ${this.webhookRegistrationStatus}`,
+      `transport probe state ${this.transportProbeStatus}`,
       this.transportProbeDetail
         ? `transport ${this.transportProbeDetail}`
         : 'transport not checked yet',
@@ -1844,6 +2171,8 @@ export class BlueBubblesChannel implements Channel {
           : 'none'
       }`,
       `detection ${this.monitorState.detectionState}`,
+      `detection detail ${this.monitorState.detectionDetail || 'none'}`,
+      `detection next action ${this.monitorState.detectionNextAction || 'none'}`,
       `shadow poll last ok ${this.monitorState.shadowPollLastOkAt || 'none'}`,
       `shadow poll error ${this.monitorState.shadowPollLastError || 'none'}`,
       `server seen chat ${this.monitorState.mostRecentServerSeenChatJid || 'none'}`,
@@ -1879,138 +2208,33 @@ export class BlueBubblesChannel implements Channel {
   }
 
   private async probeBlueBubblesTransport(): Promise<void> {
-    const candidates = this.getConfiguredBaseUrlCandidates();
-    if (candidates.length === 0 || !this.config.password) {
+    const probe = await this.bridgeProvider.probe(this.config);
+    this.monitorState.candidateProbeResults = probe.candidateResults;
+
+    if (probe.status === 'not_configured') {
       this.transportProbeStatus = 'not_checked';
-      this.transportProbeDetail = 'not configured';
+      this.transportProbeDetail = probe.detail;
       this.monitorState.activeBaseUrl = null;
-      this.monitorState.candidateProbeResults = {};
       return;
     }
 
-    const candidateProbeResults: Record<string, string> = {};
-    let firstAuthFailed:
-      | {
-          baseUrl: string;
-          detail: string;
-        }
-      | null = null;
-
-    for (const candidate of candidates) {
-      const url = new URL('/api/v1/ping', candidate);
-      for (const [key, value] of buildAuthSearchParams(this.config.password).entries()) {
-        url.searchParams.set(key, value);
-      }
-
-      try {
-        const response = await fetchBlueBubblesWithTimeout(url);
-        const responseText = await response.text();
-        if (response.ok) {
-          const detail = `reachable/auth ok (${response.status})`;
-          candidateProbeResults[candidate] = detail;
-          this.transportProbeStatus = 'reachable';
-          this.transportProbeDetail = `${detail} via ${candidate}`;
-          this.monitorState.activeBaseUrl = candidate;
-          this.monitorState.candidateProbeResults = candidateProbeResults;
-          return;
-        }
-        if (response.status === 401 || response.status === 403) {
-          const detail = extractBlueBubblesErrorText(response.status, responseText);
-          candidateProbeResults[candidate] = `auth failed (${detail})`;
-          if (!firstAuthFailed) {
-            firstAuthFailed = {
-              baseUrl: candidate,
-              detail,
-            };
-          }
-          continue;
-        }
-        candidateProbeResults[candidate] = `unreachable (${extractBlueBubblesErrorText(
-          response.status,
-          responseText,
-        )})`;
-      } catch (error) {
-        candidateProbeResults[candidate] = `unreachable (${
-          error instanceof Error ? error.message : 'transport probe failed'
-        })`;
-      }
+    if (probe.status === 'reachable') {
+      this.transportProbeStatus = 'reachable';
+      this.transportProbeDetail = probe.detail;
+      this.monitorState.activeBaseUrl = probe.activeEndpoint;
+      return;
     }
 
-    this.monitorState.candidateProbeResults = candidateProbeResults;
-    if (firstAuthFailed) {
+    if (probe.status === 'auth_failed') {
       this.transportProbeStatus = 'auth_failed';
-      this.transportProbeDetail = `${firstAuthFailed.detail} via ${firstAuthFailed.baseUrl}`;
-      this.monitorState.activeBaseUrl = firstAuthFailed.baseUrl;
+      this.transportProbeDetail = probe.detail;
+      this.monitorState.activeBaseUrl = probe.activeEndpoint;
       return;
     }
 
     this.transportProbeStatus = 'unreachable';
-    this.transportProbeDetail =
-      candidates.length === 1
-        ? candidateProbeResults[candidates[0]] || 'transport probe failed'
-        : `no reachable BlueBubbles endpoint (${summarizeBlueBubblesCandidateProbeResults(
-            candidateProbeResults,
-          )})`;
+    this.transportProbeDetail = probe.detail;
     this.monitorState.activeBaseUrl = null;
-  }
-
-  private async refreshWebhookRegistration(): Promise<void> {
-    const activeBaseUrl = this.getActiveBaseUrl();
-    if (!activeBaseUrl && this.getConfiguredBaseUrlCandidates().length > 0) {
-      this.webhookRegistrationStatus = 'unreachable';
-      this.webhookRegistrationDetail =
-        'skipped because no reachable BlueBubbles endpoint is available yet';
-      return;
-    }
-    const inspection = await inspectBlueBubblesWebhookRegistration(
-      this.buildConfigForBaseUrl(activeBaseUrl),
-    );
-    this.webhookRegistrationStatus = inspection.state;
-    this.webhookRegistrationDetail = inspection.detail;
-  }
-
-  private async refreshServerInfo(): Promise<void> {
-    const activeBaseUrl = this.getActiveBaseUrl();
-    if (!activeBaseUrl || !this.config.password) {
-      this.privateApiAvailable = null;
-      this.sendMethod = 'private-api';
-      return;
-    }
-
-    const url = new URL('/api/v1/server/info', activeBaseUrl);
-    for (const [key, value] of buildAuthSearchParams(this.config.password).entries()) {
-      url.searchParams.set(key, value);
-    }
-
-    try {
-      const response = await fetchBlueBubblesWithTimeout(url);
-      const responseText = await response.text();
-      if (!response.ok) {
-        this.privateApiAvailable = null;
-        this.sendMethod = 'private-api';
-        logger.info(
-          {
-            status: response.status,
-            detail: extractBlueBubblesErrorText(response.status, responseText),
-          },
-          'BlueBubbles server info probe failed; keeping private-api send mode',
-        );
-        return;
-      }
-
-      const privateApi = extractBlueBubblesPrivateApiState(
-        parseBlueBubblesJson(responseText),
-      );
-      this.privateApiAvailable = privateApi;
-      this.sendMethod = privateApi === false ? 'apple-script' : 'private-api';
-    } catch (error) {
-      this.privateApiAvailable = null;
-      this.sendMethod = 'private-api';
-      logger.info(
-        { err: error },
-        'BlueBubbles server info probe failed; keeping private-api send mode',
-      );
-    }
   }
 
   private verifyWebhookSecret(reqUrl: URL): boolean {
@@ -2095,8 +2319,17 @@ export class BlueBubblesChannel implements Channel {
       writeResponse(res, 202, 'Ignored chat outside configured scope');
       return;
     }
+    const replyGateMode = this.getReplyGateModeForChat({
+      chatJid: normalized.chatJid,
+      isGroup: normalized.chat.isGroup,
+    });
+    if (normalized.message.is_from_me && isBlueBubblesAndreaBotEcho(normalized.message.content)) {
+      writeResponse(res, 202, 'Ignored Andrea outbound echo');
+      return;
+    }
     if (
       normalized.message.is_from_me &&
+      replyGateMode === 'mention_required' &&
       !hasBlueBubblesAndreaMention(normalized.message.content)
     ) {
       this.noteIgnoredWebhook(
@@ -2109,7 +2342,8 @@ export class BlueBubblesChannel implements Channel {
     }
     if (
       this.inflightMessageIds.has(normalized.message.id) ||
-      hasStoredMessage(normalized.chatJid, normalized.message.id)
+      hasStoredMessage(normalized.chatJid, normalized.message.id) ||
+      this.hasRecentIngressFingerprint(normalized.chatJid, normalized.message)
     ) {
       writeResponse(res, 202, 'Ignored duplicate delivery');
       return;
@@ -2122,6 +2356,7 @@ export class BlueBubblesChannel implements Channel {
       message: normalized.message,
     });
     this.noteWebhookObserved(normalized.chatJid, normalized.message.timestamp);
+    this.noteIngressFingerprint(normalized.chatJid, normalized.message);
 
     this.inflightMessageIds.add(normalized.message.id);
     try {
@@ -2154,47 +2389,25 @@ export class BlueBubblesChannel implements Channel {
     text: string,
     replyToGuid?: string,
   ): Promise<SendMessageResult> {
-    const activeBaseUrl = await this.ensureActiveBaseUrl();
+      const activeBaseUrl = await this.ensureActiveBaseUrl({
+        recheck: true,
+        refreshReadiness: true,
+      });
     if (!activeBaseUrl || !this.config.password || !chatGuid) {
       throw new Error(
         this.transportProbeDetail ||
           'BlueBubbles transport is missing a reachable endpoint, password, or chat target',
       );
     }
-    const url = new URL('/api/v1/message/text', activeBaseUrl);
-    for (const [key, value] of buildAuthSearchParams(this.config.password).entries()) {
-      url.searchParams.set(key, value);
-    }
-
-    const body: Record<string, unknown> = {
-      chatGuid,
-      message: text,
-      tempGuid: randomUUID(),
-      method: this.sendMethod,
-    };
-    if (replyToGuid) {
-      body.selectedMessageGuid = replyToGuid;
-    }
-
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
+    return this.bridgeProvider.sendText(
+      this.buildConfigForBaseUrl(activeBaseUrl),
+      {
+        chatGuid,
+        text,
+        replyToGuid,
+        sendMethod: this.sendMethod,
       },
-      body: JSON.stringify(body),
-    });
-    const responseText = await response.text();
-    if (!response.ok) {
-      throw new Error(extractBlueBubblesErrorText(response.status, responseText));
-    }
-    const parsed = parseBlueBubblesJson(responseText);
-    const receiptId = extractBlueBubblesReceiptId(parsed);
-    if (!receiptId) {
-      throw new Error('BlueBubbles did not return a delivery receipt.');
-    }
-    return {
-      platformMessageId: `bb:${receiptId}`,
-    };
+    );
   }
 
   private async sendBlueBubblesReply(
@@ -2335,8 +2548,7 @@ export class BlueBubblesChannel implements Channel {
       });
     });
     await this.probeBlueBubblesTransport();
-    await this.refreshServerInfo();
-    await this.refreshWebhookRegistration();
+    await this.refreshBridgeReadiness();
     this.lastErrorText =
       this.transportProbeStatus === 'reachable' &&
       this.webhookRegistrationStatus === 'registered'

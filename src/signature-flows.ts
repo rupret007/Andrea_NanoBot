@@ -174,13 +174,31 @@ export function buildSignaturePostActionConfirmation(input: {
   const didWhat = ensureSentence(input.didWhat);
   const stillOpen = normalizeText(input.stillOpen);
   const nextSuggestion = normalizeActionText(input.nextSuggestion);
+  const conversationalNextSuggestion = nextSuggestion
+    ? stripTrailingPunctuation(nextSuggestion).replace(
+        /^(?:if you want,\s*)?(?:i can|you can)\s+/i,
+        '',
+      )
+    : null;
 
   if (input.channel === 'alexa') {
     return [
       didWhat,
       stillOpen ? `That still leaves ${stripTrailingPunctuation(stillOpen)}.` : null,
-      nextSuggestion
-        ? `If you want, I can ${stripTrailingPunctuation(nextSuggestion).replace(/^(?:i can|you can)\s+/i, '')}.`
+      conversationalNextSuggestion
+        ? `If you want, I can ${conversationalNextSuggestion}.`
+        : null,
+    ]
+      .filter(Boolean)
+      .join(' ');
+  }
+
+  if (input.channel === 'bluebubbles') {
+    return [
+      didWhat,
+      stillOpen ? `That still leaves ${stripTrailingPunctuation(stillOpen)}.` : null,
+      conversationalNextSuggestion
+        ? `If you want, I can ${conversationalNextSuggestion}.`
         : null,
     ]
       .filter(Boolean)

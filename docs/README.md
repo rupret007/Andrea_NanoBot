@@ -29,8 +29,9 @@ Use this shorthand when you need the current host story fast:
 - **manual surface sync still pending**
   - Alexa's latest repo interaction-model hash has not been marked as synced locally yet
   - after the Developer Console import/build, run `npm run setup -- --step alexa-model-sync mark-synced`
-- **degraded-but-usable**
-  - BlueBubbles on this PC: transport and real traffic are healthy, but the canonical self-thread still needs one fresh same-thread `message_action` proof leg
+- **optional Messages bridge**
+  - BlueBubbles on this PC is currently `degraded_but_usable`: transport and webhook registration are healthy, but the same-thread health check is not trustworthy yet because the recent-activity shadow poll is failing
+  - Telegram stays the dependable main messaging surface while that bridge is unstable
 - **externally blocked but optional**
   - outward research
   - Telegram image generation
@@ -51,7 +52,7 @@ Andrea has two different documentation audiences on purpose:
 
 - **User-safe surface**
   - normal conversation
-  - schedule help, reminders, groceries, errands, meal planning, quick replies, summaries, bill follow-through, and project help
+  - schedule help, reminders, groceries, errands, meal planning, recurring household obligations, quick replies, summaries, bill follow-through, and project help
   - personalized setup so Andrea can learn what to track and how to surface it
   - the narrow public Telegram command set
   - `/cursor_status` as the only public-safe Cursor readiness check
@@ -75,15 +76,20 @@ Andrea's current flagship journeys are:
 - Alexa or Telegram schedule check -> reminder, move, or richer follow-through
 - `What's on my calendar tomorrow?` -> short read -> add, move, or reminder
 - `Help me set this up` -> proposed Andrea setup -> approved lists and routines
-- `Add milk to my shopping list` -> quick capture -> useful readout or mark-done follow-up
+- `Add milk to my shopping list` -> zero-setup capture -> grouped list readout -> done, defer, remind, move, or plan follow-up
+- `What do we need from the store?` / `What's left for tonight?` -> smart household slice -> Telegram for the fuller review
 - `Remind me to take my pills at 9` -> clear reminder confirmation -> one next move
 - `What bills do I need to pay this week?` -> open follow-through -> reminder or plan
+- `What's missing for dinner?` / `What should I handle this weekend?` -> practical household view -> one grounded next step
+- `Make this a monthly bill` -> recurring obligation -> resurfaces when due without turning into a second task system
 - `What am I forgetting?` -> one concrete open loop -> reminder, save, or tracking
 - `What should I say back?` -> draft reply -> save, remind later, or continue in-thread
 - `Help me plan tonight / this weekend / meals this week` -> mission -> blocker -> confirmed action
 - `What do I owe people?` -> communication review -> reminder or thread follow-up
 - source-grounded research -> richer detail -> save to library
-- BlueBubbles message help -> summarize -> draft -> send or queue send-later -> optional Telegram escalation
+- Messages bridge help when available -> summarize -> draft -> send or queue send-later -> optional Telegram escalation
+
+OpenBubbles remains a future/provider-feasibility track on this PC, not a live Andrea runtime provider. The official docs support the Mac-offline goal after activation or renewal, but Andrea still does not have a supported Windows-native observation/reply surface to bind to there.
 
 Use these docs as the architecture behind those journeys, not as separate product silos.
 For repo-side proof, run `npm run debug:signature-flows`.

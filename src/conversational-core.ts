@@ -228,21 +228,21 @@ export function buildGracefulDegradedReply(params: {
     ) {
       return buildChannelVariant(channel, {
         telegram:
-          "I can't check that live right now. If you want, ask it a little more narrowly and I'll keep it grounded.",
+          "I can't check that live right now. Narrow it a little, or point me at saved material, and I'll keep it grounded.",
         alexa:
           "I can't check that live right now. Ask it a little more narrowly and I'll keep it grounded.",
         bluebubbles:
-          "I can't check that live right now. If you want, narrow it a little and I'll keep it grounded.",
+          "I can't check that live right now. Give me one narrow question and I'll keep it grounded.",
       });
     }
 
     return buildChannelVariant(channel, {
       telegram:
-        "I'm here, but I couldn't get the deeper read just now. Try that again in one short sentence and I'll keep it simple.",
+        "I'm here, but the deeper read missed just now. Give me one simple thing and I'll keep it moving.",
       alexa:
-        "I'm here, but I couldn't get the deeper read just now. Try that again in one short sentence.",
+        "I'm here, but the deeper read missed just now. Give me one simple thing.",
       bluebubbles:
-        "I'm here, but I couldn't get the deeper read just now. One short sentence will work best.",
+        "I'm here, but the deeper read missed just now. Give me one simple thing and I'll keep it moving.",
     });
   }
 
@@ -250,21 +250,21 @@ export function buildGracefulDegradedReply(params: {
     if (params.hasGroundedAlternative) {
       return buildChannelVariant(channel, {
         telegram:
-          "I can't check that live right now. I can still use your saved material or help narrow the question.",
+          "I can't check that live right now. I can still work from your saved material or tighten the question.",
         alexa:
           "I can't check that live right now. I can still use saved material or help narrow it.",
         bluebubbles:
-          "I can't check that live right now. I can still use saved material or help narrow it.",
+          "I can't check that live right now. I can still work from what you've already saved here.",
       });
     }
 
     return buildChannelVariant(channel, {
       telegram:
-        "I can't check that live right now. If you want, narrow the question and I'll keep the answer grounded.",
+        "I can't check that live right now. Narrow the question a little and I'll keep the answer grounded.",
       alexa:
         "I can't check that live right now. Narrow the question and I'll keep it grounded.",
       bluebubbles:
-        "I can't check that live right now. Narrow it a little and I'll keep it grounded.",
+        "I can't check that live right now. Keep it narrow and I'll keep it grounded.",
     });
   }
 

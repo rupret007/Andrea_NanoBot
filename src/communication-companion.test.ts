@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   _initTestDatabase,
@@ -13,10 +13,14 @@ import {
   analyzeCommunicationMessage,
   buildCommunicationOpenLoops,
   draftCommunicationReply,
+  draftCommunicationReplyWithChannelFluidity,
+  formatCommunicationDraftReply,
   getCommunicationCarryoverSignal,
   manageCommunicationTracking,
 } from './communication-companion.js';
 import type { ProfileSubject } from './types.js';
+
+const originalFetch = globalThis.fetch;
 
 function seedCandace(): ProfileSubject {
   const subject: ProfileSubject = {
@@ -36,6 +40,12 @@ function seedCandace(): ProfileSubject {
 describe('communication companion', () => {
   beforeEach(() => {
     _initTestDatabase();
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
   });
 
   it('analyzes an explicit message and creates an inferred communication thread', () => {
@@ -216,6 +226,83 @@ describe('communication companion', () => {
     expect(result.draftText).toMatch(/let me know/i);
   });
 
+  it('uses the Messages model lane for BlueBubbles drafts when OpenAI is available', async () => {
+    seedCandace();
+    vi.stubEnv('OPENAI_API_KEY', 'test-key');
+    vi.stubEnv('OPENAI_BASE_URL', 'https://openai.test/v1');
+    globalThis.fetch = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          output_text:
+            '{"draftText":"Hey Candace, tonight still works for me. If you want, we can keep it simple."}',
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      ),
+    ) as typeof fetch;
+
+    const result = await draftCommunicationReplyWithChannelFluidity({
+      channel: 'bluebubbles',
+      groupFolder: 'main',
+      chatJid: 'bb:self',
+      text:
+        'Make it warmer: Candace: Can you let me know if dinner still works tonight?',
+      now: new Date('2026-04-06T09:00:00.000Z'),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.draftMode).toBe('openai');
+    expect(result.draftText).toContain('tonight still works for me');
+    expect(result.fallbackNote).toBeUndefined();
+  });
+
+  it('falls back honestly when the richer Messages draft lane is unavailable', async () => {
+    seedCandace();
+    vi.unstubAllEnvs();
+    globalThis.fetch = vi.fn(async () => {
+      throw new Error('should not be called without config');
+    }) as typeof fetch;
+
+    const result = await draftCommunicationReplyWithChannelFluidity({
+      channel: 'bluebubbles',
+      groupFolder: 'main',
+      chatJid: 'bb:self',
+      text: 'what should I say back',
+      conversationSummary:
+        'Candace wants a follow-up about whether dinner still works tonight.',
+      now: new Date('2026-04-06T09:00:00.000Z'),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.draftMode).toBe('deterministic');
+    expect(result.fallbackNote).toContain('richer Messages draft lane');
+  });
+
+  it('keeps BlueBubbles draft replies calm when the richer lane is unavailable', async () => {
+    seedCandace();
+    vi.unstubAllEnvs();
+    globalThis.fetch = vi.fn(async () => {
+      throw new Error('should not be called without config');
+    }) as typeof fetch;
+
+    const result = await draftCommunicationReplyWithChannelFluidity({
+      channel: 'bluebubbles',
+      groupFolder: 'main',
+      chatJid: 'bb:self',
+      text: 'what should I say back',
+      conversationSummary:
+        'Candace wants a follow-up about whether dinner still works tonight.',
+      now: new Date('2026-04-06T09:00:00.000Z'),
+    });
+
+    const replyText = formatCommunicationDraftReply('bluebubbles', result);
+    expect(replyText).toContain('Draft:');
+    expect(replyText).toContain('lighter draft lane');
+    expect(replyText).not.toContain('This is shaped around');
+  });
+
   it('phrases confirmation asks more naturally in summaries and drafts', () => {
     const analysis = analyzeCommunicationMessage({
       channel: 'bluebubbles',
@@ -345,6 +432,43 @@ describe('communication companion', () => {
     expect(
       result.draftText?.match(/whether dinner still works tonight/gi) || [],
     ).toHaveLength(1);
+  });
+
+  it('prefers the live BlueBubbles inbound message over Andrea-style prior narration', () => {
+    seedCandace();
+    storeChatMetadata(
+      'bb:chat-synthetic',
+      '2026-04-06T10:00:00.000Z',
+      'Candace',
+      'bluebubbles',
+      false,
+    );
+    storeMessageDirect({
+      id: 'bb:msg-live-inbound',
+      chat_jid: 'bb:chat-synthetic',
+      sender: '+15551234567',
+      sender_name: 'Candace',
+      content: 'Can you let me know if dinner still works tonight?',
+      timestamp: '2026-04-06T10:00:00.000Z',
+      is_from_me: false,
+      is_bot_message: false,
+    });
+
+    const result = draftCommunicationReply({
+      channel: 'bluebubbles',
+      groupFolder: 'main',
+      chatJid: 'bb:chat-synthetic',
+      text: 'what should I say back',
+      priorContext: {
+        lastCommunicationSummary:
+          "With Candace, I'd stay with dinner plans tonight and keep the note simple.",
+      },
+      now: new Date('2026-04-06T10:05:00.000Z'),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.draftText).toContain('dinner still works tonight');
+    expect(result.draftText).not.toContain("With Candace, I'd");
   });
 
   it('strips programmatic open-loop phrasing out of Alexa-safe draft topics', () => {

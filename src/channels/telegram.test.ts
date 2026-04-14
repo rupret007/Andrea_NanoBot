@@ -180,7 +180,7 @@ describe('buildTelegramFeaturesText', () => {
       'open follow-through across people, home, pills, bills, and projects',
     );
     expect(features).toContain(
-      'BlueBubbles is bounded Messages help in the current thread',
+      'Messages is a best-effort bridge when available through BlueBubbles',
     );
     expect(features).toContain(
       'Alexa is concise voice help for schedule, reminders, list capture and readout, planning, open follow-through, and quick reply help',

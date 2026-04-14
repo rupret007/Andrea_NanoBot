@@ -345,6 +345,35 @@ export type BlueBubblesChatScope =
   | 'contacts_only'
   | 'allowlist';
 
+export type AppleMessagesProviderName = 'bluebubbles' | 'openbubbles' | 'none';
+
+export type AppleMessagesBridgeAvailability = 'available' | 'unavailable';
+
+export type BlueBubblesReplyGateMode = 'mention_required' | 'direct_1to1';
+
+export type MessagesDirectRouteFamily =
+  | 'chat'
+  | 'communication_reply'
+  | 'message_action_followup'
+  | 'capture'
+  | 'calendar'
+  | 'reminder'
+  | 'household_view'
+  | 'help';
+
+export interface MessagesDirectTurnEnvelope {
+  normalizedUserIntent: string;
+  routeFamily: MessagesDirectRouteFamily;
+  assistantPrompt: string;
+  draftGoal?: string | null;
+  toneHints?: string[];
+  confidence: number;
+  clarificationQuestion?: string | null;
+  fallbackText?: string | null;
+  replyText?: string | null;
+  source?: 'openai' | 'fallback';
+}
+
 export interface BlueBubblesConfig {
   enabled: boolean;
   baseUrl: string | null;
@@ -1492,6 +1521,7 @@ export type EverydayListItemState =
   | 'converted_to_mission';
 
 export type EverydayListScope = 'personal' | 'household' | 'family' | 'mixed';
+
 export type EverydayListRecurrenceKind =
   | 'none'
   | 'daily'

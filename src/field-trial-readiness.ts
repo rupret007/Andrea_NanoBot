@@ -38,7 +38,12 @@ import { getMediaProviderStatus } from './media-generation.js';
 import { describeOpenAiConfigBlocker, getOpenAiProviderStatus } from './openai-provider.js';
 import { buildPilotReviewSnapshot } from './pilot-mode.js';
 import { readProviderProofState } from './provider-proof-state.js';
-import type { PilotJourneyEventRecord, PilotJourneyId } from './types.js';
+import type {
+  AppleMessagesBridgeAvailability,
+  AppleMessagesProviderName,
+  PilotJourneyEventRecord,
+  PilotJourneyId,
+} from './types.js';
 
 export type FieldTrialProofState =
   | 'live_proven'
@@ -90,6 +95,8 @@ export interface FieldTrialLaunchReadinessTruth {
   manualSyncSteps: string[];
   optionalProviderBlockers: string[];
   optionalProviderNextActions: string[];
+  optionalBridgeBlockers: string[];
+  optionalBridgeNextActions: string[];
   proofFreshnessGaps: string[];
   manualSurfaceSyncs: {
     alexa: FieldTrialManualSurfaceSyncTruth;
@@ -116,6 +123,8 @@ export interface FieldTrialAlexaTruth extends FieldTrialSurfaceTruth {
 }
 
 export interface FieldTrialBlueBubblesTruth extends FieldTrialSurfaceTruth {
+  providerName: AppleMessagesProviderName;
+  bridgeAvailability: AppleMessagesBridgeAvailability;
   configured: boolean;
   serverBaseUrl: string;
   activeServerBaseUrl: string;
@@ -335,6 +344,77 @@ function extractBlueBubblesDetailField(
   return match?.[1]?.trim() || null;
 }
 
+function normalizeBlueBubblesDetailValue(value: string | null): string | null {
+  if (!value || value === 'none') {
+    return null;
+  }
+  return value;
+}
+
+function deriveBlueBubblesTransportProbeState(detail: string): string {
+  const explicit = normalizeBlueBubblesDetailValue(
+    extractBlueBubblesDetailField(detail, 'transport probe state'),
+  );
+  if (explicit) {
+    return explicit;
+  }
+
+  const transportDetail = normalizeBlueBubblesDetailValue(
+    extractBlueBubblesDetailField(detail, 'transport'),
+  );
+  if (!transportDetail) {
+    return 'not_checked';
+  }
+  if (/reachable\/auth ok/i.test(transportDetail)) {
+    return 'reachable';
+  }
+  if (/auth failed|unauthor|forbidden/i.test(transportDetail)) {
+    return 'auth_failed';
+  }
+  if (/unreachable|no reachable/i.test(transportDetail)) {
+    return 'unreachable';
+  }
+  return 'not_checked';
+}
+
+function deriveBlueBubblesWebhookRegistrationState(detail: string): string | null {
+  const explicit = normalizeBlueBubblesDetailValue(
+    extractBlueBubblesDetailField(detail, 'webhook registration state'),
+  );
+  if (explicit) {
+    return explicit;
+  }
+
+  const registrationDetail = normalizeBlueBubblesDetailValue(
+    extractBlueBubblesDetailField(detail, 'webhook registration'),
+  );
+  if (!registrationDetail) {
+    return null;
+  }
+  if (/registered on the BlueBubbles server/i.test(registrationDetail)) {
+    return 'registered';
+  }
+  if (/no matching Andrea webhook/i.test(registrationDetail)) {
+    return 'missing';
+  }
+  if (/cannot be checked/i.test(registrationDetail)) {
+    return 'not_configured';
+  }
+  if (/unauthor|forbidden/i.test(registrationDetail)) {
+    return 'auth_failed';
+  }
+  if (/unreachable|skipped because no reachable/i.test(registrationDetail)) {
+    return 'unreachable';
+  }
+  return null;
+}
+
+function deriveBlueBubblesReplyGateMode(detail: string): string | null {
+  return normalizeBlueBubblesDetailValue(
+    extractBlueBubblesDetailField(detail, 'reply gate'),
+  );
+}
+
 function deriveBlueBubblesTransportDiagnostics(detail: string): {
   lastInboundChatJid: string;
   lastInboundWasSelfAuthored: boolean | null;
@@ -459,6 +539,20 @@ function summarizeTruthLine(label: string, state: FieldTrialSurfaceTruth): strin
   return `${prefix} ${state.proofState}`;
 }
 
+function summarizeMessagesBridgeLine(
+  state: FieldTrialBlueBubblesTruth,
+): string {
+  const prefix = `messages bridge (${state.providerName})`;
+  const availability = state.bridgeAvailability;
+  const body =
+    state.blocker ||
+    state.detail ||
+    (availability === 'available'
+      ? 'available'
+      : 'unavailable, use Telegram as the dependable main path');
+  return `${prefix}: ${body}`;
+}
+
 function buildAlexaManualSyncTruth(projectRoot: string): FieldTrialManualSurfaceSyncTruth {
   const status = getAlexaModelSyncStatus(projectRoot);
   if (status.syncStatus === 'synced') {
@@ -569,7 +663,7 @@ function buildLaunchReadinessTruth(params: {
   windowsHost: WindowsHostReconciliation | null;
   telegram: FieldTrialSurfaceTruth;
   alexa: FieldTrialAlexaTruth;
-  bluebubbles: FieldTrialSurfaceTruth;
+  bluebubbles: FieldTrialBlueBubblesTruth;
   googleCalendar: FieldTrialSurfaceTruth;
   workCockpit: FieldTrialSurfaceTruth;
   lifeThreads: FieldTrialSurfaceTruth;
@@ -586,7 +680,6 @@ function buildLaunchReadinessTruth(params: {
   const coreSurfaces: Array<[string, FieldTrialSurfaceTruth]> = [
     ['telegram', params.telegram],
     ['alexa', params.alexa],
-    ['bluebubbles', params.bluebubbles],
     ['google_calendar', params.googleCalendar],
     ['work_cockpit', params.workCockpit],
     ['life_threads', params.lifeThreads],
@@ -612,6 +705,8 @@ function buildLaunchReadinessTruth(params: {
 
   const optionalProviderBlockers: string[] = [];
   const optionalProviderNextActions: string[] = [];
+  const optionalBridgeBlockers: string[] = [];
+  const optionalBridgeNextActions: string[] = [];
   if (params.research.proofState === 'externally_blocked') {
     optionalProviderBlockers.push(summarizeTruthLine('outward_research', params.research));
     if (params.research.nextAction) {
@@ -642,6 +737,12 @@ function buildLaunchReadinessTruth(params: {
       'Repair the local Anthropic-compatible gateway lane, then rerun npm run setup -- --step verify.',
     );
   }
+  if (params.bluebubbles.proofState !== 'live_proven') {
+    optionalBridgeBlockers.push(summarizeMessagesBridgeLine(params.bluebubbles));
+    if (params.bluebubbles.nextAction) {
+      optionalBridgeNextActions.push(params.bluebubbles.nextAction);
+    }
+  }
 
   const proofFreshnessGaps = (
     Object.entries(params.journeys) as Array<[keyof FieldTrialJourneyTruthMap, FieldTrialSurfaceTruth]>
@@ -670,13 +771,25 @@ function buildLaunchReadinessTruth(params: {
   } else if (nearLiveCoreSurfaces.length > 0) {
     coreStatus = 'fresh_proof_gap';
     status = 'near_live_only';
-    summary =
-      'Andrea core companion is close, but one core surface still needs a same-host fresh proof step.';
+    const onlyAlexaNeedsFreshProof =
+      nearLiveCoreSurfaces.length === 1 &&
+      nearLiveCoreSurfaces[0]?.[0] === 'alexa' &&
+      params.telegram.proofState === 'live_proven';
+    summary = onlyAlexaNeedsFreshProof
+      ? 'Andrea core companion is usable on this PC. Telegram is already dependable, and Alexa still needs one fresh same-host proof turn.'
+      : 'Andrea core companion is close, but one core surface still needs a same-host fresh proof step.';
   } else if (manualSyncSteps.length > 0) {
     coreStatus = 'manual_sync_pending';
     status = 'core_ready_with_manual_surface_sync';
     summary =
       'Andrea core companion is ready, but one manual surface sync step is still pending.';
+  } else if (optionalBridgeBlockers.length > 0) {
+    coreStatus = 'healthy';
+    status = 'provider_blocked_but_core_usable';
+    summary =
+      params.bluebubbles.bridgeAvailability === 'available'
+        ? 'Andrea core companion is ready on this PC. Messages is a best-effort bridge right now, and Telegram remains the dependable main path.'
+        : 'Andrea core companion is ready on this PC. The Messages bridge is unavailable right now, so use Telegram as the dependable main path.';
   } else if (optionalProviderBlockers.length > 0) {
     coreStatus = 'healthy';
     status = 'provider_blocked_but_core_usable';
@@ -692,6 +805,8 @@ function buildLaunchReadinessTruth(params: {
     manualSyncSteps,
     optionalProviderBlockers,
     optionalProviderNextActions: [...new Set(optionalProviderNextActions)],
+    optionalBridgeBlockers,
+    optionalBridgeNextActions: [...new Set(optionalBridgeNextActions)],
     proofFreshnessGaps,
     manualSurfaceSyncs: {
       alexa: alexaManualSync,
@@ -1338,31 +1453,188 @@ function buildBlueBubblesTruth(
     isBlueBubblesSelfThreadAliasJid(recentEngagement?.chatJid)
       ? ` Canonical self-thread: ${BLUEBUBBLES_CANONICAL_SELF_THREAD_JID}. Alias support stays enabled for bb:iMessage;-;jeffstory007@gmail.com.`
       : '';
+  const rawDerivedDetectionState = extractBlueBubblesDetailField(
+    channelDetail,
+    'detection',
+  );
+  const derivedDetectionState =
+    normalizeBlueBubblesDetailValue(rawDerivedDetectionState) || 'none';
+  const rawDerivedDetectionDetail = extractBlueBubblesDetailField(
+    channelDetail,
+    'detection detail',
+  );
+  const derivedDetectionDetail = normalizeBlueBubblesDetailValue(
+    rawDerivedDetectionDetail,
+  );
+  const rawDerivedDetectionNextAction = extractBlueBubblesDetailField(
+    channelDetail,
+    'detection next action',
+  );
+  const derivedDetectionNextAction = normalizeBlueBubblesDetailValue(
+    rawDerivedDetectionNextAction,
+  );
+  const rawDerivedShadowPollError = extractBlueBubblesDetailField(
+    channelDetail,
+    'shadow poll error',
+  );
+  const derivedShadowPollError =
+    normalizeBlueBubblesDetailValue(rawDerivedShadowPollError);
+  const rawDerivedShadowPollLastOk = extractBlueBubblesDetailField(
+    channelDetail,
+    'shadow poll last ok',
+  );
+  const derivedShadowPollLastOk =
+    normalizeBlueBubblesDetailValue(rawDerivedShadowPollLastOk);
+  const rawDerivedServerSeenChat = extractBlueBubblesDetailField(
+    channelDetail,
+    'server seen chat',
+  );
+  const derivedServerSeenChat =
+    normalizeBlueBubblesDetailValue(rawDerivedServerSeenChat);
+  const rawDerivedServerSeenAt = extractBlueBubblesDetailField(
+    channelDetail,
+    'server seen at',
+  );
+  const derivedServerSeenAt =
+    normalizeBlueBubblesDetailValue(rawDerivedServerSeenAt);
+  const derivedActiveEndpoint =
+    normalizeBlueBubblesDetailValue(
+      extractBlueBubblesDetailField(channelDetail, 'active endpoint'),
+    );
+  const derivedCandidateProbeResults =
+    normalizeBlueBubblesDetailValue(
+      extractBlueBubblesDetailField(channelDetail, 'candidate probe results'),
+    );
+  const derivedFallbackState =
+    extractBlueBubblesDetailField(channelDetail, 'fallback') || null;
+  const derivedFallbackLastSent =
+    extractBlueBubblesDetailField(channelDetail, 'fallback last sent') || null;
+  const derivedWebhookRegistrationDetail = normalizeBlueBubblesDetailValue(
+    extractBlueBubblesDetailField(channelDetail, 'webhook registration'),
+  );
+  const derivedWebhookRegistrationState =
+    deriveBlueBubblesWebhookRegistrationState(channelDetail);
+  const derivedTransportProbeState =
+    deriveBlueBubblesTransportProbeState(channelDetail);
+  const persistedCandidateProbeResults =
+    Object.entries(monitorState.candidateProbeResults).length > 0
+      ? Object.entries(monitorState.candidateProbeResults)
+          .map(([baseUrl, detail]) => `${baseUrl} => ${detail}`)
+          .join(' | ')
+      : null;
+  const effectiveCandidateProbeResults =
+    derivedCandidateProbeResults
+      ? derivedCandidateProbeResults.replace(/ \|\| /g, ' | ')
+      : persistedCandidateProbeResults || null;
+  const effectiveWebhookRegistrationState =
+    derivedWebhookRegistrationState || webhookRegistration.state;
+  const effectiveWebhookRegistrationDetail =
+    derivedWebhookRegistrationDetail || webhookRegistration.detail;
+  const effectiveTransportProbeState =
+    derivedTransportProbeState !== 'not_checked'
+      ? derivedTransportProbeState
+      : bluebubblesChannel?.state === 'ready'
+        ? 'reachable'
+        : 'not_checked';
+  const effectiveShadowPollLastOkAt =
+    rawDerivedShadowPollLastOk === 'none'
+      ? 'none'
+      : derivedShadowPollLastOk || monitorState.shadowPollLastOkAt || 'none';
+  const effectiveShadowPollLastError =
+    rawDerivedShadowPollError === 'none'
+      ? 'none'
+      : derivedShadowPollError || monitorState.shadowPollLastError || 'none';
+  const effectiveMostRecentServerSeenChat =
+    rawDerivedServerSeenChat === 'none'
+      ? 'none'
+      : derivedServerSeenChat || monitorState.mostRecentServerSeenChatJid || 'none';
+  const effectiveMostRecentServerSeenAt =
+    rawDerivedServerSeenAt === 'none'
+      ? 'none'
+      : derivedServerSeenAt || monitorState.mostRecentServerSeenAt || 'none';
+  const shadowMonitorOverrideAllowed =
+    derivedDetectionState === 'none' ||
+    derivedDetectionState === 'ignored_by_gate_or_scope' ||
+    derivedDetectionState === 'transport_unreachable';
+  const shadowMonitorUnstable =
+    effectiveTransportProbeState === 'reachable' &&
+    effectiveWebhookRegistrationState === 'registered' &&
+    effectiveShadowPollLastError !== 'none' &&
+    effectiveShadowPollLastOkAt === 'none' &&
+    effectiveMostRecentServerSeenChat === 'none' &&
+    shadowMonitorOverrideAllowed;
+  const liveDetectionEnvelopePresent =
+    rawDerivedDetectionState !== null ||
+    rawDerivedDetectionDetail !== null ||
+    rawDerivedDetectionNextAction !== null;
+  let effectiveDetectionState =
+    derivedDetectionState !== 'none'
+      ? derivedDetectionState
+      : monitorState.detectionState;
+  const staleReachabilityDetail = (
+    liveDetectionEnvelopePresent
+      ? derivedDetectionDetail || ''
+      : monitorState.detectionDetail || ''
+  ).toLowerCase();
+  if (shadowMonitorUnstable) {
+    effectiveDetectionState = 'mixed_degraded';
+  } else if (staleReachabilityDetail.includes('could not reach the bluebubbles server')) {
+    effectiveDetectionState =
+      effectiveTransportProbeState === 'reachable'
+        ? 'mixed_degraded'
+        : 'transport_unreachable';
+  }
+  const effectiveDetectionDetail =
+    shadowMonitorUnstable
+      ? `Andrea can reach the BlueBubbles bridge from this PC, but the recent-activity shadow poll is failing (${effectiveShadowPollLastError}), so the same-thread health check is not trustworthy yet.`
+      : liveDetectionEnvelopePresent
+        ? derivedDetectionDetail || null
+        : monitorState.detectionDetail ||
+          (effectiveDetectionState === 'transport_unreachable' && derivedShadowPollError
+            ? `Andrea could not reach the BlueBubbles server from this host. ${derivedShadowPollError}`
+            : null) ||
+          null;
+  const effectiveDetectionNextAction =
+    shadowMonitorUnstable
+      ? 'Check the BlueBubbles recent-message endpoint and shadow-poll path for this Windows host, then retry the same 1:1 Messages thread.'
+      : liveDetectionEnvelopePresent
+        ? derivedDetectionNextAction || null
+        : monitorState.detectionNextAction ||
+          (effectiveDetectionState === 'transport_unreachable'
+            ? 'Check the BlueBubbles server endpoint for this Windows host, prefer a stable IP or explicit candidate list over a .local hostname, then retry the same 1:1 Messages thread.'
+            : null) ||
+          null;
+  const bridgeAvailability: AppleMessagesBridgeAvailability =
+    config.enabled &&
+    snapshot.configured &&
+    Boolean(config.webhookPublicBaseUrl) &&
+    config.sendEnabled &&
+    effectiveTransportProbeState === 'reachable' &&
+    effectiveWebhookRegistrationState === 'registered'
+      ? 'available'
+      : 'unavailable';
 
   const base: Omit<FieldTrialBlueBubblesTruth, keyof FieldTrialSurfaceTruth> = {
+    providerName: 'bluebubbles',
+    bridgeAvailability,
     configured: snapshot.configured,
     serverBaseUrl: config.baseUrl || 'none',
-    activeServerBaseUrl: monitorState.activeBaseUrl || 'none',
+    activeServerBaseUrl: derivedActiveEndpoint || monitorState.activeBaseUrl || 'none',
     serverBaseUrlCandidates:
       config.baseUrlCandidates.length > 0
         ? config.baseUrlCandidates.join(' | ')
         : config.baseUrl || 'none',
-    serverBaseUrlCandidateResults:
-      Object.entries(monitorState.candidateProbeResults).length > 0
-        ? Object.entries(monitorState.candidateProbeResults)
-            .map(([baseUrl, detail]) => `${baseUrl} => ${detail}`)
-            .join(' | ')
-        : 'none',
+    serverBaseUrlCandidateResults: effectiveCandidateProbeResults || 'none',
     listenerHost: config.host,
     listenerPort: config.port,
     publicWebhookUrl:
       config.enabled === true
         ? redactBlueBubblesWebhookUrl(buildBlueBubblesWebhookUrl(config))
         : 'none',
-    webhookRegistrationState: webhookRegistration.state,
-    webhookRegistrationDetail: webhookRegistration.detail,
+    webhookRegistrationState: effectiveWebhookRegistrationState,
+    webhookRegistrationDetail: effectiveWebhookRegistrationDetail,
     chatScope: config.chatScope,
-    replyGateMode: 'mention_required',
+    replyGateMode: deriveBlueBubblesReplyGateMode(channelDetail) || 'mention_required',
     mostRecentEngagedChatJid: activeProofChat?.chatJid || recentEngagement?.chatJid || 'none',
     mostRecentEngagedAt:
       activeProofChat?.at ||
@@ -1386,14 +1658,17 @@ function buildBlueBubblesTruth(
     attemptedTargetSequence: transportDiagnostics.attemptedTargetSequence,
     transportState: bluebubblesChannel?.state || snapshot.state,
     transportDetail: channelDetail,
-    detectionState: monitorState.detectionState,
-    detectionDetail: monitorState.detectionDetail || 'none',
-    detectionNextAction: monitorState.detectionNextAction || 'none',
-    shadowPollLastOkAt: monitorState.shadowPollLastOkAt || 'none',
-    shadowPollLastError: monitorState.shadowPollLastError || 'none',
-    shadowPollMostRecentChat: monitorState.shadowPollMostRecentChat || 'none',
-    mostRecentServerSeenAt: monitorState.mostRecentServerSeenAt || 'none',
-    mostRecentServerSeenChatJid: monitorState.mostRecentServerSeenChatJid || 'none',
+    detectionState: effectiveDetectionState,
+    detectionDetail: effectiveDetectionDetail || 'none',
+    detectionNextAction: effectiveDetectionNextAction || 'none',
+    shadowPollLastOkAt: effectiveShadowPollLastOkAt,
+    shadowPollLastError: effectiveShadowPollLastError,
+    shadowPollMostRecentChat:
+      rawDerivedServerSeenChat === 'none'
+        ? 'none'
+        : monitorState.shadowPollMostRecentChat || derivedServerSeenChat || 'none',
+    mostRecentServerSeenAt: effectiveMostRecentServerSeenAt,
+    mostRecentServerSeenChatJid: effectiveMostRecentServerSeenChat,
     mostRecentWebhookObservedAt:
       monitorState.mostRecentWebhookObservedAt || 'none',
     mostRecentWebhookObservedChatJid:
@@ -1401,9 +1676,16 @@ function buildBlueBubblesTruth(
     lastIgnoredAt: monitorState.lastIgnoredAt || 'none',
     lastIgnoredChatJid: monitorState.lastIgnoredChatJid || 'none',
     lastIgnoredReason: monitorState.lastIgnoredReason || 'none',
-    crossSurfaceFallbackState: monitorState.crossSurfaceFallbackState,
+    crossSurfaceFallbackState:
+      derivedFallbackState && derivedFallbackState !== 'none'
+        ? derivedFallbackState
+        : monitorState.crossSurfaceFallbackState,
     crossSurfaceFallbackLastSentAt:
-      monitorState.crossSurfaceFallbackLastSentAt || 'none',
+      derivedFallbackState !== null
+        ? derivedFallbackLastSent && derivedFallbackLastSent !== 'none'
+          ? derivedFallbackLastSent
+          : 'none'
+        : monitorState.crossSurfaceFallbackLastSentAt || 'none',
     messageActionProofState: matchingProofChainMessageAction
       ? 'fresh'
       : recentMessageActionProofs.length > 0
@@ -1425,8 +1707,15 @@ function buildBlueBubblesTruth(
         ? `Andrea drafted in ${draftLikeReplyMessage?.chat_jid || proofChainChatJid}, but no fresh message-action record was created yet.${blueBubblesSelfThreadAliasDetail}`
       : recentMessageActionProofs.length > 0
         ? `A recent BlueBubbles message-action decision exists in ${recentMessageActionProofs[0]!.proofChatJid}, but not in the same chat as the current proof chain.${blueBubblesSelfThreadAliasDetail}`
-        : `No fresh BlueBubbles message-action decision is recorded yet.${blueBubblesSelfThreadAliasDetail}`,
+      : `No fresh BlueBubbles message-action decision is recorded yet.${blueBubblesSelfThreadAliasDetail}`,
   };
+  const directOneToOneMode = base.replyGateMode === 'direct_1to1';
+  const blueBubblesPromptPrefix = directOneToOneMode ? '' : '@Andrea ';
+  const blueBubblesWarmupPrompt = `\`${blueBubblesPromptPrefix}hi\``;
+  const blueBubblesLooseEndsPrompt = `\`${blueBubblesPromptPrefix}what am I forgetting\``;
+  const blueBubblesDraftPrompt = `\`${blueBubblesPromptPrefix}what should I say back\``;
+  const blueBubblesSendPrompt = `\`${blueBubblesPromptPrefix}send it\``;
+  const blueBubblesSendLaterPrompt = `\`${blueBubblesPromptPrefix}send it later tonight\``;
 
   if (
     !config.enabled &&
@@ -1437,12 +1726,13 @@ function buildBlueBubblesTruth(
     return {
       ...buildTruth({
       proofState: 'externally_blocked',
-      blocker: 'BlueBubbles is not configured in Andrea on this host.',
+      blocker:
+        'Messages bridge is not configured on this PC, so use Telegram as Andrea\'s dependable main messaging surface.',
       blockerOwner: 'external',
       nextAction:
         'Load the BLUEBUBBLES_* connection values on this Windows host, wire the Mac-side webhook to Andrea, and repro one real inbound -> reply -> follow-up flow.',
       detail:
-        'Repo-side BlueBubbles harnesses can still pass here, but Andrea does not currently have a live BlueBubbles server/webhook configuration loaded on this PC.',
+        'Repo-side BlueBubbles harnesses can still pass here, but Andrea does not currently have a live Messages bridge configured on this PC.',
       }),
       ...base,
     };
@@ -1452,12 +1742,13 @@ function buildBlueBubblesTruth(
     return {
       ...buildTruth({
       proofState: 'externally_blocked',
-      blocker: 'BlueBubbles is disabled on this host.',
+      blocker:
+        'Messages bridge is disabled on this PC, so use Telegram as Andrea\'s dependable main messaging surface.',
       blockerOwner: 'external',
       nextAction:
         'Enable BLUEBUBBLES_ENABLED and point this host at the reachable BlueBubbles server/webhook.',
       detail:
-        'BlueBubbles code is present, but the channel is intentionally disabled on this machine.',
+        'BlueBubbles code is present, but the optional Messages bridge is intentionally disabled on this machine.',
       }),
       ...base,
     };
@@ -1469,14 +1760,14 @@ function buildBlueBubblesTruth(
       proofState: 'externally_blocked',
       blocker:
         snapshot.detail ||
-        'BlueBubbles is enabled but still missing the live server or chat-scope configuration.',
+        'Messages bridge is enabled but still missing the live server or chat-scope configuration.',
       blockerOwner: 'external',
       nextAction:
         config.chatScope === 'allowlist'
           ? 'Finish the BLUEBUBBLES_* connection values and set one or more allowed chat GUIDs for this host.'
           : 'Finish the BLUEBUBBLES_* connection values for this host.',
       detail:
-        'The BlueBubbles channel is enabled in code, but this host is not yet configured for live scoped conversations.',
+        'The BlueBubbles bridge is enabled in code, but this PC is not yet configured for live scoped Messages conversations.',
       }),
       ...base,
     };
@@ -1486,12 +1777,13 @@ function buildBlueBubblesTruth(
     return {
       ...buildTruth({
         proofState: 'externally_blocked',
-        blocker: 'BlueBubbles does not have a public webhook URL configured for this Windows host.',
+        blocker:
+          'Messages bridge does not have a public webhook URL configured for this Windows host, so Telegram remains the reliable main path.',
         blockerOwner: 'external',
         nextAction:
           'Set BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL to the Mac-reachable Andrea listener URL, then update the Mac-side BlueBubbles webhook.',
         detail:
-          'Andrea can listen locally, but the Mac-side BlueBubbles server needs a public webhook target that points back to this Windows host.',
+          'Andrea can listen locally, but the Mac-side BlueBubbles server still needs a public webhook target that points back to this Windows host.',
       }),
       ...base,
     };
@@ -1501,18 +1793,19 @@ function buildBlueBubblesTruth(
     return {
       ...buildTruth({
       proofState: 'externally_blocked',
-      blocker: 'BlueBubbles outbound reply-back is still disabled on this host.',
+      blocker:
+        'Messages bridge can be configured here, but reply-back is still disabled on this host. Use Telegram until the bridge can answer back.',
       blockerOwner: 'external',
       nextAction:
         'Enable BLUEBUBBLES_SEND_ENABLED and repro one real inbound -> reply -> follow-up flow.',
       detail:
-        'Inbound webhook handling is configured, but this host cannot yet prove a full live reply-back flow.',
+        'Inbound webhook handling is configured, but this PC cannot yet prove a full live reply-back flow.',
       }),
       ...base,
     };
   }
 
-  if (monitorState.detectionState === 'transport_unreachable') {
+  if (effectiveDetectionState === 'transport_unreachable') {
     const detailParts = [
       base.detectionDetail !== 'none' ? base.detectionDetail : null,
       base.activeServerBaseUrl !== 'none'
@@ -1537,7 +1830,7 @@ function buildBlueBubblesTruth(
       ...buildTruth({
         proofState: 'externally_blocked',
         blocker:
-          'Andrea cannot currently reach the BlueBubbles server from this Windows host, so Messages may miss 1:1 texts before Andrea ever sees them.',
+          'Messages bridge is unavailable from this Windows host right now, so Messages may miss 1:1 texts before Andrea ever sees them. Use Telegram as the dependable main path.',
         blockerOwner: 'external',
         nextAction:
           base.detectionNextAction !== 'none'
@@ -1550,15 +1843,22 @@ function buildBlueBubblesTruth(
   }
 
   if (
-    monitorState.detectionState === 'suspected_missed_inbound' ||
-    monitorState.detectionState === 'mixed_degraded'
+    effectiveDetectionState === 'suspected_missed_inbound' ||
+    effectiveDetectionState === 'mixed_degraded'
   ) {
+    const shadowMonitorBlocked =
+      shadowMonitorUnstable && base.shadowPollLastError !== 'none';
     const blocker =
-      monitorState.detectionState === 'mixed_degraded'
+      shadowMonitorBlocked
+        ? 'Messages bridge is reachable on this PC, but the same-thread health check is failing, so Andrea cannot trust what it is seeing there yet.'
+        : effectiveDetectionState === 'mixed_degraded'
         ? 'BlueBubbles is seeing newer chat activity than Andrea on the webhook side, and a recent reply-back attempt failed too.'
         : 'BlueBubbles server is seeing newer chat activity than Andrea on the webhook side.';
     const detailParts = [
       base.detectionDetail !== 'none' ? base.detectionDetail : null,
+      shadowMonitorBlocked && base.shadowPollLastError !== 'none'
+        ? `Shadow poll error: ${base.shadowPollLastError}.`
+        : null,
       base.shadowPollMostRecentChat !== 'none'
         ? `Most recent server-seen chat: ${base.shadowPollMostRecentChat}.`
         : null,
@@ -1577,8 +1877,8 @@ function buildBlueBubblesTruth(
     return {
       ...buildTruth({
         proofState: 'degraded_but_usable',
-        blocker,
-        blockerOwner: 'external',
+        blocker: `${blocker} Telegram remains the dependable main messaging surface while this bridge is unstable.`,
+        blockerOwner: shadowMonitorBlocked ? 'repo_side' : 'external',
         nextAction:
           base.detectionNextAction !== 'none'
             ? base.detectionNextAction
@@ -1590,14 +1890,14 @@ function buildBlueBubblesTruth(
   }
 
   if (
-    monitorState.detectionState === 'reply_delivery_broken' &&
+    effectiveDetectionState === 'reply_delivery_broken' &&
     !bluebubblesChannel?.lastError
   ) {
     return {
       ...buildTruth({
         proofState: 'degraded_but_usable',
         blocker:
-          'BlueBubbles observed a Messages turn, but reply delivery is currently breaking before Andrea can answer back.',
+          'Messages bridge observed a Messages turn, but reply delivery is currently breaking before Andrea can answer back. Telegram remains the dependable main path while this is unstable.',
         blockerOwner: 'repo_side',
         nextAction:
           base.detectionNextAction !== 'none'
@@ -1615,14 +1915,14 @@ function buildBlueBubblesTruth(
       base.lastSendErrorDetail !== 'none'
     ) {
       const blocker = lastInboundWasSelfAuthored
-        ? 'BlueBubbles received your @Andrea message, but reply-back failed in that same chat.'
-        : 'BlueBubbles received a real inbound message, but reply-back failed in that same chat.';
+        ? 'Messages bridge received your @Andrea message, but reply-back failed in that same chat.'
+        : 'Messages bridge received a real inbound message, but reply-back failed in that same chat.';
       const nextAction = lastInboundWasSelfAuthored
         ? 'Retry the same `@Andrea` prompt in this self-chat after the direct-target fix lands. In parallel, you can still use a normal 1:1 or group thread as a second proof target.'
         : 'Retry the same `@Andrea` prompt in that chat and inspect the BlueBubbles direct-target diagnostics if reply-back still fails.';
       const detailPrefix = lastInboundChatJid !== 'none'
         ? `Recent inbound reached ${lastInboundChatJid}, but no Andrea reply was delivered back yet.`
-        : 'A real BlueBubbles inbound reached Andrea, but no Andrea reply was delivered back yet.';
+        : 'A real Messages bridge inbound reached Andrea, but no Andrea reply was delivered back yet.';
       const targetDetail =
         base.lastOutboundTargetKind !== 'none'
           ? ` Andrea last tried ${base.lastOutboundTargetKind} -> ${base.lastOutboundTarget}.`
@@ -1658,10 +1958,10 @@ function buildBlueBubblesTruth(
     const blocker =
       /unauthor/i.test(bluebubblesChannel.lastError) ||
       /forbidden/i.test(bluebubblesChannel.lastError)
-        ? 'BlueBubbles server auth failed from Andrea on this host.'
+        ? 'Messages bridge server auth failed from Andrea on this host.'
         : /secret/i.test(bluebubblesChannel.lastError)
-          ? 'BlueBubbles webhook secret mismatch is blocking live proof.'
-          : `BlueBubbles transport is degraded on this host: ${bluebubblesChannel.lastError}`;
+          ? 'Messages bridge webhook secret mismatch is blocking live proof.'
+          : `Messages bridge transport is degraded on this host: ${bluebubblesChannel.lastError}`;
     const nextAction =
       /secret/i.test(bluebubblesChannel.lastError)
         ? 'Update the Mac-side webhook secret to match Andrea and repro one real inbound -> reply -> follow-up flow.'
@@ -1680,15 +1980,15 @@ function buildBlueBubblesTruth(
     };
   }
 
-  if (webhookRegistration.state === 'missing') {
+  if (effectiveWebhookRegistrationState === 'missing') {
     return {
       ...buildTruth({
         proofState: 'externally_blocked',
         blocker:
-          'BlueBubbles transport is up, but the live server does not have Andrea’s webhook registered yet.',
+          "Messages bridge transport is up, but the live server does not have Andrea's webhook registered yet.",
         blockerOwner: 'external',
         nextAction:
-        'Register Andrea’s public webhook on the BlueBubbles server, then send `@Andrea hi` from any synced chat.',
+          `Register Andrea's public webhook on the BlueBubbles server, then send ${blueBubblesWarmupPrompt} from the companion thread.`,
         detail:
           'Andrea is listening on this Windows host and the BlueBubbles server is reachable, but the Mac-side server still needs the matching webhook entry before real inbound traffic can reach Andrea.',
       }),
@@ -1711,8 +2011,8 @@ function buildBlueBubblesTruth(
         proofState: 'live_proven',
         detail:
           sameThreadContinuationProof
-            ? `BlueBubbles is live-proven on this host. Recent same-thread proof is anchored in ${creditedLiveProofChatJid}, including a fresh message-action decision and a fresh same-thread continuation after it.`
-            : `BlueBubbles is live-proven on this host. Recent same-thread proof is anchored in ${creditedLiveProofChatJid}, including a fresh message-action decision in that same chat.`,
+            ? `Messages bridge is available on this host through BlueBubbles. Recent same-thread proof is anchored in ${creditedLiveProofChatJid}, including a fresh message-action decision and a fresh same-thread continuation after it.`
+            : `Messages bridge is available on this host through BlueBubbles. Recent same-thread proof is anchored in ${creditedLiveProofChatJid}, including a fresh message-action decision in that same chat.`,
       }),
       ...base,
     };
@@ -1730,8 +2030,8 @@ function buildBlueBubblesTruth(
         proofState: 'degraded_but_usable',
         blocker:
           matchingProofChainMessageAction
-            ? 'BlueBubbles has real traffic on this host, but the full same-thread follow-up proof chain is not fresh enough yet.'
-            : 'BlueBubbles has real traffic on this host, but the same-thread message-action proof leg is still missing.',
+            ? 'Messages bridge is available on this host through BlueBubbles, but the full same-thread follow-up proof chain is not fresh enough yet.'
+            : 'Messages bridge is available on this host through BlueBubbles, but the same-thread message-action proof leg is still missing.',
         blockerOwner: 'repo_side',
         nextAction:
           matchingProofChainMessageAction
@@ -1739,8 +2039,8 @@ function buildBlueBubblesTruth(
             : 'In that same BlueBubbles chat, ask what you should say back or send back, then use send it or send it later tonight so the message-action leg is proven too.',
         detail:
           matchingProofChainMessageAction
-            ? `Real BlueBubbles traffic is flowing on this host through ${activeChatJid}, but the full follow-up proof bar still needs one fresh same-thread continuation.`
-            : `Real BlueBubbles traffic is flowing on this host through ${activeChatJid}, but a fresh same-chat message-action decision is still missing. ${base.messageActionProofDetail}`,
+            ? `Real Messages bridge traffic is flowing on this host through ${activeChatJid}, but the full follow-up proof bar still needs one fresh same-thread continuation.`
+            : `Real Messages bridge traffic is flowing on this host through ${activeChatJid}, but a fresh same-chat message-action decision is still missing. ${base.messageActionProofDetail}`,
       }),
       ...base,
     };
@@ -1750,12 +2050,12 @@ function buildBlueBubblesTruth(
     ...buildTruth({
       proofState: 'near_live_only',
       blocker:
-        'A fresh real BlueBubbles inbound -> reply -> follow-up roundtrip has not been reproved on this host.',
+        'A fresh real Messages bridge inbound -> reply -> follow-up roundtrip has not been reproved on this host yet.',
       blockerOwner: 'external',
       nextAction:
-        'Send `@Andrea hi`, then `@Andrea what am I forgetting`, then `@Andrea what should I say back` or `@Andrea what should I send back`, and finally `@Andrea send it` or `@Andrea send it later tonight` in that same BlueBubbles conversation.',
+        `Send ${blueBubblesWarmupPrompt}, then ${blueBubblesLooseEndsPrompt}, then ${blueBubblesDraftPrompt} or \`${blueBubblesPromptPrefix}what should I send back\`, and finally ${blueBubblesSendPrompt} or ${blueBubblesSendLaterPrompt} in that same BlueBubbles conversation.`,
       detail:
-        `BlueBubbles configuration is present, but this pass still needs a real same-host roundtrip before the surface can be called fully live-proven. ${base.messageActionProofDetail}`,
+        `Messages bridge configuration is present, but this pass still needs a real same-host roundtrip before the surface can be called fully live-proven. ${base.messageActionProofDetail}`,
     }),
     ...base,
   };

@@ -67,6 +67,30 @@ describe('companion conversation binding', () => {
     expect(binding?.group.name).toContain('BlueBubbles');
   });
 
+  it('keeps trigger behavior for synthetic BlueBubbles group chats', () => {
+    storeChatMetadata(
+      'bb:iMessage;+;chat-group',
+      '2026-04-07T18:01:00.000Z',
+      'Family',
+      'bluebubbles',
+      true,
+    );
+
+    const binding = resolveCompanionConversationBinding(
+      'bb:iMessage;+;chat-group',
+      registeredGroups,
+      {
+        bluebubbles: {
+          enabled: true,
+          chatScope: 'all_synced',
+          groupFolder: 'main',
+        },
+      },
+    );
+
+    expect(binding?.group.requiresTrigger).toBe(true);
+  });
+
   it('lists known all-synced BlueBubbles jids for companion polling when the shared folder exists', () => {
     storeChatMetadata(
       'bb:iMessage;+;chat-123',

@@ -455,6 +455,12 @@ export function formatDebugStatus(): string {
           `- Optional provider next steps: ${fieldTrialTruth.launchReadiness.optionalProviderNextActions.join(' | ')}`,
         ]
       : []),
+    ...(fieldTrialTruth.launchReadiness.optionalBridgeBlockers.length > 0
+      ? [
+          `- Optional Messages bridge notes: ${fieldTrialTruth.launchReadiness.optionalBridgeBlockers.join(' | ')}`,
+          `- Optional Messages bridge next steps: ${fieldTrialTruth.launchReadiness.optionalBridgeNextActions.join(' | ')}`,
+        ]
+      : []),
     ...(fieldTrialTruth.launchReadiness.proofFreshnessGaps.length > 0
       ? [
           `- Proof freshness gaps: ${fieldTrialTruth.launchReadiness.proofFreshnessGaps.join(' | ')}`,
@@ -497,6 +503,8 @@ export function formatDebugStatus(): string {
     `- Alexa stale shape: ${fieldTrialTruth.alexa.staleShape}`,
     `- Alexa failure checks: ${fieldTrialTruth.alexa.failureChecklist}`,
     `- BlueBubbles proof: ${fieldTrialTruth.bluebubbles.proofState}`,
+    `- BlueBubbles provider: ${fieldTrialTruth.bluebubbles.providerName}`,
+    `- Messages bridge availability: ${fieldTrialTruth.bluebubbles.bridgeAvailability}`,
     `- BlueBubbles proof detail: ${fieldTrialTruth.bluebubbles.detail}`,
     `- BlueBubbles transport: ${fieldTrialTruth.bluebubbles.transportState}`,
     `- BlueBubbles transport detail: ${fieldTrialTruth.bluebubbles.transportDetail}`,

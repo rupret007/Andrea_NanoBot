@@ -101,8 +101,14 @@ function collectAttentionItems(
 
 function formatProblemEvents(
   review: ReturnType<typeof buildPilotReviewDigest>,
+  attention: ReturnType<typeof collectAttentionItems>,
 ): string[] {
   if (review.currentActionableProblemEvents.length === 0) {
+    if (attention.repoSide.length > 0) {
+      return [
+        '- no new pilot issue rows are open right now, but the repo-side attention list above is the real current friction set.',
+      ];
+    }
     return ['- none beyond the standing proof gaps below'];
   }
   return review.currentActionableProblemEvents.slice(0, 8).map((event) => {
@@ -182,6 +188,12 @@ async function main(): Promise<void> {
           `  optional_provider_next_steps=${truth.launchReadiness.optionalProviderNextActions.join(' | ')}`,
         ]
       : []),
+    ...(truth.launchReadiness.optionalBridgeBlockers.length > 0
+      ? [
+          `  optional_messages_bridge_notes=${truth.launchReadiness.optionalBridgeBlockers.join(' | ')}`,
+          `  optional_messages_bridge_next_steps=${truth.launchReadiness.optionalBridgeNextActions.join(' | ')}`,
+        ]
+      : []),
     ...(truth.launchReadiness.proofFreshnessGaps.length > 0
       ? [
           `  proof_freshness_gaps=${truth.launchReadiness.proofFreshnessGaps.join(' | ')}`,
@@ -195,6 +207,7 @@ async function main(): Promise<void> {
     `  confirm=${truth.alexa.confirmCommand}`,
     ...(truth.alexa.blocker ? [`  blocker=${truth.alexa.blocker}`] : []),
     `- BlueBubbles: ${truth.bluebubbles.proofState}`,
+    `  provider=${truth.bluebubbles.providerName} / bridge=${truth.bluebubbles.bridgeAvailability}`,
     `  scope=${truth.bluebubbles.chatScope} / reply_gate=${truth.bluebubbles.replyGateMode} / transport=${truth.bluebubbles.transportState}`,
     `  detection=${truth.bluebubbles.detectionState} / fallback=${truth.bluebubbles.crossSurfaceFallbackState}`,
     `  server=${truth.bluebubbles.serverBaseUrl}`,
@@ -246,7 +259,7 @@ async function main(): Promise<void> {
     ...(attention.external.length > 0 ? attention.external : ['- none']),
     '',
     '*Current Actionable Friction*',
-    ...formatProblemEvents(review),
+    ...formatProblemEvents(review, attention),
     '',
     '*Proof Freshness Gaps*',
     ...(attention.proofGaps.length > 0 ? attention.proofGaps : ['- none']),

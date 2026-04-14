@@ -18,6 +18,7 @@ Stable user-safe behaviors:
 - reminders and follow-ups
 - calendar scheduling and schedule questions
 - planning, meal planning, groceries, errands, bill follow-through, and reply help
+- zero-setup capture for groceries, errands, bills, meal ideas, household checklists, and tonight items
 - fast direct replies for simple questions and basic math
 - research and summaries in normal language
 - a small public-safe command set
@@ -26,7 +27,9 @@ Surface roles:
 
 - Telegram is Andrea's richest day-to-day companion surface.
 - Alexa is the shorter voice surface when your operator enabled the custom skill.
-- BlueBubbles is the bounded personal messaging surface and stays mention-required.
+- BlueBubbles is an optional bounded Messages bridge when available and stays mention-required.
+- Alexa should read back only the most useful slice of a list and hand richer review to Telegram when needed.
+- BlueBubbles should stay capture-and-readout only for lists, with fuller management handed off to Telegram.
 
 UX defaults for Telegram:
 
@@ -35,6 +38,10 @@ UX defaults for Telegram:
 - `/commands` should stay focused on setup and status, not become the primary way to talk to Andrea
 - `/features` should answer what Andrea is best at here and when another surface is better
 - group menus should stay slimmer than DM menus so the bot feels lighter in shared chats
+- list capture should work without setup friction and seed sensible default groups on first use
+- Telegram may show bounded inline actions like `Done`, `Reopen`, `Defer`, `Remind`, `Move`, or `Convert` after a natural-language list readout
+- longer list review should stay grouped by practical buckets like Groceries, Errands, Bills This Week, Meals This Week, Household Open, Tonight, and Weekend instead of becoming a flat dump
+- smart household asks should work in plain language first, like `what do we need from the store`, `what's left for tonight`, `what should I handle this weekend`, or `what's missing for dinner`
 
 ## First-Time Telegram Onboarding
 
@@ -51,8 +58,14 @@ Good first requests:
 - `Help me set this up`
 - `What's on my calendar tomorrow?`
 - `Add milk to my shopping list`
+- `What's on groceries?`
+- `What do we need from the store?`
+- `Make this a monthly bill`
 - `Remind me to take my pills at 9`
 - `What bills do I need to pay this week?`
+- `What's left for tonight?`
+- `What should I handle this weekend?`
+- `What's missing for dinner?`
 - `What should I say back?`
 - `Help me plan tonight`
 - `Help me plan meals this week`

@@ -68,6 +68,16 @@ function isEligibleBlueBubblesChatJid(
   return chat?.is_group === 0;
 }
 
+function inferBlueBubblesSyntheticGroupRequirement(chatJid: string): boolean {
+  const chat = getAllChats().find((entry) => entry.jid === chatJid);
+  if (chat) {
+    return chat.is_group !== 0;
+  }
+  const normalized = chatJid.replace(/^bb:/, '');
+  const match = normalized.match(/^[^;]+;([+-]);/);
+  return match?.[1] === '+';
+}
+
 function listScopedBlueBubblesChatJids(
   config: BlueBubblesConversationBindingConfig | undefined,
 ): string[] {
@@ -119,7 +129,7 @@ export function resolveCompanionConversationBinding(
     group: {
       ...sharedGroup,
       name: `BlueBubbles (${sharedGroup.name})`,
-      requiresTrigger: false,
+      requiresTrigger: inferBlueBubblesSyntheticGroupRequirement(chatJid),
       isMain: false,
     },
   };

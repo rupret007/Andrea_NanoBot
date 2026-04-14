@@ -21,6 +21,7 @@ describe('assistant capabilities', () => {
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
   });
 
@@ -226,6 +227,13 @@ describe('assistant capabilities', () => {
     expect(add.handled).toBe(true);
     expect(add.replyText).toContain('groceries');
     expect(add.conversationSeed?.subjectData?.activeListItemIds).toHaveLength(1);
+    expect(add.sendOptions?.inlineActionRows?.flat()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ label: 'Done' }),
+        expect.objectContaining({ label: 'Groceries' }),
+        expect.objectContaining({ label: 'Plan' }),
+      ]),
+    );
 
     const read = await executeAssistantCapability({
       capabilityId: 'capture.read_items',
@@ -496,6 +504,40 @@ describe('assistant capabilities', () => {
 
     expect(openLoops.handled).toBe(true);
     expect(openLoops.replyText).toContain('needs attention');
+  });
+
+  it('uses the Messages model lane for BlueBubbles draft replies when available', async () => {
+    vi.stubEnv('OPENAI_API_KEY', 'test-key');
+    vi.stubEnv('OPENAI_BASE_URL', 'https://openai.test/v1');
+    globalThis.fetch = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          output_text:
+            '{"draftText":"Hey Candace, tonight still works for me. Let me know what feels easiest."}',
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      ),
+    ) as typeof fetch;
+
+    const draft = await executeAssistantCapability({
+      capabilityId: 'communication.draft_reply',
+      context: {
+        channel: 'bluebubbles',
+        groupFolder: 'main',
+        chatJid: 'bb:chat-1',
+      },
+      input: {
+        canonicalText:
+          'Candace: Can you let me know if dinner still works tonight?',
+      },
+    });
+
+    expect(draft.handled).toBe(true);
+    expect(draft.replyText).toContain('tonight still works for me');
+    expect(draft.messageAction?.messageActionId).toBeTruthy();
   });
 
   it('preserves explicit library titles and explains matched sources by topic', async () => {

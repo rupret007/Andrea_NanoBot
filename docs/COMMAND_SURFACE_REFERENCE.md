@@ -78,9 +78,9 @@ Important boundary:
 
 | Surface | Truth | Best for | Important boundary |
 | --- | --- | --- | --- |
-| Telegram | `live_proven` | Richest companion use for schedule, reminders, planning, review, research, messaging review, and operator work | Public-safe commands stay small; deeper control lives in the main control chat |
-| Alexa | `live_proven` proof on this host, with model sync tracked separately | Short voice help for calendar, reminders, groceries, bills, planning, review, and quick reply help | Real proof must come from the Andrea custom skill, and latest model changes should be confirmed with `setup -- --step alexa-model-sync` |
-| BlueBubbles | `degraded_but_usable` on this host | Bounded personal messaging companion in the active thread plus quick capture/readout for lists | Mention-required, messaging-first, and still needs a fresh same-thread message-action proof leg before it counts as `live_proven` |
+| Telegram | `live_proven` | Richest companion use for schedule, reminders, grouped household views, planning, review, research, messaging review, and operator work | Public-safe commands stay small; deeper control lives in the main control chat |
+| Alexa | `live_proven` proof on this host, with model sync tracked separately | Short voice help for calendar, reminders, groceries, bills this week, tonight or weekend orientation, and quick reply help | Real proof must come from the Andrea custom skill, and latest model changes should be confirmed with `setup -- --step alexa-model-sync` |
+| BlueBubbles | `degraded_but_usable` on this host | Optional best-effort Messages bridge in the active thread plus bounded capture/readout for lists and short household slices when the bridge is healthy | Mention-required, messaging-first, and Telegram remains the dependable main path while same-thread bridge health is unstable on this PC |
 
 ## Natural-Language Discovery Surfaces
 
@@ -91,11 +91,11 @@ These are discoverable by normal language rather than slash commands.
 | Ordinary chat and simple local asks | Telegram, Alexa, BlueBubbles | `live_proven` | `hi`, `what's up`, `what time is it`, `what day is it`, `thanks` |
 | Calendar and schedule | Telegram, Alexa | `live_proven` | `what's on my calendar tomorrow`, `what's next on my calendar`, `move that to 7` |
 | Reminders and save-for-later | Telegram, Alexa, BlueBubbles | `live_proven` | `remind me to take my pills at 9`, `remind me later`, `save that for later` |
-| Lists, groceries, bills, and everyday capture | Telegram, Alexa, BlueBubbles | `live_proven` repo-side | `help me set this up`, `add milk to my shopping list`, `what's on my list`, `mark that done` |
+| Lists, groceries, bills, and everyday capture | Telegram, Alexa, BlueBubbles | `live_proven` repo-side | `help me set this up`, `add milk to my shopping list`, `what do we need from the store`, `what's left for tonight`, `make this a monthly bill`, `mark that done` |
 | Planning and next steps | Telegram, Alexa | `live_proven` | `what am I forgetting`, `help me plan tonight`, `help me plan meals this week` |
 | Communication and reply help | Telegram, Alexa, BlueBubbles | `bounded` | `what should I say back`, `what do I owe people`, `summarize this message` |
 | Compare, explain, and saved context | Telegram, Alexa | `bounded` | `what should I know before deciding`, `compare these options`, `tell me something interesting` |
-| Open follow-through and people | Telegram, Alexa, BlueBubbles | `live_proven` | `what's still open`, `what bills do I need to pay this week`, `what about Candace` |
+| Open follow-through and people | Telegram, Alexa, BlueBubbles | `live_proven` | `what's still open`, `what bills do I need to pay this week`, `what should I handle this weekend`, `what about Candace` |
 | Coding and work help | Telegram | `live_proven` | natural-language project help plus `/cursor_status` |
 
 ## Operator-Only Telegram Slash Families
@@ -165,6 +165,7 @@ These are real product surface, but they should not show up in public slash help
 | `npm run debug:status` | Detailed proof and debug surface |
 | `npm run debug:pilot` | Flagship journey proof and pilot review surface |
 | `npm run debug:bluebubbles -- --live` | Live BlueBubbles transport and proof view |
+| `npm run debug:openbubbles-feasibility` | Operator-only OpenBubbles feasibility gate for a Mac-offline Messages bridge |
 | `npm run debug:google-calendar` | Bounded Google Calendar read/write proof harness |
 | `npm run debug:signature-flows` | Signature-journey product proof harness |
 

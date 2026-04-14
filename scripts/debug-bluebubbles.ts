@@ -113,6 +113,8 @@ async function runLiveMode(): Promise<void> {
 
   printBlock('BLUEBUBBLES LIVE PROOF', [
     `proof: ${truth.bluebubbles.proofState}`,
+    `provider: ${truth.bluebubbles.providerName}`,
+    `messages_bridge: ${truth.bluebubbles.bridgeAvailability}`,
     `detail: ${truth.bluebubbles.detail}`,
     `blocker: ${truth.bluebubbles.blocker || 'none'}`,
     `next_action: ${truth.bluebubbles.nextAction || 'none'}`,

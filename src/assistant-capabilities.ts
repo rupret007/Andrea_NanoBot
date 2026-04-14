@@ -43,6 +43,7 @@ import {
   analyzeCommunicationMessage,
   buildCommunicationOpenLoops,
   draftCommunicationReply,
+  draftCommunicationReplyWithChannelFluidity,
   formatCommunicationAnalysisReply,
   formatCommunicationDraftReply,
   formatCommunicationOpenLoopsReply,
@@ -80,6 +81,7 @@ import type {
   MissionExecutionContext,
   MissionPlanSnapshot,
   MissionSuggestedAction,
+  SendMessageOptions,
 } from './types.js';
 import { normalizeVoicePrompt } from './voice-ready.js';
 
@@ -351,6 +353,7 @@ export interface AssistantCapabilityResult {
   handled: boolean;
   capabilityId?: AssistantCapabilityId;
   replyText?: string;
+  sendOptions?: Pick<SendMessageOptions, 'inlineActions' | 'inlineActionRows'>;
   outputShape?: AssistantCapabilityOutputShape;
   trace?: AssistantCapabilityTrace;
   dailyResponse?: DailyCompanionResponse;
@@ -987,7 +990,11 @@ function formatResearchBlueBubblesReply(result: ResearchResult): string {
         .join(', ')}`,
     );
   }
-  lines.push(`Route: ${result.routeExplanation}`);
+  if (result.handoffOption) {
+    lines.push('If you want, I can send the fuller version to Telegram.');
+  } else if (result.followupSuggestions[0]) {
+    lines.push(result.followupSuggestions[0]);
+  }
   return lines.filter(Boolean).join('\n');
 }
 
@@ -2218,16 +2225,28 @@ async function runCommunicationDraftCapability(
   input: AssistantCapabilityInput,
 ): Promise<AssistantCapabilityResult> {
   if (!context.groupFolder) return { handled: false };
-  const draft = draftCommunicationReply({
-    channel: context.channel,
-    groupFolder: context.groupFolder,
-    chatJid: context.chatJid,
-    text: input.canonicalText || input.text || '',
-    replyText: context.replyText,
-    conversationSummary: context.conversationSummary,
-    priorContext: context.priorSubjectData,
-    now: context.now,
-  });
+  const draft =
+    context.channel === 'bluebubbles'
+      ? await draftCommunicationReplyWithChannelFluidity({
+          channel: context.channel,
+          groupFolder: context.groupFolder,
+          chatJid: context.chatJid,
+          text: input.canonicalText || input.text || '',
+          replyText: context.replyText,
+          conversationSummary: context.conversationSummary,
+          priorContext: context.priorSubjectData,
+          now: context.now,
+        })
+      : draftCommunicationReply({
+          channel: context.channel,
+          groupFolder: context.groupFolder,
+          chatJid: context.chatJid,
+          text: input.canonicalText || input.text || '',
+          replyText: context.replyText,
+          conversationSummary: context.conversationSummary,
+          priorContext: context.priorSubjectData,
+          now: context.now,
+        });
   const replyText = formatCommunicationDraftReply(context.channel, draft);
   if (!draft.ok) {
     return {
@@ -2698,29 +2717,56 @@ async function runMissionCapability(
         executionContext.suggestedActions[0]?.linkedRefJson,
         {},
       ).personName;
-    const draft = draftCommunicationReply({
-      channel: context.channel,
-      groupFolder: context.groupFolder,
-      chatJid: context.chatJid,
-      text: text || `draft a reply to ${personName || 'them'}`,
-      replyText:
-        executionContext.mission.summary ||
-        context.replyText ||
-        context.conversationSummary,
-      conversationSummary: executionContext.mission.summary,
-      priorContext: {
-        personName,
-        communicationThreadId: context.priorSubjectData?.communicationThreadId,
-        communicationSubjectIds:
-          context.priorSubjectData?.communicationSubjectIds,
-        communicationLifeThreadIds:
-          context.priorSubjectData?.communicationLifeThreadIds,
-        lastCommunicationSummary:
-          context.priorSubjectData?.lastCommunicationSummary ||
-          executionContext.mission.summary,
-      },
-      now: context.now,
-    });
+    const draft =
+      context.channel === 'bluebubbles'
+        ? await draftCommunicationReplyWithChannelFluidity({
+            channel: context.channel,
+            groupFolder: context.groupFolder,
+            chatJid: context.chatJid,
+            text: text || `draft a reply to ${personName || 'them'}`,
+            replyText:
+              executionContext.mission.summary ||
+              context.replyText ||
+              context.conversationSummary,
+            conversationSummary: executionContext.mission.summary,
+            priorContext: {
+              personName,
+              communicationThreadId:
+                context.priorSubjectData?.communicationThreadId,
+              communicationSubjectIds:
+                context.priorSubjectData?.communicationSubjectIds,
+              communicationLifeThreadIds:
+                context.priorSubjectData?.communicationLifeThreadIds,
+              lastCommunicationSummary:
+                context.priorSubjectData?.lastCommunicationSummary ||
+                executionContext.mission.summary,
+            },
+            now: context.now,
+          })
+        : draftCommunicationReply({
+            channel: context.channel,
+            groupFolder: context.groupFolder,
+            chatJid: context.chatJid,
+            text: text || `draft a reply to ${personName || 'them'}`,
+            replyText:
+              executionContext.mission.summary ||
+              context.replyText ||
+              context.conversationSummary,
+            conversationSummary: executionContext.mission.summary,
+            priorContext: {
+              personName,
+              communicationThreadId:
+                context.priorSubjectData?.communicationThreadId,
+              communicationSubjectIds:
+                context.priorSubjectData?.communicationSubjectIds,
+              communicationLifeThreadIds:
+                context.priorSubjectData?.communicationLifeThreadIds,
+              lastCommunicationSummary:
+                context.priorSubjectData?.lastCommunicationSummary ||
+                executionContext.mission.summary,
+            },
+            now: context.now,
+          });
     replyText = draft.draftText
       ? formatCommunicationDraftReply(context.channel, draft)
       : draft.clarificationQuestion ||
@@ -3119,6 +3165,7 @@ async function runEverydayCaptureCapability(
     handled: true,
     capabilityId: descriptor.id,
     replyText: result.replyText,
+    sendOptions: result.sendOptions,
     outputShape:
       result.mode === 'read_items' && context.channel === 'telegram'
         ? 'chat_rich'

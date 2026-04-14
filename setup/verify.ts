@@ -2015,6 +2015,8 @@ export async function run(_args: string[]): Promise<void> {
     launchCandidateStatus === 'core_ready_with_manual_surface_sync' ||
     launchCandidateStatus === 'provider_blocked_but_core_usable'
       ? 'success'
+      : launchCandidateStatus === 'near_live_only'
+        ? 'attention_needed'
       : 'failed';
 
   logger.info({ status, channelAuth }, 'Verification complete');
@@ -2233,6 +2235,7 @@ export async function run(_args: string[]): Promise<void> {
     REGISTERED_GROUPS: registeredGroups,
     MOUNT_ALLOWLIST: mountAllowlist,
     SERVICE_EXPECTED_STOPPED: serviceExpectedStopped,
+    CORE_USABLE: status !== 'failed',
     EXTERNAL_BLOCKERS: externalBlockers.join(','),
     MISSING_REQUIREMENTS: reportedMissingRequirements.join(','),
     NEXT_STEPS: nextSteps,

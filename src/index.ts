@@ -166,6 +166,8 @@ import {
   normalizeBlueBubblesCompanionPrompt,
   resolveMostRecentBlueBubblesCompanionChat,
 } from './bluebubbles-companion.js';
+import { isBlueBubblesSelfThreadAliasJid } from './bluebubbles-self-thread.js';
+import { interpretBlueBubblesDirectTurn } from './messages-fluidity.js';
 import { recordOrganicTelegramRoundtripSuccess } from './telegram-roundtrip.js';
 import { readEnvFile } from './env.js';
 import {
@@ -3202,11 +3204,56 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   );
 
   const rawLastContent = missedMessages.at(-1)?.content ?? '';
-  const lastContent =
+  let lastContent =
     chatJid.startsWith('bb:')
       ? normalizeBlueBubblesCompanionPrompt(rawLastContent)
       : rawLastContent;
   const now = new Date();
+  let blueBubblesDirectTurnEnvelope: Awaited<
+    ReturnType<typeof interpretBlueBubblesDirectTurn>
+  > | null = null;
+  let blueBubblesDirectTurnChecked = false;
+  const maybeInterpretBlueBubblesDirectTurn = async () => {
+    if (blueBubblesDirectTurnChecked) {
+      return blueBubblesDirectTurnEnvelope;
+    }
+    blueBubblesDirectTurnChecked = true;
+    if (
+      conversationChannel !== 'bluebubbles' ||
+      requestPolicy.route !== 'direct_assistant' ||
+      quickReply ||
+      !isBlueBubblesSelfThreadAliasJid(chatJid)
+    ) {
+      blueBubblesDirectTurnEnvelope = null;
+      return blueBubblesDirectTurnEnvelope;
+    }
+    const priorAssistantCapabilitySeed = getSharedAssistantCapabilitySeed(
+      chatJid,
+      now,
+    );
+    const priorDailyContext = getDailyCompanionContext(chatJid, now);
+    blueBubblesDirectTurnEnvelope = await interpretBlueBubblesDirectTurn({
+      groupFolder: group.folder,
+      chatJid,
+      text: lastContent,
+      conversationSummary:
+        priorAssistantCapabilitySeed?.summaryText ||
+        priorDailyContext?.summaryText,
+      replyText: missedMessages.at(-1)?.reply_to?.content,
+      priorPersonName: priorAssistantCapabilitySeed?.subjectData?.personName,
+      priorThreadTitle: priorAssistantCapabilitySeed?.subjectData?.threadTitle,
+      priorLastAnswerSummary:
+        priorAssistantCapabilitySeed?.subjectData?.lastAnswerSummary,
+      now,
+    });
+    if (
+      blueBubblesDirectTurnEnvelope?.assistantPrompt &&
+      blueBubblesDirectTurnEnvelope.routeFamily !== 'chat'
+    ) {
+      lastContent = blueBubblesDirectTurnEnvelope.assistantPrompt;
+    }
+    return blueBubblesDirectTurnEnvelope;
+  };
   const tryHandleActionBundleFollowup = async (): Promise<boolean> => {
     const snapshot = findLatestChatActionBundle({
       groupFolder: group.folder,
@@ -3225,7 +3272,16 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     });
   };
   const tryHandleMessageActionFollowup = async (): Promise<boolean> => {
-    const operation = interpretMessageActionFollowup(lastContent);
+    let operation = interpretMessageActionFollowup(lastContent);
+    if (!operation) {
+      const interpretedTurn = await maybeInterpretBlueBubblesDirectTurn();
+      if (
+        interpretedTurn?.routeFamily === 'message_action_followup' &&
+        interpretedTurn.assistantPrompt
+      ) {
+        operation = interpretMessageActionFollowup(interpretedTurn.assistantPrompt);
+      }
+    }
     if (!operation) return false;
     const messageAction = resolveMessageActionForFollowup({
       groupFolder: group.folder,
@@ -5621,7 +5677,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             await channel.sendMessage(chatJid, presentation.text);
           }
         } else {
-          await channel.sendMessage(chatJid, draftResult.replyText || 'Okay.');
+          await channel.sendMessage(
+            chatJid,
+            draftResult.replyText || 'Okay.',
+            draftResult.sendOptions || {},
+          );
         }
         if (draftResult.conversationSeed) {
           setSharedAssistantCapabilitySeed(chatJid, draftResult.conversationSeed, now);
@@ -5629,7 +5689,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           clearSharedAssistantCapabilitySeed(chatJid);
         }
       } else {
-        await channel.sendMessage(chatJid, result.replyText || 'Okay.');
+        await channel.sendMessage(
+          chatJid,
+          result.replyText || 'Okay.',
+          result.capabilityResult?.sendOptions || {},
+        );
       }
 
       clearActionLayerContext(chatJid);
@@ -5673,11 +5737,25 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       chatJid,
       now,
     );
-    const capabilityMatch =
+    let capabilityMatch =
       continueAssistantCapabilityFromPriorSubjectData(
         lastContent,
         priorAssistantCapabilitySeed?.subjectData,
       ) || matchAssistantCapabilityRequest(lastContent);
+    if (!capabilityMatch) {
+      const interpretedTurn = await maybeInterpretBlueBubblesDirectTurn();
+      if (
+        interpretedTurn?.assistantPrompt &&
+        interpretedTurn.routeFamily !== 'chat' &&
+        interpretedTurn.routeFamily !== 'message_action_followup'
+      ) {
+        capabilityMatch =
+          continueAssistantCapabilityFromPriorSubjectData(
+            interpretedTurn.assistantPrompt,
+            priorAssistantCapabilitySeed?.subjectData,
+          ) || matchAssistantCapabilityRequest(interpretedTurn.assistantPrompt);
+      }
+    }
     if (!capabilityMatch) {
       return false;
     }
@@ -5788,7 +5866,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             now,
           );
         }
-        await channel.sendMessage(chatJid, result.replyText || 'Okay.');
+        await channel.sendMessage(
+          chatJid,
+          result.replyText || 'Okay.',
+          result.sendOptions || {},
+        );
       } else if (result.mediaResult?.artifact && channel.sendArtifact) {
         await channel.sendArtifact(chatJid, result.mediaResult.artifact, {
           caption: result.replyText || result.mediaResult.summaryText,
@@ -5823,7 +5905,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           }
         }
       } else {
-        await channel.sendMessage(chatJid, result.replyText || 'Okay.');
+        await channel.sendMessage(
+          chatJid,
+          result.replyText || 'Okay.',
+          result.sendOptions || {},
+        );
       }
 
       const actionBundle = createOrRefreshActionBundle({
@@ -5891,7 +5977,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         } else if (conversationChannel === 'bluebubbles') {
           await channel.sendMessage(
             chatJid,
-            'Andrea: I can line up the next steps for you. Ask me to send the details to Telegram if you want the full bundle there.',
+            'I can line up the next steps here. If you want the fuller bundle, ask me to send it to Telegram.',
           );
         }
       }
@@ -5992,6 +6078,42 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       );
       return false;
     }
+  };
+
+  const tryHandleBlueBubblesFluidDirectReply = async (): Promise<boolean> => {
+    const interpretedTurn = await maybeInterpretBlueBubblesDirectTurn();
+    if (!interpretedTurn) {
+      return false;
+    }
+    const clarificationNeeded =
+      interpretedTurn.confidence < 0.55 && interpretedTurn.clarificationQuestion;
+    const replyText =
+      clarificationNeeded ||
+      (interpretedTurn.routeFamily === 'chat' || interpretedTurn.routeFamily === 'help'
+        ? interpretedTurn.replyText ||
+          maybeBuildDirectQuickReply([
+            { content: interpretedTurn.assistantPrompt || lastContent },
+          ]) ||
+          interpretedTurn.fallbackText
+        : null);
+    if (!replyText) {
+      return false;
+    }
+    await channel.sendMessage(chatJid, replyText);
+    clearSharedAssistantCapabilitySeed(chatJid);
+    logger.info(
+      {
+        component: 'assistant',
+        chatJid,
+        groupFolder: group.folder,
+        group: group.name,
+        requestRoute: requestPolicy.route,
+        interpretedRouteFamily: interpretedTurn.routeFamily,
+        interpretedSource: interpretedTurn.source || 'fallback',
+      },
+      'Handled BlueBubbles direct assistant turn via Messages fluid reply path',
+    );
+    return true;
   };
 
   if (await tryHandleLocalCalendarAutomation()) {
@@ -6103,6 +6225,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       return true;
     }
     if (await tryHandleSharedAssistantCompletion()) {
+      return true;
+    }
+  }
+
+  if (requestPolicy.route === 'direct_assistant') {
+    if (await tryHandleBlueBubblesFluidDirectReply()) {
       return true;
     }
   }

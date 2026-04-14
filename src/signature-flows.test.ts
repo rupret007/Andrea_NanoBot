@@ -632,7 +632,7 @@ describe('signature flows', () => {
 
     expect(understand.handled).toBe(true);
     expect(draft.replyText).toContain('Draft:');
-    expect(reminder.replyText).toContain('Still open:');
+    expect(reminder.replyText).toContain('That still leaves');
     expect(handoff.ok).toBe(true);
     expect(sendTelegramMessage).toHaveBeenCalledWith(
       tgChatJid,

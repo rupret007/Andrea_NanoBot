@@ -32,6 +32,7 @@ import {
   BLUEBUBBLES_CANONICAL_SELF_THREAD_JID,
   canonicalizeBlueBubblesSelfThreadJid,
 } from './bluebubbles-self-thread.js';
+import { rewriteBlueBubblesMessageDraft } from './messages-fluidity.js';
 import type {
   ChannelInlineAction,
   MessageActionExplanation,
@@ -1732,9 +1733,19 @@ export async function applyMessageActionOperation(
           'Andrea: That one already went out. Ask me to draft a new version if you want to send another reply.',
       };
     }
+    const linkedRefs = parseLinkedRefs(action);
+    const modelRewrite =
+      deps.channel === 'bluebubbles'
+        ? await rewriteBlueBubblesMessageDraft({
+            draftText: action.draftText,
+            style: operation.style,
+            personName: linkedRefs.personName || null,
+          })
+        : null;
     pauseScheduledTask(action.scheduledTaskId);
     updateMessageAction(action.messageActionId, {
-      draftText: rewriteDraft(action.draftText, operation.style),
+      draftText:
+        modelRewrite?.draftText || rewriteDraft(action.draftText, operation.style),
       sendStatus: 'drafted',
       requiresApproval: true,
       followupAt: null,
@@ -1759,12 +1770,18 @@ export async function applyMessageActionOperation(
         updatedAction,
         deps.channel === 'bluebubbles' ? 'bluebubbles' : 'telegram',
       ),
-      replyText:
-        operation.style === 'shorter'
+      replyText: modelRewrite?.draftText
+        ? operation.style === 'shorter'
           ? 'Andrea: I tightened it up.'
           : operation.style === 'warmer'
             ? 'Andrea: I made it warmer.'
-            : 'Andrea: I made it more direct.',
+            : 'Andrea: I made it more direct.'
+        : modelRewrite?.fallbackNote ||
+          (operation.style === 'shorter'
+            ? 'Andrea: I tightened it up.'
+            : operation.style === 'warmer'
+              ? 'Andrea: I made it warmer.'
+              : 'Andrea: I made it more direct.'),
     };
   }
 

@@ -24,6 +24,8 @@ import {
 } from './message-actions.js';
 import type { CommunicationThreadRecord, DelegationRuleRecord } from './types.js';
 
+const originalFetch = globalThis.fetch;
+
 function seedCommunicationThread(
   overrides: Partial<CommunicationThreadRecord> = {},
 ): CommunicationThreadRecord {
@@ -104,6 +106,8 @@ describe('message actions', () => {
 
   afterEach(() => {
     _closeDatabase();
+    globalThis.fetch = originalFetch;
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
   });
 
@@ -501,6 +505,57 @@ describe('message actions', () => {
     expect(updated.approvedAt).toBeNull();
     expect(updated.lastActionKind).toBe('drafted');
     expect(getTaskById(scheduled.scheduledTaskId!)?.status).toBe('paused');
+  });
+
+  it('uses the Messages model lane for BlueBubbles rewrites when available', async () => {
+    vi.stubEnv('OPENAI_API_KEY', 'test-key');
+    vi.stubEnv('OPENAI_BASE_URL', 'https://openai.test/v1');
+    globalThis.fetch = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          output_text:
+            '{"draftText":"Hey Candace, tonight still works for me. If you want, we can keep it easy."}',
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      ),
+    ) as typeof fetch;
+
+    const thread = seedCommunicationThread();
+    const action = createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'bluebubbles',
+      presentationChatJid: 'bb:chat-1',
+      sourceType: 'communication_thread',
+      sourceKey: thread.id,
+      sourceSummary: 'Candace still needs a quick dinner answer.',
+      draftText: 'Yes, tonight still works for me.',
+      personName: 'Candace',
+      threadTitle: 'Candace',
+      communicationThreadId: thread.id,
+      communicationContext: 'reply_followthrough',
+      now: new Date('2026-04-08T19:38:00.000Z'),
+    });
+
+    const result = await applyMessageActionOperation(
+      action.messageActionId,
+      { kind: 'rewrite', style: 'warmer' },
+      {
+        groupFolder: 'main',
+        channel: 'bluebubbles',
+        chatJid: 'bb:chat-1',
+        currentTime: new Date('2026-04-08T19:39:00.000Z'),
+        sendToTarget: vi.fn(async () => ({ platformMessageId: 'unused' })),
+      },
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.replyText).toContain('made it warmer');
+    expect(getMessageAction(action.messageActionId)?.draftText).toContain(
+      'keep it easy',
+    );
   });
 
   it('runs a scheduled send through the same shared send path', async () => {

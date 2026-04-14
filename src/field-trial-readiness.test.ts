@@ -480,7 +480,7 @@ describe('field-trial readiness', () => {
     const truth = buildFieldTrialOperatorTruth({ projectRoot: tempDir });
 
     expect(truth.bluebubbles.proofState).toBe('externally_blocked');
-    expect(truth.bluebubbles.blocker).toContain('not configured in Andrea on this host');
+    expect(truth.bluebubbles.blocker).toContain('Messages bridge is not configured on this PC');
     expect(truth.bluebubbles.nextAction).toContain('BLUEBUBBLES_*');
     expect(truth.bluebubbles.chatScope).toBe('allowlist');
     expect(truth.research.proofState).toBe('externally_blocked');
@@ -652,6 +652,52 @@ describe('field-trial readiness', () => {
     expect(truth.bluebubbles.lastOutboundResult).toContain('bb:iMessage;+;chat-proof');
     expect(truth.bluebubbles.messageActionProofState).toBe('fresh');
     expect(truth.bluebubbles.messageActionProofChatJid).toBe('bb:iMessage;+;chat-proof');
+  });
+
+  it('parses BlueBubbles direct companion chats as conversational 1:1 mode', () => {
+    vi.stubEnv('BLUEBUBBLES_ENABLED', 'true');
+    vi.stubEnv('BLUEBUBBLES_BASE_URL', 'http://macbook-pro.local:1234');
+    vi.stubEnv('BLUEBUBBLES_PASSWORD', 'secret');
+    vi.stubEnv('BLUEBUBBLES_GROUP_FOLDER', 'main');
+    vi.stubEnv('BLUEBUBBLES_CHAT_SCOPE', 'all_synced');
+    vi.stubEnv('BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL', 'http://192.168.5.136:4305');
+    vi.stubEnv('BLUEBUBBLES_WEBHOOK_SECRET', 'hook-secret');
+    vi.stubEnv('BLUEBUBBLES_SEND_ENABLED', 'true');
+
+    const snapshot: HostControlSnapshot = {
+      paths: resolveHostControlPaths(tempDir),
+      nodeRuntime: null,
+      hostState: null,
+      readyState: null,
+      assistantHealthState: {
+        bootId: 'boot-blue-direct-mode',
+        pid: process.pid,
+        appVersion: '1.0.0-test',
+        updatedAt: '2026-04-10T00:12:00.000Z',
+        channels: [
+          {
+            name: 'bluebubbles',
+            configured: true,
+            state: 'ready',
+            updatedAt: '2026-04-10T00:12:00.000Z',
+            detail:
+              'listener 0.0.0.0:4305/bluebubbles/webhook | scope all_synced | reply gate direct_1to1 | group trigger required yes | transport reachable/auth ok (200) | last inbound 2026-04-10T00:10:00.000Z | last inbound chat bb:iMessage;-;+14695405551 | last inbound self_authored yes | last outbound 2026-04-10T00:11:00.000Z (bb:iMessage;-;+14695405551) | last outbound target kind chat_guid | last outbound target value iMessage;-;+14695405551 | last send error none | send method apple-script | private api available no | last metadata hydration none | attempted target sequence chat_guid',
+          },
+        ],
+      },
+      telegramRoundtripState: null,
+      telegramTransportState: null,
+      runtimeAuditState: null,
+    };
+
+    const truth = buildFieldTrialOperatorTruth({
+      projectRoot: tempDir,
+      hostSnapshot: snapshot,
+      windowsHost: null,
+    });
+
+    expect(truth.bluebubbles.replyGateMode).toBe('direct_1to1');
+    expect(truth.bluebubbles.detail).toContain('Messages bridge configuration is present');
   });
 
   it('anchors BlueBubbles proof to the presentation chat when a linked-thread action was decided from self-chat', () => {
@@ -1564,6 +1610,8 @@ describe('field-trial readiness', () => {
 
     expect(truth.bluebubbles.proofState).toBe('externally_blocked');
     expect(truth.bluebubbles.detectionState).toBe('transport_unreachable');
+    expect(truth.bluebubbles.providerName).toBe('bluebubbles');
+    expect(truth.bluebubbles.bridgeAvailability).toBe('unavailable');
     expect(truth.bluebubbles.activeServerBaseUrl).toBe('none');
     expect(truth.bluebubbles.serverBaseUrlCandidates).toContain(
       'http://192.168.5.22:1234',
@@ -1572,8 +1620,198 @@ describe('field-trial readiness', () => {
       'http://macbook-pro.local:1234 => unreachable',
     );
     expect(truth.bluebubbles.blocker).toContain(
-      'cannot currently reach the BlueBubbles server',
+      'Messages bridge is unavailable from this Windows host right now',
     );
+    expect(truth.launchReadiness.coreBlockers.join(' | ')).not.toContain(
+      'bluebubbles',
+    );
+    expect(truth.launchReadiness.optionalBridgeBlockers.join(' | ')).toContain(
+      'messages bridge (bluebubbles)',
+    );
+  });
+
+  it('prefers live healthy bridge detail over a stale persisted degraded monitor snapshot', () => {
+    vi.stubEnv('BLUEBUBBLES_ENABLED', 'true');
+    vi.stubEnv('BLUEBUBBLES_BASE_URL', 'http://macbook-pro.local:1234');
+    vi.stubEnv(
+      'BLUEBUBBLES_BASE_URL_CANDIDATES',
+      'http://macbook-pro.local:1234, http://192.168.5.22:1234',
+    );
+    vi.stubEnv('BLUEBUBBLES_PASSWORD', 'secret');
+    vi.stubEnv('BLUEBUBBLES_GROUP_FOLDER', 'main');
+    vi.stubEnv('BLUEBUBBLES_CHAT_SCOPE', 'all_synced');
+    vi.stubEnv(
+      'BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL',
+      'http://192.168.5.136:4305',
+    );
+    vi.stubEnv('BLUEBUBBLES_WEBHOOK_SECRET', 'hook-secret');
+    vi.stubEnv('BLUEBUBBLES_SEND_ENABLED', 'true');
+
+    writeBlueBubblesMonitorState(
+      {
+        ...createDefaultBlueBubblesMonitorState('2026-04-08T12:10:00.000Z'),
+        updatedAt: '2026-04-08T12:10:00.000Z',
+        detectionState: 'transport_unreachable',
+        detectionDetail:
+          'Andrea could not reach the BlueBubbles server from this host earlier in the run.',
+        detectionNextAction: 'Retry later.',
+        activeBaseUrl: null,
+        crossSurfaceFallbackState: 'sent',
+        crossSurfaceFallbackLastSentAt: '2026-04-08T12:00:00.000Z',
+      },
+      tempDir,
+    );
+
+    const snapshot: HostControlSnapshot = {
+      paths: resolveHostControlPaths(tempDir),
+      nodeRuntime: null,
+      hostState: null,
+      readyState: null,
+      assistantHealthState: {
+        bootId: 'boot-blue-recovered',
+        pid: process.pid,
+        appVersion: '1.0.0-test',
+        updatedAt: '2026-04-08T12:12:00.000Z',
+        channels: [
+          {
+            name: 'bluebubbles',
+            configured: true,
+            state: 'ready',
+            updatedAt: '2026-04-08T12:12:00.000Z',
+            detail:
+              'listener 0.0.0.0:4305/bluebubbles/webhook | provider bluebubbles | configured base url http://macbook-pro.local:1234 | active endpoint http://192.168.5.22:1234 | candidate endpoints http://macbook-pro.local:1234, http://192.168.5.22:1234 | candidate probe results http://macbook-pro.local:1234 => unreachable (fetch failed) || http://192.168.5.22:1234 => reachable/auth ok (200) | scope all_synced | reply gate mention_required | webhook http://192.168.5.136:4305/bluebubbles/webhook?secret=*** | webhook registration registered on the BlueBubbles server as webhook 1 | webhook registration state registered | transport probe state reachable | transport reachable/auth ok (200) via http://192.168.5.22:1234 | detection healthy | detection detail none | detection next action none | shadow poll last ok 2026-04-08T12:11:55.000Z | shadow poll error none | server seen chat none | server seen at none | fallback idle | fallback last sent none',
+          },
+        ],
+      },
+      telegramRoundtripState: null,
+      telegramTransportState: null,
+      runtimeAuditState: null,
+    };
+
+    const truth = buildFieldTrialOperatorTruth({
+      projectRoot: tempDir,
+      hostSnapshot: snapshot,
+    });
+
+    expect(truth.bluebubbles.detectionState).toBe('healthy');
+    expect(truth.bluebubbles.bridgeAvailability).toBe('available');
+    expect(truth.bluebubbles.activeServerBaseUrl).toBe('http://192.168.5.22:1234');
+    expect(truth.bluebubbles.webhookRegistrationState).toBe('registered');
+    expect(truth.bluebubbles.crossSurfaceFallbackState).toBe('idle');
+  });
+
+  it('treats a reachable-but-missing webhook registration as bridge unavailable', () => {
+    vi.stubEnv('BLUEBUBBLES_ENABLED', 'true');
+    vi.stubEnv('BLUEBUBBLES_BASE_URL', 'http://macbook-pro.local:1234');
+    vi.stubEnv('BLUEBUBBLES_PASSWORD', 'secret');
+    vi.stubEnv('BLUEBUBBLES_GROUP_FOLDER', 'main');
+    vi.stubEnv('BLUEBUBBLES_CHAT_SCOPE', 'all_synced');
+    vi.stubEnv(
+      'BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL',
+      'http://192.168.5.136:4305',
+    );
+    vi.stubEnv('BLUEBUBBLES_WEBHOOK_SECRET', 'hook-secret');
+    vi.stubEnv('BLUEBUBBLES_SEND_ENABLED', 'true');
+
+    const snapshot: HostControlSnapshot = {
+      paths: resolveHostControlPaths(tempDir),
+      nodeRuntime: null,
+      hostState: null,
+      readyState: null,
+      assistantHealthState: {
+        bootId: 'boot-blue-missing-webhook',
+        pid: process.pid,
+        appVersion: '1.0.0-test',
+        updatedAt: '2026-04-08T12:20:00.000Z',
+        channels: [
+          {
+            name: 'bluebubbles',
+            configured: true,
+            state: 'degraded',
+            updatedAt: '2026-04-08T12:20:00.000Z',
+            detail:
+              'listener 0.0.0.0:4305/bluebubbles/webhook | provider bluebubbles | configured base url http://macbook-pro.local:1234 | active endpoint http://macbook-pro.local:1234 | candidate endpoints http://macbook-pro.local:1234 | candidate probe results http://macbook-pro.local:1234 => reachable/auth ok (200) | scope all_synced | reply gate mention_required | webhook http://192.168.5.136:4305/bluebubbles/webhook?secret=*** | webhook registration no matching Andrea webhook is registered on the BlueBubbles server | webhook registration state missing | transport probe state reachable | transport reachable/auth ok (200) via http://macbook-pro.local:1234 | detection healthy | detection detail none | detection next action none | shadow poll last ok 2026-04-08T12:19:55.000Z | shadow poll error none | server seen chat none | server seen at none | fallback idle | fallback last sent none',
+          },
+        ],
+      },
+      telegramRoundtripState: null,
+      telegramTransportState: null,
+      runtimeAuditState: null,
+    };
+
+    const truth = buildFieldTrialOperatorTruth({
+      projectRoot: tempDir,
+      hostSnapshot: snapshot,
+    });
+
+    expect(truth.bluebubbles.bridgeAvailability).toBe('unavailable');
+    expect(truth.bluebubbles.webhookRegistrationState).toBe('missing');
+    expect(truth.bluebubbles.blocker).toContain(
+      "does not have Andrea's webhook registered yet",
+    );
+  });
+
+  it('treats a reachable bridge with a failing shadow poll as unstable instead of ignored', () => {
+    vi.stubEnv('BLUEBUBBLES_ENABLED', 'true');
+    vi.stubEnv('BLUEBUBBLES_BASE_URL', 'http://macbook-pro.local:1234');
+    vi.stubEnv('BLUEBUBBLES_PASSWORD', 'secret');
+    vi.stubEnv('BLUEBUBBLES_GROUP_FOLDER', 'main');
+    vi.stubEnv('BLUEBUBBLES_CHAT_SCOPE', 'all_synced');
+    vi.stubEnv(
+      'BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL',
+      'http://192.168.5.136:4305',
+    );
+    vi.stubEnv('BLUEBUBBLES_WEBHOOK_SECRET', 'hook-secret');
+    vi.stubEnv('BLUEBUBBLES_SEND_ENABLED', 'true');
+
+    writeBlueBubblesMonitorState(
+      {
+        ...createDefaultBlueBubblesMonitorState('2026-04-08T12:24:00.000Z'),
+        updatedAt: '2026-04-08T12:24:00.000Z',
+        detectionState: 'ignored_by_gate_or_scope',
+        detectionDetail:
+          'Andrea saw a Messages turn earlier in the run, but it was intentionally ignored.',
+        detectionNextAction: 'Use @Andrea in that thread.',
+      },
+      tempDir,
+    );
+
+    const snapshot: HostControlSnapshot = {
+      paths: resolveHostControlPaths(tempDir),
+      nodeRuntime: null,
+      hostState: null,
+      readyState: null,
+      assistantHealthState: {
+        bootId: 'boot-blue-shadow-poll',
+        pid: process.pid,
+        appVersion: '1.0.0-test',
+        updatedAt: '2026-04-08T12:25:00.000Z',
+        channels: [
+          {
+            name: 'bluebubbles',
+            configured: true,
+            state: 'degraded',
+            updatedAt: '2026-04-08T12:25:00.000Z',
+            detail:
+              'listener 0.0.0.0:4305/bluebubbles/webhook | provider bluebubbles | configured base url http://macbook-pro.local:1234 | active endpoint http://macbook-pro.local:1234 | candidate endpoints http://macbook-pro.local:1234 | candidate probe results http://macbook-pro.local:1234 => reachable/auth ok (200) | scope all_synced | reply gate mention_required | webhook http://192.168.5.136:4305/bluebubbles/webhook?secret=*** | webhook registration registered on the BlueBubbles server as webhook 1 | webhook registration state registered | transport probe state reachable | transport reachable/auth ok (200) via http://macbook-pro.local:1234 | detection ignored_by_gate_or_scope | detection detail Andrea saw a Messages turn earlier in the run, but it was intentionally ignored. | detection next action Use @Andrea in that thread. | shadow poll last ok none | shadow poll error Not Found | server seen chat none | server seen at none | fallback cooldown | fallback last sent none',
+          },
+        ],
+      },
+      telegramRoundtripState: null,
+      telegramTransportState: null,
+      runtimeAuditState: null,
+    };
+
+    const truth = buildFieldTrialOperatorTruth({
+      projectRoot: tempDir,
+      hostSnapshot: snapshot,
+    });
+
+    expect(truth.bluebubbles.bridgeAvailability).toBe('available');
+    expect(truth.bluebubbles.detectionState).toBe('mixed_degraded');
+    expect(truth.bluebubbles.blocker).toContain('same-thread health check is failing');
+    expect(truth.bluebubbles.blockerOwner).toBe('repo_side');
+    expect(truth.bluebubbles.detectionNextAction).toContain('shadow-poll path');
   });
 
   it('keeps research and image generation live-proven from persisted provider proof', () => {

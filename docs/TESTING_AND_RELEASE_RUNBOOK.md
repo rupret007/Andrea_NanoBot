@@ -85,6 +85,7 @@ For BlueBubbles channel changes, add:
 ```bash
 node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/channels/bluebubbles.test.ts src/companion-conversation-binding.test.ts src/cross-channel-handoffs.test.ts src/assistant-action-completion.test.ts
 npm run debug:bluebubbles
+npm run debug:openbubbles-feasibility
 ```
 
 On Windows, prefer a stable IP or an explicit `BLUEBUBBLES_BASE_URL_CANDIDATES` list over Bonjour-only `.local` discovery. If Andrea cannot resolve the Mac host, `debug:bluebubbles -- --live` should read as `transport_unreachable`, not a generic healthy/degraded blur.
@@ -105,11 +106,14 @@ npm run telegram:user:smoke
 
 Treat that capture/profile suite as the fast proof that Andrea can:
 
-- build a proposed setup from a guided intake
-- keep learned changes suggestion-first
-- capture groceries, errands, bills, meals, and tonight items cleanly
-- read back the useful slice instead of dumping lists
-- convert a list item into a reminder, plan, or household thread without collapsing those systems together
+- build a proposed setup from a guided intake while still allowing zero-setup capture on first use
+  - keep learned changes suggestion-first
+  - capture groceries, errands, bills, meals, household items, and tonight items cleanly
+  - reopen recurring bills and household items when they become due again
+  - read back the useful slice instead of dumping lists
+  - derive practical household views like store run, bills this week, tonight, weekend, dinner gaps, recurring soon, recently completed, and slipping carryover
+  - offer bounded Telegram inline actions after grouped list review without turning into a PM tool
+  - convert a list item into a reminder, plan, or household thread without collapsing those systems together
 
 For communication-companion and relationship-follow-through changes, add:
 
@@ -530,7 +534,7 @@ Current truthful closeout note:
 - after restart, operator surfaces may credit that Alexa proof either from the persisted handled signed-request markers or from a recent same-host `alexa_orientation` pilot success that already recorded the qualifying handled turn
 - if the repo Alexa model changed, the remaining release-candidate step is to import `docs/alexa/interaction-model.en-US.json`, run `Build Model`, and then run `npm run setup -- --step alexa-model-sync mark-synced`
 - if `npm run services:status` later shows `alexa_live_proof=near_live_only`, the remaining Alexa blocker is one human-operated voice or authenticated simulator run
-- BlueBubbles is currently `degraded_but_usable` on this host because the canonical same-thread `message_action` leg still needs a fresh repro even though transport and webhook are healthy
+- BlueBubbles is currently a `degraded_but_usable` optional Messages bridge on this host because transport and webhook registration are healthy but the recent-activity shadow poll is still failing, so Telegram remains the dependable main path while same-thread bridge health is unstable
 - outward-facing research and Telegram image generation are currently optional provider-blocked lanes on this host
 - if the Anthropic-compatible LiteLLM gateway degrades later, report that separately as the core-runtime compatibility lane rather than as a direct OpenAI billing problem
 - typed Alexa+ app chat is not an authoritative proof surface unless Andrea logs a real signed follow-up `IntentRequest` after launch

@@ -27,6 +27,7 @@ import {
   buildSignatureFlowText,
   buildSignaturePostActionConfirmation,
 } from './signature-flows.js';
+import { draftBlueBubblesCommunicationReply } from './messages-fluidity.js';
 import type {
   CommunicationFollowupState,
   CommunicationInferenceState,
@@ -87,6 +88,8 @@ export interface CommunicationDraftResult {
   linkedLifeThreads: LifeThread[];
   linkedSubjects: ProfileSubject[];
   style: 'balanced' | 'warmer' | 'direct' | 'short';
+  draftMode?: 'deterministic' | 'openai';
+  fallbackNote?: string;
 }
 
 export interface CommunicationOpenLoopItem {
@@ -347,6 +350,14 @@ function extractLatestBlueBubblesSelfCompanionContext(
   return {};
 }
 
+function looksAssistantNarratedContext(text: string | null | undefined): boolean {
+  const normalized = cleanMessageBody(text || '');
+  if (!normalized) return false;
+  return /^(?:Andrea:|The main thing still open with |The conversation most likely to slip is |The next thing that still needs attention is |With [A-Z][a-z' -]+, I'd |For tonight, |Thread follow-up: |Open conversation: |Plan carryover: |Conversation carryover: )/i.test(
+    normalized,
+  );
+}
+
 function extractMessageText(input: CommunicationContextInput): {
   text?: string;
   messageId?: string;
@@ -367,10 +378,13 @@ function extractMessageText(input: CommunicationContextInput): {
       input.conversationSummary ||
       '',
   );
+  const sameChat = extractLatestInboundMessage(input.chatJid);
+  if (sameChat.text && prior && looksAssistantNarratedContext(prior)) {
+    return { ...sameChat, source: 'chat' };
+  }
   if (prior) {
     return { text: prior, source: 'prior' };
   }
-  const sameChat = extractLatestInboundMessage(input.chatJid);
   if (sameChat.text) {
     return { ...sameChat, source: 'chat' };
   }
@@ -381,6 +395,13 @@ function extractMessageText(input: CommunicationContextInput): {
           input.now || new Date(),
         )
       : {};
+  if (
+    siblingBlueBubblesContext.text &&
+    prior &&
+    looksAssistantNarratedContext(prior)
+  ) {
+    return { ...siblingBlueBubblesContext, source: 'chat' };
+  }
   return { ...siblingBlueBubblesContext, source: 'chat' };
 }
 
@@ -1003,10 +1024,68 @@ export function analyzeCommunicationMessage(
   };
 }
 
+function finalizeCommunicationDraftResult(input: {
+  baseInput: CommunicationContextInput;
+  analysis: CommunicationAnalysisResult;
+  style: CommunicationDraftResult['style'];
+  draftText: string;
+  draftMode?: CommunicationDraftResult['draftMode'];
+  fallbackNote?: string;
+}): CommunicationDraftResult {
+  if (input.analysis.thread) {
+    updateCommunicationThread(input.analysis.thread.id, {
+      lastOutboundSummary: clipText(input.draftText, 140),
+      suggestedNextAction: 'reply_now',
+    });
+    upsertCommunicationSignal(
+      buildSignalRecord({
+        thread: input.analysis.thread,
+        sourceChannel: toSignalChannel(input.baseInput.channel),
+        chatJid: input.baseInput.chatJid,
+        summaryText: clipText(input.draftText, 140),
+        followupState: input.analysis.followupState || 'reply_needed',
+        urgency: input.analysis.urgency || 'none',
+        direction: 'draft',
+        suggestedAction: 'reply_now',
+        createdAt: (input.baseInput.now || new Date()).toISOString(),
+      }),
+    );
+  }
+
+  return {
+    ok: true,
+    draftText: input.draftText,
+    summaryText: input.analysis.summaryText,
+    thread: input.analysis.thread,
+    linkedLifeThreads: input.analysis.linkedLifeThreads,
+    linkedSubjects: input.analysis.linkedSubjects,
+    style: input.style,
+    draftMode: input.draftMode || 'deterministic',
+    fallbackNote: input.fallbackNote,
+  };
+}
+
+function buildDeterministicCommunicationDraft(input: {
+  analysis: CommunicationAnalysisResult;
+  groupFolder: string;
+  style: CommunicationDraftResult['style'];
+}): string {
+  const profileFacts = listProfileFactsForGroup(input.groupFolder, ['accepted']);
+  return buildRelationshipAwareDraft({
+    linkedSubjects: input.analysis.linkedSubjects,
+    linkedLifeThreads: input.analysis.linkedLifeThreads,
+    toneHints: input.analysis.thread?.toneStyleHints || [],
+    profileFacts,
+    summaryText: input.analysis.summaryText || '',
+    style: input.style,
+  });
+}
+
 export function draftCommunicationReply(
   input: CommunicationContextInput,
 ): CommunicationDraftResult {
   const analysis = analyzeCommunicationMessage(input);
+  const style = inferStyle(input.text || '');
   if (!analysis.ok || !analysis.summaryText) {
     return {
       ok: false,
@@ -1015,50 +1094,81 @@ export function draftCommunicationReply(
         'Show me the message first so I can draft from the right context.',
       linkedLifeThreads: analysis.linkedLifeThreads,
       linkedSubjects: analysis.linkedSubjects,
-      style: inferStyle(input.text || ''),
+      style,
     };
   }
 
+  return finalizeCommunicationDraftResult({
+    baseInput: input,
+    analysis,
+    style,
+    draftText: buildDeterministicCommunicationDraft({
+      analysis,
+      groupFolder: input.groupFolder,
+      style,
+    }),
+    draftMode: 'deterministic',
+  });
+}
+
+export async function draftCommunicationReplyWithChannelFluidity(
+  input: CommunicationContextInput,
+): Promise<CommunicationDraftResult> {
+  const analysis = analyzeCommunicationMessage(input);
   const style = inferStyle(input.text || '');
-  const profileFacts = listProfileFactsForGroup(input.groupFolder, ['accepted']);
-  const draftText = buildRelationshipAwareDraft({
-    linkedSubjects: analysis.linkedSubjects,
-    linkedLifeThreads: analysis.linkedLifeThreads,
-    toneHints: analysis.thread?.toneStyleHints || [],
-    profileFacts,
-    summaryText: analysis.summaryText,
+  if (!analysis.ok || !analysis.summaryText) {
+    return {
+      ok: false,
+      clarificationQuestion:
+        analysis.clarificationQuestion ||
+        'Show me the message first so I can draft from the right context.',
+      linkedLifeThreads: analysis.linkedLifeThreads,
+      linkedSubjects: analysis.linkedSubjects,
+      style,
+    };
+  }
+
+  const deterministicDraft = buildDeterministicCommunicationDraft({
+    analysis,
+    groupFolder: input.groupFolder,
     style,
   });
 
-  if (analysis.thread) {
-    updateCommunicationThread(analysis.thread.id, {
-      lastOutboundSummary: clipText(draftText, 140),
-      suggestedNextAction: 'reply_now',
+  if (input.channel !== 'bluebubbles') {
+    return finalizeCommunicationDraftResult({
+      baseInput: input,
+      analysis,
+      style,
+      draftText: deterministicDraft,
+      draftMode: 'deterministic',
     });
-    upsertCommunicationSignal(
-      buildSignalRecord({
-        thread: analysis.thread,
-        sourceChannel: toSignalChannel(input.channel),
-        chatJid: input.chatJid,
-        summaryText: clipText(draftText, 140),
-        followupState: analysis.followupState || 'reply_needed',
-        urgency: analysis.urgency || 'none',
-        direction: 'draft',
-        suggestedAction: 'reply_now',
-        createdAt: (input.now || new Date()).toISOString(),
-      }),
-    );
   }
 
-  return {
-    ok: true,
-    draftText,
+  const modelDraft = await draftBlueBubblesCommunicationReply({
+    messageText:
+      analysis.messageText ||
+      input.replyText ||
+      input.conversationSummary ||
+      analysis.summaryText,
     summaryText: analysis.summaryText,
-    thread: analysis.thread,
-    linkedLifeThreads: analysis.linkedLifeThreads,
-    linkedSubjects: analysis.linkedSubjects,
     style,
-  };
+    personName: analysis.linkedSubjects[0]?.displayName,
+    threadTitle: analysis.thread?.title,
+    toneHints: analysis.thread?.toneStyleHints || [],
+    linkedLifeThreadSummary:
+      analysis.linkedLifeThreads[0]?.nextAction ||
+      analysis.linkedLifeThreads[0]?.summary ||
+      null,
+  });
+
+  return finalizeCommunicationDraftResult({
+    baseInput: input,
+    analysis,
+    style,
+    draftText: modelDraft.draftText || deterministicDraft,
+    draftMode: modelDraft.draftText ? 'openai' : 'deterministic',
+    fallbackNote: modelDraft.draftText ? undefined : modelDraft.fallbackNote,
+  });
 }
 
 export function buildCommunicationOpenLoops(
@@ -1363,14 +1473,28 @@ export function formatCommunicationDraftReply(
       maxDetails: 1,
     });
   }
+  if (channel === 'bluebubbles') {
+    return [
+      result.summaryText || 'I drafted a reply.',
+      result.draftText ? `Draft: ${result.draftText}` : null,
+      result.fallbackNote
+        ? 'I kept it on the lighter draft lane here, but it is still grounded in this conversation.'
+        : 'If you want, I can make it warmer, more direct, or remind you to send it later.',
+    ]
+      .filter(Boolean)
+      .join('\n');
+  }
+  const whyLine =
+    result.fallbackNote
+      ? result.fallbackNote
+      : result.linkedSubjects[0]?.displayName
+        ? `This is shaped around ${result.linkedSubjects[0].displayName} and the current conversation.`
+        : 'This stays grounded in the conversation you brought in here.';
   return buildSignatureFlowText({
     lead: result.summaryText || 'I drafted a reply.',
     bodyText: [`Draft:`, result.draftText].filter(Boolean).join('\n'),
     nextAction: 'If you want, I can remind you to send it later.',
-    whyLine:
-      result.linkedSubjects[0]?.displayName
-        ? `This is shaped around ${result.linkedSubjects[0].displayName} and the current conversation.`
-        : 'This stays grounded in the conversation you brought in here.',
+    whyLine,
   });
 }
 

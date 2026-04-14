@@ -111,12 +111,13 @@ describe('direct quick reply', () => {
     const reply = maybeBuildDirectQuickReply([{ content: 'what can you do?' }]);
 
     expect(reply).toContain("I'm Andrea");
-    expect(reply).toContain('schedule help');
-    expect(reply).toContain('pills');
+    expect(reply).toContain('schedule moves');
+    expect(reply).toContain('save-for-later');
+    expect(reply).toContain('household');
     expect(reply).toContain('bills');
     expect(reply).toContain('what should I say back');
     expect(reply).toContain('Telegram');
-    expect(reply).toContain('BlueBubbles');
+    expect(reply).toContain('Messages');
     expect(reply).toContain('Alexa');
     expect(reply).not.toContain('Candace');
   });

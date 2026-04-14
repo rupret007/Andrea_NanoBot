@@ -1,6 +1,6 @@
 # BlueBubbles Companion Channel
 
-BlueBubbles is Andrea's calm, text-first companion surface for personal messaging.
+BlueBubbles is Andrea's optional calm, text-first Messages bridge for personal messaging.
 
 It is not a second operator shell.
 It is not a passive inbox bot.
@@ -12,11 +12,10 @@ Current host reality for the Windows operator machine:
 
 - the BlueBubbles desktop app is installed and connected to the Mac-side server
 - Andrea now has live `BLUEBUBBLES_*` config loaded on this host
-- Andrea can reach and authenticate to the live BlueBubbles server
-- Andrea's public webhook is now registered on that server
-- BlueBubbles is currently **degraded_but_usable** on this host
+- Andrea can currently reach the configured BlueBubbles endpoint from this Windows host and the webhook is still registered
+- BlueBubbles is currently **degraded_but_usable** as a Messages bridge on this host because the recent-activity shadow poll is failing, so the same-thread health check is not trustworthy yet
 - the canonical proof thread is `bb:iMessage;-;+14695405551`, and alias support remains enabled for `bb:iMessage;-;jeffstory007@gmail.com`
-- real traffic is flowing, but the proving chain still needs one fresh same-thread `message_action` decision in that canonical proof thread
+- Telegram remains Andrea's dependable main messaging surface while the bridge is unstable
 
 Use these operator truth surfaces:
 
@@ -25,6 +24,8 @@ Use these operator truth surfaces:
 - `npm run debug:status`
 - `npm run debug:bluebubbles -- --live`
 - `npm run debug:pilot`
+
+OpenBubbles is still an operator-only feasibility track on this PC. Its official docs support the Mac-offline goal after activation or renewal, but Andrea does not yet have a supported Windows-native observation/reply surface to bind to there.
 
 ## V1 Scope
 
@@ -129,6 +130,7 @@ BlueBubbles V1 uses these env settings:
 ```bash
 BLUEBUBBLES_ENABLED=true
 BLUEBUBBLES_BASE_URL=
+BLUEBUBBLES_BASE_URL_CANDIDATES=
 BLUEBUBBLES_PASSWORD=
 BLUEBUBBLES_HOST=0.0.0.0
 BLUEBUBBLES_PORT=4305
@@ -145,6 +147,7 @@ BLUEBUBBLES_SEND_ENABLED=true
 Meaning:
 
 - `BLUEBUBBLES_GROUP_FOLDER` binds BlueBubbles companion state into Andrea's shared companion folder, usually `main`
+- prefer `BLUEBUBBLES_BASE_URL_CANDIDATES` with a stable IP first and `.local` only as a fallback candidate on Windows
 - `BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL` is the Mac-reachable Andrea URL, not the local bind address
 - `BLUEBUBBLES_CHAT_SCOPE=all_synced` allows all synced personal and group chats
 - `BLUEBUBBLES_ALLOWED_CHAT_GUIDS` and `BLUEBUBBLES_ALLOWED_CHAT_GUID` are only for optional allowlist mode
@@ -181,7 +184,7 @@ BlueBubbles is `live_proven` only after all of these happen on this host:
 5. one same-thread message-action decision is recorded in the same chat, such as `send it`, `send it later tonight`, `remind me instead`, or `save under thread`
 6. if the user approves a real reply, that same-thread outbound send lands without the companion prefix
 
-If config is present and the server/webhook are ready but that roundtrip plus message-action leg has not happened yet, BlueBubbles stays below `live_proven` and should read as `degraded_but_usable` on this host. That is the current honest state on this host.
+If config is present and the server/webhook are ready but the same-thread health check is still failing, BlueBubbles stays below `live_proven` and should read as `degraded_but_usable` on that host. If Windows cannot reach the configured endpoint at all, the bridge should read as `externally_blocked` with `transport_unreachable`, and Telegram should be treated as the dependable main path.
 
 ## Operator Proof Steps
 
