@@ -211,6 +211,21 @@ describe('communication companion', () => {
     );
   });
 
+  it('uses quoted message text instead of the command wrapper for direct reply-help asks', () => {
+    const result = draftCommunicationReply({
+      channel: 'bluebubbles',
+      groupFolder: 'main',
+      text: 'what should I say back to "sounds good see you at 7"',
+      now: new Date('2026-04-14T12:51:36.900Z'),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.draftText).toContain('Sounds good');
+    expect(result.draftText).toContain('See you at 7');
+    expect(result.draftText).not.toContain('They sounds settled');
+    expect(result.draftText).not.toContain('circle back');
+  });
+
   it('builds warmer drafts from relationship-aware message context', () => {
     seedCandace();
 
@@ -300,8 +315,9 @@ describe('communication companion', () => {
 
     const replyText = formatCommunicationDraftReply('bluebubbles', result);
     expect(replyText).toContain('Draft:');
-    expect(replyText).toContain('lighter draft lane');
+    expect(replyText).toContain('kept this one simple here');
     expect(replyText).not.toContain('This is shaped around');
+    expect(replyText).not.toContain("Here's what I'm thinking.");
   });
 
   it('phrases confirmation asks more naturally in summaries and drafts', () => {
@@ -333,6 +349,39 @@ describe('communication companion', () => {
     expect(analysis.summaryText).not.toContain('about confirm');
     expect(draft.ok).toBe(true);
     expect(draft.draftText).toContain('whether you are in by 6 tonight');
+  });
+
+  it('trims trailing move-it clauses out of follow-up summaries and drafts', () => {
+    const analysis = analyzeCommunicationMessage({
+      channel: 'bluebubbles',
+      groupFolder: 'main',
+      chatJid: 'bb:test',
+      text:
+        'Summarize this message: Candace: Can you let me know if dinner still works tonight? If not, we should move it.',
+      now: new Date('2026-04-06T09:00:00.000Z'),
+    });
+
+    const draft = draftCommunicationReply({
+      channel: 'bluebubbles',
+      groupFolder: 'main',
+      chatJid: 'bb:test',
+      text: 'what should I say back',
+      conversationSummary: analysis.summaryText,
+      priorContext: analysis.thread
+        ? {
+            communicationThreadId: analysis.thread.id,
+            lastCommunicationSummary: analysis.summaryText,
+          }
+        : undefined,
+      now: new Date('2026-04-06T09:05:00.000Z'),
+    });
+
+    expect(analysis.ok).toBe(true);
+    expect(analysis.summaryText).toContain('whether dinner still works tonight');
+    expect(analysis.summaryText).not.toContain('if not');
+    expect(draft.ok).toBe(true);
+    expect(draft.draftText).toContain('whether dinner still works tonight');
+    expect(draft.draftText).not.toContain('if not, we should move it');
   });
 
   it('strips saved-note command wording from relationship-aware draft support lines', () => {

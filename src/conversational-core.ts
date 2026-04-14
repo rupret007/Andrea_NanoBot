@@ -238,11 +238,11 @@ export function buildGracefulDegradedReply(params: {
 
     return buildChannelVariant(channel, {
       telegram:
-        "I'm here, but the deeper read missed just now. Give me one simple thing and I'll keep it moving.",
+        "I'm here, but that one didn't come through cleanly. Give me one simple thing and I'll keep it moving.",
       alexa:
-        "I'm here, but the deeper read missed just now. Give me one simple thing.",
+        "That one didn't come through cleanly. Give me one simple thing.",
       bluebubbles:
-        "I'm here, but the deeper read missed just now. Give me one simple thing and I'll keep it moving.",
+        "I'm here, but that one didn't come through cleanly. Give me one simple thing and I'll keep it moving.",
     });
   }
 

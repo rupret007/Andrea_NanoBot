@@ -153,7 +153,7 @@ describe('planGoogleCalendarCreate', () => {
 
     expect(plan.kind).toBe('needs_details');
     if (plan.kind !== 'needs_details') return;
-    expect(plan.message).toContain('still need the start time');
+    expect(plan.message).toContain('What time should it start');
   });
 
   it('keeps a resumable pending state when only the start time is missing', () => {

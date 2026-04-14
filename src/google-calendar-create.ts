@@ -461,15 +461,15 @@ function buildMissingDetailsReply(input: {
   allDay: boolean;
 }): string {
   if (input.missingDate && (input.missingTime || input.allDay)) {
-    return 'I can create that as a calendar event, but I still need the date.';
+    return 'I can add that, but I still need the date.';
   }
   if (input.missingDate) {
-    return 'I can create that as a calendar event, but I still need the date.';
+    return 'I can add that, but I still need the date.';
   }
   if (input.missingTime && !input.allDay) {
-    return 'I can create that as a calendar event, but I still need the start time. You can also say "all day" if that is what you mean.';
+    return 'I can add that. What time should it start? You can also say "all day" if that is what you mean.';
   }
-  return 'I can create that as a calendar event, but I still need a bit more detail.';
+  return 'I can add that, but I still need a little more detail.';
 }
 
 function maybeMatchCalendarFromMessage(
@@ -676,12 +676,12 @@ export function planGoogleCalendarCreate(
     title = schedulingContext.title;
   }
   if (!title) {
-    return {
-      kind: 'needs_details',
-      message: /\b(?:that|it)\b/i.test(working)
-        ? 'What should I put on your calendar?'
-        : 'I can create that as a calendar event, but I still need a title.',
-    };
+      return {
+        kind: 'needs_details',
+        message: /\b(?:that|it)\b/i.test(working)
+          ? 'What should I put on your calendar?'
+          : 'I can add that, but I still need a title.',
+      };
   }
 
   if (!allDay && !timeInfo.start && !daypartInfo) {

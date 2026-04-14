@@ -1634,7 +1634,7 @@ describe('createAlexaSkill', () => {
       }),
     );
 
-    expect(extractSpeechText(response)).toContain('deeper read');
+    expect(extractSpeechText(response)).toContain("didn't come through cleanly");
     expect(extractSpeechText(response)).not.toContain('sk-test-secret');
   });
 

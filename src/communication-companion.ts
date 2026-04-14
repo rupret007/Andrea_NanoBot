@@ -138,6 +138,7 @@ function clipText(value: string, max = 180): string {
 function normalizeDraftTopicSummary(value: string): string {
   const normalized = value
     .replace(/^[A-Z][a-z]+ wants a follow-up about\s+/i, '')
+    .replace(/^[A-Z][a-z]+ sounds settled on\s+/i, '')
     .replace(/^[A-Z][a-z]+ said\s+/i, '')
     .replace(/^with [a-z][a-z' -]+, i would stay with\s+/i, '')
     .replace(/^with [a-z][a-z' -]+, the next thing worth handling is\s+/i, '')
@@ -175,6 +176,8 @@ function normalizeSpokenPersonName(value: string | undefined): string | undefine
 function normalizeCommunicationFocus(value: string): string {
   return value
     .replace(/^confirm\b\s+/i, 'whether ')
+    .replace(/\?\s*if not[\s\S]*$/i, '')
+    .replace(/\bif not[\s,]+we should [^.!?]+$/i, '')
     .replace(
       /\bwhether\s+tonight by (\d{1,2})(?::(\d{2}))?\s+if you are in\b/i,
       (_match, hour: string, minute?: string) =>
@@ -280,6 +283,16 @@ function cleanMessageBody(value: string): string {
   );
 }
 
+function extractQuotedCommunicationPromptBody(value: string | undefined): string {
+  const raw = value?.trim() || '';
+  if (!raw) return '';
+  const quoted =
+    raw.match(
+      /^(?:what should i (?:say|send) back(?: to)?|draft a response|draft a reply(?: to [a-z][a-z' -]+)?|give me a short reply|summari[sz]e this(?: message)?|what did they mean)\s*(?:[:,-]|\bto\b)?\s*["“](.+?)["”][?.! ]*$/i,
+    )?.[1] || '';
+  return cleanMessageBody(quoted);
+}
+
 function extractLatestInboundMessage(chatJid: string | undefined): {
   text?: string;
   messageId?: string;
@@ -364,6 +377,10 @@ function extractMessageText(input: CommunicationContextInput): {
   timestamp?: string;
   source: 'direct' | 'reply' | 'prior' | 'chat';
 } {
+  const quotedDirect = extractQuotedCommunicationPromptBody(input.text);
+  if (quotedDirect) {
+    return { text: quotedDirect, source: 'direct' };
+  }
   const direct = cleanMessageBody(input.text || '');
   if (direct) {
     return { text: direct, source: 'direct' };
@@ -844,6 +861,8 @@ function buildRelationshipAwareDraft(input: {
   toneHints: string[];
   profileFacts: ProfileFactWithSubject[];
   summaryText: string;
+  messageText: string;
+  followupState?: CommunicationFollowupState;
   style: CommunicationDraftResult['style'];
 }): string {
   const personName = normalizeSpokenPersonName(
@@ -857,17 +876,41 @@ function buildRelationshipAwareDraft(input: {
       : personName
         ? `Hey ${personName},`
         : 'Hey,';
-  const companionTone = resolveCompanionToneProfileFromFacts(input.profileFacts);
   const draftTopic =
     normalizeDraftTopicSummary(input.summaryText) || input.summaryText.replace(/\.$/, '');
-  const baseBody =
-    input.style === 'direct'
-      ? draftTopic.startsWith('whether ')
-        ? `I still need to sort out ${draftTopic}.`
-        : `On my side, ${draftTopic}.`
-      : draftTopic.startsWith('whether ')
-        ? `I wanted to check in about ${draftTopic}.`
-        : `I wanted to circle back on ${draftTopic}.`;
+  const resolvedAcknowledgement =
+    input.followupState === 'resolved'
+      ? (() => {
+          const normalized = normalizeText(input.messageText);
+          const seeYouPhrase =
+            normalized.match(/\bsee you(?: at)? [^.!?]+/i)?.[0] || '';
+          if (
+            /\bsounds good\b|\bworks for me\b|\bperfect\b|\ball set\b|\bsee you\b/i.test(
+              normalized,
+            )
+          ) {
+            return [
+              input.style === 'warmer' ? 'Sounds good to me too.' : 'Sounds good.',
+              seeYouPhrase
+                ? `${seeYouPhrase.charAt(0).toUpperCase()}${seeYouPhrase.slice(1)}.`
+                : null,
+            ]
+              .filter(Boolean)
+              .join(' ');
+          }
+          return '';
+        })()
+      : '';
+  if (resolvedAcknowledgement) {
+    return resolvedAcknowledgement.trim();
+  }
+  const baseBody = draftTopic.startsWith('whether ')
+    ? opener
+      ? `can you let me know ${draftTopic}?`
+      : `Can you let me know ${draftTopic}?`
+    : input.style === 'direct'
+      ? `On my side, ${draftTopic}.`
+      : `I wanted to circle back on ${draftTopic}.`;
   const rawSupportLine =
     input.linkedLifeThreads[0]?.nextAction ||
     input.linkedLifeThreads[0]?.summary ||
@@ -883,15 +926,15 @@ function buildRelationshipAwareDraft(input: {
     })
       ? normalizedSupportLine
       : '') ||
-    (companionTone === 'plain'
-      ? 'Here is the main thing from my side.'
-      : "Here's what I'm thinking.");
+    '';
   const closer =
-    input.style === 'short'
-      ? 'Let me know what works.'
-      : input.style === 'warmer'
-        ? 'No rush, but let me know what feels best.'
-        : 'Let me know what works best.';
+    draftTopic.startsWith('whether ')
+      ? ''
+      : input.style === 'short'
+        ? 'Let me know.'
+        : input.style === 'warmer'
+          ? 'No rush, but let me know what feels right.'
+          : 'Let me know what works for you.';
 
   return [opener, baseBody, clipText(supportLine, 120), closer]
     .filter(Boolean)
@@ -1082,6 +1125,8 @@ function buildDeterministicCommunicationDraft(input: {
     toneHints: input.analysis.thread?.toneStyleHints || [],
     profileFacts,
     summaryText: input.analysis.summaryText || '',
+    messageText: input.analysis.messageText || input.analysis.summaryText || '',
+    followupState: input.analysis.followupState,
     style: input.style,
   });
 }
@@ -1483,7 +1528,7 @@ export function formatCommunicationDraftReply(
       result.summaryText || 'I drafted a reply.',
       result.draftText ? `Draft: ${result.draftText}` : null,
       result.fallbackNote
-        ? 'I kept it on the lighter draft lane here, but it is still grounded in this conversation.'
+        ? 'I kept this one simple here, but it is still grounded in the conversation.'
         : 'If you want, I can make it warmer, more direct, or remind you to send it later.',
     ]
       .filter(Boolean)

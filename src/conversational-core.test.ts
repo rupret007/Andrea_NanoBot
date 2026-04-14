@@ -103,6 +103,18 @@ describe('graceful degraded replies', () => {
     expect(reply).not.toContain('setup verify');
   });
 
+  it('keeps deeper-read misses calm in messages', () => {
+    const reply = buildGracefulDegradedReply({
+      kind: 'assistant_runtime_unavailable',
+      channel: 'bluebubbles',
+      text: 'help me with this',
+    });
+
+    expect(reply).toContain("didn't come through cleanly");
+    expect(reply).toContain('one simple thing');
+    expect(reply).not.toContain('deeper read missed');
+  });
+
   it('keeps research-unavailable replies channel-safe and human', () => {
     const telegramReply = buildGracefulDegradedReply({
       kind: 'research_unavailable',
