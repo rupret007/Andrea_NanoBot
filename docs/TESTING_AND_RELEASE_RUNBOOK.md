@@ -546,6 +546,32 @@ Current truthful closeout note:
   - include practical assistant turns like `what's on my calendar tomorrow`, `remind me to take my pills at 9`, `what bills do I need to pay this week`, `add dinner with Candace tomorrow at 6:30 PM`, `move dinner to 7`, `what's up`, `what time is it`, `what about that`, `what should I say back`, `help me plan meals this week`, and `save that` when validating recent Alexa router changes
   - `npm run debug:alexa-conversation -- --review` now groups Alexa misses by blocker class, including no-context references, follow-up binding failures, and communication/planning should-route misses
 
+Dogfood handoff for this week:
+
+- Use daily this week:
+  - calendar
+  - reminders / save-for-later
+  - groceries / errands / bills / meals
+  - daily guidance
+  - reply help
+  - household follow-through
+- Manual steps still remaining:
+  - import `docs/alexa/interaction-model.en-US.json` in the Alexa Developer Console if the console model is not current
+  - run `Build Model`
+  - run `npm run setup -- --step alexa-model-sync mark-synced`
+  - run one fresh Alexa daily-guidance turn: `Open Andrea Assistant` then `What am I forgetting?`
+  - run one fresh Telegram daily-guidance turn: `what am I forgetting` or `what should I remember tonight`
+- Still externally blocked:
+  - outward research
+  - image generation
+  - local Anthropic-compatible gateway / local gateway quota-backed compatibility lane
+- Watch for during dogfooding:
+  - awkward wording
+  - repeated phrasing
+  - weak confirmations
+  - household smart-view usefulness
+  - save/remind/handoff clarity
+
 When configured, validate in this order:
 
 1. `npm run services:status` and confirm `alexa_listener_health=healthy` plus `alexa_oauth_health=healthy`

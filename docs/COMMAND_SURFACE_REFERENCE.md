@@ -80,7 +80,7 @@ Important boundary:
 | --- | --- | --- | --- |
 | Telegram | `live_proven` | Richest companion use for schedule, reminders, grouped household views, planning, review, research, messaging review, and operator work | Public-safe commands stay small; deeper control lives in the main control chat |
 | Alexa | `live_proven` proof on this host, with model sync tracked separately | Short voice help for calendar, reminders, groceries, bills this week, tonight or weekend orientation, and quick reply help | Real proof must come from the Andrea custom skill, and latest model changes should be confirmed with `setup -- --step alexa-model-sync` |
-| BlueBubbles | `degraded_but_usable` on this host | Optional best-effort Messages bridge in the active thread plus bounded capture/readout for lists and short household slices when the bridge is healthy | Mention-required, messaging-first, and Telegram remains the dependable main path while same-thread bridge health is unstable on this PC |
+| BlueBubbles | `live_proven` optional Messages bridge on this host | Optional best-effort Messages bridge in the active thread plus bounded capture/readout for lists and short household slices when the bridge is healthy | Mention-required and messaging-first; Telegram remains the dependable main path for richer completion and control |
 
 ## Natural-Language Discovery Surfaces
 
