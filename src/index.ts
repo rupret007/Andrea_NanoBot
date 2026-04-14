@@ -166,7 +166,10 @@ import {
   normalizeBlueBubblesCompanionPrompt,
   resolveMostRecentBlueBubblesCompanionChat,
 } from './bluebubbles-companion.js';
-import { isBlueBubblesSelfThreadAliasJid } from './bluebubbles-self-thread.js';
+import {
+  canonicalizeBlueBubblesSelfThreadJid,
+  isBlueBubblesSelfThreadAliasJid,
+} from './bluebubbles-self-thread.js';
 import { interpretBlueBubblesDirectTurn } from './messages-fluidity.js';
 import { recordOrganicTelegramRoundtripSuccess } from './telegram-roundtrip.js';
 import { readEnvFile } from './env.js';
@@ -595,27 +598,27 @@ const OUTCOME_REVIEW_CONTEXT_TTL_MS = 30 * 60 * 1000;
 const DELEGATION_RULE_CONTEXT_PREFIX = 'delegation_rule_context:';
 
 function getGoogleCalendarPendingStateKey(chatJid: string): string {
-  return `${GOOGLE_CALENDAR_PENDING_STATE_PREFIX}${chatJid}`;
+  return `${GOOGLE_CALENDAR_PENDING_STATE_PREFIX}${canonicalizeBlueBubblesSelfThreadJid(chatJid) || chatJid}`;
 }
 
 function getGoogleCalendarSchedulingContextKey(chatJid: string): string {
-  return `${GOOGLE_CALENDAR_SCHEDULING_CONTEXT_PREFIX}${chatJid}`;
+  return `${GOOGLE_CALENDAR_SCHEDULING_CONTEXT_PREFIX}${canonicalizeBlueBubblesSelfThreadJid(chatJid) || chatJid}`;
 }
 
 function getGoogleCalendarActiveEventContextKey(chatJid: string): string {
-  return `${GOOGLE_CALENDAR_ACTIVE_EVENT_CONTEXT_PREFIX}${chatJid}`;
+  return `${GOOGLE_CALENDAR_ACTIVE_EVENT_CONTEXT_PREFIX}${canonicalizeBlueBubblesSelfThreadJid(chatJid) || chatJid}`;
 }
 
 function getGoogleCalendarPendingReminderKey(chatJid: string): string {
-  return `${GOOGLE_CALENDAR_PENDING_REMINDER_PREFIX}${chatJid}`;
+  return `${GOOGLE_CALENDAR_PENDING_REMINDER_PREFIX}${canonicalizeBlueBubblesSelfThreadJid(chatJid) || chatJid}`;
 }
 
 function getGoogleCalendarPendingEventActionKey(chatJid: string): string {
-  return `${GOOGLE_CALENDAR_PENDING_EVENT_ACTION_PREFIX}${chatJid}`;
+  return `${GOOGLE_CALENDAR_PENDING_EVENT_ACTION_PREFIX}${canonicalizeBlueBubblesSelfThreadJid(chatJid) || chatJid}`;
 }
 
 function getGoogleCalendarPendingAutomationKey(chatJid: string): string {
-  return `${GOOGLE_CALENDAR_PENDING_AUTOMATION_PREFIX}${chatJid}`;
+  return `${GOOGLE_CALENDAR_PENDING_AUTOMATION_PREFIX}${canonicalizeBlueBubblesSelfThreadJid(chatJid) || chatJid}`;
 }
 
 function getActionLayerContextKey(chatJid: string): string {
@@ -4530,6 +4533,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               }),
             )
           : null;
+      const pendingStateToPersist =
+        pendingDraftState ||
+        (createPlan.kind === 'needs_details' && !noWritableCalendars
+          ? createPlan.pendingState || null
+          : null);
       const reply =
         createPlan.kind === 'needs_details'
           ? createPlan.message
@@ -4542,10 +4550,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             : formatGoogleCalendarCreatePrompt(pendingDraftState!);
 
       try {
-        if (pendingDraftState) {
-          setPendingGoogleCalendarCreateState(chatJid, pendingDraftState);
+        if (pendingStateToPersist) {
+          setPendingGoogleCalendarCreateState(chatJid, pendingStateToPersist);
           const contextState = buildGoogleCalendarSchedulingContextState({
-            draft: pendingDraftState.draft,
+            draft: pendingStateToPersist.draft,
             now,
           });
           if (contextState) {

@@ -367,6 +367,23 @@ function isSharedAssistantCompletionFollowup(lower: string): boolean {
   );
 }
 
+function looksLikeCalendarLookupPrompt(normalized: string): boolean {
+  const lower = normalized.toLowerCase();
+  return (
+    /\bwhat(?:'s| is)\b[\s\S]{0,80}\b(calendar|schedule)\b/.test(lower) ||
+    /\bwhat does my\b[\s\S]{0,80}\blook like\b/.test(lower) ||
+    /\b(?:show|check|look at|pull up|read)\b[\s\S]{0,80}\b(calendar|schedule)\b/.test(
+      lower,
+    ) ||
+    /\b(on my|in my)\s+(calendar|schedule)\b/.test(lower) ||
+    /\bdo i have\b[\s\S]{0,80}\b(meetings?|appointments?|events?)\b/.test(
+      lower,
+    ) ||
+    /\bwhat meetings do i have\b/.test(lower) ||
+    /\bwhen is my first meeting tomorrow\b/.test(lower)
+  );
+}
+
 function matchDailyPrompt(normalized: string): AssistantCapabilityMatch | null {
   const lower = normalized.toLowerCase();
   if (
@@ -1007,6 +1024,9 @@ export function matchAssistantCapabilityRequest(
 ): AssistantCapabilityMatch | null {
   const normalized = normalizeText(text);
   if (!normalized) return null;
+  if (looksLikeCalendarLookupPrompt(normalized)) {
+    return null;
+  }
 
   return (
     matchPilotPrompt(normalized) ||

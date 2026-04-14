@@ -156,6 +156,23 @@ describe('planGoogleCalendarCreate', () => {
     expect(plan.message).toContain('still need the start time');
   });
 
+  it('keeps a resumable pending state when only the start time is missing', () => {
+    const plan = planGoogleCalendarCreate(
+      'Add dinner to my calendar tomorrow.',
+      [...writableCalendars],
+      new Date('2026-04-01T09:00:00-05:00'),
+      'America/Chicago',
+    );
+
+    expect(plan.kind).toBe('needs_details');
+    if (plan.kind !== 'needs_details') return;
+    expect(plan.pendingState).toBeTruthy();
+    expect(plan.pendingState?.draft.title).toBe('dinner');
+    expect(plan.pendingState?.draft.startIso).toBe('2026-04-02T05:00:00.000Z');
+    expect(plan.pendingState?.draft.endIso).toBe('2026-04-02T06:00:00.000Z');
+    expect(plan.pendingState?.step).toBe('choose_calendar');
+  });
+
   it('uses scheduling context for pronoun-based follow-through', () => {
     const context = buildGoogleCalendarSchedulingContextState({
       draft: {
@@ -275,6 +292,29 @@ describe('google calendar create pending flow', () => {
     if (result.kind !== 'awaiting_input') return;
     expect(result.state.draft.startIso).toBe('2026-04-03T17:00:00.000Z');
     expect(result.state.draft.endIso).toBe('2026-04-03T18:00:00.000Z');
+  });
+
+  it('resumes a missing-time draft when the follow-up supplies the start time', () => {
+    const plan = planGoogleCalendarCreate(
+      'Add dinner to my calendar tomorrow.',
+      [...writableCalendars],
+      new Date('2026-04-01T09:00:00-05:00'),
+      'America/Chicago',
+    );
+
+    expect(plan.kind).toBe('needs_details');
+    if (plan.kind !== 'needs_details' || !plan.pendingState) return;
+
+    const result = advancePendingGoogleCalendarCreate(
+      'Start time is 11AM',
+      plan.pendingState,
+    );
+
+    expect(result.kind).toBe('awaiting_input');
+    if (result.kind !== 'awaiting_input') return;
+    expect(result.state.draft.startIso).toBe('2026-04-02T16:00:00.000Z');
+    expect(result.state.draft.endIso).toBe('2026-04-02T17:00:00.000Z');
+    expect(result.state.step).toBe('choose_calendar');
   });
 
   it('switches calendars from a follow-up phrase', () => {

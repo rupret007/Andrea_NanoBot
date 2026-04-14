@@ -79,6 +79,19 @@ describe('planCalendarAssistantLookup', () => {
     expect(plan?.pointInTime).toBeNull();
   });
 
+  it('parses schedule asks for a named weekday', () => {
+    const plan = planCalendarAssistantLookup(
+      "What's on my schedule for Saturday?",
+      new Date('2026-04-14T10:00:00-05:00'),
+      'America/Chicago',
+    );
+
+    expect(plan?.intent).toBe('agenda');
+    expect(plan?.label).toBe('Saturday');
+    expect(plan?.start.toISOString()).toBe('2026-04-18T05:00:00.000Z');
+    expect(plan?.end.toISOString()).toBe('2026-04-19T05:00:00.000Z');
+  });
+
   it('parses availability asks with dayparts', () => {
     const plan = planCalendarAssistantLookup(
       'Am I free tomorrow afternoon?',

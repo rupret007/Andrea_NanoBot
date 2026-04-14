@@ -95,7 +95,11 @@ export interface PendingGoogleCalendarCreateState {
 
 export type GoogleCalendarCreatePlanResult =
   | { kind: 'none' }
-  | { kind: 'needs_details'; message: string }
+  | {
+      kind: 'needs_details';
+      message: string;
+      pendingState?: PendingGoogleCalendarCreateState | null;
+    }
   | {
       kind: 'draft';
       draft: GoogleCalendarCreateDraft;
@@ -358,7 +362,13 @@ function parseTimeRange(working: string): {
   const startOnly = working.match(
     /\b(?:at|from)\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/i,
   );
-  if (!startOnly) {
+  const impliedStart =
+    startOnly ||
+    working.match(
+      /\b(?:start\s+time|time)\s*(?:is\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i,
+    ) ||
+    working.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i);
+  if (!impliedStart) {
     return {
       start: null,
       end: null,
@@ -367,9 +377,9 @@ function parseTimeRange(working: string): {
   }
 
   return {
-    start: parseClockPart(startOnly[1], startOnly[2], startOnly[3]),
+    start: parseClockPart(impliedStart[1], impliedStart[2], impliedStart[3]),
     end: null,
-    matchedText: startOnly[0],
+    matchedText: impliedStart[0],
   };
 }
 
@@ -583,6 +593,35 @@ function formatConflictSuggestion(
   return formatDraftWhen(draft, timeZone);
 }
 
+function buildDraftAwaitingTime(input: {
+  title: string;
+  date: Date;
+  timeZone: string;
+  durationMinutes: number;
+  selectedCalendarId: string | null;
+  writableCalendars: GoogleCalendarMetadata[];
+  location?: string | null;
+  description?: string | null;
+  now?: Date;
+}): PendingGoogleCalendarCreateState {
+  const start = startOfDay(input.date);
+  const end = new Date(start.getTime() + input.durationMinutes * 60 * 1000);
+  return buildPendingGoogleCalendarCreateState({
+    draft: {
+      title: input.title,
+      startIso: start.toISOString(),
+      endIso: end.toISOString(),
+      allDay: false,
+      timeZone: input.timeZone,
+      location: input.location,
+      description: input.description,
+    },
+    writableCalendars: input.writableCalendars,
+    selectedCalendarId: input.selectedCalendarId,
+    now: input.now,
+  });
+}
+
 export function planGoogleCalendarCreate(
   message: string,
   writableCalendars: GoogleCalendarMetadata[],
@@ -616,12 +655,12 @@ export function planGoogleCalendarCreate(
       ? schedulingContext.durationMinutes
       : schedulingContext?.durationMinutes || null;
 
-  if (!dateInfo || (!allDay && !timeInfo.start && !daypartInfo)) {
+  if (!dateInfo) {
     return {
       kind: 'needs_details',
       message: buildMissingDetailsReply({
-        missingDate: !dateInfo,
-        missingTime: !timeInfo.start && !daypartInfo,
+        missingDate: true,
+        missingTime: !allDay && !timeInfo.start && !daypartInfo,
         allDay,
       }),
     };
@@ -642,6 +681,28 @@ export function planGoogleCalendarCreate(
       message: /\b(?:that|it)\b/i.test(working)
         ? 'What should I put on your calendar?'
         : 'I can create that as a calendar event, but I still need a title.',
+    };
+  }
+
+  if (!allDay && !timeInfo.start && !daypartInfo) {
+    return {
+      kind: 'needs_details',
+      message: buildMissingDetailsReply({
+        missingDate: false,
+        missingTime: true,
+        allDay,
+      }),
+      pendingState: buildDraftAwaitingTime({
+        title,
+        date: dateInfo.date,
+        timeZone,
+        durationMinutes: contextDurationMinutes || 60,
+        selectedCalendarId: selectedCalendar?.id || null,
+        writableCalendars,
+        location: locationField.value,
+        description: notesField.value || descriptionField.value,
+        now,
+      }),
     };
   }
 

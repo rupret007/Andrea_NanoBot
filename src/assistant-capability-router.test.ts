@@ -61,6 +61,9 @@ describe('assistant capability router', () => {
     ).toMatchObject({
       capabilityId: 'research.topic',
     });
+    expect(
+      matchAssistantCapabilityRequest("What's on my schedule for Saturday?"),
+    ).toBeNull();
   });
 
   it('matches explicit knowledge-library prompts cleanly', () => {
