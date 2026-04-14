@@ -30,8 +30,8 @@ Use this shorthand when you need the current host story fast:
   - Alexa's latest repo interaction-model hash has not been marked as synced locally yet
   - after the Developer Console import/build, run `npm run setup -- --step alexa-model-sync mark-synced`
 - **optional Messages bridge**
-  - BlueBubbles on this PC is currently `degraded_but_usable`: transport, webhook registration, and the recent-activity shadow poll are healthy, but the canonical same-thread `message_action` proof leg is still missing
-  - Telegram stays the dependable main messaging surface while that bridge is unstable
+  - BlueBubbles on this PC is currently `live_proven`: transport, webhook registration, the recent-activity shadow poll, and the canonical same-thread `message_action` proof chain are all healthy on this host as of April 14, 2026
+  - Telegram stays the dependable main messaging surface, while BlueBubbles is now a proven optional bridge
 - **externally blocked but optional**
   - outward research
   - Telegram image generation
@@ -139,7 +139,7 @@ Current host-proof rule:
 - Telegram ordinary chat and the main flagship follow-through journeys were live-proven on this host on April 7, 2026
 - Alexa is status-led on this host: it is currently `live_proven` while the handled proof stays fresh, and the latest repo model is tracked separately through the local Alexa model-sync marker
 - after restart, operator surfaces may credit that Alexa proof either from the persisted handled signed-request markers or from a recent same-host `alexa_orientation` pilot success that already recorded the qualifying handled turn
-- BlueBubbles is status-led on this host: it is currently `degraded_but_usable` because transport is healthy but the canonical same-thread `message_action` leg still needs a fresh repro in `bb:iMessage;-;+14695405551`
+- BlueBubbles is status-led on this host: it is currently `live_proven` because the canonical same-thread `message_action` proof bar was satisfied on April 14, 2026 in `bb:iMessage;-;+14695405551`
 - outward-facing research and Telegram image generation are currently optional provider-blocked lanes on this host
 - the local Anthropic-compatible LiteLLM gateway remains a separate compatibility/runtime lane and should be reported separately if it degrades later
 

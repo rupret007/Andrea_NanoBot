@@ -13,9 +13,9 @@ Current host reality for the Windows operator machine:
 - the BlueBubbles desktop app is installed and connected to the Mac-side server
 - Andrea now has live `BLUEBUBBLES_*` config loaded on this host
 - Andrea can currently reach the configured BlueBubbles endpoint from this Windows host and the webhook is still registered
-- BlueBubbles is currently **degraded_but_usable** as a Messages bridge on this host because the bridge is healthy but the fresh same-thread `message_action` proof leg is still missing
+- BlueBubbles is currently **live_proven** as a Messages bridge on this host because the bridge is healthy and the canonical same-thread `message_action` proof chain was recorded on April 14, 2026
 - the canonical proof thread is `bb:iMessage;-;+14695405551`, and alias support remains enabled for `bb:iMessage;-;jeffstory007@gmail.com`
-- Telegram remains Andrea's dependable main messaging surface while the bridge is unstable
+- Telegram remains Andrea's dependable main messaging surface, while BlueBubbles is now a proven optional bridge
 
 Use these operator truth surfaces:
 
@@ -185,6 +185,8 @@ BlueBubbles is `live_proven` only after all of these happen on this host:
 6. if the user approves a real reply, that same-thread outbound send lands without the companion prefix
 
 If config is present and the server, webhook, and recent-activity shadow poll are ready but the fresh same-thread proof chain is still incomplete, BlueBubbles stays below `live_proven` and should read as `degraded_but_usable` on that host. If Windows cannot reach the configured endpoint at all, the bridge should read as `externally_blocked` with `transport_unreachable`, and Telegram should be treated as the dependable main path.
+
+On this host, that proof bar was satisfied on April 14, 2026 in `bb:iMessage;-;+14695405551` with a real same-thread ask, a fresh drafted message action, and a same-thread `send it` continuation.
 
 ## Operator Proof Steps
 

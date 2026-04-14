@@ -99,7 +99,7 @@ Current host truth for the Windows field-trial machine:
   - the latest repo Alexa interaction model hash has not been marked as synced locally yet
   - after importing and building `docs/alexa/interaction-model.en-US.json` in the Alexa Developer Console, run `npm run setup -- --step alexa-model-sync mark-synced`
 - Optional Messages bridge:
-  - BlueBubbles is currently `degraded_but_usable` on this Windows host: transport, webhook registration, and the recent-activity shadow poll are healthy, but a fresh same-thread message-action proof leg is still missing, so Telegram stays the dependable main messaging surface while the bridge remains below live-proven
+  - BlueBubbles is currently `live_proven` on this Windows host: transport, webhook registration, and the recent-activity shadow poll are healthy, and a fresh same-thread message-action proof chain was recorded on April 14, 2026 in the canonical self-thread `bb:iMessage;-;+14695405551`
 - Optional provider-blocked lanes:
   - outward research
   - Telegram image generation
@@ -321,7 +321,7 @@ BlueBubbles is now Andrea's optional bounded Messages bridge, not a core require
 - richer details still hand off explicitly to Telegram when that is the better surface
 - BlueBubbles does **not** become a main control chat and does not expose work-cockpit or admin/runtime controls
 
-On this host, the Messages bridge is currently `degraded_but_usable`: Andrea has the live `BLUEBUBBLES_*` configuration loaded, the Mac-side endpoint is reachable, the webhook is registered, and the recent-activity shadow poll is healthy, but the fresh same-thread `message_action` proof leg is still missing, so Telegram remains the dependable main messaging surface while BlueBubbles stays below `live_proven`.
+On this host, the Messages bridge is currently `live_proven`: Andrea has the live `BLUEBUBBLES_*` configuration loaded, the Mac-side endpoint is reachable, the webhook is registered, the recent-activity shadow poll is healthy, and a fresh same-thread `message_action` proof chain was recorded on April 14, 2026 in `bb:iMessage;-;+14695405551`. Telegram still remains Andrea's dependable main messaging surface, while BlueBubbles is now an honestly proven optional bridge.
 
 OpenBubbles is still not an active Andrea provider on this PC. Its official docs support the Mac-offline goal after activation or renewal, but Andrea does not yet have a supported Windows-native observation/reply surface to bind to there.
 

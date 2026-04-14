@@ -534,7 +534,7 @@ Current truthful closeout note:
 - after restart, operator surfaces may credit that Alexa proof either from the persisted handled signed-request markers or from a recent same-host `alexa_orientation` pilot success that already recorded the qualifying handled turn
 - if the repo Alexa model changed, the remaining release-candidate step is to import `docs/alexa/interaction-model.en-US.json`, run `Build Model`, and then run `npm run setup -- --step alexa-model-sync mark-synced`
 - if `npm run services:status` later shows `alexa_live_proof=near_live_only`, the remaining Alexa blocker is one human-operated voice or authenticated simulator run
-- BlueBubbles is currently a `degraded_but_usable` optional Messages bridge on this host because transport, webhook registration, and the recent-activity shadow poll are healthy but the fresh same-thread `message_action` proof leg is still missing, so Telegram remains the dependable main path while BlueBubbles stays below `live_proven`
+- BlueBubbles is currently a `live_proven` optional Messages bridge on this host because transport, webhook registration, the recent-activity shadow poll, and the canonical same-thread `message_action` proof chain are all healthy on this machine as of April 14, 2026
 - outward-facing research and Telegram image generation are currently optional provider-blocked lanes on this host
 - if the Anthropic-compatible LiteLLM gateway degrades later, report that separately as the core-runtime compatibility lane rather than as a direct OpenAI billing problem
 - typed Alexa+ app chat is not an authoritative proof surface unless Andrea logs a real signed follow-up `IntentRequest` after launch
