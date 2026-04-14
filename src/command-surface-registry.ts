@@ -937,7 +937,7 @@ export const NATURAL_LANGUAGE_DISCOVERY_SURFACES: readonly CommandSurfaceEntry[]
     surfaceKind: 'natural_language',
     channelScope: ['alexa'],
     discoverability: ['/help', '/features', 'operator_docs'],
-    truthClass: 'bounded',
+    truthClass: 'live_proven',
     summary: 'Concise voice help for your day, schedule, reminders, and short follow-up.',
     description:
       'Best for voice orientation, schedule and reminder asks, groceries and errands, pills and bills, meal or tonight planning, and quick reply help.',
@@ -952,7 +952,7 @@ export const NATURAL_LANGUAGE_DISCOVERY_SURFACES: readonly CommandSurfaceEntry[]
     surfaceKind: 'natural_language',
     channelScope: ['bluebubbles'],
     discoverability: ['/help', '/features', 'operator_docs'],
-    truthClass: 'bounded',
+    truthClass: 'live_proven',
     summary: 'Optional bounded Messages bridge when available.',
     description:
       'Mention-required Messages bridge for summarizing, drafting, reminding later, and same-thread send/defer decisions when the Apple bridge is healthy. Telegram remains the dependable main messaging surface.',
@@ -1019,10 +1019,12 @@ export const NATURAL_LANGUAGE_DISCOVERY_SURFACES: readonly CommandSurfaceEntry[]
     surfaceKind: 'natural_language',
     channelScope: ['telegram', 'alexa', 'cross_channel'],
     discoverability: ['/features'],
-    truthClass: 'live_proven',
+    truthClass: 'near_live_only',
     summary: 'Daily orientation, planning, meals, and what to do next.',
     description:
       'The most practical Andrea-first planning surface for everyday decisions, prep, meal planning, and open loops.',
+    statusAuthority:
+      'Daily guidance on this host still needs one fresh Telegram proof turn; see npm run debug:pilot for the current freshness state.',
   },
   {
     id: 'communication_and_reply_help',
@@ -1036,7 +1038,7 @@ export const NATURAL_LANGUAGE_DISCOVERY_SURFACES: readonly CommandSurfaceEntry[]
     surfaceKind: 'natural_language',
     channelScope: ['telegram', 'alexa', 'bluebubbles', 'cross_channel'],
     discoverability: ['/features'],
-    truthClass: 'bounded',
+    truthClass: 'live_proven',
     summary: 'Reply drafting, message summaries, and open communication follow-through.',
     description:
       'Telegram is richer, Messages is a calmer same-thread bridge when available, and Alexa is good for a concise first draft.',
@@ -1053,10 +1055,12 @@ export const NATURAL_LANGUAGE_DISCOVERY_SURFACES: readonly CommandSurfaceEntry[]
     surfaceKind: 'natural_language',
     channelScope: ['telegram', 'alexa', 'cross_channel'],
     discoverability: ['/features'],
-    truthClass: 'bounded',
+    truthClass: 'degraded_but_usable',
     summary: 'Compare, explain, summarize, and use saved context when it helps.',
     description:
       'Telegram is richest for fuller answers, while Alexa keeps it short and bounded.',
+    statusAuthority:
+      'Provider-backed research is externally blocked on this host right now, but local and saved-context answers still work.',
   },
   {
     id: 'open_followthrough_and_people',

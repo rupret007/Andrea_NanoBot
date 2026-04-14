@@ -23,7 +23,7 @@ Andrea separates surface truth this way:
 - `internal`
   - button-backing commands and inline action ids that support the product but are not part of normal slash help
 
-Andrea also separates capability truth this way:
+Andrea also separates proof truth from surface shape this way:
 
 - `live_proven`
   - the capability has passed the real proof bar on this host
@@ -33,8 +33,11 @@ Andrea also separates capability truth this way:
   - a bounded real path is usable, but the full live-proof bar is not yet met
 - `externally_blocked`
   - repo-side behavior is not the problem; an external dependency or human-only step is still blocking proof
+
+Surface-shape and access overlays still appear in this reference too:
+
 - `bounded`
-  - intentionally narrower or confirmation-first behavior
+  - intentionally narrower or confirmation-first behavior, not a proof label
 - `operator_only`
   - available only in the main Telegram control chat or operator docs
 - `disabled`
@@ -91,12 +94,17 @@ These are discoverable by normal language rather than slash commands.
 | Ordinary chat and simple local asks | Telegram, Alexa, BlueBubbles | `live_proven` | `hi`, `what's up`, `what time is it`, `what day is it`, `thanks` |
 | Calendar and schedule | Telegram, Alexa | `live_proven` | `what's on my calendar tomorrow`, `what's next on my calendar`, `move that to 7` |
 | Reminders and save-for-later | Telegram, Alexa, BlueBubbles | `live_proven` | `remind me to take my pills at 9`, `remind me later`, `save that for later` |
-| Lists, groceries, bills, and everyday capture | Telegram, Alexa, BlueBubbles | `live_proven` repo-side | `help me set this up`, `add milk to my shopping list`, `what do we need from the store`, `what's left for tonight`, `make this a monthly bill`, `mark that done` |
-| Planning and next steps | Telegram, Alexa | `live_proven` | `what am I forgetting`, `help me plan tonight`, `help me plan meals this week` |
-| Communication and reply help | Telegram, Alexa, BlueBubbles | `bounded` | `what should I say back`, `what do I owe people`, `summarize this message` |
-| Compare, explain, and saved context | Telegram, Alexa | `bounded` | `what should I know before deciding`, `compare these options`, `tell me something interesting` |
+| Lists, groceries, bills, and everyday capture | Telegram, Alexa, BlueBubbles | `live_proven` | `help me set this up`, `add milk to my shopping list`, `what do we need from the store`, `what's left for tonight`, `make this a monthly bill`, `mark that done` |
+| Planning and next steps | Telegram, Alexa | `near_live_only` | `what am I forgetting`, `help me plan tonight`, `help me plan meals this week` |
+| Communication and reply help | Telegram, Alexa, BlueBubbles | `live_proven` | `what should I say back`, `what do I owe people`, `summarize this message` |
+| Compare, explain, and saved context | Telegram, Alexa | `degraded_but_usable` | `what should I know before deciding`, `compare these options`, `tell me something interesting` |
 | Open follow-through and people | Telegram, Alexa, BlueBubbles | `live_proven` | `what's still open`, `what bills do I need to pay this week`, `what should I handle this weekend`, `what about Candace` |
 | Coding and work help | Telegram | `live_proven` | natural-language project help plus `/cursor_status` |
+
+Host note:
+
+- `Planning and next steps` is held at `near_live_only` on this host because daily guidance still needs one fresh Telegram proof turn, not because the repo-side planning path is broken.
+- `Compare, explain, and saved context` is currently `degraded_but_usable` because provider-backed research is externally blocked, while local and saved-context answers still work.
 
 ## Operator-Only Telegram Slash Families
 

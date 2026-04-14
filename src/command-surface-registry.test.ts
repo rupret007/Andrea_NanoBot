@@ -199,6 +199,20 @@ describe('command surface registry', () => {
     expect(features).toContain('pills');
     expect(features).not.toContain('life threads and follow-through');
   });
+
+  it('keeps discovery truth classes aligned with the current host story', () => {
+    const truthById = new Map(
+      COMMAND_SURFACE_REGISTRY.map((entry) => [entry.id, entry.truthClass] as const),
+    );
+
+    expect(truthById.get('alexa_voice_surface')).toBe('live_proven');
+    expect(truthById.get('bluebubbles_bounded_surface')).toBe('live_proven');
+    expect(truthById.get('planning_and_next_steps')).toBe('near_live_only');
+    expect(truthById.get('communication_and_reply_help')).toBe('live_proven');
+    expect(truthById.get('compare_explain_and_saved_context')).toBe(
+      'degraded_but_usable',
+    );
+  });
 });
 
 describe('command surface docs', () => {
@@ -260,5 +274,25 @@ describe('command surface docs', () => {
     expect(commandReference).toContain('operator-only');
     expect(commandReference).toContain('Calendar and schedule');
     expect(commandReference).toContain('Communication and reply help');
+  });
+
+  it('keeps the command reference truth labels aligned with current host status', () => {
+    const commandReference = readDoc('docs', 'COMMAND_SURFACE_REFERENCE.md');
+
+    expect(commandReference).toContain(
+      'Surface-shape and access overlays still appear in this reference too:',
+    );
+    expect(commandReference).toContain(
+      '| Planning and next steps | Telegram, Alexa | `near_live_only` |',
+    );
+    expect(commandReference).toContain(
+      '| Communication and reply help | Telegram, Alexa, BlueBubbles | `live_proven` |',
+    );
+    expect(commandReference).toContain(
+      '| Compare, explain, and saved context | Telegram, Alexa | `degraded_but_usable` |',
+    );
+    expect(commandReference).toContain(
+      'daily guidance still needs one fresh Telegram proof turn',
+    );
   });
 });
