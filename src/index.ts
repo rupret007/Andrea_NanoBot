@@ -3473,6 +3473,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     capabilityId?: string | null;
     confidence?: string | null;
     fallbackReason?: string | null;
+    selectedModelTier?: 'simple' | 'standard' | 'complex' | null;
+    selectedModel?: string | null;
+    providerMode?: 'direct_openai' | 'compatible_gateway' | null;
   }) => {
     if (!shouldUseOpenAiGuidedRouting) return;
     recordOpenAiGuidedRoutingState({
@@ -3483,6 +3486,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       capabilityId: params.capabilityId || null,
       confidence: params.confidence || null,
       fallbackReason: params.fallbackReason || null,
+      selectedModelTier: params.selectedModelTier || null,
+      selectedModel: params.selectedModel || null,
+      providerMode: params.providerMode || null,
     });
   };
   const maybeGetOpenAiGuidedRoute = async () => {
@@ -6268,6 +6274,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         capabilityRouteSource === 'deterministic_fallback'
           ? openAiGuidedRouteResult?.fallbackReason || null
           : null,
+      selectedModelTier:
+        openAiGuidedRouteResult?.decision?.selectedModelTier || null,
+      selectedModel: openAiGuidedRouteResult?.decision?.selectedModel || null,
+      providerMode: openAiGuidedRouteResult?.decision?.providerMode || null,
     });
     const priorDailyContext = getDailyCompanionContext(chatJid, now);
     const selectedWork = await getSelectedDailyWorkContext(
@@ -6655,6 +6665,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         routeKind: decision.routeKind,
         capabilityId: decision.capabilityId || null,
         confidence: decision.confidence,
+        selectedModelTier: decision.selectedModelTier || null,
+        selectedModel: decision.selectedModel || null,
+        providerMode: decision.providerMode || null,
       });
       await sendAssistantReplyWithFeedback({
         text: clarificationText,
@@ -6701,6 +6714,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         routeKind: decision.routeKind,
         capabilityId: decision.capabilityId || null,
         confidence: decision.confidence,
+        selectedModelTier: decision.selectedModelTier || null,
+        selectedModel: decision.selectedModel || null,
+        providerMode: decision.providerMode || null,
       });
       await sendAssistantReplyWithFeedback({
         text: guidedReply,
@@ -6790,6 +6806,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         interpretedTurn.source === 'fallback'
           ? interpretedTurn.fallbackText || 'Messages direct turn fell back locally.'
           : null,
+      selectedModelTier: openAiGuidedRouteResult?.decision?.selectedModelTier || null,
+      selectedModel: openAiGuidedRouteResult?.decision?.selectedModel || null,
+      providerMode: openAiGuidedRouteResult?.decision?.providerMode || null,
     });
     await sendAssistantReplyWithFeedback({
       text: replyText,
@@ -6897,6 +6916,15 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     const quickReplyPilot = startConversationPilotProof(
       resolveOrdinaryChatPilotJourney(lastContent),
     );
+    const openAiGuidedFallbackDecision = (
+      openAiGuidedRouteResult as {
+        decision?: {
+          selectedModelTier?: 'simple' | 'standard' | 'complex' | null;
+          selectedModel?: string | null;
+          providerMode?: 'direct_openai' | 'compatible_gateway' | null;
+        } | null;
+      } | null
+    )?.decision;
     const openAiGuidedFallbackReason = (
       openAiGuidedRouteResult as { fallbackReason?: string | null } | null
     )?.fallbackReason;
@@ -6907,6 +6935,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         fallbackReason:
           openAiGuidedFallbackReason ||
           'Fell back to the local quick reply matcher.',
+        selectedModelTier:
+          openAiGuidedFallbackDecision?.selectedModelTier || null,
+        selectedModel: openAiGuidedFallbackDecision?.selectedModel || null,
+        providerMode: openAiGuidedFallbackDecision?.providerMode || null,
       });
       await sendAssistantReplyWithFeedback({
         text: quickReply,

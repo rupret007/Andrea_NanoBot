@@ -18,7 +18,10 @@ const envConfig = readEnvFile([
   'CODEX_LOCAL_ENABLED',
   'CODEX_LOCAL_MODEL',
   'CONTAINER_RUNTIME',
+  'OPENAI_MODEL_COMPLEX',
   'OPENAI_MODEL_FALLBACK',
+  'OPENAI_MODEL_SIMPLE',
+  'OPENAI_MODEL_STANDARD',
   'ONECLI_URL',
   'TZ',
 ]);
@@ -131,9 +134,16 @@ export const CONTAINER_MAX_OUTPUT_SIZE = parseInt(
 ); // 10MB default
 export const ONECLI_URL =
   process.env.ONECLI_URL || envConfig.ONECLI_URL || 'http://localhost:10254';
+export const OPENAI_MODEL_SIMPLE =
+  process.env.OPENAI_MODEL_SIMPLE || envConfig.OPENAI_MODEL_SIMPLE || '';
+export const OPENAI_MODEL_STANDARD =
+  process.env.OPENAI_MODEL_STANDARD || envConfig.OPENAI_MODEL_STANDARD || '';
+export const OPENAI_MODEL_COMPLEX =
+  process.env.OPENAI_MODEL_COMPLEX || envConfig.OPENAI_MODEL_COMPLEX || '';
 export const OPENAI_MODEL_FALLBACK =
   process.env.OPENAI_MODEL_FALLBACK ||
   envConfig.OPENAI_MODEL_FALLBACK ||
+  OPENAI_MODEL_COMPLEX ||
   'gpt-5.4';
 export const MAX_MESSAGES_PER_PROMPT = Math.max(
   1,

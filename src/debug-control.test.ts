@@ -27,6 +27,8 @@ import {
 } from './db.js';
 import { persistNanoclawHostState, writeRuntimeAuditState } from './host-control.js';
 import { getLogControlConfig, setLogControlConfig } from './logger.js';
+import { recordOpenAiGuidedRoutingState } from './openai-guided-routing-state.js';
+import { recordOpenAiUsageState } from './openai-usage-state.js';
 
 describe('debug control', () => {
   beforeEach(() => {
@@ -428,6 +430,42 @@ describe('debug log tails', () => {
     expect(status).toContain('Latest response feedback: failed');
     expect(status).toContain('Latest response feedback class: repo_side_rough_edge');
     expect(status).toContain('Local hotfix pending landing: no');
+  });
+
+  it('shows OpenAI routing and usage tier truth in debug status', () => {
+    recordOpenAiGuidedRoutingState({
+      at: '2026-04-15T15:00:00.000Z',
+      channel: 'telegram',
+      source: 'openai_router',
+      routeKind: 'assistant_capability',
+      capabilityId: 'research.topic',
+      confidence: 'high',
+      selectedModelTier: 'simple',
+      selectedModel: 'gpt-5.4-mini',
+      providerMode: 'direct_openai',
+    });
+    recordOpenAiUsageState({
+      at: '2026-04-15T15:00:01.000Z',
+      surface: 'research',
+      selectedModelTier: 'simple',
+      selectedModel: 'gpt-5.4-mini',
+      providerMode: 'direct_openai',
+      outcome: 'success',
+      detail: 'openai_responses',
+    });
+
+    const status = formatDebugStatus();
+    expect(status).toContain('OpenAI-guided routing model tier: simple');
+    expect(status).toContain('OpenAI-guided routing model: gpt-5.4-mini');
+    expect(status).toContain(
+      'OpenAI-guided routing provider mode: direct_openai',
+    );
+    expect(status).toContain('Last OpenAI usage surface: research');
+    expect(status).toContain('Last OpenAI usage model tier: simple');
+    expect(status).toContain('Last OpenAI usage model: gpt-5.4-mini');
+    expect(status).toContain('Last OpenAI usage provider mode: direct_openai');
+    expect(status).toContain('Last OpenAI usage outcome: success');
+    expect(status).toContain('Last OpenAI usage detail: openai_responses');
   });
 
   it('prefers current chat service lines over stale group container logs', () => {

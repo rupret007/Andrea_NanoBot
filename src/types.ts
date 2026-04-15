@@ -202,6 +202,8 @@ export type CompanionRouteKind =
   | 'unsupported';
 
 export type CompanionRouteConfidence = 'high' | 'medium' | 'low';
+export type OpenAiModelTier = 'simple' | 'standard' | 'complex';
+export type OpenAiProviderMode = 'direct_openai' | 'compatible_gateway';
 
 export type CompanionRouteTimeWindowKind =
   | 'default_24h'
@@ -230,6 +232,9 @@ export interface CompanionRouteDecision {
   confidence: CompanionRouteConfidence;
   clarificationPrompt?: string | null;
   reason?: string | null;
+  selectedModelTier?: OpenAiModelTier | null;
+  selectedModel?: string | null;
+  providerMode?: OpenAiProviderMode | null;
 }
 
 export interface RuntimeBackendJobCacheRecord {

@@ -1,4 +1,9 @@
-import { OPENAI_MODEL_FALLBACK } from './config.js';
+import {
+  OPENAI_MODEL_COMPLEX,
+  OPENAI_MODEL_FALLBACK,
+  OPENAI_MODEL_SIMPLE,
+  OPENAI_MODEL_STANDARD,
+} from './config.js';
 import { readEnvFile } from './env.js';
 
 export const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com/v1';
@@ -7,6 +12,9 @@ export const DEFAULT_OPENAI_IMAGE_MODEL = 'gpt-image-1';
 export interface OpenAiProviderConfig {
   apiKey: string;
   baseUrl: string;
+  simpleModel: string;
+  standardModel: string;
+  complexModel: string;
   researchModel: string;
   imageModel: string;
 }
@@ -15,6 +23,9 @@ export interface OpenAiProviderStatus {
   configured: boolean;
   missing: string[];
   baseUrl: string;
+  simpleModel: string;
+  standardModel: string;
+  complexModel: string;
   researchModel: string;
   imageModel: string;
 }
@@ -23,6 +34,9 @@ function readOpenAiEnv(): Record<string, string> {
   return readEnvFile([
     'OPENAI_API_KEY',
     'OPENAI_BASE_URL',
+    'OPENAI_MODEL_SIMPLE',
+    'OPENAI_MODEL_STANDARD',
+    'OPENAI_MODEL_COMPLEX',
     'OPENAI_MODEL_FALLBACK',
     'OPENAI_IMAGE_MODEL',
   ]);
@@ -38,12 +52,33 @@ export function getOpenAiProviderStatus(): OpenAiProviderStatus {
   const baseUrl = normalizeBaseUrl(
     process.env.OPENAI_BASE_URL || env.OPENAI_BASE_URL,
   );
-  const researchModel =
+  const fallbackModel =
     (
       process.env.OPENAI_MODEL_FALLBACK ||
       env.OPENAI_MODEL_FALLBACK ||
       OPENAI_MODEL_FALLBACK
     ).trim() || OPENAI_MODEL_FALLBACK;
+  const simpleModel =
+    (
+      process.env.OPENAI_MODEL_SIMPLE ||
+      env.OPENAI_MODEL_SIMPLE ||
+      OPENAI_MODEL_SIMPLE ||
+      fallbackModel
+    ).trim() || fallbackModel;
+  const standardModel =
+    (
+      process.env.OPENAI_MODEL_STANDARD ||
+      env.OPENAI_MODEL_STANDARD ||
+      OPENAI_MODEL_STANDARD ||
+      fallbackModel
+    ).trim() || fallbackModel;
+  const complexModel =
+    (
+      process.env.OPENAI_MODEL_COMPLEX ||
+      env.OPENAI_MODEL_COMPLEX ||
+      OPENAI_MODEL_COMPLEX ||
+      fallbackModel
+    ).trim() || fallbackModel;
   const imageModel =
     (
       process.env.OPENAI_IMAGE_MODEL ||
@@ -55,7 +90,10 @@ export function getOpenAiProviderStatus(): OpenAiProviderStatus {
     configured: Boolean(apiKey),
     missing: apiKey ? [] : ['OPENAI_API_KEY'],
     baseUrl,
-    researchModel,
+    simpleModel,
+    standardModel,
+    complexModel,
+    researchModel: standardModel,
     imageModel,
   };
 }
@@ -70,6 +108,9 @@ export function resolveOpenAiProviderConfig(): OpenAiProviderConfig | null {
   return {
     apiKey: (process.env.OPENAI_API_KEY || env.OPENAI_API_KEY || '').trim(),
     baseUrl: status.baseUrl,
+    simpleModel: status.simpleModel,
+    standardModel: status.standardModel,
+    complexModel: status.complexModel,
     researchModel: status.researchModel,
     imageModel: status.imageModel,
   };

@@ -10,6 +10,9 @@ export interface OpenAiGuidedRoutingState {
   capabilityId?: string | null;
   confidence?: string | null;
   fallbackReason?: string | null;
+  selectedModelTier?: 'simple' | 'standard' | 'complex' | null;
+  selectedModel?: string | null;
+  providerMode?: 'direct_openai' | 'compatible_gateway' | null;
 }
 
 export function recordOpenAiGuidedRoutingState(

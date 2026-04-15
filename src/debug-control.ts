@@ -18,6 +18,7 @@ import {
 } from './host-control.js';
 import { buildFieldTrialOperatorTruth } from './field-trial-readiness.js';
 import { readOpenAiGuidedRoutingState } from './openai-guided-routing-state.js';
+import { readOpenAiUsageState } from './openai-usage-state.js';
 import {
   getLogControlConfig,
   type LogControlConfig,
@@ -402,6 +403,7 @@ export function formatDebugStatus(): string {
     windowsHost,
   });
   const guidedRouting = readOpenAiGuidedRoutingState();
+  const openAiUsage = readOpenAiUsageState();
   const installedMode =
     process.platform === 'win32'
       ? formatInstallModeLabel(
@@ -446,8 +448,35 @@ export function formatDebugStatus(): string {
     ...(guidedRouting?.confidence
       ? [`- OpenAI-guided routing confidence: ${guidedRouting.confidence}`]
       : []),
+    ...(guidedRouting?.selectedModelTier
+      ? [`- OpenAI-guided routing model tier: ${guidedRouting.selectedModelTier}`]
+      : []),
+    ...(guidedRouting?.selectedModel
+      ? [`- OpenAI-guided routing model: ${guidedRouting.selectedModel}`]
+      : []),
+    ...(guidedRouting?.providerMode
+      ? [`- OpenAI-guided routing provider mode: ${guidedRouting.providerMode}`]
+      : []),
     ...(guidedRouting?.fallbackReason
       ? [`- OpenAI-guided routing fallback: ${guidedRouting.fallbackReason}`]
+      : []),
+    ...(openAiUsage?.surface
+      ? [`- Last OpenAI usage surface: ${openAiUsage.surface}`]
+      : []),
+    ...(openAiUsage?.selectedModelTier
+      ? [`- Last OpenAI usage model tier: ${openAiUsage.selectedModelTier}`]
+      : []),
+    ...(openAiUsage?.selectedModel
+      ? [`- Last OpenAI usage model: ${openAiUsage.selectedModel}`]
+      : []),
+    ...(openAiUsage?.providerMode
+      ? [`- Last OpenAI usage provider mode: ${openAiUsage.providerMode}`]
+      : []),
+    ...(openAiUsage?.outcome
+      ? [`- Last OpenAI usage outcome: ${openAiUsage.outcome}`]
+      : []),
+    ...(openAiUsage?.detail
+      ? [`- Last OpenAI usage detail: ${openAiUsage.detail}`]
       : []),
     `- Launch status: ${fieldTrialTruth.launchReadiness.status}`,
     `- Core status: ${fieldTrialTruth.launchReadiness.coreStatus}`,

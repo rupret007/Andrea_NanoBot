@@ -13,12 +13,18 @@ import {
 const originalFetch = globalThis.fetch;
 const originalApiKey = process.env.OPENAI_API_KEY;
 const originalBaseUrl = process.env.OPENAI_BASE_URL;
+const originalSimpleModel = process.env.OPENAI_MODEL_SIMPLE;
+const originalStandardModel = process.env.OPENAI_MODEL_STANDARD;
+const originalComplexModel = process.env.OPENAI_MODEL_COMPLEX;
 
 describe('research orchestrator', () => {
   beforeEach(() => {
     _initTestDatabase();
     delete process.env.OPENAI_API_KEY;
     delete process.env.OPENAI_BASE_URL;
+    delete process.env.OPENAI_MODEL_SIMPLE;
+    delete process.env.OPENAI_MODEL_STANDARD;
+    delete process.env.OPENAI_MODEL_COMPLEX;
     globalThis.fetch = originalFetch;
     vi.restoreAllMocks();
   });
@@ -26,6 +32,9 @@ describe('research orchestrator', () => {
   afterEach(() => {
     process.env.OPENAI_API_KEY = originalApiKey;
     process.env.OPENAI_BASE_URL = originalBaseUrl;
+    process.env.OPENAI_MODEL_SIMPLE = originalSimpleModel;
+    process.env.OPENAI_MODEL_STANDARD = originalStandardModel;
+    process.env.OPENAI_MODEL_COMPLEX = originalComplexModel;
     globalThis.fetch = originalFetch;
   });
 
@@ -207,6 +216,9 @@ describe('research orchestrator', () => {
       configured: false,
       missing: ['OPENAI_API_KEY'],
       baseUrl: 'https://api.openai.com/v1',
+      simpleModel: 'gpt-5.4-mini',
+      standardModel: 'gpt-5.4',
+      complexModel: 'gpt-5.4',
       researchModel: 'gpt-5.4',
       imageModel: 'gpt-image-1',
     });
@@ -227,6 +239,7 @@ describe('research orchestrator', () => {
   it('uses OpenAI Responses when configured and returns a bounded research answer', async () => {
     process.env.OPENAI_API_KEY = 'test-key';
     process.env.OPENAI_BASE_URL = 'https://example.test/v1';
+    process.env.OPENAI_MODEL_COMPLEX = 'gpt-5.4-complex';
     globalThis.fetch = vi.fn(async () => {
       return new Response(
         JSON.stringify({
@@ -255,11 +268,75 @@ describe('research orchestrator', () => {
     });
 
     expect(globalThis.fetch).toHaveBeenCalled();
+    const firstCallBody = JSON.parse(
+      String((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0]?.[1]?.body),
+    ) as { model: string };
+    expect(firstCallBody.model).toBe('gpt-5.4-complex');
     expect(result.handled).toBe(true);
     expect(result.providerUsed).toBe('openai_responses');
     expect(result.summaryText).toContain('The strongest option');
     expect(result.routeExplanation).toContain('OpenAI-backed');
     expect(result.structuredFindings[0]?.items[0]).toContain('Lower cost');
+  });
+
+  it('uses the simple tier for weather lookups and falls back upward when the cheap model is rejected', async () => {
+    process.env.OPENAI_API_KEY = 'test-key';
+    process.env.OPENAI_BASE_URL = 'https://example.test/v1';
+    process.env.OPENAI_MODEL_SIMPLE = 'gpt-5.4-mini';
+    process.env.OPENAI_MODEL_STANDARD = 'gpt-5.4-standard';
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            error: {
+              message: 'The model gpt-5.4-mini does not exist.',
+            },
+          }),
+          {
+            status: 404,
+            headers: { 'Content-Type': 'application/json' },
+          },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            output_text: [
+              'Summary: Dallas is warm and cloudy today.',
+              'Findings:',
+              '- High near 82°F',
+              '- Small chance of rain after sunset',
+              'Recommendation: Keep an umbrella handy tonight.',
+              'Follow-ups:',
+              '- Want tomorrow too?',
+            ].join('\n'),
+          }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          },
+        ),
+      );
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    const result = await runResearchOrchestrator({
+      query: 'What is the weather today in Dallas?',
+      channel: 'telegram',
+      groupFolder: 'main',
+      now: new Date('2026-04-15T11:00:00.000Z'),
+    });
+
+    const firstModel = JSON.parse(
+      String(fetchMock.mock.calls[0]?.[1]?.body),
+    ) as { model: string };
+    const secondModel = JSON.parse(
+      String(fetchMock.mock.calls[1]?.[1]?.body),
+    ) as { model: string };
+    expect(firstModel.model).toBe('gpt-5.4-mini');
+    expect(secondModel.model).toBe('gpt-5.4-standard');
+    expect(result.summaryText).toContain('Dallas is warm and cloudy today.');
+    expect(result.debugPath).toContain('selected_model_tier=standard');
   });
 
   it('can combine saved material with outside research when explicitly requested', async () => {

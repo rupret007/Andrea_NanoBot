@@ -30,6 +30,12 @@ import {
   describeOpenAiProviderFailure,
   resolveOpenAiProviderConfig,
 } from './openai-provider.js';
+import {
+  buildOpenAiModelCandidates,
+  detectOpenAiProviderMode,
+  isOpenAiModelRejection,
+} from './openai-model-routing.js';
+import { recordOpenAiUsageState } from './openai-usage-state.js';
 import { syncOutcomeFromReminderTask } from './outcome-reviews.js';
 import type {
   AlexaConversationFollowupAction,
@@ -586,56 +592,92 @@ async function synthesizePlanWithOpenAi(
     'learningPolicy must be suggest_then_confirm.',
     `User intake JSON: ${JSON.stringify(intake)}`,
   ].join('\n');
+  const providerMode = detectOpenAiProviderMode(openAi.baseUrl);
+  const modelCandidates = buildOpenAiModelCandidates('standard', {
+    simpleModel: openAi.simpleModel,
+    standardModel: openAi.standardModel,
+    complexModel: openAi.complexModel,
+    fallbackModel: openAi.researchModel,
+  });
 
   try {
-    const response = await fetch(`${openAi.baseUrl}/responses`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${openAi.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: openAi.researchModel,
-        input: prompt,
-      }),
-    });
-    if (!response.ok) {
-      const text = await response.text();
-      describeOpenAiProviderFailure(response.status, text, 'research');
-      return null;
+    for (const candidate of modelCandidates) {
+      const response = await fetch(`${openAi.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${openAi.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: candidate.model,
+          input: prompt,
+        }),
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        if (isOpenAiModelRejection(response.status, text)) {
+          continue;
+        }
+        recordOpenAiUsageState({
+          at: new Date().toISOString(),
+          surface: 'everyday_capture',
+          selectedModelTier: candidate.tier,
+          selectedModel: candidate.model,
+          providerMode,
+          outcome: /quota|billing|rejected the configured api key|denied by the provider/i.test(
+            text,
+          )
+            ? 'blocked'
+            : 'failed',
+          detail: describeOpenAiProviderFailure(response.status, text, 'research'),
+        });
+        return null;
+      }
+      const payload = (await response.json()) as unknown;
+      const output = stripJsonFences(extractResponseOutputText(payload));
+      if (!output) {
+        continue;
+      }
+      const parsed = safeJsonParse<Partial<OperatingProfilePlan>>(output, {});
+      if (!parsed.summary || !Array.isArray(parsed.defaultGroups)) {
+        continue;
+      }
+      recordOpenAiUsageState({
+        at: new Date().toISOString(),
+        surface: 'everyday_capture',
+        selectedModelTier: candidate.tier,
+        selectedModel: candidate.model,
+        providerMode,
+        outcome: 'success',
+        detail: 'operating_profile_plan',
+      });
+      return {
+        summary: clip(parsed.summary, 220),
+        trackedAreas: Array.isArray(parsed.trackedAreas)
+          ? parsed.trackedAreas.map((item) => String(item))
+          : intake.trackingPriorities,
+        defaultGroups: parsed.defaultGroups as OperatingProfilePlanGroup[],
+        routines: Array.isArray(parsed.routines)
+          ? parsed.routines.map((item) => String(item))
+          : intake.routines,
+        reminderSuggestions: Array.isArray(parsed.reminderSuggestions)
+          ? parsed.reminderSuggestions.map((item) => String(item))
+          : [],
+        richerSurface:
+          parsed.richerSurface === 'alexa' ||
+          parsed.richerSurface === 'bluebubbles'
+            ? parsed.richerSurface
+            : 'telegram',
+        desiredIntegrations: Array.isArray(parsed.desiredIntegrations)
+          ? (parsed.desiredIntegrations as OperatingProfilePlanIntegration[])
+          : [],
+        learningPolicy: DEFAULT_LEARNING_POLICY,
+      };
     }
-    const payload = (await response.json()) as unknown;
-    const output = stripJsonFences(extractResponseOutputText(payload));
-    if (!output) return null;
-    const parsed = safeJsonParse<Partial<OperatingProfilePlan>>(output, {});
-    if (!parsed.summary || !Array.isArray(parsed.defaultGroups)) {
-      return null;
-    }
-    return {
-      summary: clip(parsed.summary, 220),
-      trackedAreas: Array.isArray(parsed.trackedAreas)
-        ? parsed.trackedAreas.map((item) => String(item))
-        : intake.trackingPriorities,
-      defaultGroups: parsed.defaultGroups as OperatingProfilePlanGroup[],
-      routines: Array.isArray(parsed.routines)
-        ? parsed.routines.map((item) => String(item))
-        : intake.routines,
-      reminderSuggestions: Array.isArray(parsed.reminderSuggestions)
-        ? parsed.reminderSuggestions.map((item) => String(item))
-        : [],
-      richerSurface:
-        parsed.richerSurface === 'alexa' ||
-        parsed.richerSurface === 'bluebubbles'
-          ? parsed.richerSurface
-          : 'telegram',
-      desiredIntegrations: Array.isArray(parsed.desiredIntegrations)
-        ? (parsed.desiredIntegrations as OperatingProfilePlanIntegration[])
-        : [],
-      learningPolicy: DEFAULT_LEARNING_POLICY,
-    };
   } catch {
     return null;
   }
+  return null;
 }
 
 function formatPlanForChannel(

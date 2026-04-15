@@ -4,6 +4,12 @@ import {
   describeOpenAiProviderFailure,
   resolveOpenAiProviderConfig,
 } from './openai-provider.js';
+import {
+  buildOpenAiModelCandidates,
+  detectOpenAiProviderMode,
+  isOpenAiModelRejection,
+} from './openai-model-routing.js';
+import { recordOpenAiUsageState } from './openai-usage-state.js';
 import type {
   BlueBubblesReplyGateMode,
   MessagesDirectTurnEnvelope,
@@ -138,61 +144,85 @@ export async function draftBlueBubblesCommunicationReply(input: {
     'Unless the style is short, keep it to 1-3 short sentences.',
     `Context JSON: ${JSON.stringify(input)}`,
   ].join('\n');
+  const providerMode = detectOpenAiProviderMode(openAi.baseUrl);
+  const modelCandidates = buildOpenAiModelCandidates('standard', {
+    simpleModel: openAi.simpleModel,
+    standardModel: openAi.standardModel,
+    complexModel: openAi.complexModel,
+    fallbackModel: openAi.researchModel,
+  });
 
   try {
-    const response = await fetch(`${openAi.baseUrl}/responses`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${openAi.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: openAi.researchModel,
-        input: prompt,
-      }),
-    });
-    if (!response.ok) {
-      const body = await response.text();
-      describeOpenAiProviderFailure(response.status, body, 'research');
+    for (const candidate of modelCandidates) {
+      const response = await fetch(`${openAi.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${openAi.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: candidate.model,
+          input: prompt,
+        }),
+      });
+      if (!response.ok) {
+        const body = await response.text();
+        if (isOpenAiModelRejection(response.status, body)) {
+          continue;
+        }
+        recordOpenAiUsageState({
+          at: new Date().toISOString(),
+          surface: 'messages_fluidity',
+          selectedModelTier: candidate.tier,
+          selectedModel: candidate.model,
+          providerMode,
+          outcome: /quota|billing|rejected the configured api key|denied by the provider/i.test(
+            body,
+          )
+            ? 'blocked'
+            : 'failed',
+          detail: describeOpenAiProviderFailure(response.status, body, 'research'),
+        });
+        return {
+          draftText: null,
+          source: 'fallback',
+          fallbackNote:
+            "I kept this one simple because the richer Messages draft lane isn't available right now.",
+        };
+      }
+      const payload = (await response.json()) as unknown;
+      const rawOutput = stripJsonFences(extractResponseOutputText(payload));
+      if (!rawOutput) {
+        continue;
+      }
+      const parsed = safeJsonParse<{ draftText?: string }>(rawOutput, {});
+      const draftText = normalizeText(parsed.draftText);
+      if (!draftText) {
+        continue;
+      }
+      recordOpenAiUsageState({
+        at: new Date().toISOString(),
+        surface: 'messages_fluidity',
+        selectedModelTier: candidate.tier,
+        selectedModel: candidate.model,
+        providerMode,
+        outcome: 'success',
+        detail: 'draft_reply',
+      });
       return {
-        draftText: null,
-        source: 'fallback',
-        fallbackNote:
-          "I kept this one simple because the richer Messages draft lane isn't available right now.",
+        draftText,
+        source: 'openai',
       };
     }
-    const payload = (await response.json()) as unknown;
-    const rawOutput = stripJsonFences(extractResponseOutputText(payload));
-    if (!rawOutput) {
-      return {
-        draftText: null,
-        source: 'fallback',
-        fallbackNote:
-          "I kept this one simple because the richer Messages draft lane isn't available right now.",
-      };
-    }
-    const parsed = safeJsonParse<{ draftText?: string }>(rawOutput, {});
-    const draftText = normalizeText(parsed.draftText);
-    if (!draftText) {
-      return {
-        draftText: null,
-        source: 'fallback',
-        fallbackNote:
-          "I kept this one simple because the richer Messages draft lane isn't available right now.",
-      };
-    }
-    return {
-      draftText,
-      source: 'openai',
-    };
   } catch {
-    return {
-      draftText: null,
-      source: 'fallback',
-      fallbackNote:
-        "I kept this one simple because the richer Messages draft lane isn't available right now.",
-    };
+    // Fall through to the honest local fallback.
   }
+  return {
+    draftText: null,
+    source: 'fallback',
+    fallbackNote:
+      "I kept this one simple because the richer Messages draft lane isn't available right now.",
+  };
 }
 
 export async function rewriteBlueBubblesMessageDraft(input: {
@@ -221,59 +251,83 @@ export async function rewriteBlueBubblesMessageDraft(input: {
     'Keep it human and concise.',
     `Context JSON: ${JSON.stringify(input)}`,
   ].join('\n');
+  const providerMode = detectOpenAiProviderMode(openAi.baseUrl);
+  const modelCandidates = buildOpenAiModelCandidates('standard', {
+    simpleModel: openAi.simpleModel,
+    standardModel: openAi.standardModel,
+    complexModel: openAi.complexModel,
+    fallbackModel: openAi.researchModel,
+  });
 
   try {
-    const response = await fetch(`${openAi.baseUrl}/responses`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${openAi.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: openAi.researchModel,
-        input: prompt,
-      }),
-    });
-    if (!response.ok) {
-      const body = await response.text();
-      describeOpenAiProviderFailure(response.status, body, 'research');
+    for (const candidate of modelCandidates) {
+      const response = await fetch(`${openAi.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${openAi.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: candidate.model,
+          input: prompt,
+        }),
+      });
+      if (!response.ok) {
+        const body = await response.text();
+        if (isOpenAiModelRejection(response.status, body)) {
+          continue;
+        }
+        recordOpenAiUsageState({
+          at: new Date().toISOString(),
+          surface: 'messages_fluidity',
+          selectedModelTier: candidate.tier,
+          selectedModel: candidate.model,
+          providerMode,
+          outcome: /quota|billing|rejected the configured api key|denied by the provider/i.test(
+            body,
+          )
+            ? 'blocked'
+            : 'failed',
+          detail: describeOpenAiProviderFailure(response.status, body, 'research'),
+        });
+        return {
+          draftText: null,
+          source: 'fallback',
+          fallbackNote:
+            "I kept the rewrite simple because the richer Messages rewrite lane isn't available right now.",
+        };
+      }
+      const payload = (await response.json()) as unknown;
+      const rawOutput = stripJsonFences(extractResponseOutputText(payload));
+      if (!rawOutput) {
+        continue;
+      }
+      const parsed = safeJsonParse<{ draftText?: string }>(rawOutput, {});
+      const draftText = normalizeText(parsed.draftText);
+      if (!draftText) {
+        continue;
+      }
+      recordOpenAiUsageState({
+        at: new Date().toISOString(),
+        surface: 'messages_fluidity',
+        selectedModelTier: candidate.tier,
+        selectedModel: candidate.model,
+        providerMode,
+        outcome: 'success',
+        detail: 'rewrite_reply',
+      });
       return {
-        draftText: null,
-        source: 'fallback',
-        fallbackNote:
-          "I kept the rewrite simple because the richer Messages rewrite lane isn't available right now.",
+        draftText,
+        source: 'openai',
       };
     }
-    const payload = (await response.json()) as unknown;
-    const rawOutput = stripJsonFences(extractResponseOutputText(payload));
-    if (!rawOutput) {
-      return {
-        draftText: null,
-        source: 'fallback',
-        fallbackNote:
-          "I kept the rewrite simple because the richer Messages rewrite lane isn't available right now.",
-      };
-    }
-    const parsed = safeJsonParse<{ draftText?: string }>(rawOutput, {});
-    const draftText = normalizeText(parsed.draftText);
-    if (!draftText) {
-      return {
-        draftText: null,
-        source: 'fallback',
-        fallbackNote:
-          "I kept the rewrite simple because the richer Messages rewrite lane isn't available right now.",
-      };
-    }
-    return {
-      draftText,
-      source: 'openai',
-    };
   } catch {
-    return {
-      draftText: null,
-      source: 'fallback',
-      fallbackNote:
-        "I kept the rewrite simple because the richer Messages rewrite lane isn't available right now.",
-    };
+    // Fall through to the honest local fallback.
   }
+  return {
+    draftText: null,
+    source: 'fallback',
+    fallbackNote:
+      "I kept the rewrite simple because the richer Messages rewrite lane isn't available right now.",
+  };
 }

@@ -21,6 +21,13 @@ import {
   isLiveLookupConversationalPrompt,
   isResearchEligibleConversationalPrompt,
 } from './conversational-core.js';
+import {
+  buildOpenAiModelCandidates,
+  detectOpenAiProviderMode,
+  isOpenAiModelRejection,
+  type OpenAiModelTier,
+} from './openai-model-routing.js';
+import { recordOpenAiUsageState } from './openai-usage-state.js';
 import { normalizeVoicePrompt } from './voice-ready.js';
 
 export type ResearchRequestKind =
@@ -268,6 +275,35 @@ function buildRouteExplanation(
 interface OpenAiResearchProviderFailure {
   providerFailure: string;
   debugPath: string[];
+}
+
+function classifyOpenAiUsageOutcome(
+  detail: string,
+): 'blocked' | 'failed' {
+  return /quota|billing|rejected the configured api key|denied by the provider|not configured/i.test(
+    detail,
+  )
+    ? 'blocked'
+    : 'failed';
+}
+
+function selectResearchModelTier(
+  request: ResearchRequest,
+  plan: ResearchPlan,
+): OpenAiModelTier {
+  const normalized = normalizeQuery(request.query).toLowerCase();
+  if (
+    plan.kind === 'compare' ||
+    plan.kind === 'recommend' ||
+    plan.kind === 'deep_research' ||
+    (plan.sources.knowledgeLibrary && plan.sources.openAiResponses)
+  ) {
+    return 'complex';
+  }
+  if (isLiveLookupConversationalPrompt(normalized)) {
+    return 'simple';
+  }
+  return 'standard';
 }
 
 function buildResearchText(
@@ -1019,7 +1055,6 @@ async function runOpenAiResearch(
     .join('\n\n');
 
   const body: Record<string, unknown> = {
-    model: openAi.researchModel,
     input: synthesisPrompt,
   };
   if (plan.sources.webSearch) {
@@ -1030,76 +1065,146 @@ async function runOpenAiResearch(
     ];
   }
 
-  try {
-    const response = await fetch(`${openAi.baseUrl}/responses`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${openAi.apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
-    });
-    const requestId = response.headers.get('x-request-id') || undefined;
-    if (!response.ok) {
-      const text = await response.text();
-      const providerFailure = describeOpenAiProviderFailure(
-        response.status,
-        text,
-        'research',
-      );
-      logger.warn(
-        {
-          status: response.status,
-          requestId,
-          body: text.slice(0, 400),
-        },
-        'Research orchestrator OpenAI call failed',
-      );
-      return {
-        providerFailure,
-        debugPath: [
-          `plan.primary=${plan.primarySource}`,
-          'openai.failed=true',
-          `provider_failure=${providerFailure}`,
-          response.status ? `status=${response.status}` : 'status=unknown',
-          requestId ? `request_id=${requestId}` : 'request_id=missing',
-        ],
-      };
-    }
-    const payload = (await response.json()) as unknown;
-    const output = extractResponseOutputText(payload);
-    if (!output) {
-      return null;
-    }
+  const preferredTier = selectResearchModelTier(request, plan);
+  const providerMode = detectOpenAiProviderMode(openAi.baseUrl);
+  const modelCandidates = buildOpenAiModelCandidates(preferredTier, {
+    simpleModel: openAi.simpleModel,
+    standardModel: openAi.standardModel,
+    complexModel: openAi.complexModel,
+    fallbackModel: openAi.researchModel,
+  });
+  let lastFailure: OpenAiResearchProviderFailure | null = null;
 
-    const parsed = parseOpenAiResearchOutput(output, plan.kind);
-    const routeExplanation = buildRouteExplanation(plan, {
-      providerUsed:
+  for (const candidate of modelCandidates) {
+    try {
+      const response = await fetch(`${openAi.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${openAi.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          ...body,
+          model: candidate.model,
+        }),
+      });
+      const requestId = response.headers.get('x-request-id') || undefined;
+      if (!response.ok) {
+        const text = await response.text();
+        const providerFailure = describeOpenAiProviderFailure(
+          response.status,
+          text,
+          'research',
+        );
+        logger.warn(
+          {
+            status: response.status,
+            requestId,
+            body: text.slice(0, 400),
+            selectedModelTier: candidate.tier,
+            selectedModel: candidate.model,
+          },
+          'Research orchestrator OpenAI call failed',
+        );
+        if (isOpenAiModelRejection(response.status, text)) {
+          lastFailure = {
+            providerFailure,
+            debugPath: [
+              `plan.primary=${plan.primarySource}`,
+              'openai.failed=true',
+              `provider_failure=${providerFailure}`,
+              `selected_model_tier=${candidate.tier}`,
+              `selected_model=${candidate.model}`,
+              response.status ? `status=${response.status}` : 'status=unknown',
+              requestId ? `request_id=${requestId}` : 'request_id=missing',
+            ],
+          };
+          continue;
+        }
+        recordOpenAiUsageState({
+          at: new Date().toISOString(),
+          surface: 'research',
+          selectedModelTier: candidate.tier,
+          selectedModel: candidate.model,
+          providerMode,
+          outcome: classifyOpenAiUsageOutcome(providerFailure),
+          detail: providerFailure,
+        });
+        return {
+          providerFailure,
+          debugPath: [
+            `plan.primary=${plan.primarySource}`,
+            'openai.failed=true',
+            `provider_failure=${providerFailure}`,
+            `selected_model_tier=${candidate.tier}`,
+            `selected_model=${candidate.model}`,
+            response.status ? `status=${response.status}` : 'status=unknown',
+            requestId ? `request_id=${requestId}` : 'request_id=missing',
+          ],
+        };
+      }
+      const payload = (await response.json()) as unknown;
+      const output = extractResponseOutputText(payload);
+      if (!output) {
+        recordOpenAiUsageState({
+          at: new Date().toISOString(),
+          surface: 'research',
+          selectedModelTier: candidate.tier,
+          selectedModel: candidate.model,
+          providerMode,
+          outcome: 'failed',
+          detail: 'OpenAI returned an empty research payload.',
+        });
+        return null;
+      }
+
+      const parsed = parseOpenAiResearchOutput(output, plan.kind);
+      const providerUsed =
         (plan.sources.localContext && localContextBlock) ||
         knowledge?.supportingSources.length
           ? 'hybrid'
-          : 'openai_responses',
-      knowledgeCount: knowledge?.supportingSources.length || 0,
-    });
-    return {
-      handled: true,
-      kind: plan.kind,
-      plan,
-      providerUsed:
-        (plan.sources.localContext && localContextBlock) ||
-        knowledge?.supportingSources.length
-          ? 'hybrid'
-          : 'openai_responses',
-      summaryText: parsed.summaryText,
-      spokenText: buildSpokenResearchText(parsed.summaryText, {
-        recommendationText:
-          request.channel === 'alexa' ? parsed.recommendationText : undefined,
-        firstFinding:
-          request.channel === 'alexa' ? parsed.findings[0] : undefined,
-      }),
-      fullText: buildResearchText(
-        parsed.summaryText,
-        parsed.findings.length
+          : 'openai_responses';
+      const routeExplanation = buildRouteExplanation(plan, {
+        providerUsed,
+        knowledgeCount: knowledge?.supportingSources.length || 0,
+      });
+      recordOpenAiUsageState({
+        at: new Date().toISOString(),
+        surface: 'research',
+        selectedModelTier: candidate.tier,
+        selectedModel: candidate.model,
+        providerMode,
+        outcome: 'success',
+        detail: providerUsed,
+      });
+      return {
+        handled: true,
+        kind: plan.kind,
+        plan,
+        providerUsed,
+        summaryText: parsed.summaryText,
+        spokenText: buildSpokenResearchText(parsed.summaryText, {
+          recommendationText:
+            request.channel === 'alexa' ? parsed.recommendationText : undefined,
+          firstFinding:
+            request.channel === 'alexa' ? parsed.findings[0] : undefined,
+        }),
+        fullText: buildResearchText(
+          parsed.summaryText,
+          parsed.findings.length
+            ? [
+                {
+                  title: plan.kind === 'compare' ? 'Tradeoffs' : 'Findings',
+                  items: parsed.findings,
+                },
+              ]
+            : [],
+          parsed.recommendationText,
+          routeExplanation,
+        ),
+        recommendationText: parsed.recommendationText,
+        routeExplanation,
+        structuredFindings: parsed.findings.length
           ? [
               {
                 title: plan.kind === 'compare' ? 'Tradeoffs' : 'Findings',
@@ -1107,62 +1212,63 @@ async function runOpenAiResearch(
               },
             ]
           : [],
-        parsed.recommendationText,
-        routeExplanation,
-      ),
-      recommendationText: parsed.recommendationText,
-      routeExplanation,
-      structuredFindings: parsed.findings.length
-        ? [
-            {
-              title: plan.kind === 'compare' ? 'Tradeoffs' : 'Findings',
-              items: parsed.findings,
-            },
-          ]
-        : [],
-      followupSuggestions: parsed.followupSuggestions,
-      saveForLaterCandidate: parsed.summaryText,
-      sourceNotes: [
-        plan.sources.localContext && localContextBlock ? 'local context' : '',
-        knowledge?.supportingSources.length ? 'knowledge library' : '',
-        plan.sources.webSearch
-          ? 'OpenAI web search'
-          : 'OpenAI Responses synthesis',
-      ].filter(Boolean),
-      handoffOption:
-        plan.needsTelegramHandoff && request.channel === 'alexa'
-          ? {
-              channel: 'telegram',
-              reason: 'the result is richer than a spoken answer should be',
-              prompt: normalizeQuery(request.query),
-            }
-          : undefined,
-      debugPath: [
-        `plan.primary=${plan.primarySource}`,
-        `provider=${
-          (plan.sources.localContext && localContextBlock) ||
-          knowledge?.supportingSources.length
-            ? 'hybrid'
-            : 'openai_responses'
-        }`,
-        ...(knowledge?.search.debugPath || []),
-        plan.sources.webSearch ? 'tool=web_search' : 'tool=none',
-        requestId ? `request_id=${requestId}` : 'request_id=missing',
-      ],
-      supportingSources: knowledge?.supportingSources || [],
-    };
-  } catch (err) {
-    logger.warn({ err }, 'Research orchestrator OpenAI request errored');
-    return {
-      providerFailure:
-        'The live OpenAI research request errored before Andrea could produce a trustworthy answer.',
-      debugPath: [
-        `plan.primary=${plan.primarySource}`,
-        'openai.failed=true',
-        'request_exception=true',
-      ],
-    };
+        followupSuggestions: parsed.followupSuggestions,
+        saveForLaterCandidate: parsed.summaryText,
+        sourceNotes: [
+          plan.sources.localContext && localContextBlock ? 'local context' : '',
+          knowledge?.supportingSources.length ? 'knowledge library' : '',
+          plan.sources.webSearch
+            ? 'OpenAI web search'
+            : 'OpenAI Responses synthesis',
+        ].filter(Boolean),
+        handoffOption:
+          plan.needsTelegramHandoff && request.channel === 'alexa'
+            ? {
+                channel: 'telegram',
+                reason: 'the result is richer than a spoken answer should be',
+                prompt: normalizeQuery(request.query),
+              }
+            : undefined,
+        debugPath: [
+          `plan.primary=${plan.primarySource}`,
+          `provider=${providerUsed}`,
+          `selected_model_tier=${candidate.tier}`,
+          `selected_model=${candidate.model}`,
+          ...(knowledge?.search.debugPath || []),
+          plan.sources.webSearch ? 'tool=web_search' : 'tool=none',
+          requestId ? `request_id=${requestId}` : 'request_id=missing',
+        ],
+        supportingSources: knowledge?.supportingSources || [],
+      };
+    } catch (err) {
+      logger.warn({ err }, 'Research orchestrator OpenAI request errored');
+      lastFailure = {
+        providerFailure:
+          'The live OpenAI research request errored before Andrea could produce a trustworthy answer.',
+        debugPath: [
+          `plan.primary=${plan.primarySource}`,
+          'openai.failed=true',
+          `selected_model_tier=${candidate.tier}`,
+          `selected_model=${candidate.model}`,
+          'request_exception=true',
+        ],
+      };
+    }
   }
+
+  if (lastFailure) {
+    recordOpenAiUsageState({
+      at: new Date().toISOString(),
+      surface: 'research',
+      selectedModelTier: preferredTier,
+      selectedModel: modelCandidates.at(-1)?.model || openAi.researchModel,
+      providerMode,
+      outcome: classifyOpenAiUsageOutcome(lastFailure.providerFailure),
+      detail: lastFailure.providerFailure,
+    });
+  }
+
+  return lastFailure;
 }
 
 export async function runResearchOrchestrator(

@@ -62,6 +62,10 @@ describe('messages fluidity', () => {
   });
 
   it('returns an honest fallback envelope when the OpenAI lane is unavailable', async () => {
+    globalThis.fetch = vi.fn(async () => {
+      throw new Error('connect ECONNREFUSED');
+    }) as typeof fetch;
+
     const result = await interpretBlueBubblesDirectTurn({
       groupFolder: 'main',
       chatJid: 'bb:iMessage;-;+14695405551',

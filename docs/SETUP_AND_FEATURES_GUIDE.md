@@ -701,6 +701,10 @@ ANDREA_RUNTIME_EXECUTION_ENABLED=true
 AGENT_RUNTIME_DEFAULT=codex_local
 AGENT_RUNTIME_FALLBACK=openai_cloud
 CODEX_LOCAL_ENABLED=true
+OPENAI_MODEL_SIMPLE=gpt-5.4-mini
+OPENAI_MODEL_STANDARD=gpt-5.4
+OPENAI_MODEL_COMPLEX=gpt-5.4
+# compatibility default if the tier vars above are unset
 OPENAI_MODEL_FALLBACK=gpt-5.4
 ```
 
@@ -713,6 +717,11 @@ Important truth:
 - `/runtime-*` is the explicit runtime fallback shell for the integrated `andrea_runtime` lane
 - `codex_local` is the intended primary runtime for this lane
 - `openai_cloud` remains conditional on `OPENAI_API_KEY` or a compatible gateway token
+- OpenAI-backed cloud routing now prefers:
+  - `OPENAI_MODEL_SIMPLE` for lightweight routing and live-fact asks
+  - `OPENAI_MODEL_STANDARD` for ordinary summaries and communication synthesis
+  - `OPENAI_MODEL_COMPLEX` for compare/deep research and cloud remediation work
+- if those tier vars are unset, `OPENAI_MODEL_FALLBACK` remains the compatibility default
 - the imported `imported/andrea_openai_bot` subtree is temporary staging/history preservation, not the long-term runtime home
 
 When this mode is active:

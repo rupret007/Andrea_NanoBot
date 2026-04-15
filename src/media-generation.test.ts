@@ -29,6 +29,9 @@ describe('media generation', () => {
       configured: false,
       missing: ['OPENAI_API_KEY'],
       baseUrl: 'https://api.openai.com/v1',
+      simpleModel: 'gpt-5.4-mini',
+      standardModel: 'gpt-5.4',
+      complexModel: 'gpt-5.4',
       researchModel: 'gpt-5.4',
       imageModel: 'gpt-image-1',
     });
