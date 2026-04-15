@@ -30,13 +30,18 @@ describe('messages fluidity', () => {
   });
 
   it('interprets a direct BlueBubbles turn through the OpenAI lane when available', async () => {
-    vi.stubEnv('OPENAI_API_KEY', 'test-key');
-    vi.stubEnv('OPENAI_BASE_URL', 'https://openai.test/v1');
     globalThis.fetch = vi.fn(async () =>
       new Response(
         JSON.stringify({
-          output_text:
-            '{"normalizedUserIntent":"make the draft warmer","routeFamily":"message_action_followup","assistantPrompt":"make it warmer","confidence":0.92}',
+          routeKind: 'assistant_capability',
+          capabilityId: 'communication.manage_tracking',
+          canonicalText: 'make it warmer',
+          arguments: {
+            replyStyle: 'warmer',
+          },
+          confidence: 'high',
+          clarificationPrompt: null,
+          reason: 'matched draft rewrite follow-up',
         }),
         {
           status: 200,

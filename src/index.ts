@@ -126,6 +126,7 @@ import {
 } from './life-threads.js';
 import {
   executeAssistantCapability,
+  type AssistantCapabilityId,
   type AssistantCapabilityConversationSeed,
   type AssistantCapabilityResult,
 } from './assistant-capabilities.js';
@@ -412,6 +413,8 @@ import {
   buildDirectAssistantRuntimeFailureReply,
   maybeBuildDirectQuickReply,
 } from './direct-quick-reply.js';
+import { routeCompanionTurnWithOpenAiBackend } from './openai-guided-routing.js';
+import { recordOpenAiGuidedRoutingState } from './openai-guided-routing-state.js';
 import { buildDirectAssistantContinuationPrompt } from './direct-assistant-continuation.js';
 import {
   getAssistantSessionStorageKey,
@@ -3450,6 +3453,67 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     });
     return sent;
   };
+  const openAiGuidedUserText = lastContent;
+  const guidedRequestRoute =
+    requestPolicy.route === 'protected_assistant'
+      ? 'protected_assistant'
+      : 'direct_assistant';
+  const shouldUseOpenAiGuidedRouting =
+    (conversationChannel === 'telegram' ||
+      conversationChannel === 'bluebubbles') &&
+    (guidedRequestRoute === 'direct_assistant' ||
+      guidedRequestRoute === 'protected_assistant');
+  let openAiGuidedRouteChecked = false;
+  let openAiGuidedRouteResult: Awaited<
+    ReturnType<typeof routeCompanionTurnWithOpenAiBackend>
+  > | null = null;
+  const rememberOpenAiGuidedRoutingState = (params: {
+    source: 'local_fast_path' | 'openai_router' | 'deterministic_fallback';
+    routeKind?: string | null;
+    capabilityId?: string | null;
+    confidence?: string | null;
+    fallbackReason?: string | null;
+  }) => {
+    if (!shouldUseOpenAiGuidedRouting) return;
+    recordOpenAiGuidedRoutingState({
+      at: new Date().toISOString(),
+      channel: conversationChannel,
+      source: params.source,
+      routeKind: params.routeKind || null,
+      capabilityId: params.capabilityId || null,
+      confidence: params.confidence || null,
+      fallbackReason: params.fallbackReason || null,
+    });
+  };
+  const maybeGetOpenAiGuidedRoute = async () => {
+    if (!shouldUseOpenAiGuidedRouting) {
+      return null;
+    }
+    if (openAiGuidedRouteChecked) {
+      return openAiGuidedRouteResult;
+    }
+    openAiGuidedRouteChecked = true;
+    const priorAssistantCapabilitySeed = getSharedAssistantCapabilitySeed(
+      chatJid,
+      now,
+    );
+    const priorDailyContext = getDailyCompanionContext(chatJid, now);
+    openAiGuidedRouteResult = await routeCompanionTurnWithOpenAiBackend({
+      channel: conversationChannel,
+      text: openAiGuidedUserText,
+      requestRoute: guidedRequestRoute,
+      conversationSummary:
+        priorAssistantCapabilitySeed?.summaryText ||
+        priorDailyContext?.summaryText ||
+        null,
+      replyText: missedMessages.at(-1)?.reply_to?.content || null,
+      priorPersonName: priorAssistantCapabilitySeed?.subjectData?.personName,
+      priorThreadTitle: priorAssistantCapabilitySeed?.subjectData?.threadTitle,
+      priorLastAnswerSummary:
+        priorAssistantCapabilitySeed?.subjectData?.lastAnswerSummary,
+    });
+    return openAiGuidedRouteResult;
+  };
   let blueBubblesDirectTurnEnvelope: Awaited<
     ReturnType<typeof interpretBlueBubblesDirectTurn>
   > | null = null;
@@ -3462,7 +3526,6 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (
       conversationChannel !== 'bluebubbles' ||
       requestPolicy.route !== 'direct_assistant' ||
-      quickReply ||
       !isBlueBubblesSelfThreadAliasJid(chatJid)
     ) {
       blueBubblesDirectTurnEnvelope = null;
@@ -6131,11 +6194,44 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       chatJid,
       now,
     );
-    let capabilityMatch =
-      continueAssistantCapabilityFromPriorSubjectData(
-        lastContent,
-        priorAssistantCapabilitySeed?.subjectData,
-      ) || matchAssistantCapabilityRequest(lastContent);
+    let capabilityMatch = continueAssistantCapabilityFromPriorSubjectData(
+      lastContent,
+      priorAssistantCapabilitySeed?.subjectData,
+    );
+    let capabilityRouteSource:
+      | 'local_fast_path'
+      | 'openai_router'
+      | 'deterministic_fallback' = capabilityMatch
+      ? 'local_fast_path'
+      : 'deterministic_fallback';
+    let capabilityRouteDecision: {
+      routeKind?: string | null;
+      confidence?: string | null;
+    } | null = null;
+    if (!capabilityMatch) {
+      const openAiRoute = await maybeGetOpenAiGuidedRoute();
+      const decision = openAiRoute?.decision;
+      if (
+        decision?.routeKind === 'assistant_capability' &&
+        typeof decision.capabilityId === 'string'
+      ) {
+        capabilityMatch = {
+          capabilityId: decision.capabilityId as AssistantCapabilityId,
+          normalizedText: openAiGuidedUserText,
+          canonicalText: decision.canonicalText || openAiGuidedUserText,
+          arguments: decision.arguments || undefined,
+          reason: decision.reason || 'matched OpenAI-guided assistant capability',
+        };
+        capabilityRouteSource = 'openai_router';
+        capabilityRouteDecision = decision;
+      }
+    }
+    if (!capabilityMatch) {
+      capabilityMatch = matchAssistantCapabilityRequest(lastContent);
+      if (capabilityMatch) {
+        capabilityRouteSource = 'deterministic_fallback';
+      }
+    }
     if (!capabilityMatch) {
       const interpretedTurn = await maybeInterpretBlueBubblesDirectTurn();
       if (
@@ -6148,11 +6244,31 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             interpretedTurn.assistantPrompt,
             priorAssistantCapabilitySeed?.subjectData,
           ) || matchAssistantCapabilityRequest(interpretedTurn.assistantPrompt);
+        if (capabilityMatch) {
+          capabilityRouteSource =
+            interpretedTurn.source === 'openai'
+              ? 'openai_router'
+              : 'deterministic_fallback';
+        }
       }
     }
     if (!capabilityMatch) {
       return false;
     }
+    rememberOpenAiGuidedRoutingState({
+      source: capabilityRouteSource,
+      routeKind:
+        capabilityRouteDecision?.routeKind ||
+        (capabilityRouteSource === 'local_fast_path'
+          ? 'assistant_capability'
+          : 'assistant_capability'),
+      capabilityId: capabilityMatch.capabilityId,
+      confidence: capabilityRouteDecision?.confidence || null,
+      fallbackReason:
+        capabilityRouteSource === 'deterministic_fallback'
+          ? openAiGuidedRouteResult?.fallbackReason || null
+          : null,
+    });
     const priorDailyContext = getDailyCompanionContext(chatJid, now);
     const selectedWork = await getSelectedDailyWorkContext(
       chatJid,
@@ -6192,6 +6308,20 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         input: {
           text: lastContent,
           canonicalText: capabilityMatch.canonicalText,
+          personName:
+            capabilityMatch.arguments?.personName ||
+            priorAssistantCapabilitySeed?.subjectData?.personName,
+          targetChatName: capabilityMatch.arguments?.targetChatName || null,
+          targetChatJid: capabilityMatch.arguments?.targetChatJid || null,
+          threadTitle:
+            capabilityMatch.arguments?.threadTitle ||
+            priorAssistantCapabilitySeed?.subjectData?.threadTitle ||
+            null,
+          timeWindowKind: capabilityMatch.arguments?.timeWindowKind || null,
+          timeWindowValue: capabilityMatch.arguments?.timeWindowValue || null,
+          savedMaterialOnly:
+            capabilityMatch.arguments?.savedMaterialOnly || null,
+          replyStyle: capabilityMatch.arguments?.replyStyle || null,
         },
       });
     } catch (err) {
@@ -6509,6 +6639,117 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     }
   };
 
+  const tryHandleOpenAiGuidedReply = async (): Promise<boolean> => {
+    const routed = await maybeGetOpenAiGuidedRoute();
+    const decision = routed?.decision;
+    if (!decision) {
+      return false;
+    }
+
+    if (decision.routeKind === 'clarify') {
+      const clarificationText =
+        decision.clarificationPrompt ||
+        "I couldn't route that cleanly. What do you want me to help with here?";
+      rememberOpenAiGuidedRoutingState({
+        source: 'openai_router',
+        routeKind: decision.routeKind,
+        capabilityId: decision.capabilityId || null,
+        confidence: decision.confidence,
+      });
+      await sendAssistantReplyWithFeedback({
+        text: clarificationText,
+        routeKey: 'openai_guided_clarify',
+        handlerKind: 'direct_quick_reply',
+        responseSource: 'local_companion',
+        traceReason: 'handled message via OpenAI-guided clarification path',
+      });
+      clearSharedAssistantCapabilitySeed(chatJid);
+      logger.info(
+        {
+          component: 'assistant',
+          chatJid,
+          groupFolder: group.folder,
+          group: group.name,
+          requestRoute: requestPolicy.route,
+          openAiGuidedRouteKind: decision.routeKind,
+          openAiGuidedConfidence: decision.confidence,
+        },
+        'Handled message via OpenAI-guided clarification path',
+      );
+      return true;
+    }
+
+    if (decision.routeKind !== 'direct_quick_reply') {
+      return false;
+    }
+
+    const guidedReply =
+      maybeBuildDirectQuickReply([
+        { content: decision.canonicalText || openAiGuidedUserText },
+      ]) ||
+      maybeBuildDirectQuickReply([{ content: openAiGuidedUserText }]);
+    if (!guidedReply) {
+      return false;
+    }
+
+    const quickReplyPilot = startConversationPilotProof(
+      resolveOrdinaryChatPilotJourney(openAiGuidedUserText),
+    );
+    try {
+      rememberOpenAiGuidedRoutingState({
+        source: 'openai_router',
+        routeKind: decision.routeKind,
+        capabilityId: decision.capabilityId || null,
+        confidence: decision.confidence,
+      });
+      await sendAssistantReplyWithFeedback({
+        text: guidedReply,
+        routeKey: 'openai_guided_direct_quick_reply',
+        handlerKind: 'direct_quick_reply',
+        responseSource: 'local_companion',
+        traceReason: 'handled message via OpenAI-guided direct quick reply path',
+      });
+      clearSharedAssistantCapabilitySeed(chatJid);
+      completeConversationPilotProof(quickReplyPilot, {
+        outcome: 'success',
+        blockerOwner: 'none',
+        summaryText: guidedReply,
+      });
+      logger.info(
+        {
+          component: 'assistant',
+          chatJid,
+          groupFolder: group.folder,
+          group: group.name,
+          requestRoute: requestPolicy.route,
+          directAssistantProfile: 'minimal_read_only',
+          openAiGuidedRouteKind: decision.routeKind,
+          openAiGuidedConfidence: decision.confidence,
+          quickReply: true,
+        },
+        'Handled message via OpenAI-guided direct quick reply path',
+      );
+      return true;
+    } catch (err) {
+      completeConversationPilotProof(quickReplyPilot, {
+        outcome: 'internal_failure',
+        blockerClass: 'openai_guided_direct_quick_reply_send_failed',
+        blockerOwner: 'repo_side',
+        summaryText:
+          err instanceof Error
+            ? err.message
+            : 'OpenAI-guided direct quick reply send failed',
+      });
+      lastAgentTimestamp[chatJid] = previousCursor;
+      saveState();
+      logger.warn(
+        { group: group.name, err },
+        'OpenAI-guided direct quick reply send failed, rolled back cursor for retry',
+      );
+      return false;
+    }
+  };
+
   const tryHandleBlueBubblesFluidDirectReply = async (): Promise<boolean> => {
     const interpretedTurn = await maybeInterpretBlueBubblesDirectTurn();
     if (!interpretedTurn) {
@@ -6528,6 +6769,28 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (!replyText) {
       return false;
     }
+    rememberOpenAiGuidedRoutingState({
+      source:
+        interpretedTurn.source === 'openai'
+          ? 'openai_router'
+          : 'deterministic_fallback',
+      routeKind:
+        clarificationNeeded && interpretedTurn.clarificationQuestion
+          ? 'clarify'
+          : 'direct_quick_reply',
+      confidence:
+        interpretedTurn.source === 'openai'
+          ? interpretedTurn.confidence >= 0.85
+            ? 'high'
+            : interpretedTurn.confidence >= 0.55
+              ? 'medium'
+              : 'low'
+          : null,
+      fallbackReason:
+        interpretedTurn.source === 'fallback'
+          ? interpretedTurn.fallbackText || 'Messages direct turn fell back locally.'
+          : null,
+    });
     await sendAssistantReplyWithFeedback({
       text: replyText,
       routeKey: 'bluebubbles_fluid_direct_reply',
@@ -6594,58 +6857,6 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     }
   }
 
-  if (requestPolicy.route === 'direct_assistant' && quickReply) {
-    const quickReplyPilot = startConversationPilotProof(
-      resolveOrdinaryChatPilotJourney(lastContent),
-    );
-    try {
-      await sendAssistantReplyWithFeedback({
-        text: quickReply,
-        routeKey: 'direct_quick_reply',
-        handlerKind: 'direct_quick_reply',
-        responseSource: 'local_companion',
-        traceReason: 'handled message via direct quick reply path',
-      });
-      clearSharedAssistantCapabilitySeed(chatJid);
-      completeConversationPilotProof(quickReplyPilot, {
-        outcome: 'success',
-        blockerOwner: 'none',
-        summaryText: quickReply,
-      });
-      logger.info(
-        {
-          component: 'assistant',
-          chatJid,
-          groupFolder: group.folder,
-          group: group.name,
-          requestRoute: requestPolicy.route,
-          directAssistantProfile: 'minimal_read_only',
-          promptKind: directAssistantPromptKind,
-          freshSession: forceFreshDirectAssistantSession,
-          rewriteApplied: directAssistantRewriteApplied,
-          quickReply: true,
-        },
-        'Handled message via direct quick reply path',
-      );
-      return true;
-    } catch (err) {
-      completeConversationPilotProof(quickReplyPilot, {
-        outcome: 'internal_failure',
-        blockerClass: 'direct_quick_reply_send_failed',
-        blockerOwner: 'repo_side',
-        summaryText:
-          err instanceof Error ? err.message : 'direct quick reply send failed',
-      });
-      lastAgentTimestamp[chatJid] = previousCursor;
-      saveState();
-      logger.warn(
-        { group: group.name, err },
-        'Direct quick reply send failed, rolled back cursor for retry',
-      );
-      return false;
-    }
-  }
-
   if (
     requestPolicy.route === 'direct_assistant' ||
     requestPolicy.route === 'protected_assistant'
@@ -6674,8 +6885,74 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   }
 
   if (requestPolicy.route === 'direct_assistant') {
+    if (await tryHandleOpenAiGuidedReply()) {
+      return true;
+    }
     if (await tryHandleBlueBubblesFluidDirectReply()) {
       return true;
+    }
+  }
+
+  if (requestPolicy.route === 'direct_assistant' && quickReply) {
+    const quickReplyPilot = startConversationPilotProof(
+      resolveOrdinaryChatPilotJourney(lastContent),
+    );
+    const openAiGuidedFallbackReason = (
+      openAiGuidedRouteResult as { fallbackReason?: string | null } | null
+    )?.fallbackReason;
+    try {
+      rememberOpenAiGuidedRoutingState({
+        source: 'deterministic_fallback',
+        routeKind: 'direct_quick_reply',
+        fallbackReason:
+          openAiGuidedFallbackReason ||
+          'Fell back to the local quick reply matcher.',
+      });
+      await sendAssistantReplyWithFeedback({
+        text: quickReply,
+        routeKey: 'direct_quick_reply',
+        handlerKind: 'direct_quick_reply',
+        responseSource: 'local_companion',
+        traceReason: 'handled message via direct quick reply fallback path',
+      });
+      clearSharedAssistantCapabilitySeed(chatJid);
+      completeConversationPilotProof(quickReplyPilot, {
+        outcome: 'success',
+        blockerOwner: 'none',
+        summaryText: quickReply,
+      });
+      logger.info(
+        {
+          component: 'assistant',
+          chatJid,
+          groupFolder: group.folder,
+          group: group.name,
+          requestRoute: requestPolicy.route,
+          directAssistantProfile: 'minimal_read_only',
+          promptKind: directAssistantPromptKind,
+          freshSession: forceFreshDirectAssistantSession,
+          rewriteApplied: directAssistantRewriteApplied,
+          quickReply: true,
+          openAiGuidedFallback: true,
+        },
+        'Handled message via direct quick reply fallback path',
+      );
+      return true;
+    } catch (err) {
+      completeConversationPilotProof(quickReplyPilot, {
+        outcome: 'internal_failure',
+        blockerClass: 'direct_quick_reply_send_failed',
+        blockerOwner: 'repo_side',
+        summaryText:
+          err instanceof Error ? err.message : 'direct quick reply send failed',
+      });
+      lastAgentTimestamp[chatJid] = previousCursor;
+      saveState();
+      logger.warn(
+        { group: group.name, err },
+        'Direct quick reply send failed, rolled back cursor for retry',
+      );
+      return false;
     }
   }
 

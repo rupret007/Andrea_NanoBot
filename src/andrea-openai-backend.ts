@@ -4,6 +4,7 @@ import {
   ANDREA_OPENAI_BACKEND_URL,
 } from './config.js';
 import type {
+  CompanionRouteDecision,
   OrchestrationSource,
   RegisteredGroup,
   RuntimeBackendJob,
@@ -284,6 +285,28 @@ export class AndreaOpenAiBackendClient {
       },
     );
     return response.job;
+  }
+
+  async routePrompt(input: {
+    channel: 'telegram' | 'bluebubbles';
+    text: string;
+    requestRoute: 'direct_assistant' | 'protected_assistant';
+    conversationSummary?: string | null;
+    replyText?: string | null;
+    priorPersonName?: string | null;
+    priorThreadTitle?: string | null;
+    priorLastAnswerSummary?: string | null;
+  }): Promise<CompanionRouteDecision> {
+    return requestJson<CompanionRouteDecision>(
+      this.fetchImpl,
+      this.baseUrl,
+      this.timeoutMs,
+      '/route',
+      {
+        method: 'POST',
+        body: JSON.stringify(input),
+      },
+    );
   }
 
   async followUpTarget(input: {

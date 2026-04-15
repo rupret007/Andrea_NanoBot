@@ -1641,6 +1641,34 @@ export function listRecentMessagesForChat(
     .all(chatJid, Math.max(1, limit)) as NewMessage[];
 }
 
+export function listMessagesForChatWindow(params: {
+  chatJid: string;
+  startTimestamp: string;
+  endTimestamp?: string | null;
+  limit?: number;
+}): NewMessage[] {
+  return db
+    .prepare(
+      `
+        SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, thread_id, reply_to_id
+        FROM messages
+        WHERE chat_jid = ?
+          AND timestamp >= ?
+          AND (? IS NULL OR timestamp <= ?)
+          AND content != '' AND content IS NOT NULL
+        ORDER BY timestamp ASC
+        LIMIT ?
+      `,
+    )
+    .all(
+      params.chatJid,
+      params.startTimestamp,
+      params.endTimestamp || null,
+      params.endTimestamp || null,
+      Math.max(1, params.limit ?? 400),
+    ) as NewMessage[];
+}
+
 export function getLastBotMessageTimestamp(
   chatJid: string,
   botPrefix: string,

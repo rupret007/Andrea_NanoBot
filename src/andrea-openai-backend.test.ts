@@ -182,6 +182,48 @@ describe('AndreaOpenAiBackendClient', () => {
     expect(job.jobId).toBe('job_777');
   });
 
+  it('routes companion prompts through POST /route', async () => {
+    const fetchImpl = vi.fn(async (input, init) => {
+      expect(String(input)).toContain('/route');
+      expect(init?.method).toBe('POST');
+      expect(String(init?.body)).toContain('"channel":"telegram"');
+      return new Response(
+        JSON.stringify({
+          routeKind: 'assistant_capability',
+          capabilityId: 'communication.summarize_thread',
+          canonicalText: 'summarize my text messages in Pops of Punk',
+          arguments: {
+            targetChatName: 'Pops of Punk',
+            timeWindowKind: 'default_24h',
+            timeWindowValue: 24,
+          },
+          confidence: 'high',
+          clarificationPrompt: null,
+          reason: 'matched synced-thread summary request',
+        }),
+        { status: 200 },
+      );
+    });
+    const client = new AndreaOpenAiBackendClient({
+      enabled: true,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    const decision = await client.routePrompt({
+      channel: 'telegram',
+      text: 'summerize Pops of Punk',
+      requestRoute: 'direct_assistant',
+    });
+
+    expect(decision).toMatchObject({
+      routeKind: 'assistant_capability',
+      capabilityId: 'communication.summarize_thread',
+      arguments: expect.objectContaining({
+        targetChatName: 'Pops of Punk',
+      }),
+    });
+  });
+
   it('supports generic follow-up targets for group-folder continuity', async () => {
     const fetchImpl = vi.fn(async (input, init) => {
       expect(String(input)).toContain('/followups');

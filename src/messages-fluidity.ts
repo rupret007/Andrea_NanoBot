@@ -1,12 +1,11 @@
 import { isBlueBubblesSelfThreadAliasJid } from './bluebubbles-self-thread.js';
-import { buildGracefulDegradedReply } from './conversational-core.js';
+import { interpretBlueBubblesDirectTurnWithBackend } from './openai-guided-routing.js';
 import {
   describeOpenAiProviderFailure,
   resolveOpenAiProviderConfig,
 } from './openai-provider.js';
 import type {
   BlueBubblesReplyGateMode,
-  MessagesDirectRouteFamily,
   MessagesDirectTurnEnvelope,
   NewMessage,
 } from './types.js';
@@ -17,13 +16,6 @@ function normalizeText(value: string | undefined): string {
     .replace(/[\u2018\u2019]/g, "'")
     .replace(/\s+/g, ' ')
     .trim();
-}
-
-function clampConfidence(value: unknown): number {
-  if (typeof value !== 'number' || !Number.isFinite(value)) {
-    return 0;
-  }
-  return Math.min(1, Math.max(0, value));
 }
 
 function safeJsonParse<T>(value: string, fallback: T): T {
@@ -71,34 +63,6 @@ function stripJsonFences(value: string): string {
     .trim();
 }
 
-function isAllowedRouteFamily(value: unknown): value is MessagesDirectRouteFamily {
-  return (
-    value === 'chat' ||
-    value === 'communication_reply' ||
-    value === 'message_action_followup' ||
-    value === 'capture' ||
-    value === 'calendar' ||
-    value === 'reminder' ||
-    value === 'household_view' ||
-    value === 'help'
-  );
-}
-
-function buildMessagesOpenAiFallback(text: string): MessagesDirectTurnEnvelope {
-  return {
-    normalizedUserIntent: normalizeText(text),
-    routeFamily: 'chat',
-    assistantPrompt: normalizeText(text),
-    confidence: 0,
-    fallbackText: buildGracefulDegradedReply({
-      kind: 'assistant_runtime_unavailable',
-      channel: 'bluebubbles',
-      text,
-    }),
-    source: 'fallback',
-  };
-}
-
 export function resolveBlueBubblesReplyGateMode(params: {
   chatJid: string | null | undefined;
   isGroup?: boolean | null;
@@ -139,97 +103,7 @@ export async function interpretBlueBubblesDirectTurn(input: {
   priorLastAnswerSummary?: string;
   now?: Date;
 }): Promise<MessagesDirectTurnEnvelope> {
-  const normalizedText = normalizeText(input.text);
-  if (!normalizedText) {
-    return {
-      normalizedUserIntent: '',
-      routeFamily: 'chat',
-      assistantPrompt: '',
-      confidence: 0,
-      clarificationQuestion: 'What do you want me to help with here?',
-      source: 'fallback',
-    };
-  }
-
-  const openAi = resolveOpenAiProviderConfig();
-  if (!openAi) {
-    return buildMessagesOpenAiFallback(normalizedText);
-  }
-
-  const prompt = [
-    'You are Andrea\'s 1:1 Messages front-door interpreter.',
-    'Return JSON only.',
-    'Valid routeFamily values: chat, communication_reply, message_action_followup, capture, calendar, reminder, household_view, help.',
-    'Use assistantPrompt to rewrite the user turn into the short command Andrea\'s existing deterministic handlers should receive.',
-    'For communication_reply, prefer assistantPrompt values like "what should I say back", "make it warmer", "make it more direct", "send it", or "send it later tonight".',
-    'For capture, household_view, calendar, and reminder, rewrite into a concise natural command Andrea can route directly.',
-    'For help, use an assistantPrompt like "what can you do".',
-    'For chat, provide a short natural replyText Andrea can send as-is in Messages.',
-    'Ask one short clarificationQuestion only if the intent is too ambiguous to act on cleanly.',
-    'Keep Messages tone human, concise, and non-bureaucratic.',
-    `Context JSON: ${JSON.stringify({
-      groupFolder: input.groupFolder,
-      chatJid: input.chatJid,
-      text: normalizedText,
-      conversationSummary: input.conversationSummary || null,
-      replyText: input.replyText || null,
-      priorPersonName: input.priorPersonName || null,
-      priorThreadTitle: input.priorThreadTitle || null,
-      priorLastAnswerSummary: input.priorLastAnswerSummary || null,
-      now: (input.now || new Date()).toISOString(),
-    })}`,
-    'Return JSON with keys: normalizedUserIntent, routeFamily, assistantPrompt, draftGoal, toneHints, confidence, clarificationQuestion, replyText.',
-  ].join('\n');
-
-  try {
-    const response = await fetch(`${openAi.baseUrl}/responses`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${openAi.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: openAi.researchModel,
-        input: prompt,
-      }),
-    });
-    if (!response.ok) {
-      const body = await response.text();
-      describeOpenAiProviderFailure(response.status, body, 'research');
-      return buildMessagesOpenAiFallback(normalizedText);
-    }
-    const payload = (await response.json()) as unknown;
-    const rawOutput = stripJsonFences(extractResponseOutputText(payload));
-    if (!rawOutput) {
-      return buildMessagesOpenAiFallback(normalizedText);
-    }
-    const parsed = safeJsonParse<Partial<MessagesDirectTurnEnvelope>>(rawOutput, {});
-    const routeFamily = isAllowedRouteFamily(parsed.routeFamily)
-      ? parsed.routeFamily
-      : 'chat';
-    const assistantPrompt = normalizeText(parsed.assistantPrompt) || normalizedText;
-    const clarificationQuestion = normalizeText(parsed.clarificationQuestion || undefined);
-    const replyText = normalizeText(parsed.replyText || undefined);
-    const toneHints = Array.isArray(parsed.toneHints)
-      ? parsed.toneHints
-          .map((hint) => normalizeText(typeof hint === 'string' ? hint : ''))
-          .filter(Boolean)
-      : [];
-    return {
-      normalizedUserIntent:
-        normalizeText(parsed.normalizedUserIntent || undefined) || normalizedText,
-      routeFamily,
-      assistantPrompt,
-      draftGoal: normalizeText(parsed.draftGoal || undefined) || null,
-      toneHints,
-      confidence: clampConfidence(parsed.confidence),
-      clarificationQuestion: clarificationQuestion || null,
-      replyText: replyText || null,
-      source: 'openai',
-    };
-  } catch {
-    return buildMessagesOpenAiFallback(normalizedText);
-  }
+  return interpretBlueBubblesDirectTurnWithBackend(input);
 }
 
 export async function draftBlueBubblesCommunicationReply(input: {

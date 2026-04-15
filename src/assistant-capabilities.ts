@@ -9,7 +9,12 @@ import {
   type DailyCompanionResponse,
 } from './daily-companion.js';
 import type { SelectedWorkContext } from './daily-command-center.js';
-import { createTask, getAllTasks, listProfileFactsForGroup } from './db.js';
+import {
+  createTask,
+  getAllTasks,
+  listMessagesForChatWindow,
+  listProfileFactsForGroup,
+} from './db.js';
 import {
   buildLifeThreadSnapshot,
   handleLifeThreadCommand,
@@ -49,6 +54,7 @@ import {
   formatCommunicationOpenLoopsReply,
   manageCommunicationTracking,
 } from './communication-companion.js';
+import { resolveBlueBubblesThreadTargetByName } from './message-actions.js';
 import { createOrRefreshMessageActionFromDraft } from './message-actions.js';
 import { buildChiefOfStaffTurn } from './chief-of-staff.js';
 import {
@@ -81,9 +87,12 @@ import type {
   MissionExecutionContext,
   MissionPlanSnapshot,
   MissionSuggestedAction,
+  NewMessage,
   SendMessageOptions,
+  CompanionRouteTimeWindowKind,
 } from './types.js';
 import { normalizeVoicePrompt } from './voice-ready.js';
+import { formatThreadSummaryWindowLabel } from './thread-summary-routing.js';
 
 export type AssistantCapabilityId =
   | 'daily.morning_brief'
@@ -116,6 +125,7 @@ export type AssistantCapabilityId =
   | 'knowledge.delete_source'
   | 'knowledge.reindex_source'
   | 'communication.understand_message'
+  | 'communication.summarize_thread'
   | 'communication.draft_reply'
   | 'communication.open_loops'
   | 'communication.manage_tracking'
@@ -255,6 +265,13 @@ export interface AssistantCapabilityInput {
   text?: string;
   canonicalText?: string;
   personName?: string;
+  targetChatName?: string | null;
+  targetChatJid?: string | null;
+  threadTitle?: string | null;
+  timeWindowKind?: CompanionRouteTimeWindowKind | null;
+  timeWindowValue?: number | null;
+  savedMaterialOnly?: boolean | null;
+  replyStyle?: 'shorter' | 'warmer' | 'more_direct' | null;
   followupAction?: AlexaConversationFollowupAction;
   reason?: string;
 }
@@ -399,6 +416,14 @@ function normalizeText(value: string | undefined): string {
   return normalizeVoicePrompt(value || '')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function clipText(value: string | undefined, maxLength: number): string {
+  const normalized = normalizeText(value);
+  if (!normalized || normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
 }
 
 function buildCapabilityTrace(
@@ -2126,6 +2151,288 @@ async function runKnowledgeMutationCapability(
           : 'disabled a saved knowledge source',
       mutationDebugPath,
     ),
+  };
+}
+
+const THREAD_SUMMARY_STOP_WORDS = new Set([
+  'about',
+  'after',
+  'also',
+  'back',
+  'been',
+  'both',
+  'from',
+  'have',
+  'just',
+  'like',
+  'more',
+  'need',
+  'only',
+  'really',
+  'still',
+  'that',
+  'them',
+  'there',
+  'they',
+  'this',
+  'today',
+  'tomorrow',
+  'tonight',
+  'want',
+  'what',
+  'when',
+  'with',
+  'would',
+  'your',
+]);
+
+function resolveThreadSummaryWindow(params: {
+  now: Date;
+  kind: CompanionRouteTimeWindowKind | null | undefined;
+  value: number | null | undefined;
+}): { startTimestamp: string; label: string } {
+  const start = new Date(params.now);
+  switch (params.kind) {
+    case 'last_hours':
+      start.setHours(start.getHours() - Math.max(1, params.value || 1));
+      break;
+    case 'last_days':
+      start.setDate(start.getDate() - Math.max(1, params.value || 1));
+      break;
+    case 'today':
+      start.setHours(0, 0, 0, 0);
+      break;
+    case 'yesterday':
+      start.setDate(start.getDate() - 1);
+      start.setHours(0, 0, 0, 0);
+      break;
+    case 'this_week': {
+      const day = start.getDay();
+      const offset = day === 0 ? 6 : day - 1;
+      start.setDate(start.getDate() - offset);
+      start.setHours(0, 0, 0, 0);
+      break;
+    }
+    case 'default_24h':
+    default:
+      start.setHours(start.getHours() - 24);
+      break;
+  }
+  return {
+    startTimestamp: start.toISOString(),
+    label: formatThreadSummaryWindowLabel(params.kind, params.value),
+  };
+}
+
+function normalizeThreadSummaryToken(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9']/g, '');
+}
+
+function pickThreadSummaryTopics(messages: NewMessage[]): string[] {
+  const counts = new Map<string, number>();
+  for (const message of messages) {
+    for (const rawToken of (message.content || '').split(/\s+/)) {
+      const token = normalizeThreadSummaryToken(rawToken);
+      if (!token || token.length < 4) continue;
+      if (THREAD_SUMMARY_STOP_WORDS.has(token)) continue;
+      counts.set(token, (counts.get(token) || 0) + 1);
+    }
+  }
+  return [...counts.entries()]
+    .sort((left, right) => right[1] - left[1])
+    .slice(0, 3)
+    .map(([token]) => token);
+}
+
+function pickThreadSummaryParticipants(messages: NewMessage[]): string[] {
+  const counts = new Map<string, number>();
+  for (const message of messages) {
+    const name = normalizeText(message.sender_name || message.sender || '');
+    if (!name) continue;
+    counts.set(name, (counts.get(name) || 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort((left, right) => right[1] - left[1])
+    .slice(0, 3)
+    .map(([name]) => name);
+}
+
+function inferThreadReplyNeed(messages: NewMessage[]): string | null {
+  const latestInbound = [...messages]
+    .reverse()
+    .find((message) => !message.is_from_me && !message.is_bot_message);
+  if (!latestInbound) return null;
+  const content = normalizeText(latestInbound.content || '').toLowerCase();
+  if (
+    /\?$/.test(content) ||
+    /\b(?:can you|could you|would you|let me know|should we|are we|do you want|confirm)\b/.test(
+      content,
+    )
+  ) {
+    return `The latest open question looks like: "${normalizeText(
+      latestInbound.content || '',
+    )}".`;
+  }
+  return null;
+}
+
+function buildThreadSummaryReply(params: {
+  chatName: string;
+  windowLabel: string;
+  messages: NewMessage[];
+  channel: AssistantCapabilityContext['channel'];
+}): string {
+  const messageCount = params.messages.length;
+  const participants = pickThreadSummaryParticipants(params.messages);
+  const topics = pickThreadSummaryTopics(params.messages);
+  const replyNeed = inferThreadReplyNeed(params.messages);
+  const lead = [
+    `Over ${params.windowLabel}, ${params.chatName} had ${messageCount} message${
+      messageCount === 1 ? '' : 's'
+    }`,
+    participants.length > 0
+      ? `with ${participants.join(participants.length > 1 ? ', ' : '')} most active.`
+      : '.',
+  ].join(' ');
+
+  const bullets: string[] = [];
+  if (topics.length > 0) {
+    bullets.push(`Main topics: ${topics.join(', ')}.`);
+  }
+  const latest = params.messages.at(-1);
+  if (latest) {
+    bullets.push(`Latest turn: ${clipText(normalizeText(latest.content || ''), 120)}.`);
+  }
+  if (replyNeed) {
+    bullets.push(replyNeed);
+  }
+
+  if (params.channel === 'bluebubbles') {
+    return [lead, ...bullets.slice(0, 2)].filter(Boolean).join('\n');
+  }
+
+  return [lead, ...bullets.slice(0, 3).map((line) => `- ${line}`)]
+    .filter(Boolean)
+    .join('\n');
+}
+
+async function runCommunicationThreadSummaryCapability(
+  descriptor: AssistantCapabilityDescriptor,
+  context: AssistantCapabilityContext,
+  input: AssistantCapabilityInput,
+): Promise<AssistantCapabilityResult> {
+  const chatQuery =
+    normalizeText(input.targetChatName || input.threadTitle || '') ||
+    normalizeText(input.personName || '');
+  if (!chatQuery) {
+    return {
+      handled: true,
+      capabilityId: descriptor.id,
+      replyText:
+        'Tell me which synced Messages thread you want summarized, like `summarize Pops of Punk from the last 2 days`.',
+      outputShape: descriptor.preferredOutputShape[context.channel],
+      trace: buildCapabilityTrace(
+        descriptor,
+        context,
+        'local_companion',
+        'asked to clarify the target synced Messages thread',
+      ),
+    };
+  }
+
+  const resolution = resolveBlueBubblesThreadTargetByName(chatQuery);
+  if (resolution.state === 'missing') {
+    return {
+      handled: true,
+      capabilityId: descriptor.id,
+      replyText: `I couldn't match "${chatQuery}" to a synced Messages chat yet.`,
+      outputShape: descriptor.preferredOutputShape[context.channel],
+      trace: buildCapabilityTrace(
+        descriptor,
+        context,
+        'local_companion',
+        'could not match the requested synced Messages chat by name',
+      ),
+    };
+  }
+  if (resolution.state === 'ambiguous') {
+    const matches = resolution.matches.map((match) => match.displayName).join(', ');
+    return {
+      handled: true,
+      capabilityId: descriptor.id,
+      replyText: `I found more than one synced Messages chat that could be "${chatQuery}". Which one do you want: ${matches}?`,
+      outputShape: descriptor.preferredOutputShape[context.channel],
+      trace: buildCapabilityTrace(
+        descriptor,
+        context,
+        'local_companion',
+        'asked to clarify an ambiguous synced Messages chat match',
+      ),
+    };
+  }
+
+  const window = resolveThreadSummaryWindow({
+    now: context.now || new Date(),
+    kind: input.timeWindowKind,
+    value: input.timeWindowValue,
+  });
+  const messages = listMessagesForChatWindow({
+    chatJid: resolution.target.chatJid,
+    startTimestamp: window.startTimestamp,
+    limit: 400,
+  }).filter((message) => !message.is_bot_message);
+
+  if (messages.length === 0) {
+    return {
+      handled: true,
+      capabilityId: descriptor.id,
+      replyText: `I didn't find any synced Messages activity in ${resolution.target.displayName} over ${window.label}.`,
+      outputShape: descriptor.preferredOutputShape[context.channel],
+      trace: buildCapabilityTrace(
+        descriptor,
+        context,
+        'local_companion',
+        'found no synced Messages history inside the requested window',
+      ),
+    };
+  }
+
+  const replyText = buildThreadSummaryReply({
+    chatName: resolution.target.displayName,
+    windowLabel: window.label,
+    messages,
+    channel: context.channel,
+  });
+
+  return {
+    handled: true,
+    capabilityId: descriptor.id,
+    replyText,
+    outputShape: descriptor.preferredOutputShape[context.channel],
+    trace: buildCapabilityTrace(
+      descriptor,
+      context,
+      'local_companion',
+      'summarized a synced Messages chat from raw BlueBubbles history',
+      [
+        `chat:${resolution.target.displayName}`,
+        `window:${window.label}`,
+        `messages:${messages.length}`,
+      ],
+    ),
+    conversationSeed: {
+      flowKey: descriptor.id.replace(/\./g, '_'),
+      subjectKind: 'communication_thread',
+      summaryText: replyText,
+      guidanceGoal: 'open_conversation',
+      subjectData: {
+        activeCapabilityId: descriptor.id,
+        threadTitle: resolution.target.displayName,
+        conversationFocus: resolution.target.displayName,
+      },
+      supportedFollowups: descriptor.followupActions,
+      responseSource: 'local_companion',
+    },
   };
 }
 
@@ -4931,6 +5238,32 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     execute: (context, input) =>
       runEverydayCaptureCapability(
         CAPABILITY_DESCRIPTORS[59]!,
+        cloneContext(context),
+        input,
+      ),
+  },
+  {
+    id: 'communication.summarize_thread',
+    label: 'Summarize Synced Messages Thread',
+    category: 'communication',
+    requiredInputs: ['text'],
+    optionalInputs: ['targetChatName', 'targetChatJid', 'threadTitle'],
+    requiresLinkedAccount: true,
+    requiresConfirmation: false,
+    safeForAlexa: false,
+    safeForTelegram: true,
+    safeForBlueBubbles: true,
+    operatorOnly: false,
+    preferredOutputShape: {
+      alexa: 'chat_brief',
+      telegram: 'chat_rich',
+      bluebubbles: 'chat_brief',
+    },
+    followupActions: ['anything_else', 'say_more'],
+    handlerKind: 'local',
+    execute: (context, input) =>
+      runCommunicationThreadSummaryCapability(
+        CAPABILITY_DESCRIPTORS[60]!,
         cloneContext(context),
         input,
       ),

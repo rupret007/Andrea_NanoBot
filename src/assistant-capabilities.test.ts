@@ -9,6 +9,8 @@ import {
   createTask,
   listKnowledgeSourcesForGroup,
   listMessageActionsForGroup,
+  storeChatMetadata,
+  storeMessage,
   _initTestDatabase,
 } from './db.js';
 
@@ -108,6 +110,103 @@ describe('assistant capabilities', () => {
     expect(
       getAssistantCapability('media.image_generate')?.availabilityNote,
     ).toContain('Telegram image generation is wired');
+  });
+
+  it('summarizes a synced BlueBubbles thread by name without creating side effects', async () => {
+    storeChatMetadata(
+      'bb:iMessage;-;pops-of-punk',
+      '2026-04-15T11:00:00.000Z',
+      'Pops of Punk',
+      'bluebubbles',
+      true,
+    );
+    storeMessage({
+      id: 'msg-pops-1',
+      chat_jid: 'bb:iMessage;-;pops-of-punk',
+      sender: 'Alex',
+      sender_name: 'Alex',
+      content: 'Let us lock the set list and confirm load-in for Friday.',
+      timestamp: '2026-04-14T18:30:00.000Z',
+      is_from_me: false,
+    });
+    storeMessage({
+      id: 'msg-pops-2',
+      chat_jid: 'bb:iMessage;-;pops-of-punk',
+      sender: 'Jeff',
+      sender_name: 'Jeff',
+      content: 'I can reply after dinner once I hear back from the venue.',
+      timestamp: '2026-04-15T09:10:00.000Z',
+      is_from_me: true,
+    });
+
+    const result = await executeAssistantCapability({
+      capabilityId: 'communication.summarize_thread',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:8004355504',
+        now: new Date('2026-04-15T12:00:00-05:00'),
+      },
+      input: {
+        canonicalText:
+          'summarize my text messages in Pops of Punk from the last 2 days',
+        targetChatName: 'Pops of Punk',
+        threadTitle: 'Pops of Punk',
+        timeWindowKind: 'last_days',
+        timeWindowValue: 2,
+      },
+    });
+
+    expect(result.handled).toBe(true);
+    expect(result.capabilityId).toBe('communication.summarize_thread');
+    expect(result.replyText).toContain('Pops of Punk');
+    expect(result.replyText).toContain('Latest turn:');
+    expect(result.trace?.responseSource).toBe('local_companion');
+    expect(result.conversationSeed?.subjectData?.threadTitle).toBe(
+      'Pops of Punk',
+    );
+    expect(
+      listMessageActionsForGroup({
+        groupFolder: 'main',
+      }),
+    ).toHaveLength(0);
+    expect(listKnowledgeSourcesForGroup('main')).toHaveLength(0);
+  });
+
+  it('asks to clarify when a named BlueBubbles thread summary is ambiguous', async () => {
+    storeChatMetadata(
+      'bb:iMessage;-;pops-of-punk-band',
+      '2026-04-15T11:00:00.000Z',
+      'Pops of Punk Band',
+      'bluebubbles',
+      true,
+    );
+    storeChatMetadata(
+      'bb:iMessage;-;pops-of-punk-fans',
+      '2026-04-15T11:05:00.000Z',
+      'Pops of Punk Fans',
+      'bluebubbles',
+      true,
+    );
+
+    const result = await executeAssistantCapability({
+      capabilityId: 'communication.summarize_thread',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:8004355504',
+        now: new Date('2026-04-15T12:00:00-05:00'),
+      },
+      input: {
+        canonicalText: 'summarize my text messages in Pops of Punk',
+        targetChatName: 'Pops of Punk',
+      },
+    });
+
+    expect(result.handled).toBe(true);
+    expect(result.replyText).toContain('Which one do you want');
+    expect(result.replyText).toContain('Pops of Punk Band');
+    expect(result.replyText).toContain('Pops of Punk Fans');
   });
 
   it('runs chief-of-staff capability execution and carries continuation context forward', async () => {

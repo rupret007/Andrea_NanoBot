@@ -26,12 +26,15 @@ import {
   isSharedResearchRequest,
   type AssistantCapabilityId,
 } from './assistant-capabilities.js';
+import { parseThreadSummaryIntent } from './thread-summary-routing.js';
+import type { CompanionRouteArguments } from './types.js';
 import { normalizeVoicePrompt } from './voice-ready.js';
 
 export interface AssistantCapabilityMatch {
   capabilityId: AssistantCapabilityId;
   normalizedText: string;
   canonicalText?: string;
+  arguments?: CompanionRouteArguments;
   reason: string;
   continuation?: boolean;
 }
@@ -673,6 +676,16 @@ function matchCommunicationPrompt(
   normalized: string,
 ): AssistantCapabilityMatch | null {
   const lower = normalized.toLowerCase();
+  const threadSummaryIntent = parseThreadSummaryIntent(normalized);
+  if (threadSummaryIntent) {
+    return {
+      capabilityId: 'communication.summarize_thread',
+      normalizedText: normalized,
+      canonicalText: threadSummaryIntent.canonicalText,
+      arguments: threadSummaryIntent.arguments,
+      reason: 'matched named synced Messages thread summary phrasing',
+    };
+  }
   if (
     /^summari[sz]e this\b/.test(lower) ||
     /^summari[sz]e this message\b/.test(lower) ||

@@ -151,6 +151,34 @@ describe('assistant capability router', () => {
     ).toMatchObject({
       capabilityId: 'communication.understand_message',
     });
+    expect(
+      matchAssistantCapabilityRequest(
+        'Can you summerize my text messages in the Pops of Punk text thread please. Last 2 days.',
+      ),
+    ).toMatchObject({
+      capabilityId: 'communication.summarize_thread',
+      arguments: expect.objectContaining({
+        targetChatName: 'Pops of Punk',
+        timeWindowKind: 'last_days',
+        timeWindowValue: 2,
+      }),
+    });
+    expect(
+      matchAssistantCapabilityRequest(
+        'Summarize my text messages in Pops of Punk from yesterday',
+      ),
+    ).toMatchObject({
+      capabilityId: 'communication.summarize_thread',
+      arguments: expect.objectContaining({
+        targetChatName: 'Pops of Punk',
+        timeWindowKind: 'yesterday',
+      }),
+    });
+    expect(
+      matchAssistantCapabilityRequest('Summarize the latest news today'),
+    ).toMatchObject({
+      capabilityId: 'research.summarize',
+    });
   });
 
   it('matches chief-of-staff prioritization, prep, decision, and explainability prompts cleanly', () => {

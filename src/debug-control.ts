@@ -1,6 +1,10 @@
 import fs from 'fs';
 import path from 'path';
 
+import {
+  ANDREA_OPENAI_BACKEND_ENABLED,
+  ANDREA_OPENAI_BACKEND_URL,
+} from './config.js';
 import { getRouterState, setRouterState } from './db.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import {
@@ -13,6 +17,7 @@ import {
   reconcileWindowsHostState,
 } from './host-control.js';
 import { buildFieldTrialOperatorTruth } from './field-trial-readiness.js';
+import { readOpenAiGuidedRoutingState } from './openai-guided-routing-state.js';
 import {
   getLogControlConfig,
   type LogControlConfig,
@@ -396,6 +401,7 @@ export function formatDebugStatus(): string {
     hostSnapshot,
     windowsHost,
   });
+  const guidedRouting = readOpenAiGuidedRoutingState();
   const installedMode =
     process.platform === 'win32'
       ? formatInstallModeLabel(
@@ -432,6 +438,17 @@ export function formatDebugStatus(): string {
     `- Workspace branch: ${commitTruth.workspaceGitBranch}`,
     `- Workspace HEAD: ${commitTruth.workspaceGitCommit}`,
     `- Serving commit aligned: ${commitTruth.servingCommitMatchesWorkspaceHead ? 'yes' : 'no'}`,
+    `- OpenAI-guided routing backend: ${ANDREA_OPENAI_BACKEND_ENABLED ? `enabled at ${ANDREA_OPENAI_BACKEND_URL}` : 'disabled in this NanoBot runtime'}`,
+    `- OpenAI-guided routing last source: ${guidedRouting?.source || 'none yet'}`,
+    ...(guidedRouting?.routeKind
+      ? [`- OpenAI-guided routing last route: ${guidedRouting.routeKind}${guidedRouting.capabilityId ? ` (${guidedRouting.capabilityId})` : ''}`]
+      : []),
+    ...(guidedRouting?.confidence
+      ? [`- OpenAI-guided routing confidence: ${guidedRouting.confidence}`]
+      : []),
+    ...(guidedRouting?.fallbackReason
+      ? [`- OpenAI-guided routing fallback: ${guidedRouting.fallbackReason}`]
+      : []),
     `- Launch status: ${fieldTrialTruth.launchReadiness.status}`,
     `- Core status: ${fieldTrialTruth.launchReadiness.coreStatus}`,
     `- Launch summary: ${fieldTrialTruth.launchReadiness.summary}`,

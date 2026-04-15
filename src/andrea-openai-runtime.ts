@@ -12,6 +12,7 @@ import {
   upsertRuntimeBackendJob,
 } from './db.js';
 import type {
+  CompanionRouteDecision,
   RegisteredGroup,
   RuntimeBackendJob,
   RuntimeBackendJobLogs,
@@ -244,6 +245,27 @@ export async function getAndreaOpenAiBackendStatus(
   client = new AndreaOpenAiBackendClient(),
 ): Promise<RuntimeBackendStatus> {
   return client.getStatus();
+}
+
+export async function routeAndreaOpenAiCompanionPrompt(
+  input: {
+    channel: 'telegram' | 'bluebubbles';
+    text: string;
+    requestRoute: 'direct_assistant' | 'protected_assistant';
+    conversationSummary?: string | null;
+    replyText?: string | null;
+    priorPersonName?: string | null;
+    priorThreadTitle?: string | null;
+    priorLastAnswerSummary?: string | null;
+  },
+  client = new AndreaOpenAiBackendClient(),
+): Promise<CompanionRouteDecision> {
+  ensureBackendEnabled(client);
+  try {
+    return await client.routePrompt(input);
+  } catch (err) {
+    throw classifyBackendError(err, null);
+  }
 }
 
 function ensureBackendEnabled(client: AndreaOpenAiBackendClient): void {
