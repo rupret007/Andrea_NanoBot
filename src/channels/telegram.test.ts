@@ -73,6 +73,7 @@ describe('buildTelegramHelpText', () => {
     expect(help).toContain('help me plan meals this week');
     expect(help).toContain('what bills do I need to pay this week');
     expect(help).toContain('reply help');
+    expect(help).toContain('Not helpful');
     expect(help).not.toContain('/alexa_status');
     expect(help).not.toContain('/amazon_status');
     expect(help).not.toContain('/amazon_search');
@@ -119,6 +120,7 @@ describe('buildTelegramWelcomeText', () => {
     expect(welcome).toContain('/features');
     expect(welcome).toContain('*Start Here*');
     expect(welcome).toContain('mention my Telegram username');
+    expect(welcome).toContain('Not helpful');
     expect(welcome).toContain("what's on my calendar tomorrow");
     expect(welcome).toContain('what should I say back');
     expect(welcome).not.toContain('Candace');
@@ -182,6 +184,7 @@ describe('buildTelegramFeaturesText', () => {
     expect(features).toContain(
       'Messages is a best-effort bridge when available through BlueBubbles',
     );
+    expect(features).toContain('private pilot issue');
     expect(features).toContain(
       'Alexa is concise voice help for schedule, reminders, list capture and readout, planning, open follow-through, and quick reply help',
     );

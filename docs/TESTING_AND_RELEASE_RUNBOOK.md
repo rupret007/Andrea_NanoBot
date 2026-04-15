@@ -350,6 +350,14 @@ If something feels off during pilot use, capture it explicitly with one of these
 - `save this as a pilot issue`
 - `mark this flow as awkward`
 
+Main-control-chat feedback loop:
+
+- substantive Andrea replies in the registered main Telegram control chat can also show `Not helpful`
+- tapping it saves a private `downvoted_response` pilot issue and offers `Start fix`, `Why`, and `Not now`
+- queued remediation prefers Codex local, then Codex cloud, then Cursor Cloud
+- if the miss is primarily an external blocker or manual sync step, Andrea should keep the issue saved and explain that honestly instead of auto-starting a repo fix
+- local hotfixes may validate and restart on-host, but commit/push still require explicit approval
+
 Important pilot-mode limits:
 
 - pilot issue capture is explicit only; Andrea does not silently file issues

@@ -1165,7 +1165,8 @@ export type PilotIssueKind =
   | 'answer_off'
   | 'should_not_happen'
   | 'awkward_flow'
-  | 'manual_pilot_issue';
+  | 'manual_pilot_issue'
+  | 'downvoted_response';
 
 export interface PilotIssueLinkedRefs {
   missionId?: string;
@@ -1174,6 +1175,13 @@ export interface PilotIssueLinkedRefs {
   reminderTaskId?: string;
   knowledgeSourceIds?: string[];
   currentWorkRef?: string;
+  responseFeedbackId?: string;
+  backendLaneId?: string;
+  backendJobId?: string;
+  platformMessageId?: string;
+  userMessageId?: string;
+  messageActionId?: string;
+  googleCalendarEventId?: string;
 }
 
 export interface PilotIssueRecord {
@@ -1192,6 +1200,59 @@ export interface PilotIssueRecord {
   summaryText: string;
   assistantContextSummary: string;
   linkedRefs: PilotIssueLinkedRefs;
+}
+
+export type ResponseFeedbackStatus =
+  | 'captured'
+  | 'awaiting_confirmation'
+  | 'running'
+  | 'blocked_external'
+  | 'manual_sync_only'
+  | 'resolved_locally'
+  | 'landed'
+  | 'cancelled';
+
+export type ResponseFeedbackClassification =
+  | 'repo_side_broken'
+  | 'repo_side_rough_edge'
+  | 'externally_blocked'
+  | 'manual_sync_only';
+
+export type ResponseFeedbackRuntimePreference =
+  | 'codex_local'
+  | 'codex_cloud'
+  | 'cursor_cloud'
+  | 'cursor_local';
+
+export interface ResponseFeedbackRecord {
+  feedbackId: string;
+  createdAt: string;
+  updatedAt: string;
+  status: ResponseFeedbackStatus;
+  classification: ResponseFeedbackClassification;
+  channel: 'telegram';
+  groupFolder: string;
+  chatJid: string;
+  threadId?: string | null;
+  platformMessageId?: string | null;
+  userMessageId?: string | null;
+  issueId?: string | null;
+  routeKey?: string | null;
+  capabilityId?: string | null;
+  handlerKind?: string | null;
+  responseSource?: string | null;
+  traceReason?: string | null;
+  traceNotes?: string[];
+  blockerClass?: string | null;
+  blockerOwner: PilotBlockerOwner;
+  originalUserText: string;
+  assistantReplyText: string;
+  linkedRefs: PilotIssueLinkedRefs;
+  remediationLaneId?: 'cursor' | 'andrea_runtime' | null;
+  remediationJobId?: string | null;
+  remediationRuntimePreference?: ResponseFeedbackRuntimePreference | null;
+  remediationPrompt?: string | null;
+  operatorNote?: string | null;
 }
 
 export interface KnowledgeSourceRecord {

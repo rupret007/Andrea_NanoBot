@@ -1236,6 +1236,7 @@ export function buildTelegramWelcomeLines(assistantName: string): string[] {
     '- In a direct chat: send a normal message. If this will be your main Andrea chat, run `/registermain` once.',
     '- In a group: mention my Telegram username when you want me to jump in.',
     '- Use `/commands` for setup and status commands, and `/features` for the short capability guide.',
+    '- In your main control chat, substantive Andrea replies can show `Not helpful` so you can save a private pilot issue and prep a fix job.',
     '',
     '*Best First Asks*',
     ...examples,
@@ -1257,6 +1258,7 @@ export function buildTelegramHelpLines(assistantName: string): string[] {
     '- In a group: mention my Telegram username when you want a reply.',
     '- Use `/commands` for setup and status commands.',
     '- Use `/features` for the short guide to what Andrea is best at here.',
+    '- In the main control chat, `Not helpful` on a real Andrea reply saves a private issue and can prep a remediation task.',
     '',
     '*Good Next Messages*',
     ...examples,
@@ -1318,6 +1320,7 @@ export function buildTelegramFeatureLines(assistantName: string): string[] {
     '- Messages is a best-effort bridge when available through BlueBubbles; Telegram stays the dependable main messaging surface.',
     '- Research and image generation are optional lanes when those provider paths are available.',
     '- `/cursor_status` is the safe readiness check for coding and work help. Deeper operator controls stay in Telegram admin surfaces.',
+    '- In the main control chat, `Not helpful` on a substantive Andrea reply saves a private pilot issue and can prepare a queued fix task.',
   ];
 }
 

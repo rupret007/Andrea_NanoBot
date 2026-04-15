@@ -6,7 +6,12 @@ import {
 } from './channels/bluebubbles.js';
 import { readBlueBubblesMonitorState } from './bluebubbles-monitor-state.js';
 import { getAlexaModelSyncStatus } from './alexa-model-sync-state.js';
-import { getAllChats, listMessageActionsForGroup, listRecentMessagesForChat } from './db.js';
+import {
+  getAllChats,
+  listMessageActionsForGroup,
+  listRecentMessagesForChat,
+  listRecentResponseFeedback,
+} from './db.js';
 import {
   BLUEBUBBLES_CANONICAL_SELF_THREAD_JID,
   canonicalizeBlueBubblesSelfThreadJid,
@@ -471,6 +476,10 @@ export interface FieldTrialPilotIssueTruth {
   loggingEnabled: boolean;
   openCount: number;
   latestSummary: string;
+  latestResponseFeedbackStatus: string;
+  latestResponseFeedbackClassification: string;
+  latestResponseFeedbackSummary: string;
+  localHotfixPending: boolean;
 }
 
 export interface FieldTrialOperatorTruth {
@@ -2368,6 +2377,7 @@ export function buildFieldTrialOperatorTruth(
         : null
       : options.windowsHost;
   const review = buildPilotReviewSnapshot();
+  const latestResponseFeedback = listRecentResponseFeedback({ limit: 1 })[0] || null;
 
   const telegram = buildTelegramTruth(hostSnapshot, windowsHost);
   const alexa = buildAlexaTruth(projectRoot, review);
@@ -2475,6 +2485,13 @@ export function buildFieldTrialOperatorTruth(
       loggingEnabled: review.loggingEnabled,
       openCount: review.openIssueCount,
       latestSummary: review.latestOpenIssue?.summaryText || '',
+      latestResponseFeedbackStatus: latestResponseFeedback?.status || '',
+      latestResponseFeedbackClassification:
+        latestResponseFeedback?.classification || '',
+      latestResponseFeedbackSummary: latestResponseFeedback
+        ? `Ask: ${latestResponseFeedback.originalUserText.slice(0, 80)} | Reply: ${latestResponseFeedback.assistantReplyText.slice(0, 80)}`
+        : '',
+      localHotfixPending: latestResponseFeedback?.status === 'resolved_locally',
     },
     launchReadiness,
   };

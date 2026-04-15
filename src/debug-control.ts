@@ -605,6 +605,14 @@ export function formatDebugStatus(): string {
     ...(fieldTrialTruth.pilotIssues.latestSummary
       ? [`- Latest pilot issue: ${fieldTrialTruth.pilotIssues.latestSummary}`]
       : []),
+    ...(fieldTrialTruth.pilotIssues.latestResponseFeedbackStatus
+      ? [
+          `- Latest response feedback: ${fieldTrialTruth.pilotIssues.latestResponseFeedbackStatus}`,
+          `- Latest response feedback class: ${fieldTrialTruth.pilotIssues.latestResponseFeedbackClassification}`,
+          `- Latest response feedback summary: ${fieldTrialTruth.pilotIssues.latestResponseFeedbackSummary}`,
+          `- Local hotfix pending landing: ${fieldTrialTruth.pilotIssues.localHotfixPending ? 'yes' : 'no'}`,
+        ]
+      : []),
     `- Journey ordinary_chat: ${fieldTrialTruth.journeys.ordinary_chat.proofState}`,
     `- Journey daily_guidance: ${fieldTrialTruth.journeys.daily_guidance.proofState}`,
     `- Journey candace_followthrough: ${fieldTrialTruth.journeys.candace_followthrough.proofState}`,

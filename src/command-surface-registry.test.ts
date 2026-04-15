@@ -191,12 +191,14 @@ describe('command surface registry', () => {
     expect(help).toContain('scheduling');
     expect(help).toContain('reply help');
     expect(help).toContain('bill follow-through');
+    expect(help).toContain('Not helpful');
     expect(help).not.toContain('missions and chief-of-staff');
 
     expect(features).toContain('calendar');
     expect(features).toContain('planning');
     expect(features).toContain('quick reply help');
     expect(features).toContain('pills');
+    expect(features).toContain('private pilot issue');
     expect(features).not.toContain('life threads and follow-through');
   });
 
@@ -272,6 +274,8 @@ describe('command surface docs', () => {
     expect(commandReference).toContain('/remote-control');
     expect(commandReference).toContain('internal');
     expect(commandReference).toContain('operator-only');
+    expect(commandReference).toContain('Telegram feedback controls');
+    expect(commandReference).toContain('Not helpful');
     expect(commandReference).toContain('Calendar and schedule');
     expect(commandReference).toContain('Communication and reply help');
   });

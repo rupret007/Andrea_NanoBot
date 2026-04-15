@@ -161,6 +161,34 @@ describe('pilot mode', () => {
     expect(capture.record?.summaryText).toContain('manual pilot issue');
   });
 
+  it('supports override-driven downvoted response issues', () => {
+    const capture = capturePilotIssue({
+      channel: 'telegram',
+      groupFolder: 'main',
+      chatJid: 'tg:main',
+      utterance: 'not helpful',
+      routeKey: 'response_feedback.capture',
+      assistantContextSummary: 'Generic news fallback.',
+      linkedRefs: {
+        responseFeedbackId: 'feedback-1',
+      },
+      issueKindOverride: 'downvoted_response',
+      summaryTextOverride:
+        'User downvoted Andrea reply to "what is the news today".',
+      blockerClassOverride: 'response_feedback_repo_side_broken',
+      blockerOwnerOverride: 'repo_side',
+      journeyEventIdOverride: null,
+    });
+
+    expect(capture.handled).toBe(true);
+    expect(capture.record?.issueKind).toBe('downvoted_response');
+    expect(capture.record?.summaryText).toContain('User downvoted Andrea reply');
+    expect(capture.record?.blockerClass).toBe(
+      'response_feedback_repo_side_broken',
+    );
+    expect(capture.record?.linkedRefs.responseFeedbackId).toBe('feedback-1');
+  });
+
   it('disables journey logging and issue capture when ANDREA_PILOT_LOGGING_ENABLED=0', () => {
     vi.stubEnv('ANDREA_PILOT_LOGGING_ENABLED', '0');
 

@@ -76,6 +76,11 @@ Important boundary:
 
 - `/cursor_status` is the only public-safe Cursor command.
 - Deeper operator/admin controls do not belong in `/commands` or public Telegram menus.
+- In the registered main control chat, substantive Andrea replies can also show a `Not helpful` button.
+  - it is a Telegram feedback control, not a slash command
+  - it saves a private pilot issue and can prepare one queued remediation job
+  - queued remediation prefers Codex local, then Codex cloud, then Cursor Cloud
+  - Cursor desktop bridge sessions are not auto-selected for queued self-fix jobs
 
 ## Channel Surface Roles
 
@@ -161,6 +166,7 @@ These are real product surface, but they should not show up in public slash help
 | `/bundle-*` | `bounded` | Action bundle buttons such as run, skip, show, pick, and defer |
 | `/runtime-*` card actions | `operator_only` | Runtime card buttons inside the work cockpit |
 | Review controls | `bounded` | `send`, `send later`, `remind later`, `save under thread`, `keep as draft` |
+| Telegram feedback controls | `operator_only` | Main-control-chat `Not helpful`, `Start fix`, `Why`, and `Not now` feedback/remediation actions |
 
 ## Operator Scripts Surfaced In Docs
 

@@ -53,6 +53,7 @@ import {
   PilotIssueRecord,
   PilotJourneyEventRecord,
   RegisteredGroup,
+  ResponseFeedbackRecord,
   RitualProfile,
   RuntimeBackendCardContextRecord,
   RuntimeBackendChatSelectionRecord,
@@ -953,6 +954,40 @@ function createSchema(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_cursor_message_contexts_agent
       ON cursor_message_contexts(agent_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS response_feedback (
+      feedback_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      status TEXT NOT NULL,
+      classification TEXT NOT NULL,
+      channel TEXT NOT NULL,
+      group_folder TEXT NOT NULL,
+      chat_jid TEXT NOT NULL,
+      thread_id TEXT,
+      platform_message_id TEXT,
+      user_message_id TEXT,
+      issue_id TEXT,
+      route_key TEXT,
+      capability_id TEXT,
+      handler_kind TEXT,
+      response_source TEXT,
+      trace_reason TEXT,
+      trace_notes_json TEXT NOT NULL,
+      blocker_class TEXT,
+      blocker_owner TEXT NOT NULL,
+      original_user_text TEXT NOT NULL,
+      assistant_reply_text TEXT NOT NULL,
+      linked_refs_json TEXT NOT NULL,
+      remediation_lane_id TEXT,
+      remediation_job_id TEXT,
+      remediation_runtime_preference TEXT,
+      remediation_prompt TEXT,
+      operator_note TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_response_feedback_chat_message
+      ON response_feedback(chat_jid, platform_message_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_response_feedback_status_updated
+      ON response_feedback(status, updated_at DESC);
     CREATE TABLE IF NOT EXISTS runtime_orchestration_jobs (
       job_id TEXT PRIMARY KEY,
       kind TEXT NOT NULL,
@@ -6254,6 +6289,262 @@ export function countPilotIssues(status?: PilotIssueRecord['status']): number {
     .prepare('SELECT COUNT(*) as total FROM pilot_issues')
     .get() as { total: number };
   return row.total;
+}
+
+function mapResponseFeedbackRow(row: {
+  feedback_id: string;
+  created_at: string;
+  updated_at: string;
+  status: ResponseFeedbackRecord['status'];
+  classification: ResponseFeedbackRecord['classification'];
+  channel: ResponseFeedbackRecord['channel'];
+  group_folder: string;
+  chat_jid: string;
+  thread_id: string | null;
+  platform_message_id: string | null;
+  user_message_id: string | null;
+  issue_id: string | null;
+  route_key: string | null;
+  capability_id: string | null;
+  handler_kind: string | null;
+  response_source: string | null;
+  trace_reason: string | null;
+  trace_notes_json: string;
+  blocker_class: string | null;
+  blocker_owner: ResponseFeedbackRecord['blockerOwner'];
+  original_user_text: string;
+  assistant_reply_text: string;
+  linked_refs_json: string;
+  remediation_lane_id: ResponseFeedbackRecord['remediationLaneId'];
+  remediation_job_id: string | null;
+  remediation_runtime_preference: ResponseFeedbackRecord['remediationRuntimePreference'];
+  remediation_prompt: string | null;
+  operator_note: string | null;
+}): ResponseFeedbackRecord {
+  return {
+    feedbackId: row.feedback_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    status: row.status,
+    classification: row.classification,
+    channel: row.channel,
+    groupFolder: row.group_folder,
+    chatJid: row.chat_jid,
+    threadId: row.thread_id,
+    platformMessageId: row.platform_message_id,
+    userMessageId: row.user_message_id,
+    issueId: row.issue_id,
+    routeKey: row.route_key,
+    capabilityId: row.capability_id,
+    handlerKind: row.handler_kind,
+    responseSource: row.response_source,
+    traceReason: row.trace_reason,
+    traceNotes: parseStringArrayJson(row.trace_notes_json),
+    blockerClass: row.blocker_class,
+    blockerOwner: row.blocker_owner,
+    originalUserText: row.original_user_text,
+    assistantReplyText: row.assistant_reply_text,
+    linkedRefs: parseJsonObject(
+      row.linked_refs_json,
+    ) as ResponseFeedbackRecord['linkedRefs'],
+    remediationLaneId: row.remediation_lane_id,
+    remediationJobId: row.remediation_job_id,
+    remediationRuntimePreference: row.remediation_runtime_preference,
+    remediationPrompt: row.remediation_prompt,
+    operatorNote: row.operator_note,
+  };
+}
+
+export function upsertResponseFeedback(record: ResponseFeedbackRecord): void {
+  assertValidGroupFolder(record.groupFolder);
+  db.prepare(
+    `
+      INSERT INTO response_feedback (
+        feedback_id,
+        created_at,
+        updated_at,
+        status,
+        classification,
+        channel,
+        group_folder,
+        chat_jid,
+        thread_id,
+        platform_message_id,
+        user_message_id,
+        issue_id,
+        route_key,
+        capability_id,
+        handler_kind,
+        response_source,
+        trace_reason,
+        trace_notes_json,
+        blocker_class,
+        blocker_owner,
+        original_user_text,
+        assistant_reply_text,
+        linked_refs_json,
+        remediation_lane_id,
+        remediation_job_id,
+        remediation_runtime_preference,
+        remediation_prompt,
+        operator_note
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(feedback_id) DO UPDATE SET
+        created_at = excluded.created_at,
+        updated_at = excluded.updated_at,
+        status = excluded.status,
+        classification = excluded.classification,
+        channel = excluded.channel,
+        group_folder = excluded.group_folder,
+        chat_jid = excluded.chat_jid,
+        thread_id = excluded.thread_id,
+        platform_message_id = excluded.platform_message_id,
+        user_message_id = excluded.user_message_id,
+        issue_id = excluded.issue_id,
+        route_key = excluded.route_key,
+        capability_id = excluded.capability_id,
+        handler_kind = excluded.handler_kind,
+        response_source = excluded.response_source,
+        trace_reason = excluded.trace_reason,
+        trace_notes_json = excluded.trace_notes_json,
+        blocker_class = excluded.blocker_class,
+        blocker_owner = excluded.blocker_owner,
+        original_user_text = excluded.original_user_text,
+        assistant_reply_text = excluded.assistant_reply_text,
+        linked_refs_json = excluded.linked_refs_json,
+        remediation_lane_id = excluded.remediation_lane_id,
+        remediation_job_id = excluded.remediation_job_id,
+        remediation_runtime_preference = excluded.remediation_runtime_preference,
+        remediation_prompt = excluded.remediation_prompt,
+        operator_note = excluded.operator_note
+    `,
+  ).run(
+    record.feedbackId,
+    record.createdAt,
+    record.updatedAt,
+    record.status,
+    record.classification,
+    record.channel,
+    record.groupFolder,
+    record.chatJid,
+    record.threadId || null,
+    record.platformMessageId || null,
+    record.userMessageId || null,
+    record.issueId || null,
+    record.routeKey || null,
+    record.capabilityId || null,
+    record.handlerKind || null,
+    record.responseSource || null,
+    record.traceReason || null,
+    JSON.stringify(record.traceNotes || []),
+    record.blockerClass || null,
+    record.blockerOwner,
+    record.originalUserText,
+    record.assistantReplyText,
+    JSON.stringify(record.linkedRefs || {}),
+    record.remediationLaneId || null,
+    record.remediationJobId || null,
+    record.remediationRuntimePreference || null,
+    record.remediationPrompt || null,
+    record.operatorNote || null,
+  );
+}
+
+export function getResponseFeedback(
+  feedbackId: string,
+): ResponseFeedbackRecord | undefined {
+  const row = db
+    .prepare(
+      `
+        SELECT *
+        FROM response_feedback
+        WHERE feedback_id = ?
+      `,
+    )
+    .get(feedbackId) as
+    | Parameters<typeof mapResponseFeedbackRow>[0]
+    | undefined;
+  if (!row || !isValidGroupFolder(row.group_folder)) {
+    return undefined;
+  }
+  return mapResponseFeedbackRow(row);
+}
+
+export function getResponseFeedbackByMessage(params: {
+  chatJid: string;
+  platformMessageId: string;
+}): ResponseFeedbackRecord | undefined {
+  const row = db
+    .prepare(
+      `
+        SELECT *
+        FROM response_feedback
+        WHERE chat_jid = ? AND platform_message_id = ?
+      `,
+    )
+    .get(params.chatJid, params.platformMessageId) as
+    | Parameters<typeof mapResponseFeedbackRow>[0]
+    | undefined;
+  if (!row || !isValidGroupFolder(row.group_folder)) {
+    return undefined;
+  }
+  return mapResponseFeedbackRow(row);
+}
+
+export function listRecentResponseFeedback(params: {
+  chatJid?: string;
+  status?: ResponseFeedbackRecord['status'];
+  limit?: number;
+} = {}): ResponseFeedbackRecord[] {
+  const clauses: string[] = [];
+  const values: Array<string | number> = [];
+  if (params.chatJid) {
+    clauses.push('chat_jid = ?');
+    values.push(params.chatJid);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    values.push(params.status);
+  }
+  const sql = [
+    'SELECT *',
+    'FROM response_feedback',
+    clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '',
+    'ORDER BY updated_at DESC',
+    'LIMIT ?',
+  ]
+    .filter(Boolean)
+    .join('\n');
+  values.push(Math.max(1, params.limit || 20));
+  const rows = db.prepare(sql).all(...values) as Array<
+    Parameters<typeof mapResponseFeedbackRow>[0]
+  >;
+  return rows
+    .filter((row) => isValidGroupFolder(row.group_folder))
+    .map((row) => mapResponseFeedbackRow(row));
+}
+
+export function updateResponseFeedback(
+  feedbackId: string,
+  updates: Partial<
+    Omit<ResponseFeedbackRecord, 'feedbackId' | 'createdAt' | 'groupFolder' | 'chatJid' | 'channel'>
+  >,
+): ResponseFeedbackRecord {
+  const existing = getResponseFeedback(feedbackId);
+  if (!existing) {
+    throw new Error(`No response feedback record found for ${feedbackId}.`);
+  }
+  const next: ResponseFeedbackRecord = {
+    ...existing,
+    ...updates,
+    traceNotes:
+      updates.traceNotes !== undefined ? updates.traceNotes : existing.traceNotes,
+    linkedRefs:
+      updates.linkedRefs !== undefined ? updates.linkedRefs : existing.linkedRefs,
+    updatedAt: updates.updatedAt || new Date().toISOString(),
+  };
+  upsertResponseFeedback(next);
+  return next;
 }
 
 export function prunePilotLoopData(cutoffIso: string): void {

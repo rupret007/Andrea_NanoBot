@@ -18,7 +18,13 @@ import {
   setAssistantExecutionProbeState,
   setDebugLevel,
 } from './debug-control.js';
-import { _closeDatabase, _initTestDatabase, insertPilotIssue, insertPilotJourneyEvent } from './db.js';
+import {
+  _closeDatabase,
+  _initTestDatabase,
+  insertPilotIssue,
+  insertPilotJourneyEvent,
+  upsertResponseFeedback,
+} from './db.js';
 import { persistNanoclawHostState, writeRuntimeAuditState } from './host-control.js';
 import { getLogControlConfig, setLogControlConfig } from './logger.js';
 
@@ -299,11 +305,47 @@ describe('debug log tails', () => {
       assistantContextSummary: 'Daily guidance proof',
       linkedRefs: {},
     });
+    upsertResponseFeedback({
+      feedbackId: 'feedback-1',
+      createdAt: '2026-04-07T17:06:00.000Z',
+      updatedAt: '2026-04-07T17:08:00.000Z',
+      status: 'running',
+      classification: 'repo_side_broken',
+      channel: 'telegram',
+      groupFolder: 'main',
+      chatJid: 'tg:main',
+      threadId: null,
+      platformMessageId: '99',
+      userMessageId: '98',
+      issueId: 'issue-1',
+      routeKey: 'assistant_completion',
+      capabilityId: 'research.answer',
+      handlerKind: 'assistant_completion',
+      responseSource: 'assistant_completion',
+      traceReason: 'generic fallback',
+      traceNotes: [],
+      blockerClass: 'response_feedback_repo_side_broken',
+      blockerOwner: 'repo_side',
+      originalUserText: "what's the news today",
+      assistantReplyText: 'I can help with updates.',
+      linkedRefs: {
+        responseFeedbackId: 'feedback-1',
+      },
+      remediationLaneId: 'andrea_runtime',
+      remediationJobId: 'job-1',
+      remediationRuntimePreference: 'codex_local',
+      remediationPrompt: 'fix it',
+      operatorNote: 'Saved for review.',
+    });
 
     const status = formatDebugStatus();
     expect(status).toContain('Pilot logging enabled: yes');
     expect(status).toContain('Open pilot issues: 1');
     expect(status).toContain('Latest pilot issue: User marked daily guidance as weird.');
+    expect(status).toContain('Latest response feedback: running');
+    expect(status).toContain('Latest response feedback class: repo_side_broken');
+    expect(status).toContain('Latest response feedback summary:');
+    expect(status).toContain('Local hotfix pending landing: no');
     expect(status).toContain('Journey daily_guidance: live_proven');
   });
 

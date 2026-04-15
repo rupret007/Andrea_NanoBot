@@ -15,6 +15,7 @@ import {
   insertPilotJourneyEvent,
   storeChatMetadata,
   storeMessage,
+  upsertResponseFeedback,
   upsertMessageAction,
 } from './db.js';
 import { buildFieldTrialOperatorTruth } from './field-trial-readiness.js';
@@ -370,6 +371,52 @@ describe('field-trial readiness', () => {
     expect(truth.alexa.detail).toContain('interaction model');
     expect(truth.alexa.nextAction).toContain('alexa-model-sync mark-synced');
     expect(truth.alexa.nextAction).toContain('What am I forgetting?');
+  });
+
+  it('surfaces the latest response-feedback loop state in operator truth', () => {
+    upsertResponseFeedback({
+      feedbackId: 'feedback-1',
+      createdAt: '2026-04-08T11:00:00.000Z',
+      updatedAt: '2026-04-08T11:05:00.000Z',
+      status: 'running',
+      classification: 'repo_side_broken',
+      channel: 'telegram',
+      groupFolder: 'main',
+      chatJid: 'tg:main',
+      threadId: null,
+      platformMessageId: '100',
+      userMessageId: '101',
+      issueId: 'issue-1',
+      routeKey: 'assistant_completion',
+      capabilityId: 'research.answer',
+      handlerKind: 'assistant_completion',
+      responseSource: 'assistant_completion',
+      traceReason: 'generic fallback',
+      traceNotes: [],
+      blockerClass: 'response_feedback_repo_side_broken',
+      blockerOwner: 'repo_side',
+      originalUserText: "what's the news today",
+      assistantReplyText: 'I can help with updates and practical follow-through.',
+      linkedRefs: {
+        responseFeedbackId: 'feedback-1',
+      },
+      remediationLaneId: 'andrea_runtime',
+      remediationJobId: 'job-1',
+      remediationRuntimePreference: 'codex_local',
+      remediationPrompt: 'fix it',
+      operatorNote: 'Saved for review.',
+    });
+
+    const truth = buildFieldTrialOperatorTruth({ projectRoot: tempDir });
+
+    expect(truth.pilotIssues.latestResponseFeedbackStatus).toBe('running');
+    expect(truth.pilotIssues.latestResponseFeedbackClassification).toBe(
+      'repo_side_broken',
+    );
+    expect(truth.pilotIssues.latestResponseFeedbackSummary).toContain(
+      "what's the news today",
+    );
+    expect(truth.pilotIssues.localHotfixPending).toBe(false);
   });
 
   it('keeps LaunchRequest-only Alexa proof below live_proven', () => {

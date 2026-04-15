@@ -1,4 +1,4 @@
-import { initDatabase } from '../src/db.js';
+import { initDatabase, listRecentResponseFeedback } from '../src/db.js';
 import { buildFieldTrialOperatorTruth } from '../src/field-trial-readiness.js';
 import {
   buildAlexaUtteranceReviewDigest,
@@ -158,6 +158,21 @@ function formatAlexaUtteranceReview(
   ]);
 }
 
+function formatResponseFeedbackLoop(): string[] {
+  const feedback = listRecentResponseFeedback({ limit: 5 });
+  if (feedback.length === 0) {
+    return ['- none recorded on this host yet'];
+  }
+  return feedback.map((item) => {
+    const ask = item.originalUserText.replace(/\s+/g, ' ').trim().slice(0, 72);
+    const lane =
+      item.remediationLaneId && item.remediationJobId
+        ? ` / ${item.remediationLaneId}:${item.remediationJobId}`
+        : '';
+    return `- ${item.status} / class=${item.classification}${lane} :: ask="${ask}"`;
+  });
+}
+
 async function main(): Promise<void> {
   initDatabase();
   const truth = buildFieldTrialOperatorTruth();
@@ -269,6 +284,9 @@ async function main(): Promise<void> {
     '',
     '*Open Pilot Issues*',
     ...formatOpenIssues(review),
+    '',
+    '*Response Feedback Loop*',
+    ...formatResponseFeedbackLoop(),
     '',
     '*Alexa Utterance Review*',
     `- Signals tracked: ${alexaReview.totalSignals}`,

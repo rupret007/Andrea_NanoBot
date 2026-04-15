@@ -75,6 +75,11 @@ export interface PilotIssueCaptureParams {
   routeKey?: string | null;
   assistantContextSummary?: string | null;
   linkedRefs?: PilotIssueLinkedRefs;
+  issueKindOverride?: PilotIssueKind | null;
+  summaryTextOverride?: string | null;
+  blockerClassOverride?: string | null;
+  blockerOwnerOverride?: PilotIssueRecord['blockerOwner'];
+  journeyEventIdOverride?: string | null;
 }
 
 export interface PilotReviewSnapshot {
@@ -406,6 +411,8 @@ function buildIssueReply(kind: PilotIssueKind): string {
     case 'awkward_flow':
       return 'Okay. I marked this flow as awkward for review.';
     case 'manual_pilot_issue':
+    case 'downvoted_response':
+      return 'Okay. I saved that response as a private pilot issue for follow-up.';
     default:
       return 'Okay. I saved that as a private pilot issue.';
   }
@@ -416,7 +423,7 @@ export function capturePilotIssue(params: PilotIssueCaptureParams): {
   replyText: string;
   record?: PilotIssueRecord;
 } {
-  const issueKind = classifyPilotIssueKind(params.utterance);
+  const issueKind = params.issueKindOverride || classifyPilotIssueKind(params.utterance);
   if (!issueKind) {
     return { handled: false, replyText: '' };
   }
@@ -439,9 +446,10 @@ export function capturePilotIssue(params: PilotIssueCaptureParams): {
     'assistant context',
   );
   const summaryText = sanitizePilotSummary(
-    linkedJourney
-      ? `User marked ${linkedJourney.summaryText.toLowerCase()} as ${issueKind.replace(/_/g, ' ')}.`
-      : `User captured a ${issueKind.replace(/_/g, ' ')} pilot issue.`,
+    params.summaryTextOverride ||
+      (linkedJourney
+        ? `User marked ${linkedJourney.summaryText.toLowerCase()} as ${issueKind.replace(/_/g, ' ')}.`
+        : `User captured a ${issueKind.replace(/_/g, ' ')} pilot issue.`),
     'pilot issue',
   );
   const record: PilotIssueRecord = {
@@ -453,10 +461,19 @@ export function capturePilotIssue(params: PilotIssueCaptureParams): {
     groupFolder: params.groupFolder,
     chatJid: params.chatJid || null,
     threadId: params.threadId || null,
-    journeyEventId: linkedJourney?.eventId || null,
+    journeyEventId:
+      params.journeyEventIdOverride !== undefined
+        ? params.journeyEventIdOverride
+        : linkedJourney?.eventId || null,
     routeKey: params.routeKey || linkedJourney?.routeKey || null,
-    blockerClass: linkedJourney?.blockerClass || null,
-    blockerOwner: linkedJourney?.blockerOwner || 'none',
+    blockerClass:
+      params.blockerClassOverride !== undefined
+        ? params.blockerClassOverride
+        : linkedJourney?.blockerClass || null,
+    blockerOwner:
+      params.blockerOwnerOverride ||
+      linkedJourney?.blockerOwner ||
+      'none',
     summaryText,
     assistantContextSummary: contextSummary,
     linkedRefs: params.linkedRefs || {},

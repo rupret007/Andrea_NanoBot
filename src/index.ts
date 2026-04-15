@@ -1,4 +1,5 @@
 import { execFileSync } from 'child_process';
+import { randomUUID } from 'crypto';
 import fs from 'fs';
 import path from 'path';
 
@@ -62,6 +63,7 @@ import {
   getAllChats,
   getAgentThread,
   getRegisteredMainChat,
+  getResponseFeedback,
   listAllCursorAgents,
   listCalendarAutomationsForChat,
   getAllRegisteredGroups,
@@ -87,9 +89,11 @@ import {
   storeChatMetadata,
   storeMessage,
   updateCalendarAutomation,
+  updateResponseFeedback,
   updateTask,
   upsertRuntimeBackendCardContext,
   upsertRuntimeBackendChatSelection,
+  upsertResponseFeedback,
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
@@ -130,6 +134,7 @@ import {
   matchAssistantCapabilityRequest,
 } from './assistant-capability-router.js';
 import {
+  capturePilotIssue,
   completePilotJourney,
   type PilotJourneyCompleteParams,
   resolveCrossChannelPilotJourney,
@@ -343,11 +348,13 @@ import {
   PilotBlockerOwner,
   PilotJourneyOutcome,
   RegisteredGroup,
+  ResponseFeedbackRecord,
   SendMessageOptions,
   RuntimeBackendJob,
 } from './types.js';
 import { logger } from './logger.js';
 import { deliverCompanionHandoff } from './cross-channel-handoffs.js';
+import { buildFieldTrialOperatorTruth } from './field-trial-readiness.js';
 import {
   buildDebugLogsInlineActions,
   buildDebugMutationInlineActions,
@@ -540,6 +547,7 @@ import {
   DEBUG_RESET_COMMANDS,
   DEBUG_STATUS_COMMANDS,
   getCommandAccessDecision,
+  isMainControlChat,
   normalizeCommandToken,
   PURCHASE_APPROVE_COMMANDS,
   PURCHASE_CANCEL_COMMANDS,
@@ -555,6 +563,16 @@ import {
   REMOTE_CONTROL_START_COMMANDS,
   REMOTE_CONTROL_STOP_COMMANDS,
 } from './operator-command-gate.js';
+import {
+  appendResponseFeedbackInlineRow,
+  buildResponseFeedbackActionRows,
+  buildResponseFeedbackCaptureReply,
+  buildResponseFeedbackRemediationPrompt,
+  buildResponseFeedbackWhyText,
+  classifyResponseFeedbackCandidate,
+  parseResponseFeedbackAction,
+  selectResponseFeedbackLane,
+} from './response-feedback.js';
 import {
   auditRegisteredMainChat,
   type RegisteredMainChatRecord,
@@ -3206,12 +3224,83 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     'Processing messages',
   );
 
-  const rawLastContent = missedMessages.at(-1)?.content ?? '';
+  const latestUserMessage = missedMessages.at(-1);
+  const rawLastContent = latestUserMessage?.content ?? '';
   let lastContent =
     chatJid.startsWith('bb:')
       ? normalizeBlueBubblesCompanionPrompt(rawLastContent)
       : rawLastContent;
   const now = new Date();
+  const sendAssistantReplyWithFeedback = async (params: {
+    text: string;
+    sendOptions?: SendMessageOptions;
+    routeKey?: string | null;
+    capabilityId?: string | null;
+    handlerKind?: string | null;
+    responseSource?: string | null;
+    traceReason?: string | null;
+    traceNotes?: string[];
+    blockerClass?: string | null;
+    blockerOwner?: PilotBlockerOwner;
+    linkedRefs?: ResponseFeedbackRecord['linkedRefs'];
+    allowFeedback?: boolean;
+  }) => {
+    const replyText = params.text.trim();
+    const shouldAttachFeedback =
+      params.allowFeedback !== false &&
+      channel.name === 'telegram' &&
+      isMainControlChat(group) &&
+      replyText.length > 0;
+    const feedbackId = shouldAttachFeedback ? randomUUID() : null;
+    const sendOptions =
+      shouldAttachFeedback && feedbackId
+        ? appendResponseFeedbackInlineRow(params.sendOptions || {}, feedbackId)
+        : params.sendOptions || {};
+    const sent = await channel.sendMessage(chatJid, replyText, sendOptions);
+    if (!feedbackId) {
+      return sent;
+    }
+    const classification = classifyResponseFeedbackCandidate({
+      originalUserText: rawLastContent || lastContent,
+      assistantReplyText: replyText,
+      routeKey: params.routeKey,
+      capabilityId: params.capabilityId,
+      responseSource: params.responseSource,
+      traceReason: params.traceReason,
+      blockerClass: params.blockerClass,
+    });
+    upsertResponseFeedback({
+      feedbackId,
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+      status: classification.status,
+      classification: classification.classification,
+      channel: 'telegram',
+      groupFolder: group.folder,
+      chatJid,
+      threadId: sent.threadId || latestUserMessage?.thread_id || null,
+      platformMessageId: sent.platformMessageId || null,
+      userMessageId: latestUserMessage?.id || null,
+      routeKey: params.routeKey || requestPolicy.route,
+      capabilityId: params.capabilityId || null,
+      handlerKind: params.handlerKind || null,
+      responseSource: params.responseSource || null,
+      traceReason: params.traceReason || null,
+      traceNotes: params.traceNotes || [],
+      blockerClass: params.blockerClass || null,
+      blockerOwner: params.blockerOwner || classification.blockerOwner,
+      originalUserText: rawLastContent || lastContent,
+      assistantReplyText: replyText,
+      linkedRefs: params.linkedRefs || {},
+      issueId: null,
+      remediationLaneId: null,
+      remediationJobId: null,
+      remediationRuntimePreference: null,
+      remediationPrompt: null,
+      operatorNote: classification.explanation,
+    });
+    return sent;
+  };
   let blueBubblesDirectTurnEnvelope: Awaited<
     ReturnType<typeof interpretBlueBubblesDirectTurn>
   > | null = null;
@@ -4479,20 +4568,26 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         try {
           const technicalDetail =
             error instanceof Error ? error.message : String(error);
-          await channel.sendMessage(
-            chatJid,
-            buildCalendarCompanionFailurePanelText({
+          await sendAssistantReplyWithFeedback({
+            text: buildCalendarCompanionFailurePanelText({
               title: '*Google Calendar*',
               channelName: channel.name,
               action: 'create_event',
               technicalDetail,
             }),
-            {
+            sendOptions: {
               inlineActionRows: buildCalendarLookupInlineActionRows(
                 CALENDAR_LOOKUP_TOMORROW_PROMPT,
               ),
             },
-          );
+            routeKey: 'google_calendar.create_event',
+            capabilityId: 'calendar.google_create',
+            handlerKind: 'google_calendar_create_local',
+            responseSource: 'local_companion',
+            traceReason: 'google calendar create fast path hit a provider failure',
+            blockerClass: technicalDetail,
+            blockerOwner: 'external',
+          });
           logger.warn(
             {
               component: 'assistant',
@@ -4560,17 +4655,24 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             setGoogleCalendarSchedulingContext(chatJid, contextState);
           }
         }
-        await channel.sendMessage(
-          chatJid,
-          formatCalendarPanelText('*Google Calendar*', reply),
-          {
+        await sendAssistantReplyWithFeedback({
+          text: formatCalendarPanelText('*Google Calendar*', reply),
+          sendOptions: {
             inlineActionRows: pendingDraftState
               ? buildGoogleCalendarCreateInlineActionRows(pendingDraftState)
               : buildCalendarLookupInlineActionRows(
                   CALENDAR_LOOKUP_TOMORROW_PROMPT,
                 ),
           },
-        );
+          routeKey: 'google_calendar.create_event',
+          capabilityId: 'calendar.google_create',
+          handlerKind: 'google_calendar_create_local',
+          responseSource: 'local_companion',
+          traceReason:
+            createPlan.kind === 'needs_details'
+              ? 'google calendar create is waiting on one missing detail'
+              : 'google calendar create draft is ready for confirmation',
+        });
         logger.info(
           {
             component: 'assistant',
@@ -4604,15 +4706,22 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       try {
         clearPendingGoogleCalendarCreateState(chatJid);
         clearGoogleCalendarSchedulingContext(chatJid);
-        await channel.sendMessage(
-          chatJid,
-          formatCalendarPanelText('*Google Calendar*', continueResult.message),
-          {
+        await sendAssistantReplyWithFeedback({
+          text: formatCalendarPanelText(
+            '*Google Calendar*',
+            continueResult.message,
+          ),
+          sendOptions: {
             inlineActionRows: buildCalendarLookupInlineActionRows(
               CALENDAR_LOOKUP_TOMORROW_PROMPT,
             ),
           },
-        );
+          routeKey: 'google_calendar.create_event',
+          capabilityId: 'calendar.google_create',
+          handlerKind: 'google_calendar_create_local',
+          responseSource: 'local_companion',
+          traceReason: 'google calendar create flow was cancelled in-thread',
+        });
         return true;
       } catch (err) {
         lastAgentTimestamp[chatJid] = previousCursor;
@@ -4656,34 +4765,44 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         });
 
         if (matches.length === 0) {
-          await channel.sendMessage(
-            chatJid,
-            formatCalendarPanelText(
+          await sendAssistantReplyWithFeedback({
+            text: formatCalendarPanelText(
               '*Google Calendar*',
               `I couldn't find a ${continueResult.anchorTime.displayLabel} meeting to schedule around on that day.`,
             ),
-            {
+            sendOptions: {
               inlineActionRows: buildGoogleCalendarCreateInlineActionRows(
                 continueResult.state,
               ),
             },
-          );
+            routeKey: 'google_calendar.create_event',
+            capabilityId: 'calendar.google_create',
+            handlerKind: 'google_calendar_create_local',
+            responseSource: 'local_companion',
+            traceReason:
+              'google calendar create could not resolve the requested anchor event',
+          });
           return true;
         }
 
         if (matches.length > 1) {
-          await channel.sendMessage(
-            chatJid,
-            formatCalendarPanelText(
+          await sendAssistantReplyWithFeedback({
+            text: formatCalendarPanelText(
               '*Google Calendar*',
               `I found more than one event around ${continueResult.anchorTime.displayLabel}. Tell me which one you mean so I can move it.`,
             ),
-            {
+            sendOptions: {
               inlineActionRows: buildGoogleCalendarCreateInlineActionRows(
                 continueResult.state,
               ),
             },
-          );
+            routeKey: 'google_calendar.create_event',
+            capabilityId: 'calendar.google_create',
+            handlerKind: 'google_calendar_create_local',
+            responseSource: 'local_companion',
+            traceReason:
+              'google calendar create needs one more clarification about the anchor event',
+          });
           return true;
         }
 
@@ -4704,17 +4823,22 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             conflictSummary: null,
           });
         setPendingGoogleCalendarCreateState(chatJid, movedState);
-        await channel.sendMessage(
-          chatJid,
-          formatCalendarPanelText(
+        await sendAssistantReplyWithFeedback({
+          text: formatCalendarPanelText(
             '*Google Calendar*',
             formatGoogleCalendarCreatePrompt(movedState),
           ),
-          {
+          sendOptions: {
             inlineActionRows:
               buildGoogleCalendarCreateInlineActionRows(movedState),
           },
-        );
+          routeKey: 'google_calendar.create_event',
+          capabilityId: 'calendar.google_create',
+          handlerKind: 'google_calendar_create_local',
+          responseSource: 'local_companion',
+          traceReason:
+            'google calendar create resolved the requested anchor event and refreshed the draft',
+        });
         return true;
       } catch (err) {
         lastAgentTimestamp[chatJid] = previousCursor;
@@ -4741,17 +4865,22 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         if (contextState) {
           setGoogleCalendarSchedulingContext(chatJid, contextState);
         }
-        await channel.sendMessage(
-          chatJid,
-          formatCalendarPanelText(
+        await sendAssistantReplyWithFeedback({
+          text: formatCalendarPanelText(
             '*Google Calendar*',
             formatGoogleCalendarCreatePrompt(enrichedState),
           ),
-          {
+          sendOptions: {
             inlineActionRows:
               buildGoogleCalendarCreateInlineActionRows(enrichedState),
           },
-        );
+          routeKey: 'google_calendar.create_event',
+          capabilityId: 'calendar.google_create',
+          handlerKind: 'google_calendar_create_local',
+          responseSource: 'local_companion',
+          traceReason:
+            'google calendar create stayed in the same-thread continuation flow',
+        });
         return true;
       } catch (err) {
         lastAgentTimestamp[chatJid] = previousCursor;
@@ -4788,9 +4917,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         chatJid,
         buildActiveGoogleCalendarEventContextState(createdEvent, now),
       );
-      await channel.sendMessage(
-        chatJid,
-        formatCalendarPanelText(
+      await sendAssistantReplyWithFeedback({
+        text: formatCalendarPanelText(
           '*Google Calendar*',
           buildCalendarCompanionEventReply({
             action: 'create_event',
@@ -4806,12 +4934,20 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             htmlLink: createdEvent.htmlLink || null,
           }),
         ),
-        {
+        sendOptions: {
           inlineActionRows: buildGoogleCalendarCreatedInlineActionRows({
             htmlLink: createdEvent.htmlLink || null,
           }),
         },
-      );
+        routeKey: 'google_calendar.create_event',
+        capabilityId: 'calendar.google_create',
+        handlerKind: 'google_calendar_create_local',
+        responseSource: 'local_companion',
+        traceReason: 'created a google calendar event through the local fast path',
+        linkedRefs: {
+          googleCalendarEventId: createdEvent.id,
+        },
+      });
       logger.info(
         {
           component: 'assistant',
@@ -4829,20 +4965,26 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         clearGoogleCalendarSchedulingContext(chatJid);
         const technicalDetail =
           error instanceof Error ? error.message : String(error);
-        await channel.sendMessage(
-          chatJid,
-          buildCalendarCompanionFailurePanelText({
+        await sendAssistantReplyWithFeedback({
+          text: buildCalendarCompanionFailurePanelText({
             title: '*Google Calendar*',
             channelName: channel.name,
             action: 'create_event',
             technicalDetail,
           }),
-          {
+          sendOptions: {
             inlineActionRows: buildCalendarLookupInlineActionRows(
               CALENDAR_LOOKUP_TOMORROW_PROMPT,
             ),
           },
-        );
+          routeKey: 'google_calendar.create_event',
+          capabilityId: 'calendar.google_create',
+          handlerKind: 'google_calendar_create_local',
+          responseSource: 'local_companion',
+          traceReason: 'google calendar create failed after confirmation',
+          blockerClass: technicalDetail,
+          blockerOwner: 'external',
+        });
         logger.warn(
           {
             component: 'assistant',
@@ -5231,16 +5373,21 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             grounded: dailyResponse.grounded,
           })
         : null;
-      await channel.sendMessage(
-        chatJid,
-        formatCalendarPanelText(
+      await sendAssistantReplyWithFeedback({
+        text: formatCalendarPanelText(
           formatDailyCompanionPanelTitle(dailyResponse.mode),
           dailyResponse.reply,
         ),
-        {
+        sendOptions: {
           inlineActionRows: buildCalendarLookupInlineActionRows(lastContent),
         },
-      );
+        routeKey: `daily_local_fast_path:${dailyResponse.mode}`,
+        capabilityId: `daily.${dailyResponse.mode}`,
+        handlerKind: 'daily_local_fast_path',
+        responseSource: 'local_companion',
+        traceReason: 'handled daily companion via local fast path',
+        linkedRefs: {},
+      });
       if (actionContext) {
         setActionLayerContext(chatJid, actionContext);
       } else {
@@ -5349,13 +5496,22 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       } else {
         clearActiveGoogleCalendarEventContext(chatJid);
       }
-      await channel.sendMessage(
-        chatJid,
-        formatCalendarPanelText('*Calendar*', calendarResponse.reply),
-        {
+      await sendAssistantReplyWithFeedback({
+        text: formatCalendarPanelText('*Calendar*', calendarResponse.reply),
+        sendOptions: {
           inlineActionRows: buildCalendarLookupInlineActionRows(lastContent),
         },
-      );
+        routeKey: 'calendar_local_fast_path',
+        capabilityId: 'calendar.local_lookup',
+        handlerKind: 'calendar_local_fast_path',
+        responseSource: 'local_companion',
+        traceReason: 'handled calendar lookup via local fast path',
+        linkedRefs: activeEventContext
+          ? {
+              googleCalendarEventId: activeEventContext.event.id,
+            }
+          : {},
+      });
       clearSharedAssistantCapabilitySeed(chatJid);
       logger.info(
         {
@@ -5643,7 +5799,19 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         if (savedThread.referencedThread) {
           setLastReferencedLifeThread(chatJid, savedThread.referencedThread, now);
         }
-        await channel.sendMessage(chatJid, savedThread.responseText || 'Okay.');
+        await sendAssistantReplyWithFeedback({
+          text: savedThread.responseText || 'Okay.',
+          routeKey: 'assistant_completion.save_for_later',
+          capabilityId: 'capture.save_for_later',
+          handlerKind: 'assistant_completion_bridge',
+          responseSource: 'local_companion',
+          traceReason: 'completed save-for-later follow-up from shared capability state',
+          linkedRefs: savedThread.referencedThread
+            ? {
+                lifeThreadId: savedThread.referencedThread.id,
+              }
+            : {},
+        });
       } else if (
         result.bridgeDraftReference &&
         sharedSeed.subjectData?.activeCapabilityId?.startsWith('communication.')
@@ -5673,8 +5841,23 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             conversationChannel === 'bluebubbles' ? 'bluebubbles' : 'telegram',
           );
           if (channel.name === 'telegram') {
-            const sent = await channel.sendMessage(chatJid, presentation.text, {
-              inlineActionRows: presentation.inlineActionRows,
+            const sent = await sendAssistantReplyWithFeedback({
+              text: presentation.text,
+              sendOptions: {
+                inlineActionRows: presentation.inlineActionRows,
+              },
+              routeKey: 'assistant_completion.draft_reply',
+              capabilityId: draftResult.capabilityId || 'communication.draft_reply',
+              handlerKind: 'assistant_completion_bridge',
+              responseSource: draftResult.trace?.responseSource || 'local_companion',
+              traceReason:
+                draftResult.trace?.reason ||
+                'completed shared capability follow-up by reopening reply help',
+              traceNotes: draftResult.trace?.notes || [],
+              blockerClass: null,
+              linkedRefs: {
+                messageActionId: draftResult.messageAction.messageActionId,
+              },
             });
             updateMessageAction(draftResult.messageAction.messageActionId, {
               presentationMessageId: sent.platformMessageId || null,
@@ -5685,11 +5868,18 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             await channel.sendMessage(chatJid, presentation.text);
           }
         } else {
-          await channel.sendMessage(
-            chatJid,
-            draftResult.replyText || 'Okay.',
-            draftResult.sendOptions || {},
-          );
+          await sendAssistantReplyWithFeedback({
+            text: draftResult.replyText || 'Okay.',
+            sendOptions: draftResult.sendOptions || {},
+            routeKey: 'assistant_completion.draft_reply',
+            capabilityId: draftResult.capabilityId || 'communication.draft_reply',
+            handlerKind: 'assistant_completion_bridge',
+            responseSource: draftResult.trace?.responseSource || 'local_companion',
+            traceReason:
+              draftResult.trace?.reason ||
+              'completed shared capability follow-up by reopening reply help',
+            traceNotes: draftResult.trace?.notes || [],
+          });
         }
         if (draftResult.conversationSeed) {
           setSharedAssistantCapabilitySeed(chatJid, draftResult.conversationSeed, now);
@@ -5697,11 +5887,24 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           clearSharedAssistantCapabilitySeed(chatJid);
         }
       } else {
-        await channel.sendMessage(
-          chatJid,
-          result.replyText || 'Okay.',
-          result.capabilityResult?.sendOptions || {},
-        );
+        await sendAssistantReplyWithFeedback({
+          text: result.replyText || 'Okay.',
+          sendOptions: result.capabilityResult?.sendOptions || {},
+          routeKey: 'assistant_completion',
+          capabilityId: sharedSeed.subjectData?.activeCapabilityId || null,
+          handlerKind: 'assistant_completion_bridge',
+          responseSource:
+            result.capabilityResult?.trace?.responseSource || 'local_companion',
+          traceReason:
+            result.capabilityResult?.trace?.reason ||
+            'completed shared capability follow-up through Alexa-style action completion',
+          traceNotes: result.capabilityResult?.trace?.notes || [],
+          linkedRefs: result.reminderTaskId
+            ? {
+                reminderTaskId: result.reminderTaskId,
+              }
+            : {},
+        });
       }
 
       clearActionLayerContext(chatJid);
@@ -5833,16 +6036,21 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               grounded: result.dailyResponse.grounded,
             })
           : null;
-        await channel.sendMessage(
-          chatJid,
-          formatCalendarPanelText(
+        await sendAssistantReplyWithFeedback({
+          text: formatCalendarPanelText(
             formatDailyCompanionPanelTitle(result.dailyResponse.mode),
             result.dailyResponse.reply,
           ),
-          {
+          sendOptions: {
             inlineActionRows: buildCalendarLookupInlineActionRows(lastContent),
           },
-        );
+          routeKey: capabilityMatch.capabilityId,
+          capabilityId: result.capabilityId || capabilityMatch.capabilityId,
+          handlerKind: result.trace?.handlerKind || 'assistant_capability',
+          responseSource: result.trace?.responseSource || 'local_companion',
+          traceReason: result.trace?.reason || 'handled shared daily capability',
+          traceNotes: result.trace?.notes || [],
+        });
         if (actionContext) {
           setActionLayerContext(chatJid, actionContext);
         } else {
@@ -5874,11 +6082,22 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             now,
           );
         }
-        await channel.sendMessage(
-          chatJid,
-          result.replyText || 'Okay.',
-          result.sendOptions || {},
-        );
+        await sendAssistantReplyWithFeedback({
+          text: result.replyText || 'Okay.',
+          sendOptions: result.sendOptions || {},
+          routeKey: capabilityMatch.capabilityId,
+          capabilityId: result.capabilityId || capabilityMatch.capabilityId,
+          handlerKind: result.trace?.handlerKind || 'assistant_capability',
+          responseSource: result.trace?.responseSource || 'local_companion',
+          traceReason:
+            result.trace?.reason || 'handled shared capability via life-thread result',
+          traceNotes: result.trace?.notes || [],
+          linkedRefs: result.lifeThreadResult.referencedThread
+            ? {
+                lifeThreadId: result.lifeThreadResult.referencedThread.id,
+              }
+            : {},
+        });
       } else if (result.mediaResult?.artifact && channel.sendArtifact) {
         await channel.sendArtifact(chatJid, result.mediaResult.artifact, {
           caption: result.replyText || result.mediaResult.summaryText,
@@ -5900,8 +6119,22 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             conversationChannel === 'bluebubbles' ? 'bluebubbles' : 'telegram',
           );
           if (channel.name === 'telegram') {
-            const sent = await channel.sendMessage(chatJid, presentation.text, {
-              inlineActionRows: presentation.inlineActionRows,
+            const sent = await sendAssistantReplyWithFeedback({
+              text: presentation.text,
+              sendOptions: {
+                inlineActionRows: presentation.inlineActionRows,
+              },
+              routeKey: capabilityMatch.capabilityId,
+              capabilityId: result.capabilityId || capabilityMatch.capabilityId,
+              handlerKind: result.trace?.handlerKind || 'assistant_capability',
+              responseSource: result.trace?.responseSource || 'local_companion',
+              traceReason:
+                result.trace?.reason ||
+                'handled shared capability through a message-action presentation',
+              traceNotes: result.trace?.notes || [],
+              linkedRefs: {
+                messageActionId: result.messageAction.messageActionId,
+              },
             });
             updateMessageAction(result.messageAction.messageActionId, {
               presentationMessageId: sent.platformMessageId || null,
@@ -5913,11 +6146,16 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           }
         }
       } else {
-        await channel.sendMessage(
-          chatJid,
-          result.replyText || 'Okay.',
-          result.sendOptions || {},
-        );
+        await sendAssistantReplyWithFeedback({
+          text: result.replyText || 'Okay.',
+          sendOptions: result.sendOptions || {},
+          routeKey: capabilityMatch.capabilityId,
+          capabilityId: result.capabilityId || capabilityMatch.capabilityId,
+          handlerKind: result.trace?.handlerKind || 'assistant_capability',
+          responseSource: result.trace?.responseSource || 'local_companion',
+          traceReason: result.trace?.reason || 'handled shared assistant capability',
+          traceNotes: result.trace?.notes || [],
+        });
       }
 
       const actionBundle = createOrRefreshActionBundle({
@@ -6107,7 +6345,16 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (!replyText) {
       return false;
     }
-    await channel.sendMessage(chatJid, replyText);
+    await sendAssistantReplyWithFeedback({
+      text: replyText,
+      routeKey: 'bluebubbles_fluid_direct_reply',
+      handlerKind: 'messages_fluidity',
+      responseSource: interpretedTurn.source || 'local_companion',
+      traceReason:
+        interpretedTurn.routeFamily === 'help'
+          ? 'handled Messages direct turn as a bounded help reply'
+          : 'handled Messages direct turn as a fluid bounded chat reply',
+    });
     clearSharedAssistantCapabilitySeed(chatJid);
     logger.info(
       {
@@ -6169,7 +6416,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       resolveOrdinaryChatPilotJourney(lastContent),
     );
     try {
-      await channel.sendMessage(chatJid, quickReply);
+      await sendAssistantReplyWithFeedback({
+        text: quickReply,
+        routeKey: 'direct_quick_reply',
+        handlerKind: 'direct_quick_reply',
+        responseSource: 'local_companion',
+        traceReason: 'handled message via direct quick reply path',
+      });
       clearSharedAssistantCapabilitySeed(chatJid);
       completeConversationPilotProof(quickReplyPilot, {
         outcome: 'success',
@@ -6280,7 +6533,17 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         });
         refreshTaskSnapshots(registeredGroups);
         clearSharedAssistantCapabilitySeed(chatJid);
-        await channel.sendMessage(chatJid, plannedReminder.confirmation);
+        await sendAssistantReplyWithFeedback({
+          text: plannedReminder.confirmation,
+          routeKey: 'local_reminder',
+          capabilityId: 'capture.reminder',
+          handlerKind: 'local_reminder',
+          responseSource: 'local_companion',
+          traceReason: 'handled simple reminder via local planner',
+          linkedRefs: {
+            reminderTaskId: plannedReminder.task.id,
+          },
+        });
         logger.info(
           {
             component: 'assistant',
@@ -6328,7 +6591,19 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       if (lifeThreadTurn.referencedThread) {
         setLastReferencedLifeThread(chatJid, lifeThreadTurn.referencedThread, now);
       }
-      await channel.sendMessage(chatJid, lifeThreadTurn.responseText || 'Okay.');
+      await sendAssistantReplyWithFeedback({
+        text: lifeThreadTurn.responseText || 'Okay.',
+        routeKey: 'life_thread_local',
+        capabilityId: 'life_thread.local',
+        handlerKind: 'life_thread_local',
+        responseSource: 'local_companion',
+        traceReason: 'handled life thread request via local assistant fast path',
+        linkedRefs: lifeThreadTurn.referencedThread
+          ? {
+              lifeThreadId: lifeThreadTurn.referencedThread.id,
+            }
+          : {},
+      });
       logger.info(
         { group: group.name },
         'Handled life thread request via local assistant fast path',
@@ -6353,10 +6628,15 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   });
   if (personalizationTurn.handled) {
     try {
-      await channel.sendMessage(
-        chatJid,
-        personalizationTurn.responseText || 'Okay.',
-      );
+      await sendAssistantReplyWithFeedback({
+        text: personalizationTurn.responseText || 'Okay.',
+        routeKey: 'personalization_local',
+        capabilityId: 'personalization.local',
+        handlerKind: 'personalization_local',
+        responseSource: 'local_companion',
+        traceReason:
+          'handled personalization request via local assistant fast path',
+      });
       logger.info(
         { group: group.name },
         'Handled personalization request via local assistant fast path',
@@ -6434,7 +6714,19 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         'Agent output chunk received',
       );
       if (text) {
-        await channel.sendMessage(chatJid, text);
+        await sendAssistantReplyWithFeedback({
+          text,
+          routeKey: requestPolicy.route,
+          handlerKind:
+            requestPolicy.route === 'direct_assistant'
+              ? 'container_direct_assistant'
+              : 'container_assistant',
+          responseSource: 'container_agent',
+          traceReason:
+            requestPolicy.route === 'direct_assistant'
+              ? 'handled request through the direct assistant container lane'
+              : 'handled request through the assistant container lane',
+        });
         outputSentToUser = true;
         if (requestPolicy.route === 'direct_assistant') {
           lastDirectAssistantTextByChatJid[chatJid] = text;
@@ -6569,21 +6861,35 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         requestPolicy.route === 'protected_assistant';
 
       if (safeCompanionSurface) {
-        await channel.sendMessage(
-          chatJid,
-          buildSilentSuccessFallback(
+        await sendAssistantReplyWithFeedback({
+          text: buildSilentSuccessFallback(
             requestPolicy.route,
             missedMessages,
             conversationChannel,
           ),
-        );
+          routeKey: requestPolicy.route,
+          handlerKind: 'assistant_fallback',
+          responseSource: 'local_companion',
+          traceReason:
+            'used a safe local fallback after a non-retriable agent/runtime problem',
+        });
       } else if (shouldNotify && output.userMessage) {
-        await channel.sendMessage(chatJid, output.userMessage);
+        await sendAssistantReplyWithFeedback({
+          text: output.userMessage,
+          routeKey: requestPolicy.route,
+          handlerKind: 'assistant_runtime_failure',
+          responseSource: 'local_companion',
+          traceReason:
+            'reported a non-retriable agent/runtime issue back to the user',
+        });
       } else if (!shouldNotify) {
-        await channel.sendMessage(
-          chatJid,
-          buildRepeatedAgentErrorMessage(output.code),
-        );
+        await sendAssistantReplyWithFeedback({
+          text: buildRepeatedAgentErrorMessage(output.code),
+          routeKey: requestPolicy.route,
+          handlerKind: 'assistant_runtime_failure',
+          responseSource: 'local_companion',
+          traceReason: 'reported a repeated non-retriable agent/runtime issue',
+        });
       }
 
       lastNonRetriableErrorNotice[chatJid] = {
@@ -6627,15 +6933,19 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       output.status === 'error' &&
       requestPolicy.route === 'direct_assistant'
     ) {
-      await channel.sendMessage(
-        chatJid,
-        buildDirectAssistantRuntimeFailureReply(
+      await sendAssistantReplyWithFeedback({
+        text: buildDirectAssistantRuntimeFailureReply(
           missedMessages,
           output.userMessage,
           now,
           conversationChannel,
         ),
-      );
+        routeKey: 'direct_assistant',
+        handlerKind: 'assistant_runtime_failure',
+        responseSource: 'local_companion',
+        traceReason:
+          'used the direct-assistant runtime failure fallback after retries failed',
+      });
       logger.warn(
         {
           component: 'assistant',
@@ -7488,6 +7798,399 @@ async function main(): Promise<void> {
       title: '*Debug Status*',
       sections: [stripLeadingMarkdownTitle(formatDebugStatus())],
     });
+  }
+
+  function buildResponseFeedbackBlockerClass(
+    classification: ResponseFeedbackRecord['classification'],
+  ): string {
+    switch (classification) {
+      case 'repo_side_broken':
+        return 'response_feedback_repo_side_broken';
+      case 'repo_side_rough_edge':
+        return 'response_feedback_repo_side_rough_edge';
+      case 'manual_sync_only':
+        return 'response_feedback_manual_sync_only';
+      case 'externally_blocked':
+      default:
+        return 'response_feedback_externally_blocked';
+    }
+  }
+
+  function summarizeResponseFeedbackText(
+    text: string | null | undefined,
+    fallback: string,
+    maxLength = 96,
+  ): string {
+    const normalized = (text || '').replace(/\s+/g, ' ').trim();
+    if (!normalized) return fallback;
+    if (normalized.length <= maxLength) return normalized;
+    return `${normalized.slice(0, maxLength - 3).trimEnd()}...`;
+  }
+
+  function buildResponseFeedbackIssueSummary(
+    record: Pick<ResponseFeedbackRecord, 'originalUserText' | 'classification'>,
+  ): string {
+    const askExcerpt = summarizeResponseFeedbackText(
+      record.originalUserText,
+      'a recent ask',
+      88,
+    );
+    switch (record.classification) {
+      case 'repo_side_broken':
+        return `User downvoted Andrea reply to "${askExcerpt}" because the flow looked broken.`;
+      case 'externally_blocked':
+        return `User downvoted Andrea reply to "${askExcerpt}" because the blocker surfaced poorly.`;
+      case 'manual_sync_only':
+        return `User downvoted Andrea reply to "${askExcerpt}" because a manual sync step surfaced in the answer.`;
+      case 'repo_side_rough_edge':
+      default:
+        return `User downvoted Andrea reply to "${askExcerpt}".`;
+    }
+  }
+
+  function buildResponseFeedbackHostTruthLines(): string[] {
+    const truth = buildFieldTrialOperatorTruth();
+    const summarize = (label: string, detail: string, proof: string) =>
+      `${label}: ${proof}${detail ? ` (${detail})` : ''}`;
+    return [
+      summarize(
+        'Telegram',
+        truth.telegram.blocker || truth.telegram.detail,
+        truth.telegram.proofState,
+      ),
+      summarize(
+        'BlueBubbles',
+        truth.bluebubbles.blocker || truth.bluebubbles.detail,
+        truth.bluebubbles.proofState,
+      ),
+      summarize(
+        'Google Calendar',
+        truth.googleCalendar.blocker || truth.googleCalendar.detail,
+        truth.googleCalendar.proofState,
+      ),
+      summarize(
+        'Alexa',
+        truth.alexa.blocker ||
+          `${truth.alexa.proofState}; model_sync=${truth.launchReadiness.manualSurfaceSyncs.alexa.syncStatus}`,
+        truth.alexa.proofState,
+      ),
+      summarize(
+        'Research',
+        truth.research.blocker || truth.research.detail,
+        truth.research.proofState,
+      ),
+      summarize(
+        'Image generation',
+        truth.imageGeneration.blocker || truth.imageGeneration.detail,
+        truth.imageGeneration.proofState,
+      ),
+      summarize(
+        'Work cockpit',
+        truth.workCockpit.blocker || truth.workCockpit.detail,
+        truth.workCockpit.proofState,
+      ),
+    ];
+  }
+
+  async function handleResponseFeedbackAction(
+    chatJid: string,
+    msg: NewMessage,
+    action: NonNullable<ReturnType<typeof parseResponseFeedbackAction>>,
+  ): Promise<boolean> {
+    const channel = findChannel(channels, chatJid);
+    const group = registeredGroups[chatJid];
+    if (!channel || !group || !isMainControlChat(group)) {
+      return true;
+    }
+
+    const existing = getResponseFeedback(action.feedbackId);
+    if (!existing || existing.chatJid !== chatJid) {
+      await channel.sendMessage(
+        chatJid,
+        'That feedback card is no longer available here.',
+        buildOperatorSendOptions(msg),
+      );
+      return true;
+    }
+
+    const linkedRefs: ResponseFeedbackRecord['linkedRefs'] = {
+      ...(existing.linkedRefs || {}),
+      responseFeedbackId: existing.feedbackId,
+      platformMessageId:
+        existing.linkedRefs?.platformMessageId ||
+        existing.platformMessageId ||
+        undefined,
+      userMessageId:
+        existing.linkedRefs?.userMessageId || existing.userMessageId || undefined,
+    };
+
+    const ensurePilotIssue = (): ResponseFeedbackRecord => {
+      if (existing.issueId) {
+        return updateResponseFeedback(existing.feedbackId, {
+          linkedRefs,
+        });
+      }
+      const captured = capturePilotIssue({
+        channel: 'telegram',
+        groupFolder: existing.groupFolder,
+        chatJid: existing.chatJid,
+        threadId: existing.threadId || null,
+        utterance: 'not helpful',
+        routeKey: existing.routeKey || 'response_feedback.capture',
+        assistantContextSummary: existing.assistantReplyText,
+        linkedRefs,
+        issueKindOverride: 'downvoted_response',
+        summaryTextOverride: buildResponseFeedbackIssueSummary(existing),
+        blockerClassOverride: buildResponseFeedbackBlockerClass(
+          existing.classification,
+        ),
+        blockerOwnerOverride: existing.blockerOwner,
+      });
+      return updateResponseFeedback(existing.feedbackId, {
+        issueId: captured.record?.issueId || null,
+        linkedRefs,
+        status:
+          existing.classification === 'externally_blocked'
+            ? 'blocked_external'
+            : existing.classification === 'manual_sync_only'
+              ? 'manual_sync_only'
+              : 'awaiting_confirmation',
+      });
+    };
+
+    if (action.operation === 'capture') {
+      const captured = ensurePilotIssue();
+      await channel.sendMessage(
+        chatJid,
+        buildResponseFeedbackCaptureReply(
+          captured,
+          captured.operatorNote || 'I saved the issue for review.',
+        ),
+        buildOperatorSendOptions(msg, {
+          inlineActionRows: buildResponseFeedbackActionRows(captured),
+        }),
+      );
+      return true;
+    }
+
+    if (action.operation === 'why') {
+      await channel.sendMessage(
+        chatJid,
+        buildResponseFeedbackWhyText(
+          existing,
+          existing.operatorNote || 'I saved the issue for review.',
+        ),
+        buildOperatorSendOptions(msg),
+      );
+      return true;
+    }
+
+    if (action.operation === 'not_now') {
+      const updated = updateResponseFeedback(existing.feedbackId, {
+        linkedRefs,
+        status:
+          existing.classification === 'externally_blocked'
+            ? 'blocked_external'
+            : existing.classification === 'manual_sync_only'
+              ? 'manual_sync_only'
+              : 'captured',
+      });
+      await channel.sendMessage(
+        chatJid,
+        'Saved for later. I am not starting a fix right now.',
+        buildOperatorSendOptions(msg, {
+          inlineActionRows: buildResponseFeedbackActionRows(updated),
+        }),
+      );
+      return true;
+    }
+
+    const captured = ensurePilotIssue();
+    if (captured.status === 'running' && captured.remediationJobId) {
+      await channel.sendMessage(
+        chatJid,
+        `A self-fix task is already running for this feedback item (${captured.remediationJobId}).`,
+        buildOperatorSendOptions(msg),
+      );
+      return true;
+    }
+
+    if (
+      captured.classification === 'externally_blocked' ||
+      captured.classification === 'manual_sync_only'
+    ) {
+      const updated = updateResponseFeedback(captured.feedbackId, {
+        linkedRefs,
+        status:
+          captured.classification === 'externally_blocked'
+            ? 'blocked_external'
+            : 'manual_sync_only',
+      });
+      await channel.sendMessage(
+        chatJid,
+        buildResponseFeedbackCaptureReply(
+          updated,
+          updated.operatorNote ||
+            'This one should stay captured rather than auto-starting a repo fix.',
+        ),
+        buildOperatorSendOptions(msg, {
+          inlineActionRows: buildResponseFeedbackActionRows(updated),
+        }),
+      );
+      return true;
+    }
+
+    const runtimeStatus = await getAndreaOpenAiBackendStatus();
+    const cursorCloudStatus = getCursorCloudStatus();
+    const cursorDesktopStatus = await getCursorDesktopStatus({ probe: true });
+    const laneSelection = selectResponseFeedbackLane({
+      runtimeAvailable: runtimeStatus.state === 'available',
+      runtimeLocalPreferred:
+        runtimeStatus.state === 'available' &&
+        runtimeStatus.meta?.localExecutionState === 'available_authenticated',
+      runtimeCloudAllowed: runtimeStatus.state === 'available',
+      runtimeDetail:
+        runtimeStatus.meta?.localExecutionState === 'available_authenticated'
+          ? 'Codex local is healthy and authenticated on this host.'
+          : runtimeStatus.detail || runtimeStatus.meta?.operatorGuidance || null,
+      cursorCloudAvailable:
+        cursorCloudStatus.enabled && cursorCloudStatus.hasApiKey,
+      cursorCloudDetail:
+        cursorCloudStatus.enabled && cursorCloudStatus.hasApiKey
+          ? 'Cursor Cloud is configured and ready for queued coding jobs.'
+          : null,
+      cursorDesktopAvailable:
+        cursorDesktopStatus.enabled &&
+        cursorDesktopStatus.hasToken &&
+        cursorDesktopStatus.probeStatus === 'ok' &&
+        cursorDesktopStatus.agentJobCompatibility === 'validated',
+      cursorDesktopDetail:
+        cursorDesktopStatus.agentJobDetail || cursorDesktopStatus.probeDetail,
+    });
+
+    if (!laneSelection.laneId) {
+      const updated = updateResponseFeedback(captured.feedbackId, {
+        linkedRefs,
+        status: 'captured',
+        remediationRuntimePreference: laneSelection.runtimePreference,
+        operatorNote: laneSelection.reason,
+      });
+      await channel.sendMessage(
+        chatJid,
+        [
+          'I saved that feedback, but I do not have a queued self-fix lane ready right now.',
+          laneSelection.reason,
+          'Use `Why` if you want the routing context, or try again after the runtime lane is healthy.',
+        ].join('\n'),
+        buildOperatorSendOptions(msg, {
+          inlineActionRows: buildResponseFeedbackActionRows(updated),
+        }),
+      );
+      return true;
+    }
+
+    const remediationPrompt = buildResponseFeedbackRemediationPrompt({
+      record: captured,
+      laneSelection,
+      hostTruthLines: buildResponseFeedbackHostTruthLines(),
+    });
+
+    if (laneSelection.laneId === 'andrea_runtime') {
+      const created = await getAndreaRuntimeLane().createJob({
+        groupFolder: captured.groupFolder,
+        chatJid,
+        promptText: remediationPrompt,
+        requestedBy: msg.sender,
+      });
+      const updated = updateResponseFeedback(captured.feedbackId, {
+        linkedRefs: {
+          ...linkedRefs,
+          backendLaneId: 'andrea_runtime',
+          backendJobId: created.handle.jobId,
+        },
+        status: 'running',
+        remediationLaneId: 'andrea_runtime',
+        remediationJobId: created.handle.jobId,
+        remediationRuntimePreference: laneSelection.runtimePreference,
+        remediationPrompt,
+        operatorNote: laneSelection.reason,
+      });
+      await sendBackendJobMessage({
+        chatJid,
+        laneId: 'andrea_runtime',
+        jobId: created.handle.jobId,
+        sourceMessage: msg,
+        contextKind: 'runtime_job_card',
+        payload: mergeTaskMessageContextPayload(created.metadata, {
+          taskContextType: 'job_card',
+          taskTitle: `Codex/OpenAI runtime ${formatOpaqueTaskId(created.handle.jobId)}`,
+          taskSummary: summarizeVisibleTaskText(created.summary),
+          responseFeedbackId: updated.feedbackId,
+        }),
+        inlineActions: buildRuntimeJobInlineActions({
+          job: created,
+          contextKind: 'runtime_job_card',
+          canExecute: andreaRuntimeExecutionEnabled,
+        }),
+        text: [
+          'Andrea started a self-fix task for that downvoted reply.',
+          formatRuntimeJobCard(created),
+          formatRuntimeNextStep(created.handle.jobId),
+          'If the hotfix validates locally, I will still ask before any commit or push.',
+        ].join('\n\n'),
+      });
+      return true;
+    }
+
+    const created = await cursorBackendLane.createCursorJob({
+      groupFolder: captured.groupFolder,
+      chatJid,
+      promptText: remediationPrompt,
+      requestedBy: msg.sender,
+    });
+    const updated = updateResponseFeedback(captured.feedbackId, {
+      linkedRefs: {
+        ...linkedRefs,
+        backendLaneId: 'cursor',
+        backendJobId: created.id,
+      },
+      status: 'running',
+      remediationLaneId: 'cursor',
+      remediationJobId: created.id,
+      remediationRuntimePreference: laneSelection.runtimePreference,
+      remediationPrompt,
+      operatorNote: laneSelection.reason,
+    });
+    await sendCursorAgentMessage({
+      chatJid,
+      agentId: created.id,
+      provider: created.provider,
+      sourceMessage: msg,
+      contextKind: 'cursor_job_card',
+      payload: mergeTaskMessageContextPayload(
+        buildCursorTaskContextPayload({
+          agentId: created.id,
+          provider: created.provider,
+          contextType: 'job_card',
+          summary:
+            created.summary || created.sourceRepository || created.promptText,
+        }),
+        {
+          responseFeedbackId: updated.feedbackId,
+        },
+      ),
+      inlineActions: buildCursorJobCardActions(created),
+      text: [
+        'Andrea started a self-fix task for that downvoted reply.',
+        '',
+        formatCursorJobCard(created),
+        '',
+        formatCursorTaskNextStepMessage(created),
+        '',
+        'If the hotfix validates locally, I will still ask before any commit or push.',
+      ].join('\n'),
+    });
+    return true;
   }
 
   async function handleDebugStatus(
@@ -11369,6 +12072,15 @@ async function main(): Promise<void> {
             'sender-allowlist: dropping message before command handling',
           );
         }
+        return;
+      }
+
+      const responseFeedbackAction = parseResponseFeedbackAction(rawTrimmed);
+      if (responseFeedbackAction) {
+        handleResponseFeedbackAction(chatJid, msg, responseFeedbackAction).catch(
+          (err) =>
+            logger.error({ err, chatJid }, 'Response feedback action error'),
+        );
         return;
       }
 
