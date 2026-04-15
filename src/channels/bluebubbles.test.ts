@@ -1502,6 +1502,7 @@ describe('BlueBubbles channel', () => {
       res.end('not found');
     });
 
+    const onHealthUpdate = vi.fn();
     const channel = new BlueBubblesChannel(
       buildConfig({
         baseUrl: apiStub.baseUrl,
@@ -1513,21 +1514,22 @@ describe('BlueBubbles channel', () => {
         onMessage: vi.fn(),
         onChatMetadata: vi.fn(),
         registeredGroups: () => ({}),
-        onHealthUpdate: vi.fn(),
+        onHealthUpdate,
       },
     );
 
     try {
       await channel.connect();
 
-      const monitorState = readBlueBubblesMonitorState();
-      expect(monitorState.detectionState).toBe('suspected_missed_inbound');
-      expect(monitorState.detectionDetail).toContain('newer 1:1 chat activity');
-      expect(monitorState.mostRecentServerSeenChatJid).toBe(
-        'bb:iMessage;-;+14695550123',
+      const latestHealth = onHealthUpdate.mock.calls.at(-1)?.[0];
+      expect(latestHealth?.detail).toContain(
+        'detection suspected_missed_inbound',
       );
-      expect(monitorState.mostRecentWebhookObservedChatJid).toBeNull();
-      expect(monitorState.crossSurfaceFallbackState).toBe('armed');
+      expect(latestHealth?.detail).toContain('newer 1:1 chat activity');
+      expect(latestHealth?.detail).toContain(
+        'server seen chat bb:iMessage;-;+14695550123',
+      );
+      expect(latestHealth?.detail).toContain('fallback armed');
     } finally {
       await channel.disconnect();
       await apiStub.close();
@@ -1700,6 +1702,59 @@ describe('BlueBubbles channel', () => {
       expect(monitorState.candidateProbeResults[apiStub.baseUrl]).toBe(
         'reachable/auth ok (200)',
       );
+      expect(monitorState.detectionState).toBe('healthy');
+    } finally {
+      await channel.disconnect();
+      await apiStub.close();
+    }
+  });
+
+  it('keeps BlueBubbles health reporting alive when baseUrlCandidates is missing', async () => {
+    const apiStub = await startBlueBubblesApiStub(async (req, _body, res) => {
+      if ((req.url || '').startsWith('/api/v1/webhook')) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ data: [] }));
+        return;
+      }
+      if ((req.url || '').startsWith('/api/v1/server/info')) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ data: { private_api: true } }));
+        return;
+      }
+      if ((req.url || '').startsWith('/api/v1/message')) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ data: [] }));
+        return;
+      }
+      res.statusCode = 404;
+      res.end('not found');
+    });
+
+    const config = {
+      ...buildConfig({
+        baseUrl: apiStub.baseUrl,
+        chatScope: 'all_synced',
+        allowedChatGuids: [],
+        allowedChatGuid: null,
+      }),
+      baseUrlCandidates: undefined,
+    } as unknown as BlueBubblesConfig;
+
+    const channel = new BlueBubblesChannel(config, {
+      onMessage: vi.fn(),
+      onChatMetadata: vi.fn(),
+      registeredGroups: () => ({}),
+      onHealthUpdate: vi.fn(),
+    });
+
+    try {
+      await channel.connect();
+
+      const monitorState = readBlueBubblesMonitorState();
+      expect(monitorState.activeBaseUrl).toBe(apiStub.baseUrl);
       expect(monitorState.detectionState).toBe('healthy');
     } finally {
       await channel.disconnect();

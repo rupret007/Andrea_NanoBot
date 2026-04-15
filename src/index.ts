@@ -3678,12 +3678,36 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   };
   const tryHandleLocalCalendarAutomation = async (): Promise<boolean> => {
     try {
+      const pendingGoogleCalendarCreateState =
+        getPendingGoogleCalendarCreateState(chatJid);
+      if (
+        pendingGoogleCalendarCreateState &&
+        isPendingGoogleCalendarCreateExpired(
+          pendingGoogleCalendarCreateState,
+          now,
+        )
+      ) {
+        clearPendingGoogleCalendarCreateState(chatJid);
+      }
+
       const pendingAutomation = getPendingCalendarAutomationState(chatJid);
       if (
         pendingAutomation &&
         isPendingCalendarAutomationExpired(pendingAutomation, now)
       ) {
         clearPendingCalendarAutomationState(chatJid);
+      }
+
+      const activePendingGoogleCalendarCreateState =
+        getPendingGoogleCalendarCreateState(chatJid);
+      if (
+        activePendingGoogleCalendarCreateState &&
+        advancePendingGoogleCalendarCreate(
+          lastContent,
+          activePendingGoogleCalendarCreateState,
+        ).kind !== 'no_match'
+      ) {
+        return false;
       }
 
       const activeState = getPendingCalendarAutomationState(chatJid);
@@ -4382,6 +4406,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             },
           );
           return true;
+        }
+
+        if (getPendingGoogleCalendarCreateState(chatJid)) {
+          return false;
         }
 
         let writableCalendars: GoogleCalendarMetadata[] = [];

@@ -34,7 +34,8 @@ const DAYPART_RANGES = {
   tonight: { startHour: 18, endHour: 24 },
 } as const;
 
-const CANCEL_PATTERN = /^(?:cancel|never mind|nevermind|stop|no)\b/i;
+const CANCEL_PATTERN =
+  /^(?:cancel|never mind|nevermind|stop|no|delete(?:\s+(?:that|it))?|remove(?:\s+(?:that|it))?|discard(?:\s+(?:that|it))?)\b/i;
 const CONFIRM_PATTERN =
   /^(?:yes|yep|yeah|confirm|create it|go ahead|looks good|ok|okay)\b/i;
 const DEFAULT_CONFIRMATION_TTL_MS = 30 * 60 * 1000;
@@ -954,7 +955,15 @@ function parsePendingDraftAdjustment(
   const daypartInfo = parseDaypartPhrase(working);
   const allDay = ALL_DAY_PATTERN.test(working);
 
-  if (!dateInfo && !timeInfo.start && !daypartInfo && !allDay) {
+  if (
+    !looksLikePendingDraftAdjustmentMessage({
+      working,
+      dateInfo,
+      timeInfo,
+      daypartInfo,
+      allDay,
+    })
+  ) {
     return null;
   }
 
@@ -999,6 +1008,51 @@ function parsePendingDraftAdjustment(
   );
   end = new Date(start.getTime() + durationMinutes * 60 * 1000);
   return cloneDraftWithTiming(state.draft, start, end, false);
+}
+
+function looksLikePendingDraftAdjustmentMessage(input: {
+  working: string;
+  dateInfo: { date: Date; matchedText: string } | null;
+  timeInfo: {
+    start: { hours: number; minutes: number; displayLabel: string } | null;
+    end: { hours: number; minutes: number; displayLabel: string } | null;
+    matchedText: string | null;
+  };
+  daypartInfo: { name: keyof typeof DAYPART_RANGES; matchedText: string } | null;
+  allDay: boolean;
+}): boolean {
+  if (
+    !input.dateInfo &&
+    !input.timeInfo.start &&
+    !input.daypartInfo &&
+    !input.allDay
+  ) {
+    return false;
+  }
+
+  let residual = input.working;
+  const stripLiteral = (value: string | null | undefined): void => {
+    if (!value) return;
+    residual = collapseWhitespace(
+      residual.replace(new RegExp(escapeRegex(value), 'i'), ' '),
+    );
+  };
+
+  stripLiteral(input.dateInfo?.matchedText);
+  stripLiteral(input.timeInfo.matchedText);
+  stripLiteral(input.daypartInfo?.matchedText);
+  if (input.allDay) {
+    residual = collapseWhitespace(residual.replace(ALL_DAY_PATTERN, ' '));
+  }
+
+  residual = collapseWhitespace(
+    residual.replace(
+      /^(?:(?:please|move|put|set|make|change|shift|start(?:\s+time)?(?:\s+is)?|it(?:\s+starts?)?|this|that|it|for|on|to|at|from|after|around|instead|calendar|my|the|event)\b[\s,.-]*)+/i,
+      '',
+    ),
+  );
+
+  return residual.length === 0;
 }
 
 function parseAfterAnchorRequest(

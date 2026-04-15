@@ -393,9 +393,13 @@ export function planResearchRequest(request: ResearchRequest): ResearchPlan {
     savedMaterialMode !== 'auto' ||
     SAVED_MATERIAL_RE.test(lower) ||
     Boolean(request.requestedSourceIds?.length);
-  const personalContextLikely = PERSONAL_CONTEXT_RE.test(lower);
+  const currentNewsLikely =
+    /\b(news|headlines|latest news|news today|today'?s news)\b/i.test(lower);
+  const personalContextLikely =
+    PERSONAL_CONTEXT_RE.test(lower) && !currentNewsLikely;
   const externalLikely =
-    (EXTERNAL_FACT_RE.test(lower) ||
+    (currentNewsLikely ||
+      EXTERNAL_FACT_RE.test(lower) ||
       isResearchEligibleConversationalPrompt(lower)) &&
     !personalContextLikely;
   const synthesisHeavy =

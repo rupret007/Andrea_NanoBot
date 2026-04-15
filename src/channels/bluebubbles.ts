@@ -95,6 +95,19 @@ function normalizeBaseUrlCandidates(
   return [...normalized];
 }
 
+function getBlueBubblesBaseUrlCandidates(
+  config: Pick<BlueBubblesConfig, 'baseUrl' | 'baseUrlCandidates'>,
+): string[] {
+  const candidates = Array.isArray(config.baseUrlCandidates)
+    ? config.baseUrlCandidates
+    : [];
+  return candidates.length > 0
+    ? candidates
+    : config.baseUrl
+      ? [config.baseUrl]
+      : [];
+}
+
 function normalizeChatScope(value: string | undefined): BlueBubblesChatScope {
   const normalized = value?.trim().toLowerCase();
   if (normalized === 'all_synced') return 'all_synced';
@@ -958,12 +971,7 @@ class BlueBubblesMessagesProvider implements AppleMessagesProvider {
   readonly name = 'bluebubbles' as const;
 
   async probe(config: BlueBubblesConfig): Promise<AppleMessagesProbeResult> {
-    const candidates =
-      config.baseUrlCandidates.length > 0
-        ? config.baseUrlCandidates
-        : config.baseUrl
-          ? [config.baseUrl]
-          : [];
+    const candidates = getBlueBubblesBaseUrlCandidates(config);
     if (candidates.length === 0 || !config.password) {
       return {
         provider: this.name,
@@ -1504,11 +1512,7 @@ export class BlueBubblesChannel implements Channel {
   }
 
   private getConfiguredBaseUrlCandidates(): string[] {
-    return this.config.baseUrlCandidates.length > 0
-      ? this.config.baseUrlCandidates
-      : this.config.baseUrl
-        ? [this.config.baseUrl]
-        : [];
+    return getBlueBubblesBaseUrlCandidates(this.config);
   }
 
   private getActiveBaseUrl(): string | null {

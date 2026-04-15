@@ -341,4 +341,38 @@ describe('research orchestrator', () => {
     expect(result.debugPath).toContain('openai.failed=true');
     expect(result.fullText).not.toContain('Band');
   });
+
+  it('treats current-news requests as blocked external research instead of local context', async () => {
+    process.env.OPENAI_API_KEY = 'test-key';
+    process.env.OPENAI_BASE_URL = 'https://example.test/v1';
+    globalThis.fetch = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          error: {
+            message:
+              'You exceeded your current quota, please check your plan and billing details.',
+            type: 'insufficient_quota',
+            code: 'insufficient_quota',
+          },
+        }),
+        {
+          status: 429,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      );
+    }) as typeof fetch;
+
+    const result = await runResearchOrchestrator({
+      query: "What's the news today?",
+      channel: 'telegram',
+      groupFolder: 'main',
+      now: new Date('2026-04-05T11:00:00.000Z'),
+    });
+
+    expect(result.providerUsed).toBeUndefined();
+    expect(result.summaryText).toContain("can't check that live right now");
+    expect(result.routeExplanation).toContain('live lookup');
+    expect(result.fullText).not.toContain('Band');
+    expect(result.fullText).not.toContain('local context');
+  });
 });

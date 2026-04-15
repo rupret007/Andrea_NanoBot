@@ -317,6 +317,86 @@ describe('google calendar create pending flow', () => {
     expect(result.state.step).toBe('choose_calendar');
   });
 
+  it('updates a pending draft when the user says move that to a new time', () => {
+    const pending = buildPendingGoogleCalendarCreateState({
+      draft: {
+        title: 'project sync',
+        startIso: '2026-04-02T20:15:00.000Z',
+        endIso: '2026-04-02T21:15:00.000Z',
+        allDay: false,
+        timeZone: 'America/Chicago',
+      },
+      writableCalendars: [...writableCalendars],
+      selectedCalendarId: 'primary',
+      now: new Date('2026-04-01T09:00:00-05:00'),
+    });
+
+    const result = advancePendingGoogleCalendarCreate(
+      'move that to 3:30 PM',
+      pending,
+    );
+
+    expect(result.kind).toBe('awaiting_input');
+    if (result.kind !== 'awaiting_input') return;
+    expect(result.state.draft.startIso).toBe('2026-04-02T20:30:00.000Z');
+    expect(result.state.draft.endIso).toBe('2026-04-02T21:30:00.000Z');
+  });
+
+  it('treats delete that as cancelling a pending draft', () => {
+    const pending = buildPendingGoogleCalendarCreateState({
+      draft: {
+        title: 'project sync',
+        startIso: '2026-04-02T21:00:00.000Z',
+        endIso: '2026-04-02T22:00:00.000Z',
+        allDay: false,
+        timeZone: 'America/Chicago',
+      },
+      writableCalendars: [...writableCalendars],
+      selectedCalendarId: 'primary',
+      now: new Date('2026-04-01T09:00:00-05:00'),
+    });
+
+    const result = advancePendingGoogleCalendarCreate('delete that', pending);
+    expect(result.kind).toBe('cancelled');
+  });
+
+  it('does not treat unrelated asks with date or time words as calendar draft adjustments', () => {
+    const pending = buildPendingGoogleCalendarCreateState({
+      draft: {
+        title: 'project sync',
+        startIso: '2026-04-02T21:00:00.000Z',
+        endIso: '2026-04-02T22:00:00.000Z',
+        allDay: false,
+        timeZone: 'America/Chicago',
+      },
+      writableCalendars: [...writableCalendars],
+      selectedCalendarId: 'primary',
+      now: new Date('2026-04-01T09:00:00-05:00'),
+    });
+
+    expect(
+      advancePendingGoogleCalendarCreate(
+        'Remind me on Thursday evening 7PM to ask Lucky about the changes.',
+        pending,
+      ).kind,
+    ).toBe('no_match');
+    expect(
+      advancePendingGoogleCalendarCreate(
+        'what should I say back to "sounds good see you at 7"',
+        pending,
+      ).kind,
+    ).toBe('no_match');
+    expect(
+      advancePendingGoogleCalendarCreate(
+        "What's on my schedule for Saturday?",
+        pending,
+      ).kind,
+    ).toBe('no_match');
+    expect(
+      advancePendingGoogleCalendarCreate("what's the news today", pending).kind,
+    ).toBe('no_match');
+  });
+
   it('switches calendars from a follow-up phrase', () => {
     const pending = buildPendingGoogleCalendarCreateState({
       draft: {

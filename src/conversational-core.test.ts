@@ -44,6 +44,9 @@ describe('conversational core classifier', () => {
     expect(classifyConversationalTurn("What is Jar Jar Binks' species?")).toBe(
       'simple_factoid',
     );
+    expect(classifyConversationalTurn("What's the news today?")).toBe(
+      'source_grounded_question',
+    );
     expect(
       classifyConversationalTurn('What should I know about Jar Jar Binks?'),
     ).toBe('source_grounded_question');
@@ -113,6 +116,17 @@ describe('graceful degraded replies', () => {
     expect(reply).toContain("didn't come through cleanly");
     expect(reply).toContain('one simple thing');
     expect(reply).not.toContain('deeper read missed');
+  });
+
+  it('uses the honest live-check fallback for current-news asks', () => {
+    const reply = buildGracefulDegradedReply({
+      kind: 'assistant_runtime_unavailable',
+      channel: 'telegram',
+      text: "What's the news today?",
+    });
+
+    expect(reply).toContain("can't check that live right now");
+    expect(reply).not.toContain("didn't come through cleanly");
   });
 
   it('keeps research-unavailable replies channel-safe and human', () => {

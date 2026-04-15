@@ -161,6 +161,14 @@ export function classifyConversationalTurn(text: string): ConversationalTurnClas
   }
 
   if (
+    /\b(news|headlines|latest news|news today|today'?s news)\b/.test(
+      normalized,
+    )
+  ) {
+    return 'source_grounded_question';
+  }
+
+  if (
     /^(?:research|look into|compare|summari[sz]e|explain the tradeoffs|what('?s| is) the best choice|what should i know before deciding|what are the pros and cons)\b/.test(
       normalized,
     ) ||
