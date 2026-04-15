@@ -235,6 +235,13 @@ describe('communication companion', () => {
       text: 'Candace: Can you let me know if dinner still works tonight?',
       now: new Date('2026-04-14T11:45:00.000Z'),
     });
+    const generic = analyzeCommunicationMessage({
+      channel: 'telegram',
+      groupFolder: 'main',
+      chatJid: 'tg:main',
+      text: 'Can you let me know?',
+      now: new Date('2026-04-14T11:46:00.000Z'),
+    });
 
     storeChatMetadata(
       'tg:main',
@@ -260,6 +267,7 @@ describe('communication companion', () => {
       chatJid: 'tg:main',
       text: 'what should I say back',
       priorContext: {
+        communicationThreadId: generic.thread?.id,
         lastAnswerSummary:
           "I can't check that live right now. Narrow the question a little and I'll keep the answer grounded.",
       },

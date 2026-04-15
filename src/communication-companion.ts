@@ -860,7 +860,17 @@ function resolveExistingThread(
   linkedSubjects: ProfileSubject[],
 ): CommunicationThreadRecord | undefined {
   if (input.priorContext?.communicationThreadId) {
-    return getCommunicationThread(input.priorContext.communicationThreadId);
+    const existing = getCommunicationThread(input.priorContext.communicationThreadId);
+    const shouldBypassGenericPriorThread =
+      existing !== undefined &&
+      isCommandOnlyCommunicationPrompt(input.text || '') &&
+      existing.linkedSubjectIds.length === 0 &&
+      existing.linkedLifeThreadIds.length === 0 &&
+      (/^Communication follow-up$/i.test(existing.title) ||
+        looksLikeMalformedCommunicationSummary(existing.lastInboundSummary));
+    if (existing && !shouldBypassGenericPriorThread) {
+      return existing;
+    }
   }
   const subjectId = linkedSubjects[0]?.id;
   if (!subjectId) {
