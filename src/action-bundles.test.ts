@@ -203,6 +203,16 @@ describe('action bundles', () => {
       kind: 'execute_action_indexes',
       orderIndexes: [1, 2],
     });
+    expect(
+      interpretActionBundleFollowup(
+        'Can you summerize my text messages in the Pops of Punk text thread please. Last 2 days.',
+        snapshot!,
+      ),
+    ).toBeNull();
+    expect(interpretActionBundleFollowup('2', snapshot!)).toEqual({
+      kind: 'execute_action_indexes',
+      orderIndexes: [2],
+    });
   });
 
   it('handles partial execution honestly when one bundle action fails', async () => {

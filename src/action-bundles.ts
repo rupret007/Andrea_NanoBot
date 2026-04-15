@@ -927,6 +927,17 @@ function parseOrdinalSelection(text: string, snapshot: ActionBundleSnapshot): nu
   const normalized = text.toLowerCase();
   if (/do the first two/.test(normalized)) return [1, 2].filter((index) => index <= snapshot.actions.length);
   if (/do the first one|do the first\b/.test(normalized)) return [1];
+  const hasSelectionCue =
+    /^(?:do|run|pick|choose|select|take|just|only)\b/.test(normalized) ||
+    /\b(?:action|actions|step|steps|option|options|number|numbers)\b/.test(
+      normalized,
+    );
+  const isBareOrdinalList = /^\s*\d+(?:\s*(?:,|and)\s*\d+|\s+\d+)*\s*$/.test(
+    normalized,
+  );
+  if (!hasSelectionCue && !isBareOrdinalList) {
+    return [];
+  }
   const matches = [...normalized.matchAll(/\b(\d+)\b/g)]
     .map((match) => Number.parseInt(match[1] || '', 10))
     .filter((value) => Number.isFinite(value) && value >= 1 && value <= snapshot.actions.length);

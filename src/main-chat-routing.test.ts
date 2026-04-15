@@ -44,6 +44,22 @@ describe('main chat routing', () => {
     expect(decision).toEqual({ kind: 'process_fresh_turn_now' });
   });
 
+  it('processes substantive new companion asks immediately even while work is active', () => {
+    const decision = decideMainChatRouting({
+      isMainGroup: true,
+      messages: [
+        {
+          content:
+            'Can you summerize my text messages in the Pops of Punk text thread please. Last 2 days.',
+        },
+      ],
+      sessionState: 'busy_assistant',
+      localQuickReply: null,
+    });
+
+    expect(decision).toEqual({ kind: 'process_fresh_turn_now' });
+  });
+
   it('keeps explicit reply-context messages out of standalone conversation routing', () => {
     const decision = decideMainChatRouting({
       isMainGroup: true,
