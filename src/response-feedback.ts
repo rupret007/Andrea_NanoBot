@@ -161,7 +161,7 @@ export function classifyResponseFeedbackCandidate(params: {
   if (
     responseSource === 'research_handoff' ||
     responseSource === 'media_handoff' ||
-    /quota|provider|api key|not configured|blocked|live research|image generation/.test(
+    /quota|provider|api key|not configured|blocked|live research|image generation|can't check that live|couldn't check that live|live lookup (?:was )?unavailable|live lookup unavailable|can't do a live lookup|can't pull live|can't fetch live/.test(
       combined,
     )
   ) {

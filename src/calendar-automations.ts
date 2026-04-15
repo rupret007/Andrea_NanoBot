@@ -241,6 +241,26 @@ export type CalendarAutomationPlanResult =
       message: string;
     };
 
+function looksLikeCalendarEventDeleteFollowThrough(normalized: string): boolean {
+  if (!/^(?:delete|remove)\b/.test(normalized)) {
+    return false;
+  }
+  if (
+    /\b(?:automation|automations|brief|briefing|summary|watch|watcher|reminder)\b/.test(
+      normalized,
+    )
+  ) {
+    return false;
+  }
+  return (
+    /\b(?:that|it|event|meeting|appointment|calendar)\b/.test(normalized) ||
+    /\b(?:today|tonight|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/.test(
+      normalized,
+    ) ||
+    /\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b/.test(normalized)
+  );
+}
+
 export type PendingCalendarAutomationResult =
   | { kind: 'no_match' }
   | { kind: 'cancelled'; message: string }
@@ -1770,6 +1790,10 @@ export async function planCalendarAutomation(
 
   if (/^(?:resume|turn back on|reactivate|enable)\b/.test(normalized)) {
     return buildPauseResumeOrDeleteResult(message, automations, now, 'resume');
+  }
+
+  if (looksLikeCalendarEventDeleteFollowThrough(normalized)) {
+    return { kind: 'none' };
   }
 
   if (/^(?:delete|remove)\b/.test(normalized)) {

@@ -288,6 +288,28 @@ function isCommandOnlyCommunicationPrompt(value: string): boolean {
   );
 }
 
+function looksLikeNonCommunicationCompanionPrompt(value: string): boolean {
+  return /^(?:\/(?:start|help|commands|features)\b|what am i forgetting\b|what should i remember tonight\b|what should i do next\b|what(?:'|’)?s still open\b|what(?:'|’)?s on my (?:schedule|calendar)\b|what(?:'|’)?s the news today\b|today(?:'|’)?s news\b|what can you do\b|save that(?: for later)?\b|remind me later\b|add .+\bcalendar\b|move that\b|delete that\b|cancel that\b|show (?:me )?(?:my )?(?:grocery list|errands|bills|meals)\b|add .+\bto my grocery list\b)/i.test(
+    value.trim(),
+  );
+}
+
+function looksLikeCommunicationMessageBody(value: string): boolean {
+  const normalized = cleanMessageBody(value);
+  if (!normalized) return false;
+  if (isCommandOnlyCommunicationPrompt(normalized)) return false;
+  if (looksLikeNonCommunicationCompanionPrompt(normalized)) return false;
+  if (/^[^:]{1,40}:\s+\S+/.test(normalized)) return true;
+  if (
+    /\b(?:let me know|can you|could you|would you|are you free|are we still|does that work|what do you think|should we|can we|need you to|when you get a chance|circle back|follow up|works tonight|works for me|sounds good|see you (?:at|then)|thank you|thanks)\b/i.test(
+      normalized,
+    )
+  ) {
+    return true;
+  }
+  return /\?/.test(normalized);
+}
+
 function cleanMessageBody(value: string): string {
   return stripCommandPrefix(
     value
@@ -317,7 +339,7 @@ function extractLatestInboundMessage(chatJid: string | undefined): {
     if (item.is_from_me || item.is_bot_message || !item.content?.trim()) {
       return false;
     }
-    return Boolean(cleanMessageBody(item.content));
+    return looksLikeCommunicationMessageBody(item.content);
   });
   if (!message) return {};
   const cleaned = cleanMessageBody(message.content);
@@ -365,7 +387,7 @@ function extractLatestBlueBubblesSelfCompanionContext(
     for (const message of recentMessages) {
       if (message.is_bot_message || !message.content?.trim()) continue;
       const cleaned = cleanMessageBody(message.content);
-      if (!cleaned || isCommandOnlyCommunicationPrompt(cleaned)) continue;
+      if (!cleaned || !looksLikeCommunicationMessageBody(cleaned)) continue;
       return {
         text: cleaned,
         messageId: message.id,
@@ -383,6 +405,59 @@ function looksAssistantNarratedContext(text: string | null | undefined): boolean
   return /^(?:Andrea:|The main thing still open with |The conversation most likely to slip is |The next thing that still needs attention is |With [A-Z][a-z' -]+, I'd |For tonight, |Thread follow-up: |Open conversation: |Plan carryover: |Conversation carryover: )/i.test(
     normalized,
   );
+}
+
+function looksLikeMalformedCommunicationSummary(value: string | null | undefined): boolean {
+  const normalized = normalizeText(value || '');
+  if (!normalized) return true;
+  return /^(?:they wants an answer about\.?|they wants a follow-up about\.?|they said\.?)$/i.test(
+    normalized,
+  );
+}
+
+function looksLikeCommunicationContextText(value: string | null | undefined): boolean {
+  const normalized = normalizeText(value || '');
+  if (!normalized) return false;
+  if (looksLikeMalformedCommunicationSummary(normalized)) return false;
+  if (looksAssistantNarratedContext(normalized)) return true;
+  if (looksLikeCommunicationMessageBody(normalized)) return true;
+  return /\b(?:wants an answer about|wants a follow-up about|said they would get back|sounds settled on|still needs attention|still need(?:s)? a clean answer|reply to [a-z][a-z' -]+ about)\b/i.test(
+    normalized,
+  );
+}
+
+function findFallbackCommunicationThread(
+  input: Pick<CommunicationContextInput, 'groupFolder' | 'chatJid' | 'text'>,
+): CommunicationThreadRecord | undefined {
+  if (!isCommandOnlyCommunicationPrompt(input.text || '')) {
+    return undefined;
+  }
+
+  const threads = listCommunicationThreadsForGroup({
+    groupFolder: input.groupFolder,
+    includeDisabled: false,
+    followupStates: ['reply_needed', 'scheduled', 'waiting_on_them'],
+    limit: 10,
+  }).filter(
+    (thread) => !looksLikeMalformedCommunicationSummary(thread.lastInboundSummary),
+  );
+
+  if (threads.length === 0) return undefined;
+
+  const sameChatWithContext = threads.find(
+    (thread) =>
+      thread.channelChatJid === input.chatJid &&
+      (thread.linkedSubjectIds.length > 0 || thread.linkedLifeThreadIds.length > 0),
+  );
+  if (sameChatWithContext) return sameChatWithContext;
+
+  const anyThreadWithContext = threads.find(
+    (thread) =>
+      thread.linkedSubjectIds.length > 0 || thread.linkedLifeThreadIds.length > 0,
+  );
+  if (anyThreadWithContext) return anyThreadWithContext;
+
+  return threads.find((thread) => thread.channelChatJid === input.chatJid) || threads[0];
 }
 
 function extractMessageText(input: CommunicationContextInput): {
@@ -410,14 +485,23 @@ function extractMessageText(input: CommunicationContextInput): {
       '',
   );
   const sameChat = extractLatestInboundMessage(input.chatJid);
+  const fallbackThread = findFallbackCommunicationThread(input);
   if (sameChat.text && prior && looksAssistantNarratedContext(prior)) {
     return { ...sameChat, source: 'chat' };
   }
-  if (prior) {
+  if (prior && looksLikeCommunicationContextText(prior)) {
     return { text: prior, source: 'prior' };
   }
   if (sameChat.text) {
     return { ...sameChat, source: 'chat' };
+  }
+  if (fallbackThread?.lastInboundSummary) {
+    return {
+      text: fallbackThread.lastInboundSummary,
+      messageId: fallbackThread.lastMessageId || undefined,
+      timestamp: fallbackThread.lastContactAt || undefined,
+      source: 'prior',
+    };
   }
   const siblingBlueBubblesContext =
     input.channel === 'bluebubbles'
@@ -779,13 +863,15 @@ function resolveExistingThread(
     return getCommunicationThread(input.priorContext.communicationThreadId);
   }
   const subjectId = linkedSubjects[0]?.id;
-  if (!subjectId) return undefined;
+  if (!subjectId) {
+    return findFallbackCommunicationThread(input);
+  }
   return listCommunicationThreadsForGroup({
     groupFolder: input.groupFolder,
     subjectId,
     includeDisabled: false,
     limit: 1,
-  })[0];
+  })[0] || findFallbackCommunicationThread(input);
 }
 
 function upsertThreadFromAnalysis(input: {

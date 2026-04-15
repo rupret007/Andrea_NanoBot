@@ -196,6 +196,22 @@ describe('response feedback helpers', () => {
     expect(result.status).toBe('blocked_external');
   });
 
+  it('treats honest blocked-live news fallbacks as externally blocked', () => {
+    const result = classifyResponseFeedbackCandidate({
+      originalUserText: "what's the news today",
+      assistantReplyText:
+        "I can't check that live right now because the live lookup was unavailable.",
+      routeKey: 'assistant_completion',
+      capabilityId: 'assistant_completion',
+      responseSource: 'assistant_completion',
+      traceReason: 'live lookup was unavailable',
+      blockerClass: null,
+    });
+
+    expect(result.classification).toBe('externally_blocked');
+    expect(result.status).toBe('blocked_external');
+  });
+
   it('treats canned-news misses as repo-side broken', () => {
     const result = classifyResponseFeedbackCandidate({
       originalUserText: "what's the news today",

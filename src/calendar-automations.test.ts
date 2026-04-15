@@ -202,6 +202,29 @@ describe('planCalendarAutomation', () => {
     expect(result.message).not.toContain('Family calendar summary');
   });
 
+  it('does not steal event-delete phrasing from the Google Calendar follow-through lane', async () => {
+    const deleteThat = await planCalendarAutomation(
+      'delete that',
+      new Date('2026-04-01T10:00:00-05:00'),
+      [],
+    );
+    expect(deleteThat.kind).toBe('none');
+
+    const deleteEvent = await planCalendarAutomation(
+      'Delete Andrea QA calendar tomorrow',
+      new Date('2026-04-01T10:00:00-05:00'),
+      [],
+    );
+    expect(deleteEvent.kind).toBe('none');
+
+    const deleteAutomation = await planCalendarAutomation(
+      'delete my morning brief',
+      new Date('2026-04-01T10:00:00-05:00'),
+      [createAutomationSummary({})],
+    );
+    expect(deleteAutomation.kind).toBe('awaiting_input');
+  });
+
   it('asks for a time when a one-time watch automation omits one', async () => {
     const result = await planCalendarAutomation(
       'Let me know if tomorrow afternoon has no 30-minute gaps',

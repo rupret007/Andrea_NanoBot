@@ -226,6 +226,52 @@ describe('communication companion', () => {
     expect(result.draftText).not.toContain('circle back');
   });
 
+  it('reuses the best open communication thread when Telegram main chat only has control prompts', () => {
+    seedCandace();
+    analyzeCommunicationMessage({
+      channel: 'telegram',
+      groupFolder: 'main',
+      chatJid: 'tg:main',
+      text: 'Candace: Can you let me know if dinner still works tonight?',
+      now: new Date('2026-04-14T11:45:00.000Z'),
+    });
+
+    storeChatMetadata(
+      'tg:main',
+      '2026-04-14T11:50:00.000Z',
+      'Andrea',
+      'telegram',
+      false,
+    );
+    storeMessageDirect({
+      id: 'tg:control-ask',
+      chat_jid: 'tg:main',
+      sender: '8004355504',
+      sender_name: 'Jeff',
+      content: 'what am I forgetting',
+      timestamp: '2026-04-14T11:50:00.000Z',
+      is_from_me: false,
+      is_bot_message: false,
+    });
+
+    const result = draftCommunicationReply({
+      channel: 'telegram',
+      groupFolder: 'main',
+      chatJid: 'tg:main',
+      text: 'what should I say back',
+      priorContext: {
+        lastAnswerSummary:
+          "I can't check that live right now. Narrow the question a little and I'll keep the answer grounded.",
+      },
+      now: new Date('2026-04-14T11:51:00.000Z'),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.draftText).toContain('Candace');
+    expect(result.draftText).toContain('dinner still works tonight');
+    expect(result.draftText).not.toContain('what am I forgetting');
+  });
+
   it('builds warmer drafts from relationship-aware message context', () => {
     seedCandace();
 
