@@ -1492,6 +1492,9 @@ function Start-AndreaOpenAiBackend {
 
   $quotedRepoRoot = ([string] $config.repoRoot).Replace("'", "''")
   $quotedNodeExe = ([string] $NodeExe).Replace("'", "''")
+  $openAiApiKey = Get-EnvValue -DotEnv $DotEnv -Key 'OPENAI_API_KEY'
+  $openAiBaseUrl = Get-EnvValue -DotEnv $DotEnv -Key 'OPENAI_BASE_URL'
+  $openAiModelFallback = Get-EnvValue -DotEnv $DotEnv -Key 'OPENAI_MODEL_FALLBACK'
   $command = @(
     "& {"
     "Set-Location -LiteralPath '$quotedRepoRoot';"
@@ -1499,6 +1502,9 @@ function Start-AndreaOpenAiBackend {
     "`$env:ORCHESTRATION_HTTP_HOST='127.0.0.1';"
     ("`$env:ORCHESTRATION_HTTP_PORT='{0}';" -f [string] $config.port)
     "`$env:TZ='America/Chicago';"
+    $(if (-not [string]::IsNullOrWhiteSpace($openAiApiKey)) { ("`$env:OPENAI_API_KEY='{0}';" -f ([string] $openAiApiKey).Replace("'", "''")) } else { '' })
+    $(if (-not [string]::IsNullOrWhiteSpace($openAiBaseUrl)) { ("`$env:OPENAI_BASE_URL='{0}';" -f ([string] $openAiBaseUrl).Replace("'", "''")) } else { '' })
+    $(if (-not [string]::IsNullOrWhiteSpace($openAiModelFallback)) { ("`$env:OPENAI_MODEL_FALLBACK='{0}';" -f ([string] $openAiModelFallback).Replace("'", "''")) } else { '' })
     "& '$quotedNodeExe' 'dist/index.js'"
     "}"
   ) -join ' '
