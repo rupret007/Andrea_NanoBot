@@ -168,8 +168,9 @@ import {
   resolveCompanionConversationBinding,
 } from './companion-conversation-binding.js';
 import {
-  isBlueBubblesExplicitAsk,
+  decideBlueBubblesCompanionIngress,
   normalizeBlueBubblesCompanionPrompt,
+  resolveBlueBubblesPendingLocalContinuationKind,
   resolveMostRecentBlueBubblesCompanionChat,
 } from './bluebubbles-companion.js';
 import {
@@ -1142,6 +1143,70 @@ function setPendingActionDraftState(
 
 function clearPendingActionDraftState(chatJid: string): void {
   deleteRouterState(getActionLayerPendingDraftKey(chatJid));
+}
+
+function getPendingBlueBubblesLocalContinuationKind(
+  chatJid: string,
+  now = new Date(),
+) {
+  return resolveBlueBubblesPendingLocalContinuationKind({
+    chatJid,
+    hasGoogleCalendarCreate: (candidateChatJid) => {
+      const pendingState = getPendingGoogleCalendarCreateState(candidateChatJid);
+      if (!pendingState) return false;
+      if (isPendingGoogleCalendarCreateExpired(pendingState, now)) {
+        clearPendingGoogleCalendarCreateState(candidateChatJid);
+        return false;
+      }
+      return true;
+    },
+    hasGoogleCalendarReminder: (candidateChatJid) => {
+      const pendingState = getPendingCalendarReminderState(candidateChatJid);
+      if (!pendingState) return false;
+      if (isPendingCalendarReminderExpired(pendingState, now)) {
+        clearPendingCalendarReminderState(candidateChatJid);
+        return false;
+      }
+      return true;
+    },
+    hasGoogleCalendarEventAction: (candidateChatJid) => {
+      const pendingState =
+        getPendingGoogleCalendarEventActionState(candidateChatJid);
+      if (!pendingState) return false;
+      if (isPendingGoogleCalendarEventActionExpired(pendingState, now)) {
+        clearPendingGoogleCalendarEventActionState(candidateChatJid);
+        return false;
+      }
+      return true;
+    },
+    hasCalendarAutomation: (candidateChatJid) => {
+      const pendingState = getPendingCalendarAutomationState(candidateChatJid);
+      if (!pendingState) return false;
+      if (isPendingCalendarAutomationExpired(pendingState, now)) {
+        clearPendingCalendarAutomationState(candidateChatJid);
+        return false;
+      }
+      return true;
+    },
+    hasActionReminder: (candidateChatJid) => {
+      const pendingState = getPendingActionReminderState(candidateChatJid);
+      if (!pendingState) return false;
+      if (isPendingActionReminderExpired(pendingState, now)) {
+        clearPendingActionReminderState(candidateChatJid);
+        return false;
+      }
+      return true;
+    },
+    hasActionDraft: (candidateChatJid) => {
+      const pendingState = getPendingActionDraftState(candidateChatJid);
+      if (!pendingState) return false;
+      if (isPendingActionDraftExpired(pendingState, now)) {
+        clearPendingActionDraftState(candidateChatJid);
+        return false;
+      }
+      return true;
+    },
+  });
 }
 
 function getDailyCompanionContext(
@@ -13329,14 +13394,20 @@ async function main(): Promise<void> {
           lastTimestamp = msg.timestamp;
           saveState();
         }
+        const companionNow = new Date();
         const hasRecentCompanionContext = Boolean(
-          getSharedAssistantCapabilitySeed(chatJid, new Date()),
+          getSharedAssistantCapabilitySeed(chatJid, companionNow),
         );
-        if (
-          isBlueBubblesExplicitAsk(msg.content, {
+        const pendingLocalContinuationKind =
+          getPendingBlueBubblesLocalContinuationKind(chatJid, companionNow);
+        const companionIngressDecision = decideBlueBubblesCompanionIngress(
+          msg.content,
+          {
             hasRecentCompanionContext,
-          })
-        ) {
+            pendingLocalContinuationKind,
+          },
+        );
+        if (companionIngressDecision.kind === 'explicit_ask') {
           try {
             const primed = await primeBlueBubblesChatHistory(
               blueBubblesConfig,
@@ -13355,13 +13426,29 @@ async function main(): Promise<void> {
               'BlueBubbles recent-history priming failed; continuing with stored local context',
             );
           }
+          logger.debug(
+            { chatJid, messageId: msg.id },
+            'Enqueued BlueBubbles companion turn from explicit @Andrea ask',
+          );
+          queue.enqueueMessageCheck(chatJid);
+        } else if (
+          companionIngressDecision.kind === 'pending_local_continuation'
+        ) {
+          logger.debug(
+            {
+              chatJid,
+              messageId: msg.id,
+              continuationKind: companionIngressDecision.continuationKind,
+            },
+            'Enqueued BlueBubbles same-thread follow-up for pending local continuation',
+          );
           queue.enqueueMessageCheck(chatJid);
         } else {
           lastAgentTimestamp[chatJid] = msg.timestamp;
           saveState();
           logger.debug(
             { chatJid, messageId: msg.id },
-            'Ignored BlueBubbles chatter without an @Andrea mention',
+            'Ignored BlueBubbles chatter without an @Andrea mention or pending local continuation',
           );
         }
       }

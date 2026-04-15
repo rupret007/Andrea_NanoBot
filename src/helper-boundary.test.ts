@@ -126,6 +126,24 @@ describe('helper boundary wiring', () => {
     expect(source).toContain('clearSharedAssistantCapabilitySeed(chatJid);');
   });
 
+  it('lets pending BlueBubbles local continuations bypass the fresh @Andrea wake gate without widening ordinary chatter', () => {
+    const source = readRepoFile('src/index.ts');
+
+    expect(source).toContain(
+      'const pendingLocalContinuationKind =',
+    );
+    expect(source).toContain(
+      'getPendingBlueBubblesLocalContinuationKind(chatJid, companionNow);',
+    );
+    expect(source).toContain('decideBlueBubblesCompanionIngress(');
+    expect(source).toContain(
+      'Enqueued BlueBubbles same-thread follow-up for pending local continuation',
+    );
+    expect(source).toContain(
+      'Ignored BlueBubbles chatter without an @Andrea mention or pending local continuation',
+    );
+  });
+
   it('reconciles work-cockpit current-work panels against the visible lane state before clearing selection', () => {
     const source = readRepoFile('src/index.ts');
 

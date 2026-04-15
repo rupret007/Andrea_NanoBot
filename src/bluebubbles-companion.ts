@@ -1,5 +1,6 @@
 import { resolveAlexaConversationFollowup } from './alexa-conversation.js';
 import { matchAssistantCapabilityRequest } from './assistant-capability-router.js';
+import { expandBlueBubblesLogicalSelfThreadJids } from './bluebubbles-self-thread.js';
 import { listRecentPilotJourneyEvents } from './db.js';
 import { resolveOrdinaryChatPilotJourney } from './pilot-mode.js';
 
@@ -94,6 +95,95 @@ export function isBlueBubblesExplicitAsk(
     return true;
   }
   return true;
+}
+
+export type BlueBubblesPendingLocalContinuationKind =
+  | 'google_calendar_create'
+  | 'google_calendar_reminder'
+  | 'google_calendar_event_action'
+  | 'calendar_automation'
+  | 'action_reminder'
+  | 'action_draft';
+
+export type BlueBubblesCompanionIngressDecision =
+  | { kind: 'explicit_ask' }
+  | {
+      kind: 'pending_local_continuation';
+      continuationKind: BlueBubblesPendingLocalContinuationKind;
+    }
+  | { kind: 'ignored_chatter' };
+
+function resolveBlueBubblesContinuationChatJids(chatJid: string): string[] {
+  const candidates = expandBlueBubblesLogicalSelfThreadJids(chatJid);
+  if (candidates.length === 0) {
+    return [chatJid];
+  }
+  return [...new Set(candidates)];
+}
+
+export function resolveBlueBubblesPendingLocalContinuationKind(input: {
+  chatJid: string;
+  hasGoogleCalendarCreate(chatJid: string): boolean;
+  hasGoogleCalendarReminder(chatJid: string): boolean;
+  hasGoogleCalendarEventAction(chatJid: string): boolean;
+  hasCalendarAutomation(chatJid: string): boolean;
+  hasActionReminder(chatJid: string): boolean;
+  hasActionDraft(chatJid: string): boolean;
+}): BlueBubblesPendingLocalContinuationKind | null {
+  const candidateChatJids = resolveBlueBubblesContinuationChatJids(
+    input.chatJid,
+  );
+
+  if (candidateChatJids.some((chatJid) => input.hasGoogleCalendarCreate(chatJid))) {
+    return 'google_calendar_create';
+  }
+  if (
+    candidateChatJids.some((chatJid) =>
+      input.hasGoogleCalendarReminder(chatJid),
+    )
+  ) {
+    return 'google_calendar_reminder';
+  }
+  if (
+    candidateChatJids.some((chatJid) =>
+      input.hasGoogleCalendarEventAction(chatJid),
+    )
+  ) {
+    return 'google_calendar_event_action';
+  }
+  if (candidateChatJids.some((chatJid) => input.hasCalendarAutomation(chatJid))) {
+    return 'calendar_automation';
+  }
+  if (candidateChatJids.some((chatJid) => input.hasActionReminder(chatJid))) {
+    return 'action_reminder';
+  }
+  if (candidateChatJids.some((chatJid) => input.hasActionDraft(chatJid))) {
+    return 'action_draft';
+  }
+  return null;
+}
+
+export function decideBlueBubblesCompanionIngress(
+  text: string,
+  options: {
+    hasRecentCompanionContext?: boolean;
+    pendingLocalContinuationKind?: BlueBubblesPendingLocalContinuationKind | null;
+  } = {},
+): BlueBubblesCompanionIngressDecision {
+  if (
+    isBlueBubblesExplicitAsk(text, {
+      hasRecentCompanionContext: options.hasRecentCompanionContext,
+    })
+  ) {
+    return { kind: 'explicit_ask' };
+  }
+  if (options.pendingLocalContinuationKind) {
+    return {
+      kind: 'pending_local_continuation',
+      continuationKind: options.pendingLocalContinuationKind,
+    };
+  }
+  return { kind: 'ignored_chatter' };
 }
 
 export function resolveMostRecentBlueBubblesCompanionChat(params: {
