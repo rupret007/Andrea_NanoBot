@@ -281,6 +281,24 @@ export function buildResponseFeedbackActionRows(
       ],
     ];
   }
+  if (record.status === 'failed') {
+    return [
+      [
+        {
+          label: 'Retry fix',
+          actionId: buildResponseFeedbackActionId(record.feedbackId, 'start'),
+        },
+        {
+          label: 'Why',
+          actionId: buildResponseFeedbackActionId(record.feedbackId, 'why'),
+        },
+        {
+          label: 'Not now',
+          actionId: buildResponseFeedbackActionId(record.feedbackId, 'not_now'),
+        },
+      ],
+    ];
+  }
   return [
     [
       {
@@ -434,6 +452,35 @@ export function selectResponseFeedbackLane(
     reason:
       'Neither the Codex/OpenAI runtime lane nor Cursor Cloud is healthy enough to auto-start a remediation job right now.',
   };
+}
+
+export function selectResponseFeedbackRetryLane(params: {
+  record: Pick<
+    ResponseFeedbackRecord,
+    'status' | 'remediationRuntimePreference'
+  >;
+  availability: ResponseFeedbackLaneAvailability;
+}): ResponseFeedbackLaneSelection {
+  const selection = selectResponseFeedbackLane(params.availability);
+  if (
+    params.record.status === 'failed' &&
+    params.record.remediationRuntimePreference === 'codex_local' &&
+    selection.laneId === 'andrea_runtime' &&
+    selection.runtimePreference === 'codex_local' &&
+    params.availability.runtimeAvailable &&
+    params.availability.runtimeCloudAllowed
+  ) {
+    return {
+      laneId: 'andrea_runtime',
+      runtimePreference: 'codex_cloud',
+      label: 'Codex cloud',
+      promptPrefix: '[runtime: cloud]',
+      reason:
+        'Codex local already failed on this feedback item, so Andrea is retrying in Codex cloud.',
+    };
+  }
+
+  return selection;
 }
 
 function buildExpectedBehavior(record: Pick<

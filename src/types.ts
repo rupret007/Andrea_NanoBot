@@ -1210,6 +1210,7 @@ export type ResponseFeedbackStatus =
   | 'captured'
   | 'awaiting_confirmation'
   | 'running'
+  | 'failed'
   | 'blocked_external'
   | 'manual_sync_only'
   | 'resolved_locally'

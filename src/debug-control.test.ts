@@ -388,6 +388,48 @@ describe('debug log tails', () => {
     expect(status).toContain('Local hotfix pending landing: yes');
   });
 
+  it('shows failed remediation truth without implying a landing is pending', () => {
+    upsertResponseFeedback({
+      feedbackId: 'feedback-failed',
+      createdAt: '2026-04-07T17:06:00.000Z',
+      updatedAt: '2026-04-07T17:10:00.000Z',
+      status: 'failed',
+      classification: 'repo_side_rough_edge',
+      channel: 'telegram',
+      groupFolder: 'main',
+      chatJid: 'tg:main',
+      threadId: null,
+      platformMessageId: '201',
+      userMessageId: '200',
+      issueId: 'issue-3',
+      routeKey: 'weather.answer',
+      capabilityId: 'weather.answer',
+      handlerKind: 'assistant_completion',
+      responseSource: 'assistant_completion',
+      traceReason: 'execution issue',
+      traceNotes: [],
+      blockerClass: 'response_feedback_repo_side_rough_edge',
+      blockerOwner: 'repo_side',
+      originalUserText: 'What is the weather today in Dallas?',
+      assistantReplyText:
+        'I hit a temporary execution issue while processing that request.',
+      linkedRefs: {
+        responseFeedbackId: 'feedback-failed',
+      },
+      remediationLaneId: 'andrea_runtime',
+      remediationJobId: 'job-failed',
+      remediationRuntimePreference: 'codex_local',
+      remediationPrompt: 'fix it',
+      operatorNote:
+        'The remediation task failed before it produced a clean local hotfix, so it is back in review.',
+    });
+
+    const status = formatDebugStatus();
+    expect(status).toContain('Latest response feedback: failed');
+    expect(status).toContain('Latest response feedback class: repo_side_rough_edge');
+    expect(status).toContain('Local hotfix pending landing: no');
+  });
+
   it('prefers current chat service lines over stale group container logs', () => {
     fs.writeFileSync(
       path.join(tempDir, 'logs', 'nanoclaw.log'),

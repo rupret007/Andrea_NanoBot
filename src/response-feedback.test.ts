@@ -9,6 +9,7 @@ import {
   classifyResponseFeedbackCandidate,
   parseResponseFeedbackAction,
   selectResponseFeedbackLane,
+  selectResponseFeedbackRetryLane,
 } from './response-feedback.js';
 import type { ResponseFeedbackRecord } from './types.js';
 
@@ -121,6 +122,31 @@ describe('response feedback helpers', () => {
         {
           label: 'Why',
           actionId: 'feedback:11111111-2222-3333-4444-555555555555:why',
+        },
+      ],
+    ]);
+  });
+
+  it('offers retry actions after a remediation task fails', () => {
+    const rows = buildResponseFeedbackActionRows(
+      buildRecord({
+        status: 'failed',
+      }),
+    );
+
+    expect(rows).toEqual([
+      [
+        {
+          label: 'Retry fix',
+          actionId: 'feedback:11111111-2222-3333-4444-555555555555:start',
+        },
+        {
+          label: 'Why',
+          actionId: 'feedback:11111111-2222-3333-4444-555555555555:why',
+        },
+        {
+          label: 'Not now',
+          actionId: 'feedback:11111111-2222-3333-4444-555555555555:not_now',
         },
       ],
     ]);
@@ -267,6 +293,26 @@ describe('response feedback helpers', () => {
     });
     expect(desktopOnly.laneId).toBeNull();
     expect(desktopOnly.runtimePreference).toBe('cursor_local');
+  });
+
+  it('falls back to codex cloud when retrying after a codex-local failure', () => {
+    const selection = selectResponseFeedbackRetryLane({
+      record: buildRecord({
+        status: 'failed',
+        remediationRuntimePreference: 'codex_local',
+      }),
+      availability: {
+        runtimeAvailable: true,
+        runtimeLocalPreferred: true,
+        runtimeCloudAllowed: true,
+        cursorCloudAvailable: true,
+        cursorDesktopAvailable: false,
+      },
+    });
+
+    expect(selection.laneId).toBe('andrea_runtime');
+    expect(selection.runtimePreference).toBe('codex_cloud');
+    expect(selection.label).toBe('Codex cloud');
   });
 
   it('builds a remediation prompt with the ask, validation, restart, and no-commit rules', () => {

@@ -575,7 +575,7 @@ import {
   buildResponseFeedbackWhyText,
   classifyResponseFeedbackCandidate,
   parseResponseFeedbackAction,
-  selectResponseFeedbackLane,
+  selectResponseFeedbackRetryLane,
 } from './response-feedback.js';
 import {
   auditRegisteredMainChat,
@@ -772,6 +772,24 @@ function isFailedResponseFeedbackTaskStatus(
     normalized === 'canceled' ||
     normalized === 'stopped'
   );
+}
+
+function buildResponseFeedbackFailureNote(
+  taskStatus: string | null | undefined,
+): string {
+  const normalized = normalizeTaskStatus(taskStatus);
+  switch (normalized) {
+    case 'cancelled':
+    case 'canceled':
+      return 'The remediation task was cancelled before it produced a clean local hotfix, so it is back in review.';
+    case 'stopped':
+      return 'The remediation task was stopped before it produced a clean local hotfix, so it is back in review.';
+    case 'error':
+      return 'The remediation task hit an execution error before it produced a clean local hotfix, so it is back in review.';
+    case 'failed':
+    default:
+      return 'The remediation task failed before it produced a clean local hotfix, so it is back in review.';
+  }
 }
 
 function getCurrentMainChatAudit(): ReturnType<typeof auditRegisteredMainChat> {
@@ -8105,16 +8123,81 @@ async function main(): Promise<void> {
 
     if (
       isFailedResponseFeedbackTaskStatus(taskStatus) &&
-      record.status === 'running'
+      record.status !== 'resolved_locally' &&
+      record.status !== 'landed'
     ) {
+      const operatorNote = buildResponseFeedbackFailureNote(taskStatus);
+      if (record.status === 'failed' && record.operatorNote === operatorNote) {
+        return record;
+      }
       return updateResponseFeedback(record.feedbackId, {
-        status: 'awaiting_confirmation',
-        operatorNote:
-          "The remediation task finished without a clean local hotfix, so it's back in review.",
+        status: 'failed',
+        operatorNote,
       });
     }
 
     return record;
+  }
+
+  async function refreshRunningResponseFeedbackRecord(
+    record: ResponseFeedbackRecord,
+  ): Promise<ResponseFeedbackRecord> {
+    if (
+      record.status !== 'running' ||
+      !record.remediationLaneId ||
+      !record.remediationJobId
+    ) {
+      return record;
+    }
+
+    try {
+      if (record.remediationLaneId === 'andrea_runtime') {
+        const job = await getAndreaRuntimeLane().getJob({
+          handle: {
+            laneId: 'andrea_runtime',
+            jobId: record.remediationJobId,
+          },
+          groupFolder: record.groupFolder,
+          chatJid: record.chatJid,
+        });
+        if (!job) return record;
+        return (
+          syncResponseFeedbackFromTaskStatus(
+            'andrea_runtime',
+            record.remediationJobId,
+            job.status,
+          ) || record
+        );
+      }
+
+      const job = await cursorBackendLane.getJob({
+        handle: {
+          laneId: 'cursor',
+          jobId: record.remediationJobId,
+        },
+        groupFolder: record.groupFolder,
+        chatJid: record.chatJid,
+      });
+      if (!job) return record;
+      return (
+        syncResponseFeedbackFromTaskStatus(
+          'cursor',
+          record.remediationJobId,
+          job.status,
+        ) || record
+      );
+    } catch (err) {
+      logger.warn(
+        {
+          err,
+          feedbackId: record.feedbackId,
+          laneId: record.remediationLaneId,
+          remediationJobId: record.remediationJobId,
+        },
+        'Failed to refresh response feedback remediation state',
+      );
+      return record;
+    }
   }
 
   function buildResponseFeedbackTaskSendOptions(params: {
@@ -8239,7 +8322,7 @@ async function main(): Promise<void> {
       return true;
     }
 
-    const existing = getResponseFeedback(action.feedbackId);
+    let existing = getResponseFeedback(action.feedbackId);
     if (!existing || existing.chatJid !== chatJid) {
       await channel.sendMessage(
         chatJid,
@@ -8248,6 +8331,7 @@ async function main(): Promise<void> {
       );
       return true;
     }
+    existing = await refreshRunningResponseFeedbackRecord(existing);
 
     const linkedRefs: ResponseFeedbackRecord['linkedRefs'] = {
       ...(existing.linkedRefs || {}),
@@ -8462,7 +8546,9 @@ async function main(): Promise<void> {
     const runtimeStatus = await getAndreaOpenAiBackendStatus();
     const cursorCloudStatus = getCursorCloudStatus();
     const cursorDesktopStatus = await getCursorDesktopStatus({ probe: true });
-    const laneSelection = selectResponseFeedbackLane({
+    const laneSelection = selectResponseFeedbackRetryLane({
+      record: captured,
+      availability: {
       runtimeAvailable: runtimeStatus.state === 'available',
       runtimeLocalPreferred:
         runtimeStatus.state === 'available' &&
@@ -8485,6 +8571,7 @@ async function main(): Promise<void> {
         cursorDesktopStatus.agentJobCompatibility === 'validated',
       cursorDesktopDetail:
         cursorDesktopStatus.agentJobDetail || cursorDesktopStatus.probeDetail,
+      },
     });
 
     if (!laneSelection.laneId) {
@@ -8561,7 +8648,7 @@ async function main(): Promise<void> {
         }),
         jobStatus: created.status,
         text: [
-          'Andrea started a self-fix task for that downvoted reply.',
+          `Andrea started a self-fix task for that downvoted reply using ${laneSelection.label}.`,
           formatRuntimeJobCard(created),
           formatRuntimeNextStep(created.handle.jobId),
           'If the hotfix validates locally, I will still ask before any commit or push.',
@@ -8611,7 +8698,7 @@ async function main(): Promise<void> {
       inlineActions: buildCursorJobCardActions(created),
       jobStatus: created.status,
       text: [
-        'Andrea started a self-fix task for that downvoted reply.',
+        `Andrea started a self-fix task for that downvoted reply using ${laneSelection.label}.`,
         '',
         formatCursorJobCard(created),
         '',
