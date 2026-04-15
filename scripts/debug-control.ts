@@ -6,6 +6,7 @@ import {
   setDebugLevel,
 } from '../src/debug-control.js';
 import { initDatabase } from '../src/db.js';
+import { refreshRecentResponseFeedbackTruth } from '../src/response-feedback.js';
 
 function printUsage(): void {
   console.log(
@@ -27,6 +28,7 @@ async function main(): Promise<void> {
 
   switch ((command || '').toLowerCase()) {
     case 'status':
+      await refreshRecentResponseFeedbackTruth({ limit: 5 });
       console.log(formatDebugStatus());
       return;
     case 'level': {

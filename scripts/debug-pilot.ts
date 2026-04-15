@@ -5,6 +5,7 @@ import {
   buildPilotReviewDigest,
   FLAGSHIP_PILOT_JOURNEYS,
 } from '../src/pilot-mode.js';
+import { refreshRecentResponseFeedbackTruth } from '../src/response-feedback.js';
 import type { FieldTrialSurfaceTruth } from '../src/field-trial-readiness.js';
 import type { PilotJourneyId } from '../src/types.js';
 
@@ -175,6 +176,7 @@ function formatResponseFeedbackLoop(): string[] {
 
 async function main(): Promise<void> {
   initDatabase();
+  await refreshRecentResponseFeedbackTruth({ limit: 5 });
   const truth = buildFieldTrialOperatorTruth();
   const review = buildPilotReviewDigest();
   const alexaReview = buildAlexaUtteranceReviewDigest();

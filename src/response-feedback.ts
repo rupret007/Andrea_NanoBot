@@ -1,3 +1,13 @@
+import {
+  getCursorAgentById,
+  getRuntimeBackendJob,
+  listRecentResponseFeedback,
+  updateResponseFeedback,
+} from './db.js';
+import {
+  ANDREA_OPENAI_BACKEND_ID,
+  AndreaOpenAiBackendClient,
+} from './andrea-openai-backend.js';
 import type {
   ChannelInlineAction,
   PilotBlockerOwner,
@@ -47,10 +57,156 @@ export interface ResponseFeedbackLaneSelection {
   reason: string;
 }
 
+interface ResponseFeedbackRefreshOptions {
+  runtimeStatusLookup?: (jobId: string) => Promise<string | null | undefined>;
+  cursorStatusLookup?: (jobId: string) => string | null | undefined;
+}
+
 const RESPONSE_FEEDBACK_ACTION_PREFIX = 'feedback';
 
 function normalizeText(value: string | null | undefined): string {
   return (value || '').replace(/\s+/g, ' ').trim();
+}
+
+function normalizeTaskStatus(status: string | null | undefined): string {
+  return (status || '').trim().toLowerCase();
+}
+
+function isSuccessfulResponseFeedbackTaskStatus(
+  status: string | null | undefined,
+): boolean {
+  const normalized = normalizeTaskStatus(status);
+  return (
+    normalized === 'completed' ||
+    normalized === 'complete' ||
+    normalized === 'finished' ||
+    normalized === 'succeeded' ||
+    normalized === 'success'
+  );
+}
+
+function isFailedResponseFeedbackTaskStatus(
+  status: string | null | undefined,
+): boolean {
+  const normalized = normalizeTaskStatus(status);
+  return (
+    normalized === 'failed' ||
+    normalized === 'error' ||
+    normalized === 'cancelled' ||
+    normalized === 'canceled' ||
+    normalized === 'stopped'
+  );
+}
+
+function buildResponseFeedbackFailureNote(
+  taskStatus: string | null | undefined,
+): string {
+  const normalized = normalizeTaskStatus(taskStatus);
+  switch (normalized) {
+    case 'cancelled':
+    case 'canceled':
+      return 'The remediation task was cancelled before it produced a clean local hotfix, so it is back in review.';
+    case 'stopped':
+      return 'The remediation task was stopped before it produced a clean local hotfix, so it is back in review.';
+    case 'error':
+      return 'The remediation task hit an execution error before it produced a clean local hotfix, so it is back in review.';
+    case 'failed':
+    default:
+      return 'The remediation task failed before it produced a clean local hotfix, so it is back in review.';
+  }
+}
+
+async function lookupRuntimeStatusFromBackend(
+  jobId: string,
+): Promise<string | null> {
+  try {
+    const client = new AndreaOpenAiBackendClient();
+    const job = await client.getJob(jobId);
+    return job.status || null;
+  } catch {
+    return getRuntimeBackendJob(ANDREA_OPENAI_BACKEND_ID, jobId)?.status || null;
+  }
+}
+
+function syncResponseFeedbackRecordFromTaskStatus(
+  record: ResponseFeedbackRecord,
+  taskStatus: string | null | undefined,
+): ResponseFeedbackRecord {
+  if (
+    isSuccessfulResponseFeedbackTaskStatus(taskStatus) &&
+    record.status !== 'resolved_locally' &&
+    record.status !== 'landed'
+  ) {
+    return updateResponseFeedback(record.feedbackId, {
+      status: 'resolved_locally',
+      operatorNote:
+        'The remediation task completed locally and is waiting for explicit landing approval.',
+    });
+  }
+
+  if (
+    isFailedResponseFeedbackTaskStatus(taskStatus) &&
+    record.status !== 'resolved_locally' &&
+    record.status !== 'landed'
+  ) {
+    const operatorNote = buildResponseFeedbackFailureNote(taskStatus);
+    if (record.status === 'failed' && record.operatorNote === operatorNote) {
+      return record;
+    }
+    return updateResponseFeedback(record.feedbackId, {
+      status: 'failed',
+      operatorNote,
+    });
+  }
+
+  return record;
+}
+
+export async function refreshResponseFeedbackRecordTruth(
+  record: ResponseFeedbackRecord,
+  options: ResponseFeedbackRefreshOptions = {},
+): Promise<ResponseFeedbackRecord> {
+  if (
+    record.status !== 'running' ||
+    !record.remediationLaneId ||
+    !record.remediationJobId
+  ) {
+    return record;
+  }
+
+  if (record.remediationLaneId === 'andrea_runtime') {
+    const taskStatus = options.runtimeStatusLookup
+      ? await options.runtimeStatusLookup(record.remediationJobId)
+      : await lookupRuntimeStatusFromBackend(record.remediationJobId);
+    return syncResponseFeedbackRecordFromTaskStatus(record, taskStatus);
+  }
+
+  if (record.remediationLaneId === 'cursor') {
+    const taskStatus = options.cursorStatusLookup
+      ? options.cursorStatusLookup(record.remediationJobId)
+      : getCursorAgentById(record.remediationJobId)?.status;
+    return syncResponseFeedbackRecordFromTaskStatus(record, taskStatus);
+  }
+
+  return record;
+}
+
+export async function refreshRecentResponseFeedbackTruth(
+  params: {
+    chatJid?: string;
+    status?: ResponseFeedbackRecord['status'];
+    limit?: number;
+  } = {},
+  options: ResponseFeedbackRefreshOptions = {},
+): Promise<ResponseFeedbackRecord[]> {
+  const records = listRecentResponseFeedback(params);
+  const refreshed = await Promise.all(
+    records.map((record) => refreshResponseFeedbackRecordTruth(record, options)),
+  );
+  return refreshed.sort(
+    (left, right) =>
+      Date.parse(right.updatedAt || '') - Date.parse(left.updatedAt || ''),
+  );
 }
 
 function splitInlineActionsIntoRows(

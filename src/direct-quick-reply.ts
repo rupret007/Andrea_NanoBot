@@ -11,6 +11,11 @@ const MAX_ABS_MATH_RESULT = 1_000_000_000_000;
 function stripAndreaAddressing(normalized: string): string {
   return normalized
     .replace(/(^|[\s([{\-])@andrea\b[,:;!?-]*/g, '$1')
+    .replace(
+      /^(hi|hello|hey|good morning|good afternoon|good evening)\s+andrea\b[,:;!?-]*/g,
+      '$1 ',
+    )
+    .replace(/^andrea\b[,:;!?-]*/g, '')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -258,7 +263,7 @@ export function maybeBuildDirectQuickReply(
   if (
     isStandalonePrompt(
       normalized,
-      /^(?:(?:hi|hello|hey|good morning|good afternoon|good evening)[!., ]+)?(?:(?:how(?:'s|s| is) it going)|(?:how are you))(?: (?:this|your)? ?(?:morning|afternoon|evening|today))?[?.! ]*$/,
+      /^(?:(?:hi|hello|hey|good morning|good afternoon|good evening)[!., ]+)?(?:(?:how(?:'s|s| is) it going)|(?:how are you)|(?:how we doing)|(?:how are we doing)|(?:how're we doing))(?: (?:this|your)? ?(?:morning|afternoon|evening|today))?[?.! ]*$/,
       9,
     )
   ) {

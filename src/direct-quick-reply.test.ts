@@ -39,6 +39,36 @@ describe('direct quick reply', () => {
     expect(reply).toContain('Doing well');
   });
 
+  it('returns a casual response for bare-Andrea how-we-doing checks', () => {
+    const reply = maybeBuildDirectQuickReply([
+      { content: 'Hey Andrea how we doing?' },
+    ]);
+
+    expect(reply).toContain('Doing well');
+  });
+
+  it('returns a casual response for bare-Andrea how-are-we-doing checks', () => {
+    const reply = maybeBuildDirectQuickReply([
+      { content: 'Hey Andrea, how are we doing?' },
+    ]);
+
+    expect(reply).toContain('Doing well');
+  });
+
+  it('returns a casual response for direct how-we-doing checks', () => {
+    const reply = maybeBuildDirectQuickReply([{ content: 'how we doing?' }]);
+
+    expect(reply).toContain('Doing well');
+  });
+
+  it('keeps @Andrea how-we-doing checks local-first', () => {
+    const reply = maybeBuildDirectQuickReply([
+      { content: '@Andrea hey how we doing?' },
+    ]);
+
+    expect(reply).toContain('Doing well');
+  });
+
   it('returns a casual response for good-morning check-ins', () => {
     const reply = maybeBuildDirectQuickReply([
       { content: 'good morning, how are you' },
@@ -96,6 +126,30 @@ describe('direct quick reply', () => {
   it('does not hijack mixed reminder asks that start casually', () => {
     const reply = maybeBuildDirectQuickReply([
       { content: 'hey can you remind me tomorrow at 3pm to call Sam?' },
+    ]);
+
+    expect(reply).toBeNull();
+  });
+
+  it('does not hijack mixed reminder asks that start with bare Andrea addressing', () => {
+    const reply = maybeBuildDirectQuickReply([
+      { content: 'Hey Andrea remind me tomorrow at 3pm to call Sam?' },
+    ]);
+
+    expect(reply).toBeNull();
+  });
+
+  it('does not hijack substantive thread-summary asks that start with bare Andrea addressing', () => {
+    const reply = maybeBuildDirectQuickReply([
+      { content: 'Andrea summarize my texts from yesterday' },
+    ]);
+
+    expect(reply).toBeNull();
+  });
+
+  it('does not hijack broader status asks that are not casual check-ins', () => {
+    const reply = maybeBuildDirectQuickReply([
+      { content: 'how are we doing on that project' },
     ]);
 
     expect(reply).toBeNull();

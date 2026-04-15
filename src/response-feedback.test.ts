@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
   appendResponseFeedbackActionRows,
@@ -8,9 +8,11 @@ import {
   buildResponseFeedbackRemediationPrompt,
   classifyResponseFeedbackCandidate,
   parseResponseFeedbackAction,
+  refreshResponseFeedbackRecordTruth,
   selectResponseFeedbackLane,
   selectResponseFeedbackRetryLane,
 } from './response-feedback.js';
+import { _initTestDatabase, upsertResponseFeedback } from './db.js';
 import type { ResponseFeedbackRecord } from './types.js';
 
 function buildRecord(
@@ -50,6 +52,10 @@ function buildRecord(
 }
 
 describe('response feedback helpers', () => {
+  beforeEach(() => {
+    _initTestDatabase();
+  });
+
   it('parses and builds action ids', () => {
     const actionId = buildResponseFeedbackActionId(
       '11111111-2222-3333-4444-555555555555',
@@ -342,5 +348,28 @@ describe('response feedback helpers', () => {
     expect(prompt).toContain('npm run build');
     expect(prompt).toContain('restart with npm run services:restart');
     expect(prompt).toContain('Do not commit or push');
+  });
+
+  it('refreshes a running remediation record to failed when the live task already died', async () => {
+    const record = buildRecord({
+      status: 'running',
+      classification: 'repo_side_rough_edge',
+      blockerOwner: 'repo_side',
+      responseSource: 'assistant_completion',
+      remediationLaneId: 'andrea_runtime',
+      remediationJobId: 'runtime-job-1',
+      remediationRuntimePreference: 'codex_local',
+      operatorNote: 'Saved for review.',
+    });
+    upsertResponseFeedback(record);
+
+    const refreshed = await refreshResponseFeedbackRecordTruth(record, {
+      runtimeStatusLookup: async () => 'failed',
+    });
+
+    expect(refreshed.status).toBe('failed');
+    expect(refreshed.operatorNote).toContain(
+      'failed before it produced a clean local hotfix',
+    );
   });
 });
