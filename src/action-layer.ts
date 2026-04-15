@@ -1,7 +1,10 @@
-import type {
-  CalendarActiveEventContext,
-  CalendarEvent,
+import { TIMEZONE } from './config.js';
+import {
+  planCalendarAssistantLookup,
+  type CalendarActiveEventContext,
+  type CalendarEvent,
 } from './calendar-assistant.js';
+import { isPotentialDailyCompanionPrompt } from './daily-companion.js';
 import {
   buildGroundedDaySnapshot,
   describeWindowCapacity,
@@ -16,7 +19,11 @@ import {
   type UpcomingReminderSummary,
 } from './daily-command-center.js';
 import {
+  isExplicitGoogleCalendarCreateRequest,
+} from './google-calendar-create.js';
+import {
   planContextualReminder,
+  planSimpleReminder,
   type PlannedReminder,
 } from './local-reminder.js';
 import { buildVoiceReply, normalizeVoicePrompt } from './voice-ready.js';
@@ -92,6 +99,32 @@ export interface PendingActionDraftState {
   sourceLabel: string | null;
   timeZone?: string | null;
   topicPrompt?: string | null;
+}
+
+export function shouldInterruptPendingActionLayerFlow(
+  message: string,
+  params: {
+    now?: Date;
+    timeZone?: string;
+    groupFolder?: string;
+    chatJid?: string;
+  } = {},
+): boolean {
+  const now = params.now || new Date();
+  const timeZone = params.timeZone || TIMEZONE;
+  const trimmed = message.trim();
+  if (!trimmed) {
+    return false;
+  }
+  return Boolean(
+    trimmed.startsWith('/') ||
+      isPotentialDailyCompanionPrompt(message) ||
+      planCalendarAssistantLookup(message, now, timeZone) ||
+      isExplicitGoogleCalendarCreateRequest(message) ||
+      (params.groupFolder &&
+        params.chatJid &&
+        planSimpleReminder(message, params.groupFolder, params.chatJid, now)),
+  );
 }
 
 interface ActionLayerDeps extends DailyCommandCenterDeps {

@@ -1565,7 +1565,7 @@ export function matchOutcomeReviewPrompt(
     return { kind: 'weekly_review' };
   }
   if (
-    /what do i still owe people|what still needs my attention|what(?:'s| is)? still open|what should i remember tonight/.test(
+    /what do i still owe people|what still needs my attention|what(?:'s| is)? still open/.test(
       normalized,
     )
   ) {

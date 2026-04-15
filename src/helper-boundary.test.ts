@@ -86,18 +86,22 @@ describe('helper boundary wiring', () => {
   });
 
   it('lets fresh day, calendar, reminder, and slash-command prompts interrupt pending action continuations', () => {
-    const source = readRepoFile('src/index.ts');
+    const indexSource = readRepoFile('src/index.ts');
+    const actionLayerSource = readRepoFile('src/action-layer.ts');
 
-    expect(source).toContain(
-      'const shouldInterruptPendingActionFlow = Boolean(',
+    expect(indexSource).toContain('shouldInterruptPendingActionLayerFlow(');
+    expect(actionLayerSource).toContain('trimmed.startsWith(\'/\')');
+    expect(actionLayerSource).toContain(
+      'isPotentialDailyCompanionPrompt(message)',
     );
-    expect(source).toContain("lastContent.trim().startsWith('/')");
-    expect(source).toContain('isPotentialDailyCompanionPrompt(lastContent)');
-    expect(source).toContain(
-      'planCalendarAssistantLookup(lastContent, now, TIMEZONE)',
+    expect(actionLayerSource).toContain(
+      'planCalendarAssistantLookup(message, now, timeZone)',
     );
-    expect(source).toContain(
-      'planSimpleReminder(lastContent, group.folder, chatJid, now)',
+    expect(actionLayerSource).toContain(
+      'isExplicitGoogleCalendarCreateRequest(message)',
+    );
+    expect(actionLayerSource).toContain(
+      'planSimpleReminder(message, params.groupFolder, params.chatJid, now)',
     );
   });
 

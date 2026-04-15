@@ -288,6 +288,21 @@ function isCommandOnlyCommunicationPrompt(value: string): boolean {
   );
 }
 
+function isCommandOnlyCommunicationFollowup(
+  input: Pick<CommunicationContextInput, 'text' | 'priorContext' | 'conversationSummary'>,
+): boolean {
+  const rawPromptText = input.text || '';
+  return (
+    isCommandOnlyCommunicationPrompt(rawPromptText) ||
+    (isMeaninglessCommunicationBody(cleanMessageBody(rawPromptText)) &&
+      Boolean(
+        input.priorContext?.communicationThreadId ||
+          input.priorContext?.lastCommunicationSummary ||
+          input.conversationSummary,
+      ))
+  );
+}
+
 function looksLikeNonCommunicationCompanionPrompt(value: string): boolean {
   return /^(?:\/(?:start|help|commands|features)\b|what am i forgetting\b|what should i remember tonight\b|what should i do next\b|what(?:'|’)?s still open\b|what(?:'|’)?s on my (?:schedule|calendar)\b|what(?:'|’)?s the news today\b|today(?:'|’)?s news\b|what can you do\b|save that(?: for later)?\b|remind me later\b|add .+\bcalendar\b|move that\b|delete that\b|cancel that\b|show (?:me )?(?:my )?(?:grocery list|errands|bills|meals)\b|add .+\bto my grocery list\b)/i.test(
     value.trim(),
@@ -295,8 +310,14 @@ function looksLikeNonCommunicationCompanionPrompt(value: string): boolean {
 }
 
 function looksLikeCommunicationMessageBody(value: string): boolean {
+  const raw = value.trim();
+  if (!raw) return false;
+  if (/^[?!.,:;-]+$/.test(raw)) return false;
+  if (isCommandOnlyCommunicationPrompt(raw)) return false;
+  if (looksLikeNonCommunicationCompanionPrompt(raw)) return false;
   const normalized = cleanMessageBody(value);
   if (!normalized) return false;
+  if (isMeaninglessCommunicationBody(normalized)) return false;
   if (isCommandOnlyCommunicationPrompt(normalized)) return false;
   if (looksLikeNonCommunicationCompanionPrompt(normalized)) return false;
   if (/^[^:]{1,40}:\s+\S+/.test(normalized)) return true;
@@ -317,6 +338,13 @@ function cleanMessageBody(value: string): string {
       .replace(/^\s*>+\s*/gm, '')
       .trim(),
   );
+}
+
+function isMeaninglessCommunicationBody(
+  value: string | null | undefined,
+): boolean {
+  const normalized = normalizeText(value || '');
+  return !normalized || /^[?!.,:;-]+$/.test(normalized);
 }
 
 function extractQuotedCommunicationPromptBody(value: string | undefined): string {
@@ -342,8 +370,14 @@ function extractLatestInboundMessage(chatJid: string | undefined): {
     return looksLikeCommunicationMessageBody(item.content);
   });
   if (!message) return {};
+  if (
+    isCommandOnlyCommunicationPrompt(message.content) ||
+    looksLikeNonCommunicationCompanionPrompt(message.content)
+  ) {
+    return {};
+  }
   const cleaned = cleanMessageBody(message.content);
-  if (!cleaned) return {};
+  if (isMeaninglessCommunicationBody(cleaned)) return {};
   return {
     text: cleaned,
     messageId: message.id,
@@ -410,9 +444,16 @@ function looksAssistantNarratedContext(text: string | null | undefined): boolean
 function looksLikeMalformedCommunicationSummary(value: string | null | undefined): boolean {
   const normalized = normalizeText(value || '');
   if (!normalized) return true;
-  return /^(?:they wants an answer about\.?|they wants a follow-up about\.?|they said\.?)$/i.test(
+  return /^(?:they wants an answer about|they wants a follow-up about|they said)(?:\s*\.)?$/i.test(
     normalized,
   );
+}
+
+function looksGenericCommandOnlyCommunicationSummary(
+  value: string | null | undefined,
+): boolean {
+  const normalized = normalizeText(value || '');
+  return /still needs a clean follow-up/i.test(normalized);
 }
 
 function looksLikeCommunicationContextText(value: string | null | undefined): boolean {
@@ -439,7 +480,10 @@ function findFallbackCommunicationThread(
     followupStates: ['reply_needed', 'scheduled', 'waiting_on_them'],
     limit: 10,
   }).filter(
-    (thread) => !looksLikeMalformedCommunicationSummary(thread.lastInboundSummary),
+    (thread) =>
+      !looksLikeMalformedCommunicationSummary(thread.lastInboundSummary) &&
+      !isMeaninglessCommunicationBody(thread.lastInboundSummary) &&
+      !looksGenericCommandOnlyCommunicationSummary(thread.lastInboundSummary),
   );
 
   if (threads.length === 0) return undefined;
@@ -460,22 +504,112 @@ function findFallbackCommunicationThread(
   return threads.find((thread) => thread.channelChatJid === input.chatJid) || threads[0];
 }
 
+function buildCommandOnlyCommunicationFallbackSummary(params: {
+  existing?: CommunicationThreadRecord;
+  linkedLifeThreads: LifeThread[];
+  linkedSubjects: ProfileSubject[];
+}): string | null {
+  const existingSummary = normalizeText(params.existing?.lastInboundSummary || '');
+  if (
+    existingSummary &&
+    !looksLikeMalformedCommunicationSummary(existingSummary) &&
+    !isMeaninglessCommunicationBody(existingSummary) &&
+    !looksGenericCommandOnlyCommunicationSummary(existingSummary)
+  ) {
+    return existingSummary;
+  }
+
+  const lifeThreadSummary = normalizeText(
+    params.linkedLifeThreads[0]?.nextAction ||
+      params.linkedLifeThreads[0]?.summary ||
+      '',
+  );
+  if (lifeThreadSummary) {
+    return clipText(lifeThreadSummary, 140);
+  }
+
+  const personName = params.linkedSubjects[0]?.displayName?.trim();
+  if (personName) {
+    return `${personName} still needs a clean follow-up.`;
+  }
+
+  return null;
+}
+
+function repairCommandOnlyDraftInput(
+  input: CommunicationContextInput,
+): CommunicationContextInput {
+  if (!isCommandOnlyCommunicationPrompt(input.text || '')) {
+    return input;
+  }
+
+  const existing =
+    input.priorContext?.communicationThreadId
+      ? getCommunicationThread(input.priorContext.communicationThreadId)
+      : undefined;
+  const summaryCandidate =
+    normalizeText(input.priorContext?.lastCommunicationSummary || '') ||
+    normalizeText(input.conversationSummary || '') ||
+    normalizeText(existing?.lastInboundSummary || '');
+  if (
+    summaryCandidate &&
+    !looksLikeMalformedCommunicationSummary(summaryCandidate)
+  ) {
+    return input;
+  }
+
+  const lifeThreadIds = [
+    ...(input.priorContext?.communicationLifeThreadIds || []),
+    ...(existing?.linkedLifeThreadIds || []),
+  ];
+  if (lifeThreadIds.length === 0) {
+    return input;
+  }
+
+  const fallbackThread = listLifeThreadsForGroup(input.groupFolder, [
+    'active',
+    'paused',
+  ]).find((thread) => lifeThreadIds.includes(thread.id));
+  const repairedSummary = normalizeText(
+    fallbackThread?.nextAction || fallbackThread?.summary || '',
+  );
+  if (!repairedSummary) {
+    return input;
+  }
+
+  return {
+    ...input,
+    conversationSummary: repairedSummary,
+    priorContext: {
+      ...input.priorContext,
+      threadTitle: input.priorContext?.threadTitle || fallbackThread?.title,
+      communicationLifeThreadIds: Array.from(
+        new Set([...(input.priorContext?.communicationLifeThreadIds || []), ...lifeThreadIds]),
+      ),
+      lastCommunicationSummary: repairedSummary,
+    },
+  };
+}
+
 function extractMessageText(input: CommunicationContextInput): {
   text?: string;
   messageId?: string;
   timestamp?: string;
   source: 'direct' | 'reply' | 'prior' | 'chat';
 } {
+  const rawInputText = input.text || '';
+  const cleanedInputText = cleanMessageBody(rawInputText);
+  const commandOnlyPrompt = isCommandOnlyCommunicationFollowup(input);
   const quotedDirect = extractQuotedCommunicationPromptBody(input.text);
-  if (quotedDirect) {
+  if (!isMeaninglessCommunicationBody(quotedDirect)) {
     return { text: quotedDirect, source: 'direct' };
   }
-  const direct = cleanMessageBody(input.text || '');
-  if (direct) {
+  const direct = commandOnlyPrompt ? '' : cleanedInputText;
+  if (!isMeaninglessCommunicationBody(direct)) {
     return { text: direct, source: 'direct' };
   }
   const reply = cleanMessageBody(input.replyText || '');
-  if (reply) {
+  if (!isMeaninglessCommunicationBody(reply)) {
     return { text: reply, source: 'reply' };
   }
   const prior = cleanMessageBody(
@@ -489,7 +623,7 @@ function extractMessageText(input: CommunicationContextInput): {
   if (sameChat.text && prior && looksAssistantNarratedContext(prior)) {
     return { ...sameChat, source: 'chat' };
   }
-  if (prior && looksLikeCommunicationContextText(prior)) {
+  if (!isMeaninglessCommunicationBody(prior) && looksLikeCommunicationContextText(prior)) {
     return { text: prior, source: 'prior' };
   }
   if (sameChat.text) {
@@ -1097,45 +1231,123 @@ export function analyzeCommunicationMessage(
 ): CommunicationAnalysisResult {
   const now = input.now || new Date();
   const extracted = extractMessageText(input);
-  const messageText = normalizeText(extracted.text);
+  let messageText = normalizeText(extracted.text);
+  const commandOnlyPrompt = isCommandOnlyCommunicationFollowup(input);
+  if (commandOnlyPrompt && isMeaninglessCommunicationBody(messageText)) {
+    messageText = '';
+  }
+  const subjects = listProfileSubjectsForGroup(input.groupFolder);
+  const linkedSubjects = resolveSubjectIds(
+    input,
+    messageText || normalizeText(input.text || ''),
+    subjects,
+    now,
+  );
+  const linkedLifeThreads = resolveLifeThreads(input, linkedSubjects);
+  const existing = resolveExistingThread(input, linkedSubjects);
+  const effectiveLinkedSubjects =
+    linkedSubjects.length > 0 || !existing
+      ? linkedSubjects
+      : existing.linkedSubjectIds
+          .map((subjectId) => subjects.find((subject) => subject.id === subjectId))
+          .filter((subject): subject is ProfileSubject => Boolean(subject));
+  const availableLifeThreads = listLifeThreadsForGroup(input.groupFolder, [
+    'active',
+    'paused',
+  ]);
+  const effectiveLinkedLifeThreads =
+    linkedLifeThreads.length > 0 || !existing
+      ? linkedLifeThreads
+      : existing.linkedLifeThreadIds
+          .map((threadId) => availableLifeThreads.find((thread) => thread.id === threadId))
+          .filter((thread): thread is LifeThread => Boolean(thread));
+  const profileFacts = listProfileFactsForGroup(input.groupFolder, ['accepted']);
+  const toneHints = buildToneHints(profileFacts, effectiveLinkedSubjects);
+  const recoveredSummary =
+    commandOnlyPrompt &&
+    (!messageText || looksLikeMalformedCommunicationSummary(messageText))
+      ? buildCommandOnlyCommunicationFallbackSummary({
+          existing,
+          linkedLifeThreads: effectiveLinkedLifeThreads,
+          linkedSubjects: effectiveLinkedSubjects,
+        })
+      : null;
+  if (!messageText && recoveredSummary) {
+    messageText = recoveredSummary;
+  }
+  const shouldForceCommandContext =
+    commandOnlyPrompt &&
+    extracted.source !== 'direct' &&
+    extracted.source !== 'reply' &&
+    (!messageText ||
+      isMeaninglessCommunicationBody(messageText) ||
+      looksLikeMalformedCommunicationSummary(messageText) ||
+      !looksLikeCommunicationMessageBody(messageText));
+  const preservedCommandSummary =
+    shouldForceCommandContext
+      ? [
+          normalizeText(input.priorContext?.lastCommunicationSummary || ''),
+          normalizeText(input.conversationSummary || ''),
+          normalizeText(existing?.lastInboundSummary || ''),
+          normalizeText(recoveredSummary || ''),
+        ].find(
+          (candidate) =>
+            !isMeaninglessCommunicationBody(candidate) &&
+            !looksLikeMalformedCommunicationSummary(candidate) &&
+            looksLikeCommunicationContextText(candidate),
+        ) || null
+      : null;
   if (!messageText) {
     return {
       ok: false,
       clarificationQuestion:
         'Paste the message or quote the part you want me to read first.',
       suggestedActions: [],
-      linkedLifeThreads: [],
-      linkedSubjects: [],
+      linkedLifeThreads: effectiveLinkedLifeThreads,
+      linkedSubjects: effectiveLinkedSubjects,
     };
   }
-
-  const subjects = listProfileSubjectsForGroup(input.groupFolder);
-  const linkedSubjects = resolveSubjectIds(input, messageText, subjects, now);
-  const linkedLifeThreads = resolveLifeThreads(input, linkedSubjects);
-  const profileFacts = listProfileFactsForGroup(input.groupFolder, ['accepted']);
-  const toneHints = buildToneHints(profileFacts, linkedSubjects);
-  const existing = resolveExistingThread(input, linkedSubjects);
+  const effectiveMessageText = normalizeText(
+    preservedCommandSummary || recoveredSummary || messageText,
+  );
+  const shouldReuseExistingPriorState =
+    extracted.source === 'prior' &&
+    existing &&
+    !recoveredSummary &&
+    !looksLikeMalformedCommunicationSummary(existing.lastInboundSummary);
   const urgency =
-    extracted.source === 'prior' && existing
+    shouldReuseExistingPriorState
       ? existing.urgency
-      : inferUrgency(messageText, now, extracted.timestamp);
+      : inferUrgency(effectiveMessageText, now, extracted.timestamp);
   const followupState =
-    extracted.source === 'prior' && existing
+    shouldReuseExistingPriorState
       ? existing.followupState
-      : inferFollowupState(messageText, urgency);
-  const suggestedActions = pickSuggestedActions(followupState, linkedLifeThreads);
+      : inferFollowupState(effectiveMessageText, urgency);
+  const suggestedActions = pickSuggestedActions(
+    followupState,
+    effectiveLinkedLifeThreads,
+  );
+  const shouldPreserveEffectiveSummary =
+    commandOnlyPrompt && looksLikeCommunicationContextText(effectiveMessageText);
   const summaryText =
-    extracted.source === 'prior' && existing?.lastInboundSummary
+    shouldReuseExistingPriorState && existing?.lastInboundSummary
       ? existing.lastInboundSummary
-      : buildSummaryText(messageText, linkedSubjects, followupState);
+      : preservedCommandSummary ||
+        recoveredSummary ||
+        (shouldPreserveEffectiveSummary ? effectiveMessageText : null) ||
+        buildSummaryText(
+          effectiveMessageText,
+          effectiveLinkedSubjects,
+          followupState,
+        );
   const thread = upsertThreadFromAnalysis({
     existing,
     sourceChannel: toSignalChannel(input.channel),
     groupFolder: input.groupFolder,
     chatJid: input.chatJid,
     messageId: extracted.messageId,
-    linkedSubjects,
-    linkedLifeThreads,
+    linkedSubjects: effectiveLinkedSubjects,
+    linkedLifeThreads: effectiveLinkedLifeThreads,
     summaryText,
     followupState,
     urgency,
@@ -1166,7 +1378,7 @@ export function analyzeCommunicationMessage(
 
   return {
     ok: true,
-    messageText,
+    messageText: effectiveMessageText,
     summaryText,
     followupState,
     urgency,
@@ -1177,8 +1389,100 @@ export function analyzeCommunicationMessage(
     suggestedActions,
     explanation: buildExplanation(followupState, urgency),
     thread,
-    linkedLifeThreads,
-    linkedSubjects,
+    linkedLifeThreads: effectiveLinkedLifeThreads,
+    linkedSubjects: effectiveLinkedSubjects,
+  };
+}
+
+function repairCommandOnlyAnalysisResult(
+  input: CommunicationContextInput,
+  analysis: CommunicationAnalysisResult,
+): CommunicationAnalysisResult {
+  if (!analysis.ok || !isCommandOnlyCommunicationFollowup(input)) {
+    return analysis;
+  }
+
+  const currentSummary = normalizeText(analysis.summaryText || '');
+  if (
+    currentSummary &&
+    !looksLikeMalformedCommunicationSummary(currentSummary) &&
+    !looksGenericCommandOnlyCommunicationSummary(currentSummary)
+  ) {
+    return analysis;
+  }
+
+  const fallbackSummary = buildCommandOnlyCommunicationFallbackSummary({
+    existing: analysis.thread,
+    linkedLifeThreads: analysis.linkedLifeThreads,
+    linkedSubjects: analysis.linkedSubjects,
+  });
+  if (!fallbackSummary) {
+    return analysis;
+  }
+
+  if (analysis.thread) {
+    updateCommunicationThread(analysis.thread.id, {
+      lastInboundSummary: fallbackSummary,
+    });
+  }
+
+  return {
+    ...analysis,
+    messageText: fallbackSummary,
+    summaryText: fallbackSummary,
+    thread: analysis.thread
+      ? {
+          ...analysis.thread,
+          lastInboundSummary: fallbackSummary,
+        }
+      : analysis.thread,
+  };
+}
+
+function stabilizeCommunicationDraftAnalysis(
+  analysis: CommunicationAnalysisResult,
+): CommunicationAnalysisResult {
+  if (!analysis.ok) {
+    return analysis;
+  }
+
+  const currentSummary = normalizeText(analysis.summaryText || '');
+  if (
+    currentSummary &&
+    !looksLikeMalformedCommunicationSummary(currentSummary) &&
+    !looksGenericCommandOnlyCommunicationSummary(currentSummary) &&
+    !isMeaninglessCommunicationBody(currentSummary)
+  ) {
+    return analysis;
+  }
+
+  const fallbackSummary = buildCommandOnlyCommunicationFallbackSummary({
+    existing: analysis.thread,
+    linkedLifeThreads: analysis.linkedLifeThreads,
+    linkedSubjects: analysis.linkedSubjects,
+  });
+  if (!fallbackSummary) {
+    return analysis;
+  }
+
+  if (analysis.thread) {
+    updateCommunicationThread(analysis.thread.id, {
+      lastInboundSummary: fallbackSummary,
+    });
+  }
+
+  return {
+    ...analysis,
+    messageText: isMeaninglessCommunicationBody(analysis.messageText)
+      ? fallbackSummary
+      : analysis.messageText,
+    summaryText: fallbackSummary,
+    thread: analysis.thread
+      ? {
+          ...analysis.thread,
+          lastInboundSummary: fallbackSummary,
+        }
+      : analysis.thread,
   };
 }
 
@@ -1244,8 +1548,14 @@ function buildDeterministicCommunicationDraft(input: {
 export function draftCommunicationReply(
   input: CommunicationContextInput,
 ): CommunicationDraftResult {
-  const analysis = analyzeCommunicationMessage(input);
-  const style = inferStyle(input.text || '');
+  const repairedInput = repairCommandOnlyDraftInput(input);
+  const analysis = stabilizeCommunicationDraftAnalysis(
+    repairCommandOnlyAnalysisResult(
+      repairedInput,
+      analyzeCommunicationMessage(repairedInput),
+    ),
+  );
+  const style = inferStyle(repairedInput.text || '');
   if (!analysis.ok || !analysis.summaryText) {
     return {
       ok: false,
@@ -1259,12 +1569,12 @@ export function draftCommunicationReply(
   }
 
   return finalizeCommunicationDraftResult({
-    baseInput: input,
+    baseInput: repairedInput,
     analysis,
     style,
     draftText: buildDeterministicCommunicationDraft({
       analysis,
-      groupFolder: input.groupFolder,
+      groupFolder: repairedInput.groupFolder,
       style,
     }),
     draftMode: 'deterministic',
@@ -1274,8 +1584,14 @@ export function draftCommunicationReply(
 export async function draftCommunicationReplyWithChannelFluidity(
   input: CommunicationContextInput,
 ): Promise<CommunicationDraftResult> {
-  const analysis = analyzeCommunicationMessage(input);
-  const style = inferStyle(input.text || '');
+  const repairedInput = repairCommandOnlyDraftInput(input);
+  const analysis = stabilizeCommunicationDraftAnalysis(
+    repairCommandOnlyAnalysisResult(
+      repairedInput,
+      analyzeCommunicationMessage(repairedInput),
+    ),
+  );
+  const style = inferStyle(repairedInput.text || '');
   if (!analysis.ok || !analysis.summaryText) {
     return {
       ok: false,
@@ -1290,13 +1606,13 @@ export async function draftCommunicationReplyWithChannelFluidity(
 
   const deterministicDraft = buildDeterministicCommunicationDraft({
     analysis,
-    groupFolder: input.groupFolder,
+    groupFolder: repairedInput.groupFolder,
     style,
   });
 
-  if (input.channel !== 'bluebubbles') {
+  if (repairedInput.channel !== 'bluebubbles') {
     return finalizeCommunicationDraftResult({
-      baseInput: input,
+      baseInput: repairedInput,
       analysis,
       style,
       draftText: deterministicDraft,
@@ -1307,8 +1623,8 @@ export async function draftCommunicationReplyWithChannelFluidity(
   const modelDraft = await draftBlueBubblesCommunicationReply({
     messageText:
       analysis.messageText ||
-      input.replyText ||
-      input.conversationSummary ||
+      repairedInput.replyText ||
+      repairedInput.conversationSummary ||
       analysis.summaryText,
     summaryText: analysis.summaryText,
     style,
@@ -1322,7 +1638,7 @@ export async function draftCommunicationReplyWithChannelFluidity(
   });
 
   return finalizeCommunicationDraftResult({
-    baseInput: input,
+    baseInput: repairedInput,
     analysis,
     style,
     draftText: modelDraft.draftText || deterministicDraft,

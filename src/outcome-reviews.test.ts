@@ -653,6 +653,7 @@ describe('outcome reviews', () => {
       kind: 'still_open_person',
       personName: 'Candace',
     });
+    expect(matchOutcomeReviewPrompt('what should I remember tonight')).toBeNull();
     expect(interpretOutcomeReviewControl("that's done")).toEqual({
       kind: 'mark_handled',
     });

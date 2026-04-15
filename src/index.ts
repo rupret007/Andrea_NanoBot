@@ -182,12 +182,13 @@ import { readEnvFile } from './env.js';
 import {
   advancePendingActionDraft,
   advancePendingActionReminder,
-  planActionLayerIntent,
   buildActionLayerContextFromDailyCommandCenter,
   buildActionLayerResponse,
   isActionLayerContextExpired,
   isPendingActionDraftExpired,
   isPendingActionReminderExpired,
+  planActionLayerIntent,
+  shouldInterruptPendingActionLayerFlow,
   type ActionLayerContextState,
   type PendingActionDraftState,
   type PendingActionReminderState,
@@ -4705,6 +4706,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         return false;
       }
 
+      clearPendingActionReminderState(chatJid);
+      clearPendingActionDraftState(chatJid);
+
       const noWritableCalendars =
         !writableCalendars || writableCalendars.length === 0;
       const pendingDraftState =
@@ -5145,13 +5149,14 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       }
 
       const freshIntent = planActionLayerIntent(lastContent);
-      const shouldInterruptPendingActionFlow = Boolean(
+      const shouldInterruptPendingActionFlow =
         !freshIntent &&
-        (lastContent.trim().startsWith('/') ||
-          isPotentialDailyCompanionPrompt(lastContent) ||
-          planCalendarAssistantLookup(lastContent, now, TIMEZONE) ||
-          planSimpleReminder(lastContent, group.folder, chatJid, now)),
-      );
+        shouldInterruptPendingActionLayerFlow(lastContent, {
+          now,
+          timeZone: TIMEZONE,
+          groupFolder: group.folder,
+          chatJid,
+        });
       const activeActionReminder = getPendingActionReminderState(chatJid);
       if (activeActionReminder) {
         if (freshIntent) {
@@ -5552,6 +5557,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     }
 
     try {
+      clearPendingActionReminderState(chatJid);
+      clearPendingActionDraftState(chatJid);
       if (calendarResponse.schedulingContext) {
         setGoogleCalendarSchedulingContext(
           chatJid,

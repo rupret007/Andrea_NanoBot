@@ -1,4 +1,7 @@
 import http from 'http';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -96,7 +99,13 @@ function buildConfig(
 }
 
 describe('BlueBubbles channel', () => {
+  let tempProjectRoot: string;
+
   beforeEach(() => {
+    tempProjectRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'andrea-bluebubbles-monitor-'),
+    );
+    vi.spyOn(process, 'cwd').mockReturnValue(tempProjectRoot);
     _initTestDatabase();
     clearBlueBubblesMonitorState();
   });
@@ -105,6 +114,7 @@ describe('BlueBubbles channel', () => {
     vi.restoreAllMocks();
     vi.useRealTimers();
     clearBlueBubblesMonitorState();
+    fs.rmSync(tempProjectRoot, { recursive: true, force: true });
   });
 
   it('resolves config with the live V1 BlueBubbles fields', () => {
@@ -1743,19 +1753,21 @@ describe('BlueBubbles channel', () => {
       baseUrlCandidates: undefined,
     } as unknown as BlueBubblesConfig;
 
+    const onHealthUpdate = vi.fn();
     const channel = new BlueBubblesChannel(config, {
       onMessage: vi.fn(),
       onChatMetadata: vi.fn(),
       registeredGroups: () => ({}),
-      onHealthUpdate: vi.fn(),
+      onHealthUpdate,
     });
 
     try {
       await channel.connect();
 
       const monitorState = readBlueBubblesMonitorState();
-      expect(monitorState.activeBaseUrl).toBe(apiStub.baseUrl);
       expect(monitorState.detectionState).toBe('healthy');
+      const latestHealth = onHealthUpdate.mock.calls.at(-1)?.[0];
+      expect(latestHealth?.detail).toContain(`active endpoint ${apiStub.baseUrl}`);
     } finally {
       await channel.disconnect();
       await apiStub.close();

@@ -6,6 +6,7 @@ import {
   listCommunicationThreadsForGroup,
   storeChatMetadata,
   storeMessageDirect,
+  updateCommunicationThread,
   upsertLifeThread,
   upsertProfileSubject,
 } from './db.js';
@@ -278,6 +279,112 @@ describe('communication companion', () => {
     expect(result.draftText).toContain('Candace');
     expect(result.draftText).toContain('dinner still works tonight');
     expect(result.draftText).not.toContain('what am I forgetting');
+  });
+
+  it('recovers reply-help from linked life thread context when the stored thread summary is malformed', () => {
+    seedCandace();
+    upsertLifeThread({
+      id: 'thread-candace-live',
+      groupFolder: 'main',
+      title: 'Candace',
+      category: 'relationship',
+      status: 'active',
+      scope: 'personal',
+      relatedSubjectIds: ['subject-candace'],
+      contextTags: ['candace', 'dinner'],
+      summary: 'Candace wants a follow-up about whether dinner still works tonight.',
+      nextAction:
+        'Candace wants a follow-up about whether dinner still works tonight.',
+      nextFollowupAt: null,
+      sourceKind: 'inferred',
+      confidenceKind: 'high',
+      userConfirmed: true,
+      sensitivity: 'normal',
+      surfaceMode: 'default',
+      mergedIntoThreadId: null,
+      createdAt: '2026-04-14T11:45:00.000Z',
+      lastUpdatedAt: '2026-04-14T11:45:00.000Z',
+      lastUsedAt: '2026-04-14T11:45:00.000Z',
+      followthroughMode: 'important_only',
+      lastSurfacedAt: null,
+      snoozedUntil: null,
+      linkedTaskId: null,
+    });
+    const seeded = analyzeCommunicationMessage({
+      channel: 'telegram',
+      groupFolder: 'main',
+      chatJid: 'tg:main',
+      text: 'Candace: Can you let me know if dinner still works tonight?',
+      now: new Date('2026-04-14T11:45:00.000Z'),
+    });
+    expect(seeded.thread?.id).toBeTruthy();
+    updateCommunicationThread(seeded.thread!.id, {
+      lastInboundSummary: 'They wants an answer about .',
+    });
+
+    const result = draftCommunicationReply({
+      channel: 'telegram',
+      groupFolder: 'main',
+      chatJid: 'tg:main',
+      text: 'what should I say back',
+      priorContext: {
+        communicationThreadId: seeded.thread!.id,
+        communicationSubjectIds: ['subject-candace'],
+        communicationLifeThreadIds: ['thread-candace-live'],
+      },
+      now: new Date('2026-04-14T11:51:00.000Z'),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.summaryText).toContain('Candace wants a follow-up');
+    expect(result.draftText).toContain('Candace');
+    expect(result.draftText).toContain('dinner still works tonight');
+    expect(result.draftText).not.toContain('They wants an answer about .');
+
+    const repaired = listCommunicationThreadsForGroup({
+      groupFolder: 'main',
+      includeDisabled: false,
+      limit: 10,
+    }).find((thread) => thread.id === seeded.thread!.id);
+    expect(repaired?.lastInboundSummary).toContain(
+      'Candace wants a follow-up about whether dinner still works tonight.',
+    );
+  });
+
+  it('treats question-mark reply-help prompts as commands instead of message bodies', () => {
+    seedCandace();
+    const seeded = analyzeCommunicationMessage({
+      channel: 'telegram',
+      groupFolder: 'main',
+      chatJid: 'tg:main',
+      text: 'Candace: Can you let me know if dinner still works tonight?',
+      now: new Date('2026-04-14T11:45:00.000Z'),
+    });
+    expect(seeded.thread?.id).toBeTruthy();
+    updateCommunicationThread(seeded.thread!.id, {
+      lastInboundSummary: 'They wants an answer about .',
+    });
+
+    const result = draftCommunicationReply({
+      channel: 'telegram',
+      groupFolder: 'main',
+      chatJid: 'tg:main',
+      text: 'what should I say back?',
+      priorContext: {
+        communicationThreadId: seeded.thread!.id,
+        communicationSubjectIds: ['subject-candace'],
+        communicationLifeThreadIds: ['thread-candace-live'],
+      },
+      now: new Date('2026-04-14T11:51:00.000Z'),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.summaryText).not.toContain('?');
+    expect(result.summaryText).not.toContain('They wants an answer about .');
+    expect(result.draftText).toContain('Candace');
+    expect(result.draftText).not.toContain('They wants an answer about .');
+    expect(result.draftText).not.toContain('circle back on ?');
+    expect(result.draftText).not.toContain('circle back on They');
   });
 
   it('builds warmer drafts from relationship-aware message context', () => {

@@ -4,6 +4,7 @@ import {
   advancePendingActionDraft,
   advancePendingActionReminder,
   buildActionLayerResponse,
+  shouldInterruptPendingActionLayerFlow,
   type PendingActionDraftState,
 } from './action-layer.js';
 import type { CalendarActiveEventContext } from './calendar-assistant.js';
@@ -509,6 +510,31 @@ describe('buildActionLayerResponse', () => {
 });
 
 describe('action-layer pending flows', () => {
+  it('interrupts pending reminder follow-through when a fresh calendar create ask arrives', () => {
+    expect(
+      shouldInterruptPendingActionLayerFlow(
+        'Add Andrea QA disposable event Friday at 3PM to my calendar',
+        {
+          now: new Date('2026-04-15T09:00:00-05:00'),
+          timeZone: 'America/Chicago',
+          groupFolder: 'main',
+          chatJid: 'tg:1',
+        },
+      ),
+    ).toBe(true);
+  });
+
+  it('does not treat a bare timing follow-up as an interrupting new intent', () => {
+    expect(
+      shouldInterruptPendingActionLayerFlow('Start time is 11AM', {
+        now: new Date('2026-04-15T09:00:00-05:00'),
+        timeZone: 'America/Chicago',
+        groupFolder: 'main',
+        chatJid: 'tg:1',
+      }),
+    ).toBe(false);
+  });
+
   it('turns a pending follow-through reminder into a plain reminder task from a timing-only reply', () => {
     const result = advancePendingActionReminder(
       'at 4',
