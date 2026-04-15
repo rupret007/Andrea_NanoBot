@@ -302,7 +302,9 @@ export function buildRuntimeStatusInlineActions(): NonNullable<
 }
 
 function buildRuntimeTaskPayload(
-  job: Pick<BackendJobDetails, 'handle' | 'summary' | 'metadata'>,
+  job: Pick<BackendJobDetails, 'handle' | 'summary' | 'metadata'> & {
+    status?: BackendJobDetails['status'] | null;
+  },
   contextType: TaskContextType,
   extras: {
     outputPreview?: string | null;
@@ -313,6 +315,7 @@ function buildRuntimeTaskPayload(
     taskContextType: contextType,
     taskTitle: `Codex/OpenAI runtime ${formatOpaqueTaskId(job.handle.jobId)}`,
     taskSummary: summarizeVisibleTaskText(job.summary),
+    taskStatus: job.status || null,
     outputPreview: summarizeVisibleTaskText(extras.outputPreview),
     outputSource: extras.outputSource || null,
   });

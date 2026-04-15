@@ -6491,6 +6491,29 @@ export function getResponseFeedbackByMessage(params: {
   return mapResponseFeedbackRow(row);
 }
 
+export function getResponseFeedbackByRemediationJob(params: {
+  laneId: NonNullable<ResponseFeedbackRecord['remediationLaneId']>;
+  jobId: string;
+}): ResponseFeedbackRecord | undefined {
+  const row = db
+    .prepare(
+      `
+        SELECT *
+        FROM response_feedback
+        WHERE remediation_lane_id = ? AND remediation_job_id = ?
+        ORDER BY updated_at DESC
+        LIMIT 1
+      `,
+    )
+    .get(params.laneId, params.jobId) as
+    | Parameters<typeof mapResponseFeedbackRow>[0]
+    | undefined;
+  if (!row || !isValidGroupFolder(row.group_folder)) {
+    return undefined;
+  }
+  return mapResponseFeedbackRow(row);
+}
+
 export function listRecentResponseFeedback(params: {
   chatJid?: string;
   status?: ResponseFeedbackRecord['status'];

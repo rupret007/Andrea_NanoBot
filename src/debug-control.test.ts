@@ -349,6 +349,45 @@ describe('debug log tails', () => {
     expect(status).toContain('Journey daily_guidance: live_proven');
   });
 
+  it('shows local hotfix pending landing when response feedback resolved locally', () => {
+    upsertResponseFeedback({
+      feedbackId: 'feedback-local',
+      createdAt: '2026-04-07T17:06:00.000Z',
+      updatedAt: '2026-04-07T17:09:00.000Z',
+      status: 'resolved_locally',
+      classification: 'repo_side_broken',
+      channel: 'telegram',
+      groupFolder: 'main',
+      chatJid: 'tg:main',
+      threadId: null,
+      platformMessageId: '101',
+      userMessageId: '100',
+      issueId: 'issue-2',
+      routeKey: 'assistant_completion',
+      capabilityId: 'research.answer',
+      handlerKind: 'assistant_completion',
+      responseSource: 'assistant_completion',
+      traceReason: 'generic fallback',
+      traceNotes: [],
+      blockerClass: 'response_feedback_repo_side_broken',
+      blockerOwner: 'repo_side',
+      originalUserText: "what's the news today",
+      assistantReplyText: 'I can help with updates.',
+      linkedRefs: {
+        responseFeedbackId: 'feedback-local',
+      },
+      remediationLaneId: 'andrea_runtime',
+      remediationJobId: 'job-local',
+      remediationRuntimePreference: 'codex_local',
+      remediationPrompt: 'fix it',
+      operatorNote: 'Local hotfix ready to land.',
+    });
+
+    const status = formatDebugStatus();
+    expect(status).toContain('Latest response feedback: resolved_locally');
+    expect(status).toContain('Local hotfix pending landing: yes');
+  });
+
   it('prefers current chat service lines over stale group container logs', () => {
     fs.writeFileSync(
       path.join(tempDir, 'logs', 'nanoclaw.log'),

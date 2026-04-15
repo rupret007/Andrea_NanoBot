@@ -1182,6 +1182,10 @@ export interface PilotIssueLinkedRefs {
   userMessageId?: string;
   messageActionId?: string;
   googleCalendarEventId?: string;
+  repoHeadAtStart?: string;
+  repoDirtyPathsAtStart?: string[];
+  landingCommitSha?: string;
+  landingPushedAt?: string;
 }
 
 export interface PilotIssueRecord {

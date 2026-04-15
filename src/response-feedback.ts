@@ -11,7 +11,10 @@ export type ResponseFeedbackActionKind =
   | 'capture'
   | 'start'
   | 'why'
-  | 'not_now';
+  | 'not_now'
+  | 'keep_local'
+  | 'commit_only'
+  | 'commit_push';
 
 export interface ParsedResponseFeedbackAction {
   feedbackId: string;
@@ -89,7 +92,7 @@ export function parseResponseFeedbackAction(
 ): ParsedResponseFeedbackAction | null {
   const trimmed = normalizeText(text);
   const match = trimmed.match(
-    /^feedback:([a-f0-9-]{8,}):(capture|start|why|not_now)$/i,
+    /^feedback:([a-f0-9-]{8,}):(capture|start|why|not_now|keep_local|commit_only|commit_push)$/i,
   );
   if (!match) return null;
   return {
@@ -208,6 +211,49 @@ export function classifyResponseFeedbackCandidate(params: {
 export function buildResponseFeedbackActionRows(
   record: Pick<ResponseFeedbackRecord, 'feedbackId' | 'status' | 'classification'>,
 ): SendMessageOptions['inlineActionRows'] {
+  if (record.status === 'resolved_locally') {
+    return [
+      [
+        {
+          label: 'Commit + push',
+          actionId: buildResponseFeedbackActionId(
+            record.feedbackId,
+            'commit_push',
+          ),
+        },
+        {
+          label: 'Commit only',
+          actionId: buildResponseFeedbackActionId(
+            record.feedbackId,
+            'commit_only',
+          ),
+        },
+      ],
+      [
+        {
+          label: 'Keep local',
+          actionId: buildResponseFeedbackActionId(
+            record.feedbackId,
+            'keep_local',
+          ),
+        },
+        {
+          label: 'Why',
+          actionId: buildResponseFeedbackActionId(record.feedbackId, 'why'),
+        },
+      ],
+    ];
+  }
+  if (record.status === 'landed') {
+    return [
+      [
+        {
+          label: 'Why',
+          actionId: buildResponseFeedbackActionId(record.feedbackId, 'why'),
+        },
+      ],
+    ];
+  }
   if (
     record.status === 'blocked_external' ||
     record.status === 'manual_sync_only'
@@ -250,6 +296,23 @@ export function buildResponseFeedbackActionRows(
         actionId: buildResponseFeedbackActionId(record.feedbackId, 'not_now'),
       },
     ],
+  ];
+}
+
+export function appendResponseFeedbackActionRows(params: {
+  record: Pick<ResponseFeedbackRecord, 'feedbackId' | 'status' | 'classification'>;
+  inlineActions?: ChannelInlineAction[] | null;
+  inlineActionRows?: ChannelInlineAction[][] | null;
+}): SendMessageOptions['inlineActionRows'] {
+  const baseRows =
+    params.inlineActionRows && params.inlineActionRows.length > 0
+      ? params.inlineActionRows.map((row) => [...row])
+      : params.inlineActions && params.inlineActions.length > 0
+        ? splitInlineActionsIntoRows(params.inlineActions)
+        : [];
+  return [
+    ...baseRows,
+    ...(buildResponseFeedbackActionRows(params.record) || []),
   ];
 }
 

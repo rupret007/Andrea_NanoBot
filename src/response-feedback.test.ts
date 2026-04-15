@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  appendResponseFeedbackActionRows,
   appendResponseFeedbackInlineRow,
   buildResponseFeedbackActionId,
+  buildResponseFeedbackActionRows,
   buildResponseFeedbackRemediationPrompt,
   classifyResponseFeedbackCandidate,
   parseResponseFeedbackAction,
@@ -59,6 +61,14 @@ describe('response feedback helpers', () => {
       feedbackId: '11111111-2222-3333-4444-555555555555',
       operation: 'capture',
     });
+    expect(
+      parseResponseFeedbackAction(
+        'feedback:11111111-2222-3333-4444-555555555555:commit_push',
+      ),
+    ).toEqual({
+      feedbackId: '11111111-2222-3333-4444-555555555555',
+      operation: 'commit_push',
+    });
     expect(parseResponseFeedbackAction('/help')).toBeNull();
   });
 
@@ -77,6 +87,80 @@ describe('response feedback helpers', () => {
           label: 'Not helpful',
           actionId:
             'feedback:11111111-2222-3333-4444-555555555555:capture',
+        },
+      ],
+    ]);
+  });
+
+  it('offers landing actions after a local hotfix resolves', () => {
+    const rows = buildResponseFeedbackActionRows(
+      buildRecord({
+        status: 'resolved_locally',
+      }),
+    );
+
+    expect(rows).toEqual([
+      [
+        {
+          label: 'Commit + push',
+          actionId:
+            'feedback:11111111-2222-3333-4444-555555555555:commit_push',
+        },
+        {
+          label: 'Commit only',
+          actionId:
+            'feedback:11111111-2222-3333-4444-555555555555:commit_only',
+        },
+      ],
+      [
+        {
+          label: 'Keep local',
+          actionId:
+            'feedback:11111111-2222-3333-4444-555555555555:keep_local',
+        },
+        {
+          label: 'Why',
+          actionId: 'feedback:11111111-2222-3333-4444-555555555555:why',
+        },
+      ],
+    ]);
+  });
+
+  it('appends landing rows after existing task actions when a hotfix is local-only', () => {
+    const rows = appendResponseFeedbackActionRows({
+      record: buildRecord({ status: 'resolved_locally' }),
+      inlineActions: [
+        { label: 'Refresh', actionId: '/runtime-status' },
+        { label: 'Open Work', actionId: '/runtime-jobs' },
+      ],
+    });
+
+    expect(rows).toEqual([
+      [
+        { label: 'Refresh', actionId: '/runtime-status' },
+        { label: 'Open Work', actionId: '/runtime-jobs' },
+      ],
+      [
+        {
+          label: 'Commit + push',
+          actionId:
+            'feedback:11111111-2222-3333-4444-555555555555:commit_push',
+        },
+        {
+          label: 'Commit only',
+          actionId:
+            'feedback:11111111-2222-3333-4444-555555555555:commit_only',
+        },
+      ],
+      [
+        {
+          label: 'Keep local',
+          actionId:
+            'feedback:11111111-2222-3333-4444-555555555555:keep_local',
+        },
+        {
+          label: 'Why',
+          actionId: 'feedback:11111111-2222-3333-4444-555555555555:why',
         },
       ],
     ]);

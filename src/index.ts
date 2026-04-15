@@ -64,6 +64,7 @@ import {
   getAgentThread,
   getRegisteredMainChat,
   getResponseFeedback,
+  getResponseFeedbackByRemediationJob,
   listAllCursorAgents,
   listCalendarAutomationsForChat,
   getAllRegisteredGroups,
@@ -564,6 +565,7 @@ import {
   REMOTE_CONTROL_STOP_COMMANDS,
 } from './operator-command-gate.js';
 import {
+  appendResponseFeedbackActionRows,
   appendResponseFeedbackInlineRow,
   buildResponseFeedbackActionRows,
   buildResponseFeedbackCaptureReply,
@@ -708,6 +710,66 @@ function readGitRef(args: string[]): string {
   } catch {
     return 'unknown';
   }
+}
+
+function parseGitStatusPath(line: string): string | null {
+  if (!line || line.length < 4) return null;
+  const rawPath = line.slice(3).trim();
+  if (!rawPath) return null;
+  if (rawPath.includes(' -> ')) {
+    return rawPath.split(' -> ').at(-1)?.trim() || null;
+  }
+  return rawPath;
+}
+
+function listCurrentGitDirtyPaths(): string[] {
+  try {
+    const output = execFileSync(
+      'git',
+      ['-C', ACTIVE_REPO_ROOT, 'status', '--porcelain'],
+      {
+        encoding: 'utf-8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      },
+    ).trim();
+    if (!output) return [];
+    return output
+      .split(/\r?\n/)
+      .map((line) => parseGitStatusPath(line))
+      .filter((path): path is string => Boolean(path));
+  } catch {
+    return [];
+  }
+}
+
+function normalizeTaskStatus(status: string | null | undefined): string {
+  return (status || '').trim().toLowerCase();
+}
+
+function isSuccessfulResponseFeedbackTaskStatus(
+  status: string | null | undefined,
+): boolean {
+  const normalized = normalizeTaskStatus(status);
+  return (
+    normalized === 'completed' ||
+    normalized === 'complete' ||
+    normalized === 'finished' ||
+    normalized === 'succeeded' ||
+    normalized === 'success'
+  );
+}
+
+function isFailedResponseFeedbackTaskStatus(
+  status: string | null | undefined,
+): boolean {
+  const normalized = normalizeTaskStatus(status);
+  return (
+    normalized === 'failed' ||
+    normalized === 'error' ||
+    normalized === 'cancelled' ||
+    normalized === 'canceled' ||
+    normalized === 'stopped'
+  );
 }
 
 function getCurrentMainChatAudit(): ReturnType<typeof auditRegisteredMainChat> {
@@ -7707,6 +7769,7 @@ async function main(): Promise<void> {
     agentId: string;
     provider: 'cloud' | 'desktop';
     contextType: TaskContextType;
+    status?: string | null;
     summary?: string | null;
     outputPreview?: string | null;
     outputSource?: string | null;
@@ -7719,6 +7782,7 @@ async function main(): Promise<void> {
           provider: params.provider,
           id: params.agentId,
         })} ${formatOpaqueTaskId(params.agentId)}`,
+        taskStatus: params.status || null,
         taskSummary: summarizeVisibleTaskText(params.summary),
         outputPreview: summarizeVisibleTaskText(params.outputPreview),
         outputSource: params.outputSource || null,
@@ -7892,6 +7956,178 @@ async function main(): Promise<void> {
     ];
   }
 
+  function runGitCommand(args: string[]): string {
+    try {
+      return execFileSync('git', ['-C', ACTIVE_REPO_ROOT, ...args], {
+        encoding: 'utf-8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }).trim();
+    } catch (err) {
+      const stderr =
+        err &&
+        typeof err === 'object' &&
+        'stderr' in err &&
+        typeof (err as { stderr?: unknown }).stderr === 'string'
+          ? (err as { stderr: string }).stderr.trim()
+          : '';
+      const stdout =
+        err &&
+        typeof err === 'object' &&
+        'stdout' in err &&
+        typeof (err as { stdout?: unknown }).stdout === 'string'
+          ? (err as { stdout: string }).stdout.trim()
+          : '';
+      throw new Error(
+        stderr || stdout || `git ${args.join(' ')} failed in ${ACTIVE_REPO_ROOT}.`,
+      );
+    }
+  }
+
+  function syncResponseFeedbackFromTaskStatus(
+    laneId: NonNullable<ResponseFeedbackRecord['remediationLaneId']>,
+    jobId: string,
+    taskStatus: string | null | undefined,
+  ): ResponseFeedbackRecord | null {
+    const record = getResponseFeedbackByRemediationJob({ laneId, jobId });
+    if (!record) return null;
+
+    if (
+      isSuccessfulResponseFeedbackTaskStatus(taskStatus) &&
+      record.status !== 'resolved_locally' &&
+      record.status !== 'landed'
+    ) {
+      return updateResponseFeedback(record.feedbackId, {
+        status: 'resolved_locally',
+        operatorNote:
+          'The remediation task completed locally and is waiting for explicit landing approval.',
+      });
+    }
+
+    if (
+      isFailedResponseFeedbackTaskStatus(taskStatus) &&
+      record.status === 'running'
+    ) {
+      return updateResponseFeedback(record.feedbackId, {
+        status: 'awaiting_confirmation',
+        operatorNote:
+          "The remediation task finished without a clean local hotfix, so it's back in review.",
+      });
+    }
+
+    return record;
+  }
+
+  function buildResponseFeedbackTaskSendOptions(params: {
+    laneId: 'cursor' | 'andrea_runtime';
+    jobId: string;
+    payload?: Record<string, unknown> | null;
+    inlineActions?: SendMessageOptions['inlineActions'];
+    inlineActionRows?: SendMessageOptions['inlineActionRows'];
+    jobStatus?: string | null;
+  }): Pick<SendMessageOptions, 'inlineActions' | 'inlineActionRows'> & {
+    payload: Record<string, unknown> | null;
+  } {
+    const payloadStatus =
+      params.payload && typeof params.payload.taskStatus === 'string'
+        ? params.payload.taskStatus
+        : null;
+    const taskStatus = params.jobStatus || payloadStatus;
+    const record = syncResponseFeedbackFromTaskStatus(
+      params.laneId,
+      params.jobId,
+      taskStatus,
+    );
+    if (!record) {
+      return {
+        payload: params.payload || null,
+        inlineActions: params.inlineActions,
+        inlineActionRows: params.inlineActionRows,
+      };
+    }
+
+    return {
+      payload: mergeTaskMessageContextPayload(
+        (params.payload || null) as Record<string, unknown> | null,
+        {
+          responseFeedbackId: record.feedbackId,
+          taskStatus: taskStatus || null,
+        },
+      ),
+      inlineActions: undefined,
+      inlineActionRows: appendResponseFeedbackActionRows({
+        record,
+        inlineActions: params.inlineActions,
+        inlineActionRows: params.inlineActionRows,
+      }),
+    };
+  }
+
+  function buildResponseFeedbackLandingCommitMessage(
+    record: ResponseFeedbackRecord,
+  ): string {
+    const clippedAsk = summarizeResponseFeedbackText(
+      record.originalUserText,
+      'response feedback hotfix',
+      44,
+    )
+      .replace(/[`"]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return clippedAsk
+      ? `Land local hotfix for ${clippedAsk}`
+      : `Land local hotfix for response feedback ${record.feedbackId.slice(0, 8)}`;
+  }
+
+  function landResponseFeedbackHotfix(
+    record: ResponseFeedbackRecord,
+    mode: 'commit_only' | 'commit_push',
+  ): {
+    branch: string;
+    commitSha: string;
+    commitMessage: string;
+    dirtyPaths: string[];
+    pushedAt: string | null;
+  } {
+    const dirtyAtStart = record.linkedRefs.repoDirtyPathsAtStart || [];
+    if (dirtyAtStart.length > 0) {
+      throw new Error(
+        `This repo was already dirty before the remediation started (${dirtyAtStart.join(', ')}), so I am keeping the hotfix local instead of auto-committing from Telegram.`,
+      );
+    }
+
+    const dirtyPaths = listCurrentGitDirtyPaths();
+    if (dirtyPaths.length === 0) {
+      throw new Error(
+        'I do not see any local changes to land from this host right now.',
+      );
+    }
+
+    runGitCommand(['add', '--all', '--', ...dirtyPaths]);
+    const commitMessage = buildResponseFeedbackLandingCommitMessage(record);
+    runGitCommand(['commit', '-m', commitMessage]);
+    const branch = readGitRef(['rev-parse', '--abbrev-ref', 'HEAD']);
+    const commitSha = readGitRef(['rev-parse', 'HEAD']);
+    let pushedAt: string | null = null;
+
+    if (mode === 'commit_push') {
+      if (!branch || branch === 'unknown') {
+        throw new Error(
+          'I committed the local hotfix, but I could not determine the current git branch for a safe push.',
+        );
+      }
+      runGitCommand(['push', 'origin', branch]);
+      pushedAt = new Date().toISOString();
+    }
+
+    return {
+      branch,
+      commitSha,
+      commitMessage,
+      dirtyPaths,
+      pushedAt,
+    };
+  }
+
   async function handleResponseFeedbackAction(
     chatJid: string,
     msg: NewMessage,
@@ -7982,6 +8218,89 @@ async function main(): Promise<void> {
         ),
         buildOperatorSendOptions(msg),
       );
+      return true;
+    }
+
+    if (action.operation === 'keep_local') {
+      const updated = updateResponseFeedback(existing.feedbackId, {
+        linkedRefs,
+        status: 'resolved_locally',
+        operatorNote:
+          'Operator chose to keep the validated hotfix local without a commit or push.',
+      });
+      await channel.sendMessage(
+        chatJid,
+        'Keeping it local. I am leaving the validated hotfix on this host without a commit or push.',
+        buildOperatorSendOptions(msg, {
+          inlineActionRows: buildResponseFeedbackActionRows(updated),
+        }),
+      );
+      return true;
+    }
+
+    if (
+      action.operation === 'commit_only' ||
+      action.operation === 'commit_push'
+    ) {
+      if (existing.status !== 'resolved_locally' && existing.status !== 'landed') {
+        await channel.sendMessage(
+          chatJid,
+          'That hotfix is not ready to land yet. Refresh the remediation task card after it completes locally, then use the landing buttons there.',
+          buildOperatorSendOptions(msg, {
+            inlineActionRows: buildResponseFeedbackActionRows(existing),
+          }),
+        );
+        return true;
+      }
+
+      try {
+        const landed = landResponseFeedbackHotfix(
+          existing,
+          action.operation === 'commit_push' ? 'commit_push' : 'commit_only',
+        );
+        const updated = updateResponseFeedback(existing.feedbackId, {
+          linkedRefs: {
+            ...linkedRefs,
+            landingCommitSha: landed.commitSha,
+            landingPushedAt: landed.pushedAt || undefined,
+          },
+          status: 'landed',
+          operatorNote:
+            action.operation === 'commit_push'
+              ? `Committed and pushed ${landed.commitSha.slice(0, 7)} on ${landed.branch}.`
+              : `Committed ${landed.commitSha.slice(0, 7)} locally on ${landed.branch}.`,
+        });
+        await channel.sendMessage(
+          chatJid,
+          [
+            action.operation === 'commit_push'
+              ? 'I landed that hotfix and pushed it.'
+              : 'I committed that hotfix locally.',
+            `Commit: ${landed.commitSha}`,
+            `Branch: ${landed.branch}`,
+            `Files: ${landed.dirtyPaths.join(', ')}`,
+            action.operation === 'commit_push'
+              ? 'Push target: origin/' + landed.branch
+              : 'Push: not requested',
+          ].join('\n'),
+          buildOperatorSendOptions(msg, {
+            inlineActionRows: buildResponseFeedbackActionRows(updated),
+          }),
+        );
+      } catch (err) {
+        const updated = updateResponseFeedback(existing.feedbackId, {
+          linkedRefs,
+          status: 'resolved_locally',
+          operatorNote: err instanceof Error ? err.message : String(err),
+        });
+        await channel.sendMessage(
+          chatJid,
+          err instanceof Error ? err.message : String(err),
+          buildOperatorSendOptions(msg, {
+            inlineActionRows: buildResponseFeedbackActionRows(updated),
+          }),
+        );
+      }
       return true;
     }
 
@@ -8094,6 +8413,13 @@ async function main(): Promise<void> {
       laneSelection,
       hostTruthLines: buildResponseFeedbackHostTruthLines(),
     });
+    const linkedRefsWithRepoBaseline: ResponseFeedbackRecord['linkedRefs'] = {
+      ...linkedRefs,
+      repoHeadAtStart:
+        existing.linkedRefs.repoHeadAtStart || readGitRef(['rev-parse', 'HEAD']),
+      repoDirtyPathsAtStart:
+        existing.linkedRefs.repoDirtyPathsAtStart || listCurrentGitDirtyPaths(),
+    };
 
     if (laneSelection.laneId === 'andrea_runtime') {
       const created = await getAndreaRuntimeLane().createJob({
@@ -8104,7 +8430,7 @@ async function main(): Promise<void> {
       });
       const updated = updateResponseFeedback(captured.feedbackId, {
         linkedRefs: {
-          ...linkedRefs,
+          ...linkedRefsWithRepoBaseline,
           backendLaneId: 'andrea_runtime',
           backendJobId: created.handle.jobId,
         },
@@ -8124,6 +8450,7 @@ async function main(): Promise<void> {
         payload: mergeTaskMessageContextPayload(created.metadata, {
           taskContextType: 'job_card',
           taskTitle: `Codex/OpenAI runtime ${formatOpaqueTaskId(created.handle.jobId)}`,
+          taskStatus: created.status,
           taskSummary: summarizeVisibleTaskText(created.summary),
           responseFeedbackId: updated.feedbackId,
         }),
@@ -8132,6 +8459,7 @@ async function main(): Promise<void> {
           contextKind: 'runtime_job_card',
           canExecute: andreaRuntimeExecutionEnabled,
         }),
+        jobStatus: created.status,
         text: [
           'Andrea started a self-fix task for that downvoted reply.',
           formatRuntimeJobCard(created),
@@ -8150,7 +8478,7 @@ async function main(): Promise<void> {
     });
     const updated = updateResponseFeedback(captured.feedbackId, {
       linkedRefs: {
-        ...linkedRefs,
+        ...linkedRefsWithRepoBaseline,
         backendLaneId: 'cursor',
         backendJobId: created.id,
       },
@@ -8172,6 +8500,7 @@ async function main(): Promise<void> {
           agentId: created.id,
           provider: created.provider,
           contextType: 'job_card',
+          status: created.status,
           summary:
             created.summary || created.sourceRepository || created.promptText,
         }),
@@ -8180,6 +8509,7 @@ async function main(): Promise<void> {
         },
       ),
       inlineActions: buildCursorJobCardActions(created),
+      jobStatus: created.status,
       text: [
         'Andrea started a self-fix task for that downvoted reply.',
         '',
@@ -8343,15 +8673,26 @@ async function main(): Promise<void> {
     contextKind: string;
     payload?: Record<string, unknown> | null;
     inlineActions?: SendMessageOptions['inlineActions'];
+    inlineActionRows?: SendMessageOptions['inlineActionRows'];
+    jobStatus?: string | null;
     replyToMessageId?: string;
   }): Promise<string | undefined> {
+    const sendOptions = buildResponseFeedbackTaskSendOptions({
+      laneId: params.laneId,
+      jobId: params.jobId,
+      payload: params.payload,
+      inlineActions: params.inlineActions,
+      inlineActionRows: params.inlineActionRows,
+      jobStatus: params.jobStatus,
+    });
     const platformMessageId = await sendCursorMessage(
       params.chatJid,
       params.text,
       params.sourceMessage,
       {
         replyToMessageId: params.replyToMessageId,
-        inlineActions: params.inlineActions,
+        inlineActions: sendOptions.inlineActions,
+        inlineActionRows: sendOptions.inlineActionRows,
       },
     );
     if (platformMessageId) {
@@ -8362,7 +8703,7 @@ async function main(): Promise<void> {
         contextKind: params.contextKind,
         laneId: params.laneId,
         agentId: params.jobId,
-        payload: params.payload || null,
+        payload: sendOptions.payload || null,
       });
     }
     rememberCursorOperatorSelection({
@@ -8383,6 +8724,8 @@ async function main(): Promise<void> {
     contextKind: string;
     payload?: Record<string, unknown> | null;
     inlineActions?: SendMessageOptions['inlineActions'];
+    inlineActionRows?: SendMessageOptions['inlineActionRows'];
+    jobStatus?: string | null;
     replyToMessageId?: string;
   }): Promise<string | undefined> {
     const mergedPayload = mergeTaskMessageContextPayload(
@@ -8398,6 +8741,8 @@ async function main(): Promise<void> {
       contextKind: params.contextKind,
       payload: mergedPayload,
       inlineActions: params.inlineActions,
+      inlineActionRows: params.inlineActionRows,
+      jobStatus: params.jobStatus,
       replyToMessageId: params.replyToMessageId,
     });
   }
@@ -9172,6 +9517,7 @@ async function main(): Promise<void> {
         agentId: selected.id,
         provider: selected.provider,
         contextType: 'job_card',
+        status: selected.status,
         summary:
           selected.summary ||
           selected.sourceRepository ||
@@ -9179,6 +9525,7 @@ async function main(): Promise<void> {
           null,
       }),
       inlineActions: buildCursorJobCardActions(selected),
+      jobStatus: selected.status,
       replyToMessageId,
     });
   }
@@ -10794,6 +11141,7 @@ async function main(): Promise<void> {
           agentId: created.id,
           provider: created.provider,
           contextType: 'job_card',
+          status: created.status,
           summary:
             created.summary ||
             created.sourceRepository ||
@@ -10801,6 +11149,7 @@ async function main(): Promise<void> {
             null,
         }),
         inlineActions: buildCursorJobCardActions(created),
+        jobStatus: created.status,
         text: [
           'Andrea started this Cursor task.',
           '',
@@ -10874,14 +11223,16 @@ async function main(): Promise<void> {
           provider,
           sourceMessage,
           contextKind: 'cursor_job_message',
-          payload: buildCursorTaskContextPayload({
-            agentId: normalizedAgentId,
-            provider,
-            contextType: 'output',
-            outputSource: 'none',
-          }),
-          inlineActions,
-          text: `No output is available yet for this task.\nTask: ${labelCursorRecord(normalizedAgentId)} ${formatOpaqueTaskId(normalizedAgentId)}.\n\n${formatCursorTaskNextStepMessage({ provider, id: normalizedAgentId })}`,
+        payload: buildCursorTaskContextPayload({
+          agentId: normalizedAgentId,
+          provider,
+          contextType: 'output',
+          status: actionRecord?.status || null,
+          outputSource: 'none',
+        }),
+        jobStatus: actionRecord?.status || null,
+        inlineActions,
+        text: `No output is available yet for this task.\nTask: ${labelCursorRecord(normalizedAgentId)} ${formatOpaqueTaskId(normalizedAgentId)}.\n\n${formatCursorTaskNextStepMessage({ provider, id: normalizedAgentId })}`,
         });
         return;
       }
@@ -10911,9 +11262,11 @@ async function main(): Promise<void> {
           agentId: normalizedAgentId,
           provider,
           contextType: 'output',
+          status: actionRecord?.status || null,
           outputPreview: messages.at(-1)?.content || formatted,
           outputSource: 'conversation',
         }),
+        jobStatus: actionRecord?.status || null,
         inlineActions,
         text: `Current output for this task\nTask: ${labelCursorRecord(normalizedAgentId)} ${formatOpaqueTaskId(normalizedAgentId)} (latest ${messages.length} messages)\n\n${formatted}${outputSuggestion ? `\n\n${outputSuggestion}` : ''}\n\n${formatCursorTaskNextStepMessage({ provider, id: normalizedAgentId })}`,
       });
@@ -11003,8 +11356,10 @@ async function main(): Promise<void> {
           agentId: normalizedAgentId,
           provider: 'cloud',
           contextType: 'results',
+          status: actionRecord?.status || null,
           summary: lines.slice(0, 3).join('\n'),
         }),
+        jobStatus: actionRecord?.status || null,
         inlineActions,
         text: `Results for this task\nTask: Cursor Cloud ${formatOpaqueTaskId(normalizedAgentId)}\n\n${lines.join('\n')}\n\nReply to this result card with \`/cursor-download ABSOLUTE_PATH\` when you want one file. \`/cursor-download ${normalizedAgentId} ABSOLUTE_PATH\` still works anywhere as an explicit fallback.`,
       });
@@ -11425,6 +11780,7 @@ async function main(): Promise<void> {
           agentId: synced.cursorJob.id,
           provider: synced.cursorJob.provider,
           contextType: 'job_card',
+          status: synced.cursorJob.status,
           summary:
             synced.cursorJob.summary ||
             synced.cursorJob.sourceRepository ||
@@ -11432,6 +11788,7 @@ async function main(): Promise<void> {
             null,
         }),
         inlineActions: buildCursorJobCardActions(synced.cursorJob),
+        jobStatus: synced.cursorJob.status,
         text: [
           'Here is the latest state for this Cursor task.',
           '',
@@ -11502,7 +11859,19 @@ async function main(): Promise<void> {
         provider: stopped.provider,
         sourceMessage,
         contextKind: 'cursor_job_card',
+        payload: buildCursorTaskContextPayload({
+          agentId: stopped.id,
+          provider: stopped.provider,
+          contextType: 'job_card',
+          status: stopped.status,
+          summary:
+            stopped.summary ||
+            stopped.sourceRepository ||
+            stopped.promptText ||
+            null,
+        }),
         inlineActions: buildCursorJobCardActions(stopped),
+        jobStatus: stopped.status,
         text: [
           'Andrea asked Cursor to stop this task.',
           '',
@@ -11618,6 +11987,7 @@ async function main(): Promise<void> {
           agentId: followed.id,
           provider: followed.provider,
           contextType: 'job_card',
+          status: followed.status,
           summary:
             followed.summary ||
             followed.sourceRepository ||
@@ -11625,6 +11995,7 @@ async function main(): Promise<void> {
             null,
         }),
         inlineActions: buildCursorJobCardActions(followed),
+        jobStatus: followed.status,
         text: [
           'Andrea sent your next instruction to this Cursor task.',
           '',
