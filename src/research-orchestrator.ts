@@ -18,6 +18,7 @@ import {
 } from './openai-provider.js';
 import {
   buildGracefulDegradedReply,
+  isLiveLookupConversationalPrompt,
   isResearchEligibleConversationalPrompt,
 } from './conversational-core.js';
 import { normalizeVoicePrompt } from './voice-ready.js';
@@ -395,10 +396,12 @@ export function planResearchRequest(request: ResearchRequest): ResearchPlan {
     Boolean(request.requestedSourceIds?.length);
   const currentNewsLikely =
     /\b(news|headlines|latest news|news today|today'?s news)\b/i.test(lower);
+  const liveLookupLikely = isLiveLookupConversationalPrompt(lower);
   const personalContextLikely =
-    PERSONAL_CONTEXT_RE.test(lower) && !currentNewsLikely;
+    PERSONAL_CONTEXT_RE.test(lower) && !currentNewsLikely && !liveLookupLikely;
   const externalLikely =
     (currentNewsLikely ||
+      liveLookupLikely ||
       EXTERNAL_FACT_RE.test(lower) ||
       isResearchEligibleConversationalPrompt(lower)) &&
     !personalContextLikely;

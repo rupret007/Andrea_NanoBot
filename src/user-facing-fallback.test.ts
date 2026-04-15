@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildSilentSuccessFallback } from './user-facing-fallback.js';
+import {
+  buildSilentSuccessFallback,
+  maybeShieldProtectedAssistantOutput,
+} from './user-facing-fallback.js';
 
 describe('buildSilentSuccessFallback', () => {
   it('reuses the direct rescue reply for direct assistant turns', () => {
@@ -44,12 +47,13 @@ describe('buildSilentSuccessFallback', () => {
     expect(reply).toContain("haven't assumed it went through");
   });
 
-  it('uses generic protected-assistant wording for other protected tasks', () => {
+  it('uses live-lookup wording for protected weather requests', () => {
     const reply = buildSilentSuccessFallback('protected_assistant', [
       { content: 'What is the weather tomorrow?' },
     ]);
 
-    expect(reply).toContain("couldn't confirm that request completed");
+    expect(reply).toContain("can't check that live right now");
+    expect(reply).not.toContain("couldn't confirm that request completed");
   });
 
   it('uses control-plane wording for control actions', () => {
@@ -67,5 +71,36 @@ describe('buildSilentSuccessFallback', () => {
 
     expect(reply).not.toContain('helper');
     expect(reply).toContain('usable final response');
+  });
+
+  it('shields protected weather output before runtime-ish text can leak', () => {
+    const reply = maybeShieldProtectedAssistantOutput(
+      [{ content: 'What is the weather today in Dallas?' }],
+      'I hit a temporary execution issue while processing that request. Please try again.',
+      'telegram',
+    );
+
+    expect(reply).toContain("can't check that live right now");
+    expect(reply).not.toContain('temporary execution issue');
+  });
+
+  it('shields live-lookup protected turns even if the container text looks ordinary', () => {
+    const reply = maybeShieldProtectedAssistantOutput(
+      [{ content: "What's the forecast for Dallas tomorrow?" }],
+      'It is 72 and sunny.',
+      'bluebubbles',
+    );
+
+    expect(reply).toContain("can't check that live right now");
+  });
+
+  it('keeps generic protected failures explicit for non-live-lookups', () => {
+    const reply = maybeShieldProtectedAssistantOutput(
+      [{ content: 'Schedule lunch tomorrow at noon' }],
+      'I hit a temporary execution issue while processing that request. Please try again.',
+      'telegram',
+    );
+
+    expect(reply).toContain("couldn't confirm that reminder was saved");
   });
 });

@@ -228,7 +228,7 @@ const ADVANCED_HELPER_SIGNALS: RouteSignal[] = [
 const PROTECTED_ASSISTANT_SIGNALS: RouteSignal[] = [
   {
     pattern:
-      /\b(remind|reminder|schedule|scheduled|appointment|appointments|calendar|meeting|availability|available|weather|forecast|help me remember|remember to)\b/i,
+      /\b(remind|reminder|schedule|scheduled|appointment|appointments|calendar|meeting|availability|available|weather|forecast|temperature|current conditions?|rain|snow|umbrella|precipitation|wind|humidity|humid|help me remember|remember to)\b/i,
     reason: 'matched assistant scheduling or lookup intent',
   },
   {

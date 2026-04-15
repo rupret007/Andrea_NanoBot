@@ -55,6 +55,15 @@ describe('conversational core classifier', () => {
         'Can you help me compare three backup vendors for next month?',
       ),
     ).toBe('source_grounded_question');
+    expect(
+      classifyConversationalTurn('What is the weather today in Dallas?'),
+    ).toBe('source_grounded_question');
+    expect(
+      classifyConversationalTurn("What's the forecast for Dallas tomorrow?"),
+    ).toBe('source_grounded_question');
+    expect(classifyConversationalTurn('Will it rain in Dallas tonight?')).toBe(
+      'source_grounded_question',
+    );
   });
 
   it('keeps work and operator asks out of the ordinary conversational lane', () => {
@@ -77,6 +86,16 @@ describe('research eligibility classifier', () => {
     expect(
       isResearchEligibleConversationalPrompt(
         'What should I know about Jar Jar Binks?',
+      ),
+    ).toBe(true);
+    expect(
+      isResearchEligibleConversationalPrompt(
+        'What is the weather today in Dallas?',
+      ),
+    ).toBe(true);
+    expect(
+      isResearchEligibleConversationalPrompt(
+        "What's the forecast for Dallas tomorrow?",
       ),
     ).toBe(true);
   });

@@ -61,6 +61,18 @@ describe('assistant capability router', () => {
     ).toMatchObject({
       capabilityId: 'research.topic',
     });
+    for (const prompt of [
+      'What is the weather today in Dallas?',
+      "What's the weather today in Dallas.",
+      "What's the forecast for Dallas tomorrow?",
+      'Will it rain in Dallas tonight?',
+      "What's the temperature in Dallas right now?",
+      "What's the weather in Austin this weekend?",
+    ]) {
+      expect(matchAssistantCapabilityRequest(prompt)).toMatchObject({
+        capabilityId: 'research.topic',
+      });
+    }
     expect(
       matchAssistantCapabilityRequest("What's on my schedule for Saturday?"),
     ).toBeNull();

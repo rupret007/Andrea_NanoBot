@@ -422,7 +422,10 @@ import {
   shouldAvoidCombinedContextForMainChat,
   type MainChatSessionState,
 } from './main-chat-routing.js';
-import { buildSilentSuccessFallback } from './user-facing-fallback.js';
+import {
+  buildSilentSuccessFallback,
+  maybeShieldProtectedAssistantOutput,
+} from './user-facing-fallback.js';
 import {
   buildCursorReplyContextMissingMessage,
   buildCursorCloudTaskActions,
@@ -6882,6 +6885,15 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           ? result.result
           : JSON.stringify(result.result);
       const text = formatOutbound(raw);
+      const shieldedProtectedText =
+        requestPolicy.route === 'protected_assistant'
+          ? maybeShieldProtectedAssistantOutput(
+              missedMessages,
+              text,
+              conversationChannel,
+            )
+          : null;
+      const outboundText = shieldedProtectedText || text;
       logger.info(
         {
           component: 'assistant',
@@ -6893,23 +6905,27 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         },
         'Agent output chunk received',
       );
-      if (text) {
+      if (outboundText) {
         await sendAssistantReplyWithFeedback({
-          text,
+          text: outboundText,
           routeKey: requestPolicy.route,
-          handlerKind:
-            requestPolicy.route === 'direct_assistant'
+          handlerKind: shieldedProtectedText
+            ? 'assistant_fallback'
+            : requestPolicy.route === 'direct_assistant'
               ? 'container_direct_assistant'
               : 'container_assistant',
-          responseSource: 'container_agent',
-          traceReason:
-            requestPolicy.route === 'direct_assistant'
+          responseSource: shieldedProtectedText
+            ? 'local_companion'
+            : 'container_agent',
+          traceReason: shieldedProtectedText
+            ? 'shielded protected assistant container output with a safe degraded reply'
+            : requestPolicy.route === 'direct_assistant'
               ? 'handled request through the direct assistant container lane'
               : 'handled request through the assistant container lane',
         });
         outputSentToUser = true;
         if (requestPolicy.route === 'direct_assistant') {
-          lastDirectAssistantTextByChatJid[chatJid] = text;
+          lastDirectAssistantTextByChatJid[chatJid] = outboundText;
         }
       }
       resetIdleTimer();
@@ -7027,6 +7043,26 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         'Agent error after output was sent, skipping cursor rollback to prevent duplicates',
       );
       return true;
+    }
+
+    if (requestPolicy.route === 'protected_assistant') {
+      const shieldedProtectedFallback = maybeShieldProtectedAssistantOutput(
+        missedMessages,
+        output.userMessage || '',
+        conversationChannel,
+        { forceLiveLookupFallback: true },
+      );
+      if (shieldedProtectedFallback) {
+        await sendAssistantReplyWithFeedback({
+          text: shieldedProtectedFallback,
+          routeKey: requestPolicy.route,
+          handlerKind: 'assistant_fallback',
+          responseSource: 'local_companion',
+          traceReason:
+            'shielded a protected assistant runtime failure with a safe degraded reply',
+        });
+        return true;
+      }
     }
 
     if (output.status === 'error' && output.nonRetriable) {

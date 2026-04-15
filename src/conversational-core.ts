@@ -96,6 +96,31 @@ function hasExplicitPersonalContext(normalized: string): boolean {
   );
 }
 
+function isWeatherLookupPrompt(normalized: string): boolean {
+  return (
+    /\b(weather|forecast|temperature|rain|snow|umbrella|precipitation|wind|humidity|humid|current conditions?)\b/.test(
+      normalized,
+    ) ||
+    /\bwill it (?:rain|snow)\b/.test(normalized) ||
+    (/\b(high|low)\b/.test(normalized) &&
+      /\b(today|tomorrow|tonight|this weekend|weekend|right now|currently|current|in [a-z])\b/.test(
+        normalized,
+      ))
+  );
+}
+
+export function isLiveLookupConversationalPrompt(text: string): boolean {
+  const normalized = normalizeText(text);
+  if (!normalized) {
+    return false;
+  }
+
+  return (
+    isWeatherLookupPrompt(normalized) ||
+    /\b(news|headlines|latest news|news today|today'?s news)\b/.test(normalized)
+  );
+}
+
 export function classifyConversationalTurn(text: string): ConversationalTurnClass {
   const normalized = normalizeText(text);
 
@@ -149,6 +174,10 @@ export function classifyConversationalTurn(text: string): ConversationalTurnClas
     return 'lightweight_companion';
   }
 
+  if (isLiveLookupConversationalPrompt(normalized)) {
+    return 'source_grounded_question';
+  }
+
   if (
     /\b(candace|family|household|at home|home|thread|life thread)\b/.test(
       normalized,
@@ -158,14 +187,6 @@ export function classifyConversationalTurn(text: string): ConversationalTurnClas
     )
   ) {
     return 'personal_guidance';
-  }
-
-  if (
-    /\b(news|headlines|latest news|news today|today'?s news)\b/.test(
-      normalized,
-    )
-  ) {
-    return 'source_grounded_question';
   }
 
   if (

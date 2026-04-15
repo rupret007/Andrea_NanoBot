@@ -388,6 +388,55 @@ describe('assistant capabilities', () => {
     expect(alexa.handoffPayload?.kind).toBe('message');
   });
 
+  it('keeps blocked weather lookups calm on protected user surfaces', async () => {
+    process.env.OPENAI_API_KEY = 'test-key';
+    process.env.OPENAI_BASE_URL = 'https://example.test/v1';
+    globalThis.fetch = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          error: {
+            message:
+              'You exceeded your current quota, please check your plan and billing details.',
+            type: 'insufficient_quota',
+            code: 'insufficient_quota',
+          },
+        }),
+        {
+          status: 429,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      );
+    }) as typeof fetch;
+
+    const telegram = await executeAssistantCapability({
+      capabilityId: 'research.topic',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:8004355504',
+      },
+      input: {
+        canonicalText: 'What is the weather today in Dallas?',
+      },
+    });
+    const bluebubbles = await executeAssistantCapability({
+      capabilityId: 'research.topic',
+      context: {
+        channel: 'bluebubbles',
+        groupFolder: 'main',
+        chatJid: 'bb:iMessage;-;jeffstory007@gmail.com',
+      },
+      input: {
+        canonicalText: 'What is the weather today in Dallas?',
+      },
+    });
+
+    expect(telegram.replyText).toContain("can't check that live right now");
+    expect(telegram.replyText).not.toContain('temporary execution issue');
+    expect(bluebubbles.replyText).toContain("can't check that live right now");
+    expect(bluebubbles.replyText).not.toContain('processing that request');
+  });
+
   it('saves explicit library material and renders source-grounded answers differently by channel', async () => {
     const save = await executeAssistantCapability({
       capabilityId: 'knowledge.save_source',

@@ -375,4 +375,38 @@ describe('research orchestrator', () => {
     expect(result.fullText).not.toContain('Band');
     expect(result.fullText).not.toContain('local context');
   });
+
+  it('treats weather requests as blocked external research instead of leaking runtime text', async () => {
+    process.env.OPENAI_API_KEY = 'test-key';
+    process.env.OPENAI_BASE_URL = 'https://example.test/v1';
+    globalThis.fetch = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          error: {
+            message:
+              'You exceeded your current quota, please check your plan and billing details.',
+            type: 'insufficient_quota',
+            code: 'insufficient_quota',
+          },
+        }),
+        {
+          status: 429,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      );
+    }) as typeof fetch;
+
+    const result = await runResearchOrchestrator({
+      query: 'What is the weather today in Dallas?',
+      channel: 'telegram',
+      groupFolder: 'main',
+      now: new Date('2026-04-15T11:00:00.000Z'),
+    });
+
+    expect(result.providerUsed).toBeUndefined();
+    expect(result.summaryText).toContain("can't check that live right now");
+    expect(result.routeExplanation).toContain('live lookup');
+    expect(result.fullText).not.toContain('temporary execution issue');
+    expect(result.fullText).not.toContain('processing that request');
+  });
 });
