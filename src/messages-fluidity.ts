@@ -112,6 +112,146 @@ export async function interpretBlueBubblesDirectTurn(input: {
   return interpretBlueBubblesDirectTurnWithBackend(input);
 }
 
+function normalizeStringArray(value: unknown, maxItems: number): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item) => normalizeText(typeof item === 'string' ? item : ''))
+    .filter(Boolean)
+    .slice(0, maxItems);
+}
+
+export async function summarizeBlueBubblesThreadDigest(input: {
+  chatName: string;
+  windowLabel: string;
+  transcript: string;
+  channel: 'telegram' | 'bluebubbles';
+}): Promise<{
+  lead: string | null;
+  digest: string | null;
+  bullets: string[];
+  source: 'openai' | 'fallback';
+  fallbackNote?: string;
+}> {
+  const openAi = resolveOpenAiProviderConfig();
+  if (!openAi) {
+    return {
+      lead: null,
+      digest: null,
+      bullets: [],
+      source: 'fallback',
+      fallbackNote:
+        "I kept this one grounded locally because the richer Messages summary lane isn't available right now.",
+    };
+  }
+
+  const prompt = [
+    'You are Andrea summarizing a synced Messages thread.',
+    'Return JSON only with keys lead, digest, bullets.',
+    'Stay strictly grounded in the provided transcript.',
+    'Do not invent details, relationships, or decisions that are not in the transcript.',
+    'Never include raw phone numbers, raw identifiers, or JIDs.',
+    'Use the participant labels already present in the transcript when helpful.',
+    'This should read like an almost-full digest of the conversation, not activity stats.',
+    'lead: 1-2 sentences that orient what the conversation was mostly about.',
+    'digest: a detailed paragraph or two as one string covering the substantive flow, disagreements, decisions, and ending state.',
+    'bullets: 3 to 6 concise bullets for notable points, shifts, decisions, or clear follow-up needs.',
+    `Context JSON: ${JSON.stringify(input)}`,
+  ].join('\n');
+  const providerMode = detectOpenAiProviderMode(openAi.baseUrl);
+  const modelCandidates = buildOpenAiModelCandidates('standard', {
+    simpleModel: openAi.simpleModel,
+    standardModel: openAi.standardModel,
+    complexModel: openAi.complexModel,
+    fallbackModel: openAi.researchModel,
+  });
+
+  try {
+    for (const candidate of modelCandidates) {
+      const response = await fetch(`${openAi.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${openAi.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: candidate.model,
+          input: prompt,
+        }),
+      });
+      if (!response.ok) {
+        const body = await response.text();
+        if (isOpenAiModelRejection(response.status, body)) {
+          continue;
+        }
+        recordOpenAiUsageState({
+          at: new Date().toISOString(),
+          surface: 'messages_fluidity',
+          selectedModelTier: candidate.tier,
+          selectedModel: candidate.model,
+          providerMode,
+          outcome: /quota|billing|rejected the configured api key|denied by the provider/i.test(
+            body,
+          )
+            ? 'blocked'
+            : 'failed',
+          detail: describeOpenAiProviderFailure(response.status, body, 'research'),
+        });
+        return {
+          lead: null,
+          digest: null,
+          bullets: [],
+          source: 'fallback',
+          fallbackNote:
+            "I kept this one grounded locally because the richer Messages summary lane isn't available right now.",
+        };
+      }
+      const payload = (await response.json()) as unknown;
+      const rawOutput = stripJsonFences(extractResponseOutputText(payload));
+      if (!rawOutput) {
+        continue;
+      }
+      const parsed = safeJsonParse<{
+        lead?: string;
+        digest?: string;
+        bullets?: unknown;
+      }>(rawOutput, {});
+      const lead = normalizeText(parsed.lead);
+      const digest = normalizeText(parsed.digest);
+      const bullets = normalizeStringArray(parsed.bullets, 6);
+      if (!lead && !digest && bullets.length === 0) {
+        continue;
+      }
+      recordOpenAiUsageState({
+        at: new Date().toISOString(),
+        surface: 'messages_fluidity',
+        selectedModelTier: candidate.tier,
+        selectedModel: candidate.model,
+        providerMode,
+        outcome: 'success',
+        detail: 'thread_summary',
+      });
+      return {
+        lead: lead || null,
+        digest: digest || null,
+        bullets,
+        source: 'openai',
+      };
+    }
+  } catch {
+    // Fall through to the honest local fallback.
+  }
+  return {
+    lead: null,
+    digest: null,
+    bullets: [],
+    source: 'fallback',
+    fallbackNote:
+      "I kept this one grounded locally because the richer Messages summary lane isn't available right now.",
+  };
+}
+
 export async function draftBlueBubblesCommunicationReply(input: {
   messageText: string;
   summaryText: string;

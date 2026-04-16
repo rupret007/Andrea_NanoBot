@@ -135,6 +135,7 @@ import {
   continueAssistantCapabilityFromPriorSubjectData,
   matchAssistantCapabilityRequest,
 } from './assistant-capability-router.js';
+import { buildAssistantCapabilityExecutionInput } from './assistant-capability-input.js';
 import {
   capturePilotIssue,
   completePilotJourney,
@@ -6315,24 +6316,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           priorSubjectData: priorAssistantCapabilitySeed?.subjectData,
           replyText: missedMessages.at(-1)?.reply_to?.content,
         },
-        input: {
-          text: lastContent,
-          canonicalText: capabilityMatch.canonicalText,
-          personName:
-            capabilityMatch.arguments?.personName ||
-            priorAssistantCapabilitySeed?.subjectData?.personName,
-          targetChatName: capabilityMatch.arguments?.targetChatName || null,
-          targetChatJid: capabilityMatch.arguments?.targetChatJid || null,
-          threadTitle:
-            capabilityMatch.arguments?.threadTitle ||
-            priorAssistantCapabilitySeed?.subjectData?.threadTitle ||
-            null,
-          timeWindowKind: capabilityMatch.arguments?.timeWindowKind || null,
-          timeWindowValue: capabilityMatch.arguments?.timeWindowValue || null,
-          savedMaterialOnly:
-            capabilityMatch.arguments?.savedMaterialOnly || null,
-          replyStyle: capabilityMatch.arguments?.replyStyle || null,
-        },
+        input: buildAssistantCapabilityExecutionInput({
+          lastContent,
+          capabilityMatch,
+          priorSubjectData: priorAssistantCapabilitySeed?.subjectData,
+        }),
       });
     } catch (err) {
       completeConversationPilotProof(pilotRecord, {

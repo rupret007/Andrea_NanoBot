@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   interpretBlueBubblesDirectTurn,
   resolveBlueBubblesReplyGateMode,
+  summarizeBlueBubblesThreadDigest,
 } from './messages-fluidity.js';
 
 const originalFetch = globalThis.fetch;
@@ -74,5 +75,44 @@ describe('messages fluidity', () => {
 
     expect(result.source).toBe('fallback');
     expect(result.fallbackText).toContain("I'm here");
+  });
+
+  it('uses the standard tier for synced thread digest synthesis', async () => {
+    vi.stubEnv('OPENAI_API_KEY', 'test-key');
+    vi.stubEnv('OPENAI_MODEL_STANDARD', 'gpt-5.4');
+    globalThis.fetch = vi.fn(async (_input, init) => {
+      const payload = JSON.parse(String(init?.body)) as {
+        model: string;
+      };
+      expect(payload.model).toBe('gpt-5.4');
+      return new Response(
+        JSON.stringify({
+          output_text: JSON.stringify({
+            lead: 'The thread mostly debated how faithful an adaptation should be.',
+            digest:
+              'People compared Fallout and Invincible as examples of when a story can stay true to the world without simply replaying the same material.',
+            bullets: [
+              'One person liked Fallout as a continuation story.',
+              'Another pushed against simple retellings.',
+              'The latest turn landed on liking the story but not knowing the wider world as well.',
+            ],
+          }),
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }) as typeof fetch;
+
+    const result = await summarizeBlueBubblesThreadDigest({
+      chatName: 'Pops of Punk',
+      windowLabel: 'today',
+      transcript:
+        'One person: Fallout works because it keeps the world right.\nAnother person: I do not want the same material repeated.\nOne person: I like the Fallout story but I do not know the world too well.',
+      channel: 'telegram',
+    });
+
+    expect(result.source).toBe('openai');
+    expect(result.lead).toContain('adaptation');
+    expect(result.digest).toContain('Fallout and Invincible');
+    expect(result.bullets).toHaveLength(3);
   });
 });

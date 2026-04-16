@@ -8,6 +8,30 @@ export interface ThreadSummaryIntent {
   arguments: CompanionRouteArguments;
 }
 
+const GENERIC_THREAD_NAME_TOKENS = new Set([
+  'a',
+  'an',
+  'for',
+  'from',
+  'in',
+  'last',
+  'message',
+  'messages',
+  'my',
+  'please',
+  'pls',
+  'recent',
+  'text',
+  'texts',
+  'that',
+  'the',
+  'this',
+  'thread',
+  'today',
+  'week',
+  'yesterday',
+]);
+
 function normalizeText(value: string): string {
   return value
     .replace(/[\u201c\u201d]/g, '"')
@@ -82,6 +106,7 @@ function parseWindow(
 
 function cleanChatName(value: string): string {
   return normalizeText(value)
+    .replace(/^(?:from|in)\s+/i, '')
     .replace(/^the\s+/i, '')
     .replace(
       /\b(?:text(?: message)?s?|messages?|message|thread|chat|conversation|group(?: chat)?|space)\b/gi,
@@ -93,6 +118,22 @@ function cleanChatName(value: string): string {
     .replace(/[.,!?]+$/g, '')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function isSpecificChatName(value: string): boolean {
+  const normalized = cleanChatName(value).toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  if (
+    /^(?:for|today|yesterday|this week|recent|my|my texts?|my messages?|text messages?|messages?|texts?)$/i.test(
+      normalized,
+    )
+  ) {
+    return false;
+  }
+  const tokens = normalized.split(/\s+/).filter(Boolean);
+  return tokens.some((token) => !GENERIC_THREAD_NAME_TOKENS.has(token));
 }
 
 function looksLikeThreadSummaryPrompt(value: string): boolean {
@@ -119,6 +160,30 @@ function looksLikeThreadSummaryPrompt(value: string): boolean {
   );
 }
 
+export function looksLikeGenericThreadSummaryPrompt(
+  rawText: string | null | undefined,
+): boolean {
+  const normalized = normalizeForMatch(rawText || '');
+  if (!normalized) {
+    return false;
+  }
+  if (parseThreadSummaryIntent(normalized)) {
+    return false;
+  }
+  if (looksLikeThreadSummaryPrompt(normalized)) {
+    return true;
+  }
+  const lower = normalized.toLowerCase();
+  return (
+    /^(?:what are|show me|give me|list)\s+(?:my\s+)?(?:recent|latest|today'?s|todays)?\s*(?:text(?: message)?s?|messages|texts)\b/.test(
+      lower,
+    ) ||
+    /^(?:what were|what was in)\s+(?:my\s+)?(?:recent|latest|today'?s|todays)?\s*(?:text(?: message)?s?|messages|texts)\b/.test(
+      lower,
+    )
+  );
+}
+
 export function parseThreadSummaryIntent(
   rawText: string | null | undefined,
 ): ThreadSummaryIntent | null {
@@ -129,12 +194,14 @@ export function parseThreadSummaryIntent(
 
   const { cleanedText, kind, value } = parseWindow(normalized);
   const withoutLead = normalizeText(
-    cleanedText
-      .replace(
-        /^(?:can you|could you|please|hey|hi|hello)\s+/i,
-        '',
-      )
-      .replace(/\b(?:summari[sz]e|summerize|sumarize)\b/i, '')
+    normalizeText(
+      cleanedText
+        .replace(
+          /^(?:can you|could you|please|hey|hi|hello)\s+/i,
+          '',
+        )
+        .replace(/\b(?:summari[sz]e|summerize|sumarize)\b/i, ''),
+    )
       .replace(/^my\s+/i, '')
       .replace(/^(?:the\s+)?(?:text(?: message)?s?|messages?|texts?)\s+/i, '')
       .replace(/^(?:in|from)\s+/i, ''),
@@ -152,10 +219,10 @@ export function parseThreadSummaryIntent(
     const match = withoutLead.match(pattern);
     if (!match) continue;
     targetChatName = cleanChatName(match[1] || '');
-    if (targetChatName) break;
+    if (targetChatName && isSpecificChatName(targetChatName)) break;
   }
 
-  if (!targetChatName) {
+  if (!targetChatName || !isSpecificChatName(targetChatName)) {
     return null;
   }
 

@@ -26,7 +26,10 @@ import {
   isSharedResearchRequest,
   type AssistantCapabilityId,
 } from './assistant-capabilities.js';
-import { parseThreadSummaryIntent } from './thread-summary-routing.js';
+import {
+  looksLikeGenericThreadSummaryPrompt,
+  parseThreadSummaryIntent,
+} from './thread-summary-routing.js';
 import type { CompanionRouteArguments } from './types.js';
 import { normalizeVoicePrompt } from './voice-ready.js';
 
@@ -684,6 +687,14 @@ function matchCommunicationPrompt(
       canonicalText: threadSummaryIntent.canonicalText,
       arguments: threadSummaryIntent.arguments,
       reason: 'matched named synced Messages thread summary phrasing',
+    };
+  }
+  if (looksLikeGenericThreadSummaryPrompt(normalized)) {
+    return {
+      capabilityId: 'communication.summarize_thread',
+      normalizedText: normalized,
+      canonicalText: normalized,
+      reason: 'matched generic synced Messages summary phrasing that needs a thread clarification',
     };
   }
   if (

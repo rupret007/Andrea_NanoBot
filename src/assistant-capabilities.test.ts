@@ -113,6 +113,31 @@ describe('assistant capabilities', () => {
   });
 
   it('summarizes a synced BlueBubbles thread by name without creating side effects', async () => {
+    vi.stubEnv('OPENAI_API_KEY', 'test-key');
+    vi.stubEnv('OPENAI_MODEL_STANDARD', 'gpt-5.4');
+    globalThis.fetch = vi.fn(async (_input, init) => {
+      const payload = JSON.parse(String(init?.body)) as {
+        model: string;
+        input: string;
+      };
+      expect(payload.model).toBe('gpt-5.4');
+      expect(payload.input).toContain('almost-full digest of the conversation');
+      return new Response(
+        JSON.stringify({
+          output_text: JSON.stringify({
+            lead: 'Pops of Punk spent most of today debating adaptation choices across a few shows.',
+            digest:
+              'The thread compared how faithfully Fallout, Invincible, and The Boys handle their source material. One person argued that Fallout works because it protects the world while still telling a continuation story, while another pushed back that adaptations should avoid just reusing the same material beat for beat.',
+            bullets: [
+              'The conversation bounced between Fallout, Invincible, and The Boys as examples of what works.',
+              'A clear disagreement emerged over whether an adaptation should mirror the source closely or tell a looser continuation story.',
+              'The latest turn landed on liking the Fallout story while still feeling less familiar with the wider world behind it.',
+            ],
+          }),
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }) as typeof fetch;
     storeChatMetadata(
       'bb:iMessage;-;pops-of-punk',
       '2026-04-15T11:00:00.000Z',
@@ -160,7 +185,8 @@ describe('assistant capabilities', () => {
     expect(result.handled).toBe(true);
     expect(result.capabilityId).toBe('communication.summarize_thread');
     expect(result.replyText).toContain('Pops of Punk');
-    expect(result.replyText).toContain('Latest turn:');
+    expect(result.replyText).toContain('adaptation choices');
+    expect(result.replyText).toContain('The thread compared how faithfully');
     expect(result.trace?.responseSource).toBe('local_companion');
     expect(result.conversationSeed?.subjectData?.threadTitle).toBe(
       'Pops of Punk',
@@ -171,6 +197,75 @@ describe('assistant capabilities', () => {
       }),
     ).toHaveLength(0);
     expect(listKnowledgeSourcesForGroup('main')).toHaveLength(0);
+  });
+
+  it('falls back to a clean local digest for today without surfacing raw identifiers', async () => {
+    vi.stubEnv('OPENAI_API_KEY', ' ');
+    storeChatMetadata(
+      'bb:iMessage;+;chat-pops-clean',
+      '2026-04-15T18:51:51.947Z',
+      'Pops of Punk',
+      'bluebubbles',
+      true,
+    );
+    storeMessage({
+      id: 'msg-pops-old',
+      chat_jid: 'bb:iMessage;+;chat-pops-clean',
+      sender: 'bb:+14697852580',
+      sender_name: '+14697852580',
+      content: 'Yesterday everyone was still just figuring out whether to read the comics first.',
+      timestamp: '2026-04-14T23:10:00.000Z',
+      is_from_me: false,
+    });
+    storeMessage({
+      id: 'msg-pops-today-1',
+      chat_jid: 'bb:iMessage;+;chat-pops-clean',
+      sender: 'bb:+14697852580',
+      sender_name: '+14697852580',
+      content: 'I think Fallout works because it keeps the world right while still telling a continuation story.',
+      timestamp: '2026-04-15T16:46:28.314Z',
+      is_from_me: false,
+    });
+    storeMessage({
+      id: 'msg-pops-today-2',
+      chat_jid: 'bb:iMessage;+;chat-pops-clean',
+      sender: 'bb:+13373027596',
+      sender_name: '+13373027596',
+      content: 'I do not want an adaptation to just repeat the exact same material with a different format.',
+      timestamp: '2026-04-15T16:48:09.713Z',
+      is_from_me: false,
+    });
+    storeMessage({
+      id: 'msg-pops-today-3',
+      chat_jid: 'bb:iMessage;+;chat-pops-clean',
+      sender: 'bb:+13373027596',
+      sender_name: '+13373027596',
+      content: 'Yeah I like the Fallout story but I do not know too much about the world yet.',
+      timestamp: '2026-04-15T18:51:51.947Z',
+      is_from_me: false,
+    });
+
+    const result = await executeAssistantCapability({
+      capabilityId: 'communication.summarize_thread',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:8004355504',
+        now: new Date('2026-04-15T19:00:00-05:00'),
+      },
+      input: {
+        canonicalText: 'summarize my text messages in Pops of Punk from today',
+        targetChatName: 'Pops of Punk',
+        threadTitle: 'Pops of Punk',
+        timeWindowKind: 'today',
+      },
+    });
+
+    expect(result.handled).toBe(true);
+    expect(result.replyText).toContain('Here’s the gist from Pops of Punk today.');
+    expect(result.replyText).not.toContain('+14697852580');
+    expect(result.replyText).not.toContain('+13373027596');
+    expect(result.replyText).not.toContain('Yesterday everyone was still just figuring out');
   });
 
   it('asks to clarify when a named BlueBubbles thread summary is ambiguous', async () => {

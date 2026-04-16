@@ -54,6 +54,7 @@ import {
   formatCommunicationOpenLoopsReply,
   manageCommunicationTracking,
 } from './communication-companion.js';
+import { summarizeBlueBubblesThreadDigest } from './messages-fluidity.js';
 import { resolveBlueBubblesThreadTargetByName } from './message-actions.js';
 import { createOrRefreshMessageActionFromDraft } from './message-actions.js';
 import { buildChiefOfStaffTurn } from './chief-of-staff.js';
@@ -2154,44 +2155,13 @@ async function runKnowledgeMutationCapability(
   };
 }
 
-const THREAD_SUMMARY_STOP_WORDS = new Set([
-  'about',
-  'after',
-  'also',
-  'back',
-  'been',
-  'both',
-  'from',
-  'have',
-  'just',
-  'like',
-  'more',
-  'need',
-  'only',
-  'really',
-  'still',
-  'that',
-  'them',
-  'there',
-  'they',
-  'this',
-  'today',
-  'tomorrow',
-  'tonight',
-  'want',
-  'what',
-  'when',
-  'with',
-  'would',
-  'your',
-]);
-
 function resolveThreadSummaryWindow(params: {
   now: Date;
   kind: CompanionRouteTimeWindowKind | null | undefined;
   value: number | null | undefined;
-}): { startTimestamp: string; label: string } {
+}): { startTimestamp: string; endTimestamp: string | null; label: string } {
   const start = new Date(params.now);
+  let end: Date | null = null;
   switch (params.kind) {
     case 'last_hours':
       start.setHours(start.getHours() - Math.max(1, params.value || 1));
@@ -2203,6 +2173,8 @@ function resolveThreadSummaryWindow(params: {
       start.setHours(0, 0, 0, 0);
       break;
     case 'yesterday':
+      end = new Date(start);
+      end.setHours(0, 0, 0, 0);
       start.setDate(start.getDate() - 1);
       start.setHours(0, 0, 0, 0);
       break;
@@ -2220,41 +2192,108 @@ function resolveThreadSummaryWindow(params: {
   }
   return {
     startTimestamp: start.toISOString(),
+    endTimestamp: end ? end.toISOString() : null,
     label: formatThreadSummaryWindowLabel(params.kind, params.value),
   };
 }
 
-function normalizeThreadSummaryToken(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9']/g, '');
+function looksLikeRawParticipantIdentifier(value: string): boolean {
+  const normalized = normalizeText(value);
+  if (!normalized) return true;
+  if (/^bb[:;]/i.test(normalized)) return true;
+  if (/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(normalized)) return true;
+  const digits = normalized.replace(/\D/g, '');
+  return digits.length >= 7;
 }
 
-function pickThreadSummaryTopics(messages: NewMessage[]): string[] {
-  const counts = new Map<string, number>();
-  for (const message of messages) {
-    for (const rawToken of (message.content || '').split(/\s+/)) {
-      const token = normalizeThreadSummaryToken(rawToken);
-      if (!token || token.length < 4) continue;
-      if (THREAD_SUMMARY_STOP_WORDS.has(token)) continue;
-      counts.set(token, (counts.get(token) || 0) + 1);
+function getThreadSummarySpeakerKey(message: NewMessage): string {
+  if (message.is_from_me) {
+    return '__you__';
+  }
+  return normalizeText(message.sender_name || message.sender || '') || '__unknown__';
+}
+
+function buildThreadSummarySpeakerLabels(params: {
+  messages: NewMessage[];
+  isGroup: boolean;
+}): Map<string, string> {
+  const labels = new Map<string, string>();
+  let unlabeledIndex = 0;
+  const groupFallbackLabels = [
+    'One person',
+    'Another person',
+    'A third person',
+    'Someone else',
+  ];
+  for (const message of params.messages) {
+    const key = getThreadSummarySpeakerKey(message);
+    if (!key || labels.has(key)) continue;
+    if (message.is_from_me) {
+      labels.set(key, 'You');
+      continue;
     }
+    const preferredName = normalizeText(message.sender_name || '');
+    const secondaryName = normalizeText(message.sender || '');
+    const friendlyName = [preferredName, secondaryName].find(
+      (candidate) => candidate && !looksLikeRawParticipantIdentifier(candidate),
+    );
+    if (friendlyName) {
+      labels.set(key, friendlyName);
+      continue;
+    }
+    if (!params.isGroup) {
+      labels.set(key, 'The other person');
+      continue;
+    }
+    const fallbackLabel =
+      groupFallbackLabels[unlabeledIndex] || `Person ${unlabeledIndex + 1}`;
+    unlabeledIndex += 1;
+    labels.set(key, fallbackLabel);
   }
-  return [...counts.entries()]
-    .sort((left, right) => right[1] - left[1])
-    .slice(0, 3)
-    .map(([token]) => token);
+  return labels;
 }
 
-function pickThreadSummaryParticipants(messages: NewMessage[]): string[] {
-  const counts = new Map<string, number>();
-  for (const message of messages) {
-    const name = normalizeText(message.sender_name || message.sender || '');
-    if (!name) continue;
-    counts.set(name, (counts.get(name) || 0) + 1);
+function buildThreadSummaryTranscript(params: {
+  messages: NewMessage[];
+  speakerLabels: Map<string, string>;
+}): string {
+  return params.messages
+    .slice(-120)
+    .map((message) => {
+      const speaker =
+        params.speakerLabels.get(getThreadSummarySpeakerKey(message)) || 'Someone';
+      return `${speaker}: ${clipText(message.content || '', 240)}`;
+    })
+    .filter(Boolean)
+    .join('\n');
+}
+
+function pickRepresentativeThreadMessages(messages: NewMessage[]): NewMessage[] {
+  const substantive = messages.filter(
+    (message) => normalizeText(message.content || '').length >= 16,
+  );
+  if (substantive.length <= 4) {
+    return substantive;
   }
-  return [...counts.entries()]
-    .sort((left, right) => right[1] - left[1])
-    .slice(0, 3)
-    .map(([name]) => name);
+  const indexes = [
+    0,
+    Math.floor(substantive.length / 3),
+    Math.floor((substantive.length * 2) / 3),
+    substantive.length - 1,
+  ];
+  const seen = new Set<string>();
+  const picks: NewMessage[] = [];
+  for (const index of indexes) {
+    const message = substantive[index];
+    if (!message) continue;
+    const fingerprint = `${getThreadSummarySpeakerKey(message)}|${normalizeText(
+      message.content || '',
+    )}`;
+    if (seen.has(fingerprint)) continue;
+    seen.add(fingerprint);
+    picks.push(message);
+  }
+  return picks;
 }
 
 function inferThreadReplyNeed(messages: NewMessage[]): string | null {
@@ -2276,42 +2315,78 @@ function inferThreadReplyNeed(messages: NewMessage[]): string | null {
   return null;
 }
 
-function buildThreadSummaryReply(params: {
+function buildFallbackThreadSummaryReply(params: {
   chatName: string;
   windowLabel: string;
   messages: NewMessage[];
+  speakerLabels: Map<string, string>;
   channel: AssistantCapabilityContext['channel'];
 }): string {
-  const messageCount = params.messages.length;
-  const participants = pickThreadSummaryParticipants(params.messages);
-  const topics = pickThreadSummaryTopics(params.messages);
+  const highlights = pickRepresentativeThreadMessages(params.messages);
   const replyNeed = inferThreadReplyNeed(params.messages);
-  const lead = [
-    `Over ${params.windowLabel}, ${params.chatName} had ${messageCount} message${
-      messageCount === 1 ? '' : 's'
-    }`,
-    participants.length > 0
-      ? `with ${participants.join(participants.length > 1 ? ', ' : '')} most active.`
-      : '.',
-  ].join(' ');
-
-  const bullets: string[] = [];
-  if (topics.length > 0) {
-    bullets.push(`Main topics: ${topics.join(', ')}.`);
-  }
-  const latest = params.messages.at(-1);
-  if (latest) {
-    bullets.push(`Latest turn: ${clipText(normalizeText(latest.content || ''), 120)}.`);
-  }
+  const lead = `Here’s the gist from ${params.chatName} ${params.windowLabel === 'today' ? 'today' : `over ${params.windowLabel}`}.`;
+  const digestSentences = highlights.slice(0, 3).map((message, index) => {
+    const speaker =
+      params.speakerLabels.get(getThreadSummarySpeakerKey(message)) || 'Someone';
+    const content = clipText(
+      message.content || '',
+      params.channel === 'bluebubbles' ? 90 : 140,
+    );
+    if (index === 0) {
+      return `${speaker} opened with "${content}".`;
+    }
+    if (index === highlights.length - 1) {
+      return `By the end, ${speaker} was saying "${content}".`;
+    }
+    return `Later, ${speaker} added "${content}".`;
+  });
+  const bullets = highlights
+    .map((message, index) => {
+      const speaker =
+        params.speakerLabels.get(getThreadSummarySpeakerKey(message)) || 'Someone';
+      const prefix =
+        index === 0 ? 'Early on' : index === highlights.length - 1 ? 'Latest turn' : 'Later';
+      return `${prefix}: ${speaker} said "${clipText(message.content || '', 120)}".`;
+    })
+    .slice(0, params.channel === 'bluebubbles' ? 2 : 4);
   if (replyNeed) {
     bullets.push(replyNeed);
   }
 
   if (params.channel === 'bluebubbles') {
-    return [lead, ...bullets.slice(0, 2)].filter(Boolean).join('\n');
+    return [lead, digestSentences.slice(0, 2).join(' '), ...bullets.slice(0, 2)]
+      .filter(Boolean)
+      .join('\n');
   }
 
-  return [lead, ...bullets.slice(0, 3).map((line) => `- ${line}`)]
+  return [lead, '', digestSentences.join(' '), '', ...bullets.map((line) => `- ${line}`)]
+    .filter(Boolean)
+    .join('\n');
+}
+
+function formatThreadSummaryReply(params: {
+  lead: string | null;
+  digest: string | null;
+  bullets: string[];
+  channel: AssistantCapabilityContext['channel'];
+}): string {
+  if (params.channel === 'bluebubbles') {
+    return [
+      params.lead,
+      params.digest ? clipText(params.digest, 320) : null,
+      ...params.bullets.slice(0, 2).map((line) => `- ${clipText(line, 180)}`),
+    ]
+      .filter(Boolean)
+      .join('\n');
+  }
+
+  return [
+    params.lead,
+    '',
+    params.digest,
+    '',
+    ...params.bullets.slice(0, 6).map((line) => `- ${line}`),
+  ]
     .filter(Boolean)
     .join('\n');
 }
@@ -2379,6 +2454,7 @@ async function runCommunicationThreadSummaryCapability(
   const messages = listMessagesForChatWindow({
     chatJid: resolution.target.chatJid,
     startTimestamp: window.startTimestamp,
+    endTimestamp: window.endTimestamp,
     limit: 400,
   }).filter((message) => !message.is_bot_message);
 
@@ -2397,12 +2473,40 @@ async function runCommunicationThreadSummaryCapability(
     };
   }
 
-  const replyText = buildThreadSummaryReply({
+  const speakerLabels = buildThreadSummarySpeakerLabels({
+    messages,
+    isGroup: resolution.target.isGroup,
+  });
+  const transcript = buildThreadSummaryTranscript({
+    messages,
+    speakerLabels,
+  });
+  const synthesizedDigest = await summarizeBlueBubblesThreadDigest({
     chatName: resolution.target.displayName,
     windowLabel: window.label,
-    messages,
-    channel: context.channel,
+    transcript,
+    channel: context.channel === 'bluebubbles' ? 'bluebubbles' : 'telegram',
   });
+  const replyText =
+    synthesizedDigest.source === 'openai' &&
+    (synthesizedDigest.lead ||
+      synthesizedDigest.digest ||
+      synthesizedDigest.bullets.length > 0)
+      ? formatThreadSummaryReply({
+          lead:
+            synthesizedDigest.lead ||
+            `Here’s the gist from ${resolution.target.displayName} ${window.label === 'today' ? 'today' : `over ${window.label}`}.`,
+          digest: synthesizedDigest.digest,
+          bullets: synthesizedDigest.bullets,
+          channel: context.channel,
+        })
+      : buildFallbackThreadSummaryReply({
+          chatName: resolution.target.displayName,
+          windowLabel: window.label,
+          messages,
+          speakerLabels,
+          channel: context.channel,
+        });
 
   return {
     handled: true,
@@ -2418,6 +2522,7 @@ async function runCommunicationThreadSummaryCapability(
         `chat:${resolution.target.displayName}`,
         `window:${window.label}`,
         `messages:${messages.length}`,
+        `digest_source:${synthesizedDigest.source}`,
       ],
     ),
     conversationSeed: {

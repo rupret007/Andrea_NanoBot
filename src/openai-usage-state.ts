@@ -17,7 +17,12 @@ export interface OpenAiUsageState {
 }
 
 export function recordOpenAiUsageState(state: OpenAiUsageState): void {
-  setRouterState(OPENAI_USAGE_STATE_KEY, JSON.stringify(state));
+  try {
+    setRouterState(OPENAI_USAGE_STATE_KEY, JSON.stringify(state));
+  } catch {
+    // Some focused tests exercise routing helpers without the shared DB bootstrapped.
+    // Usage-state observability should never break the user-facing path.
+  }
 }
 
 export function readOpenAiUsageState(): OpenAiUsageState | null {

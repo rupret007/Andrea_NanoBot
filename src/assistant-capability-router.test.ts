@@ -175,6 +175,29 @@ describe('assistant capability router', () => {
       }),
     });
     expect(
+      matchAssistantCapabilityRequest(
+        'Summarize the texts today from the Pops of Punk text thread please',
+      ),
+    ).toMatchObject({
+      capabilityId: 'communication.summarize_thread',
+      arguments: expect.objectContaining({
+        targetChatName: 'Pops of Punk',
+        timeWindowKind: 'today',
+      }),
+    });
+    expect(
+      matchAssistantCapabilityRequest('Summarize my text messages for today'),
+    ).toMatchObject({
+      capabilityId: 'communication.summarize_thread',
+      canonicalText: 'Summarize my text messages for today',
+    });
+    expect(
+      matchAssistantCapabilityRequest('What are my recent text messages?'),
+    ).toMatchObject({
+      capabilityId: 'communication.summarize_thread',
+      canonicalText: 'What are my recent text messages',
+    });
+    expect(
       matchAssistantCapabilityRequest('Summarize the latest news today'),
     ).toMatchObject({
       capabilityId: 'research.summarize',
