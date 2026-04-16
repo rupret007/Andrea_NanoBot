@@ -356,6 +356,40 @@ describe('research orchestrator', () => {
     expect(result.structuredFindings[0]?.items[0]).toContain('Lower cost');
   });
 
+  it('asks for the two items when a compare prompt is too generic', async () => {
+    const result = await runResearchOrchestrator({
+      query: 'compare these two for me',
+      channel: 'telegram',
+      groupFolder: 'main',
+      now: new Date('2026-04-16T13:00:00.000Z'),
+    });
+
+    expect(result.handled).toBe(true);
+    expect(result.kind).toBe('compare');
+    expect(result.summaryText).toContain(
+      'Tell me the two things you want me to compare',
+    );
+    expect(result.debugPath).toContain('research.compare_clarify');
+    expect(result.structuredFindings).toEqual([]);
+  });
+
+  it('asks for the options when a recommendation prompt is too generic', async () => {
+    const result = await runResearchOrchestrator({
+      query: 'recommend the better one',
+      channel: 'telegram',
+      groupFolder: 'main',
+      now: new Date('2026-04-16T13:05:00.000Z'),
+    });
+
+    expect(result.handled).toBe(true);
+    expect(result.kind).toBe('recommend');
+    expect(result.summaryText).toContain(
+      'Tell me the options you want me to weigh first',
+    );
+    expect(result.debugPath).toContain('research.compare_clarify');
+    expect(result.structuredFindings).toEqual([]);
+  });
+
   it('uses the simple tier for weather lookups and falls back upward when the cheap model is rejected', async () => {
     process.env.OPENAI_API_KEY = 'test-key';
     process.env.OPENAI_BASE_URL = 'https://example.test/v1';

@@ -219,6 +219,57 @@ function buildResearchLifeThreadLine(
   return `${normalizedTitle}: ${normalizedFocus}`;
 }
 
+function isGenericCompareClarifierQuery(
+  query: string,
+  kind: ResearchRequestKind,
+): boolean {
+  const lower = normalizeQuery(query).toLowerCase();
+  if (!lower) return false;
+  if (kind === 'compare') {
+    return (
+      /^compare (?:these|those|the) (?:two|2)(?:\b.*)?$/.test(lower) ||
+      /^compare them(?:\b.*)?$/.test(lower) ||
+      /^compare this(?:\b.*)?$/.test(lower)
+    );
+  }
+  if (kind === 'recommend') {
+    return (
+      /^recommend the better one(?:\b.*)?$/.test(lower) ||
+      /^which (?:one )?is better(?:\b.*)?$/.test(lower) ||
+      /^which should i pick(?:\b.*)?$/.test(lower)
+    );
+  }
+  return false;
+}
+
+function buildGenericComparisonClarifier(
+  request: ResearchRequest,
+  plan: ResearchPlan,
+): ResearchResult {
+  const summaryText =
+    plan.kind === 'compare'
+      ? request.channel === 'alexa'
+        ? 'Tell me the two things you want me to compare.'
+        : 'Tell me the two things you want me to compare, and I will break down the tradeoffs.'
+      : request.channel === 'alexa'
+        ? 'Tell me the options you want me to weigh first.'
+        : 'Tell me the options you want me to weigh first, and I will tell you which one looks stronger.';
+  return {
+    handled: true,
+    kind: plan.kind,
+    plan,
+    summaryText,
+    spokenText: summaryText,
+    fullText: summaryText,
+    sourceNotes: ['clarification: missing comparison targets'],
+    routeExplanation:
+      'The request asked for a comparison or recommendation, but did not name the options yet.',
+    structuredFindings: [],
+    followupSuggestions: [],
+    debugPath: ['research.compare_clarify'],
+  };
+}
+
 function buildDefaultFollowups(kind: ResearchRequestKind): string[] {
   switch (kind) {
     case 'compare':
@@ -1348,6 +1399,10 @@ export async function runResearchOrchestrator(
       followupSuggestions: [],
       debugPath: ['research.empty_query'],
     };
+  }
+
+  if (isGenericCompareClarifierQuery(normalized, plan.kind)) {
+    return buildGenericComparisonClarifier(normalizedRequest, plan);
   }
 
   if (plan.primarySource === 'runtime_delegate') {

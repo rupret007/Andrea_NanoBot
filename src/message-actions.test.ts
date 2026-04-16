@@ -175,6 +175,7 @@ describe('message actions', () => {
         groupFolder: 'main',
         chatJid: 'bb:iMessage;-;jeffstory007@gmail.com',
         rawText: 'send it later tonight',
+        now: new Date('2026-04-16T16:20:00.000Z'),
       })?.messageActionId,
     ).toBe(action.messageActionId);
   });
@@ -679,11 +680,48 @@ describe('message actions', () => {
     expect(resolved?.messageActionId).toBe(action.messageActionId);
   });
 
+  it('does not bind a bare followup to a stale open message action', () => {
+    createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'telegram',
+      presentationChatJid: 'tg:main',
+      sourceType: 'communication_thread',
+      sourceKey: 'comm-stale',
+      sourceSummary: 'Older Candace draft.',
+      draftText: 'Yes, tonight still works for me.',
+      personName: 'Candace',
+      threadTitle: 'Candace',
+      communicationThreadId: 'comm-stale',
+      communicationContext: 'reply_followthrough',
+      now: new Date('2026-04-08T19:00:00.000Z'),
+    });
+
+    const resolved = resolveMessageActionForFollowup({
+      groupFolder: 'main',
+      chatJid: 'tg:main',
+      rawText: 'make that less stiff',
+      now: new Date('2026-04-08T20:00:01.000Z'),
+    });
+
+    expect(resolved).toBeUndefined();
+  });
+
   it('treats BlueBubbles send-using phrasing as a send follow-up', () => {
     expect(interpretMessageActionFollowup('send using blue bubbles')).toEqual({
       kind: 'send',
     });
     expect(isBlueBubblesExplicitSendAlias('send that using blue bubbles')).toBe(true);
+  });
+
+  it('treats natural rewrite aliases as message-action followups', () => {
+    expect(interpretMessageActionFollowup('make that less stiff')).toEqual({
+      kind: 'rewrite',
+      style: 'warmer',
+    });
+    expect(interpretMessageActionFollowup('more blunt')).toEqual({
+      kind: 'rewrite',
+      style: 'more_direct',
+    });
   });
 
   it('parses an explicit BlueBubbles text-message request with a named target', () => {

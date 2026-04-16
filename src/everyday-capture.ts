@@ -2872,6 +2872,10 @@ async function handleReadItems(
 async function handleUpdateItem(
   input: EverydayCaptureCommandInput,
 ): Promise<EverydayCaptureCommandResult> {
+  const readTarget = parseReadTarget(input.text);
+  if (readTarget) {
+    return handleReadItems(input);
+  }
   const item = resolveActiveItem(input);
   if (!item) {
     return buildResult({

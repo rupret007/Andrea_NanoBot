@@ -35,7 +35,7 @@ const DAYPART_RANGES = {
 } as const;
 
 const CANCEL_PATTERN =
-  /^(?:cancel|never mind|nevermind|stop|no|delete(?:\s+(?:that|it))?|remove(?:\s+(?:that|it))?|discard(?:\s+(?:that|it))?)\b/i;
+  /^(?:cancel|never mind|nevermind|stop|no|(?:actually\s+)?scratch that|delete(?:\s+(?:that|it))?|remove(?:\s+(?:that|it))?|discard(?:\s+(?:that|it))?)\b/i;
 const CONFIRM_PATTERN =
   /^(?:yes|yep|yeah|confirm|create it|go ahead|looks good|ok|okay)\b/i;
 const DEFAULT_CONFIRMATION_TTL_MS = 30 * 60 * 1000;
@@ -361,7 +361,7 @@ function parseTimeRange(working: string): {
   }
 
   const startOnly = working.match(
-    /\b(?:at|from)\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/i,
+    /\b(?:at|from|to|around)\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?(?:-?ish)?\b/i,
   );
   const impliedStart =
     startOnly ||

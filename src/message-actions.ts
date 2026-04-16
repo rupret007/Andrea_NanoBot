@@ -164,7 +164,10 @@ export interface ResolveMessageActionForPromptParams {
   groupFolder: string;
   chatJid: string;
   rawText: string;
+  now?: Date;
 }
+
+const MESSAGE_ACTION_FOLLOWUP_CONTEXT_TTL_MS = 30 * 60 * 1000;
 
 function normalizeText(value: string | null | undefined): string {
   return (value || '').replace(/\s+/g, ' ').trim();
@@ -1132,10 +1135,18 @@ export function interpretMessageActionFollowup(
   if (/^(shorter|make it shorter)$/.test(normalized)) {
     return { kind: 'rewrite', style: 'shorter' };
   }
-  if (/^(make it warmer|warmer)$/.test(normalized)) {
+  if (
+    /^(?:make (?:it|that)(?: a little)? warmer|warmer|make (?:it|that) less stiff|less stiff)$/.test(
+      normalized,
+    )
+  ) {
     return { kind: 'rewrite', style: 'warmer' };
   }
-  if (/^(more direct|make it more direct)$/.test(normalized)) {
+  if (
+    /^(?:more direct|make (?:it|that) more direct|more blunt|make (?:it|that) more blunt)$/.test(
+      normalized,
+    )
+  ) {
     return { kind: 'rewrite', style: 'more_direct' };
   }
   if (/^(skip that|not now)$/.test(normalized)) {
@@ -2010,12 +2021,23 @@ export async function applyMessageActionOperation(
 export function resolveMessageActionForFollowup(
   params: ResolveMessageActionForPromptParams,
 ): MessageActionRecord | undefined {
+  const now = params.now || new Date();
   const current = findLatestChatMessageAction({
     groupFolder: params.groupFolder,
     chatJid: params.chatJid,
   });
   const explicitPersonName = extractExplicitPersonName(params.rawText);
   if (!explicitPersonName) {
+    if (!current) return undefined;
+    const lastTouchedAtMs = Date.parse(
+      current.lastActionAt || current.lastUpdatedAt || current.createdAt,
+    );
+    if (
+      !Number.isFinite(lastTouchedAtMs) ||
+      lastTouchedAtMs + MESSAGE_ACTION_FOLLOWUP_CONTEXT_TTL_MS < now.getTime()
+    ) {
+      return undefined;
+    }
     return current;
   }
   if (current && actionMatchesPersonName(current, explicitPersonName)) {

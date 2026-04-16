@@ -518,6 +518,40 @@ describe('assistant capabilities', () => {
     expect(read.conversationSeed?.subjectData?.activeTaskKind).toBe('list_read');
   });
 
+  it('keeps explicit store read asks on the read path even if they land on the update capability', async () => {
+    await executeAssistantCapability({
+      capabilityId: 'capture.add_item',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:8004355504',
+        now: new Date('2026-04-12T10:10:00-05:00'),
+      },
+      input: {
+        canonicalText: 'add milk to my grocery list',
+      },
+    });
+
+    const read = await executeAssistantCapability({
+      capabilityId: 'capture.update_item',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:8004355504',
+        now: new Date('2026-04-12T10:15:00-05:00'),
+      },
+      input: {
+        text: 'what do I need from the store again',
+        canonicalText: 'mark that done',
+      },
+    });
+
+    expect(read.handled).toBe(true);
+    expect(read.replyText).toContain('*Groceries*');
+    expect(read.replyText?.toLowerCase()).toContain('milk');
+    expect(read.conversationSeed?.subjectData?.activeTaskKind).toBe('list_read');
+  });
+
   it('adds companion continuation payloads to Alexa-safe daily answers', async () => {
     createTask({
       id: 'task-daily-handoff',

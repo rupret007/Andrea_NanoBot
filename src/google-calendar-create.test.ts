@@ -430,6 +430,31 @@ describe('google calendar create pending flow', () => {
     expect(result.state.draft.endIso).toBe('2026-04-02T21:30:00.000Z');
   });
 
+  it('updates a pending draft when the user gives a bare retime follow-up', () => {
+    const pending = buildPendingGoogleCalendarCreateState({
+      draft: {
+        title: 'project sync',
+        startIso: '2026-04-02T17:00:00.000Z',
+        endIso: '2026-04-02T18:00:00.000Z',
+        allDay: false,
+        timeZone: 'America/Chicago',
+      },
+      writableCalendars: [...writableCalendars],
+      selectedCalendarId: 'primary',
+      now: new Date('2026-04-01T09:00:00-05:00'),
+    });
+
+    const result = advancePendingGoogleCalendarCreate(
+      'move that to 3 instead',
+      pending,
+    );
+
+    expect(result.kind).toBe('awaiting_input');
+    if (result.kind !== 'awaiting_input') return;
+    expect(result.state.draft.startIso).toBe('2026-04-02T20:00:00.000Z');
+    expect(result.state.draft.endIso).toBe('2026-04-02T21:00:00.000Z');
+  });
+
   it('treats delete that as cancelling a pending draft', () => {
     const pending = buildPendingGoogleCalendarCreateState({
       draft: {
@@ -445,6 +470,27 @@ describe('google calendar create pending flow', () => {
     });
 
     const result = advancePendingGoogleCalendarCreate('delete that', pending);
+    expect(result.kind).toBe('cancelled');
+  });
+
+  it('treats scratch-that follow-ups as cancelling a pending draft', () => {
+    const pending = buildPendingGoogleCalendarCreateState({
+      draft: {
+        title: 'project sync',
+        startIso: '2026-04-02T21:00:00.000Z',
+        endIso: '2026-04-02T22:00:00.000Z',
+        allDay: false,
+        timeZone: 'America/Chicago',
+      },
+      writableCalendars: [...writableCalendars],
+      selectedCalendarId: 'primary',
+      now: new Date('2026-04-01T09:00:00-05:00'),
+    });
+
+    const result = advancePendingGoogleCalendarCreate(
+      'actually scratch that',
+      pending,
+    );
     expect(result.kind).toBe('cancelled');
   });
 

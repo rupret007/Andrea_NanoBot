@@ -499,6 +499,45 @@ describe('communication companion', () => {
     expect(result.draftText).toMatch(/let me know/i);
   });
 
+  it('asks to clarify before rewrite-only prompts invent a fresh communication thread', () => {
+    const result = draftCommunicationReply({
+      channel: 'telegram',
+      groupFolder: 'main',
+      text: 'make that less stiff',
+      conversationSummary:
+        'The first fixed point in your day is pest control is coming at 1:00 PM.',
+      now: new Date('2026-04-16T18:31:00.000Z'),
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.style).toBe('warmer');
+    expect(result.clarificationQuestion).toContain(
+      'Show me the message you want me to rewrite first',
+    );
+  });
+
+  it('uses direct rewrite style once a real communication thread is active', () => {
+    seedCandace();
+
+    const result = draftCommunicationReply({
+      channel: 'telegram',
+      groupFolder: 'main',
+      text: 'more blunt',
+      priorContext: {
+        personName: 'Candace',
+        communicationThreadId: 'comm-candace',
+        communicationSubjectIds: ['subject-candace'],
+        lastCommunicationSummary:
+          'Candace wants a follow-up about whether dinner still works tonight.',
+      },
+      now: new Date('2026-04-16T18:32:00.000Z'),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.style).toBe('direct');
+    expect(result.draftText).toContain('Candace');
+  });
+
   it('uses the Messages model lane for BlueBubbles drafts when OpenAI is available', async () => {
     seedCandace();
     vi.stubEnv('OPENAI_API_KEY', 'test-key');

@@ -3752,7 +3752,10 @@ async function runEverydayCaptureCapability(
     };
   }
 
-  const utterance = input.canonicalText || input.text || '';
+  // Preserve the raw user utterance for list handling so an upstream
+  // capability canonicalization cannot turn an explicit read ask into an
+  // update flow before everyday-capture gets to interpret it.
+  const utterance = input.text || input.canonicalText || '';
   const result = await handleEverydayCaptureCommand({
     channel: context.channel,
     groupFolder: context.groupFolder,

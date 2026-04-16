@@ -79,7 +79,7 @@ function isReferenceBoundSavePrompt(value: string): boolean {
 }
 
 function isBareCommunicationDraftFollowup(value: string): boolean {
-  return /^(?:what should i say back|what should i send back|draft that for me|give me a short reply|make it warmer|make it more direct)[?.! ]*$/i.test(
+  return /^(?:what should i say back|what should i send back|draft that for me|give me a short reply|make (?:it|that)(?: a little)? warmer|warmer|make (?:it|that) more direct|more direct|make (?:it|that) less stiff|less stiff|make (?:it|that) more blunt|more blunt)[?.! ]*$/i.test(
     value.trim(),
   );
 }
@@ -749,8 +749,14 @@ function matchCommunicationPrompt(
     /^draft a reply\b/.test(lower) ||
     /^draft a reply to\b/.test(lower) ||
     /^give me a short reply\b/.test(lower) ||
-    /^make it warmer\b/.test(lower) ||
-    /^make it more direct\b/.test(lower) ||
+    /^make (?:it|that)(?: a little)? warmer\b/.test(lower) ||
+    /^warmer\b/.test(lower) ||
+    /^make (?:it|that) more direct\b/.test(lower) ||
+    /^more direct\b/.test(lower) ||
+    /^make (?:it|that) less stiff\b/.test(lower) ||
+    /^less stiff\b/.test(lower) ||
+    /^make (?:it|that) more blunt\b/.test(lower) ||
+    /^more blunt\b/.test(lower) ||
     /^make it sound like me\b/.test(lower)
   ) {
     return {

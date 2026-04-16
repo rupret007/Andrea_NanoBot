@@ -273,6 +273,12 @@ function slugifyName(value: string): string {
     .replace(/^-+|-+$/g, '');
 }
 
+function isRewriteOnlyCommunicationPrompt(value: string): boolean {
+  return /^(?:make (?:it|that)(?: a little)? warmer|warmer|make (?:it|that) more direct|more direct|make (?:it|that) less stiff|less stiff|make (?:it|that) more blunt|more blunt|make it sound like me)[?.! ]*$/i.test(
+    value.trim(),
+  );
+}
+
 function stripCommandPrefix(raw: string): string {
   const explicitTopicMatch = raw.match(
     /^(?:what should i say back|what should i send back|draft a response|draft a reply)\s+to\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+about\s+(.+?)[?.! ]*$/i,
@@ -282,14 +288,14 @@ function stripCommandPrefix(raw: string): string {
   }
   return raw
     .replace(
-      /^(?:summarize this(?: message)?|what did they mean|what still needs a reply here|what should i say back(?: to [a-z][a-z' -]+)?|what should i send back(?: to [a-z][a-z' -]+)?|draft a response(?: to [a-z][a-z' -]+)?|draft a reply(?: to [a-z][a-z' -]+)?|give me a short reply|make it warmer|make it more direct|make it sound like me|save this conversation under [^:]+|remind me to reply later|don't surface this automatically|dont surface this automatically|stop tracking that|forget this conversation thread|mark that handled)[:,-]?\s*/i,
+      /^(?:summarize this(?: message)?|what did they mean|what still needs a reply here|what should i say back(?: to [a-z][a-z' -]+)?|what should i send back(?: to [a-z][a-z' -]+)?|draft a response(?: to [a-z][a-z' -]+)?|draft a reply(?: to [a-z][a-z' -]+)?|give me a short reply|make (?:it|that)(?: a little)? warmer|warmer|make (?:it|that) more direct|more direct|make (?:it|that) less stiff|less stiff|make (?:it|that) more blunt|more blunt|make it sound like me|save this conversation under [^:]+|remind me to reply later|don't surface this automatically|dont surface this automatically|stop tracking that|forget this conversation thread|mark that handled)[:,-]?\s*/i,
       '',
     )
     .trim();
 }
 
 function isCommandOnlyCommunicationPrompt(value: string): boolean {
-  return /^(?:summari[sz]e this(?: message)?|what did they mean|what still needs a reply here|what should i (?:say|send) back(?: to [a-z][a-z' -]+)?|draft a response(?: to [a-z][a-z' -]+)?|draft a reply(?: to [a-z][a-z' -]+)?|give me a short reply|make it warmer|make it more direct|make it sound like me|save this conversation under [^:]+|remind me to reply later|don't surface this automatically|dont surface this automatically|stop tracking that|forget this conversation thread|mark that handled)[?.! ]*$/i.test(
+  return /^(?:summari[sz]e this(?: message)?|what did they mean|what still needs a reply here|what should i (?:say|send) back(?: to [a-z][a-z' -]+)?|draft a response(?: to [a-z][a-z' -]+)?|draft a reply(?: to [a-z][a-z' -]+)?|give me a short reply|make (?:it|that)(?: a little)? warmer|warmer|make (?:it|that) more direct|more direct|make (?:it|that) less stiff|less stiff|make (?:it|that) more blunt|more blunt|make it sound like me|save this conversation under [^:]+|remind me to reply later|don't surface this automatically|dont surface this automatically|stop tracking that|forget this conversation thread|mark that handled)[?.! ]*$/i.test(
     value.trim(),
   );
 }
@@ -469,10 +475,46 @@ function looksGenericCommandOnlyCommunicationSummary(
     /^(?:what do i still need to reply to|what do i owe people|who am i forgetting to respond to|anything i need to reply to)\b/i.test(
       normalized,
     ) ||
-    /^(?:what should i (?:say|send) back|draft a (?:response|reply)|give me a short reply|make it warmer|make it more direct|make it sound like me|save this conversation under|remind me to reply later|don't surface this automatically|dont surface this automatically|stop tracking that|forget this conversation thread|mark that handled)\b/i.test(
+    /^(?:what should i (?:say|send) back|draft a (?:response|reply)|give me a short reply|make (?:it|that)(?: a little)? warmer|warmer|make (?:it|that) more direct|more direct|make (?:it|that) less stiff|less stiff|make (?:it|that) more blunt|more blunt|make it sound like me|save this conversation under|remind me to reply later|don't surface this automatically|dont surface this automatically|stop tracking that|forget this conversation thread|mark that handled)\b/i.test(
       normalized,
     )
   );
+}
+
+function hasConcreteCommunicationRewriteContext(
+  input: CommunicationContextInput,
+): boolean {
+  if (!isRewriteOnlyCommunicationPrompt(input.text || '')) {
+    return true;
+  }
+
+  const quotedDirect = extractQuotedCommunicationPromptBody(input.text);
+  if (!isMeaninglessCommunicationBody(quotedDirect)) {
+    return true;
+  }
+
+  const replyBody = cleanMessageBody(input.replyText || '');
+  if (
+    !isMeaninglessCommunicationBody(replyBody) &&
+    looksLikeCommunicationMessageBody(replyBody)
+  ) {
+    return true;
+  }
+
+  if (
+    input.priorContext?.communicationThreadId ||
+    input.priorContext?.communicationSubjectIds?.length ||
+    input.priorContext?.communicationLifeThreadIds?.length ||
+    input.priorContext?.personName ||
+    input.priorContext?.threadTitle
+  ) {
+    return true;
+  }
+
+  const priorSummary = normalizeUsableCommunicationSummary(
+    input.priorContext?.lastCommunicationSummary,
+  );
+  return Boolean(priorSummary && looksLikeCommunicationContextText(priorSummary));
 }
 
 function looksLikeCommunicationContextText(value: string | null | undefined): boolean {
@@ -1241,8 +1283,8 @@ function buildRelationshipAwareDraft(input: {
 function inferStyle(text: string): CommunicationDraftResult['style'] {
   const normalized = text.toLowerCase();
   if (/\bshort\b/.test(normalized)) return 'short';
-  if (/\bwarmer\b/.test(normalized)) return 'warmer';
-  if (/\bmore direct\b|\bdirect\b/.test(normalized)) return 'direct';
+  if (/\bwarmer\b|\bless stiff\b/.test(normalized)) return 'warmer';
+  if (/\bmore direct\b|\bdirect\b|\bblunt\b/.test(normalized)) return 'direct';
   return 'balanced';
 }
 
@@ -1603,6 +1645,17 @@ function buildDeterministicCommunicationDraft(input: {
 export function draftCommunicationReply(
   input: CommunicationContextInput,
 ): CommunicationDraftResult {
+  const style = inferStyle(input.text || '');
+  if (!hasConcreteCommunicationRewriteContext(input)) {
+    return {
+      ok: false,
+      clarificationQuestion:
+        'Show me the message you want me to rewrite first, or tell me who it is to.',
+      linkedLifeThreads: [],
+      linkedSubjects: [],
+      style,
+    };
+  }
   const repairedInput = repairCommandOnlyDraftInput(input);
   const analysis = stabilizeCommunicationDraftAnalysis(
     repairCommandOnlyAnalysisResult(
@@ -1611,7 +1664,6 @@ export function draftCommunicationReply(
     ),
     repairedInput.text,
   );
-  const style = inferStyle(repairedInput.text || '');
   if (!analysis.ok || !analysis.summaryText) {
     return {
       ok: false,
@@ -1640,6 +1692,17 @@ export function draftCommunicationReply(
 export async function draftCommunicationReplyWithChannelFluidity(
   input: CommunicationContextInput,
 ): Promise<CommunicationDraftResult> {
+  const style = inferStyle(input.text || '');
+  if (!hasConcreteCommunicationRewriteContext(input)) {
+    return {
+      ok: false,
+      clarificationQuestion:
+        'Show me the message you want me to rewrite first, or tell me who it is to.',
+      linkedLifeThreads: [],
+      linkedSubjects: [],
+      style,
+    };
+  }
   const repairedInput = repairCommandOnlyDraftInput(input);
   const analysis = stabilizeCommunicationDraftAnalysis(
     repairCommandOnlyAnalysisResult(
@@ -1648,7 +1711,6 @@ export async function draftCommunicationReplyWithChannelFluidity(
     ),
     repairedInput.text,
   );
-  const style = inferStyle(repairedInput.text || '');
   if (!analysis.ok || !analysis.summaryText) {
     return {
       ok: false,

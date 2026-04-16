@@ -3631,6 +3631,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       groupFolder: group.folder,
       chatJid,
       rawText: lastContent,
+      now,
     });
     if (!messageAction) {
       if (

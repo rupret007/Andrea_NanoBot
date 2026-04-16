@@ -389,8 +389,8 @@ export function maybeBuildDirectQuickReply(
   if (
     isStandalonePrompt(
       normalized,
-      /^(?:who are you|what can you do)[?.! ]*$/,
-      5,
+      /^(?:(?:hi|hello|hey|yo)[!., ]+)?(?:who are you|what can you do|what can you actually do for me|what all do you handle(?: again)?|what do you handle(?: again)?|what all can you do(?: again)?|what do you actually do(?: for me)?)[?.! ]*$/,
+      10,
     )
   ) {
     const spotlight = getPracticalDiscoverySpotlights('telegram')

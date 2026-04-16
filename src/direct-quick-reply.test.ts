@@ -176,6 +176,30 @@ describe('direct quick reply', () => {
     expect(reply).not.toContain('Candace');
   });
 
+  it('keeps broader handle-again phrasing in the local capability lane', () => {
+    const reply = maybeBuildDirectQuickReply([
+      { content: 'hey andrea what all do you handle again' },
+    ]);
+
+    expect(reply).toContain("I'm Andrea");
+    expect(reply).toContain('schedule moves');
+    expect(reply).toContain('quick reply help');
+    expect(reply).not.toContain('coding');
+    expect(reply).not.toContain('inspect your files');
+  });
+
+  it('keeps casual what-can-you-actually-do phrasing in the local capability lane', () => {
+    const reply = maybeBuildDirectQuickReply([
+      { content: 'yo what can you actually do for me' },
+    ]);
+
+    expect(reply).toContain("I'm Andrea");
+    expect(reply).toContain('schedule moves');
+    expect(reply).toContain('Messages');
+    expect(reply).not.toContain('coding');
+    expect(reply).not.toContain('inspect your files');
+  });
+
   it('returns a bounded coding-capability response for cursor and codex asks', () => {
     const reply = maybeBuildDirectQuickReply([
       { content: 'Can you use cursor and codex?' },
