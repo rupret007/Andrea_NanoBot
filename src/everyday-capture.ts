@@ -1908,7 +1908,11 @@ function parseReadTarget(text: string): ReadTarget | null {
   if (/^what do i still need to buy\b/.test(normalized)) {
     return { kind: 'shopping', summary: 'groceries' };
   }
-  if (/^what errands do i have\b/.test(normalized)) {
+  if (
+    /^what errands do i have\b/.test(normalized) ||
+    /^what('?s| is) still on my errands list\b/.test(normalized) ||
+    /^what('?s| is) on my errands list\b/.test(normalized)
+  ) {
     return { kind: 'errands', summary: 'errands' };
   }
   if (

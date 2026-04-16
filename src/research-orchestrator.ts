@@ -236,6 +236,7 @@ function isGenericCompareClarifierQuery(
     return (
       /^recommend the better one(?:\b.*)?$/.test(lower) ||
       /^which (?:one )?is better(?:\b.*)?$/.test(lower) ||
+      /^which one'?s actually better for me(?:\b.*)?$/.test(lower) ||
       /^which should i pick(?:\b.*)?$/.test(lower) ||
       /^should i buy this one or that one(?:\b.*)?$/.test(lower) ||
       /^should i buy this or that(?:\b.*)?$/.test(lower)
@@ -502,7 +503,7 @@ export function isResearchPrompt(text: string): boolean {
   const normalized = normalizeQuery(text).toLowerCase();
   if (!normalized) return false;
   return (
-    /^(research|look into|compare|summarize|summarise|explain the tradeoffs|what'?s the best choice|what is the best choice|what should i know before deciding|what are the pros and cons)\b/.test(
+    /^(research|look into|compare|summarize|summarise|explain the tradeoffs|what'?s the best choice|what is the best choice|what should i know before deciding|what are the pros and cons|which one'?s actually better for me)\b/.test(
       normalized,
     ) ||
     /\b(report back|tradeoffs?|compare options|summarize findings|summarise findings|pros and cons|before deciding)\b/.test(
@@ -519,7 +520,7 @@ export function planResearchRequest(request: ResearchRequest): ResearchPlan {
   const kind: ResearchRequestKind =
     /\b(compare|versus|vs\.?|tradeoffs?|pros and cons|pros|cons)\b/i.test(lower)
       ? 'compare'
-      : /\b(best choice|recommend|which should i|what should i pick|what should i know before deciding|before deciding|why|should i buy this one or that one|should i buy this or that)\b/i.test(
+      : /\b(best choice|recommend|which should i|which one'?s actually better for me|what should i pick|what should i know before deciding|before deciding|why|should i buy this one or that one|should i buy this or that)\b/i.test(
             lower,
           )
         ? 'recommend'

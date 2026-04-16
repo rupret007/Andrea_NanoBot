@@ -30,6 +30,7 @@ const MONTH_INDEX: Record<string, number> = {
 const DAYPART_RANGES = {
   morning: { startHour: 6, endHour: 12 },
   afternoon: { startHour: 12, endHour: 17 },
+  after_lunch: { startHour: 13, endHour: 17 },
   evening: { startHour: 17, endHour: 21 },
   tonight: { startHour: 18, endHour: 24 },
 } as const;
@@ -388,6 +389,14 @@ function parseDaypartPhrase(working: string): {
   name: keyof typeof DAYPART_RANGES;
   matchedText: string;
 } | null {
+  const afterLunchMatch = working.match(/\bafter(?:\s+|-)lunch\b/i);
+  if (afterLunchMatch) {
+    return {
+      name: 'after_lunch',
+      matchedText: afterLunchMatch[0],
+    };
+  }
+
   for (const daypart of Object.keys(DAYPART_RANGES) as Array<
     keyof typeof DAYPART_RANGES
   >) {

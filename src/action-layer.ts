@@ -1,4 +1,5 @@
 import { TIMEZONE } from './config.js';
+import { matchAssistantCapabilityRequest } from './assistant-capability-router.js';
 import {
   planCalendarAssistantLookup,
   type CalendarActiveEventContext,
@@ -31,6 +32,29 @@ import { canonicalizeBlueBubblesSelfThreadJid } from './bluebubbles-self-thread.
 
 const DEFAULT_PENDING_TTL_MS = 30 * 60 * 1000;
 const CANCEL_PATTERN = /^(?:cancel|never mind|nevermind|stop|no)\b/i;
+
+function looksLikeFreshWorkCockpitPrompt(message: string): boolean {
+  const normalized = normalizeMessage(message).toLowerCase();
+  return (
+    normalized === 'current work' ||
+    normalized === "show me what's running" ||
+    normalized === 'show me whats running' ||
+    normalized === "show me what's running right now" ||
+    normalized === 'show me whats running right now' ||
+    normalized === "what's running" ||
+    normalized === 'whats running' ||
+    normalized === 'what work is active right now' ||
+    normalized === "what's the latest from runtime" ||
+    normalized === 'whats the latest from runtime' ||
+    normalized === 'open the current task again'
+  );
+}
+
+function looksLikeFreshDiscoveryPrompt(message: string): boolean {
+  return /^(?:who are you|what can you do|what can you actually do for me|what all (?:do|can) you handle(?: again)?|what do you handle(?: again)?|what all can you do(?: again)?|what do you actually do(?: for me)?|what are you useful for(?: right now| today)?|what can you help me with(?: today| right now)?|what should i use you for(?: tonight| right now| today)?)\b/i.test(
+    normalizeMessage(message),
+  );
+}
 
 type ActionLayerIntentKind =
   | 'what_next'
@@ -116,11 +140,15 @@ export function shouldInterruptPendingActionLayerFlow(
   if (!trimmed) {
     return false;
   }
+  const freshCapabilityPrompt = Boolean(matchAssistantCapabilityRequest(message));
   return Boolean(
     trimmed.startsWith('/') ||
+      looksLikeFreshDiscoveryPrompt(message) ||
+      looksLikeFreshWorkCockpitPrompt(message) ||
       isPotentialDailyCompanionPrompt(message) ||
       planCalendarAssistantLookup(message, now, timeZone) ||
       isExplicitGoogleCalendarCreateRequest(message) ||
+      freshCapabilityPrompt ||
       (params.groupFolder &&
         params.chatJid &&
         planSimpleReminder(message, params.groupFolder, params.chatJid, now)),

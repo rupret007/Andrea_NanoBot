@@ -91,6 +91,8 @@ describe('helper boundary wiring', () => {
 
     expect(indexSource).toContain('shouldInterruptPendingActionLayerFlow(');
     expect(actionLayerSource).toContain('trimmed.startsWith(\'/\')');
+    expect(actionLayerSource).toContain('looksLikeFreshDiscoveryPrompt(message)');
+    expect(actionLayerSource).toContain('looksLikeFreshWorkCockpitPrompt(message)');
     expect(actionLayerSource).toContain(
       'isPotentialDailyCompanionPrompt(message)',
     );
@@ -99,6 +101,9 @@ describe('helper boundary wiring', () => {
     );
     expect(actionLayerSource).toContain(
       'isExplicitGoogleCalendarCreateRequest(message)',
+    );
+    expect(actionLayerSource).toContain(
+      'matchAssistantCapabilityRequest(message)',
     );
     expect(actionLayerSource).toContain(
       'planSimpleReminder(message, params.groupFolder, params.chatJid, now)',
@@ -160,7 +165,9 @@ describe('helper boundary wiring', () => {
     expect(source).toContain(".replace(/[’‘]/g, \"'\")");
     expect(source).toContain("normalized === 'current work'");
     expect(source).toContain(`normalized === "show me what's running"`);
+    expect(source).toContain(`normalized === "show me what's running right now"`);
     expect(source).toContain("normalized === 'what work is active right now'");
+    expect(source).toContain("normalized === 'open the current task again'");
     expect(source).toContain(`normalized === "what's the latest from runtime"`);
     expect(source).toContain("state: { kind: 'work_current' }");
     expect(source).toContain('forceNew: true');

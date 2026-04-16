@@ -222,6 +222,26 @@ describe('direct quick reply', () => {
     expect(reply).not.toContain('big or small');
   });
 
+  it('keeps can-you-handle-again discovery phrasing in the local capability lane', () => {
+    const reply = maybeBuildDirectQuickReply([
+      { content: 'what all can you handle again' },
+    ]);
+
+    expect(reply).toContain("I'm Andrea");
+    expect(reply).toContain('schedule moves');
+    expect(reply).toContain('quick reply help');
+  });
+
+  it('keeps use-you-for-tonight discovery phrasing in the local capability lane', () => {
+    const reply = maybeBuildDirectQuickReply([
+      { content: 'what should i use you for tonight' },
+    ]);
+
+    expect(reply).toContain("I'm Andrea");
+    expect(reply).toContain('save-for-later');
+    expect(reply).toContain('quick reply help');
+  });
+
   it('returns a bounded coding-capability response for cursor and codex asks', () => {
     const reply = maybeBuildDirectQuickReply([
       { content: 'Can you use cursor and codex?' },

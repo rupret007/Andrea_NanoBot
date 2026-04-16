@@ -21,7 +21,22 @@ describe('assistant capability router', () => {
       capabilityId: 'daily.loose_ends',
     });
     expect(
+      matchAssistantCapabilityRequest('Is there anything new I should know?'),
+    ).toMatchObject({
+      capabilityId: 'daily.loose_ends',
+    });
+    expect(
       matchAssistantCapabilityRequest('What should I not forget before bed?'),
+    ).toMatchObject({
+      capabilityId: 'daily.evening_reset',
+    });
+    expect(
+      matchAssistantCapabilityRequest('What should I do before bed?'),
+    ).toMatchObject({
+      capabilityId: 'daily.evening_reset',
+    });
+    expect(
+      matchAssistantCapabilityRequest('What should I not lose sight of tonight?'),
     ).toMatchObject({
       capabilityId: 'daily.evening_reset',
     });
@@ -96,6 +111,11 @@ describe('assistant capability router', () => {
     ).toMatchObject({
       capabilityId: 'research.topic',
     });
+    expect(
+      matchAssistantCapabilityRequest("Which one's actually better for me?"),
+    ).toMatchObject({
+      capabilityId: 'research.recommend',
+    });
     for (const prompt of [
       'What is the weather today in Dallas?',
       "What's the weather today in Dallas.",
@@ -131,6 +151,11 @@ describe('assistant capability router', () => {
     ).toMatchObject({
       capabilityId: 'knowledge.explain_sources',
     });
+    expect(
+      matchAssistantCapabilityRequest('Just use my saved stuff'),
+    ).toMatchObject({
+      capabilityId: 'knowledge.list_sources',
+    });
   });
 
   it('matches communication-companion prompts cleanly', () => {
@@ -163,6 +188,11 @@ describe('assistant capability router', () => {
       capabilityId: 'communication.open_loops',
     });
     expect(matchAssistantCapabilityRequest('What texts need me?')).toMatchObject({
+      capabilityId: 'communication.open_loops',
+    });
+    expect(
+      matchAssistantCapabilityRequest('What texts need me right now?'),
+    ).toMatchObject({
       capabilityId: 'communication.open_loops',
     });
     expect(
@@ -348,6 +378,11 @@ describe('assistant capability router', () => {
     });
     expect(
       matchAssistantCapabilityRequest('What do we need from the store?'),
+    ).toMatchObject({
+      capabilityId: 'capture.read_items',
+    });
+    expect(
+      matchAssistantCapabilityRequest("What's still on my errands list?"),
     ).toMatchObject({
       capabilityId: 'capture.read_items',
     });

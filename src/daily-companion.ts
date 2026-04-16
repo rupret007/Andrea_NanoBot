@@ -197,7 +197,9 @@ function isMiddayPrompt(normalized: string): boolean {
     normalized === 'what should i handle before my next meeting?' ||
     normalized === 'what should i handle before my next meeting' ||
     normalized === 'anything i should know?' ||
-    normalized === 'anything i should know'
+    normalized === 'anything i should know' ||
+    normalized === 'is there anything new i should know?' ||
+    normalized === 'is there anything new i should know'
   );
 }
 
@@ -207,6 +209,10 @@ function isEveningPrompt(normalized: string): boolean {
     normalized === 'what should i remember tonight' ||
     normalized === 'what should i not forget before bed?' ||
     normalized === 'what should i not forget before bed' ||
+    normalized === 'what should i do before bed?' ||
+    normalized === 'what should i do before bed' ||
+    normalized === 'what should i not lose sight of tonight?' ||
+    normalized === 'what should i not lose sight of tonight' ||
     normalized === "what's left for today?" ||
     normalized === "what's left for today" ||
     normalized === 'whats left for today?' ||
@@ -247,6 +253,8 @@ function isOpenGuidancePrompt(normalized: string): boolean {
     normalized === 'what am i juggling right now' ||
     normalized === 'anything i should know?' ||
     normalized === 'anything i should know' ||
+    normalized === 'is there anything new i should know?' ||
+    normalized === 'is there anything new i should know' ||
     normalized === 'what should i handle before i leave?' ||
     normalized === 'what should i handle before i leave' ||
     normalized === 'what should i remember tonight?' ||

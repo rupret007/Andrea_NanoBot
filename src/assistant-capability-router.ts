@@ -166,7 +166,7 @@ function matchEverydayCapturePrompt(
     };
   }
     if (
-      /^(show me (?:my )?(?:grocery|shopping) list|what('?s| is) on my (?:grocery|shopping) list|what('?s| is) on my list|what('?s| is) on groceries|what do (?:we|i) need from the store(?: again)?|what do i still need to buy|what errands do i have|what bills do i need to pay(?: this week| soon)?|what bills are due this week|what meals have i planned(?: this week)?|what meal ideas do i have this week|what meal do i have planned|what household (?:items|things|stuff) (?:are )?(?:still open|do i have)|what should i remember to get tonight|what('?s| is) left for tonight|what should i handle this weekend|what('?s| is) missing for dinner|what recurring (?:things|items) (?:are )?(?:coming back|coming up)(?: soon)?)\b/.test(
+      /^(show me (?:my )?(?:grocery|shopping) list|what('?s| is) on my (?:grocery|shopping) list|what('?s| is) on my list|what('?s| is) on groceries|what do (?:we|i) need from the store(?: again)?|what do i still need to buy|what errands do i have|what('?s| is) (?:still )?on my errands list|what bills do i need to pay(?: this week| soon)?|what bills are due this week|what meals have i planned(?: this week)?|what meal ideas do i have this week|what meal do i have planned|what household (?:items|things|stuff) (?:are )?(?:still open|do i have)|what should i remember to get tonight|what('?s| is) left for tonight|what should i handle this weekend|what('?s| is) missing for dinner|what recurring (?:things|items) (?:are )?(?:coming back|coming up)(?: soon)?)\b/.test(
         lower,
       )
     ) {
@@ -433,6 +433,7 @@ function matchDailyPrompt(normalized: string): AssistantCapabilityMatch | null {
     lower === 'what am i forgetting' ||
     lower === 'what am i probably missing' ||
     lower === 'anything i should know' ||
+    lower === 'is there anything new i should know' ||
     lower === 'what should i follow up on' ||
     lower === 'what exactly am i forgetting' ||
     lower === 'exactly what am i forgetting' ||
@@ -450,6 +451,8 @@ function matchDailyPrompt(normalized: string): AssistantCapabilityMatch | null {
   if (
     lower === 'what should i remember tonight' ||
     lower === 'what should i not forget before bed' ||
+    lower === 'what should i do before bed' ||
+    lower === 'what should i not lose sight of tonight' ||
     lower === 'give me an evening reset' ||
     lower === 'what should i handle before i leave'
   ) {
@@ -1004,7 +1007,8 @@ function matchKnowledgePrompt(
   }
   if (
     /^show me the relevant saved items\b/.test(lower) ||
-    /^what have i saved about\b/.test(lower)
+    /^what have i saved about\b/.test(lower) ||
+    /^just use my saved stuff\b/.test(lower)
   ) {
     return {
       capabilityId: 'knowledge.list_sources',
@@ -1030,6 +1034,7 @@ function matchKnowledgePrompt(
     /^summari[sz]e what i saved about\b/.test(lower) ||
     /^what do i already know about\b/.test(lower) ||
     /^use only my saved material\b/.test(lower) ||
+    /^just use my saved material\b/.test(lower) ||
     /^combine my notes with outside research\b/.test(lower)
   ) {
     return {

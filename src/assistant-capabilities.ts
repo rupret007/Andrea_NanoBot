@@ -5685,7 +5685,7 @@ export function inferResearchCapabilityId(text: string): AssistantCapabilityId {
     return 'research.compare';
   }
   if (
-    /\b(best choice|which should i|recommend|what should i know before deciding|before deciding|why)\b/.test(
+    /\b(best choice|which should i|which one'?s actually better for me|recommend|what should i know before deciding|before deciding|why)\b/.test(
       normalized,
     )
   ) {

@@ -535,6 +535,47 @@ describe('action-layer pending flows', () => {
     ).toBe(false);
   });
 
+  it('treats fresh communication and list read asks as interrupting new intents', () => {
+    expect(
+      shouldInterruptPendingActionLayerFlow('What texts need me right now', {
+        now: new Date('2026-04-15T09:00:00-05:00'),
+        timeZone: 'America/Chicago',
+        groupFolder: 'main',
+        chatJid: 'tg:1',
+      }),
+    ).toBe(true);
+    expect(
+      shouldInterruptPendingActionLayerFlow("What's still on my errands list", {
+        now: new Date('2026-04-15T09:00:00-05:00'),
+        timeZone: 'America/Chicago',
+        groupFolder: 'main',
+        chatJid: 'tg:1',
+      }),
+    ).toBe(true);
+  });
+
+  it('treats fresh work-cockpit and discovery asks as interrupting new intents', () => {
+    expect(
+      shouldInterruptPendingActionLayerFlow(
+        "show me what's running right now",
+        {
+          now: new Date('2026-04-15T09:00:00-05:00'),
+          timeZone: 'America/Chicago',
+          groupFolder: 'main',
+          chatJid: 'tg:1',
+        },
+      ),
+    ).toBe(true);
+    expect(
+      shouldInterruptPendingActionLayerFlow('what all can you handle again', {
+        now: new Date('2026-04-15T09:00:00-05:00'),
+        timeZone: 'America/Chicago',
+        groupFolder: 'main',
+        chatJid: 'tg:1',
+      }),
+    ).toBe(true);
+  });
+
   it('turns a pending follow-through reminder into a plain reminder task from a timing-only reply', () => {
     const result = advancePendingActionReminder(
       'at 4',

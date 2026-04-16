@@ -826,9 +826,12 @@ function isCurrentWorkQuickOpenPhrase(trimmed: string): boolean {
     normalized === 'current work' ||
     normalized === "show me what's running" ||
     normalized === 'show me whats running' ||
+    normalized === "show me what's running right now" ||
+    normalized === 'show me whats running right now' ||
     normalized === "what's running" ||
     normalized === 'whats running' ||
     normalized === 'what work is active right now' ||
+    normalized === 'open the current task again' ||
     normalized === "what's the latest from runtime" ||
     normalized === 'whats the latest from runtime'
   );

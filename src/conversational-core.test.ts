@@ -36,7 +36,16 @@ describe('conversational core classifier', () => {
       'lightweight_companion',
     );
     expect(
+      classifyConversationalTurn('Is there anything new I should know?'),
+    ).toBe('lightweight_companion');
+    expect(
       classifyConversationalTurn('What should I not forget before bed?'),
+    ).toBe('lightweight_companion');
+    expect(classifyConversationalTurn('What should I do before bed?')).toBe(
+      'lightweight_companion',
+    );
+    expect(
+      classifyConversationalTurn('What should I not lose sight of tonight?'),
     ).toBe('lightweight_companion');
   });
 
@@ -63,6 +72,9 @@ describe('conversational core classifier', () => {
     ).toBe('source_grounded_question');
     expect(
       classifyConversationalTurn('Should I buy this one or that one?'),
+    ).toBe('source_grounded_question');
+    expect(
+      classifyConversationalTurn("Which one's actually better for me?"),
     ).toBe('source_grounded_question');
     expect(
       classifyConversationalTurn('What is the weather today in Dallas?'),

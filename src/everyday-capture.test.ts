@@ -404,6 +404,26 @@ describe('everyday capture', () => {
     expect(readout.replyText!.toLowerCase()).toContain('milk');
   });
 
+  it('recognizes what is still on my errands list phrasing for errand readouts', async () => {
+    await approveStarterProfile();
+
+    await handleEverydayCaptureCommand(
+      buildInput('save this as an errand', {
+        replyText: 'Drop off dry cleaning',
+      }),
+    );
+
+    const readout = await handleEverydayCaptureCommand(
+      buildInput("what's still on my errands list"),
+    );
+
+    expect(readout.handled).toBe(true);
+    expect(readout.mode).toBe('read_items');
+    expect(readout.replyText).toBeDefined();
+    expect(readout.replyText!).toContain('*Errands*');
+    expect(readout.replyText!.toLowerCase()).toContain('drop off dry cleaning');
+  });
+
   it('adds a new item into the active list after a readout asks for the current slice', async () => {
     await approveStarterProfile();
 

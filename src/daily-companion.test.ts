@@ -119,6 +119,17 @@ describe('isPotentialDailyCompanionPrompt', () => {
       isPotentialDailyCompanionPrompt('What should I not forget before bed?'),
     ).toBe(true);
     expect(
+      isPotentialDailyCompanionPrompt('Is there anything new I should know?'),
+    ).toBe(true);
+    expect(
+      isPotentialDailyCompanionPrompt('What should I do before bed?'),
+    ).toBe(true);
+    expect(
+      isPotentialDailyCompanionPrompt(
+        'What should I not lose sight of tonight?',
+      ),
+    ).toBe(true);
+    expect(
       isPotentialDailyCompanionPrompt('What do Candace and I have coming up?'),
     ).toBe(true);
     expect(
