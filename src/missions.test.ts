@@ -5,6 +5,7 @@ import {
   _initTestDatabase,
   getMission,
   listMissionSteps,
+  upsertLifeThread,
   updateCommunicationThread,
 } from './db.js';
 import { analyzeCommunicationMessage } from './communication-companion.js';
@@ -189,6 +190,80 @@ describe('missions', () => {
       'Current work still has pressure around Ship release notes.',
     );
     expect(explained.replyText).toContain('Clear it by: Lock the timing.');
+  });
+
+  it('keeps mission wording natural when a linked thread title is generic', async () => {
+    const now = new Date('2026-04-06T18:18:00.000Z');
+
+    const candace = analyzeCommunicationMessage({
+      channel: 'telegram',
+      groupFolder: 'main',
+      chatJid: 'tg:main',
+      text: 'Candace: can you let me know if dinner still works tonight?',
+      now,
+    });
+
+    updateCommunicationThread(candace.thread!.id, {
+      lastInboundSummary:
+        'Candace wants a follow-up about whether dinner still works tonight.',
+    });
+
+    upsertLifeThread({
+      id: 'thread-generic-followup',
+      groupFolder: 'main',
+      title: 'Follow-Up',
+      category: 'personal',
+      status: 'active',
+      scope: 'personal',
+      relatedSubjectIds: [],
+      contextTags: ['candace', 'dinner'],
+      summary:
+        'Candace wants a follow-up about whether dinner still works tonight.',
+      nextAction:
+        'Candace wants a follow-up about whether dinner still works tonight.',
+      nextFollowupAt: null,
+      sourceKind: 'inferred',
+      confidenceKind: 'high',
+      userConfirmed: true,
+      sensitivity: 'normal',
+      surfaceMode: 'default',
+      mergedIntoThreadId: null,
+      createdAt: '2026-04-06T18:10:00.000Z',
+      lastUpdatedAt: '2026-04-06T18:10:00.000Z',
+      lastUsedAt: '2026-04-06T18:10:00.000Z',
+      followthroughMode: 'important_only',
+      lastSurfacedAt: null,
+      snoozedUntil: null,
+      linkedTaskId: null,
+    });
+
+    const proposed = await buildMissionTurn({
+      channel: 'telegram',
+      groupFolder: 'main',
+      chatJid: 'tg:main',
+      text: 'help me plan tonight',
+      mode: 'propose',
+      now,
+    });
+
+    expect(proposed.replyText).not.toContain('Tie this back to Follow-Up');
+    expect(proposed.replyText).not.toContain('Track this under Follow-Up');
+
+    const explained = await buildMissionTurn({
+      channel: 'telegram',
+      groupFolder: 'main',
+      chatJid: 'tg:main',
+      text: "what's blocking this",
+      mode: 'explain',
+      priorContext: {
+        missionId: proposed.mission.missionId,
+      },
+      now,
+    });
+
+    expect(explained.replyText).not.toContain('life_threads');
+    expect(explained.replyText).not.toContain('communication_threads');
+    expect(explained.replyText).toContain('recent conversations');
   });
 
   it('starts a fresh explicit proposal instead of reusing the prior mission id', async () => {

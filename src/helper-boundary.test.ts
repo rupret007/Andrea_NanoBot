@@ -157,6 +157,7 @@ describe('helper boundary wiring', () => {
     const source = readRepoFile('src/index.ts');
 
     expect(source).toContain('function isCurrentWorkQuickOpenPhrase(');
+    expect(source).toContain(".replace(/[’‘]/g, \"'\")");
     expect(source).toContain("normalized === 'current work'");
     expect(source).toContain(`normalized === "show me what's running"`);
     expect(source).toContain("normalized === 'what work is active right now'");

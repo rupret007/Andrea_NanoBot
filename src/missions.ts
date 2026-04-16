@@ -83,6 +83,66 @@ function normalizeText(value: string | undefined): string {
     .trim();
 }
 
+function normalizeThreadTitleForDisplay(
+  threadTitle: string | null | undefined,
+): string | null {
+  const trimmed = normalizeText(threadTitle || '');
+  if (!trimmed) return null;
+  return /^(?:follow[- ]?up|thread|carryover|open loops?)$/i.test(trimmed)
+    ? null
+    : trimmed;
+}
+
+function humanizeChiefSignal(signal: string): string {
+  const normalized = normalizeText(signal)
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_');
+  switch (normalized) {
+    case 'life_threads':
+      return 'your ongoing threads';
+    case 'communication_threads':
+      return 'recent conversations';
+    case 'calendar':
+    case 'calendar_events':
+      return 'your calendar';
+    case 'reminders':
+      return 'your reminders';
+    case 'current_work':
+      return 'current work';
+    case 'knowledge_library':
+      return 'saved material';
+    case 'everyday_capture':
+      return 'your lists and captures';
+    case 'chief_of_staff':
+      return 'your broader daily context';
+    case 'missions':
+      return 'your active plan';
+    case 'ritual_profile':
+      return 'your routines';
+    default:
+      return normalized.replace(/_/g, ' ');
+  }
+}
+
+function joinHumanReadableList(values: string[]): string {
+  if (values.length <= 1) return values[0] || '';
+  if (values.length === 2) return `${values[0]} and ${values[1]}`;
+  return `${values.slice(0, -1).join(', ')}, and ${values.at(-1)}`;
+}
+
+function buildMissionThreadAnchor(params: {
+  linkedLifeThreadTitle?: string | null;
+  linkedSubjects: ProfileSubject[];
+}): string | null {
+  const displayThreadTitle = normalizeThreadTitleForDisplay(
+    params.linkedLifeThreadTitle,
+  );
+  if (displayThreadTitle) return displayThreadTitle;
+
+  const personName = normalizeText(params.linkedSubjects[0]?.displayName || '');
+  return personName ? `${personName} thread` : null;
+}
+
 function safeJsonParse<T>(value: string | undefined | null, fallback: T): T {
   if (!value) return fallback;
   try {
@@ -365,11 +425,24 @@ function buildMissionExplainability(params: {
   blockers: string[];
 }): string[] {
   const lines: string[] = [];
+  const threadAnchor = buildMissionThreadAnchor({
+    linkedLifeThreadTitle: params.linkedLifeThreadTitle,
+    linkedSubjects: params.linkedSubjects,
+  });
   if (params.chiefSignalsUsed.length > 0) {
-    lines.push(`I shaped this from ${params.chiefSignalsUsed.join(', ')}.`);
+    const humanizedSignals = [
+      ...new Set(
+        params.chiefSignalsUsed
+          .map((signal) => humanizeChiefSignal(signal))
+          .filter(Boolean),
+      ),
+    ];
+    if (humanizedSignals.length > 0) {
+      lines.push(`I pulled that from ${joinHumanReadableList(humanizedSignals)}.`);
+    }
   }
-  if (params.linkedLifeThreadTitle) {
-    lines.push(`I kept the ${params.linkedLifeThreadTitle} thread in view.`);
+  if (threadAnchor) {
+    lines.push(`I kept the ${threadAnchor} in view.`);
   }
   if (params.linkedSubjects.length > 0) {
     lines.push(
@@ -479,6 +552,10 @@ function buildMissionSteps(params: {
     suggestedActionKind?: MissionSuggestedActionKind;
     linkedRefJson?: string | null;
   }> = [];
+  const threadAnchor = buildMissionThreadAnchor({
+    linkedLifeThreadTitle: params.linkedLifeThreadTitle,
+    linkedSubjects: params.linkedSubjects,
+  });
 
   if (params.linkedSubjects.length > 0) {
     const firstPerson = params.linkedSubjects[0]!;
@@ -511,7 +588,9 @@ function buildMissionSteps(params: {
 
   if (params.linkedLifeThreadTitle) {
     rawSteps.push({
-      title: `Tie this back to ${params.linkedLifeThreadTitle}`,
+      title: threadAnchor
+        ? `Tie this back to ${threadAnchor}`
+        : 'Keep this tied to the ongoing thread',
       detail:
         'Keep the ongoing thread context in view so this plan does not drift away from the bigger picture.',
       requiresUserJudgment: false,
@@ -595,6 +674,10 @@ function buildMissionSuggestedActions(params: {
   mutedKinds: MissionSuggestedActionKind[];
 }): MissionSuggestedAction[] {
   const suggestions: MissionSuggestedAction[] = [];
+  const threadAnchor = buildMissionThreadAnchor({
+    linkedLifeThreadTitle: params.linkedLifeThreadTitle,
+    linkedSubjects: params.linkedSubjects,
+  });
   const add = (action: MissionSuggestedAction | null) => {
     if (!action) return;
     if (params.mutedKinds.includes(action.kind)) return;
@@ -641,7 +724,9 @@ function buildMissionSuggestedActions(params: {
   if (params.linkedLifeThreadTitle) {
     add({
       kind: 'link_thread',
-      label: `Track this under ${params.linkedLifeThreadTitle}`,
+      label: threadAnchor
+        ? `Track this under ${threadAnchor}`
+        : 'Keep this tied to the ongoing thread',
       reason:
         'That keeps the plan tied to the ongoing matter instead of floating separately.',
       requiresConfirmation: true,

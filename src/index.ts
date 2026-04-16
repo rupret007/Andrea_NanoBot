@@ -817,7 +817,11 @@ function mapResponseFeedbackRuntimePreferenceToAgentRuntime(
 }
 
 function isCurrentWorkQuickOpenPhrase(trimmed: string): boolean {
-  const normalized = trimmed.replace(/\s+/g, ' ').trim().toLowerCase();
+  const normalized = trimmed
+    .replace(/[’‘]/g, "'")
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
   return (
     normalized === 'current work' ||
     normalized === "show me what's running" ||
