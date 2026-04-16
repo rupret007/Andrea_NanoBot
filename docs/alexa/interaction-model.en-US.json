@@ -520,13 +520,6 @@
               "confirmationRequired": false,
               "elicitationRequired": false,
               "prompts": {}
-            },
-            {
-              "name": "calendarReference",
-              "type": "AMAZON.SearchQuery",
-              "confirmationRequired": false,
-              "elicitationRequired": false,
-              "prompts": {}
             }
           ]
         },
