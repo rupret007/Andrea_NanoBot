@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { buildChiefOfStaffTurn } from './chief-of-staff.js';
 import { analyzeCommunicationMessage } from './communication-companion.js';
 import { _initTestDatabase, createTask } from './db.js';
-import { handleLifeThreadCommand } from './life-threads.js';
+import { buildLifeThreadSnapshot, handleLifeThreadCommand } from './life-threads.js';
 import type {
   GroundedDaySnapshot,
   SelectedWorkContext,
@@ -232,5 +232,43 @@ describe('chief-of-staff', () => {
 
     expect(result.snapshot.mainSignal?.summaryText).toContain('breathing room');
     expect(result.snapshot.mainSignal?.summaryText).not.toContain('300 minutes');
+  });
+
+  it('uses thread detail instead of a generic Follow-up title for life-thread signals', async () => {
+    const now = new Date('2026-04-06T17:30:00.000Z');
+    handleLifeThreadCommand({
+      groupFolder: 'main',
+      channel: 'telegram',
+      chatJid: 'tg:chief-of-staff',
+      text: 'save this for later',
+      replyText:
+        'The first fixed point in your day is pest control is coming today at 1:00 PM.',
+      now: new Date('2026-04-06T10:00:00.000Z'),
+    });
+
+    const result = await buildChiefOfStaffTurn({
+      channel: 'telegram',
+      groupFolder: 'main',
+      text: 'what should I do next',
+      mode: 'prioritize',
+      now,
+      groundedSnapshot: {
+        ...createGroundedSnapshot(now),
+        selectedWork: null,
+        currentFocus: {
+          ...createGroundedSnapshot(now).currentFocus,
+          selectedWork: null,
+          reason: 'schedule_only',
+        },
+      },
+      lifeThreadSnapshot: buildLifeThreadSnapshot({
+        groupFolder: 'main',
+        now,
+      }),
+    });
+
+    expect(result.snapshot.mainSignal?.title).toContain('Pest control');
+    expect(result.snapshot.mainSignal?.title).not.toBe('Follow-up');
+    expect(result.summaryText).not.toContain('Keep Follow-up in view');
   });
 });

@@ -813,6 +813,42 @@ describe('buildDailyCompanionResponse', () => {
     expect(alexa?.reply).not.toContain('Thread:');
   });
 
+  it('does not surface generic Follow-up thread titles in tonight guidance detail lines', async () => {
+    handleLifeThreadCommand({
+      groupFolder: 'main',
+      channel: 'telegram',
+      chatJid: 'tg:8004355504',
+      text: 'save this for later',
+      replyText: 'The first fixed point in your day is pest control is coming today at 1:00 PM.',
+      now: new Date('2026-04-04T10:00:00-05:00'),
+    });
+
+    const response = await buildDailyCompanionResponse(
+      'What should I remember tonight?',
+      {
+        channel: 'telegram',
+        groupFolder: 'main',
+        now: new Date('2026-04-04T17:00:00-05:00'),
+        timeZone: 'America/Chicago',
+        env: baseEnv,
+        fetchImpl: createGoogleCalendarFetchMock({
+          eventsByCalendar: {
+            primary: {
+              items: [],
+            },
+          },
+        }),
+        tasks: [],
+      },
+    );
+
+    expect(response?.reply).toContain('Pest control is coming today at 1:00 PM');
+    expect(response?.reply).not.toContain(
+      'The first fixed point in your day is pest control is coming today at 1:00 PM',
+    );
+    expect(response?.reply).not.toContain('Follow-up: Pest control');
+  });
+
   it('makes Alexa anything-else follow-ups add a new point before recapping', async () => {
     const priorContext: DailyCompanionContext = {
       version: 1,

@@ -444,6 +444,34 @@ describe('storeChatMetadata', () => {
     expect(chats[0].name).toBe('Updated Name');
   });
 
+  it('does not let placeholder BlueBubbles names overwrite a friendly title', () => {
+    storeChatMetadata(
+      'bb:iMessage;+;chat123',
+      '2024-01-01T00:00:00.000Z',
+      'Pops of Punk',
+      'bluebubbles',
+      true,
+    );
+    storeChatMetadata(
+      'bb:iMessage;+;chat123',
+      '2024-01-01T00:00:01.000Z',
+      'bb:iMessage;+;chat123',
+      'bluebubbles',
+      true,
+    );
+    storeChatMetadata(
+      'bb:iMessage;+;chat123',
+      '2024-01-01T00:00:02.000Z',
+      'iMessage;+;chat123',
+      'bluebubbles',
+      true,
+    );
+    const chats = getAllChats();
+    expect(chats).toHaveLength(1);
+    expect(chats[0].name).toBe('Pops of Punk');
+    expect(chats[0].last_message_time).toBe('2024-01-01T00:00:02.000Z');
+  });
+
   it('preserves newer timestamp on conflict', () => {
     storeChatMetadata('group@g.us', '2024-01-01T00:00:05.000Z');
     storeChatMetadata('group@g.us', '2024-01-01T00:00:01.000Z');

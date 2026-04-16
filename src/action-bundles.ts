@@ -54,6 +54,14 @@ import type {
 const ACTION_BUNDLE_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_ACTIONS_PER_BUNDLE = 4;
 
+function normalizeThreadTitleForDisplay(threadTitle: string | null | undefined): string | null {
+  const trimmed = threadTitle?.trim() || null;
+  if (!trimmed) return null;
+  return /^(?:follow[- ]?up|thread|carryover|open loops?)$/i.test(trimmed)
+    ? null
+    : trimmed;
+}
+
 interface ReminderActionPayload {
   type: 'create_reminder';
   reminderBody: string;
@@ -314,7 +322,8 @@ function deriveBundleTitle(
   sourceContext: ActionBundleSourceContext,
 ): string {
   if (sourceContext.titleHint) return sourceContext.titleHint;
-  if (candidate?.threadTitle) return `${candidate.threadTitle} next steps`;
+  const displayThreadTitle = normalizeThreadTitleForDisplay(candidate?.threadTitle);
+  if (displayThreadTitle) return `${displayThreadTitle} next steps`;
   if (candidate?.missionSummary) return 'Mission next steps';
   if (sourceContext.personName) return `${sourceContext.personName} next steps`;
   switch (originKind) {
@@ -347,6 +356,9 @@ function deriveSourceContext(params: {
     normalizeText(params.summaryText) ||
     normalizeText(params.replyText) ||
     normalizeText(params.candidate?.voiceSummary);
+  const displayThreadTitle = normalizeThreadTitleForDisplay(
+    params.candidate?.threadTitle,
+  );
   return {
     whyLine:
       params.originKind === 'communication'
@@ -363,7 +375,7 @@ function deriveSourceContext(params: {
         ? undefined
         : undefined,
     titleHint:
-      params.candidate?.threadTitle ||
+      displayThreadTitle ||
       (params.originKind === 'mission' ? 'Mission next steps' : undefined),
   };
 }
@@ -538,6 +550,7 @@ function synthesizeActions(params: {
   const actions: SynthesizedAction[] = [];
   const completionText = inferReminderBody(params.sourceContext, params.candidate);
   const threadTitle = params.candidate.threadTitle || null;
+  const displayThreadTitle = normalizeThreadTitleForDisplay(threadTitle);
 
   if (params.originKind === 'communication') {
     if (!params.candidate.messageActionId) {
@@ -571,8 +584,8 @@ function synthesizeActions(params: {
     actions.push({
       actionType: 'save_to_thread',
       targetSystem: 'life_threads',
-      summary: threadTitle
-        ? `Save it under ${threadTitle}`
+      summary: displayThreadTitle
+        ? `Save it under ${displayThreadTitle}`
         : 'Save it to the thread',
       requiresConfirmation: true,
       payload: {
@@ -599,7 +612,9 @@ function synthesizeActions(params: {
     actions.push({
       actionType: 'save_to_thread',
       targetSystem: 'life_threads',
-      summary: threadTitle ? `Save it under ${threadTitle}` : 'Save it for later',
+      summary: displayThreadTitle
+        ? `Save it under ${displayThreadTitle}`
+        : 'Save it for later',
       requiresConfirmation: true,
       payload: {
         type: 'save_to_thread',

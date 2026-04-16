@@ -8,7 +8,11 @@ import {
   type DailyCompanionContext,
   type DailyCompanionResponse,
 } from './daily-companion.js';
-import type { SelectedWorkContext } from './daily-command-center.js';
+import {
+  formatClock,
+  getUpcomingReminders,
+  type SelectedWorkContext,
+} from './daily-command-center.js';
 import {
   createTask,
   getAllTasks,
@@ -94,6 +98,7 @@ import type {
 } from './types.js';
 import { normalizeVoicePrompt } from './voice-ready.js';
 import { formatThreadSummaryWindowLabel } from './thread-summary-routing.js';
+import { TIMEZONE } from './config.js';
 
 export type AssistantCapabilityId =
   | 'daily.morning_brief'
@@ -105,6 +110,7 @@ export type AssistantCapabilityId =
   | 'followthrough.remind_before_anchor'
   | 'followthrough.save_for_later'
   | 'followthrough.draft_follow_up'
+  | 'followthrough.reminder_overview'
   | 'pilot.capture_issue'
   | 'threads.list_open'
   | 'threads.explicit_lookup'
@@ -614,6 +620,203 @@ function buildDailySeed(
     hasRiskSignal: defaults.hasRiskSignal,
     reminderCandidate: defaults.reminderCandidate,
     responseSource: defaults.responseSource || 'local_companion',
+  };
+}
+
+type ReminderOverviewWindow = 'upcoming' | 'today' | 'tomorrow' | 'this_week';
+
+function resolveReminderOverviewWindow(
+  value: string,
+): ReminderOverviewWindow {
+  const lower = value.toLowerCase();
+  if (/\btomorrow\b/.test(lower)) return 'tomorrow';
+  if (/\btoday\b/.test(lower)) return 'today';
+  if (/\bthis week\b/.test(lower)) return 'this_week';
+  return 'upcoming';
+}
+
+function startOfLocalDay(date: Date): Date {
+  const next = new Date(date);
+  next.setHours(0, 0, 0, 0);
+  return next;
+}
+
+function endOfLocalDay(date: Date): Date {
+  const next = new Date(date);
+  next.setHours(24, 0, 0, 0);
+  return next;
+}
+
+function endOfLocalWeek(date: Date): Date {
+  const next = endOfLocalDay(date);
+  const currentDay = next.getDay();
+  const daysUntilNextMonday = currentDay === 0 ? 1 : 8 - currentDay;
+  next.setDate(next.getDate() + daysUntilNextMonday);
+  return next;
+}
+
+function filterReminderOverviewByWindow(
+  reminders: Array<{ label: string; nextRunIso: string; id: string }>,
+  window: ReminderOverviewWindow,
+  now: Date,
+): Array<{ label: string; nextRunIso: string; id: string }> {
+  if (window === 'upcoming') {
+    return reminders;
+  }
+
+  const start =
+    window === 'today'
+      ? now
+      : window === 'tomorrow'
+        ? startOfLocalDay(new Date(now.getTime() + 24 * 60 * 60 * 1000))
+        : now;
+  const end =
+    window === 'today'
+      ? endOfLocalDay(now)
+      : window === 'tomorrow'
+        ? endOfLocalDay(new Date(now.getTime() + 24 * 60 * 60 * 1000))
+        : endOfLocalWeek(now);
+
+  return reminders.filter((reminder) => {
+    const runAt = new Date(reminder.nextRunIso);
+    return runAt.getTime() >= start.getTime() && runAt.getTime() < end.getTime();
+  });
+}
+
+function buildReminderOverviewLead(
+  count: number,
+  window: ReminderOverviewWindow,
+): string {
+  if (window === 'today') {
+    return count === 1
+      ? 'You have one reminder left today.'
+      : `You have ${count} reminders left today.`;
+  }
+  if (window === 'tomorrow') {
+    return count === 1
+      ? 'Tomorrow you have one reminder.'
+      : `Tomorrow you have ${count} reminders.`;
+  }
+  if (window === 'this_week') {
+    return count === 1
+      ? 'You have one reminder coming up this week.'
+      : `You have ${count} reminders coming up this week.`;
+  }
+  return count === 1
+    ? 'You have one upcoming reminder.'
+    : `You have ${count} upcoming reminders.`;
+}
+
+function buildReminderOverviewEmptyReply(window: ReminderOverviewWindow): string {
+  if (window === 'today') {
+    return "You don't have any reminders left today.";
+  }
+  if (window === 'tomorrow') {
+    return "I don't see any reminders tomorrow.";
+  }
+  if (window === 'this_week') {
+    return "I don't see any reminders coming up this week.";
+  }
+  return "You don't have any upcoming reminders right now.";
+}
+
+function formatReminderOverviewItem(
+  reminder: { label: string; nextRunIso: string },
+  timeZone: string,
+  now: Date,
+  window: ReminderOverviewWindow,
+): string {
+  const runAt = new Date(reminder.nextRunIso);
+  const timeLabel = formatClock(runAt, timeZone);
+  if (window === 'today') {
+    return `${timeLabel} ${reminder.label}`;
+  }
+  if (window === 'tomorrow') {
+    return `${timeLabel} ${reminder.label}`;
+  }
+  const tomorrowStart = startOfLocalDay(new Date(now.getTime() + 24 * 60 * 60 * 1000));
+  const tomorrowEnd = endOfLocalDay(new Date(now.getTime() + 24 * 60 * 60 * 1000));
+  if (runAt.getTime() >= now.getTime() && runAt.getTime() < endOfLocalDay(now).getTime()) {
+    return `Today at ${timeLabel} ${reminder.label}`;
+  }
+  if (
+    runAt.getTime() >= tomorrowStart.getTime() &&
+    runAt.getTime() < tomorrowEnd.getTime()
+  ) {
+    return `Tomorrow at ${timeLabel} ${reminder.label}`;
+  }
+  const dayLabel = runAt.toLocaleDateString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    timeZone,
+  });
+  return `${dayLabel} at ${timeLabel} ${reminder.label}`;
+}
+
+async function runReminderOverviewCapability(
+  descriptor: AssistantCapabilityDescriptor,
+  context: AssistantCapabilityContext,
+  input: AssistantCapabilityInput,
+): Promise<AssistantCapabilityResult> {
+  if (!context.groupFolder) return { handled: false };
+
+  const now = context.now || new Date();
+  const window = resolveReminderOverviewWindow(
+    input.canonicalText || input.text || '',
+  );
+  const reminders = filterReminderOverviewByWindow(
+    getUpcomingReminders(
+      getAllTasks().filter((task) => task.group_folder === context.groupFolder),
+      now,
+    ),
+    window,
+    now,
+  );
+
+  const replyText =
+    reminders.length === 0
+      ? buildReminderOverviewEmptyReply(window)
+      : [
+          buildReminderOverviewLead(reminders.length, window),
+          ...reminders
+            .slice(0, context.channel === 'bluebubbles' ? 3 : 5)
+            .map((reminder) =>
+              formatReminderOverviewItem(reminder, TIMEZONE, now, window),
+            ),
+          reminders.length > (context.channel === 'bluebubbles' ? 3 : 5)
+            ? `Plus ${reminders.length - (context.channel === 'bluebubbles' ? 3 : 5)} more after that.`
+            : null,
+        ]
+          .filter(Boolean)
+          .join('\n');
+
+  return {
+    handled: true,
+    capabilityId: descriptor.id,
+    replyText,
+    outputShape: descriptor.preferredOutputShape[context.channel],
+    conversationSeed: {
+      flowKey: descriptor.id.replace(/\./g, '_'),
+      subjectKind: 'day_brief',
+      summaryText: replyText,
+      guidanceGoal: 'action_follow_through',
+      subjectData: {
+        activeCapabilityId: descriptor.id,
+        conversationFocus: 'reminders',
+        lastAnswerSummary: replyText,
+      },
+      supportedFollowups: descriptor.followupActions,
+      responseSource: 'local_companion',
+    },
+    trace: buildCapabilityTrace(
+      descriptor,
+      context,
+      'local_companion',
+      'summarized upcoming reminders from local scheduled tasks',
+      [`window:${window}`, `reminders:${reminders.length}`],
+    ),
+    followupActions: descriptor.followupActions,
   };
 }
 
@@ -2547,11 +2750,12 @@ async function runCommunicationUnderstandCapability(
   input: AssistantCapabilityInput,
 ): Promise<AssistantCapabilityResult> {
   if (!context.groupFolder) return { handled: false };
+  const rawCommunicationText = input.text || input.canonicalText || '';
   const analysis = analyzeCommunicationMessage({
     channel: context.channel,
     groupFolder: context.groupFolder,
     chatJid: context.chatJid,
-    text: input.canonicalText || input.text || '',
+    text: rawCommunicationText,
     replyText: context.replyText,
     conversationSummary: context.conversationSummary,
     priorContext: context.priorSubjectData,
@@ -2601,8 +2805,7 @@ async function runCommunicationUnderstandCapability(
     conversationSeed: buildCommunicationConversationSeed({
       descriptor,
       summaryText: analysis.summaryText || 'I looked at the conversation.',
-      conversationFocus:
-        analysis.messageText || input.canonicalText || input.text || '',
+      conversationFocus: analysis.messageText || rawCommunicationText,
       personName: analysis.linkedSubjects[0]?.displayName,
       threadId: analysis.linkedLifeThreads[0]?.id,
       threadTitle:
@@ -2637,13 +2840,14 @@ async function runCommunicationDraftCapability(
   input: AssistantCapabilityInput,
 ): Promise<AssistantCapabilityResult> {
   if (!context.groupFolder) return { handled: false };
+  const rawCommunicationText = input.text || input.canonicalText || '';
   const draft =
     context.channel === 'bluebubbles'
       ? await draftCommunicationReplyWithChannelFluidity({
           channel: context.channel,
           groupFolder: context.groupFolder,
           chatJid: context.chatJid,
-          text: input.canonicalText || input.text || '',
+          text: rawCommunicationText,
           replyText: context.replyText,
           conversationSummary: context.conversationSummary,
           priorContext: context.priorSubjectData,
@@ -2653,7 +2857,7 @@ async function runCommunicationDraftCapability(
           channel: context.channel,
           groupFolder: context.groupFolder,
           chatJid: context.chatJid,
-          text: input.canonicalText || input.text || '',
+          text: rawCommunicationText,
           replyText: context.replyText,
           conversationSummary: context.conversationSummary,
           priorContext: context.priorSubjectData,
@@ -2723,8 +2927,7 @@ async function runCommunicationDraftCapability(
     conversationSeed: buildCommunicationConversationSeed({
       descriptor,
       summaryText: draft.summaryText || 'I drafted a reply.',
-      conversationFocus:
-        input.canonicalText || input.text || draft.summaryText || '',
+      conversationFocus: rawCommunicationText || draft.summaryText || '',
       personName: draft.linkedSubjects[0]?.displayName,
       threadId: draft.linkedLifeThreads[0]?.id,
       threadTitle: draft.linkedLifeThreads[0]?.title || draft.thread?.title,
@@ -2761,11 +2964,12 @@ async function runCommunicationOpenLoopsCapability(
   input: AssistantCapabilityInput,
 ): Promise<AssistantCapabilityResult> {
   if (!context.groupFolder) return { handled: false };
+  const rawCommunicationText = input.text || input.canonicalText || '';
   const openLoops = buildCommunicationOpenLoops({
     channel: context.channel,
     groupFolder: context.groupFolder,
     chatJid: context.chatJid,
-    text: input.canonicalText || input.text || '',
+    text: rawCommunicationText,
     replyText: context.replyText,
     conversationSummary: context.conversationSummary,
     priorContext: context.priorSubjectData,
@@ -2824,11 +3028,12 @@ async function runCommunicationManageCapability(
   input: AssistantCapabilityInput,
 ): Promise<AssistantCapabilityResult> {
   if (!context.groupFolder) return { handled: false };
+  const rawCommunicationText = input.text || input.canonicalText || '';
   const result = manageCommunicationTracking({
     channel: context.channel,
     groupFolder: context.groupFolder,
     chatJid: context.chatJid,
-    text: input.canonicalText || input.text || '',
+    text: rawCommunicationText,
     replyText: context.replyText,
     conversationSummary: context.conversationSummary,
     priorContext: context.priorSubjectData,
@@ -5369,6 +5574,32 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     execute: (context, input) =>
       runCommunicationThreadSummaryCapability(
         CAPABILITY_DESCRIPTORS[60]!,
+        cloneContext(context),
+        input,
+      ),
+  },
+  {
+    id: 'followthrough.reminder_overview',
+    label: 'Reminder Overview',
+    category: 'followthrough',
+    requiredInputs: ['text'],
+    optionalInputs: [],
+    requiresLinkedAccount: true,
+    requiresConfirmation: false,
+    safeForAlexa: true,
+    safeForTelegram: true,
+    safeForBlueBubbles: true,
+    operatorOnly: false,
+    preferredOutputShape: {
+      alexa: 'voice_brief',
+      telegram: 'chat_rich',
+      bluebubbles: 'chat_brief',
+    },
+    followupActions: ['anything_else', 'say_more'],
+    handlerKind: 'local',
+    execute: (context, input) =>
+      runReminderOverviewCapability(
+        CAPABILITY_DESCRIPTORS[61]!,
         cloneContext(context),
         input,
       ),

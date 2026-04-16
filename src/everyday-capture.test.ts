@@ -360,6 +360,44 @@ describe('everyday capture', () => {
     expect(readout.handoffOffer).toContain('fuller list to Telegram');
   });
 
+  it('treats explicit grocery-list read asks as readouts even with active list context', async () => {
+    await approveStarterProfile();
+
+    const add = await handleEverydayCaptureCommand(
+      buildInput('add eggs to my grocery list'),
+    );
+
+    const readout = await handleEverydayCaptureCommand(
+      buildInput('show me my grocery list', {
+        priorContext: add.conversationData,
+      }),
+    );
+
+    expect(readout.handled).toBe(true);
+    expect(readout.mode).toBe('read_items');
+    expect(readout.replyText).toBeDefined();
+    expect(readout.replyText!).toContain('*Groceries*');
+    expect(readout.replyText!.toLowerCase()).toContain('eggs');
+  });
+
+  it('recognizes what is on my grocery list phrasing for shopping readouts', async () => {
+    await approveStarterProfile();
+
+    await handleEverydayCaptureCommand(
+      buildInput('add milk to my shopping list'),
+    );
+
+    const readout = await handleEverydayCaptureCommand(
+      buildInput("what's on my grocery list"),
+    );
+
+    expect(readout.handled).toBe(true);
+    expect(readout.mode).toBe('read_items');
+    expect(readout.replyText).toBeDefined();
+    expect(readout.replyText!).toContain('*Groceries*');
+    expect(readout.replyText!.toLowerCase()).toContain('milk');
+  });
+
   it('returns grouped Telegram readouts with contextual inline actions', async () => {
     await handleEverydayCaptureCommand(buildInput('add milk to my shopping list'));
     await handleEverydayCaptureCommand(buildInput('save this as an errand', {

@@ -126,6 +126,14 @@ interface LocalResearchContext {
   memoryLines: string[];
 }
 
+const GENERIC_LIFE_THREAD_TITLES = new Set([
+  'follow-up',
+  'follow up',
+  'thread',
+  'carryover',
+  'open loops',
+]);
+
 interface KnowledgeResearchContext {
   search: KnowledgeSearchResult;
   contextBlock: string;
@@ -166,6 +174,49 @@ function normalizeResearchTaskPrompt(prompt: string): string {
   }
 
   return normalized;
+}
+
+function normalizeResearchLifeThreadText(
+  value: string | null | undefined,
+): string {
+  const trimmed = normalizeVoicePrompt(value || '').replace(/\s+/g, ' ').trim();
+  if (!trimmed) return '';
+  const normalized = trimmed
+    .replace(
+      /^(?:the first fixed point in your day is|the next grounded thing is|the clearest next anchor is|the next thing that still needs attention is|the thing most likely to slip is|one carryover to keep in sight is|the thing worth closing tonight is|the thing still most likely to slip tonight is)\s+/i,
+      '',
+    )
+    .replace(
+      /^keep\s+(.+?)\s+(?:moving so it does not drift|in view, but it can wait for a calmer moment)$/i,
+      '$1',
+    )
+    .trim();
+  const candidate = normalized || trimmed;
+  return /^[a-z]/.test(candidate)
+    ? `${candidate[0]!.toUpperCase()}${candidate.slice(1)}`
+    : candidate;
+}
+
+function isGenericLifeThreadTitle(title: string | null | undefined): boolean {
+  const normalized = normalizeVoicePrompt(title || '').replace(/\s+/g, ' ').trim();
+  return Boolean(normalized) && GENERIC_LIFE_THREAD_TITLES.has(normalized.toLowerCase());
+}
+
+function buildResearchLifeThreadLine(
+  title: string,
+  focus: string | null | undefined,
+): string {
+  const normalizedTitle = normalizeResearchLifeThreadText(title);
+  const normalizedFocus = normalizeResearchLifeThreadText(focus);
+  if (!normalizedTitle) return normalizedFocus;
+  if (!normalizedFocus) return normalizedTitle;
+  if (isGenericLifeThreadTitle(normalizedTitle)) {
+    return normalizedFocus;
+  }
+  if (normalizedFocus.toLowerCase() === normalizedTitle.toLowerCase()) {
+    return normalizedTitle;
+  }
+  return `${normalizedTitle}: ${normalizedFocus}`;
 }
 
 function buildDefaultFollowups(kind: ResearchRequestKind): string[] {
@@ -559,10 +610,13 @@ async function collectLocalResearchContext(
       (thread) => thread.surfaceMode !== 'manual_only',
     ),
   ];
-  const threadLines = threadCandidates.slice(0, 3).map((thread) => {
-    const focus = thread.nextAction || thread.summary;
-    return `${thread.title}: ${focus}`;
-  });
+  const threadLines = threadCandidates
+    .slice(0, 3)
+    .map((thread) => {
+      const focus = thread.nextAction || thread.summary;
+      return buildResearchLifeThreadLine(thread.title, focus);
+    })
+    .filter(Boolean);
 
   const taskLines = getAllTasks()
     .filter(
@@ -622,7 +676,12 @@ function buildKnowledgeContextBlock(
   const seen = new Set<string>();
   const supportingSources: ResearchSupportingSource[] = [];
   for (const hit of search.hits) {
-    const key = hit.sourceId || `${hit.sourceTitle}:${hit.excerpt}`;
+    const titleKey = hit.sourceTitle.trim().toLowerCase();
+    const excerptKey = (hit.excerpt || '').trim().toLowerCase();
+    const key =
+      titleKey || excerptKey
+        ? `${titleKey}:${excerptKey}`
+        : hit.sourceId || `${hit.sourceTitle}:${hit.excerpt}`;
     if (seen.has(key)) continue;
     seen.add(key);
     supportingSources.push({

@@ -13,6 +13,7 @@ import {
   storeMessage,
   _initTestDatabase,
 } from './db.js';
+import { planSimpleReminder } from './local-reminder.js';
 
 const originalFetch = globalThis.fetch;
 
@@ -56,6 +57,9 @@ describe('assistant capabilities', () => {
     expect(registry.some((entry) => entry.id === 'capture.read_items')).toBe(
       true,
     );
+    expect(
+      registry.some((entry) => entry.id === 'followthrough.reminder_overview'),
+    ).toBe(true);
 
     expect(getAssistantCapability('work.current_logs')).toMatchObject({
       operatorOnly: true,
@@ -268,6 +272,38 @@ describe('assistant capabilities', () => {
     expect(result.replyText).not.toContain('Yesterday everyone was still just figuring out');
   });
 
+  it('reads upcoming reminders from local scheduled tasks', async () => {
+    const planned = planSimpleReminder(
+      'remind me tomorrow afternoon at 4:15pm to review the Andrea QA reminder path',
+      'main',
+      'tg:8004355504',
+      new Date('2026-04-15T12:00:00-05:00'),
+    );
+    expect(planned).not.toBeNull();
+    createTask(planned!.task);
+
+    const result = await executeAssistantCapability({
+      capabilityId: 'followthrough.reminder_overview',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:8004355504',
+        now: new Date('2026-04-15T12:05:00-05:00'),
+      },
+      input: {
+        canonicalText: 'what reminders do I have tomorrow',
+      },
+    });
+
+    expect(result.handled).toBe(true);
+    expect(result.capabilityId).toBe('followthrough.reminder_overview');
+    expect(result.replyText).toContain('Tomorrow you have one reminder.');
+    expect(result.replyText).toContain(
+      '4:15 PM review the Andrea QA reminder path',
+    );
+    expect(result.trace?.responseSource).toBe('local_companion');
+  });
+
   it('asks to clarify when a named BlueBubbles thread summary is ambiguous', async () => {
     storeChatMetadata(
       'bb:iMessage;-;pops-of-punk-band',
@@ -445,6 +481,40 @@ describe('assistant capabilities', () => {
 
     expect(read.handled).toBe(true);
     expect(read.replyText?.toLowerCase()).toContain('milk');
+    expect(read.conversationSeed?.subjectData?.activeTaskKind).toBe('list_read');
+  });
+
+  it('keeps grocery-list read capability on the read path for explicit show-me phrasing', async () => {
+    const add = await executeAssistantCapability({
+      capabilityId: 'capture.add_item',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:8004355504',
+        now: new Date('2026-04-12T10:00:00-05:00'),
+      },
+      input: {
+        canonicalText: 'add eggs to my shopping list',
+      },
+    });
+
+    const read = await executeAssistantCapability({
+      capabilityId: 'capture.read_items',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:8004355504',
+        now: new Date('2026-04-12T10:05:00-05:00'),
+        priorSubjectData: add.conversationSeed?.subjectData,
+      },
+      input: {
+        canonicalText: 'show me my grocery list',
+      },
+    });
+
+    expect(read.handled).toBe(true);
+    expect(read.replyText).toContain('*Groceries*');
+    expect(read.replyText?.toLowerCase()).toContain('eggs');
     expect(read.conversationSeed?.subjectData?.activeTaskKind).toBe('list_read');
   });
 
@@ -747,6 +817,60 @@ describe('assistant capabilities', () => {
 
     expect(openLoops.handled).toBe(true);
     expect(openLoops.replyText).toContain('needs attention');
+  });
+
+  it('keeps explicit person-and-topic draft asks grounded after an open-loops turn', async () => {
+    const understand = await executeAssistantCapability({
+      capabilityId: 'communication.understand_message',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:8004355504',
+      },
+      input: {
+        text: 'Candace: Can you let me know if dinner still works tonight?',
+        canonicalText:
+          'Candace: Can you let me know if dinner still works tonight?',
+      },
+    });
+
+    expect(understand.handled).toBe(true);
+
+    const openLoops = await executeAssistantCapability({
+      capabilityId: 'communication.open_loops',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:8004355504',
+        priorSubjectData: understand.conversationSeed?.subjectData,
+      },
+      input: {
+        text: 'What do I still need to reply to?',
+        canonicalText: 'what do i still need to reply to?',
+      },
+    });
+
+    expect(openLoops.handled).toBe(true);
+    expect(openLoops.replyText).toContain('Candace');
+
+    const draft = await executeAssistantCapability({
+      capabilityId: 'communication.draft_reply',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:8004355504',
+        priorSubjectData: openLoops.conversationSeed?.subjectData,
+      },
+      input: {
+        text: 'What should I say back to Candace about dinner tonight?',
+        canonicalText: 'what should i say back to candace about dinner tonight?',
+      },
+    });
+
+    expect(draft.handled).toBe(true);
+    expect(draft.replyText).toContain('Hey Candace,');
+    expect(draft.replyText).toMatch(/dinner still works tonight|dinner tonight/i);
+    expect(draft.replyText).not.toContain('circle back on What do I');
   });
 
   it('uses the Messages model lane for BlueBubbles draft replies when available', async () => {

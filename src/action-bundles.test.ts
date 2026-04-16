@@ -215,6 +215,31 @@ describe('action bundles', () => {
     });
   });
 
+  it('hides generic Follow-up thread titles in daily guidance action summaries', () => {
+    const snapshot = createOrRefreshActionBundle({
+      groupFolder: 'main',
+      presentationChannel: 'telegram',
+      presentationChatJid: 'tg:main',
+      capabilityId: 'daily.guidance',
+      continuationCandidate: {
+        capabilityId: 'daily.guidance',
+        voiceSummary: 'Pest control is coming today at 1:00 PM.',
+        threadTitle: 'Follow-up',
+        completionText: 'Pest control is coming today at 1:00 PM.',
+      },
+      summaryText: 'Pest control is coming today at 1:00 PM.',
+      utterance: 'what should I remember tonight',
+      now: new Date('2026-04-08T10:00:00.000Z'),
+    });
+
+    expect(snapshot).toBeTruthy();
+    expect(snapshot?.bundle.title).toBe('Daily next steps');
+    expect(
+      snapshot?.actions.find((action) => action.actionType === 'save_to_thread')
+        ?.summary,
+    ).toBe('Save it for later');
+  });
+
   it('handles partial execution honestly when one bundle action fails', async () => {
     const snapshot = createOrRefreshActionBundle({
       groupFolder: 'main',

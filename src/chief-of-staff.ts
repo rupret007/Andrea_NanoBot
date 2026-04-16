@@ -85,6 +85,35 @@ function normalizeText(value: string | undefined): string {
     .trim();
 }
 
+function normalizeLifeThreadDetail(value: string | null | undefined): string {
+  const trimmed = normalizeText(value || '');
+  if (!trimmed) return '';
+  const normalized = trimmed
+    .replace(
+      /^(?:the first fixed point in your day is|the next grounded thing is|the clearest next anchor is|the next thing that still needs attention is|the thing most likely to slip is|one carryover to keep in sight is|the thing worth closing tonight is|the thing still most likely to slip tonight is)\s+/i,
+      '',
+    )
+    .replace(
+      /^keep\s+(.+?)\s+(?:moving so it does not drift|in view, but it can wait for a calmer moment)$/i,
+      '$1',
+    )
+    .trim();
+  const candidate = normalized || trimmed;
+  return /^[a-z]/.test(candidate)
+    ? `${candidate[0]!.toUpperCase()}${candidate.slice(1)}`
+    : candidate;
+}
+
+function isClauseLikeSignalTitle(title: string): boolean {
+  const normalized = normalizeText(title);
+  return (
+    /^[a-z]/.test(normalized) ||
+    /\b(?:is|are|was|were|still|coming|need(?:s)?|waiting|owed|scheduled)\b/i.test(
+      normalized,
+    )
+  );
+}
+
 function safeJsonParse<T>(value: string | undefined, fallback: T): T {
   if (!value) return fallback;
   try {
@@ -373,10 +402,18 @@ function buildLifeThreadSignal(
 ): ChiefOfStaffSignal | null {
   if (!thread) return null;
   const scope = thread.scope as import('./types.js').ChiefOfStaffScope;
+  const summaryText =
+    normalizeLifeThreadDetail(thread.nextAction || thread.summary || thread.title) ||
+    thread.title;
+  const displayTitle = /^(?:follow[- ]?up|thread|carryover|open loops?)$/i.test(
+    normalizeText(thread.title),
+  )
+    ? summaryText
+    : thread.title;
   return {
     kind,
-    title: thread.title,
-    summaryText: thread.nextAction || thread.summary || thread.title,
+    title: displayTitle,
+    summaryText,
     scope,
     urgency: kind === 'slip_risk' ? 'high' : 'medium',
     importance: importanceFromScope(scope),
@@ -512,6 +549,9 @@ function buildBestNextAction(signal: ChiefOfStaffSignal | null): string | null {
     case 'prepare':
       return `Prep ${signal.title} before it turns into a scramble.`;
     case 'follow_up':
+      if (isClauseLikeSignalTitle(signal.title)) {
+        return `Move this forward with one concrete follow-up: ${signal.title}.`;
+      }
       return `Move ${signal.title} forward with one concrete follow-up.`;
     case 'remind':
       return `Turn ${signal.title} into a reminder if you are not doing it now.`;
@@ -520,6 +560,9 @@ function buildBestNextAction(signal: ChiefOfStaffSignal | null): string | null {
     case 'drop':
       return `Let ${signal.title} stop taking up attention if it is no longer real.`;
     case 'watch':
+      if (isClauseLikeSignalTitle(signal.title)) {
+        return `Keep this in view for later: ${signal.title}.`;
+      }
       return `Keep ${signal.title} in view, but it can wait for a calmer moment.`;
     default:
       return `Handle ${signal.title} next.`;

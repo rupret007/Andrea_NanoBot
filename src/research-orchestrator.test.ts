@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createTask, _initTestDatabase } from './db.js';
+import { createTask, upsertLifeThread, _initTestDatabase } from './db.js';
 import { handleLifeThreadCommand } from './life-threads.js';
 import { saveKnowledgeSource } from './knowledge-library.js';
 import * as openAiProvider from './openai-provider.js';
@@ -145,6 +145,51 @@ describe('research orchestrator', () => {
     expect(result.fullText).not.toContain('Send a concise reminder');
   });
 
+  it('normalizes generic life-thread titles and assistant-y thread summaries in local context research', async () => {
+    upsertLifeThread({
+      id: 'lt-research-followup',
+      groupFolder: 'main',
+      title: 'Follow-Up',
+      category: 'personal',
+      status: 'active',
+      scope: 'personal',
+      relatedSubjectIds: [],
+      contextTags: ['pest-control'],
+      summary:
+        'The first fixed point in your day is pest control is coming at 1:00 PM.',
+      nextAction: null,
+      nextFollowupAt: null,
+      sourceKind: 'inferred',
+      confidenceKind: 'high',
+      userConfirmed: true,
+      sensitivity: 'normal',
+      surfaceMode: 'default',
+      mergedIntoThreadId: null,
+      createdAt: '2026-04-05T08:55:00.000Z',
+      lastUpdatedAt: '2026-04-05T09:30:00.000Z',
+      lastUsedAt: '2026-04-05T09:30:00.000Z',
+      followthroughMode: 'important_only',
+      lastSurfacedAt: null,
+      snoozedUntil: null,
+      linkedTaskId: null,
+    });
+
+    const result = await runResearchOrchestrator({
+      query: 'Summarize what matters from my current context',
+      channel: 'telegram',
+      groupFolder: 'main',
+      now: new Date('2026-04-05T10:00:00.000Z'),
+    });
+
+    expect(result.handled).toBe(true);
+    expect(result.summaryText).toContain('Pest control is coming at 1:00 PM');
+    expect(result.summaryText).not.toContain('Follow-Up');
+    expect(result.summaryText).not.toContain('The first fixed point in your day is');
+    expect(result.structuredFindings[0]?.items[0]).toBe(
+      'Pest control is coming at 1:00 PM.',
+    );
+  });
+
   it('builds a grounded library answer when saved sources are requested', async () => {
     saveKnowledgeSource({
       groupFolder: 'main',
@@ -209,6 +254,38 @@ describe('research orchestrator', () => {
     expect(result.spokenText).toContain('saved material');
     expect(result.spokenText).not.toContain('Backup Dinner Summary');
     expect(result.spokenText).not.toContain('\n');
+  });
+
+  it('dedupes identical saved-material hits across different source records', async () => {
+    saveKnowledgeSource({
+      groupFolder: 'main',
+      title: 'Candace Dinner Note',
+      content:
+        'Candace wants Friday dinner after rehearsal because pickup timing stays simpler and bedtime does not get squeezed.',
+      sourceType: 'manual_reference',
+      now: new Date('2026-04-05T09:00:00.000Z'),
+    });
+    saveKnowledgeSource({
+      groupFolder: 'main',
+      title: 'Candace Dinner Note',
+      content:
+        'Candace wants Friday dinner after rehearsal because pickup timing stays simpler and bedtime does not get squeezed.',
+      sourceType: 'saved_research_result',
+      now: new Date('2026-04-05T09:05:00.000Z'),
+    });
+
+    const result = await runResearchOrchestrator({
+      query: 'Use only my saved material for Friday dinner with Candace.',
+      channel: 'telegram',
+      groupFolder: 'main',
+      now: new Date('2026-04-05T10:00:00.000Z'),
+    });
+
+    const fullText = result.fullText || '';
+    expect(result.supportingSources).toHaveLength(1);
+    expect(result.supportingSources?.[0]?.title).toBe('Candace Dinner Note');
+    expect(result.structuredFindings[0]?.items).toHaveLength(1);
+    expect(fullText.match(/Candace Dinner Note/g)?.length).toBe(2);
   });
 
   it('returns an exact blocker when an OpenAI-style research question has no configured provider or local fallback', async () => {

@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { executeAssistantCapability } from './assistant-capabilities.js';
-import { _initTestDatabase, getMission, listMissionSteps } from './db.js';
+import {
+  _initTestDatabase,
+  getMission,
+  listMissionSteps,
+  updateCommunicationThread,
+} from './db.js';
 import { analyzeCommunicationMessage } from './communication-companion.js';
 import { handleLifeThreadCommand } from './life-threads.js';
 import { buildMissionTurn } from './missions.js';
@@ -215,5 +220,50 @@ describe('missions', () => {
     expect(second.mission.missionId).not.toBe(first.mission.missionId);
     expect(second.mission.title).toContain('Friday dinner with Candace');
     expect(second.replyText).toContain('For Friday dinner with Candace');
+  });
+
+  it('does not surface malformed orphaned open-loop summaries as mission blockers', async () => {
+    const now = new Date('2026-04-06T18:25:00.000Z');
+
+    const candace = analyzeCommunicationMessage({
+      channel: 'telegram',
+      groupFolder: 'main',
+      chatJid: 'tg:main',
+      text: 'Candace: can you let me know if dinner still works tonight?',
+      now,
+    });
+    const generic = analyzeCommunicationMessage({
+      channel: 'telegram',
+      groupFolder: 'main',
+      chatJid: 'tg:main',
+      text: 'Can you get back to me?',
+      now: new Date('2026-04-06T18:26:00.000Z'),
+    });
+
+    updateCommunicationThread(candace.thread!.id, {
+      lastInboundSummary:
+        'Candace wants a follow-up about whether dinner still works tonight.',
+    });
+    updateCommunicationThread(generic.thread!.id, {
+      linkedSubjectIds: [],
+      linkedLifeThreadIds: [],
+      lastInboundSummary: 'They wants an answer about .',
+      lastOutboundSummary:
+        'Hey, I wanted to circle back on They wants an answer about .',
+    });
+
+    const result = await buildMissionTurn({
+      channel: 'telegram',
+      groupFolder: 'main',
+      chatJid: 'tg:main',
+      text: 'help me plan tonight',
+      mode: 'propose',
+      now,
+    });
+
+    expect(result.replyText).not.toContain('They wants an answer about .');
+    expect(result.replyText).toContain(
+      'Candace wants a follow-up about whether dinner still works tonight.',
+    );
   });
 });

@@ -78,6 +78,12 @@ function isReferenceBoundSavePrompt(value: string): boolean {
   );
 }
 
+function isBareCommunicationDraftFollowup(value: string): boolean {
+  return /^(?:what should i say back|what should i send back|draft that for me|give me a short reply|make it warmer|make it more direct)[?.! ]*$/i.test(
+    value.trim(),
+  );
+}
+
 function isAlexaLocalVoiceAsk(value: string): boolean {
   return /^(what time is it|what day is it|what'?s up|whats up|can you help me|help me|what can you do)$/i.test(
     value.trim(),
@@ -144,7 +150,7 @@ function matchEverydayCapturePrompt(
     /^(add milk to my shopping list|put batteries on my list|save this as an errand|add pay water bill to my list|add dinner idea for friday|add my pills to tonight|track that for the household|put that on the weekend list)\b/.test(
       lower,
     ) ||
-    /^(?:add|put)\b.+\b(?:shopping list|on my list|to tonight|to groceries|under groceries|under household|under bills|under meals|weekend list)\b/.test(
+    /^(?:add|put)\b.+\b(?:shopping list|grocery list|on my list|to tonight|to groceries|under groceries|under household|under bills|under meals|weekend list)\b/.test(
       lower,
     ) ||
     /^save (?:this|that).+\b(?:as an errand|under)\b/.test(lower) ||
@@ -158,7 +164,7 @@ function matchEverydayCapturePrompt(
     };
   }
     if (
-      /^(what('?s| is) on my list|what('?s| is) on groceries|what do we need from the store|what do i still need to buy|what errands do i have|what bills do i need to pay(?: this week| soon)?|what bills are due this week|what meals have i planned(?: this week)?|what meal ideas do i have this week|what meal do i have planned|what household (?:items|things|stuff) (?:are )?(?:still open|do i have)|what should i remember to get tonight|what('?s| is) left for tonight|what should i handle this weekend|what('?s| is) missing for dinner|what recurring (?:things|items) (?:are )?(?:coming back|coming up)(?: soon)?)\b/.test(
+      /^(show me (?:my )?(?:grocery|shopping) list|what('?s| is) on my (?:grocery|shopping) list|what('?s| is) on my list|what('?s| is) on groceries|what do we need from the store|what do i still need to buy|what errands do i have|what bills do i need to pay(?: this week| soon)?|what bills are due this week|what meals have i planned(?: this week)?|what meal ideas do i have this week|what meal do i have planned|what household (?:items|things|stuff) (?:are )?(?:still open|do i have)|what should i remember to get tonight|what('?s| is) left for tonight|what should i handle this weekend|what('?s| is) missing for dinner|what recurring (?:things|items) (?:are )?(?:coming back|coming up)(?: soon)?)\b/.test(
         lower,
       )
     ) {
@@ -448,6 +454,30 @@ function matchDailyPrompt(normalized: string): AssistantCapabilityMatch | null {
       normalizedText: normalized,
       canonicalText: 'what should I remember tonight',
       reason: 'matched evening reset phrasing',
+    };
+  }
+  return null;
+}
+
+function matchReminderOverviewPrompt(
+  normalized: string,
+): AssistantCapabilityMatch | null {
+  const lower = normalized.toLowerCase();
+  if (
+    /^(?:what reminders do i have|what should i remember|what do i need to remember)(?: (today|tomorrow|this week))?$/.test(
+      lower,
+    )
+  ) {
+    const windowMatch = lower.match(/\b(today|tomorrow|this week)\b/);
+    const windowLabel = windowMatch?.[1];
+    const canonicalText = windowLabel
+      ? `what reminders do I have ${windowLabel}`
+      : 'what reminders do I have';
+    return {
+      capabilityId: 'followthrough.reminder_overview',
+      normalizedText: normalized,
+      canonicalText,
+      reason: 'matched reminder overview readout phrasing',
     };
   }
   return null;
@@ -1059,6 +1089,7 @@ export function matchAssistantCapabilityRequest(
     matchMissionPrompt(normalized) ||
     matchStaffPrompt(normalized) ||
     matchDailyPrompt(normalized) ||
+    matchReminderOverviewPrompt(normalized) ||
     matchHouseholdPrompt(normalized) ||
     matchCommunicationPrompt(normalized) ||
     matchThreadPrompt(normalized) ||
@@ -1264,9 +1295,7 @@ function continueAssistantCapabilityFromActiveCapability(
   }
 
   if (
-    /^(what should i say back|what should i send back|draft that for me|give me a short reply|make it warmer|make it more direct)\b/.test(
-      lower,
-    ) &&
+    isBareCommunicationDraftFollowup(lower) &&
     activeCapabilityId?.startsWith('communication.')
   ) {
     return {

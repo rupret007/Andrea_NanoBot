@@ -229,6 +229,38 @@ describe('assistant capability router', () => {
     });
   });
 
+  it('matches reminder overview readouts cleanly', () => {
+    expect(
+      matchAssistantCapabilityRequest('What reminders do I have?'),
+    ).toMatchObject({
+      capabilityId: 'followthrough.reminder_overview',
+      canonicalText: 'what reminders do I have',
+    });
+    expect(
+      matchAssistantCapabilityRequest('What reminders do I have tomorrow?'),
+    ).toMatchObject({
+      capabilityId: 'followthrough.reminder_overview',
+      canonicalText: 'what reminders do I have tomorrow',
+    });
+    expect(
+      matchAssistantCapabilityRequest('What should I remember tomorrow?'),
+    ).toMatchObject({
+      capabilityId: 'followthrough.reminder_overview',
+      canonicalText: 'what reminders do I have tomorrow',
+    });
+    expect(
+      matchAssistantCapabilityRequest('What do I need to remember this week?'),
+    ).toMatchObject({
+      capabilityId: 'followthrough.reminder_overview',
+      canonicalText: 'what reminders do I have this week',
+    });
+    expect(
+      matchAssistantCapabilityRequest('What should I remember tonight?'),
+    ).toMatchObject({
+      capabilityId: 'daily.evening_reset',
+    });
+  });
+
   it('routes personalized setup and everyday capture prompts before broader planning logic', () => {
     expect(
       matchAssistantCapabilityRequest('Help me set this up'),
@@ -242,6 +274,11 @@ describe('assistant capability router', () => {
     });
     expect(
       matchAssistantCapabilityRequest('Add milk to my shopping list'),
+    ).toMatchObject({
+      capabilityId: 'capture.add_item',
+    });
+    expect(
+      matchAssistantCapabilityRequest('Add milk to my grocery list'),
     ).toMatchObject({
       capabilityId: 'capture.add_item',
     });
@@ -267,6 +304,16 @@ describe('assistant capability router', () => {
     });
     expect(
       matchAssistantCapabilityRequest('What do we need from the store?'),
+    ).toMatchObject({
+      capabilityId: 'capture.read_items',
+    });
+    expect(
+      matchAssistantCapabilityRequest('Show me my grocery list'),
+    ).toMatchObject({
+      capabilityId: 'capture.read_items',
+    });
+    expect(
+      matchAssistantCapabilityRequest("What's on my grocery list?"),
     ).toMatchObject({
       capabilityId: 'capture.read_items',
     });
@@ -735,6 +782,29 @@ describe('assistant capability router', () => {
     ).toMatchObject({
       capabilityId: 'communication.open_loops',
       continuation: true,
+    });
+  });
+
+  it('does not let an active communication context swallow a fresh explicit person-and-topic draft ask', () => {
+    expect(
+      continueAssistantCapabilityFromPriorSubjectData(
+        'What should I say back to Candace about dinner tonight?',
+        {
+          activeCapabilityId: 'communication.open_loops',
+        },
+      ),
+    ).toMatchObject({
+      capabilityId: 'communication.draft_reply',
+      reason: 'matched relationship-aware draft phrasing',
+    });
+
+    expect(
+      matchAssistantCapabilityRequest(
+        'What should I say back to Candace about dinner tonight?',
+      ),
+    ).toMatchObject({
+      capabilityId: 'communication.draft_reply',
+      reason: 'matched relationship-aware draft phrasing',
     });
   });
 

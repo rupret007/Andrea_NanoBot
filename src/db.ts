@@ -1402,6 +1402,22 @@ export function _closeDatabase(): void {
  * Store chat metadata only (no message content).
  * Used for all chats to enable group discovery without storing sensitive content.
  */
+function normalizeChatNameCandidate(value: string | null | undefined): string {
+  return (value || '').trim();
+}
+
+function isPlaceholderChatName(chatJid: string, name: string | null | undefined): boolean {
+  const normalizedName = normalizeChatNameCandidate(name);
+  if (!normalizedName) return true;
+  const jidSansPrefix = chatJid.replace(/^bb:/i, '');
+  if (normalizedName === chatJid || normalizedName === jidSansPrefix) {
+    return true;
+  }
+  return /^(?:bb:)?(?:iMessage|SMS|RCS):[+-];(?:chat[0-9]+|[^ ]+@[^ ]+|\+?\d+)$/i.test(
+    normalizedName,
+  );
+}
+
 export function storeChatMetadata(
   chatJid: string,
   timestamp: string,
@@ -1411,8 +1427,13 @@ export function storeChatMetadata(
 ): void {
   const ch = channel ?? null;
   const group = isGroup === undefined ? null : isGroup ? 1 : 0;
+  const normalizedName = normalizeChatNameCandidate(name);
+  const safeName =
+    normalizedName && !isPlaceholderChatName(chatJid, normalizedName)
+      ? normalizedName
+      : null;
 
-  if (name) {
+  if (safeName) {
     // Update with name, preserving existing timestamp if newer
     db.prepare(
       `
@@ -1423,7 +1444,7 @@ export function storeChatMetadata(
         channel = COALESCE(excluded.channel, channel),
         is_group = COALESCE(excluded.is_group, is_group)
     `,
-    ).run(chatJid, name, timestamp, ch, group);
+    ).run(chatJid, safeName, timestamp, ch, group);
   } else {
     // Update timestamp only, preserve existing name if any
     db.prepare(
@@ -1444,6 +1465,9 @@ export function storeChatMetadata(
  * Used during group metadata sync.
  */
 export function updateChatName(chatJid: string, name: string): void {
+  if (isPlaceholderChatName(chatJid, name)) {
+    return;
+  }
   db.prepare(
     `
     INSERT INTO chats (jid, name, last_message_time) VALUES (?, ?, ?)

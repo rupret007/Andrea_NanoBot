@@ -2864,7 +2864,7 @@ export class BlueBubblesChannel implements Channel {
         );
         this.persistMonitorState();
       }
-      storeChatMetadata(jid, sentAt, jid, 'bluebubbles');
+      storeChatMetadata(jid, sentAt, undefined, 'bluebubbles');
       storeMessageDirect({
         id:
           result.platformMessageId ||

@@ -1622,7 +1622,9 @@ function parseCaptureTarget(
   const scope = inferScope(rawWithoutRecurrence || raw);
 
   const shoppingMatch =
-    rawWithoutRecurrence.match(/^(?:add|put)\s+(.+?)\s+to\s+(?:my\s+)?shopping list$/i) ||
+    rawWithoutRecurrence.match(
+      /^(?:add|put)\s+(.+?)\s+to\s+(?:my\s+)?(?:shopping|grocery) list$/i,
+    ) ||
     rawWithoutRecurrence.match(/^(?:add|put)\s+(.+?)\s+on\s+(?:my\s+)?list$/i) ||
     rawWithoutRecurrence.match(/^(?:add|put)\s+(.+?)\s+to groceries$/i);
   if (shoppingMatch?.[1]) {
@@ -1856,6 +1858,11 @@ function parseReadTarget(text: string): ReadTarget | null {
   const normalized = normalizeText(text).toLowerCase();
   if (/^what('?s| is) on my list\b/.test(normalized)) {
     return { kind: 'all', summary: 'your list' };
+  }
+  if (
+    /^(show me|what('?s| is) on) my (grocery|shopping) list\b/.test(normalized)
+  ) {
+    return { kind: 'shopping', summary: 'groceries' };
   }
   if (/^(what('?s| is) on groceries|what do we need from the store)\b/.test(normalized)) {
     return { kind: 'shopping', summary: 'groceries' };

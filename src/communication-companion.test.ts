@@ -387,6 +387,102 @@ describe('communication companion', () => {
     expect(result.draftText).not.toContain('circle back on They');
   });
 
+  it('strips explicit reply-help framing so person-and-topic asks draft cleanly', () => {
+    seedCandace();
+
+    const result = draftCommunicationReply({
+      channel: 'telegram',
+      groupFolder: 'main',
+      chatJid: 'tg:main',
+      text: 'What should I say back to Candace about dinner tonight?',
+      now: new Date('2026-04-14T11:51:00.000Z'),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.draftText).toContain('Hey Candace,');
+    expect(result.draftText).toContain('dinner tonight');
+    expect(result.draftText).not.toContain('circle back on to Candace');
+  });
+
+  it('repairs malformed carried-forward summaries for explicit person-and-topic follow-ups', () => {
+    seedCandace();
+
+    const seeded = analyzeCommunicationMessage({
+      channel: 'telegram',
+      groupFolder: 'main',
+      chatJid: 'tg:main',
+      text: 'Candace: Can you let me know if dinner still works tonight?',
+      now: new Date('2026-04-14T11:45:00.000Z'),
+    });
+
+    expect(seeded.ok).toBe(true);
+    updateCommunicationThread(seeded.thread!.id, {
+      lastInboundSummary: 'to Candace about dinner tonight?',
+    });
+
+    const result = draftCommunicationReply({
+      channel: 'telegram',
+      groupFolder: 'main',
+      chatJid: 'tg:main',
+      text: 'What should I say back to Candace about dinner tonight?',
+      priorContext: {
+        personName: 'Candace',
+        communicationThreadId: seeded.thread!.id,
+        communicationSubjectIds: ['subject-candace'],
+        lastCommunicationSummary: 'to Candace about dinner tonight?',
+      },
+      now: new Date('2026-04-14T11:51:00.000Z'),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.summaryText).toBe(
+      'Candace wants a follow-up about dinner tonight.',
+    );
+    expect(result.draftText).toContain('Hey Candace,');
+    expect(result.draftText).toContain('dinner tonight');
+    expect(result.draftText).not.toContain('to Candace about dinner tonight?');
+    expect(result.draftText).not.toContain('circle back on to Candace');
+  });
+
+  it('repairs command-like carried-forward summaries for explicit person-and-topic follow-ups', () => {
+    seedCandace();
+
+    const seeded = analyzeCommunicationMessage({
+      channel: 'telegram',
+      groupFolder: 'main',
+      chatJid: 'tg:main',
+      text: 'Candace: Can you let me know if dinner still works tonight?',
+      now: new Date('2026-04-14T11:45:00.000Z'),
+    });
+
+    expect(seeded.ok).toBe(true);
+    updateCommunicationThread(seeded.thread!.id, {
+      lastInboundSummary: 'What do I still need to reply to?',
+    });
+
+    const result = draftCommunicationReply({
+      channel: 'telegram',
+      groupFolder: 'main',
+      chatJid: 'tg:main',
+      text: 'What should I say back to Candace about dinner tonight?',
+      priorContext: {
+        personName: 'Candace',
+        communicationThreadId: seeded.thread!.id,
+        communicationSubjectIds: ['subject-candace'],
+        lastCommunicationSummary: 'What do I still need to reply to?',
+      },
+      now: new Date('2026-04-14T11:51:00.000Z'),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.summaryText).toBe(
+      'Candace wants a follow-up about dinner tonight.',
+    );
+    expect(result.draftText).toContain('Hey Candace,');
+    expect(result.draftText).toContain('dinner tonight');
+    expect(result.draftText).not.toContain('What do I');
+  });
+
   it('builds warmer drafts from relationship-aware message context', () => {
     seedCandace();
 
@@ -751,7 +847,7 @@ describe('communication companion', () => {
       now: new Date('2026-04-06T09:05:00.000Z'),
     });
 
-    expect(openLoops.summaryText).toContain('still needs attention');
+    expect(openLoops.summaryText).toMatch(/still needs? attention/);
     expect(openLoops.bestNextStep).toContain('Candace');
     expect(openLoops.items[0]?.personName).toBe('Candace');
     expect(formatCommunicationOpenLoopsReply('telegram', openLoops)).toContain(
@@ -771,6 +867,88 @@ describe('communication companion', () => {
     expect(suppressed.ok).toBe(true);
     expect(suppressed.replyText).toContain('stop surfacing');
     expect(getCommunicationCarryoverSignal({ groupFolder: 'main' })).toBeNull();
+  });
+
+  it('ignores malformed orphaned communication threads when summarizing open loops', () => {
+    seedCandace();
+
+    const candace = analyzeCommunicationMessage({
+      channel: 'telegram',
+      groupFolder: 'main',
+      chatJid: 'tg:test',
+      text: 'Candace: Can you let me know if dinner still works tonight?',
+      now: new Date('2026-04-06T09:00:00.000Z'),
+    });
+    const generic = analyzeCommunicationMessage({
+      channel: 'telegram',
+      groupFolder: 'main',
+      chatJid: 'tg:test',
+      text: 'Can you get back to me?',
+      now: new Date('2026-04-06T09:01:00.000Z'),
+    });
+
+    updateCommunicationThread(candace.thread!.id, {
+      lastInboundSummary:
+        'Candace wants a follow-up about whether dinner still works tonight.',
+    });
+    updateCommunicationThread(generic.thread!.id, {
+      linkedSubjectIds: [],
+      linkedLifeThreadIds: [],
+      lastInboundSummary: 'They sounds settled on sounds good see you at 7.',
+      lastOutboundSummary: 'Sounds good. See you at 7.',
+    });
+
+    const openLoops = buildCommunicationOpenLoops({
+      channel: 'telegram',
+      groupFolder: 'main',
+      text: 'What do I owe people?',
+      now: new Date('2026-04-06T09:05:00.000Z'),
+    });
+
+    expect(openLoops.summaryText).toMatch(/still needs? attention/);
+    expect(formatCommunicationOpenLoopsReply('telegram', openLoops)).toContain(
+      'Candace wants a follow-up about whether dinner still works tonight.',
+    );
+    expect(formatCommunicationOpenLoopsReply('telegram', openLoops)).not.toContain(
+      'They sounds settled on sounds good see you at 7.',
+    );
+  });
+
+  it('ignores command-like carried-forward summaries when summarizing open loops', () => {
+    seedCandace();
+
+    const candace = analyzeCommunicationMessage({
+      channel: 'telegram',
+      groupFolder: 'main',
+      chatJid: 'tg:test',
+      text: 'Candace: Can you let me know if dinner still works tonight?',
+      now: new Date('2026-04-06T09:00:00.000Z'),
+    });
+
+    expect(candace.ok).toBe(true);
+    updateCommunicationThread(candace.thread!.id, {
+      lastInboundSummary: 'What do I still need to reply to?',
+      lastOutboundSummary:
+        'Candace, I wanted to circle back on What do I. Let me know what works for you.',
+    });
+
+    const openLoops = buildCommunicationOpenLoops({
+      channel: 'telegram',
+      groupFolder: 'main',
+      text: 'What do I still need to reply to?',
+      now: new Date('2026-04-06T09:05:00.000Z'),
+    });
+
+    expect(openLoops.summaryText).toMatch(/still needs attention/);
+    expect(formatCommunicationOpenLoopsReply('telegram', openLoops)).not.toContain(
+      'What do I still need to reply to?',
+    );
+    expect(formatCommunicationOpenLoopsReply('telegram', openLoops)).not.toContain(
+      'I wanted to circle back on What do I',
+    );
+    expect(formatCommunicationOpenLoopsReply('telegram', openLoops)).toContain(
+      'Candace',
+    );
   });
 
   it('can turn an open conversation into a reply-later reminder', () => {

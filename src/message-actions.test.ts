@@ -684,6 +684,33 @@ describe('message actions', () => {
     expect(resolved.target.isGroup).toBe(true);
   });
 
+  it('keeps resolving a synced BlueBubbles thread after placeholder metadata updates', () => {
+    storeChatMetadata(
+      'bb:iMessage;+;chat-pops',
+      '2026-04-10T18:59:25.530Z',
+      'Pops of Punk',
+      'bluebubbles',
+      true,
+    );
+    storeChatMetadata(
+      'bb:iMessage;+;chat-pops',
+      '2026-04-10T19:01:34.886Z',
+      'bb:iMessage;+;chat-pops',
+      'bluebubbles',
+      true,
+    );
+
+    const resolved = resolveBlueBubblesThreadTargetByName(
+      'the Pops of Punk text thread',
+    );
+    expect(resolved.state).toBe('resolved');
+    if (resolved.state !== 'resolved') {
+      throw new Error('expected resolved target');
+    }
+    expect(resolved.target.chatJid).toBe('bb:iMessage;+;chat-pops');
+    expect(resolved.target.displayName).toBe('Pops of Punk');
+  });
+
   it('can create an explicit BlueBubbles thread draft without falling back to self-companion mode', () => {
     const action = createOrRefreshMessageActionFromDraft({
       groupFolder: 'main',

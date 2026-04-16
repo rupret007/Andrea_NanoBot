@@ -274,16 +274,22 @@ function slugifyName(value: string): string {
 }
 
 function stripCommandPrefix(raw: string): string {
+  const explicitTopicMatch = raw.match(
+    /^(?:what should i say back|what should i send back|draft a response|draft a reply)\s+to\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+about\s+(.+?)[?.! ]*$/i,
+  );
+  if (explicitTopicMatch?.[1]?.trim()) {
+    return explicitTopicMatch[1].trim();
+  }
   return raw
     .replace(
-      /^(?:summarize this(?: message)?|what did they mean|what still needs a reply here|what should i say back|what should i send back|draft a response|draft a reply(?: to [a-z][a-z' -]+)?|give me a short reply|make it warmer|make it more direct|make it sound like me|save this conversation under [^:]+|remind me to reply later|don't surface this automatically|dont surface this automatically|stop tracking that|forget this conversation thread|mark that handled)[:,-]?\s*/i,
+      /^(?:summarize this(?: message)?|what did they mean|what still needs a reply here|what should i say back(?: to [a-z][a-z' -]+)?|what should i send back(?: to [a-z][a-z' -]+)?|draft a response(?: to [a-z][a-z' -]+)?|draft a reply(?: to [a-z][a-z' -]+)?|give me a short reply|make it warmer|make it more direct|make it sound like me|save this conversation under [^:]+|remind me to reply later|don't surface this automatically|dont surface this automatically|stop tracking that|forget this conversation thread|mark that handled)[:,-]?\s*/i,
       '',
     )
     .trim();
 }
 
 function isCommandOnlyCommunicationPrompt(value: string): boolean {
-  return /^(?:summari[sz]e this(?: message)?|what did they mean|what still needs a reply here|what should i (?:say|send) back|draft a response|draft a reply(?: to [a-z][a-z' -]+)?|give me a short reply|make it warmer|make it more direct|make it sound like me|save this conversation under [^:]+|remind me to reply later|don't surface this automatically|dont surface this automatically|stop tracking that|forget this conversation thread|mark that handled)[?.! ]*$/i.test(
+  return /^(?:summari[sz]e this(?: message)?|what did they mean|what still needs a reply here|what should i (?:say|send) back(?: to [a-z][a-z' -]+)?|draft a response(?: to [a-z][a-z' -]+)?|draft a reply(?: to [a-z][a-z' -]+)?|give me a short reply|make it warmer|make it more direct|make it sound like me|save this conversation under [^:]+|remind me to reply later|don't surface this automatically|dont surface this automatically|stop tracking that|forget this conversation thread|mark that handled)[?.! ]*$/i.test(
     value.trim(),
   );
 }
@@ -444,8 +450,13 @@ function looksAssistantNarratedContext(text: string | null | undefined): boolean
 function looksLikeMalformedCommunicationSummary(value: string | null | undefined): boolean {
   const normalized = normalizeText(value || '');
   if (!normalized) return true;
-  return /^(?:they wants an answer about|they wants a follow-up about|they said)(?:\s*\.)?$/i.test(
-    normalized,
+  return (
+    /(?:^|\b)(?:they wants an answer about|they wants a follow-up about|they sounds settled on|they said)(?:\b|\s*\.)/i.test(
+      normalized,
+    ) ||
+    /^(?:to|reply to)\s+[a-z][a-z' -]+(?:\s+[a-z][a-z' -]+)*\s+about\b/i.test(
+      normalized,
+    )
   );
 }
 
@@ -453,7 +464,15 @@ function looksGenericCommandOnlyCommunicationSummary(
   value: string | null | undefined,
 ): boolean {
   const normalized = normalizeText(value || '');
-  return /still needs a clean follow-up/i.test(normalized);
+  return (
+    /still needs a clean follow-up/i.test(normalized) ||
+    /^(?:what do i still need to reply to|what do i owe people|who am i forgetting to respond to|anything i need to reply to)\b/i.test(
+      normalized,
+    ) ||
+    /^(?:what should i (?:say|send) back|draft a (?:response|reply)|give me a short reply|make it warmer|make it more direct|make it sound like me|save this conversation under|remind me to reply later|don't surface this automatically|dont surface this automatically|stop tracking that|forget this conversation thread|mark that handled)\b/i.test(
+      normalized,
+    )
+  );
 }
 
 function looksLikeCommunicationContextText(value: string | null | undefined): boolean {
@@ -465,6 +484,21 @@ function looksLikeCommunicationContextText(value: string | null | undefined): bo
   return /\b(?:wants an answer about|wants a follow-up about|said they would get back|sounds settled on|still needs attention|still need(?:s)? a clean answer|reply to [a-z][a-z' -]+ about)\b/i.test(
     normalized,
   );
+}
+
+function normalizeUsableCommunicationSummary(
+  value: string | null | undefined,
+): string | null {
+  const candidate = normalizeText(value || '');
+  if (
+    !candidate ||
+    looksLikeMalformedCommunicationSummary(candidate) ||
+    looksGenericCommandOnlyCommunicationSummary(candidate) ||
+    isMeaninglessCommunicationBody(candidate)
+  ) {
+    return null;
+  }
+  return candidate;
 }
 
 function findFallbackCommunicationThread(
@@ -508,6 +542,7 @@ function buildCommandOnlyCommunicationFallbackSummary(params: {
   existing?: CommunicationThreadRecord;
   linkedLifeThreads: LifeThread[];
   linkedSubjects: ProfileSubject[];
+  rawText?: string;
 }): string | null {
   const existingSummary = normalizeText(params.existing?.lastInboundSummary || '');
   if (
@@ -526,6 +561,14 @@ function buildCommandOnlyCommunicationFallbackSummary(params: {
   );
   if (lifeThreadSummary) {
     return clipText(lifeThreadSummary, 140);
+  }
+
+  const explicitTopic = extractExplicitDraftTopicFromPrompt(params.rawText || '');
+  if (explicitTopic) {
+    const personName = params.linkedSubjects[0]?.displayName?.trim();
+    return personName
+      ? `${personName} wants a follow-up about ${clipText(explicitTopic, 90)}.`
+      : `There is a follow-up about ${clipText(explicitTopic, 90)}.`;
   }
 
   const personName = params.linkedSubjects[0]?.displayName?.trim();
@@ -697,6 +740,14 @@ function detectExplicitPersonName(
     rawText.match(/\b(?:to|with|from|about|reply to)\s+([A-Z][a-z]+)\b/)?.[1] ||
     rawText.match(/^([A-Z][a-z]+)\s*:/)?.[1];
   return matched?.trim() || undefined;
+}
+
+function extractExplicitDraftTopicFromPrompt(rawText: string): string {
+  const explicitTopicMatch =
+    rawText.match(
+      /^(?:what should i say back|what should i send back|draft a response|draft a reply)\s+to\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+about\s+(.+?)[?.! ]*$/i,
+    )?.[1] || '';
+  return normalizeCommunicationFocus(explicitTopicMatch).trim();
 }
 
 function resolveSubjectIds(
@@ -1270,6 +1321,7 @@ export function analyzeCommunicationMessage(
           existing,
           linkedLifeThreads: effectiveLinkedLifeThreads,
           linkedSubjects: effectiveLinkedSubjects,
+          rawText: input.text,
         })
       : null;
   if (!messageText && recoveredSummary) {
@@ -1415,6 +1467,7 @@ function repairCommandOnlyAnalysisResult(
     existing: analysis.thread,
     linkedLifeThreads: analysis.linkedLifeThreads,
     linkedSubjects: analysis.linkedSubjects,
+    rawText: input.text,
   });
   if (!fallbackSummary) {
     return analysis;
@@ -1441,6 +1494,7 @@ function repairCommandOnlyAnalysisResult(
 
 function stabilizeCommunicationDraftAnalysis(
   analysis: CommunicationAnalysisResult,
+  rawText?: string,
 ): CommunicationAnalysisResult {
   if (!analysis.ok) {
     return analysis;
@@ -1460,6 +1514,7 @@ function stabilizeCommunicationDraftAnalysis(
     existing: analysis.thread,
     linkedLifeThreads: analysis.linkedLifeThreads,
     linkedSubjects: analysis.linkedSubjects,
+    rawText,
   });
   if (!fallbackSummary) {
     return analysis;
@@ -1554,6 +1609,7 @@ export function draftCommunicationReply(
       repairedInput,
       analyzeCommunicationMessage(repairedInput),
     ),
+    repairedInput.text,
   );
   const style = inferStyle(repairedInput.text || '');
   if (!analysis.ok || !analysis.summaryText) {
@@ -1590,6 +1646,7 @@ export async function draftCommunicationReplyWithChannelFluidity(
       repairedInput,
       analyzeCommunicationMessage(repairedInput),
     ),
+    repairedInput.text,
   );
   const style = inferStyle(repairedInput.text || '');
   if (!analysis.ok || !analysis.summaryText) {
@@ -1665,24 +1722,51 @@ export function buildCommunicationOpenLoops(
   });
 
   const items = threads
-    .filter((thread) => thread.followupState !== 'resolved' && thread.trackingMode !== 'disabled')
-    .map<CommunicationOpenLoopItem>((thread) => {
+    .filter(
+      (thread) =>
+        thread.followupState !== 'resolved' &&
+        thread.trackingMode !== 'disabled',
+    )
+    .map<CommunicationOpenLoopItem | null>((thread) => {
       const personName =
         personScope?.displayName ||
         subjects.find((subject) => thread.linkedSubjectIds.includes(subject.id))?.displayName;
+      const inboundSummary = normalizeUsableCommunicationSummary(
+        thread.lastInboundSummary,
+      );
+      const hasLinkedContext =
+        Boolean(personName) ||
+        thread.linkedSubjectIds.length > 0 ||
+        thread.linkedLifeThreadIds.length > 0;
+      const summaryText =
+        inboundSummary ||
+        (hasLinkedContext
+          ? personName
+            ? `${personName} still needs attention.`
+            : thread.title
+              ? `${thread.title} still needs attention.`
+              : null
+          : null);
+      if (!summaryText) {
+        return null;
+      }
       return {
         threadId: thread.id,
         title: thread.title,
         personName,
-        summaryText:
-          thread.lastInboundSummary ||
-          thread.lastOutboundSummary ||
-          'This conversation still looks open.',
+        summaryText,
         followupState: thread.followupState,
         urgency: thread.urgency,
         suggestedNextAction: thread.suggestedNextAction,
       };
-    });
+    })
+    .filter((item): item is CommunicationOpenLoopItem => Boolean(item))
+    .filter(
+      (item) =>
+        !looksLikeMalformedCommunicationSummary(item.summaryText) &&
+        !looksGenericCommandOnlyCommunicationSummary(item.summaryText) &&
+        !isMeaninglessCommunicationBody(item.summaryText),
+    );
 
   const summaryText = personScope
     ? items.length === 0

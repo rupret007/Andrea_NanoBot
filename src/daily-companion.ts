@@ -422,8 +422,32 @@ function summarizeWindow(
 
 function summarizeThread(thread: LifeThread | null): string | null {
   if (!thread) return null;
-  const detail = thread.nextAction || thread.summary;
-  return `${thread.title}: ${detail}`;
+  const normalizeThreadDetail = (value: string | null): string | null => {
+    const trimmed = trimTerminalPunctuation(value);
+    if (!trimmed) return null;
+    const normalized = trimmed
+      .replace(
+        /^(?:the first fixed point in your day is|the next grounded thing is|the clearest next anchor is|the next thing that still needs attention is|the thing most likely to slip is|one carryover to keep in sight is|the thing worth closing tonight is|the thing still most likely to slip tonight is)\s+/i,
+        '',
+      )
+      .replace(
+        /^keep\s+(.+?)\s+(?:moving so it does not drift|in view, but it can wait for a calmer moment)$/i,
+        '$1',
+      )
+      .trim();
+    const candidate = normalized || trimmed;
+    return /^[a-z]/.test(candidate)
+      ? `${candidate[0]!.toUpperCase()}${candidate.slice(1)}`
+      : candidate;
+  };
+  const title = trimTerminalPunctuation(thread.title);
+  const detail = normalizeThreadDetail(thread.nextAction || thread.summary || null);
+  if (!detail) return title;
+  if (!title) return detail;
+  if (/^(?:follow[- ]?up|thread|carryover|open loops?)$/i.test(title)) {
+    return detail;
+  }
+  return `${title}: ${detail}`;
 }
 
 function summarizeThreadDetail(thread: LifeThread | null): string | null {
