@@ -367,6 +367,42 @@ describe('planCalendarAutomation', () => {
     expect(result.message).toContain('Scope: Musak Calendar');
   });
 
+  it('treats main calendar phrasing as the selected primary calendar', async () => {
+    const result = await planCalendarAutomation(
+      'Send me a brief for my main calendar every weekday at 7 AM',
+      new Date('2026-04-01T10:00:00-05:00'),
+      [],
+      {
+        configuredCalendars: [
+          {
+            id: 'primary',
+            summary: 'jeffstory007@gmail.com',
+            primary: true,
+            accessRole: 'owner',
+            writable: true,
+            selected: true,
+          },
+          {
+            id: 'musak',
+            summary: 'Musak Calendar',
+            primary: false,
+            accessRole: 'owner',
+            writable: true,
+            selected: true,
+          },
+        ],
+      },
+    );
+
+    expect(result.kind).toBe('awaiting_input');
+    if (result.kind !== 'awaiting_input') return;
+    expect(result.state.step).toBe('confirm');
+    if (result.state.step !== 'confirm') return;
+    expect(result.state.draft.config.scopeKind).toBe('named_calendar');
+    expect(result.state.draft.config.scopeCalendarId).toBe('primary');
+    expect(result.message).toContain('Scope: jeffstory007@gmail.com');
+  });
+
   it('asks briefly when multiple named calendars match', async () => {
     const result = await planCalendarAutomation(
       'Send me a brief for the Story calendar every weekday at 7 AM',

@@ -45,6 +45,11 @@ describe('planGoogleCalendarCreate', () => {
         'Schedule dinner with Candace tomorrow at 6:30 PM.',
       ),
     ).toBe(true);
+    expect(
+      isExplicitGoogleCalendarCreateRequest(
+        'Put Andrea calendar live proof lunch with Sam on tomorrow afternoon.',
+      ),
+    ).toBe(true);
     expect(isExplicitGoogleCalendarCreateRequest('Remind me tomorrow at 3pm.')).toBe(
       false,
     );
@@ -75,6 +80,22 @@ describe('planGoogleCalendarCreate', () => {
     expect(plan.draft.startIso).toBe('2026-04-02T20:00:00.000Z');
     expect(plan.draft.endIso).toBe('2026-04-02T21:00:00.000Z');
     expect(plan.draft.allDay).toBe(false);
+  });
+
+  it('accepts natural put-on phrasing for a timed calendar event', () => {
+    const plan = planGoogleCalendarCreate(
+      'Put Andrea calendar live proof lunch with Sam on tomorrow afternoon.',
+      [...writableCalendars],
+      new Date('2026-04-16T11:00:00-05:00'),
+      'America/Chicago',
+    );
+
+    expect(plan.kind).toBe('draft');
+    if (plan.kind !== 'draft') return;
+    expect(plan.draft.title).toBe('Andrea calendar live proof lunch with Sam');
+    expect(plan.draft.startIso).toBe('2026-04-17T17:00:00.000Z');
+    expect(plan.draft.endIso).toBe('2026-04-17T18:00:00.000Z');
+    expect(plan.selectedCalendarId).toBeNull();
   });
 
   it('builds an all-day draft and auto-selects a named calendar', () => {
@@ -127,6 +148,29 @@ describe('planGoogleCalendarCreate', () => {
     if (plan.kind !== 'draft') return;
     expect(plan.draft.title).toBe('check air filters');
     expect(plan.selectedCalendarId).toBeNull();
+  });
+
+  it('accepts main-calendar phrasing as the primary selected calendar', () => {
+    const plan = planGoogleCalendarCreate(
+      'Add check air filters to my main calendar tomorrow at 4pm.',
+      [
+        {
+          id: 'jeffstory007@gmail.com',
+          summary: 'jeffstory007@gmail.com',
+          primary: true,
+          accessRole: 'owner',
+          writable: true,
+          selected: true,
+        },
+      ],
+      new Date('2026-04-09T09:00:00-05:00'),
+      'America/Chicago',
+    );
+
+    expect(plan.kind).toBe('draft');
+    if (plan.kind !== 'draft') return;
+    expect(plan.draft.title).toBe('check air filters');
+    expect(plan.selectedCalendarId).toBe('jeffstory007@gmail.com');
   });
 
   it('accepts hyphenated all-day phrasing', () => {
@@ -315,6 +359,50 @@ describe('google calendar create pending flow', () => {
     expect(result.state.draft.startIso).toBe('2026-04-02T16:00:00.000Z');
     expect(result.state.draft.endIso).toBe('2026-04-02T17:00:00.000Z');
     expect(result.state.step).toBe('choose_calendar');
+  });
+
+  it('applies time and main-calendar selection from the same choose-calendar follow-up', () => {
+    const pending = buildPendingGoogleCalendarCreateState({
+      draft: {
+        title: 'proof lunch with Sam',
+        startIso: '2026-04-02T17:00:00.000Z',
+        endIso: '2026-04-02T18:00:00.000Z',
+        allDay: false,
+        timeZone: 'America/Chicago',
+      },
+      writableCalendars: [
+        {
+          id: 'jeffstory007@gmail.com',
+          summary: 'jeffstory007@gmail.com',
+          primary: true,
+          accessRole: 'owner',
+          writable: true,
+          selected: true,
+        },
+        {
+          id: 'family@group.calendar.google.com',
+          summary: 'Family',
+          primary: false,
+          accessRole: 'writer',
+          writable: true,
+          selected: true,
+        },
+      ],
+      selectedCalendarId: null,
+      now: new Date('2026-04-01T09:00:00-05:00'),
+    });
+
+    const result = advancePendingGoogleCalendarCreate(
+      '3pm on my main calendar',
+      pending,
+    );
+
+    expect(result.kind).toBe('awaiting_input');
+    if (result.kind !== 'awaiting_input') return;
+    expect(result.state.step).toBe('confirm_create');
+    expect(result.state.selectedCalendarId).toBe('jeffstory007@gmail.com');
+    expect(result.state.draft.startIso).toBe('2026-04-02T20:00:00.000Z');
+    expect(result.state.draft.endIso).toBe('2026-04-02T21:00:00.000Z');
   });
 
   it('updates a pending draft when the user says move that to a new time', () => {

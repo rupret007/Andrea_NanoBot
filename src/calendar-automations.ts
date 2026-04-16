@@ -695,6 +695,17 @@ async function resolveAutomationScopeSelection(
   const calendars = (await listConfiguredGoogleCalendars(deps)).filter(
     (calendar) => calendar.selected,
   );
+  const normalizedHint = normalizeCalendarMatchText(hint);
+  const primaryCalendar = calendars.find((calendar) => calendar.primary);
+  if (
+    primaryCalendar &&
+    (normalizedHint === 'main' || normalizedHint === 'primary')
+  ) {
+    return {
+      kind: 'resolved',
+      scope: createScopeSelection('named_calendar', primaryCalendar),
+    };
+  }
   const scored = calendars
     .map((calendar) => ({
       calendar,

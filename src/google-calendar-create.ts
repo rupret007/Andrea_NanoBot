@@ -422,7 +422,8 @@ function looksLikeExplicitCalendarCreate(normalized: string): boolean {
     /\b(?:add|put)\b[\s\S]{0,140}\b(?:to|on|in)\b[\s\S]{0,60}\bcalendar\b/.test(
       normalized,
     ) ||
-    (/^\s*add\b/.test(normalized) && assistantStyleSchedulingCue.test(normalized)) ||
+    (/^\s*(?:add|put|create|schedule)\b/.test(normalized) &&
+      assistantStyleSchedulingCue.test(normalized)) ||
     /\bcreate\b[\s\S]{0,50}\bevent\b/.test(normalized) ||
     /\bschedule\b[\s\S]{0,80}\b(?:event|calendar)\b/.test(normalized) ||
     (/^\s*schedule\b/.test(normalized) &&
@@ -478,6 +479,13 @@ function maybeMatchCalendarFromMessage(
   calendars: GoogleCalendarMetadata[],
 ): GoogleCalendarMetadata | null {
   const normalized = collapseWhitespace(message).toLowerCase();
+  const primaryCalendar = calendars.find((calendar) => calendar.primary);
+  if (
+    primaryCalendar &&
+    /\b(?:my|the)?\s*(?:main|primary)\s+calendar\b/.test(normalized)
+  ) {
+    return primaryCalendar;
+  }
   const sorted = [...calendars].sort(
     (left, right) => right.summary.length - left.summary.length,
   );
@@ -526,6 +534,10 @@ function stripCreatePhrases(
   next = next
     .replace(
       /\b(?:to|on|in)\s+(?:the\s+|my\s+)?(?:[\w.&-]+\s+){0,3}[\w.&-]+'s\s+calendar\b/gi,
+      ' ',
+    )
+    .replace(
+      /\b(?:to|on|in)\s+(?:the\s+|my\s+)?(?:main|primary)\s+calendar\b/gi,
       ' ',
     )
     .replace(/\b(?:to|on|in)\s+(?:my\s+)?calendar\b/gi, ' ')
@@ -904,6 +916,14 @@ function matchCalendarSelection(
   const normalized = collapseWhitespace(message).toLowerCase();
   if (!normalized) return null;
 
+  const primaryCalendar = calendars.find((calendar) => calendar.primary);
+  if (
+    primaryCalendar &&
+    /\b(?:my|the)?\s*(?:main|primary)\s+calendar\b/.test(normalized)
+  ) {
+    return primaryCalendar;
+  }
+
   const numeric = normalized.match(/\b(\d{1,2})\b/);
   if (numeric) {
     const index = Number(numeric[1]) - 1;
@@ -1044,6 +1064,15 @@ function looksLikePendingDraftAdjustmentMessage(input: {
   if (input.allDay) {
     residual = collapseWhitespace(residual.replace(ALL_DAY_PATTERN, ' '));
   }
+  residual = collapseWhitespace(
+    residual.replace(
+      /\b(?:on|to|in)\s+(?:my\s+|the\s+)?(?:main|primary)\s+calendar\b/gi,
+      ' ',
+    ),
+  );
+  residual = collapseWhitespace(
+    residual.replace(/\b(?:main|primary)\s+calendar\b/gi, ' '),
+  );
 
   residual = collapseWhitespace(
     residual.replace(
@@ -1106,32 +1135,20 @@ export function advancePendingGoogleCalendarCreate(
 
   if (state.step === 'choose_calendar') {
     const selection = matchCalendarSelection(normalized, state.calendars);
-    if (!selection) {
-      const adjustedDraft = parsePendingDraftAdjustment(
-        normalized,
-        state,
-        referenceNow,
-      );
-      if (!adjustedDraft) {
-        return { kind: 'no_match' };
-      }
-      const nextState: PendingGoogleCalendarCreateState = {
-        ...state,
-        step: state.selectedCalendarId ? 'confirm_create' : 'choose_calendar',
-        draft: adjustedDraft,
-        conflictSummary: null,
-      };
-      return {
-        kind: 'awaiting_input',
-        state: nextState,
-        message: formatGoogleCalendarCreatePrompt(nextState),
-      };
+    const adjustedDraft = parsePendingDraftAdjustment(
+      normalized,
+      state,
+      referenceNow,
+    );
+    if (!selection && !adjustedDraft) {
+      return { kind: 'no_match' };
     }
 
     const nextState: PendingGoogleCalendarCreateState = {
       ...state,
-      step: 'confirm_create',
-      selectedCalendarId: selection.id,
+      step: selection?.id || state.selectedCalendarId ? 'confirm_create' : 'choose_calendar',
+      draft: adjustedDraft || state.draft,
+      selectedCalendarId: selection?.id || state.selectedCalendarId,
       conflictSummary: null,
     };
 
