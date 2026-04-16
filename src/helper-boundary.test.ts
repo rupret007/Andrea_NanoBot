@@ -158,6 +158,7 @@ describe('helper boundary wiring', () => {
 
     expect(source).toContain("trimmed === 'current work'");
     expect(source).toContain("state: { kind: 'work_current' }");
+    expect(source).toContain('getRegisteredMainChat()?.jid === chatJid');
   });
 
   it('routes shared assistant save and reminder follow-ups before generic direct action-layer fallbacks', () => {

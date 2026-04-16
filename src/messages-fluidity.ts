@@ -16,6 +16,10 @@ import type {
   NewMessage,
 } from './types.js';
 
+const THREAD_SUMMARY_FALLBACK_NOTE =
+  "I kept this one grounded locally because the richer Messages summary lane isn't available right now.";
+const THREAD_SUMMARY_OPENAI_TIMEOUT_MS = 12_000;
+
 function normalizeText(value: string | undefined): string {
   return (value || '')
     .replace(/[\u201c\u201d]/g, '"')
@@ -67,6 +71,22 @@ function stripJsonFences(value: string): string {
     .replace(/^```(?:json)?\s*/i, '')
     .replace(/\s*```$/i, '')
     .trim();
+}
+
+function buildThreadSummaryFallbackResult(): {
+  lead: null;
+  digest: null;
+  bullets: [];
+  source: 'fallback';
+  fallbackNote: string;
+} {
+  return {
+    lead: null,
+    digest: null,
+    bullets: [],
+    source: 'fallback',
+    fallbackNote: THREAD_SUMMARY_FALLBACK_NOTE,
+  };
 }
 
 export function resolveBlueBubblesReplyGateMode(params: {
@@ -127,6 +147,7 @@ export async function summarizeBlueBubblesThreadDigest(input: {
   windowLabel: string;
   transcript: string;
   channel: 'telegram' | 'bluebubbles';
+  timeoutMs?: number;
 }): Promise<{
   lead: string | null;
   digest: string | null;
@@ -136,14 +157,7 @@ export async function summarizeBlueBubblesThreadDigest(input: {
 }> {
   const openAi = resolveOpenAiProviderConfig();
   if (!openAi) {
-    return {
-      lead: null,
-      digest: null,
-      bullets: [],
-      source: 'fallback',
-      fallbackNote:
-        "I kept this one grounded locally because the richer Messages summary lane isn't available right now.",
-    };
+    return buildThreadSummaryFallbackResult();
   }
 
   const prompt = [
@@ -166,20 +180,39 @@ export async function summarizeBlueBubblesThreadDigest(input: {
     complexModel: openAi.complexModel,
     fallbackModel: openAi.researchModel,
   });
+  const timeoutMs = Math.max(100, input.timeoutMs ?? THREAD_SUMMARY_OPENAI_TIMEOUT_MS);
 
   try {
     for (const candidate of modelCandidates) {
-      const response = await fetch(`${openAi.baseUrl}/responses`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${openAi.apiKey}`,
-        },
-        body: JSON.stringify({
-          model: candidate.model,
-          input: prompt,
-        }),
-      });
+      let response: Response;
+      try {
+        response = await fetch(`${openAi.baseUrl}/responses`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${openAi.apiKey}`,
+          },
+          body: JSON.stringify({
+            model: candidate.model,
+            input: prompt,
+          }),
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+      } catch (error) {
+        recordOpenAiUsageState({
+          at: new Date().toISOString(),
+          surface: 'messages_fluidity',
+          selectedModelTier: candidate.tier,
+          selectedModel: candidate.model,
+          providerMode,
+          outcome: 'failed',
+          detail:
+            error instanceof Error && error.name === 'TimeoutError'
+              ? `thread_summary timed out after ${timeoutMs}ms`
+              : 'thread_summary request failed before a response arrived',
+        });
+        return buildThreadSummaryFallbackResult();
+      }
       if (!response.ok) {
         const body = await response.text();
         if (isOpenAiModelRejection(response.status, body)) {
@@ -198,14 +231,7 @@ export async function summarizeBlueBubblesThreadDigest(input: {
             : 'failed',
           detail: describeOpenAiProviderFailure(response.status, body, 'research'),
         });
-        return {
-          lead: null,
-          digest: null,
-          bullets: [],
-          source: 'fallback',
-          fallbackNote:
-            "I kept this one grounded locally because the richer Messages summary lane isn't available right now.",
-        };
+        return buildThreadSummaryFallbackResult();
       }
       const payload = (await response.json()) as unknown;
       const rawOutput = stripJsonFences(extractResponseOutputText(payload));
@@ -242,14 +268,7 @@ export async function summarizeBlueBubblesThreadDigest(input: {
   } catch {
     // Fall through to the honest local fallback.
   }
-  return {
-    lead: null,
-    digest: null,
-    bullets: [],
-    source: 'fallback',
-    fallbackNote:
-      "I kept this one grounded locally because the richer Messages summary lane isn't available right now.",
-  };
+  return buildThreadSummaryFallbackResult();
 }
 
 export async function draftBlueBubblesCommunicationReply(input: {

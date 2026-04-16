@@ -12947,6 +12947,9 @@ async function main(): Promise<void> {
       const isSlashCommand = rawTrimmed.startsWith('/');
       const rawCommandToken = trimmed.split(/\s+/)[0] || '';
       const commandToken = normalizeCommandToken(rawCommandToken);
+      const mainControlChat =
+        isMainControlChat(registeredGroups[chatJid]) ||
+        getRegisteredMainChat()?.jid === chatJid;
 
       const allowlistCfg = loadSenderAllowlist();
       if (
@@ -13008,7 +13011,7 @@ async function main(): Promise<void> {
             chatJid,
             commandToken,
             reason: commandAccess.reason,
-            isMain: registeredGroups[chatJid]?.isMain === true,
+            isMain: mainControlChat,
           },
           'Blocked command outside allowed surface',
         );
@@ -13139,7 +13142,7 @@ async function main(): Promise<void> {
       }
 
       if (
-        registeredGroups[chatJid]?.isMain === true &&
+        mainControlChat &&
         !isSlashCommand &&
         trimmed === 'current work'
       ) {
@@ -13533,7 +13536,7 @@ async function main(): Promise<void> {
       }
 
       const repliedCursorDashboard =
-        registeredGroups[chatJid]?.isMain === true &&
+        mainControlChat &&
         !isSlashCommand &&
         rawTrimmed
           ? getCursorDashboardMessageContext(chatJid, msg.reply_to_id)
@@ -13708,7 +13711,7 @@ async function main(): Promise<void> {
       }
 
       const rawRepliedMessageContext =
-        registeredGroups[chatJid]?.isMain === true &&
+        mainControlChat &&
         !isSlashCommand &&
         rawTrimmed
           ? getCursorMessageContext(chatJid, msg.reply_to_id || '')

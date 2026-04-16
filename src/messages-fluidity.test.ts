@@ -115,4 +115,34 @@ describe('messages fluidity', () => {
     expect(result.digest).toContain('Fallout and Invincible');
     expect(result.bullets).toHaveLength(3);
   });
+
+  it('falls back promptly when synced thread digest synthesis times out', async () => {
+    vi.stubEnv('OPENAI_API_KEY', 'test-key');
+    globalThis.fetch = vi.fn((_input, init) => {
+      const signal = init?.signal;
+      return new Promise<Response>((_resolve, reject) => {
+        if (!signal) {
+          reject(new Error('Expected an abortable request signal.'));
+          return;
+        }
+        signal.addEventListener(
+          'abort',
+          () => reject(new DOMException('Timed out', 'TimeoutError')),
+          { once: true },
+        );
+      });
+    }) as typeof fetch;
+
+    const result = await summarizeBlueBubblesThreadDigest({
+      chatName: 'Pops of Punk',
+      windowLabel: 'today',
+      transcript:
+        'One person: Fallout works because it keeps the world right.\nAnother person: I do not want the same material repeated.',
+      channel: 'telegram',
+      timeoutMs: 100,
+    });
+
+    expect(result.source).toBe('fallback');
+    expect(result.fallbackNote).toContain('grounded locally');
+  });
 });
