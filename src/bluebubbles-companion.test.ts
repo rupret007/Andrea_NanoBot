@@ -62,12 +62,54 @@ describe('bluebubbles companion helpers', () => {
     expect(isBlueBubblesExplicitAsk('sounds good')).toBe(false);
   });
 
+  it('allows direct assistant asks in the canonical BlueBubbles self-thread without @Andrea', () => {
+    expect(
+      isBlueBubblesExplicitAsk('hi', {
+        chatJid: 'bb:iMessage;-;+14695405551',
+      }),
+    ).toBe(true);
+    expect(
+      isBlueBubblesExplicitAsk('what should I say back', {
+        chatJid: 'bb:iMessage;-;+14695405551',
+      }),
+    ).toBe(true);
+    expect(
+      isBlueBubblesExplicitAsk('what am I forgetting', {
+        chatJid: 'bb:iMessage;-;jeffstory007@gmail.com',
+      }),
+    ).toBe(true);
+    expect(
+      isBlueBubblesExplicitAsk('sounds good', {
+        chatJid: 'bb:iMessage;-;+14695405551',
+      }),
+    ).toBe(false);
+  });
+
   it('keeps explicit @Andrea asks ahead of pending continuation wakeups', () => {
     expect(
       decideBlueBubblesCompanionIngress('@Andrea yes', {
         pendingLocalContinuationKind: 'google_calendar_create',
       }),
     ).toEqual({ kind: 'explicit_ask' });
+  });
+
+  it('treats a bare self-thread reply-help ask as an explicit ask', () => {
+    expect(
+      decideBlueBubblesCompanionIngress('what should I say back', {
+        chatJid: 'bb:iMessage;-;+14695405551',
+      }),
+    ).toEqual({ kind: 'explicit_ask' });
+  });
+
+  it('allows a bare message-action follow-up when a draft is already open in the same BlueBubbles chat', () => {
+    expect(
+      decideBlueBubblesCompanionIngress('send it later tonight', {
+        hasOpenMessageActionFollowup: true,
+      }),
+    ).toEqual({
+      kind: 'pending_local_continuation',
+      continuationKind: 'action_draft',
+    });
   });
 
   it('allows a bare follow-up when a pending calendar create exists on the canonical self-thread alias', () => {

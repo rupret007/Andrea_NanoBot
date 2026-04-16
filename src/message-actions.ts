@@ -31,6 +31,7 @@ import { resolveBlueBubblesConfig } from './channels/bluebubbles.js';
 import {
   BLUEBUBBLES_CANONICAL_SELF_THREAD_JID,
   canonicalizeBlueBubblesSelfThreadJid,
+  expandBlueBubblesLogicalSelfThreadJids,
 } from './bluebubbles-self-thread.js';
 import { rewriteBlueBubblesMessageDraft } from './messages-fluidity.js';
 import type {
@@ -2009,7 +2010,7 @@ export async function applyMessageActionOperation(
 export function resolveMessageActionForFollowup(
   params: ResolveMessageActionForPromptParams,
 ): MessageActionRecord | undefined {
-  const current = findLatestOpenMessageActionForChat({
+  const current = findLatestChatMessageAction({
     groupFolder: params.groupFolder,
     chatJid: params.chatJid,
   });
@@ -2062,10 +2063,21 @@ export function findLatestChatMessageAction(params: {
   groupFolder: string;
   chatJid: string;
 }): MessageActionRecord | undefined {
-  return findLatestOpenMessageActionForChat({
-    groupFolder: params.groupFolder,
-    chatJid: params.chatJid,
-  });
+  const candidateChatJids = [
+    ...new Set(expandBlueBubblesLogicalSelfThreadJids(params.chatJid)),
+  ];
+  return candidateChatJids
+    .map((chatJid) =>
+      findLatestOpenMessageActionForChat({
+        groupFolder: params.groupFolder,
+        chatJid,
+      }),
+    )
+    .filter((action): action is MessageActionRecord => Boolean(action))
+    .sort(
+      (left, right) =>
+        Date.parse(right.lastUpdatedAt) - Date.parse(left.lastUpdatedAt),
+    )[0];
 }
 
 export function listOpenMessageActionsForGroup(groupFolder: string): MessageActionRecord[] {

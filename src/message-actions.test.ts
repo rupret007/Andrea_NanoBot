@@ -140,6 +140,45 @@ describe('message actions', () => {
     ).toBe('partial');
   });
 
+  it('finds the latest self-thread message action across BlueBubbles self-thread aliases', () => {
+    const action = createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'bluebubbles',
+      presentationChatJid: 'bb:iMessage;-;+14695405551',
+      sourceType: 'manual_prompt',
+      sourceKey: 'self-thread-followup-proof',
+      sourceSummary: 'Draft text message to Candace.',
+      draftText: 'Hey Candace, does dinner still work tonight?',
+      personName: 'Candace',
+      threadTitle: 'Candace',
+      communicationContext: 'general',
+      targetOverride: {
+        kind: 'external_thread',
+        chatJid: 'bb:iMessage;+;chat-candace',
+        threadId: null,
+        replyToMessageId: null,
+        isGroup: false,
+        personName: 'Candace',
+      },
+      targetChannelOverride: 'bluebubbles',
+      now: new Date('2026-04-16T16:06:22.703Z'),
+    });
+
+    expect(
+      findLatestChatMessageAction({
+        groupFolder: 'main',
+        chatJid: 'bb:iMessage;-;jeffstory007@gmail.com',
+      })?.messageActionId,
+    ).toBe(action.messageActionId);
+    expect(
+      resolveMessageActionForFollowup({
+        groupFolder: 'main',
+        chatJid: 'bb:iMessage;-;jeffstory007@gmail.com',
+        rawText: 'send it later tonight',
+      })?.messageActionId,
+    ).toBe(action.messageActionId);
+  });
+
   it('marks narrow safe bluebubbles replies as approved when a saved send rule matches', () => {
     const thread = seedCommunicationThread();
     seedSendRule();

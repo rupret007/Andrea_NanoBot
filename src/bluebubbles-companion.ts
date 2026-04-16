@@ -1,6 +1,9 @@
 import { resolveAlexaConversationFollowup } from './alexa-conversation.js';
 import { matchAssistantCapabilityRequest } from './assistant-capability-router.js';
-import { expandBlueBubblesLogicalSelfThreadJids } from './bluebubbles-self-thread.js';
+import {
+  expandBlueBubblesLogicalSelfThreadJids,
+  isBlueBubblesSelfThreadAliasJid,
+} from './bluebubbles-self-thread.js';
 import { listRecentPilotJourneyEvents } from './db.js';
 import { resolveOrdinaryChatPilotJourney } from './pilot-mode.js';
 
@@ -83,9 +86,12 @@ export function isBlueBubblesExplicitAsk(
   text: string,
   options: {
     hasRecentCompanionContext?: boolean;
+    chatJid?: string | null;
   } = {},
 ): boolean {
-  if (!hasBlueBubblesAndreaMention(text)) return false;
+  const directSelfThread = isBlueBubblesSelfThreadAliasJid(options.chatJid);
+  const hasMention = hasBlueBubblesAndreaMention(text);
+  if (!hasMention && !directSelfThread) return false;
   if (matchAssistantCapabilityRequest(text)) return true;
   if (resolveOrdinaryChatPilotJourney(text)) return true;
   if (
@@ -94,7 +100,7 @@ export function isBlueBubblesExplicitAsk(
   ) {
     return true;
   }
-  return true;
+  return hasMention;
 }
 
 export type BlueBubblesPendingLocalContinuationKind =
@@ -167,15 +173,24 @@ export function decideBlueBubblesCompanionIngress(
   text: string,
   options: {
     hasRecentCompanionContext?: boolean;
+    hasOpenMessageActionFollowup?: boolean;
     pendingLocalContinuationKind?: BlueBubblesPendingLocalContinuationKind | null;
+    chatJid?: string | null;
   } = {},
 ): BlueBubblesCompanionIngressDecision {
   if (
     isBlueBubblesExplicitAsk(text, {
       hasRecentCompanionContext: options.hasRecentCompanionContext,
+      chatJid: options.chatJid,
     })
   ) {
     return { kind: 'explicit_ask' };
+  }
+  if (options.hasOpenMessageActionFollowup) {
+    return {
+      kind: 'pending_local_continuation',
+      continuationKind: 'action_draft',
+    };
   }
   if (options.pendingLocalContinuationKind) {
     return {

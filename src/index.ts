@@ -13854,7 +13854,10 @@ async function main(): Promise<void> {
 
       // Sender allowlist drop mode: discard messages from denied senders before storing
       storeMessage(msg);
-      if (chatJid.startsWith('bb:') && resolveCompanionBinding(chatJid)) {
+      const blueBubblesBinding = chatJid.startsWith('bb:')
+        ? resolveCompanionBinding(chatJid)
+        : null;
+      if (blueBubblesBinding) {
         if (msg.timestamp > lastTimestamp) {
           lastTimestamp = msg.timestamp;
           saveState();
@@ -13865,10 +13868,21 @@ async function main(): Promise<void> {
         );
         const pendingLocalContinuationKind =
           getPendingBlueBubblesLocalContinuationKind(chatJid, companionNow);
+        const hasOpenMessageActionFollowup =
+          Boolean(interpretMessageActionFollowup(msg.content)) &&
+          Boolean(
+            resolveMessageActionForFollowup({
+              groupFolder: blueBubblesBinding.group.folder,
+              chatJid,
+              rawText: msg.content,
+            }),
+          );
         const companionIngressDecision = decideBlueBubblesCompanionIngress(
           msg.content,
           {
+            chatJid,
             hasRecentCompanionContext,
+            hasOpenMessageActionFollowup,
             pendingLocalContinuationKind,
           },
         );
