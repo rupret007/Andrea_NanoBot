@@ -139,6 +139,7 @@ describe('createAndreaRuntimeBackendLane', () => {
       chatJid: 'tg:main',
       promptText: 'Build it',
       requestedBy: 'tg:operator',
+      requestedRuntime: 'openai_cloud',
     });
     const logs = await lane.getJobLogs({
       handle: { laneId: 'andrea_runtime', jobId: 'runtime-job-1' },
@@ -180,6 +181,11 @@ describe('createAndreaRuntimeBackendLane', () => {
         })
         .map((action) => action.label),
     ).toEqual(['Refresh', 'View Output', 'Continue', 'Stop Run']);
+    expect(client.createJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestedRuntime: 'openai_cloud',
+      }),
+    );
   });
 
   it('preserves legacy group-folder follow-up continuity through the backend', async () => {

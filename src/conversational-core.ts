@@ -167,7 +167,7 @@ export function classifyConversationalTurn(text: string): ConversationalTurnClas
   }
 
   if (
-    /^(?:what should i do next|what('?s| is) next|what should i do now|anything i should know|anything important|what am i forgetting|what exactly am i forgetting|what am i missing|what am i overlooking|what loose ends do i have|what should i remember tonight|what matters today|what matters most today|what should i know about today|give me my day|give me an evening reset)\b/.test(
+    /^(?:what should i do next|what('?s| is) next|what should i do now|anything i should know|anything important|what am i forgetting|what am i probably missing|what exactly am i forgetting|what am i missing|what am i overlooking|what loose ends do i have|what should i remember tonight|what should i not forget before bed|what matters today|what matters most today|what should i know about today|give me my day|give me an evening reset)\b/.test(
       normalized,
     )
   ) {

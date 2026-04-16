@@ -168,6 +168,45 @@ describe('runtime orchestration service', () => {
     expect(harness.service.getJob(job.jobId)?.status).toBe('queued');
   });
 
+  it('honors requestedRuntime over an existing local thread when launching a queued job', async () => {
+    const harness = buildHarness({
+      runContainerAgent: vi.fn(async (_group, input) => {
+        expect(input.preferredRuntime).toBe('openai_cloud');
+        expect(input.sessionId).toBeUndefined();
+        return {
+          status: 'success' as const,
+          result: 'Cloud retry ran',
+          newSessionId: 'thread-cloud',
+          runtime: 'openai_cloud' as const,
+        };
+      }),
+    });
+    harness.storedThreads.main = {
+      group_folder: 'main',
+      runtime: 'codex_local',
+      thread_id: 'thread-local',
+      last_response_id: 'thread-local',
+      updated_at: '2026-03-30T00:00:00.000Z',
+    };
+    harness.sessions.main = 'thread-local';
+
+    const job = await harness.service.createJob({
+      groupFolder: 'main',
+      prompt: 'Retry this in the cloud lane.',
+      source: { system: 'nanoclaw' },
+      routeHint: 'cloud_allowed',
+      requestedRuntime: 'openai_cloud',
+    });
+
+    await harness.queuedTasks.get(job.jobId)!();
+
+    const updated = harness.service.getJob(job.jobId);
+    expect(updated?.status).toBe('succeeded');
+    expect(updated?.requestedRuntime).toBe('openai_cloud');
+    expect(updated?.selectedRuntime).toBe('openai_cloud');
+    expect(updated?.threadId).toBe('thread-cloud');
+  });
+
   it('transitions a queued job through running to succeeded', async () => {
     let releaseRun: (() => void) | undefined;
     const runBlocked = new Promise<void>((resolve) => {
@@ -634,5 +673,44 @@ describe('runtime orchestration service', () => {
     expect(result.job.status).toBe('failed');
     expect(result.job.stopRequested).toBe(true);
     expect(result.job.errorText).toContain('before execution started');
+  });
+
+  it('reconciles an orphaned running job to failed when no live runner remains', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-03-30T00:01:00.000Z'));
+    const harness = buildHarness();
+
+    createRuntimeOrchestrationJob({
+      jobId: 'job-orphaned',
+      kind: 'create',
+      status: 'running',
+      stopRequested: false,
+      groupFolder: 'main',
+      groupJid: 'tg:main',
+      parentJobId: null,
+      threadId: 'thread-orphaned',
+      runtimeRoute: 'cloud_allowed',
+      requestedRuntime: null,
+      selectedRuntime: 'codex_local',
+      promptPreview: 'orphaned',
+      latestOutputText: null,
+      finalOutputText: null,
+      errorText: null,
+      logFile: null,
+      sourceSystem: 'nanoclaw',
+      actorRef: null,
+      correlationId: 'corr-orphaned',
+      replyRef: null,
+      createdAt: '2026-03-30T00:00:00.000Z',
+      startedAt: '2026-03-30T00:00:01.000Z',
+      finishedAt: null,
+      updatedAt: '2026-03-30T00:00:01.000Z',
+    });
+
+    const reconciled = harness.service.getJob('job-orphaned');
+    expect(reconciled?.status).toBe('failed');
+    expect(reconciled?.errorText).toContain(
+      'lost its live runner before producing output',
+    );
   });
 });

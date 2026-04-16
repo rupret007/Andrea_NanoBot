@@ -32,6 +32,12 @@ describe('conversational core classifier', () => {
     expect(classifyConversationalTurn('What am I forgetting?')).toBe(
       'lightweight_companion',
     );
+    expect(classifyConversationalTurn('What am I probably missing?')).toBe(
+      'lightweight_companion',
+    );
+    expect(
+      classifyConversationalTurn('What should I not forget before bed?'),
+    ).toBe('lightweight_companion');
   });
 
   it('classifies personal guidance separately from general knowledge', () => {

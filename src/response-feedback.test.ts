@@ -372,4 +372,75 @@ describe('response feedback helpers', () => {
       'failed before it produced a clean local hotfix',
     );
   });
+
+  it('refreshes a stale awaiting-confirmation remediation record to failed when the linked task already died', async () => {
+    const record = buildRecord({
+      status: 'awaiting_confirmation',
+      classification: 'repo_side_rough_edge',
+      blockerOwner: 'repo_side',
+      responseSource: 'assistant_completion',
+      remediationLaneId: 'andrea_runtime',
+      remediationJobId: 'runtime-job-stale-failed',
+      remediationRuntimePreference: 'codex_local',
+      operatorNote: 'Saved for review.',
+    });
+    upsertResponseFeedback(record);
+
+    const refreshed = await refreshResponseFeedbackRecordTruth(record, {
+      runtimeStatusLookup: async () => 'failed',
+    });
+
+    expect(refreshed.status).toBe('failed');
+    expect(refreshed.operatorNote).toContain(
+      'failed before it produced a clean local hotfix',
+    );
+  });
+
+  it('keeps a succeeded remediation in review when no new local hotfix exists yet', async () => {
+    const record = buildRecord({
+      status: 'running',
+      classification: 'repo_side_rough_edge',
+      blockerOwner: 'repo_side',
+      responseSource: 'assistant_completion',
+      remediationLaneId: 'cursor',
+      remediationJobId: 'cursor-job-2',
+      remediationRuntimePreference: 'cursor_cloud',
+      operatorNote: 'Saved for review.',
+    });
+    upsertResponseFeedback(record);
+
+    const refreshed = await refreshResponseFeedbackRecordTruth(record, {
+      cursorStatusLookup: () => 'succeeded',
+      localHotfixReadyCheck: () => false,
+    });
+
+    expect(refreshed.status).toBe('captured');
+    expect(refreshed.operatorNote).toContain(
+      'do not see a new local hotfix on this host yet',
+    );
+  });
+
+  it('keeps a succeeded runtime remediation in review because the runtime lane is read-only', async () => {
+    const record = buildRecord({
+      status: 'running',
+      classification: 'repo_side_rough_edge',
+      blockerOwner: 'repo_side',
+      responseSource: 'assistant_completion',
+      remediationLaneId: 'andrea_runtime',
+      remediationJobId: 'runtime-job-readonly',
+      remediationRuntimePreference: 'codex_cloud',
+      operatorNote: 'Saved for review.',
+    });
+    upsertResponseFeedback(record);
+
+    const refreshed = await refreshResponseFeedbackRecordTruth(record, {
+      runtimeStatusLookup: async () => 'succeeded',
+      localHotfixReadyCheck: () => true,
+    });
+
+    expect(refreshed.status).toBe('captured');
+    expect(refreshed.operatorNote).toContain(
+      'runtime lane is read-only on this host',
+    );
+  });
 });

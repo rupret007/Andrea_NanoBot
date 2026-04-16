@@ -1,3 +1,5 @@
+import { execFileSync } from 'child_process';
+
 import {
   getCursorAgentById,
   getRuntimeBackendJob,
@@ -8,6 +10,7 @@ import {
   ANDREA_OPENAI_BACKEND_ID,
   AndreaOpenAiBackendClient,
 } from './andrea-openai-backend.js';
+import { parseGitDirtyPaths } from './git-status-paths.js';
 import type {
   ChannelInlineAction,
   PilotBlockerOwner,
@@ -60,6 +63,7 @@ export interface ResponseFeedbackLaneSelection {
 interface ResponseFeedbackRefreshOptions {
   runtimeStatusLookup?: (jobId: string) => Promise<string | null | undefined>;
   cursorStatusLookup?: (jobId: string) => string | null | undefined;
+  localHotfixReadyCheck?: (record: ResponseFeedbackRecord) => boolean;
 }
 
 const RESPONSE_FEEDBACK_ACTION_PREFIX = 'feedback';
@@ -128,15 +132,64 @@ async function lookupRuntimeStatusFromBackend(
   }
 }
 
+function buildResponseFeedbackNoHotfixNote(
+  laneId?: ResponseFeedbackRecord['remediationLaneId'] | null,
+): string {
+  if (laneId === 'andrea_runtime') {
+    return 'The remediation task finished, but the Codex/OpenAI runtime lane is read-only on this host, so there is no local hotfix to land yet.';
+  }
+  return 'The remediation task finished, but I do not see a new local hotfix on this host yet, so it is back in review.';
+}
+
+function listCurrentGitDirtyPaths(): string[] {
+  try {
+    const output = execFileSync('git', ['status', '--short'], {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return parseGitDirtyPaths(output);
+  } catch {
+    return [];
+  }
+}
+
+function hasResponseFeedbackLocalHotfix(
+  record: Pick<ResponseFeedbackRecord, 'linkedRefs'>,
+): boolean {
+  const baseline = new Set(record.linkedRefs?.repoDirtyPathsAtStart || []);
+  return listCurrentGitDirtyPaths().some((path) => !baseline.has(path));
+}
+
 function syncResponseFeedbackRecordFromTaskStatus(
   record: ResponseFeedbackRecord,
   taskStatus: string | null | undefined,
+  options: ResponseFeedbackRefreshOptions = {},
 ): ResponseFeedbackRecord {
   if (
     isSuccessfulResponseFeedbackTaskStatus(taskStatus) &&
     record.status !== 'resolved_locally' &&
     record.status !== 'landed'
   ) {
+    if (record.remediationLaneId === 'andrea_runtime') {
+      return updateResponseFeedback(record.feedbackId, {
+        status: 'captured',
+        operatorNote: buildResponseFeedbackNoHotfixNote(
+          record.remediationLaneId,
+        ),
+      });
+    }
+    const localHotfixReady = options.localHotfixReadyCheck
+      ? options.localHotfixReadyCheck(record)
+      : hasResponseFeedbackLocalHotfix(record);
+    if (!localHotfixReady) {
+      return updateResponseFeedback(record.feedbackId, {
+        status: 'captured',
+        operatorNote: buildResponseFeedbackNoHotfixNote(
+          record.remediationLaneId,
+        ),
+      });
+    }
     return updateResponseFeedback(record.feedbackId, {
       status: 'resolved_locally',
       operatorNote:
@@ -166,11 +219,7 @@ export async function refreshResponseFeedbackRecordTruth(
   record: ResponseFeedbackRecord,
   options: ResponseFeedbackRefreshOptions = {},
 ): Promise<ResponseFeedbackRecord> {
-  if (
-    record.status !== 'running' ||
-    !record.remediationLaneId ||
-    !record.remediationJobId
-  ) {
+  if (!record.remediationLaneId || !record.remediationJobId) {
     return record;
   }
 
@@ -178,14 +227,14 @@ export async function refreshResponseFeedbackRecordTruth(
     const taskStatus = options.runtimeStatusLookup
       ? await options.runtimeStatusLookup(record.remediationJobId)
       : await lookupRuntimeStatusFromBackend(record.remediationJobId);
-    return syncResponseFeedbackRecordFromTaskStatus(record, taskStatus);
+    return syncResponseFeedbackRecordFromTaskStatus(record, taskStatus, options);
   }
 
   if (record.remediationLaneId === 'cursor') {
     const taskStatus = options.cursorStatusLookup
       ? options.cursorStatusLookup(record.remediationJobId)
       : getCursorAgentById(record.remediationJobId)?.status;
-    return syncResponseFeedbackRecordFromTaskStatus(record, taskStatus);
+    return syncResponseFeedbackRecordFromTaskStatus(record, taskStatus, options);
   }
 
   return record;

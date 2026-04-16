@@ -16,6 +16,21 @@ describe('assistant capability router', () => {
       capabilityId: 'daily.loose_ends',
     });
     expect(
+      matchAssistantCapabilityRequest('What am I probably missing?'),
+    ).toMatchObject({
+      capabilityId: 'daily.loose_ends',
+    });
+    expect(
+      matchAssistantCapabilityRequest('What should I not forget before bed?'),
+    ).toMatchObject({
+      capabilityId: 'daily.evening_reset',
+    });
+    expect(
+      matchAssistantCapabilityRequest('What do I need from the store again?'),
+    ).toMatchObject({
+      capabilityId: 'capture.read_items',
+    });
+    expect(
       matchAssistantCapabilityRequest('What about Candace?'),
     ).toMatchObject({
       capabilityId: 'household.candace_upcoming',

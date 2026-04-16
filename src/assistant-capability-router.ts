@@ -164,7 +164,7 @@ function matchEverydayCapturePrompt(
     };
   }
     if (
-      /^(show me (?:my )?(?:grocery|shopping) list|what('?s| is) on my (?:grocery|shopping) list|what('?s| is) on my list|what('?s| is) on groceries|what do we need from the store|what do i still need to buy|what errands do i have|what bills do i need to pay(?: this week| soon)?|what bills are due this week|what meals have i planned(?: this week)?|what meal ideas do i have this week|what meal do i have planned|what household (?:items|things|stuff) (?:are )?(?:still open|do i have)|what should i remember to get tonight|what('?s| is) left for tonight|what should i handle this weekend|what('?s| is) missing for dinner|what recurring (?:things|items) (?:are )?(?:coming back|coming up)(?: soon)?)\b/.test(
+      /^(show me (?:my )?(?:grocery|shopping) list|what('?s| is) on my (?:grocery|shopping) list|what('?s| is) on my list|what('?s| is) on groceries|what do (?:we|i) need from the store(?: again)?|what do i still need to buy|what errands do i have|what bills do i need to pay(?: this week| soon)?|what bills are due this week|what meals have i planned(?: this week)?|what meal ideas do i have this week|what meal do i have planned|what household (?:items|things|stuff) (?:are )?(?:still open|do i have)|what should i remember to get tonight|what('?s| is) left for tonight|what should i handle this weekend|what('?s| is) missing for dinner|what recurring (?:things|items) (?:are )?(?:coming back|coming up)(?: soon)?)\b/.test(
         lower,
       )
     ) {
@@ -429,6 +429,7 @@ function matchDailyPrompt(normalized: string): AssistantCapabilityMatch | null {
   }
   if (
     lower === 'what am i forgetting' ||
+    lower === 'what am i probably missing' ||
     lower === 'anything i should know' ||
     lower === 'what should i follow up on' ||
     lower === 'what exactly am i forgetting' ||
@@ -446,6 +447,7 @@ function matchDailyPrompt(normalized: string): AssistantCapabilityMatch | null {
   }
   if (
     lower === 'what should i remember tonight' ||
+    lower === 'what should i not forget before bed' ||
     lower === 'give me an evening reset' ||
     lower === 'what should i handle before i leave'
   ) {

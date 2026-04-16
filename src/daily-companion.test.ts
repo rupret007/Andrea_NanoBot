@@ -113,6 +113,12 @@ describe('isPotentialDailyCompanionPrompt', () => {
       true,
     );
     expect(
+      isPotentialDailyCompanionPrompt('What am I probably missing?'),
+    ).toBe(true);
+    expect(
+      isPotentialDailyCompanionPrompt('What should I not forget before bed?'),
+    ).toBe(true);
+    expect(
       isPotentialDailyCompanionPrompt('What do Candace and I have coming up?'),
     ).toBe(true);
     expect(
@@ -200,6 +206,37 @@ describe('buildDailyCompanionResponse', () => {
     expect(response?.reply).toContain('The best next move is still Ship docs.');
     expect(response?.reply).toContain('Current work: Ship docs (Running)');
     expect(response?.recommendationKind).toBe('do_now');
+  });
+
+  it('keeps completed work out of loose-ends guidance even when the snapshot still has a stale selection', async () => {
+    const fetchImpl = createGoogleCalendarFetchMock({
+      eventsByCalendar: {
+        primary: {
+          items: [],
+        },
+      },
+    });
+
+    const response = await buildDailyCompanionResponse(
+      'What am I probably missing?',
+      {
+        channel: 'telegram',
+        groupFolder: 'main',
+        now: new Date('2026-04-04T12:00:00-05:00'),
+        timeZone: 'America/Chicago',
+        env: baseEnv,
+        fetchImpl,
+        selectedWork: {
+          ...selectedWork,
+          statusLabel: 'Succeeded',
+        },
+        tasks: [],
+      },
+    );
+
+    expect(response?.mode).toBe('open_guidance');
+    expect(response?.reply).not.toContain('Ship docs');
+    expect(response?.signalsUsed).not.toContain('current_work');
   });
 
   it('surfaces thread carryover in daily guidance when an active thread would otherwise slip', async () => {

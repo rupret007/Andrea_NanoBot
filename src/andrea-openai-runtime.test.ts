@@ -93,11 +93,17 @@ describe('andrea-openai-runtime', () => {
         group: MAIN_GROUP,
         prompt: 'Ship it',
         actorId: 'tg:user',
+        requestedRuntime: 'openai_cloud',
       },
       client as never,
     );
 
     expect(job.jobId).toBe('job_001');
+    expect(client.createJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestedRuntime: 'openai_cloud',
+      }),
+    );
     expect(getRuntimeBackendJob(ANDREA_OPENAI_BACKEND_ID, 'job_001')).toMatchObject(
       {
         chat_jid: 'tg:1',

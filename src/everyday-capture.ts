@@ -1864,7 +1864,11 @@ function parseReadTarget(text: string): ReadTarget | null {
   ) {
     return { kind: 'shopping', summary: 'groceries' };
   }
-  if (/^(what('?s| is) on groceries|what do we need from the store)\b/.test(normalized)) {
+  if (
+    /^(what('?s| is) on groceries|what do (?:we|i) need from the store(?: again)?)\b/.test(
+      normalized,
+    )
+  ) {
     return { kind: 'shopping', summary: 'groceries' };
   }
   if (/^what do i still need to buy\b/.test(normalized)) {

@@ -13,6 +13,7 @@ import {
   formatWindow,
   type DailyCommandCenterDeps,
   type GroundedDaySnapshot,
+  type SelectedWorkContext,
   type UpcomingReminderSummary,
 } from './daily-command-center.js';
 import { listProfileFactsForGroup } from './db.js';
@@ -204,6 +205,8 @@ function isEveningPrompt(normalized: string): boolean {
   return (
     normalized === 'what should i remember tonight?' ||
     normalized === 'what should i remember tonight' ||
+    normalized === 'what should i not forget before bed?' ||
+    normalized === 'what should i not forget before bed' ||
     normalized === "what's left for today?" ||
     normalized === "what's left for today" ||
     normalized === 'whats left for today?' ||
@@ -226,6 +229,8 @@ function isOpenGuidancePrompt(normalized: string): boolean {
     normalized === 'whats still open' ||
     normalized === 'what am i forgetting?' ||
     normalized === 'what am i forgetting' ||
+    normalized === 'what am i probably missing?' ||
+    normalized === 'what am i probably missing' ||
     normalized === 'what exactly am i forgetting?' ||
     normalized === 'what exactly am i forgetting' ||
     normalized === 'exactly what am i forgetting?' ||
@@ -274,6 +279,8 @@ function isLooseEndsPrompt(normalized: string): boolean {
     normalized === 'whats still open' ||
     normalized === 'what am i forgetting?' ||
     normalized === 'what am i forgetting' ||
+    normalized === 'what am i probably missing?' ||
+    normalized === 'what am i probably missing' ||
     normalized === 'what exactly am i forgetting?' ||
     normalized === 'what exactly am i forgetting' ||
     normalized === 'exactly what am i forgetting?' ||
@@ -283,6 +290,27 @@ function isLooseEndsPrompt(normalized: string): boolean {
     normalized === 'what should i follow up on?' ||
     normalized === 'what should i follow up on'
   );
+}
+
+function isCompletedSelectedWork(
+  selectedWork: SelectedWorkContext | null | undefined,
+): boolean {
+  return Boolean(
+    selectedWork &&
+      /^(done|succeeded|success|completed|complete|stopped|cancelled|canceled)$/i.test(
+        selectedWork.statusLabel.trim(),
+      ),
+  );
+}
+
+function visibleSelectedWork(
+  selectedWork: SelectedWorkContext | null | undefined,
+  enabled: boolean,
+): SelectedWorkContext | null {
+  if (!enabled || !selectedWork || isCompletedSelectedWork(selectedWork)) {
+    return null;
+  }
+  return selectedWork;
 }
 
 function extractExplicitHouseholdPerson(
@@ -757,7 +785,7 @@ function chooseRecommendation(
   kind: DailyCompanionRecommendationKind;
   focusKey: string | null;
 } {
-  const work = snapshot.selectedWork;
+  const work = visibleSelectedWork(snapshot.selectedWork, prefs.workContextEnabled);
   const nextEvent = snapshot.calendar.nextTimedEvent;
   const nextReminder = snapshot.todayReminders[0];
   const nextWindow = summarizeWindow(snapshot);
@@ -1273,7 +1301,7 @@ async function applyPrioritizedCarryoverFocus(params: {
     mode: staffMode,
     now: params.now,
     tasks: params.tasks,
-    selectedWork: params.groundedSnapshot.selectedWork,
+    selectedWork: visibleSelectedWork(params.groundedSnapshot.selectedWork, true),
     groundedSnapshot: params.groundedSnapshot,
     lifeThreadSnapshot: params.threadSnapshot,
   });
@@ -1497,6 +1525,10 @@ function buildMorningDraft(params: {
   threadSnapshot: ReturnType<typeof buildLifeThreadSnapshot>;
 }): CompanionDraft {
   const { snapshot } = params;
+  const currentWork = visibleSelectedWork(
+    snapshot.selectedWork,
+    params.prefs.workContextEnabled,
+  );
   const nextEvent = snapshot.calendar.nextTimedEvent;
   const nextReminder = snapshot.todayReminders[0] || null;
   const window = summarizeWindow(snapshot);
@@ -1534,12 +1566,8 @@ function buildMorningDraft(params: {
       snapshot.timeZone,
     )}.`;
     leadReason = 'next_timed_event';
-  } else if (
-    snapshot.selectedWork &&
-    window &&
-    params.prefs.workContextEnabled
-  ) {
-    lead = `You have open room to make progress on ${snapshot.selectedWork.title}.`;
+  } else if (currentWork && window) {
+    lead = `You have open room to make progress on ${currentWork.title}.`;
     leadReason = 'selected_work_open_block';
   } else if (dueThread) {
     lead = `One carryover to keep in sight is ${dueThread.title}.`;
@@ -1590,9 +1618,7 @@ function buildMorningDraft(params: {
     signalsUsed: [
       'calendar',
       nextReminder ? 'reminders' : null,
-      snapshot.selectedWork && params.prefs.workContextEnabled
-        ? 'current_work'
-        : null,
+      currentWork ? 'current_work' : null,
       dueThread || householdThread ? 'life_threads' : null,
       params.householdLines.length > 0 ? 'household_context' : null,
     ].filter((line): line is string => Boolean(line)),
@@ -1664,6 +1690,10 @@ function buildMiddayDraft(params: {
   threadSnapshot: ReturnType<typeof buildLifeThreadSnapshot>;
 }): CompanionDraft {
   const { snapshot } = params;
+  const currentWork = visibleSelectedWork(
+    snapshot.selectedWork,
+    params.prefs.workContextEnabled,
+  );
   const nextEvent = snapshot.calendar.nextTimedEvent;
   const nextReminder = snapshot.todayReminders[0] || null;
   const window = summarizeWindow(snapshot);
@@ -1685,8 +1715,8 @@ function buildMiddayDraft(params: {
 
   let lead = 'The clearest next anchor is your schedule right now.';
   let leadReason = 'schedule_only';
-  if (snapshot.selectedWork && recommendation.focusKey?.startsWith('work:')) {
-    lead = `The best next move is still ${snapshot.selectedWork.title}.`;
+  if (currentWork && recommendation.focusKey?.startsWith('work:')) {
+    lead = `The best next move is still ${currentWork.title}.`;
     leadReason = 'selected_work';
   } else if (dueThread) {
     lead = `The next thing that still needs attention is ${dueThread.title}.`;
@@ -1706,8 +1736,8 @@ function buildMiddayDraft(params: {
   }
 
   const detailLines = [
-    snapshot.selectedWork && params.prefs.workContextEnabled
-      ? `Current work: ${snapshot.selectedWork.title} (${snapshot.selectedWork.statusLabel})`
+    currentWork
+      ? `Current work: ${currentWork.title} (${currentWork.statusLabel})`
       : null,
     nextEvent ? `Next: ${summarizeEvent(nextEvent, snapshot.timeZone)}` : null,
     nextReminder
@@ -1745,9 +1775,7 @@ function buildMiddayDraft(params: {
     signalsUsed: [
       'calendar',
       nextReminder ? 'reminders' : null,
-      snapshot.selectedWork && params.prefs.workContextEnabled
-        ? 'current_work'
-        : null,
+      currentWork ? 'current_work' : null,
       threadContext.threadSummaryLines[0] ? 'life_threads' : null,
       params.householdLines.length > 0 ? 'household_context' : null,
     ].filter((line): line is string => Boolean(line)),
@@ -2100,10 +2128,10 @@ function buildLooseEndsDraft(params: {
           params.threadSnapshot.recommendedNextThread.id !== dueThread?.id
         ? params.threadSnapshot.recommendedNextThread
         : null;
-  const currentWork =
-    params.snapshot.selectedWork && params.prefs.workContextEnabled
-      ? params.snapshot.selectedWork
-      : null;
+  const currentWork = visibleSelectedWork(
+    params.snapshot.selectedWork,
+    params.prefs.workContextEnabled,
+  );
   const threadContext = buildThreadContextDetails({
     dueThread,
     householdThread: params.threadSnapshot.householdCarryover,
@@ -2636,7 +2664,9 @@ export async function buildDailyCompanionResponse(
     ? buildLifeThreadSnapshot({
         groupFolder: deps.groupFolder,
         now,
-        selectedWorkTitle: snapshot.selectedWork?.title || null,
+        selectedWorkTitle:
+          visibleSelectedWork(snapshot.selectedWork, prefs.workContextEnabled)
+            ?.title || null,
       })
     : {
         activeThreads: [],

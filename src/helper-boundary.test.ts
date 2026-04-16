@@ -156,7 +156,10 @@ describe('helper boundary wiring', () => {
   it('keeps a plain Current Work request on the cockpit dashboard path', () => {
     const source = readRepoFile('src/index.ts');
 
-    expect(source).toContain("trimmed === 'current work'");
+    expect(source).toContain('function isCurrentWorkQuickOpenPhrase(');
+    expect(source).toContain("normalized === 'current work'");
+    expect(source).toContain(`normalized === "show me what's running"`);
+    expect(source).toContain("normalized === 'what work is active right now'");
     expect(source).toContain("state: { kind: 'work_current' }");
     expect(source).toContain('getRegisteredMainChat()?.jid === chatJid');
   });

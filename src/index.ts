@@ -346,6 +346,7 @@ import {
 } from './sender-allowlist.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import {
+  AgentRuntimeName,
   AgentThreadState,
   Channel,
   ChannelHealthSnapshot,
@@ -358,6 +359,7 @@ import {
   RuntimeBackendJob,
 } from './types.js';
 import { logger } from './logger.js';
+import { parseGitDirtyPaths } from './git-status-paths.js';
 import { deliverCompanionHandoff } from './cross-channel-handoffs.js';
 import { buildFieldTrialOperatorTruth } from './field-trial-readiness.js';
 import {
@@ -721,35 +723,22 @@ function readGitRef(args: string[]): string {
   }
 }
 
-function parseGitStatusPath(line: string): string | null {
-  if (!line || line.length < 4) return null;
-  const rawPath = line.slice(3).trim();
-  if (!rawPath) return null;
-  if (rawPath.includes(' -> ')) {
-    return rawPath.split(' -> ').at(-1)?.trim() || null;
-  }
-  return rawPath;
-}
-
 function listCurrentGitDirtyPaths(): string[] {
   try {
     const output = execFileSync(
       'git',
       ['-C', ACTIVE_REPO_ROOT, 'status', '--porcelain'],
-      {
-        encoding: 'utf-8',
-        stdio: ['ignore', 'pipe', 'ignore'],
-      },
-    ).trim();
-    if (!output) return [];
-    return output
-      .split(/\r?\n/)
-      .map((line) => parseGitStatusPath(line))
-      .filter((path): path is string => Boolean(path));
-  } catch {
-    return [];
+        {
+          encoding: 'utf-8',
+          stdio: ['ignore', 'pipe', 'ignore'],
+        },
+      );
+      if (!output.trim()) return [];
+      return parseGitDirtyPaths(output);
+    } catch {
+      return [];
+    }
   }
-}
 
 function normalizeTaskStatus(status: string | null | undefined): string {
   return (status || '').trim().toLowerCase();
@@ -797,6 +786,46 @@ function buildResponseFeedbackFailureNote(
     default:
       return 'The remediation task failed before it produced a clean local hotfix, so it is back in review.';
   }
+}
+
+  function buildResponseFeedbackNoHotfixNote(): string {
+    return 'The remediation task finished, but I do not see a new local hotfix on this host yet, so it is back in review.';
+  }
+
+  function buildResponseFeedbackReadOnlyLaneNote(): string {
+    return 'The remediation task finished, but the Codex/OpenAI runtime lane is read-only on this host, so there is no local hotfix to land yet.';
+  }
+
+function hasResponseFeedbackLocalHotfix(
+  record: Pick<ResponseFeedbackRecord, 'linkedRefs'>,
+): boolean {
+  const baseline = new Set(record.linkedRefs?.repoDirtyPathsAtStart || []);
+  return listCurrentGitDirtyPaths().some((path) => !baseline.has(path));
+}
+
+function mapResponseFeedbackRuntimePreferenceToAgentRuntime(
+  runtimePreference: ResponseFeedbackRecord['remediationRuntimePreference'],
+): AgentRuntimeName | null {
+  switch (runtimePreference) {
+    case 'codex_local':
+      return 'codex_local';
+    case 'codex_cloud':
+      return 'openai_cloud';
+    default:
+      return null;
+  }
+}
+
+function isCurrentWorkQuickOpenPhrase(trimmed: string): boolean {
+  const normalized = trimmed.replace(/\s+/g, ' ').trim().toLowerCase();
+  return (
+    normalized === 'current work' ||
+    normalized === "show me what's running" ||
+    normalized === 'show me whats running' ||
+    normalized === "what's running" ||
+    normalized === 'whats running' ||
+    normalized === 'what work is active right now'
+  );
 }
 
 function getCurrentMainChatAudit(): ReturnType<typeof auditRegisteredMainChat> {
@@ -8442,11 +8471,23 @@ async function main(): Promise<void> {
     const record = getResponseFeedbackByRemediationJob({ laneId, jobId });
     if (!record) return null;
 
-    if (
-      isSuccessfulResponseFeedbackTaskStatus(taskStatus) &&
-      record.status !== 'resolved_locally' &&
-      record.status !== 'landed'
-    ) {
+      if (
+        isSuccessfulResponseFeedbackTaskStatus(taskStatus) &&
+        record.status !== 'resolved_locally' &&
+        record.status !== 'landed'
+      ) {
+        if (laneId === 'andrea_runtime') {
+          return updateResponseFeedback(record.feedbackId, {
+            status: 'captured',
+            operatorNote: buildResponseFeedbackReadOnlyLaneNote(),
+          });
+        }
+        if (!hasResponseFeedbackLocalHotfix(record)) {
+          return updateResponseFeedback(record.feedbackId, {
+            status: 'captured',
+          operatorNote: buildResponseFeedbackNoHotfixNote(),
+        });
+      }
       return updateResponseFeedback(record.feedbackId, {
         status: 'resolved_locally',
         operatorNote:
@@ -8475,11 +8516,7 @@ async function main(): Promise<void> {
   async function refreshRunningResponseFeedbackRecord(
     record: ResponseFeedbackRecord,
   ): Promise<ResponseFeedbackRecord> {
-    if (
-      record.status !== 'running' ||
-      !record.remediationLaneId ||
-      !record.remediationJobId
-    ) {
+    if (!record.remediationLaneId || !record.remediationJobId) {
       return record;
     }
 
@@ -8935,10 +8972,8 @@ async function main(): Promise<void> {
     });
     const linkedRefsWithRepoBaseline: ResponseFeedbackRecord['linkedRefs'] = {
       ...linkedRefs,
-      repoHeadAtStart:
-        existing.linkedRefs.repoHeadAtStart || readGitRef(['rev-parse', 'HEAD']),
-      repoDirtyPathsAtStart:
-        existing.linkedRefs.repoDirtyPathsAtStart || listCurrentGitDirtyPaths(),
+      repoHeadAtStart: readGitRef(['rev-parse', 'HEAD']),
+      repoDirtyPathsAtStart: listCurrentGitDirtyPaths(),
     };
 
     if (laneSelection.laneId === 'andrea_runtime') {
@@ -8947,6 +8982,9 @@ async function main(): Promise<void> {
         chatJid,
         promptText: remediationPrompt,
         requestedBy: msg.sender,
+        requestedRuntime: mapResponseFeedbackRuntimePreferenceToAgentRuntime(
+          laneSelection.runtimePreference,
+        ),
       });
       const updated = updateResponseFeedback(captured.feedbackId, {
         linkedRefs: {
@@ -13144,7 +13182,7 @@ async function main(): Promise<void> {
       if (
         mainControlChat &&
         !isSlashCommand &&
-        trimmed === 'current work'
+        isCurrentWorkQuickOpenPhrase(trimmed)
       ) {
         handleCurrentWorkQuickOpen(chatJid, msg).catch((err) =>
           logger.error({ err, chatJid }, 'Current work quick-open error'),

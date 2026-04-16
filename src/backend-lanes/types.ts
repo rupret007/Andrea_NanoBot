@@ -1,3 +1,5 @@
+import type { AgentRuntimeName } from '../types.js';
+
 export type BackendLaneId = 'cursor' | 'andrea_runtime';
 
 export interface BackendJobHandle {
@@ -52,6 +54,7 @@ export interface BackendCreateJobParams {
   chatJid: string;
   promptText: string;
   requestedBy?: string;
+  requestedRuntime?: AgentRuntimeName | null;
   options?: Record<string, unknown>;
 }
 

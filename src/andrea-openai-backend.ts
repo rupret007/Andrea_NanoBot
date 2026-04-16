@@ -250,6 +250,7 @@ export class AndreaOpenAiBackendClient {
   async createJob(input: {
     groupFolder: string;
     prompt: string;
+    requestedRuntime?: 'codex_local' | 'openai_cloud' | 'claude_legacy' | null;
     source: OrchestrationSource;
   }): Promise<RuntimeBackendJob> {
     const response = await requestJson<{ job: RuntimeBackendJob }>(
@@ -304,7 +305,24 @@ export class AndreaOpenAiBackendClient {
       '/route',
       {
         method: 'POST',
-        body: JSON.stringify(input),
+        body: JSON.stringify({
+          channel: input.channel,
+          text: input.text,
+          requestRoute: input.requestRoute,
+          ...(input.conversationSummary
+            ? { conversationSummary: input.conversationSummary }
+            : {}),
+          ...(input.replyText ? { replyText: input.replyText } : {}),
+          ...(input.priorPersonName
+            ? { priorPersonName: input.priorPersonName }
+            : {}),
+          ...(input.priorThreadTitle
+            ? { priorThreadTitle: input.priorThreadTitle }
+            : {}),
+          ...(input.priorLastAnswerSummary
+            ? { priorLastAnswerSummary: input.priorLastAnswerSummary }
+            : {}),
+        }),
       },
     );
   }

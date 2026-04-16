@@ -157,6 +157,12 @@ describe('everyday capture', () => {
     );
     expect(billsReadout.replyText).toContain('pay water bill');
 
+    const groceriesReadout = await handleEverydayCaptureCommand(
+      buildInput('what do I need from the store again'),
+    );
+    expect(groceriesReadout.replyText).toContain('milk');
+    expect(groceriesReadout.replyText).toContain('batteries');
+
     const mealsReadout = await handleEverydayCaptureCommand(
       buildInput('what meals have I planned this week'),
     );

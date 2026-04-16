@@ -159,6 +159,7 @@ describe('AndreaOpenAiBackendClient', () => {
     const fetchImpl = vi.fn(async (_input, init) => {
       expect(init?.method).toBe('POST');
       expect(String(init?.body)).toContain('"system":"andrea_nanobot"');
+      expect(String(init?.body)).toContain('"requestedRuntime":"openai_cloud"');
       return new Response(JSON.stringify({ job: makeJob('job_777') }), {
         status: 202,
       });
@@ -171,6 +172,7 @@ describe('AndreaOpenAiBackendClient', () => {
     const job = await client.createJob({
       groupFolder: 'main',
       prompt: 'Do the work',
+      requestedRuntime: 'openai_cloud',
       source: {
         system: 'andrea_nanobot',
         actorType: 'chat',

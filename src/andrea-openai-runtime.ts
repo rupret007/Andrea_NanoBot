@@ -12,6 +12,7 @@ import {
   upsertRuntimeBackendJob,
 } from './db.js';
 import type {
+  AgentRuntimeName,
   CompanionRouteDecision,
   RegisteredGroup,
   RuntimeBackendJob,
@@ -55,6 +56,7 @@ export interface RuntimeJobsInput extends RuntimeContextInput {
 
 export interface RuntimeCreateInput extends RuntimeContextInput {
   prompt: string;
+  requestedRuntime?: AgentRuntimeName | null;
 }
 
 export interface RuntimeJobInput extends RuntimeContextInput {
@@ -289,6 +291,7 @@ export async function createAndreaOpenAiRuntimeJob(
     const job = await client.createJob({
       groupFolder: input.group.folder,
       prompt: input.prompt,
+      requestedRuntime: input.requestedRuntime || null,
       source: buildSource(input),
     });
     cacheJob(input.chatJid, job);
@@ -304,6 +307,7 @@ export async function createAndreaOpenAiRuntimeJob(
           const job = await client.createJob({
             groupFolder: input.group.folder,
             prompt: input.prompt,
+            requestedRuntime: input.requestedRuntime || null,
             source: buildSource(input),
           });
           cacheJob(input.chatJid, job);

@@ -99,6 +99,8 @@ export interface RuntimeExecutionResult {
   plan: RuntimeExecutionPlan;
 }
 
+const ORPHANED_RUNNING_JOB_GRACE_MS = 15_000;
+
 export interface RuntimeOrchestrationServiceDependencies extends RuntimeExecutionDependencies {
   enqueueJob(groupJid: string, jobId: string, fn: () => Promise<void>): void;
   getRuntimeJobs(): QueueRuntimeJobSnapshot[];
@@ -235,19 +237,23 @@ function planRuntimeExecution(
   const runtimeRoute =
     request.routeHint ||
     classifyRuntimeRoute(request.requestPolicy, request.prompt);
-  const preferredRuntime = selectPreferredRuntime(existingThread, runtimeRoute);
+  const preferredRuntime =
+    request.requestedRuntime || selectPreferredRuntime(existingThread, runtimeRoute);
   const reusedThreadId =
     existingThread &&
     shouldReuseExistingThread(existingThread, preferredRuntime)
       ? existingThread.thread_id
       : null;
+  const sessionId =
+    reusedThreadId ||
+    (existingThread ? undefined : deps.getSession(request.group.folder));
 
   return {
     existingThread,
     runtimeRoute,
     preferredRuntime,
     reusedThreadId,
-    sessionId: reusedThreadId || deps.getSession(request.group.folder),
+    sessionId,
   };
 }
 
@@ -342,6 +348,40 @@ function toPublicJob(
     finishedAt: job.finishedAt,
     updatedAt: job.updatedAt,
   };
+}
+
+function reconcileOrphanedRunningJob(
+  deps: RuntimeOrchestrationServiceDependencies,
+  jobId: string,
+): RuntimeOrchestrationJobRecord | undefined {
+  const job = getRuntimeOrchestrationJob(jobId);
+  if (!job || job.status !== 'running') {
+    return job;
+  }
+
+  const activeJob = deps
+    .getRuntimeJobs()
+    .find((runtimeJob) => runtimeJob.runningTaskId === jobId);
+  if (activeJob) {
+    return job;
+  }
+
+  const startedAtMs = Date.parse(job.startedAt || job.updatedAt || job.createdAt);
+  if (
+    Number.isFinite(startedAtMs) &&
+    Date.now() - startedAtMs < ORPHANED_RUNNING_JOB_GRACE_MS
+  ) {
+    return job;
+  }
+
+  updateRuntimeOrchestrationJob(jobId, {
+    status: 'failed',
+    updatedAt: nowIso(),
+    finishedAt: nowIso(),
+    errorText:
+      'Runtime orchestration job lost its live runner before producing output.',
+  });
+  return getRuntimeOrchestrationJob(jobId);
 }
 
 function resolveGroupTarget(
@@ -494,6 +534,7 @@ async function runOrchestrationJob(
   executionContextResolver: () => ResolvedFollowUpTarget | ResolvedGroupTarget,
   prompt: string,
   routeHint: RuntimeRoute | undefined,
+  requestedRuntime?: AgentRuntimeName | null,
 ): Promise<void> {
   const currentJob = getRuntimeOrchestrationJob(jobId);
   if (!currentJob) return;
@@ -511,6 +552,7 @@ async function runOrchestrationJob(
     prompt,
     requestPolicy,
     routeHint,
+    requestedRuntime,
     existingThreadOverride: executionTarget.threadCandidate,
   });
 
@@ -534,6 +576,7 @@ async function runOrchestrationJob(
       prompt,
       requestPolicy,
       routeHint,
+      requestedRuntime,
       existingThreadOverride: executionTarget.threadCandidate,
       onOutput: async (output) => {
         if (output.result !== null) {
@@ -676,6 +719,7 @@ export function createRuntimeOrchestrationService(
           }),
           prompt,
           request.routeHint,
+          request.requestedRuntime,
         );
       });
 
@@ -734,7 +778,7 @@ export function createRuntimeOrchestrationService(
     },
 
     getJob(jobId: string): RuntimeOrchestrationJob | null {
-      return toPublicJob(getRuntimeOrchestrationJob(jobId));
+      return toPublicJob(reconcileOrphanedRunningJob(deps, jobId));
     },
 
     listJobs(query: ListRuntimeJobsRequest = {}): RuntimeOrchestrationJobList {
@@ -743,13 +787,17 @@ export function createRuntimeOrchestrationService(
         limit: clampJobListLimit(query.limit),
       });
 
-      return {
-        jobs: result.jobs.map(
-          (job) => toPublicJob(job as RuntimeOrchestrationJobRecord)!,
-        ),
-        nextBeforeJobId: result.nextBeforeJobId || null,
-      };
-    },
+        return {
+          jobs: result.jobs.map(
+            (job) =>
+              toPublicJob(
+                reconcileOrphanedRunningJob(deps, job.jobId) ||
+                  (job as RuntimeOrchestrationJobRecord),
+              )!,
+          ),
+          nextBeforeJobId: result.nextBeforeJobId || null,
+        };
+      },
 
     getJobLogs(query: GetRuntimeJobLogsRequest): RuntimeJobLogsResult {
       const job = getRuntimeOrchestrationJob(query.jobId);

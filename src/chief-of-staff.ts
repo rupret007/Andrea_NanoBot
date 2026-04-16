@@ -123,6 +123,23 @@ function safeJsonParse<T>(value: string | undefined, fallback: T): T {
   }
 }
 
+function isCompletedSelectedWork(
+  work: SelectedWorkContext | null | undefined,
+): boolean {
+  return Boolean(
+    work &&
+      /^(done|succeeded|success|completed|complete|stopped|cancelled|canceled)$/i.test(
+        work.statusLabel.trim(),
+      ),
+  );
+}
+
+function visibleSelectedWork(
+  work: SelectedWorkContext | null | undefined,
+): SelectedWorkContext | null {
+  return !work || isCompletedSelectedWork(work) ? null : work;
+}
+
 function ensureSelfSubject(groupFolder: string, now: Date): ProfileSubject {
   const existing = getProfileSubjectByKey(groupFolder, 'self', 'self');
   if (existing) return existing;
@@ -772,9 +789,11 @@ export async function buildChiefOfStaffSnapshot(
     (await buildGroundedDaySnapshot({
       now,
       tasks: input.tasks,
-      selectedWork: input.selectedWork || null,
+      selectedWork: visibleSelectedWork(input.selectedWork),
     }));
-  const selectedWork = input.selectedWork || grounded.selectedWork;
+  const selectedWork = visibleSelectedWork(
+    input.selectedWork || grounded.selectedWork,
+  );
   const lifeThreadSnapshot =
     input.lifeThreadSnapshot ||
     buildLifeThreadSnapshot({

@@ -164,6 +164,7 @@ export function createAndreaRuntimeBackendLane(
           group,
           prompt: params.promptText,
           actorId: params.requestedBy || params.chatJid,
+          requestedRuntime: params.requestedRuntime || null,
         },
         client,
       );
