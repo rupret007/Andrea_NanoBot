@@ -1,6 +1,6 @@
 import { executeAssistantCapability } from '../src/assistant-capabilities.js';
 import { buildDailyCompanionResponse } from '../src/daily-companion.js';
-import { createTask, getTaskById, initDatabase } from '../src/db.js';
+import { _initTestDatabase, createTask, getTaskById } from '../src/db.js';
 import { handleLifeThreadCommand } from '../src/life-threads.js';
 
 function printBlock(title: string, lines: string[]): void {
@@ -12,7 +12,7 @@ function printBlock(title: string, lines: string[]): void {
 }
 
 async function main(): Promise<void> {
-  initDatabase();
+  _initTestDatabase();
   const groupFolder = 'ritual-debug';
   const chatJid = 'tg:ritual-debug';
 

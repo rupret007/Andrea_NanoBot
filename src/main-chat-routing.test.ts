@@ -6,6 +6,22 @@ import {
 } from './main-chat-routing.js';
 
 describe('main chat routing', () => {
+  it('replies locally for quick discovery asks even when no work session is active yet', () => {
+    const decision = decideMainChatRouting({
+      isMainGroup: true,
+      messages: [{ content: 'what are you useful for right now' }],
+      sessionState: 'inactive',
+      localQuickReply:
+        "I'm Andrea. I help most with schedule moves, reminders and save-for-later.",
+    });
+
+    expect(decision).toEqual({
+      kind: 'reply_locally',
+      replyText:
+        "I'm Andrea. I help most with schedule moves, reminders and save-for-later.",
+    });
+  });
+
   it('replies locally for the exact silence regression when work is active', () => {
     const decision = decideMainChatRouting({
       isMainGroup: true,

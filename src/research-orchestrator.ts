@@ -236,7 +236,9 @@ function isGenericCompareClarifierQuery(
     return (
       /^recommend the better one(?:\b.*)?$/.test(lower) ||
       /^which (?:one )?is better(?:\b.*)?$/.test(lower) ||
-      /^which should i pick(?:\b.*)?$/.test(lower)
+      /^which should i pick(?:\b.*)?$/.test(lower) ||
+      /^should i buy this one or that one(?:\b.*)?$/.test(lower) ||
+      /^should i buy this or that(?:\b.*)?$/.test(lower)
     );
   }
   return false;
@@ -517,7 +519,7 @@ export function planResearchRequest(request: ResearchRequest): ResearchPlan {
   const kind: ResearchRequestKind =
     /\b(compare|versus|vs\.?|tradeoffs?|pros and cons|pros|cons)\b/i.test(lower)
       ? 'compare'
-      : /\b(best choice|recommend|which should i|what should i pick|what should i know before deciding|before deciding|why)\b/i.test(
+      : /\b(best choice|recommend|which should i|what should i pick|what should i know before deciding|before deciding|why|should i buy this one or that one|should i buy this or that)\b/i.test(
             lower,
           )
         ? 'recommend'

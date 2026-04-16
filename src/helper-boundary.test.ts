@@ -161,7 +161,9 @@ describe('helper boundary wiring', () => {
     expect(source).toContain("normalized === 'current work'");
     expect(source).toContain(`normalized === "show me what's running"`);
     expect(source).toContain("normalized === 'what work is active right now'");
+    expect(source).toContain(`normalized === "what's the latest from runtime"`);
     expect(source).toContain("state: { kind: 'work_current' }");
+    expect(source).toContain('forceNew: true');
     expect(source).toContain('getRegisteredMainChat()?.jid === chatJid');
   });
 
@@ -184,5 +186,19 @@ describe('helper boundary wiring', () => {
     expect(sharedCompletionIndex).toBeGreaterThan(-1);
     expect(directActionLayerIndex).toBeGreaterThan(-1);
     expect(sharedCompletionIndex).toBeLessThan(directActionLayerIndex);
+  });
+
+  it('checks shared assistant completion follow-ups before reopening shared capability routing', () => {
+    const source = readRepoFile('src/index.ts');
+    const sharedCompletionIndex = source.indexOf(
+      'if (await tryHandleSharedAssistantCompletion()) {',
+    );
+    const sharedCapabilityIndex = source.indexOf(
+      'if (await tryHandleSharedAssistantCapability()) {',
+    );
+
+    expect(sharedCompletionIndex).toBeGreaterThan(-1);
+    expect(sharedCapabilityIndex).toBeGreaterThan(-1);
+    expect(sharedCompletionIndex).toBeLessThan(sharedCapabilityIndex);
   });
 });

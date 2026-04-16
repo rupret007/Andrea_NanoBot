@@ -636,6 +636,13 @@ function buildPrepChecklist(params: {
   return [...checklist].slice(0, 4);
 }
 
+function buildPrepareSummaryText(prepChecklist: string[]): string | null {
+  const lead = prepChecklist[0]?.replace(/\.$/, '').trim();
+  if (!lead) return null;
+  const normalizedLead = lead.replace(/^[A-Z]/, (match) => match.toLowerCase());
+  return `The main prep move is to ${normalizedLead}.`;
+}
+
 function buildExplainabilityLines(params: {
   mainSignal: ChiefOfStaffSignal | null;
   supportingSignals: ChiefOfStaffSignal[];
@@ -686,6 +693,22 @@ function resolveCommunicationCandidate(
 }
 
 function buildDetailText(snapshot: ChiefOfStaffSnapshot): string {
+  const formatSignalDetailLine = (signal: ChiefOfStaffSignal): string => {
+    const title = signal.title.trim();
+    const summaryText = signal.summaryText.trim();
+    if (!title) return summaryText;
+    if (!summaryText) return title;
+    const normalize = (value: string) =>
+      value
+        .toLowerCase()
+        .replace(/[.!?]+$/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+    return normalize(title) === normalize(summaryText)
+      ? summaryText
+      : `${title}: ${summaryText}`;
+  };
+
   const whyLine =
     snapshot.explainabilityLines[0] &&
     snapshot.explainabilityLines[0] !== snapshot.summaryText
@@ -695,9 +718,7 @@ function buildDetailText(snapshot: ChiefOfStaffSnapshot): string {
   return buildSignatureFlowText({
     lead: snapshot.summaryText,
     detailLines: [
-      ...snapshot.supportingSignals
-        .slice(0, 2)
-        .map((signal) => `${signal.title}: ${signal.summaryText}`),
+      ...snapshot.supportingSignals.slice(0, 2).map(formatSignalDetailLine),
       ...snapshot.prepChecklist.map((item) => `Prep: ${item}`),
       snapshot.confidence === 'low'
         ? "Confidence: I'm not confident enough to rank this much harder than that."
@@ -947,7 +968,7 @@ export async function buildChiefOfStaffSnapshot(
     mainSignal?.summaryText ||
     buildLowConfidenceSummary(horizon, scope);
   if (input.mode === 'prepare' && prepChecklist.length > 0) {
-    summaryText = `The main prep move is to get ${prepChecklist[0]!.replace(/\.$/, '')} ready.`;
+    summaryText = buildPrepareSummaryText(prepChecklist) || summaryText;
   } else if (input.mode === 'plan_horizon' && mainSignal) {
     summaryText = `For ${horizon.replace(/_/g, ' ')}, ${mainSignal.summaryText}`;
   } else if (input.mode === 'prioritize' && mainSignal) {

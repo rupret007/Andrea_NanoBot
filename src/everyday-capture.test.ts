@@ -404,6 +404,51 @@ describe('everyday capture', () => {
     expect(readout.replyText!.toLowerCase()).toContain('milk');
   });
 
+  it('adds a new item into the active list after a readout asks for the current slice', async () => {
+    await approveStarterProfile();
+
+    await handleEverydayCaptureCommand(
+      buildInput('add eggs to my grocery list'),
+    );
+
+    const readout = await handleEverydayCaptureCommand(
+      buildInput('what do I need from the store again'),
+    );
+
+    const add = await handleEverydayCaptureCommand(
+      buildInput('add milk eggs and maybe trash bags', {
+        priorContext: readout.conversationData,
+      }),
+    );
+
+    expect(add.handled).toBe(true);
+    expect(add.mode).toBe('add_item');
+    expect(add.replyText).toContain('groceries');
+    expect(add.listItems?.[0]?.title).toBe('milk eggs and maybe trash bags');
+  });
+
+  it('keeps the grocery group anchored even when the readout is empty', async () => {
+    await approveStarterProfile();
+
+    const readout = await handleEverydayCaptureCommand(
+      buildInput('what do I need from the store again'),
+    );
+
+    expect(readout.handled).toBe(true);
+    expect(readout.mode).toBe('read_items');
+    expect(readout.conversationData?.activeListGroupId).toBeTruthy();
+
+    const add = await handleEverydayCaptureCommand(
+      buildInput('add milk eggs and maybe trash bags', {
+        priorContext: readout.conversationData,
+      }),
+    );
+
+    expect(add.handled).toBe(true);
+    expect(add.mode).toBe('add_item');
+    expect(add.replyText).toContain('groceries');
+  });
+
   it('returns grouped Telegram readouts with contextual inline actions', async () => {
     await handleEverydayCaptureCommand(buildInput('add milk to my shopping list'));
     await handleEverydayCaptureCommand(buildInput('save this as an errand', {

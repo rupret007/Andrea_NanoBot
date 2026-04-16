@@ -40,6 +40,26 @@ describe('assistant capability router', () => {
     ).toMatchObject({
       capabilityId: 'threads.list_open',
     });
+    expect(
+      matchAssistantCapabilityRequest('Help me get tonight under control'),
+    ).toMatchObject({
+      capabilityId: 'staff.plan_horizon',
+    });
+    expect(
+      matchAssistantCapabilityRequest('Walk me through tonight'),
+    ).toMatchObject({
+      capabilityId: 'staff.plan_horizon',
+    });
+    expect(
+      matchAssistantCapabilityRequest('What matters before my next meeting?'),
+    ).toMatchObject({
+      capabilityId: 'staff.prepare',
+    });
+    expect(
+      matchAssistantCapabilityRequest('Why is this suddenly a priority?'),
+    ).toMatchObject({
+      capabilityId: 'staff.explain',
+    });
   });
 
   it('matches bounded research prompts without inventing new intents', () => {
@@ -140,6 +160,9 @@ describe('assistant capability router', () => {
     expect(
       matchAssistantCapabilityRequest('What do I owe people right now?'),
     ).toMatchObject({
+      capabilityId: 'communication.open_loops',
+    });
+    expect(matchAssistantCapabilityRequest('What texts need me?')).toMatchObject({
       capabilityId: 'communication.open_loops',
     });
     expect(
@@ -491,6 +514,19 @@ describe('assistant capability router', () => {
     ).toMatchObject({
       capabilityId: 'capture.profile_setup',
     });
+    expect(
+      continueAssistantCapabilityFromPriorSubjectData(
+        'add milk eggs and maybe trash bags',
+        {
+          activeCapabilityId: 'capture.read_items',
+          activeTaskKind: 'list_read',
+          activeListGroupId: 'group-groceries',
+        },
+      ),
+    ).toMatchObject({
+      capabilityId: 'capture.add_item',
+      continuation: true,
+    });
   });
 
   it('maps broad Alexa intent families into shared capabilities when carrier phrases are strong', () => {
@@ -733,6 +769,24 @@ describe('assistant capability router', () => {
       capabilityId: 'staff.configure',
       continuation: true,
     });
+    expect(
+      continueAssistantCapabilityFromAlexaState(
+        'why is this suddenly a priority',
+        state,
+      ),
+    ).toMatchObject({
+      capabilityId: 'staff.explain',
+      continuation: true,
+    });
+    expect(
+      continueAssistantCapabilityFromAlexaState(
+        'what matters before my next meeting',
+        state,
+      ),
+    ).toMatchObject({
+      capabilityId: 'staff.prepare',
+      continuation: true,
+    });
   });
 
   it('keeps knowledge follow-ups on the active capability', () => {
@@ -800,6 +854,12 @@ describe('assistant capability router', () => {
         'what conversations are still open',
         state,
       ),
+    ).toMatchObject({
+      capabilityId: 'communication.open_loops',
+      continuation: true,
+    });
+    expect(
+      continueAssistantCapabilityFromAlexaState('what texts need me', state),
     ).toMatchObject({
       capabilityId: 'communication.open_loops',
       continuation: true,

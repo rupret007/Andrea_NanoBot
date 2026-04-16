@@ -162,6 +162,38 @@ function canonicalizeName(value: string): string {
   return normalizeText(value).toLowerCase();
 }
 
+function isCompletedSelectedWork(
+  work: SelectedWorkContext | null | undefined,
+): boolean {
+  return Boolean(
+    work &&
+      /^(done|succeeded|success|completed|complete|stopped|cancelled|canceled)$/i.test(
+        work.statusLabel.trim(),
+      ),
+  );
+}
+
+function resolveRelevantSelectedWork(params: {
+  selectedWork?: SelectedWorkContext | null;
+  objective: string;
+  category?: MissionRecord['category'] | null;
+}): SelectedWorkContext | null {
+  const work = params.selectedWork;
+  if (!work || isCompletedSelectedWork(work)) return null;
+  if (params.category === 'work') return work;
+  if (
+    /blocked|waiting/i.test(work.statusLabel) ||
+    /blocked|waiting/i.test(work.summary || '')
+  ) {
+    return work;
+  }
+  return /\b(work|ship|code|bug|pr|deploy|cursor|codex|project|runtime|release)\b/i.test(
+    params.objective,
+  )
+    ? work
+    : null;
+}
+
 function inferHorizon(text: string): ChiefOfStaffHorizon {
   const lower = text.toLowerCase();
   if (/\btonight\b/.test(lower)) return 'tonight';
@@ -959,21 +991,25 @@ async function buildMissionSnapshot(
         limit: 3,
       }).sources.slice(0, 2)
     : [];
-  const category =
-    existing?.category ||
-    inferMissionCategory({
-      objective,
-      linkedSubjects,
-      linkedLifeThreadTitle: linkedLifeThread?.title || null,
-      selectedWork: input.selectedWork || null,
-    });
+  const inferredCategory = inferMissionCategory({
+    objective,
+    linkedSubjects,
+    linkedLifeThreadTitle: linkedLifeThread?.title || null,
+    selectedWork: input.selectedWork || null,
+  });
+  const category = existing?.category || inferredCategory;
+  const selectedWork = resolveRelevantSelectedWork({
+    selectedWork: input.selectedWork || null,
+    objective,
+    category,
+  });
   const scope =
     existing?.scope ||
-    inferMissionScope(category, linkedSubjects, input.selectedWork);
+    inferMissionScope(category, linkedSubjects, selectedWork);
   const blockers = buildMissionBlockers({
     objective,
     horizon,
-    selectedWork: input.selectedWork || null,
+    selectedWork,
     openLoopSummary: openLoops.summaryText,
     openLoopLead: openLoops.items[0]?.summaryText,
     linkedLifeThreadTitle: linkedLifeThread?.title || null,
@@ -989,7 +1025,7 @@ async function buildMissionSnapshot(
     horizon,
     linkedLifeThreadTitle: linkedLifeThread?.title || null,
     linkedSubjects,
-    selectedWork: input.selectedWork || null,
+    selectedWork,
     knowledgeTitles: knowledgeSources.map((source) => source.title),
     blockers,
     existingSteps,
@@ -1001,7 +1037,7 @@ async function buildMissionSnapshot(
     linkedLifeThreadTitle: linkedLifeThread?.title || null,
     linkedSubjects,
     knowledgeSourceIds: knowledgeSources.map((source) => source.sourceId),
-    selectedWork: input.selectedWork || null,
+    selectedWork,
     blockers,
     steps,
     mutedKinds: existing?.mutedSuggestedActionKinds || [],
@@ -1027,7 +1063,7 @@ async function buildMissionSnapshot(
     linkedReminderIds: existing?.linkedReminderIds || [],
     linkedCurrentWorkJson:
       existing?.linkedCurrentWorkJson ||
-      (input.selectedWork ? JSON.stringify(input.selectedWork) : null),
+      (selectedWork ? JSON.stringify(selectedWork) : null),
     linkedKnowledgeSourceIds: knowledgeSources.map((source) => source.sourceId),
     summary: buildMissionSummary({
       title: buildMissionTitle(objective),

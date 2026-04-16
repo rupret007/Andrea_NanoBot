@@ -828,7 +828,9 @@ function isCurrentWorkQuickOpenPhrase(trimmed: string): boolean {
     normalized === 'show me whats running' ||
     normalized === "what's running" ||
     normalized === 'whats running' ||
-    normalized === 'what work is active right now'
+    normalized === 'what work is active right now' ||
+    normalized === "what's the latest from runtime" ||
+    normalized === 'whats the latest from runtime'
   );
 }
 
@@ -6917,10 +6919,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (await tryHandleActionBundleFollowup()) {
       return true;
     }
-    if (await tryHandleSharedAssistantCapability()) {
+    if (await tryHandleSharedAssistantCompletion()) {
       return true;
     }
-    if (await tryHandleSharedAssistantCompletion()) {
+    if (await tryHandleSharedAssistantCapability()) {
       return true;
     }
   }
@@ -10827,6 +10829,7 @@ async function main(): Promise<void> {
         chatJid,
         sourceMessage,
         state: { kind: 'work_current' },
+        forceNew: true,
       });
       if (pilotRecord) {
         completePilotJourney({

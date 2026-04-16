@@ -234,6 +234,36 @@ describe('chief-of-staff', () => {
     expect(result.snapshot.mainSignal?.summaryText).not.toContain('300 minutes');
   });
 
+  it('uses a natural prep summary for before-my-next-meeting guidance', async () => {
+    const now = new Date('2026-04-06T17:00:00.000Z');
+
+    analyzeCommunicationMessage({
+      channel: 'telegram',
+      groupFolder: 'main',
+      chatJid: 'tg:chief-of-staff',
+      text: 'Candace: can you let me know if dinner still works tonight?',
+      now,
+    });
+
+    const result = await buildChiefOfStaffTurn({
+      channel: 'telegram',
+      groupFolder: 'main',
+      text: 'what matters before my next meeting',
+      mode: 'prepare',
+      now,
+      groundedSnapshot: createGroundedSnapshot(now),
+      lifeThreadSnapshot: createLifeThreadSnapshot(),
+    });
+
+    expect(result.summaryText).toContain(
+      'The main prep move is to be ready to address Candace conversation.',
+    );
+    expect(result.summaryText).not.toContain('get Be ready');
+    expect(result.detailText).not.toContain(
+      'You have one conversation that still needs attention.:',
+    );
+  });
+
   it('uses thread detail instead of a generic Follow-up title for life-thread signals', async () => {
     const now = new Date('2026-04-06T17:30:00.000Z');
     handleLifeThreadCommand({

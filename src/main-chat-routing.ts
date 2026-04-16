@@ -69,15 +69,15 @@ export function decideMainChatRouting(params: {
     return { kind: 'pipe_active_session' };
   }
 
-  if (sessionState === 'inactive') {
-    return { kind: 'process_fresh_turn_now' };
-  }
-
   if (messages.length === 1 && localQuickReply) {
     return {
       kind: 'reply_locally',
       replyText: localQuickReply,
     };
+  }
+
+  if (sessionState === 'inactive') {
+    return { kind: 'process_fresh_turn_now' };
   }
 
   if (sessionState === 'idle_assistant') {

@@ -489,6 +489,7 @@ function buildDailyContinuationCandidate(
     const summaryTarget = summaryText
       .replace(/^the easiest thing to forget right now is\s+/i, '')
       .replace(/^the main prep move is to get\s+/i, '')
+      .replace(/^the main prep move is to\s+/i, '')
       .replace(/^for (?:today|tonight|tomorrow|this week|weekend|next few days),\s+/i, '')
       .replace(/\s+ready\.$/i, '')
       .replace(/[.!?]+$/g, '')

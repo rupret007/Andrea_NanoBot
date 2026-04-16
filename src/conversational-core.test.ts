@@ -62,6 +62,9 @@ describe('conversational core classifier', () => {
       ),
     ).toBe('source_grounded_question');
     expect(
+      classifyConversationalTurn('Should I buy this one or that one?'),
+    ).toBe('source_grounded_question');
+    expect(
       classifyConversationalTurn('What is the weather today in Dallas?'),
     ).toBe('source_grounded_question');
     expect(

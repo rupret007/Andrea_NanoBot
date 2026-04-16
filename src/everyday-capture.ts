@@ -1821,6 +1821,40 @@ function parseCaptureTarget(
     };
   }
 
+  const contextualAddMatch = rawWithoutRecurrence.match(/^(?:add|put)\s+(.+?)$/i);
+  if (
+    contextualAddMatch?.[1] &&
+    input.priorContext?.activeListGroupId &&
+    ['list_capture', 'list_read', 'list_update'].includes(
+      input.priorContext.activeTaskKind || '',
+    )
+  ) {
+    const activeGroup = getEverydayListGroup(input.priorContext.activeListGroupId);
+    const title = stripRecurrenceLanguage(contextualAddMatch[1]);
+    if (activeGroup && title) {
+      return {
+        title,
+        groupKind: activeGroup.kind,
+        itemKind:
+          activeGroup.kind === 'shopping'
+            ? 'shopping_item'
+            : activeGroup.kind === 'errands'
+              ? 'errand'
+              : activeGroup.kind === 'bills'
+                ? 'bill'
+                : activeGroup.kind === 'meals'
+                  ? 'meal_entry'
+                  : activeGroup.kind === 'checklist' &&
+                      /\bpills?|meds?|medication\b/i.test(title)
+                    ? 'checklist_item'
+                    : 'general_item',
+        groupTitle: activeGroup.title,
+        scope: activeGroup.scope,
+        recurrence: recurrence || undefined,
+      };
+    }
+  }
+
   if (lower.startsWith('add ') || lower.startsWith('put ')) {
     return null;
   }
@@ -1923,6 +1957,31 @@ function parseReadTarget(text: string): ReadTarget | null {
     return { kind: 'all', summary: 'still open' };
   }
   return null;
+}
+
+function resolveConversationGroupForReadTarget(
+  groupFolder: string,
+  target: ReadTarget,
+): EverydayListGroup | null {
+  switch (target.kind) {
+    case 'shopping':
+      return findEverydayListGroupByKind(groupFolder, 'shopping') || null;
+    case 'errands':
+      return findEverydayListGroupByKind(groupFolder, 'errands') || null;
+    case 'bills':
+      return findEverydayListGroupByKind(groupFolder, 'bills') || null;
+    case 'meals':
+    case 'dinner_missing':
+      return findEverydayListGroupByKind(groupFolder, 'meals') || null;
+    case 'household':
+      return findEverydayListGroupByKind(groupFolder, 'household') || null;
+    case 'tonight':
+      return findEverydayListGroupByTitle(groupFolder, 'Tonight') || null;
+    case 'weekend':
+      return findEverydayListGroupByTitle(groupFolder, 'Weekend') || null;
+    default:
+      return null;
+  }
 }
 
 function parseMarkDoneRequest(text: string): boolean {
@@ -2843,6 +2902,10 @@ async function handleReadItems(
     groups,
     now,
   });
+  const contextGroup =
+    (view.items[0]
+      ? getEverydayListGroup(view.items[0].groupId) || null
+      : null) || resolveConversationGroupForReadTarget(input.groupFolder, target);
   const formatted = formatReadout({
     channel: input.channel,
     target,
@@ -2858,13 +2921,13 @@ async function handleReadItems(
     sendOptions: formatted.sendOptions,
     conversationData: {
       activeTaskKind: 'list_read',
-      activeListGroupId: view.items[0]?.groupId,
+      activeListGroupId: contextGroup?.groupId,
       activeListItemIds: view.items.slice(0, 5).map((item) => item.itemId),
-      activeListScope: view.items[0]?.scope,
+      activeListScope: contextGroup?.scope || view.items[0]?.scope,
       activeOperatingProfileId: activeProfile?.profileId,
     },
     supportedFollowups: ['anything_else', 'create_reminder', 'send_details'],
-    listGroup: view.items[0] ? getEverydayListGroup(view.items[0].groupId) || null : null,
+    listGroup: contextGroup,
     listItems: view.items,
   });
 }

@@ -390,6 +390,23 @@ describe('research orchestrator', () => {
     expect(result.structuredFindings).toEqual([]);
   });
 
+  it('asks for the options when a generic buying recommendation prompt names no options', async () => {
+    const result = await runResearchOrchestrator({
+      query: 'should I buy this one or that one',
+      channel: 'telegram',
+      groupFolder: 'main',
+      now: new Date('2026-04-16T13:06:00.000Z'),
+    });
+
+    expect(result.handled).toBe(true);
+    expect(result.kind).toBe('recommend');
+    expect(result.summaryText).toContain(
+      'Tell me the options you want me to weigh first',
+    );
+    expect(result.debugPath).toContain('research.compare_clarify');
+    expect(result.structuredFindings).toEqual([]);
+  });
+
   it('uses the simple tier for weather lookups and falls back upward when the cheap model is rejected', async () => {
     process.env.OPENAI_API_KEY = 'test-key';
     process.env.OPENAI_BASE_URL = 'https://example.test/v1';

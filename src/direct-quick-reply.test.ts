@@ -200,6 +200,28 @@ describe('direct quick reply', () => {
     expect(reply).not.toContain('inspect your files');
   });
 
+  it('keeps useful-right-now discovery phrasing in the local capability lane', () => {
+    const reply = maybeBuildDirectQuickReply([
+      { content: 'what are you useful for right now' },
+    ]);
+
+    expect(reply).toContain("I'm Andrea");
+    expect(reply).toContain('schedule moves');
+    expect(reply).toContain('Telegram');
+    expect(reply).not.toContain('Writing, editing, and explaining code');
+  });
+
+  it('keeps help-me-with-today discovery phrasing in the local capability lane', () => {
+    const reply = maybeBuildDirectQuickReply([
+      { content: 'what can you help me with today' },
+    ]);
+
+    expect(reply).toContain("I'm Andrea");
+    expect(reply).toContain('quick reply help');
+    expect(reply).toContain('Alexa');
+    expect(reply).not.toContain('big or small');
+  });
+
   it('returns a bounded coding-capability response for cursor and codex asks', () => {
     const reply = maybeBuildDirectQuickReply([
       { content: 'Can you use cursor and codex?' },

@@ -297,6 +297,31 @@ describe('missions', () => {
     expect(second.replyText).toContain('For Friday dinner with Candace');
   });
 
+  it('keeps unrelated current work out of a general tonight plan', async () => {
+    const now = new Date('2026-04-06T18:22:00.000Z');
+
+    const result = await buildMissionTurn({
+      channel: 'telegram',
+      groupFolder: 'main',
+      chatJid: 'tg:main',
+      text: 'help me plan tonight',
+      mode: 'propose',
+      selectedWork: {
+        laneLabel: 'Cursor',
+        title: 'Reply with exactly: live cloud smoke ok',
+        statusLabel: 'Running',
+        summary: 'Reply with exactly: live cloud smoke ok. Do not modify files.',
+      },
+      now,
+    });
+
+    expect(result.mission.category).not.toBe('work');
+    expect(result.mission.scope).not.toBe('work');
+    expect(result.mission.linkedCurrentWorkJson).toBeNull();
+    expect(result.replyText).not.toContain('live cloud smoke ok');
+    expect(result.replyText).not.toContain('Current work still has pressure');
+  });
+
   it('does not surface malformed orphaned open-loop summaries as mission blockers', async () => {
     const now = new Date('2026-04-06T18:25:00.000Z');
 

@@ -389,7 +389,7 @@ export function maybeBuildDirectQuickReply(
   if (
     isStandalonePrompt(
       normalized,
-      /^(?:(?:hi|hello|hey|yo)[!., ]+)?(?:who are you|what can you do|what can you actually do for me|what all do you handle(?: again)?|what do you handle(?: again)?|what all can you do(?: again)?|what do you actually do(?: for me)?)[?.! ]*$/,
+      /^(?:(?:hi|hello|hey|yo)[!., ]+)?(?:who are you|what can you do|what can you actually do for me|what all do you handle(?: again)?|what do you handle(?: again)?|what all can you do(?: again)?|what do you actually do(?: for me)?|what are you useful for(?: right now| today)?|what can you help me with(?: today| right now)?)[?.! ]*$/,
       10,
     )
   ) {

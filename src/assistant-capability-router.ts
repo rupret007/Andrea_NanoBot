@@ -44,6 +44,8 @@ export interface AssistantCapabilityMatch {
 
 export interface AssistantCapabilityContinuationSubjectData {
   activeCapabilityId?: AssistantCapabilityId;
+  activeTaskKind?: string;
+  activeListGroupId?: string;
 }
 
 function stripAndreaAddressing(value: string): string {
@@ -769,6 +771,7 @@ function matchCommunicationPrompt(
   if (
     /^do i owe a reply\b/.test(lower) ||
     /^what do i owe people\b/.test(lower) ||
+    /^what texts need me\b/.test(lower) ||
     /^who am i forgetting to respond to\b/.test(lower) ||
     /^anything i need to send tonight\b/.test(lower) ||
     /^anything i need to reply to\b/.test(lower) ||
@@ -893,6 +896,9 @@ function matchStaffPrompt(normalized: string): AssistantCapabilityMatch | null {
     /^what should i not let slip this week\b/.test(lower) ||
     /^what('?s| is) the smart plan for tomorrow\b/.test(lower) ||
     /^what should i line up this weekend\b/.test(lower) ||
+    /^help me get tonight under control\b/.test(lower) ||
+    /^walk me through tonight\b/.test(lower) ||
+    /^talk me through tonight\b/.test(lower) ||
     /^what are the biggest open loops right now\b/.test(lower) ||
     /^what bills do i need to pay(?: this week| this month| soon)?\b/.test(lower) ||
     /^what bills are coming up\b/.test(lower) ||
@@ -909,6 +915,7 @@ function matchStaffPrompt(normalized: string): AssistantCapabilityMatch | null {
     /^what should i prepare before tonight\b/.test(lower) ||
     /^what should i remember before i leave\b/.test(lower) ||
     /^what should i handle before my next meeting\b/.test(lower) ||
+    /^what matters before my next meeting\b/.test(lower) ||
     /^help me prepare for this meeting\b/.test(lower) ||
     /^what should i do before my next meeting\b/.test(lower) ||
     /^what do i need before that event\b/.test(lower) ||
@@ -940,7 +947,8 @@ function matchStaffPrompt(normalized: string): AssistantCapabilityMatch | null {
   }
   if (
     /^why are you prioritizing that\b/.test(lower) ||
-    /^what are you using to decide this\b/.test(lower)
+    /^what are you using to decide this\b/.test(lower) ||
+    /^why is this suddenly a priority\b/.test(lower)
   ) {
     return {
       capabilityId: 'staff.explain',
@@ -1217,7 +1225,7 @@ function continueAssistantCapabilityFromActiveCapability(
 
   if (
     activeCapabilityId?.startsWith('staff.') &&
-    (/^(what matters today|what should i do next|what is slipping)\b/.test(
+    (/^(what matters today|what should i do next|what is slipping|help me get tonight under control|walk me through tonight|talk me through tonight)\b/.test(
       lower,
     ) ||
       /^say more\b/.test(lower) ||
@@ -1225,6 +1233,8 @@ function continueAssistantCapabilityFromActiveCapability(
       /^shorter\b/.test(lower) ||
       /^why are you prioritizing that\b/.test(lower) ||
       /^what are you using to decide this\b/.test(lower) ||
+      /^why is this suddenly a priority\b/.test(lower) ||
+      /^what matters before my next meeting\b/.test(lower) ||
       /^be less aggressive about surfacing family stuff\b/.test(lower) ||
       /^don'?t suggest work right now\b/.test(lower) ||
       /^be more direct\b/.test(lower) ||
@@ -1237,8 +1247,11 @@ function continueAssistantCapabilityFromActiveCapability(
       /^shorter\b/.test(lower)
         ? activeCapabilityId
         : /^why are you prioritizing that\b/.test(lower) ||
-            /^what are you using to decide this\b/.test(lower)
+            /^what are you using to decide this\b/.test(lower) ||
+            /^why is this suddenly a priority\b/.test(lower)
           ? 'staff.explain'
+          : /^what matters before my next meeting\b/.test(lower)
+            ? 'staff.prepare'
           : /^be less aggressive about surfacing family stuff\b/.test(lower) ||
               /^don'?t suggest work right now\b/.test(lower) ||
               /^be more direct\b/.test(lower) ||
@@ -1317,7 +1330,7 @@ function continueAssistantCapabilityFromActiveCapability(
   }
 
   if (
-    /^(what do i owe people|anything i need to reply to|what conversations are still open)\b/.test(
+    /^(what do i owe people|anything i need to reply to|what conversations are still open|what texts need me)\b/.test(
       lower,
     ) &&
     activeCapabilityId?.startsWith('communication.')
@@ -1348,6 +1361,22 @@ export function continueAssistantCapabilityFromPriorSubjectData(
   if (!normalized) return null;
   const pilotMatch = matchPilotPrompt(normalized);
   if (pilotMatch) return pilotMatch;
+  if (
+    subjectData.activeCapabilityId?.startsWith('capture.') &&
+    ['list_capture', 'list_read', 'list_update'].includes(
+      subjectData.activeTaskKind || '',
+    ) &&
+    subjectData.activeListGroupId &&
+    /^add\b/.test(normalized.toLowerCase())
+  ) {
+    return {
+      capabilityId: 'capture.add_item',
+      normalizedText: normalized,
+      canonicalText: normalized,
+      reason: 'continuing the active everyday list with an add follow-up',
+      continuation: true,
+    };
+  }
   if (
     !subjectData.activeCapabilityId?.startsWith('capture.') &&
     isSharedAssistantCompletionFollowup(normalized.toLowerCase())
