@@ -1269,7 +1269,7 @@ describe('createAlexaSkill', () => {
     expect(invalidSamples).toEqual([]);
   });
 
-  it('limits SearchQuery-plus-structured-slot mixing to the focused write intents', () => {
+  it('rejects SearchQuery-plus-structured-slot mixing anywhere in the Alexa interaction model', () => {
     const interactionModel = JSON.parse(
       fs.readFileSync(
         'docs/alexa/interaction-model.en-US.json',
@@ -1306,21 +1306,51 @@ describe('createAlexaSkill', () => {
             const mixesSearchQuery = slotNames.some(
               (slotName) => slotTypes[slotName] === 'AMAZON.SearchQuery',
             );
-            if (!mixesSearchQuery) {
-              return [];
-            }
-            return [
-              'CalendarCreateIntent',
-              'CalendarMoveIntent',
-              'CalendarCancelIntent',
-              'ReminderCreateIntent',
-            ].includes(intent.name || '')
-              ? []
-              : [`${intent.name}: ${sample}`];
+            return mixesSearchQuery ? [`${intent.name}: ${sample}`] : [];
           });
         }) || [];
 
     expect(invalidSamples).toEqual([]);
+  });
+
+  it('references every Alexa interaction-model slot in at least one sample', () => {
+    const interactionModel = JSON.parse(
+      fs.readFileSync(
+        'docs/alexa/interaction-model.en-US.json',
+        'utf8',
+      ),
+    ) as {
+      interactionModel?: {
+        languageModel?: {
+          intents?: Array<{
+            name?: string;
+            slots?: Array<{
+              name?: string;
+            }>;
+            samples?: string[];
+          }>;
+        };
+      };
+    };
+
+    const unreferencedSlots =
+      interactionModel.interactionModel?.languageModel?.intents?.flatMap(
+        (intent) => {
+          const samples = intent.samples || [];
+          return (intent.slots || []).flatMap((slot) => {
+            const slotName = slot.name || '';
+            if (!slotName) {
+              return [];
+            }
+            const referenced = samples.some((sample) =>
+              sample.includes(`{${slotName}}`),
+            );
+            return referenced ? [] : [`${intent.name}: ${slotName}`];
+          });
+        },
+      ) || [];
+
+    expect(unreferencedSlots).toEqual([]);
   });
 
   it('tracks the focused write intents and repeat intent in the Alexa interaction model', () => {

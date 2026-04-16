@@ -336,14 +336,13 @@
             }
           ],
           "samples": [
-            "put {eventTitle} on {targetDate}",
-            "put {eventTitle} on {targetDate} at {targetTime}",
-            "schedule {eventTitle} for {targetDate}",
-            "schedule {eventTitle} for {targetDate} at {targetTime}",
-            "add {eventTitle} on {targetDate}",
-            "add {eventTitle} on {targetDate} at {targetTime}",
-            "put {eventTitle} on my {calendarReference} for {targetDate}",
-            "schedule {eventTitle} on my {calendarReference} for {targetDate} at {targetTime}"
+            "schedule {eventTitle}",
+            "add {eventTitle}",
+            "put {eventTitle} on my calendar",
+            "schedule something for {targetDate}",
+            "add something at {targetTime}",
+            "add something for {targetDate} at {targetTime}",
+            "schedule something on my {calendarReference}"
           ]
         },
         {
@@ -364,19 +363,15 @@
             {
               "name": "targetTime",
               "type": "AMAZON.TIME"
-            },
-            {
-              "name": "calendarReference",
-              "type": "AMAZON.SearchQuery"
             }
           ],
           "samples": [
-            "move {eventReference} to {targetTime}",
-            "move {eventReference} to {targetDate}",
-            "move {eventReference} to {targetDate} at {targetTime}",
-            "reschedule {eventReference} to {targetTime}",
-            "move my {sourceTime} meeting to {targetTime}",
-            "move {eventReference} on my {calendarReference} to {targetTime}"
+            "move {eventReference}",
+            "reschedule {eventReference}",
+            "move that to {targetTime}",
+            "move that to {targetDate}",
+            "move that to {targetDate} at {targetTime}",
+            "move my {sourceTime} meeting"
           ]
         },
         {
@@ -389,17 +384,13 @@
             {
               "name": "targetDate",
               "type": "AMAZON.DATE"
-            },
-            {
-              "name": "calendarReference",
-              "type": "AMAZON.SearchQuery"
             }
           ],
           "samples": [
             "cancel {eventReference}",
-            "cancel {eventReference} on {targetDate}",
             "delete {eventReference}",
-            "delete {eventReference} on {targetDate}"
+            "cancel something on {targetDate}",
+            "delete something on {targetDate}"
           ]
         },
         {
@@ -420,10 +411,10 @@
           ],
           "samples": [
             "remind me to {reminderBody}",
-            "remind me to {reminderBody} on {reminderDate}",
-            "remind me to {reminderBody} at {reminderTime}",
-            "remind me to {reminderBody} on {reminderDate} at {reminderTime}",
-            "remind me about {reminderBody}"
+            "remind me about {reminderBody}",
+            "set a reminder for {reminderDate}",
+            "set a reminder at {reminderTime}",
+            "set a reminder for {reminderDate} at {reminderTime}"
           ]
         },
         {
@@ -492,13 +483,6 @@
               "confirmationRequired": false,
               "elicitationRequired": false,
               "prompts": {}
-            },
-            {
-              "name": "calendarReference",
-              "type": "AMAZON.SearchQuery",
-              "confirmationRequired": false,
-              "elicitationRequired": false,
-              "prompts": {}
             }
           ]
         },
@@ -563,13 +547,6 @@
             {
               "name": "targetDate",
               "type": "AMAZON.DATE",
-              "confirmationRequired": false,
-              "elicitationRequired": false,
-              "prompts": {}
-            },
-            {
-              "name": "calendarReference",
-              "type": "AMAZON.SearchQuery",
               "confirmationRequired": false,
               "elicitationRequired": false,
               "prompts": {}
