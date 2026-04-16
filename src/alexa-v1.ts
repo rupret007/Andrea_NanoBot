@@ -4,6 +4,10 @@ export const ALEXA_PLANNING_ORIENTATION_INTENT = 'PlanningOrientationIntent';
 export const ALEXA_SAVE_REMIND_HANDOFF_INTENT = 'SaveRemindHandoffIntent';
 export const ALEXA_OPEN_ASK_INTENT = 'OpenAskIntent';
 export const ALEXA_CONVERSATION_CONTROL_INTENT = 'ConversationControlIntent';
+export const ALEXA_CALENDAR_CREATE_INTENT = 'CalendarCreateIntent';
+export const ALEXA_CALENDAR_MOVE_INTENT = 'CalendarMoveIntent';
+export const ALEXA_CALENDAR_CANCEL_INTENT = 'CalendarCancelIntent';
+export const ALEXA_REMINDER_CREATE_INTENT = 'ReminderCreateIntent';
 export const ALEXA_MY_DAY_INTENT = 'MyDayIntent';
 export const ALEXA_UPCOMING_SOON_INTENT = 'UpcomingSoonIntent';
 export const ALEXA_WHAT_NEXT_INTENT = 'WhatNextIntent';
@@ -24,8 +28,9 @@ export const ALEXA_ANYTHING_ELSE_INTENT = 'AnythingElseIntent';
 export const ALEXA_CONVERSATIONAL_FOLLOWUP_INTENT =
   'ConversationalFollowupIntent';
 export const ALEXA_MEMORY_CONTROL_INTENT = 'MemoryControlIntent';
+export const ALEXA_REPEAT_INTENT = 'AMAZON.RepeatIntent';
 export const ALEXA_DEFAULT_REPROMPT =
-  "Ask what's on my calendar tomorrow, add milk to my shopping list, remind me to take my pills at 9, what bills do I need to pay this week, or what should I say back.";
+  "Try what's on my calendar tomorrow, remind me to take my pills at 9, or what should I say back.";
 
 export const ALEXA_V1_PERSONAL_INTENTS = new Set<string>([
   ALEXA_COMPANION_GUIDANCE_INTENT,
@@ -34,6 +39,10 @@ export const ALEXA_V1_PERSONAL_INTENTS = new Set<string>([
   ALEXA_SAVE_REMIND_HANDOFF_INTENT,
   ALEXA_OPEN_ASK_INTENT,
   ALEXA_CONVERSATION_CONTROL_INTENT,
+  ALEXA_CALENDAR_CREATE_INTENT,
+  ALEXA_CALENDAR_MOVE_INTENT,
+  ALEXA_CALENDAR_CANCEL_INTENT,
+  ALEXA_REMINDER_CREATE_INTENT,
   ALEXA_MY_DAY_INTENT,
   ALEXA_UPCOMING_SOON_INTENT,
   ALEXA_WHAT_NEXT_INTENT,
@@ -88,6 +97,14 @@ export function buildAlexaPersonalPrompt(
       return `Stay in Andrea Alexa companion mode. Answer this practical question naturally and briefly: ${trimSingleLine(values.captureText) || 'the current question'}. This may be reply help, compare-and-explain help, or something the user should know before deciding. Use shared Andrea context when it genuinely helps.${SPOKEN_STYLE_SUFFIX}`;
     case ALEXA_CONVERSATION_CONTROL_INTENT:
       return `Stay in Andrea Alexa companion mode. Handle this follow-up or conversation-control request naturally: ${trimSingleLine(values.captureText) || 'continue the current thread'}.${SPOKEN_STYLE_SUFFIX}`;
+    case ALEXA_CALENDAR_CREATE_INTENT:
+      return `Stay in Andrea Alexa companion mode. Add this calendar event cleanly and confirm it briefly once it is saved: ${trimSingleLine(values.captureText) || 'the current event request'}.${SPOKEN_STYLE_SUFFIX}`;
+    case ALEXA_CALENDAR_MOVE_INTENT:
+      return `Stay in Andrea Alexa companion mode. Move or reschedule this calendar event cleanly and confirm the new timing briefly once it is updated: ${trimSingleLine(values.captureText) || 'the current reschedule request'}.${SPOKEN_STYLE_SUFFIX}`;
+    case ALEXA_CALENDAR_CANCEL_INTENT:
+      return `Stay in Andrea Alexa companion mode. Cancel this calendar event safely and confirm it briefly once it is removed: ${trimSingleLine(values.captureText) || 'the current cancel request'}.${SPOKEN_STYLE_SUFFIX}`;
+    case ALEXA_REMINDER_CREATE_INTENT:
+      return `Stay in Andrea Alexa companion mode. Save this reminder cleanly and confirm it briefly once it is captured: ${trimSingleLine(values.captureText) || 'the current reminder request'}.${SPOKEN_STYLE_SUFFIX}`;
     case ALEXA_MY_DAY_INTENT:
       return `Give me a practical morning brief for today. Focus on calendar timing, obligations, reminders, and what matters most right now. Lead with the main thing first, then only one or two useful follow-through points.${SPOKEN_STYLE_SUFFIX}`;
     case ALEXA_UPCOMING_SOON_INTENT:
@@ -186,15 +203,15 @@ export function buildAlexaOpenConversationPrompt(
 }
 
 export function buildAlexaHelpSpeech(assistantName: string): string {
-  return `This is ${assistantName}. I'm best at your schedule, reminders, lists, planning tonight, open follow-through, and quick reply help. Try what's on my calendar tomorrow, add milk to my shopping list, remind me to take my pills at 9, what bills do I need to pay this week, help me plan tonight, or what should I say back. If we need more detail, I can send it to Telegram.`;
+  return `This is ${assistantName}. I'm best at your schedule, reminders, and quick follow-through. Try what's on my calendar tomorrow, remind me to take my pills at 9, or what should I say back. If you want the fuller version, I can send it to Telegram.`;
 }
 
 export function buildAlexaWelcomeSpeech(assistantName: string): string {
-  return `This is ${assistantName}. I can help with your schedule, reminders, lists, planning tonight, open follow-through, and quick reply help. Try what's on my calendar tomorrow, add milk to my shopping list, remind me to take my pills at 9, what bills do I need to pay this week, or what should I say back.`;
+  return `This is ${assistantName}. I can help with your schedule, reminders, and quick follow-through. Try what's on my calendar tomorrow, remind me to take my pills at 9, or what should I say back.`;
 }
 
 export function buildAlexaFallbackSpeech(assistantName: string): string {
-  return `This is ${assistantName}. I didn't catch that. Ask about your schedule, your grocery list, a reminder, planning tonight, what bills are still open, or what you should say back.`;
+  return `This is ${assistantName}. I didn't catch that. Try your schedule, one reminder, or a quick reply question like what should I say back.`;
 }
 
 export function buildReminderLeadTimeQuestion(assistantName: string): string {

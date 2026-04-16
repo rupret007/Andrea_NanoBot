@@ -88,6 +88,9 @@ import {
   ALEXA_ANYTHING_ELSE_INTENT,
   ALEXA_ANYTHING_IMPORTANT_INTENT,
   ALEXA_BEFORE_NEXT_MEETING_INTENT,
+  ALEXA_CALENDAR_CANCEL_INTENT,
+  ALEXA_CALENDAR_CREATE_INTENT,
+  ALEXA_CALENDAR_MOVE_INTENT,
   ALEXA_CANDACE_UPCOMING_INTENT,
   ALEXA_COMPANION_GUIDANCE_INTENT,
   ALEXA_CONVERSATIONAL_FOLLOWUP_INTENT,
@@ -100,7 +103,9 @@ import {
   ALEXA_OPEN_ASK_INTENT,
   ALEXA_PEOPLE_HOUSEHOLD_INTENT,
   ALEXA_PLANNING_ORIENTATION_INTENT,
+  ALEXA_REMINDER_CREATE_INTENT,
   ALEXA_REMIND_BEFORE_NEXT_MEETING_INTENT,
+  ALEXA_REPEAT_INTENT,
   ALEXA_SAVE_FOR_LATER_INTENT,
   ALEXA_SAVE_REMIND_HANDOFF_INTENT,
   ALEXA_TOMORROW_CALENDAR_INTENT,
@@ -1165,6 +1170,50 @@ function buildAlexaStructuredDateClarification(input: {
   return undefined;
 }
 
+function buildAlexaStructuredDateTimePhrase(input: {
+  date?: string;
+  time?: string;
+}): string {
+  const parts: string[] = [];
+  if (input.date) {
+    parts.push(input.date);
+  }
+  if (input.time) {
+    parts.push(
+      isAlexaDaypartLabel(input.time) ? input.time : `at ${input.time}`,
+    );
+  }
+  return parts.join(' ').trim();
+}
+
+function formatAlexaCalendarReferencePhrase(value: string | undefined): string {
+  const trimmed = normalizeVoicePrompt(value || '').trim();
+  if (!trimmed) return '';
+  if (/\bcalendar\b/i.test(trimmed)) {
+    return ` on ${trimmed}`;
+  }
+  if (/^(main|primary|personal|work)$/i.test(trimmed)) {
+    return ` on my ${trimmed} calendar`;
+  }
+  return ` on ${trimmed}`;
+}
+
+function buildAlexaStructuredReminderPhrase(input: {
+  body: string;
+  date?: string;
+  time?: string;
+}): string {
+  const body = normalizeVoicePrompt(input.body).trim();
+  const when = buildAlexaStructuredDateTimePhrase({
+    date: input.date,
+    time: input.time,
+  });
+  if (!when) {
+    return body;
+  }
+  return normalizeVoicePrompt(`${when} to ${body}`).trim();
+}
+
 function getIntentSlotValues(
   requestEnvelope: RequestEnvelope,
 ): AlexaIntentSlotValuesResult {
@@ -1173,44 +1222,182 @@ function getIntentSlotValues(
   if (request.type !== 'IntentRequest') {
     return { slotValues };
   }
-  if (request.intent.name !== ALEXA_SAVE_REMIND_HANDOFF_INTENT) {
-    return { slotValues };
-  }
 
   const referenceDate = getRequestTimestampDate(requestEnvelope);
   let clarificationSpeech: string | undefined;
 
-  if (
-    !slotValues.calendarMoveText &&
-    (slotValues.calendarMoveSourceTime ||
-      slotValues.calendarMoveTargetDate ||
-      slotValues.calendarMoveTargetTime)
-  ) {
-    const sourceTime = slotValues.calendarMoveSourceTime
-      ? formatAlexaStructuredClockTime(slotValues.calendarMoveSourceTime)
-      : undefined;
-    const targetDate = slotValues.calendarMoveTargetDate
+  if (request.intent.name === ALEXA_CALENDAR_CREATE_INTENT) {
+    if (!slotValues.eventTitle) {
+      return {
+        slotValues,
+        clarificationSpeech: 'What should I call the event?',
+      };
+    }
+    const targetDate = slotValues.targetDate
       ? formatAlexaStructuredDate(
-          slotValues.calendarMoveTargetDate,
+          slotValues.targetDate,
           referenceDate,
           'calendar',
         )
       : undefined;
-    const targetTime = slotValues.calendarMoveTargetTime
-      ? formatAlexaStructuredClockTime(slotValues.calendarMoveTargetTime)
+    const targetTime = slotValues.targetTime
+      ? formatAlexaStructuredClockTime(slotValues.targetTime)
       : undefined;
     clarificationSpeech =
       clarificationSpeech ||
       buildAlexaStructuredDateClarification({
-        needsDate: Boolean(slotValues.calendarMoveTargetDate && !targetDate),
+        needsDate: Boolean(slotValues.targetDate && !targetDate),
+        needsTime: Boolean(slotValues.targetTime && !targetTime),
+      });
+    if (clarificationSpeech) {
+      return { slotValues, clarificationSpeech };
+    }
+    if (!targetDate) {
+      return {
+        slotValues,
+        clarificationSpeech: 'What day should I put it on?',
+      };
+    }
+    const when = buildAlexaStructuredDateTimePhrase({
+      date: targetDate,
+      time: targetTime,
+    });
+    slotValues.calendarCreateText = normalizeVoicePrompt(
+      `${slotValues.eventTitle} ${when}${formatAlexaCalendarReferencePhrase(slotValues.calendarReference)}`,
+    ).trim();
+    return { slotValues };
+  }
+
+  if (request.intent.name === ALEXA_CALENDAR_CANCEL_INTENT) {
+    if (!slotValues.eventReference) {
+      return {
+        slotValues,
+        clarificationSpeech: 'Which event do you want to cancel?',
+      };
+    }
+    const targetDate = slotValues.targetDate
+      ? formatAlexaStructuredDate(
+          slotValues.targetDate,
+          referenceDate,
+          'calendar',
+        )
+      : undefined;
+    clarificationSpeech =
+      clarificationSpeech ||
+      buildAlexaStructuredDateClarification({
+        needsDate: Boolean(slotValues.targetDate && !targetDate),
+      });
+    if (clarificationSpeech) {
+      return { slotValues, clarificationSpeech };
+    }
+    slotValues.calendarCancelText = normalizeVoicePrompt(
+      `${slotValues.eventReference}${targetDate ? ` ${targetDate}` : ''}${formatAlexaCalendarReferencePhrase(slotValues.calendarReference)}`,
+    ).trim();
+    return { slotValues };
+  }
+
+  if (request.intent.name === ALEXA_REMINDER_CREATE_INTENT) {
+    if (!slotValues.reminderBody) {
+      return {
+        slotValues,
+        clarificationSpeech: 'What should I remind you about?',
+      };
+    }
+    const reminderDate = slotValues.reminderDate
+      ? formatAlexaStructuredDate(
+          slotValues.reminderDate,
+          referenceDate,
+          'reminder',
+        )
+      : undefined;
+    const reminderTime = slotValues.reminderTime
+      ? formatAlexaStructuredClockTime(slotValues.reminderTime)
+      : undefined;
+    clarificationSpeech =
+      clarificationSpeech ||
+      buildAlexaStructuredDateClarification({
+        needsDate: Boolean(slotValues.reminderDate && !reminderDate),
+        needsTime: Boolean(slotValues.reminderTime && !reminderTime),
+      });
+    if (clarificationSpeech) {
+      return { slotValues, clarificationSpeech };
+    }
+    slotValues.reminderText = buildAlexaStructuredReminderPhrase({
+      body: slotValues.reminderBody,
+      date: reminderDate,
+      time: reminderTime,
+    });
+    return { slotValues };
+  }
+
+  if (
+    [ALEXA_SAVE_REMIND_HANDOFF_INTENT, ALEXA_CALENDAR_MOVE_INTENT].includes(
+      request.intent.name,
+    ) &&
+    !slotValues.calendarMoveText &&
+    (slotValues.calendarMoveSourceTime ||
+      slotValues.sourceTime ||
+      slotValues.calendarMoveTargetDate ||
+      slotValues.targetDate ||
+      slotValues.calendarMoveTargetTime ||
+      slotValues.targetTime)
+  ) {
+    const sourceTime = slotValues.calendarMoveSourceTime || slotValues.sourceTime
+      ? formatAlexaStructuredClockTime(
+          slotValues.calendarMoveSourceTime || slotValues.sourceTime,
+        )
+      : undefined;
+    const targetDate = slotValues.calendarMoveTargetDate || slotValues.targetDate
+      ? formatAlexaStructuredDate(
+          slotValues.calendarMoveTargetDate || slotValues.targetDate,
+          referenceDate,
+          'calendar',
+        )
+      : undefined;
+    const targetTime = slotValues.calendarMoveTargetTime || slotValues.targetTime
+      ? formatAlexaStructuredClockTime(
+          slotValues.calendarMoveTargetTime || slotValues.targetTime,
+        )
+      : undefined;
+    clarificationSpeech =
+      clarificationSpeech ||
+      buildAlexaStructuredDateClarification({
+        needsDate: Boolean(
+          (slotValues.calendarMoveTargetDate || slotValues.targetDate) &&
+            !targetDate,
+        ),
         needsTime: Boolean(
-          (slotValues.calendarMoveSourceTime && !sourceTime) ||
-            (slotValues.calendarMoveTargetTime && !targetTime),
+          ((slotValues.calendarMoveSourceTime || slotValues.sourceTime) &&
+            !sourceTime) ||
+            ((slotValues.calendarMoveTargetTime || slotValues.targetTime) &&
+              !targetTime),
         ),
       });
     if (!clarificationSpeech) {
       let synthesized = '';
-      if (sourceTime && targetDate) {
+      const eventReference =
+        slotValues.eventReference ||
+        (sourceTime ? `my ${sourceTime}` : undefined);
+      const destination = buildAlexaStructuredDateTimePhrase({
+        date: targetDate,
+        time: targetTime,
+      });
+      if (request.intent.name === ALEXA_CALENDAR_MOVE_INTENT) {
+        if (!eventReference) {
+          return {
+            slotValues,
+            clarificationSpeech: 'Which event do you want to move?',
+          };
+        }
+        if (!destination) {
+          return {
+            slotValues,
+            clarificationSpeech: 'What time or day should I move it to?',
+          };
+        }
+        synthesized =
+          `${eventReference} to ${destination}${formatAlexaCalendarReferencePhrase(slotValues.calendarReference)}`.trim();
+      } else if (sourceTime && targetDate) {
         synthesized = `my ${sourceTime} to ${targetDate}`;
         if (targetTime) {
           synthesized = isAlexaDaypartLabel(targetTime)
@@ -1279,13 +1466,13 @@ function buildAlexaLocalVoiceResponse(
   if (kind === 'whats_up') {
     return {
       speech:
-        "I'm here. We can check your schedule, handle one reminder, figure out what matters today, or help with a quick reply.",
+        "I'm here. We can check your schedule, set one reminder, or help with a quick reply.",
       reprompt: DEFAULT_ALEXA_REPROMPT,
     };
   }
   return {
     speech:
-      'Yes. I can help with your schedule, reminders, planning, open follow-through like bills, and quick reply help. If you want more detail after that, I can send the fuller version to Telegram.',
+      'Yes. I can help with your schedule, one reminder, and quick follow-through. If you want more detail after that, I can send it to Telegram.',
     reprompt: DEFAULT_ALEXA_REPROMPT,
   };
 }
@@ -1932,6 +2119,10 @@ function shouldRunAlexaAssistantTaskTurn(intentName: string): boolean {
     ALEXA_PEOPLE_HOUSEHOLD_INTENT,
     ALEXA_PLANNING_ORIENTATION_INTENT,
     ALEXA_SAVE_REMIND_HANDOFF_INTENT,
+    ALEXA_CALENDAR_CREATE_INTENT,
+    ALEXA_CALENDAR_MOVE_INTENT,
+    ALEXA_CALENDAR_CANCEL_INTENT,
+    ALEXA_REMINDER_CREATE_INTENT,
     ALEXA_OPEN_ASK_INTENT,
     ALEXA_CONVERSATION_CONTROL_INTENT,
     ALEXA_CONVERSATIONAL_FOLLOWUP_INTENT,
@@ -2840,6 +3031,55 @@ export function createAlexaSkill(
       };
     }
     return { ok: true as const, linked };
+  };
+
+  const buildAlexaRepeatSpeech = (
+    linked: Extract<ReturnType<typeof resolveAlexaLinkedAccount>, { ok: true }>,
+  ): string => {
+    const pending = loadAlexaPendingSession(
+      linked.principalKey,
+      linked.account.accessTokenHash,
+    );
+    if (pending) {
+      const payload = parseAlexaSessionPayload(pending);
+      switch (pending.pendingKind) {
+        case 'capture_reminder_lead_time':
+          return buildReminderLeadTimeQuestion(assistantName);
+        case 'capture_save_for_later_content':
+          return buildSaveForLaterQuestion(assistantName);
+        case 'capture_follow_up_reference':
+          return buildDraftFollowUpQuestion();
+        case 'confirm_reminder_before_next_meeting':
+          return buildReminderConfirmationSpeech(
+            assistantName,
+            payload.leadTimeText || '30 minutes',
+          );
+        case 'confirm_save_for_later':
+          return buildSaveForLaterConfirmationSpeech(
+            assistantName,
+            payload.captureText || 'that',
+          );
+        case 'confirm_companion_completion':
+          return 'I can send that to Telegram if you want. Should I do it?';
+        case 'confirm_profile_fact':
+          return 'Should I remember that?';
+      }
+    }
+
+    const conversationState = loadAlexaConversationState(
+      linked.principalKey,
+      linked.account.accessTokenHash,
+    );
+    const priorCompanionContext = parseDailyCompanionContext(conversationState);
+    return (
+      priorCompanionContext?.shortText?.trim() ||
+      priorCompanionContext?.extendedText?.trim() ||
+      conversationState?.subjectData.pendingActionText?.trim() ||
+      conversationState?.subjectData.activeVoiceActionSummary?.trim() ||
+      conversationState?.subjectData.lastAnswerSummary?.trim() ||
+      conversationState?.summaryText?.trim() ||
+      helpSpeech
+    );
   };
 
   const resolveOptionalLinkedContext = (principal: AlexaPrincipal) => {
@@ -5298,6 +5538,9 @@ export function createAlexaSkill(
         slotValues.calendarMoveText ||
         slotValues.calendarCancelText ||
         slotValues.reminderText ||
+        slotValues.eventTitle ||
+        slotValues.eventReference ||
+        slotValues.reminderBody ||
         slotValues.query ||
         slotValues.controlText ||
         slotValues.captureText ||
@@ -6974,6 +7217,49 @@ export function createAlexaSkill(
     },
   };
 
+  const RepeatIntentHandler = {
+    canHandle(handlerInput: HandlerInput) {
+      return (
+        getRequestType(handlerInput.requestEnvelope) === 'IntentRequest' &&
+        getIntentName(handlerInput.requestEnvelope) === ALEXA_REPEAT_INTENT
+      );
+    },
+    handle(handlerInput: HandlerInput) {
+      const authorization = authorizeAlexaRequest(
+        handlerInput.requestEnvelope,
+        config,
+        assistantName,
+      );
+      if (!authorization.ok) {
+        recordHandledRequest(handlerInput.requestEnvelope, {
+          responseSource: 'barrier',
+        });
+        return buildBarrierResponse(handlerInput, authorization);
+      }
+
+      const linkedResolution = resolveLinkedContext(
+        handlerInput,
+        authorization.principal,
+      );
+      if (!linkedResolution.ok) {
+        recordHandledRequest(handlerInput.requestEnvelope, {
+          responseSource: 'barrier',
+        });
+        return linkedResolution.response;
+      }
+
+      recordHandledRequest(handlerInput.requestEnvelope, {
+        responseSource: 'local_companion',
+        linked: true,
+        groupFolder: linkedResolution.linked.account.groupFolder,
+      });
+      return handlerInput.responseBuilder
+        .speak(buildAlexaRepeatSpeech(linkedResolution.linked))
+        .reprompt(DEFAULT_ALEXA_REPROMPT)
+        .getResponse();
+    },
+  };
+
   const ExitHandler = {
     canHandle(handlerInput: HandlerInput) {
       return (
@@ -7073,6 +7359,7 @@ export function createAlexaSkill(
       YesIntentHandler,
       NoIntentHandler,
       HelpHandler,
+      RepeatIntentHandler,
       ExitHandler,
       FallbackHandler,
       UnknownIntentHandler,

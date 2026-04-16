@@ -907,6 +907,51 @@ describe('createAlexaSkill', () => {
     expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
   });
 
+  it('creates a calendar event directly from structured Alexa dialog slots', async () => {
+    mockedListGoogleCalendars.mockResolvedValue([
+      {
+        id: 'primary',
+        summary: 'Personal',
+        primary: true,
+        accessRole: 'owner',
+        writable: true,
+        selected: true,
+      },
+    ]);
+    mockedCreateGoogleCalendarEvent.mockResolvedValue({
+      id: 'evt-structured-1',
+      title: 'Lunch with Sam',
+      startIso: '2026-04-04T19:00:00.000Z',
+      endIso: '2026-04-04T20:00:00.000Z',
+      allDay: false,
+      calendarId: 'primary',
+      calendarName: 'Personal',
+      htmlLink: null,
+    });
+
+    const skill = createAlexaSkill(buildConfig());
+    const response = await skill.invoke(
+      buildIntentEnvelope('CalendarCreateIntent', {
+        eventTitle: 'lunch with Sam',
+        targetDate: '2026-04-04',
+        targetTime: 'AF',
+        calendarReference: 'main calendar',
+      }),
+    );
+
+    expect(mockedCreateGoogleCalendarEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        calendarId: 'primary',
+        title: 'lunch with Sam',
+        start: expect.any(Date),
+        end: expect.any(Date),
+      }),
+      expect.anything(),
+    );
+    expect(extractSpeechText(response)).toContain('added');
+    expect(extractSpeechText(response)).toContain('Lunch with Sam');
+  });
+
   it('uses structured move slots to keep the active calendar event in frame', async () => {
     mockedListGoogleCalendars.mockResolvedValue([
       {
@@ -993,6 +1038,92 @@ describe('createAlexaSkill', () => {
     expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
   });
 
+  it('uses focused move intent slots to keep the active calendar event in frame', async () => {
+    mockedListGoogleCalendars.mockResolvedValue([
+      {
+        id: 'primary',
+        summary: 'Personal',
+        primary: true,
+        accessRole: 'owner',
+        writable: true,
+        selected: true,
+      },
+    ]);
+    mockedUpdateGoogleCalendarEvent.mockResolvedValue({
+      id: 'evt-1',
+      title: 'Dinner with Candace',
+      startIso: '2026-04-05T00:00:00.000Z',
+      endIso: '2026-04-05T01:00:00.000Z',
+      allDay: false,
+      calendarId: 'primary',
+      calendarName: 'Personal',
+      htmlLink: null,
+    });
+    const linked = seedLinkedAccount('main');
+    saveAlexaConversationState(
+      getAlexaPrincipalKey({
+        userId: 'amzn1.ask.account.test-user',
+        personId: 'amzn1.ask.person.test-person',
+      }),
+      linked!.accessTokenHash,
+      'main',
+      {
+        flowKey: 'assistant_calendar_read',
+        subjectKind: 'event',
+        summaryText: 'Dinner with Candace is tomorrow at 6:30 PM.',
+        supportedFollowups: ['anything_else', 'shorter', 'say_more'],
+        subjectData: {
+          activeCalendarEventContextJson: JSON.stringify({
+            version: 1,
+            createdAt: new Date().toISOString(),
+            event: {
+              id: 'evt-1',
+              title: 'Dinner with Candace',
+              startIso: '2026-04-04T23:30:00.000Z',
+              endIso: '2026-04-05T00:30:00.000Z',
+              allDay: false,
+              calendarId: 'primary',
+              calendarName: 'Personal',
+              htmlLink: null,
+            },
+          }),
+          activeTaskKind: 'calendar_read',
+          activeTaskSummary: 'Dinner with Candace tomorrow at 6:30 PM',
+          activeEntityLabel: 'Dinner with Candace',
+          activeDateTimeContext: 'tomorrow at 6:30 PM',
+        },
+        styleHints: {
+          channelMode: 'alexa_companion',
+          guidanceGoal: 'tomorrow_brief',
+          initiativeLevel: 'measured',
+          prioritizationLens: 'calendar',
+          hasActionItem: true,
+          responseSource: 'local_companion',
+        },
+      },
+    );
+
+    const skill = createAlexaSkill(buildConfig());
+    const response = await skill.invoke(
+      buildIntentEnvelope('CalendarMoveIntent', {
+        eventReference: 'Dinner with Candace',
+        targetTime: '19:00',
+      }),
+    );
+
+    expect(extractSpeechText(response)).toContain('Dinner with Candace');
+    expect(extractSpeechText(response)).toContain('7:00 PM');
+    expect(mockedUpdateGoogleCalendarEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        calendarId: 'primary',
+        eventId: 'evt-1',
+        start: expect.any(Date),
+        end: expect.any(Date),
+      }),
+      expect.anything(),
+    );
+  });
+
   it('asks for confirmation before cancelling a calendar event from voice', async () => {
     mockedListGoogleCalendars.mockResolvedValue([
       {
@@ -1032,6 +1163,44 @@ describe('createAlexaSkill', () => {
     expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
   });
 
+  it('asks for confirmation before cancelling a calendar event from focused dialog slots', async () => {
+    mockedListGoogleCalendars.mockResolvedValue([
+      {
+        id: 'primary',
+        summary: 'Personal',
+        primary: true,
+        accessRole: 'owner',
+        writable: true,
+        selected: true,
+      },
+    ]);
+    mockedListGoogleCalendarEvents.mockResolvedValue({
+      events: [
+        {
+          id: 'evt-1',
+          title: 'Dinner with Candace',
+          startIso: '2026-04-04T23:30:00.000Z',
+          endIso: '2026-04-05T00:30:00.000Z',
+          allDay: false,
+          calendarId: 'primary',
+          calendarName: 'Personal',
+          htmlLink: null,
+        },
+      ],
+    } as Awaited<ReturnType<typeof listGoogleCalendarEvents>>);
+
+    const skill = createAlexaSkill(buildConfig());
+    const response = await skill.invoke(
+      buildIntentEnvelope('CalendarCancelIntent', {
+        eventReference: 'dinner with Candace',
+        targetDate: '2026-04-04',
+      }),
+    );
+
+    expect(extractSpeechText(response)).toContain('Do you want me to');
+    expect(extractSpeechText(response)).toContain('Dinner with Candace');
+  });
+
   it('creates a reminder directly from a natural assistant-style request', async () => {
     const skill = createAlexaSkill(buildConfig(), {
       resolveTelegramMainChat: () => ({ chatJid: 'tg:main' }),
@@ -1050,6 +1219,26 @@ describe('createAlexaSkill', () => {
     expect(extractSpeechText(response)).toContain("I'll remind you");
     expect(extractSpeechText(response)).toContain('text Candace');
     expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
+  });
+
+  it('creates a reminder directly from focused dialog slots', async () => {
+    const skill = createAlexaSkill(buildConfig(), {
+      resolveTelegramMainChat: () => ({ chatJid: 'tg:main' }),
+    });
+    const startingTaskCount = getAllTasks().length;
+
+    const response = await skill.invoke(
+      buildIntentEnvelope('ReminderCreateIntent', {
+        reminderBody: 'text Candace',
+        reminderTime: '16:00',
+      }),
+    );
+
+    const tasks = getAllTasks();
+    expect(tasks.length).toBe(startingTaskCount + 1);
+    expect(tasks.at(-1)?.prompt).toContain('text Candace');
+    expect(extractSpeechText(response)).toContain("I'll remind you");
+    expect(extractSpeechText(response)).toContain('text Candace');
   });
 
   it('rejects literal digits in Alexa interaction-model sample utterances', () => {
@@ -1080,7 +1269,7 @@ describe('createAlexaSkill', () => {
     expect(invalidSamples).toEqual([]);
   });
 
-  it('rejects AMAZON.SearchQuery samples that mix a phrase slot with any other slot', () => {
+  it('limits SearchQuery-plus-structured-slot mixing to the focused write intents', () => {
     const interactionModel = JSON.parse(
       fs.readFileSync(
         'docs/alexa/interaction-model.en-US.json',
@@ -1117,11 +1306,84 @@ describe('createAlexaSkill', () => {
             const mixesSearchQuery = slotNames.some(
               (slotName) => slotTypes[slotName] === 'AMAZON.SearchQuery',
             );
-            return mixesSearchQuery ? [`${intent.name}: ${sample}`] : [];
+            if (!mixesSearchQuery) {
+              return [];
+            }
+            return [
+              'CalendarCreateIntent',
+              'CalendarMoveIntent',
+              'CalendarCancelIntent',
+              'ReminderCreateIntent',
+            ].includes(intent.name || '')
+              ? []
+              : [`${intent.name}: ${sample}`];
           });
         }) || [];
 
     expect(invalidSamples).toEqual([]);
+  });
+
+  it('tracks the focused write intents and repeat intent in the Alexa interaction model', () => {
+    const interactionModel = JSON.parse(
+      fs.readFileSync(
+        'docs/alexa/interaction-model.en-US.json',
+        'utf8',
+      ),
+    ) as {
+      interactionModel?: {
+        languageModel?: {
+          intents?: Array<{
+            name?: string;
+          }>;
+        };
+        dialog?: {
+          intents?: Array<{
+            name?: string;
+          }>;
+        };
+      };
+    };
+
+    const intentNames = new Set(
+      interactionModel.interactionModel?.languageModel?.intents?.map(
+        (intent) => intent.name || '',
+      ) || [],
+    );
+    const dialogIntentNames = new Set(
+      interactionModel.interactionModel?.dialog?.intents?.map(
+        (intent) => intent.name || '',
+      ) || [],
+    );
+
+    expect(Array.from(intentNames)).toEqual(
+      expect.arrayContaining([
+        'MyDayIntent',
+        'WhatMattersMostTodayIntent',
+        'WhatAmIForgettingIntent',
+        'WhatNextIntent',
+        'BeforeNextMeetingIntent',
+        'TomorrowCalendarIntent',
+        'EveningResetIntent',
+        'AnythingImportantIntent',
+        'SaveForLaterIntent',
+        'DraftFollowUpIntent',
+        'AnythingElseIntent',
+        'ConversationalFollowupIntent',
+        'CalendarCreateIntent',
+        'CalendarMoveIntent',
+        'CalendarCancelIntent',
+        'ReminderCreateIntent',
+        'AMAZON.RepeatIntent',
+      ]),
+    );
+    expect(Array.from(dialogIntentNames)).toEqual(
+      expect.arrayContaining([
+        'CalendarCreateIntent',
+        'CalendarMoveIntent',
+        'CalendarCancelIntent',
+        'ReminderCreateIntent',
+      ]),
+    );
   });
 
   it('keeps what should I remember tonight on the guidance path instead of treating it like a calendar lookup', async () => {
@@ -1210,6 +1472,23 @@ describe('createAlexaSkill', () => {
     );
     expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
     expect(extractSpeechText(response)).toContain('Review the agenda first');
+  });
+
+  it('repeats the last Alexa companion answer cleanly', async () => {
+    mockedBuildDailyCompanionResponse.mockResolvedValue(
+      buildCompanionResponse('Today is light. The main thing is your afternoon review.'),
+    );
+
+    const skill = createAlexaSkill(buildConfig());
+    await skill.invoke(buildIntentEnvelope('WhatMattersMostTodayIntent'));
+    const response = await skill.invoke(
+      buildIntentEnvelope('AMAZON.RepeatIntent'),
+    );
+
+    expect(extractSpeechText(response)).toContain(
+      'Today is light. The main thing is your afternoon review.',
+    );
+    expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
   });
 
   it('maps action-guidance follow-ups onto the active Alexa context', async () => {

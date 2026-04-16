@@ -22,6 +22,18 @@ describe('alexa dialogue', () => {
     expect(resolveAlexaVoiceIntentFamily('SaveRemindHandoffIntent')).toBe(
       'save_remind_handoff',
     );
+    expect(resolveAlexaVoiceIntentFamily('CalendarCreateIntent')).toBe(
+      'save_remind_handoff',
+    );
+    expect(resolveAlexaVoiceIntentFamily('CalendarMoveIntent')).toBe(
+      'save_remind_handoff',
+    );
+    expect(resolveAlexaVoiceIntentFamily('CalendarCancelIntent')).toBe(
+      'save_remind_handoff',
+    );
+    expect(resolveAlexaVoiceIntentFamily('ReminderCreateIntent')).toBe(
+      'save_remind_handoff',
+    );
     expect(resolveAlexaVoiceIntentFamily('OpenAskIntent')).toBe('open_ask');
     expect(resolveAlexaVoiceIntentFamily('ConversationControlIntent')).toBe(
       'conversation_control',
@@ -163,6 +175,48 @@ describe('alexa dialogue', () => {
     ).toMatchObject({
       preferredText: 'save that',
       candidateTexts: ['save that', 'send me the full version', 'draft that'],
+    });
+
+    expect(
+      extractAlexaVoiceIntentCapture('CalendarCreateIntent', {
+        eventTitle: 'lunch with Sam',
+        targetDate: 'tomorrow',
+        targetTime: 'afternoon',
+        calendarReference: 'main calendar',
+      }),
+    ).toMatchObject({
+      preferredText: 'schedule lunch with Sam tomorrow afternoon on main calendar',
+      candidateTexts: expect.arrayContaining([
+        'schedule lunch with Sam tomorrow afternoon on main calendar',
+        'add lunch with Sam tomorrow afternoon on main calendar',
+      ]),
+    });
+
+    expect(
+      extractAlexaVoiceIntentCapture('CalendarMoveIntent', {
+        eventReference: 'lunch with Sam',
+        targetTime: '3 PM',
+      }),
+    ).toMatchObject({
+      preferredText: 'move lunch with Sam to 3 PM',
+    });
+
+    expect(
+      extractAlexaVoiceIntentCapture('CalendarCancelIntent', {
+        eventReference: 'lunch with Sam',
+        targetDate: 'tomorrow',
+      }),
+    ).toMatchObject({
+      preferredText: 'cancel lunch with Sam tomorrow',
+    });
+
+    expect(
+      extractAlexaVoiceIntentCapture('ReminderCreateIntent', {
+        reminderBody: 'take my pills',
+        reminderTime: '9 PM',
+      }),
+    ).toMatchObject({
+      preferredText: 'remind me to take my pills at 9 PM',
     });
 
     expect(

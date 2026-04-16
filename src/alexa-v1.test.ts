@@ -3,6 +3,9 @@ import { describe, expect, it } from 'vitest';
 import {
   ALEXA_DEFAULT_REPROMPT,
   ALEXA_ANYTHING_IMPORTANT_INTENT,
+  ALEXA_CALENDAR_CANCEL_INTENT,
+  ALEXA_CALENDAR_CREATE_INTENT,
+  ALEXA_CALENDAR_MOVE_INTENT,
   ALEXA_COMPANION_GUIDANCE_INTENT,
   ALEXA_CONVERSATION_CONTROL_INTENT,
   ALEXA_DRAFT_FOLLOW_UP_INTENT,
@@ -12,6 +15,7 @@ import {
   ALEXA_OPEN_ASK_INTENT,
   ALEXA_PEOPLE_HOUSEHOLD_INTENT,
   ALEXA_PLANNING_ORIENTATION_INTENT,
+  ALEXA_REMINDER_CREATE_INTENT,
   ALEXA_REMIND_BEFORE_NEXT_MEETING_INTENT,
   ALEXA_SAVE_FOR_LATER_INTENT,
   ALEXA_SAVE_REMIND_HANDOFF_INTENT,
@@ -35,6 +39,10 @@ describe('alexa v1 prompt mapping', () => {
     expect(isAlexaPersonalIntent(ALEXA_MY_DAY_INTENT)).toBe(true);
     expect(isAlexaPersonalIntent(ALEXA_COMPANION_GUIDANCE_INTENT)).toBe(true);
     expect(isAlexaPersonalIntent(ALEXA_OPEN_ASK_INTENT)).toBe(true);
+    expect(isAlexaPersonalIntent(ALEXA_CALENDAR_CREATE_INTENT)).toBe(true);
+    expect(isAlexaPersonalIntent(ALEXA_CALENDAR_MOVE_INTENT)).toBe(true);
+    expect(isAlexaPersonalIntent(ALEXA_CALENDAR_CANCEL_INTENT)).toBe(true);
+    expect(isAlexaPersonalIntent(ALEXA_REMINDER_CREATE_INTENT)).toBe(true);
     expect(isAlexaPersonalIntent('AskAndreaIntent')).toBe(false);
   });
 
@@ -69,6 +77,26 @@ describe('alexa v1 prompt mapping', () => {
         captureText: 'a little more direct',
       }),
     ).toContain('conversation-control request naturally');
+    expect(
+      buildAlexaPersonalPrompt(ALEXA_CALENDAR_CREATE_INTENT, {
+        captureText: 'lunch with Sam tomorrow afternoon',
+      }),
+    ).toContain('Add this calendar event cleanly');
+    expect(
+      buildAlexaPersonalPrompt(ALEXA_CALENDAR_MOVE_INTENT, {
+        captureText: 'move lunch to 3 PM',
+      }),
+    ).toContain('Move or reschedule this calendar event');
+    expect(
+      buildAlexaPersonalPrompt(ALEXA_CALENDAR_CANCEL_INTENT, {
+        captureText: 'cancel lunch tomorrow',
+      }),
+    ).toContain('Cancel this calendar event safely');
+    expect(
+      buildAlexaPersonalPrompt(ALEXA_REMINDER_CREATE_INTENT, {
+        captureText: 'take my pills at 9',
+      }),
+    ).toContain('Save this reminder cleanly');
     expect(buildAlexaPersonalPrompt(ALEXA_MY_DAY_INTENT)).toContain(
       'practical morning brief',
     );
@@ -117,12 +145,7 @@ describe('alexa v1 speech helpers', () => {
     expect(buildAlexaHelpSpeech('Andrea')).toContain(
       'remind me to take my pills at 9',
     );
-    expect(buildAlexaHelpSpeech('Andrea')).toContain(
-      'add milk to my shopping list',
-    );
-    expect(buildAlexaHelpSpeech('Andrea')).toContain(
-      'what bills do I need to pay this week',
-    );
+    expect(buildAlexaHelpSpeech('Andrea')).toContain('what should I say back');
     expect(buildAlexaHelpSpeech('Andrea')).toContain('Telegram');
     expect(buildAlexaHelpSpeech('Andrea')).not.toContain('Andrea Pulse');
     expect(buildAlexaHelpSpeech('Andrea')).not.toContain('Candace');
@@ -133,12 +156,7 @@ describe('alexa v1 speech helpers', () => {
     expect(buildAlexaWelcomeSpeech('Andrea')).toContain(
       'remind me to take my pills at 9',
     );
-    expect(buildAlexaWelcomeSpeech('Andrea')).toContain(
-      'add milk to my shopping list',
-    );
-    expect(buildAlexaWelcomeSpeech('Andrea')).toContain(
-      'what bills do I need to pay this week',
-    );
+    expect(buildAlexaWelcomeSpeech('Andrea')).toContain('what should I say back');
     expect(buildAlexaWelcomeSpeech('Andrea')).not.toContain('Candace');
     expect(buildAlexaFallbackSpeech('Andrea')).toContain(
       "didn't catch that",
@@ -146,18 +164,15 @@ describe('alexa v1 speech helpers', () => {
     expect(buildAlexaFallbackSpeech('Andrea')).toContain(
       'your schedule',
     );
-    expect(buildAlexaFallbackSpeech('Andrea')).toContain('your grocery list');
-    expect(buildAlexaFallbackSpeech('Andrea')).toContain('bills are still open');
+    expect(buildAlexaFallbackSpeech('Andrea')).toContain('one reminder');
+    expect(buildAlexaFallbackSpeech('Andrea')).toContain(
+      'what should I say back',
+    );
     expect(ALEXA_DEFAULT_REPROMPT).toContain(
       'remind me to take my pills at 9',
     );
-    expect(ALEXA_DEFAULT_REPROMPT).toContain(
-      'add milk to my shopping list',
-    );
-    expect(ALEXA_DEFAULT_REPROMPT).toContain(
-      'what bills do I need to pay this week',
-    );
     expect(ALEXA_DEFAULT_REPROMPT).toContain("what's on my calendar tomorrow");
+    expect(ALEXA_DEFAULT_REPROMPT).toContain('what should I say back');
     expect(ALEXA_DEFAULT_REPROMPT).not.toContain('Candace');
   });
 

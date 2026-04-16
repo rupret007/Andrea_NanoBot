@@ -2,6 +2,9 @@ import { classifyAssistantRequest } from './assistant-routing.js';
 import { matchAssistantCapabilityRequest } from './assistant-capability-router.js';
 import {
   ALEXA_ANYTHING_ELSE_INTENT,
+  ALEXA_CALENDAR_CANCEL_INTENT,
+  ALEXA_CALENDAR_CREATE_INTENT,
+  ALEXA_CALENDAR_MOVE_INTENT,
   ALEXA_CANDACE_UPCOMING_INTENT,
   ALEXA_COMPANION_GUIDANCE_INTENT,
   ALEXA_CONVERSATIONAL_FOLLOWUP_INTENT,
@@ -13,6 +16,7 @@ import {
   ALEXA_OPEN_ASK_INTENT,
   ALEXA_PEOPLE_HOUSEHOLD_INTENT,
   ALEXA_PLANNING_ORIENTATION_INTENT,
+  ALEXA_REMINDER_CREATE_INTENT,
   ALEXA_REMIND_BEFORE_NEXT_MEETING_INTENT,
   ALEXA_SAVE_FOR_LATER_INTENT,
   ALEXA_SAVE_REMIND_HANDOFF_INTENT,
@@ -367,6 +371,10 @@ export function resolveAlexaVoiceIntentFamily(
     case ALEXA_PLANNING_ORIENTATION_INTENT:
       return 'planning_orientation';
     case ALEXA_SAVE_REMIND_HANDOFF_INTENT:
+    case ALEXA_CALENDAR_CREATE_INTENT:
+    case ALEXA_CALENDAR_MOVE_INTENT:
+    case ALEXA_CALENDAR_CANCEL_INTENT:
+    case ALEXA_REMINDER_CREATE_INTENT:
       return 'save_remind_handoff';
     case ALEXA_OPEN_ASK_INTENT:
       return 'open_ask';
@@ -407,6 +415,15 @@ export function extractAlexaVoiceIntentCapture(
     calendarMoveText?: string;
     calendarCancelText?: string;
     reminderText?: string;
+    eventTitle?: string;
+    eventReference?: string;
+    targetDate?: string;
+    targetTime?: string;
+    sourceTime?: string;
+    reminderBody?: string;
+    reminderDate?: string;
+    reminderTime?: string;
+    calendarReference?: string;
     query?: string;
     controlText?: string;
     followupText?: string;
@@ -429,6 +446,9 @@ export function extractAlexaVoiceIntentCapture(
         slotValues.calendarMoveText ||
         slotValues.calendarCancelText ||
         slotValues.reminderText ||
+        slotValues.eventTitle ||
+        slotValues.eventReference ||
+        slotValues.reminderBody ||
         slotValues.item ||
         slotValues.query ||
         slotValues.controlText ||
@@ -469,7 +489,170 @@ export function extractAlexaVoiceIntentCapture(
         candidateTexts: candidates,
       };
     }
-    case ALEXA_SAVE_REMIND_HANDOFF_INTENT: {
+    case ALEXA_SAVE_REMIND_HANDOFF_INTENT:
+    case ALEXA_CALENDAR_CREATE_INTENT:
+    case ALEXA_CALENDAR_MOVE_INTENT:
+    case ALEXA_CALENDAR_CANCEL_INTENT:
+    case ALEXA_REMINDER_CREATE_INTENT: {
+      if (intentName === ALEXA_CALENDAR_CREATE_INTENT && slotValues.calendarCreateText) {
+        const value =
+          normalizeText(slotValues.calendarCreateText) || slotValues.calendarCreateText;
+        return {
+          family,
+          slotValue: value,
+          preferredText: `add ${value}`,
+          candidateTexts: dedupe([
+            `add ${value}`,
+            `schedule ${value}`,
+            `put ${value} on my calendar`,
+          ]),
+        };
+      }
+      if (intentName === ALEXA_CALENDAR_MOVE_INTENT && slotValues.calendarMoveText) {
+        const value =
+          normalizeText(slotValues.calendarMoveText) || slotValues.calendarMoveText;
+        return {
+          family,
+          slotValue: value,
+          preferredText: `move ${value}`,
+          candidateTexts: dedupe([`move ${value}`, `reschedule ${value}`]),
+        };
+      }
+      if (intentName === ALEXA_CALENDAR_CANCEL_INTENT && slotValues.calendarCancelText) {
+        const value =
+          normalizeText(slotValues.calendarCancelText) || slotValues.calendarCancelText;
+        return {
+          family,
+          slotValue: value,
+          preferredText: `cancel ${value}`,
+          candidateTexts: dedupe([`cancel ${value}`, `delete ${value}`]),
+        };
+      }
+      if (intentName === ALEXA_CALENDAR_CANCEL_INTENT && slotValues.eventReference) {
+        const value =
+          normalizeText(
+            `${slotValues.eventReference}${slotValues.targetDate ? ` ${slotValues.targetDate}` : ''}${slotValues.calendarReference ? ` ${slotValues.calendarReference}` : ''}`,
+          ) || slotValues.eventReference;
+        return {
+          family,
+          slotValue: value,
+          preferredText: `cancel ${value}`,
+          candidateTexts: dedupe([`cancel ${value}`, `delete ${value}`]),
+        };
+      }
+      if (intentName === ALEXA_REMINDER_CREATE_INTENT && slotValues.reminderText) {
+        const value = normalizeText(slotValues.reminderText) || slotValues.reminderText;
+        return {
+          family,
+          slotValue: value,
+          preferredText: `remind me ${value}`,
+          candidateTexts: dedupe([
+            `remind me ${value}`,
+            `remind me to ${value}`,
+            `remind me about ${value}`,
+          ]),
+        };
+      }
+      if (intentName === ALEXA_REMINDER_CREATE_INTENT && slotValues.reminderBody) {
+        const reminderTail = normalizeText(
+          [
+            slotValues.reminderDate,
+            slotValues.reminderTime &&
+            !/^(?:at|morning|afternoon|evening|tonight)\b/i.test(slotValues.reminderTime)
+              ? `at ${slotValues.reminderTime}`
+              : slotValues.reminderTime,
+          ]
+            .filter(Boolean)
+            .join(' '),
+        );
+        const value =
+          normalizeText(
+            `${slotValues.reminderBody}${reminderTail ? ` ${reminderTail}` : ''}`,
+          ) ||
+          slotValues.reminderBody;
+        return {
+          family,
+          slotValue: value,
+          preferredText: `remind me to ${value}`,
+          candidateTexts: dedupe([
+            `remind me to ${value}`,
+            `remind me about ${value}`,
+          ]),
+        };
+      }
+      if (slotValues.eventTitle && slotValues.targetDate) {
+        const dateOrTime = [slotValues.targetDate, slotValues.targetTime]
+          .filter(Boolean)
+          .join(' ');
+        const calendarReference = slotValues.calendarReference
+          ? ` on ${slotValues.calendarReference}`
+          : '';
+        const value =
+          normalizeText(
+            `${slotValues.eventTitle} ${dateOrTime}${calendarReference}`,
+          ) ||
+          slotValues.eventTitle;
+        return {
+          family,
+          slotValue: value,
+          preferredText: `schedule ${value}`,
+          candidateTexts: dedupe([
+            `schedule ${value}`,
+            `add ${value}`,
+            `put ${value} on my calendar`,
+          ]),
+        };
+      }
+      if (slotValues.eventReference && (slotValues.targetDate || slotValues.targetTime)) {
+        const destinationParts = [slotValues.targetDate, slotValues.targetTime]
+          .filter(Boolean)
+          .join(' ');
+        const calendarReference = slotValues.calendarReference
+          ? ` on ${slotValues.calendarReference}`
+          : '';
+        const value =
+          normalizeText(
+            `${slotValues.eventReference} to ${destinationParts}${calendarReference}`,
+          ) ||
+          slotValues.eventReference;
+        return {
+          family,
+          slotValue: value,
+          preferredText: `move ${value}`,
+          candidateTexts: dedupe([`move ${value}`, `reschedule ${value}`]),
+        };
+      }
+      if (slotValues.eventReference) {
+        const dateOrCalendar = [slotValues.targetDate, slotValues.calendarReference]
+          .filter(Boolean)
+          .join(' ');
+        const value =
+          normalizeText(`${slotValues.eventReference} ${dateOrCalendar}`) ||
+          slotValues.eventReference;
+        return {
+          family,
+          slotValue: value,
+          preferredText: `cancel ${value}`,
+          candidateTexts: dedupe([`cancel ${value}`, `delete ${value}`]),
+        };
+      }
+      if (slotValues.reminderBody) {
+        const reminderTail = [slotValues.reminderDate, slotValues.reminderTime]
+          .filter(Boolean)
+          .join(' ');
+        const value =
+          normalizeText(`${slotValues.reminderBody} ${reminderTail}`) ||
+          slotValues.reminderBody;
+        return {
+          family,
+          slotValue: value,
+          preferredText: `remind me to ${value}`,
+          candidateTexts: dedupe([
+            `remind me to ${value}`,
+            `remind me about ${value}`,
+          ]),
+        };
+      }
       if (slotValues.calendarCreateText) {
         const value = normalizeText(slotValues.calendarCreateText) || slotValues.calendarCreateText;
         return {
