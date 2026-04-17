@@ -42,6 +42,25 @@ function makeJob(jobId = 'job_001') {
 }
 
 describe('AndreaOpenAiBackendClient', () => {
+  it('prefers the platform coordinator when platform-default runtime routing is enabled', async () => {
+    vi.stubEnv('ANDREA_OPENAI_BACKEND_ENABLED', 'true');
+    vi.stubEnv('ANDREA_OPENAI_BACKEND_URL', 'http://127.0.0.1:3210');
+    vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_ENABLED', 'true');
+    vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_URL', 'http://127.0.0.1:4400/');
+    vi.stubEnv('ANDREA_PLATFORM_FALLBACK_TO_DIRECT_RUNTIME', 'false');
+    vi.resetModules();
+
+    const module = await import('./andrea-openai-backend.js');
+    const client = new module.AndreaOpenAiBackendClient({
+      fetchImpl: vi.fn(),
+    });
+
+    expect(client.baseUrl).toBe('http://127.0.0.1:4400');
+
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
   it('returns not_enabled status when the lane is disabled', async () => {
     const client = new AndreaOpenAiBackendClient({
       enabled: false,
@@ -81,6 +100,131 @@ describe('AndreaOpenAiBackendClient', () => {
 
     expect(status.state).toBe('available');
     expect(status.version).toBe('1.2.3');
+  });
+
+  it('uses runtime /status snapshots when they are available', async () => {
+    const fetchImpl = vi.fn(async (input) => {
+      if (String(input).endsWith('/status')) {
+        return new Response(
+          JSON.stringify({
+            backend: ANDREA_OPENAI_BACKEND_ID,
+            transport: 'http',
+            enabled: true,
+            version: '2.0.0',
+            ready: true,
+            localExecutionState: 'available_authenticated',
+            authState: 'authenticated',
+            localExecutionDetail:
+              'Codex local execution is authenticated and the container runtime is ready.',
+            operatorGuidance: null,
+            dispatchSurface: {
+              metaRoute: '/meta',
+              statusRoute: '/status',
+              jobsCollectionRoute: '/jobs',
+              jobItemRoute: '/jobs/:jobId',
+              jobFollowUpRoute: '/jobs/:jobId/followup',
+              jobLogsRoute: '/jobs/:jobId/logs',
+              jobStopRoute: '/jobs/:jobId/stop',
+              followUpsCollectionRoute: '/followups',
+              groupsCollectionRoute: '/groups/:groupFolder',
+            },
+            runtime: {
+              defaultRuntime: 'codex_local',
+              fallbackRuntime: 'openai_cloud',
+              codexLocalEnabled: true,
+              codexLocalModel: 'gpt-5.4-mini',
+              codexLocalReady: true,
+              hostCodexAuthPresent: true,
+              openAiModelFallback: 'gpt-5.4',
+              openAiApiKeyPresent: true,
+              openAiCloudReady: true,
+              openAiBaseUrl: null,
+              activeThreadCount: 1,
+              activeJobCount: 2,
+              containerRuntimeName: 'podman',
+              containerRuntimeStatus: 'running',
+            },
+          }),
+          { status: 200 },
+        );
+      }
+      throw new Error(`unexpected route: ${String(input)}`);
+    });
+    const client = new AndreaOpenAiBackendClient({
+      enabled: true,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    const status = await client.getStatus();
+
+    expect(status.state).toBe('available');
+    expect(status.version).toBe('2.0.0');
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('surfaces platform lifecycle detail from the coordinator status bundle', async () => {
+    const fetchImpl = vi.fn(async (input) => {
+      if (String(input).endsWith('/status')) {
+        return new Response(
+          JSON.stringify({
+            snapshot: {
+              lifecycle_state: 'READY',
+              lifecycle_reason: 'All core platform services are healthy.',
+              component_rollup: {
+                coordinator: 'healthy',
+                runtime: 'healthy',
+              },
+              active_blockers: [],
+              faults: {},
+              recent_jobs: [
+                {
+                  job_id: 'job_123',
+                  state: 'RUNNING',
+                  summary: 'Queued from NanoBot via the coordinator.',
+                  updated_at: '2026-04-17T13:00:00.000Z',
+                },
+              ],
+              proof_rollup: {},
+              metadata: {
+                generated_at: '2026-04-17T13:00:00.000Z',
+              },
+            },
+            backend_status: {
+              state: 'available',
+              backend: ANDREA_OPENAI_BACKEND_ID,
+              version: '2.1.0',
+              transport: 'http',
+              detail: null,
+              meta: {
+                backend: ANDREA_OPENAI_BACKEND_ID,
+                transport: 'http',
+                enabled: true,
+                version: '2.1.0',
+                ready: true,
+                localExecutionState: 'available_authenticated',
+                authState: 'authenticated',
+                localExecutionDetail:
+                  'Codex local execution is authenticated and the container runtime is ready.',
+                operatorGuidance: null,
+              },
+            },
+          }),
+          { status: 200 },
+        );
+      }
+      throw new Error(`unexpected route: ${String(input)}`);
+    });
+    const client = new AndreaOpenAiBackendClient({
+      enabled: true,
+      baseUrl: 'http://127.0.0.1:4400',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    const status = await client.getStatus();
+
+    expect(status.state).toBe('available');
+    expect(status.detail).toContain('Platform lifecycle: READY.');
+    expect(status.detail).toContain('Recent jobs tracked: 1');
   });
 
   it('maps /meta into not_ready status', async () => {

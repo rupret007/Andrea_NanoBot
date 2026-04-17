@@ -40,6 +40,7 @@ $pinnedNodeLauncher = Join-Path $projectRoot 'scripts\run-with-pinned-node.mjs'
 $watchdogLogPath = Join-Path $logsDir 'nanoclaw.watchdog.log'
 $watchdogErrorLogPath = Join-Path $logsDir 'nanoclaw.watchdog.error.log'
 $compatibilityShimPath = Join-Path $projectRoot 'start-nanoclaw.ps1'
+$defaultAndreaPlatformRoot = Join-Path (Join-Path (Split-Path -Parent $projectRoot) 'ANDREA') 'andrea_platform'
 $startupFolderScriptPath = if ($env:APPDATA) {
   Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup\nanoclaw-start.cmd'
 } else {
@@ -153,6 +154,260 @@ function Get-EnvValue {
     return ([string] $DotEnv[$Key]).Trim()
   }
   return ''
+}
+
+function Get-AndreaPlatformConfig {
+  param([hashtable] $DotEnv)
+
+  $platformRoot = Get-EnvValue -DotEnv $DotEnv -Key 'ANDREA_PLATFORM_ROOT'
+  if ([string]::IsNullOrWhiteSpace($platformRoot)) {
+    $platformRoot = $defaultAndreaPlatformRoot
+  }
+
+  $coordinatorEnabledValue = Get-EnvValue -DotEnv $DotEnv -Key 'ANDREA_PLATFORM_COORDINATOR_ENABLED'
+  $enabled = if ([string]::IsNullOrWhiteSpace($coordinatorEnabledValue)) {
+    Test-Path -LiteralPath $platformRoot
+  } else {
+    $coordinatorEnabledValue -eq 'true'
+  }
+
+  $coordinatorUrl = Get-EnvValue -DotEnv $DotEnv -Key 'ANDREA_PLATFORM_COORDINATOR_URL'
+  if ([string]::IsNullOrWhiteSpace($coordinatorUrl)) {
+    $coordinatorUrl = 'http://127.0.0.1:4400'
+  }
+  $shellGatewayUrl = Get-EnvValue -DotEnv $DotEnv -Key 'ANDREA_PLATFORM_SHELL_GATEWAY_URL'
+  if ([string]::IsNullOrWhiteSpace($shellGatewayUrl)) {
+    $shellGatewayUrl = 'http://127.0.0.1:4401'
+  }
+  $runtimeGatewayUrl = Get-EnvValue -DotEnv $DotEnv -Key 'ANDREA_PLATFORM_RUNTIME_GATEWAY_URL'
+  if ([string]::IsNullOrWhiteSpace($runtimeGatewayUrl)) {
+    $runtimeGatewayUrl = 'http://127.0.0.1:4402'
+  }
+
+  return [pscustomobject]@{
+    enabled = [bool] $enabled
+    root = $platformRoot
+    pythonPath = Join-Path $platformRoot '.venv\Scripts\python.exe'
+    operatorScript = Join-Path $platformRoot 'scripts\platform_operator.py'
+    coordinatorUrl = $coordinatorUrl
+    shellGatewayUrl = $shellGatewayUrl
+    runtimeGatewayUrl = $runtimeGatewayUrl
+  }
+}
+
+function Invoke-AndreaPlatformOperator {
+  param(
+    [pscustomobject] $Config,
+    [string] $Command,
+    [switch] $Json
+  )
+
+  if (-not $Config.enabled) {
+    return [pscustomobject]@{
+      status = 'skipped'
+      detail = 'Andrea platform control plane is disabled.'
+      payload = $null
+    }
+  }
+
+  if (-not (Test-Path -LiteralPath ([string] $Config.root))) {
+    return [pscustomobject]@{
+      status = 'failed'
+      detail = ("Andrea platform root is missing: {0}" -f [string] $Config.root)
+      payload = $null
+    }
+  }
+
+  if (-not (Test-Path -LiteralPath ([string] $Config.pythonPath))) {
+    return [pscustomobject]@{
+      status = 'failed'
+      detail = ("Andrea platform python entrypoint is missing: {0}" -f [string] $Config.pythonPath)
+      payload = $null
+    }
+  }
+
+  if (-not (Test-Path -LiteralPath ([string] $Config.operatorScript))) {
+    return [pscustomobject]@{
+      status = 'failed'
+      detail = ("Andrea platform operator script is missing: {0}" -f [string] $Config.operatorScript)
+      payload = $null
+    }
+  }
+
+  try {
+    $args = @([string] $Config.operatorScript, $Command)
+    if ($Json) {
+      $args += '--json'
+    }
+    $output = & ([string] $Config.pythonPath) @args 2>&1
+    if ($LASTEXITCODE -ne 0) {
+      return [pscustomobject]@{
+        status = 'failed'
+        detail = (($output | Out-String).Trim())
+        payload = $null
+      }
+    }
+
+    $payload = $null
+    if ($Json) {
+      try {
+        $payload = (($output | Out-String) | ConvertFrom-Json -ErrorAction Stop)
+      } catch {
+        $payload = $null
+      }
+    }
+
+    return [pscustomobject]@{
+      status = 'ok'
+      detail = (($output | Out-String).Trim())
+      payload = $payload
+    }
+  } catch {
+    return [pscustomobject]@{
+      status = 'failed'
+      detail = $_.Exception.Message
+      payload = $null
+    }
+  }
+}
+
+function Get-AndreaPlatformSnapshot {
+  param([hashtable] $DotEnv)
+
+  $config = Get-AndreaPlatformConfig -DotEnv $DotEnv
+  if (-not $config.enabled) {
+    return [pscustomobject]@{
+      enabled = $false
+      health = 'disabled'
+      detail = 'Andrea platform control plane is disabled.'
+      lifecycle = 'none'
+      reason = ''
+      coordinatorUrl = [string] $config.coordinatorUrl
+      shellGatewayUrl = [string] $config.shellGatewayUrl
+      runtimeGatewayUrl = [string] $config.runtimeGatewayUrl
+      root = [string] $config.root
+    }
+  }
+
+  $result = Invoke-AndreaPlatformOperator -Config $config -Command 'status' -Json
+  if ($result.status -ne 'ok' -or $null -eq $result.payload) {
+    return [pscustomobject]@{
+      enabled = $true
+      health = 'unreachable'
+      detail = [string] $result.detail
+      lifecycle = 'unknown'
+      reason = ''
+      coordinatorUrl = [string] $config.coordinatorUrl
+      shellGatewayUrl = [string] $config.shellGatewayUrl
+      runtimeGatewayUrl = [string] $config.runtimeGatewayUrl
+      root = [string] $config.root
+    }
+  }
+
+  $payload = $result.payload
+  $runningServiceCount = 0
+  if ($payload.services) {
+    foreach ($service in @($payload.services)) {
+      if ([string] $service.process_state -eq 'running') {
+        $runningServiceCount++
+      }
+    }
+  }
+
+  if ($runningServiceCount -eq 0) {
+    return [pscustomobject]@{
+      enabled = $true
+      health = 'stopped'
+      detail = 'Andrea platform services are not running yet.'
+      lifecycle = 'stopped'
+      reason = ''
+      coordinatorUrl = [string] $config.coordinatorUrl
+      shellGatewayUrl = [string] $config.shellGatewayUrl
+      runtimeGatewayUrl = [string] $config.runtimeGatewayUrl
+      root = [string] $config.root
+    }
+  }
+
+  $lifecycle = if ($payload.authoritative_lifecycle) { [string] $payload.authoritative_lifecycle } else { 'unknown' }
+  $reason = if ($payload.authoritative_reason) { [string] $payload.authoritative_reason } else { '' }
+  $health = switch ($lifecycle) {
+    'READY' { 'healthy' }
+    'BOOTING' { 'starting' }
+    'BLOCKED_EXTERNAL' { 'blocked_external' }
+    'DEGRADED' { 'degraded' }
+    'FAULTED' { 'degraded' }
+    default { 'unknown' }
+  }
+
+  return [pscustomobject]@{
+    enabled = $true
+    health = $health
+    detail = if ([string]::IsNullOrWhiteSpace($reason)) { [string] $result.detail } else { $reason }
+    lifecycle = $lifecycle
+      reason = $reason
+      coordinatorUrl = [string] $config.coordinatorUrl
+      shellGatewayUrl = [string] $config.shellGatewayUrl
+      runtimeGatewayUrl = [string] $config.runtimeGatewayUrl
+      root = [string] $config.root
+      runningServiceCount = $runningServiceCount
+    }
+}
+
+function Start-AndreaPlatform {
+  param([hashtable] $DotEnv)
+
+  $config = Get-AndreaPlatformConfig -DotEnv $DotEnv
+  if (-not $config.enabled) {
+    return [pscustomobject]@{
+      status = 'skipped'
+      detail = 'Andrea platform control plane is disabled.'
+    }
+  }
+
+  $before = Get-AndreaPlatformSnapshot -DotEnv $DotEnv
+  if (
+    [string] $before.health -eq 'healthy' -or
+    [string] $before.health -eq 'starting' -or
+    [string] $before.health -eq 'degraded' -or
+    [string] $before.health -eq 'blocked_external'
+  ) {
+    return [pscustomobject]@{
+      status = 'already_running'
+      detail = ("Andrea platform lifecycle is {0}." -f [string] $before.lifecycle)
+    }
+  }
+
+  $launch = Invoke-AndreaPlatformOperator -Config $config -Command 'launch'
+  if ($launch.status -ne 'ok') {
+    return [pscustomobject]@{
+      status = 'failed'
+      detail = [string] $launch.detail
+    }
+  }
+
+  $after = Get-AndreaPlatformSnapshot -DotEnv $DotEnv
+  if ([string] $after.health -eq 'unreachable') {
+    return [pscustomobject]@{
+      status = 'failed'
+      detail = 'Andrea platform did not become reachable after launch.'
+    }
+  }
+
+  return [pscustomobject]@{
+    status = 'started'
+    detail = ("Andrea platform lifecycle is {0}." -f [string] $after.lifecycle)
+  }
+}
+
+function Stop-AndreaPlatform {
+  param([hashtable] $DotEnv)
+
+  $config = Get-AndreaPlatformConfig -DotEnv $DotEnv
+  if (-not $config.enabled) { return }
+  $stop = Invoke-AndreaPlatformOperator -Config $config -Command 'stop'
+  if ($stop.status -ne 'ok') {
+    Write-HostStep ("Andrea platform stop warning: {0}" -f [string] $stop.detail)
+  }
 }
 
 function Normalize-RoutePath {
@@ -1451,6 +1706,7 @@ function Start-AndreaOpenAiBackend {
   )
 
   $config = Get-AndreaOpenAiBackendConfig -DotEnv $DotEnv
+  $platformConfig = Get-AndreaPlatformConfig -DotEnv $DotEnv
   if (-not $config.enabled) {
     return [pscustomobject]@{
       status = 'skipped'
@@ -1502,6 +1758,9 @@ function Start-AndreaOpenAiBackend {
     "`$env:ORCHESTRATION_HTTP_HOST='127.0.0.1';"
     ("`$env:ORCHESTRATION_HTTP_PORT='{0}';" -f [string] $config.port)
     "`$env:TZ='America/Chicago';"
+    $(if ($platformConfig.enabled -and -not [string]::IsNullOrWhiteSpace([string] $platformConfig.runtimeGatewayUrl)) {
+        ("`$env:ANDREA_PLATFORM_RUNTIME_GATEWAY_URL='{0}';" -f ([string] $platformConfig.runtimeGatewayUrl).Replace("'", "''"))
+      } else { '' })
     $(if (-not [string]::IsNullOrWhiteSpace($openAiApiKey)) { ("`$env:OPENAI_API_KEY='{0}';" -f ([string] $openAiApiKey).Replace("'", "''")) } else { '' })
     $(if (-not [string]::IsNullOrWhiteSpace($openAiBaseUrl)) { ("`$env:OPENAI_BASE_URL='{0}';" -f ([string] $openAiBaseUrl).Replace("'", "''")) } else { '' })
     $(if (-not [string]::IsNullOrWhiteSpace($openAiModelFallback)) { ("`$env:OPENAI_MODEL_FALLBACK='{0}';" -f ([string] $openAiModelFallback).Replace("'", "''")) } else { '' })
@@ -1727,10 +1986,14 @@ function Start-NanoClaw {
   Remove-FileIfExists $assistantHealthPath
   Remove-FileIfExists $alexaLastSignedRequestPath
   Stop-OrphanedRepoProcesses | Out-Null
+  $dotEnv = Read-DotEnv
+  $platformStart = Start-AndreaPlatform -DotEnv $dotEnv
   Stop-Gateway
   $gatewayStart = Start-Gateway
-  $dotEnv = Read-DotEnv
   $backendStart = Start-AndreaOpenAiBackend -DotEnv $dotEnv -NodeExe $nodeExe
+  if ($platformStart.status -eq 'failed') {
+    Write-HostStep ("Andrea platform start warning: {0}" -f $platformStart.detail)
+  }
   if ($gatewayStart.status -eq 'failed') {
     Write-HostStep ("OpenAI gateway start warning: {0}" -f $gatewayStart.detail)
   }
@@ -1743,6 +2006,14 @@ function Start-NanoClaw {
 
   if (Test-Path -LiteralPath $pidFile) {
     Remove-FileIfExists $pidFile
+  }
+
+  $platformSnapshot = Get-AndreaPlatformSnapshot -DotEnv $dotEnv
+  if ($platformSnapshot.enabled) {
+    $env:ANDREA_PLATFORM_COORDINATOR_ENABLED = 'true'
+    $env:ANDREA_PLATFORM_COORDINATOR_URL = [string] $platformSnapshot.coordinatorUrl
+    $env:ANDREA_PLATFORM_FALLBACK_TO_DIRECT_RUNTIME = 'false'
+    $env:ANDREA_PLATFORM_SHELL_GATEWAY_URL = [string] $platformSnapshot.shellGatewayUrl
   }
 
   $proc = Start-Process -FilePath $nodeExe -ArgumentList @($entryPath) -WorkingDirectory $projectRoot -WindowStyle Hidden -RedirectStandardOutput $stdoutLogPath -RedirectStandardError $stderrLogPath -PassThru
@@ -1770,6 +2041,14 @@ function Start-NanoClaw {
           $dependencyMessages.Add(("Andrea OpenAI backend requires Codex login: {0}" -f [string] $backendSnapshot.detail))
         } elseif ([string] $backendSnapshot.localExecutionState -eq 'not_ready') {
           $dependencyMessages.Add(("Andrea OpenAI backend is not ready: {0}" -f [string] $backendSnapshot.detail))
+        }
+      }
+      $platformSnapshot = Get-AndreaPlatformSnapshot -DotEnv $dotEnv
+      if ($platformSnapshot.enabled) {
+        if ([string] $platformSnapshot.health -eq 'unreachable') {
+          $dependencyMessages.Add(("Andrea platform control plane is unreachable: {0}" -f [string] $platformSnapshot.detail))
+        } elseif ([string] $platformSnapshot.lifecycle -ne 'READY') {
+          $dependencyMessages.Add(("Andrea platform lifecycle is {0}: {1}" -f [string] $platformSnapshot.lifecycle, [string] $platformSnapshot.detail))
         }
       }
 
@@ -1831,6 +2110,7 @@ function Stop-NanoClaw {
   }
 
   Stop-AndreaOpenAiBackend
+  Stop-AndreaPlatform -DotEnv (Read-DotEnv)
   Stop-Gateway
   Remove-FileIfExists $pidFile
   Remove-FileIfExists $readyStatePath
@@ -1876,6 +2156,19 @@ function Ensure-NanoClaw {
   $telegramProbeConfig = Get-TelegramLiveProbeConfigStatus
   $inStartupGrace = Test-InStartupGrace -HostState $hostState -ReadyState $readyState
   $dotEnv = Read-DotEnv
+  $platformSnapshot = Get-AndreaPlatformSnapshot -DotEnv $dotEnv
+  if (
+    $platformSnapshot.enabled -and (
+      [string] $platformSnapshot.health -eq 'unreachable' -or
+      [string] $platformSnapshot.health -eq 'stopped' -or
+      [string] $platformSnapshot.health -eq 'unknown'
+    )
+  ) {
+    $platformStart = Start-AndreaPlatform -DotEnv $dotEnv
+    if ($platformStart.status -eq 'failed') {
+      Write-HostStep ("Periodic ensure check could not recover the Andrea platform control plane: {0}" -f $platformStart.detail)
+    }
+  }
   $backendSnapshot = Get-AndreaOpenAiBackendSnapshot -DotEnv $dotEnv
   if ($backendSnapshot.shouldManage -and ([string] $backendSnapshot.health -ne 'healthy' -or -not [bool] $backendSnapshot.running)) {
     $backendStart = Start-AndreaOpenAiBackend -DotEnv $dotEnv -NodeExe (Resolve-PinnedNodeExecutable)

@@ -1,6 +1,12 @@
 import crypto from 'crypto';
 
 import {
+  emitAndreaPlatformIntentRequest,
+  emitAndreaPlatformIntentResponse,
+  emitAndreaPlatformShellHealth,
+  mapShellHealthFromBackendStatus,
+} from './andrea-platform-bridge.js';
+import {
   ANDREA_OPENAI_BACKEND_ID,
   AndreaOpenAiBackendClient,
   AndreaOpenAiBackendHttpError,
@@ -246,7 +252,9 @@ function classifyCreateRetryFailure(
 export async function getAndreaOpenAiBackendStatus(
   client = new AndreaOpenAiBackendClient(),
 ): Promise<RuntimeBackendStatus> {
-  return client.getStatus();
+  const status = await client.getStatus();
+  void emitAndreaPlatformShellHealth(mapShellHealthFromBackendStatus(status));
+  return status;
 }
 
 export async function routeAndreaOpenAiCompanionPrompt(
@@ -263,9 +271,43 @@ export async function routeAndreaOpenAiCompanionPrompt(
   client = new AndreaOpenAiBackendClient(),
 ): Promise<CompanionRouteDecision> {
   ensureBackendEnabled(client);
+  void emitAndreaPlatformIntentRequest({
+    channel: input.channel,
+    text: input.text,
+    routeHint: input.requestRoute,
+    metadata: {
+      requestRoute: input.requestRoute,
+    },
+  });
   try {
-    return await client.routePrompt(input);
+    const decision = await client.routePrompt(input);
+    void emitAndreaPlatformIntentResponse({
+      channel: input.channel,
+      summary: `Companion route decision: ${decision.routeKind}.`,
+      outcome:
+        decision.routeKind === 'unsupported'
+          ? 'blocked'
+          : decision.routeKind === 'clarify'
+            ? 'degraded'
+            : 'handled',
+      metadata: {
+        routeKind: decision.routeKind,
+        ...(decision.capabilityId
+          ? { capabilityId: decision.capabilityId }
+          : {}),
+        confidence: decision.confidence,
+      },
+    });
+    return decision;
   } catch (err) {
+    void emitAndreaPlatformIntentResponse({
+      channel: input.channel,
+      summary: 'Companion routing failed before a route decision was returned.',
+      outcome: 'fallback',
+      metadata: {
+        error: 'route_failure',
+      },
+    });
     throw classifyBackendError(err, null);
   }
 }

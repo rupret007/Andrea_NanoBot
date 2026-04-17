@@ -2,6 +2,9 @@ import {
   ANDREA_OPENAI_BACKEND_ENABLED,
   ANDREA_OPENAI_BACKEND_TIMEOUT_MS,
   ANDREA_OPENAI_BACKEND_URL,
+  ANDREA_PLATFORM_COORDINATOR_ENABLED,
+  ANDREA_PLATFORM_COORDINATOR_URL,
+  ANDREA_PLATFORM_FALLBACK_TO_DIRECT_RUNTIME,
 } from './config.js';
 import type {
   CompanionRouteDecision,
@@ -29,6 +32,71 @@ interface ErrorEnvelope {
     code?: ErrorCode;
     message?: string;
   };
+}
+
+interface RuntimeBackendDispatchSurface {
+  metaRoute: string;
+  statusRoute: string;
+  jobsCollectionRoute: string;
+  jobItemRoute: string;
+  jobFollowUpRoute: string;
+  jobLogsRoute: string;
+  jobStopRoute: string;
+  followUpsCollectionRoute: string;
+  groupsCollectionRoute: string;
+}
+
+interface RuntimeBackendRuntimeSnapshot {
+  defaultRuntime: string;
+  fallbackRuntime: string;
+  codexLocalEnabled: boolean;
+  codexLocalModel: string | null;
+  codexLocalReady: boolean;
+  hostCodexAuthPresent: boolean;
+  openAiModelFallback: string;
+  openAiApiKeyPresent: boolean;
+  openAiCloudReady: boolean;
+  openAiBaseUrl: string | null;
+  activeThreadCount: number;
+  activeJobCount: number;
+  containerRuntimeName: string;
+  containerRuntimeStatus: string;
+}
+
+interface RuntimeBackendStatusSnapshot extends RuntimeBackendMeta {
+  dispatchSurface: RuntimeBackendDispatchSurface;
+  runtime: RuntimeBackendRuntimeSnapshot;
+}
+
+interface PlatformCoordinatorJobSummary {
+  job_id: string;
+  group_folder?: string | null;
+  thread_id?: string | null;
+  state: string;
+  selected_runtime?: string | null;
+  summary?: string | null;
+  error_text?: string | null;
+  updated_at?: string | null;
+}
+
+interface PlatformCoordinatorSnapshot {
+  lifecycle_state: string;
+  lifecycle_reason: string;
+  component_rollup: Record<string, string>;
+  active_blockers: string[];
+  faults: Record<string, Record<string, unknown>>;
+  recent_jobs: PlatformCoordinatorJobSummary[];
+  proof_rollup: Record<string, string>;
+  metadata: Record<string, string>;
+}
+
+interface PlatformCoordinatorStatusBundle {
+  snapshot: PlatformCoordinatorSnapshot;
+  backend_status: RuntimeBackendStatus;
+  system_manager?: Record<string, unknown> | null;
+  health_monitor?: Record<string, unknown> | null;
+  last_intent_request?: Record<string, unknown> | null;
+  last_intent_response?: Record<string, unknown> | null;
 }
 
 export interface EnsureBackendGroupRequest {
@@ -71,6 +139,119 @@ export class AndreaOpenAiBackendHttpError extends Error {
 
 function trimTrailingSlashes(value: string): string {
   return value.replace(/\/+$/, '');
+}
+
+function looksLikeRuntimeBackendStatusSnapshot(
+  value: unknown,
+): value is RuntimeBackendStatusSnapshot {
+  if (!value || typeof value !== 'object') return false;
+  const snapshot = value as Record<string, unknown>;
+  return (
+    typeof snapshot.backend === 'string' &&
+    typeof snapshot.transport === 'string' &&
+    typeof snapshot.enabled === 'boolean' &&
+    typeof snapshot.ready === 'boolean' &&
+    typeof snapshot.localExecutionState === 'string' &&
+    typeof snapshot.authState === 'string' &&
+    snapshot.dispatchSurface !== undefined &&
+    snapshot.runtime !== undefined
+  );
+}
+
+function looksLikePlatformCoordinatorStatusBundle(
+  value: unknown,
+): value is PlatformCoordinatorStatusBundle {
+  if (!value || typeof value !== 'object') return false;
+  const bundle = value as Record<string, unknown>;
+  const snapshot = bundle.snapshot as Record<string, unknown> | undefined;
+  const backendStatus = bundle.backend_status as Record<string, unknown> | undefined;
+  return (
+    snapshot !== undefined &&
+    typeof snapshot.lifecycle_state === 'string' &&
+    backendStatus !== undefined &&
+    typeof backendStatus.state === 'string'
+  );
+}
+
+function buildPlatformLifecycleDetail(
+  snapshot: PlatformCoordinatorSnapshot | null | undefined,
+  existingDetail: string | null | undefined,
+): string | null {
+  if (!snapshot) {
+    return existingDetail || null;
+  }
+
+  const details = [
+    `Platform lifecycle: ${snapshot.lifecycle_state}.`,
+    snapshot.lifecycle_reason ? `Reason: ${snapshot.lifecycle_reason}` : null,
+    snapshot.active_blockers.length > 0
+      ? `Blockers: ${snapshot.active_blockers.join(' | ')}`
+      : null,
+    snapshot.recent_jobs.length > 0
+      ? `Recent jobs tracked: ${snapshot.recent_jobs.length}`
+      : null,
+    existingDetail || null,
+  ].filter((line): line is string => Boolean(line));
+
+  return details.length > 0 ? details.join(' ') : null;
+}
+
+function mapMetaToRuntimeBackendStatus(
+  meta: RuntimeBackendMeta,
+  detailOverride?: string | null,
+): RuntimeBackendStatus {
+  if (meta.backend !== ANDREA_OPENAI_BACKEND_ID) {
+    return {
+      state: 'unavailable',
+      backend: meta.backend,
+      version: meta.version,
+      transport: 'http',
+      detail: `Unexpected backend identity "${meta.backend}" from configured runtime lane.`,
+      meta,
+    };
+  }
+
+  if (
+    meta.localExecutionState === 'available_auth_required' ||
+    meta.authState === 'auth_required'
+  ) {
+    return {
+      state: 'auth_required',
+      backend: meta.backend,
+      version: meta.version,
+      transport: 'http',
+      detail:
+        detailOverride ||
+        meta.localExecutionDetail ||
+        meta.operatorGuidance ||
+        'Codex local execution requires a real login on the backend host.',
+      meta,
+    };
+  }
+
+  if (!meta.ready) {
+    return {
+      state: 'not_ready',
+      backend: meta.backend,
+      version: meta.version,
+      transport: 'http',
+      detail:
+        detailOverride ||
+        meta.localExecutionDetail ||
+        meta.operatorGuidance ||
+        'Andrea OpenAI backend is reachable but does not currently have a ready execution lane.',
+      meta,
+    };
+  }
+
+  return {
+    state: 'available',
+    backend: meta.backend,
+    version: meta.version,
+    transport: 'http',
+    detail: detailOverride || null,
+    meta,
+  };
 }
 
 function asErrorMessage(err: unknown): string {
@@ -156,8 +337,14 @@ export class AndreaOpenAiBackendClient {
 
   constructor(options: AndreaOpenAiBackendClientOptions = {}) {
     this.enabled = options.enabled ?? ANDREA_OPENAI_BACKEND_ENABLED;
+    const resolvedBaseUrl =
+      options.baseUrl ??
+      (ANDREA_PLATFORM_COORDINATOR_ENABLED &&
+      !ANDREA_PLATFORM_FALLBACK_TO_DIRECT_RUNTIME
+        ? ANDREA_PLATFORM_COORDINATOR_URL
+        : ANDREA_OPENAI_BACKEND_URL);
     this.baseUrl = trimTrailingSlashes(
-      options.baseUrl ?? ANDREA_OPENAI_BACKEND_URL,
+      resolvedBaseUrl,
     );
     this.timeoutMs = options.timeoutMs ?? ANDREA_OPENAI_BACKEND_TIMEOUT_MS;
     this.fetchImpl = options.fetchImpl ?? fetch;
@@ -171,6 +358,35 @@ export class AndreaOpenAiBackendClient {
       '/meta',
       { method: 'GET' },
     );
+  }
+
+  private async getStatusSnapshot():
+    Promise<RuntimeBackendStatusSnapshot | PlatformCoordinatorStatusBundle | null> {
+    try {
+      const snapshot = await requestJson<unknown>(
+        this.fetchImpl,
+        this.baseUrl,
+        this.timeoutMs,
+        '/status',
+        { method: 'GET' },
+      );
+      if (
+        looksLikeRuntimeBackendStatusSnapshot(snapshot) ||
+        looksLikePlatformCoordinatorStatusBundle(snapshot)
+      ) {
+        return snapshot;
+      }
+      return null;
+    } catch (err) {
+      if (
+        err instanceof AndreaOpenAiBackendHttpError &&
+        err.route === '/status' &&
+        err.status === 404
+      ) {
+        return null;
+      }
+      throw err;
+    }
   }
 
   async getStatus(): Promise<RuntimeBackendStatus> {
@@ -187,54 +403,26 @@ export class AndreaOpenAiBackendClient {
     }
 
     try {
+      const snapshot = await this.getStatusSnapshot();
+      if (snapshot) {
+        if (looksLikePlatformCoordinatorStatusBundle(snapshot)) {
+          return {
+            ...snapshot.backend_status,
+            detail: buildPlatformLifecycleDetail(
+              snapshot.snapshot,
+              snapshot.backend_status.detail,
+            ),
+          };
+        }
+
+        return mapMetaToRuntimeBackendStatus(
+          snapshot,
+          buildPlatformLifecycleDetail(null, snapshot.localExecutionDetail),
+        );
+      }
+
       const meta = await this.getMeta();
-      if (meta.backend !== ANDREA_OPENAI_BACKEND_ID) {
-        return {
-          state: 'unavailable',
-          backend: meta.backend,
-          version: meta.version,
-          transport: 'http',
-          detail: `Unexpected backend identity "${meta.backend}" from ${this.baseUrl}.`,
-          meta,
-        };
-      }
-      if (
-        meta.localExecutionState === 'available_auth_required' ||
-        meta.authState === 'auth_required'
-      ) {
-        return {
-          state: 'auth_required',
-          backend: meta.backend,
-          version: meta.version,
-          transport: 'http',
-          detail:
-            meta.localExecutionDetail ||
-            meta.operatorGuidance ||
-            'Codex local execution requires a real login on the backend host.',
-          meta,
-        };
-      }
-      if (!meta.ready) {
-        return {
-          state: 'not_ready',
-          backend: meta.backend,
-          version: meta.version,
-          transport: 'http',
-          detail:
-            meta.localExecutionDetail ||
-            meta.operatorGuidance ||
-            'Andrea OpenAI backend is reachable but does not currently have a ready execution lane.',
-          meta,
-        };
-      }
-      return {
-        state: 'available',
-        backend: meta.backend,
-        version: meta.version,
-        transport: 'http',
-        detail: null,
-        meta,
-      };
+      return mapMetaToRuntimeBackendStatus(meta);
     } catch (err) {
       return {
         state: 'unavailable',

@@ -16,6 +16,9 @@ import {
   AGENT_RUNTIME_FALLBACK,
   ANDREA_OPENAI_BACKEND_ENABLED,
   ANDREA_OPENAI_BACKEND_URL,
+  ANDREA_PLATFORM_COORDINATOR_ENABLED,
+  ANDREA_PLATFORM_COORDINATOR_URL,
+  ANDREA_PLATFORM_FALLBACK_TO_DIRECT_RUNTIME,
   CONTAINER_TIMEOUT,
   DEFAULT_TRIGGER,
   getTriggerPattern,
@@ -165,6 +168,10 @@ import {
   writeAssistantHealthState,
   writeAssistantReadyState,
 } from './host-control.js';
+import {
+  emitAndreaPlatformShellHealth,
+  mapShellHealthFromChannelHealth,
+} from './andrea-platform-bridge.js';
 import {
   listCompanionConversationChatJids,
   resolveCompanionConversationBinding,
@@ -2872,11 +2879,24 @@ function buildAndreaRuntimeDisabledMessage(): string {
   return formatWorkPanel({
     title: '*Codex/OpenAI Runtime*',
     lines: [
-      "Andrea's Codex/OpenAI runtime lane uses the Andrea_OpenAI_Bot loopback backend on this host.",
+      ANDREA_PLATFORM_COORDINATOR_ENABLED &&
+      !ANDREA_PLATFORM_FALLBACK_TO_DIRECT_RUNTIME
+        ? "Andrea's Codex/OpenAI runtime lane is platform-routed on this host, but execution is currently turned off."
+        : "Andrea's Codex/OpenAI runtime lane uses the Andrea_OpenAI_Bot loopback backend on this host.",
       'That backend lane is currently disabled in this NanoBot runtime, so Andrea can only review existing runtime work.',
       'Enable ANDREA_OPENAI_BACKEND_ENABLED=true (the legacy ANDREA_RUNTIME_EXECUTION_ENABLED=true flag also works), then restart Andrea to bring the runtime lane back online.',
     ],
   });
+}
+
+function getAndreaRuntimeStatusBaseUrl(): string {
+  if (
+    ANDREA_PLATFORM_COORDINATOR_ENABLED &&
+    !ANDREA_PLATFORM_FALLBACK_TO_DIRECT_RUNTIME
+  ) {
+    return ANDREA_PLATFORM_COORDINATOR_URL;
+  }
+  return ANDREA_OPENAI_BACKEND_URL;
 }
 
 async function buildAndreaRuntimeStatusMessage(
@@ -2890,7 +2910,7 @@ async function buildAndreaRuntimeStatusMessage(
         formatRuntimeBackendStatusSummary(
           status,
           group,
-          ANDREA_OPENAI_BACKEND_URL,
+          getAndreaRuntimeStatusBaseUrl(),
         ),
       ),
     ],
@@ -8027,10 +8047,14 @@ async function main(): Promise<void> {
   let assistantHealthInterval: ReturnType<typeof setInterval> | null = null;
   const writeCurrentAssistantHealth = () => {
     try {
+      const currentChannelHealth = [...channelHealthByName.values()];
       writeAssistantHealthState({
         appVersion,
-        channelHealth: [...channelHealthByName.values()],
+        channelHealth: currentChannelHealth,
       });
+      void emitAndreaPlatformShellHealth(
+        mapShellHealthFromChannelHealth(currentChannelHealth),
+      );
     } catch (err) {
       logger.warn({ err }, 'Failed to persist assistant health marker');
     }
@@ -10421,7 +10445,7 @@ async function main(): Promise<void> {
       formatRuntimeBackendStatusSummary(
         status,
         context.group,
-        ANDREA_OPENAI_BACKEND_URL,
+        getAndreaRuntimeStatusBaseUrl(),
       ),
     );
   }
