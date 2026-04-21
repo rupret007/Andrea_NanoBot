@@ -87,6 +87,12 @@ interface PlatformCoordinatorSnapshot {
   faults: Record<string, Record<string, unknown>>;
   recent_jobs: PlatformCoordinatorJobSummary[];
   proof_rollup: Record<string, string>;
+  memory_freshness_rollup?: Record<string, string>;
+  integration_health_rollup?: Record<string, string>;
+  ritual_status_rollup?: Record<string, string>;
+  trace_rollup?: Record<string, string>;
+  determinism_audit_rollup?: Record<string, string>;
+  replay_validation_rollup?: Record<string, string>;
   metadata: Record<string, string>;
 }
 
@@ -97,6 +103,9 @@ interface PlatformCoordinatorStatusBundle {
   health_monitor?: Record<string, unknown> | null;
   last_intent_request?: Record<string, unknown> | null;
   last_intent_response?: Record<string, unknown> | null;
+  trace_index?: Record<string, string> | null;
+  determinism_audit?: Record<string, unknown> | null;
+  replay_validation?: Record<string, unknown> | null;
 }
 
 export interface EnsureBackendGroupRequest {
@@ -189,6 +198,23 @@ function buildPlatformLifecycleDetail(
       : null,
     snapshot.recent_jobs.length > 0
       ? `Recent jobs tracked: ${snapshot.recent_jobs.length}`
+      : null,
+    snapshot.trace_rollup?.trace_events
+      ? `Trace events: ${snapshot.trace_rollup.trace_events}`
+      : null,
+    snapshot.determinism_audit_rollup?.status
+      ? `Determinism audit: ${snapshot.determinism_audit_rollup.status}`
+      : null,
+    snapshot.replay_validation_rollup?.last_passed
+      ? `Replay validation last passed: ${snapshot.replay_validation_rollup.last_passed}`
+      : null,
+    snapshot.memory_freshness_rollup &&
+    Object.keys(snapshot.memory_freshness_rollup).length > 0
+      ? `Memory registry keys: ${Object.keys(snapshot.memory_freshness_rollup).length}`
+      : null,
+    snapshot.integration_health_rollup &&
+    Object.keys(snapshot.integration_health_rollup).length > 0
+      ? `Integration health entries: ${Object.keys(snapshot.integration_health_rollup).length}`
       : null,
     existingDetail || null,
   ].filter((line): line is string => Boolean(line));
@@ -433,6 +459,68 @@ export class AndreaOpenAiBackendClient {
         meta: null,
       };
     }
+  }
+
+  async getPlatformTrace(traceId: string): Promise<Record<string, unknown>> {
+    return requestJson<Record<string, unknown>>(
+      this.fetchImpl,
+      this.baseUrl,
+      this.timeoutMs,
+      `/trace/${encodeURIComponent(traceId)}`,
+      { method: 'GET' },
+    );
+  }
+
+  async getPlatformDeterminismAudit(): Promise<Record<string, unknown>> {
+    return requestJson<Record<string, unknown>>(
+      this.fetchImpl,
+      this.baseUrl,
+      this.timeoutMs,
+      '/audit/determinism',
+      { method: 'GET' },
+    );
+  }
+
+  async getPlatformProofReport(): Promise<Record<string, unknown>> {
+    return requestJson<Record<string, unknown>>(
+      this.fetchImpl,
+      this.baseUrl,
+      this.timeoutMs,
+      '/proof-report',
+      { method: 'GET' },
+    );
+  }
+
+  async capturePlatformReplay(input: {
+    sessionId?: string;
+    notes?: string;
+  } = {}): Promise<Record<string, unknown>> {
+    return requestJson<Record<string, unknown>>(
+      this.fetchImpl,
+      this.baseUrl,
+      this.timeoutMs,
+      '/replay/capture',
+      {
+        method: 'POST',
+        body: JSON.stringify(input),
+      },
+    );
+  }
+
+  async validatePlatformReplay(input: {
+    sessionId?: string;
+    artifactPath?: string;
+  }): Promise<Record<string, unknown>> {
+    return requestJson<Record<string, unknown>>(
+      this.fetchImpl,
+      this.baseUrl,
+      this.timeoutMs,
+      '/replay/validate',
+      {
+        method: 'POST',
+        body: JSON.stringify(input),
+      },
+    );
   }
 
   async createJob(input: {

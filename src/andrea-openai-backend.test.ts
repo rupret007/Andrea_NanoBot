@@ -185,6 +185,24 @@ describe('AndreaOpenAiBackendClient', () => {
                 },
               ],
               proof_rollup: {},
+              memory_freshness_rollup: {
+                semanticMemory: '12 saved sources',
+              },
+              integration_health_rollup: {
+                google_calendar: 'live_proven',
+              },
+              ritual_status_rollup: {
+                enabled: '3',
+              },
+              trace_rollup: {
+                trace_events: '4',
+              },
+              determinism_audit_rollup: {
+                status: 'pass',
+              },
+              replay_validation_rollup: {
+                last_passed: 'true',
+              },
               metadata: {
                 generated_at: '2026-04-17T13:00:00.000Z',
               },
@@ -225,6 +243,74 @@ describe('AndreaOpenAiBackendClient', () => {
     expect(status.state).toBe('available');
     expect(status.detail).toContain('Platform lifecycle: READY.');
     expect(status.detail).toContain('Recent jobs tracked: 1');
+    expect(status.detail).toContain('Trace events: 4');
+    expect(status.detail).toContain('Determinism audit: pass');
+    expect(status.detail).toContain('Replay validation last passed: true');
+    expect(status.detail).toContain('Memory registry keys: 1');
+    expect(status.detail).toContain('Integration health entries: 1');
+  });
+
+  it('reads platform trace, audit, proof, and replay endpoints', async () => {
+    const fetchImpl = vi.fn(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith('/trace/corr-1')) {
+        expect(init?.method).toBe('GET');
+        return new Response(
+          JSON.stringify({ found: true, trace_id: 'corr-1', events: [] }),
+          { status: 200 },
+        );
+      }
+      if (url.endsWith('/audit/determinism')) {
+        expect(init?.method).toBe('GET');
+        return new Response(JSON.stringify({ status: 'pass', findings: [] }), {
+          status: 200,
+        });
+      }
+      if (url.endsWith('/proof-report')) {
+        expect(init?.method).toBe('GET');
+        return new Response(JSON.stringify({ proof_rollup: {} }), {
+          status: 200,
+        });
+      }
+      if (url.endsWith('/replay/capture')) {
+        expect(init?.method).toBe('POST');
+        expect(String(init?.body)).toContain('"sessionId":"session-1"');
+        return new Response(
+          JSON.stringify({ session_id: 'session-1', artifact_path: 'session.json' }),
+          { status: 200 },
+        );
+      }
+      if (url.endsWith('/replay/validate')) {
+        expect(init?.method).toBe('POST');
+        expect(String(init?.body)).toContain('"sessionId":"session-1"');
+        return new Response(
+          JSON.stringify({ session_id: 'session-1', passed: true }),
+          { status: 200 },
+        );
+      }
+      throw new Error(`unexpected route: ${url}`);
+    });
+    const client = new AndreaOpenAiBackendClient({
+      enabled: true,
+      baseUrl: 'http://127.0.0.1:4400',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    await expect(client.getPlatformTrace('corr-1')).resolves.toMatchObject({
+      found: true,
+    });
+    await expect(client.getPlatformDeterminismAudit()).resolves.toMatchObject({
+      status: 'pass',
+    });
+    await expect(client.getPlatformProofReport()).resolves.toMatchObject({
+      proof_rollup: {},
+    });
+    await expect(
+      client.capturePlatformReplay({ sessionId: 'session-1' }),
+    ).resolves.toMatchObject({ session_id: 'session-1' });
+    await expect(
+      client.validatePlatformReplay({ sessionId: 'session-1' }),
+    ).resolves.toMatchObject({ passed: true });
   });
 
   it('maps /meta into not_ready status', async () => {

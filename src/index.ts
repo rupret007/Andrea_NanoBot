@@ -2921,7 +2921,10 @@ async function buildAndreaRuntimeStatusMessage(
       ),
     ],
     lines: [
-      "Andrea's Codex/OpenAI lane now resolves through the Andrea_OpenAI_Bot loopback backend.",
+      ANDREA_PLATFORM_COORDINATOR_ENABLED &&
+      !ANDREA_PLATFORM_FALLBACK_TO_DIRECT_RUNTIME
+        ? "Andrea's Codex/OpenAI lane now resolves through the Andrea Platform coordinator first; the direct backend path is break-glass fallback."
+        : "Andrea's Codex/OpenAI lane now resolves through the Andrea_OpenAI_Bot loopback backend.",
       'Use `/cursor` when you want the unified work cockpit, or `/runtime-*` when you want explicit runtime controls.',
     ],
   });
