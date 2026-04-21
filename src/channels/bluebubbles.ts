@@ -1965,6 +1965,14 @@ export class BlueBubblesChannel implements Channel {
     if (!previous || previous < timestamp) {
       this.monitorState.perChatWebhookObserved[chatJid] = timestamp;
     }
+    this.monitorState.recentEvidence = this.monitorState.recentEvidence.filter(
+      (entry) =>
+        !(
+          entry.kind === 'missed_inbound' &&
+          entry.chatJid === chatJid &&
+          entry.observedAt <= timestamp
+        ),
+    );
     if (
       !this.monitorState.mostRecentWebhookObservedAt ||
       this.monitorState.mostRecentWebhookObservedAt < timestamp
@@ -1976,6 +1984,29 @@ export class BlueBubblesChannel implements Channel {
       this.monitorState.lastIgnoredAt = null;
       this.monitorState.lastIgnoredChatJid = null;
       this.monitorState.lastIgnoredReason = null;
+    }
+    if (
+      (this.monitorState.detectionState === 'suspected_missed_inbound' ||
+        this.monitorState.detectionState === 'mixed_degraded') &&
+      this.monitorState.mostRecentServerSeenChatJid === chatJid &&
+      (!this.monitorState.mostRecentServerSeenAt ||
+        this.monitorState.mostRecentServerSeenAt <= timestamp) &&
+      !this.monitorState.recentEvidence.some(
+        (entry) => entry.kind === 'missed_inbound',
+      )
+    ) {
+      const hasReplyFailure = this.monitorState.recentEvidence.some(
+        (entry) => entry.kind === 'reply_delivery_failed',
+      );
+      this.setDetectionState(
+        hasReplyFailure ? 'reply_delivery_broken' : 'healthy',
+        hasReplyFailure
+          ? 'Webhook freshness caught up, but a recent reply-back attempt still failed from Andrea.'
+          : null,
+        hasReplyFailure
+          ? 'Inspect the BlueBubbles reply target and send method on this host, then retry the same thread.'
+          : null,
+      );
     }
     this.persistMonitorState();
   }

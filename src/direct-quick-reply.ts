@@ -3,6 +3,10 @@ import {
   buildGracefulDegradedReply,
   type ConversationalChannel,
 } from './conversational-core.js';
+import {
+  buildAndreaCapabilityPackagingLine,
+  getAndreaCapabilityDiscoveryPrompts,
+} from './assistant-profile-pack.js';
 import { getPracticalDiscoverySpotlights } from './command-surface-registry.js';
 import { buildAndreaPingPresenceReply } from './ping-presence.js';
 
@@ -223,7 +227,7 @@ export function maybeBuildDirectQuickReply(
   if (
     isStandalonePrompt(normalized, /^what are you (?:best|good) at[?.! ]*$/, 6)
   ) {
-    return 'Schedule help, reminders, meal and week planning, reply drafting, and keeping follow-through like pills, bills, and open loops clean. Give me one concrete ask and I will keep it moving.';
+    return `Schedule help, reminders, meeting prep, reply drafting, repo check-ins, life threads, idea capture, and keeping follow-through like pills, bills, and open loops clean. Give me one concrete ask and I will keep it moving.`;
   }
 
   if (
@@ -397,7 +401,10 @@ export function maybeBuildDirectQuickReply(
       .slice(0, 5)
       .map((entry) => entry.prompt)
       .join(', ');
-    return `I'm Andrea. I help most with schedule moves, reminders and save-for-later, groceries, bills, household follow-through, planning tonight or this week, and quick reply help. Good starting asks are ${spotlight}. Telegram is my richest lane, Alexa is best for short voice check-ins, and Messages is a bounded bridge when it's healthy.`;
+    const benchmarkGuidedPrompts = getAndreaCapabilityDiscoveryPrompts()
+      .slice(1, 5)
+      .join(', ');
+    return `I'm Andrea. I help most with ${buildAndreaCapabilityPackagingLine()}. Good starting asks are ${spotlight}. If you want the richer benchmark-style lanes, try ${benchmarkGuidedPrompts}. Telegram is my richest lane, Alexa is best for short voice check-ins, and Messages is a bounded bridge when it's healthy.`;
   }
 
   if (

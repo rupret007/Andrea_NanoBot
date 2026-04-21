@@ -133,6 +133,7 @@ import {
   type AssistantCapabilityConversationSeed,
   type AssistantCapabilityResult,
 } from './assistant-capabilities.js';
+import { buildAndreaPlatformConfigSnapshots } from './assistant-profile-pack.js';
 import { completeAssistantActionFromAlexa } from './assistant-action-completion.js';
 import {
   continueAssistantCapabilityFromPriorSubjectData,
@@ -169,6 +170,7 @@ import {
   writeAssistantReadyState,
 } from './host-control.js';
 import {
+  emitAndreaPlatformShellConfigSnapshot,
   emitAndreaPlatformShellHealth,
   mapShellHealthFromChannelHealth,
 } from './andrea-platform-bridge.js';
@@ -592,6 +594,7 @@ import {
   classifyResponseFeedbackCandidate,
   parseResponseFeedbackAction,
   selectResponseFeedbackRetryLane,
+  shouldCancelPendingContinuationForFeedback,
 } from './response-feedback.js';
 import {
   auditRegisteredMainChat,
@@ -835,6 +838,9 @@ function isCurrentWorkQuickOpenPhrase(trimmed: string): boolean {
     normalized === 'show me whats running' ||
     normalized === "show me what's running right now" ||
     normalized === 'show me whats running right now' ||
+    normalized === "what's on deck for my repos" ||
+    normalized === 'whats on deck for my repos' ||
+    normalized === 'show me a repo standup' ||
     normalized === "what's running" ||
     normalized === 'whats running' ||
     normalized === 'what work is active right now' ||
@@ -8048,6 +8054,13 @@ async function main(): Promise<void> {
   const writeCurrentAssistantHealth = () => {
     try {
       const currentChannelHealth = [...channelHealthByName.values()];
+      const activeGroupFolders = [
+        ...new Set(
+          Object.values(registeredGroups)
+            .map((group) => group.folder)
+            .filter(Boolean),
+        ),
+      ];
       writeAssistantHealthState({
         appVersion,
         channelHealth: currentChannelHealth,
@@ -8055,6 +8068,9 @@ async function main(): Promise<void> {
       void emitAndreaPlatformShellHealth(
         mapShellHealthFromChannelHealth(currentChannelHealth),
       );
+      for (const snapshot of buildAndreaPlatformConfigSnapshots(activeGroupFolders)) {
+        void emitAndreaPlatformShellConfigSnapshot(snapshot);
+      }
     } catch (err) {
       logger.warn({ err }, 'Failed to persist assistant health marker');
     }
@@ -8783,6 +8799,10 @@ async function main(): Promise<void> {
     };
 
     if (action.operation === 'capture') {
+      if (shouldCancelPendingContinuationForFeedback(existing)) {
+        clearPendingGoogleCalendarCreateState(chatJid);
+        clearGoogleCalendarSchedulingContext(chatJid);
+      }
       const captured = ensurePilotIssue();
       await channel.sendMessage(
         chatJid,

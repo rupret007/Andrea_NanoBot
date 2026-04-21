@@ -8,6 +8,8 @@ export interface ThreadSummaryIntent {
   arguments: CompanionRouteArguments;
 }
 
+export const ALL_SYNCED_MESSAGES_TARGET = '__all_synced_messages__';
+
 const GENERIC_THREAD_NAME_TOKENS = new Set([
   'a',
   'an',
@@ -42,7 +44,7 @@ function normalizeText(value: string): string {
 
 function stripAndreaAddressing(value: string): string {
   return value
-    .replace(/(^|[\s([{\-])@andrea\b[,:;!?-]*/gi, '$1')
+    .replace(/(^|[\s([{-])@andrea\b[,:;!?-]*/gi, '$1')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -175,6 +177,7 @@ export function looksLikeGenericThreadSummaryPrompt(
   }
   const lower = normalized.toLowerCase();
   return (
+    Boolean(parseAllSyncedMessagesSummaryIntent(normalized)) ||
     /^(?:what are|show me|give me|list)\s+(?:my\s+)?(?:recent|latest|today'?s|todays)?\s*(?:text(?: message)?s?|messages|texts)\b/.test(
       lower,
     ) ||
@@ -182,6 +185,61 @@ export function looksLikeGenericThreadSummaryPrompt(
       lower,
     )
   );
+}
+
+export function parseAllSyncedMessagesSummaryIntent(
+  rawText: string | null | undefined,
+): ThreadSummaryIntent | null {
+  const normalized = normalizeForMatch(rawText || '');
+  if (!normalized) return null;
+  const lower = normalized.toLowerCase();
+  if (
+    !/^(?:(?:yeah|yes|yep|sure|ok(?:ay)?)\s+)?(?:all\s+)?(?:my\s+)?(?:text(?: message)?s?|messages|texts)\b/.test(
+      lower,
+    ) &&
+    !/^(?:what are|show me|give me|list)\s+(?:all\s+)?(?:my\s+)?(?:text(?: message)?s?|messages|texts)\b/.test(
+      lower,
+    )
+  ) {
+    return null;
+  }
+  if (
+    /\b(?:thread|chat|conversation)\b/.test(lower) &&
+    !/\ball\b/.test(lower)
+  ) {
+    return null;
+  }
+  if (
+    /\b(?:in|from)\s+(?!today\b|yesterday\b|this week\b|the last\b|last\s+\d+\b)[a-z0-9]/.test(
+      lower,
+    ) &&
+    !/\ball\b/.test(lower)
+  ) {
+    return null;
+  }
+  const { kind, value } = parseWindow(normalized);
+  const canonicalText =
+    kind === 'today'
+      ? 'summarize all synced text messages from today'
+      : kind === 'yesterday'
+        ? 'summarize all synced text messages from yesterday'
+        : kind === 'this_week'
+          ? 'summarize all synced text messages from this week'
+          : kind === 'last_hours'
+            ? `summarize all synced text messages from the last ${value || 1} hours`
+            : kind === 'last_days'
+              ? `summarize all synced text messages from the last ${value || 1} days`
+              : 'summarize all synced text messages from the last 24 hours';
+  return {
+    canonicalText,
+    arguments: {
+      targetChatJid: ALL_SYNCED_MESSAGES_TARGET,
+      targetChatName: 'all synced Messages',
+      threadTitle: 'all synced Messages',
+      timeWindowKind: kind,
+      timeWindowValue: value,
+    },
+  };
 }
 
 export function parseThreadSummaryIntent(

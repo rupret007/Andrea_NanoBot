@@ -165,10 +165,10 @@ describe('direct quick reply', () => {
     const reply = maybeBuildDirectQuickReply([{ content: 'what can you do?' }]);
 
     expect(reply).toContain("I'm Andrea");
-    expect(reply).toContain('schedule moves');
+    expect(reply).toContain('meeting prep');
     expect(reply).toContain('save-for-later');
-    expect(reply).toContain('household');
-    expect(reply).toContain('bills');
+    expect(reply).toContain('life threads');
+    expect(reply).toContain('idea capture');
     expect(reply).toContain('what should I say back');
     expect(reply).toContain('Telegram');
     expect(reply).toContain('Messages');
@@ -182,7 +182,7 @@ describe('direct quick reply', () => {
     ]);
 
     expect(reply).toContain("I'm Andrea");
-    expect(reply).toContain('schedule moves');
+    expect(reply).toContain('repo check-ins');
     expect(reply).toContain('quick reply help');
     expect(reply).not.toContain('coding');
     expect(reply).not.toContain('inspect your files');
@@ -194,7 +194,7 @@ describe('direct quick reply', () => {
     ]);
 
     expect(reply).toContain("I'm Andrea");
-    expect(reply).toContain('schedule moves');
+    expect(reply).toContain('meeting prep');
     expect(reply).toContain('Messages');
     expect(reply).not.toContain('coding');
     expect(reply).not.toContain('inspect your files');
@@ -206,7 +206,7 @@ describe('direct quick reply', () => {
     ]);
 
     expect(reply).toContain("I'm Andrea");
-    expect(reply).toContain('schedule moves');
+    expect(reply).toContain('life threads');
     expect(reply).toContain('Telegram');
     expect(reply).not.toContain('Writing, editing, and explaining code');
   });
@@ -218,6 +218,7 @@ describe('direct quick reply', () => {
 
     expect(reply).toContain("I'm Andrea");
     expect(reply).toContain('quick reply help');
+    expect(reply).toContain('meeting prep');
     expect(reply).toContain('Alexa');
     expect(reply).not.toContain('big or small');
   });
@@ -228,7 +229,7 @@ describe('direct quick reply', () => {
     ]);
 
     expect(reply).toContain("I'm Andrea");
-    expect(reply).toContain('schedule moves');
+    expect(reply).toContain('repo check-ins');
     expect(reply).toContain('quick reply help');
   });
 
@@ -239,6 +240,7 @@ describe('direct quick reply', () => {
 
     expect(reply).toContain("I'm Andrea");
     expect(reply).toContain('save-for-later');
+    expect(reply).toContain('life threads');
     expect(reply).toContain('quick reply help');
   });
 
@@ -266,8 +268,9 @@ describe('direct quick reply', () => {
     ]);
 
     expect(reply).toContain('Schedule help');
-    expect(reply).toContain('meal and week planning');
+    expect(reply).toContain('meeting prep');
     expect(reply).toContain('reply drafting');
+    expect(reply).toContain('repo check-ins');
   });
 
   it('returns a stable response for funny-or-pretending asks', () => {

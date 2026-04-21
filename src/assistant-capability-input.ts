@@ -14,7 +14,10 @@ export function buildAssistantCapabilityExecutionInput(params: {
 }): AssistantCapabilityInput {
   const args = params.capabilityMatch.arguments;
   const hasExplicitThreadTarget = Boolean(
-    args?.targetChatName || args?.threadTitle || args?.personName,
+    args?.targetChatName ||
+      args?.targetChatJid ||
+      args?.threadTitle ||
+      args?.personName,
   );
   const allowPriorThreadTarget =
     params.capabilityMatch.capabilityId !== 'communication.summarize_thread' ||

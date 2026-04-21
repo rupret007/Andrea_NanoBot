@@ -1662,6 +1662,95 @@ describe('field-trial readiness', () => {
     expect(truth.bluebubbles.detail).toContain('Telegram fallback: sent');
   });
 
+  it('clears stale missed-inbound truth when the webhook has caught up to the same server-seen chat', () => {
+    vi.stubEnv('BLUEBUBBLES_ENABLED', 'true');
+    vi.stubEnv('BLUEBUBBLES_BASE_URL', 'http://macbook-pro.local:1234');
+    vi.stubEnv('BLUEBUBBLES_PASSWORD', 'secret');
+    vi.stubEnv('BLUEBUBBLES_GROUP_FOLDER', 'main');
+    vi.stubEnv('BLUEBUBBLES_CHAT_SCOPE', 'all_synced');
+    vi.stubEnv(
+      'BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL',
+      'http://192.168.5.136:4305',
+    );
+    vi.stubEnv('BLUEBUBBLES_WEBHOOK_SECRET', 'hook-secret');
+    vi.stubEnv('BLUEBUBBLES_SEND_ENABLED', 'true');
+
+    writeBlueBubblesMonitorState(
+      {
+        ...createDefaultBlueBubblesMonitorState('2026-04-08T12:00:00.000Z'),
+        updatedAt: '2026-04-08T12:00:00.000Z',
+        detectionState: 'suspected_missed_inbound',
+        detectionDetail:
+          'BlueBubbles server saw newer 1:1 chat activity in bb:iMessage;-;+14695550123, but Andrea has not observed that inbound on the webhook side yet.',
+        detectionNextAction:
+          'Check the Mac-side BlueBubbles webhook target and whether this Windows listener is reachable from the Mac, then repro the same text thread.',
+        shadowPollLastOkAt: '2026-04-08T12:00:00.000Z',
+        shadowPollMostRecentChat: 'bb:iMessage;-;+14695550123',
+        mostRecentServerSeenAt: '2026-04-08T11:56:30.000Z',
+        mostRecentServerSeenChatJid: 'bb:iMessage;-;+14695550123',
+        mostRecentServerSeenMessageId: 'bb:missed-msg-1',
+        mostRecentWebhookObservedAt: '2026-04-08T11:58:00.000Z',
+        mostRecentWebhookObservedChatJid: 'bb:iMessage;-;+14695550123',
+        recentEvidence: [
+          {
+            kind: 'missed_inbound',
+            chatJid: 'bb:iMessage;-;+14695550123',
+            signature: 'bb:missed-msg-1',
+            observedAt: '2026-04-08T11:56:30.000Z',
+          },
+        ],
+        perChatServerSeen: {
+          'bb:iMessage;-;+14695550123': '2026-04-08T11:56:30.000Z',
+        },
+        perChatWebhookObserved: {
+          'bb:iMessage;-;+14695550123': '2026-04-08T11:58:00.000Z',
+        },
+      },
+      tempDir,
+    );
+
+    const snapshot: HostControlSnapshot = {
+      paths: resolveHostControlPaths(tempDir),
+      nodeRuntime: null,
+      hostState: null,
+      readyState: null,
+      assistantHealthState: {
+        bootId: 'boot-blue-caught-up',
+        pid: process.pid,
+        appVersion: '1.0.0-test',
+        updatedAt: '2026-04-08T12:00:00.000Z',
+        channels: [
+          {
+            name: 'bluebubbles',
+            configured: true,
+            state: 'ready',
+            updatedAt: '2026-04-08T12:00:00.000Z',
+            detail:
+              'listener 0.0.0.0:4305/bluebubbles/webhook | scope all_synced | reply gate direct_1to1 | transport reachable/auth ok (200) | last inbound 2026-04-08T11:58:00.000Z | last inbound chat bb:iMessage;-;+14695550123 | last inbound self_authored no | last outbound 2026-04-08T11:59:00.000Z (bb:iMessage;-;+14695550123) | last outbound target kind chat_guid | last outbound target value iMessage;-;+14695550123 | last send error none | detection suspected_missed_inbound | detection detail BlueBubbles server saw newer 1:1 chat activity in bb:iMessage;-;+14695550123, but Andrea has not observed that inbound on the webhook side yet. | detection next action Check the Mac-side BlueBubbles webhook target and whether this Windows listener is reachable from the Mac, then repro the same text thread. | shadow poll last ok 2026-04-08T12:00:00.000Z | shadow poll error none | server seen chat bb:iMessage;-;+14695550123 | server seen at 2026-04-08T11:56:30.000Z',
+          },
+        ],
+      },
+      telegramRoundtripState: null,
+      telegramTransportState: null,
+      runtimeAuditState: null,
+    };
+
+    const truth = buildFieldTrialOperatorTruth({
+      projectRoot: tempDir,
+      hostSnapshot: snapshot,
+    });
+
+    expect(truth.bluebubbles.detectionState).toBe('healthy');
+    expect(truth.bluebubbles.blocker).not.toContain('newer chat activity');
+    expect(truth.bluebubbles.transportDetail).not.toContain(
+      'suspected_missed_inbound',
+    );
+    expect(truth.bluebubbles.transportDetail).toContain('detection healthy');
+    expect(truth.bluebubbles.mostRecentWebhookObservedAt).toBe(
+      '2026-04-08T11:58:00.000Z',
+    );
+  });
+
   it('surfaces transport-unreachable BlueBubbles truth with active endpoint and candidate results', () => {
     vi.stubEnv('BLUEBUBBLES_ENABLED', 'true');
     vi.stubEnv('BLUEBUBBLES_BASE_URL', 'http://macbook-pro.local:1234');

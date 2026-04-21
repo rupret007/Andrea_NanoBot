@@ -38,6 +38,10 @@ import {
   RUNTIME_STATUS_COMMANDS,
   RUNTIME_STOP_COMMANDS,
 } from './operator-command-gate.js';
+import {
+  buildAndreaCapabilityPackagingLine,
+  getAndreaCapabilityDiscoveryPrompts,
+} from './assistant-profile-pack.js';
 
 export type CommandSurfaceAudience = 'user' | 'operator' | 'internal';
 export type CommandSurfaceKind =
@@ -1226,11 +1230,14 @@ export function buildTelegramWelcomeLines(assistantName: string): string[] {
   const examples = getPracticalDiscoverySpotlights('telegram')
     .slice(0, 5)
     .map((entry) => `- \`${entry.prompt}\``);
+  const benchmarkPackExamples = getAndreaCapabilityDiscoveryPrompts()
+    .slice(1, 5)
+    .map((prompt) => `- \`${prompt}\``);
   return [
     `*Welcome to ${assistantName}*`,
     '',
     '- Start with a normal request in plain language.',
-    "- Telegram is Andrea's richest surface for schedule help, reminders, groceries and errands, meal and week planning, bill follow-through, reply help, and deeper answers.",
+    `- Telegram is Andrea's richest surface for ${buildAndreaCapabilityPackagingLine()}, plus groceries, errands, pills, bills, and deeper answers.`,
     '',
     '*Start Here*',
     '- In a direct chat: send a normal message. If this will be your main Andrea chat, run `/registermain` once.',
@@ -1240,6 +1247,9 @@ export function buildTelegramWelcomeLines(assistantName: string): string[] {
     '',
     '*Best First Asks*',
     ...examples,
+    '',
+    '*Benchmark-Guided Packs*',
+    ...benchmarkPackExamples,
   ];
 }
 
@@ -1247,11 +1257,14 @@ export function buildTelegramHelpLines(assistantName: string): string[] {
   const examples = getPracticalDiscoverySpotlights('telegram')
     .slice(0, 5)
     .map((entry) => `- \`${entry.prompt}\``);
+  const benchmarkPackExamples = getAndreaCapabilityDiscoveryPrompts()
+    .slice(0, 6)
+    .map((prompt) => `- \`${prompt}\``);
   return [
     `*How ${assistantName} Works Here*`,
     '',
     '- Most people should just send a normal message.',
-    "- Telegram is Andrea's richest surface for scheduling, reminders, groceries and errands, meal and week planning, bill follow-through, reply help, review, and richer detail.",
+    `- Telegram is Andrea's richest surface for ${buildAndreaCapabilityPackagingLine()}, plus grounded follow-through and richer detail.`,
     '',
     '*Best Habits*',
     '- In a DM: ask normally, or run `/registermain` once if this should be your main Andrea chat.',
@@ -1262,6 +1275,9 @@ export function buildTelegramHelpLines(assistantName: string): string[] {
     '',
     '*Good Next Messages*',
     ...examples,
+    '',
+    '*Capability Packs*',
+    ...benchmarkPackExamples,
   ];
 }
 
@@ -1311,6 +1327,8 @@ export function buildTelegramFeatureLines(assistantName: string): string[] {
     '- Figure out what matters today, what bills or other follow-through are still open, and what to do next.',
     '- Keep groceries, errands, meals, pills, and household checklists in view without turning it into a giant planning ritual.',
     '- Draft replies, summarize messages, and keep communication follow-through clean.',
+    '- Prep for your next meeting, keep repo and project work in view, and ask what changed when you want a compact status readout.',
+    '- Capture ideas, keep life threads inspectable, and use saved context without turning Andrea into a slash-command maze.',
     '- Compare options, explain a decision, and get source-grounded summaries when those lanes are available.',
     '- Keep track of open follow-through across people, home, pills, bills, and projects without making that the whole public story.',
     '',
@@ -1325,7 +1343,7 @@ export function buildTelegramFeatureLines(assistantName: string): string[] {
 }
 
 export function buildTelegramDescription(assistantName: string): string {
-  return `${assistantName} helps with schedule questions, reminders, groceries and errands, pills and bills, planning meals or the week, reply help, and calm follow-through. Start with a normal message. In DM, run /registermain once to make it your main Andrea chat.`;
+  return `${assistantName} helps with ${buildAndreaCapabilityPackagingLine()}, plus groceries, errands, pills, bills, and calm follow-through. Start with a normal message. In DM, run /registermain once to make it your main Andrea chat.`;
 }
 
 export function buildTelegramShortDescription(assistantName: string): string {

@@ -306,6 +306,19 @@ export function parseResponseFeedbackAction(
   };
 }
 
+export function shouldCancelPendingContinuationForFeedback(
+  record: Pick<ResponseFeedbackRecord, 'routeKey' | 'capabilityId' | 'handlerKind'>,
+): boolean {
+  const routeKey = normalizeText(record.routeKey).toLowerCase();
+  const capabilityId = normalizeText(record.capabilityId).toLowerCase();
+  const handlerKind = normalizeText(record.handlerKind).toLowerCase();
+  return (
+    routeKey.startsWith('google_calendar.create_event') ||
+    capabilityId === 'calendar.google_create' ||
+    handlerKind === 'google_calendar_create_local'
+  );
+}
+
 export function appendResponseFeedbackInlineRow(
   options: SendMessageOptions = {},
   feedbackId: string,

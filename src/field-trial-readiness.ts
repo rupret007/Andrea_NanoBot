@@ -1601,6 +1601,19 @@ function buildBlueBubblesTruth(
     rawDerivedServerSeenAt === 'none'
       ? 'none'
       : derivedServerSeenAt || monitorState.mostRecentServerSeenAt || 'none';
+  const mostRecentWebhookObservedAt =
+    monitorState.mostRecentWebhookObservedAt || 'none';
+  const mostRecentWebhookObservedChatJid =
+    monitorState.mostRecentWebhookObservedChatJid || 'none';
+  const webhookCaughtUpToServer =
+    effectiveMostRecentServerSeenChat !== 'none' &&
+    effectiveMostRecentServerSeenAt !== 'none' &&
+    mostRecentWebhookObservedChatJid === effectiveMostRecentServerSeenChat &&
+    (parseFieldTrialIsoTime(mostRecentWebhookObservedAt) ?? -1) >=
+      (parseFieldTrialIsoTime(effectiveMostRecentServerSeenAt) ?? Number.MAX_SAFE_INTEGER);
+  const hasRecentBlueBubblesReplyFailure = monitorState.recentEvidence.some(
+    (entry) => entry.kind === 'reply_delivery_failed',
+  );
   const shadowMonitorOverrideAllowed =
     derivedDetectionState === 'none' ||
     derivedDetectionState === 'ignored_by_gate_or_scope' ||
@@ -1632,9 +1645,23 @@ function buildBlueBubblesTruth(
       effectiveTransportProbeState === 'reachable'
         ? 'mixed_degraded'
         : 'transport_unreachable';
+  } else if (
+    webhookCaughtUpToServer &&
+    (effectiveDetectionState === 'suspected_missed_inbound' ||
+      effectiveDetectionState === 'mixed_degraded')
+  ) {
+    effectiveDetectionState = hasRecentBlueBubblesReplyFailure
+      ? 'reply_delivery_broken'
+      : 'healthy';
   }
   const effectiveDetectionDetail =
-    shadowMonitorUnstable
+    webhookCaughtUpToServer &&
+    (derivedDetectionState === 'suspected_missed_inbound' ||
+      derivedDetectionState === 'mixed_degraded' ||
+      monitorState.detectionState === 'suspected_missed_inbound' ||
+      monitorState.detectionState === 'mixed_degraded')
+      ? null
+      : shadowMonitorUnstable
       ? `Andrea can reach the BlueBubbles bridge from this PC, but the recent-activity shadow poll is failing (${effectiveShadowPollLastError}), so the same-thread health check is not trustworthy yet.`
       : liveDetectionEnvelopePresent
         ? derivedDetectionDetail || null
@@ -1644,7 +1671,13 @@ function buildBlueBubblesTruth(
             : null) ||
           null;
   const effectiveDetectionNextAction =
-    shadowMonitorUnstable
+    webhookCaughtUpToServer &&
+    (derivedDetectionState === 'suspected_missed_inbound' ||
+      derivedDetectionState === 'mixed_degraded' ||
+      monitorState.detectionState === 'suspected_missed_inbound' ||
+      monitorState.detectionState === 'mixed_degraded')
+      ? null
+      : shadowMonitorUnstable
       ? 'Check the BlueBubbles recent-message endpoint and shadow-poll path for this Windows host, then retry the same 1:1 Messages thread.'
       : liveDetectionEnvelopePresent
         ? derivedDetectionNextAction || null
@@ -1653,6 +1686,23 @@ function buildBlueBubblesTruth(
             ? 'Check the BlueBubbles server endpoint for this Windows host, prefer a stable IP or explicit candidate list over a .local hostname, then retry the same 1:1 Messages thread.'
             : null) ||
           null;
+  const effectiveChannelDetail =
+    webhookCaughtUpToServer &&
+    (derivedDetectionState === 'suspected_missed_inbound' ||
+      derivedDetectionState === 'mixed_degraded' ||
+      monitorState.detectionState === 'suspected_missed_inbound' ||
+      monitorState.detectionState === 'mixed_degraded')
+      ? channelDetail
+          .split(' | ')
+          .filter(
+            (part) =>
+              part !== 'detection suspected_missed_inbound' &&
+              !part.startsWith('detection detail ') &&
+              !part.startsWith('detection next action '),
+          )
+          .concat('detection healthy')
+          .join(' | ')
+      : channelDetail;
   const bridgeAvailability: AppleMessagesBridgeAvailability =
     config.enabled &&
     snapshot.configured &&
@@ -1705,7 +1755,7 @@ function buildBlueBubblesTruth(
     lastMetadataHydrationSource: effectiveLastMetadataHydrationSource,
     attemptedTargetSequence: effectiveAttemptedTargetSequence,
     transportState: bluebubblesChannel?.state || snapshot.state,
-    transportDetail: channelDetail,
+    transportDetail: effectiveChannelDetail,
     detectionState: effectiveDetectionState,
     detectionDetail: effectiveDetectionDetail || 'none',
     detectionNextAction: effectiveDetectionNextAction || 'none',
@@ -1717,10 +1767,8 @@ function buildBlueBubblesTruth(
         : monitorState.shadowPollMostRecentChat || derivedServerSeenChat || 'none',
     mostRecentServerSeenAt: effectiveMostRecentServerSeenAt,
     mostRecentServerSeenChatJid: effectiveMostRecentServerSeenChat,
-    mostRecentWebhookObservedAt:
-      monitorState.mostRecentWebhookObservedAt || 'none',
-    mostRecentWebhookObservedChatJid:
-      monitorState.mostRecentWebhookObservedChatJid || 'none',
+    mostRecentWebhookObservedAt,
+    mostRecentWebhookObservedChatJid,
     lastIgnoredAt: monitorState.lastIgnoredAt || 'none',
     lastIgnoredChatJid: monitorState.lastIgnoredChatJid || 'none',
     lastIgnoredReason: monitorState.lastIgnoredReason || 'none',

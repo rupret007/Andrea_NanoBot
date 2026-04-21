@@ -27,6 +27,7 @@ import {
   type AssistantCapabilityId,
 } from './assistant-capabilities.js';
 import {
+  parseAllSyncedMessagesSummaryIntent,
   looksLikeGenericThreadSummaryPrompt,
   parseThreadSummaryIntent,
 } from './thread-summary-routing.js';
@@ -50,7 +51,7 @@ export interface AssistantCapabilityContinuationSubjectData {
 
 function stripAndreaAddressing(value: string): string {
   return value
-    .replace(/(^|[\s([{\-])@andrea\b[,:;!?-]*/gi, '$1')
+    .replace(/(^|[\s([{-])@andrea\b[,:;!?-]*/gi, '$1')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -528,6 +529,8 @@ function matchThreadPrompt(
   const lower = normalized.toLowerCase();
   if (
     /^what threads do i have open\b/.test(lower) ||
+    /^what life threads are open\b/.test(lower) ||
+    /^what life threads do i have open\b/.test(lower) ||
     /^what('?s| is) active right now\b/.test(lower)
   ) {
     return {
@@ -716,6 +719,16 @@ function matchCommunicationPrompt(
   normalized: string,
 ): AssistantCapabilityMatch | null {
   const lower = normalized.toLowerCase();
+  const allSyncedSummaryIntent = parseAllSyncedMessagesSummaryIntent(normalized);
+  if (allSyncedSummaryIntent) {
+    return {
+      capabilityId: 'communication.summarize_thread',
+      normalizedText: normalized,
+      canonicalText: allSyncedSummaryIntent.canonicalText,
+      arguments: allSyncedSummaryIntent.arguments,
+      reason: 'matched all-synced Messages summary phrasing',
+    };
+  }
   const threadSummaryIntent = parseThreadSummaryIntent(normalized);
   if (threadSummaryIntent) {
     return {
@@ -919,6 +932,7 @@ function matchStaffPrompt(normalized: string): AssistantCapabilityMatch | null {
     /^what should i remember before i leave\b/.test(lower) ||
     /^what should i handle before my next meeting\b/.test(lower) ||
     /^what matters before my next meeting\b/.test(lower) ||
+    /^prep me for my next meeting\b/.test(lower) ||
     /^help me prepare for this meeting\b/.test(lower) ||
     /^what should i do before my next meeting\b/.test(lower) ||
     /^what do i need before that event\b/.test(lower) ||
@@ -985,6 +999,8 @@ function matchKnowledgePrompt(
     /^save (?:this|that|this note|that note|this result|that result|this summary|that summary) to my library\b/.test(
       lower,
     ) ||
+    /^capture this idea\b/.test(lower) ||
+    /^save this idea\b/.test(lower) ||
     /^(?:save|add|import|index) (?:the )?(?:file|document) /.test(lower)
   ) {
     return {

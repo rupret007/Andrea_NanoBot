@@ -567,6 +567,14 @@ describe('action-layer pending flows', () => {
       ),
     ).toBe(true);
     expect(
+      shouldInterruptPendingActionLayerFlow("what's on deck for my repos", {
+        now: new Date('2026-04-15T09:00:00-05:00'),
+        timeZone: 'America/Chicago',
+        groupFolder: 'main',
+        chatJid: 'tg:1',
+      }),
+    ).toBe(true);
+    expect(
       shouldInterruptPendingActionLayerFlow('what all can you handle again', {
         now: new Date('2026-04-15T09:00:00-05:00'),
         timeZone: 'America/Chicago',

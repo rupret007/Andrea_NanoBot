@@ -51,15 +51,22 @@ describe('andrea platform shell bridge', () => {
       detail: 'Loopback backend reachable.',
       metadata: { source: 'test' },
     });
+    await bridge.emitAndreaPlatformShellConfigSnapshot({
+      component: 'andrea.memory',
+      configName: 'memory_freshness_rollup',
+      snapshot: { semanticMemory: '12 subjects' },
+    });
 
-    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(fetchImpl).toHaveBeenCalledTimes(4);
     expect(calls[0]?.url).toBe('http://127.0.0.1:4401/intent/request');
     expect(calls[1]?.url).toBe('http://127.0.0.1:4401/intent/response');
     expect(calls[2]?.url).toBe('http://127.0.0.1:4401/system/health');
+    expect(calls[3]?.url).toBe('http://127.0.0.1:4401/config/snapshot');
 
     const firstBody = JSON.parse(String(calls[0]?.body ?? '{}'));
     const secondBody = JSON.parse(String(calls[1]?.body ?? '{}'));
     const thirdBody = JSON.parse(String(calls[2]?.body ?? '{}'));
+    const fourthBody = JSON.parse(String(calls[3]?.body ?? '{}'));
 
     expect(firstBody).toMatchObject({
       source: 'andrea_nanobot',
@@ -87,6 +94,14 @@ describe('andrea platform shell bridge', () => {
       summary: 'Shell is healthy.',
       detail: 'Loopback backend reachable.',
       metadata: { source: 'test' },
+    });
+    expect(fourthBody).toMatchObject({
+      source: 'andrea_nanobot',
+      component: 'andrea.memory',
+      config_name: 'memory_freshness_rollup',
+    });
+    expect(JSON.parse(String(fourthBody.snapshot_json))).toEqual({
+      semanticMemory: '12 subjects',
     });
   });
 

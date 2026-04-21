@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { ALL_SYNCED_MESSAGES_TARGET } from './thread-summary-routing.js';
 import {
   continueAssistantCapabilityFromPriorSubjectData,
   continueAssistantCapabilityFromAlexaState,
@@ -56,6 +57,11 @@ describe('assistant capability router', () => {
       capabilityId: 'threads.list_open',
     });
     expect(
+      matchAssistantCapabilityRequest('What life threads are open?'),
+    ).toMatchObject({
+      capabilityId: 'threads.list_open',
+    });
+    expect(
       matchAssistantCapabilityRequest('Help me get tonight under control'),
     ).toMatchObject({
       capabilityId: 'staff.plan_horizon',
@@ -67,6 +73,11 @@ describe('assistant capability router', () => {
     });
     expect(
       matchAssistantCapabilityRequest('What matters before my next meeting?'),
+    ).toMatchObject({
+      capabilityId: 'staff.prepare',
+    });
+    expect(
+      matchAssistantCapabilityRequest('Prep me for my next meeting'),
     ).toMatchObject({
       capabilityId: 'staff.prepare',
     });
@@ -136,6 +147,11 @@ describe('assistant capability router', () => {
   it('matches explicit knowledge-library prompts cleanly', () => {
     expect(
       matchAssistantCapabilityRequest('Save this to my library'),
+    ).toMatchObject({
+      capabilityId: 'knowledge.save_source',
+    });
+    expect(
+      matchAssistantCapabilityRequest('Capture this idea'),
     ).toMatchObject({
       capabilityId: 'knowledge.save_source',
     });
@@ -270,6 +286,25 @@ describe('assistant capability router', () => {
     ).toMatchObject({
       capabilityId: 'communication.summarize_thread',
       canonicalText: 'What are my recent text messages',
+    });
+    expect(
+      matchAssistantCapabilityRequest('yeah all text messages for today'),
+    ).toMatchObject({
+      capabilityId: 'communication.summarize_thread',
+      arguments: expect.objectContaining({
+        targetChatJid: ALL_SYNCED_MESSAGES_TARGET,
+        timeWindowKind: 'today',
+      }),
+    });
+    expect(
+      matchAssistantCapabilityRequest('what are my text messages for today?'),
+    ).toMatchObject({
+      capabilityId: 'communication.summarize_thread',
+      canonicalText: 'summarize all synced text messages from today',
+      arguments: expect.objectContaining({
+        targetChatJid: ALL_SYNCED_MESSAGES_TARGET,
+        timeWindowKind: 'today',
+      }),
     });
     expect(
       matchAssistantCapabilityRequest('Summarize the latest news today'),

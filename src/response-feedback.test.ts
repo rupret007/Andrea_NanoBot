@@ -11,6 +11,7 @@ import {
   refreshResponseFeedbackRecordTruth,
   selectResponseFeedbackLane,
   selectResponseFeedbackRetryLane,
+  shouldCancelPendingContinuationForFeedback,
 } from './response-feedback.js';
 import { _initTestDatabase, upsertResponseFeedback } from './db.js';
 import type { ResponseFeedbackRecord } from './types.js';
@@ -97,6 +98,27 @@ describe('response feedback helpers', () => {
         },
       ],
     ]);
+  });
+
+  it('marks pending calendar create continuations as unsafe after a downvote', () => {
+    expect(
+      shouldCancelPendingContinuationForFeedback(
+        buildRecord({
+          routeKey: 'google_calendar.create_event',
+          capabilityId: 'calendar.google_create',
+          handlerKind: 'google_calendar_create_local',
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      shouldCancelPendingContinuationForFeedback(
+        buildRecord({
+          routeKey: 'communication.open_loops',
+          capabilityId: 'communication.open_loops',
+          handlerKind: 'assistant_capability',
+        }),
+      ),
+    ).toBe(false);
   });
 
   it('offers landing actions after a local hotfix resolves', () => {

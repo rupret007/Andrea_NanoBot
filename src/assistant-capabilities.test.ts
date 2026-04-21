@@ -14,6 +14,7 @@ import {
   _initTestDatabase,
 } from './db.js';
 import { planSimpleReminder } from './local-reminder.js';
+import { ALL_SYNCED_MESSAGES_TARGET } from './thread-summary-routing.js';
 
 const originalFetch = globalThis.fetch;
 
@@ -270,6 +271,63 @@ describe('assistant capabilities', () => {
     expect(result.replyText).not.toContain('+14697852580');
     expect(result.replyText).not.toContain('+13373027596');
     expect(result.replyText).not.toContain('Yesterday everyone was still just figuring out');
+  });
+
+  it('summarizes all synced Messages activity for broad today requests', async () => {
+    storeChatMetadata(
+      'bb:iMessage;-;+14695550123',
+      '2026-04-15T16:50:00.000Z',
+      '+14695550123',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'msg-all-today-1',
+      chat_jid: 'bb:iMessage;-;+14695550123',
+      sender: 'bb:+14695550123',
+      sender_name: '+14695550123',
+      content: 'Can you send me the dinner address?',
+      timestamp: '2026-04-15T16:46:28.314Z',
+      is_from_me: false,
+    });
+    storeChatMetadata(
+      'bb:iMessage;+;chat-pops-clean',
+      '2026-04-15T18:51:51.947Z',
+      'Pops of Punk',
+      'bluebubbles',
+      true,
+    );
+    storeMessage({
+      id: 'msg-all-today-2',
+      chat_jid: 'bb:iMessage;+;chat-pops-clean',
+      sender: 'bb:+13373027596',
+      sender_name: '+13373027596',
+      content: 'Fallout still has the best worldbuilding argument.',
+      timestamp: '2026-04-15T18:51:51.947Z',
+      is_from_me: false,
+    });
+
+    const result = await executeAssistantCapability({
+      capabilityId: 'communication.summarize_thread',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:8004355504',
+        now: new Date('2026-04-15T19:00:00-05:00'),
+      },
+      input: {
+        canonicalText: 'summarize all synced text messages from today',
+        targetChatJid: ALL_SYNCED_MESSAGES_TARGET,
+        timeWindowKind: 'today',
+      },
+    });
+
+    expect(result.handled).toBe(true);
+    expect(result.replyText).toContain('I found 2 synced Messages turns');
+    expect(result.replyText).toContain('Pops of Punk');
+    expect(result.replyText).toContain('Messages chat');
+    expect(result.replyText).not.toContain('+14695550123');
+    expect(result.trace?.notes).toContain('window:today');
   });
 
   it('reads upcoming reminders from local scheduled tasks', async () => {

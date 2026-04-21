@@ -41,6 +41,9 @@ function looksLikeFreshWorkCockpitPrompt(message: string): boolean {
     normalized === 'show me whats running' ||
     normalized === "show me what's running right now" ||
     normalized === 'show me whats running right now' ||
+    normalized === "what's on deck for my repos" ||
+    normalized === 'whats on deck for my repos' ||
+    normalized === 'show me a repo standup' ||
     normalized === "what's running" ||
     normalized === 'whats running' ||
     normalized === 'what work is active right now' ||

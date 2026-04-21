@@ -186,20 +186,23 @@ describe('command surface registry', () => {
     expect(welcome).toContain("what's on my calendar tomorrow");
     expect(welcome).toContain('remind me to take my pills at 9');
     expect(welcome).toContain('what bills do I need to pay this week');
+    expect(welcome).toContain('prep me for my next meeting');
+    expect(welcome).toContain('what life threads are open');
     expect(welcome).not.toContain('Candace');
 
-    expect(help).toContain('scheduling');
+    expect(help).toContain('meeting prep');
     expect(help).toContain('reply help');
-    expect(help).toContain('bill follow-through');
+    expect(help).toContain('repo check-ins');
     expect(help).toContain('Not helpful');
-    expect(help).not.toContain('missions and chief-of-staff');
+    expect(help).toContain('capture this idea');
 
     expect(features).toContain('calendar');
     expect(features).toContain('planning');
     expect(features).toContain('quick reply help');
     expect(features).toContain('pills');
+    expect(features).toContain('life threads');
+    expect(features).toContain('repo and project work');
     expect(features).toContain('private pilot issue');
-    expect(features).not.toContain('life threads and follow-through');
   });
 
   it('keeps discovery truth classes aligned with the current host story', () => {

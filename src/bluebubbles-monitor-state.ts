@@ -111,6 +111,63 @@ function normalizeStringMap(value: unknown): Record<string, string> {
   ) as Record<string, string>;
 }
 
+function parseIsoTime(value: string | null | undefined): number | null {
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+export function reconcileBlueBubblesWebhookCatchUp(
+  state: BlueBubblesMonitorState,
+): BlueBubblesMonitorState {
+  const serverSeenAt = parseIsoTime(state.mostRecentServerSeenAt);
+  const webhookObservedAt = parseIsoTime(state.mostRecentWebhookObservedAt);
+  const webhookCaughtUp =
+    Boolean(state.mostRecentServerSeenChatJid) &&
+    state.mostRecentServerSeenChatJid === state.mostRecentWebhookObservedChatJid &&
+    serverSeenAt != null &&
+    webhookObservedAt != null &&
+    webhookObservedAt >= serverSeenAt;
+  if (!webhookCaughtUp) {
+    return state;
+  }
+
+  const recentEvidence = state.recentEvidence.filter(
+    (entry) =>
+      !(
+        entry.kind === 'missed_inbound' &&
+        entry.chatJid === state.mostRecentServerSeenChatJid &&
+        (parseIsoTime(entry.observedAt) ?? Number.MAX_SAFE_INTEGER) <=
+          webhookObservedAt
+      ),
+  );
+  const hasMissedInbound = recentEvidence.some(
+    (entry) => entry.kind === 'missed_inbound',
+  );
+  const hasReplyFailure = recentEvidence.some(
+    (entry) => entry.kind === 'reply_delivery_failed',
+  );
+  if (
+    hasMissedInbound ||
+    (state.detectionState !== 'suspected_missed_inbound' &&
+      state.detectionState !== 'mixed_degraded')
+  ) {
+    return { ...state, recentEvidence };
+  }
+
+  return {
+    ...state,
+    recentEvidence,
+    detectionState: hasReplyFailure ? 'reply_delivery_broken' : 'healthy',
+    detectionDetail: hasReplyFailure
+      ? 'Webhook freshness caught up, but a recent reply-back attempt still failed from Andrea.'
+      : null,
+    detectionNextAction: hasReplyFailure
+      ? 'Inspect the BlueBubbles reply target and send method on this host, then retry the same thread.'
+      : null,
+  };
+}
+
 export function createDefaultBlueBubblesMonitorState(
   nowIso = new Date().toISOString(),
 ): BlueBubblesMonitorState {
@@ -173,7 +230,7 @@ function normalizeState(value: unknown): BlueBubblesMonitorState | null {
     input.crossSurfaceFallbackState === 'cooldown'
       ? input.crossSurfaceFallbackState
       : 'idle';
-  return {
+  return reconcileBlueBubblesWebhookCatchUp({
     ...createDefaultBlueBubblesMonitorState(
       isNonEmptyString(input.updatedAt) ? input.updatedAt : new Date().toISOString(),
     ),
@@ -286,7 +343,7 @@ function normalizeState(value: unknown): BlueBubblesMonitorState | null {
       : [],
     perChatServerSeen: normalizeStringMap(input.perChatServerSeen),
     perChatWebhookObserved: normalizeStringMap(input.perChatWebhookObserved),
-  };
+  });
 }
 
 export function readBlueBubblesMonitorState(
@@ -309,10 +366,10 @@ export function writeBlueBubblesMonitorState(
   projectRoot = process.cwd(),
 ): BlueBubblesMonitorState {
   const statePath = getMonitorStatePath(projectRoot);
-  const next = {
+  const next = reconcileBlueBubblesWebhookCatchUp({
     ...createDefaultBlueBubblesMonitorState(state.updatedAt || new Date().toISOString()),
     ...state,
-  };
+  });
   fs.mkdirSync(resolveHostControlPaths(projectRoot).runtimeStateDir, {
     recursive: true,
   });

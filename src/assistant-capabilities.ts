@@ -15,6 +15,7 @@ import {
 } from './daily-command-center.js';
 import {
   createTask,
+  getAllChats,
   getAllTasks,
   listMessagesForChatWindow,
   listProfileFactsForGroup,
@@ -61,6 +62,7 @@ import {
 import { summarizeBlueBubblesThreadDigest } from './messages-fluidity.js';
 import { resolveBlueBubblesThreadTargetByName } from './message-actions.js';
 import { createOrRefreshMessageActionFromDraft } from './message-actions.js';
+import { ALL_SYNCED_MESSAGES_TARGET } from './thread-summary-routing.js';
 import { buildChiefOfStaffTurn } from './chief-of-staff.js';
 import {
   buildMissionExecutionContext,
@@ -2595,11 +2597,117 @@ function formatThreadSummaryReply(params: {
     .join('\n');
 }
 
+function formatSafeSyncedThreadLabel(params: {
+  name?: string | null;
+  jid: string;
+  isGroup?: boolean | null;
+}): string {
+  const normalized = normalizeText(params.name || '');
+  if (
+    normalized &&
+    normalized !== params.jid &&
+    !/(?:\+?\d[\d\s().-]{6,}\d)/.test(normalized)
+  ) {
+    return clipText(normalized, 64);
+  }
+  return params.isGroup ? 'Messages group' : 'Messages chat';
+}
+
+function buildAllSyncedMessagesSummaryReply(params: {
+  window: ReturnType<typeof resolveThreadSummaryWindow>;
+  channel: AssistantCapabilityContext['channel'];
+}): string {
+  const threads = getAllChats()
+    .filter((chat) => chat.jid.startsWith('bb:'))
+    .map((chat) => {
+      const messages = listMessagesForChatWindow({
+        chatJid: chat.jid,
+        startTimestamp: params.window.startTimestamp,
+        endTimestamp: params.window.endTimestamp,
+        limit: 80,
+      }).filter((message) => !message.is_bot_message);
+      return { chat, messages };
+    })
+    .filter((entry) => entry.messages.length > 0)
+    .sort((left, right) => {
+      const leftLatest = left.messages[left.messages.length - 1]?.timestamp || '';
+      const rightLatest =
+        right.messages[right.messages.length - 1]?.timestamp || '';
+      return rightLatest.localeCompare(leftLatest);
+    });
+
+  if (threads.length === 0) {
+    return `I didn't find any synced Messages activity across your chats over ${params.window.label}.`;
+  }
+
+  const totalMessages = threads.reduce(
+    (sum, entry) => sum + entry.messages.length,
+    0,
+  );
+  const lead = `I found ${totalMessages} synced Messages turn${totalMessages === 1 ? '' : 's'} across ${threads.length} chat${threads.length === 1 ? '' : 's'} over ${params.window.label}.`;
+  const rows = threads.slice(0, params.channel === 'bluebubbles' ? 3 : 6).map(
+    (entry) => {
+      const label = formatSafeSyncedThreadLabel({
+        jid: entry.chat.jid,
+        name: entry.chat.name,
+        isGroup: Boolean(entry.chat.is_group),
+      });
+      const latest = entry.messages[entry.messages.length - 1];
+      const latestText = clipText(latest?.content || '', 120);
+      return `- ${label}: ${entry.messages.length} turn${entry.messages.length === 1 ? '' : 's'}${latestText ? `. Latest: "${latestText}"` : ''}`;
+    },
+  );
+  const hiddenCount = Math.max(0, threads.length - rows.length);
+  const tail =
+    hiddenCount > 0
+      ? `- Plus ${hiddenCount} more synced chat${hiddenCount === 1 ? '' : 's'} with activity.`
+      : null;
+  return [lead, '', ...rows, tail].filter(Boolean).join('\n');
+}
+
 async function runCommunicationThreadSummaryCapability(
   descriptor: AssistantCapabilityDescriptor,
   context: AssistantCapabilityContext,
   input: AssistantCapabilityInput,
 ): Promise<AssistantCapabilityResult> {
+  if (input.targetChatJid === ALL_SYNCED_MESSAGES_TARGET) {
+    const window = resolveThreadSummaryWindow({
+      now: context.now || new Date(),
+      kind: input.timeWindowKind,
+      value: input.timeWindowValue,
+    });
+    const replyText = buildAllSyncedMessagesSummaryReply({
+      window,
+      channel: context.channel,
+    });
+    return {
+      handled: true,
+      capabilityId: descriptor.id,
+      replyText,
+      outputShape: descriptor.preferredOutputShape[context.channel],
+      trace: buildCapabilityTrace(
+        descriptor,
+        context,
+        'local_companion',
+        'summarized activity across all synced Messages chats',
+        [`window:${window.label}`],
+      ),
+      conversationSeed: {
+        flowKey: descriptor.id.replace(/\./g, '_'),
+        subjectKind: 'communication_thread',
+        summaryText: replyText,
+        guidanceGoal: 'open_conversation',
+        subjectData: {
+          activeCapabilityId: descriptor.id,
+          threadTitle: 'all synced Messages',
+          conversationFocus: 'all synced Messages',
+        },
+        supportedFollowups: descriptor.followupActions,
+        responseSource: 'local_companion',
+      },
+    };
+  }
+
   const chatQuery =
     normalizeText(input.targetChatName || input.threadTitle || '') ||
     normalizeText(input.personName || '');

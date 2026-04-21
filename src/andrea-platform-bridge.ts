@@ -54,6 +54,19 @@ export function isAndreaPlatformShellBridgeEnabled(): boolean {
   return Boolean(SHELL_GATEWAY_BASE_URL);
 }
 
+export async function emitAndreaPlatformShellConfigSnapshot(input: {
+  component: string;
+  configName: string;
+  snapshot: Record<string, unknown>;
+}): Promise<void> {
+  await postShellGateway('/config/snapshot', {
+    source: 'andrea_nanobot',
+    component: input.component,
+    config_name: input.configName,
+    snapshot_json: JSON.stringify(input.snapshot),
+  });
+}
+
 export async function emitAndreaPlatformShellHealth(
   input: {
     severity: HealthSeverity;
