@@ -8106,6 +8106,25 @@ function compactPlatformStrings(
   );
 }
 
+function sanitizePlatformControlText(value: string | null | undefined): string {
+  if (!value) return '';
+  const markers = [
+    'stack trace:',
+    'Traceback (most recent call last)',
+    'OPENAI_API_KEY=',
+    'ANTHROPIC_API_KEY=',
+  ];
+  let sanitized = value;
+  for (const marker of markers) {
+    const index = sanitized.indexOf(marker);
+    if (index >= 0) {
+      sanitized = `${sanitized.slice(0, index).trim()} Provider/runtime diagnostic detail omitted from platform control-plane truth.`;
+      break;
+    }
+  }
+  return sanitized.replace(/\s+/g, ' ').trim().slice(0, 1200);
+}
+
 function toAndreaPlatformProofState(
   state: FieldTrialProofState,
 ): AndreaPlatformProofState | null {
@@ -8140,7 +8159,9 @@ function toAndreaPlatformHealthState(
 }
 
 function summarizePlatformProofTruth(truth: FieldTrialSurfaceTruth): string {
-  return truth.detail || truth.blocker || truth.nextAction || truth.proofState;
+  return sanitizePlatformControlText(
+    truth.detail || truth.blocker || truth.nextAction || truth.proofState,
+  );
 }
 
 function emitAndreaPlatformSurfaceProof(
@@ -8155,8 +8176,8 @@ function emitAndreaPlatformSurfaceProof(
     journey,
     state,
     summary: summarizePlatformProofTruth(truth),
-    blocker: truth.blocker || null,
-    nextAction: truth.nextAction || null,
+    blocker: sanitizePlatformControlText(truth.blocker) || null,
+    nextAction: sanitizePlatformControlText(truth.nextAction) || null,
     metadata: compactPlatformStrings({
       blockerOwner: truth.blockerOwner,
     }),
@@ -8263,11 +8284,14 @@ function emitAndreaPlatformTransportTruths(
       transportId: channel.name,
       transportKind: kind,
       state: channelTransportState(channel),
-      summary:
+      summary: sanitizePlatformControlText(
         channel.detail ||
-        channel.lastError ||
-        `${channel.name} channel is ${channel.state}.`,
-      detail: channel.lastError || channel.detail || null,
+          channel.lastError ||
+          `${channel.name} channel is ${channel.state}.`,
+      ),
+      detail:
+        sanitizePlatformControlText(channel.lastError || channel.detail || null) ||
+        null,
       freshnessSeconds: secondsSinceTimestamp(channel.updatedAt),
       deliverySemantics:
         kind === 'telegram'
@@ -8276,7 +8300,7 @@ function emitAndreaPlatformTransportTruths(
             ? 'bluebubbles_webhook_shadow_poll'
             : 'channel_adapter',
       fallbackTarget: kind === 'bluebubbles' ? 'telegram' : 'none',
-      blocker: channel.lastError || null,
+      blocker: sanitizePlatformControlText(channel.lastError) || null,
       metadata: compactPlatformStrings({
         configured: String(channel.configured),
         channelState: channel.state,
@@ -8289,44 +8313,54 @@ function emitAndreaPlatformTransportTruths(
     transportKind: 'alexa',
     state: toAndreaPlatformHealthState(truth.alexa.proofState),
     summary: summarizePlatformProofTruth(truth.alexa),
-    detail: truth.alexa.detail || truth.alexa.blocker || null,
+    detail:
+      sanitizePlatformControlText(truth.alexa.detail || truth.alexa.blocker) ||
+      null,
     deliverySemantics: 'signed_https_request',
     fallbackTarget: 'telegram',
-    blocker: truth.alexa.blocker || null,
-    nextAction: truth.alexa.nextAction || null,
+    blocker: sanitizePlatformControlText(truth.alexa.blocker) || null,
+    nextAction: sanitizePlatformControlText(truth.alexa.nextAction) || null,
   });
   void emitAndreaPlatformTransportEvent({
     transportId: 'research_provider',
     transportKind: 'provider',
     state: toAndreaPlatformHealthState(truth.research.proofState),
     summary: summarizePlatformProofTruth(truth.research),
-    detail: truth.research.detail || truth.research.blocker || null,
+    detail:
+      sanitizePlatformControlText(truth.research.detail || truth.research.blocker) ||
+      null,
     deliverySemantics: 'provider_api',
     fallbackTarget: 'saved_material_only',
-    blocker: truth.research.blocker || null,
-    nextAction: truth.research.nextAction || null,
+    blocker: sanitizePlatformControlText(truth.research.blocker) || null,
+    nextAction: sanitizePlatformControlText(truth.research.nextAction) || null,
   });
   void emitAndreaPlatformTransportEvent({
     transportId: 'image_generation_provider',
     transportKind: 'provider',
     state: toAndreaPlatformHealthState(truth.imageGeneration.proofState),
     summary: summarizePlatformProofTruth(truth.imageGeneration),
-    detail: truth.imageGeneration.detail || truth.imageGeneration.blocker || null,
+    detail:
+      sanitizePlatformControlText(
+        truth.imageGeneration.detail || truth.imageGeneration.blocker,
+      ) || null,
     deliverySemantics: 'provider_api',
     fallbackTarget: 'telegram_text_handoff',
-    blocker: truth.imageGeneration.blocker || null,
-    nextAction: truth.imageGeneration.nextAction || null,
+    blocker: sanitizePlatformControlText(truth.imageGeneration.blocker) || null,
+    nextAction:
+      sanitizePlatformControlText(truth.imageGeneration.nextAction) || null,
   });
   void emitAndreaPlatformTransportEvent({
     transportId: 'local_gateway',
     transportKind: 'gateway',
     state: toAndreaPlatformHealthState(truth.hostHealth.proofState),
     summary: summarizePlatformProofTruth(truth.hostHealth),
-    detail: truth.hostHealth.detail || truth.hostHealth.blocker || null,
+    detail:
+      sanitizePlatformControlText(truth.hostHealth.detail || truth.hostHealth.blocker) ||
+      null,
     deliverySemantics: 'local_process_and_http',
     fallbackTarget: 'operator_status',
-    blocker: truth.hostHealth.blocker || null,
-    nextAction: truth.hostHealth.nextAction || null,
+    blocker: sanitizePlatformControlText(truth.hostHealth.blocker) || null,
+    nextAction: sanitizePlatformControlText(truth.hostHealth.nextAction) || null,
   });
 }
 
