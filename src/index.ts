@@ -8109,10 +8109,10 @@ function compactPlatformStrings(
 function sanitizePlatformControlText(value: string | null | undefined): string {
   if (!value) return '';
   const markers = [
-    'stack trace:',
-    'Traceback (most recent call last)',
     'OPENAI_API_KEY=',
     'ANTHROPIC_API_KEY=',
+    'stack trace:',
+    'Traceback (most recent call last)',
   ];
   let sanitized = value;
   for (const marker of markers) {
