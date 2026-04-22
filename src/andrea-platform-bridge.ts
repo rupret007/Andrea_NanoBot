@@ -6,12 +6,37 @@ const SHELL_GATEWAY_BASE_URL = (
 ).trim().replace(/\/+$/, '');
 
 type IntentResponseOutcome = 'handled' | 'blocked' | 'degraded' | 'fallback';
+type ProofState =
+  | 'LIVE_PROVEN'
+  | 'NEAR_LIVE_ONLY'
+  | 'DEGRADED_BUT_USABLE'
+  | 'EXTERNALLY_BLOCKED';
 type HealthSeverity =
   | 'healthy'
   | 'degraded'
   | 'faulted'
   | 'blocked_external'
   | 'near_live_only';
+type TransportKind =
+  | 'telegram'
+  | 'bluebubbles'
+  | 'alexa'
+  | 'backend_http'
+  | 'dds'
+  | 'webhook'
+  | 'gateway'
+  | 'provider'
+  | 'other';
+type TraceKind =
+  | 'intent'
+  | 'route'
+  | 'job'
+  | 'proof'
+  | 'feedback'
+  | 'commit'
+  | 'operator'
+  | 'config'
+  | 'replay';
 
 function shellGatewayRoute(path: string): string | null {
   if (!SHELL_GATEWAY_BASE_URL) return null;
@@ -82,6 +107,83 @@ export async function emitAndreaPlatformShellHealth(
     severity: input.severity,
     summary: input.summary,
     ...(input.detail ? { detail: input.detail } : {}),
+    ...(input.metadata ? { metadata: input.metadata } : {}),
+  });
+}
+
+export async function emitAndreaPlatformProofEvent(input: {
+  surface: string;
+  state: ProofState;
+  summary: string;
+  journey?: string | null;
+  blocker?: string | null;
+  nextAction?: string | null;
+  metadata?: Record<string, string>;
+}): Promise<void> {
+  await postShellGateway('/proof/event', {
+    source: 'andrea_nanobot',
+    surface: input.surface,
+    ...(input.journey ? { journey: input.journey } : {}),
+    state: input.state,
+    summary: input.summary,
+    ...(input.blocker ? { blocker: input.blocker } : {}),
+    ...(input.nextAction ? { next_action: input.nextAction } : {}),
+    ...(input.metadata ? { metadata: input.metadata } : {}),
+  });
+}
+
+export async function emitAndreaPlatformTransportEvent(input: {
+  transportId: string;
+  transportKind: TransportKind;
+  state: HealthSeverity;
+  summary: string;
+  detail?: string | null;
+  latencyMs?: number | null;
+  freshnessSeconds?: number | null;
+  deliverySemantics?: string | null;
+  fallbackTarget?: string | null;
+  blocker?: string | null;
+  nextAction?: string | null;
+  metadata?: Record<string, string>;
+}): Promise<void> {
+  await postShellGateway('/transport/event', {
+    source: 'andrea_nanobot',
+    transport_id: input.transportId,
+    transport_kind: input.transportKind,
+    state: input.state,
+    summary: input.summary,
+    ...(input.detail ? { detail: input.detail } : {}),
+    ...(input.latencyMs !== undefined && input.latencyMs !== null
+      ? { latency_ms: input.latencyMs }
+      : {}),
+    ...(input.freshnessSeconds !== undefined && input.freshnessSeconds !== null
+      ? { freshness_seconds: input.freshnessSeconds }
+      : {}),
+    ...(input.deliverySemantics
+      ? { delivery_semantics: input.deliverySemantics }
+      : {}),
+    ...(input.fallbackTarget ? { fallback_target: input.fallbackTarget } : {}),
+    ...(input.blocker ? { blocker: input.blocker } : {}),
+    ...(input.nextAction ? { next_action: input.nextAction } : {}),
+    ...(input.metadata ? { metadata: input.metadata } : {}),
+  });
+}
+
+export async function emitAndreaPlatformTraceEvent(input: {
+  traceId: string;
+  traceKind: TraceKind;
+  title: string;
+  summary: string;
+  refs?: Record<string, string>;
+  metadata?: Record<string, string>;
+}): Promise<void> {
+  await postShellGateway('/trace/event', {
+    source: 'andrea_nanobot',
+    trace_id: input.traceId,
+    trace_kind: input.traceKind,
+    title: input.title,
+    summary: input.summary,
+    ...(input.refs ? { refs: input.refs } : {}),
     ...(input.metadata ? { metadata: input.metadata } : {}),
   });
 }

@@ -185,6 +185,9 @@ describe('AndreaOpenAiBackendClient', () => {
                 },
               ],
               proof_rollup: {},
+              transport_health_rollup: {
+                transport_count: '3',
+              },
               memory_freshness_rollup: {
                 semanticMemory: '12 saved sources',
               },
@@ -244,13 +247,14 @@ describe('AndreaOpenAiBackendClient', () => {
     expect(status.detail).toContain('Platform lifecycle: READY.');
     expect(status.detail).toContain('Recent jobs tracked: 1');
     expect(status.detail).toContain('Trace events: 4');
+    expect(status.detail).toContain('Transport entries: 3');
     expect(status.detail).toContain('Determinism audit: pass');
     expect(status.detail).toContain('Replay validation last passed: true');
     expect(status.detail).toContain('Memory registry keys: 1');
     expect(status.detail).toContain('Integration health entries: 1');
   });
 
-  it('reads platform trace, audit, proof, and replay endpoints', async () => {
+  it('reads platform trace, audit, proof, transport, gaps, and replay endpoints', async () => {
     const fetchImpl = vi.fn(async (input, init) => {
       const url = String(input);
       if (url.endsWith('/trace/corr-1')) {
@@ -271,6 +275,20 @@ describe('AndreaOpenAiBackendClient', () => {
         return new Response(JSON.stringify({ proof_rollup: {} }), {
           status: 200,
         });
+      }
+      if (url.endsWith('/transport-report')) {
+        expect(init?.method).toBe('GET');
+        return new Response(
+          JSON.stringify({ rollup: { transport_count: '1' }, transports: {} }),
+          { status: 200 },
+        );
+      }
+      if (url.endsWith('/trace-gaps')) {
+        expect(init?.method).toBe('GET');
+        return new Response(
+          JSON.stringify({ status: 'pass', gap_count: 0, gaps: [] }),
+          { status: 200 },
+        );
       }
       if (url.endsWith('/replay/capture')) {
         expect(init?.method).toBe('POST');
@@ -304,6 +322,13 @@ describe('AndreaOpenAiBackendClient', () => {
     });
     await expect(client.getPlatformProofReport()).resolves.toMatchObject({
       proof_rollup: {},
+    });
+    await expect(client.getPlatformTransportReport()).resolves.toMatchObject({
+      rollup: { transport_count: '1' },
+    });
+    await expect(client.getPlatformTraceGaps()).resolves.toMatchObject({
+      status: 'pass',
+      gap_count: 0,
     });
     await expect(
       client.capturePlatformReplay({ sessionId: 'session-1' }),

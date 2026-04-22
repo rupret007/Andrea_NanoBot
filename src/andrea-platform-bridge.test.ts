@@ -56,17 +56,47 @@ describe('andrea platform shell bridge', () => {
       configName: 'memory_freshness_rollup',
       snapshot: { semanticMemory: '12 subjects' },
     });
+    await bridge.emitAndreaPlatformProofEvent({
+      surface: 'telegram',
+      journey: 'smoke',
+      state: 'LIVE_PROVEN',
+      summary: 'Telegram smoke is live-proven.',
+      metadata: { source: 'test' },
+    });
+    await bridge.emitAndreaPlatformTransportEvent({
+      transportId: 'telegram',
+      transportKind: 'telegram',
+      state: 'healthy',
+      summary: 'Telegram transport is healthy.',
+      deliverySemantics: 'long_polling',
+      fallbackTarget: 'none',
+      metadata: { source: 'test' },
+    });
+    await bridge.emitAndreaPlatformTraceEvent({
+      traceId: 'feedback-1',
+      traceKind: 'feedback',
+      title: 'Response feedback captured',
+      summary: 'Feedback entered the platform trace chain.',
+      refs: { feedbackId: 'feedback-1' },
+      metadata: { source: 'test' },
+    });
 
-    expect(fetchImpl).toHaveBeenCalledTimes(4);
+    expect(fetchImpl).toHaveBeenCalledTimes(7);
     expect(calls[0]?.url).toBe('http://127.0.0.1:4401/intent/request');
     expect(calls[1]?.url).toBe('http://127.0.0.1:4401/intent/response');
     expect(calls[2]?.url).toBe('http://127.0.0.1:4401/system/health');
     expect(calls[3]?.url).toBe('http://127.0.0.1:4401/config/snapshot');
+    expect(calls[4]?.url).toBe('http://127.0.0.1:4401/proof/event');
+    expect(calls[5]?.url).toBe('http://127.0.0.1:4401/transport/event');
+    expect(calls[6]?.url).toBe('http://127.0.0.1:4401/trace/event');
 
     const firstBody = JSON.parse(String(calls[0]?.body ?? '{}'));
     const secondBody = JSON.parse(String(calls[1]?.body ?? '{}'));
     const thirdBody = JSON.parse(String(calls[2]?.body ?? '{}'));
     const fourthBody = JSON.parse(String(calls[3]?.body ?? '{}'));
+    const fifthBody = JSON.parse(String(calls[4]?.body ?? '{}'));
+    const sixthBody = JSON.parse(String(calls[5]?.body ?? '{}'));
+    const seventhBody = JSON.parse(String(calls[6]?.body ?? '{}'));
 
     expect(firstBody).toMatchObject({
       source: 'andrea_nanobot',
@@ -102,6 +132,33 @@ describe('andrea platform shell bridge', () => {
     });
     expect(JSON.parse(String(fourthBody.snapshot_json))).toEqual({
       semanticMemory: '12 subjects',
+    });
+    expect(fifthBody).toMatchObject({
+      source: 'andrea_nanobot',
+      surface: 'telegram',
+      journey: 'smoke',
+      state: 'LIVE_PROVEN',
+      summary: 'Telegram smoke is live-proven.',
+      metadata: { source: 'test' },
+    });
+    expect(sixthBody).toMatchObject({
+      source: 'andrea_nanobot',
+      transport_id: 'telegram',
+      transport_kind: 'telegram',
+      state: 'healthy',
+      summary: 'Telegram transport is healthy.',
+      delivery_semantics: 'long_polling',
+      fallback_target: 'none',
+      metadata: { source: 'test' },
+    });
+    expect(seventhBody).toMatchObject({
+      source: 'andrea_nanobot',
+      trace_id: 'feedback-1',
+      trace_kind: 'feedback',
+      title: 'Response feedback captured',
+      summary: 'Feedback entered the platform trace chain.',
+      refs: { feedbackId: 'feedback-1' },
+      metadata: { source: 'test' },
     });
   });
 

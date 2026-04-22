@@ -87,6 +87,7 @@ interface PlatformCoordinatorSnapshot {
   faults: Record<string, Record<string, unknown>>;
   recent_jobs: PlatformCoordinatorJobSummary[];
   proof_rollup: Record<string, string>;
+  transport_health_rollup?: Record<string, string>;
   memory_freshness_rollup?: Record<string, string>;
   integration_health_rollup?: Record<string, string>;
   ritual_status_rollup?: Record<string, string>;
@@ -201,6 +202,9 @@ function buildPlatformLifecycleDetail(
       : null,
     snapshot.trace_rollup?.trace_events
       ? `Trace events: ${snapshot.trace_rollup.trace_events}`
+      : null,
+    snapshot.transport_health_rollup?.transport_count
+      ? `Transport entries: ${snapshot.transport_health_rollup.transport_count}`
       : null,
     snapshot.determinism_audit_rollup?.status
       ? `Determinism audit: ${snapshot.determinism_audit_rollup.status}`
@@ -487,6 +491,26 @@ export class AndreaOpenAiBackendClient {
       this.baseUrl,
       this.timeoutMs,
       '/proof-report',
+      { method: 'GET' },
+    );
+  }
+
+  async getPlatformTransportReport(): Promise<Record<string, unknown>> {
+    return requestJson<Record<string, unknown>>(
+      this.fetchImpl,
+      this.baseUrl,
+      this.timeoutMs,
+      '/transport-report',
+      { method: 'GET' },
+    );
+  }
+
+  async getPlatformTraceGaps(): Promise<Record<string, unknown>> {
+    return requestJson<Record<string, unknown>>(
+      this.fetchImpl,
+      this.baseUrl,
+      this.timeoutMs,
+      '/trace-gaps',
       { method: 'GET' },
     );
   }

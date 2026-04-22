@@ -170,8 +170,11 @@ import {
   writeAssistantReadyState,
 } from './host-control.js';
 import {
+  emitAndreaPlatformProofEvent,
   emitAndreaPlatformShellConfigSnapshot,
   emitAndreaPlatformShellHealth,
+  emitAndreaPlatformTraceEvent,
+  emitAndreaPlatformTransportEvent,
   mapShellHealthFromChannelHealth,
 } from './andrea-platform-bridge.js';
 import {
@@ -370,7 +373,12 @@ import {
 import { logger } from './logger.js';
 import { parseGitDirtyPaths } from './git-status-paths.js';
 import { deliverCompanionHandoff } from './cross-channel-handoffs.js';
-import { buildFieldTrialOperatorTruth } from './field-trial-readiness.js';
+import {
+  buildFieldTrialOperatorTruth,
+  type FieldTrialOperatorTruth,
+  type FieldTrialProofState,
+  type FieldTrialSurfaceTruth,
+} from './field-trial-readiness.js';
 import {
   buildDebugLogsInlineActions,
   buildDebugMutationInlineActions,
@@ -3518,6 +3526,31 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       remediationRuntimePreference: null,
       remediationPrompt: null,
       operatorNote: classification.explanation,
+    });
+    void emitAndreaPlatformTraceEvent({
+      traceId: feedbackId,
+      traceKind: 'feedback',
+      title: 'Response feedback captured',
+      summary: classification.explanation,
+      refs: compactPlatformStrings({
+        feedbackId,
+        platformMessageId: sent.platformMessageId || '',
+        userMessageId: latestUserMessage?.id ? String(latestUserMessage.id) : '',
+        threadId:
+          sent.threadId ||
+          (latestUserMessage?.thread_id ? String(latestUserMessage.thread_id) : ''),
+        chatJid,
+      }),
+      metadata: compactPlatformStrings({
+        status: classification.status,
+        classification: classification.classification,
+        routeKey: params.routeKey || requestPolicy.route,
+        capabilityId: params.capabilityId || '',
+        handlerKind: params.handlerKind || '',
+        responseSource: params.responseSource || '',
+        blockerClass: params.blockerClass || '',
+        blockerOwner: params.blockerOwner || classification.blockerOwner,
+      }),
     });
     return sent;
   };
@@ -8050,6 +8083,253 @@ function resolveAppVersion(): string {
   }
 }
 
+type AndreaPlatformProofState =
+  | 'LIVE_PROVEN'
+  | 'NEAR_LIVE_ONLY'
+  | 'DEGRADED_BUT_USABLE'
+  | 'EXTERNALLY_BLOCKED';
+type AndreaPlatformHealthState =
+  | 'healthy'
+  | 'degraded'
+  | 'faulted'
+  | 'blocked_external'
+  | 'near_live_only';
+
+function compactPlatformStrings(
+  values: Record<string, string | null | undefined>,
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(values).filter(
+      (entry): entry is [string, string] =>
+        typeof entry[1] === 'string' && entry[1].length > 0,
+    ),
+  );
+}
+
+function toAndreaPlatformProofState(
+  state: FieldTrialProofState,
+): AndreaPlatformProofState | null {
+  switch (state) {
+    case 'live_proven':
+      return 'LIVE_PROVEN';
+    case 'near_live_only':
+      return 'NEAR_LIVE_ONLY';
+    case 'degraded_but_usable':
+      return 'DEGRADED_BUT_USABLE';
+    case 'externally_blocked':
+      return 'EXTERNALLY_BLOCKED';
+    case 'not_intended_for_trial':
+      return null;
+  }
+}
+
+function toAndreaPlatformHealthState(
+  state: FieldTrialProofState,
+): AndreaPlatformHealthState {
+  switch (state) {
+    case 'live_proven':
+      return 'healthy';
+    case 'near_live_only':
+      return 'near_live_only';
+    case 'externally_blocked':
+      return 'blocked_external';
+    case 'degraded_but_usable':
+    case 'not_intended_for_trial':
+      return 'degraded';
+  }
+}
+
+function summarizePlatformProofTruth(truth: FieldTrialSurfaceTruth): string {
+  return truth.detail || truth.blocker || truth.nextAction || truth.proofState;
+}
+
+function emitAndreaPlatformSurfaceProof(
+  surface: string,
+  journey: string,
+  truth: FieldTrialSurfaceTruth,
+): void {
+  const state = toAndreaPlatformProofState(truth.proofState);
+  if (!state) return;
+  void emitAndreaPlatformProofEvent({
+    surface,
+    journey,
+    state,
+    summary: summarizePlatformProofTruth(truth),
+    blocker: truth.blocker || null,
+    nextAction: truth.nextAction || null,
+    metadata: compactPlatformStrings({
+      blockerOwner: truth.blockerOwner,
+    }),
+  });
+}
+
+function combinePlatformProofStates(
+  truths: readonly FieldTrialSurfaceTruth[],
+): AndreaPlatformProofState {
+  if (truths.some((truth) => truth.proofState === 'externally_blocked')) {
+    return 'EXTERNALLY_BLOCKED';
+  }
+  if (truths.some((truth) => truth.proofState === 'degraded_but_usable')) {
+    return 'DEGRADED_BUT_USABLE';
+  }
+  if (truths.some((truth) => truth.proofState === 'near_live_only')) {
+    return 'NEAR_LIVE_ONLY';
+  }
+  return 'LIVE_PROVEN';
+}
+
+function emitAndreaPlatformProofTruths(truth: FieldTrialOperatorTruth): void {
+  const surfaces: Array<[string, string, FieldTrialSurfaceTruth]> = [
+    ['telegram', 'roundtrip', truth.telegram],
+    ['alexa', 'signed_intent', truth.alexa],
+    ['bluebubbles', 'same_thread_message_action', truth.bluebubbles],
+    ['google_calendar', 'read_write', truth.googleCalendar],
+    ['work_cockpit', 'runtime_status', truth.workCockpit],
+    ['life_threads', 'continuity', truth.lifeThreads],
+    ['communication_companion', 'reply_help', truth.communicationCompanion],
+    ['chief_of_staff_missions', 'daily_guidance', truth.chiefOfStaffMissions],
+    ['knowledge_library', 'saved_material', truth.knowledgeLibrary],
+    [
+      'action_bundles_delegation_outcome_review',
+      'feedback_loop',
+      truth.actionBundlesDelegationOutcomeReview,
+    ],
+    ['research', 'live_facts', truth.research],
+    ['image_generation', 'telegram_image', truth.imageGeneration],
+    ['host_health', 'runtime_host', truth.hostHealth],
+  ];
+  for (const [surface, journey, surfaceTruth] of surfaces) {
+    emitAndreaPlatformSurfaceProof(surface, journey, surfaceTruth);
+  }
+  for (const [journeyId, journeyTruth] of Object.entries(truth.journeys)) {
+    emitAndreaPlatformSurfaceProof('journey', journeyId, journeyTruth);
+  }
+  emitAndreaPlatformSurfaceProof('memory', 'profile_pack', truth.knowledgeLibrary);
+  void emitAndreaPlatformProofEvent({
+    surface: 'integrations',
+    journey: 'registry',
+    state: combinePlatformProofStates([
+      truth.googleCalendar,
+      truth.bluebubbles,
+      truth.research,
+      truth.imageGeneration,
+      truth.alexa,
+    ]),
+    summary:
+      'Integration registry truth is derived from calendar, messages, Alexa, research, and image-provider proof states.',
+    metadata: compactPlatformStrings({
+      googleCalendar: truth.googleCalendar.proofState,
+      bluebubbles: truth.bluebubbles.proofState,
+      alexa: truth.alexa.proofState,
+      research: truth.research.proofState,
+      imageGeneration: truth.imageGeneration.proofState,
+    }),
+  });
+  emitAndreaPlatformSurfaceProof('rituals', 'daily_guidance', truth.journeys.daily_guidance);
+}
+
+function channelTransportKind(
+  channelName: string,
+): 'telegram' | 'bluebubbles' | 'other' {
+  const normalized = channelName.toLowerCase();
+  if (normalized.includes('telegram')) return 'telegram';
+  if (normalized.includes('bluebubbles')) return 'bluebubbles';
+  return 'other';
+}
+
+function channelTransportState(
+  channel: ChannelHealthSnapshot,
+): AndreaPlatformHealthState {
+  if (!channel.configured) return 'degraded';
+  if (channel.state === 'ready') return 'healthy';
+  if (channel.state === 'stopped') return 'faulted';
+  return 'degraded';
+}
+
+function secondsSinceTimestamp(timestamp: string | null | undefined): number | null {
+  if (!timestamp) return null;
+  const millis = Date.parse(timestamp);
+  if (Number.isNaN(millis)) return null;
+  return Math.max(0, Math.floor((Date.now() - millis) / 1000));
+}
+
+function emitAndreaPlatformTransportTruths(
+  channelHealth: readonly ChannelHealthSnapshot[],
+  truth: FieldTrialOperatorTruth,
+): void {
+  for (const channel of channelHealth) {
+    const kind = channelTransportKind(channel.name);
+    void emitAndreaPlatformTransportEvent({
+      transportId: channel.name,
+      transportKind: kind,
+      state: channelTransportState(channel),
+      summary:
+        channel.detail ||
+        channel.lastError ||
+        `${channel.name} channel is ${channel.state}.`,
+      detail: channel.lastError || channel.detail || null,
+      freshnessSeconds: secondsSinceTimestamp(channel.updatedAt),
+      deliverySemantics:
+        kind === 'telegram'
+          ? 'telegram_long_polling'
+          : kind === 'bluebubbles'
+            ? 'bluebubbles_webhook_shadow_poll'
+            : 'channel_adapter',
+      fallbackTarget: kind === 'bluebubbles' ? 'telegram' : 'none',
+      blocker: channel.lastError || null,
+      metadata: compactPlatformStrings({
+        configured: String(channel.configured),
+        channelState: channel.state,
+        lastReadyAt: channel.lastReadyAt || '',
+      }),
+    });
+  }
+  void emitAndreaPlatformTransportEvent({
+    transportId: 'alexa_public_ingress',
+    transportKind: 'alexa',
+    state: toAndreaPlatformHealthState(truth.alexa.proofState),
+    summary: summarizePlatformProofTruth(truth.alexa),
+    detail: truth.alexa.detail || truth.alexa.blocker || null,
+    deliverySemantics: 'signed_https_request',
+    fallbackTarget: 'telegram',
+    blocker: truth.alexa.blocker || null,
+    nextAction: truth.alexa.nextAction || null,
+  });
+  void emitAndreaPlatformTransportEvent({
+    transportId: 'research_provider',
+    transportKind: 'provider',
+    state: toAndreaPlatformHealthState(truth.research.proofState),
+    summary: summarizePlatformProofTruth(truth.research),
+    detail: truth.research.detail || truth.research.blocker || null,
+    deliverySemantics: 'provider_api',
+    fallbackTarget: 'saved_material_only',
+    blocker: truth.research.blocker || null,
+    nextAction: truth.research.nextAction || null,
+  });
+  void emitAndreaPlatformTransportEvent({
+    transportId: 'image_generation_provider',
+    transportKind: 'provider',
+    state: toAndreaPlatformHealthState(truth.imageGeneration.proofState),
+    summary: summarizePlatformProofTruth(truth.imageGeneration),
+    detail: truth.imageGeneration.detail || truth.imageGeneration.blocker || null,
+    deliverySemantics: 'provider_api',
+    fallbackTarget: 'telegram_text_handoff',
+    blocker: truth.imageGeneration.blocker || null,
+    nextAction: truth.imageGeneration.nextAction || null,
+  });
+  void emitAndreaPlatformTransportEvent({
+    transportId: 'local_gateway',
+    transportKind: 'gateway',
+    state: toAndreaPlatformHealthState(truth.hostHealth.proofState),
+    summary: summarizePlatformProofTruth(truth.hostHealth),
+    detail: truth.hostHealth.detail || truth.hostHealth.blocker || null,
+    deliverySemantics: 'local_process_and_http',
+    fallbackTarget: 'operator_status',
+    blocker: truth.hostHealth.blocker || null,
+    nextAction: truth.hostHealth.nextAction || null,
+  });
+}
+
 async function main(): Promise<void> {
   const appVersion = resolveAppVersion();
   const channelHealthByName = new Map<string, ChannelHealthSnapshot>();
@@ -8074,6 +8354,9 @@ async function main(): Promise<void> {
       for (const snapshot of buildAndreaPlatformConfigSnapshots(activeGroupFolders)) {
         void emitAndreaPlatformShellConfigSnapshot(snapshot);
       }
+      const operatorTruth = buildFieldTrialOperatorTruth();
+      emitAndreaPlatformProofTruths(operatorTruth);
+      emitAndreaPlatformTransportTruths(currentChannelHealth, operatorTruth);
     } catch (err) {
       logger.warn({ err }, 'Failed to persist assistant health marker');
     }

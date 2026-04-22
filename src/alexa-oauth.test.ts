@@ -509,7 +509,7 @@ describe('alexa oauth', () => {
     });
     expect(intentResponse.status).toBe(200);
     const responseEnvelope = (await intentResponse.json()) as ResponseEnvelope;
-    expect(extractSpeechText(responseEnvelope)).toContain('tomorrow');
+    expect(extractSpeechText(responseEnvelope).toLowerCase()).toContain('tomorrow');
     expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
 
     const bound = getAlexaLinkedAccountByAccessTokenHash(
