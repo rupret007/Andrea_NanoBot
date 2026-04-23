@@ -290,6 +290,21 @@ describe('AndreaOpenAiBackendClient', () => {
           { status: 200 },
         );
       }
+      if (url.endsWith('/conductor/plan')) {
+        expect(init?.method).toBe('POST');
+        expect(String(init?.body)).toContain('"goal":"debug the repo tests"');
+        return new Response(
+          JSON.stringify({
+            need: { goal: 'debug the repo tests', category: 'code' },
+            plan: {
+              route: 'runtime_job',
+              selected_workers: ['codex_local'],
+            },
+            workers: {},
+          }),
+          { status: 200 },
+        );
+      }
       if (url.endsWith('/replay/capture')) {
         expect(init?.method).toBe('POST');
         expect(String(init?.body)).toContain('"sessionId":"session-1"');
@@ -329,6 +344,11 @@ describe('AndreaOpenAiBackendClient', () => {
     await expect(client.getPlatformTraceGaps()).resolves.toMatchObject({
       status: 'pass',
       gap_count: 0,
+    });
+    await expect(
+      client.planPlatformConductor({ goal: 'debug the repo tests' }),
+    ).resolves.toMatchObject({
+      plan: { route: 'runtime_job' },
     });
     await expect(
       client.capturePlatformReplay({ sessionId: 'session-1' }),
@@ -437,6 +457,65 @@ describe('AndreaOpenAiBackendClient', () => {
     });
 
     expect(job.jobId).toBe('job_777');
+  });
+
+  it('plans platform-default runtime jobs through the conductor before creation', async () => {
+    vi.stubEnv('ANDREA_OPENAI_BACKEND_ENABLED', 'true');
+    vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_ENABLED', 'true');
+    vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_URL', 'http://127.0.0.1:4400');
+    vi.stubEnv('ANDREA_PLATFORM_FALLBACK_TO_DIRECT_RUNTIME', 'false');
+    vi.resetModules();
+    const module = await import('./andrea-openai-backend.js');
+    const calls: string[] = [];
+    const fetchImpl = vi.fn(async (input, init) => {
+      const url = String(input);
+      calls.push(url);
+      if (url.endsWith('/conductor/plan')) {
+        expect(init?.method).toBe('POST');
+        expect(String(init?.body)).toContain('"goal":"Debug the failing tests"');
+        expect(String(init?.body)).toContain('"correlationId":"corr-conductor"');
+        expect(String(init?.body)).toContain('"approved":true');
+        return new Response(
+          JSON.stringify({
+            need: { goal: 'Debug the failing tests', category: 'code' },
+            plan: {
+              route: 'runtime_job',
+              selected_workers: ['codex_local'],
+            },
+            workers: {},
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.endsWith('/jobs')) {
+        expect(init?.method).toBe('POST');
+        return new Response(JSON.stringify({ job: makeJob('job_conductor') }), {
+          status: 202,
+        });
+      }
+      throw new Error(`unexpected route: ${url}`);
+    });
+    const client = new module.AndreaOpenAiBackendClient({
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    const job = await client.createJob({
+      groupFolder: 'main',
+      prompt: 'Debug the failing tests',
+      source: {
+        system: 'andrea_nanobot',
+        actorType: 'chat',
+        actorId: 'tg:1',
+        correlationId: 'corr-conductor',
+      },
+    });
+
+    expect(job.jobId).toBe('job_conductor');
+    expect(calls[0]).toContain('/conductor/plan');
+    expect(calls[1]).toContain('/jobs');
+
+    vi.unstubAllEnvs();
+    vi.resetModules();
   });
 
   it('routes companion prompts through POST /route', async () => {

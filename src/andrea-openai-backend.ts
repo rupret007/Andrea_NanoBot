@@ -94,6 +94,7 @@ interface PlatformCoordinatorSnapshot {
   trace_rollup?: Record<string, string>;
   determinism_audit_rollup?: Record<string, string>;
   replay_validation_rollup?: Record<string, string>;
+  conductor_rollup?: Record<string, string>;
   metadata: Record<string, string>;
 }
 
@@ -107,6 +108,12 @@ interface PlatformCoordinatorStatusBundle {
   trace_index?: Record<string, string> | null;
   determinism_audit?: Record<string, unknown> | null;
   replay_validation?: Record<string, unknown> | null;
+}
+
+interface PlatformConductorPlanResponse {
+  need: Record<string, unknown>;
+  plan: Record<string, unknown>;
+  workers: Record<string, unknown>;
 }
 
 export interface EnsureBackendGroupRequest {
@@ -211,6 +218,9 @@ function buildPlatformLifecycleDetail(
       : null,
     snapshot.replay_validation_rollup?.last_passed
       ? `Replay validation last passed: ${snapshot.replay_validation_rollup.last_passed}`
+      : null,
+    snapshot.conductor_rollup?.worker_count
+      ? `Conductor workers: ${snapshot.conductor_rollup.worker_count}`
       : null,
     snapshot.memory_freshness_rollup &&
     Object.keys(snapshot.memory_freshness_rollup).length > 0
@@ -515,6 +525,52 @@ export class AndreaOpenAiBackendClient {
     );
   }
 
+  async planPlatformConductor(input: {
+    goal: string;
+    channel?: 'telegram' | 'bluebubbles' | 'alexa';
+    groupFolder?: string | null;
+    actorType?: string | null;
+    actorId?: string | null;
+    correlationId?: string | null;
+    approved?: boolean;
+  }): Promise<PlatformConductorPlanResponse> {
+    return requestJson<PlatformConductorPlanResponse>(
+      this.fetchImpl,
+      this.baseUrl,
+      this.timeoutMs,
+      '/conductor/plan',
+      {
+        method: 'POST',
+        body: JSON.stringify(input),
+      },
+    );
+  }
+
+  private shouldPlanRuntimeWorkThroughConductor(): boolean {
+    return (
+      ANDREA_PLATFORM_COORDINATOR_ENABLED &&
+      !ANDREA_PLATFORM_FALLBACK_TO_DIRECT_RUNTIME &&
+      this.baseUrl === trimTrailingSlashes(ANDREA_PLATFORM_COORDINATOR_URL)
+    );
+  }
+
+  private async emitConductorPlanForRuntimeJob(input: {
+    groupFolder: string;
+    prompt: string;
+    source: OrchestrationSource;
+  }): Promise<void> {
+    if (!this.shouldPlanRuntimeWorkThroughConductor()) return;
+    await this.planPlatformConductor({
+      goal: input.prompt,
+      channel: 'telegram',
+      groupFolder: input.groupFolder,
+      actorType: input.source.actorType || 'operator',
+      actorId: input.source.actorId || null,
+      correlationId: input.source.correlationId || null,
+      approved: true,
+    });
+  }
+
   async capturePlatformReplay(input: {
     sessionId?: string;
     notes?: string;
@@ -553,6 +609,7 @@ export class AndreaOpenAiBackendClient {
     requestedRuntime?: 'codex_local' | 'openai_cloud' | 'claude_legacy' | null;
     source: OrchestrationSource;
   }): Promise<RuntimeBackendJob> {
+    await this.emitConductorPlanForRuntimeJob(input);
     const response = await requestJson<{ job: RuntimeBackendJob }>(
       this.fetchImpl,
       this.baseUrl,
