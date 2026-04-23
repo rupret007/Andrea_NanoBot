@@ -1750,6 +1750,9 @@ function Start-AndreaOpenAiBackend {
   $quotedNodeExe = ([string] $NodeExe).Replace("'", "''")
   $openAiApiKey = Get-EnvValue -DotEnv $DotEnv -Key 'OPENAI_API_KEY'
   $openAiBaseUrl = Get-EnvValue -DotEnv $DotEnv -Key 'OPENAI_BASE_URL'
+  $openAiModelSimple = Get-EnvValue -DotEnv $DotEnv -Key 'OPENAI_MODEL_SIMPLE'
+  $openAiModelStandard = Get-EnvValue -DotEnv $DotEnv -Key 'OPENAI_MODEL_STANDARD'
+  $openAiModelComplex = Get-EnvValue -DotEnv $DotEnv -Key 'OPENAI_MODEL_COMPLEX'
   $openAiModelFallback = Get-EnvValue -DotEnv $DotEnv -Key 'OPENAI_MODEL_FALLBACK'
   $command = @(
     "& {"
@@ -1763,6 +1766,9 @@ function Start-AndreaOpenAiBackend {
       } else { '' })
     $(if (-not [string]::IsNullOrWhiteSpace($openAiApiKey)) { ("`$env:OPENAI_API_KEY='{0}';" -f ([string] $openAiApiKey).Replace("'", "''")) } else { '' })
     $(if (-not [string]::IsNullOrWhiteSpace($openAiBaseUrl)) { ("`$env:OPENAI_BASE_URL='{0}';" -f ([string] $openAiBaseUrl).Replace("'", "''")) } else { '' })
+    $(if (-not [string]::IsNullOrWhiteSpace($openAiModelSimple)) { ("`$env:OPENAI_MODEL_SIMPLE='{0}';" -f ([string] $openAiModelSimple).Replace("'", "''")) } else { '' })
+    $(if (-not [string]::IsNullOrWhiteSpace($openAiModelStandard)) { ("`$env:OPENAI_MODEL_STANDARD='{0}';" -f ([string] $openAiModelStandard).Replace("'", "''")) } else { '' })
+    $(if (-not [string]::IsNullOrWhiteSpace($openAiModelComplex)) { ("`$env:OPENAI_MODEL_COMPLEX='{0}';" -f ([string] $openAiModelComplex).Replace("'", "''")) } else { '' })
     $(if (-not [string]::IsNullOrWhiteSpace($openAiModelFallback)) { ("`$env:OPENAI_MODEL_FALLBACK='{0}';" -f ([string] $openAiModelFallback).Replace("'", "''")) } else { '' })
     "& '$quotedNodeExe' 'dist/index.js'"
     "}"
