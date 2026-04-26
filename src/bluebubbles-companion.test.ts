@@ -11,6 +11,7 @@ import {
 import {
   decideBlueBubblesCompanionIngress,
   isBlueBubblesExplicitAsk,
+  isBlueBubblesProofDrillStartRequest,
   normalizeBlueBubblesCompanionPrompt,
   resolveBlueBubblesPendingLocalContinuationKind,
   resolveMostRecentBlueBubblesCompanionChat,
@@ -88,6 +89,19 @@ describe('bluebubbles companion helpers', () => {
         chatJid: 'bb:iMessage;-;+14695405551',
       }),
     ).toBe(false);
+  });
+
+  it('recognizes explicit BlueBubbles proof-drill start requests', () => {
+    expect(isBlueBubblesProofDrillStartRequest('start proof drill')).toBe(true);
+    expect(
+      isBlueBubblesProofDrillStartRequest('@Andrea start bluebubbles proof'),
+    ).toBe(true);
+    expect(isBlueBubblesProofDrillStartRequest('start blue bubbles proof')).toBe(
+      true,
+    );
+    expect(isBlueBubblesProofDrillStartRequest('send it later tonight')).toBe(
+      false,
+    );
   });
 
   it('allows recent direct 1:1 BlueBubbles chats to become conversational without @Andrea', () => {

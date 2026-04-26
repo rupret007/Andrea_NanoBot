@@ -17,6 +17,7 @@ import {
   listBlueBubblesMessageActionContinuitySnapshots,
   reconcileBlueBubblesMessageActionContinuity,
   reconcileBlueBubblesSelfThreadContinuity,
+  resolveBlueBubblesProofDrillSnapshot,
 } from './message-actions.js';
 import {
   BLUEBUBBLES_CANONICAL_SELF_THREAD_JID,
@@ -206,6 +207,10 @@ export interface FieldTrialBlueBubblesTruth extends FieldTrialSurfaceTruth {
   messageActionProofChatJid: string;
   messageActionProofAt: string;
   messageActionProofDetail: string;
+  proofDrillState: 'idle' | 'active' | 'deferred' | 'stale';
+  proofDrillActionId: string;
+  proofDrillStartedAt: string;
+  proofDrillNextStep: string;
 }
 
 function parseFieldTrialIsoTime(
@@ -1718,6 +1723,10 @@ function buildBlueBubblesTruth(
     : null;
   const representativeContinuity =
     effectiveReplyGateContinuity || primaryContinuity;
+  const proofDrill = resolveBlueBubblesProofDrillSnapshot({
+    groupFolder: config.groupFolder || 'main',
+    now,
+  });
   const effectiveReplyGateIsGroup = effectiveReplyGateChatJid
     ? (bluebubblesChats.find((chat) => chat.jid === effectiveReplyGateChatJid)
         ?.is_group ?? 0) !== 0
@@ -2118,6 +2127,10 @@ function buildBlueBubblesTruth(
           : recentMessageActionProofs.length > 0
             ? `A recent BlueBubbles message-action decision exists in ${recentMessageActionProofs[0]!.proofChatJid}, but not in the same chat as the current proof chain.${blueBubblesSelfThreadAliasDetail}`
             : `No fresh BlueBubbles message-action decision is recorded yet.${blueBubblesSelfThreadAliasDetail}`,
+    proofDrillState: proofDrill.proofDrillState,
+    proofDrillActionId: proofDrill.proofDrillActionId,
+    proofDrillStartedAt: proofDrill.proofDrillStartedAt,
+    proofDrillNextStep: proofDrill.proofDrillNextStep,
   };
   const directOneToOneMode = base.effectiveReplyGateMode === 'direct_1to1';
   const blueBubblesPromptPrefix = directOneToOneMode ? '' : '@Andrea ';

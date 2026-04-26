@@ -131,6 +131,12 @@ export class BlueBubblesControlClient {
     });
   }
 
+  async startProofDrill(chatJid?: string | null): Promise<unknown> {
+    return this.request('POST', '/v1/bluebubbles/proof-drill/start', {
+      chatJid: toNullableString(chatJid),
+    });
+  }
+
   async send(input: {
     chatJid: string;
     text: string;
@@ -175,6 +181,10 @@ export function createBlueBubblesMcpToolHandlers(
           args.mode === 'shadow'
           ? args.mode
           : 'all',
+      ),
+    bluebubbles_start_proof_drill: async (args) =>
+      client.startProofDrill(
+        typeof args.chatJid === 'string' ? args.chatJid : null,
       ),
     bluebubbles_send: async (args) =>
       client.send({
@@ -260,6 +270,16 @@ export async function startBlueBubblesControlMcpServer(): Promise<void> {
       mode: z.enum(['transport', 'webhook', 'shadow', 'all']).optional(),
     },
     async (args) => toTextResult(await handlers.bluebubbles_refresh(args)),
+  );
+
+  server.tool(
+    'bluebubbles_start_proof_drill',
+    'Start the safe BlueBubbles same-thread proof drill and return the active message action.',
+    {
+      chatJid: z.string().optional(),
+    },
+    async (args) =>
+      toTextResult(await handlers.bluebubbles_start_proof_drill(args)),
   );
 
   server.tool(

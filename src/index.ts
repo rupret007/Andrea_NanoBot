@@ -184,6 +184,7 @@ import {
 } from './companion-conversation-binding.js';
 import {
   decideBlueBubblesCompanionIngress,
+  isBlueBubblesProofDrillStartRequest,
   normalizeBlueBubblesCompanionPrompt,
   resolveBlueBubblesPendingLocalContinuationKind,
   resolveMostRecentBlueBubblesCompanionChat,
@@ -220,6 +221,7 @@ import {
 } from './action-bundles.js';
 import {
   applyMessageActionOperation,
+  buildBlueBubblesProofDrillPresentationText,
   buildMessageActionPresentation,
   canApplyBlueBubblesMessageActionFollowup,
   canUseBareBlueBubblesMessageActionFollowup,
@@ -233,6 +235,7 @@ import {
   parseExplicitBlueBubblesThreadSendIntent,
   resolveBlueBubblesThreadTargetByName,
   resolveMessageActionForFollowup,
+  startBlueBubblesProofDrill,
   type MessageActionOperation,
 } from './message-actions.js';
 import {
@@ -8400,6 +8403,10 @@ function buildBlueBubblesPlatformMetadata(
     messageActionProofState: truth.messageActionProofState,
     messageActionProofChatJid: truth.messageActionProofChatJid,
     messageActionProofAt: truth.messageActionProofAt,
+    proofDrillState: truth.proofDrillState,
+    proofDrillActionId: truth.proofDrillActionId,
+    proofDrillStartedAt: truth.proofDrillStartedAt,
+    proofDrillNextStep: truth.proofDrillNextStep,
     transportState: truth.transportState,
     webhookRegistrationState: truth.webhookRegistrationState,
   };
@@ -14616,6 +14623,84 @@ async function main(): Promise<void> {
           saveState();
         }
         const companionNow = new Date();
+        if (isBlueBubblesProofDrillStartRequest(msg.content)) {
+          const blueBubblesChannel = findChannel(channels, chatJid);
+          if (blueBubblesChannel?.name !== 'bluebubbles') {
+            logger.warn(
+              { chatJid },
+              'BlueBubbles proof drill requested without an active BlueBubbles channel',
+            );
+            return;
+          }
+          try {
+            const started = startBlueBubblesProofDrill({
+              groupFolder: blueBubblesBinding.group.folder,
+              chatJid,
+              now: companionNow,
+            });
+            const sent = await blueBubblesChannel.sendMessage(
+              started.action.presentationChatJid || chatJid,
+              buildBlueBubblesProofDrillPresentationText(started.action),
+            );
+            updateMessageAction(started.action.messageActionId, {
+              presentationMessageId: sent.platformMessageId || null,
+              presentationChatJid:
+                started.action.presentationChatJid || chatJid,
+              lastUpdatedAt: companionNow.toISOString(),
+            });
+            const correlationId = `bluebubbles-proof-drill:${started.action.messageActionId}`;
+            void emitAndreaPlatformTraceEvent({
+              traceId: `${correlationId}:proof_drill_started:${companionNow.getTime()}`,
+              traceKind: 'proof',
+              title: 'BlueBubbles proof_drill_started',
+              summary:
+                'BlueBubbles proof drill started from the canonical self-thread trigger.',
+              refs: {
+                correlationId,
+                messageActionId: started.action.messageActionId,
+                chatJid: started.action.presentationChatJid || chatJid,
+              },
+              metadata: {
+                surface: 'bluebubbles',
+                event: 'proof_drill_started',
+                confirmationMessageId: sent.platformMessageId || '',
+              },
+            });
+            void emitAndreaPlatformProofEvent({
+              surface: 'bluebubbles',
+              journey: 'same_thread_message_action',
+              state: 'DEGRADED_BUT_USABLE',
+              summary:
+                'BlueBubbles proof drill started with a fresh same-thread message action.',
+              blocker:
+                'BlueBubbles proof drill still needs the deferred same-thread decision.',
+              nextAction:
+                'In the same BlueBubbles self-thread, say `send it later tonight`.',
+              metadata: {
+                event: 'proof_drill_started',
+                messageActionId: started.action.messageActionId,
+                chatJid: started.action.presentationChatJid || chatJid,
+              },
+            });
+            logger.info(
+              {
+                chatJid,
+                actionId: started.action.messageActionId,
+              },
+              'Started BlueBubbles same-thread proof drill from in-channel trigger',
+            );
+          } catch (err) {
+            logger.error(
+              { err, chatJid },
+              'BlueBubbles proof drill trigger failed',
+            );
+            await blueBubblesChannel.sendMessage(
+              chatJid,
+              'Andrea: I could not start the BlueBubbles proof drill from here yet. Try the control API or ask me again in the canonical self-thread.',
+            );
+          }
+          return;
+        }
         const hasRecentCompanionContext = Boolean(
           getSharedAssistantCapabilitySeed(chatJid, companionNow),
         );

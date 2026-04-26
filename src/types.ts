@@ -564,6 +564,10 @@ export interface BlueBubblesControlStatus {
   messageActionProofState: 'none' | 'fresh' | 'stale';
   messageActionProofChatJid: string;
   messageActionProofAt: string;
+  proofDrillState: BlueBubblesProofDrillState;
+  proofDrillActionId: string;
+  proofDrillStartedAt: string;
+  proofDrillNextStep: string;
 }
 
 export interface BlueBubblesProofReport {
@@ -599,6 +603,10 @@ export interface BlueBubblesProofReport {
   eligibleFollowups: string[];
   canonicalSelfThreadChatJid: string;
   sourceSelfThreadChatJid: string;
+  proofDrillState: BlueBubblesProofDrillState;
+  proofDrillActionId: string;
+  proofDrillStartedAt: string;
+  proofDrillNextStep: string;
 }
 
 export interface BlueBubblesChatSummary {
@@ -642,7 +650,17 @@ export interface BlueBubblesOpenMessageAction {
   requiresExplicitMention: boolean;
   activePresentationAt: string | null;
   eligibleFollowups: string[];
+  isProofDrill: boolean;
+  proofDrillState: BlueBubblesProofDrillState;
+  proofDrillStartedAt: string;
+  proofDrillNextStep: string;
 }
+
+export type BlueBubblesProofDrillState =
+  | 'idle'
+  | 'active'
+  | 'deferred'
+  | 'stale';
 
 export type BlueBubblesContinuityState =
   | 'idle'

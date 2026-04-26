@@ -107,6 +107,15 @@ export function normalizeBlueBubblesCompanionPrompt(text: string): string {
   return stripped || 'hi';
 }
 
+export function isBlueBubblesProofDrillStartRequest(text: string): boolean {
+  const normalized = normalizeText(stripBlueBubblesAndreaMention(text));
+  return (
+    normalized === 'start bluebubbles proof' ||
+    normalized === 'start blue bubbles proof' ||
+    normalized === 'start proof drill'
+  );
+}
+
 export function isBlueBubblesExplicitAsk(
   text: string,
   options: {

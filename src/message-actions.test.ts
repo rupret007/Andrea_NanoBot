@@ -14,19 +14,23 @@ import {
 } from './db.js';
 import {
   applyMessageActionOperation,
+  buildBlueBubblesProofDrillPresentationText,
   canUseBareBlueBubblesMessageActionFollowup,
   createOrRefreshMessageActionFromDraft,
   ensureBlueBubblesSelfThreadMessageActionForReplyText,
   findLatestChatMessageAction,
+  isBlueBubblesProofDrillAction,
   isBlueBubblesExplicitSendAlias,
   interpretMessageActionFollowup,
   listBlueBubblesMessageActionContinuitySnapshots,
   parseExplicitBlueBubblesThreadSendIntent,
   reconcileBlueBubblesMessageActionContinuity,
   reconcileBlueBubblesSelfThreadContinuity,
+  resolveBlueBubblesProofDrillSnapshot,
   resolveBlueBubblesThreadTargetByName,
   resolveMessageActionForFollowup,
   runScheduledMessageActionByTaskId,
+  startBlueBubblesProofDrill,
 } from './message-actions.js';
 import type {
   CommunicationThreadRecord,
@@ -385,6 +389,84 @@ describe('message actions', () => {
         chatJid: 'bb:iMessage;-;jeffstory007@gmail.com',
       }),
     ).toBeUndefined();
+  });
+
+  it('starts one active BlueBubbles proof drill action and refreshes it on repeat start', () => {
+    const first = startBlueBubblesProofDrill({
+      groupFolder: 'main',
+      chatJid: 'bb:iMessage;-;jeffstory007@gmail.com',
+      now: new Date('2026-04-16T16:00:00.000Z'),
+    });
+    const second = startBlueBubblesProofDrill({
+      groupFolder: 'main',
+      chatJid: 'bb:iMessage;-;+14695405551',
+      now: new Date('2026-04-16T16:05:00.000Z'),
+    });
+    const snapshot = resolveBlueBubblesProofDrillSnapshot({
+      groupFolder: 'main',
+      now: new Date('2026-04-16T16:05:00.000Z'),
+    });
+    const continuity = reconcileBlueBubblesSelfThreadContinuity({
+      groupFolder: 'main',
+      chatJid: 'bb:iMessage;-;+14695405551',
+      now: new Date('2026-04-16T16:05:00.000Z'),
+      allowRehydrate: false,
+    });
+
+    expect(second.action.messageActionId).toBe(first.action.messageActionId);
+    expect(isBlueBubblesProofDrillAction(second.action)).toBe(true);
+    expect(snapshot.proofDrillState).toBe('active');
+    expect(snapshot.proofDrillActionId).toBe(second.action.messageActionId);
+    expect(continuity.openMessageActionCount).toBe(1);
+    expect(continuity.activeMessageActionId).toBe(second.action.messageActionId);
+    expect(buildBlueBubblesProofDrillPresentationText(second.action)).toContain(
+      'send it later tonight',
+    );
+  });
+
+  it('keeps BlueBubbles proof drills deferred-only and rejects immediate send', async () => {
+    const started = startBlueBubblesProofDrill({
+      groupFolder: 'main',
+      now: new Date('2026-04-16T16:00:00.000Z'),
+    });
+    const sendToTarget = vi.fn(async () => ({ platformMessageId: 'unused' }));
+
+    const blocked = await applyMessageActionOperation(
+      started.action.messageActionId,
+      { kind: 'send' },
+      {
+        groupFolder: 'main',
+        channel: 'bluebubbles',
+        chatJid: started.action.presentationChatJid || '',
+        currentTime: new Date('2026-04-16T16:01:00.000Z'),
+        sendToTarget,
+      },
+    );
+    expect(blocked.replyText).toContain('will not send');
+    expect(getMessageAction(started.action.messageActionId)?.sendStatus).toBe(
+      'drafted',
+    );
+
+    const deferred = await applyMessageActionOperation(
+      started.action.messageActionId,
+      { kind: 'defer', timingHint: 'later tonight' },
+      {
+        groupFolder: 'main',
+        channel: 'bluebubbles',
+        chatJid: started.action.presentationChatJid || '',
+        currentTime: new Date('2026-04-16T16:02:00.000Z'),
+        sendToTarget,
+      },
+    );
+    expect(deferred.action?.sendStatus).toBe('deferred');
+    expect(deferred.action?.lastActionKind).toBe('remind_instead');
+    expect(sendToTarget).not.toHaveBeenCalled();
+    expect(
+      resolveBlueBubblesProofDrillSnapshot({
+        groupFolder: 'main',
+        now: new Date('2026-04-16T16:02:00.000Z'),
+      }).proofDrillState,
+    ).toBe('deferred');
   });
 
   it('prefers a fresh rehydrated self-thread draft over a stale older action', () => {

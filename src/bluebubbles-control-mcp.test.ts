@@ -108,6 +108,9 @@ describe('BlueBubbles MCP bridge helpers', () => {
       operation: 'defer',
       timingHint: 'later tonight',
     });
+    await handlers.bluebubbles_start_proof_drill({
+      chatJid: 'bb:iMessage;-;+14695405551',
+    });
 
     expect(stub.requests).toEqual(
       expect.arrayContaining([
@@ -119,9 +122,14 @@ describe('BlueBubbles MCP bridge helpers', () => {
           method: 'POST',
           url: '/v1/bluebubbles/message-actions/action-1/execute',
         }),
+        expect.objectContaining({
+          method: 'POST',
+          url: '/v1/bluebubbles/proof-drill/start',
+        }),
       ]),
     );
     expect(stub.requests[0]?.body).toContain('Hello there');
     expect(stub.requests[1]?.body).toContain('later tonight');
+    expect(stub.requests[2]?.body).toContain('+14695405551');
   });
 });

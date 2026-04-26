@@ -4,6 +4,7 @@ import {
   getAllChats,
   getMessageAction,
   listRecentMessagesForChat,
+  updateMessageAction,
 } from './db.js';
 import { readEnvFile } from './env.js';
 import {
@@ -13,8 +14,12 @@ import {
 import { logger } from './logger.js';
 import {
   applyMessageActionOperation,
+  buildBlueBubblesProofDrillPresentationText,
+  isBlueBubblesProofDrillAction,
   listBlueBubblesMessageActionContinuitySnapshots,
   reconcileBlueBubblesMessageActionContinuity,
+  resolveBlueBubblesProofDrillSnapshot,
+  startBlueBubblesProofDrill,
   type MessageActionOperation,
 } from './message-actions.js';
 import { resolveBlueBubblesReplyGateMode } from './messages-fluidity.js';
@@ -22,6 +27,10 @@ import {
   type BlueBubblesChannel,
   resolveBlueBubblesConfig,
 } from './channels/bluebubbles.js';
+import {
+  emitAndreaPlatformProofEvent,
+  emitAndreaPlatformTraceEvent,
+} from './andrea-platform-bridge.js';
 import type {
   BlueBubblesChatSummary,
   BlueBubblesControlApiConfig,
@@ -112,9 +121,77 @@ function clipPreview(value: string | null | undefined, max = 180): string {
     : `${normalized.slice(0, max - 3).trimEnd()}...`;
 }
 
+function buildProofDrillFields(now = new Date()): {
+  proofDrillState: BlueBubblesProofReport['proofDrillState'];
+  proofDrillActionId: string;
+  proofDrillStartedAt: string;
+  proofDrillNextStep: string;
+} {
+  const config = resolveBlueBubblesConfig();
+  return resolveBlueBubblesProofDrillSnapshot({
+    groupFolder: config.groupFolder || 'main',
+    now,
+  });
+}
+
+function emitBlueBubblesProofDrillPlatformEvent(params: {
+  event:
+    | 'proof_drill_started'
+    | 'proof_drill_deferred'
+    | 'proof_drill_confirmed';
+  actionId: string;
+  chatJid: string;
+  state: 'DEGRADED_BUT_USABLE' | 'LIVE_PROVEN';
+  summary: string;
+  now: Date;
+  confirmationMessageId?: string | null;
+}): void {
+  const correlationId = `bluebubbles-proof-drill:${params.actionId}`;
+  void emitAndreaPlatformTraceEvent({
+    traceId: `${correlationId}:${params.event}:${params.now.getTime()}`,
+    traceKind: 'proof',
+    title: `BlueBubbles ${params.event}`,
+    summary: params.summary,
+    refs: {
+      correlationId,
+      messageActionId: params.actionId,
+      chatJid: params.chatJid,
+    },
+    metadata: {
+      surface: 'bluebubbles',
+      event: params.event,
+      messageActionId: params.actionId,
+      chatJid: params.chatJid,
+      confirmationMessageId: params.confirmationMessageId || '',
+    },
+  });
+  void emitAndreaPlatformProofEvent({
+    surface: 'bluebubbles',
+    journey: 'same_thread_message_action',
+    state: params.state,
+    summary: params.summary,
+    blocker:
+      params.state === 'LIVE_PROVEN'
+        ? null
+        : 'BlueBubbles proof drill has started but still needs the deferred same-thread decision.',
+    nextAction:
+      params.state === 'LIVE_PROVEN'
+        ? null
+        : 'In the same BlueBubbles self-thread, say `send it later tonight`.',
+    metadata: {
+      event: params.event,
+      messageActionId: params.actionId,
+      chatJid: params.chatJid,
+      confirmationMessageId: params.confirmationMessageId || '',
+    },
+  });
+}
+
 function buildProofReport(
   truth: FieldTrialBlueBubblesTruth,
+  now = new Date(),
 ): BlueBubblesProofReport {
+  const proofDrill = buildProofDrillFields(now);
   return {
     proofState: truth.proofState,
     blocker: truth.blocker,
@@ -152,15 +229,18 @@ function buildProofReport(
     eligibleFollowups: [...truth.eligibleFollowups],
     canonicalSelfThreadChatJid: truth.canonicalSelfThreadChatJid,
     sourceSelfThreadChatJid: truth.sourceSelfThreadChatJid,
+    ...proofDrill,
   };
 }
 
 function buildStatus(params: {
   truth: FieldTrialBlueBubblesTruth;
   channel: BlueBubblesChannel | null;
+  now?: Date;
 }): BlueBubblesControlStatus {
   const config = resolveBlueBubblesConfig();
   const snapshot = params.channel?.getControlSnapshot();
+  const proofDrill = buildProofDrillFields(params.now);
   return {
     enabled: snapshot?.enabled ?? config.enabled,
     configured: params.truth.configured,
@@ -228,6 +308,7 @@ function buildStatus(params: {
     messageActionProofState: params.truth.messageActionProofState,
     messageActionProofChatJid: params.truth.messageActionProofChatJid,
     messageActionProofAt: params.truth.messageActionProofAt,
+    ...proofDrill,
   };
 }
 
@@ -307,25 +388,55 @@ function listOpenBlueBubblesMessageActions(
         entry.presentationChatJid === chatJid ||
         entry.action.presentationChatJid === chatJid,
     )
-    .map((entry) => ({
-      actionId: entry.entry.action.messageActionId,
-      chatJid: entry.entry.presentationChatJid || 'none',
-      status: entry.entry.action.sendStatus,
-      draftPreview: clipPreview(entry.entry.action.draftText, 220),
-      allowedOperations: entry.entry.isActive
-        ? buildAllowedOperations(entry.entry.action.sendStatus)
-        : [],
-      createdAt: entry.entry.action.createdAt,
-      scheduledFor: entry.entry.action.followupAt || null,
-      isActive: entry.entry.isActive,
-      conversationKind: entry.entry.conversationKind,
-      decisionPolicy: entry.entry.decisionPolicy,
-      conversationalEligibility: entry.entry.conversationalEligibility,
-      requiresExplicitMention: entry.entry.requiresExplicitMention,
-      activePresentationAt: entry.entry.activePresentationAt,
-      eligibleFollowups: [...entry.entry.eligibleFollowups],
-    }))
+    .map((entry) => {
+      const isProofDrill = isBlueBubblesProofDrillAction(entry.entry.action);
+      const proofDrill = isProofDrill
+        ? resolveBlueBubblesProofDrillSnapshot({
+            groupFolder,
+            now,
+          })
+        : {
+            proofDrillState: 'idle' as const,
+            proofDrillActionId: 'none',
+            proofDrillStartedAt: 'none',
+            proofDrillNextStep: 'none',
+          };
+      return {
+        actionId: entry.entry.action.messageActionId,
+        chatJid: entry.entry.presentationChatJid || 'none',
+        status: entry.entry.action.sendStatus,
+        draftPreview: clipPreview(entry.entry.action.draftText, 220),
+        allowedOperations: entry.entry.isActive
+          ? buildAllowedOperations(entry.entry.action)
+          : [],
+        createdAt: entry.entry.action.createdAt,
+        scheduledFor: entry.entry.action.followupAt || null,
+        isActive: entry.entry.isActive,
+        conversationKind: entry.entry.conversationKind,
+        decisionPolicy: entry.entry.decisionPolicy,
+        conversationalEligibility: entry.entry.conversationalEligibility,
+        requiresExplicitMention: entry.entry.requiresExplicitMention,
+        activePresentationAt: entry.entry.activePresentationAt,
+        eligibleFollowups: [...entry.entry.eligibleFollowups],
+        isProofDrill,
+        proofDrillState:
+          proofDrill.proofDrillActionId === entry.entry.action.messageActionId
+            ? proofDrill.proofDrillState
+            : 'idle',
+        proofDrillStartedAt:
+          proofDrill.proofDrillActionId === entry.entry.action.messageActionId
+            ? proofDrill.proofDrillStartedAt
+            : 'none',
+        proofDrillNextStep:
+          proofDrill.proofDrillActionId === entry.entry.action.messageActionId
+            ? proofDrill.proofDrillNextStep
+            : 'none',
+      };
+    })
     .sort((left, right) => {
+      if (left.isProofDrill !== right.isProofDrill) {
+        return left.isProofDrill ? -1 : 1;
+      }
       if (left.isActive !== right.isActive) {
         return left.isActive ? -1 : 1;
       }
@@ -344,10 +455,13 @@ function listOpenBlueBubblesMessageActions(
 }
 
 function buildAllowedOperations(
-  status: string,
+  action: { sendStatus: string; sourceKey: string; linkedRefsJson?: string | null },
 ): BlueBubblesMessageActionOperationKind[] {
-  if (status === 'sent' || status === 'skipped') {
+  if (action.sendStatus === 'sent' || action.sendStatus === 'skipped') {
     return [];
+  }
+  if (isBlueBubblesProofDrillAction(action)) {
+    return ['defer', 'remind_instead', 'save_to_thread'];
   }
   return ['send', 'defer', 'remind_instead', 'save_to_thread'];
 }
@@ -498,6 +612,11 @@ export class BlueBubblesControlServer {
         'This BlueBubbles message action is no longer the active draft. Ask Andrea for a fresh draft, then use send it later tonight.',
       );
     }
+    if (isBlueBubblesProofDrillAction(action) && request.operation === 'send') {
+      throw new Error(
+        'BlueBubbles proof drill does not allow immediate send. Use send it later tonight.',
+      );
+    }
     const operation = resolveOperation(request);
     const result = await applyMessageActionOperation(
       action.messageActionId,
@@ -544,6 +663,35 @@ export class BlueBubblesControlServer {
         );
       }
     }
+    if (isBlueBubblesProofDrillAction(action) && operation.kind === 'defer') {
+      const truth = this.buildTruth();
+      const state =
+        truth.messageActionProofState === 'fresh'
+          ? 'LIVE_PROVEN'
+          : 'DEGRADED_BUT_USABLE';
+      emitBlueBubblesProofDrillPlatformEvent({
+        event: 'proof_drill_deferred',
+        actionId,
+        chatJid: action.presentationChatJid,
+        state,
+        summary:
+          'BlueBubbles proof drill recorded a deferred same-thread decision.',
+        now: currentTime,
+        confirmationMessageId,
+      });
+      if (confirmationMessageId) {
+        emitBlueBubblesProofDrillPlatformEvent({
+          event: 'proof_drill_confirmed',
+          actionId,
+          chatJid: action.presentationChatJid,
+          state,
+          summary:
+            'BlueBubbles proof drill posted a same-thread confirmation after the deferred decision.',
+          now: currentTime,
+          confirmationMessageId,
+        });
+      }
+    }
     return {
       handled: result.handled,
       action: getMessageAction(actionId),
@@ -551,7 +699,63 @@ export class BlueBubblesControlServer {
       presentation: result.presentation || null,
       confirmationMessageId,
       confirmationError,
-      proof: buildProofReport(this.buildTruth()),
+      proof: buildProofReport(this.buildTruth(), currentTime),
+    };
+  }
+
+  private async startProofDrill(
+    chatJid: string | null,
+  ): Promise<Record<string, unknown>> {
+    const currentTime = this.now();
+    const config = resolveBlueBubblesConfig();
+    const started = startBlueBubblesProofDrill({
+      groupFolder: config.groupFolder || 'main',
+      chatJid,
+      now: currentTime,
+    });
+    let presentationMessageId: string | null = null;
+    const presentationChatJid = started.action.presentationChatJid;
+    if (!presentationChatJid?.startsWith('bb:')) {
+      throw new Error('BlueBubbles proof drill is missing a self-thread chat.');
+    }
+    const presentationText = buildBlueBubblesProofDrillPresentationText(
+      started.action,
+    );
+    const result = await this.requireChannel().sendMessage(
+      presentationChatJid,
+      presentationText,
+    );
+    presentationMessageId = result.platformMessageId || null;
+    updateMessageAction(started.action.messageActionId, {
+      presentationMessageId,
+      presentationChatJid,
+      lastUpdatedAt: currentTime.toISOString(),
+    });
+    emitBlueBubblesProofDrillPlatformEvent({
+      event: 'proof_drill_started',
+      actionId: started.action.messageActionId,
+      chatJid: presentationChatJid,
+      state: 'DEGRADED_BUT_USABLE',
+      summary:
+        'BlueBubbles proof drill started with a fresh same-thread message action.',
+      now: currentTime,
+      confirmationMessageId: presentationMessageId,
+    });
+    const snapshot = resolveBlueBubblesProofDrillSnapshot({
+      groupFolder: config.groupFolder || 'main',
+      now: currentTime,
+    });
+    return {
+      actionId: started.action.messageActionId,
+      chatJid: presentationChatJid,
+      proofDrillState: snapshot.proofDrillState,
+      nextStep: snapshot.proofDrillNextStep,
+      status: buildStatus({
+        truth: this.buildTruth(),
+        channel: this.deps.getChannel(),
+        now: currentTime,
+      }),
+      proof: buildProofReport(this.buildTruth(), currentTime),
     };
   }
 
@@ -574,17 +778,21 @@ export class BlueBubblesControlServer {
       }
 
       if (method === 'GET' && url.pathname === '/v1/bluebubbles/status') {
+        const now = this.now();
         writeJson(res, 200, {
           status: buildStatus({
             truth: this.buildTruth(),
             channel: this.deps.getChannel(),
+            now,
           }),
         });
         return;
       }
 
       if (method === 'GET' && url.pathname === '/v1/bluebubbles/proof') {
-        writeJson(res, 200, { proof: buildProofReport(this.buildTruth()) });
+        writeJson(res, 200, {
+          proof: buildProofReport(this.buildTruth(), this.now()),
+        });
         return;
       }
 
@@ -624,6 +832,7 @@ export class BlueBubblesControlServer {
         if (chatJid) {
           this.requireKnownChat(chatJid);
         }
+        const proofDrill = buildProofDrillFields(this.now());
         writeJson(res, 200, {
           actions: listOpenBlueBubblesMessageActions(
             config.groupFolder,
@@ -635,6 +844,7 @@ export class BlueBubblesControlServer {
           openMessageActionCount: truth.openMessageActionCount,
           continuityState: truth.continuityState,
           proofCandidateChatJid: truth.proofCandidateChatJid,
+          ...proofDrill,
         });
         return;
       }
@@ -654,9 +864,23 @@ export class BlueBubblesControlServer {
           status: buildStatus({
             truth: this.buildTruth(),
             channel: this.deps.getChannel(),
+            now: this.now(),
           }),
-          proof: buildProofReport(this.buildTruth()),
+          proof: buildProofReport(this.buildTruth(), this.now()),
         });
+        return;
+      }
+
+      if (
+        method === 'POST' &&
+        url.pathname === '/v1/bluebubbles/proof-drill/start'
+      ) {
+        const body = await readJsonBody(req);
+        writeJson(
+          res,
+          200,
+          await this.startProofDrill(toNullableString(body.chatJid)),
+        );
         return;
       }
 
@@ -685,7 +909,7 @@ export class BlueBubblesControlServer {
         writeJson(res, 200, {
           sent: true,
           result,
-          proof: buildProofReport(this.buildTruth()),
+          proof: buildProofReport(this.buildTruth(), this.now()),
         });
         return;
       }

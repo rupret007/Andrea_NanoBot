@@ -40,6 +40,7 @@ import type {
   BlueBubblesConversationalEligibility,
   BlueBubblesConversationKind,
   BlueBubblesDecisionPolicy,
+  BlueBubblesProofDrillState,
   ChannelInlineAction,
   MessageActionExplanation,
   MessageActionLinkedRefs,
@@ -219,6 +220,13 @@ export type BlueBubblesSelfThreadContinuitySnapshot =
   BlueBubblesMessageActionContinuitySnapshot;
 
 export const MESSAGE_ACTION_FOLLOWUP_CONTEXT_TTL_MS = 30 * 60 * 1000;
+export const BLUEBUBBLES_PROOF_DRILL_SOURCE_KEY_PREFIX =
+  'bluebubbles-proof-drill:self-thread';
+export const BLUEBUBBLES_PROOF_DRILL_NEXT_STEP =
+  'In the same BlueBubbles self-thread, say `send it later tonight` to record the safe deferred proof decision.';
+
+const BLUEBUBBLES_PROOF_DRILL_DRAFT_TEXT =
+  'BlueBubbles proof drill: keep this unsent and use send it later tonight to record the deferred same-thread decision.';
 
 const BLUEBUBBLES_SELF_THREAD_ELIGIBLE_FOLLOWUPS = [
   'show it again',
@@ -931,6 +939,253 @@ function parseLinkedRefs(record: MessageActionRecord): MessageActionLinkedRefs {
   return parseJsonSafe<MessageActionLinkedRefs>(record.linkedRefsJson, {});
 }
 
+function parseLinkedRefsRecord(
+  record: MessageActionRecord,
+): Record<string, unknown> {
+  return parseJsonSafe<Record<string, unknown>>(record.linkedRefsJson, {});
+}
+
+export function isBlueBubblesProofDrillAction(
+  action: Pick<MessageActionRecord, 'sourceKey' | 'linkedRefsJson'>,
+): boolean {
+  if (action.sourceKey.startsWith(BLUEBUBBLES_PROOF_DRILL_SOURCE_KEY_PREFIX)) {
+    return true;
+  }
+  const linkedRefs = parseJsonSafe<Record<string, unknown>>(
+    action.linkedRefsJson,
+    {},
+  );
+  return linkedRefs.bluebubblesProofDrill === true;
+}
+
+function resolveProofDrillStartedAt(action: MessageActionRecord): string {
+  const linkedRefs = parseLinkedRefsRecord(action);
+  return typeof linkedRefs.proofDrillStartedAt === 'string'
+    ? linkedRefs.proofDrillStartedAt
+    : action.createdAt;
+}
+
+function proofDrillTouchedAt(action: MessageActionRecord): string {
+  return (
+    action.lastActionAt ||
+    action.lastUpdatedAt ||
+    action.createdAt ||
+    resolveProofDrillStartedAt(action)
+  );
+}
+
+function proofDrillTouchedAtMs(action: MessageActionRecord): number {
+  const parsed = Date.parse(proofDrillTouchedAt(action));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function listBlueBubblesProofDrillActions(
+  groupFolder: string,
+): MessageActionRecord[] {
+  return listMessageActionsForGroup({
+    groupFolder,
+    includeSent: true,
+    limit: 200,
+  })
+    .filter(isBlueBubblesProofDrillAction)
+    .sort((left, right) => proofDrillTouchedAtMs(right) - proofDrillTouchedAtMs(left));
+}
+
+function stampBlueBubblesProofDrillAction(params: {
+  action: MessageActionRecord;
+  chatJid: string;
+  now: Date;
+}): MessageActionRecord {
+  const nowIso = params.now.toISOString();
+  const linkedRefs = {
+    ...parseLinkedRefsRecord(params.action),
+    bluebubblesProofDrill: true,
+    proofDrillStartedAt: nowIso,
+    proofDrillNextStep: BLUEBUBBLES_PROOF_DRILL_NEXT_STEP,
+    chatJid: params.chatJid,
+    personName: 'Andrea self-thread',
+  };
+  updateMessageAction(params.action.messageActionId, {
+    sourceSummary: 'BlueBubbles same-thread proof drill.',
+    draftText: BLUEBUBBLES_PROOF_DRILL_DRAFT_TEXT,
+    trustLevel: 'draft_only',
+    sendStatus: 'drafted',
+    followupAt: null,
+    scheduledTaskId: null,
+    requiresApproval: true,
+    approvedAt: null,
+    lastActionKind: 'drafted',
+    lastActionAt: nowIso,
+    presentationChatJid: params.chatJid,
+    linkedRefsJson: JSON.stringify(linkedRefs),
+    lastUpdatedAt: nowIso,
+  });
+  return getMessageAction(params.action.messageActionId) || params.action;
+}
+
+export interface BlueBubblesProofDrillSnapshot {
+  proofDrillState: BlueBubblesProofDrillState;
+  proofDrillActionId: string;
+  proofDrillStartedAt: string;
+  proofDrillNextStep: string;
+}
+
+export interface BlueBubblesProofDrillStartResult {
+  action: MessageActionRecord;
+  presentationText: string;
+  snapshot: BlueBubblesProofDrillSnapshot;
+}
+
+export function resolveBlueBubblesProofDrillSnapshot(params: {
+  groupFolder: string;
+  now?: Date;
+}): BlueBubblesProofDrillSnapshot {
+  const now = params.now || new Date();
+  const actions = listBlueBubblesProofDrillActions(params.groupFolder);
+  const latest = actions[0] || null;
+  if (!latest) {
+    return {
+      proofDrillState: 'idle',
+      proofDrillActionId: 'none',
+      proofDrillStartedAt: 'none',
+      proofDrillNextStep:
+        'Start the BlueBubbles proof drill from the control API, MCP, or the canonical self-thread.',
+    };
+  }
+  const touchedAt = proofDrillTouchedAt(latest);
+  const touchedAtMs = Date.parse(touchedAt);
+  const isFresh =
+    Number.isFinite(touchedAtMs) &&
+    touchedAtMs + MESSAGE_ACTION_FOLLOWUP_CONTEXT_TTL_MS >= now.getTime();
+  const isOpen = isActionableBlueBubblesDecisionStatus(latest.sendStatus);
+  if (latest.sendStatus === 'deferred') {
+    return {
+      proofDrillState: 'deferred',
+      proofDrillActionId: latest.messageActionId,
+      proofDrillStartedAt: resolveProofDrillStartedAt(latest),
+      proofDrillNextStep:
+        'Deferred same-thread proof decision is recorded; confirm status after the BlueBubbles same-thread confirmation posts.',
+    };
+  }
+  if (isOpen && isFresh) {
+    return {
+      proofDrillState: 'active',
+      proofDrillActionId: latest.messageActionId,
+      proofDrillStartedAt: resolveProofDrillStartedAt(latest),
+      proofDrillNextStep: BLUEBUBBLES_PROOF_DRILL_NEXT_STEP,
+    };
+  }
+  return {
+    proofDrillState: 'stale',
+    proofDrillActionId: latest.messageActionId,
+    proofDrillStartedAt: resolveProofDrillStartedAt(latest),
+    proofDrillNextStep:
+      'Start a fresh BlueBubbles proof drill; the previous drill is no longer fresh.',
+  };
+}
+
+export function buildBlueBubblesProofDrillPresentationText(
+  action: MessageActionRecord,
+): string {
+  return [
+    'Andrea: BlueBubbles proof drill is ready.',
+    '',
+    'Target: Andrea self-thread proof lane in Messages.',
+    '',
+    'Draft:',
+    action.draftText,
+    '',
+    'Status: ready for a deferred same-thread decision. I will not send this immediately.',
+    'Next: show it again, make it shorter, make it more direct, save that, remind me instead, or send it later tonight.',
+  ].join('\n');
+}
+
+export function startBlueBubblesProofDrill(params: {
+  groupFolder: string;
+  chatJid?: string | null;
+  now?: Date;
+}): BlueBubblesProofDrillStartResult {
+  const now = params.now || new Date();
+  const chatJid =
+    canonicalizeBlueBubblesSelfThreadJid(params.chatJid) ||
+    (params.chatJid && isBlueBubblesSelfThreadAliasJid(params.chatJid)
+      ? params.chatJid
+      : null) ||
+    BLUEBUBBLES_CANONICAL_SELF_THREAD_JID;
+  if (!isBlueBubblesSelfThreadAliasJid(chatJid)) {
+    throw new Error(
+      'BlueBubbles proof drill can only run in the canonical self-thread.',
+    );
+  }
+
+  const freshnessCutoff = now.getTime() - MESSAGE_ACTION_FOLLOWUP_CONTEXT_TTL_MS;
+  let activeProofDrill = listBlueBubblesProofDrillActions(params.groupFolder).find(
+    (action) =>
+      isActionableBlueBubblesDecisionStatus(action.sendStatus) &&
+      proofDrillTouchedAtMs(action) >= freshnessCutoff,
+  );
+  for (const action of listBlueBubblesProofDrillActions(params.groupFolder)) {
+    if (action.messageActionId === activeProofDrill?.messageActionId) {
+      continue;
+    }
+    if (isActionableBlueBubblesDecisionStatus(action.sendStatus)) {
+      skipBlueBubblesContinuityAction(action, now);
+    }
+  }
+
+  if (activeProofDrill) {
+    activeProofDrill = stampBlueBubblesProofDrillAction({
+      action: activeProofDrill,
+      chatJid,
+      now,
+    });
+  } else {
+    const created = createOrRefreshMessageActionFromDraft({
+      groupFolder: params.groupFolder,
+      presentationChannel: 'bluebubbles',
+      presentationChatJid: chatJid,
+      sourceType: 'manual_prompt',
+      sourceKey: `${BLUEBUBBLES_PROOF_DRILL_SOURCE_KEY_PREFIX}:${now.getTime()}`,
+      sourceSummary: 'BlueBubbles same-thread proof drill.',
+      draftText: BLUEBUBBLES_PROOF_DRILL_DRAFT_TEXT,
+      personName: 'Andrea self-thread',
+      threadTitle: 'Andrea self-thread proof lane',
+      communicationContext: 'reply_followthrough',
+      targetOverride: {
+        kind: 'external_thread',
+        chatJid,
+        threadId: null,
+        replyToMessageId: null,
+        isGroup: false,
+        personName: 'Andrea self-thread',
+      },
+      targetChannelOverride: 'bluebubbles',
+      now,
+    });
+    activeProofDrill = stampBlueBubblesProofDrillAction({
+      action: created,
+      chatJid,
+      now,
+    });
+  }
+
+  reconcileBlueBubblesSelfThreadContinuity({
+    groupFolder: params.groupFolder,
+    chatJid,
+    now,
+    allowRehydrate: false,
+  });
+  const action = getMessageAction(activeProofDrill.messageActionId) || activeProofDrill;
+  return {
+    action,
+    presentationText: buildBlueBubblesProofDrillPresentationText(action),
+    snapshot: resolveBlueBubblesProofDrillSnapshot({
+      groupFolder: params.groupFolder,
+      now,
+    }),
+  };
+}
+
 function parseExplanation(
   record: MessageActionRecord,
 ): MessageActionExplanation {
@@ -1294,6 +1549,11 @@ function actionMatchesPersonName(
 }
 
 function buildActionLead(record: MessageActionRecord): string {
+  if (isBlueBubblesProofDrillAction(record)) {
+    return record.sendStatus === 'deferred'
+      ? 'Andrea: BlueBubbles proof drill deferred decision is recorded.'
+      : 'Andrea: BlueBubbles proof drill is ready.';
+  }
   if (isScheduledSendAction(record)) {
     return 'Andrea: I queued that to send later.';
   }
@@ -1395,6 +1655,11 @@ function buildStateNote(record: MessageActionRecord): string | null {
 }
 
 function nextStepLine(record: MessageActionRecord): string {
+  if (isBlueBubblesProofDrillAction(record)) {
+    return record.sendStatus === 'deferred'
+      ? 'Next: proof drill decision is recorded; I will keep the action unsent unless you explicitly ask for a fresh drill.'
+      : 'Next: show it again, make it shorter, make it more direct, save that, remind me instead, or send it later tonight.';
+  }
   if (record.sendStatus === 'sent') {
     return 'Next: review it later if you want to track the follow-through.';
   }
@@ -1420,6 +1685,38 @@ function nextStepLine(record: MessageActionRecord): string {
 }
 
 function buildInlineRows(record: MessageActionRecord): ChannelInlineAction[][] {
+  if (isBlueBubblesProofDrillAction(record)) {
+    return [
+      [
+        {
+          label: 'Show drill',
+          actionId: `/message-show ${record.messageActionId}`,
+        },
+        {
+          label: 'Shorter',
+          actionId: `/message-rewrite ${record.messageActionId} shorter`,
+        },
+        {
+          label: 'More direct',
+          actionId: `/message-rewrite ${record.messageActionId} direct`,
+        },
+      ],
+      [
+        {
+          label: 'Send later tonight',
+          actionId: `/message-later ${record.messageActionId}`,
+        },
+        {
+          label: 'Remind me instead',
+          actionId: `/message-remind ${record.messageActionId}`,
+        },
+        {
+          label: 'Save under thread',
+          actionId: `/message-save-thread ${record.messageActionId}`,
+        },
+      ],
+    ];
+  }
   if (record.sendStatus === 'sent') {
     return [
       [
@@ -2290,6 +2587,24 @@ export async function applyMessageActionOperation(
   const action = getMessageAction(messageActionId);
   if (!action) return { handled: false };
   const now = deps.currentTime || new Date();
+
+  if (
+    isBlueBubblesProofDrillAction(action) &&
+    (operation.kind === 'send' ||
+      operation.kind === 'send_again' ||
+      operation.kind === 'rewrite_and_send')
+  ) {
+    return {
+      handled: true,
+      action,
+      replyText:
+        'Andrea: I will not send the BlueBubbles proof drill immediately. Use `send it later tonight` to record the safe deferred proof decision.',
+      presentation: buildMessageActionPresentation(
+        action,
+        deps.channel === 'bluebubbles' ? 'bluebubbles' : 'telegram',
+      ),
+    };
+  }
 
   if (operation.kind === 'show' || operation.kind === 'show_draft') {
     return {

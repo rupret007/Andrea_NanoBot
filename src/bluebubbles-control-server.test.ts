@@ -225,6 +225,10 @@ function buildTruth(
     messageActionProofAt: 'none',
     messageActionProofDetail:
       'No fresh BlueBubbles message-action decision is recorded yet.',
+    proofDrillState: 'idle',
+    proofDrillActionId: 'none',
+    proofDrillStartedAt: 'none',
+    proofDrillNextStep: 'Start the BlueBubbles proof drill.',
     ...overrides,
   };
 }
@@ -358,6 +362,8 @@ describe('BlueBubbles control server', () => {
         activePresentationAt: string | null;
         eligibleFollowups: string[];
         canonicalSelfThreadChatJid: string;
+        proofDrillState: string;
+        proofDrillActionId: string;
       };
     };
     expect(statusBody.status.configuredReplyGateMode).toBe('mention_required');
@@ -378,6 +384,8 @@ describe('BlueBubbles control server', () => {
     expect(statusBody.status.canonicalSelfThreadChatJid).toBe(
       BLUEBUBBLES_CANONICAL_SELF_THREAD_JID,
     );
+    expect(statusBody.status.proofDrillState).toBe('idle');
+    expect(statusBody.status.proofDrillActionId).toBe('none');
     expect(JSON.stringify(statusBody)).not.toContain('hook-secret');
     expect(JSON.stringify(statusBody)).toContain('secret=***');
     expect(statusBody.status.transportState).toBe('ready');
@@ -401,6 +409,7 @@ describe('BlueBubbles control server', () => {
         conversationalEligibility: string;
         requiresExplicitMention: boolean;
         canonicalSelfThreadChatJid: string;
+        proofDrillState: string;
       };
     };
     expect(proofBody.proof.messageActionProofState).toBe('none');
@@ -418,6 +427,7 @@ describe('BlueBubbles control server', () => {
     expect(proofBody.proof.canonicalSelfThreadChatJid).toBe(
       BLUEBUBBLES_CANONICAL_SELF_THREAD_JID,
     );
+    expect(proofBody.proof.proofDrillState).toBe('idle');
 
     await control.close();
     await channel.disconnect();
@@ -677,6 +687,130 @@ describe('BlueBubbles control server', () => {
     expect(executeBody.confirmationError).toBeNull();
     expect(apiStub.sentBodies.length).toBeGreaterThanOrEqual(1);
     expect(executeBody.proof).toBeTruthy();
+
+    await control.close();
+    await channel.disconnect();
+    await apiStub.close();
+  });
+
+  it('starts a proof drill, rejects immediate send, and accepts deferred proof completion', async () => {
+    const apiStub = await startBlueBubblesApiStub();
+    const channel = new BlueBubblesChannel(
+      buildConfig({ baseUrl: apiStub.baseUrl }),
+      {
+        onHealthUpdate: () => undefined,
+        onMessage: async () => undefined,
+        onChatMetadata: () => undefined,
+        registeredGroups: () => ({}),
+        onRegisterMainChat: async () => ({ ok: true, message: 'ok' }),
+      },
+    );
+    storeChatMetadata(
+      BLUEBUBBLES_CANONICAL_SELF_THREAD_JID,
+      '2026-04-25T15:02:00.000Z',
+      'Andrea Self',
+      'bluebubbles',
+      false,
+    );
+    await channel.connect();
+    const control = await startControlServer({
+      channel,
+      truth: buildTruth({
+        recentTargetChatJid: BLUEBUBBLES_CANONICAL_SELF_THREAD_JID,
+        recentTargetAt: '2026-04-25T15:04:00.000Z',
+      }),
+    });
+
+    const startResponse = await fetch(
+      `${control.baseUrl}/v1/bluebubbles/proof-drill/start`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer control-token',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({}),
+      },
+    );
+    expect(startResponse.status).toBe(200);
+    const startBody = (await startResponse.json()) as {
+      actionId: string;
+      proofDrillState: string;
+      nextStep: string;
+      status: { proofDrillState: string; proofDrillActionId: string };
+      proof: { proofDrillState: string; proofDrillActionId: string };
+    };
+    expect(startBody.actionId).toBeTruthy();
+    expect(startBody.proofDrillState).toBe('active');
+    expect(startBody.nextStep).toContain('send it later tonight');
+    expect(startBody.status.proofDrillState).toBe('active');
+    expect(startBody.status.proofDrillActionId).toBe(startBody.actionId);
+    expect(startBody.proof.proofDrillState).toBe('active');
+    expect(apiStub.sentBodies[0]).toMatchObject({
+      chatGuid: BLUEBUBBLES_CANONICAL_SELF_THREAD_JID.replace(/^bb:/, ''),
+    });
+
+    const actionsResponse = await fetch(
+      `${control.baseUrl}/v1/bluebubbles/message-actions/open`,
+      { headers: { Authorization: 'Bearer control-token' } },
+    );
+    const actionsBody = (await actionsResponse.json()) as {
+      actions: Array<{
+        actionId: string;
+        isProofDrill: boolean;
+        allowedOperations: string[];
+        proofDrillState: string;
+      }>;
+      proofDrillActionId: string;
+    };
+    expect(actionsBody.proofDrillActionId).toBe(startBody.actionId);
+    expect(actionsBody.actions[0]).toMatchObject({
+      actionId: startBody.actionId,
+      isProofDrill: true,
+      proofDrillState: 'active',
+    });
+    expect(actionsBody.actions[0]?.allowedOperations).not.toContain('send');
+
+    const rejectedSend = await fetch(
+      `${control.baseUrl}/v1/bluebubbles/message-actions/${startBody.actionId}/execute`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer control-token',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ operation: 'send' }),
+      },
+    );
+    expect(rejectedSend.status).toBe(400);
+    expect(await rejectedSend.json()).toMatchObject({
+      error: expect.stringContaining('does not allow immediate send'),
+    });
+
+    const deferred = await fetch(
+      `${control.baseUrl}/v1/bluebubbles/message-actions/${startBody.actionId}/execute`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer control-token',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          operation: 'defer',
+          timingHint: 'later tonight',
+        }),
+      },
+    );
+    expect(deferred.status).toBe(200);
+    const deferredBody = (await deferred.json()) as {
+      action: { sendStatus: string; lastActionKind: string };
+      confirmationMessageId: string | null;
+      proof: { proofDrillState: string };
+    };
+    expect(deferredBody.action.sendStatus).toBe('deferred');
+    expect(deferredBody.action.lastActionKind).toBe('remind_instead');
+    expect(deferredBody.confirmationMessageId).toBeTruthy();
+    expect(deferredBody.proof.proofDrillState).toBe('deferred');
 
     await control.close();
     await channel.disconnect();
