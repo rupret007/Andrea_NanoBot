@@ -432,6 +432,26 @@ function isActionableBlueBubblesDecisionStatus(
   return status === 'drafted' || status === 'approved' || status === 'failed';
 }
 
+function skipBlueBubblesContinuityAction(
+  action: MessageActionRecord,
+  now: Date,
+): MessageActionRecord {
+  const nowIso = now.toISOString();
+  updateMessageAction(action.messageActionId, {
+    sendStatus: 'skipped',
+    followupAt: null,
+    scheduledTaskId: null,
+    requiresApproval: false,
+    approvedAt: null,
+    lastActionKind: 'skipped',
+    lastActionAt: nowIso,
+    lastUpdatedAt: nowIso,
+  });
+  const refreshed = getMessageAction(action.messageActionId) || action;
+  syncOutcomeFromMessageActionRecord(refreshed, now);
+  return refreshed;
+}
+
 function resolveBlueBubblesConversationPresentationChatJid(
   action: Pick<MessageActionRecord, 'presentationChatJid'>,
 ): string | null {
@@ -2679,14 +2699,22 @@ export function resolveMessageActionForFollowup(
 export function findLatestChatMessageAction(params: {
   groupFolder: string;
   chatJid: string;
+  now?: Date;
 }): MessageActionRecord | undefined {
   if (params.chatJid.startsWith('bb:')) {
     const continuity = reconcileBlueBubblesMessageActionContinuity({
       groupFolder: params.groupFolder,
       chatJid: params.chatJid,
+      now: params.now,
       allowRehydrate: false,
     });
-    return continuity.activeAction || continuity.openActions[0]?.action;
+    return (
+      continuity.activeAction ||
+      continuity.openActions.find((entry) => entry.isActive)?.action ||
+      (continuity.conversationKind === 'self_thread'
+        ? undefined
+        : continuity.openActions[0]?.action)
+    );
   }
   const candidateChatJids = [
     ...new Set(expandBlueBubblesLogicalSelfThreadJids(params.chatJid)),
@@ -2763,7 +2791,6 @@ export function reconcileBlueBubblesMessageActionContinuity(params: {
     canonicalSelfThreadChatJid,
   );
   const supersededActionIds: string[] = [];
-  const nowIso = now.toISOString();
   const freshnessCutoff =
     now.getTime() - MESSAGE_ACTION_FOLLOWUP_CONTEXT_TTL_MS;
   let continuityCandidates = listBlueBubblesMessageActionContinuityCandidates({
@@ -2793,20 +2820,7 @@ export function reconcileBlueBubblesMessageActionContinuity(params: {
       .sort((left, right) => right.engagedAtMs - left.engagedAtMs)
       .slice(1)
       .forEach((duplicate) => {
-        updateMessageAction(duplicate.action.messageActionId, {
-          sendStatus: 'skipped',
-          followupAt: null,
-          scheduledTaskId: null,
-          requiresApproval: false,
-          approvedAt: null,
-          lastActionKind: 'skipped',
-          lastActionAt: nowIso,
-          lastUpdatedAt: nowIso,
-        });
-        const refreshed =
-          getMessageAction(duplicate.action.messageActionId) ||
-          duplicate.action;
-        syncOutcomeFromMessageActionRecord(refreshed, now);
+        skipBlueBubblesContinuityAction(duplicate.action, now);
         supersededActionIds.push(duplicate.action.messageActionId);
       });
   }
@@ -2815,6 +2829,23 @@ export function reconcileBlueBubblesMessageActionContinuity(params: {
       groupFolder: params.groupFolder,
       canonicalChatJid: canonicalSelfThreadChatJid,
     });
+  }
+  if (conversationKind === 'self_thread') {
+    const staleSelfThreadActions = continuityCandidates.filter(
+      (candidate) =>
+        isActionableBlueBubblesDecisionStatus(candidate.action.sendStatus) &&
+        candidate.engagedAtMs < freshnessCutoff,
+    );
+    for (const staleAction of staleSelfThreadActions) {
+      skipBlueBubblesContinuityAction(staleAction.action, now);
+      supersededActionIds.push(staleAction.action.messageActionId);
+    }
+    if (staleSelfThreadActions.length > 0) {
+      continuityCandidates = listBlueBubblesMessageActionContinuityCandidates({
+        groupFolder: params.groupFolder,
+        canonicalChatJid: canonicalSelfThreadChatJid,
+      });
+    }
   }
 
   let rehydratedActionId: string | null = null;

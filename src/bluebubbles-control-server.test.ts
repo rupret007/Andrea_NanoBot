@@ -12,6 +12,7 @@ import { BlueBubblesChannel } from './channels/bluebubbles.js';
 import {
   _closeDatabase,
   _initTestDatabase,
+  getMessageAction,
   storeChatMetadata,
   storeMessageDirect,
 } from './db.js';
@@ -508,6 +509,174 @@ describe('BlueBubbles control server', () => {
     expect(await blockedGroupSend.json()).toMatchObject({
       error: expect.stringContaining('Direct BlueBubbles send is only allowed'),
     });
+
+    await control.close();
+    await channel.disconnect();
+    await apiStub.close();
+  });
+
+  it('skips stale self-thread actions instead of exposing executable control operations', async () => {
+    const apiStub = await startBlueBubblesApiStub();
+    const channel = new BlueBubblesChannel(
+      buildConfig({ baseUrl: apiStub.baseUrl }),
+      {
+        onHealthUpdate: () => undefined,
+        onMessage: async () => undefined,
+        onChatMetadata: () => undefined,
+        registeredGroups: () => ({}),
+        onRegisterMainChat: async () => ({ ok: true, message: 'ok' }),
+      },
+    );
+    storeChatMetadata(
+      BLUEBUBBLES_CANONICAL_SELF_THREAD_JID,
+      '2026-04-25T14:00:00.000Z',
+      'Andrea Self',
+      'bluebubbles',
+      false,
+    );
+    const stale = createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'bluebubbles',
+      presentationChatJid: BLUEBUBBLES_CANONICAL_SELF_THREAD_JID,
+      sourceType: 'manual_prompt',
+      sourceKey: 'bb-control-stale-action',
+      sourceSummary: 'Old Candace draft.',
+      draftText: 'Old draft that should no longer control the thread.',
+      personName: 'Candace',
+      threadTitle: 'Candace',
+      communicationContext: 'general',
+      targetOverride: {
+        kind: 'external_thread',
+        chatJid: 'bb:iMessage;-;+15551234567',
+        threadId: null,
+        replyToMessageId: null,
+        isGroup: false,
+        personName: 'Candace',
+      },
+      targetChannelOverride: 'bluebubbles',
+      now: new Date('2026-04-25T14:00:00.000Z'),
+    });
+    await channel.connect();
+    const control = await startControlServer({
+      channel,
+      truth: buildTruth({ continuityState: 'idle', openMessageActionCount: 0 }),
+    });
+
+    const actionsResponse = await fetch(
+      `${control.baseUrl}/v1/bluebubbles/message-actions/open?chatJid=${encodeURIComponent(BLUEBUBBLES_CANONICAL_SELF_THREAD_JID)}`,
+      { headers: { Authorization: 'Bearer control-token' } },
+    );
+    expect(actionsResponse.status).toBe(200);
+    const actionsBody = (await actionsResponse.json()) as {
+      actions: unknown[];
+    };
+    expect(actionsBody.actions).toEqual([]);
+    expect(getMessageAction(stale.messageActionId)?.sendStatus).toBe('skipped');
+
+    const executeResponse = await fetch(
+      `${control.baseUrl}/v1/bluebubbles/message-actions/${stale.messageActionId}/execute`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer control-token',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          operation: 'defer',
+          timingHint: 'tonight',
+        }),
+      },
+    );
+    expect(executeResponse.status).toBe(400);
+    expect(await executeResponse.json()).toMatchObject({
+      error: expect.stringContaining('no longer the active draft'),
+    });
+
+    await control.close();
+    await channel.disconnect();
+    await apiStub.close();
+  });
+
+  it('executes send it later tonight as a deferred same-thread decision with confirmation', async () => {
+    const apiStub = await startBlueBubblesApiStub();
+    const channel = new BlueBubblesChannel(
+      buildConfig({ baseUrl: apiStub.baseUrl }),
+      {
+        onHealthUpdate: () => undefined,
+        onMessage: async () => undefined,
+        onChatMetadata: () => undefined,
+        registeredGroups: () => ({}),
+        onRegisterMainChat: async () => ({ ok: true, message: 'ok' }),
+      },
+    );
+    storeChatMetadata(
+      BLUEBUBBLES_CANONICAL_SELF_THREAD_JID,
+      '2026-04-25T15:02:00.000Z',
+      'Andrea Self',
+      'bluebubbles',
+      false,
+    );
+    const action = createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'bluebubbles',
+      presentationChatJid: BLUEBUBBLES_CANONICAL_SELF_THREAD_JID,
+      sourceType: 'manual_prompt',
+      sourceKey: 'bb-control-defer-proof',
+      sourceSummary: 'Candace still needs an answer.',
+      draftText: 'Dinner still works for me tonight.',
+      personName: 'Candace',
+      threadTitle: 'Candace',
+      communicationContext: 'general',
+      targetOverride: {
+        kind: 'external_thread',
+        chatJid: 'bb:iMessage;-;+15551234567',
+        threadId: null,
+        replyToMessageId: null,
+        isGroup: false,
+        personName: 'Candace',
+      },
+      targetChannelOverride: 'bluebubbles',
+      now: new Date('2026-04-25T15:04:00.000Z'),
+    });
+    await channel.connect();
+    const control = await startControlServer({
+      channel,
+      truth: buildTruth({
+        recentTargetChatJid: BLUEBUBBLES_CANONICAL_SELF_THREAD_JID,
+        recentTargetAt: '2026-04-25T15:04:00.000Z',
+        openMessageActionCount: 1,
+        continuityState: 'draft_open',
+        proofCandidateChatJid: BLUEBUBBLES_CANONICAL_SELF_THREAD_JID,
+      }),
+    });
+
+    const executeResponse = await fetch(
+      `${control.baseUrl}/v1/bluebubbles/message-actions/${action.messageActionId}/execute`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer control-token',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          operation: 'defer',
+          timingHint: 'tonight',
+        }),
+      },
+    );
+    expect(executeResponse.status).toBe(200);
+    const executeBody = (await executeResponse.json()) as {
+      action: { sendStatus: string; lastActionKind: string };
+      confirmationMessageId: string | null;
+      confirmationError: string | null;
+      proof: unknown;
+    };
+    expect(executeBody.action.sendStatus).toBe('deferred');
+    expect(executeBody.action.lastActionKind).toBe('remind_instead');
+    expect(executeBody.confirmationMessageId).toBeTruthy();
+    expect(executeBody.confirmationError).toBeNull();
+    expect(apiStub.sentBodies.length).toBeGreaterThanOrEqual(1);
+    expect(executeBody.proof).toBeTruthy();
 
     await control.close();
     await channel.disconnect();

@@ -312,7 +312,9 @@ function listOpenBlueBubblesMessageActions(
       chatJid: entry.entry.presentationChatJid || 'none',
       status: entry.entry.action.sendStatus,
       draftPreview: clipPreview(entry.entry.action.draftText, 220),
-      allowedOperations: buildAllowedOperations(entry.entry.action.sendStatus),
+      allowedOperations: entry.entry.isActive
+        ? buildAllowedOperations(entry.entry.action.sendStatus)
+        : [],
       createdAt: entry.entry.action.createdAt,
       scheduledFor: entry.entry.action.followupAt || null,
       isActive: entry.entry.isActive,
@@ -479,6 +481,23 @@ export class BlueBubblesControlServer {
         'This BlueBubbles message action is missing a presentation chat.',
       );
     }
+    const currentTime = this.now();
+    const continuity = reconcileBlueBubblesMessageActionContinuity({
+      groupFolder: action.groupFolder,
+      chatJid: action.presentationChatJid,
+      now: currentTime,
+      allowRehydrate: true,
+    });
+    const activeEntry = continuity.openActions.find(
+      (entry) =>
+        entry.action.messageActionId === action.messageActionId &&
+        entry.isActive,
+    );
+    if (!activeEntry) {
+      throw new Error(
+        'This BlueBubbles message action is no longer the active draft. Ask Andrea for a fresh draft, then use send it later tonight.',
+      );
+    }
     const operation = resolveOperation(request);
     const result = await applyMessageActionOperation(
       action.messageActionId,
@@ -487,7 +506,7 @@ export class BlueBubblesControlServer {
         groupFolder: action.groupFolder,
         channel: 'bluebubbles',
         chatJid: action.presentationChatJid,
-        currentTime: this.now(),
+        currentTime,
         sendToTarget: async (
           targetChannel: string,
           chatJid: string,

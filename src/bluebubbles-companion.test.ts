@@ -365,13 +365,13 @@ describe('bluebubbles companion helpers', () => {
       scheduledTaskId: null,
       approvedAt: null,
       lastActionKind: null,
-      lastActionAt: '2026-04-07T19:45:00.000Z',
+      lastActionAt: '2026-04-07T20:20:00.000Z',
       dedupeKey: 'self-thread-proof-gap',
       presentationChatJid: 'bb:iMessage;-;jeffstory007@gmail.com',
       presentationThreadId: null,
       presentationMessageId: null,
-      createdAt: '2026-04-07T19:44:00.000Z',
-      lastUpdatedAt: '2026-04-07T19:45:00.000Z',
+      createdAt: '2026-04-07T20:19:00.000Z',
+      lastUpdatedAt: '2026-04-07T20:20:00.000Z',
       sentAt: null,
     });
 
@@ -383,7 +383,7 @@ describe('bluebubbles companion helpers', () => {
       }),
     ).toEqual({
       chatJid: 'bb:iMessage;-;+14695405551',
-      engagedAt: '2026-04-07T19:45:00.000Z',
+      engagedAt: '2026-04-07T20:20:00.000Z',
     });
   });
 

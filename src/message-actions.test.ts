@@ -179,6 +179,7 @@ describe('message actions', () => {
       findLatestChatMessageAction({
         groupFolder: 'main',
         chatJid: 'bb:iMessage;-;jeffstory007@gmail.com',
+        now: new Date('2026-04-16T16:20:00.000Z'),
       })?.messageActionId,
     ).toBe(action.messageActionId);
     expect(
@@ -342,8 +343,52 @@ describe('message actions', () => {
     expect(getMessageAction(newer.messageActionId)?.sendStatus).toBe('drafted');
   });
 
+  it('skips stale self-thread BlueBubbles actions when no fresh draft remains', () => {
+    const stale = createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'bluebubbles',
+      presentationChatJid: 'bb:iMessage;-;+14695405551',
+      sourceType: 'manual_prompt',
+      sourceKey: 'stale-self-thread-only',
+      sourceSummary: 'Older draft text message to Candace.',
+      draftText: 'Older Candace draft.',
+      personName: 'Candace',
+      threadTitle: 'Candace',
+      communicationContext: 'general',
+      targetOverride: {
+        kind: 'external_thread',
+        chatJid: 'bb:iMessage;+;chat-candace',
+        threadId: null,
+        replyToMessageId: null,
+        isGroup: false,
+        personName: 'Candace',
+      },
+      targetChannelOverride: 'bluebubbles',
+      now: new Date('2026-04-16T15:00:00.000Z'),
+    });
+
+    const continuity = reconcileBlueBubblesSelfThreadContinuity({
+      groupFolder: 'main',
+      chatJid: 'bb:iMessage;-;jeffstory007@gmail.com',
+      now: new Date('2026-04-16T16:20:00.000Z'),
+      allowRehydrate: true,
+    });
+
+    expect(continuity.activeMessageActionId).toBeNull();
+    expect(continuity.openMessageActionCount).toBe(0);
+    expect(continuity.continuityState).toBe('idle');
+    expect(continuity.supersededActionIds).toContain(stale.messageActionId);
+    expect(getMessageAction(stale.messageActionId)?.sendStatus).toBe('skipped');
+    expect(
+      findLatestChatMessageAction({
+        groupFolder: 'main',
+        chatJid: 'bb:iMessage;-;jeffstory007@gmail.com',
+      }),
+    ).toBeUndefined();
+  });
+
   it('prefers a fresh rehydrated self-thread draft over a stale older action', () => {
-    createOrRefreshMessageActionFromDraft({
+    const stale = createOrRefreshMessageActionFromDraft({
       groupFolder: 'main',
       presentationChannel: 'bluebubbles',
       presentationChatJid: 'bb:iMessage;-;+14695405551',
@@ -411,6 +456,7 @@ describe('message actions', () => {
     );
     expect(resolved?.presentationMessageId).toBe('bb:self-thread-draft-fresh');
     expect(resolved?.sourceKey).toContain('rehydrated-bluebubbles-draft');
+    expect(getMessageAction(stale.messageActionId)?.sendStatus).toBe('skipped');
   });
 
   it('marks group continuity as explicit-only and limits followups to inspection and rewrites', () => {
