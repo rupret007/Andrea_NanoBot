@@ -488,11 +488,32 @@ export class BlueBubblesControlServer {
     if (!result.handled) {
       throw new Error('BlueBubbles could not execute that message action.');
     }
+    let confirmationMessageId: string | null = null;
+    let confirmationError: string | null = null;
+    const confirmationText = result.replyText || result.presentation?.text || null;
+    if (confirmationText) {
+      try {
+        const confirmation = await this.requireChannel().sendMessage(
+          action.presentationChatJid,
+          confirmationText,
+        );
+        confirmationMessageId = confirmation.platformMessageId || null;
+      } catch (err) {
+        confirmationError =
+          err instanceof Error ? err.message : String(err);
+        logger.warn(
+          { err, actionId, chatJid: action.presentationChatJid },
+          'BlueBubbles control API executed a message action but could not post the same-thread confirmation',
+        );
+      }
+    }
     return {
       handled: result.handled,
       action: getMessageAction(actionId),
       replyText: result.replyText || null,
       presentation: result.presentation || null,
+      confirmationMessageId,
+      confirmationError,
       proof: buildProofReport(this.buildTruth()),
     };
   }

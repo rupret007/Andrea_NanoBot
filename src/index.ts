@@ -173,6 +173,7 @@ import {
 } from './host-control.js';
 import {
   emitAndreaPlatformProofEvent,
+  emitAndreaPlatformFeedbackReflection,
   emitAndreaPlatformShellConfigSnapshot,
   emitAndreaPlatformShellHealth,
   emitAndreaPlatformTraceEvent,
@@ -225,6 +226,7 @@ import {
   canApplyBlueBubblesMessageActionFollowup,
   canUseBareBlueBubblesMessageActionFollowup,
   createOrRefreshMessageActionFromDraft,
+  ensureBlueBubblesSelfThreadMessageActionForReplyText,
   reconcileBlueBubblesMessageActionContinuity,
   reconcileBlueBubblesSelfThreadContinuity,
   findLatestChatMessageAction,
@@ -3521,6 +3523,15 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         ? appendResponseFeedbackInlineRow(params.sendOptions || {}, feedbackId)
         : params.sendOptions || {};
     const sent = await channel.sendMessage(chatJid, replyText, sendOptions);
+    if (channel.name === 'bluebubbles') {
+      ensureBlueBubblesSelfThreadMessageActionForReplyText({
+        groupFolder: group.folder,
+        chatJid,
+        replyText,
+        presentationMessageId: sent.platformMessageId || null,
+        now,
+      });
+    }
     if (!feedbackId) {
       return sent;
     }
@@ -3566,7 +3577,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     void emitAndreaPlatformTraceEvent({
       traceId: feedbackId,
       traceKind: 'feedback',
-      title: 'Response feedback captured',
+      title: 'Response feedback affordance attached',
       summary: classification.explanation,
       refs: compactPlatformStrings({
         feedbackId,
@@ -8890,6 +8901,102 @@ async function main(): Promise<void> {
     }
   }
 
+  function mapResponseFeedbackTaskFamily(
+    record: Pick<ResponseFeedbackRecord, 'routeKey' | 'capabilityId' | 'responseSource'>,
+  ): 'calendar' | 'communication' | 'research' | 'media' | 'assistant' | 'operator' | 'code' | 'unknown' {
+    const routeText = [
+      record.routeKey,
+      record.capabilityId,
+      record.responseSource,
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+    if (routeText.includes('calendar')) return 'calendar';
+    if (
+      routeText.includes('communication') ||
+      routeText.includes('reply') ||
+      routeText.includes('message') ||
+      routeText.includes('text')
+    ) {
+      return 'communication';
+    }
+    if (routeText.includes('research') || routeText.includes('news')) {
+      return 'research';
+    }
+    if (routeText.includes('image') || routeText.includes('media')) return 'media';
+    if (routeText.includes('runtime') || routeText.includes('work_cockpit')) {
+      return 'operator';
+    }
+    if (routeText.includes('code') || routeText.includes('repo')) return 'code';
+    return routeText ? 'assistant' : 'unknown';
+  }
+
+  async function emitResponseFeedbackCognition(
+    record: ResponseFeedbackRecord,
+  ): Promise<ResponseFeedbackRecord> {
+    void emitAndreaPlatformTraceEvent({
+      traceId: record.feedbackId,
+      traceKind: 'feedback',
+      title: 'Response feedback downvote captured',
+      summary: buildResponseFeedbackIssueSummary(record),
+      refs: compactPlatformStrings({
+        feedbackId: record.feedbackId,
+        issueId: record.issueId || '',
+        platformMessageId: record.platformMessageId || '',
+        userMessageId: record.userMessageId || '',
+        remediationJobId: record.remediationJobId || '',
+      }),
+      metadata: compactPlatformStrings({
+        status: record.status,
+        classification: record.classification,
+        routeKey: record.routeKey || '',
+        capabilityId: record.capabilityId || '',
+        blockerClass: record.blockerClass || '',
+        blockerOwner: record.blockerOwner,
+      }),
+    });
+    const platform = await emitAndreaPlatformFeedbackReflection({
+      feedbackId: record.feedbackId,
+      issueId: record.issueId || null,
+      status: record.status,
+      classification: record.classification,
+      taskFamily: mapResponseFeedbackTaskFamily(record),
+      channel: record.channel,
+      groupFolder: record.groupFolder,
+      chatJid: record.chatJid,
+      threadId: record.threadId || null,
+      routeKey: record.routeKey || null,
+      capabilityId: record.capabilityId || null,
+      handlerKind: record.handlerKind || null,
+      responseSource: record.responseSource || null,
+      blockerClass: record.blockerClass || null,
+      blockerOwner: record.blockerOwner,
+      platformMessageId: record.platformMessageId || null,
+      userMessageId: record.userMessageId || null,
+      remediationLaneId: record.remediationLaneId || null,
+      remediationJobId: record.remediationJobId || null,
+      originalUserPreview: sanitizePlatformControlText(
+        summarizeResponseFeedbackText(record.originalUserText, 'original ask', 220),
+      ),
+      assistantReplyPreview: sanitizePlatformControlText(
+        summarizeResponseFeedbackText(record.assistantReplyText, 'assistant reply', 220),
+      ),
+      summary: buildResponseFeedbackIssueSummary(record),
+    });
+    if (!platform) return record;
+    return updateResponseFeedback(record.feedbackId, {
+      linkedRefs: {
+        ...(record.linkedRefs || {}),
+        platformTaskLedgerId: platform.taskLedgerId,
+        platformProgressLedgerId: platform.progressLedgerId,
+        platformReflectionId: platform.reflectionId,
+        platformEvaluationId: platform.evaluationId,
+        platformLearningId: platform.learningId,
+      },
+    });
+  }
+
   function buildResponseFeedbackHostTruthLines(): string[] {
     const truth = buildFieldTrialOperatorTruth();
     const summarize = (label: string, detail: string, proof: string) =>
@@ -9251,7 +9358,7 @@ async function main(): Promise<void> {
         clearPendingGoogleCalendarCreateState(chatJid);
         clearGoogleCalendarSchedulingContext(chatJid);
       }
-      const captured = ensurePilotIssue();
+      const captured = await emitResponseFeedbackCognition(ensurePilotIssue());
       await channel.sendMessage(
         chatJid,
         buildResponseFeedbackCaptureReply(

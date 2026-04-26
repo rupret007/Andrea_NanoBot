@@ -310,6 +310,75 @@ function findBlueBubblesSameThreadContinuationAfterAction(
   return null;
 }
 
+const BLUEBUBBLES_DECISION_CONFIRMATION_WINDOW_MS = 5 * 60 * 1000;
+
+function isLikelyBlueBubblesMessageActionDecisionPrompt(content: string): boolean {
+  const normalized = content
+    .replace(/^@\s*andrea[:,]?\s*/i, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+  return /^(send it(?: later(?: tonight)?| tonight)?|save that|save it|remind me instead|remind me later|send the draft|send that)\b/.test(
+    normalized,
+  );
+}
+
+function findBlueBubblesSameThreadDecisionConfirmation(
+  proofChatJid: string | null,
+  actionAt: string | null | undefined,
+  messages: Array<ReturnType<typeof listRecentMessagesForChat>[number]>,
+): { inboundAt: string; outboundAt: string } | null {
+  if (!proofChatJid) return null;
+  const actionTimestamp = parseFieldTrialIsoTime(actionAt);
+  if (actionTimestamp == null) return null;
+  const ordered = [...messages]
+    .filter(
+      (message) =>
+        canonicalizeBlueBubblesSelfThreadJid(message.chat_jid) === proofChatJid ||
+        message.chat_jid === proofChatJid,
+    )
+    .sort(
+      (left, right) => Date.parse(left.timestamp || '') - Date.parse(right.timestamp || ''),
+    );
+  const earliestDecisionAt =
+    actionTimestamp - BLUEBUBBLES_DECISION_CONFIRMATION_WINDOW_MS;
+  let decisionInbound: { timestamp: string } | null = null;
+  for (const message of ordered) {
+    const messageTimestamp = parseFieldTrialIsoTime(message.timestamp);
+    if (
+      messageTimestamp == null ||
+      messageTimestamp < earliestDecisionAt ||
+      messageTimestamp > actionTimestamp
+    ) {
+      continue;
+    }
+    if (
+      !message.is_bot_message &&
+      isLikelyBlueBubblesMessageActionDecisionPrompt(message.content || '')
+    ) {
+      decisionInbound = { timestamp: message.timestamp };
+    }
+  }
+  if (!decisionInbound) return null;
+  for (const message of ordered) {
+    const messageTimestamp = parseFieldTrialIsoTime(message.timestamp);
+    if (
+      messageTimestamp == null ||
+      messageTimestamp < actionTimestamp ||
+      messageTimestamp <= Date.parse(decisionInbound.timestamp)
+    ) {
+      continue;
+    }
+    if (message.is_bot_message) {
+      return {
+        inboundAt: decisionInbound.timestamp,
+        outboundAt: message.timestamp,
+      };
+    }
+  }
+  return null;
+}
+
 function deriveBlueBubblesWebhookRegistrationTruth(detail: string): {
   state: string;
   detail: string;
@@ -1592,8 +1661,18 @@ function buildBlueBubblesTruth(
         recentProofChainMessages,
       )
     : null;
+  const sameThreadDecisionConfirmationProof = matchingProofChainMessageAction
+    ? findBlueBubblesSameThreadDecisionConfirmation(
+        proofChainChatJid,
+        matchingProofChainMessageAction.action.lastActionAt ||
+          matchingProofChainMessageAction.action.sentAt,
+        recentProofChainMessages,
+      )
+    : null;
+  const sameThreadProof =
+    sameThreadContinuationProof || sameThreadDecisionConfirmationProof;
   const creditedLiveProofChatJid =
-    sameThreadContinuationProof && proofChainChatJid ? proofChainChatJid : liveProofChatJid;
+    sameThreadProof && proofChainChatJid ? proofChainChatJid : liveProofChatJid;
   const blueBubblesSelfThreadAliasDetail =
     isBlueBubblesSelfThreadAliasJid(lastInboundChatJid) ||
     isBlueBubblesSelfThreadAliasJid(lastOutboundChatJid) ||
@@ -2240,7 +2319,7 @@ function buildBlueBubblesTruth(
     creditedLiveProofChatJid &&
     matchingProofChainMessageAction &&
     (
-      sameThreadContinuationProof ||
+      sameThreadProof ||
       (liveProofChatJid &&
         lastInboundObservedAt !== 'none' &&
         lastOutboundResult !== 'none')
@@ -2252,6 +2331,8 @@ function buildBlueBubblesTruth(
         detail:
           sameThreadContinuationProof
             ? `Messages bridge is available on this host through BlueBubbles. Recent same-thread proof is anchored in ${creditedLiveProofChatJid}, including a fresh message-action decision and a fresh same-thread continuation after it.`
+            : sameThreadDecisionConfirmationProof
+              ? `Messages bridge is available on this host through BlueBubbles. Recent same-thread proof is anchored in ${creditedLiveProofChatJid}, including a fresh message-action decision and Andrea's confirmation in that same chat.`
             : `Messages bridge is available on this host through BlueBubbles. Recent same-thread proof is anchored in ${creditedLiveProofChatJid}, including a fresh message-action decision in that same chat.`,
       }),
       ...base,

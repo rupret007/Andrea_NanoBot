@@ -720,6 +720,152 @@ describe('field-trial readiness', () => {
     expect(truth.bluebubbles.messageActionProofChatJid).toBe('bb:iMessage;+;chat-proof');
   });
 
+  it('credits BlueBubbles live proof from a self-thread deferred decision plus confirmation', () => {
+    vi.stubEnv('BLUEBUBBLES_ENABLED', 'true');
+    vi.stubEnv('BLUEBUBBLES_BASE_URL', 'http://macbook-pro.local:1234');
+    vi.stubEnv('BLUEBUBBLES_PASSWORD', 'secret');
+    vi.stubEnv('BLUEBUBBLES_GROUP_FOLDER', 'main');
+    vi.stubEnv('BLUEBUBBLES_CHAT_SCOPE', 'all_synced');
+    vi.stubEnv('BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL', 'http://192.168.5.136:4305');
+    vi.stubEnv('BLUEBUBBLES_WEBHOOK_SECRET', 'hook-secret');
+    vi.stubEnv('BLUEBUBBLES_SEND_ENABLED', 'true');
+
+    const snapshot: HostControlSnapshot = {
+      paths: resolveHostControlPaths(tempDir),
+      nodeRuntime: null,
+      hostState: null,
+      readyState: null,
+      assistantHealthState: {
+        bootId: 'boot-blue-defer-proof',
+        pid: process.pid,
+        appVersion: '1.0.0-test',
+        updatedAt: '2026-04-07T20:10:00.000Z',
+        channels: [
+          {
+            name: 'bluebubbles',
+            configured: true,
+            state: 'ready',
+            updatedAt: '2026-04-07T20:10:00.000Z',
+            detail: 'listener 0.0.0.0:4305/bluebubbles/webhook | scope all_synced | reply gate direct_1to1 | transport reachable/auth ok (200) | webhook registration registered on the BlueBubbles server as webhook 1 | webhook registration state registered | transport probe state reachable | detection healthy',
+          },
+        ],
+      },
+      telegramRoundtripState: null,
+      telegramTransportState: null,
+      runtimeAuditState: null,
+    };
+
+    storeChatMetadata(
+      'bb:iMessage;+;chat-candace',
+      '2026-04-07T20:00:00.000Z',
+      'Candace',
+      'bluebubbles',
+      false,
+    );
+    storeChatMetadata(
+      'bb:iMessage;-;+14695405551',
+      '2026-04-07T20:00:00.000Z',
+      'Andrea Self',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'bb:self-proof-ask',
+      chat_jid: 'bb:iMessage;-;+14695405551',
+      sender: 'Jeff',
+      sender_name: 'Jeff',
+      content: '@Andrea what should I say back to Candace?',
+      timestamp: '2026-04-07T20:00:00.000Z',
+      is_from_me: true,
+      is_bot_message: false,
+    });
+    storeMessage({
+      id: 'bb:self-proof-draft',
+      chat_jid: 'bb:iMessage;-;+14695405551',
+      sender: 'Andrea',
+      sender_name: 'Andrea',
+      content: [
+        'Andrea: I drafted a reply.',
+        '',
+        'Target: Candace in Messages.',
+        '',
+        'Draft:',
+        'Yes, tonight still works for me.',
+        '',
+        'Status: drafted and ready to send.',
+      ].join('\n'),
+      timestamp: '2026-04-07T20:01:00.000Z',
+      is_from_me: true,
+      is_bot_message: true,
+    });
+    storeMessage({
+      id: 'bb:self-proof-decision',
+      chat_jid: 'bb:iMessage;-;+14695405551',
+      sender: 'Jeff',
+      sender_name: 'Jeff',
+      content: 'send it later tonight',
+      timestamp: '2026-04-07T20:04:20.000Z',
+      is_from_me: true,
+      is_bot_message: false,
+    });
+    storeMessage({
+      id: 'bb:self-proof-confirmation',
+      chat_jid: 'bb:iMessage;-;+14695405551',
+      sender: 'Andrea',
+      sender_name: 'Andrea',
+      content: 'Andrea: I queued that to send around tonight.',
+      timestamp: '2026-04-07T20:04:31.000Z',
+      is_from_me: true,
+      is_bot_message: true,
+    });
+    upsertMessageAction({
+      messageActionId: 'msg-action-defer-proof-1',
+      groupFolder: 'main',
+      sourceType: 'communication_thread',
+      sourceKey: 'comm-candace-proof',
+      sourceSummary: 'Candace reply was deferred from the same self-thread.',
+      targetKind: 'external_thread',
+      targetChannel: 'bluebubbles',
+      targetConversationJson: JSON.stringify({
+        kind: 'external_thread',
+        chatJid: 'bb:iMessage;+;chat-candace',
+        personName: 'Candace',
+      }),
+      draftText: 'Yes, tonight still works for me.',
+      trustLevel: 'schedule_send',
+      sendStatus: 'deferred',
+      followupAt: '2026-04-08T01:30:00.000Z',
+      requiresApproval: false,
+      delegationRuleId: null,
+      delegationMode: null,
+      explanationJson: null,
+      linkedRefsJson: JSON.stringify({ communicationThreadId: 'comm-candace-proof', personName: 'Candace' }),
+      platformMessageId: null,
+      scheduledTaskId: 'scheduled-bluebubbles-proof',
+      approvedAt: '2026-04-07T20:04:30.000Z',
+      lastActionKind: 'scheduled_send',
+      lastActionAt: '2026-04-07T20:04:30.000Z',
+      dedupeKey: 'proof-defer-key-1',
+      presentationChatJid: 'bb:iMessage;-;+14695405551',
+      presentationThreadId: null,
+      presentationMessageId: 'bb:self-proof-draft',
+      createdAt: '2026-04-07T20:01:00.000Z',
+      lastUpdatedAt: '2026-04-07T20:04:30.000Z',
+      sentAt: null,
+    });
+
+    const truth = buildFieldTrialOperatorTruth({
+      projectRoot: tempDir,
+      hostSnapshot: snapshot,
+      windowsHost: null,
+    });
+
+    expect(truth.bluebubbles.proofState).toBe('live_proven');
+    expect(truth.bluebubbles.messageActionProofState).toBe('fresh');
+    expect(truth.bluebubbles.messageActionProofChatJid).toBe('bb:iMessage;-;+14695405551');
+    expect(truth.bluebubbles.detail).toContain("Andrea's confirmation");
+  });
+
   it('parses BlueBubbles direct companion chats as conversational 1:1 mode', () => {
     vi.stubEnv('BLUEBUBBLES_ENABLED', 'true');
     vi.stubEnv('BLUEBUBBLES_BASE_URL', 'http://macbook-pro.local:1234');

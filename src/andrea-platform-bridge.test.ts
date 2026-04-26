@@ -181,6 +181,73 @@ describe('andrea platform shell bridge', () => {
     });
   });
 
+  it('posts response-feedback reflections to the platform coordinator when enabled', async () => {
+    vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_ENABLED', 'true');
+    vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_URL', 'http://127.0.0.1:4400/');
+    vi.stubEnv('ANDREA_PLATFORM_FALLBACK_TO_DIRECT_RUNTIME', 'false');
+
+    const calls: Array<{ url: string; body: unknown }> = [];
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      calls.push({
+        url: String(input),
+        body: init?.body,
+      });
+      return new Response(
+        JSON.stringify({
+          task: { task_ledger_id: 'task-1' },
+          progress: { progress_ledger_id: 'progress-1' },
+          reflection: { reflection_id: 'reflection-1' },
+          evaluation: { evaluation_id: 'evaluation-1' },
+          learning: { learning_id: 'learning-1' },
+        }),
+        { status: 200 },
+      );
+    });
+    vi.stubGlobal('fetch', fetchImpl as unknown as typeof fetch);
+
+    const bridge = await import('./andrea-platform-bridge.js');
+    const result = await bridge.emitAndreaPlatformFeedbackReflection({
+      feedbackId: 'feedback-1',
+      issueId: 'issue-1',
+      status: 'awaiting_confirmation',
+      classification: 'repo_side_rough_edge',
+      taskFamily: 'calendar',
+      channel: 'telegram',
+      groupFolder: 'main',
+      chatJid: 'telegram:main',
+      routeKey: 'calendar_local_fast_path',
+      capabilityId: 'calendar.local_lookup',
+      blockerOwner: 'repo_side',
+      platformMessageId: 'msg-1',
+      userMessageId: 'user-msg-1',
+      summary: 'User downvoted a calendar answer.',
+      originalUserPreview: 'Do I have anything at 3pm tomorrow?',
+      assistantReplyPreview: "I don't see anything at 3 PM tomorrow.",
+    });
+
+    expect(result).toEqual({
+      feedbackId: 'feedback-1',
+      taskLedgerId: 'task-1',
+      progressLedgerId: 'progress-1',
+      reflectionId: 'reflection-1',
+      evaluationId: 'evaluation-1',
+      learningId: 'learning-1',
+    });
+    expect(calls[0]?.url).toBe('http://127.0.0.1:4400/feedback/reflection');
+    expect(JSON.parse(String(calls[0]?.body ?? '{}'))).toMatchObject({
+      feedbackId: 'feedback-1',
+      correlationId: 'feedback-1',
+      taskFamily: 'calendar',
+      sentiment: 'negative',
+      outcome: 'degraded',
+      metadata: {
+        issueId: 'issue-1',
+        routeKey: 'calendar_local_fast_path',
+        capabilityId: 'calendar.local_lookup',
+      },
+    });
+  });
+
   it('maps configured ready channels to a healthy shell state', async () => {
     const bridge = await import('./andrea-platform-bridge.js');
     const channelHealth: ChannelHealthSnapshot[] = [

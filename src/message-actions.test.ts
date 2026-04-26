@@ -16,6 +16,7 @@ import {
   applyMessageActionOperation,
   canUseBareBlueBubblesMessageActionFollowup,
   createOrRefreshMessageActionFromDraft,
+  ensureBlueBubblesSelfThreadMessageActionForReplyText,
   findLatestChatMessageAction,
   isBlueBubblesExplicitSendAlias,
   interpretMessageActionFollowup,
@@ -237,6 +238,45 @@ describe('message actions', () => {
       chatJid: 'bb:iMessage;+;chat-candace',
       personName: 'Candace',
     });
+  });
+
+  it('ensures draft-like BlueBubbles self-thread replies have an active action record', () => {
+    storeChatMetadata(
+      'bb:iMessage;+;chat-candace',
+      '2026-04-16T16:05:00.000Z',
+      'Candace',
+      'bluebubbles',
+      false,
+    );
+    storeChatMetadata(
+      'bb:iMessage;-;jeffstory007@gmail.com',
+      '2026-04-16T16:06:22.703Z',
+      'Jeff',
+      'bluebubbles',
+      false,
+    );
+
+    const action = ensureBlueBubblesSelfThreadMessageActionForReplyText({
+      groupFolder: 'main',
+      chatJid: 'bb:iMessage;-;jeffstory007@gmail.com',
+      presentationMessageId: 'bb:self-thread-draft-ensure',
+      replyText: [
+        'Andrea: I drafted a reply.',
+        '',
+        'Target: Candace in Messages.',
+        '',
+        'Draft:',
+        'Hey Candace, tonight still works for me.',
+        '',
+        'Status: drafted and ready to send.',
+      ].join('\n'),
+      now: new Date('2026-04-16T16:07:00.000Z'),
+    });
+
+    expect(action?.messageActionId).toBeTruthy();
+    expect(action?.presentationChatJid).toBe('bb:iMessage;-;+14695405551');
+    expect(action?.presentationMessageId).toBe('bb:self-thread-draft-ensure');
+    expect(action?.draftText).toBe('Hey Candace, tonight still works for me.');
   });
 
   it('collapses duplicate same-thread BlueBubbles drafts to one active action', () => {

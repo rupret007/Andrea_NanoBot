@@ -1285,6 +1285,35 @@ END:VCALENDAR</c:calendar-data>
     expect(reply).toContain('2:30 PM-3:30 PM Dental appointment');
   });
 
+  it('uses narrow wording for exact-time availability with no overlap', async () => {
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            summary: 'Family',
+            items: [],
+          }),
+          { status: 200 },
+        ),
+    );
+
+    const reply = await buildCalendarAssistantReply(
+      'Do I have anything at 3pm tomorrow?',
+      {
+        now: new Date('2026-03-31T23:55:00-05:00'),
+        timeZone: 'America/Chicago',
+        platform: 'win32',
+        env: {
+          GOOGLE_CALENDAR_ACCESS_TOKEN: 'token',
+        },
+        fetchImpl,
+      },
+    );
+
+    expect(reply).toBe("I don't see anything at 3 PM tomorrow.");
+    expect(reply).not.toContain('You look free');
+  });
+
   it('formats Google all-day events as all day', async () => {
     const fetchImpl = vi.fn(
       async () =>

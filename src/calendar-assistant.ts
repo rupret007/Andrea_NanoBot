@@ -2829,7 +2829,7 @@ function buildDefaultCalendarReply(
                 result.plan.forceIncludeCalendarNames,
               ).join('\n')}`
             : '';
-        return `You look free ${result.plan.label}.${allDayNote}`;
+        return `I don't see anything ${result.plan.label}.${allDayNote}`;
       }
 
       return [

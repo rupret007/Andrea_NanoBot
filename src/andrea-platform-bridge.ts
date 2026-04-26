@@ -1,8 +1,19 @@
 import { logger } from './logger.js';
+import {
+  ANDREA_PLATFORM_COORDINATOR_ENABLED,
+  ANDREA_PLATFORM_COORDINATOR_URL,
+  ANDREA_PLATFORM_FALLBACK_TO_DIRECT_RUNTIME,
+} from './config.js';
 import type { ChannelHealthSnapshot, RuntimeBackendStatus } from './types.js';
 
 const SHELL_GATEWAY_BASE_URL = (
   process.env.ANDREA_PLATFORM_SHELL_GATEWAY_URL || ''
+).trim().replace(/\/+$/, '');
+const COORDINATOR_BASE_URL = (
+  ANDREA_PLATFORM_COORDINATOR_ENABLED &&
+  !ANDREA_PLATFORM_FALLBACK_TO_DIRECT_RUNTIME
+    ? ANDREA_PLATFORM_COORDINATOR_URL
+    : ''
 ).trim().replace(/\/+$/, '');
 
 type IntentResponseOutcome = 'handled' | 'blocked' | 'degraded' | 'fallback';
@@ -43,6 +54,11 @@ function shellGatewayRoute(path: string): string | null {
   return `${SHELL_GATEWAY_BASE_URL}${path}`;
 }
 
+function coordinatorRoute(path: string): string | null {
+  if (!COORDINATOR_BASE_URL) return null;
+  return `${COORDINATOR_BASE_URL}${path}`;
+}
+
 async function postShellGateway(path: string, payload: object): Promise<void> {
   const url = shellGatewayRoute(path);
   if (!url) return;
@@ -72,6 +88,44 @@ async function postShellGateway(path: string, payload: object): Promise<void> {
       },
       'Andrea platform shell bridge post failed.',
     );
+  }
+}
+
+async function postCoordinatorJson(
+  path: string,
+  payload: object,
+): Promise<unknown | null> {
+  const url = coordinatorRoute(path);
+  if (!url) return null;
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      logger.warn(
+        {
+          component: 'andrea_platform_coordinator_bridge',
+          path,
+          status: response.status,
+        },
+        'Andrea platform coordinator bridge returned a non-2xx response.',
+      );
+      return null;
+    }
+    return (await response.json()) as unknown;
+  } catch (err) {
+    logger.debug(
+      {
+        component: 'andrea_platform_coordinator_bridge',
+        path,
+        err,
+      },
+      'Andrea platform coordinator bridge post failed.',
+    );
+    return null;
   }
 }
 
@@ -186,6 +240,99 @@ export async function emitAndreaPlatformTraceEvent(input: {
     ...(input.refs ? { refs: input.refs } : {}),
     ...(input.metadata ? { metadata: input.metadata } : {}),
   });
+}
+
+export interface AndreaPlatformFeedbackReflectionResult {
+  feedbackId: string;
+  taskLedgerId?: string;
+  progressLedgerId?: string;
+  reflectionId?: string;
+  evaluationId?: string;
+  learningId?: string;
+}
+
+function pickString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+export async function emitAndreaPlatformFeedbackReflection(input: {
+  feedbackId: string;
+  issueId?: string | null;
+  status: string;
+  classification: string;
+  taskFamily: 'calendar' | 'communication' | 'research' | 'media' | 'assistant' | 'operator' | 'code' | 'unknown';
+  channel: 'telegram';
+  groupFolder: string;
+  chatJid: string;
+  threadId?: string | null;
+  routeKey?: string | null;
+  capabilityId?: string | null;
+  handlerKind?: string | null;
+  responseSource?: string | null;
+  blockerClass?: string | null;
+  blockerOwner?: string | null;
+  platformMessageId?: string | null;
+  userMessageId?: string | null;
+  remediationLaneId?: string | null;
+  remediationJobId?: string | null;
+  originalUserPreview?: string | null;
+  assistantReplyPreview?: string | null;
+  summary: string;
+  nextAction?: string | null;
+}): Promise<AndreaPlatformFeedbackReflectionResult | null> {
+  const response = await postCoordinatorJson('/feedback/reflection', {
+    feedbackId: input.feedbackId,
+    correlationId: input.feedbackId,
+    taskFamily: input.taskFamily,
+    sentiment: 'negative',
+    outcome:
+      input.classification === 'externally_blocked' ||
+      input.classification === 'manual_sync_only'
+        ? 'blocked'
+        : 'degraded',
+    normalizedGoal: `Review user feedback for ${input.taskFamily} response ${input.feedbackId}.`,
+    summary: input.summary,
+    channel: input.channel,
+    sourceSystem: 'andrea_nanobot',
+    nextAction: input.nextAction || 'Use this downvote to guide the next narrow fix or routing rule.',
+    jobId: input.remediationJobId || undefined,
+    metadata: {
+      feedbackId: input.feedbackId,
+      issueId: input.issueId || '',
+      status: input.status,
+      classification: input.classification,
+      groupFolder: input.groupFolder,
+      chatJid: input.chatJid,
+      threadId: input.threadId || '',
+      routeKey: input.routeKey || '',
+      capabilityId: input.capabilityId || '',
+      handlerKind: input.handlerKind || '',
+      responseSource: input.responseSource || '',
+      blockerClass: input.blockerClass || '',
+      blockerOwner: input.blockerOwner || '',
+      platformMessageId: input.platformMessageId || '',
+      userMessageId: input.userMessageId || '',
+      remediationLaneId: input.remediationLaneId || '',
+      remediationJobId: input.remediationJobId || '',
+      originalUserPreview: input.originalUserPreview || '',
+      assistantReplyPreview: input.assistantReplyPreview || '',
+    },
+  });
+  if (!response || typeof response !== 'object') return null;
+  const body = response as Record<string, unknown>;
+  const task = body.task as Record<string, unknown> | undefined;
+  const progress = body.progress as Record<string, unknown> | undefined;
+  const reflection = body.reflection as Record<string, unknown> | undefined;
+  const evaluation = body.evaluation as Record<string, unknown> | undefined;
+  const learning = body.learning as Record<string, unknown> | undefined;
+  return {
+    feedbackId: input.feedbackId,
+    taskLedgerId: pickString(task?.task_ledger_id),
+    progressLedgerId: pickString(progress?.progress_ledger_id),
+    reflectionId: pickString(reflection?.reflection_id),
+    evaluationId: pickString(evaluation?.evaluation_id),
+    learningId: pickString(learning?.learning_id),
+  };
 }
 
 export async function emitAndreaPlatformIntentRequest(

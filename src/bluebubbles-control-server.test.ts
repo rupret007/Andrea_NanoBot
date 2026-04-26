@@ -645,9 +645,14 @@ describe('BlueBubbles control server', () => {
     expect(executeResponse.status).toBe(200);
     const executeBody = (await executeResponse.json()) as {
       action: { sendStatus: string };
+      confirmationMessageId: string | null;
+      confirmationError: string | null;
       proof: unknown;
     };
     expect(executeBody.action.sendStatus).toBe('sent');
+    expect(executeBody.confirmationMessageId).toBeTruthy();
+    expect(executeBody.confirmationError).toBeNull();
+    expect(apiStub.sentBodies.length).toBeGreaterThanOrEqual(2);
     expect(executeBody.proof).toBeTruthy();
 
     await control.close();
