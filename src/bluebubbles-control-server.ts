@@ -649,7 +649,9 @@ export class BlueBubblesControlServer {
     let confirmationMessageId: string | null = null;
     let confirmationError: string | null = null;
     const confirmationText =
-      result.replyText || result.presentation?.text || null;
+      isBlueBubblesProofDrillAction(action) && operation.kind === 'defer'
+        ? result.presentation?.text || result.replyText || null
+        : result.replyText || result.presentation?.text || null;
     if (confirmationText) {
       try {
         const confirmation = await this.requireChannel().sendMessage(

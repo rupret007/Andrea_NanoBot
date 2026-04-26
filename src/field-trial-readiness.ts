@@ -408,7 +408,10 @@ function isLikelyBlueBubblesProofDrillConfirmation(
   return (
     normalized.includes(
       'bluebubbles proof drill deferred decision is recorded',
-    ) || normalized.includes('proof drill decision is recorded')
+    ) ||
+    normalized.includes('proof drill decision is recorded') ||
+    normalized.includes('saved that to revisit before sending') ||
+    normalized.includes('kept this as a reminder')
   );
 }
 

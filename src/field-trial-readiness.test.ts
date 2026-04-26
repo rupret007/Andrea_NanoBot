@@ -960,7 +960,8 @@ describe('field-trial readiness', () => {
       chat_jid: 'bb:iMessage;-;+14695405551',
       sender: 'Andrea',
       sender_name: 'Andrea',
-      content: 'Andrea: BlueBubbles proof drill deferred decision is recorded.',
+      content:
+        "Andrea: I saved that to revisit before sending, and I'll bring it back around tonight.",
       timestamp: '2026-04-07T20:04:31.000Z',
       is_from_me: true,
       is_bot_message: true,
