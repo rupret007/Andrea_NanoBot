@@ -763,7 +763,126 @@ describe('field-trial readiness', () => {
     });
 
     expect(truth.bluebubbles.replyGateMode).toBe('direct_1to1');
+    expect(truth.bluebubbles.conversationKind).toBe('self_thread');
+    expect(truth.bluebubbles.decisionPolicy).toBe('semi_auto_self_thread');
+    expect(truth.bluebubbles.requiresExplicitMention).toBe(false);
+    expect(truth.bluebubbles.eligibleFollowups).toEqual([]);
     expect(truth.bluebubbles.detail).toContain('Messages bridge configuration is present');
+  });
+
+  it('prefers active self-thread message-action continuity over stale pilot-only targeting', () => {
+    vi.stubEnv('BLUEBUBBLES_ENABLED', 'true');
+    vi.stubEnv('BLUEBUBBLES_BASE_URL', 'http://macbook-pro.local:1234');
+    vi.stubEnv('BLUEBUBBLES_PASSWORD', 'secret');
+    vi.stubEnv('BLUEBUBBLES_GROUP_FOLDER', 'main');
+    vi.stubEnv('BLUEBUBBLES_CHAT_SCOPE', 'all_synced');
+    vi.stubEnv('BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL', 'http://192.168.5.136:4305');
+    vi.stubEnv('BLUEBUBBLES_WEBHOOK_SECRET', 'hook-secret');
+    vi.stubEnv('BLUEBUBBLES_SEND_ENABLED', 'true');
+
+    const snapshot: HostControlSnapshot = {
+      paths: resolveHostControlPaths(tempDir),
+      nodeRuntime: null,
+      hostState: null,
+      readyState: null,
+      assistantHealthState: {
+        bootId: 'boot-blue-continuity',
+        pid: process.pid,
+        appVersion: '1.0.0-test',
+        updatedAt: '2026-04-10T00:12:00.000Z',
+        channels: [
+          {
+            name: 'bluebubbles',
+            configured: true,
+            state: 'ready',
+            updatedAt: '2026-04-10T00:12:00.000Z',
+            detail:
+              'listener 0.0.0.0:4305/bluebubbles/webhook | scope all_synced | reply gate mention_required | transport reachable/auth ok (200) | last inbound 2026-04-10T00:10:00.000Z | last inbound chat bb:iMessage;-;jeffstory007@gmail.com | last inbound self_authored yes | last outbound 2026-04-10T00:11:00.000Z (bb:iMessage;-;jeffstory007@gmail.com) | last outbound target kind chat_guid | last outbound target value iMessage;-;+14695405551 | last send error none | send method apple-script | private api available no | last metadata hydration none | attempted target sequence chat_guid',
+          },
+        ],
+      },
+      telegramRoundtripState: null,
+      telegramTransportState: null,
+      runtimeAuditState: null,
+    };
+
+    insertPilotJourneyEvent({
+      eventId: 'bb-old-pilot-target',
+      journeyId: 'ordinary_chat',
+      channel: 'bluebubbles',
+      groupFolder: 'main',
+      chatJid: 'bb:iMessage;+;chat-stale',
+      threadId: null,
+      routeKey: 'ordinary_chat',
+      systemsInvolved: ['assistant_shell'],
+      outcome: 'success',
+      blockerClass: null,
+      blockerOwner: 'none',
+      degradedPath: null,
+      handoffCreated: false,
+      missionCreated: false,
+      threadSaved: false,
+      reminderCreated: false,
+      librarySaved: false,
+      currentWorkRef: null,
+      summaryText: 'Older BlueBubbles engagement',
+      startedAt: '2026-04-09T22:00:00.000Z',
+      completedAt: '2026-04-09T22:01:00.000Z',
+      durationMs: 1000,
+    });
+    upsertMessageAction({
+      messageActionId: 'bb-open-self-thread-action',
+      groupFolder: 'main',
+      sourceType: 'manual_prompt',
+      sourceKey: 'bb-open-self-thread-action',
+      sourceSummary: 'Draft text message to Candace.',
+      targetKind: 'external_thread',
+      targetChannel: 'bluebubbles',
+      targetConversationJson: JSON.stringify({
+        kind: 'external_thread',
+        chatJid: 'bb:iMessage;+;chat-candace',
+        personName: 'Candace',
+      }),
+      draftText: 'Hey Candace, tonight still works for me.',
+      trustLevel: 'approve_before_send',
+      sendStatus: 'drafted',
+      followupAt: null,
+      requiresApproval: true,
+      delegationRuleId: null,
+      delegationMode: null,
+      explanationJson: null,
+      linkedRefsJson: JSON.stringify({ personName: 'Candace' }),
+      platformMessageId: null,
+      scheduledTaskId: null,
+      approvedAt: null,
+      lastActionKind: null,
+      lastActionAt: '2026-04-10T00:11:30.000Z',
+      dedupeKey: 'bb-open-self-thread-action',
+      presentationChatJid: 'bb:iMessage;-;jeffstory007@gmail.com',
+      presentationThreadId: null,
+      presentationMessageId: 'bb:self-thread-draft-1',
+      createdAt: '2026-04-10T00:11:00.000Z',
+      lastUpdatedAt: '2026-04-10T00:11:30.000Z',
+      sentAt: null,
+    });
+
+    const truth = buildFieldTrialOperatorTruth({
+      projectRoot: tempDir,
+      hostSnapshot: snapshot,
+      windowsHost: null,
+    });
+
+    expect(truth.bluebubbles.recentTargetChatJid).toBe('bb:iMessage;-;+14695405551');
+    expect(truth.bluebubbles.recentTargetAt).toBe('2026-04-10T00:11:30.000Z');
+    expect(truth.bluebubbles.openMessageActionCount).toBeGreaterThanOrEqual(1);
+    expect(truth.bluebubbles.continuityState).toBe('draft_open');
+    expect(truth.bluebubbles.proofCandidateChatJid).toBe('bb:iMessage;-;+14695405551');
+    expect(truth.bluebubbles.effectiveReplyGateMode).toBe('direct_1to1');
+    expect(truth.bluebubbles.conversationKind).toBe('self_thread');
+    expect(truth.bluebubbles.decisionPolicy).toBe('semi_auto_self_thread');
+    expect(truth.bluebubbles.requiresExplicitMention).toBe(false);
+    expect(truth.bluebubbles.activePresentationAt).toBe('2026-04-10T00:11:30.000Z');
+    expect(truth.bluebubbles.eligibleFollowups).toContain('send it later tonight');
   });
 
   it('uses persisted outbound diagnostics when the live bridge detail has not rehydrated them yet', () => {
@@ -1540,7 +1659,10 @@ describe('field-trial readiness', () => {
     expect(truth.bluebubbles.lastInboundChatJid).toBe('bb:RCS;-;+14696881303');
     expect(truth.bluebubbles.messageActionProofState).toBe('none');
     expect(truth.bluebubbles.messageActionProofDetail).toContain(
-      'Andrea drafted in bb:iMessage;-;jeffstory007@gmail.com',
+      'Andrea drafted in bb:iMessage;-;jeffstory007@gmail.com earlier',
+    );
+    expect(truth.bluebubbles.messageActionProofDetail).toContain(
+      'no active message-action record remains',
     );
     expect(truth.bluebubbles.messageActionProofDetail).toContain(
       'Canonical self-thread: bb:iMessage;-;+14695405551.',

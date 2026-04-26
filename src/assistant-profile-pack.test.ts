@@ -69,6 +69,7 @@ describe('assistant profile pack', () => {
       groupsTracked: '0',
       indexStatus: 'seeded_profile_pack_and_db_backed',
       changelogStatus: 'append_only',
+      arbitrationStatus: 'active_memory_intelligence',
     });
     expect(ANDREA_RITUAL_MANIFEST).toHaveLength(7);
 
@@ -76,6 +77,7 @@ describe('assistant profile pack', () => {
     expect(snapshots.map((snapshot) => `${snapshot.component}:${snapshot.configName}`)).toEqual([
       'andrea.memory:memory_profile_pack',
       'andrea.memory:memory_freshness_rollup',
+      'andrea.memory:memory_intelligence_report',
       'andrea.integrations:integration_capability_registry',
       'andrea.integrations:integration_health_rollup',
       'andrea.rituals:ritual_manifest',

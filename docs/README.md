@@ -30,8 +30,8 @@ Use this shorthand when you need the current host story fast:
   - Alexa's latest repo interaction-model hash has not been marked as synced locally yet
   - after the Developer Console import/build, run `npm run setup -- --step alexa-model-sync mark-synced`
 - **optional Messages bridge**
-  - BlueBubbles on this PC is currently `live_proven`: transport, webhook registration, the recent-activity shadow poll, and the canonical same-thread `message_action` proof chain are all healthy on this host as of April 14, 2026
-  - Telegram stays the dependable main messaging surface, while BlueBubbles is now a proven optional bridge
+  - BlueBubbles on this PC is currently `degraded_but_usable`: transport and webhook registration are healthy, but the fresh same-thread `message_action` proof leg is still missing in current live truth
+  - Telegram stays the dependable main messaging surface, while BlueBubbles remains an optional bridge that now also exposes an authenticated LAN control API plus a thin MCP adapter
 - **externally blocked but optional**
   - outward research
   - Telegram image generation

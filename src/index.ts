@@ -103,9 +103,11 @@ import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
 import {
+  BlueBubblesChannel,
   primeBlueBubblesChatHistory,
   resolveBlueBubblesConfig,
 } from './channels/bluebubbles.js';
+import { startBlueBubblesControlServer } from './bluebubbles-control-server.js';
 import { planSimpleReminder } from './local-reminder.js';
 import {
   buildCalendarAssistantResponse,
@@ -220,7 +222,11 @@ import {
 import {
   applyMessageActionOperation,
   buildMessageActionPresentation,
+  canApplyBlueBubblesMessageActionFollowup,
+  canUseBareBlueBubblesMessageActionFollowup,
   createOrRefreshMessageActionFromDraft,
+  reconcileBlueBubblesMessageActionContinuity,
+  reconcileBlueBubblesSelfThreadContinuity,
   findLatestChatMessageAction,
   isBlueBubblesExplicitSendAlias,
   interpretMessageActionFollowup,
@@ -375,6 +381,7 @@ import { parseGitDirtyPaths } from './git-status-paths.js';
 import { deliverCompanionHandoff } from './cross-channel-handoffs.js';
 import {
   buildFieldTrialOperatorTruth,
+  type FieldTrialBlueBubblesTruth,
   type FieldTrialOperatorTruth,
   type FieldTrialProofState,
   type FieldTrialSurfaceTruth,
@@ -1810,9 +1817,38 @@ async function applyAndPresentMessageAction(params: {
   if (result.replyText) {
     await channel.sendMessage(params.chatJid, result.replyText);
   } else if (result.presentation) {
-    await channel.sendMessage(params.chatJid, result.presentation.text);
+    const sent = await channel.sendMessage(params.chatJid, result.presentation.text);
+    if (channel.name === 'bluebubbles' && result.action) {
+      syncBlueBubblesMessageActionPresentation({
+        groupFolder: group.folder,
+        chatJid: params.chatJid,
+        messageActionId: result.action.messageActionId,
+        platformMessageId: sent.platformMessageId || null,
+        now: params.now || new Date(),
+      });
+    }
   }
   return true;
+}
+
+function syncBlueBubblesMessageActionPresentation(params: {
+  groupFolder: string;
+  chatJid: string;
+  messageActionId: string;
+  platformMessageId?: string | null;
+  now: Date;
+}): void {
+  updateMessageAction(params.messageActionId, {
+    presentationMessageId: params.platformMessageId || null,
+    presentationChatJid: params.chatJid,
+    lastUpdatedAt: params.now.toISOString(),
+  });
+  reconcileBlueBubblesSelfThreadContinuity({
+    groupFolder: params.groupFolder,
+    chatJid: params.chatJid,
+    now: params.now,
+    allowRehydrate: false,
+  });
 }
 
 async function applyAndPresentOutcomeReviewControl(params: {
@@ -3714,6 +3750,23 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       }
       return false;
     }
+    if (conversationChannel === 'bluebubbles') {
+      const continuity = reconcileBlueBubblesMessageActionContinuity({
+        groupFolder: group.folder,
+        chatJid,
+        now,
+        allowRehydrate: true,
+      });
+      if (
+        !canApplyBlueBubblesMessageActionFollowup({
+          rawText: lastContent,
+          operation,
+          continuity,
+        })
+      ) {
+        return false;
+      }
+    }
     return applyAndPresentMessageAction({
       chatJid,
       messageActionId: messageAction.messageActionId,
@@ -3767,7 +3820,14 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       now,
     });
     const presentation = buildMessageActionPresentation(action, 'bluebubbles');
-    await channel.sendMessage(chatJid, presentation.text);
+    const sent = await channel.sendMessage(chatJid, presentation.text);
+    syncBlueBubblesMessageActionPresentation({
+      groupFolder: group.folder,
+      chatJid,
+      messageActionId: action.messageActionId,
+      platformMessageId: sent.platformMessageId || null,
+      now,
+    });
     return true;
   };
   const tryHandleOutcomeReview = async (): Promise<boolean> => {
@@ -6219,7 +6279,14 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               lastUpdatedAt: now.toISOString(),
             });
           } else {
-            await channel.sendMessage(chatJid, presentation.text);
+            const sent = await channel.sendMessage(chatJid, presentation.text);
+            syncBlueBubblesMessageActionPresentation({
+              groupFolder: group.folder,
+              chatJid,
+              messageActionId: draftResult.messageAction.messageActionId,
+              platformMessageId: sent.platformMessageId || null,
+              now,
+            });
           }
         } else {
           await sendAssistantReplyWithFeedback({
@@ -6554,7 +6621,14 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               lastUpdatedAt: now.toISOString(),
             });
           } else {
-            await channel.sendMessage(chatJid, presentation.text);
+            const sent = await channel.sendMessage(chatJid, presentation.text);
+            syncBlueBubblesMessageActionPresentation({
+              groupFolder: group.folder,
+              chatJid,
+              messageActionId: result.messageAction.messageActionId,
+              platformMessageId: sent.platformMessageId || null,
+              now,
+            });
           }
         }
       } else {
@@ -8168,6 +8242,7 @@ function emitAndreaPlatformSurfaceProof(
   surface: string,
   journey: string,
   truth: FieldTrialSurfaceTruth,
+  extraMetadata?: Record<string, string | null | undefined>,
 ): void {
   const state = toAndreaPlatformProofState(truth.proofState);
   if (!state) return;
@@ -8180,6 +8255,7 @@ function emitAndreaPlatformSurfaceProof(
     nextAction: sanitizePlatformControlText(truth.nextAction) || null,
     metadata: compactPlatformStrings({
       blockerOwner: truth.blockerOwner,
+      ...(extraMetadata || {}),
     }),
   });
 }
@@ -8197,6 +8273,39 @@ function combinePlatformProofStates(
     return 'NEAR_LIVE_ONLY';
   }
   return 'LIVE_PROVEN';
+}
+
+function buildBlueBubblesPlatformMetadata(
+  truth: FieldTrialBlueBubblesTruth,
+): Record<string, string | null | undefined> {
+  return {
+    configuredReplyGateMode: truth.configuredReplyGateMode,
+    effectiveReplyGateMode: truth.effectiveReplyGateMode,
+    mostRecentEngagedChatJid: truth.mostRecentEngagedChatJid,
+    mostRecentEngagedAt: truth.mostRecentEngagedAt,
+    conversationKind: truth.conversationKind,
+    decisionPolicy: truth.decisionPolicy,
+    conversationalEligibility: truth.conversationalEligibility,
+    requiresExplicitMention: truth.requiresExplicitMention ? 'true' : 'false',
+    recentTargetChatJid: truth.recentTargetChatJid,
+    recentTargetAt: truth.recentTargetAt,
+    openMessageActionCount: String(truth.openMessageActionCount),
+    continuityState: truth.continuityState,
+    proofCandidateChatJid: truth.proofCandidateChatJid,
+    activeMessageActionId: truth.activeMessageActionId,
+    activePresentationAt: truth.activePresentationAt,
+    eligibleFollowups:
+      truth.eligibleFollowups.length > 0
+        ? truth.eligibleFollowups.join(' | ')
+        : null,
+    canonicalSelfThreadChatJid: truth.canonicalSelfThreadChatJid,
+    sourceSelfThreadChatJid: truth.sourceSelfThreadChatJid,
+    messageActionProofState: truth.messageActionProofState,
+    messageActionProofChatJid: truth.messageActionProofChatJid,
+    messageActionProofAt: truth.messageActionProofAt,
+    transportState: truth.transportState,
+    webhookRegistrationState: truth.webhookRegistrationState,
+  };
 }
 
 function emitAndreaPlatformProofTruths(truth: FieldTrialOperatorTruth): void {
@@ -8220,7 +8329,14 @@ function emitAndreaPlatformProofTruths(truth: FieldTrialOperatorTruth): void {
     ['host_health', 'runtime_host', truth.hostHealth],
   ];
   for (const [surface, journey, surfaceTruth] of surfaces) {
-    emitAndreaPlatformSurfaceProof(surface, journey, surfaceTruth);
+    emitAndreaPlatformSurfaceProof(
+      surface,
+      journey,
+      surfaceTruth,
+      surface === 'bluebubbles'
+        ? buildBlueBubblesPlatformMetadata(truth.bluebubbles)
+        : undefined,
+    );
   }
   for (const [journeyId, journeyTruth] of Object.entries(truth.journeys)) {
     emitAndreaPlatformSurfaceProof('journey', journeyId, journeyTruth);
@@ -8305,6 +8421,9 @@ function emitAndreaPlatformTransportTruths(
         configured: String(channel.configured),
         channelState: channel.state,
         lastReadyAt: channel.lastReadyAt || '',
+        ...(kind === 'bluebubbles'
+          ? buildBlueBubblesPlatformMetadata(truth.bluebubbles)
+          : {}),
       }),
     });
   }
@@ -8428,6 +8547,8 @@ async function main(): Promise<void> {
   }
 
   let alexaRuntime: AlexaRuntime | null = null;
+  let blueBubblesControlServer: ReturnType<typeof startBlueBubblesControlServer> =
+    null;
 
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
@@ -8441,6 +8562,13 @@ async function main(): Promise<void> {
         .catch((err) =>
           logger.warn({ err }, 'Alexa voice ingress shutdown failed'),
         );
+    }
+    if (blueBubblesControlServer) {
+      await new Promise<void>((resolve) =>
+        blueBubblesControlServer?.close(() => resolve()),
+      ).catch((err) =>
+        logger.warn({ err }, 'BlueBubbles control API shutdown failed'),
+      );
     }
     for (const ch of channels) await ch.disconnect();
     process.exit(0);
@@ -14239,15 +14367,33 @@ async function main(): Promise<void> {
         );
         const pendingLocalContinuationKind =
           getPendingBlueBubblesLocalContinuationKind(chatJid, companionNow);
-        const hasOpenMessageActionFollowup =
-          Boolean(interpretMessageActionFollowup(msg.content)) &&
-          Boolean(
-            resolveMessageActionForFollowup({
+        const interpretedMessageActionFollowup =
+          interpretMessageActionFollowup(msg.content);
+        const resolvedMessageAction = interpretedMessageActionFollowup
+          ? resolveMessageActionForFollowup({
               groupFolder: blueBubblesBinding.group.folder,
               chatJid,
               rawText: msg.content,
-            }),
-          );
+              now: companionNow,
+            })
+          : null;
+        const continuitySnapshot = interpretedMessageActionFollowup
+          ? reconcileBlueBubblesMessageActionContinuity({
+              groupFolder: blueBubblesBinding.group.folder,
+              chatJid,
+              now: companionNow,
+              allowRehydrate: true,
+            })
+          : null;
+        const hasOpenMessageActionFollowup =
+          Boolean(interpretedMessageActionFollowup) &&
+          Boolean(resolvedMessageAction) &&
+          Boolean(continuitySnapshot) &&
+          canUseBareBlueBubblesMessageActionFollowup({
+            rawText: msg.content,
+            operation: interpretedMessageActionFollowup!,
+            continuity: continuitySnapshot!,
+          });
         const companionIngressDecision = decideBlueBubblesCompanionIngress(
           msg.content,
           {
@@ -14333,6 +14479,13 @@ async function main(): Promise<void> {
     channels.push(channel);
     await channel.connect();
   }
+  blueBubblesControlServer = startBlueBubblesControlServer({
+    getChannel: () =>
+      channels.find(
+        (channel): channel is BlueBubblesChannel =>
+          channel instanceof BlueBubblesChannel,
+      ) || null,
+  });
   resolveTelegramMainChatForAlexa = (groupFolder: string) => {
     const telegramEntries = Object.entries(registeredGroups).filter(([jid]) => {
       const channel = findChannel(channels, jid);

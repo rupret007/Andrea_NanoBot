@@ -2,7 +2,12 @@ import crypto from 'crypto';
 
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { _initTestDatabase, insertPilotJourneyEvent } from './db.js';
+import {
+  _initTestDatabase,
+  insertPilotJourneyEvent,
+  storeChatMetadata,
+  upsertMessageAction,
+} from './db.js';
 import {
   decideBlueBubblesCompanionIngress,
   isBlueBubblesExplicitAsk,
@@ -81,6 +86,41 @@ describe('bluebubbles companion helpers', () => {
     expect(
       isBlueBubblesExplicitAsk('sounds good', {
         chatJid: 'bb:iMessage;-;+14695405551',
+      }),
+    ).toBe(false);
+  });
+
+  it('allows recent direct 1:1 BlueBubbles chats to become conversational without @Andrea', () => {
+    storeChatMetadata(
+      'bb:iMessage;-;+12147254219',
+      '2026-04-07T20:05:00.000Z',
+      'Candace',
+      'bluebubbles',
+      false,
+    );
+
+    expect(
+      isBlueBubblesExplicitAsk('what should I say back', {
+        chatJid: 'bb:iMessage;-;+12147254219',
+        hasRecentCompanionContext: true,
+      }),
+    ).toBe(true);
+    expect(
+      isBlueBubblesExplicitAsk('what am I forgetting', {
+        chatJid: 'bb:iMessage;-;+12147254219',
+        hasRecentCompanionContext: true,
+      }),
+    ).toBe(true);
+    expect(
+      isBlueBubblesExplicitAsk('sounds good', {
+        chatJid: 'bb:iMessage;-;+12147254219',
+        hasRecentCompanionContext: true,
+      }),
+    ).toBe(false);
+    expect(
+      isBlueBubblesExplicitAsk('what should I say back', {
+        chatJid: 'bb:iMessage;-;+12147254219',
+        hasRecentCompanionContext: false,
       }),
     ).toBe(false);
   });
@@ -288,6 +328,126 @@ describe('bluebubbles companion helpers', () => {
     ).toEqual({
       chatJid: 'bb:iMessage;+;chat-new',
       engagedAt: '2026-04-07T19:01:00.000Z',
+    });
+  });
+
+  it('prefers a fresh same-thread message action over pilot-only history', () => {
+    insertPilotJourneyEvent(
+      buildEvent({
+        chatJid: 'bb:iMessage;+;chat-pilot',
+        startedAt: '2026-04-07T19:30:00.000Z',
+        completedAt: '2026-04-07T19:31:00.000Z',
+      }),
+    );
+    upsertMessageAction({
+      messageActionId: 'msg-action-self-thread',
+      groupFolder: 'main',
+      sourceType: 'manual_prompt',
+      sourceKey: 'self-thread-proof-gap',
+      sourceSummary: 'Draft text message to Candace.',
+      targetKind: 'external_thread',
+      targetChannel: 'bluebubbles',
+      targetConversationJson: JSON.stringify({
+        kind: 'external_thread',
+        chatJid: 'bb:iMessage;+;chat-candace',
+        personName: 'Candace',
+      }),
+      draftText: 'Hey Candace, tonight still works for me.',
+      trustLevel: 'approve_before_send',
+      sendStatus: 'drafted',
+      followupAt: null,
+      requiresApproval: true,
+      delegationRuleId: null,
+      delegationMode: null,
+      explanationJson: null,
+      linkedRefsJson: JSON.stringify({ personName: 'Candace' }),
+      platformMessageId: null,
+      scheduledTaskId: null,
+      approvedAt: null,
+      lastActionKind: null,
+      lastActionAt: '2026-04-07T19:45:00.000Z',
+      dedupeKey: 'self-thread-proof-gap',
+      presentationChatJid: 'bb:iMessage;-;jeffstory007@gmail.com',
+      presentationThreadId: null,
+      presentationMessageId: null,
+      createdAt: '2026-04-07T19:44:00.000Z',
+      lastUpdatedAt: '2026-04-07T19:45:00.000Z',
+      sentAt: null,
+    });
+
+    expect(
+      resolveMostRecentBlueBubblesCompanionChat({
+        groupFolder: 'main',
+        maxAgeHours: 12,
+        now: new Date('2026-04-07T20:30:00.000Z'),
+      }),
+    ).toEqual({
+      chatJid: 'bb:iMessage;-;+14695405551',
+      engagedAt: '2026-04-07T19:45:00.000Z',
+    });
+  });
+
+  it('prefers a fresh active group continuity target over stale pilot-only history', () => {
+    insertPilotJourneyEvent(
+      buildEvent({
+        chatJid: 'bb:iMessage;+;chat-pilot',
+        startedAt: '2026-04-07T19:30:00.000Z',
+        completedAt: '2026-04-07T19:31:00.000Z',
+      }),
+    );
+    storeChatMetadata(
+      'bb:iMessage;+;group-fresh',
+      '2026-04-07T19:31:00.000Z',
+      'Family Group',
+      'bluebubbles',
+      true,
+    );
+    upsertMessageAction({
+      messageActionId: 'msg-action-group-thread',
+      groupFolder: 'main',
+      sourceType: 'manual_prompt',
+      sourceKey: 'group-proof-gap',
+      sourceSummary: 'Draft group reply.',
+      targetKind: 'external_thread',
+      targetChannel: 'bluebubbles',
+      targetConversationJson: JSON.stringify({
+        kind: 'external_thread',
+        chatJid: 'bb:iMessage;+;group-fresh',
+        personName: 'Family Group',
+        isGroup: true,
+      }),
+      draftText: 'Dinner around 7 works here too.',
+      trustLevel: 'approve_before_send',
+      sendStatus: 'drafted',
+      followupAt: null,
+      requiresApproval: true,
+      delegationRuleId: null,
+      delegationMode: null,
+      explanationJson: null,
+      linkedRefsJson: JSON.stringify({ personName: 'Family Group' }),
+      platformMessageId: null,
+      scheduledTaskId: null,
+      approvedAt: null,
+      lastActionKind: null,
+      lastActionAt: '2026-04-07T19:45:00.000Z',
+      dedupeKey: 'group-proof-gap',
+      presentationChatJid: 'bb:iMessage;+;group-fresh',
+      presentationThreadId: null,
+      presentationMessageId: 'bb:group-draft-1',
+      createdAt: '2026-04-07T19:44:00.000Z',
+      lastUpdatedAt: '2026-04-07T19:45:00.000Z',
+      sentAt: null,
+    });
+
+    expect(
+      resolveMostRecentBlueBubblesCompanionChat({
+        groupFolder: 'main',
+        maxAgeHours: 12,
+        now: new Date('2026-04-07T20:30:00.000Z'),
+      }),
+    ).toEqual({
+      chatJid: 'bb:iMessage;+;group-fresh',
+      engagedAt: '2026-04-07T19:45:00.000Z',
     });
   });
 

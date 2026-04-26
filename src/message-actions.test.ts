@@ -8,16 +8,21 @@ import {
   getOutcomeBySource,
   getTaskById,
   storeChatMetadata,
+  storeMessageDirect,
   upsertCommunicationThread,
   upsertDelegationRule,
 } from './db.js';
 import {
   applyMessageActionOperation,
+  canUseBareBlueBubblesMessageActionFollowup,
   createOrRefreshMessageActionFromDraft,
   findLatestChatMessageAction,
   isBlueBubblesExplicitSendAlias,
   interpretMessageActionFollowup,
+  listBlueBubblesMessageActionContinuitySnapshots,
   parseExplicitBlueBubblesThreadSendIntent,
+  reconcileBlueBubblesMessageActionContinuity,
+  reconcileBlueBubblesSelfThreadContinuity,
   resolveBlueBubblesThreadTargetByName,
   resolveMessageActionForFollowup,
   runScheduledMessageActionByTaskId,
@@ -178,6 +183,379 @@ describe('message actions', () => {
         now: new Date('2026-04-16T16:20:00.000Z'),
       })?.messageActionId,
     ).toBe(action.messageActionId);
+  });
+
+  it('rehydrates a fresh BlueBubbles self-thread draft presentation into a message action', () => {
+    storeChatMetadata(
+      'bb:iMessage;+;chat-candace',
+      '2026-04-16T16:05:00.000Z',
+      'Candace',
+      'bluebubbles',
+      false,
+    );
+    storeChatMetadata(
+      'bb:iMessage;-;jeffstory007@gmail.com',
+      '2026-04-16T16:06:22.703Z',
+      'Jeff',
+      'bluebubbles',
+      false,
+    );
+    storeMessageDirect({
+      id: 'bb:self-thread-draft-1',
+      chat_jid: 'bb:iMessage;-;jeffstory007@gmail.com',
+      sender: 'Andrea',
+      sender_name: 'Andrea',
+      content: [
+        'Andrea: I drafted a reply.',
+        '',
+        'Target: Candace in Messages.',
+        '',
+        'Draft:',
+        'Hey Candace, tonight still works for me.',
+        '',
+        'Status: drafted and ready to send.',
+      ].join('\n'),
+      timestamp: '2026-04-16T16:06:22.703Z',
+      is_from_me: true,
+      is_bot_message: true,
+    });
+
+    const action = resolveMessageActionForFollowup({
+      groupFolder: 'main',
+      chatJid: 'bb:iMessage;-;+14695405551',
+      rawText: 'send it later tonight',
+      now: new Date('2026-04-16T16:20:00.000Z'),
+    });
+
+    expect(action?.messageActionId).toBeTruthy();
+    expect(action?.presentationChatJid).toBe('bb:iMessage;-;+14695405551');
+    expect(action?.presentationMessageId).toBe('bb:self-thread-draft-1');
+    expect(action?.draftText).toBe('Hey Candace, tonight still works for me.');
+    expect(
+      JSON.parse(action?.targetConversationJson || '{}'),
+    ).toMatchObject({
+      chatJid: 'bb:iMessage;+;chat-candace',
+      personName: 'Candace',
+    });
+  });
+
+  it('collapses duplicate same-thread BlueBubbles drafts to one active action', () => {
+    const older = createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'bluebubbles',
+      presentationChatJid: 'bb:iMessage;-;+14695405551',
+      sourceType: 'manual_prompt',
+      sourceKey: 'duplicate-self-thread-older',
+      sourceSummary: 'Draft text message to Candace.',
+      draftText: 'Hey Candace, tonight still works for me.',
+      personName: 'Candace',
+      threadTitle: 'Candace',
+      communicationContext: 'general',
+      targetOverride: {
+        kind: 'external_thread',
+        chatJid: 'bb:iMessage;+;chat-candace',
+        threadId: null,
+        replyToMessageId: null,
+        isGroup: false,
+        personName: 'Candace',
+      },
+      targetChannelOverride: 'bluebubbles',
+      now: new Date('2026-04-16T16:00:00.000Z'),
+    });
+    const newer = createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'bluebubbles',
+      presentationChatJid: 'bb:iMessage;-;+14695405551',
+      sourceType: 'manual_prompt',
+      sourceKey: 'duplicate-self-thread-newer',
+      sourceSummary: 'Draft text message to Candace.',
+      draftText: 'Hey Candace, tonight still works for me.',
+      personName: 'Candace',
+      threadTitle: 'Candace',
+      communicationContext: 'general',
+      targetOverride: {
+        kind: 'external_thread',
+        chatJid: 'bb:iMessage;+;chat-candace',
+        threadId: null,
+        replyToMessageId: null,
+        isGroup: false,
+        personName: 'Candace',
+      },
+      targetChannelOverride: 'bluebubbles',
+      now: new Date('2026-04-16T16:05:00.000Z'),
+    });
+
+    const continuity = reconcileBlueBubblesSelfThreadContinuity({
+      groupFolder: 'main',
+      chatJid: 'bb:iMessage;-;jeffstory007@gmail.com',
+      now: new Date('2026-04-16T16:10:00.000Z'),
+      allowRehydrate: false,
+    });
+
+    expect(continuity.activeMessageActionId).toBe(newer.messageActionId);
+    expect(continuity.openMessageActionCount).toBe(1);
+    expect(continuity.supersededActionIds).toContain(older.messageActionId);
+    expect(getMessageAction(older.messageActionId)?.sendStatus).toBe('skipped');
+    expect(getMessageAction(newer.messageActionId)?.sendStatus).toBe('drafted');
+  });
+
+  it('prefers a fresh rehydrated self-thread draft over a stale older action', () => {
+    createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'bluebubbles',
+      presentationChatJid: 'bb:iMessage;-;+14695405551',
+      sourceType: 'manual_prompt',
+      sourceKey: 'stale-self-thread-action',
+      sourceSummary: 'Older draft text message to Candace.',
+      draftText: 'Older Candace draft.',
+      personName: 'Candace',
+      threadTitle: 'Candace',
+      communicationContext: 'general',
+      targetOverride: {
+        kind: 'external_thread',
+        chatJid: 'bb:iMessage;+;chat-candace',
+        threadId: null,
+        replyToMessageId: null,
+        isGroup: false,
+        personName: 'Candace',
+      },
+      targetChannelOverride: 'bluebubbles',
+      now: new Date('2026-04-16T15:00:00.000Z'),
+    });
+    storeChatMetadata(
+      'bb:iMessage;+;chat-candace',
+      '2026-04-16T16:05:00.000Z',
+      'Candace',
+      'bluebubbles',
+      false,
+    );
+    storeChatMetadata(
+      'bb:iMessage;-;jeffstory007@gmail.com',
+      '2026-04-16T16:06:22.703Z',
+      'Jeff',
+      'bluebubbles',
+      false,
+    );
+    storeMessageDirect({
+      id: 'bb:self-thread-draft-fresh',
+      chat_jid: 'bb:iMessage;-;jeffstory007@gmail.com',
+      sender: 'Andrea',
+      sender_name: 'Andrea',
+      content: [
+        'Andrea: I drafted a reply.',
+        '',
+        'Target: Candace in Messages.',
+        '',
+        'Draft:',
+        'Hey Candace, tonight still works for me.',
+        '',
+        'Status: drafted and ready to send.',
+      ].join('\n'),
+      timestamp: '2026-04-16T16:06:22.703Z',
+      is_from_me: true,
+      is_bot_message: true,
+    });
+
+    const resolved = resolveMessageActionForFollowup({
+      groupFolder: 'main',
+      chatJid: 'bb:iMessage;-;+14695405551',
+      rawText: 'send it later tonight',
+      now: new Date('2026-04-16T16:20:00.000Z'),
+    });
+
+    expect(resolved?.draftText).toBe('Hey Candace, tonight still works for me.');
+    expect(resolved?.presentationMessageId).toBe('bb:self-thread-draft-fresh');
+    expect(resolved?.sourceKey).toContain('rehydrated-bluebubbles-draft');
+  });
+
+  it('marks group continuity as explicit-only and limits followups to inspection and rewrites', () => {
+    storeChatMetadata(
+      'bb:iMessage;+;family-group',
+      '2026-04-16T18:00:00.000Z',
+      'Family Group',
+      'bluebubbles',
+      true,
+    );
+    const groupAction = createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'bluebubbles',
+      presentationChatJid: 'bb:iMessage;+;family-group',
+      sourceType: 'manual_prompt',
+      sourceKey: 'group-draft',
+      sourceSummary: 'Draft text message to Family Group.',
+      draftText: 'We can do dinner around 7.',
+      personName: 'Family Group',
+      threadTitle: 'Family Group',
+      communicationContext: 'general',
+      targetOverride: {
+        kind: 'external_thread',
+        chatJid: 'bb:iMessage;+;family-group',
+        threadId: null,
+        replyToMessageId: null,
+        isGroup: true,
+        personName: 'Family Group',
+      },
+      targetChannelOverride: 'bluebubbles',
+      now: new Date('2026-04-16T18:05:00.000Z'),
+    });
+
+    const continuity = reconcileBlueBubblesMessageActionContinuity({
+      groupFolder: 'main',
+      chatJid: 'bb:iMessage;+;family-group',
+      now: new Date('2026-04-16T18:10:00.000Z'),
+      allowRehydrate: true,
+    });
+
+    expect(continuity.activeMessageActionId).toBe(groupAction.messageActionId);
+    expect(continuity.conversationKind).toBe('group');
+    expect(continuity.decisionPolicy).toBe('explicit_only');
+    expect(continuity.requiresExplicitMention).toBe(true);
+    expect(continuity.eligibleFollowups).toEqual([
+      'show it again',
+      'make it shorter',
+      'make it more direct',
+    ]);
+  });
+
+  it('treats a recent direct 1:1 BlueBubbles chat as conversational after fresh Andrea context', () => {
+    storeChatMetadata(
+      'bb:iMessage;-;+12147254219',
+      '2026-04-16T18:05:00.000Z',
+      'Candace',
+      'bluebubbles',
+      false,
+    );
+    storeMessageDirect({
+      id: 'bb:direct-recent-andrea',
+      chat_jid: 'bb:iMessage;-;+12147254219',
+      sender: 'Andrea',
+      sender_name: 'Andrea',
+      content: 'Andrea: Here is the latest draft option.',
+      timestamp: '2026-04-16T18:08:00.000Z',
+      is_from_me: true,
+      is_bot_message: true,
+    });
+
+    const continuity = reconcileBlueBubblesMessageActionContinuity({
+      groupFolder: 'main',
+      chatJid: 'bb:iMessage;-;+12147254219',
+      now: new Date('2026-04-16T18:10:00.000Z'),
+      allowRehydrate: true,
+    });
+
+    expect(continuity.conversationKind).toBe('direct_1to1');
+    expect(continuity.decisionPolicy).toBe('semi_auto_recent_direct_1to1');
+    expect(continuity.conversationalEligibility).toBe('conversational_now');
+    expect(continuity.requiresExplicitMention).toBe(false);
+    expect(continuity.recentTargetChatJid).toBe('bb:iMessage;-;+12147254219');
+    expect(
+      listBlueBubblesMessageActionContinuitySnapshots({
+        groupFolder: 'main',
+        now: new Date('2026-04-16T18:10:00.000Z'),
+        allowRehydrate: true,
+      }).some(
+        (snapshot) =>
+          snapshot.recentTargetChatJid === 'bb:iMessage;-;+12147254219' &&
+          snapshot.decisionPolicy === 'semi_auto_recent_direct_1to1',
+      ),
+    ).toBe(true);
+  });
+
+  it('keeps stale direct 1:1 BlueBubbles continuity explicit-only when Andrea context is no longer fresh', () => {
+    storeChatMetadata(
+      'bb:iMessage;-;+12147254219',
+      '2026-04-16T16:05:00.000Z',
+      'Candace',
+      'bluebubbles',
+      false,
+    );
+    storeMessageDirect({
+      id: 'bb:direct-stale-andrea',
+      chat_jid: 'bb:iMessage;-;+12147254219',
+      sender: 'Andrea',
+      sender_name: 'Andrea',
+      content: 'Andrea: Here is the latest draft option.',
+      timestamp: '2026-04-16T16:00:00.000Z',
+      is_from_me: true,
+      is_bot_message: true,
+    });
+
+    const continuity = reconcileBlueBubblesMessageActionContinuity({
+      groupFolder: 'main',
+      chatJid: 'bb:iMessage;-;+12147254219',
+      now: new Date('2026-04-16T18:10:00.000Z'),
+      allowRehydrate: true,
+    });
+
+    expect(continuity.conversationKind).toBe('direct_1to1');
+    expect(continuity.decisionPolicy).toBe('explicit_only');
+    expect(continuity.conversationalEligibility).toBe('explicit_only');
+    expect(continuity.requiresExplicitMention).toBe(true);
+  });
+
+  it('sorts continuity snapshots with the active self-thread ahead of group continuity', () => {
+    storeChatMetadata(
+      'bb:iMessage;+;family-group',
+      '2026-04-16T18:00:00.000Z',
+      'Family Group',
+      'bluebubbles',
+      true,
+    );
+    createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'bluebubbles',
+      presentationChatJid: 'bb:iMessage;+;family-group',
+      sourceType: 'manual_prompt',
+      sourceKey: 'group-draft-2',
+      sourceSummary: 'Draft text message to Family Group.',
+      draftText: 'We can do dinner around 7.',
+      personName: 'Family Group',
+      threadTitle: 'Family Group',
+      communicationContext: 'general',
+      targetOverride: {
+        kind: 'external_thread',
+        chatJid: 'bb:iMessage;+;family-group',
+        threadId: null,
+        replyToMessageId: null,
+        isGroup: true,
+        personName: 'Family Group',
+      },
+      targetChannelOverride: 'bluebubbles',
+      now: new Date('2026-04-16T18:05:00.000Z'),
+    });
+    createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'bluebubbles',
+      presentationChatJid: 'bb:iMessage;-;+14695405551',
+      sourceType: 'manual_prompt',
+      sourceKey: 'self-thread-draft-order',
+      sourceSummary: 'Draft text message to Candace.',
+      draftText: 'Tonight still works for me.',
+      personName: 'Candace',
+      threadTitle: 'Candace',
+      communicationContext: 'general',
+      targetOverride: {
+        kind: 'external_thread',
+        chatJid: 'bb:iMessage;+;chat-candace',
+        threadId: null,
+        replyToMessageId: null,
+        isGroup: false,
+        personName: 'Candace',
+      },
+      targetChannelOverride: 'bluebubbles',
+      now: new Date('2026-04-16T18:06:00.000Z'),
+    });
+
+    const snapshots = listBlueBubblesMessageActionContinuitySnapshots({
+      groupFolder: 'main',
+      now: new Date('2026-04-16T18:10:00.000Z'),
+      allowRehydrate: true,
+    });
+
+    expect(snapshots[0]?.conversationKind).toBe('self_thread');
+    expect(snapshots.some((snapshot) => snapshot.conversationKind === 'group')).toBe(
+      true,
+    );
   });
 
   it('marks narrow safe bluebubbles replies as approved when a saved send rule matches', () => {
@@ -722,6 +1100,76 @@ describe('message actions', () => {
       kind: 'rewrite',
       style: 'more_direct',
     });
+    expect(interpretMessageActionFollowup('save that')).toEqual({
+      kind: 'save_to_thread',
+    });
+  });
+
+  it('allows bare self-thread defers but keeps immediate send and group decisions stricter', () => {
+    createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'bluebubbles',
+      presentationChatJid: 'bb:iMessage;-;+14695405551',
+      sourceType: 'manual_prompt',
+      sourceKey: 'self-thread-policy',
+      sourceSummary: 'Draft text message to Candace.',
+      draftText: 'Tonight still works for me.',
+      personName: 'Candace',
+      threadTitle: 'Candace',
+      communicationContext: 'general',
+      targetOverride: {
+        kind: 'external_thread',
+        chatJid: 'bb:iMessage;+;chat-candace',
+        threadId: null,
+        replyToMessageId: null,
+        isGroup: false,
+        personName: 'Candace',
+      },
+      targetChannelOverride: 'bluebubbles',
+      now: new Date('2026-04-16T19:00:00.000Z'),
+    });
+    const selfThreadContinuity = reconcileBlueBubblesMessageActionContinuity({
+      groupFolder: 'main',
+      chatJid: 'bb:iMessage;-;+14695405551',
+      now: new Date('2026-04-16T19:05:00.000Z'),
+      allowRehydrate: true,
+    });
+    const groupContinuity = {
+      ...selfThreadContinuity,
+      conversationKind: 'group' as const,
+      decisionPolicy: 'explicit_only' as const,
+      requiresExplicitMention: true,
+      eligibleFollowups: ['show it again', 'make it shorter', 'make it more direct'],
+    };
+
+    expect(
+      canUseBareBlueBubblesMessageActionFollowup({
+        rawText: 'send it later tonight',
+        operation: { kind: 'defer', timingHint: 'today tonight' },
+        continuity: selfThreadContinuity,
+      }),
+    ).toBe(true);
+    expect(
+      canUseBareBlueBubblesMessageActionFollowup({
+        rawText: 'send it',
+        operation: { kind: 'send' },
+        continuity: selfThreadContinuity,
+      }),
+    ).toBe(false);
+    expect(
+      canUseBareBlueBubblesMessageActionFollowup({
+        rawText: 'show it again',
+        operation: { kind: 'show_draft' },
+        continuity: groupContinuity,
+      }),
+    ).toBe(true);
+    expect(
+      canUseBareBlueBubblesMessageActionFollowup({
+        rawText: 'send it later tonight',
+        operation: { kind: 'defer', timingHint: 'today tonight' },
+        continuity: groupContinuity,
+      }),
+    ).toBe(false);
   });
 
   it('parses an explicit BlueBubbles text-message request with a named target', () => {

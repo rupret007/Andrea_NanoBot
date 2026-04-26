@@ -6,6 +6,7 @@ import {
   listProfileSubjectsForGroup,
   listRitualProfilesForGroup,
 } from './db.js';
+import { buildMemoryIntelligenceReport } from './assistant-memory-intelligence.js';
 
 export type AndreaMemoryTierId = 'working' | 'semantic' | 'procedural';
 
@@ -467,6 +468,9 @@ export function buildAndreaMemoryFreshnessRollup(
       latestTouched > 0 ? new Date(latestTouched).toISOString() : 'not_yet_indexed',
     indexStatus: 'seeded_profile_pack_and_db_backed',
     changelogStatus: 'append_only',
+    arbitrationStatus: 'active_memory_intelligence',
+    semanticPromotionPolicy: 'grounded_or_confirmed_only',
+    proceduralPromotionPolicy: 'repeated_success_or_outcome_review',
     ownership: 'raw memory stays in the product layer; platform only sees freshness metadata',
     taskStates:
       'active=current focus/open loops; waiting=blocked follow-up; someday=backlog; done=outcome reviewed',
@@ -552,6 +556,11 @@ export function buildAndreaPlatformConfigSnapshots(
       component: 'andrea.memory',
       configName: 'memory_freshness_rollup',
       snapshot: buildAndreaMemoryFreshnessRollup(groupFolders),
+    },
+    {
+      component: 'andrea.memory',
+      configName: 'memory_intelligence_report',
+      snapshot: buildMemoryIntelligenceReport(groupFolders),
     },
     {
       component: 'andrea.integrations',

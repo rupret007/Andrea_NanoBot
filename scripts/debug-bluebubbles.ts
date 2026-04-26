@@ -8,10 +8,7 @@ import {
   redactBlueBubblesWebhookUrl,
   resolveBlueBubblesConfig,
 } from '../src/channels/bluebubbles.js';
-import {
-  normalizeBlueBubblesCompanionPrompt,
-  resolveMostRecentBlueBubblesCompanionChat,
-} from '../src/bluebubbles-companion.js';
+import { normalizeBlueBubblesCompanionPrompt } from '../src/bluebubbles-companion.js';
 import { resolveCompanionConversationBinding } from '../src/companion-conversation-binding.js';
 import { deliverCompanionHandoff } from '../src/cross-channel-handoffs.js';
 import {
@@ -87,10 +84,6 @@ async function runLiveMode(): Promise<void> {
   const config = resolveBlueBubblesConfig();
   const truth = buildFieldTrialOperatorTruth();
   const chats = getAllChats().filter((chat) => chat.jid.startsWith('bb:')).slice(0, 5);
-  const recentChat = resolveMostRecentBlueBubblesCompanionChat({
-    groupFolder: config.groupFolder || 'main',
-    maxAgeHours: 12,
-  });
 
   printBlock('BLUEBUBBLES LIVE CONFIG', [
     `enabled: ${config.enabled}`,
@@ -107,7 +100,8 @@ async function runLiveMode(): Promise<void> {
     }`,
     `listener: ${config.host}:${config.port}${config.webhookPath}`,
     `chat_scope: ${config.chatScope}`,
-    `reply_gate: mention_required`,
+    `configured_reply_gate: ${truth.bluebubbles.configuredReplyGateMode}`,
+    `effective_reply_gate: ${truth.bluebubbles.effectiveReplyGateMode}`,
     `send_enabled: ${config.sendEnabled}`,
   ]);
 
@@ -169,8 +163,14 @@ async function runLiveMode(): Promise<void> {
   );
 
   printBlock('BLUEBUBBLES LIVE TARGET', [
-    `recent_target: ${recentChat?.chatJid || 'none'}`,
-    `recent_target_at: ${recentChat?.engagedAt || 'none'}`,
+    `recent_target: ${truth.bluebubbles.recentTargetChatJid}`,
+    `recent_target_at: ${truth.bluebubbles.recentTargetAt}`,
+    `continuity_state: ${truth.bluebubbles.continuityState}`,
+    `open_message_actions: ${truth.bluebubbles.openMessageActionCount}`,
+    `proof_candidate_chat: ${truth.bluebubbles.proofCandidateChatJid}`,
+    `active_message_action_id: ${truth.bluebubbles.activeMessageActionId}`,
+    `canonical_self_thread: ${truth.bluebubbles.canonicalSelfThreadChatJid}`,
+    `source_self_thread: ${truth.bluebubbles.sourceSelfThreadChatJid}`,
   ]);
 }
 

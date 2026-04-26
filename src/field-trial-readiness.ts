@@ -2,6 +2,7 @@ import {
   buildBlueBubblesHealthSnapshot,
   buildBlueBubblesWebhookUrl,
   redactBlueBubblesWebhookUrl,
+  resolveConfiguredBlueBubblesReplyGateMode,
   resolveBlueBubblesConfig,
 } from './channels/bluebubbles.js';
 import { readBlueBubblesMonitorState } from './bluebubbles-monitor-state.js';
@@ -12,6 +13,11 @@ import {
   listRecentMessagesForChat,
   listRecentResponseFeedback,
 } from './db.js';
+import {
+  listBlueBubblesMessageActionContinuitySnapshots,
+  reconcileBlueBubblesMessageActionContinuity,
+  reconcileBlueBubblesSelfThreadContinuity,
+} from './message-actions.js';
 import {
   BLUEBUBBLES_CANONICAL_SELF_THREAD_JID,
   canonicalizeBlueBubblesSelfThreadJid,
@@ -40,12 +46,14 @@ import {
   type WindowsHostReconciliation,
 } from './host-control.js';
 import { getMediaProviderStatus } from './media-generation.js';
+import { resolveBlueBubblesReplyGateMode } from './messages-fluidity.js';
 import { describeOpenAiConfigBlocker, getOpenAiProviderStatus } from './openai-provider.js';
 import { buildPilotReviewSnapshot } from './pilot-mode.js';
 import { readProviderProofState } from './provider-proof-state.js';
 import type {
   AppleMessagesBridgeAvailability,
   AppleMessagesProviderName,
+  MessageActionRecord,
   PilotJourneyEventRecord,
   PilotJourneyId,
 } from './types.js';
@@ -141,6 +149,8 @@ export interface FieldTrialBlueBubblesTruth extends FieldTrialSurfaceTruth {
   webhookRegistrationState: string;
   webhookRegistrationDetail: string;
   chatScope: string;
+  configuredReplyGateMode: string;
+  effectiveReplyGateMode: string;
   replyGateMode: string;
   mostRecentEngagedChatJid: string;
   mostRecentEngagedAt: string;
@@ -172,6 +182,23 @@ export interface FieldTrialBlueBubblesTruth extends FieldTrialSurfaceTruth {
   lastIgnoredReason: string;
   crossSurfaceFallbackState: string;
   crossSurfaceFallbackLastSentAt: string;
+  recentTargetChatJid: string;
+  recentTargetAt: string;
+  openMessageActionCount: number;
+  continuityState: 'idle' | 'draft_open' | 'awaiting_decision' | 'proof_gap';
+  proofCandidateChatJid: string;
+  activeMessageActionId: string;
+  conversationKind: 'self_thread' | 'direct_1to1' | 'group';
+  decisionPolicy:
+    | 'semi_auto_self_thread'
+    | 'semi_auto_recent_direct_1to1'
+    | 'explicit_only';
+  conversationalEligibility: 'conversational_now' | 'explicit_only';
+  requiresExplicitMention: boolean;
+  activePresentationAt: string | null;
+  eligibleFollowups: string[];
+  canonicalSelfThreadChatJid: string;
+  sourceSelfThreadChatJid: string;
   messageActionProofState: 'none' | 'fresh' | 'stale';
   messageActionProofChatJid: string;
   messageActionProofAt: string;
@@ -512,6 +539,13 @@ export interface BuildFieldTrialOperatorTruthOptions {
     | 'quota_blocked'
     | 'degraded'
     | 'available';
+}
+
+interface OpenSelfThreadMessageActionEntry {
+  action: MessageActionRecord;
+  chatJid: string;
+  engagedAt: string;
+  engagedAtMs: number;
 }
 
 interface PilotReviewSnapshotLike {
@@ -1299,6 +1333,7 @@ function buildBlueBubblesTruth(
   hostSnapshot: HostControlSnapshot,
   review: PilotReviewSnapshotLike,
 ): FieldTrialBlueBubblesTruth {
+  const now = new Date();
   const config = resolveBlueBubblesConfig();
   const monitorState = readBlueBubblesMonitorState(projectRoot);
   const snapshot = buildBlueBubblesHealthSnapshot(config);
@@ -1347,7 +1382,7 @@ function buildBlueBubblesTruth(
       event.chatJid?.startsWith('bb:') === true &&
       (event.outcome === 'success' || event.outcome === 'degraded_usable'),
   );
-  const freshProofCutoff = Date.now() - 24 * 60 * 60 * 1000;
+  const freshProofCutoff = now.getTime() - 24 * 60 * 60 * 1000;
   const recentSuccesses = review.recentEvents.filter((event) => {
     const proofAt = Date.parse(event.completedAt || event.startedAt);
     return (
@@ -1401,6 +1436,18 @@ function buildBlueBubblesTruth(
         (entry) => entry.proofChatJid === liveProofChatJid,
       ) || null
     : null;
+  const continuity = reconcileBlueBubblesSelfThreadContinuity({
+    groupFolder: config.groupFolder || 'main',
+    chatJid: BLUEBUBBLES_CANONICAL_SELF_THREAD_JID,
+    now,
+    allowRehydrate: true,
+  });
+  const continuitySnapshots = listBlueBubblesMessageActionContinuitySnapshots({
+    groupFolder: config.groupFolder || 'main',
+    now,
+    allowRehydrate: true,
+  });
+  const primaryContinuity = continuitySnapshots[0] || continuity;
 
   let lastInboundObservedAt = 'none';
   let lastOutboundResult = 'none';
@@ -1428,6 +1475,27 @@ function buildBlueBubblesTruth(
 
   const activeSelfThreadChat =
     pickMostRecentBlueBubblesChat([
+      continuity.recentTargetChatJid !== 'none'
+        ? {
+            chatJid: continuity.recentTargetChatJid,
+            at: continuity.recentTargetAt,
+          }
+        : {
+            chatJid: null,
+            at: null,
+          },
+      canonicalizeBlueBubblesProofCandidate({
+        chatJid:
+          matchingMessageActionProof?.proofChatJid ||
+          recentMessageActionProofs[0]?.proofChatJid ||
+          null,
+        at:
+          matchingMessageActionProof?.action.lastActionAt ||
+          matchingMessageActionProof?.action.sentAt ||
+          recentMessageActionProofs[0]?.action.lastActionAt ||
+          recentMessageActionProofs[0]?.action.sentAt ||
+          null,
+      }),
       canonicalizeBlueBubblesProofCandidate({
         chatJid: recentEngagement?.chatJid || null,
         at: recentEngagement?.completedAt || recentEngagement?.startedAt || null,
@@ -1486,6 +1554,36 @@ function buildBlueBubblesTruth(
       ) || null;
   const draftLikeReplyWithoutAction =
     !matchingProofChainMessageAction && Boolean(draftLikeReplyMessage);
+  const continuityState = primaryContinuity.continuityState;
+  const effectiveReplyGateChatJid =
+    activeSelfThreadChat?.chatJid ||
+    activeProofChat?.chatJid ||
+    canonicalizeBlueBubblesSelfThreadJid(recentEngagement?.chatJid) ||
+    recentEngagement?.chatJid ||
+    null;
+  const effectiveReplyGateContinuity = effectiveReplyGateChatJid
+    ? reconcileBlueBubblesMessageActionContinuity({
+        groupFolder: config.groupFolder || 'main',
+        chatJid: effectiveReplyGateChatJid,
+        now,
+        allowRehydrate: true,
+      })
+    : null;
+  const representativeContinuity = effectiveReplyGateContinuity || primaryContinuity;
+  const effectiveReplyGateIsGroup = effectiveReplyGateChatJid
+    ? (bluebubblesChats.find((chat) => chat.jid === effectiveReplyGateChatJid)?.is_group ?? 0) !== 0
+    : null;
+  const effectiveReplyGateMode =
+    effectiveReplyGateContinuity
+      ? effectiveReplyGateContinuity.requiresExplicitMention
+        ? 'mention_required'
+        : 'direct_1to1'
+      : effectiveReplyGateChatJid
+        ? resolveBlueBubblesReplyGateMode({
+            chatJid: effectiveReplyGateChatJid,
+            isGroup: effectiveReplyGateIsGroup,
+          })
+      : deriveBlueBubblesReplyGateMode(channelDetail) || 'mention_required';
   const sameThreadContinuationProof = matchingProofChainMessageAction
     ? findBlueBubblesSameThreadContinuationAfterAction(
         proofChainChatJid,
@@ -1733,7 +1831,9 @@ function buildBlueBubblesTruth(
     webhookRegistrationState: effectiveWebhookRegistrationState,
     webhookRegistrationDetail: effectiveWebhookRegistrationDetail,
     chatScope: config.chatScope,
-    replyGateMode: deriveBlueBubblesReplyGateMode(channelDetail) || 'mention_required',
+    configuredReplyGateMode: resolveConfiguredBlueBubblesReplyGateMode(config),
+    effectiveReplyGateMode,
+    replyGateMode: effectiveReplyGateMode,
     mostRecentEngagedChatJid: activeProofChat?.chatJid || recentEngagement?.chatJid || 'none',
     mostRecentEngagedAt:
       activeProofChat?.at ||
@@ -1782,6 +1882,46 @@ function buildBlueBubblesTruth(
           ? derivedFallbackLastSent
           : 'none'
         : monitorState.crossSurfaceFallbackLastSentAt || 'none',
+    recentTargetChatJid:
+      representativeContinuity.recentTargetChatJid !== 'none'
+        ? representativeContinuity.recentTargetChatJid
+        : activeSelfThreadChat?.chatJid ||
+      activeProofChat?.chatJid ||
+      canonicalizeBlueBubblesSelfThreadJid(recentEngagement?.chatJid) ||
+      recentEngagement?.chatJid ||
+      'none',
+    recentTargetAt:
+      representativeContinuity.recentTargetAt !== 'none'
+        ? representativeContinuity.recentTargetAt
+        : activeSelfThreadChat?.at ||
+      activeProofChat?.at ||
+      recentEngagement?.completedAt ||
+      recentEngagement?.startedAt ||
+      'none',
+    openMessageActionCount: representativeContinuity.openMessageActionCount,
+    continuityState: representativeContinuity.continuityState,
+    proofCandidateChatJid:
+      continuity.proofCandidateChatJid !== 'none'
+        ? continuity.proofCandidateChatJid
+        : proofChainChatJid ||
+      matchingProofChainMessageAction?.proofChatJid ||
+      recentMessageActionProofs[0]?.proofChatJid ||
+      'none',
+    activeMessageActionId: representativeContinuity.activeMessageActionId || 'none',
+    conversationKind: representativeContinuity.conversationKind,
+    decisionPolicy: representativeContinuity.decisionPolicy,
+    conversationalEligibility:
+      representativeContinuity.conversationalEligibility,
+    requiresExplicitMention: representativeContinuity.requiresExplicitMention,
+    activePresentationAt: representativeContinuity.activePresentationAt,
+    eligibleFollowups: [...representativeContinuity.eligibleFollowups],
+    canonicalSelfThreadChatJid:
+      representativeContinuity.canonicalSelfThreadChatJid ||
+      BLUEBUBBLES_CANONICAL_SELF_THREAD_JID,
+    sourceSelfThreadChatJid:
+      representativeContinuity.sourceSelfThreadChatJid ||
+      representativeContinuity.canonicalSelfThreadChatJid ||
+      BLUEBUBBLES_CANONICAL_SELF_THREAD_JID,
     messageActionProofState: matchingProofChainMessageAction
       ? 'fresh'
       : recentMessageActionProofs.length > 0
@@ -1799,13 +1939,17 @@ function buildBlueBubblesTruth(
       'none',
     messageActionProofDetail: matchingProofChainMessageAction
       ? `Recent same-chat message action is recorded in ${matchingProofChainMessageAction.proofChatJid}.${blueBubblesSelfThreadAliasDetail}`
+      : continuity.activeMessageActionId
+        ? `A fresh BlueBubbles same-thread draft is active in ${continuity.canonicalSelfThreadChatJid || proofChainChatJid || BLUEBUBBLES_CANONICAL_SELF_THREAD_JID}, and it is waiting for a decision.${blueBubblesSelfThreadAliasDetail}`
       : draftLikeReplyWithoutAction && proofChainChatJid
-        ? `Andrea drafted in ${draftLikeReplyMessage?.chat_jid || proofChainChatJid}, but no fresh message-action record was created yet.${blueBubblesSelfThreadAliasDetail}`
+        ? continuityState === 'idle'
+          ? `Andrea drafted in ${draftLikeReplyMessage?.chat_jid || proofChainChatJid} earlier, but that self-thread draft is no longer fresh and no active message-action record remains.${blueBubblesSelfThreadAliasDetail}`
+          : `Andrea drafted in ${draftLikeReplyMessage?.chat_jid || proofChainChatJid}, but no fresh message-action record was created yet.${blueBubblesSelfThreadAliasDetail}`
       : recentMessageActionProofs.length > 0
         ? `A recent BlueBubbles message-action decision exists in ${recentMessageActionProofs[0]!.proofChatJid}, but not in the same chat as the current proof chain.${blueBubblesSelfThreadAliasDetail}`
       : `No fresh BlueBubbles message-action decision is recorded yet.${blueBubblesSelfThreadAliasDetail}`,
   };
-  const directOneToOneMode = base.replyGateMode === 'direct_1to1';
+  const directOneToOneMode = base.effectiveReplyGateMode === 'direct_1to1';
   const blueBubblesPromptPrefix = directOneToOneMode ? '' : '@Andrea ';
   const blueBubblesWarmupPrompt = `\`${blueBubblesPromptPrefix}hi\``;
   const blueBubblesLooseEndsPrompt = `\`${blueBubblesPromptPrefix}what am I forgetting\``;

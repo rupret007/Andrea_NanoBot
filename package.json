@@ -40,6 +40,7 @@
     "services:ensure": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/nanoclaw-host.ps1 ensure",
     "services:status": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/nanoclaw-host.ps1 status",
     "cursor:bridge": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs src/cursor-desktop-bridge.ts",
+    "bluebubbles:mcp": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs src/bluebubbles-control-mcp.ts",
     "telegram:user:auth": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs src/telegram-user-session.ts auth",
     "telegram:user:send": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs src/telegram-user-session.ts send",
     "telegram:user:tap": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs src/telegram-user-session.ts tap",
@@ -69,6 +70,7 @@
     "debug:conversational-core": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-conversational-core.ts"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
     "@onecli-sh/sdk": "^0.2.0",
     "@types/qrcode": "^1.5.5",
     "ask-sdk-core": "^2.14.0",
@@ -78,7 +80,8 @@
     "cron-parser": "5.5.0",
     "grammy": "^1.39.3",
     "qrcode": "^1.5.4",
-    "telegram": "^2.26.22"
+    "telegram": "^2.26.22",
+    "zod": "^4.0.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.35.0",

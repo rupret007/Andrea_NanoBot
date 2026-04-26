@@ -13,9 +13,9 @@ Current host reality for the Windows operator machine:
 - the BlueBubbles desktop app is installed and connected to the Mac-side server
 - Andrea now has live `BLUEBUBBLES_*` config loaded on this host
 - Andrea can currently reach the configured BlueBubbles endpoint from this Windows host and the webhook is still registered
-- BlueBubbles is currently **live_proven** as a Messages bridge on this host because the bridge is healthy and the canonical same-thread `message_action` proof chain was recorded on April 14, 2026
+- BlueBubbles is currently **degraded_but_usable** on this host because transport and webhook registration are healthy, but the fresh same-thread `message_action` proof leg is still missing in current live truth
 - the canonical proof thread is `bb:iMessage;-;+14695405551`, and alias support remains enabled for `bb:iMessage;-;jeffstory007@gmail.com`
-- Telegram remains Andrea's dependable main messaging surface, while BlueBubbles is now a proven optional bridge
+- Telegram remains Andrea's dependable main messaging surface, while BlueBubbles stays an optional bridge that still needs one fresh same-thread proof completion
 
 Use these operator truth surfaces:
 
@@ -24,6 +24,8 @@ Use these operator truth surfaces:
 - `npm run debug:status`
 - `npm run debug:bluebubbles -- --live`
 - `npm run debug:pilot`
+- `GET /v1/bluebubbles/status` on the BlueBubbles control API when `BLUEBUBBLES_CONTROL_API_ENABLED=true`
+- `npm run bluebubbles:mcp` for the thin stdio MCP bridge over that authenticated control API
 
 OpenBubbles is still an operator-only feasibility track on this PC. Its official docs support the Mac-offline goal after activation or renewal, but Andrea does not yet have a supported Windows-native observation/reply surface to bind to there.
 

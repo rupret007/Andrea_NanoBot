@@ -12,6 +12,7 @@ import {
 import {
   getAllChats,
   hasStoredMessage,
+  listRecentMessagesForChat,
   storeChatMetadata,
   storeMessageDirect,
 } from '../db.js';
@@ -22,6 +23,7 @@ import { hasBlueBubblesAndreaMention } from '../bluebubbles-companion.js';
 import {
   BLUEBUBBLES_CANONICAL_SELF_THREAD_JID,
   expandBlueBubblesLogicalSelfThreadJids,
+  isBlueBubblesSelfThreadAliasJid,
 } from '../bluebubbles-self-thread.js';
 import {
   buildBlueBubblesIngressFingerprint,
@@ -29,6 +31,7 @@ import {
   resolveBlueBubblesReplyGateMode,
 } from '../messages-fluidity.js';
 import type {
+  BlueBubblesChannelControlSnapshot,
   BlueBubblesReplyGateMode,
   BlueBubblesChatScope,
   BlueBubblesChatRef,
@@ -171,6 +174,30 @@ export function buildBlueBubblesLinkedChatJid(
   return buildBlueBubblesChatJid(
     config.allowedChatGuid || config.allowedChatGuids[0] || null,
   );
+}
+
+export function resolveConfiguredBlueBubblesReplyGateMode(
+  config: Pick<
+    BlueBubblesConfig,
+    'allowedChatGuid' | 'allowedChatGuids' | 'chatScope'
+  >,
+): BlueBubblesReplyGateMode {
+  const linkedChatJid = buildBlueBubblesLinkedChatJid(config);
+  const linkedChat = linkedChatJid
+    ? getAllChats().find((chat) => chat.jid === linkedChatJid)
+    : null;
+  if (!linkedChatJid) {
+    return config.chatScope === 'contacts_only'
+      ? 'direct_1to1'
+      : 'mention_required';
+  }
+  return resolveBlueBubblesReplyGateMode({
+    chatJid: linkedChatJid,
+    isGroup:
+      linkedChat && typeof linkedChat.is_group === 'number'
+        ? linkedChat.is_group !== 0
+        : null,
+  });
 }
 
 export function buildBlueBubblesListenerWebhookUrl(
@@ -1594,9 +1621,39 @@ export class BlueBubblesChannel implements Channel {
     chatJid: string | null | undefined;
     isGroup?: boolean | null;
   }): BlueBubblesReplyGateMode {
+    if (params.isGroup) {
+      return 'mention_required';
+    }
+    if (isBlueBubblesSelfThreadAliasJid(params.chatJid)) {
+      return 'direct_1to1';
+    }
+    if (this.hasRecentAndreaContextForChat(params.chatJid)) {
+      return 'direct_1to1';
+    }
     return resolveBlueBubblesReplyGateMode({
       chatJid: params.chatJid,
       isGroup: params.isGroup,
+    });
+  }
+
+  private hasRecentAndreaContextForChat(
+    chatJid: string | null | undefined,
+  ): boolean {
+    const normalizedChatJid = chatJid?.trim();
+    if (!normalizedChatJid) {
+      return false;
+    }
+    const freshnessCutoff = Date.now() - BLUEBUBBLES_MISSED_INBOUND_GRACE_MS * 15;
+    return listRecentMessagesForChat(normalizedChatJid, 12).some((message) => {
+      const timestamp = Date.parse(message.timestamp || '');
+      if (!Number.isFinite(timestamp) || timestamp < freshnessCutoff) {
+        return false;
+      }
+      return (
+        Boolean(message.is_bot_message) ||
+        (Boolean(message.is_from_me) &&
+          isBlueBubblesAndreaBotEcho(message.content))
+      );
     });
   }
 
@@ -2050,17 +2107,23 @@ export class BlueBubblesChannel implements Channel {
     chatJid: string,
     at: string,
     reason: 'mention_required' | 'chat_scope',
+    isGroup?: boolean | null,
   ): void {
     this.monitorState.lastIgnoredAt = at;
     this.monitorState.lastIgnoredChatJid = chatJid;
     this.monitorState.lastIgnoredReason = reason;
+    const ignoredDirectChat = reason === 'mention_required' && !isGroup;
     this.setDetectionState(
       'ignored_by_gate_or_scope',
       reason === 'mention_required'
-        ? `Andrea saw a Messages turn in ${chatJid}, but it was intentionally ignored because that thread still requires @Andrea.`
+        ? ignoredDirectChat
+          ? `Andrea saw a Messages turn in ${chatJid}, but it was intentionally ignored because that direct 1:1 chat does not have fresh Andrea context yet and still needs @Andrea.`
+          : `Andrea saw a Messages turn in ${chatJid}, but it was intentionally ignored because that group thread still needs @Andrea for a fresh Andrea-directed turn.`
         : `Andrea saw a Messages turn in ${chatJid}, but it was intentionally ignored because that chat is outside the configured scope.`,
       reason === 'mention_required'
-        ? 'Use @Andrea in that group thread, or relax the reply gate if that chat should behave conversationally.'
+        ? ignoredDirectChat
+          ? 'Use @Andrea once in that direct 1:1 chat to re-establish Andrea context, or continue from the most recent Andrea turn in that same thread.'
+          : 'Use @Andrea in that group thread to open the next action, then keep follow-ups in the same thread.'
         : 'Use a chat that is inside the configured Messages scope, or widen the BlueBubbles scope on this host.',
     );
     this.persistMonitorState();
@@ -2190,6 +2253,7 @@ export class BlueBubblesChannel implements Channel {
             chatJid: string;
             at: string;
             reason: 'mention_required' | 'chat_scope';
+            isGroup: boolean;
           }
         | null = null;
       let latestMissed:
@@ -2225,6 +2289,7 @@ export class BlueBubblesChannel implements Channel {
               chatJid: row.chatJid,
               at: row.message.timestamp,
               reason: ignoredReason,
+              isGroup: Boolean(row.chat.isGroup),
             };
           }
           continue;
@@ -2281,13 +2346,19 @@ export class BlueBubblesChannel implements Channel {
           'Inspect the BlueBubbles reply target and send method on this host, then retry the same thread.',
         );
       } else if (latestIgnored) {
+        const ignoredDirectChat =
+          latestIgnored.reason === 'mention_required' && !latestIgnored.isGroup;
         this.setDetectionState(
           'ignored_by_gate_or_scope',
           latestIgnored.reason === 'mention_required'
-            ? `The newest Messages turn in ${latestIgnored.chatJid} would still be ignored until it includes @Andrea.`
+            ? ignoredDirectChat
+              ? `The newest Messages turn in ${latestIgnored.chatJid} would still be ignored until that direct 1:1 chat gets a fresh Andrea-directed turn or recent Andrea context.`
+              : `The newest Messages turn in ${latestIgnored.chatJid} would still be ignored until it includes @Andrea.`
             : `The newest Messages turn in ${latestIgnored.chatJid} is outside Andrea's configured BlueBubbles scope.`,
           latestIgnored.reason === 'mention_required'
-            ? 'Use @Andrea in that group thread, or relax the reply gate if that chat should behave conversationally.'
+            ? ignoredDirectChat
+              ? 'Use @Andrea once in that direct 1:1 chat, or continue from the most recent Andrea turn in that same thread.'
+              : 'Use @Andrea in that group thread to open the next action, then keep follow-ups in the same thread.'
             : 'Use a chat inside the configured scope, or widen the BlueBubbles scope on this host.',
         );
       } else {
@@ -2372,7 +2443,19 @@ export class BlueBubblesChannel implements Channel {
       this.config.sendEnabled &&
       this.transportProbeStatus === 'reachable' &&
       this.webhookRegistrationStatus === 'registered';
+    const healthChatJid = this.getRepresentativeHealthChatJid();
+    const matchedHealthChat = healthChatJid
+      ? getAllChats().find((chat) => chat.jid === healthChatJid)
+      : null;
     const healthReplyGateMode = this.getHealthReplyGateMode();
+    const healthConversationModeDetail =
+      healthReplyGateMode === 'direct_1to1'
+        ? 'conversation mode 1:1 conversational now'
+        : matchedHealthChat && typeof matchedHealthChat.is_group === 'number'
+          ? matchedHealthChat.is_group !== 0
+            ? 'conversation mode group explicit @Andrea'
+            : 'conversation mode direct 1:1 needs fresh @Andrea context'
+          : 'conversation mode explicit-only until fresh Andrea context exists';
     const lastInboundObservedAt =
       this.lastInboundObservedAt || this.monitorState.lastInboundObservedAt;
     const lastInboundChatJid =
@@ -2420,9 +2503,7 @@ export class BlueBubblesChannel implements Channel {
       )}`,
       `scope ${this.config.chatScope}`,
       `reply gate ${healthReplyGateMode}`,
-      healthReplyGateMode === 'mention_required'
-        ? 'group trigger required yes'
-        : '1:1 conversational yes',
+      healthConversationModeDetail,
       `webhook ${this.getPublicWebhookDisplayUrl()}`,
       this.webhookRegistrationDetail
         ? `webhook registration ${this.webhookRegistrationDetail}`
@@ -2625,6 +2706,7 @@ export class BlueBubblesChannel implements Channel {
         normalized.chatJid,
         normalized.message.timestamp,
         'mention_required',
+        normalized.chat.isGroup,
       );
       writeResponse(res, 202, 'Ignored outgoing message without @Andrea mention');
       return;
@@ -2955,6 +3037,72 @@ export class BlueBubblesChannel implements Channel {
 
   getLinkedChatJid(): string | null {
     return buildBlueBubblesLinkedChatJid(this.config);
+  }
+
+  getConfiguredReplyGateMode(): BlueBubblesReplyGateMode {
+    return resolveConfiguredBlueBubblesReplyGateMode(this.config);
+  }
+
+  getEffectiveReplyGateMode(): BlueBubblesReplyGateMode {
+    return this.getHealthReplyGateMode();
+  }
+
+  getControlSnapshot(): BlueBubblesChannelControlSnapshot {
+    return {
+      connected: this.connected,
+      enabled: this.config.enabled,
+      groupFolder: this.config.groupFolder,
+      chatScope: this.config.chatScope,
+      sendEnabled: this.config.sendEnabled,
+      listenerHost: this.config.host,
+      listenerPort: this.activePort,
+      configuredBaseUrl: this.config.baseUrl,
+      activeBaseUrl: this.getActiveBaseUrl(),
+      candidateBaseUrls: this.getConfiguredBaseUrlCandidates(),
+      publicWebhookUrl: this.getPublicWebhookDisplayUrl(),
+      webhookRegistrationState: this.webhookRegistrationStatus,
+      webhookRegistrationDetail: this.webhookRegistrationDetail || 'none',
+      transportState: this.transportProbeStatus,
+      transportDetail: this.transportProbeDetail || 'none',
+      shadowPollLastOkAt: this.monitorState.shadowPollLastOkAt || 'none',
+      shadowPollLastError: this.monitorState.shadowPollLastError || 'none',
+      shadowPollMostRecentChat: this.monitorState.shadowPollMostRecentChat || 'none',
+      configuredReplyGateMode: this.getConfiguredReplyGateMode(),
+      effectiveReplyGateMode: this.getEffectiveReplyGateMode(),
+      lastInboundObservedAt: this.lastInboundObservedAt || 'none',
+      lastInboundChatJid: this.lastInboundChatJid || 'none',
+      lastInboundWasSelfAuthored: this.lastInboundChatJid
+        ? this.lastInboundWasSelfAuthored
+        : null,
+      lastOutboundResult: this.lastOutboundResult || 'none',
+      lastOutboundTargetKind: this.lastOutboundTargetKind || 'none',
+      lastOutboundTarget: this.lastOutboundTargetValue || 'none',
+      lastSendErrorDetail: this.lastSendErrorDetail || 'none',
+      detectionState: this.monitorState.detectionState,
+      detectionDetail: this.monitorState.detectionDetail || 'none',
+      detectionNextAction: this.monitorState.detectionNextAction || 'none',
+    };
+  }
+
+  async refreshControlState(
+    mode: 'transport' | 'webhook' | 'shadow' | 'all',
+  ): Promise<BlueBubblesChannelControlSnapshot> {
+    if (!this.connected) {
+      throw new Error('BlueBubbles channel is not connected.');
+    }
+    if (mode === 'transport' || mode === 'all') {
+      await this.probeBlueBubblesTransport();
+    }
+    if (mode === 'webhook' || mode === 'all') {
+      await this.probeBlueBubblesTransport();
+      await this.refreshBridgeReadiness();
+    }
+    if (mode === 'shadow' || mode === 'all') {
+      await this.runShadowMonitorOnce();
+    }
+    this.persistMonitorState();
+    this.emitHealth();
+    return this.getControlSnapshot();
   }
 
   async disconnect(): Promise<void> {

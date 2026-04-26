@@ -2990,24 +2990,66 @@ async function runCommunicationDraftCapability(
   }
 
   const messageAction =
-    context.channel === 'alexa' || !context.chatJid || !draft.thread?.id
+    context.channel === 'alexa' || !context.chatJid
       ? undefined
-      : createOrRefreshMessageActionFromDraft({
-          groupFolder: context.groupFolder,
-          presentationChannel: context.channel,
-          presentationChatJid: context.chatJid,
-          presentationThreadId: context.priorSubjectData?.threadId || null,
-          sourceType: 'communication_thread',
-          sourceKey: draft.thread.id,
-          sourceSummary: draft.summaryText || 'Drafted reply',
-          draftText: draft.draftText || replyText,
-          personName: draft.linkedSubjects[0]?.displayName || draft.thread.title,
-          threadTitle: draft.linkedLifeThreads[0]?.title || draft.thread.title,
-          communicationThreadId: draft.thread.id,
-          threadId: draft.linkedLifeThreads[0]?.id,
-          communicationContext: 'reply_followthrough',
-          now: context.now,
-        });
+      : draft.thread?.id
+        ? createOrRefreshMessageActionFromDraft({
+            groupFolder: context.groupFolder,
+            presentationChannel: context.channel,
+            presentationChatJid: context.chatJid,
+            presentationThreadId: context.priorSubjectData?.threadId || null,
+            sourceType: 'communication_thread',
+            sourceKey: draft.thread.id,
+            sourceSummary: draft.summaryText || 'Drafted reply',
+            draftText: draft.draftText || replyText,
+            personName: draft.linkedSubjects[0]?.displayName || draft.thread.title,
+            threadTitle: draft.linkedLifeThreads[0]?.title || draft.thread.title,
+            communicationThreadId: draft.thread.id,
+            threadId: draft.linkedLifeThreads[0]?.id,
+            communicationContext: 'reply_followthrough',
+            now: context.now,
+          })
+        : context.channel === 'bluebubbles' && draft.linkedSubjects[0]?.displayName
+          ? (() => {
+              const resolvedTarget = resolveBlueBubblesThreadTargetByName(
+                draft.linkedSubjects[0]!.displayName,
+              );
+              if (resolvedTarget.state !== 'resolved') {
+                return undefined;
+              }
+              const dedupeSeed = clipText(
+                normalizeText(draft.draftText || replyText).toLowerCase(),
+                80,
+              );
+              return createOrRefreshMessageActionFromDraft({
+                groupFolder: context.groupFolder,
+                presentationChannel: 'bluebubbles',
+                presentationChatJid: context.chatJid,
+                presentationThreadId: context.priorSubjectData?.threadId || null,
+                sourceType: 'manual_prompt',
+                sourceKey: `bluebubbles-channel-draft:${resolvedTarget.target.chatJid}:${dedupeSeed}`,
+                sourceSummary:
+                  draft.summaryText ||
+                  `Draft text message to ${resolvedTarget.target.displayName}.`,
+                draftText: draft.draftText || replyText,
+                personName: resolvedTarget.target.displayName,
+                threadTitle:
+                  draft.linkedLifeThreads[0]?.title || resolvedTarget.target.displayName,
+                threadId: draft.linkedLifeThreads[0]?.id,
+                communicationContext: 'general',
+                targetOverride: {
+                  kind: 'external_thread',
+                  chatJid: resolvedTarget.target.chatJid,
+                  threadId: null,
+                  replyToMessageId: null,
+                  isGroup: resolvedTarget.target.isGroup,
+                  personName: resolvedTarget.target.displayName,
+                },
+                targetChannelOverride: 'bluebubbles',
+                now: context.now,
+              });
+            })()
+          : undefined;
 
   const continuationCandidate = buildCommunicationContinuationCandidate({
     descriptor,

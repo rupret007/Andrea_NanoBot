@@ -11,6 +11,7 @@ import {
   findLatestOpenMessageActionForChat,
   listCommunicationThreadsForGroup,
   listMessageActionsForGroup,
+  listRecentMessagesForChat,
   updateCommunicationThread,
   updateMessageAction,
   updateTask,
@@ -32,9 +33,13 @@ import {
   BLUEBUBBLES_CANONICAL_SELF_THREAD_JID,
   canonicalizeBlueBubblesSelfThreadJid,
   expandBlueBubblesLogicalSelfThreadJids,
+  isBlueBubblesSelfThreadAliasJid,
 } from './bluebubbles-self-thread.js';
 import { rewriteBlueBubblesMessageDraft } from './messages-fluidity.js';
 import type {
+  BlueBubblesConversationalEligibility,
+  BlueBubblesConversationKind,
+  BlueBubblesDecisionPolicy,
   ChannelInlineAction,
   MessageActionExplanation,
   MessageActionLinkedRefs,
@@ -118,6 +123,11 @@ export interface MessageActionPresentation {
   primaryMessageActionId: string;
 }
 
+export interface ParsedMessageActionPresentation {
+  targetLabel: string | null;
+  draftText: string;
+}
+
 export type MessageActionOperation =
   | { kind: 'show' }
   | { kind: 'show_draft' }
@@ -167,10 +177,169 @@ export interface ResolveMessageActionForPromptParams {
   now?: Date;
 }
 
-const MESSAGE_ACTION_FOLLOWUP_CONTEXT_TTL_MS = 30 * 60 * 1000;
+export interface BlueBubblesMessageActionContinuityAction {
+  action: MessageActionRecord;
+  presentationChatJid: string;
+  targetChatJid: string | null;
+  engagedAt: string;
+  conversationKind: BlueBubblesConversationKind;
+  decisionPolicy: BlueBubblesDecisionPolicy;
+  conversationalEligibility: BlueBubblesConversationalEligibility;
+  requiresExplicitMention: boolean;
+  activePresentationAt: string | null;
+  eligibleFollowups: string[];
+  isActive: boolean;
+}
+
+export interface BlueBubblesMessageActionContinuitySnapshot {
+  sourceSelfThreadChatJid: string | null;
+  canonicalSelfThreadChatJid: string | null;
+  conversationKind: BlueBubblesConversationKind;
+  decisionPolicy: BlueBubblesDecisionPolicy;
+  conversationalEligibility: BlueBubblesConversationalEligibility;
+  requiresExplicitMention: boolean;
+  activeMessageActionId: string | null;
+  activeAction: MessageActionRecord | null;
+  activePresentationAt: string | null;
+  recentTargetChatJid: string;
+  recentTargetAt: string;
+  openMessageActionCount: number;
+  continuityState: 'idle' | 'draft_open' | 'awaiting_decision' | 'proof_gap';
+  proofCandidateChatJid: string;
+  eligibleFollowups: string[];
+  openActions: BlueBubblesMessageActionContinuityAction[];
+  rehydratedActionId: string | null;
+  supersededActionIds: string[];
+}
+
+export type BlueBubblesSelfThreadContinuityAction =
+  BlueBubblesMessageActionContinuityAction;
+
+export type BlueBubblesSelfThreadContinuitySnapshot =
+  BlueBubblesMessageActionContinuitySnapshot;
+
+export const MESSAGE_ACTION_FOLLOWUP_CONTEXT_TTL_MS = 30 * 60 * 1000;
+
+const BLUEBUBBLES_SELF_THREAD_ELIGIBLE_FOLLOWUPS = [
+  'show it again',
+  'make it shorter',
+  'make it more direct',
+  'save that',
+  'remind me instead',
+  'send it later',
+  'send it later tonight',
+] as const;
+
+const BLUEBUBBLES_EXPLICIT_ONLY_ELIGIBLE_FOLLOWUPS = [
+  'show it again',
+  'make it shorter',
+  'make it more direct',
+] as const;
 
 function normalizeText(value: string | null | undefined): string {
   return (value || '').replace(/\s+/g, ' ').trim();
+}
+
+function normalizeBlueBubblesConversationChatJid(
+  chatJid: string | null | undefined,
+): string | null {
+  const normalized =
+    canonicalizeBlueBubblesSelfThreadJid(chatJid) ||
+    normalizeText(chatJid || null) ||
+    null;
+  return normalized || null;
+}
+
+function resolveBlueBubblesConversationKind(
+  chatJid: string | null | undefined,
+): BlueBubblesConversationKind {
+  if (isBlueBubblesSelfThreadAliasJid(chatJid)) {
+    return 'self_thread';
+  }
+  const normalizedChatJid = normalizeBlueBubblesConversationChatJid(chatJid);
+  const knownChat = normalizedChatJid
+    ? getAllChats().find((chat) => chat.jid === normalizedChatJid)
+    : null;
+  return knownChat?.is_group ? 'group' : 'direct_1to1';
+}
+
+function isBlueBubblesSemiAutoDecisionPolicy(
+  policy: BlueBubblesDecisionPolicy,
+): boolean {
+  return (
+    policy === 'semi_auto_self_thread' ||
+    policy === 'semi_auto_recent_direct_1to1'
+  );
+}
+
+function resolveBlueBubblesDecisionPolicy(
+  conversationKind: BlueBubblesConversationKind,
+  context: {
+    hasFreshActiveAction: boolean;
+    hasFreshDraftPresentation: boolean;
+    hasFreshAndreaContext: boolean;
+  },
+): BlueBubblesDecisionPolicy {
+  if (conversationKind === 'self_thread') {
+    return 'semi_auto_self_thread';
+  }
+  if (
+    conversationKind === 'direct_1to1' &&
+    (context.hasFreshActiveAction ||
+      context.hasFreshDraftPresentation ||
+      context.hasFreshAndreaContext)
+  ) {
+    return 'semi_auto_recent_direct_1to1';
+  }
+  return 'explicit_only';
+}
+
+function resolveBlueBubblesConversationalEligibility(
+  decisionPolicy: BlueBubblesDecisionPolicy,
+): BlueBubblesConversationalEligibility {
+  return isBlueBubblesSemiAutoDecisionPolicy(decisionPolicy)
+    ? 'conversational_now'
+    : 'explicit_only';
+}
+
+function resolveBlueBubblesRequiresExplicitMention(
+  decisionPolicy: BlueBubblesDecisionPolicy,
+): boolean {
+  return decisionPolicy === 'explicit_only';
+}
+
+function resolveBlueBubblesEligibleFollowups(
+  decisionPolicy: BlueBubblesDecisionPolicy,
+): string[] {
+  return isBlueBubblesSemiAutoDecisionPolicy(decisionPolicy)
+    ? [...BLUEBUBBLES_SELF_THREAD_ELIGIBLE_FOLLOWUPS]
+    : [...BLUEBUBBLES_EXPLICIT_ONLY_ELIGIBLE_FOLLOWUPS];
+}
+
+function findFreshBlueBubblesAndreaContextMessage(params: {
+  chatJids: string[];
+  now: Date;
+}): ReturnType<typeof listRecentMessagesForChat>[number] | null {
+  const freshnessCutoff = params.now.getTime() - MESSAGE_ACTION_FOLLOWUP_CONTEXT_TTL_MS;
+  let freshest: ReturnType<typeof listRecentMessagesForChat>[number] | null = null;
+  let freshestTimestamp = Number.NEGATIVE_INFINITY;
+  for (const chatJid of [...new Set(params.chatJids)]) {
+    for (const message of listRecentMessagesForChat(chatJid, 12)) {
+      const timestamp = Date.parse(message.timestamp || '');
+      if (!Number.isFinite(timestamp) || timestamp < freshnessCutoff) {
+        continue;
+      }
+      const fromAndrea =
+        Boolean(message.is_bot_message) ||
+        (Boolean(message.is_from_me) && /^\s*Andrea:/i.test(message.content || ''));
+      if (!fromAndrea || timestamp <= freshestTimestamp) {
+        continue;
+      }
+      freshest = message;
+      freshestTimestamp = timestamp;
+    }
+  }
+  return freshest;
 }
 
 function normalizeBlueBubblesChatLookup(value: string | null | undefined): string {
@@ -228,6 +397,191 @@ function buildLinkedRefs(params: CreateMessageActionFromDraftParams): MessageAct
     delegationMode: params.delegationMode || null,
     delegationExplanation: params.delegationExplanation || null,
   };
+}
+
+function parseTargetConversation(
+  action: Pick<MessageActionRecord, 'targetConversationJson'>,
+): {
+  chatJid: string | null;
+  personName: string | null;
+} {
+  const parsed = parseJsonSafe<{
+    chatJid?: string | null;
+    personName?: string | null;
+  }>(action.targetConversationJson, {});
+  return {
+    chatJid: normalizeText(parsed.chatJid || null) || null,
+    personName: normalizeText(parsed.personName || null) || null,
+  };
+}
+
+function isOpenMessageActionStatus(status: MessageActionSendStatus): boolean {
+  return status !== 'sent' && status !== 'skipped';
+}
+
+function isActionableBlueBubblesDecisionStatus(
+  status: MessageActionSendStatus,
+): boolean {
+  return status === 'drafted' || status === 'approved' || status === 'failed';
+}
+
+function resolveBlueBubblesConversationPresentationChatJid(
+  action: Pick<MessageActionRecord, 'presentationChatJid'>,
+): string | null {
+  return normalizeBlueBubblesConversationChatJid(action.presentationChatJid);
+}
+
+function resolveBlueBubblesSelfThreadPresentationChatJid(
+  action: Pick<MessageActionRecord, 'presentationChatJid'>,
+): string | null {
+  const presentationChatJid =
+    resolveBlueBubblesConversationPresentationChatJid(action);
+  if (!presentationChatJid || !isBlueBubblesSelfThreadAliasJid(presentationChatJid)) {
+    return null;
+  }
+  return presentationChatJid;
+}
+
+function getMessageActionFreshnessTimestamp(
+  action: Pick<MessageActionRecord, 'lastActionAt' | 'lastUpdatedAt' | 'createdAt'>,
+): number {
+  return Date.parse(action.lastActionAt || action.lastUpdatedAt || action.createdAt || '');
+}
+
+function buildBlueBubblesMessageActionContinuityKey(
+  action: Pick<
+    MessageActionRecord,
+    | 'presentationChatJid'
+    | 'targetConversationJson'
+    | 'draftText'
+    | 'targetChannel'
+    | 'targetKind'
+  >,
+): string | null {
+  if (action.targetChannel !== 'bluebubbles' || action.targetKind !== 'external_thread') {
+    return null;
+  }
+  const presentationChatJid =
+    resolveBlueBubblesConversationPresentationChatJid(action);
+  const targetChatJid = parseTargetConversation(action).chatJid;
+  const normalizedDraft = normalizeText(action.draftText).toLowerCase();
+  if (!presentationChatJid || !targetChatJid || !normalizedDraft) {
+    return null;
+  }
+  return `${presentationChatJid}|${targetChatJid}|${normalizedDraft}`;
+}
+
+function buildBlueBubblesSelfThreadContinuityKey(
+  action: Pick<
+    MessageActionRecord,
+    | 'presentationChatJid'
+    | 'targetConversationJson'
+    | 'draftText'
+    | 'targetChannel'
+    | 'targetKind'
+  >,
+): string | null {
+  const presentationChatJid = resolveBlueBubblesSelfThreadPresentationChatJid(action);
+  if (!presentationChatJid) {
+    return null;
+  }
+  return buildBlueBubblesMessageActionContinuityKey({
+    ...action,
+    presentationChatJid,
+  });
+}
+
+function findFreshBlueBubblesDraftPresentation(params: {
+  chatJids: string[];
+  now: Date;
+}): ReturnType<typeof listRecentMessagesForChat>[number] | null {
+  const cutoff = params.now.getTime() - MESSAGE_ACTION_FOLLOWUP_CONTEXT_TTL_MS;
+  return params.chatJids
+    .flatMap((chatJid) => listRecentMessagesForChat(chatJid, 8))
+    .filter((message) => Boolean(message.is_bot_message))
+    .sort(
+      (left, right) =>
+        Date.parse(right.timestamp || '') - Date.parse(left.timestamp || ''),
+    )
+    .find((message) => {
+      const timestamp = Date.parse(message.timestamp || '');
+      if (!Number.isFinite(timestamp) || timestamp < cutoff) {
+        return false;
+      }
+      return Boolean(parseMessageActionPresentationText(message.content || ''));
+    }) || null;
+}
+
+function findFreshBlueBubblesSelfThreadDraftPresentation(params: {
+  chatJids: string[];
+  now: Date;
+}): ReturnType<typeof listRecentMessagesForChat>[number] | null {
+  return findFreshBlueBubblesDraftPresentation(params);
+}
+
+function listBlueBubblesMessageActionContinuityCandidates(params: {
+  groupFolder: string;
+  canonicalChatJid: string;
+}): Array<{
+  action: MessageActionRecord;
+  presentationChatJid: string;
+  targetChatJid: string | null;
+  engagedAt: string;
+  engagedAtMs: number;
+  continuityKey: string | null;
+}> {
+  return listMessageActionsForGroup({
+    groupFolder: params.groupFolder,
+    includeSent: false,
+    limit: 200,
+  })
+    .filter((action) => action.targetChannel === 'bluebubbles')
+    .filter((action) => action.targetKind === 'external_thread')
+    .filter((action) => isOpenMessageActionStatus(action.sendStatus))
+    .map((action) => {
+      const presentationChatJid =
+        resolveBlueBubblesConversationPresentationChatJid(action);
+      if (presentationChatJid !== params.canonicalChatJid) {
+        return null;
+      }
+      const engagedAt =
+        action.lastActionAt || action.lastUpdatedAt || action.createdAt;
+      const engagedAtMs = Date.parse(engagedAt || '');
+      if (!Number.isFinite(engagedAtMs)) {
+        return null;
+      }
+      return {
+        action,
+        presentationChatJid,
+        targetChatJid: parseTargetConversation(action).chatJid,
+        engagedAt,
+        engagedAtMs,
+        continuityKey: buildBlueBubblesMessageActionContinuityKey(action),
+      };
+    })
+    .filter(
+      (
+        entry,
+      ): entry is {
+        action: MessageActionRecord;
+        presentationChatJid: string;
+        targetChatJid: string | null;
+        engagedAt: string;
+        engagedAtMs: number;
+        continuityKey: string | null;
+      } => Boolean(entry),
+    )
+    .sort((left, right) => right.engagedAtMs - left.engagedAtMs);
+}
+
+function listBlueBubblesSelfThreadContinuityCandidates(params: {
+  groupFolder: string;
+  canonicalSelfThreadChatJid: string;
+}) {
+  return listBlueBubblesMessageActionContinuityCandidates({
+    groupFolder: params.groupFolder,
+    canonicalChatJid: params.canonicalSelfThreadChatJid,
+  });
 }
 
 function containsHighRiskMessagingCue(text: string): boolean {
@@ -808,6 +1162,30 @@ function buildTargetLine(record: MessageActionRecord): string {
     : 'Target: your Telegram companion.';
 }
 
+export function parseMessageActionPresentationText(
+  rawText: string,
+): ParsedMessageActionPresentation | null {
+  const normalized = rawText.replace(/\r\n/g, '\n').trim();
+  if (!normalized) return null;
+  const targetMatch = normalized.match(/^Target:\s*(.+?)(?: in Messages\.)$/mi);
+  const draftMatch = normalized.match(/(?:^|\n)Draft:\n([\s\S]*?)(?:\n\nStatus:|\nStatus:)/m);
+  if (!draftMatch?.[1]) {
+    return null;
+  }
+  const targetLabel =
+    targetMatch?.[1]?.trim() && targetMatch[1].trim().toLowerCase() !== 'that conversation'
+      ? targetMatch[1].trim()
+      : null;
+  const draftText = draftMatch[1].trim();
+  if (!draftText) {
+    return null;
+  }
+  return {
+    targetLabel,
+    draftText,
+  };
+}
+
 function extractExplicitPersonName(rawText: string): string | null {
   const normalized = normalizeText(rawText);
   const match = normalized.match(
@@ -1129,7 +1507,11 @@ export function interpretMessageActionFollowup(
   if (/^(keep (?:it|that)(?: as)? (?:a )?draft|keep as draft|leave it as draft)$/.test(normalized)) {
     return { kind: 'keep_draft' };
   }
-  if (/^(save under (?:the )?thread|save it under (?:the )?thread)$/.test(normalized)) {
+  if (
+    /^(save that|save this|save under (?:the )?thread|save it under (?:the )?thread)$/.test(
+      normalized,
+    )
+  ) {
     return { kind: 'save_to_thread' };
   }
   if (/^(shorter|make it shorter)$/.test(normalized)) {
@@ -2022,13 +2404,38 @@ export function resolveMessageActionForFollowup(
   params: ResolveMessageActionForPromptParams,
 ): MessageActionRecord | undefined {
   const now = params.now || new Date();
-  const current = findLatestChatMessageAction({
-    groupFolder: params.groupFolder,
-    chatJid: params.chatJid,
-  });
+  const recoverCurrent = (): MessageActionRecord | undefined => {
+    if (params.chatJid.startsWith('bb:')) {
+      return (
+        reconcileBlueBubblesMessageActionContinuity({
+          groupFolder: params.groupFolder,
+          chatJid: params.chatJid,
+          now,
+          allowRehydrate: true,
+        }).activeAction || undefined
+      );
+    }
+    return rehydrateBlueBubblesSelfThreadMessageAction(params);
+  };
+  const continuity = params.chatJid.startsWith('bb:')
+    ? reconcileBlueBubblesMessageActionContinuity({
+        groupFolder: params.groupFolder,
+        chatJid: params.chatJid,
+        now,
+        allowRehydrate: true,
+      })
+    : null;
+  const current =
+    continuity?.activeAction ||
+    findLatestChatMessageAction({
+      groupFolder: params.groupFolder,
+      chatJid: params.chatJid,
+    });
   const explicitPersonName = extractExplicitPersonName(params.rawText);
   if (!explicitPersonName) {
-    if (!current) return undefined;
+    if (!current) {
+      return recoverCurrent();
+    }
     const lastTouchedAtMs = Date.parse(
       current.lastActionAt || current.lastUpdatedAt || current.createdAt,
     );
@@ -2036,7 +2443,7 @@ export function resolveMessageActionForFollowup(
       !Number.isFinite(lastTouchedAtMs) ||
       lastTouchedAtMs + MESSAGE_ACTION_FOLLOWUP_CONTEXT_TTL_MS < now.getTime()
     ) {
-      return undefined;
+      return recoverCurrent();
     }
     return current;
   }
@@ -2053,6 +2460,11 @@ export function resolveMessageActionForFollowup(
     )[0];
   if (matchedAction) {
     return matchedAction;
+  }
+
+  const recovered = recoverCurrent();
+  if (recovered && actionMatchesPersonName(recovered, explicitPersonName)) {
+    return recovered;
   }
 
   const matchedThread = listCommunicationThreadsForGroup({
@@ -2077,7 +2489,7 @@ export function resolveMessageActionForFollowup(
       params.groupFolder,
       'communication_thread',
       matchedThread.id,
-    ) || current
+    ) || current || recovered
   );
 }
 
@@ -2085,6 +2497,14 @@ export function findLatestChatMessageAction(params: {
   groupFolder: string;
   chatJid: string;
 }): MessageActionRecord | undefined {
+  if (params.chatJid.startsWith('bb:')) {
+    const continuity = reconcileBlueBubblesMessageActionContinuity({
+      groupFolder: params.groupFolder,
+      chatJid: params.chatJid,
+      allowRehydrate: false,
+    });
+    return continuity.activeAction || continuity.openActions[0]?.action;
+  }
   const candidateChatJids = [
     ...new Set(expandBlueBubblesLogicalSelfThreadJids(params.chatJid)),
   ];
@@ -2107,5 +2527,451 @@ export function listOpenMessageActionsForGroup(groupFolder: string): MessageActi
     groupFolder,
     includeSent: false,
     limit: 100,
+  }).filter((action) => action.sendStatus !== 'skipped');
+}
+
+function compareBlueBubblesContinuitySnapshots(
+  left: BlueBubblesMessageActionContinuitySnapshot,
+  right: BlueBubblesMessageActionContinuitySnapshot,
+): number {
+  const leftActive = left.activeMessageActionId ? 0 : 1;
+  const rightActive = right.activeMessageActionId ? 0 : 1;
+  if (leftActive !== rightActive) {
+    return leftActive - rightActive;
+  }
+  const priority = (kind: BlueBubblesConversationKind): number => {
+    switch (kind) {
+      case 'self_thread':
+        return 0;
+      case 'direct_1to1':
+        return 1;
+      case 'group':
+        return 2;
+    }
+  };
+  const leftKind = priority(left.conversationKind);
+  const rightKind = priority(right.conversationKind);
+  if (leftKind !== rightKind) {
+    return leftKind - rightKind;
+  }
+  return Date.parse(right.recentTargetAt || '') - Date.parse(left.recentTargetAt || '');
+}
+
+export function reconcileBlueBubblesMessageActionContinuity(params: {
+  groupFolder: string;
+  chatJid?: string | null;
+  now?: Date;
+  allowRehydrate?: boolean;
+}): BlueBubblesMessageActionContinuitySnapshot {
+  const now = params.now || new Date();
+  const sourceSelfThreadChatJid =
+    params.chatJid && normalizeBlueBubblesConversationChatJid(params.chatJid)
+      ? params.chatJid
+      : BLUEBUBBLES_CANONICAL_SELF_THREAD_JID;
+  const canonicalSelfThreadChatJid =
+    normalizeBlueBubblesConversationChatJid(sourceSelfThreadChatJid) ||
+    BLUEBUBBLES_CANONICAL_SELF_THREAD_JID;
+  const conversationKind =
+    resolveBlueBubblesConversationKind(canonicalSelfThreadChatJid);
+  const supersededActionIds: string[] = [];
+  const nowIso = now.toISOString();
+  const freshnessCutoff = now.getTime() - MESSAGE_ACTION_FOLLOWUP_CONTEXT_TTL_MS;
+  let continuityCandidates = listBlueBubblesMessageActionContinuityCandidates({
+    groupFolder: params.groupFolder,
+    canonicalChatJid: canonicalSelfThreadChatJid,
   });
+  const duplicateActionGroups = new Map<
+    string,
+    Array<(typeof continuityCandidates)[number]>
+  >();
+  for (const candidate of continuityCandidates) {
+    if (
+      !candidate.continuityKey ||
+      !isActionableBlueBubblesDecisionStatus(candidate.action.sendStatus)
+    ) {
+      continue;
+    }
+    const group = duplicateActionGroups.get(candidate.continuityKey) || [];
+    group.push(candidate);
+    duplicateActionGroups.set(candidate.continuityKey, group);
+  }
+  for (const duplicates of duplicateActionGroups.values()) {
+    if (duplicates.length < 2) {
+      continue;
+    }
+    duplicates
+      .sort((left, right) => right.engagedAtMs - left.engagedAtMs)
+      .slice(1)
+      .forEach((duplicate) => {
+        updateMessageAction(duplicate.action.messageActionId, {
+          sendStatus: 'skipped',
+          followupAt: null,
+          scheduledTaskId: null,
+          requiresApproval: false,
+          approvedAt: null,
+          lastActionKind: 'skipped',
+          lastActionAt: nowIso,
+          lastUpdatedAt: nowIso,
+        });
+        const refreshed =
+          getMessageAction(duplicate.action.messageActionId) || duplicate.action;
+        syncOutcomeFromMessageActionRecord(refreshed, now);
+        supersededActionIds.push(duplicate.action.messageActionId);
+      });
+  }
+  if (supersededActionIds.length > 0) {
+    continuityCandidates = listBlueBubblesMessageActionContinuityCandidates({
+      groupFolder: params.groupFolder,
+      canonicalChatJid: canonicalSelfThreadChatJid,
+    });
+  }
+
+  let rehydratedActionId: string | null = null;
+  let recoveredFromChatJid: string | null = null;
+  let activeActionCandidate =
+    continuityCandidates.find((candidate) =>
+      isActionableBlueBubblesDecisionStatus(candidate.action.sendStatus) &&
+      candidate.engagedAtMs >= freshnessCutoff,
+    ) || null;
+  if (!activeActionCandidate && params.allowRehydrate) {
+    const draftChatJids =
+      conversationKind === 'self_thread'
+        ? [...new Set(expandBlueBubblesLogicalSelfThreadJids(sourceSelfThreadChatJid))]
+        : [canonicalSelfThreadChatJid];
+    const freshDraftPresentation = findFreshBlueBubblesDraftPresentation({
+      chatJids: draftChatJids,
+      now,
+    });
+    if (freshDraftPresentation) {
+      const recovered = createRehydratedBlueBubblesMessageAction({
+        groupFolder: params.groupFolder,
+        chatJid: freshDraftPresentation.chat_jid,
+        presentationText: freshDraftPresentation.content || '',
+        presentationMessageId: freshDraftPresentation.id,
+        now,
+      });
+      if (recovered) {
+        rehydratedActionId = recovered.messageActionId;
+        recoveredFromChatJid = freshDraftPresentation.chat_jid;
+        continuityCandidates = listBlueBubblesMessageActionContinuityCandidates({
+          groupFolder: params.groupFolder,
+          canonicalChatJid: canonicalSelfThreadChatJid,
+        });
+        activeActionCandidate =
+          continuityCandidates.find((candidate) =>
+            isActionableBlueBubblesDecisionStatus(candidate.action.sendStatus) &&
+            candidate.engagedAtMs >= freshnessCutoff,
+          ) || null;
+      }
+    }
+  }
+
+  const freshDraftPresentation = findFreshBlueBubblesDraftPresentation({
+    chatJids:
+      conversationKind === 'self_thread'
+        ? [...new Set(expandBlueBubblesLogicalSelfThreadJids(sourceSelfThreadChatJid))]
+        : [canonicalSelfThreadChatJid],
+    now,
+  });
+  const recentAndreaContextMessage = findFreshBlueBubblesAndreaContextMessage({
+    chatJids:
+      conversationKind === 'self_thread'
+        ? [...new Set(expandBlueBubblesLogicalSelfThreadJids(sourceSelfThreadChatJid))]
+        : [canonicalSelfThreadChatJid],
+    now,
+  });
+  const decisionPolicy = resolveBlueBubblesDecisionPolicy(conversationKind, {
+    hasFreshActiveAction: Boolean(activeActionCandidate),
+    hasFreshDraftPresentation: Boolean(freshDraftPresentation),
+    hasFreshAndreaContext: Boolean(recentAndreaContextMessage),
+  });
+  const conversationalEligibility =
+    resolveBlueBubblesConversationalEligibility(decisionPolicy);
+  const requiresExplicitMention =
+    resolveBlueBubblesRequiresExplicitMention(decisionPolicy);
+  const eligibleFollowups =
+    resolveBlueBubblesEligibleFollowups(decisionPolicy);
+  const continuityState:
+    | 'idle'
+    | 'draft_open'
+    | 'awaiting_decision'
+    | 'proof_gap' = activeActionCandidate
+    ? activeActionCandidate.action.sendStatus === 'approved'
+      ? 'awaiting_decision'
+      : 'draft_open'
+    : freshDraftPresentation
+      ? 'proof_gap'
+      : 'idle';
+  const recentTargetChatJid =
+    activeActionCandidate?.presentationChatJid ||
+    normalizeBlueBubblesConversationChatJid(freshDraftPresentation?.chat_jid) ||
+    normalizeBlueBubblesConversationChatJid(recentAndreaContextMessage?.chat_jid) ||
+    freshDraftPresentation?.chat_jid ||
+    recentAndreaContextMessage?.chat_jid ||
+    'none';
+  const recentTargetAt =
+    activeActionCandidate?.engagedAt ||
+    freshDraftPresentation?.timestamp ||
+    recentAndreaContextMessage?.timestamp ||
+    'none';
+  const activePresentationAt = activeActionCandidate?.engagedAt || null;
+  const openActions = continuityCandidates
+    .filter((candidate) =>
+      isActionableBlueBubblesDecisionStatus(candidate.action.sendStatus),
+    )
+    .map((candidate) => ({
+      action: candidate.action,
+      presentationChatJid: candidate.presentationChatJid,
+      targetChatJid: candidate.targetChatJid,
+      engagedAt: candidate.engagedAt,
+      conversationKind,
+      decisionPolicy,
+      conversationalEligibility,
+      requiresExplicitMention,
+      activePresentationAt: candidate.engagedAt,
+      eligibleFollowups: [...eligibleFollowups],
+      isActive:
+        activeActionCandidate?.action.messageActionId ===
+        candidate.action.messageActionId,
+    }))
+    .sort((left, right) => {
+      if (left.isActive !== right.isActive) {
+        return left.isActive ? -1 : 1;
+      }
+      return Date.parse(right.engagedAt) - Date.parse(left.engagedAt);
+    });
+
+  return {
+    sourceSelfThreadChatJid:
+      recoveredFromChatJid || sourceSelfThreadChatJid || null,
+    canonicalSelfThreadChatJid,
+    conversationKind,
+    decisionPolicy,
+    conversationalEligibility,
+    requiresExplicitMention,
+    activeMessageActionId: activeActionCandidate?.action.messageActionId || null,
+    activeAction: activeActionCandidate?.action || null,
+    activePresentationAt,
+    recentTargetChatJid,
+    recentTargetAt,
+    openMessageActionCount: openActions.length,
+    continuityState,
+    proofCandidateChatJid:
+      activeActionCandidate?.presentationChatJid ||
+      normalizeBlueBubblesConversationChatJid(freshDraftPresentation?.chat_jid) ||
+      freshDraftPresentation?.chat_jid ||
+      'none',
+    eligibleFollowups: continuityState === 'idle' ? [] : [...eligibleFollowups],
+    openActions,
+    rehydratedActionId,
+    supersededActionIds,
+  };
+}
+
+export function reconcileBlueBubblesSelfThreadContinuity(params: {
+  groupFolder: string;
+  chatJid?: string | null;
+  now?: Date;
+  allowRehydrate?: boolean;
+}): BlueBubblesSelfThreadContinuitySnapshot {
+  return reconcileBlueBubblesMessageActionContinuity(params);
+}
+
+export function listBlueBubblesMessageActionContinuitySnapshots(params: {
+  groupFolder: string;
+  now?: Date;
+  allowRehydrate?: boolean;
+}): BlueBubblesMessageActionContinuitySnapshot[] {
+  const now = params.now || new Date();
+  const candidateChatJids = new Set<string>([BLUEBUBBLES_CANONICAL_SELF_THREAD_JID]);
+  for (const chat of getAllChats()) {
+    if (!chat.jid.startsWith('bb:')) continue;
+    const normalizedChatJid = normalizeBlueBubblesConversationChatJid(chat.jid);
+    if (normalizedChatJid) {
+      candidateChatJids.add(normalizedChatJid);
+    }
+  }
+  for (const action of listMessageActionsForGroup({
+    groupFolder: params.groupFolder,
+    includeSent: false,
+    limit: 200,
+  })) {
+    if (action.targetChannel !== 'bluebubbles' || action.targetKind !== 'external_thread') {
+      continue;
+    }
+    const presentationChatJid =
+      resolveBlueBubblesConversationPresentationChatJid(action);
+    if (presentationChatJid) {
+      candidateChatJids.add(presentationChatJid);
+    }
+  }
+  return [...candidateChatJids]
+    .map((chatJid) =>
+      reconcileBlueBubblesMessageActionContinuity({
+        groupFolder: params.groupFolder,
+        chatJid,
+        now,
+        allowRehydrate: params.allowRehydrate,
+      }),
+    )
+    .filter(
+      (snapshot) =>
+        snapshot.openMessageActionCount > 0 ||
+        snapshot.continuityState !== 'idle' ||
+        (snapshot.conversationKind === 'direct_1to1' &&
+          snapshot.decisionPolicy === 'semi_auto_recent_direct_1to1' &&
+          snapshot.recentTargetChatJid !== 'none'),
+    )
+    .sort(compareBlueBubblesContinuitySnapshots);
+}
+
+function isBlueBubblesAndreaDirectedInstruction(rawText: string): boolean {
+  const normalized = normalizeText(rawText).toLowerCase();
+  return /(?:^|[\s([{\-])@andrea\b/.test(normalized);
+}
+
+export function canUseBareBlueBubblesMessageActionFollowup(params: {
+  rawText: string;
+  operation: MessageActionOperation;
+  continuity: BlueBubblesMessageActionContinuitySnapshot;
+}): boolean {
+  if (!params.continuity.activeAction) {
+    return false;
+  }
+  if (isBlueBubblesSemiAutoDecisionPolicy(params.continuity.decisionPolicy)) {
+    return (
+      params.operation.kind === 'show' ||
+      params.operation.kind === 'show_draft' ||
+      params.operation.kind === 'rewrite' ||
+      params.operation.kind === 'defer' ||
+      params.operation.kind === 'remind_instead' ||
+      params.operation.kind === 'save_to_thread'
+    );
+  }
+  return (
+    params.operation.kind === 'show' ||
+    params.operation.kind === 'show_draft' ||
+    params.operation.kind === 'rewrite' ||
+    params.operation.kind === 'why'
+  );
+}
+
+export function canApplyBlueBubblesMessageActionFollowup(params: {
+  rawText: string;
+  operation: MessageActionOperation;
+  continuity: BlueBubblesMessageActionContinuitySnapshot;
+}): boolean {
+  if (canUseBareBlueBubblesMessageActionFollowup(params)) {
+    return true;
+  }
+  if (params.continuity.conversationKind === 'self_thread') {
+    return (
+      isBlueBubblesAndreaDirectedInstruction(params.rawText) ||
+      isBlueBubblesExplicitSendAlias(params.rawText)
+    );
+  }
+  return isBlueBubblesAndreaDirectedInstruction(params.rawText);
+}
+
+export function ensureBlueBubblesSelfThreadMessageActionForReplyText(params: {
+  groupFolder: string;
+  chatJid: string;
+  replyText: string;
+  presentationMessageId?: string | null;
+  now?: Date;
+}): MessageActionRecord | undefined {
+  if (!isBlueBubblesSelfThreadAliasJid(params.chatJid)) {
+    return undefined;
+  }
+  const created = createRehydratedBlueBubblesMessageAction({
+    groupFolder: params.groupFolder,
+    chatJid: params.chatJid,
+    presentationText: params.replyText,
+    presentationMessageId: params.presentationMessageId || null,
+    now: params.now,
+  });
+  const continuity = reconcileBlueBubblesSelfThreadContinuity({
+    groupFolder: params.groupFolder,
+    chatJid: params.chatJid,
+    now: params.now,
+    allowRehydrate: false,
+  });
+  return continuity.activeAction || created;
+}
+
+function createRehydratedBlueBubblesMessageAction(params: {
+  groupFolder: string;
+  chatJid: string;
+  presentationText: string;
+  presentationMessageId?: string | null;
+  now?: Date;
+}): MessageActionRecord | undefined {
+  const now = params.now || new Date();
+  const parsed = parseMessageActionPresentationText(params.presentationText);
+  if (!parsed?.targetLabel || !parsed.draftText) {
+    return undefined;
+  }
+  const resolution = resolveBlueBubblesThreadTargetByName(parsed.targetLabel);
+  if (resolution.state !== 'resolved') {
+    return undefined;
+  }
+  const presentationChatJid =
+    normalizeBlueBubblesConversationChatJid(params.chatJid) || params.chatJid;
+  const dedupeSeed = clipText(
+    normalizeText(parsed.draftText).toLowerCase(),
+    80,
+  );
+  const action = createOrRefreshMessageActionFromDraft({
+    groupFolder: params.groupFolder,
+    presentationChannel: 'bluebubbles',
+    presentationChatJid,
+    sourceType: 'manual_prompt',
+    sourceKey: `rehydrated-bluebubbles-draft:${resolution.target.chatJid}:${dedupeSeed}`,
+    sourceSummary: `Draft text message to ${resolution.target.displayName}.`,
+    draftText: parsed.draftText,
+    personName: resolution.target.displayName,
+    threadTitle: resolution.target.displayName,
+    communicationContext: 'general',
+    targetOverride: {
+      kind: 'external_thread',
+      chatJid: resolution.target.chatJid,
+      threadId: null,
+      replyToMessageId: null,
+      isGroup: resolution.target.isGroup,
+      personName: resolution.target.displayName,
+    },
+    targetChannelOverride: 'bluebubbles',
+    now,
+  });
+  if (params.presentationMessageId) {
+    updateMessageAction(action.messageActionId, {
+      presentationMessageId: params.presentationMessageId,
+      presentationChatJid,
+      lastUpdatedAt: now.toISOString(),
+    });
+    return getMessageAction(action.messageActionId) || action;
+  }
+  return action;
+}
+
+function rehydrateBlueBubblesSelfThreadMessageAction(
+  params: ResolveMessageActionForPromptParams,
+): MessageActionRecord | undefined {
+  const continuity = isBlueBubblesSelfThreadAliasJid(params.chatJid)
+    ? reconcileBlueBubblesSelfThreadContinuity({
+        groupFolder: params.groupFolder,
+        chatJid: params.chatJid,
+        now: params.now,
+        allowRehydrate: true,
+      })
+    : null;
+  const recovered = continuity?.activeAction || null;
+  const explicitPersonName = extractExplicitPersonName(params.rawText);
+  if (
+    recovered &&
+    (!explicitPersonName || actionMatchesPersonName(recovered, explicitPersonName))
+  ) {
+    return recovered;
+  }
+  return undefined;
 }

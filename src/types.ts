@@ -458,6 +458,220 @@ export interface BlueBubblesContactRef {
   service?: string | null;
 }
 
+export type BlueBubblesProofState =
+  | 'live_proven'
+  | 'near_live_only'
+  | 'externally_blocked'
+  | 'degraded_but_usable'
+  | 'not_intended_for_trial';
+
+export type BlueBubblesBlockerOwner = 'none' | 'repo_side' | 'external';
+
+export interface BlueBubblesControlApiConfig {
+  enabled: boolean;
+  host: string;
+  port: number;
+  token: string;
+  baseUrl: string | null;
+}
+
+export interface BlueBubblesControlMcpConfig {
+  baseUrl: string;
+  token: string;
+}
+
+export interface BlueBubblesChannelControlSnapshot {
+  connected: boolean;
+  enabled: boolean;
+  groupFolder: string;
+  chatScope: string;
+  sendEnabled: boolean;
+  listenerHost: string;
+  listenerPort: number;
+  configuredBaseUrl: string | null;
+  activeBaseUrl: string | null;
+  candidateBaseUrls: string[];
+  publicWebhookUrl: string;
+  webhookRegistrationState: string;
+  webhookRegistrationDetail: string;
+  transportState: string;
+  transportDetail: string;
+  shadowPollLastOkAt: string;
+  shadowPollLastError: string;
+  shadowPollMostRecentChat: string;
+  configuredReplyGateMode: BlueBubblesReplyGateMode;
+  effectiveReplyGateMode: BlueBubblesReplyGateMode;
+  lastInboundObservedAt: string;
+  lastInboundChatJid: string;
+  lastInboundWasSelfAuthored: boolean | null;
+  lastOutboundResult: string;
+  lastOutboundTargetKind: string;
+  lastOutboundTarget: string;
+  lastSendErrorDetail: string;
+  detectionState: string;
+  detectionDetail: string;
+  detectionNextAction: string;
+}
+
+export interface BlueBubblesControlStatus {
+  enabled: boolean;
+  configured: boolean;
+  connected: boolean;
+  groupFolder: string;
+  chatScope: string;
+  sendEnabled: boolean;
+  listenerHost: string;
+  listenerPort: number;
+  configuredBaseUrl: string | null;
+  activeBaseUrl: string | null;
+  candidateBaseUrls: string[];
+  publicWebhookUrl: string;
+  webhookRegistrationState: string;
+  webhookRegistrationDetail: string;
+  transportState: string;
+  transportDetail: string;
+  shadowPollLastOkAt: string;
+  shadowPollLastError: string;
+  shadowPollMostRecentChat: string;
+  configuredReplyGateMode: BlueBubblesReplyGateMode;
+  effectiveReplyGateMode: BlueBubblesReplyGateMode;
+  proofState: BlueBubblesProofState;
+  blocker: string;
+  blockerOwner: BlueBubblesBlockerOwner;
+  nextAction: string;
+  detectionState: string;
+  detectionDetail: string;
+  detectionNextAction: string;
+  mostRecentEngagedChatJid: string;
+  mostRecentEngagedAt: string;
+  lastInboundAt: string;
+  lastInboundChatJid: string;
+  lastInboundWasSelfAuthored: boolean;
+  lastOutboundResult: string;
+  lastOutboundTargetKind: string;
+  lastOutboundTarget: string;
+  recentTargetChatJid: string;
+  recentTargetAt: string;
+  openMessageActionCount: number;
+  continuityState: BlueBubblesContinuityState;
+  proofCandidateChatJid: string;
+  activeMessageActionId: string;
+  conversationKind: BlueBubblesConversationKind;
+  decisionPolicy: BlueBubblesDecisionPolicy;
+  conversationalEligibility: BlueBubblesConversationalEligibility;
+  requiresExplicitMention: boolean;
+  activePresentationAt: string | null;
+  eligibleFollowups: string[];
+  canonicalSelfThreadChatJid: string;
+  sourceSelfThreadChatJid: string;
+  messageActionProofState: 'none' | 'fresh' | 'stale';
+  messageActionProofChatJid: string;
+  messageActionProofAt: string;
+}
+
+export interface BlueBubblesProofReport {
+  proofState: BlueBubblesProofState;
+  blocker: string;
+  blockerOwner: BlueBubblesBlockerOwner;
+  nextAction: string;
+  detail: string;
+  configuredReplyGateMode: BlueBubblesReplyGateMode;
+  effectiveReplyGateMode: BlueBubblesReplyGateMode;
+  messageActionProofState: 'none' | 'fresh' | 'stale';
+  messageActionProofChatJid: string;
+  messageActionProofAt: string;
+  messageActionProofDetail: string;
+  detectionState: string;
+  detectionDetail: string;
+  detectionNextAction: string;
+  transportState: string;
+  transportDetail: string;
+  webhookRegistrationState: string;
+  webhookRegistrationDetail: string;
+  recentTargetChatJid: string;
+  recentTargetAt: string;
+  openMessageActionCount: number;
+  continuityState: BlueBubblesContinuityState;
+  proofCandidateChatJid: string;
+  activeMessageActionId: string;
+  conversationKind: BlueBubblesConversationKind;
+  decisionPolicy: BlueBubblesDecisionPolicy;
+  conversationalEligibility: BlueBubblesConversationalEligibility;
+  requiresExplicitMention: boolean;
+  activePresentationAt: string | null;
+  eligibleFollowups: string[];
+  canonicalSelfThreadChatJid: string;
+  sourceSelfThreadChatJid: string;
+}
+
+export interface BlueBubblesChatSummary {
+  chatJid: string;
+  name: string | null;
+  isGroup: boolean;
+  lastMessageAt: string | null;
+  lastInboundAt: string | null;
+  lastOutboundAt: string | null;
+  effectiveReplyGateMode: BlueBubblesReplyGateMode;
+}
+
+export interface BlueBubblesMessageView {
+  messageId: string;
+  chatJid: string;
+  timestamp: string;
+  isBotMessage: boolean;
+  isFromMe: boolean;
+  preview: string;
+  replyToMessageId?: string;
+}
+
+export type BlueBubblesMessageActionOperationKind =
+  | 'send'
+  | 'defer'
+  | 'remind_instead'
+  | 'save_to_thread';
+
+export interface BlueBubblesOpenMessageAction {
+  actionId: string;
+  chatJid: string;
+  status: MessageActionSendStatus;
+  draftPreview: string;
+  allowedOperations: BlueBubblesMessageActionOperationKind[];
+  createdAt: string;
+  scheduledFor: string | null;
+  isActive: boolean;
+  conversationKind: BlueBubblesConversationKind;
+  decisionPolicy: BlueBubblesDecisionPolicy;
+  conversationalEligibility: BlueBubblesConversationalEligibility;
+  requiresExplicitMention: boolean;
+  activePresentationAt: string | null;
+  eligibleFollowups: string[];
+}
+
+export type BlueBubblesContinuityState =
+  | 'idle'
+  | 'draft_open'
+  | 'awaiting_decision'
+  | 'proof_gap';
+
+export type BlueBubblesConversationKind =
+  | 'self_thread'
+  | 'direct_1to1'
+  | 'group';
+
+export type BlueBubblesDecisionPolicy =
+  | 'semi_auto_self_thread'
+  | 'semi_auto_recent_direct_1to1'
+  | 'explicit_only';
+
+export type BlueBubblesConversationalEligibility =
+  | 'conversational_now'
+  | 'explicit_only';
+
+export interface BlueBubblesExecuteMessageActionRequest {
+  operation: BlueBubblesMessageActionOperationKind;
+  timingHint?: string | null;
+}
+
 export type KnowledgeSourceType =
   | 'uploaded_document'
   | 'generated_note'
