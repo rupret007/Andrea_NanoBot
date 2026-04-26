@@ -17,6 +17,7 @@ import {
   listBlueBubblesMessageActionContinuitySnapshots,
   reconcileBlueBubblesMessageActionContinuity,
   reconcileBlueBubblesSelfThreadContinuity,
+  isBlueBubblesProofDrillAction,
   resolveBlueBubblesProofDrillSnapshot,
 } from './message-actions.js';
 import {
@@ -393,6 +394,58 @@ function findBlueBubblesSameThreadDecisionConfirmation(
     if (message.is_bot_message) {
       return {
         inboundAt: decisionInbound.timestamp,
+        outboundAt: message.timestamp,
+      };
+    }
+  }
+  return null;
+}
+
+function isLikelyBlueBubblesProofDrillConfirmation(
+  content: string | null | undefined,
+): boolean {
+  const normalized = (content || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  return (
+    normalized.includes(
+      'bluebubbles proof drill deferred decision is recorded',
+    ) || normalized.includes('proof drill decision is recorded')
+  );
+}
+
+function findBlueBubblesProofDrillConfirmationAfterAction(
+  proofChatJid: string | null,
+  action: ReturnType<typeof listMessageActionsForGroup>[number] | null,
+  messages: Array<ReturnType<typeof listRecentMessagesForChat>[number]>,
+): { inboundAt: string; outboundAt: string } | null {
+  if (!proofChatJid || !action || !isBlueBubblesProofDrillAction(action)) {
+    return null;
+  }
+  if (action.sendStatus !== 'deferred') return null;
+  const actionTimestamp = parseFieldTrialIsoTime(
+    action.lastActionAt || action.sentAt,
+  );
+  if (actionTimestamp == null) return null;
+  const ordered = [...messages]
+    .filter(
+      (message) =>
+        canonicalizeBlueBubblesSelfThreadJid(message.chat_jid) ===
+          proofChatJid || message.chat_jid === proofChatJid,
+    )
+    .sort(
+      (left, right) =>
+        Date.parse(left.timestamp || '') - Date.parse(right.timestamp || ''),
+    );
+  for (const message of ordered) {
+    const messageTimestamp = parseFieldTrialIsoTime(message.timestamp);
+    if (messageTimestamp == null || messageTimestamp < actionTimestamp) {
+      continue;
+    }
+    if (
+      message.is_bot_message &&
+      isLikelyBlueBubblesProofDrillConfirmation(message.content)
+    ) {
+      return {
+        inboundAt: action.lastActionAt || action.sentAt || message.timestamp,
         outboundAt: message.timestamp,
       };
     }
@@ -1754,6 +1807,11 @@ function buildBlueBubblesTruth(
         proofChainChatJid,
         matchingProofChainMessageAction.action.lastActionAt ||
           matchingProofChainMessageAction.action.sentAt,
+        recentProofChainMessages,
+      ) ||
+      findBlueBubblesProofDrillConfirmationAfterAction(
+        proofChainChatJid,
+        matchingProofChainMessageAction.action,
         recentProofChainMessages,
       )
     : null;

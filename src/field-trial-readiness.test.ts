@@ -899,6 +899,126 @@ describe('field-trial readiness', () => {
     expect(truth.bluebubbles.detail).toContain("Andrea's confirmation");
   });
 
+  it('credits BlueBubbles proof drill from deferred action plus same-thread confirmation', () => {
+    vi.stubEnv('BLUEBUBBLES_ENABLED', 'true');
+    vi.stubEnv('BLUEBUBBLES_BASE_URL', 'http://macbook-pro.local:1234');
+    vi.stubEnv('BLUEBUBBLES_PASSWORD', 'secret');
+    vi.stubEnv('BLUEBUBBLES_GROUP_FOLDER', 'main');
+    vi.stubEnv('BLUEBUBBLES_CHAT_SCOPE', 'all_synced');
+    vi.stubEnv(
+      'BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL',
+      'http://192.168.5.136:4305',
+    );
+    vi.stubEnv('BLUEBUBBLES_WEBHOOK_SECRET', 'hook-secret');
+    vi.stubEnv('BLUEBUBBLES_SEND_ENABLED', 'true');
+
+    const snapshot: HostControlSnapshot = {
+      paths: resolveHostControlPaths(tempDir),
+      nodeRuntime: null,
+      hostState: null,
+      readyState: null,
+      assistantHealthState: {
+        bootId: 'boot-blue-proof-drill',
+        pid: process.pid,
+        appVersion: '1.0.0-test',
+        updatedAt: '2026-04-07T20:10:00.000Z',
+        channels: [
+          {
+            name: 'bluebubbles',
+            configured: true,
+            state: 'ready',
+            updatedAt: '2026-04-07T20:10:00.000Z',
+            detail:
+              'listener 0.0.0.0:4305/bluebubbles/webhook | scope all_synced | reply gate direct_1to1 | transport reachable/auth ok (200) | webhook registration registered on the BlueBubbles server as webhook 1 | webhook registration state registered | transport probe state reachable | detection healthy',
+          },
+        ],
+      },
+      telegramRoundtripState: null,
+      telegramTransportState: null,
+      runtimeAuditState: null,
+    };
+
+    storeChatMetadata(
+      'bb:iMessage;-;+14695405551',
+      '2026-04-07T20:00:00.000Z',
+      'Andrea Self',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'bb:proof-drill-ready',
+      chat_jid: 'bb:iMessage;-;+14695405551',
+      sender: 'Andrea',
+      sender_name: 'Andrea',
+      content: 'Andrea: BlueBubbles proof drill is ready.',
+      timestamp: '2026-04-07T20:04:00.000Z',
+      is_from_me: true,
+      is_bot_message: true,
+    });
+    storeMessage({
+      id: 'bb:proof-drill-confirmed',
+      chat_jid: 'bb:iMessage;-;+14695405551',
+      sender: 'Andrea',
+      sender_name: 'Andrea',
+      content: 'Andrea: BlueBubbles proof drill deferred decision is recorded.',
+      timestamp: '2026-04-07T20:04:31.000Z',
+      is_from_me: true,
+      is_bot_message: true,
+    });
+    upsertMessageAction({
+      messageActionId: 'msg-action-proof-drill-1',
+      groupFolder: 'main',
+      sourceType: 'manual_prompt',
+      sourceKey: 'bluebubbles-proof-drill:self-thread:1777227219252',
+      sourceSummary: 'BlueBubbles same-thread proof drill.',
+      targetKind: 'external_thread',
+      targetChannel: 'bluebubbles',
+      targetConversationJson: JSON.stringify({
+        kind: 'external_thread',
+        chatJid: 'bb:iMessage;-;+14695405551',
+        personName: 'Andrea self-thread',
+      }),
+      draftText:
+        'BlueBubbles proof drill: keep this unsent and use send it later tonight to record the deferred same-thread decision.',
+      trustLevel: 'approve_before_send',
+      sendStatus: 'deferred',
+      followupAt: '2026-04-08T01:00:00.000Z',
+      requiresApproval: true,
+      delegationRuleId: null,
+      delegationMode: 'always_ask',
+      explanationJson: null,
+      linkedRefsJson: JSON.stringify({
+        chatJid: 'bb:iMessage;-;+14695405551',
+        personName: 'Andrea self-thread',
+        bluebubblesProofDrill: true,
+        proofDrillStartedAt: '2026-04-07T20:04:00.000Z',
+      }),
+      platformMessageId: null,
+      scheduledTaskId: null,
+      approvedAt: null,
+      lastActionKind: 'remind_instead',
+      lastActionAt: '2026-04-07T20:04:30.000Z',
+      dedupeKey: 'proof-drill-key-1',
+      presentationChatJid: 'bb:iMessage;-;+14695405551',
+      presentationThreadId: null,
+      presentationMessageId: 'bb:proof-drill-ready',
+      createdAt: '2026-04-07T20:04:00.000Z',
+      lastUpdatedAt: '2026-04-07T20:04:30.000Z',
+      sentAt: null,
+    });
+
+    const truth = buildFieldTrialOperatorTruth({
+      projectRoot: tempDir,
+      hostSnapshot: snapshot,
+      windowsHost: null,
+    });
+
+    expect(truth.bluebubbles.proofState).toBe('live_proven');
+    expect(truth.bluebubbles.messageActionProofState).toBe('fresh');
+    expect(truth.bluebubbles.proofDrillState).toBe('deferred');
+    expect(truth.bluebubbles.detail).toContain("Andrea's confirmation");
+  });
+
   it('parses BlueBubbles direct companion chats as conversational 1:1 mode', () => {
     vi.stubEnv('BLUEBUBBLES_ENABLED', 'true');
     vi.stubEnv('BLUEBUBBLES_BASE_URL', 'http://macbook-pro.local:1234');
