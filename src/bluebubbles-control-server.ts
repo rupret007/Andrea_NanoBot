@@ -147,6 +147,30 @@ function emitBlueBubblesProofDrillPlatformEvent(params: {
   confirmationMessageId?: string | null;
 }): void {
   const correlationId = `bluebubbles-proof-drill:${params.actionId}`;
+  const eventAt = params.now.toISOString();
+  const isStarted = params.event === 'proof_drill_started';
+  const metadata = {
+    surface: 'bluebubbles',
+    event: params.event,
+    messageActionId: params.actionId,
+    chatJid: params.chatJid,
+    confirmationMessageId: params.confirmationMessageId || '',
+    continuityState: isStarted ? 'draft_open' : 'idle',
+    messageActionProofState: isStarted ? 'none' : 'fresh',
+    messageActionProofChatJid: params.chatJid,
+    mostRecentEngagedChatJid: params.chatJid,
+    proofCandidateChatJid: params.chatJid,
+    activeMessageActionId: isStarted ? params.actionId : 'none',
+    openMessageActionCount: isStarted ? '1' : '0',
+    conversationKind: 'self_thread',
+    decisionPolicy: 'semi_auto_self_thread',
+    conversationalEligibility: 'conversational_now',
+    requiresExplicitMention: 'false',
+    activePresentationAt: isStarted ? eventAt : '',
+    recentTargetAt: eventAt,
+    eligibleFollowups:
+      'show it again | make it shorter | make it more direct | save that | remind me instead | send it later | send it later tonight',
+  };
   void emitAndreaPlatformTraceEvent({
     traceId: `${correlationId}:${params.event}:${params.now.getTime()}`,
     traceKind: 'proof',
@@ -157,13 +181,7 @@ function emitBlueBubblesProofDrillPlatformEvent(params: {
       messageActionId: params.actionId,
       chatJid: params.chatJid,
     },
-    metadata: {
-      surface: 'bluebubbles',
-      event: params.event,
-      messageActionId: params.actionId,
-      chatJid: params.chatJid,
-      confirmationMessageId: params.confirmationMessageId || '',
-    },
+    metadata,
   });
   void emitAndreaPlatformProofEvent({
     surface: 'bluebubbles',
@@ -178,12 +196,7 @@ function emitBlueBubblesProofDrillPlatformEvent(params: {
       params.state === 'LIVE_PROVEN'
         ? null
         : 'In the same BlueBubbles self-thread, say `send it later tonight`.',
-    metadata: {
-      event: params.event,
-      messageActionId: params.actionId,
-      chatJid: params.chatJid,
-      confirmationMessageId: params.confirmationMessageId || '',
-    },
+    metadata,
   });
 }
 

@@ -14663,7 +14663,27 @@ async function main(): Promise<void> {
               metadata: {
                 surface: 'bluebubbles',
                 event: 'proof_drill_started',
+                messageActionId: started.action.messageActionId,
+                chatJid: started.action.presentationChatJid || chatJid,
                 confirmationMessageId: sent.platformMessageId || '',
+                continuityState: 'draft_open',
+                messageActionProofState: 'none',
+                messageActionProofChatJid:
+                  started.action.presentationChatJid || chatJid,
+                mostRecentEngagedChatJid:
+                  started.action.presentationChatJid || chatJid,
+                proofCandidateChatJid:
+                  started.action.presentationChatJid || chatJid,
+                activeMessageActionId: started.action.messageActionId,
+                openMessageActionCount: '1',
+                conversationKind: 'self_thread',
+                decisionPolicy: 'semi_auto_self_thread',
+                conversationalEligibility: 'conversational_now',
+                requiresExplicitMention: 'false',
+                activePresentationAt: companionNow.toISOString(),
+                recentTargetAt: companionNow.toISOString(),
+                eligibleFollowups:
+                  'show it again | make it shorter | make it more direct | save that | remind me instead | send it later | send it later tonight',
               },
             });
             void emitAndreaPlatformProofEvent({
@@ -14680,6 +14700,24 @@ async function main(): Promise<void> {
                 event: 'proof_drill_started',
                 messageActionId: started.action.messageActionId,
                 chatJid: started.action.presentationChatJid || chatJid,
+                continuityState: 'draft_open',
+                messageActionProofState: 'none',
+                messageActionProofChatJid:
+                  started.action.presentationChatJid || chatJid,
+                mostRecentEngagedChatJid:
+                  started.action.presentationChatJid || chatJid,
+                proofCandidateChatJid:
+                  started.action.presentationChatJid || chatJid,
+                activeMessageActionId: started.action.messageActionId,
+                openMessageActionCount: '1',
+                conversationKind: 'self_thread',
+                decisionPolicy: 'semi_auto_self_thread',
+                conversationalEligibility: 'conversational_now',
+                requiresExplicitMention: 'false',
+                activePresentationAt: companionNow.toISOString(),
+                recentTargetAt: companionNow.toISOString(),
+                eligibleFollowups:
+                  'show it again | make it shorter | make it more direct | save that | remind me instead | send it later | send it later tonight',
               },
             });
             logger.info(
