@@ -222,7 +222,6 @@ async function sendTelegramMessage(
   }
 }
 
-
 async function sendTelegramArtifact(
   api: { sendPhoto: Api['sendPhoto'] },
   chatId: string | number,
@@ -238,7 +237,10 @@ async function sendTelegramArtifact(
   }
   const sent = await api.sendPhoto(
     chatId,
-    new InputFile(Buffer.from(artifact.bytesBase64, 'base64'), artifact.filename),
+    new InputFile(
+      Buffer.from(artifact.bytesBase64, 'base64'),
+      artifact.filename,
+    ),
     {
       ...(options.message_thread_id
         ? { message_thread_id: options.message_thread_id }
@@ -346,10 +348,7 @@ export function extractTelegramReplyRef(
   const senderId =
     replied.from?.id === undefined ? undefined : replied.from.id.toString();
   const senderName =
-    replied.from?.first_name ||
-    replied.from?.username ||
-    senderId ||
-    undefined;
+    replied.from?.first_name || replied.from?.username || senderId || undefined;
 
   return {
     message_id: replied.message_id.toString(),
@@ -431,7 +430,7 @@ export class TelegramChannel implements Channel {
         lastError:
           patch.lastError !== undefined
             ? patch.lastError
-            : previous?.lastError ?? null,
+            : (previous?.lastError ?? null),
         lastErrorClass:
           patch.lastErrorClass ?? previous?.lastErrorClass ?? 'none',
         webhookPresent:
@@ -625,9 +624,7 @@ export class TelegramChannel implements Channel {
       classification.errorClass === 'webhook_active' ||
       classification.errorClass === 'shared_token_suspected' ||
       classification.errorClass === 'token_rotation_required';
-    this.consecutiveExternalConflicts = conflictNow
-      ? conflictBefore + 1
-      : 0;
+    this.consecutiveExternalConflicts = conflictNow ? conflictBefore + 1 : 0;
 
     const now = new Date().toISOString();
     const lastPollConflictAt =
@@ -755,45 +752,43 @@ export class TelegramChannel implements Channel {
         }
       };
 
-      this.bot!
-        .start({
-          onStart: async (botInfo) => {
-            await this.configureBotMetadataOnce();
-            const readyAt = new Date().toISOString();
-            this.recoveryAttempts = 0;
-            this.updateHealth({
-              state: 'ready',
-              lastReadyAt: readyAt,
-              lastError: null,
-              detail: `Telegram long polling connected as @${botInfo.username}.`,
-            });
-            this.persistTransportState({
-              status: 'ready',
-              detail: `Telegram long polling connected as @${botInfo.username}.`,
-              lastError: null,
-              lastErrorClass: 'none',
-              webhookPresent: false,
-              webhookUrl: null,
-              externalConsumerSuspected: false,
-              tokenRotationRequired: false,
-              consecutiveExternalConflicts: this.consecutiveExternalConflicts,
-            });
-            logger.info(
-              {
-                component: 'telegram',
-                username: botInfo.username,
-                id: botInfo.id,
-              },
-              'Telegram bot connected',
-            );
-            console.log(`\n  Telegram bot: @${botInfo.username}`);
-            console.log(
-              '  Send /help for usage, /chatid for chat ID, or /registermain in DM to bootstrap main chat\n',
-            );
-            settleReady();
-          },
-        })
-        .catch(settleFailure);
+      this.bot!.start({
+        onStart: async (botInfo) => {
+          await this.configureBotMetadataOnce();
+          const readyAt = new Date().toISOString();
+          this.recoveryAttempts = 0;
+          this.updateHealth({
+            state: 'ready',
+            lastReadyAt: readyAt,
+            lastError: null,
+            detail: `Telegram long polling connected as @${botInfo.username}.`,
+          });
+          this.persistTransportState({
+            status: 'ready',
+            detail: `Telegram long polling connected as @${botInfo.username}.`,
+            lastError: null,
+            lastErrorClass: 'none',
+            webhookPresent: false,
+            webhookUrl: null,
+            externalConsumerSuspected: false,
+            tokenRotationRequired: false,
+            consecutiveExternalConflicts: this.consecutiveExternalConflicts,
+          });
+          logger.info(
+            {
+              component: 'telegram',
+              username: botInfo.username,
+              id: botInfo.id,
+            },
+            'Telegram bot connected',
+          );
+          console.log(`\n  Telegram bot: @${botInfo.username}`);
+          console.log(
+            '  Send /help for usage, /chatid for chat ID, or /registermain in DM to bootstrap main chat\n',
+          );
+          settleReady();
+        },
+      }).catch(settleFailure);
     });
   }
 
@@ -1253,15 +1248,20 @@ export class TelegramChannel implements Channel {
 
     try {
       const numericId = jid.replace(/^tg:/, '');
-      const result = await sendTelegramArtifact(this.bot.api, numericId, artifact, {
-        ...(options.threadId
-          ? { message_thread_id: parseInt(options.threadId, 10) }
-          : {}),
-        ...(options.replyToMessageId
-          ? { reply_to_message_id: parseInt(options.replyToMessageId, 10) }
-          : {}),
-        caption: options.caption,
-      });
+      const result = await sendTelegramArtifact(
+        this.bot.api,
+        numericId,
+        artifact,
+        {
+          ...(options.threadId
+            ? { message_thread_id: parseInt(options.threadId, 10) }
+            : {}),
+          ...(options.replyToMessageId
+            ? { reply_to_message_id: parseInt(options.replyToMessageId, 10) }
+            : {}),
+          caption: options.caption,
+        },
+      );
       logger.info(
         {
           component: 'telegram',
@@ -1275,7 +1275,9 @@ export class TelegramChannel implements Channel {
       );
       return {
         platformMessageId: result.platformMessageId,
-        platformMessageIds: result.platformMessageId ? [result.platformMessageId] : [],
+        platformMessageIds: result.platformMessageId
+          ? [result.platformMessageId]
+          : [],
         threadId: options.threadId || null,
       };
     } catch (err) {

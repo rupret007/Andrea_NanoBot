@@ -30,12 +30,12 @@ describe('assistant profile pack', () => {
       'someday',
       'done',
     ]);
-    expect(ANDREA_CAPABILITY_PACKAGES.some((pack) => pack.id === 'meeting_prep')).toBe(
-      true,
-    );
-    expect(ANDREA_CAPABILITY_PACKAGES.some((pack) => pack.id === 'repo_standup')).toBe(
-      true,
-    );
+    expect(
+      ANDREA_CAPABILITY_PACKAGES.some((pack) => pack.id === 'meeting_prep'),
+    ).toBe(true);
+    expect(
+      ANDREA_CAPABILITY_PACKAGES.some((pack) => pack.id === 'repo_standup'),
+    ).toBe(true);
     expect(buildAndreaCapabilityPackagingLine()).toContain('meeting prep');
     expect(buildAndreaCapabilityPackagingLine()).toContain('life threads');
   });
@@ -74,7 +74,11 @@ describe('assistant profile pack', () => {
     expect(ANDREA_RITUAL_MANIFEST).toHaveLength(7);
 
     const snapshots = buildAndreaPlatformConfigSnapshots([]);
-    expect(snapshots.map((snapshot) => `${snapshot.component}:${snapshot.configName}`)).toEqual([
+    expect(
+      snapshots.map(
+        (snapshot) => `${snapshot.component}:${snapshot.configName}`,
+      ),
+    ).toEqual([
       'andrea.memory:memory_profile_pack',
       'andrea.memory:memory_freshness_rollup',
       'andrea.memory:memory_intelligence_report',

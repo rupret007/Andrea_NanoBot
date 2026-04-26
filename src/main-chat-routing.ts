@@ -15,10 +15,7 @@ export type MainChatRoutingDecision =
 type RoutingMessage = Pick<NewMessage, 'content' | 'reply_to_id'>;
 
 function countWords(text: string): number {
-  return text
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean).length;
+  return text.trim().split(/\s+/).filter(Boolean).length;
 }
 
 function isLikelyFreshCompanionAsk(message: RoutingMessage): boolean {

@@ -8,13 +8,17 @@ import type { ChannelHealthSnapshot, RuntimeBackendStatus } from './types.js';
 
 const SHELL_GATEWAY_BASE_URL = (
   process.env.ANDREA_PLATFORM_SHELL_GATEWAY_URL || ''
-).trim().replace(/\/+$/, '');
+)
+  .trim()
+  .replace(/\/+$/, '');
 const COORDINATOR_BASE_URL = (
   ANDREA_PLATFORM_COORDINATOR_ENABLED &&
   !ANDREA_PLATFORM_FALLBACK_TO_DIRECT_RUNTIME
     ? ANDREA_PLATFORM_COORDINATOR_URL
     : ''
-).trim().replace(/\/+$/, '');
+)
+  .trim()
+  .replace(/\/+$/, '');
 
 type IntentResponseOutcome = 'handled' | 'blocked' | 'degraded' | 'fallback';
 type ProofState =
@@ -146,14 +150,12 @@ export async function emitAndreaPlatformShellConfigSnapshot(input: {
   });
 }
 
-export async function emitAndreaPlatformShellHealth(
-  input: {
-    severity: HealthSeverity;
-    summary: string;
-    detail?: string | null;
-    metadata?: Record<string, string>;
-  },
-): Promise<void> {
+export async function emitAndreaPlatformShellHealth(input: {
+  severity: HealthSeverity;
+  summary: string;
+  detail?: string | null;
+  metadata?: Record<string, string>;
+}): Promise<void> {
   await postShellGateway('/system/health', {
     source: 'andrea_nanobot',
     component: 'andrea.shell',
@@ -260,7 +262,15 @@ export async function emitAndreaPlatformFeedbackReflection(input: {
   issueId?: string | null;
   status: string;
   classification: string;
-  taskFamily: 'calendar' | 'communication' | 'research' | 'media' | 'assistant' | 'operator' | 'code' | 'unknown';
+  taskFamily:
+    | 'calendar'
+    | 'communication'
+    | 'research'
+    | 'media'
+    | 'assistant'
+    | 'operator'
+    | 'code'
+    | 'unknown';
   channel: 'telegram';
   groupFolder: string;
   chatJid: string;
@@ -294,7 +304,9 @@ export async function emitAndreaPlatformFeedbackReflection(input: {
     summary: input.summary,
     channel: input.channel,
     sourceSystem: 'andrea_nanobot',
-    nextAction: input.nextAction || 'Use this downvote to guide the next narrow fix or routing rule.',
+    nextAction:
+      input.nextAction ||
+      'Use this downvote to guide the next narrow fix or routing rule.',
     jobId: input.remediationJobId || undefined,
     metadata: {
       feedbackId: input.feedbackId,
@@ -335,16 +347,14 @@ export async function emitAndreaPlatformFeedbackReflection(input: {
   };
 }
 
-export async function emitAndreaPlatformIntentRequest(
-  input: {
-    channel: 'telegram' | 'bluebubbles';
-    text: string;
-    actorId?: string | null;
-    groupFolder?: string | null;
-    routeHint?: string | null;
-    metadata?: Record<string, string>;
-  },
-): Promise<void> {
+export async function emitAndreaPlatformIntentRequest(input: {
+  channel: 'telegram' | 'bluebubbles';
+  text: string;
+  actorId?: string | null;
+  groupFolder?: string | null;
+  routeHint?: string | null;
+  metadata?: Record<string, string>;
+}): Promise<void> {
   await postShellGateway('/intent/request', {
     source: 'andrea_nanobot',
     channel: input.channel,
@@ -356,16 +366,14 @@ export async function emitAndreaPlatformIntentRequest(
   });
 }
 
-export async function emitAndreaPlatformIntentResponse(
-  input: {
-    channel: 'telegram' | 'bluebubbles';
-    summary: string;
-    outcome: IntentResponseOutcome;
-    actorId?: string | null;
-    groupFolder?: string | null;
-    metadata?: Record<string, string>;
-  },
-): Promise<void> {
+export async function emitAndreaPlatformIntentResponse(input: {
+  channel: 'telegram' | 'bluebubbles';
+  summary: string;
+  outcome: IntentResponseOutcome;
+  actorId?: string | null;
+  groupFolder?: string | null;
+  metadata?: Record<string, string>;
+}): Promise<void> {
   await postShellGateway('/intent/response', {
     source: 'andrea_nanobot',
     channel: input.channel,
@@ -377,9 +385,7 @@ export async function emitAndreaPlatformIntentResponse(
   });
 }
 
-export function mapShellHealthFromBackendStatus(
-  status: RuntimeBackendStatus,
-): {
+export function mapShellHealthFromBackendStatus(status: RuntimeBackendStatus): {
   severity: HealthSeverity;
   summary: string;
   detail?: string | null;
@@ -394,13 +400,15 @@ export function mapShellHealthFromBackendStatus(
     case 'auth_required':
       return {
         severity: 'near_live_only',
-        summary: 'NanoBot can reach the runtime backend, but local auth is still required.',
+        summary:
+          'NanoBot can reach the runtime backend, but local auth is still required.',
         detail: status.detail,
       };
     case 'not_ready':
       return {
         severity: 'degraded',
-        summary: 'NanoBot can reach the runtime backend, but the execution lane is not ready.',
+        summary:
+          'NanoBot can reach the runtime backend, but the execution lane is not ready.',
         detail: status.detail,
       };
     case 'not_enabled':
@@ -427,15 +435,23 @@ export function mapShellHealthFromChannelHealth(
   detail?: string | null;
   metadata?: Record<string, string>;
 } {
-  const configuredChannels = channelHealth.filter((channel) => channel.configured);
-  const readyChannels = configuredChannels.filter((channel) => channel.state === 'ready');
-  const unhealthyChannels = configuredChannels.filter((channel) => channel.state !== 'ready');
+  const configuredChannels = channelHealth.filter(
+    (channel) => channel.configured,
+  );
+  const readyChannels = configuredChannels.filter(
+    (channel) => channel.state === 'ready',
+  );
+  const unhealthyChannels = configuredChannels.filter(
+    (channel) => channel.state !== 'ready',
+  );
 
   if (configuredChannels.length === 0) {
     return {
       severity: 'degraded',
-      summary: 'NanoBot shell is running, but no interactive channels are configured yet.',
-      detail: 'Configure at least one interactive channel so the platform can treat the shell as live.',
+      summary:
+        'NanoBot shell is running, but no interactive channels are configured yet.',
+      detail:
+        'Configure at least one interactive channel so the platform can treat the shell as live.',
       metadata: {
         configuredChannels: '0',
         readyChannels: '0',
@@ -452,7 +468,8 @@ export function mapShellHealthFromChannelHealth(
       .join('; ');
     return {
       severity: 'degraded',
-      summary: 'NanoBot shell is running, but one or more configured channels are not ready yet.',
+      summary:
+        'NanoBot shell is running, but one or more configured channels are not ready yet.',
       detail,
       metadata: {
         configuredChannels: String(configuredChannels.length),

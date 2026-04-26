@@ -92,7 +92,9 @@ describe('conversational core classifier', () => {
       'work_or_operator',
     );
     expect(
-      classifyConversationalTurn('Show me the runtime logs for that cursor job'),
+      classifyConversationalTurn(
+        'Show me the runtime logs for that cursor job',
+      ),
     ).toBe('work_or_operator');
   });
 });
@@ -100,9 +102,7 @@ describe('conversational core classifier', () => {
 describe('research eligibility classifier', () => {
   it('treats plain factoids as research-eligible when they are not local utilities', () => {
     expect(
-      isResearchEligibleConversationalPrompt(
-        "What is Jar Jar Binks' species?",
-      ),
+      isResearchEligibleConversationalPrompt("What is Jar Jar Binks' species?"),
     ).toBe(true);
     expect(
       isResearchEligibleConversationalPrompt(
@@ -125,7 +125,9 @@ describe('research eligibility classifier', () => {
     expect(
       isResearchEligibleConversationalPrompt('What time is it in Australia?'),
     ).toBe(false);
-    expect(isResearchEligibleConversationalPrompt('What day is it?')).toBe(false);
+    expect(isResearchEligibleConversationalPrompt('What day is it?')).toBe(
+      false,
+    );
     expect(
       isResearchEligibleConversationalPrompt("What's still open with Candace?"),
     ).toBe(false);
@@ -187,7 +189,9 @@ describe('graceful degraded replies', () => {
     });
 
     expect(telegramReply).toContain("can't check that live right now");
-    expect(alexaReply).not.toContain('saved material or help narrow the question');
+    expect(alexaReply).not.toContain(
+      'saved material or help narrow the question',
+    );
     expect(bluebubblesReply).toContain('grounded');
   });
 
@@ -240,7 +244,9 @@ describe('graceful degraded replies', () => {
       kind: 'temporary_unavailable',
     });
 
-    expect(reply).toContain("I couldn't line that reminder up right this second");
+    expect(reply).toContain(
+      "I couldn't line that reminder up right this second",
+    );
     expect(reply).toContain('save that for later');
     expect(reply).not.toContain('host');
     expect(reply).not.toContain('runtime');
@@ -273,7 +279,9 @@ describe('graceful degraded replies', () => {
     expect(reply).toContain(
       'Got it - I added "check air filters" to Jeff\'s calendar',
     );
-    expect(reply).toContain('Open in Google Calendar: https://calendar.google.com/calendar/event?eid=abc');
+    expect(reply).toContain(
+      'Open in Google Calendar: https://calendar.google.com/calendar/event?eid=abc',
+    );
     expect(reply).not.toContain('Added "check air filters" to Jeff on');
   });
 

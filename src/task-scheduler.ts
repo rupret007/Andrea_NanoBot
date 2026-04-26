@@ -201,13 +201,16 @@ async function runTask(
     return;
   }
 
-  const scheduledMessageResult = await runScheduledMessageActionByTaskId(task.id, {
-    groupFolder: task.group_folder,
-    channel: task.chat_jid.startsWith('bb:') ? 'bluebubbles' : 'telegram',
-    chatJid: task.chat_jid,
-    currentTime: new Date(),
-    sendToTarget: deps.sendToTarget,
-  });
+  const scheduledMessageResult = await runScheduledMessageActionByTaskId(
+    task.id,
+    {
+      groupFolder: task.group_folder,
+      channel: task.chat_jid.startsWith('bb:') ? 'bluebubbles' : 'telegram',
+      chatJid: task.chat_jid,
+      currentTime: new Date(),
+      sendToTarget: deps.sendToTarget,
+    },
+  );
   if (scheduledMessageResult.handled) {
     if (
       scheduledMessageResult.notificationChatJid &&
@@ -225,7 +228,9 @@ async function runTask(
       run_at: new Date().toISOString(),
       duration_ms: durationMs,
       status:
-        scheduledMessageResult.action?.sendStatus === 'failed' ? 'error' : 'success',
+        scheduledMessageResult.action?.sendStatus === 'failed'
+          ? 'error'
+          : 'success',
       result:
         scheduledMessageResult.action?.sendStatus === 'failed'
           ? null

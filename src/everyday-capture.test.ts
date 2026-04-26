@@ -52,7 +52,9 @@ describe('everyday capture', () => {
   });
 
   it('supports zero-setup capture and calm empty readouts before profile approval', async () => {
-    const empty = await handleEverydayCaptureCommand(buildInput("what's on my list"));
+    const empty = await handleEverydayCaptureCommand(
+      buildInput("what's on my list"),
+    );
 
     expect(empty.handled).toBe(true);
     expect(empty.replyText).toContain('Your list looks clear right now.');
@@ -133,12 +135,16 @@ describe('everyday capture', () => {
   it('captures practical list items, reads them back, and keeps suggestions gated', async () => {
     await approveStarterProfile();
 
-    await handleEverydayCaptureCommand(buildInput('add milk to my shopping list'));
+    await handleEverydayCaptureCommand(
+      buildInput('add milk to my shopping list'),
+    );
     await handleEverydayCaptureCommand(buildInput('put batteries on my list'));
     await handleEverydayCaptureCommand(
       buildInput('add pay water bill to my list'),
     );
-    await handleEverydayCaptureCommand(buildInput('add dinner idea for Friday'));
+    await handleEverydayCaptureCommand(
+      buildInput('add dinner idea for Friday'),
+    );
     await handleEverydayCaptureCommand(buildInput('add my pills to tonight'));
 
     const allItems = listEverydayListItems('main', { includeDone: true });
@@ -168,12 +174,12 @@ describe('everyday capture', () => {
     );
     expect(mealsReadout.replyText).toContain('Dinner idea');
 
-    expect(getEverydayCaptureSignal({ groupFolder: 'main', focus: 'weekly' })).toEqual(
-      expect.arrayContaining(['Bill: pay water bill']),
-    );
-    expect(getEverydayCaptureSignal({ groupFolder: 'main', focus: 'tonight' })).toEqual(
-      expect.arrayContaining(['Tonight: Take pills']),
-    );
+    expect(
+      getEverydayCaptureSignal({ groupFolder: 'main', focus: 'weekly' }),
+    ).toEqual(expect.arrayContaining(['Bill: pay water bill']));
+    expect(
+      getEverydayCaptureSignal({ groupFolder: 'main', focus: 'tonight' }),
+    ).toEqual(expect.arrayContaining(['Tonight: Take pills']));
 
     const suggestions = listOperatingProfileSuggestions('main', ['proposed']);
     expect(suggestions.map((item) => item.title)).toEqual(
@@ -184,7 +190,9 @@ describe('everyday capture', () => {
       buildInput('dismiss that suggestion'),
     );
     expect(dismiss.replyText).toContain('leave that suggestion alone');
-    expect(listOperatingProfileSuggestions('main', ['dismissed'])).toHaveLength(1);
+    expect(listOperatingProfileSuggestions('main', ['dismissed'])).toHaveLength(
+      1,
+    );
   });
 
   it('supports mark-done, defer, and reminder conversion from the active item frame', async () => {
@@ -269,7 +277,9 @@ describe('everyday capture', () => {
       }),
     );
     const movedItem = getEverydayListItem(billId!);
-    expect(moveToWeekend.replyText).toContain('moved pay water bill to weekend');
+    expect(moveToWeekend.replyText).toContain(
+      'moved pay water bill to weekend',
+    );
     expect(movedItem?.groupId).toBeTruthy();
     expect(
       listEverydayListGroups('main').find(
@@ -333,7 +343,9 @@ describe('everyday capture', () => {
         priorContext: household.conversationData,
       }),
     );
-    expect(thread.replyText).toContain('saved Replace the air filter under the household thread');
+    expect(thread.replyText).toContain(
+      'saved Replace the air filter under the household thread',
+    );
     expect(getEverydayListItem(householdId!)?.state).toBe('open');
     const threadLinkage = JSON.parse(
       getEverydayListItem(householdId!)?.linkageJson || '{}',
@@ -362,7 +374,9 @@ describe('everyday capture', () => {
     );
 
     expect(readout.replyText).toContain('From the store');
-    expect(readout.replyText).toContain('If you want, I can send the fuller list to Telegram.');
+    expect(readout.replyText).toContain(
+      'If you want, I can send the fuller list to Telegram.',
+    );
     expect(readout.handoffOffer).toContain('fuller list to Telegram');
   });
 
@@ -470,11 +484,17 @@ describe('everyday capture', () => {
   });
 
   it('returns grouped Telegram readouts with contextual inline actions', async () => {
-    await handleEverydayCaptureCommand(buildInput('add milk to my shopping list'));
-    await handleEverydayCaptureCommand(buildInput('save this as an errand', {
-      replyText: 'Pick up batteries',
-    }));
-    await handleEverydayCaptureCommand(buildInput('add pay water bill to my list'));
+    await handleEverydayCaptureCommand(
+      buildInput('add milk to my shopping list'),
+    );
+    await handleEverydayCaptureCommand(
+      buildInput('save this as an errand', {
+        replyText: 'Pick up batteries',
+      }),
+    );
+    await handleEverydayCaptureCommand(
+      buildInput('add pay water bill to my list'),
+    );
 
     const readout = await handleEverydayCaptureCommand(
       buildInput("what's still open"),

@@ -49,16 +49,17 @@ function extractResponseOutputText(payload: unknown): string {
   const parts: string[] = [];
   for (const item of output) {
     const itemRecord =
-      item && typeof item === 'object'
-        ? (item as Record<string, unknown>)
-        : {};
+      item && typeof item === 'object' ? (item as Record<string, unknown>) : {};
     const content = Array.isArray(itemRecord.content) ? itemRecord.content : [];
     for (const chunk of content) {
       const chunkRecord =
         chunk && typeof chunk === 'object'
           ? (chunk as Record<string, unknown>)
           : {};
-      if (chunkRecord.type === 'output_text' && typeof chunkRecord.text === 'string') {
+      if (
+        chunkRecord.type === 'output_text' &&
+        typeof chunkRecord.text === 'string'
+      ) {
         parts.push(chunkRecord.text);
       }
     }
@@ -101,7 +102,9 @@ export function resolveBlueBubblesReplyGateMode(params: {
     : 'mention_required';
 }
 
-export function isBlueBubblesAndreaBotEcho(text: string | null | undefined): boolean {
+export function isBlueBubblesAndreaBotEcho(
+  text: string | null | undefined,
+): boolean {
   return /^\s*Andrea:/i.test(text || '');
 }
 
@@ -180,7 +183,10 @@ export async function summarizeBlueBubblesThreadDigest(input: {
     complexModel: openAi.complexModel,
     fallbackModel: openAi.researchModel,
   });
-  const timeoutMs = Math.max(100, input.timeoutMs ?? THREAD_SUMMARY_OPENAI_TIMEOUT_MS);
+  const timeoutMs = Math.max(
+    100,
+    input.timeoutMs ?? THREAD_SUMMARY_OPENAI_TIMEOUT_MS,
+  );
 
   try {
     for (const candidate of modelCandidates) {
@@ -224,12 +230,17 @@ export async function summarizeBlueBubblesThreadDigest(input: {
           selectedModelTier: candidate.tier,
           selectedModel: candidate.model,
           providerMode,
-          outcome: /quota|billing|rejected the configured api key|denied by the provider/i.test(
+          outcome:
+            /quota|billing|rejected the configured api key|denied by the provider/i.test(
+              body,
+            )
+              ? 'blocked'
+              : 'failed',
+          detail: describeOpenAiProviderFailure(
+            response.status,
             body,
-          )
-            ? 'blocked'
-            : 'failed',
-          detail: describeOpenAiProviderFailure(response.status, body, 'research'),
+            'research',
+          ),
         });
         return buildThreadSummaryFallbackResult();
       }
@@ -335,12 +346,17 @@ export async function draftBlueBubblesCommunicationReply(input: {
           selectedModelTier: candidate.tier,
           selectedModel: candidate.model,
           providerMode,
-          outcome: /quota|billing|rejected the configured api key|denied by the provider/i.test(
+          outcome:
+            /quota|billing|rejected the configured api key|denied by the provider/i.test(
+              body,
+            )
+              ? 'blocked'
+              : 'failed',
+          detail: describeOpenAiProviderFailure(
+            response.status,
             body,
-          )
-            ? 'blocked'
-            : 'failed',
-          detail: describeOpenAiProviderFailure(response.status, body, 'research'),
+            'research',
+          ),
         });
         return {
           draftText: null,
@@ -442,12 +458,17 @@ export async function rewriteBlueBubblesMessageDraft(input: {
           selectedModelTier: candidate.tier,
           selectedModel: candidate.model,
           providerMode,
-          outcome: /quota|billing|rejected the configured api key|denied by the provider/i.test(
+          outcome:
+            /quota|billing|rejected the configured api key|denied by the provider/i.test(
+              body,
+            )
+              ? 'blocked'
+              : 'failed',
+          detail: describeOpenAiProviderFailure(
+            response.status,
             body,
-          )
-            ? 'blocked'
-            : 'failed',
-          detail: describeOpenAiProviderFailure(response.status, body, 'research'),
+            'research',
+          ),
         });
         return {
           draftText: null,

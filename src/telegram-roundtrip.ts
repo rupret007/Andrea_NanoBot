@@ -38,7 +38,9 @@ export interface TelegramPingProbeEvaluation {
 function normalizeIsoTimestamp(value?: string | null): string {
   if (!value) return new Date().toISOString();
   const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : new Date().toISOString();
+  return Number.isFinite(parsed)
+    ? new Date(parsed).toISOString()
+    : new Date().toISOString();
 }
 
 function computeNextDueAt(
@@ -86,7 +88,13 @@ export function evaluateTelegramPingReplies(
     };
   }
   const unexpectedPreview = replies
-    .map((reply) => reply.text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).join(' / '))
+    .map((reply) =>
+      reply.text
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .join(' / '),
+    )
     .filter(Boolean)
     .slice(0, 3)
     .join(' | ');
@@ -107,10 +115,10 @@ export function persistTelegramRoundtripState(
   const previous = readTelegramRoundtripState(projectRoot);
   const observedAt = normalizeIsoTimestamp(params.observedAt);
   const lastSuccessAt =
-    params.status === 'healthy'
-      ? observedAt
-      : previous?.lastSuccessAt || null;
-  const lastProbeAt = params.probeAt ? normalizeIsoTimestamp(params.probeAt) : previous?.lastProbeAt || null;
+    params.status === 'healthy' ? observedAt : previous?.lastSuccessAt || null;
+  const lastProbeAt = params.probeAt
+    ? normalizeIsoTimestamp(params.probeAt)
+    : previous?.lastProbeAt || null;
   const consecutiveFailures =
     params.status === 'healthy' || params.resetFailures
       ? 0
@@ -120,7 +128,11 @@ export function persistTelegramRoundtripState(
 
   const state: TelegramRoundtripState = {
     bootId: snapshot.hostState?.bootId || previous?.bootId || '',
-    pid: snapshot.hostState?.pid ?? snapshot.readyState?.pid ?? previous?.pid ?? null,
+    pid:
+      snapshot.hostState?.pid ??
+      snapshot.readyState?.pid ??
+      previous?.pid ??
+      null,
     status: params.status,
     source: params.source,
     detail: params.detail,
@@ -152,7 +164,10 @@ export function recordOrganicTelegramRoundtripSuccess(
         params.detail ||
         'Observed a real Telegram request/response exchange in the operator chat.',
       target: params.target ?? null,
-      expectedReply: buildExpectedTelegramPingReply(undefined, params.observedAt),
+      expectedReply: buildExpectedTelegramPingReply(
+        undefined,
+        params.observedAt,
+      ),
       observedAt: params.observedAt,
       resetFailures: true,
     },
@@ -173,7 +188,8 @@ export function recordTelegramProbeSuccess(
     {
       source: params.source,
       status: 'healthy',
-      detail: 'Telegram roundtrip probe succeeded with the expected /ping reply.',
+      detail:
+        'Telegram roundtrip probe succeeded with the expected /ping reply.',
       target: params.target ?? null,
       expectedReply: buildExpectedTelegramPingReply(undefined, observedAt),
       observedAt,

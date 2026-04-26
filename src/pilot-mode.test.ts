@@ -43,21 +43,25 @@ describe('pilot mode', () => {
 
   it('sanitizes stored summaries and avoids raw formatting leakage', () => {
     expect(
-      sanitizePilotSummary('  **Candace** still needs\n\n a reply with _details_.  '),
+      sanitizePilotSummary(
+        '  **Candace** still needs\n\n a reply with _details_.  ',
+      ),
     ).toBe('Candace still needs a reply with details.');
   });
 
   it('classifies flagship journey seeds', () => {
-    expect(resolveOrdinaryChatPilotJourney('hi')?.journeyId).toBe('ordinary_chat');
+    expect(resolveOrdinaryChatPilotJourney('hi')?.journeyId).toBe(
+      'ordinary_chat',
+    );
     expect(resolveOrdinaryChatPilotJourney('@Andrea hi')?.journeyId).toBe(
       'ordinary_chat',
     );
-    expect(resolveOrdinaryChatPilotJourney("@Andrea what's up")?.journeyId).toBe(
-      'ordinary_chat',
-    );
-    expect(resolveCrossChannelPilotJourney('save that for later')?.journeyId).toBe(
-      'cross_channel_handoff',
-    );
+    expect(
+      resolveOrdinaryChatPilotJourney("@Andrea what's up")?.journeyId,
+    ).toBe('ordinary_chat');
+    expect(
+      resolveCrossChannelPilotJourney('save that for later')?.journeyId,
+    ).toBe('cross_channel_handoff');
     expect(
       resolvePilotJourneyFromCapability({
         capabilityId: 'communication.draft_reply',
@@ -182,7 +186,9 @@ describe('pilot mode', () => {
 
     expect(capture.handled).toBe(true);
     expect(capture.record?.issueKind).toBe('downvoted_response');
-    expect(capture.record?.summaryText).toContain('User downvoted Andrea reply');
+    expect(capture.record?.summaryText).toContain(
+      'User downvoted Andrea reply',
+    );
     expect(capture.record?.blockerClass).toBe(
       'response_feedback_repo_side_broken',
     );
@@ -262,9 +268,9 @@ describe('pilot mode', () => {
     expect(digest.totalUsage24h).toBe(2);
     expect(digest.journeyDigests.ordinary_chat.usage24h).toBe(1);
     expect(digest.journeyDigests.ordinary_chat.proofFreshness).toBe('fresh');
-    expect(digest.journeyDigests.cross_channel_handoff.latestProblemEvent?.outcome).toBe(
-      'degraded_usable',
-    );
+    expect(
+      digest.journeyDigests.cross_channel_handoff.latestProblemEvent?.outcome,
+    ).toBe('degraded_usable');
     expect(digest.recentProblemEvents).toHaveLength(1);
     expect(digest.currentActionableProblemEvents).toHaveLength(1);
     expect(digest.historicalRecurringFailures).toHaveLength(0);

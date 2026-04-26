@@ -99,14 +99,7 @@ export interface TelegramTapAndCaptureResult {
 export interface TelegramPingProbeResult {
   ok: boolean;
   status: 'healthy' | 'failed' | 'unconfigured' | 'skipped';
-  stage:
-    | 'success'
-    | 'config'
-    | 'auth'
-    | 'send'
-    | 'reply'
-    | 'match'
-    | 'not_due';
+  stage: 'success' | 'config' | 'auth' | 'send' | 'reply' | 'match' | 'not_due';
   detail: string;
   target: string | null;
   sentId?: number;
@@ -163,7 +156,7 @@ export function extractRuntimeJobIdFromReplyText(text: string): string | null {
   if (cardMatch?.[1]) return cardMatch[1];
 
   const acceptedMatch = text.match(
-    /Andrea OpenAI (?:job|follow-up) ([A-Za-z0-9_.:-]+)/
+    /Andrea OpenAI (?:job|follow-up) ([A-Za-z0-9_.:-]+)/,
   );
   if (acceptedMatch?.[1]) return acceptedMatch[1];
 

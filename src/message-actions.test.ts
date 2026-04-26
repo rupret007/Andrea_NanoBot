@@ -28,7 +28,10 @@ import {
   resolveMessageActionForFollowup,
   runScheduledMessageActionByTaskId,
 } from './message-actions.js';
-import type { CommunicationThreadRecord, DelegationRuleRecord } from './types.js';
+import type {
+  CommunicationThreadRecord,
+  DelegationRuleRecord,
+} from './types.js';
 
 const originalFetch = globalThis.fetch;
 
@@ -97,9 +100,9 @@ function seedSendRule(
     lastOutcomeStatus: overrides.lastOutcomeStatus ?? null,
     userConfirmed: overrides.userConfirmed ?? true,
     channelApplicabilityJson:
-      overrides.channelApplicabilityJson || JSON.stringify(['telegram', 'bluebubbles']),
-    safetyLevel:
-      overrides.safetyLevel || 'safe_to_auto_after_delegation',
+      overrides.channelApplicabilityJson ||
+      JSON.stringify(['telegram', 'bluebubbles']),
+    safetyLevel: overrides.safetyLevel || 'safe_to_auto_after_delegation',
   };
   upsertDelegationRule(rule);
   return rule;
@@ -138,11 +141,13 @@ describe('message actions', () => {
     expect(action.targetChannel).toBe('bluebubbles');
     expect(action.targetKind).toBe('external_thread');
     expect(action.sendStatus).toBe('drafted');
-    expect(findLatestChatMessageAction({ groupFolder: 'main', chatJid: 'bb:chat-1' })?.messageActionId).toBe(
-      action.messageActionId,
-    );
     expect(
-      getOutcomeBySource('main', 'message_action', action.messageActionId)?.status,
+      findLatestChatMessageAction({ groupFolder: 'main', chatJid: 'bb:chat-1' })
+        ?.messageActionId,
+    ).toBe(action.messageActionId);
+    expect(
+      getOutcomeBySource('main', 'message_action', action.messageActionId)
+        ?.status,
     ).toBe('partial');
   });
 
@@ -232,9 +237,7 @@ describe('message actions', () => {
     expect(action?.presentationChatJid).toBe('bb:iMessage;-;+14695405551');
     expect(action?.presentationMessageId).toBe('bb:self-thread-draft-1');
     expect(action?.draftText).toBe('Hey Candace, tonight still works for me.');
-    expect(
-      JSON.parse(action?.targetConversationJson || '{}'),
-    ).toMatchObject({
+    expect(JSON.parse(action?.targetConversationJson || '{}')).toMatchObject({
       chatJid: 'bb:iMessage;+;chat-candace',
       personName: 'Candace',
     });
@@ -403,7 +406,9 @@ describe('message actions', () => {
       now: new Date('2026-04-16T16:20:00.000Z'),
     });
 
-    expect(resolved?.draftText).toBe('Hey Candace, tonight still works for me.');
+    expect(resolved?.draftText).toBe(
+      'Hey Candace, tonight still works for me.',
+    );
     expect(resolved?.presentationMessageId).toBe('bb:self-thread-draft-fresh');
     expect(resolved?.sourceKey).toContain('rehydrated-bluebubbles-draft');
   });
@@ -593,9 +598,9 @@ describe('message actions', () => {
     });
 
     expect(snapshots[0]?.conversationKind).toBe('self_thread');
-    expect(snapshots.some((snapshot) => snapshot.conversationKind === 'group')).toBe(
-      true,
-    );
+    expect(
+      snapshots.some((snapshot) => snapshot.conversationKind === 'group'),
+    ).toBe(true);
   });
 
   it('marks narrow safe bluebubbles replies as approved when a saved send rule matches', () => {
@@ -638,15 +643,21 @@ describe('message actions', () => {
       communicationContext: 'reply_followthrough',
       now: new Date('2026-04-08T19:10:00.000Z'),
     });
-    const sendToTarget = vi.fn(async () => ({ platformMessageId: 'bb:sent-1' }));
+    const sendToTarget = vi.fn(async () => ({
+      platformMessageId: 'bb:sent-1',
+    }));
 
-    const result = await applyMessageActionOperation(action.messageActionId, { kind: 'send' }, {
-      groupFolder: 'main',
-      channel: 'bluebubbles',
-      chatJid: 'bb:chat-1',
-      currentTime: new Date('2026-04-08T19:12:00.000Z'),
-      sendToTarget,
-    });
+    const result = await applyMessageActionOperation(
+      action.messageActionId,
+      { kind: 'send' },
+      {
+        groupFolder: 'main',
+        channel: 'bluebubbles',
+        chatJid: 'bb:chat-1',
+        currentTime: new Date('2026-04-08T19:12:00.000Z'),
+        sendToTarget,
+      },
+    );
 
     expect(result.handled).toBe(true);
     expect(sendToTarget).toHaveBeenCalledWith(
@@ -660,7 +671,8 @@ describe('message actions', () => {
     );
     expect(getMessageAction(action.messageActionId)?.sendStatus).toBe('sent');
     expect(
-      getOutcomeBySource('main', 'message_action', action.messageActionId)?.status,
+      getOutcomeBySource('main', 'message_action', action.messageActionId)
+        ?.status,
     ).toBe('completed');
   });
 
@@ -694,16 +706,21 @@ describe('message actions', () => {
     );
 
     const updated = getMessageAction(action.messageActionId)!;
-    const reminderId = JSON.parse(updated.linkedRefsJson || '{}').reminderTaskId;
+    const reminderId = JSON.parse(
+      updated.linkedRefsJson || '{}',
+    ).reminderTaskId;
 
     expect(result.handled).toBe(true);
     expect(result.replyText).toContain('kept the draft unsent');
     expect(updated.sendStatus).toBe('deferred');
     expect(updated.lastActionKind).toBe('remind_instead');
     expect(reminderId).toBeTruthy();
-    expect(getTaskById(reminderId)?.prompt).toContain('Revisit this draft reply');
+    expect(getTaskById(reminderId)?.prompt).toContain(
+      'Revisit this draft reply',
+    );
     expect(
-      getOutcomeBySource('main', 'message_action', action.messageActionId)?.status,
+      getOutcomeBySource('main', 'message_action', action.messageActionId)
+        ?.status,
     ).toBe('deferred');
   });
 
@@ -738,14 +755,20 @@ describe('message actions', () => {
 
     const updated = getMessageAction(action.messageActionId)!;
     const linkedRefs = JSON.parse(updated.linkedRefsJson || '{}');
-    const outcome = getOutcomeBySource('main', 'message_action', action.messageActionId)!;
+    const outcome = getOutcomeBySource(
+      'main',
+      'message_action',
+      action.messageActionId,
+    )!;
 
     expect(result.handled).toBe(true);
     expect(updated.sendStatus).toBe('deferred');
     expect(updated.lastActionKind).toBe('save_to_thread');
     expect(updated.requiresApproval).toBe(false);
     expect(linkedRefs.threadId).toBeTruthy();
-    expect(getCommunicationThread(thread.id)?.suggestedNextAction).toBe('save_for_later');
+    expect(getCommunicationThread(thread.id)?.suggestedNextAction).toBe(
+      'save_for_later',
+    );
     expect(outcome.status).toBe('deferred');
     expect(outcome.nextFollowupText).toContain('saved under the thread');
   });
@@ -766,15 +789,21 @@ describe('message actions', () => {
       communicationContext: 'reply_followthrough',
       now: new Date('2026-04-08T19:20:00.000Z'),
     });
-    const sendToTarget = vi.fn(async () => ({ platformMessageId: 'bb:sent-2' }));
+    const sendToTarget = vi.fn(async () => ({
+      platformMessageId: 'bb:sent-2',
+    }));
 
-    await applyMessageActionOperation(action.messageActionId, { kind: 'send' }, {
-      groupFolder: 'main',
-      channel: 'bluebubbles',
-      chatJid: 'bb:chat-1',
-      currentTime: new Date('2026-04-08T19:21:00.000Z'),
-      sendToTarget,
-    });
+    await applyMessageActionOperation(
+      action.messageActionId,
+      { kind: 'send' },
+      {
+        groupFolder: 'main',
+        channel: 'bluebubbles',
+        chatJid: 'bb:chat-1',
+        currentTime: new Date('2026-04-08T19:21:00.000Z'),
+        sendToTarget,
+      },
+    );
     const duplicate = await applyMessageActionOperation(
       action.messageActionId,
       { kind: 'send' },
@@ -809,13 +838,17 @@ describe('message actions', () => {
       now: new Date('2026-04-08T19:25:00.000Z'),
     });
 
-    const result = await applyMessageActionOperation(action.messageActionId, { kind: 'defer' }, {
-      groupFolder: 'main',
-      channel: 'bluebubbles',
-      chatJid: 'bb:chat-1',
-      currentTime: new Date('2026-04-08T19:26:00.000Z'),
-      sendToTarget: vi.fn(async () => ({ platformMessageId: 'unused' })),
-    });
+    const result = await applyMessageActionOperation(
+      action.messageActionId,
+      { kind: 'defer' },
+      {
+        groupFolder: 'main',
+        channel: 'bluebubbles',
+        chatJid: 'bb:chat-1',
+        currentTime: new Date('2026-04-08T19:26:00.000Z'),
+        sendToTarget: vi.fn(async () => ({ platformMessageId: 'unused' })),
+      },
+    );
 
     const updated = getMessageAction(action.messageActionId)!;
     expect(result.handled).toBe(true);
@@ -845,22 +878,30 @@ describe('message actions', () => {
       now: new Date('2026-04-08T19:30:00.000Z'),
     });
 
-    await applyMessageActionOperation(action.messageActionId, { kind: 'defer' }, {
-      groupFolder: 'main',
-      channel: 'bluebubbles',
-      chatJid: 'bb:chat-1',
-      currentTime: new Date('2026-04-08T19:31:00.000Z'),
-      sendToTarget: vi.fn(async () => ({ platformMessageId: 'unused' })),
-    });
+    await applyMessageActionOperation(
+      action.messageActionId,
+      { kind: 'defer' },
+      {
+        groupFolder: 'main',
+        channel: 'bluebubbles',
+        chatJid: 'bb:chat-1',
+        currentTime: new Date('2026-04-08T19:31:00.000Z'),
+        sendToTarget: vi.fn(async () => ({ platformMessageId: 'unused' })),
+      },
+    );
     const scheduled = getMessageAction(action.messageActionId)!;
 
-    await applyMessageActionOperation(scheduled.messageActionId, { kind: 'cancel_deferred' }, {
-      groupFolder: 'main',
-      channel: 'bluebubbles',
-      chatJid: 'bb:chat-1',
-      currentTime: new Date('2026-04-08T19:32:00.000Z'),
-      sendToTarget: vi.fn(async () => ({ platformMessageId: 'unused' })),
-    });
+    await applyMessageActionOperation(
+      scheduled.messageActionId,
+      { kind: 'cancel_deferred' },
+      {
+        groupFolder: 'main',
+        channel: 'bluebubbles',
+        chatJid: 'bb:chat-1',
+        currentTime: new Date('2026-04-08T19:32:00.000Z'),
+        sendToTarget: vi.fn(async () => ({ platformMessageId: 'unused' })),
+      },
+    );
 
     const updated = getMessageAction(action.messageActionId)!;
     expect(updated.sendStatus).toBe('approved');
@@ -886,13 +927,17 @@ describe('message actions', () => {
       now: new Date('2026-04-08T19:35:00.000Z'),
     });
 
-    await applyMessageActionOperation(action.messageActionId, { kind: 'defer' }, {
-      groupFolder: 'main',
-      channel: 'bluebubbles',
-      chatJid: 'bb:chat-1',
-      currentTime: new Date('2026-04-08T19:36:00.000Z'),
-      sendToTarget: vi.fn(async () => ({ platformMessageId: 'unused' })),
-    });
+    await applyMessageActionOperation(
+      action.messageActionId,
+      { kind: 'defer' },
+      {
+        groupFolder: 'main',
+        channel: 'bluebubbles',
+        chatJid: 'bb:chat-1',
+        currentTime: new Date('2026-04-08T19:36:00.000Z'),
+        sendToTarget: vi.fn(async () => ({ platformMessageId: 'unused' })),
+      },
+    );
     const scheduled = getMessageAction(action.messageActionId)!;
 
     await applyMessageActionOperation(
@@ -933,13 +978,17 @@ describe('message actions', () => {
       now: new Date('2026-04-08T19:38:00.000Z'),
     });
 
-    await applyMessageActionOperation(action.messageActionId, { kind: 'defer' }, {
-      groupFolder: 'main',
-      channel: 'bluebubbles',
-      chatJid: 'bb:chat-1',
-      currentTime: new Date('2026-04-08T19:39:00.000Z'),
-      sendToTarget: vi.fn(async () => ({ platformMessageId: 'unused' })),
-    });
+    await applyMessageActionOperation(
+      action.messageActionId,
+      { kind: 'defer' },
+      {
+        groupFolder: 'main',
+        channel: 'bluebubbles',
+        chatJid: 'bb:chat-1',
+        currentTime: new Date('2026-04-08T19:39:00.000Z'),
+        sendToTarget: vi.fn(async () => ({ platformMessageId: 'unused' })),
+      },
+    );
     const scheduled = getMessageAction(action.messageActionId)!;
 
     const result = await applyMessageActionOperation(
@@ -968,17 +1017,18 @@ describe('message actions', () => {
   it('uses the Messages model lane for BlueBubbles rewrites when available', async () => {
     vi.stubEnv('OPENAI_API_KEY', 'test-key');
     vi.stubEnv('OPENAI_BASE_URL', 'https://openai.test/v1');
-    globalThis.fetch = vi.fn(async () =>
-      new Response(
-        JSON.stringify({
-          output_text:
-            '{"draftText":"Hey Candace, tonight still works for me. If you want, we can keep it easy."}',
-        }),
-        {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        },
-      ),
+    globalThis.fetch = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            output_text:
+              '{"draftText":"Hey Candace, tonight still works for me. If you want, we can keep it easy."}',
+          }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          },
+        ),
     ) as typeof fetch;
 
     const thread = seedCommunicationThread();
@@ -1034,23 +1084,32 @@ describe('message actions', () => {
       now: new Date('2026-04-08T19:40:00.000Z'),
     });
 
-    await applyMessageActionOperation(action.messageActionId, { kind: 'defer' }, {
-      groupFolder: 'main',
-      channel: 'bluebubbles',
-      chatJid: 'bb:chat-1',
-      currentTime: new Date('2026-04-08T19:41:00.000Z'),
-      sendToTarget: vi.fn(async () => ({ platformMessageId: 'unused' })),
-    });
+    await applyMessageActionOperation(
+      action.messageActionId,
+      { kind: 'defer' },
+      {
+        groupFolder: 'main',
+        channel: 'bluebubbles',
+        chatJid: 'bb:chat-1',
+        currentTime: new Date('2026-04-08T19:41:00.000Z'),
+        sendToTarget: vi.fn(async () => ({ platformMessageId: 'unused' })),
+      },
+    );
     const scheduled = getMessageAction(action.messageActionId)!;
-    const sendToTarget = vi.fn(async () => ({ platformMessageId: 'bb:sent-scheduled' }));
+    const sendToTarget = vi.fn(async () => ({
+      platformMessageId: 'bb:sent-scheduled',
+    }));
 
-    const runResult = await runScheduledMessageActionByTaskId(scheduled.scheduledTaskId!, {
-      groupFolder: 'main',
-      channel: 'bluebubbles',
-      chatJid: 'bb:chat-1',
-      currentTime: new Date('2026-04-08T21:00:00.000Z'),
-      sendToTarget,
-    });
+    const runResult = await runScheduledMessageActionByTaskId(
+      scheduled.scheduledTaskId!,
+      {
+        groupFolder: 'main',
+        channel: 'bluebubbles',
+        chatJid: 'bb:chat-1',
+        currentTime: new Date('2026-04-08T21:00:00.000Z'),
+        sendToTarget,
+      },
+    );
 
     expect(runResult.handled).toBe(true);
     expect(sendToTarget).toHaveBeenCalledWith(
@@ -1062,7 +1121,9 @@ describe('message actions', () => {
       }),
     );
     expect(getMessageAction(action.messageActionId)?.sendStatus).toBe('sent');
-    expect(getCommunicationThread(thread.id)?.followupState).toBe('waiting_on_them');
+    expect(getCommunicationThread(thread.id)?.followupState).toBe(
+      'waiting_on_them',
+    );
   });
 
   it('resolves explicit person-targeted followups to an existing open message action', () => {
@@ -1128,7 +1189,9 @@ describe('message actions', () => {
     expect(interpretMessageActionFollowup('send using blue bubbles')).toEqual({
       kind: 'send',
     });
-    expect(isBlueBubblesExplicitSendAlias('send that using blue bubbles')).toBe(true);
+    expect(isBlueBubblesExplicitSendAlias('send that using blue bubbles')).toBe(
+      true,
+    );
   });
 
   it('treats natural rewrite aliases as message-action followups', () => {
@@ -1179,7 +1242,11 @@ describe('message actions', () => {
       conversationKind: 'group' as const,
       decisionPolicy: 'explicit_only' as const,
       requiresExplicitMention: true,
-      eligibleFollowups: ['show it again', 'make it shorter', 'make it more direct'],
+      eligibleFollowups: [
+        'show it again',
+        'make it shorter',
+        'make it more direct',
+      ],
     };
 
     expect(
@@ -1239,7 +1306,9 @@ describe('message actions', () => {
       false,
     );
 
-    const resolved = resolveBlueBubblesThreadTargetByName('the Rad Dad test thread');
+    const resolved = resolveBlueBubblesThreadTargetByName(
+      'the Rad Dad test thread',
+    );
     expect(resolved.state).toBe('resolved');
     if (resolved.state !== 'resolved') {
       throw new Error('expected resolved target');
@@ -1307,7 +1376,9 @@ describe('message actions', () => {
   });
 
   it('treats natural show-draft phrasing as a message-action follow-up', () => {
-    expect(interpretMessageActionFollowup("ok let's see the draft again")).toEqual({
+    expect(
+      interpretMessageActionFollowup("ok let's see the draft again"),
+    ).toEqual({
       kind: 'show_draft',
     });
     expect(interpretMessageActionFollowup('show me the draft again')).toEqual({

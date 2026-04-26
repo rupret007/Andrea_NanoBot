@@ -14,10 +14,7 @@ import {
   listAndreaOpenAiRuntimeJobs,
   stopAndreaOpenAiRuntimeJob,
 } from './andrea-openai-runtime.js';
-import {
-  _initTestDatabase,
-  getRuntimeBackendJob,
-} from './db.js';
+import { _initTestDatabase, getRuntimeBackendJob } from './db.js';
 import type { RegisteredGroup, RuntimeBackendJob } from './types.js';
 
 const MAIN_GROUP: RegisteredGroup = {
@@ -29,7 +26,9 @@ const MAIN_GROUP: RegisteredGroup = {
   isMain: true,
 };
 
-function makeJob(overrides: Partial<RuntimeBackendJob> = {}): RuntimeBackendJob {
+function makeJob(
+  overrides: Partial<RuntimeBackendJob> = {},
+): RuntimeBackendJob {
   return {
     backend: ANDREA_OPENAI_BACKEND_ID,
     jobId: 'job_001',
@@ -104,12 +103,12 @@ describe('andrea-openai-runtime', () => {
         requestedRuntime: 'openai_cloud',
       }),
     );
-    expect(getRuntimeBackendJob(ANDREA_OPENAI_BACKEND_ID, 'job_001')).toMatchObject(
-      {
-        chat_jid: 'tg:1',
-        group_folder: 'main',
-      },
-    );
+    expect(
+      getRuntimeBackendJob(ANDREA_OPENAI_BACKEND_ID, 'job_001'),
+    ).toMatchObject({
+      chat_jid: 'tg:1',
+      group_folder: 'main',
+    });
   });
 
   it('classifies missing-group create failures as bootstrap_required when the backend lacks a registration route', async () => {

@@ -45,7 +45,9 @@ describe('rituals', () => {
     });
 
     const profile = getRitualProfileByType('main', 'morning_brief');
-    const task = profile?.linkedTaskId ? getTaskById(profile.linkedTaskId) : null;
+    const task = profile?.linkedTaskId
+      ? getTaskById(profile.linkedTaskId)
+      : null;
 
     expect(result.handled).toBe(true);
     expect(result.responseText).toContain('Telegram');
@@ -77,7 +79,9 @@ describe('rituals', () => {
     });
 
     const profile = getRitualProfileByType('main', 'morning_brief');
-    const task = profile?.linkedTaskId ? getTaskById(profile.linkedTaskId) : null;
+    const task = profile?.linkedTaskId
+      ? getTaskById(profile.linkedTaskId)
+      : null;
 
     expect(result.handled).toBe(true);
     expect(result.responseText).toContain('morning brief');
@@ -128,9 +132,9 @@ describe('rituals', () => {
     });
 
     const profile = getRitualProfileByType('main', 'household_checkin');
-    const familyPreference = listProfileFactsForGroup('main', ['accepted']).find(
-      (fact) => fact.factKey === 'family_context_default',
-    );
+    const familyPreference = listProfileFactsForGroup('main', [
+      'accepted',
+    ]).find((fact) => fact.factKey === 'family_context_default');
 
     expect(result.handled).toBe(true);
     expect(result.responseText).toContain('family context');

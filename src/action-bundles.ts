@@ -54,7 +54,9 @@ import type {
 const ACTION_BUNDLE_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_ACTIONS_PER_BUNDLE = 4;
 
-function normalizeThreadTitleForDisplay(threadTitle: string | null | undefined): string | null {
+function normalizeThreadTitleForDisplay(
+  threadTitle: string | null | undefined,
+): string | null {
   const trimmed = threadTitle?.trim() || null;
   if (!trimmed) return null;
   return /^(?:follow[- ]?up|thread|carryover|open loops?)$/i.test(trimmed)
@@ -295,7 +297,10 @@ function deriveOriginKind(
   ) {
     return 'communication';
   }
-  if (candidate?.chiefOfStaffContextJson || capabilityId?.startsWith('staff.')) {
+  if (
+    candidate?.chiefOfStaffContextJson ||
+    capabilityId?.startsWith('staff.')
+  ) {
     return 'chief_of_staff';
   }
   if (
@@ -322,7 +327,9 @@ function deriveBundleTitle(
   sourceContext: ActionBundleSourceContext,
 ): string {
   if (sourceContext.titleHint) return sourceContext.titleHint;
-  const displayThreadTitle = normalizeThreadTitleForDisplay(candidate?.threadTitle);
+  const displayThreadTitle = normalizeThreadTitleForDisplay(
+    candidate?.threadTitle,
+  );
   if (displayThreadTitle) return `${displayThreadTitle} next steps`;
   if (candidate?.missionSummary) return 'Mission next steps';
   if (sourceContext.personName) return `${sourceContext.personName} next steps`;
@@ -443,7 +450,10 @@ function synthesizeMissionActions(params: {
         requiresConfirmation: true,
         payload: {
           type: 'create_reminder',
-          reminderBody: inferReminderBody(params.sourceContext, params.candidate),
+          reminderBody: inferReminderBody(
+            params.sourceContext,
+            params.candidate,
+          ),
           timingHint: defaultReminderTiming('mission'),
         },
       });
@@ -464,7 +474,8 @@ function synthesizeMissionActions(params: {
               ? linkedRef.threadTitle
               : params.candidate.threadTitle || null,
           communicationThreadId: params.candidate.communicationThreadId || null,
-          communicationSubjectIds: params.candidate.communicationSubjectIds || [],
+          communicationSubjectIds:
+            params.candidate.communicationSubjectIds || [],
           communicationLifeThreadIds:
             params.candidate.communicationLifeThreadIds || [],
           lastCommunicationSummary: params.candidate.lastCommunicationSummary,
@@ -485,7 +496,10 @@ function synthesizeMissionActions(params: {
             'Mission context',
         },
       });
-    } else if (action.kind === 'link_thread' || action.kind === 'track_follow_up') {
+    } else if (
+      action.kind === 'link_thread' ||
+      action.kind === 'track_follow_up'
+    ) {
       actions.push({
         actionType: 'save_to_thread',
         targetSystem: 'life_threads',
@@ -548,7 +562,10 @@ function synthesizeActions(params: {
   }
 
   const actions: SynthesizedAction[] = [];
-  const completionText = inferReminderBody(params.sourceContext, params.candidate);
+  const completionText = inferReminderBody(
+    params.sourceContext,
+    params.candidate,
+  );
   const threadTitle = params.candidate.threadTitle || null;
   const displayThreadTitle = normalizeThreadTitleForDisplay(threadTitle);
 
@@ -564,8 +581,10 @@ function synthesizeActions(params: {
           text: 'what should I say back',
           threadTitle,
           communicationThreadId: params.candidate.communicationThreadId || null,
-          communicationSubjectIds: params.candidate.communicationSubjectIds || [],
-          communicationLifeThreadIds: params.candidate.communicationLifeThreadIds || [],
+          communicationSubjectIds:
+            params.candidate.communicationSubjectIds || [],
+          communicationLifeThreadIds:
+            params.candidate.communicationLifeThreadIds || [],
           lastCommunicationSummary: params.candidate.lastCommunicationSummary,
         },
       });
@@ -632,7 +651,10 @@ function synthesizeActions(params: {
         text: completionText,
       },
     });
-  } else if (params.originKind === 'research' || params.originKind === 'handoff') {
+  } else if (
+    params.originKind === 'research' ||
+    params.originKind === 'handoff'
+  ) {
     if (
       params.presentationChannel !== 'telegram' &&
       params.candidate.handoffPayload
@@ -650,11 +672,13 @@ function synthesizeActions(params: {
           threadId: params.candidate.threadId,
           communicationThreadId: params.candidate.communicationThreadId,
           communicationSubjectIds: params.candidate.communicationSubjectIds,
-          communicationLifeThreadIds: params.candidate.communicationLifeThreadIds,
+          communicationLifeThreadIds:
+            params.candidate.communicationLifeThreadIds,
           lastCommunicationSummary: params.candidate.lastCommunicationSummary,
           missionId: params.candidate.missionId,
           missionSummary: params.candidate.missionSummary,
-          missionSuggestedActionsJson: params.candidate.missionSuggestedActionsJson,
+          missionSuggestedActionsJson:
+            params.candidate.missionSuggestedActionsJson,
           missionBlockersJson: params.candidate.missionBlockersJson,
           missionStepFocusJson: params.candidate.missionStepFocusJson,
           knowledgeSourceIds: params.candidate.knowledgeSourceIds,
@@ -692,7 +716,9 @@ function synthesizeActions(params: {
   return actions;
 }
 
-function canReuseOpenBundle(snapshot: ActionBundleSnapshot | undefined): boolean {
+function canReuseOpenBundle(
+  snapshot: ActionBundleSnapshot | undefined,
+): boolean {
   if (!snapshot) return false;
   return snapshot.actions.every(
     (action) => action.status === 'proposed' || action.status === 'approved',
@@ -709,7 +735,9 @@ export function createOrRefreshActionBundle(
 
   const now = params.now || new Date();
   const nowIso = now.toISOString();
-  const expiresAt = new Date(now.getTime() + ACTION_BUNDLE_TTL_MS).toISOString();
+  const expiresAt = new Date(
+    now.getTime() + ACTION_BUNDLE_TTL_MS,
+  ).toISOString();
   const sourceContext = deriveSourceContext({
     originKind,
     capabilityId: params.capabilityId,
@@ -774,45 +802,54 @@ export function createOrRefreshActionBundle(
     presentationChatJid: params.presentationChatJid || null,
     presentationThreadId: params.presentationThreadId || null,
     presentationMessageId:
-      existing?.bundleId === bundleId ? existing.presentationMessageId || null : null,
+      existing?.bundleId === bundleId
+        ? existing.presentationMessageId || null
+        : null,
     presentationMode:
-      existing?.bundleId === bundleId ? existing.presentationMode || 'default' : 'default',
-    bundleStatus: existing?.bundleId === bundleId ? existing.bundleStatus : 'open',
-    userConfirmed: existing?.bundleId === bundleId ? existing.userConfirmed : false,
+      existing?.bundleId === bundleId
+        ? existing.presentationMode || 'default'
+        : 'default',
+    bundleStatus:
+      existing?.bundleId === bundleId ? existing.bundleStatus : 'open',
+    userConfirmed:
+      existing?.bundleId === bundleId ? existing.userConfirmed : false,
     createdAt: existing?.bundleId === bundleId ? existing.createdAt : nowIso,
     expiresAt,
     lastUpdatedAt: nowIso,
     relatedRefsJson: JSON.stringify(buildRelatedRefs(candidate)),
   };
-  const actions: ActionBundleActionRecord[] = synthesized.map((action, index) => ({
-    actionId:
-      existingSnapshot?.actions.find((item) => item.orderIndex === index + 1)?.actionId ||
-      randomUUID(),
-    bundleId,
-    orderIndex: index + 1,
-    actionType: action.actionType,
-    targetSystem: action.targetSystem,
-    summary: action.summary,
-    requiresConfirmation: action.requiresConfirmation,
-    delegationRuleId: action.delegationRuleId || null,
-    delegationMode: action.delegationMode || null,
-    delegationExplanation: action.delegationExplanation || null,
-    status:
-      existingSnapshot?.actions.find((item) => item.orderIndex === index + 1)?.status ||
-      action.initialStatus ||
-      'proposed',
-    failureReason:
-      existingSnapshot?.actions.find((item) => item.orderIndex === index + 1)?.failureReason ||
-      null,
-    payloadJson: JSON.stringify(action.payload),
-    resultRefJson:
-      existingSnapshot?.actions.find((item) => item.orderIndex === index + 1)?.resultRefJson ||
-      null,
-    createdAt:
-      existingSnapshot?.actions.find((item) => item.orderIndex === index + 1)?.createdAt ||
-      nowIso,
-    lastUpdatedAt: nowIso,
-  }));
+  const actions: ActionBundleActionRecord[] = synthesized.map(
+    (action, index) => ({
+      actionId:
+        existingSnapshot?.actions.find((item) => item.orderIndex === index + 1)
+          ?.actionId || randomUUID(),
+      bundleId,
+      orderIndex: index + 1,
+      actionType: action.actionType,
+      targetSystem: action.targetSystem,
+      summary: action.summary,
+      requiresConfirmation: action.requiresConfirmation,
+      delegationRuleId: action.delegationRuleId || null,
+      delegationMode: action.delegationMode || null,
+      delegationExplanation: action.delegationExplanation || null,
+      status:
+        existingSnapshot?.actions.find((item) => item.orderIndex === index + 1)
+          ?.status ||
+        action.initialStatus ||
+        'proposed',
+      failureReason:
+        existingSnapshot?.actions.find((item) => item.orderIndex === index + 1)
+          ?.failureReason || null,
+      payloadJson: JSON.stringify(action.payload),
+      resultRefJson:
+        existingSnapshot?.actions.find((item) => item.orderIndex === index + 1)
+          ?.resultRefJson || null,
+      createdAt:
+        existingSnapshot?.actions.find((item) => item.orderIndex === index + 1)
+          ?.createdAt || nowIso,
+      lastUpdatedAt: nowIso,
+    }),
+  );
 
   upsertActionBundle(record);
   replaceActionBundleActions(bundleId, actions);
@@ -821,7 +858,10 @@ export function createOrRefreshActionBundle(
   return snapshot;
 }
 
-function statusPill(action: ActionBundleActionRecord, selectionMode: boolean): string {
+function statusPill(
+  action: ActionBundleActionRecord,
+  selectionMode: boolean,
+): string {
   if (selectionMode) {
     return action.status === 'approved' ? '[x]' : '[ ]';
   }
@@ -848,13 +888,17 @@ function statusPill(action: ActionBundleActionRecord, selectionMode: boolean): s
   }
 }
 
-function pendingActions(snapshot: ActionBundleSnapshot): ActionBundleActionRecord[] {
+function pendingActions(
+  snapshot: ActionBundleSnapshot,
+): ActionBundleActionRecord[] {
   return snapshot.actions.filter((action) =>
     ['proposed', 'approved'].includes(action.status),
   );
 }
 
-function selectedActions(snapshot: ActionBundleSnapshot): ActionBundleActionRecord[] {
+function selectedActions(
+  snapshot: ActionBundleSnapshot,
+): ActionBundleActionRecord[] {
   return snapshot.actions.filter((action) => action.status === 'approved');
 }
 
@@ -871,7 +915,9 @@ export function buildActionBundlePresentation(
   if (sourceContext.whyLine) {
     lines.push(sourceContext.whyLine);
   }
-  const ruleDriven = snapshot.actions.filter((action) => action.delegationRuleId);
+  const ruleDriven = snapshot.actions.filter(
+    (action) => action.delegationRuleId,
+  );
   if (ruleDriven.length > 0) {
     lines.push(
       `Andrea used your saved rule on ${ruleDriven.length} ${ruleDriven.length === 1 ? 'step' : 'steps'} here.`,
@@ -894,17 +940,35 @@ export function buildActionBundlePresentation(
       ]);
     }
     rows.push([
-      { label: 'Run selected', actionId: `/bundle-run-selected ${snapshot.bundle.bundleId}` },
-      { label: 'Skip selected', actionId: `/bundle-skip-selected ${snapshot.bundle.bundleId}` },
+      {
+        label: 'Run selected',
+        actionId: `/bundle-run-selected ${snapshot.bundle.bundleId}`,
+      },
+      {
+        label: 'Skip selected',
+        actionId: `/bundle-skip-selected ${snapshot.bundle.bundleId}`,
+      },
     ]);
     rows.push([
-      { label: 'Show again', actionId: `/bundle-show ${snapshot.bundle.bundleId}` },
+      {
+        label: 'Show again',
+        actionId: `/bundle-show ${snapshot.bundle.bundleId}`,
+      },
     ]);
   } else {
     rows.push([
-      { label: 'Approve all', actionId: `/bundle-run-all ${snapshot.bundle.bundleId}` },
-      { label: 'Pick actions', actionId: `/bundle-pick ${snapshot.bundle.bundleId}` },
-      { label: 'Not now', actionId: `/bundle-defer ${snapshot.bundle.bundleId}` },
+      {
+        label: 'Approve all',
+        actionId: `/bundle-run-all ${snapshot.bundle.bundleId}`,
+      },
+      {
+        label: 'Pick actions',
+        actionId: `/bundle-pick ${snapshot.bundle.bundleId}`,
+      },
+      {
+        label: 'Not now',
+        actionId: `/bundle-defer ${snapshot.bundle.bundleId}`,
+      },
     ]);
   }
 
@@ -938,9 +1002,13 @@ export function buildActionBundleVoiceSummary(
   };
 }
 
-function parseOrdinalSelection(text: string, snapshot: ActionBundleSnapshot): number[] {
+function parseOrdinalSelection(
+  text: string,
+  snapshot: ActionBundleSnapshot,
+): number[] {
   const normalized = text.toLowerCase();
-  if (/do the first two/.test(normalized)) return [1, 2].filter((index) => index <= snapshot.actions.length);
+  if (/do the first two/.test(normalized))
+    return [1, 2].filter((index) => index <= snapshot.actions.length);
   if (/do the first one|do the first\b/.test(normalized)) return [1];
   const hasSelectionCue =
     /^(?:do|run|pick|choose|select|take|just|only)\b/.test(normalized) ||
@@ -955,7 +1023,12 @@ function parseOrdinalSelection(text: string, snapshot: ActionBundleSnapshot): nu
   }
   const matches = [...normalized.matchAll(/\b(\d+)\b/g)]
     .map((match) => Number.parseInt(match[1] || '', 10))
-    .filter((value) => Number.isFinite(value) && value >= 1 && value <= snapshot.actions.length);
+    .filter(
+      (value) =>
+        Number.isFinite(value) &&
+        value >= 1 &&
+        value <= snapshot.actions.length,
+    );
   return [...new Set(matches)];
 }
 
@@ -968,13 +1041,19 @@ export function interpretActionBundleFollowup(
   if (/^(approve all|do that|do all that|run it|do it)\b/.test(normalized)) {
     return { kind: 'approve_all' };
   }
-  if (/^(show me the actions again|show again|what are the actions)\b/.test(normalized)) {
+  if (
+    /^(show me the actions again|show again|what are the actions)\b/.test(
+      normalized,
+    )
+  ) {
     return { kind: 'show' };
   }
   if (/^(pick actions|let me choose)\b/.test(normalized)) {
     return { kind: 'enter_selection' };
   }
-  if (/^(not now|later|not right now|leave that for later)\b/.test(normalized)) {
+  if (
+    /^(not now|later|not right now|leave that for later)\b/.test(normalized)
+  ) {
     return { kind: 'defer_all' };
   }
   if (/^(just the reminder|only the reminder)\b/.test(normalized)) {
@@ -984,7 +1063,9 @@ export function interpretActionBundleFollowup(
     return { kind: 'execute_action_type', actionType: 'draft_follow_up' };
   }
   if (/^(save but don'?t remind|save it for later)\b/.test(normalized)) {
-    const threadAction = snapshot.actions.find((action) => action.actionType === 'save_to_thread');
+    const threadAction = snapshot.actions.find(
+      (action) => action.actionType === 'save_to_thread',
+    );
     return {
       kind: 'execute_action_type',
       actionType: threadAction ? 'save_to_thread' : 'save_to_library',
@@ -1029,8 +1110,11 @@ export function findLatestChatActionBundle(params: {
   return getActionBundleSnapshot(record.bundleId);
 }
 
-function recomputeBundleStatus(actions: ActionBundleActionRecord[]): ActionBundleStatus {
-  if (actions.every((action) => action.status === 'deferred')) return 'dismissed';
+function recomputeBundleStatus(
+  actions: ActionBundleActionRecord[],
+): ActionBundleStatus {
+  if (actions.every((action) => action.status === 'deferred'))
+    return 'dismissed';
   if (actions.every((action) => action.status === 'executed')) return 'done';
   if (
     actions.some((action) =>
@@ -1062,7 +1146,11 @@ function describeExecutionOutcome(params: {
   skipped: string[];
   deferred: boolean;
 }): string {
-  if (params.executed.length > 0 && params.failed.length === 0 && params.skipped.length === 0) {
+  if (
+    params.executed.length > 0 &&
+    params.failed.length === 0 &&
+    params.skipped.length === 0
+  ) {
     return `Andrea: Done — ${formatList(params.executed)}.`;
   }
   if (params.executed.length > 0 && params.failed.length > 0) {
@@ -1094,7 +1182,10 @@ async function executeBundleAction(
   failureReason?: string;
   resultRefJson?: string | null;
 }> {
-  const payload = parseJsonSafe<BundleActionPayload>(action.payloadJson, {} as BundleActionPayload);
+  const payload = parseJsonSafe<BundleActionPayload>(
+    action.payloadJson,
+    {} as BundleActionPayload,
+  );
   const now = deps.currentTime || (deps.now ? deps.now() : new Date());
   const relatedRefs = parseJsonSafe<ActionBundleRelatedRefs>(
     snapshot.bundle.relatedRefsJson,
@@ -1179,7 +1270,8 @@ async function executeBundleAction(
         ok: false,
         label: 'the draft',
         failureReason:
-          draft.clarificationQuestion || 'The draft still needs one more detail.',
+          draft.clarificationQuestion ||
+          'The draft still needs one more detail.',
       };
     }
     const messagePresentationChannel =
@@ -1187,16 +1279,20 @@ async function executeBundleAction(
     const messageAction = createOrRefreshMessageActionFromDraft({
       groupFolder: deps.groupFolder,
       presentationChannel: messagePresentationChannel,
-      presentationChatJid: deps.chatJid || snapshot.bundle.presentationChatJid || '',
-      presentationThreadId:
-        snapshot.bundle.presentationThreadId || null,
+      presentationChatJid:
+        deps.chatJid || snapshot.bundle.presentationChatJid || '',
+      presentationThreadId: snapshot.bundle.presentationThreadId || null,
       sourceType: 'action_bundle',
       sourceKey: snapshot.bundle.bundleId,
       sourceSummary: draft.summaryText || snapshot.bundle.title,
       draftText: draft.draftText || payload.text,
       personName: draft.linkedSubjects[0]?.displayName || draft.thread?.title,
-      threadTitle: payload.threadTitle || draft.linkedLifeThreads[0]?.title || draft.thread?.title,
-      communicationThreadId: draft.thread?.id || payload.communicationThreadId || null,
+      threadTitle:
+        payload.threadTitle ||
+        draft.linkedLifeThreads[0]?.title ||
+        draft.thread?.title,
+      communicationThreadId:
+        draft.thread?.id || payload.communicationThreadId || null,
       threadId: draft.linkedLifeThreads[0]?.id || null,
       missionId: relatedRefs.missionId,
       actionBundleId: snapshot.bundle.bundleId,
@@ -1217,7 +1313,8 @@ async function executeBundleAction(
         messagePresentationChannel,
       ).text,
       resultRefJson: JSON.stringify({
-        communicationThreadId: draft.thread?.id || payload.communicationThreadId || null,
+        communicationThreadId:
+          draft.thread?.id || payload.communicationThreadId || null,
         messageActionId: messageAction.messageActionId,
       }),
     };
@@ -1252,7 +1349,8 @@ async function executeBundleAction(
     return {
       ok: true,
       label: 'the thread save',
-      detailText: result.responseText || 'Andrea: I saved that under the thread.',
+      detailText:
+        result.responseText || 'Andrea: I saved that under the thread.',
       resultRefJson: JSON.stringify({
         threadId: result.referencedThread?.id || null,
       }),
@@ -1298,7 +1396,9 @@ async function executeBundleAction(
       text: 'make this part of my evening reset',
       replyText: payload.text,
       conversationSummary: snapshot.bundle.title,
-      priorContext: relatedRefs.threadId ? { usedThreadIds: [relatedRefs.threadId] } : undefined,
+      priorContext: relatedRefs.threadId
+        ? { usedThreadIds: [relatedRefs.threadId] }
+        : undefined,
       now,
     });
     if (!result.handled) {
@@ -1311,7 +1411,8 @@ async function executeBundleAction(
     return {
       ok: true,
       label: 'the ritual pin',
-      detailText: result.responseText || 'Andrea: I added that to your evening reset.',
+      detailText:
+        result.responseText || 'Andrea: I added that to your evening reset.',
     };
   }
 
@@ -1380,7 +1481,9 @@ async function executeBundleAction(
       ok: true,
       label: 'the current-work link',
       detailText: 'Andrea: Done — I kept that current work context attached.',
-      resultRefJson: JSON.stringify({ linkedCurrentWorkJson: payload.linkedCurrentWorkJson }),
+      resultRefJson: JSON.stringify({
+        linkedCurrentWorkJson: payload.linkedCurrentWorkJson,
+      }),
     };
   }
 
@@ -1450,15 +1553,26 @@ async function executeActions(
   const bundleStatus = recomputeBundleStatus(refreshed.actions);
   const finalSnapshot = finalizeBundleUpdate(
     refreshed,
-      {
-        bundleStatus,
-        userConfirmed: true,
-        presentationMode: 'default',
-      },
-      currentTime,
-    );
-  const replyParts = [describeExecutionOutcome({ executed, failed, skipped: [], deferred: false })];
-  if (detailTexts.length === 1 && executed.length === 1 && actions.length === 1) {
+    {
+      bundleStatus,
+      userConfirmed: true,
+      presentationMode: 'default',
+    },
+    currentTime,
+  );
+  const replyParts = [
+    describeExecutionOutcome({
+      executed,
+      failed,
+      skipped: [],
+      deferred: false,
+    }),
+  ];
+  if (
+    detailTexts.length === 1 &&
+    executed.length === 1 &&
+    actions.length === 1
+  ) {
     replyParts.push(detailTexts[0]!);
   } else if (detailTexts.length > 0 && executed.includes('the draft')) {
     const draftText = detailTexts.find((text) => /draft:/i.test(text));
@@ -1467,7 +1581,9 @@ async function executeActions(
   return {
     handled: true,
     snapshot: finalSnapshot,
-    presentation: finalSnapshot ? buildActionBundlePresentation(finalSnapshot) : undefined,
+    presentation: finalSnapshot
+      ? buildActionBundlePresentation(finalSnapshot)
+      : undefined,
     replyText: replyParts.filter(Boolean).join('\n\n'),
   };
 }
@@ -1508,7 +1624,9 @@ export async function applyActionBundleOperation(
   }
 
   if (operation.kind === 'toggle_action') {
-    const action = snapshot.actions.find((item) => item.orderIndex === operation.orderIndex);
+    const action = snapshot.actions.find(
+      (item) => item.orderIndex === operation.orderIndex,
+    );
     if (!action || !['proposed', 'approved'].includes(action.status)) {
       return { handled: false };
     }
@@ -1516,7 +1634,11 @@ export async function applyActionBundleOperation(
       status: action.status === 'approved' ? 'proposed' : 'approved',
       lastUpdatedAt: now.toISOString(),
     });
-    const next = finalizeBundleUpdate(snapshot, { presentationMode: 'selection' }, now);
+    const next = finalizeBundleUpdate(
+      snapshot,
+      { presentationMode: 'selection' },
+      now,
+    );
     return {
       handled: true,
       snapshot: next,
@@ -1564,7 +1686,10 @@ export async function applyActionBundleOperation(
     if (!refreshed) return { handled: false };
     const next = finalizeBundleUpdate(
       refreshed,
-      { bundleStatus: recomputeBundleStatus(refreshed.actions), presentationMode: 'default' },
+      {
+        bundleStatus: recomputeBundleStatus(refreshed.actions),
+        presentationMode: 'default',
+      },
       now,
     );
     return {
@@ -1581,7 +1706,9 @@ export async function applyActionBundleOperation(
   }
 
   if (operation.kind === 'skip_action_type') {
-    const target = pendingActions(snapshot).filter((action) => action.actionType === operation.actionType);
+    const target = pendingActions(snapshot).filter(
+      (action) => action.actionType === operation.actionType,
+    );
     for (const action of target) {
       if (action.delegationRuleId) {
         recordDelegationRuleOverride(action.delegationRuleId, now);
@@ -1595,7 +1722,10 @@ export async function applyActionBundleOperation(
     if (!refreshed) return { handled: false };
     const next = finalizeBundleUpdate(
       refreshed,
-      { bundleStatus: recomputeBundleStatus(refreshed.actions), presentationMode: 'default' },
+      {
+        bundleStatus: recomputeBundleStatus(refreshed.actions),
+        presentationMode: 'default',
+      },
       now,
     );
     return {
@@ -1622,7 +1752,9 @@ export async function applyActionBundleOperation(
   if (operation.kind === 'execute_action_type') {
     return executeActions(
       snapshot,
-      pendingActions(snapshot).filter((action) => action.actionType === operation.actionType),
+      pendingActions(snapshot).filter(
+        (action) => action.actionType === operation.actionType,
+      ),
       deps,
     );
   }
@@ -1631,7 +1763,9 @@ export async function applyActionBundleOperation(
     const indexSet = new Set(operation.orderIndexes);
     return executeActions(
       snapshot,
-      pendingActions(snapshot).filter((action) => indexSet.has(action.orderIndex)),
+      pendingActions(snapshot).filter((action) =>
+        indexSet.has(action.orderIndex),
+      ),
       deps,
     );
   }

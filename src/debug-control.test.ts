@@ -25,7 +25,10 @@ import {
   insertPilotJourneyEvent,
   upsertResponseFeedback,
 } from './db.js';
-import { persistNanoclawHostState, writeRuntimeAuditState } from './host-control.js';
+import {
+  persistNanoclawHostState,
+  writeRuntimeAuditState,
+} from './host-control.js';
 import { getLogControlConfig, setLogControlConfig } from './logger.js';
 import { recordOpenAiGuidedRoutingState } from './openai-guided-routing-state.js';
 import { recordOpenAiUsageState } from './openai-usage-state.js';
@@ -257,7 +260,9 @@ describe('debug log tails', () => {
     const status = formatDebugStatus();
     expect(status).toContain('Installed artifact mode:');
     expect(status).toContain('Current launch mode:');
-    expect(status).toContain('Serving git commit: dc67cf98c6b2f3d19c6a3c70f3a6c54abe266794');
+    expect(status).toContain(
+      'Serving git commit: dc67cf98c6b2f3d19c6a3c70f3a6c54abe266794',
+    );
     expect(status).toContain('Serving commit aligned: no');
     expect(status).toContain('Alexa last signed request: none');
     expect(status).toContain('Alexa proof kind: none');
@@ -343,9 +348,13 @@ describe('debug log tails', () => {
     const status = formatDebugStatus();
     expect(status).toContain('Pilot logging enabled: yes');
     expect(status).toContain('Open pilot issues: 1');
-    expect(status).toContain('Latest pilot issue: User marked daily guidance as weird.');
+    expect(status).toContain(
+      'Latest pilot issue: User marked daily guidance as weird.',
+    );
     expect(status).toContain('Latest response feedback: running');
-    expect(status).toContain('Latest response feedback class: repo_side_broken');
+    expect(status).toContain(
+      'Latest response feedback class: repo_side_broken',
+    );
     expect(status).toContain('Latest response feedback summary:');
     expect(status).toContain('Local hotfix pending landing: no');
     expect(status).toContain('Journey daily_guidance: live_proven');
@@ -428,7 +437,9 @@ describe('debug log tails', () => {
 
     const status = formatDebugStatus();
     expect(status).toContain('Latest response feedback: failed');
-    expect(status).toContain('Latest response feedback class: repo_side_rough_edge');
+    expect(status).toContain(
+      'Latest response feedback class: repo_side_rough_edge',
+    );
     expect(status).toContain('Local hotfix pending landing: no');
   });
 

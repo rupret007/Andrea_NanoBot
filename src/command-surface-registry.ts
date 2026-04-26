@@ -117,104 +117,105 @@ function family(
   };
 }
 
-export const PUBLIC_TELEGRAM_COMMAND_SURFACES: readonly CommandSurfaceEntry[] = [
-  {
-    id: 'telegram_start',
-    preferredAlias: '/start',
-    acceptedAliases: ['/start'],
-    audience: 'user',
-    surfaceKind: 'slash',
-    channelScope: ['telegram'],
-    discoverability: ['/start', '/help', '/commands'],
-    truthClass: 'live_proven',
-    summary: 'Quick start for new chats and first asks.',
-    menuDescription: 'Quick start and example asks',
-  },
-  {
-    id: 'telegram_help',
-    preferredAlias: '/help',
-    acceptedAliases: ['/help'],
-    audience: 'user',
-    surfaceKind: 'slash',
-    channelScope: ['telegram'],
-    discoverability: ['/start', '/help', '/commands'],
-    truthClass: 'live_proven',
-    summary: 'How Andrea works in Telegram, in one screen.',
-    menuDescription: 'How Andrea works here',
-  },
-  {
-    id: 'telegram_commands',
-    preferredAlias: '/commands',
-    acceptedAliases: ['/commands'],
-    audience: 'user',
-    surfaceKind: 'slash',
-    channelScope: ['telegram'],
-    discoverability: ['/start', '/help', '/commands'],
-    truthClass: 'live_proven',
-    summary: 'Setup and status commands for this safe Telegram surface.',
-    menuDescription: 'Setup and status commands',
-  },
-  {
-    id: 'telegram_features',
-    preferredAlias: '/features',
-    acceptedAliases: ['/features'],
-    audience: 'user',
-    surfaceKind: 'slash',
-    channelScope: ['telegram'],
-    discoverability: ['/start', '/help', '/features'],
-    truthClass: 'live_proven',
-    summary: 'What Andrea is best at here and where other surfaces fit.',
-    menuDescription: 'What Andrea is best at',
-  },
-  {
-    id: 'telegram_ping',
-    preferredAlias: '/ping',
-    acceptedAliases: ['/ping'],
-    audience: 'user',
-    surfaceKind: 'slash',
-    channelScope: ['telegram'],
-    discoverability: ['/commands', '/help'],
-    truthClass: 'live_proven',
-    summary: 'Quick online check.',
-    menuDescription: 'Check if Andrea is online',
-  },
-  {
-    id: 'telegram_chatid',
-    preferredAlias: '/chatid',
-    acceptedAliases: ['/chatid'],
-    audience: 'user',
-    surfaceKind: 'slash',
-    channelScope: ['telegram'],
-    discoverability: ['/commands'],
-    truthClass: 'live_proven',
-    summary: 'Show the current Telegram chat ID and type.',
-    menuDescription: "Show this chat's ID",
-  },
-  {
-    id: 'telegram_registermain',
-    preferredAlias: '/registermain',
-    acceptedAliases: ['/registermain'],
-    audience: 'user',
-    surfaceKind: 'slash',
-    channelScope: ['telegram'],
-    discoverability: ['/start', '/help', '/commands'],
-    truthClass: 'live_proven',
-    summary: "Make this DM Andrea's main control chat.",
-    menuDescription: 'Make this DM your main chat',
-  },
-  {
-    id: 'telegram_cursor_status',
-    preferredAlias: '/cursor_status',
-    acceptedAliases: ['/cursor_status'],
-    audience: 'user',
-    surfaceKind: 'slash',
-    channelScope: ['telegram'],
-    discoverability: ['/commands', '/help', '/features'],
-    truthClass: 'live_proven',
-    summary: 'Check whether coding and work help are ready right now.',
-    menuDescription: 'Coding and work readiness',
-  },
-] as const;
+export const PUBLIC_TELEGRAM_COMMAND_SURFACES: readonly CommandSurfaceEntry[] =
+  [
+    {
+      id: 'telegram_start',
+      preferredAlias: '/start',
+      acceptedAliases: ['/start'],
+      audience: 'user',
+      surfaceKind: 'slash',
+      channelScope: ['telegram'],
+      discoverability: ['/start', '/help', '/commands'],
+      truthClass: 'live_proven',
+      summary: 'Quick start for new chats and first asks.',
+      menuDescription: 'Quick start and example asks',
+    },
+    {
+      id: 'telegram_help',
+      preferredAlias: '/help',
+      acceptedAliases: ['/help'],
+      audience: 'user',
+      surfaceKind: 'slash',
+      channelScope: ['telegram'],
+      discoverability: ['/start', '/help', '/commands'],
+      truthClass: 'live_proven',
+      summary: 'How Andrea works in Telegram, in one screen.',
+      menuDescription: 'How Andrea works here',
+    },
+    {
+      id: 'telegram_commands',
+      preferredAlias: '/commands',
+      acceptedAliases: ['/commands'],
+      audience: 'user',
+      surfaceKind: 'slash',
+      channelScope: ['telegram'],
+      discoverability: ['/start', '/help', '/commands'],
+      truthClass: 'live_proven',
+      summary: 'Setup and status commands for this safe Telegram surface.',
+      menuDescription: 'Setup and status commands',
+    },
+    {
+      id: 'telegram_features',
+      preferredAlias: '/features',
+      acceptedAliases: ['/features'],
+      audience: 'user',
+      surfaceKind: 'slash',
+      channelScope: ['telegram'],
+      discoverability: ['/start', '/help', '/features'],
+      truthClass: 'live_proven',
+      summary: 'What Andrea is best at here and where other surfaces fit.',
+      menuDescription: 'What Andrea is best at',
+    },
+    {
+      id: 'telegram_ping',
+      preferredAlias: '/ping',
+      acceptedAliases: ['/ping'],
+      audience: 'user',
+      surfaceKind: 'slash',
+      channelScope: ['telegram'],
+      discoverability: ['/commands', '/help'],
+      truthClass: 'live_proven',
+      summary: 'Quick online check.',
+      menuDescription: 'Check if Andrea is online',
+    },
+    {
+      id: 'telegram_chatid',
+      preferredAlias: '/chatid',
+      acceptedAliases: ['/chatid'],
+      audience: 'user',
+      surfaceKind: 'slash',
+      channelScope: ['telegram'],
+      discoverability: ['/commands'],
+      truthClass: 'live_proven',
+      summary: 'Show the current Telegram chat ID and type.',
+      menuDescription: "Show this chat's ID",
+    },
+    {
+      id: 'telegram_registermain',
+      preferredAlias: '/registermain',
+      acceptedAliases: ['/registermain'],
+      audience: 'user',
+      surfaceKind: 'slash',
+      channelScope: ['telegram'],
+      discoverability: ['/start', '/help', '/commands'],
+      truthClass: 'live_proven',
+      summary: "Make this DM Andrea's main control chat.",
+      menuDescription: 'Make this DM your main chat',
+    },
+    {
+      id: 'telegram_cursor_status',
+      preferredAlias: '/cursor_status',
+      acceptedAliases: ['/cursor_status'],
+      audience: 'user',
+      surfaceKind: 'slash',
+      channelScope: ['telegram'],
+      discoverability: ['/commands', '/help', '/features'],
+      truthClass: 'live_proven',
+      summary: 'Check whether coding and work help are ready right now.',
+      menuDescription: 'Coding and work readiness',
+    },
+  ] as const;
 
 export type PracticalCommandFamilyId =
   | 'local_basics'
@@ -272,7 +273,9 @@ export interface EverydayJobSpec {
   family: PracticalCommandFamilyId;
   bestChannels: readonly ('alexa' | 'telegram' | 'bluebubbles')[];
   promptVariants: readonly string[];
-  discoveryPrompts: Partial<Record<'telegram' | 'alexa' | 'bluebubbles', string>>;
+  discoveryPrompts: Partial<
+    Record<'telegram' | 'alexa' | 'bluebubbles', string>
+  >;
   expectedOutcome: string;
   whatMakesItExcellent: string;
   successConfirmationStyle: string;
@@ -325,187 +328,676 @@ function practicalCommand(
   };
 }
 
-export const PRACTICAL_COMMAND_FAMILY_FINDINGS: readonly PracticalCommandFamilyFinding[] = [
-  {
-    rank: 1,
-    family: 'calendar_schedule',
-    label: 'Calendar and schedule',
-    whyItMatters:
-      'This is the most common daily assistant job and one of the clearest trust builders when it works cleanly.',
-    routeStrategy: 'capability-first',
-  },
-  {
-    rank: 2,
-    family: 'reminders_save',
-    label: 'Reminders and follow-up',
-    whyItMatters:
-      'People lean on assistants to stop dropped balls more than to entertain them.',
-    routeStrategy: 'capability-first',
-  },
-  {
-    rank: 3,
-    family: 'capture_lists',
-    label: 'Lists, groceries, bills, and everyday capture',
-    whyItMatters:
-      'Daily usefulness goes up fast when capture is low-friction and the open list is easy to review.',
-    routeStrategy: 'capability-first',
-  },
-  {
-    rank: 4,
-    family: 'communication_help',
-    label: 'Messages and reply help',
-    whyItMatters:
-      'Reply help is one of the highest-value everyday assistant behaviors because it is emotional as well as practical.',
-    routeStrategy: 'capability-first',
-  },
-  {
-    rank: 5,
-    family: 'orientation_planning',
-    label: 'Daily orientation and planning',
-    whyItMatters:
-      "This is where Andrea's chief-of-staff value shows up in normal life instead of in internal product labels.",
-    routeStrategy: 'capability-first',
-  },
-  {
-    rank: 6,
-    family: 'review_followthrough',
-    label: 'Review and open follow-through',
-    whyItMatters:
-      "People naturally ask what's still open far more often than they ask for a subsystem by name.",
-    routeStrategy: 'capability-first',
-  },
-  {
-    rank: 7,
-    family: 'reminders_save',
-    label: 'Save, notes, and remember-this',
-    whyItMatters:
-      'Lightweight capture is an everyday assistant behavior even when it stays bounded.',
-    routeStrategy: 'capability-first',
-  },
-  {
-    rank: 8,
-    family: 'local_basics',
-    label: 'Time and date',
-    whyItMatters:
-      'Quick deterministic answers build trust and make the assistant feel alive in ordinary use.',
-    routeStrategy: 'local-first',
-  },
-  {
-    rank: 9,
-    family: 'compare_explain',
-    label: 'Compare, explain, and what should I know',
-    whyItMatters:
-      'Bounded decision help feels intelligent and useful, especially before a purchase or tradeoff.',
-    routeStrategy: 'research-first',
-  },
-  {
-    rank: 10,
-    family: 'orientation_planning',
-    label: 'Routines like good morning, tonight, and review',
-    whyItMatters:
-      'Routine phrasing creates repeatable entry points into the assistant.',
-    routeStrategy: 'capability-first',
-  },
-  {
-    rank: 11,
-    family: 'household_coordination',
-    label: 'Household and family coordination',
-    whyItMatters:
-      'This is valuable, but it works better as a continuation lane than as the top public story.',
-    routeStrategy: 'capability-first',
-  },
-] as const;
+export const PRACTICAL_COMMAND_FAMILY_FINDINGS: readonly PracticalCommandFamilyFinding[] =
+  [
+    {
+      rank: 1,
+      family: 'calendar_schedule',
+      label: 'Calendar and schedule',
+      whyItMatters:
+        'This is the most common daily assistant job and one of the clearest trust builders when it works cleanly.',
+      routeStrategy: 'capability-first',
+    },
+    {
+      rank: 2,
+      family: 'reminders_save',
+      label: 'Reminders and follow-up',
+      whyItMatters:
+        'People lean on assistants to stop dropped balls more than to entertain them.',
+      routeStrategy: 'capability-first',
+    },
+    {
+      rank: 3,
+      family: 'capture_lists',
+      label: 'Lists, groceries, bills, and everyday capture',
+      whyItMatters:
+        'Daily usefulness goes up fast when capture is low-friction and the open list is easy to review.',
+      routeStrategy: 'capability-first',
+    },
+    {
+      rank: 4,
+      family: 'communication_help',
+      label: 'Messages and reply help',
+      whyItMatters:
+        'Reply help is one of the highest-value everyday assistant behaviors because it is emotional as well as practical.',
+      routeStrategy: 'capability-first',
+    },
+    {
+      rank: 5,
+      family: 'orientation_planning',
+      label: 'Daily orientation and planning',
+      whyItMatters:
+        "This is where Andrea's chief-of-staff value shows up in normal life instead of in internal product labels.",
+      routeStrategy: 'capability-first',
+    },
+    {
+      rank: 6,
+      family: 'review_followthrough',
+      label: 'Review and open follow-through',
+      whyItMatters:
+        "People naturally ask what's still open far more often than they ask for a subsystem by name.",
+      routeStrategy: 'capability-first',
+    },
+    {
+      rank: 7,
+      family: 'reminders_save',
+      label: 'Save, notes, and remember-this',
+      whyItMatters:
+        'Lightweight capture is an everyday assistant behavior even when it stays bounded.',
+      routeStrategy: 'capability-first',
+    },
+    {
+      rank: 8,
+      family: 'local_basics',
+      label: 'Time and date',
+      whyItMatters:
+        'Quick deterministic answers build trust and make the assistant feel alive in ordinary use.',
+      routeStrategy: 'local-first',
+    },
+    {
+      rank: 9,
+      family: 'compare_explain',
+      label: 'Compare, explain, and what should I know',
+      whyItMatters:
+        'Bounded decision help feels intelligent and useful, especially before a purchase or tradeoff.',
+      routeStrategy: 'research-first',
+    },
+    {
+      rank: 10,
+      family: 'orientation_planning',
+      label: 'Routines like good morning, tonight, and review',
+      whyItMatters:
+        'Routine phrasing creates repeatable entry points into the assistant.',
+      routeStrategy: 'capability-first',
+    },
+    {
+      rank: 11,
+      family: 'household_coordination',
+      label: 'Household and family coordination',
+      whyItMatters:
+        'This is valuable, but it works better as a continuation lane than as the top public story.',
+      routeStrategy: 'capability-first',
+    },
+  ] as const;
 
 export const PRACTICAL_COMMAND_INVENTORY: readonly PracticalCommandEntry[] = [
-  practicalCommand('local_basics', 'what time is it', 'alexa', ['telegram'], 'local'),
-  practicalCommand('local_basics', 'what day is it', 'alexa', ['telegram'], 'local'),
-  practicalCommand('local_basics', "what's up", 'alexa', ['telegram', 'bluebubbles'], 'local'),
-  practicalCommand('local_basics', 'can you help me', 'alexa', ['telegram', 'bluebubbles'], 'local'),
-  practicalCommand('local_basics', 'what can you do', 'alexa', ['telegram', 'bluebubbles'], 'local'),
+  practicalCommand(
+    'local_basics',
+    'what time is it',
+    'alexa',
+    ['telegram'],
+    'local',
+  ),
+  practicalCommand(
+    'local_basics',
+    'what day is it',
+    'alexa',
+    ['telegram'],
+    'local',
+  ),
+  practicalCommand(
+    'local_basics',
+    "what's up",
+    'alexa',
+    ['telegram', 'bluebubbles'],
+    'local',
+  ),
+  practicalCommand(
+    'local_basics',
+    'can you help me',
+    'alexa',
+    ['telegram', 'bluebubbles'],
+    'local',
+  ),
+  practicalCommand(
+    'local_basics',
+    'what can you do',
+    'alexa',
+    ['telegram', 'bluebubbles'],
+    'local',
+  ),
 
-  practicalCommand('calendar_schedule', "what's on my calendar today", 'alexa', ['telegram'], 'calendar_read'),
-  practicalCommand('calendar_schedule', "what's on my calendar tomorrow", 'alexa', ['telegram'], 'calendar_read'),
-  practicalCommand('calendar_schedule', 'what do I have this afternoon', 'alexa', ['telegram'], 'calendar_read'),
-  practicalCommand('calendar_schedule', 'when is my first meeting tomorrow', 'alexa', ['telegram'], 'calendar_read'),
-  practicalCommand('calendar_schedule', "what's next on my calendar", 'alexa', ['telegram'], 'calendar_read'),
-  practicalCommand('calendar_schedule', 'what should I handle before my next meeting', 'alexa', ['telegram'], 'calendar_read'),
+  practicalCommand(
+    'calendar_schedule',
+    "what's on my calendar today",
+    'alexa',
+    ['telegram'],
+    'calendar_read',
+  ),
+  practicalCommand(
+    'calendar_schedule',
+    "what's on my calendar tomorrow",
+    'alexa',
+    ['telegram'],
+    'calendar_read',
+  ),
+  practicalCommand(
+    'calendar_schedule',
+    'what do I have this afternoon',
+    'alexa',
+    ['telegram'],
+    'calendar_read',
+  ),
+  practicalCommand(
+    'calendar_schedule',
+    'when is my first meeting tomorrow',
+    'alexa',
+    ['telegram'],
+    'calendar_read',
+  ),
+  practicalCommand(
+    'calendar_schedule',
+    "what's next on my calendar",
+    'alexa',
+    ['telegram'],
+    'calendar_read',
+  ),
+  practicalCommand(
+    'calendar_schedule',
+    'what should I handle before my next meeting',
+    'alexa',
+    ['telegram'],
+    'calendar_read',
+  ),
 
-  practicalCommand('calendar_schedule', 'add dinner tomorrow at 6:30 PM', 'alexa', ['telegram'], 'calendar_write'),
-  practicalCommand('calendar_schedule', 'put workout on my calendar Friday at 7', 'alexa', ['telegram'], 'calendar_write'),
-  practicalCommand('calendar_schedule', 'schedule lunch tomorrow at noon', 'alexa', ['telegram'], 'calendar_write'),
-  practicalCommand('calendar_schedule', 'move that to 7', 'alexa', ['telegram'], 'calendar_write'),
-  practicalCommand('calendar_schedule', 'move my 3 PM to tomorrow', 'alexa', ['telegram'], 'calendar_write'),
-  practicalCommand('calendar_schedule', 'cancel dinner tomorrow', 'alexa', ['telegram'], 'calendar_write'),
+  practicalCommand(
+    'calendar_schedule',
+    'add dinner tomorrow at 6:30 PM',
+    'alexa',
+    ['telegram'],
+    'calendar_write',
+  ),
+  practicalCommand(
+    'calendar_schedule',
+    'put workout on my calendar Friday at 7',
+    'alexa',
+    ['telegram'],
+    'calendar_write',
+  ),
+  practicalCommand(
+    'calendar_schedule',
+    'schedule lunch tomorrow at noon',
+    'alexa',
+    ['telegram'],
+    'calendar_write',
+  ),
+  practicalCommand(
+    'calendar_schedule',
+    'move that to 7',
+    'alexa',
+    ['telegram'],
+    'calendar_write',
+  ),
+  practicalCommand(
+    'calendar_schedule',
+    'move my 3 PM to tomorrow',
+    'alexa',
+    ['telegram'],
+    'calendar_write',
+  ),
+  practicalCommand(
+    'calendar_schedule',
+    'cancel dinner tomorrow',
+    'alexa',
+    ['telegram'],
+    'calendar_write',
+  ),
 
-  practicalCommand('reminders_save', 'remind me to call Sam tomorrow at 3', 'alexa', ['telegram'], 'reminder_write'),
-  practicalCommand('reminders_save', 'remind me at 4 to text Mom', 'alexa', ['telegram'], 'reminder_write'),
-  practicalCommand('reminders_save', 'remind me to take my pills at 9', 'alexa', ['telegram'], 'reminder_write'),
-  practicalCommand('reminders_save', 'remind me to pay the water bill Friday', 'alexa', ['telegram'], 'reminder_write'),
-  practicalCommand('reminders_save', 'remind me about that tonight', 'alexa', ['telegram'], 'reminder_write'),
-  practicalCommand('reminders_save', 'remind me later', 'alexa', ['telegram', 'bluebubbles'], 'reminder_write'),
-  practicalCommand('reminders_save', 'save that for later', 'alexa', ['telegram', 'bluebubbles'], 'review'),
-  practicalCommand('reminders_save', 'remember this', 'alexa', ['telegram'], 'review'),
-  practicalCommand('reminders_save', 'add this to my evening reset', 'alexa', ['telegram'], 'reminder_write'),
-  practicalCommand('reminders_save', 'send me the fuller version', 'handoff', ['alexa', 'telegram', 'bluebubbles'], 'telegram_handoff'),
+  practicalCommand(
+    'reminders_save',
+    'remind me to call Sam tomorrow at 3',
+    'alexa',
+    ['telegram'],
+    'reminder_write',
+  ),
+  practicalCommand(
+    'reminders_save',
+    'remind me at 4 to text Mom',
+    'alexa',
+    ['telegram'],
+    'reminder_write',
+  ),
+  practicalCommand(
+    'reminders_save',
+    'remind me to take my pills at 9',
+    'alexa',
+    ['telegram'],
+    'reminder_write',
+  ),
+  practicalCommand(
+    'reminders_save',
+    'remind me to pay the water bill Friday',
+    'alexa',
+    ['telegram'],
+    'reminder_write',
+  ),
+  practicalCommand(
+    'reminders_save',
+    'remind me about that tonight',
+    'alexa',
+    ['telegram'],
+    'reminder_write',
+  ),
+  practicalCommand(
+    'reminders_save',
+    'remind me later',
+    'alexa',
+    ['telegram', 'bluebubbles'],
+    'reminder_write',
+  ),
+  practicalCommand(
+    'reminders_save',
+    'save that for later',
+    'alexa',
+    ['telegram', 'bluebubbles'],
+    'review',
+  ),
+  practicalCommand(
+    'reminders_save',
+    'remember this',
+    'alexa',
+    ['telegram'],
+    'review',
+  ),
+  practicalCommand(
+    'reminders_save',
+    'add this to my evening reset',
+    'alexa',
+    ['telegram'],
+    'reminder_write',
+  ),
+  practicalCommand(
+    'reminders_save',
+    'send me the fuller version',
+    'handoff',
+    ['alexa', 'telegram', 'bluebubbles'],
+    'telegram_handoff',
+  ),
 
-  practicalCommand('capture_lists', 'add milk to my shopping list', 'alexa', ['telegram', 'bluebubbles'], 'capture'),
-  practicalCommand('capture_lists', 'put batteries on my list', 'alexa', ['telegram', 'bluebubbles'], 'capture'),
-  practicalCommand('capture_lists', 'save this as an errand', 'alexa', ['telegram', 'bluebubbles'], 'capture'),
-  practicalCommand('capture_lists', 'add pay water bill to my list', 'alexa', ['telegram'], 'capture'),
-  practicalCommand('capture_lists', 'add dinner idea for Friday', 'alexa', ['telegram'], 'capture'),
-  practicalCommand('capture_lists', 'add my pills to tonight', 'alexa', ['telegram'], 'capture'),
-  practicalCommand('capture_lists', "what's on my list", 'alexa', ['telegram', 'bluebubbles'], 'capture'),
-  practicalCommand('capture_lists', 'what do we need from the store', 'alexa', ['telegram', 'bluebubbles'], 'capture'),
-  practicalCommand('capture_lists', 'what do I still need to buy', 'alexa', ['telegram', 'bluebubbles'], 'capture'),
-  practicalCommand('capture_lists', 'what errands do I have', 'alexa', ['telegram'], 'capture'),
-  practicalCommand('capture_lists', "what's left for tonight", 'alexa', ['telegram', 'bluebubbles'], 'capture'),
-  practicalCommand('capture_lists', 'what should I handle this weekend', 'alexa', ['telegram'], 'capture'),
-  practicalCommand('capture_lists', "what's missing for dinner", 'alexa', ['telegram'], 'capture'),
-  practicalCommand('capture_lists', 'what meals have I planned this week', 'telegram', ['alexa'], 'capture'),
-  practicalCommand('capture_lists', 'what recurring things are coming up', 'alexa', ['telegram'], 'capture'),
-  practicalCommand('capture_lists', 'mark that done', 'alexa', ['telegram', 'bluebubbles'], 'capture'),
-  practicalCommand('capture_lists', 'turn that into a reminder', 'alexa', ['telegram'], 'capture'),
+  practicalCommand(
+    'capture_lists',
+    'add milk to my shopping list',
+    'alexa',
+    ['telegram', 'bluebubbles'],
+    'capture',
+  ),
+  practicalCommand(
+    'capture_lists',
+    'put batteries on my list',
+    'alexa',
+    ['telegram', 'bluebubbles'],
+    'capture',
+  ),
+  practicalCommand(
+    'capture_lists',
+    'save this as an errand',
+    'alexa',
+    ['telegram', 'bluebubbles'],
+    'capture',
+  ),
+  practicalCommand(
+    'capture_lists',
+    'add pay water bill to my list',
+    'alexa',
+    ['telegram'],
+    'capture',
+  ),
+  practicalCommand(
+    'capture_lists',
+    'add dinner idea for Friday',
+    'alexa',
+    ['telegram'],
+    'capture',
+  ),
+  practicalCommand(
+    'capture_lists',
+    'add my pills to tonight',
+    'alexa',
+    ['telegram'],
+    'capture',
+  ),
+  practicalCommand(
+    'capture_lists',
+    "what's on my list",
+    'alexa',
+    ['telegram', 'bluebubbles'],
+    'capture',
+  ),
+  practicalCommand(
+    'capture_lists',
+    'what do we need from the store',
+    'alexa',
+    ['telegram', 'bluebubbles'],
+    'capture',
+  ),
+  practicalCommand(
+    'capture_lists',
+    'what do I still need to buy',
+    'alexa',
+    ['telegram', 'bluebubbles'],
+    'capture',
+  ),
+  practicalCommand(
+    'capture_lists',
+    'what errands do I have',
+    'alexa',
+    ['telegram'],
+    'capture',
+  ),
+  practicalCommand(
+    'capture_lists',
+    "what's left for tonight",
+    'alexa',
+    ['telegram', 'bluebubbles'],
+    'capture',
+  ),
+  practicalCommand(
+    'capture_lists',
+    'what should I handle this weekend',
+    'alexa',
+    ['telegram'],
+    'capture',
+  ),
+  practicalCommand(
+    'capture_lists',
+    "what's missing for dinner",
+    'alexa',
+    ['telegram'],
+    'capture',
+  ),
+  practicalCommand(
+    'capture_lists',
+    'what meals have I planned this week',
+    'telegram',
+    ['alexa'],
+    'capture',
+  ),
+  practicalCommand(
+    'capture_lists',
+    'what recurring things are coming up',
+    'alexa',
+    ['telegram'],
+    'capture',
+  ),
+  practicalCommand(
+    'capture_lists',
+    'mark that done',
+    'alexa',
+    ['telegram', 'bluebubbles'],
+    'capture',
+  ),
+  practicalCommand(
+    'capture_lists',
+    'turn that into a reminder',
+    'alexa',
+    ['telegram'],
+    'capture',
+  ),
 
-  practicalCommand('orientation_planning', 'what am I forgetting', 'alexa', ['telegram'], 'daily_guidance'),
-  practicalCommand('orientation_planning', 'what matters today', 'alexa', ['telegram'], 'planning'),
-  practicalCommand('orientation_planning', 'what should I do next', 'alexa', ['telegram'], 'planning'),
-  practicalCommand('orientation_planning', 'what should I remember tonight', 'alexa', ['telegram'], 'daily_guidance'),
-  practicalCommand('orientation_planning', 'help me plan tonight', 'alexa', ['telegram'], 'planning'),
-  practicalCommand('orientation_planning', 'help me plan meals this week', 'telegram', ['alexa'], 'planning'),
-  practicalCommand('orientation_planning', 'help me plan this week', 'telegram', ['alexa'], 'planning'),
-  practicalCommand('orientation_planning', 'help me figure out tomorrow morning', 'alexa', ['telegram'], 'planning'),
-  practicalCommand('orientation_planning', "what's still open", 'alexa', ['telegram'], 'review'),
-  practicalCommand('review_followthrough', 'what bills do I need to pay this week', 'telegram', ['alexa'], 'review'),
+  practicalCommand(
+    'orientation_planning',
+    'what am I forgetting',
+    'alexa',
+    ['telegram'],
+    'daily_guidance',
+  ),
+  practicalCommand(
+    'orientation_planning',
+    'what matters today',
+    'alexa',
+    ['telegram'],
+    'planning',
+  ),
+  practicalCommand(
+    'orientation_planning',
+    'what should I do next',
+    'alexa',
+    ['telegram'],
+    'planning',
+  ),
+  practicalCommand(
+    'orientation_planning',
+    'what should I remember tonight',
+    'alexa',
+    ['telegram'],
+    'daily_guidance',
+  ),
+  practicalCommand(
+    'orientation_planning',
+    'help me plan tonight',
+    'alexa',
+    ['telegram'],
+    'planning',
+  ),
+  practicalCommand(
+    'orientation_planning',
+    'help me plan meals this week',
+    'telegram',
+    ['alexa'],
+    'planning',
+  ),
+  practicalCommand(
+    'orientation_planning',
+    'help me plan this week',
+    'telegram',
+    ['alexa'],
+    'planning',
+  ),
+  practicalCommand(
+    'orientation_planning',
+    'help me figure out tomorrow morning',
+    'alexa',
+    ['telegram'],
+    'planning',
+  ),
+  practicalCommand(
+    'orientation_planning',
+    "what's still open",
+    'alexa',
+    ['telegram'],
+    'review',
+  ),
+  practicalCommand(
+    'review_followthrough',
+    'what bills do I need to pay this week',
+    'telegram',
+    ['alexa'],
+    'review',
+  ),
 
-  practicalCommand('communication_help', 'what should I say back', 'alexa', ['telegram', 'bluebubbles'], 'communication'),
-  practicalCommand('communication_help', 'give me a short reply', 'alexa', ['telegram', 'bluebubbles'], 'communication'),
-  practicalCommand('communication_help', 'make that warmer', 'alexa', ['telegram', 'bluebubbles'], 'communication'),
-  practicalCommand('communication_help', 'make that more direct', 'alexa', ['telegram', 'bluebubbles'], 'communication'),
-  practicalCommand('communication_help', 'summarize this message', 'alexa', ['telegram', 'bluebubbles'], 'communication'),
-  practicalCommand('communication_help', 'who do I still owe a reply', 'alexa', ['telegram', 'bluebubbles'], 'communication'),
-  practicalCommand('communication_help', 'what do I owe people', 'alexa', ['telegram', 'bluebubbles'], 'communication'),
-  practicalCommand('communication_help', 'remind me to reply later', 'alexa', ['telegram', 'bluebubbles'], 'communication'),
+  practicalCommand(
+    'communication_help',
+    'what should I say back',
+    'alexa',
+    ['telegram', 'bluebubbles'],
+    'communication',
+  ),
+  practicalCommand(
+    'communication_help',
+    'give me a short reply',
+    'alexa',
+    ['telegram', 'bluebubbles'],
+    'communication',
+  ),
+  practicalCommand(
+    'communication_help',
+    'make that warmer',
+    'alexa',
+    ['telegram', 'bluebubbles'],
+    'communication',
+  ),
+  practicalCommand(
+    'communication_help',
+    'make that more direct',
+    'alexa',
+    ['telegram', 'bluebubbles'],
+    'communication',
+  ),
+  practicalCommand(
+    'communication_help',
+    'summarize this message',
+    'alexa',
+    ['telegram', 'bluebubbles'],
+    'communication',
+  ),
+  practicalCommand(
+    'communication_help',
+    'who do I still owe a reply',
+    'alexa',
+    ['telegram', 'bluebubbles'],
+    'communication',
+  ),
+  practicalCommand(
+    'communication_help',
+    'what do I owe people',
+    'alexa',
+    ['telegram', 'bluebubbles'],
+    'communication',
+  ),
+  practicalCommand(
+    'communication_help',
+    'remind me to reply later',
+    'alexa',
+    ['telegram', 'bluebubbles'],
+    'communication',
+  ),
 
-  practicalCommand('compare_explain', 'compare meal delivery and grocery delivery for a busy week', 'alexa', ['telegram'], 'research_or_knowledge'),
-  practicalCommand('compare_explain', 'what should I know before deciding', 'alexa', ['telegram'], 'research_or_knowledge'),
-  practicalCommand('compare_explain', 'explain this simply', 'alexa', ['telegram'], 'research_or_knowledge'),
-  practicalCommand('compare_explain', 'tell me something interesting', 'alexa', ['telegram'], 'research_or_knowledge'),
-  practicalCommand('compare_explain', 'summarize this', 'alexa', ['telegram', 'bluebubbles'], 'research_or_knowledge'),
-  practicalCommand('compare_explain', 'help me think through this choice', 'alexa', ['telegram'], 'research_or_knowledge'),
+  practicalCommand(
+    'compare_explain',
+    'compare meal delivery and grocery delivery for a busy week',
+    'alexa',
+    ['telegram'],
+    'research_or_knowledge',
+  ),
+  practicalCommand(
+    'compare_explain',
+    'what should I know before deciding',
+    'alexa',
+    ['telegram'],
+    'research_or_knowledge',
+  ),
+  practicalCommand(
+    'compare_explain',
+    'explain this simply',
+    'alexa',
+    ['telegram'],
+    'research_or_knowledge',
+  ),
+  practicalCommand(
+    'compare_explain',
+    'tell me something interesting',
+    'alexa',
+    ['telegram'],
+    'research_or_knowledge',
+  ),
+  practicalCommand(
+    'compare_explain',
+    'summarize this',
+    'alexa',
+    ['telegram', 'bluebubbles'],
+    'research_or_knowledge',
+  ),
+  practicalCommand(
+    'compare_explain',
+    'help me think through this choice',
+    'alexa',
+    ['telegram'],
+    'research_or_knowledge',
+  ),
 
-  practicalCommand('review_followthrough', 'anything else', 'alexa', ['telegram', 'bluebubbles'], 'review'),
-  practicalCommand('review_followthrough', 'what still needs attention', 'alexa', ['telegram', 'bluebubbles'], 'review'),
-  practicalCommand('review_followthrough', 'what did I save about this', 'alexa', ['telegram'], 'review'),
-  practicalCommand('review_followthrough', 'send that to Telegram', 'handoff', ['alexa', 'bluebubbles'], 'telegram_handoff'),
+  practicalCommand(
+    'review_followthrough',
+    'anything else',
+    'alexa',
+    ['telegram', 'bluebubbles'],
+    'review',
+  ),
+  practicalCommand(
+    'review_followthrough',
+    'what still needs attention',
+    'alexa',
+    ['telegram', 'bluebubbles'],
+    'review',
+  ),
+  practicalCommand(
+    'review_followthrough',
+    'what did I save about this',
+    'alexa',
+    ['telegram'],
+    'review',
+  ),
+  practicalCommand(
+    'review_followthrough',
+    'send that to Telegram',
+    'handoff',
+    ['alexa', 'bluebubbles'],
+    'telegram_handoff',
+  ),
 
-  practicalCommand('household_coordination', "what's still open with my family", 'telegram', ['alexa', 'bluebubbles'], 'thread_followup', 'secondary'),
-  practicalCommand('household_coordination', 'what do I need to follow up on at home', 'telegram', ['alexa', 'bluebubbles'], 'thread_followup', 'secondary'),
-  practicalCommand('household_coordination', 'what about Candace', 'telegram', ['alexa', 'bluebubbles'], 'thread_followup', 'secondary'),
-  practicalCommand('household_coordination', "what's still open with Candace", 'telegram', ['alexa', 'bluebubbles'], 'thread_followup', 'secondary'),
-  practicalCommand('household_coordination', 'what should I say back to Candace', 'telegram', ['alexa', 'bluebubbles'], 'communication', 'secondary'),
-  practicalCommand('household_coordination', 'save this under the Candace thread', 'telegram', ['bluebubbles'], 'thread_followup', 'secondary'),
-  practicalCommand('household_coordination', 'remind me to check in with Candace tonight', 'telegram', ['alexa', 'bluebubbles'], 'reminder_write', 'secondary'),
-  practicalCommand('household_coordination', 'what do Candace and I have coming up', 'telegram', ['alexa', 'bluebubbles'], 'thread_followup', 'secondary'),
+  practicalCommand(
+    'household_coordination',
+    "what's still open with my family",
+    'telegram',
+    ['alexa', 'bluebubbles'],
+    'thread_followup',
+    'secondary',
+  ),
+  practicalCommand(
+    'household_coordination',
+    'what do I need to follow up on at home',
+    'telegram',
+    ['alexa', 'bluebubbles'],
+    'thread_followup',
+    'secondary',
+  ),
+  practicalCommand(
+    'household_coordination',
+    'what about Candace',
+    'telegram',
+    ['alexa', 'bluebubbles'],
+    'thread_followup',
+    'secondary',
+  ),
+  practicalCommand(
+    'household_coordination',
+    "what's still open with Candace",
+    'telegram',
+    ['alexa', 'bluebubbles'],
+    'thread_followup',
+    'secondary',
+  ),
+  practicalCommand(
+    'household_coordination',
+    'what should I say back to Candace',
+    'telegram',
+    ['alexa', 'bluebubbles'],
+    'communication',
+    'secondary',
+  ),
+  practicalCommand(
+    'household_coordination',
+    'save this under the Candace thread',
+    'telegram',
+    ['bluebubbles'],
+    'thread_followup',
+    'secondary',
+  ),
+  practicalCommand(
+    'household_coordination',
+    'remind me to check in with Candace tonight',
+    'telegram',
+    ['alexa', 'bluebubbles'],
+    'reminder_write',
+    'secondary',
+  ),
+  practicalCommand(
+    'household_coordination',
+    'what do Candace and I have coming up',
+    'telegram',
+    ['alexa', 'bluebubbles'],
+    'thread_followup',
+    'secondary',
+  ),
 ] as const;
 
 export const EVERYDAY_JOB_SPECS: readonly EverydayJobSpec[] = [
@@ -588,7 +1080,8 @@ export const EVERYDAY_JOB_SPECS: readonly EverydayJobSpec[] = [
     whatMakesItExcellent:
       'It feels like a real assistant catching what might slip, not a state dump.',
     successConfirmationStyle: 'lead answer plus one follow-through move',
-    blockedFallbackStyle: 'local answer from calendar, reminders, and saved context',
+    blockedFallbackStyle:
+      'local answer from calendar, reminders, and saved context',
     nextStepSuggestions: ['I can save that for tonight if you want.'],
   },
   {
@@ -599,7 +1092,8 @@ export const EVERYDAY_JOB_SPECS: readonly EverydayJobSpec[] = [
     bestChannels: ['alexa', 'telegram'],
     promptVariants: ['what should I do next', 'what matters today'],
     discoveryPrompts: {},
-    expectedOutcome: 'Prioritize one thing clearly instead of listing everything.',
+    expectedOutcome:
+      'Prioritize one thing clearly instead of listing everything.',
     whatMakesItExcellent:
       'The answer feels decisive, grounded, and useful right away.',
     successConfirmationStyle: 'single priority first, brief support second',
@@ -622,7 +1116,8 @@ export const EVERYDAY_JOB_SPECS: readonly EverydayJobSpec[] = [
       alexa: 'what should I say back',
       bluebubbles: 'what should I say back',
     },
-    expectedOutcome: 'Draft or summarize clearly, then offer one sensible continuation.',
+    expectedOutcome:
+      'Draft or summarize clearly, then offer one sensible continuation.',
     whatMakesItExcellent:
       'The draft sounds like a person, and style follow-ups stay coherent.',
     successConfirmationStyle: 'draft first, style tweak second',
@@ -644,12 +1139,16 @@ export const EVERYDAY_JOB_SPECS: readonly EverydayJobSpec[] = [
     discoveryPrompts: {
       telegram: 'what bills do I need to pay this week',
     },
-    expectedOutcome: 'Surface the most important open loops and the best next move.',
+    expectedOutcome:
+      'Surface the most important open loops and the best next move.',
     whatMakesItExcellent:
       'It starts broad and practical before narrowing into a person or thread.',
     successConfirmationStyle: 'lead loop plus one best next action',
-    blockedFallbackStyle: 'local review from reminders, threads, and saved context',
-    nextStepSuggestions: ['I can remind you later if you do not want to handle it now.'],
+    blockedFallbackStyle:
+      'local review from reminders, threads, and saved context',
+    nextStepSuggestions: [
+      'I can remind you later if you do not want to handle it now.',
+    ],
   },
   {
     jobId: 'planning_horizon',
@@ -667,11 +1166,13 @@ export const EVERYDAY_JOB_SPECS: readonly EverydayJobSpec[] = [
       telegram: 'help me plan meals this week',
       alexa: 'help me plan tonight',
     },
-    expectedOutcome: 'Give a short plan with the next step and the main blocker.',
+    expectedOutcome:
+      'Give a short plan with the next step and the main blocker.',
     whatMakesItExcellent:
       'It feels action-first and practical for real life, including meals and household logistics.',
     successConfirmationStyle: 'next step first, blocker second',
-    blockedFallbackStyle: 'short local plan with optional Telegram continuation',
+    blockedFallbackStyle:
+      'short local plan with optional Telegram continuation',
     nextStepSuggestions: ['I can send the fuller version to Telegram.'],
   },
   {
@@ -686,11 +1187,13 @@ export const EVERYDAY_JOB_SPECS: readonly EverydayJobSpec[] = [
       'help me think through this choice',
     ],
     discoveryPrompts: {},
-    expectedOutcome: 'Give one useful synthesis first, then offer richer detail only if needed.',
+    expectedOutcome:
+      'Give one useful synthesis first, then offer richer detail only if needed.',
     whatMakesItExcellent:
       'Andrea stays helpful even when live research is blocked by grounding the answer first.',
     successConfirmationStyle: 'short synthesis first, richer handoff second',
-    blockedFallbackStyle: 'local or saved-context answer before any handoff offer',
+    blockedFallbackStyle:
+      'local or saved-context answer before any handoff offer',
     nextStepSuggestions: ['Want the fuller version in Telegram?'],
   },
   {
@@ -701,16 +1204,21 @@ export const EVERYDAY_JOB_SPECS: readonly EverydayJobSpec[] = [
     bestChannels: ['alexa', 'telegram'],
     promptVariants: ['send me the fuller version', 'send that to Telegram'],
     discoveryPrompts: {},
-    expectedOutcome: 'Continue in Telegram without making the user restate context.',
+    expectedOutcome:
+      'Continue in Telegram without making the user restate context.',
     whatMakesItExcellent:
       'The handoff feels earned and optional instead of like an escape hatch.',
     successConfirmationStyle: 'what is being sent plus where it will show up',
-    blockedFallbackStyle: 'say what already worked locally and what richer detail needs Telegram',
+    blockedFallbackStyle:
+      'say what already worked locally and what richer detail needs Telegram',
     nextStepSuggestions: [],
   },
 ] as const;
 
-const PRACTICAL_DISCOVERY_FAMILY_LABELS: Record<PracticalCommandFamilyId, string> = {
+const PRACTICAL_DISCOVERY_FAMILY_LABELS: Record<
+  PracticalCommandFamilyId,
+  string
+> = {
   local_basics: 'local basics',
   calendar_schedule: 'calendar and schedule',
   reminders_save: 'reminders and save-for-later',
@@ -739,7 +1247,8 @@ function includesSurface(
   surface: PracticalCommandSurface,
 ): boolean {
   return (
-    entry.primarySurface === surface || entry.secondarySurfaces.includes(surface)
+    entry.primarySurface === surface ||
+    entry.secondarySurfaces.includes(surface)
   );
 }
 
@@ -752,7 +1261,10 @@ export function getPracticalCommandsForSurface(
 ): PracticalCommandEntry[] {
   return PRACTICAL_COMMAND_INVENTORY.filter((entry) => {
     if (!includesSurface(entry, surface)) return false;
-    if (options.discoveryTier && entry.discoveryTier !== options.discoveryTier) {
+    if (
+      options.discoveryTier &&
+      entry.discoveryTier !== options.discoveryTier
+    ) {
       return false;
     }
     if (options.family && entry.family !== options.family) {
@@ -762,10 +1274,12 @@ export function getPracticalCommandsForSurface(
   });
 }
 
-export function getEverydayJobSpecs(options: {
-  jobTier?: EverydayJobTier;
-  surface?: 'telegram' | 'alexa' | 'bluebubbles';
-} = {}): EverydayJobSpec[] {
+export function getEverydayJobSpecs(
+  options: {
+    jobTier?: EverydayJobTier;
+    surface?: 'telegram' | 'alexa' | 'bluebubbles';
+  } = {},
+): EverydayJobSpec[] {
   return EVERYDAY_JOB_SPECS.filter((job) => {
     if (options.jobTier && job.jobTier !== options.jobTier) {
       return false;
@@ -780,10 +1294,11 @@ export function getEverydayJobSpecs(options: {
 function getEverydayJobDiscoveryPrompts(
   surface: 'telegram' | 'alexa' | 'bluebubbles',
 ): string[] {
-  return EVERYDAY_JOB_DISCOVERY_ORDER.map((jobId) =>
-    EVERYDAY_JOB_SPECS.find((job) => job.jobId === jobId)?.discoveryPrompts[
-      surface
-    ],
+  return EVERYDAY_JOB_DISCOVERY_ORDER.map(
+    (jobId) =>
+      EVERYDAY_JOB_SPECS.find((job) => job.jobId === jobId)?.discoveryPrompts[
+        surface
+      ],
   ).filter((prompt): prompt is string => Boolean(prompt));
 }
 
@@ -791,7 +1306,9 @@ export function getPracticalDiscoverySpotlights(
   surface: 'telegram' | 'alexa' | 'bluebubbles',
 ): PracticalCommandEntry[] {
   const byPrompt = new Map(
-    PRACTICAL_COMMAND_INVENTORY.map((entry) => [entry.prompt.toLowerCase(), entry] as const),
+    PRACTICAL_COMMAND_INVENTORY.map(
+      (entry) => [entry.prompt.toLowerCase(), entry] as const,
+    ),
   );
   return getEverydayJobDiscoveryPrompts(surface)
     .map((prompt) => byPrompt.get(prompt.toLowerCase()))
@@ -805,299 +1322,575 @@ export function getPracticalFamilyLabels(
 }
 
 export const OPERATOR_SLASH_COMMAND_SURFACES: readonly CommandSurfaceEntry[] = [
-  family('remote_control_start', '/remote-control', REMOTE_CONTROL_START_COMMANDS, 'Disabled experimental remote-control bridge.', 'operator', 'disabled'),
-  family('remote_control_stop', '/remote-control-end', REMOTE_CONTROL_STOP_COMMANDS, 'Disabled remote-control stop path.', 'operator', 'disabled'),
-  family('cursor_dashboard', '/cursor', CURSOR_DASHBOARD_COMMANDS, 'Open the main work cockpit.', 'operator', 'operator_only'),
-  family('cursor_models', '/cursor-models', CURSOR_MODELS_COMMANDS, 'List available Cursor Cloud models.', 'operator', 'operator_only'),
-  family('cursor_test', '/cursor-test', CURSOR_TEST_COMMANDS, 'Run Cursor troubleshooting smoke.', 'operator', 'operator_only'),
-  family('cursor_jobs', '/cursor-jobs', CURSOR_JOBS_COMMANDS, 'Open tracked Cursor jobs.', 'operator', 'operator_only'),
-  family('cursor_create', '/cursor-create', CURSOR_CREATE_COMMANDS, 'Start a Cursor Cloud job.', 'operator', 'operator_only'),
-  family('cursor_sync', '/cursor-sync', CURSOR_SYNC_COMMANDS, 'Attach or refresh the current work item.', 'operator', 'operator_only'),
-  family('cursor_select', '/cursor-select', CURSOR_SELECT_COMMANDS, 'Hidden current-work selector helper.', 'internal', 'operator_only'),
-  family('cursor_ui', '/cursor-ui', CURSOR_UI_COMMANDS, 'Internal backing command for work-cockpit buttons.', 'internal', 'operator_only'),
-  family('cursor_stop', '/cursor-stop', CURSOR_STOP_COMMANDS, 'Stop the current Cursor job.', 'operator', 'operator_only'),
-  family('cursor_followup', '/cursor-followup', CURSOR_FOLLOWUP_COMMANDS, 'Send follow-up instructions to the current Cursor job.', 'operator', 'operator_only'),
-  family('cursor_terminal', '/cursor-terminal', CURSOR_TERMINAL_COMMANDS, 'Run a line-oriented terminal command on the desktop bridge.', 'operator', 'operator_only'),
-  family('cursor_terminal_help', '/cursor-terminal-help', CURSOR_TERMINAL_HELP_COMMANDS, 'Show desktop bridge terminal help.', 'operator', 'operator_only'),
-  family('cursor_terminal_status', '/cursor-terminal-status', CURSOR_TERMINAL_STATUS_COMMANDS, 'Inspect desktop bridge terminal state.', 'operator', 'operator_only'),
-  family('cursor_terminal_log', '/cursor-terminal-log', CURSOR_TERMINAL_LOG_COMMANDS, 'Read cached desktop bridge terminal output.', 'operator', 'operator_only'),
-  family('cursor_terminal_stop', '/cursor-terminal-stop', CURSOR_TERMINAL_STOP_COMMANDS, 'Stop the current desktop bridge terminal command.', 'operator', 'operator_only'),
-  family('cursor_conversation', '/cursor-conversation', CURSOR_CONVERSATION_COMMANDS, 'Show the text trail for the current work item.', 'operator', 'operator_only'),
-  family('cursor_results', '/cursor-results', CURSOR_ARTIFACTS_COMMANDS, 'List tracked output files for the current Cursor job.', 'operator', 'operator_only'),
-  family('cursor_download', '/cursor-download', CURSOR_ARTIFACT_LINK_COMMANDS, 'Generate a temporary download link for one result file.', 'operator', 'operator_only'),
-  family('runtime_status', '/runtime-status', RUNTIME_STATUS_COMMANDS, 'Show the Codex/OpenAI runtime lane status.', 'operator', 'operator_only'),
-  family('runtime_jobs', '/runtime-jobs', RUNTIME_JOBS_COMMANDS, 'List runtime-lane jobs.', 'operator', 'operator_only'),
-  family('runtime_create', '/runtime-create', RUNTIME_CREATE_COMMANDS, 'Create a runtime-lane job.', 'operator', 'operator_only'),
-  family('runtime_job', '/runtime-job', RUNTIME_JOB_COMMANDS, 'Inspect one runtime-lane job.', 'operator', 'operator_only'),
-  family('runtime_followup', '/runtime-followup', RUNTIME_FOLLOWUP_COMMANDS, 'Send follow-up instructions to a runtime-lane job.', 'operator', 'operator_only'),
-  family('runtime_stop', '/runtime-stop', RUNTIME_STOP_COMMANDS, 'Stop a runtime-lane job.', 'operator', 'operator_only'),
-  family('runtime_logs', '/runtime-logs', RUNTIME_LOGS_COMMANDS, 'Read runtime-lane logs.', 'operator', 'operator_only'),
-  family('debug_status', '/debug-status', DEBUG_STATUS_COMMANDS, 'Show live troubleshooting state.', 'operator', 'operator_only'),
-  family('debug_level', '/debug-level', DEBUG_LEVEL_COMMANDS, 'Apply a temporary live debug override.', 'operator', 'operator_only'),
-  family('debug_reset', '/debug-reset', DEBUG_RESET_COMMANDS, 'Clear one or all debug overrides.', 'operator', 'operator_only'),
-  family('debug_logs', '/debug-logs', DEBUG_LOGS_COMMANDS, 'Read recent sanitized troubleshooting logs.', 'operator', 'operator_only'),
-  family('alexa_status', '/alexa-status', ALEXA_STATUS_COMMANDS, 'Show Alexa listener, model-sync, and proof status.', 'operator', 'operator_only'),
-  family('amazon_status', '/amazon-status', AMAZON_STATUS_COMMANDS, 'Show Amazon Business integration status.', 'operator', 'bounded'),
-  family('amazon_search', '/amazon-search', AMAZON_SEARCH_COMMANDS, 'Search Amazon Business offers.', 'operator', 'bounded'),
-  family('purchase_request', '/purchase-request', PURCHASE_REQUEST_COMMANDS, 'Open a purchase request.', 'operator', 'bounded'),
-  family('purchase_requests', '/purchase-requests', PURCHASE_REQUESTS_COMMANDS, 'List open purchase requests.', 'operator', 'bounded'),
-  family('purchase_approve', '/purchase-approve', PURCHASE_APPROVE_COMMANDS, 'Approve a purchase request.', 'operator', 'bounded'),
-  family('purchase_cancel', '/purchase-cancel', PURCHASE_CANCEL_COMMANDS, 'Cancel a purchase request.', 'operator', 'bounded'),
+  family(
+    'remote_control_start',
+    '/remote-control',
+    REMOTE_CONTROL_START_COMMANDS,
+    'Disabled experimental remote-control bridge.',
+    'operator',
+    'disabled',
+  ),
+  family(
+    'remote_control_stop',
+    '/remote-control-end',
+    REMOTE_CONTROL_STOP_COMMANDS,
+    'Disabled remote-control stop path.',
+    'operator',
+    'disabled',
+  ),
+  family(
+    'cursor_dashboard',
+    '/cursor',
+    CURSOR_DASHBOARD_COMMANDS,
+    'Open the main work cockpit.',
+    'operator',
+    'operator_only',
+  ),
+  family(
+    'cursor_models',
+    '/cursor-models',
+    CURSOR_MODELS_COMMANDS,
+    'List available Cursor Cloud models.',
+    'operator',
+    'operator_only',
+  ),
+  family(
+    'cursor_test',
+    '/cursor-test',
+    CURSOR_TEST_COMMANDS,
+    'Run Cursor troubleshooting smoke.',
+    'operator',
+    'operator_only',
+  ),
+  family(
+    'cursor_jobs',
+    '/cursor-jobs',
+    CURSOR_JOBS_COMMANDS,
+    'Open tracked Cursor jobs.',
+    'operator',
+    'operator_only',
+  ),
+  family(
+    'cursor_create',
+    '/cursor-create',
+    CURSOR_CREATE_COMMANDS,
+    'Start a Cursor Cloud job.',
+    'operator',
+    'operator_only',
+  ),
+  family(
+    'cursor_sync',
+    '/cursor-sync',
+    CURSOR_SYNC_COMMANDS,
+    'Attach or refresh the current work item.',
+    'operator',
+    'operator_only',
+  ),
+  family(
+    'cursor_select',
+    '/cursor-select',
+    CURSOR_SELECT_COMMANDS,
+    'Hidden current-work selector helper.',
+    'internal',
+    'operator_only',
+  ),
+  family(
+    'cursor_ui',
+    '/cursor-ui',
+    CURSOR_UI_COMMANDS,
+    'Internal backing command for work-cockpit buttons.',
+    'internal',
+    'operator_only',
+  ),
+  family(
+    'cursor_stop',
+    '/cursor-stop',
+    CURSOR_STOP_COMMANDS,
+    'Stop the current Cursor job.',
+    'operator',
+    'operator_only',
+  ),
+  family(
+    'cursor_followup',
+    '/cursor-followup',
+    CURSOR_FOLLOWUP_COMMANDS,
+    'Send follow-up instructions to the current Cursor job.',
+    'operator',
+    'operator_only',
+  ),
+  family(
+    'cursor_terminal',
+    '/cursor-terminal',
+    CURSOR_TERMINAL_COMMANDS,
+    'Run a line-oriented terminal command on the desktop bridge.',
+    'operator',
+    'operator_only',
+  ),
+  family(
+    'cursor_terminal_help',
+    '/cursor-terminal-help',
+    CURSOR_TERMINAL_HELP_COMMANDS,
+    'Show desktop bridge terminal help.',
+    'operator',
+    'operator_only',
+  ),
+  family(
+    'cursor_terminal_status',
+    '/cursor-terminal-status',
+    CURSOR_TERMINAL_STATUS_COMMANDS,
+    'Inspect desktop bridge terminal state.',
+    'operator',
+    'operator_only',
+  ),
+  family(
+    'cursor_terminal_log',
+    '/cursor-terminal-log',
+    CURSOR_TERMINAL_LOG_COMMANDS,
+    'Read cached desktop bridge terminal output.',
+    'operator',
+    'operator_only',
+  ),
+  family(
+    'cursor_terminal_stop',
+    '/cursor-terminal-stop',
+    CURSOR_TERMINAL_STOP_COMMANDS,
+    'Stop the current desktop bridge terminal command.',
+    'operator',
+    'operator_only',
+  ),
+  family(
+    'cursor_conversation',
+    '/cursor-conversation',
+    CURSOR_CONVERSATION_COMMANDS,
+    'Show the text trail for the current work item.',
+    'operator',
+    'operator_only',
+  ),
+  family(
+    'cursor_results',
+    '/cursor-results',
+    CURSOR_ARTIFACTS_COMMANDS,
+    'List tracked output files for the current Cursor job.',
+    'operator',
+    'operator_only',
+  ),
+  family(
+    'cursor_download',
+    '/cursor-download',
+    CURSOR_ARTIFACT_LINK_COMMANDS,
+    'Generate a temporary download link for one result file.',
+    'operator',
+    'operator_only',
+  ),
+  family(
+    'runtime_status',
+    '/runtime-status',
+    RUNTIME_STATUS_COMMANDS,
+    'Show the Codex/OpenAI runtime lane status.',
+    'operator',
+    'operator_only',
+  ),
+  family(
+    'runtime_jobs',
+    '/runtime-jobs',
+    RUNTIME_JOBS_COMMANDS,
+    'List runtime-lane jobs.',
+    'operator',
+    'operator_only',
+  ),
+  family(
+    'runtime_create',
+    '/runtime-create',
+    RUNTIME_CREATE_COMMANDS,
+    'Create a runtime-lane job.',
+    'operator',
+    'operator_only',
+  ),
+  family(
+    'runtime_job',
+    '/runtime-job',
+    RUNTIME_JOB_COMMANDS,
+    'Inspect one runtime-lane job.',
+    'operator',
+    'operator_only',
+  ),
+  family(
+    'runtime_followup',
+    '/runtime-followup',
+    RUNTIME_FOLLOWUP_COMMANDS,
+    'Send follow-up instructions to a runtime-lane job.',
+    'operator',
+    'operator_only',
+  ),
+  family(
+    'runtime_stop',
+    '/runtime-stop',
+    RUNTIME_STOP_COMMANDS,
+    'Stop a runtime-lane job.',
+    'operator',
+    'operator_only',
+  ),
+  family(
+    'runtime_logs',
+    '/runtime-logs',
+    RUNTIME_LOGS_COMMANDS,
+    'Read runtime-lane logs.',
+    'operator',
+    'operator_only',
+  ),
+  family(
+    'debug_status',
+    '/debug-status',
+    DEBUG_STATUS_COMMANDS,
+    'Show live troubleshooting state.',
+    'operator',
+    'operator_only',
+  ),
+  family(
+    'debug_level',
+    '/debug-level',
+    DEBUG_LEVEL_COMMANDS,
+    'Apply a temporary live debug override.',
+    'operator',
+    'operator_only',
+  ),
+  family(
+    'debug_reset',
+    '/debug-reset',
+    DEBUG_RESET_COMMANDS,
+    'Clear one or all debug overrides.',
+    'operator',
+    'operator_only',
+  ),
+  family(
+    'debug_logs',
+    '/debug-logs',
+    DEBUG_LOGS_COMMANDS,
+    'Read recent sanitized troubleshooting logs.',
+    'operator',
+    'operator_only',
+  ),
+  family(
+    'alexa_status',
+    '/alexa-status',
+    ALEXA_STATUS_COMMANDS,
+    'Show Alexa listener, model-sync, and proof status.',
+    'operator',
+    'operator_only',
+  ),
+  family(
+    'amazon_status',
+    '/amazon-status',
+    AMAZON_STATUS_COMMANDS,
+    'Show Amazon Business integration status.',
+    'operator',
+    'bounded',
+  ),
+  family(
+    'amazon_search',
+    '/amazon-search',
+    AMAZON_SEARCH_COMMANDS,
+    'Search Amazon Business offers.',
+    'operator',
+    'bounded',
+  ),
+  family(
+    'purchase_request',
+    '/purchase-request',
+    PURCHASE_REQUEST_COMMANDS,
+    'Open a purchase request.',
+    'operator',
+    'bounded',
+  ),
+  family(
+    'purchase_requests',
+    '/purchase-requests',
+    PURCHASE_REQUESTS_COMMANDS,
+    'List open purchase requests.',
+    'operator',
+    'bounded',
+  ),
+  family(
+    'purchase_approve',
+    '/purchase-approve',
+    PURCHASE_APPROVE_COMMANDS,
+    'Approve a purchase request.',
+    'operator',
+    'bounded',
+  ),
+  family(
+    'purchase_cancel',
+    '/purchase-cancel',
+    PURCHASE_CANCEL_COMMANDS,
+    'Cancel a purchase request.',
+    'operator',
+    'bounded',
+  ),
 ];
 
-export const INTERNAL_BUTTON_COMMAND_SURFACES: readonly CommandSurfaceEntry[] = [
-  {
-    id: 'cursor_ui_family',
-    preferredAlias: '/cursor-ui *',
-    acceptedAliases: ['/cursor-ui *', '/cursor_ui *'],
-    audience: 'internal',
-    surfaceKind: 'button_backing',
-    channelScope: ['telegram', 'operator'],
-    discoverability: ['operator_docs', 'internal_only'],
-    truthClass: 'operator_only',
-    summary: 'Backs the /cursor dashboard buttons and tiles.',
-    description:
-      'Includes status, jobs, home, sync, text, files, followup, stop, terminal, runtime, and wizard actions.',
-  },
-  {
-    id: 'bundle_command_family',
-    preferredAlias: '/bundle-*',
-    acceptedAliases: [
-      '/bundle-toggle',
-      '/bundle-run-selected',
-      '/bundle-skip-selected',
-      '/bundle-show',
-      '/bundle-run-all',
-      '/bundle-pick',
-      '/bundle-defer',
-    ],
-    audience: 'internal',
-    surfaceKind: 'button_backing',
-    channelScope: ['telegram', 'cross_channel', 'operator'],
-    discoverability: ['operator_docs', 'internal_only'],
-    truthClass: 'bounded',
-    summary: 'Backs action-bundle and review buttons.',
-    description:
-      'Internal button family for bundle selection, run, skip, show, and defer controls.',
-  },
-  {
-    id: 'runtime_card_actions',
-    preferredAlias: '/runtime-* card actions',
-    acceptedAliases: [
-      '/runtime-status',
-      '/runtime-jobs',
-      '/runtime-logs',
-      '/runtime-stop',
-    ],
-    audience: 'internal',
-    surfaceKind: 'inline_action',
-    channelScope: ['telegram', 'operator'],
-    discoverability: ['operator_docs', 'internal_only'],
-    truthClass: 'operator_only',
-    summary: 'Backs runtime cards inside the work cockpit.',
-    description:
-      'Reply-linked current-work actions for the explicit runtime fallback lane.',
-  },
-  {
-    id: 'review_controls',
-    preferredAlias: 'review controls',
-    acceptedAliases: [
-      'send',
-      'send later',
-      'remind later',
-      'save under thread',
-      'keep as draft',
-    ],
-    audience: 'internal',
-    surfaceKind: 'inline_action',
-    channelScope: ['telegram', 'bluebubbles', 'cross_channel'],
-    discoverability: ['operator_docs'],
-    truthClass: 'bounded',
-    summary: 'Inline action language for send, remind, save, defer, and keep-as-draft.',
-    description:
-      'Used across messaging, action bundles, and follow-through review.',
-  },
-];
+export const INTERNAL_BUTTON_COMMAND_SURFACES: readonly CommandSurfaceEntry[] =
+  [
+    {
+      id: 'cursor_ui_family',
+      preferredAlias: '/cursor-ui *',
+      acceptedAliases: ['/cursor-ui *', '/cursor_ui *'],
+      audience: 'internal',
+      surfaceKind: 'button_backing',
+      channelScope: ['telegram', 'operator'],
+      discoverability: ['operator_docs', 'internal_only'],
+      truthClass: 'operator_only',
+      summary: 'Backs the /cursor dashboard buttons and tiles.',
+      description:
+        'Includes status, jobs, home, sync, text, files, followup, stop, terminal, runtime, and wizard actions.',
+    },
+    {
+      id: 'bundle_command_family',
+      preferredAlias: '/bundle-*',
+      acceptedAliases: [
+        '/bundle-toggle',
+        '/bundle-run-selected',
+        '/bundle-skip-selected',
+        '/bundle-show',
+        '/bundle-run-all',
+        '/bundle-pick',
+        '/bundle-defer',
+      ],
+      audience: 'internal',
+      surfaceKind: 'button_backing',
+      channelScope: ['telegram', 'cross_channel', 'operator'],
+      discoverability: ['operator_docs', 'internal_only'],
+      truthClass: 'bounded',
+      summary: 'Backs action-bundle and review buttons.',
+      description:
+        'Internal button family for bundle selection, run, skip, show, and defer controls.',
+    },
+    {
+      id: 'runtime_card_actions',
+      preferredAlias: '/runtime-* card actions',
+      acceptedAliases: [
+        '/runtime-status',
+        '/runtime-jobs',
+        '/runtime-logs',
+        '/runtime-stop',
+      ],
+      audience: 'internal',
+      surfaceKind: 'inline_action',
+      channelScope: ['telegram', 'operator'],
+      discoverability: ['operator_docs', 'internal_only'],
+      truthClass: 'operator_only',
+      summary: 'Backs runtime cards inside the work cockpit.',
+      description:
+        'Reply-linked current-work actions for the explicit runtime fallback lane.',
+    },
+    {
+      id: 'review_controls',
+      preferredAlias: 'review controls',
+      acceptedAliases: [
+        'send',
+        'send later',
+        'remind later',
+        'save under thread',
+        'keep as draft',
+      ],
+      audience: 'internal',
+      surfaceKind: 'inline_action',
+      channelScope: ['telegram', 'bluebubbles', 'cross_channel'],
+      discoverability: ['operator_docs'],
+      truthClass: 'bounded',
+      summary:
+        'Inline action language for send, remind, save, defer, and keep-as-draft.',
+      description:
+        'Used across messaging, action bundles, and follow-through review.',
+    },
+  ];
 
-export const NATURAL_LANGUAGE_DISCOVERY_SURFACES: readonly CommandSurfaceEntry[] = [
-  {
-    id: 'telegram_rich_surface',
-    preferredAlias: 'Telegram rich companion surface',
-    acceptedAliases: ['Telegram'],
-    audience: 'user',
-    surfaceKind: 'natural_language',
-    channelScope: ['telegram'],
-    discoverability: ['/help', '/features'],
-    truthClass: 'live_proven',
-    summary: "Andrea's richest day-to-day companion and operator surface.",
-    description:
-      'Best for schedule help, reminders, groceries and errands, pills and bills, meal and week planning, messaging review, and richer execution.',
-  },
-  {
-    id: 'alexa_voice_surface',
-    preferredAlias: 'Alexa bounded voice surface',
-    acceptedAliases: ['Alexa', 'Andrea custom skill'],
-    audience: 'user',
-    surfaceKind: 'natural_language',
-    channelScope: ['alexa'],
-    discoverability: ['/help', '/features', 'operator_docs'],
-    truthClass: 'live_proven',
-    summary: 'Concise voice help for your day, schedule, reminders, and short follow-up.',
-    description:
-      'Best for voice orientation, schedule and reminder asks, groceries and errands, pills and bills, meal or tonight planning, and quick reply help.',
-    statusAuthority:
-      'Check npm run services:status or npm run debug:status for the current live proof and model-sync state.',
-  },
-  {
-    id: 'bluebubbles_bounded_surface',
-    preferredAlias: 'Messages bridge when available',
-    acceptedAliases: ['BlueBubbles', '@Andrea in Messages'],
-    audience: 'user',
-    surfaceKind: 'natural_language',
-    channelScope: ['bluebubbles'],
-    discoverability: ['/help', '/features', 'operator_docs'],
-    truthClass: 'live_proven',
-    summary: 'Optional bounded Messages bridge when available.',
-    description:
-      'Mention-required Messages bridge for summarizing, drafting, reminding later, and same-thread send/defer decisions when the Apple bridge is healthy. Telegram remains the dependable main messaging surface.',
-    statusAuthority:
-      'Use npm run debug:bluebubbles -- --live and npm run services:status for the current proof bar.',
-  },
-  {
-    id: 'ordinary_chat',
-    preferredAlias: 'ordinary chat',
-    acceptedAliases: ['hi', "what's up", 'how is it going', 'thanks'],
-    audience: 'user',
-    surfaceKind: 'natural_language',
-    channelScope: ['telegram', 'bluebubbles', 'alexa'],
-    discoverability: ['/features'],
-    truthClass: 'live_proven',
-    summary: 'Warm ordinary-chat replies and fast local asks.',
-    description: 'Includes greetings, time/date, light math, and concise help prompts.',
-  },
-  {
-    id: 'calendar_and_schedule',
-    preferredAlias: 'calendar and schedule',
-    acceptedAliases: [
-      "what's on my calendar tomorrow",
-      "what's next on my calendar",
-      'add dinner tomorrow at 6:30 PM',
-    ],
-    audience: 'user',
-    surfaceKind: 'natural_language',
-    channelScope: ['telegram', 'alexa', 'cross_channel'],
-    discoverability: ['/features'],
-    truthClass: 'live_proven',
-    summary: 'Calendar reads, adds, moves, and short schedule check-ins.',
-    description:
-      'Alexa is strong for quick voice scheduling, and Telegram is richer when you want more detail or completion.',
-  },
-  {
-    id: 'reminders_and_save_for_later',
-    preferredAlias: 'reminders and save-for-later',
-    acceptedAliases: [
-      'remind me to call Sam tomorrow at 3',
-      'remind me to take my pills at 9',
-      'remind me later',
-      'save that for later',
-    ],
-    audience: 'user',
-    surfaceKind: 'natural_language',
-    channelScope: ['telegram', 'alexa', 'bluebubbles', 'cross_channel'],
-    discoverability: ['/features'],
-    truthClass: 'live_proven',
-    summary: 'Reminders, meds or bill follow-through, and bounded save-for-later flow.',
-    description:
-      'Good for not dropping the ball on calls, meds, bills, or later follow-through, with Telegram as the richer continuation surface.',
-  },
-  {
-    id: 'planning_and_next_steps',
-    preferredAlias: 'planning and next steps',
-    acceptedAliases: [
-      'what am I forgetting',
-      'what matters today',
-      'help me plan tonight',
-      'help me plan meals this week',
-    ],
-    audience: 'user',
-    surfaceKind: 'natural_language',
-    channelScope: ['telegram', 'alexa', 'cross_channel'],
-    discoverability: ['/features'],
-    truthClass: 'near_live_only',
-    summary: 'Daily orientation, planning, meals, and what to do next.',
-    description:
-      'The most practical Andrea-first planning surface for everyday decisions, prep, meal planning, and open loops.',
-    statusAuthority:
-      'Daily guidance on this host still needs one fresh Telegram proof turn; see npm run debug:pilot for the current freshness state.',
-  },
-  {
-    id: 'communication_and_reply_help',
-    preferredAlias: 'communication and reply help',
-    acceptedAliases: [
-      'what should I say back',
-      'what do I owe people',
-      'summarize this message',
-    ],
-    audience: 'user',
-    surfaceKind: 'natural_language',
-    channelScope: ['telegram', 'alexa', 'bluebubbles', 'cross_channel'],
-    discoverability: ['/features'],
-    truthClass: 'live_proven',
-    summary: 'Reply drafting, message summaries, and open communication follow-through.',
-    description:
-      'Telegram is richer, Messages is a calmer same-thread bridge when available, and Alexa is good for a concise first draft.',
-  },
-  {
-    id: 'compare_explain_and_saved_context',
-    preferredAlias: 'compare, explain, and saved context',
-    acceptedAliases: [
-      'what should I know before deciding',
-      'compare these options',
-      'tell me something interesting',
-    ],
-    audience: 'user',
-    surfaceKind: 'natural_language',
-    channelScope: ['telegram', 'alexa', 'cross_channel'],
-    discoverability: ['/features'],
-    truthClass: 'degraded_but_usable',
-    summary: 'Compare, explain, summarize, and use saved context when it helps.',
-    description:
-      'Telegram is richest for fuller answers, while Alexa keeps it short and bounded.',
-    statusAuthority:
-      'Provider-backed research is externally blocked on this host right now, but local and saved-context answers still work.',
-  },
-  {
-    id: 'open_followthrough_and_people',
-    preferredAlias: 'open follow-through and people',
-    acceptedAliases: [
-      "what's still open",
-      'what bills do I need to pay this week',
-      "what's still open with my family",
-      "what about Candace",
-    ],
-    audience: 'user',
-    surfaceKind: 'natural_language',
-    channelScope: ['telegram', 'alexa', 'bluebubbles', 'cross_channel'],
-    discoverability: ['/features'],
-    truthClass: 'live_proven',
-    summary: 'Review open loops, bills, people, and household follow-through.',
-    description:
-      'Person-specific continuity is strong, but it is now framed as a continuation lane after broader follow-through like bills, home tasks, and open loops.',
-  },
-  {
-    id: 'coding_and_work_help',
-    preferredAlias: 'coding and work help',
-    acceptedAliases: ['/cursor_status', 'project help'],
-    audience: 'user',
-    surfaceKind: 'natural_language',
-    channelScope: ['telegram'],
-    discoverability: ['/features', '/commands'],
-    truthClass: 'live_proven',
-    summary: 'Coding/work help stays available, with deeper operator control kept separate.',
-    description:
-      'Normal users get /cursor_status and natural-language project help. Deeper work-cockpit controls stay operator-only.',
-  },
-];
+export const NATURAL_LANGUAGE_DISCOVERY_SURFACES: readonly CommandSurfaceEntry[] =
+  [
+    {
+      id: 'telegram_rich_surface',
+      preferredAlias: 'Telegram rich companion surface',
+      acceptedAliases: ['Telegram'],
+      audience: 'user',
+      surfaceKind: 'natural_language',
+      channelScope: ['telegram'],
+      discoverability: ['/help', '/features'],
+      truthClass: 'live_proven',
+      summary: "Andrea's richest day-to-day companion and operator surface.",
+      description:
+        'Best for schedule help, reminders, groceries and errands, pills and bills, meal and week planning, messaging review, and richer execution.',
+    },
+    {
+      id: 'alexa_voice_surface',
+      preferredAlias: 'Alexa bounded voice surface',
+      acceptedAliases: ['Alexa', 'Andrea custom skill'],
+      audience: 'user',
+      surfaceKind: 'natural_language',
+      channelScope: ['alexa'],
+      discoverability: ['/help', '/features', 'operator_docs'],
+      truthClass: 'live_proven',
+      summary:
+        'Concise voice help for your day, schedule, reminders, and short follow-up.',
+      description:
+        'Best for voice orientation, schedule and reminder asks, groceries and errands, pills and bills, meal or tonight planning, and quick reply help.',
+      statusAuthority:
+        'Check npm run services:status or npm run debug:status for the current live proof and model-sync state.',
+    },
+    {
+      id: 'bluebubbles_bounded_surface',
+      preferredAlias: 'Messages bridge when available',
+      acceptedAliases: ['BlueBubbles', '@Andrea in Messages'],
+      audience: 'user',
+      surfaceKind: 'natural_language',
+      channelScope: ['bluebubbles'],
+      discoverability: ['/help', '/features', 'operator_docs'],
+      truthClass: 'live_proven',
+      summary: 'Optional bounded Messages bridge when available.',
+      description:
+        'Mention-required Messages bridge for summarizing, drafting, reminding later, and same-thread send/defer decisions when the Apple bridge is healthy. Telegram remains the dependable main messaging surface.',
+      statusAuthority:
+        'Use npm run debug:bluebubbles -- --live and npm run services:status for the current proof bar.',
+    },
+    {
+      id: 'ordinary_chat',
+      preferredAlias: 'ordinary chat',
+      acceptedAliases: ['hi', "what's up", 'how is it going', 'thanks'],
+      audience: 'user',
+      surfaceKind: 'natural_language',
+      channelScope: ['telegram', 'bluebubbles', 'alexa'],
+      discoverability: ['/features'],
+      truthClass: 'live_proven',
+      summary: 'Warm ordinary-chat replies and fast local asks.',
+      description:
+        'Includes greetings, time/date, light math, and concise help prompts.',
+    },
+    {
+      id: 'calendar_and_schedule',
+      preferredAlias: 'calendar and schedule',
+      acceptedAliases: [
+        "what's on my calendar tomorrow",
+        "what's next on my calendar",
+        'add dinner tomorrow at 6:30 PM',
+      ],
+      audience: 'user',
+      surfaceKind: 'natural_language',
+      channelScope: ['telegram', 'alexa', 'cross_channel'],
+      discoverability: ['/features'],
+      truthClass: 'live_proven',
+      summary: 'Calendar reads, adds, moves, and short schedule check-ins.',
+      description:
+        'Alexa is strong for quick voice scheduling, and Telegram is richer when you want more detail or completion.',
+    },
+    {
+      id: 'reminders_and_save_for_later',
+      preferredAlias: 'reminders and save-for-later',
+      acceptedAliases: [
+        'remind me to call Sam tomorrow at 3',
+        'remind me to take my pills at 9',
+        'remind me later',
+        'save that for later',
+      ],
+      audience: 'user',
+      surfaceKind: 'natural_language',
+      channelScope: ['telegram', 'alexa', 'bluebubbles', 'cross_channel'],
+      discoverability: ['/features'],
+      truthClass: 'live_proven',
+      summary:
+        'Reminders, meds or bill follow-through, and bounded save-for-later flow.',
+      description:
+        'Good for not dropping the ball on calls, meds, bills, or later follow-through, with Telegram as the richer continuation surface.',
+    },
+    {
+      id: 'planning_and_next_steps',
+      preferredAlias: 'planning and next steps',
+      acceptedAliases: [
+        'what am I forgetting',
+        'what matters today',
+        'help me plan tonight',
+        'help me plan meals this week',
+      ],
+      audience: 'user',
+      surfaceKind: 'natural_language',
+      channelScope: ['telegram', 'alexa', 'cross_channel'],
+      discoverability: ['/features'],
+      truthClass: 'near_live_only',
+      summary: 'Daily orientation, planning, meals, and what to do next.',
+      description:
+        'The most practical Andrea-first planning surface for everyday decisions, prep, meal planning, and open loops.',
+      statusAuthority:
+        'Daily guidance on this host still needs one fresh Telegram proof turn; see npm run debug:pilot for the current freshness state.',
+    },
+    {
+      id: 'communication_and_reply_help',
+      preferredAlias: 'communication and reply help',
+      acceptedAliases: [
+        'what should I say back',
+        'what do I owe people',
+        'summarize this message',
+      ],
+      audience: 'user',
+      surfaceKind: 'natural_language',
+      channelScope: ['telegram', 'alexa', 'bluebubbles', 'cross_channel'],
+      discoverability: ['/features'],
+      truthClass: 'live_proven',
+      summary:
+        'Reply drafting, message summaries, and open communication follow-through.',
+      description:
+        'Telegram is richer, Messages is a calmer same-thread bridge when available, and Alexa is good for a concise first draft.',
+    },
+    {
+      id: 'compare_explain_and_saved_context',
+      preferredAlias: 'compare, explain, and saved context',
+      acceptedAliases: [
+        'what should I know before deciding',
+        'compare these options',
+        'tell me something interesting',
+      ],
+      audience: 'user',
+      surfaceKind: 'natural_language',
+      channelScope: ['telegram', 'alexa', 'cross_channel'],
+      discoverability: ['/features'],
+      truthClass: 'degraded_but_usable',
+      summary:
+        'Compare, explain, summarize, and use saved context when it helps.',
+      description:
+        'Telegram is richest for fuller answers, while Alexa keeps it short and bounded.',
+      statusAuthority:
+        'Provider-backed research is externally blocked on this host right now, but local and saved-context answers still work.',
+    },
+    {
+      id: 'open_followthrough_and_people',
+      preferredAlias: 'open follow-through and people',
+      acceptedAliases: [
+        "what's still open",
+        'what bills do I need to pay this week',
+        "what's still open with my family",
+        'what about Candace',
+      ],
+      audience: 'user',
+      surfaceKind: 'natural_language',
+      channelScope: ['telegram', 'alexa', 'bluebubbles', 'cross_channel'],
+      discoverability: ['/features'],
+      truthClass: 'live_proven',
+      summary:
+        'Review open loops, bills, people, and household follow-through.',
+      description:
+        'Person-specific continuity is strong, but it is now framed as a continuation lane after broader follow-through like bills, home tasks, and open loops.',
+    },
+    {
+      id: 'coding_and_work_help',
+      preferredAlias: 'coding and work help',
+      acceptedAliases: ['/cursor_status', 'project help'],
+      audience: 'user',
+      surfaceKind: 'natural_language',
+      channelScope: ['telegram'],
+      discoverability: ['/features', '/commands'],
+      truthClass: 'live_proven',
+      summary:
+        'Coding/work help stays available, with deeper operator control kept separate.',
+      description:
+        'Normal users get /cursor_status and natural-language project help. Deeper work-cockpit controls stay operator-only.',
+    },
+  ];
 
 export const OPERATOR_SCRIPT_SURFACES: readonly CommandSurfaceEntry[] = [
   {
@@ -1164,7 +1957,8 @@ export const OPERATOR_SCRIPT_SURFACES: readonly CommandSurfaceEntry[] = [
     channelScope: ['operator'],
     discoverability: ['operator_docs'],
     truthClass: 'operator_only',
-    summary: 'Operator-only OpenBubbles feasibility gate for PC-first Messages.',
+    summary:
+      'Operator-only OpenBubbles feasibility gate for PC-first Messages.',
   },
   {
     id: 'debug_google_calendar',
@@ -1349,5 +2143,3 @@ export function buildTelegramDescription(assistantName: string): string {
 export function buildTelegramShortDescription(assistantName: string): string {
   return `${assistantName}: schedule, reminders, lists, planning, replies, and follow-through.`;
 }
-
-

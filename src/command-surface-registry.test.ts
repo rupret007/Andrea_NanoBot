@@ -20,7 +20,10 @@ import {
   getTelegramBotMenuCommands,
 } from './command-surface-registry.js';
 
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const repoRoot = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '..',
+);
 
 function readDoc(...segments: string[]): string {
   return fs.readFileSync(path.join(repoRoot, ...segments), 'utf8');
@@ -28,7 +31,9 @@ function readDoc(...segments: string[]): string {
 
 describe('command surface registry', () => {
   it('keeps the public Telegram command set small and menu-derived', () => {
-    expect(PUBLIC_TELEGRAM_COMMAND_SURFACES.map((entry) => entry.preferredAlias)).toEqual([
+    expect(
+      PUBLIC_TELEGRAM_COMMAND_SURFACES.map((entry) => entry.preferredAlias),
+    ).toEqual([
       '/start',
       '/help',
       '/commands',
@@ -207,7 +212,9 @@ describe('command surface registry', () => {
 
   it('keeps discovery truth classes aligned with the current host story', () => {
     const truthById = new Map(
-      COMMAND_SURFACE_REGISTRY.map((entry) => [entry.id, entry.truthClass] as const),
+      COMMAND_SURFACE_REGISTRY.map(
+        (entry) => [entry.id, entry.truthClass] as const,
+      ),
     );
 
     expect(truthById.get('alexa_voice_surface')).toBe('live_proven');
@@ -259,7 +266,9 @@ describe('command surface docs', () => {
     expect(bluebubblesGuide).toContain('externally_blocked');
     expect(bluebubblesGuide).toContain('transport_unreachable');
     expect(docsIndex).toContain('core_ready_with_manual_surface_sync');
-    expect(docsIndex).toContain('Telegram stays the dependable main messaging surface');
+    expect(docsIndex).toContain(
+      'Telegram stays the dependable main messaging surface',
+    );
     expect(runbook).toContain(
       'setup -- --step verify` now follows **pass core, warn extras**',
     );

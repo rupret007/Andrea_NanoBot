@@ -185,7 +185,8 @@ describe('alexa dialogue', () => {
         calendarReference: 'main calendar',
       }),
     ).toMatchObject({
-      preferredText: 'schedule lunch with Sam tomorrow afternoon on main calendar',
+      preferredText:
+        'schedule lunch with Sam tomorrow afternoon on main calendar',
       candidateTexts: expect.arrayContaining([
         'schedule lunch with Sam tomorrow afternoon on main calendar',
         'add lunch with Sam tomorrow afternoon on main calendar',
@@ -295,9 +296,7 @@ describe('alexa dialogue', () => {
       followupAction: 'memory_control',
     });
 
-    expect(
-      planAlexaDialogueTurn('what about that', state),
-    ).toMatchObject({
+    expect(planAlexaDialogueTurn('what about that', state)).toMatchObject({
       route: 'handoff',
       followupAction: 'switch_person',
     });

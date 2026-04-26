@@ -383,10 +383,7 @@ export interface PulsePreference {
   updatedAt?: string | null;
 }
 
-export type BlueBubblesChatScope =
-  | 'all_synced'
-  | 'contacts_only'
-  | 'allowlist';
+export type BlueBubblesChatScope = 'all_synced' | 'contacts_only' | 'allowlist';
 
 export type AppleMessagesProviderName = 'bluebubbles' | 'openbubbles' | 'none';
 

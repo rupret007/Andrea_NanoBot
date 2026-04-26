@@ -114,9 +114,7 @@ import {
   planCalendarAssistantLookup,
   type CalendarSchedulingContext,
 } from './calendar-assistant.js';
-import {
-  type SelectedWorkContext,
-} from './daily-command-center.js';
+import { type SelectedWorkContext } from './daily-command-center.js';
 import {
   buildDailyCompanionResponse,
   isPotentialDailyCompanionPrompt,
@@ -255,7 +253,11 @@ import {
   saveDelegationRuleFromPreview,
   updateDelegationRuleMode,
 } from './delegation-rules.js';
-import { getDelegationRule, updateDelegationRule, updateMessageAction } from './db.js';
+import {
+  getDelegationRule,
+  updateDelegationRule,
+  updateMessageAction,
+} from './db.js';
 import {
   advancePendingCalendarAutomation,
   buildCalendarAutomationPersistInput,
@@ -526,9 +528,7 @@ import {
   summarizeVisibleTaskText,
   type TaskContextType,
 } from './task-continuation.js';
-import {
-  ANDREA_OPENAI_BACKEND_ID,
-} from './andrea-openai-backend.js';
+import { ANDREA_OPENAI_BACKEND_ID } from './andrea-openai-backend.js';
 import {
   AndreaOpenAiRuntimeError,
   createAndreaOpenAiRuntimeJob,
@@ -755,17 +755,17 @@ function listCurrentGitDirtyPaths(): string[] {
     const output = execFileSync(
       'git',
       ['-C', ACTIVE_REPO_ROOT, 'status', '--porcelain'],
-        {
-          encoding: 'utf-8',
-          stdio: ['ignore', 'pipe', 'ignore'],
-        },
-      );
-      if (!output.trim()) return [];
-      return parseGitDirtyPaths(output);
-    } catch {
-      return [];
-    }
+      {
+        encoding: 'utf-8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      },
+    );
+    if (!output.trim()) return [];
+    return parseGitDirtyPaths(output);
+  } catch {
+    return [];
   }
+}
 
 function normalizeTaskStatus(status: string | null | undefined): string {
   return (status || '').trim().toLowerCase();
@@ -815,13 +815,13 @@ function buildResponseFeedbackFailureNote(
   }
 }
 
-  function buildResponseFeedbackNoHotfixNote(): string {
-    return 'The remediation task finished, but I do not see a new local hotfix on this host yet, so it is back in review.';
-  }
+function buildResponseFeedbackNoHotfixNote(): string {
+  return 'The remediation task finished, but I do not see a new local hotfix on this host yet, so it is back in review.';
+}
 
-  function buildResponseFeedbackReadOnlyLaneNote(): string {
-    return 'The remediation task finished, but the Codex/OpenAI runtime lane is read-only on this host, so there is no local hotfix to land yet.';
-  }
+function buildResponseFeedbackReadOnlyLaneNote(): string {
+  return 'The remediation task finished, but the Codex/OpenAI runtime lane is read-only on this host, so there is no local hotfix to land yet.';
+}
 
 function hasResponseFeedbackLocalHotfix(
   record: Pick<ResponseFeedbackRecord, 'linkedRefs'>,
@@ -893,8 +893,7 @@ function writeCurrentRuntimeAuditState(warningOverride?: string | null): void {
       registeredMainChatJid: audit.registeredMainChat?.jid || null,
       registeredMainChatName: audit.registeredMainChat?.name || null,
       registeredMainChatFolder: audit.registeredMainChat?.folder || null,
-      registeredMainChatPresentInChats:
-        audit.registeredMainChatPresentInChats,
+      registeredMainChatPresentInChats: audit.registeredMainChatPresentInChats,
       latestTelegramChatJid: audit.latestTelegramChat?.jid || null,
       latestTelegramChatName: audit.latestTelegramChat?.name || null,
       mainChatAuditWarning: warningOverride ?? audit.warning,
@@ -1245,7 +1244,8 @@ function getPendingBlueBubblesLocalContinuationKind(
   return resolveBlueBubblesPendingLocalContinuationKind({
     chatJid,
     hasGoogleCalendarCreate: (candidateChatJid) => {
-      const pendingState = getPendingGoogleCalendarCreateState(candidateChatJid);
+      const pendingState =
+        getPendingGoogleCalendarCreateState(candidateChatJid);
       if (!pendingState) return false;
       if (isPendingGoogleCalendarCreateExpired(pendingState, now)) {
         clearPendingGoogleCalendarCreateState(candidateChatJid);
@@ -1501,19 +1501,17 @@ function parseJsonSafe<T>(value: string | null | undefined, fallback: T): T {
   }
 }
 
-function parseBundleCommand(rawText: string):
-  | {
-      bundleId: string;
-      operation:
-        | { kind: 'approve_all' }
-        | { kind: 'enter_selection' }
-        | { kind: 'toggle_action'; orderIndex: number }
-        | { kind: 'run_selected' }
-        | { kind: 'skip_selected' }
-        | { kind: 'defer_all' }
-        | { kind: 'show' };
-    }
-  | null {
+function parseBundleCommand(rawText: string): {
+  bundleId: string;
+  operation:
+    | { kind: 'approve_all' }
+    | { kind: 'enter_selection' }
+    | { kind: 'toggle_action'; orderIndex: number }
+    | { kind: 'run_selected' }
+    | { kind: 'skip_selected' }
+    | { kind: 'defer_all' }
+    | { kind: 'show' };
+} | null {
   const trimmed = rawText.trim();
   const parts = trimmed.split(/\s+/);
   const command = parts[0]?.toLowerCase();
@@ -1545,12 +1543,10 @@ function parseBundleCommand(rawText: string):
   return null;
 }
 
-function parseMessageActionCommand(rawText: string):
-  | {
-      messageActionId: string;
-      operation: MessageActionOperation;
-    }
-  | null {
+function parseMessageActionCommand(rawText: string): {
+  messageActionId: string;
+  operation: MessageActionOperation;
+} | null {
   const trimmed = rawText.trim();
   const parts = trimmed.split(/\s+/);
   const command = parts[0]?.toLowerCase();
@@ -1586,10 +1582,16 @@ function parseMessageActionCommand(rawText: string):
   if (command === '/message-rewrite') {
     const style = (parts[2] || '').toLowerCase();
     if (style === 'shorter') {
-      return { messageActionId, operation: { kind: 'rewrite', style: 'shorter' } };
+      return {
+        messageActionId,
+        operation: { kind: 'rewrite', style: 'shorter' },
+      };
     }
     if (style === 'warmer') {
-      return { messageActionId, operation: { kind: 'rewrite', style: 'warmer' } };
+      return {
+        messageActionId,
+        operation: { kind: 'rewrite', style: 'warmer' },
+      };
     }
     if (style === 'direct') {
       return {
@@ -1601,17 +1603,15 @@ function parseMessageActionCommand(rawText: string):
   return null;
 }
 
-function parseReviewCommand(rawText: string):
-  | {
-      outcomeId: string;
-      control:
-        | { kind: 'mark_handled' }
-        | { kind: 'still_open' }
-        | { kind: 'remind_tomorrow' }
-        | { kind: 'hide' }
-        | { kind: 'show' };
-    }
-  | null {
+function parseReviewCommand(rawText: string): {
+  outcomeId: string;
+  control:
+    | { kind: 'mark_handled' }
+    | { kind: 'still_open' }
+    | { kind: 'remind_tomorrow' }
+    | { kind: 'hide' }
+    | { kind: 'show' };
+} | null {
   const trimmed = rawText.trim();
   const parts = trimmed.split(/\s+/);
   const command = parts[0]?.toLowerCase();
@@ -1635,20 +1635,18 @@ function parseReviewCommand(rawText: string):
   return null;
 }
 
-function parseDelegationRuleCommand(rawText: string):
-  | {
-      command:
-        | 'confirm_preview'
-        | 'cancel_preview'
-        | 'pause'
-        | 'disable'
-        | 'always_ask'
-        | 'auto_safe'
-        | 'why'
-        | 'use_here';
-      targetId: string;
-    }
-  | null {
+function parseDelegationRuleCommand(rawText: string): {
+  command:
+    | 'confirm_preview'
+    | 'cancel_preview'
+    | 'pause'
+    | 'disable'
+    | 'always_ask'
+    | 'auto_safe'
+    | 'why'
+    | 'use_here';
+  targetId: string;
+} | null {
   const trimmed = rawText.trim();
   const parts = trimmed.split(/\s+/);
   const command = parts[0]?.toLowerCase();
@@ -1718,9 +1716,14 @@ async function applyAndPresentActionBundle(params: {
       (action) => action.delegationRuleId,
     );
     if (messageId && channel.editMessage) {
-      await channel.editMessage(params.chatJid, messageId, result.presentation.text, {
-        inlineActionRows: result.presentation.inlineActionRows,
-      });
+      await channel.editMessage(
+        params.chatJid,
+        messageId,
+        result.presentation.text,
+        {
+          inlineActionRows: result.presentation.inlineActionRows,
+        },
+      );
       rememberActionBundlePresentation({
         bundleId: params.bundleId,
         messageId,
@@ -1737,9 +1740,13 @@ async function applyAndPresentActionBundle(params: {
         });
       }
     } else {
-      const sent = await channel.sendMessage(params.chatJid, result.presentation.text, {
-        inlineActionRows: result.presentation.inlineActionRows,
-      });
+      const sent = await channel.sendMessage(
+        params.chatJid,
+        result.presentation.text,
+        {
+          inlineActionRows: result.presentation.inlineActionRows,
+        },
+      );
       rememberActionBundlePresentation({
         bundleId: params.bundleId,
         messageId: sent.platformMessageId || null,
@@ -1797,20 +1804,32 @@ async function applyAndPresentMessageAction(params: {
   if (channel.name === 'telegram' && result.presentation) {
     const messageId = result.action?.presentationMessageId || null;
     if (messageId && channel.editMessage) {
-      await channel.editMessage(params.chatJid, messageId, result.presentation.text, {
-        inlineActionRows: result.presentation.inlineActionRows,
-      });
+      await channel.editMessage(
+        params.chatJid,
+        messageId,
+        result.presentation.text,
+        {
+          inlineActionRows: result.presentation.inlineActionRows,
+        },
+      );
     } else {
-      const sent = await channel.sendMessage(params.chatJid, result.presentation.text, {
-        inlineActionRows: result.presentation.inlineActionRows,
-      });
+      const sent = await channel.sendMessage(
+        params.chatJid,
+        result.presentation.text,
+        {
+          inlineActionRows: result.presentation.inlineActionRows,
+        },
+      );
       updateMessageAction(params.messageActionId, {
         presentationMessageId: sent.platformMessageId || null,
         presentationChatJid: params.chatJid,
         lastUpdatedAt: (params.now || new Date()).toISOString(),
       });
     }
-    if (result.replyText && !['show', 'show_draft'].includes(params.operation.kind)) {
+    if (
+      result.replyText &&
+      !['show', 'show_draft'].includes(params.operation.kind)
+    ) {
       await channel.sendMessage(params.chatJid, result.replyText);
     }
     return true;
@@ -1819,7 +1838,10 @@ async function applyAndPresentMessageAction(params: {
   if (result.replyText) {
     await channel.sendMessage(params.chatJid, result.replyText);
   } else if (result.presentation) {
-    const sent = await channel.sendMessage(params.chatJid, result.presentation.text);
+    const sent = await channel.sendMessage(
+      params.chatJid,
+      result.presentation.text,
+    );
     if (channel.name === 'bluebubbles' && result.action) {
       syncBlueBubblesMessageActionPresentation({
         groupFolder: group.folder,
@@ -1877,7 +1899,10 @@ async function applyAndPresentOutcomeReviewControl(params: {
   });
   if (!result.handled) return false;
 
-  const context = getOutcomeReviewContext(params.chatJid, params.now || new Date());
+  const context = getOutcomeReviewContext(
+    params.chatJid,
+    params.now || new Date(),
+  );
   let refreshedPresentation:
     | ReturnType<typeof buildOutcomeReviewResponse>
     | undefined;
@@ -1977,7 +2002,8 @@ async function applyAndPresentDelegationRuleCommand(params: {
   const context = getDelegationRuleContext(params.chatJid, now);
 
   if (params.command === 'confirm_preview') {
-    if (!context?.previewJson || context.previewId !== params.targetId) return false;
+    if (!context?.previewJson || context.previewId !== params.targetId)
+      return false;
     try {
       const preview = JSON.parse(context.previewJson);
       const rule = saveDelegationRuleFromPreview(group.folder, preview, now);
@@ -2023,10 +2049,9 @@ async function applyAndPresentDelegationRuleCommand(params: {
   } else if (params.command === 'auto_safe') {
     updateDelegationRuleMode(params.targetId, 'auto_apply_when_safe');
   } else if (params.command === 'use_here') {
-    retargetDelegationRuleChannels(
-      params.targetId,
-      [channel.name === 'bluebubbles' ? 'bluebubbles' : 'telegram'],
-    );
+    retargetDelegationRuleChannels(params.targetId, [
+      channel.name === 'bluebubbles' ? 'bluebubbles' : 'telegram',
+    ]);
   } else if (params.command === 'why') {
     const rule = getDelegationRule(params.targetId);
     if (!rule) return false;
@@ -3045,7 +3070,10 @@ function getCurrentWorkSelection(
     }
   }
 
-  const legacyRuntimeSelection = getLegacyRuntimeSelection(chatJid, groupFolder);
+  const legacyRuntimeSelection = getLegacyRuntimeSelection(
+    chatJid,
+    groupFolder,
+  );
   if (!legacyRuntimeSelection) {
     return null;
   }
@@ -3075,7 +3103,10 @@ function clearCurrentWorkSelection(params: {
     threadId: params.threadId,
     laneId: params.laneId,
   });
-  if (params.laneId === 'andrea_runtime' || params.source === 'legacy_runtime_fallback') {
+  if (
+    params.laneId === 'andrea_runtime' ||
+    params.source === 'legacy_runtime_fallback'
+  ) {
     clearLegacyRuntimeSelection(params.chatJid);
   }
 }
@@ -3275,12 +3306,10 @@ function listProcessableCompanionChatJids(): string[] {
   });
 }
 
-let resolveTelegramMainChatForAlexa = (_groupFolder: string) => undefined as
-  | { chatJid: string }
-  | undefined;
-let resolveBlueBubblesCompanionChat = (_groupFolder: string) => undefined as
-  | { chatJid: string }
-  | undefined;
+let resolveTelegramMainChatForAlexa = (_groupFolder: string) =>
+  undefined as { chatJid: string } | undefined;
+let resolveBlueBubblesCompanionChat = (_groupFolder: string) =>
+  undefined as { chatJid: string } | undefined;
 let resolveCompanionHandoffTarget = (
   groupFolder: string,
   targetChannel: 'telegram' | 'bluebubbles',
@@ -3360,7 +3389,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     logger.warn({ chatJid }, 'No channel owns JID, skipping messages');
     return true;
   }
-  const conversationChannel = channel.name === 'bluebubbles' ? 'bluebubbles' : 'telegram';
+  const conversationChannel =
+    channel.name === 'bluebubbles' ? 'bluebubbles' : 'telegram';
 
   const isMainGroup = group.isMain === true;
 
@@ -3492,10 +3522,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   const latestUserMessage = missedMessages.at(-1);
   const rawLastContent = latestUserMessage?.content ?? '';
-  let lastContent =
-    chatJid.startsWith('bb:')
-      ? normalizeBlueBubblesCompanionPrompt(rawLastContent)
-      : rawLastContent;
+  let lastContent = chatJid.startsWith('bb:')
+    ? normalizeBlueBubblesCompanionPrompt(rawLastContent)
+    : rawLastContent;
   const now = new Date();
   const sendAssistantReplyWithFeedback = async (params: {
     text: string;
@@ -3582,10 +3611,14 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       refs: compactPlatformStrings({
         feedbackId,
         platformMessageId: sent.platformMessageId || '',
-        userMessageId: latestUserMessage?.id ? String(latestUserMessage.id) : '',
+        userMessageId: latestUserMessage?.id
+          ? String(latestUserMessage.id)
+          : '',
         threadId:
           sent.threadId ||
-          (latestUserMessage?.thread_id ? String(latestUserMessage.thread_id) : ''),
+          (latestUserMessage?.thread_id
+            ? String(latestUserMessage.thread_id)
+            : ''),
         chatJid,
       }),
       metadata: compactPlatformStrings({
@@ -3737,7 +3770,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         interpretedTurn?.routeFamily === 'message_action_followup' &&
         interpretedTurn.assistantPrompt
       ) {
-        operation = interpretMessageActionFollowup(interpretedTurn.assistantPrompt);
+        operation = interpretMessageActionFollowup(
+          interpretedTurn.assistantPrompt,
+        );
       }
     }
     if (!operation) return false;
@@ -3789,7 +3824,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (conversationChannel !== 'bluebubbles') return false;
     const explicitSend = parseExplicitBlueBubblesThreadSendIntent(lastContent);
     if (!explicitSend) return false;
-    const resolution = resolveBlueBubblesThreadTargetByName(explicitSend.targetLabel);
+    const resolution = resolveBlueBubblesThreadTargetByName(
+      explicitSend.targetLabel,
+    );
     if (resolution.state === 'missing') {
       await channel.sendMessage(
         chatJid,
@@ -3798,7 +3835,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       return true;
     }
     if (resolution.state === 'ambiguous') {
-      const options = resolution.matches.map((match) => match.displayName).join(', ');
+      const options = resolution.matches
+        .map((match) => match.displayName)
+        .join(', ');
       await channel.sendMessage(
         chatJid,
         `Andrea: I found more than one Messages chat that could be "${explicitSend.targetLabel}".\n\nUse the exact chat name. Matches: ${options}.`,
@@ -4963,7 +5002,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     }
 
     if (!activePendingState) {
-      const activeSchedulingContext = getGoogleCalendarSchedulingContext(chatJid);
+      const activeSchedulingContext =
+        getGoogleCalendarSchedulingContext(chatJid);
       if (!explicitCreate) {
         return false;
       }
@@ -5003,7 +5043,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             capabilityId: 'calendar.google_create',
             handlerKind: 'google_calendar_create_local',
             responseSource: 'local_companion',
-            traceReason: 'google calendar create fast path hit a provider failure',
+            traceReason:
+              'google calendar create fast path hit a provider failure',
             blockerClass: technicalDetail,
             blockerOwner: 'external',
           });
@@ -5060,7 +5101,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           ? createPlan.message
           : noWritableCalendars
             ? buildCalendarCompanionFailureReply({
-                channel: resolveConversationalChannelForChannelName(channel.name),
+                channel: resolveConversationalChannelForChannelName(
+                  channel.name,
+                ),
                 action: 'create_event',
                 kind: 'calendar_auth_unavailable',
               })
@@ -5365,7 +5408,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         capabilityId: 'calendar.google_create',
         handlerKind: 'google_calendar_create_local',
         responseSource: 'local_companion',
-        traceReason: 'created a google calendar event through the local fast path',
+        traceReason:
+          'created a google calendar event through the local fast path',
         linkedRefs: {
           googleCalendarEventId: createdEvent.id,
         },
@@ -5819,8 +5863,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       clearSharedAssistantCapabilitySeed(chatJid);
       setDailyCompanionContext(chatJid, dailyResponse.context);
       const suggestedThread =
-        lastContent &&
-        group.folder
+        lastContent && group.folder
           ? maybeCreatePendingLifeThreadSuggestion({
               groupFolder: group.folder,
               chatJid,
@@ -6075,7 +6118,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       handoffCreated: explicitHandoffCreated,
       missionCreated: Boolean(
         result.conversationSeed?.subjectData?.missionId ||
-          result.continuationCandidate?.missionId,
+        result.continuationCandidate?.missionId,
       ),
       threadSaved: Boolean(result.lifeThreadResult?.referencedThread),
       librarySaved: capabilityId === 'knowledge.save_source',
@@ -6110,7 +6153,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (result.handoffResult) {
       systemsInvolved.add('cross_channel_handoffs');
     }
-    if (result.bridgeSaveForLaterText || result.lifeThreadResult?.referencedThread) {
+    if (
+      result.bridgeSaveForLaterText ||
+      result.lifeThreadResult?.referencedThread
+    ) {
       systemsInvolved.add('life_threads');
     }
     if (result.reminderTaskId) {
@@ -6128,10 +6174,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       handoffCreated: Boolean(result.handoffResult),
       missionCreated: Boolean(
         capabilityOutcome?.missionCreated ||
-          result.capabilityResult?.conversationSeed?.subjectData?.missionId,
+        result.capabilityResult?.conversationSeed?.subjectData?.missionId,
       ),
       threadSaved: Boolean(
-        result.bridgeSaveForLaterText || result.lifeThreadResult?.referencedThread,
+        result.bridgeSaveForLaterText ||
+        result.lifeThreadResult?.referencedThread,
       ),
       reminderCreated: Boolean(result.reminderTaskId),
       librarySaved: Boolean(capabilityOutcome?.librarySaved),
@@ -6222,7 +6269,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           now,
         });
         if (savedThread.referencedThread) {
-          setLastReferencedLifeThread(chatJid, savedThread.referencedThread, now);
+          setLastReferencedLifeThread(
+            chatJid,
+            savedThread.referencedThread,
+            now,
+          );
         }
         await sendAssistantReplyWithFeedback({
           text: savedThread.responseText || 'Okay.',
@@ -6230,7 +6281,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           capabilityId: 'capture.save_for_later',
           handlerKind: 'assistant_completion_bridge',
           responseSource: 'local_companion',
-          traceReason: 'completed save-for-later follow-up from shared capability state',
+          traceReason:
+            'completed save-for-later follow-up from shared capability state',
           linkedRefs: savedThread.referencedThread
             ? {
                 lifeThreadId: savedThread.referencedThread.id,
@@ -6272,9 +6324,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
                 inlineActionRows: presentation.inlineActionRows,
               },
               routeKey: 'assistant_completion.draft_reply',
-              capabilityId: draftResult.capabilityId || 'communication.draft_reply',
+              capabilityId:
+                draftResult.capabilityId || 'communication.draft_reply',
               handlerKind: 'assistant_completion_bridge',
-              responseSource: draftResult.trace?.responseSource || 'local_companion',
+              responseSource:
+                draftResult.trace?.responseSource || 'local_companion',
               traceReason:
                 draftResult.trace?.reason ||
                 'completed shared capability follow-up by reopening reply help',
@@ -6304,9 +6358,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             text: draftResult.replyText || 'Okay.',
             sendOptions: draftResult.sendOptions || {},
             routeKey: 'assistant_completion.draft_reply',
-            capabilityId: draftResult.capabilityId || 'communication.draft_reply',
+            capabilityId:
+              draftResult.capabilityId || 'communication.draft_reply',
             handlerKind: 'assistant_completion_bridge',
-            responseSource: draftResult.trace?.responseSource || 'local_companion',
+            responseSource:
+              draftResult.trace?.responseSource || 'local_companion',
             traceReason:
               draftResult.trace?.reason ||
               'completed shared capability follow-up by reopening reply help',
@@ -6314,7 +6370,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           });
         }
         if (draftResult.conversationSeed) {
-          setSharedAssistantCapabilitySeed(chatJid, draftResult.conversationSeed, now);
+          setSharedAssistantCapabilitySeed(
+            chatJid,
+            draftResult.conversationSeed,
+            now,
+          );
         } else {
           clearSharedAssistantCapabilitySeed(chatJid);
         }
@@ -6351,7 +6411,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         },
         'Handled shared assistant follow-up completion via local fast path',
       );
-      completeConversationPilotProof(pilotRecord, buildCompletionPilotOutcome(result));
+      completeConversationPilotProof(
+        pilotRecord,
+        buildCompletionPilotOutcome(result),
+      );
       return true;
     } catch (err) {
       completeConversationPilotProof(pilotRecord, {
@@ -6359,7 +6422,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         blockerClass: 'assistant_completion_send_failed',
         blockerOwner: 'repo_side',
         summaryText:
-          err instanceof Error ? err.message : 'assistant completion send failed',
+          err instanceof Error
+            ? err.message
+            : 'assistant completion send failed',
       });
       lastAgentTimestamp[chatJid] = previousCursor;
       saveState();
@@ -6406,7 +6471,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           normalizedText: openAiGuidedUserText,
           canonicalText: decision.canonicalText || openAiGuidedUserText,
           arguments: decision.arguments || undefined,
-          reason: decision.reason || 'matched OpenAI-guided assistant capability',
+          reason:
+            decision.reason || 'matched OpenAI-guided assistant capability',
         };
         capabilityRouteSource = 'openai_router';
         capabilityRouteDecision = decision;
@@ -6470,8 +6536,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         channel: conversationChannel,
         text: lastContent,
         canonicalText: capabilityMatch.canonicalText,
-        personName:
-          priorAssistantCapabilitySeed?.subjectData?.personName,
+        personName: priorAssistantCapabilitySeed?.subjectData?.personName,
         threadTitle: priorAssistantCapabilitySeed?.subjectData?.threadTitle,
         summaryText:
           priorAssistantCapabilitySeed?.summaryText ||
@@ -6538,7 +6603,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           capabilityId: result.capabilityId || capabilityMatch.capabilityId,
           handlerKind: result.trace?.handlerKind || 'assistant_capability',
           responseSource: result.trace?.responseSource || 'local_companion',
-          traceReason: result.trace?.reason || 'handled shared daily capability',
+          traceReason:
+            result.trace?.reason || 'handled shared daily capability',
           traceNotes: result.trace?.notes || [],
         });
         if (actionContext) {
@@ -6580,7 +6646,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           handlerKind: result.trace?.handlerKind || 'assistant_capability',
           responseSource: result.trace?.responseSource || 'local_companion',
           traceReason:
-            result.trace?.reason || 'handled shared capability via life-thread result',
+            result.trace?.reason ||
+            'handled shared capability via life-thread result',
           traceNotes: result.trace?.notes || [],
           linkedRefs: result.lifeThreadResult.referencedThread
             ? {
@@ -6650,7 +6717,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           capabilityId: result.capabilityId || capabilityMatch.capabilityId,
           handlerKind: result.trace?.handlerKind || 'assistant_capability',
           responseSource: result.trace?.responseSource || 'local_companion',
-          traceReason: result.trace?.reason || 'handled shared assistant capability',
+          traceReason:
+            result.trace?.reason || 'handled shared assistant capability',
           traceNotes: result.trace?.notes || [],
         });
       }
@@ -6687,12 +6755,15 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           );
         }
         if (result.continuationCandidate) {
-          result.continuationCandidate.actionBundleId = actionBundle.bundle.bundleId;
-          result.continuationCandidate.actionBundleTitle = actionBundle.bundle.title;
-          result.continuationCandidate.actionBundleSummary = actionBundle.actions
-            .slice(0, 3)
-            .map((action) => action.summary)
-            .join(', ');
+          result.continuationCandidate.actionBundleId =
+            actionBundle.bundle.bundleId;
+          result.continuationCandidate.actionBundleTitle =
+            actionBundle.bundle.title;
+          result.continuationCandidate.actionBundleSummary =
+            actionBundle.actions
+              .slice(0, 3)
+              .map((action) => action.summary)
+              .join(', ');
         }
         if (conversationChannel === 'telegram') {
           const presentation = buildActionBundlePresentation(actionBundle);
@@ -6731,7 +6802,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         clearSharedAssistantCapabilitySeed(chatJid);
       }
       let explicitHandoffCreated = false;
-      if (explicitHandoffTarget && result.continuationCandidate?.handoffPayload) {
+      if (
+        explicitHandoffTarget &&
+        result.continuationCandidate?.handoffPayload
+      ) {
         const handoff = await deliverCompanionHandoff(
           {
             groupFolder: group.folder,
@@ -6807,7 +6881,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         blockerClass: 'assistant_capability_send_failed',
         blockerOwner: 'repo_side',
         summaryText:
-          err instanceof Error ? err.message : 'assistant capability send failed',
+          err instanceof Error
+            ? err.message
+            : 'assistant capability send failed',
       });
       lastAgentTimestamp[chatJid] = previousCursor;
       saveState();
@@ -6873,8 +6949,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     const guidedReply =
       maybeBuildDirectQuickReply([
         { content: decision.canonicalText || openAiGuidedUserText },
-      ]) ||
-      maybeBuildDirectQuickReply([{ content: openAiGuidedUserText }]);
+      ]) || maybeBuildDirectQuickReply([{ content: openAiGuidedUserText }]);
     if (!guidedReply) {
       return false;
     }
@@ -6897,7 +6972,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         routeKey: 'openai_guided_direct_quick_reply',
         handlerKind: 'direct_quick_reply',
         responseSource: 'local_companion',
-        traceReason: 'handled message via OpenAI-guided direct quick reply path',
+        traceReason:
+          'handled message via OpenAI-guided direct quick reply path',
       });
       clearSharedAssistantCapabilitySeed(chatJid);
       completeConversationPilotProof(quickReplyPilot, {
@@ -6946,10 +7022,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       return false;
     }
     const clarificationNeeded =
-      interpretedTurn.confidence < 0.55 && interpretedTurn.clarificationQuestion;
+      interpretedTurn.confidence < 0.55 &&
+      interpretedTurn.clarificationQuestion;
     const replyText =
       clarificationNeeded ||
-      (interpretedTurn.routeFamily === 'chat' || interpretedTurn.routeFamily === 'help'
+      (interpretedTurn.routeFamily === 'chat' ||
+      interpretedTurn.routeFamily === 'help'
         ? interpretedTurn.replyText ||
           maybeBuildDirectQuickReply([
             { content: interpretedTurn.assistantPrompt || lastContent },
@@ -6978,9 +7056,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           : null,
       fallbackReason:
         interpretedTurn.source === 'fallback'
-          ? interpretedTurn.fallbackText || 'Messages direct turn fell back locally.'
+          ? interpretedTurn.fallbackText ||
+            'Messages direct turn fell back locally.'
           : null,
-      selectedModelTier: openAiGuidedRouteResult?.decision?.selectedModelTier || null,
+      selectedModelTier:
+        openAiGuidedRouteResult?.decision?.selectedModelTier || null,
       selectedModel: openAiGuidedRouteResult?.decision?.selectedModel || null,
       providerMode: openAiGuidedRouteResult?.decision?.providerMode || null,
     });
@@ -7255,7 +7335,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     try {
       clearSharedAssistantCapabilitySeed(chatJid);
       if (lifeThreadTurn.referencedThread) {
-        setLastReferencedLifeThread(chatJid, lifeThreadTurn.referencedThread, now);
+        setLastReferencedLifeThread(
+          chatJid,
+          lifeThreadTurn.referencedThread,
+          now,
+        );
       }
       await sendAssistantReplyWithFeedback({
         text: lifeThreadTurn.responseText || 'Okay.',
@@ -7263,7 +7347,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         capabilityId: 'life_thread.local',
         handlerKind: 'life_thread_local',
         responseSource: 'local_companion',
-        traceReason: 'handled life thread request via local assistant fast path',
+        traceReason:
+          'handled life thread request via local assistant fast path',
         linkedRefs: lifeThreadTurn.referencedThread
           ? {
               lifeThreadId: lifeThreadTurn.referencedThread.id,
@@ -8094,7 +8179,8 @@ async function startMessageLoop(): Promise<void> {
           const formatted = buildAssistantPromptWithPersonalization(
             formatMessages(messagesToSend, TIMEZONE),
             {
-              channel: channel.name === 'bluebubbles' ? 'bluebubbles' : 'telegram',
+              channel:
+                channel.name === 'bluebubbles' ? 'bluebubbles' : 'telegram',
               groupFolder: group.folder,
             },
           );
@@ -8352,7 +8438,11 @@ function emitAndreaPlatformProofTruths(truth: FieldTrialOperatorTruth): void {
   for (const [journeyId, journeyTruth] of Object.entries(truth.journeys)) {
     emitAndreaPlatformSurfaceProof('journey', journeyId, journeyTruth);
   }
-  emitAndreaPlatformSurfaceProof('memory', 'profile_pack', truth.knowledgeLibrary);
+  emitAndreaPlatformSurfaceProof(
+    'memory',
+    'profile_pack',
+    truth.knowledgeLibrary,
+  );
   void emitAndreaPlatformProofEvent({
     surface: 'integrations',
     journey: 'registry',
@@ -8373,7 +8463,11 @@ function emitAndreaPlatformProofTruths(truth: FieldTrialOperatorTruth): void {
       imageGeneration: truth.imageGeneration.proofState,
     }),
   });
-  emitAndreaPlatformSurfaceProof('rituals', 'daily_guidance', truth.journeys.daily_guidance);
+  emitAndreaPlatformSurfaceProof(
+    'rituals',
+    'daily_guidance',
+    truth.journeys.daily_guidance,
+  );
 }
 
 function channelTransportKind(
@@ -8394,7 +8488,9 @@ function channelTransportState(
   return 'degraded';
 }
 
-function secondsSinceTimestamp(timestamp: string | null | undefined): number | null {
+function secondsSinceTimestamp(
+  timestamp: string | null | undefined,
+): number | null {
   if (!timestamp) return null;
   const millis = Date.parse(timestamp);
   if (Number.isNaN(millis)) return null;
@@ -8417,8 +8513,9 @@ function emitAndreaPlatformTransportTruths(
           `${channel.name} channel is ${channel.state}.`,
       ),
       detail:
-        sanitizePlatformControlText(channel.lastError || channel.detail || null) ||
-        null,
+        sanitizePlatformControlText(
+          channel.lastError || channel.detail || null,
+        ) || null,
       freshnessSeconds: secondsSinceTimestamp(channel.updatedAt),
       deliverySemantics:
         kind === 'telegram'
@@ -8457,8 +8554,9 @@ function emitAndreaPlatformTransportTruths(
     state: toAndreaPlatformHealthState(truth.research.proofState),
     summary: summarizePlatformProofTruth(truth.research),
     detail:
-      sanitizePlatformControlText(truth.research.detail || truth.research.blocker) ||
-      null,
+      sanitizePlatformControlText(
+        truth.research.detail || truth.research.blocker,
+      ) || null,
     deliverySemantics: 'provider_api',
     fallbackTarget: 'saved_material_only',
     blocker: sanitizePlatformControlText(truth.research.blocker) || null,
@@ -8485,12 +8583,14 @@ function emitAndreaPlatformTransportTruths(
     state: toAndreaPlatformHealthState(truth.hostHealth.proofState),
     summary: summarizePlatformProofTruth(truth.hostHealth),
     detail:
-      sanitizePlatformControlText(truth.hostHealth.detail || truth.hostHealth.blocker) ||
-      null,
+      sanitizePlatformControlText(
+        truth.hostHealth.detail || truth.hostHealth.blocker,
+      ) || null,
     deliverySemantics: 'local_process_and_http',
     fallbackTarget: 'operator_status',
     blocker: sanitizePlatformControlText(truth.hostHealth.blocker) || null,
-    nextAction: sanitizePlatformControlText(truth.hostHealth.nextAction) || null,
+    nextAction:
+      sanitizePlatformControlText(truth.hostHealth.nextAction) || null,
   });
 }
 
@@ -8515,7 +8615,9 @@ async function main(): Promise<void> {
       void emitAndreaPlatformShellHealth(
         mapShellHealthFromChannelHealth(currentChannelHealth),
       );
-      for (const snapshot of buildAndreaPlatformConfigSnapshots(activeGroupFolders)) {
+      for (const snapshot of buildAndreaPlatformConfigSnapshots(
+        activeGroupFolders,
+      )) {
         void emitAndreaPlatformShellConfigSnapshot(snapshot);
       }
       const operatorTruth = buildFieldTrialOperatorTruth();
@@ -8558,8 +8660,9 @@ async function main(): Promise<void> {
   }
 
   let alexaRuntime: AlexaRuntime | null = null;
-  let blueBubblesControlServer: ReturnType<typeof startBlueBubblesControlServer> =
-    null;
+  let blueBubblesControlServer: ReturnType<
+    typeof startBlueBubblesControlServer
+  > = null;
 
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
@@ -8720,10 +8823,7 @@ async function main(): Promise<void> {
     target: ResolvedCursorTarget;
     err: unknown;
   }): boolean {
-    if (
-      params.target.via !== 'current' &&
-      params.target.via !== 'selected'
-    ) {
+    if (params.target.via !== 'current' && params.target.via !== 'selected') {
       return false;
     }
     if (!shouldClearCursorSelectionForError(params.err)) {
@@ -8902,8 +9002,19 @@ async function main(): Promise<void> {
   }
 
   function mapResponseFeedbackTaskFamily(
-    record: Pick<ResponseFeedbackRecord, 'routeKey' | 'capabilityId' | 'responseSource'>,
-  ): 'calendar' | 'communication' | 'research' | 'media' | 'assistant' | 'operator' | 'code' | 'unknown' {
+    record: Pick<
+      ResponseFeedbackRecord,
+      'routeKey' | 'capabilityId' | 'responseSource'
+    >,
+  ):
+    | 'calendar'
+    | 'communication'
+    | 'research'
+    | 'media'
+    | 'assistant'
+    | 'operator'
+    | 'code'
+    | 'unknown' {
     const routeText = [
       record.routeKey,
       record.capabilityId,
@@ -8924,7 +9035,8 @@ async function main(): Promise<void> {
     if (routeText.includes('research') || routeText.includes('news')) {
       return 'research';
     }
-    if (routeText.includes('image') || routeText.includes('media')) return 'media';
+    if (routeText.includes('image') || routeText.includes('media'))
+      return 'media';
     if (routeText.includes('runtime') || routeText.includes('work_cockpit')) {
       return 'operator';
     }
@@ -8977,10 +9089,18 @@ async function main(): Promise<void> {
       remediationLaneId: record.remediationLaneId || null,
       remediationJobId: record.remediationJobId || null,
       originalUserPreview: sanitizePlatformControlText(
-        summarizeResponseFeedbackText(record.originalUserText, 'original ask', 220),
+        summarizeResponseFeedbackText(
+          record.originalUserText,
+          'original ask',
+          220,
+        ),
       ),
       assistantReplyPreview: sanitizePlatformControlText(
-        summarizeResponseFeedbackText(record.assistantReplyText, 'assistant reply', 220),
+        summarizeResponseFeedbackText(
+          record.assistantReplyText,
+          'assistant reply',
+          220,
+        ),
       ),
       summary: buildResponseFeedbackIssueSummary(record),
     });
@@ -9063,7 +9183,9 @@ async function main(): Promise<void> {
           ? (err as { stdout: string }).stdout.trim()
           : '';
       throw new Error(
-        stderr || stdout || `git ${args.join(' ')} failed in ${ACTIVE_REPO_ROOT}.`,
+        stderr ||
+          stdout ||
+          `git ${args.join(' ')} failed in ${ACTIVE_REPO_ROOT}.`,
       );
     }
   }
@@ -9076,20 +9198,20 @@ async function main(): Promise<void> {
     const record = getResponseFeedbackByRemediationJob({ laneId, jobId });
     if (!record) return null;
 
-      if (
-        isSuccessfulResponseFeedbackTaskStatus(taskStatus) &&
-        record.status !== 'resolved_locally' &&
-        record.status !== 'landed'
-      ) {
-        if (laneId === 'andrea_runtime') {
-          return updateResponseFeedback(record.feedbackId, {
-            status: 'captured',
-            operatorNote: buildResponseFeedbackReadOnlyLaneNote(),
-          });
-        }
-        if (!hasResponseFeedbackLocalHotfix(record)) {
-          return updateResponseFeedback(record.feedbackId, {
-            status: 'captured',
+    if (
+      isSuccessfulResponseFeedbackTaskStatus(taskStatus) &&
+      record.status !== 'resolved_locally' &&
+      record.status !== 'landed'
+    ) {
+      if (laneId === 'andrea_runtime') {
+        return updateResponseFeedback(record.feedbackId, {
+          status: 'captured',
+          operatorNote: buildResponseFeedbackReadOnlyLaneNote(),
+        });
+      }
+      if (!hasResponseFeedbackLocalHotfix(record)) {
+        return updateResponseFeedback(record.feedbackId, {
+          status: 'captured',
           operatorNote: buildResponseFeedbackNoHotfixNote(),
         });
       }
@@ -9316,7 +9438,9 @@ async function main(): Promise<void> {
         existing.platformMessageId ||
         undefined,
       userMessageId:
-        existing.linkedRefs?.userMessageId || existing.userMessageId || undefined,
+        existing.linkedRefs?.userMessageId ||
+        existing.userMessageId ||
+        undefined,
     };
 
     const ensurePilotIssue = (): ResponseFeedbackRecord => {
@@ -9405,7 +9529,10 @@ async function main(): Promise<void> {
       action.operation === 'commit_only' ||
       action.operation === 'commit_push'
     ) {
-      if (existing.status !== 'resolved_locally' && existing.status !== 'landed') {
+      if (
+        existing.status !== 'resolved_locally' &&
+        existing.status !== 'landed'
+      ) {
         await channel.sendMessage(
           chatJid,
           'That hotfix is not ready to land yet. Refresh the remediation task card after it completes locally, then use the landing buttons there.',
@@ -9528,28 +9655,30 @@ async function main(): Promise<void> {
     const laneSelection = selectResponseFeedbackRetryLane({
       record: captured,
       availability: {
-      runtimeAvailable: runtimeStatus.state === 'available',
-      runtimeLocalPreferred:
-        runtimeStatus.state === 'available' &&
-        runtimeStatus.meta?.localExecutionState === 'available_authenticated',
-      runtimeCloudAllowed: runtimeStatus.state === 'available',
-      runtimeDetail:
-        runtimeStatus.meta?.localExecutionState === 'available_authenticated'
-          ? 'Codex local is healthy and authenticated on this host.'
-          : runtimeStatus.detail || runtimeStatus.meta?.operatorGuidance || null,
-      cursorCloudAvailable:
-        cursorCloudStatus.enabled && cursorCloudStatus.hasApiKey,
-      cursorCloudDetail:
-        cursorCloudStatus.enabled && cursorCloudStatus.hasApiKey
-          ? 'Cursor Cloud is configured and ready for queued coding jobs.'
-          : null,
-      cursorDesktopAvailable:
-        cursorDesktopStatus.enabled &&
-        cursorDesktopStatus.hasToken &&
-        cursorDesktopStatus.probeStatus === 'ok' &&
-        cursorDesktopStatus.agentJobCompatibility === 'validated',
-      cursorDesktopDetail:
-        cursorDesktopStatus.agentJobDetail || cursorDesktopStatus.probeDetail,
+        runtimeAvailable: runtimeStatus.state === 'available',
+        runtimeLocalPreferred:
+          runtimeStatus.state === 'available' &&
+          runtimeStatus.meta?.localExecutionState === 'available_authenticated',
+        runtimeCloudAllowed: runtimeStatus.state === 'available',
+        runtimeDetail:
+          runtimeStatus.meta?.localExecutionState === 'available_authenticated'
+            ? 'Codex local is healthy and authenticated on this host.'
+            : runtimeStatus.detail ||
+              runtimeStatus.meta?.operatorGuidance ||
+              null,
+        cursorCloudAvailable:
+          cursorCloudStatus.enabled && cursorCloudStatus.hasApiKey,
+        cursorCloudDetail:
+          cursorCloudStatus.enabled && cursorCloudStatus.hasApiKey
+            ? 'Cursor Cloud is configured and ready for queued coding jobs.'
+            : null,
+        cursorDesktopAvailable:
+          cursorDesktopStatus.enabled &&
+          cursorDesktopStatus.hasToken &&
+          cursorDesktopStatus.probeStatus === 'ok' &&
+          cursorDesktopStatus.agentJobCompatibility === 'validated',
+        cursorDesktopDetail:
+          cursorDesktopStatus.agentJobDetail || cursorDesktopStatus.probeDetail,
       },
     });
 
@@ -9941,7 +10070,9 @@ async function main(): Promise<void> {
     cloudStatus: ReturnType<typeof getCursorCloudStatus>;
     desktopStatus: Awaited<ReturnType<typeof getCursorDesktopStatus>>;
     gatewayStatus: Awaited<ReturnType<typeof getCursorGatewayStatus>>;
-    runtimeBackendStatus: Awaited<ReturnType<typeof getAndreaOpenAiBackendStatus>>;
+    runtimeBackendStatus: Awaited<
+      ReturnType<typeof getAndreaOpenAiBackendStatus>
+    >;
   }): {
     cloudLine: string;
     desktopLine: string;
@@ -9998,10 +10129,9 @@ async function main(): Promise<void> {
       limit: 50,
     });
     const flattened = flattenCursorJobInventory(inventory);
-    const selected =
-      selectedAgentId
-        ? flattened.find((entry) => entry.id === selectedAgentId) || null
-        : null;
+    const selected = selectedAgentId
+      ? flattened.find((entry) => entry.id === selectedAgentId) || null
+      : null;
     if (
       shouldClearStaleWorkCockpitSelection({
         selectedJobId: selectedAgentId,
@@ -10184,11 +10314,12 @@ async function main(): Promise<void> {
     }
 
     if (params.state.kind === 'home') {
-      const [desktopStatus, gatewayStatus, runtimeBackendStatus] = await Promise.all([
-        getCursorDesktopStatus({ probe: false }),
-        getCursorGatewayStatus({ probe: false }),
-        getAndreaOpenAiBackendStatus(),
-      ]);
+      const [desktopStatus, gatewayStatus, runtimeBackendStatus] =
+        await Promise.all([
+          getCursorDesktopStatus({ probe: false }),
+          getCursorGatewayStatus({ probe: false }),
+          getAndreaOpenAiBackendStatus(),
+        ]);
       const cloudStatus = getCursorCloudStatus();
       const [selection, runtimeSelection] = await Promise.all([
         getCursorSelectedAgentRecord(
@@ -10338,17 +10469,18 @@ async function main(): Promise<void> {
     }
 
     if (params.state.kind === 'work_current') {
-      const [selection, runtimeSelection, runtimeBackendStatus] = await Promise.all([
-        getCursorSelectedAgentRecord(
-          params.chatJid,
-          params.sourceMessage?.thread_id,
-        ),
-        getRuntimeSelectedJobRecord(
-          params.chatJid,
-          params.sourceMessage?.thread_id,
-        ),
-        getAndreaOpenAiBackendStatus(),
-      ]);
+      const [selection, runtimeSelection, runtimeBackendStatus] =
+        await Promise.all([
+          getCursorSelectedAgentRecord(
+            params.chatJid,
+            params.sourceMessage?.thread_id,
+          ),
+          getRuntimeSelectedJobRecord(
+            params.chatJid,
+            params.sourceMessage?.thread_id,
+          ),
+          getAndreaOpenAiBackendStatus(),
+        ]);
       const currentWorkSelection = getCurrentWorkSelection(
         params.chatJid,
         group.folder,
@@ -10408,7 +10540,8 @@ async function main(): Promise<void> {
           runtimeBackendStatus.state === 'available'
             ? 'authenticated and ready on this host'
             : runtimeBackendStatus.state === 'auth_required'
-              ? runtimeBackendStatus.detail || 'codex_local needs login on the backend host'
+              ? runtimeBackendStatus.detail ||
+                'codex_local needs login on the backend host'
               : runtimeBackendStatus.state === 'not_enabled'
                 ? 'loopback backend is disabled in this NanoBot runtime'
                 : runtimeBackendStatus.detail ||
@@ -11405,7 +11538,9 @@ async function main(): Promise<void> {
           blockerClass: 'work_cockpit_dashboard_failed',
           blockerOwner: 'repo_side',
           summaryText:
-            err instanceof Error ? err.message : 'work cockpit dashboard failed',
+            err instanceof Error
+              ? err.message
+              : 'work cockpit dashboard failed',
         });
       }
       throw err;
@@ -11449,7 +11584,9 @@ async function main(): Promise<void> {
           blockerClass: 'current_work_quick_open_failed',
           blockerOwner: 'repo_side',
           summaryText:
-            err instanceof Error ? err.message : 'current work quick-open failed',
+            err instanceof Error
+              ? err.message
+              : 'current work quick-open failed',
         });
       }
       throw err;
@@ -12391,16 +12528,16 @@ async function main(): Promise<void> {
           provider,
           sourceMessage,
           contextKind: 'cursor_job_message',
-        payload: buildCursorTaskContextPayload({
-          agentId: normalizedAgentId,
-          provider,
-          contextType: 'output',
-          status: actionRecord?.status || null,
-          outputSource: 'none',
-        }),
-        jobStatus: actionRecord?.status || null,
-        inlineActions,
-        text: `No output is available yet for this task.\nTask: ${labelCursorRecord(normalizedAgentId)} ${formatOpaqueTaskId(normalizedAgentId)}.\n\n${formatCursorTaskNextStepMessage({ provider, id: normalizedAgentId })}`,
+          payload: buildCursorTaskContextPayload({
+            agentId: normalizedAgentId,
+            provider,
+            contextType: 'output',
+            status: actionRecord?.status || null,
+            outputSource: 'none',
+          }),
+          jobStatus: actionRecord?.status || null,
+          inlineActions,
+          text: `No output is available yet for this task.\nTask: ${labelCursorRecord(normalizedAgentId)} ${formatOpaqueTaskId(normalizedAgentId)}.\n\n${formatCursorTaskNextStepMessage({ provider, id: normalizedAgentId })}`,
         });
         return;
       }
@@ -13254,204 +13391,208 @@ async function main(): Promise<void> {
     try {
       await dispatchRuntimeCommand(
         {
-        async sendToChat(targetChatJid, text, extra = {}) {
-          const sent = await channel.sendMessage(
-            targetChatJid,
+          async sendToChat(targetChatJid, text, extra = {}) {
+            const sent = await channel.sendMessage(
+              targetChatJid,
+              text,
+              buildOperatorSendOptions(sourceMessage, extra),
+            );
+            return sent.platformMessageId;
+          },
+          async sendRuntimeJobMessage({
+            operatorChatJid,
             text,
-            buildOperatorSendOptions(sourceMessage, extra),
-          );
-          return sent.platformMessageId;
-        },
-        async sendRuntimeJobMessage({
-          operatorChatJid,
-          text,
-          jobId,
-          contextKind,
-          payload,
-          inlineActions,
-        }) {
-          return sendBackendJobMessage({
-            chatJid: operatorChatJid,
-            text,
-            laneId: 'andrea_runtime',
             jobId,
-            sourceMessage,
             contextKind,
             payload,
             inlineActions,
-          });
-        },
-        rememberRuntimeJobList({
-          chatJid: targetChatJid,
-          threadId,
-          listMessageId,
-          jobs,
-        }) {
-          rememberCursorJobList({
+          }) {
+            return sendBackendJobMessage({
+              chatJid: operatorChatJid,
+              text,
+              laneId: 'andrea_runtime',
+              jobId,
+              sourceMessage,
+              contextKind,
+              payload,
+              inlineActions,
+            });
+          },
+          rememberRuntimeJobList({
             chatJid: targetChatJid,
             threadId,
             listMessageId,
-            items: jobs.map((job) => ({
-              laneId: 'andrea_runtime',
-              id: job.handle.jobId,
-              provider: null,
-            })),
-            selectedLaneId: 'andrea_runtime',
-          });
-        },
-        async getStatusMessage() {
-          return buildAndreaRuntimeStatusMessage(group);
-        },
-        canExecute: andreaRuntimeExecutionEnabled,
-        getExecutionDisabledMessage() {
-          return buildAndreaRuntimeDisabledMessage();
-        },
-        async createJob({
-          groupFolder,
-          chatJid: targetChatJid,
-          promptText,
-          requestedBy,
-        }) {
-          return runtimeLane.createJob({
+            jobs,
+          }) {
+            rememberCursorJobList({
+              chatJid: targetChatJid,
+              threadId,
+              listMessageId,
+              items: jobs.map((job) => ({
+                laneId: 'andrea_runtime',
+                id: job.handle.jobId,
+                provider: null,
+              })),
+              selectedLaneId: 'andrea_runtime',
+            });
+          },
+          async getStatusMessage() {
+            return buildAndreaRuntimeStatusMessage(group);
+          },
+          canExecute: andreaRuntimeExecutionEnabled,
+          getExecutionDisabledMessage() {
+            return buildAndreaRuntimeDisabledMessage();
+          },
+          async createJob({
             groupFolder,
             chatJid: targetChatJid,
             promptText,
             requestedBy,
-          });
-        },
-        getRuntimeJobs() {
-          return queue.getRuntimeJobs();
-        },
-        async listJobs({ chatJid: targetChatJid, groupFolder, limit }) {
-          return runtimeLane.listJobs({
-            chatJid: targetChatJid,
-            groupFolder,
-            limit,
-          });
-        },
-        resolveTarget({
-          chatJid: targetChatJid,
-          threadId,
-          replyToMessageId,
-          requestedTarget,
-        }) {
-          const resolved = resolveBackendTarget({
+          }) {
+            return runtimeLane.createJob({
+              groupFolder,
+              chatJid: targetChatJid,
+              promptText,
+              requestedBy,
+            });
+          },
+          getRuntimeJobs() {
+            return queue.getRuntimeJobs();
+          },
+          async listJobs({ chatJid: targetChatJid, groupFolder, limit }) {
+            return runtimeLane.listJobs({
+              chatJid: targetChatJid,
+              groupFolder,
+              limit,
+            });
+          },
+          resolveTarget({
             chatJid: targetChatJid,
             threadId,
             replyToMessageId,
             requestedTarget,
-            laneId: 'andrea_runtime',
-            parseExplicitTarget(raw) {
-              return /^runtime-job-/i.test(raw.trim()) ? raw.trim() : null;
-            },
-          });
-          if (!resolved.target) {
-            const legacySelection = getLegacyRuntimeSelection(
-              targetChatJid,
-              group.folder,
-            );
-            if (
-              legacySelection &&
-              (!requestedTarget || requestedTarget.trim().toLowerCase() === 'current')
-            ) {
-              rememberCursorOperatorSelection({
-                chatJid: targetChatJid,
-                threadId,
-                laneId: 'andrea_runtime',
-                agentId: legacySelection,
-              });
-              return {
-                target: {
-                  handle: { laneId: 'andrea_runtime', jobId: legacySelection },
-                  jobId: legacySelection,
-                  via: 'selected' as const,
-                },
-                failureMessage: null,
-              };
-            }
-          }
-          return resolved.target
-            ? {
-                target: {
-                  handle: resolved.target.handle,
-                  jobId: resolved.target.agentId,
-                  via: resolved.target.via,
-                },
-                failureMessage: null,
-              }
-            : {
-                target: null,
-                failureMessage:
-                  resolved.failureMessage ||
-                  getBackendContextGuidance('andrea_runtime'),
-              };
-        },
-        async refreshJob(args) {
-          return runtimeLane.refreshJob(args);
-        },
-        async getPrimaryOutput(args) {
-          return runtimeLane.getPrimaryOutput(args);
-        },
-        async getJobLogs(args) {
-          return runtimeLane.getJobLogs(args);
-        },
-        async stopJob(args) {
-          return runtimeLane.stopJob(args);
-        },
-        async followUpJob(args) {
-          return runtimeLane.followUp(args);
-        },
-        async followUpLegacyGroup({
-          groupFolder,
-          chatJid: targetChatJid,
-          promptText,
-        }) {
-          return followUpAndreaRuntimeLaneGroup({
-            resolveGroupByFolder(folder) {
-              const entry = Object.entries(registeredGroups).find(
-                ([, candidate]) => candidate.folder === folder,
+          }) {
+            const resolved = resolveBackendTarget({
+              chatJid: targetChatJid,
+              threadId,
+              replyToMessageId,
+              requestedTarget,
+              laneId: 'andrea_runtime',
+              parseExplicitTarget(raw) {
+                return /^runtime-job-/i.test(raw.trim()) ? raw.trim() : null;
+              },
+            });
+            if (!resolved.target) {
+              const legacySelection = getLegacyRuntimeSelection(
+                targetChatJid,
+                group.folder,
               );
-              if (!entry) return null;
-              const [jid, resolvedGroup] = entry;
-              return { jid, group: resolvedGroup };
-            },
+              if (
+                legacySelection &&
+                (!requestedTarget ||
+                  requestedTarget.trim().toLowerCase() === 'current')
+              ) {
+                rememberCursorOperatorSelection({
+                  chatJid: targetChatJid,
+                  threadId,
+                  laneId: 'andrea_runtime',
+                  agentId: legacySelection,
+                });
+                return {
+                  target: {
+                    handle: {
+                      laneId: 'andrea_runtime',
+                      jobId: legacySelection,
+                    },
+                    jobId: legacySelection,
+                    via: 'selected' as const,
+                  },
+                  failureMessage: null,
+                };
+              }
+            }
+            return resolved.target
+              ? {
+                  target: {
+                    handle: resolved.target.handle,
+                    jobId: resolved.target.agentId,
+                    via: resolved.target.via,
+                  },
+                  failureMessage: null,
+                }
+              : {
+                  target: null,
+                  failureMessage:
+                    resolved.failureMessage ||
+                    getBackendContextGuidance('andrea_runtime'),
+                };
+          },
+          async refreshJob(args) {
+            return runtimeLane.refreshJob(args);
+          },
+          async getPrimaryOutput(args) {
+            return runtimeLane.getPrimaryOutput(args);
+          },
+          async getJobLogs(args) {
+            return runtimeLane.getJobLogs(args);
+          },
+          async stopJob(args) {
+            return runtimeLane.stopJob(args);
+          },
+          async followUpJob(args) {
+            return runtimeLane.followUp(args);
+          },
+          async followUpLegacyGroup({
             groupFolder,
             chatJid: targetChatJid,
             promptText,
-            actorId: targetChatJid,
-          });
-        },
-        findGroupByFolder(folder) {
-          const entry = Object.entries(registeredGroups).find(
-            ([, group]) => group.folder === folder,
-          );
-          if (!entry) return null;
-          const [jid, group] = entry;
-          return { jid, folder: group.folder };
-        },
-        requestStop(groupJid) {
-          return queue.requestStop(groupJid);
-        },
-        formatFailure({ operation, err, targetDisplay, guidance }) {
-          return formatBackendOperationFailure({
-            laneId: 'andrea_runtime',
-            operation,
-            err,
-            targetDisplay,
-            guidance,
-          });
-        },
-        clearCurrentSelection({ chatJid: targetChatJid, threadId }) {
-          clearCurrentWorkSelection({
-            chatJid: targetChatJid,
-            threadId,
-            laneId: 'andrea_runtime',
-            source: 'shared',
-          });
-        },
-        shouldClearSelectionForError(err) {
-          return shouldClearRuntimeSelectionForError(err);
-        },
+          }) {
+            return followUpAndreaRuntimeLaneGroup({
+              resolveGroupByFolder(folder) {
+                const entry = Object.entries(registeredGroups).find(
+                  ([, candidate]) => candidate.folder === folder,
+                );
+                if (!entry) return null;
+                const [jid, resolvedGroup] = entry;
+                return { jid, group: resolvedGroup };
+              },
+              groupFolder,
+              chatJid: targetChatJid,
+              promptText,
+              actorId: targetChatJid,
+            });
+          },
+          findGroupByFolder(folder) {
+            const entry = Object.entries(registeredGroups).find(
+              ([, group]) => group.folder === folder,
+            );
+            if (!entry) return null;
+            const [jid, group] = entry;
+            return { jid, folder: group.folder };
+          },
+          requestStop(groupJid) {
+            return queue.requestStop(groupJid);
+          },
+          formatFailure({ operation, err, targetDisplay, guidance }) {
+            return formatBackendOperationFailure({
+              laneId: 'andrea_runtime',
+              operation,
+              err,
+              targetDisplay,
+              guidance,
+            });
+          },
+          clearCurrentSelection({ chatJid: targetChatJid, threadId }) {
+            clearCurrentWorkSelection({
+              chatJid: targetChatJid,
+              threadId,
+              laneId: 'andrea_runtime',
+              source: 'shared',
+            });
+          },
+          shouldClearSelectionForError(err) {
+            return shouldClearRuntimeSelectionForError(err);
+          },
         },
         {
           operatorChatJid: chatJid,
@@ -13520,7 +13661,8 @@ async function main(): Promise<void> {
       }
       const mainTelegramEntry = Object.entries(registeredGroups).find(
         ([jid, group]) =>
-          group.isMain === true && findChannel(channels, jid)?.name === 'telegram',
+          group.isMain === true &&
+          findChannel(channels, jid)?.name === 'telegram',
       );
       if (!mainTelegramEntry) {
         return {
@@ -13619,9 +13761,12 @@ async function main(): Promise<void> {
 
       const responseFeedbackAction = parseResponseFeedbackAction(rawTrimmed);
       if (responseFeedbackAction) {
-        handleResponseFeedbackAction(chatJid, msg, responseFeedbackAction).catch(
-          (err) =>
-            logger.error({ err, chatJid }, 'Response feedback action error'),
+        handleResponseFeedbackAction(
+          chatJid,
+          msg,
+          responseFeedbackAction,
+        ).catch((err) =>
+          logger.error({ err, chatJid }, 'Response feedback action error'),
         );
         return;
       }
@@ -14184,9 +14329,7 @@ async function main(): Promise<void> {
       }
 
       const repliedCursorDashboard =
-        mainControlChat &&
-        !isSlashCommand &&
-        rawTrimmed
+        mainControlChat && !isSlashCommand && rawTrimmed
           ? getCursorDashboardMessageContext(chatJid, msg.reply_to_id)
           : null;
       if (repliedCursorDashboard) {
@@ -14278,7 +14421,10 @@ async function main(): Promise<void> {
               '/runtime-followup',
               msg,
             ).catch((err) =>
-              logger.error({ err, chatJid }, 'Current-work runtime followup error'),
+              logger.error(
+                { err, chatJid },
+                'Current-work runtime followup error',
+              ),
             );
             return;
           }
@@ -14359,9 +14505,7 @@ async function main(): Promise<void> {
       }
 
       const rawRepliedMessageContext =
-        mainControlChat &&
-        !isSlashCommand &&
-        rawTrimmed
+        mainControlChat && !isSlashCommand && rawTrimmed
           ? getCursorMessageContext(chatJid, msg.reply_to_id || '')
           : null;
       const repliedMessageContext =
@@ -14404,7 +14548,10 @@ async function main(): Promise<void> {
             'This BlueBubbles thread is for companion help, not control commands. Ask me naturally here, and use Telegram for the admin side.',
           )
           .catch((err) =>
-            logger.error({ err, chatJid }, 'BlueBubbles slash-command gate reply failed'),
+            logger.error(
+              { err, chatJid },
+              'BlueBubbles slash-command gate reply failed',
+            ),
           );
         return;
       }
@@ -14474,8 +14621,9 @@ async function main(): Promise<void> {
         );
         const pendingLocalContinuationKind =
           getPendingBlueBubblesLocalContinuationKind(chatJid, companionNow);
-        const interpretedMessageActionFollowup =
-          interpretMessageActionFollowup(msg.content);
+        const interpretedMessageActionFollowup = interpretMessageActionFollowup(
+          msg.content,
+        );
         const resolvedMessageAction = interpretedMessageActionFollowup
           ? resolveMessageActionForFollowup({
               groupFolder: blueBubblesBinding.group.folder,
@@ -14519,7 +14667,11 @@ async function main(): Promise<void> {
             );
             if (primed.storedCount > 0) {
               logger.debug(
-                { chatJid, storedCount: primed.storedCount, totalCount: primed.totalCount },
+                {
+                  chatJid,
+                  storedCount: primed.storedCount,
+                  totalCount: primed.totalCount,
+                },
                 'Primed BlueBubbles recent chat history for an @Andrea mention',
               );
             }
@@ -14600,17 +14752,22 @@ async function main(): Promise<void> {
     });
     const exactMain = telegramEntries.find(
       ([, group]) =>
-        group.folder === groupFolder && (group.isMain === true || groupFolder === 'main'),
+        group.folder === groupFolder &&
+        (group.isMain === true || groupFolder === 'main'),
     );
     if (exactMain) {
       return { chatJid: exactMain[0] };
     }
-    const exact = telegramEntries.find(([, group]) => group.folder === groupFolder);
+    const exact = telegramEntries.find(
+      ([, group]) => group.folder === groupFolder,
+    );
     if (exact) {
       return { chatJid: exact[0] };
     }
     if (groupFolder === 'main') {
-      const fallbackMain = telegramEntries.find(([, group]) => group.isMain === true);
+      const fallbackMain = telegramEntries.find(
+        ([, group]) => group.isMain === true,
+      );
       if (fallbackMain) {
         return { chatJid: fallbackMain[0] };
       }
@@ -14694,7 +14851,11 @@ async function main(): Promise<void> {
       },
       sendHandoffArtifact: sendCompanionHandoffArtifact,
       sendTelegramArtifact: async (chatJid, artifact, options) => {
-        return sendCompanionHandoffArtifactToChannel(chatJid, artifact, options);
+        return sendCompanionHandoffArtifactToChannel(
+          chatJid,
+          artifact,
+          options,
+        );
       },
     });
   } catch (err) {
@@ -14703,11 +14864,15 @@ async function main(): Promise<void> {
 
   const hasAlexaIngress = alexaRuntime?.getStatus().running === true;
   if (channels.length === 0 && !hasAlexaIngress) {
-    logger.fatal('No channels connected and Alexa voice ingress is not running');
+    logger.fatal(
+      'No channels connected and Alexa voice ingress is not running',
+    );
     process.exit(1);
   }
   if (channels.length === 0 && hasAlexaIngress) {
-    logger.info('No chat channels connected; Alexa voice ingress is serving locally');
+    logger.info(
+      'No chat channels connected; Alexa voice ingress is serving locally',
+    );
   }
 
   // Start subsystems (independently of connection handler)

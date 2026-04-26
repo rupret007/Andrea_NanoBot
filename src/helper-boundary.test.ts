@@ -56,11 +56,11 @@ describe('helper boundary wiring', () => {
     expect(source).toContain(
       'Retrying direct assistant request in recovery mode',
     );
-      expect(source).toContain('disableMcpServer');
-      expect(source).toContain(
-        'Answer directly and concisely from the user prompt without helper orchestration.',
-      );
-    });
+    expect(source).toContain('disableMcpServer');
+    expect(source).toContain(
+      'Answer directly and concisely from the user prompt without helper orchestration.',
+    );
+  });
 
   it('keeps send_message as Andrea-only instead of advertising a second bot identity', () => {
     const source = readRepoFile('container/agent-runner/src/ipc-mcp-stdio.ts');
@@ -90,9 +90,13 @@ describe('helper boundary wiring', () => {
     const actionLayerSource = readRepoFile('src/action-layer.ts');
 
     expect(indexSource).toContain('shouldInterruptPendingActionLayerFlow(');
-    expect(actionLayerSource).toContain('trimmed.startsWith(\'/\')');
-    expect(actionLayerSource).toContain('looksLikeFreshDiscoveryPrompt(message)');
-    expect(actionLayerSource).toContain('looksLikeFreshWorkCockpitPrompt(message)');
+    expect(actionLayerSource).toContain("trimmed.startsWith('/')");
+    expect(actionLayerSource).toContain(
+      'looksLikeFreshDiscoveryPrompt(message)',
+    );
+    expect(actionLayerSource).toContain(
+      'looksLikeFreshWorkCockpitPrompt(message)',
+    );
     expect(actionLayerSource).toContain(
       'isPotentialDailyCompanionPrompt(message)',
     );
@@ -119,9 +123,7 @@ describe('helper boundary wiring', () => {
     expect(source).toContain(
       'const priorAssistantCapabilitySeed = getSharedAssistantCapabilitySeed(',
     );
-    expect(source).toContain(
-      'priorAssistantCapabilitySeed?.subjectData,',
-    );
+    expect(source).toContain('priorAssistantCapabilitySeed?.subjectData,');
     expect(source).toContain(
       'priorSubjectData: priorAssistantCapabilitySeed?.subjectData',
     );
@@ -134,9 +136,7 @@ describe('helper boundary wiring', () => {
   it('lets pending BlueBubbles local continuations bypass the fresh @Andrea wake gate without widening ordinary chatter', () => {
     const source = readRepoFile('src/index.ts');
 
-    expect(source).toContain(
-      'const pendingLocalContinuationKind =',
-    );
+    expect(source).toContain('const pendingLocalContinuationKind =');
     expect(source).toContain(
       'getPendingBlueBubblesLocalContinuationKind(chatJid, companionNow);',
     );
@@ -153,7 +153,9 @@ describe('helper boundary wiring', () => {
     const source = readRepoFile('src/index.ts');
 
     expect(source).toContain('reconcileWorkCockpitCurrentSelection({');
-    expect(source).toContain('runtimeJobId: runtimeSelection?.selected?.handle.jobId || null');
+    expect(source).toContain(
+      'runtimeJobId: runtimeSelection?.selected?.handle.jobId || null',
+    );
     expect(source).toContain('cursorJobId: selection?.selected?.id || null');
     expect(source).toContain('shouldClearStaleWorkCockpitSelection({');
   });
@@ -162,10 +164,12 @@ describe('helper boundary wiring', () => {
     const source = readRepoFile('src/index.ts');
 
     expect(source).toContain('function isCurrentWorkQuickOpenPhrase(');
-    expect(source).toContain(".replace(/[’‘]/g, \"'\")");
+    expect(source).toContain('.replace(/[’‘]/g, "\'")');
     expect(source).toContain("normalized === 'current work'");
     expect(source).toContain(`normalized === "show me what's running"`);
-    expect(source).toContain(`normalized === "show me what's running right now"`);
+    expect(source).toContain(
+      `normalized === "show me what's running right now"`,
+    );
     expect(source).toContain("normalized === 'what work is active right now'");
     expect(source).toContain("normalized === 'open the current task again'");
     expect(source).toContain(`normalized === "what's the latest from runtime"`);

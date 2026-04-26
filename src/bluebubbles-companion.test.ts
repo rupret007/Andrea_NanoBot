@@ -296,9 +296,9 @@ describe('bluebubbles companion helpers', () => {
     expect(stripBlueBubblesAndreaMention('@Andrea what am I forgetting')).toBe(
       'what am I forgetting',
     );
-    expect(
-      stripBlueBubblesAndreaMention('hey @Andrea, summarize this'),
-    ).toBe('hey summarize this');
+    expect(stripBlueBubblesAndreaMention('hey @Andrea, summarize this')).toBe(
+      'hey summarize this',
+    );
     expect(normalizeBlueBubblesCompanionPrompt('@Andrea')).toBe('hi');
   });
 

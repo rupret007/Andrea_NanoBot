@@ -74,22 +74,23 @@ describe('AndreaOpenAiBackendClient', () => {
   });
 
   it('maps /meta into available status', async () => {
-    const fetchImpl = vi.fn(async () =>
-      new Response(
-        JSON.stringify({
-          backend: ANDREA_OPENAI_BACKEND_ID,
-          transport: 'http',
-          enabled: true,
-          version: '1.2.3',
-          ready: true,
-          localExecutionState: 'available_authenticated',
-          authState: 'authenticated',
-          localExecutionDetail:
-            'Codex local execution is authenticated and the container runtime is ready.',
-          operatorGuidance: null,
-        }),
-        { status: 200 },
-      ),
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            backend: ANDREA_OPENAI_BACKEND_ID,
+            transport: 'http',
+            enabled: true,
+            version: '1.2.3',
+            ready: true,
+            localExecutionState: 'available_authenticated',
+            authState: 'authenticated',
+            localExecutionDetail:
+              'Codex local execution is authenticated and the container runtime is ready.',
+            operatorGuidance: null,
+          }),
+          { status: 200 },
+        ),
     );
     const client = new AndreaOpenAiBackendClient({
       enabled: true,
@@ -309,7 +310,10 @@ describe('AndreaOpenAiBackendClient', () => {
         expect(init?.method).toBe('POST');
         expect(String(init?.body)).toContain('"sessionId":"session-1"');
         return new Response(
-          JSON.stringify({ session_id: 'session-1', artifact_path: 'session.json' }),
+          JSON.stringify({
+            session_id: 'session-1',
+            artifact_path: 'session.json',
+          }),
           { status: 200 },
         );
       }
@@ -359,22 +363,24 @@ describe('AndreaOpenAiBackendClient', () => {
   });
 
   it('maps /meta into not_ready status', async () => {
-    const fetchImpl = vi.fn(async () =>
-      new Response(
-        JSON.stringify({
-          backend: ANDREA_OPENAI_BACKEND_ID,
-          transport: 'http',
-          enabled: true,
-          version: null,
-          ready: false,
-          localExecutionState: 'not_ready',
-          authState: 'unknown',
-          localExecutionDetail:
-            'Codex local execution is not ready because podman is installed_not_running.',
-          operatorGuidance: 'Start or repair podman, then retry the Codex/OpenAI runtime lane.',
-        }),
-        { status: 200 },
-      ),
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            backend: ANDREA_OPENAI_BACKEND_ID,
+            transport: 'http',
+            enabled: true,
+            version: null,
+            ready: false,
+            localExecutionState: 'not_ready',
+            authState: 'unknown',
+            localExecutionDetail:
+              'Codex local execution is not ready because podman is installed_not_running.',
+            operatorGuidance:
+              'Start or repair podman, then retry the Codex/OpenAI runtime lane.',
+          }),
+          { status: 200 },
+        ),
     );
     const client = new AndreaOpenAiBackendClient({
       enabled: true,
@@ -387,23 +393,24 @@ describe('AndreaOpenAiBackendClient', () => {
   });
 
   it('maps explicit auth-required meta into auth_required status', async () => {
-    const fetchImpl = vi.fn(async () =>
-      new Response(
-        JSON.stringify({
-          backend: ANDREA_OPENAI_BACKEND_ID,
-          transport: 'http',
-          enabled: true,
-          version: '1.2.3',
-          ready: false,
-          localExecutionState: 'available_auth_required',
-          authState: 'auth_required',
-          localExecutionDetail:
-            'Codex local execution is reachable on this host, but no usable Codex login or OPENAI_API_KEY is available yet.',
-          operatorGuidance:
-            'Run codex login on the Andrea_OpenAI_Bot host, or provide OPENAI_API_KEY before retrying codex_local work.',
-        }),
-        { status: 200 },
-      ),
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            backend: ANDREA_OPENAI_BACKEND_ID,
+            transport: 'http',
+            enabled: true,
+            version: '1.2.3',
+            ready: false,
+            localExecutionState: 'available_auth_required',
+            authState: 'auth_required',
+            localExecutionDetail:
+              'Codex local execution is reachable on this host, but no usable Codex login or OPENAI_API_KEY is available yet.',
+            operatorGuidance:
+              'Run codex login on the Andrea_OpenAI_Bot host, or provide OPENAI_API_KEY before retrying codex_local work.',
+          }),
+          { status: 200 },
+        ),
     );
     const client = new AndreaOpenAiBackendClient({
       enabled: true,
@@ -472,8 +479,12 @@ describe('AndreaOpenAiBackendClient', () => {
       calls.push(url);
       if (url.endsWith('/conductor/plan')) {
         expect(init?.method).toBe('POST');
-        expect(String(init?.body)).toContain('"goal":"Debug the failing tests"');
-        expect(String(init?.body)).toContain('"correlationId":"corr-conductor"');
+        expect(String(init?.body)).toContain(
+          '"goal":"Debug the failing tests"',
+        );
+        expect(String(init?.body)).toContain(
+          '"correlationId":"corr-conductor"',
+        );
         expect(String(init?.body)).toContain('"approved":true');
         return new Response(
           JSON.stringify({
@@ -653,7 +664,9 @@ describe('AndreaOpenAiBackendClient', () => {
       expect(String(init?.body)).toContain('"jid":"tg:1"');
       expect(String(init?.body)).toContain('"name":"Andrea Main"');
       expect(String(init?.body)).toContain('"trigger":"@andrea"');
-      expect(String(init?.body)).toContain('"addedAt":"2026-04-02T20:00:00.000Z"');
+      expect(String(init?.body)).toContain(
+        '"addedAt":"2026-04-02T20:00:00.000Z"',
+      );
       expect(String(init?.body)).toContain('"requiresTrigger":false');
       expect(String(init?.body)).toContain('"isMain":true');
       return new Response(JSON.stringify({ created: true }), { status: 201 });
@@ -681,16 +694,17 @@ describe('AndreaOpenAiBackendClient', () => {
   it('surfaces structured backend HTTP errors', async () => {
     const client = new AndreaOpenAiBackendClient({
       enabled: true,
-      fetchImpl: vi.fn(async () =>
-        new Response(
-          JSON.stringify({
-            error: {
-              code: 'not_found',
-              message: 'No runtime job found for "missing".',
-            },
-          }),
-          { status: 404 },
-        ),
+      fetchImpl: vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              error: {
+                code: 'not_found',
+                message: 'No runtime job found for "missing".',
+              },
+            }),
+            { status: 404 },
+          ),
       ) as unknown as typeof fetch,
     });
 
@@ -704,16 +718,18 @@ describe('AndreaOpenAiBackendClient', () => {
   it('preserves conflict error codes from backend registration failures', async () => {
     const client = new AndreaOpenAiBackendClient({
       enabled: true,
-      fetchImpl: vi.fn(async () =>
-        new Response(
-          JSON.stringify({
-            error: {
-              code: 'conflict',
-              message: 'Group "main" already exists with conflicting metadata.',
-            },
-          }),
-          { status: 409 },
-        ),
+      fetchImpl: vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              error: {
+                code: 'conflict',
+                message:
+                  'Group "main" already exists with conflicting metadata.',
+              },
+            }),
+            { status: 409 },
+          ),
       ) as unknown as typeof fetch,
     });
 

@@ -18,7 +18,9 @@ function toNullableString(value: string | null | undefined): string | null {
   return value && value.trim() ? value.trim() : null;
 }
 
-function toTextResult(payload: unknown): { content: Array<{ type: 'text'; text: string }> } {
+function toTextResult(payload: unknown): {
+  content: Array<{ type: 'text'; text: string }>;
+} {
   return {
     content: [
       {
@@ -121,7 +123,9 @@ export class BlueBubblesControlClient {
     return this.request('GET', `/v1/bluebubbles/message-actions/open${query}`);
   }
 
-  async refresh(mode?: 'transport' | 'webhook' | 'shadow' | 'all'): Promise<unknown> {
+  async refresh(
+    mode?: 'transport' | 'webhook' | 'shadow' | 'all',
+  ): Promise<unknown> {
     return this.request('POST', '/v1/bluebubbles/refresh', {
       mode: mode || 'all',
     });
@@ -154,9 +158,7 @@ export function createBlueBubblesMcpToolHandlers(
     bluebubbles_status: async () => client.status(),
     bluebubbles_proof: async () => client.proof(),
     bluebubbles_list_chats: async (args) =>
-      client.listChats(
-        typeof args.limit === 'number' ? args.limit : undefined,
-      ),
+      client.listChats(typeof args.limit === 'number' ? args.limit : undefined),
     bluebubbles_get_messages: async (args) =>
       client.getMessages(
         String(args.chatJid || ''),
@@ -184,19 +186,16 @@ export function createBlueBubblesMcpToolHandlers(
             : null,
       }),
     bluebubbles_execute_message_action: async (args) =>
-      client.executeMessageAction(
-        String(args.actionId || ''),
-        {
-          operation:
-            args.operation === 'defer' ||
-            args.operation === 'remind_instead' ||
-            args.operation === 'save_to_thread'
-              ? args.operation
-              : 'send',
-          timingHint:
-            typeof args.timingHint === 'string' ? args.timingHint : null,
-        },
-      ),
+      client.executeMessageAction(String(args.actionId || ''), {
+        operation:
+          args.operation === 'defer' ||
+          args.operation === 'remind_instead' ||
+          args.operation === 'save_to_thread'
+            ? args.operation
+            : 'send',
+        timingHint:
+          typeof args.timingHint === 'string' ? args.timingHint : null,
+      }),
   };
 }
 
@@ -258,9 +257,7 @@ export async function startBlueBubblesControlMcpServer(): Promise<void> {
     'bluebubbles_refresh',
     'Refresh BlueBubbles transport, webhook, and shadow truth.',
     {
-      mode: z
-        .enum(['transport', 'webhook', 'shadow', 'all'])
-        .optional(),
+      mode: z.enum(['transport', 'webhook', 'shadow', 'all']).optional(),
     },
     async (args) => toTextResult(await handlers.bluebubbles_refresh(args)),
   );

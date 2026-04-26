@@ -13,10 +13,7 @@ import {
   AndreaOpenAiBackendTransportError,
   type EnsureBackendGroupRequest,
 } from './andrea-openai-backend.js';
-import {
-  getRuntimeBackendJob,
-  upsertRuntimeBackendJob,
-} from './db.js';
+import { getRuntimeBackendJob, upsertRuntimeBackendJob } from './db.js';
 import type {
   AgentRuntimeName,
   CompanionRouteDecision,
@@ -143,7 +140,9 @@ function isMissingGroupRegistrationError(
   return (
     err instanceof AndreaOpenAiBackendHttpError &&
     err.status === 404 &&
-    err.message.includes(`No registered group found for folder "${groupFolder}"`)
+    err.message.includes(
+      `No registered group found for folder "${groupFolder}"`,
+    )
   );
 }
 
@@ -207,7 +206,10 @@ async function ensureBackendGroup(
     await client.ensureGroupRegistration(request);
     return 'registered';
   } catch (err) {
-    if (err instanceof AndreaOpenAiBackendHttpError && err.route.startsWith('/groups/')) {
+    if (
+      err instanceof AndreaOpenAiBackendHttpError &&
+      err.route.startsWith('/groups/')
+    ) {
       if (err.status === 404 || err.status === 405) {
         return 'unsupported';
       }
@@ -223,7 +225,9 @@ async function ensureBackendGroup(
   }
 }
 
-function buildBootstrapRequiredError(groupFolder: string): AndreaOpenAiRuntimeError {
+function buildBootstrapRequiredError(
+  groupFolder: string,
+): AndreaOpenAiRuntimeError {
   return new AndreaOpenAiRuntimeError(
     'bootstrap_required',
     `Andrea OpenAI backend is reachable, but backend group "${groupFolder}" is not registered yet.`,

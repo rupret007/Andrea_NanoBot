@@ -1247,7 +1247,9 @@ function createSchema(database: Database.Database): void {
   }
 
   try {
-    database.exec(`ALTER TABLE message_actions ADD COLUMN scheduled_task_id TEXT`);
+    database.exec(
+      `ALTER TABLE message_actions ADD COLUMN scheduled_task_id TEXT`,
+    );
   } catch {
     /* column already exists */
   }
@@ -1259,7 +1261,9 @@ function createSchema(database: Database.Database): void {
   }
 
   try {
-    database.exec(`ALTER TABLE message_actions ADD COLUMN last_action_kind TEXT`);
+    database.exec(
+      `ALTER TABLE message_actions ADD COLUMN last_action_kind TEXT`,
+    );
   } catch {
     /* column already exists */
   }
@@ -1406,7 +1410,10 @@ function normalizeChatNameCandidate(value: string | null | undefined): string {
   return (value || '').trim();
 }
 
-function isPlaceholderChatName(chatJid: string, name: string | null | undefined): boolean {
+function isPlaceholderChatName(
+  chatJid: string,
+  name: string | null | undefined,
+): boolean {
   const normalizedName = normalizeChatNameCandidate(name);
   if (!normalizedName) return true;
   const jidSansPrefix = chatJid.replace(/^bb:/i, '');
@@ -3749,25 +3756,25 @@ export function listDelegationRulesForGroup(params: {
       `,
     )
     .all(...args) as Array<{
-      rule_id: string;
-      group_folder: string;
-      title: string;
-      trigger_type: DelegationRuleRecord['triggerType'];
-      trigger_scope: DelegationRuleRecord['triggerScope'];
-      conditions_json: string;
-      delegated_actions_json: string;
-      approval_mode: DelegationRuleRecord['approvalMode'];
-      status: DelegationRuleRecord['status'];
-      created_at: string;
-      last_used_at: string | null;
-      times_used: number;
-      times_auto_applied: number;
-      times_overridden: number;
-      last_outcome_status: DelegationRuleRecord['lastOutcomeStatus'];
-      user_confirmed: number;
-      channel_applicability_json: string;
-      safety_level: DelegationRuleRecord['safetyLevel'];
-    }>;
+    rule_id: string;
+    group_folder: string;
+    title: string;
+    trigger_type: DelegationRuleRecord['triggerType'];
+    trigger_scope: DelegationRuleRecord['triggerScope'];
+    conditions_json: string;
+    delegated_actions_json: string;
+    approval_mode: DelegationRuleRecord['approvalMode'];
+    status: DelegationRuleRecord['status'];
+    created_at: string;
+    last_used_at: string | null;
+    times_used: number;
+    times_auto_applied: number;
+    times_overridden: number;
+    last_outcome_status: DelegationRuleRecord['lastOutcomeStatus'];
+    user_confirmed: number;
+    channel_applicability_json: string;
+    safety_level: DelegationRuleRecord['safetyLevel'];
+  }>;
   return rows
     .filter((row) => isValidGroupFolder(row.group_folder))
     .map((row) => mapDelegationRuleRow(row));
@@ -3805,7 +3812,9 @@ export function updateDelegationRule(
     approvalMode: updates.approvalMode ?? existing.approvalMode,
     status: updates.status ?? existing.status,
     lastUsedAt:
-      updates.lastUsedAt !== undefined ? updates.lastUsedAt : existing.lastUsedAt,
+      updates.lastUsedAt !== undefined
+        ? updates.lastUsedAt
+        : existing.lastUsedAt,
     timesUsed: updates.timesUsed ?? existing.timesUsed,
     timesAutoApplied: updates.timesAutoApplied ?? existing.timesAutoApplied,
     timesOverridden: updates.timesOverridden ?? existing.timesOverridden,
@@ -4100,7 +4109,9 @@ export function listMessageActionsForGroup(params: {
   const clauses = ['group_folder = ?'];
   const args: unknown[] = [params.groupFolder];
   if (params.statuses?.length) {
-    clauses.push(`send_status IN (${params.statuses.map(() => '?').join(', ')})`);
+    clauses.push(
+      `send_status IN (${params.statuses.map(() => '?').join(', ')})`,
+    );
     args.push(...params.statuses);
   } else if (!params.includeSent) {
     clauses.push(`send_status != 'sent'`);
@@ -4123,36 +4134,36 @@ export function listMessageActionsForGroup(params: {
       `,
     )
     .all(...args) as Array<{
-      message_action_id: string;
-      group_folder: string;
-      source_type: MessageActionRecord['sourceType'];
-      source_key: string;
-      source_summary: string | null;
-      target_kind: MessageActionRecord['targetKind'];
-      target_channel: MessageActionRecord['targetChannel'];
-      target_conversation_json: string;
-      draft_text: string;
-      trust_level: MessageActionRecord['trustLevel'];
-      send_status: MessageActionRecord['sendStatus'];
-      followup_at: string | null;
-      requires_approval: number;
-      delegation_rule_id: string | null;
-      delegation_mode: MessageActionRecord['delegationMode'];
-      explanation_json: string | null;
-      linked_refs_json: string | null;
-      platform_message_id: string | null;
-      scheduled_task_id: string | null;
-      approved_at: string | null;
-      last_action_kind: MessageActionRecord['lastActionKind'];
-      last_action_at: string | null;
-      dedupe_key: string;
-      presentation_chat_jid: string | null;
-      presentation_thread_id: string | null;
-      presentation_message_id: string | null;
-      created_at: string;
-      last_updated_at: string;
-      sent_at: string | null;
-    }>;
+    message_action_id: string;
+    group_folder: string;
+    source_type: MessageActionRecord['sourceType'];
+    source_key: string;
+    source_summary: string | null;
+    target_kind: MessageActionRecord['targetKind'];
+    target_channel: MessageActionRecord['targetChannel'];
+    target_conversation_json: string;
+    draft_text: string;
+    trust_level: MessageActionRecord['trustLevel'];
+    send_status: MessageActionRecord['sendStatus'];
+    followup_at: string | null;
+    requires_approval: number;
+    delegation_rule_id: string | null;
+    delegation_mode: MessageActionRecord['delegationMode'];
+    explanation_json: string | null;
+    linked_refs_json: string | null;
+    platform_message_id: string | null;
+    scheduled_task_id: string | null;
+    approved_at: string | null;
+    last_action_kind: MessageActionRecord['lastActionKind'];
+    last_action_at: string | null;
+    dedupe_key: string;
+    presentation_chat_jid: string | null;
+    presentation_thread_id: string | null;
+    presentation_message_id: string | null;
+    created_at: string;
+    last_updated_at: string;
+    sent_at: string | null;
+  }>;
   return rows
     .filter((row) => isValidGroupFolder(row.group_folder))
     .map((row) => mapMessageActionRow(row));
@@ -4180,11 +4191,7 @@ export function findLatestOpenMessageActionForChat(params: {
         LIMIT 1
       `,
     )
-    .get(
-      params.groupFolder,
-      params.chatJid,
-      ...statuses,
-    ) as
+    .get(params.groupFolder, params.chatJid, ...statuses) as
     | {
         message_action_id: string;
         group_folder: string;
@@ -4314,7 +4321,9 @@ export function updateMessageAction(
     trustLevel: updates.trustLevel ?? existing.trustLevel,
     sendStatus: updates.sendStatus ?? existing.sendStatus,
     followupAt:
-      updates.followupAt !== undefined ? updates.followupAt : existing.followupAt,
+      updates.followupAt !== undefined
+        ? updates.followupAt
+        : existing.followupAt,
     requiresApproval:
       updates.requiresApproval !== undefined
         ? updates.requiresApproval
@@ -4344,7 +4353,9 @@ export function updateMessageAction(
         ? updates.scheduledTaskId
         : existing.scheduledTaskId,
     approvedAt:
-      updates.approvedAt !== undefined ? updates.approvedAt : existing.approvedAt,
+      updates.approvedAt !== undefined
+        ? updates.approvedAt
+        : existing.approvedAt,
     lastActionKind:
       updates.lastActionKind !== undefined
         ? updates.lastActionKind
@@ -4568,7 +4579,9 @@ export function listOutcomesForGroup(params: {
   const clauses = ['group_folder = ?'];
   const args: unknown[] = [params.groupFolder];
   if (params.sourceTypes?.length) {
-    clauses.push(`source_type IN (${params.sourceTypes.map(() => '?').join(', ')})`);
+    clauses.push(
+      `source_type IN (${params.sourceTypes.map(() => '?').join(', ')})`,
+    );
     args.push(...params.sourceTypes);
   }
   if (params.statuses?.length) {
@@ -4593,25 +4606,25 @@ export function listOutcomesForGroup(params: {
       `,
     )
     .all(...args) as Array<{
-        outcome_id: string;
-        group_folder: string;
-        source_type: OutcomeRecord['sourceType'];
-        source_key: string;
-        linked_refs_json: string | null;
-        status: OutcomeRecord['status'];
-        completion_summary: string | null;
-        next_followup_text: string | null;
-        blocker_text: string | null;
-        due_at: string | null;
-        review_horizon: OutcomeRecord['reviewHorizon'];
-        last_checked_at: string;
-        user_confirmed: number;
-        show_in_daily_review: number;
-        show_in_weekly_review: number;
-        review_suppressed_until: string | null;
-        created_at: string;
-        updated_at: string;
-      }>;
+    outcome_id: string;
+    group_folder: string;
+    source_type: OutcomeRecord['sourceType'];
+    source_key: string;
+    linked_refs_json: string | null;
+    status: OutcomeRecord['status'];
+    completion_summary: string | null;
+    next_followup_text: string | null;
+    blocker_text: string | null;
+    due_at: string | null;
+    review_horizon: OutcomeRecord['reviewHorizon'];
+    last_checked_at: string;
+    user_confirmed: number;
+    show_in_daily_review: number;
+    show_in_weekly_review: number;
+    review_suppressed_until: string | null;
+    created_at: string;
+    updated_at: string;
+  }>;
   return rows
     .filter((row) => isValidGroupFolder(row.group_folder))
     .map((row) => mapOutcomeRow(row));
@@ -4752,7 +4765,9 @@ export function replaceActionBundleActions(
   actions: ActionBundleActionRecord[],
 ): void {
   const tx = db.transaction((nextActions: ActionBundleActionRecord[]) => {
-    db.prepare(`DELETE FROM action_bundle_actions WHERE bundle_id = ?`).run(bundleId);
+    db.prepare(`DELETE FROM action_bundle_actions WHERE bundle_id = ?`).run(
+      bundleId,
+    );
     const insert = db.prepare(
       `
         INSERT INTO action_bundle_actions (
@@ -4799,7 +4814,9 @@ export function replaceActionBundleActions(
   tx(actions);
 }
 
-export function getActionBundle(bundleId: string): ActionBundleRecord | undefined {
+export function getActionBundle(
+  bundleId: string,
+): ActionBundleRecord | undefined {
   const row = db
     .prepare(
       `
@@ -4868,23 +4885,25 @@ export function listActionBundleActions(
       `,
     )
     .all(bundleId) as Array<{
-      action_id: string;
-      bundle_id: string;
-      order_index: number;
-      action_type: ActionBundleActionRecord['actionType'];
-      target_system: ActionBundleActionRecord['targetSystem'];
-      summary: string;
-      requires_confirmation: number;
-      status: ActionBundleActionRecord['status'];
-      delegation_rule_id: string | null;
-      delegation_mode: NonNullable<ActionBundleActionRecord['delegationMode']> | null;
-      delegation_explanation: string | null;
-      failure_reason: string | null;
-      payload_json: string;
-      result_ref_json: string | null;
-      created_at: string;
-      last_updated_at: string;
-    }>;
+    action_id: string;
+    bundle_id: string;
+    order_index: number;
+    action_type: ActionBundleActionRecord['actionType'];
+    target_system: ActionBundleActionRecord['targetSystem'];
+    summary: string;
+    requires_confirmation: number;
+    status: ActionBundleActionRecord['status'];
+    delegation_rule_id: string | null;
+    delegation_mode: NonNullable<
+      ActionBundleActionRecord['delegationMode']
+    > | null;
+    delegation_explanation: string | null;
+    failure_reason: string | null;
+    payload_json: string;
+    result_ref_json: string | null;
+    created_at: string;
+    last_updated_at: string;
+  }>;
 
   return rows.map((row) => ({
     actionId: row.action_id,
@@ -4926,7 +4945,9 @@ export function listActionBundlesForGroup(params: {
   const clauses = ['group_folder = ?'];
   const args: unknown[] = [params.groupFolder];
   if (params.statuses?.length) {
-    clauses.push(`bundle_status IN (${params.statuses.map(() => '?').join(', ')})`);
+    clauses.push(
+      `bundle_status IN (${params.statuses.map(() => '?').join(', ')})`,
+    );
     args.push(...params.statuses);
   }
   args.push(Math.max(1, params.limit || 25));
@@ -4965,7 +4986,9 @@ export function findOpenActionBundleBySource(
         LIMIT 1
       `,
     )
-    .get(groupFolder, sourceContextKey, now) as { bundle_id: string } | undefined;
+    .get(groupFolder, sourceContextKey, now) as
+    | { bundle_id: string }
+    | undefined;
   return row ? getActionBundle(row.bundle_id) : undefined;
 }
 
@@ -6069,12 +6092,14 @@ export function getPilotJourneyEvent(
   return mapPilotJourneyEventRow(row);
 }
 
-export function listRecentPilotJourneyEvents(params: {
-  limit?: number;
-  journeyId?: PilotJourneyEventRecord['journeyId'];
-  channel?: PilotJourneyEventRecord['channel'];
-  outcome?: PilotJourneyEventRecord['outcome'];
-} = {}): PilotJourneyEventRecord[] {
+export function listRecentPilotJourneyEvents(
+  params: {
+    limit?: number;
+    journeyId?: PilotJourneyEventRecord['journeyId'];
+    channel?: PilotJourneyEventRecord['channel'];
+    outcome?: PilotJourneyEventRecord['outcome'];
+  } = {},
+): PilotJourneyEventRecord[] {
   const clauses: string[] = [];
   const values: Array<string | number> = [];
 
@@ -6138,7 +6163,9 @@ export function findRecentPilotJourneyEvent(params: {
   maxAgeMinutes?: number;
 }): PilotJourneyEventRecord | null {
   const maxAgeMinutes = Math.max(1, params.maxAgeMinutes || 30);
-  const cutoffIso = new Date(Date.now() - maxAgeMinutes * 60 * 1000).toISOString();
+  const cutoffIso = new Date(
+    Date.now() - maxAgeMinutes * 60 * 1000,
+  ).toISOString();
   const clauses = ['started_at >= ?'];
   const values: Array<string> = [cutoffIso];
 
@@ -6226,7 +6253,9 @@ function mapPilotIssueRow(row: {
     blockerOwner: row.blocker_owner,
     summaryText: row.summary_text,
     assistantContextSummary: row.assistant_context_summary,
-    linkedRefs: parseJsonObject(row.linked_refs_json) as PilotIssueRecord['linkedRefs'],
+    linkedRefs: parseJsonObject(
+      row.linked_refs_json,
+    ) as PilotIssueRecord['linkedRefs'],
   };
 }
 
@@ -6286,10 +6315,12 @@ export function insertPilotIssue(record: PilotIssueRecord): void {
   );
 }
 
-export function listPilotIssues(params: {
-  status?: PilotIssueRecord['status'];
-  limit?: number;
-} = {}): PilotIssueRecord[] {
+export function listPilotIssues(
+  params: {
+    status?: PilotIssueRecord['status'];
+    limit?: number;
+  } = {},
+): PilotIssueRecord[] {
   const clauses: string[] = [];
   const values: Array<string | number> = [];
   if (params.status) {
@@ -6566,11 +6597,13 @@ export function getResponseFeedbackByRemediationJob(params: {
   return mapResponseFeedbackRow(row);
 }
 
-export function listRecentResponseFeedback(params: {
-  chatJid?: string;
-  status?: ResponseFeedbackRecord['status'];
-  limit?: number;
-} = {}): ResponseFeedbackRecord[] {
+export function listRecentResponseFeedback(
+  params: {
+    chatJid?: string;
+    status?: ResponseFeedbackRecord['status'];
+    limit?: number;
+  } = {},
+): ResponseFeedbackRecord[] {
   const clauses: string[] = [];
   const values: Array<string | number> = [];
   if (params.chatJid) {
@@ -6602,7 +6635,10 @@ export function listRecentResponseFeedback(params: {
 export function updateResponseFeedback(
   feedbackId: string,
   updates: Partial<
-    Omit<ResponseFeedbackRecord, 'feedbackId' | 'createdAt' | 'groupFolder' | 'chatJid' | 'channel'>
+    Omit<
+      ResponseFeedbackRecord,
+      'feedbackId' | 'createdAt' | 'groupFolder' | 'chatJid' | 'channel'
+    >
   >,
 ): ResponseFeedbackRecord {
   const existing = getResponseFeedback(feedbackId);
@@ -6613,9 +6649,13 @@ export function updateResponseFeedback(
     ...existing,
     ...updates,
     traceNotes:
-      updates.traceNotes !== undefined ? updates.traceNotes : existing.traceNotes,
+      updates.traceNotes !== undefined
+        ? updates.traceNotes
+        : existing.traceNotes,
     linkedRefs:
-      updates.linkedRefs !== undefined ? updates.linkedRefs : existing.linkedRefs,
+      updates.linkedRefs !== undefined
+        ? updates.linkedRefs
+        : existing.linkedRefs,
     updatedAt: updates.updatedAt || new Date().toISOString(),
   };
   upsertResponseFeedback(next);
@@ -7238,7 +7278,9 @@ export function getActiveOperatingProfile(
         LIMIT 1
       `,
     )
-    .get(groupFolder) as Parameters<typeof mapOperatingProfileRow>[0] | undefined;
+    .get(groupFolder) as
+    | Parameters<typeof mapOperatingProfileRow>[0]
+    | undefined;
   return row ? mapOperatingProfileRow(row) : undefined;
 }
 
@@ -7371,7 +7413,9 @@ export function listOperatingProfileSuggestions(
         ORDER BY updated_at DESC
       `,
     )
-    .all(...args) as Array<Parameters<typeof mapOperatingProfileSuggestionRow>[0]>;
+    .all(...args) as Array<
+    Parameters<typeof mapOperatingProfileSuggestionRow>[0]
+  >;
   return rows.map(mapOperatingProfileSuggestionRow);
 }
 
@@ -7466,7 +7510,9 @@ export function findEverydayListGroupByTitle(
         LIMIT 1
       `,
     )
-    .get(groupFolder, title) as Parameters<typeof mapEverydayListGroupRow>[0] | undefined;
+    .get(groupFolder, title) as
+    | Parameters<typeof mapEverydayListGroupRow>[0]
+    | undefined;
   return row ? mapEverydayListGroupRow(row) : undefined;
 }
 
@@ -7489,9 +7535,9 @@ export function findEverydayListGroupByKind(
         LIMIT 1
       `,
     )
-    .get(
-      ...(scope ? [groupFolder, kind, scope] : [groupFolder, kind]),
-    ) as Parameters<typeof mapEverydayListGroupRow>[0] | undefined;
+    .get(...(scope ? [groupFolder, kind, scope] : [groupFolder, kind])) as
+    | Parameters<typeof mapEverydayListGroupRow>[0]
+    | undefined;
   return row ? mapEverydayListGroupRow(row) : undefined;
 }
 

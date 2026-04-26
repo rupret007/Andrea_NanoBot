@@ -13,9 +13,7 @@ export const ANDREA_PING_PERSONALITY_LINES = [
 
 const TELEGRAM_TOP_OF_HOUR_CRON = '0 * * * *';
 
-function normalizeReferenceDate(
-  reference?: Date | string | null,
-): Date | null {
+function normalizeReferenceDate(reference?: Date | string | null): Date | null {
   if (reference instanceof Date) {
     return Number.isFinite(reference.getTime()) ? new Date(reference) : null;
   }

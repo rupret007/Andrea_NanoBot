@@ -137,7 +137,9 @@ describe('buildTelegramCommandsText', () => {
     expect(commands).toContain('*Useful Checks*');
     expect(commands).toContain('*In Groups*');
     expect(commands).toContain('/cursor_status');
-    expect(commands).toContain('Most people can ignore commands and just type normally.');
+    expect(commands).toContain(
+      'Most people can ignore commands and just type normally.',
+    );
     expect(commands).toContain(
       'Deeper operator/admin controls stay out of normal help',
     );
@@ -196,7 +198,10 @@ describe('buildTelegramFeaturesText', () => {
 
 describe('buildTelegramPingText', () => {
   it('returns the shared two-line witty ping response', () => {
-    const text = buildTelegramPingText('Andrea', new Date('2026-04-07T20:05:00.000Z'));
+    const text = buildTelegramPingText(
+      'Andrea',
+      new Date('2026-04-07T20:05:00.000Z'),
+    );
 
     expect(text).toContain('Andrea is online.');
     expect(text.split('\n')).toHaveLength(2);
@@ -272,10 +277,17 @@ describe('TelegramChannel polling hardening', () => {
     expect(setMyDescription).toHaveBeenCalledTimes(1);
     expect(setMyShortDescription).toHaveBeenCalledTimes(1);
     expect(setMyCommands).toHaveBeenCalledTimes(2);
-    expect(setMyCommands).toHaveBeenNthCalledWith(1, getTelegramBotGroupMenuCommands());
-    expect(setMyCommands).toHaveBeenNthCalledWith(2, getTelegramBotMenuCommands(), {
-      scope: { type: 'all_private_chats' },
-    });
+    expect(setMyCommands).toHaveBeenNthCalledWith(
+      1,
+      getTelegramBotGroupMenuCommands(),
+    );
+    expect(setMyCommands).toHaveBeenNthCalledWith(
+      2,
+      getTelegramBotMenuCommands(),
+      {
+        scope: { type: 'all_private_chats' },
+      },
+    );
   });
 
   it('registers the Telegram bot menu from the shared public registry', async () => {

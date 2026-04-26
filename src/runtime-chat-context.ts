@@ -8,8 +8,7 @@ export interface RuntimeJobTargetResolution {
   missingSelection: boolean;
 }
 
-export interface RuntimeLogsTargetResolution
-  extends RuntimeJobTargetResolution {
+export interface RuntimeLogsTargetResolution extends RuntimeJobTargetResolution {
   limit: number;
 }
 

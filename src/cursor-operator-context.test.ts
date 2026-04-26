@@ -359,22 +359,22 @@ describe('operator context helpers', () => {
   });
 
   it('gives exact-id fallback guidance for both Cursor Cloud and desktop sessions', () => {
-    expect(formatCursorTaskNextStepMessage(makeInventory().cloudTracked[0])).toContain(
-      '/cursor-sync bc-11111111-2222-3333-4444-555555555555',
-    );
-    expect(formatCursorTaskNextStepMessage(makeInventory().cloudTracked[0])).toContain(
-      '/cursor-results bc-11111111-2222-3333-4444-555555555555',
-    );
-    expect(formatCursorTaskNextStepMessage(makeInventory().cloudTracked[0])).toContain(
-      'Reply with plain text to continue this task.',
-    );
+    expect(
+      formatCursorTaskNextStepMessage(makeInventory().cloudTracked[0]),
+    ).toContain('/cursor-sync bc-11111111-2222-3333-4444-555555555555');
+    expect(
+      formatCursorTaskNextStepMessage(makeInventory().cloudTracked[0]),
+    ).toContain('/cursor-results bc-11111111-2222-3333-4444-555555555555');
+    expect(
+      formatCursorTaskNextStepMessage(makeInventory().cloudTracked[0]),
+    ).toContain('Reply with plain text to continue this task.');
 
-    expect(formatCursorTaskNextStepMessage(makeInventory().desktopTracked[0])).toContain(
-      '/cursor-terminal-status desk_local_123',
-    );
-    expect(formatCursorTaskNextStepMessage(makeInventory().desktopTracked[0])).toContain(
-      '/cursor-terminal-log desk_local_123',
-    );
+    expect(
+      formatCursorTaskNextStepMessage(makeInventory().desktopTracked[0]),
+    ).toContain('/cursor-terminal-status desk_local_123');
+    expect(
+      formatCursorTaskNextStepMessage(makeInventory().desktopTracked[0]),
+    ).toContain('/cursor-terminal-log desk_local_123');
     expect(
       formatCursorTaskNextStepMessage(makeInventory().desktopTracked[0]),
     ).not.toContain('Reply with plain text to continue this task.');

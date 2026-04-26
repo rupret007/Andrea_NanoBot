@@ -86,7 +86,9 @@ describe('direct quick reply', () => {
   });
 
   it('keeps BlueBubbles @Andrea vibe checks local-first', () => {
-    const reply = maybeBuildDirectQuickReply([{ content: "@Andrea what's up?" }]);
+    const reply = maybeBuildDirectQuickReply([
+      { content: "@Andrea what's up?" },
+    ]);
 
     expect(reply).toBeTruthy();
     expect(reply?.toLowerCase()).not.toContain('candace');
@@ -94,7 +96,9 @@ describe('direct quick reply', () => {
   });
 
   it('returns a calm what-are-you-doing response', () => {
-    const reply = maybeBuildDirectQuickReply([{ content: 'what are you doing?' }]);
+    const reply = maybeBuildDirectQuickReply([
+      { content: 'what are you doing?' },
+    ]);
 
     expect(reply).toBeTruthy();
     expect(reply).not.toContain('/help');
@@ -317,15 +321,15 @@ describe('direct quick reply', () => {
   });
 
   it('returns a stable acknowledgment for short confirmations', () => {
-    expect(
-      ['Sounds good.', 'Okay.', 'All right.'],
-    ).toContain(maybeBuildDirectQuickReply([{ content: 'ok' }]));
-    expect(
-      ['Sounds good.', 'Okay.', 'All right.'],
-    ).toContain(maybeBuildDirectQuickReply([{ content: 'yes!' }]));
-    expect(
-      ['Sounds good.', 'Okay.', 'All right.'],
-    ).toContain(maybeBuildDirectQuickReply([{ content: 'go ahead' }]));
+    expect(['Sounds good.', 'Okay.', 'All right.']).toContain(
+      maybeBuildDirectQuickReply([{ content: 'ok' }]),
+    );
+    expect(['Sounds good.', 'Okay.', 'All right.']).toContain(
+      maybeBuildDirectQuickReply([{ content: 'yes!' }]),
+    );
+    expect(['Sounds good.', 'Okay.', 'All right.']).toContain(
+      maybeBuildDirectQuickReply([{ content: 'go ahead' }]),
+    );
   });
 
   it('does not hijack mixed requests that start with thanks', () => {
@@ -513,7 +517,12 @@ describe('direct runtime failure reply', () => {
 
   it('keeps a generic direct fallback non-technical when no quick answer exists', () => {
     const reply = buildDirectAssistantRuntimeFailureReply(
-      [{ content: 'Can you help me compare three backup vendors for next month?' }],
+      [
+        {
+          content:
+            'Can you help me compare three backup vendors for next month?',
+        },
+      ],
       'Andrea cannot run that assistant turn right now because the runtime failed during startup or execution.',
     );
 

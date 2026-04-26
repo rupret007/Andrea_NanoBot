@@ -95,7 +95,9 @@ function buildSyntheticMessage(content: string): NewMessage {
 }
 
 function normalizeText(value: string | undefined): string {
-  return normalizeVoicePrompt(value || '').replace(/\s+/g, ' ').trim();
+  return normalizeVoicePrompt(value || '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function dedupe(values: string[]): string[] {
@@ -147,9 +149,7 @@ function buildClarificationSpeech(
     state?.subjectData.activeVoiceAnchor?.trim() ||
     state?.subjectData.activeSubjectLabel?.trim() ||
     state?.subjectData.conversationFocus?.trim();
-  const activeSubject =
-    personName ||
-    activeAnchor;
+  const activeSubject = personName || activeAnchor;
   if (activeSubject) {
     return `Is that still about ${activeSubject}, or something else?`;
   }
@@ -187,13 +187,14 @@ function buildCompanionGuidanceCandidates(slotValue: string): string[] {
   if (/^(help|help me|can you help me)$/i.test(lower)) {
     return ['can you help me', 'what can you do'];
   }
-  if (
-    /\b(next on my calendar|next calendar item|next event)\b/.test(lower)
-  ) {
+  if (/\b(next on my calendar|next calendar item|next event)\b/.test(lower)) {
     return ["what's next on my calendar", "what's coming up"];
   }
   if (/\b(first meeting tomorrow|first meeting)\b/.test(lower)) {
-    return ['when is my first meeting tomorrow', 'what is on my calendar tomorrow'];
+    return [
+      'when is my first meeting tomorrow',
+      'what is on my calendar tomorrow',
+    ];
   }
   if (/\b(pills?|meds?|medication|medicine)\b/.test(lower)) {
     return ['remind me to take my pills at 9'];
@@ -204,7 +205,9 @@ function buildCompanionGuidanceCandidates(slotValue: string): string[] {
   if (/\b(meal|meals|meal plan)\b/.test(lower)) {
     return ['help me plan meals this week', 'help me plan tonight'];
   }
-  if (/\b(owe people|owe a reply|owe replies|owe someone a reply)\b/.test(lower)) {
+  if (
+    /\b(owe people|owe a reply|owe replies|owe someone a reply)\b/.test(lower)
+  ) {
     return ['what do I owe people'];
   }
   if (/\b(still open|still needs attention|needs attention)\b/.test(lower)) {
@@ -247,10 +250,7 @@ function buildCompanionGuidanceCandidates(slotValue: string): string[] {
   if (/\b(today|my day|morning brief|shape of today)\b/.test(lower)) {
     return ['what should I know about today'];
   }
-  return [
-    `what should I know about ${slotValue}`,
-    `help me with ${slotValue}`,
-  ];
+  return [`what should I know about ${slotValue}`, `help me with ${slotValue}`];
 }
 
 function buildPeopleHouseholdCandidates(subject: string): string[] {
@@ -279,17 +279,9 @@ function buildSaveRemindCandidates(item: string): string[] {
     return ['send me the full version'];
   }
   if (isBareReference(normalized)) {
-    return [
-      `save ${item}`,
-      'send me the full version',
-      `draft ${item}`,
-    ];
+    return [`save ${item}`, 'send me the full version', `draft ${item}`];
   }
-  return [
-    `save ${item}`,
-    `draft ${item}`,
-    `send ${item} to Telegram`,
-  ];
+  return [`save ${item}`, `draft ${item}`, `send ${item} to Telegram`];
 }
 
 function buildOpenAskCandidates(query: string): string[] {
@@ -461,7 +453,9 @@ export function extractAlexaVoiceIntentCapture(
 
   switch (intentName) {
     case ALEXA_COMPANION_GUIDANCE_INTENT: {
-      const candidates = dedupe(buildCompanionGuidanceCandidates(slotValue || 'today'));
+      const candidates = dedupe(
+        buildCompanionGuidanceCandidates(slotValue || 'today'),
+      );
       return {
         family,
         slotValue,
@@ -494,9 +488,13 @@ export function extractAlexaVoiceIntentCapture(
     case ALEXA_CALENDAR_MOVE_INTENT:
     case ALEXA_CALENDAR_CANCEL_INTENT:
     case ALEXA_REMINDER_CREATE_INTENT: {
-      if (intentName === ALEXA_CALENDAR_CREATE_INTENT && slotValues.calendarCreateText) {
+      if (
+        intentName === ALEXA_CALENDAR_CREATE_INTENT &&
+        slotValues.calendarCreateText
+      ) {
         const value =
-          normalizeText(slotValues.calendarCreateText) || slotValues.calendarCreateText;
+          normalizeText(slotValues.calendarCreateText) ||
+          slotValues.calendarCreateText;
         return {
           family,
           slotValue: value,
@@ -508,9 +506,13 @@ export function extractAlexaVoiceIntentCapture(
           ]),
         };
       }
-      if (intentName === ALEXA_CALENDAR_MOVE_INTENT && slotValues.calendarMoveText) {
+      if (
+        intentName === ALEXA_CALENDAR_MOVE_INTENT &&
+        slotValues.calendarMoveText
+      ) {
         const value =
-          normalizeText(slotValues.calendarMoveText) || slotValues.calendarMoveText;
+          normalizeText(slotValues.calendarMoveText) ||
+          slotValues.calendarMoveText;
         return {
           family,
           slotValue: value,
@@ -518,9 +520,13 @@ export function extractAlexaVoiceIntentCapture(
           candidateTexts: dedupe([`move ${value}`, `reschedule ${value}`]),
         };
       }
-      if (intentName === ALEXA_CALENDAR_CANCEL_INTENT && slotValues.calendarCancelText) {
+      if (
+        intentName === ALEXA_CALENDAR_CANCEL_INTENT &&
+        slotValues.calendarCancelText
+      ) {
         const value =
-          normalizeText(slotValues.calendarCancelText) || slotValues.calendarCancelText;
+          normalizeText(slotValues.calendarCancelText) ||
+          slotValues.calendarCancelText;
         return {
           family,
           slotValue: value,
@@ -528,7 +534,10 @@ export function extractAlexaVoiceIntentCapture(
           candidateTexts: dedupe([`cancel ${value}`, `delete ${value}`]),
         };
       }
-      if (intentName === ALEXA_CALENDAR_CANCEL_INTENT && slotValues.eventReference) {
+      if (
+        intentName === ALEXA_CALENDAR_CANCEL_INTENT &&
+        slotValues.eventReference
+      ) {
         const value =
           normalizeText(
             `${slotValues.eventReference}${slotValues.targetDate ? ` ${slotValues.targetDate}` : ''}${slotValues.calendarReference ? ` ${slotValues.calendarReference}` : ''}`,
@@ -540,8 +549,12 @@ export function extractAlexaVoiceIntentCapture(
           candidateTexts: dedupe([`cancel ${value}`, `delete ${value}`]),
         };
       }
-      if (intentName === ALEXA_REMINDER_CREATE_INTENT && slotValues.reminderText) {
-        const value = normalizeText(slotValues.reminderText) || slotValues.reminderText;
+      if (
+        intentName === ALEXA_REMINDER_CREATE_INTENT &&
+        slotValues.reminderText
+      ) {
+        const value =
+          normalizeText(slotValues.reminderText) || slotValues.reminderText;
         return {
           family,
           slotValue: value,
@@ -553,12 +566,17 @@ export function extractAlexaVoiceIntentCapture(
           ]),
         };
       }
-      if (intentName === ALEXA_REMINDER_CREATE_INTENT && slotValues.reminderBody) {
+      if (
+        intentName === ALEXA_REMINDER_CREATE_INTENT &&
+        slotValues.reminderBody
+      ) {
         const reminderTail = normalizeText(
           [
             slotValues.reminderDate,
             slotValues.reminderTime &&
-            !/^(?:at|morning|afternoon|evening|tonight)\b/i.test(slotValues.reminderTime)
+            !/^(?:at|morning|afternoon|evening|tonight)\b/i.test(
+              slotValues.reminderTime,
+            )
               ? `at ${slotValues.reminderTime}`
               : slotValues.reminderTime,
           ]
@@ -568,8 +586,7 @@ export function extractAlexaVoiceIntentCapture(
         const value =
           normalizeText(
             `${slotValues.reminderBody}${reminderTail ? ` ${reminderTail}` : ''}`,
-          ) ||
-          slotValues.reminderBody;
+          ) || slotValues.reminderBody;
         return {
           family,
           slotValue: value,
@@ -590,8 +607,7 @@ export function extractAlexaVoiceIntentCapture(
         const value =
           normalizeText(
             `${slotValues.eventTitle} ${dateOrTime}${calendarReference}`,
-          ) ||
-          slotValues.eventTitle;
+          ) || slotValues.eventTitle;
         return {
           family,
           slotValue: value,
@@ -603,7 +619,10 @@ export function extractAlexaVoiceIntentCapture(
           ]),
         };
       }
-      if (slotValues.eventReference && (slotValues.targetDate || slotValues.targetTime)) {
+      if (
+        slotValues.eventReference &&
+        (slotValues.targetDate || slotValues.targetTime)
+      ) {
         const destinationParts = [slotValues.targetDate, slotValues.targetTime]
           .filter(Boolean)
           .join(' ');
@@ -613,8 +632,7 @@ export function extractAlexaVoiceIntentCapture(
         const value =
           normalizeText(
             `${slotValues.eventReference} to ${destinationParts}${calendarReference}`,
-          ) ||
-          slotValues.eventReference;
+          ) || slotValues.eventReference;
         return {
           family,
           slotValue: value,
@@ -623,7 +641,10 @@ export function extractAlexaVoiceIntentCapture(
         };
       }
       if (slotValues.eventReference) {
-        const dateOrCalendar = [slotValues.targetDate, slotValues.calendarReference]
+        const dateOrCalendar = [
+          slotValues.targetDate,
+          slotValues.calendarReference,
+        ]
           .filter(Boolean)
           .join(' ');
         const value =
@@ -654,7 +675,9 @@ export function extractAlexaVoiceIntentCapture(
         };
       }
       if (slotValues.calendarCreateText) {
-        const value = normalizeText(slotValues.calendarCreateText) || slotValues.calendarCreateText;
+        const value =
+          normalizeText(slotValues.calendarCreateText) ||
+          slotValues.calendarCreateText;
         return {
           family,
           slotValue: value,
@@ -667,7 +690,9 @@ export function extractAlexaVoiceIntentCapture(
         };
       }
       if (slotValues.calendarMoveText) {
-        const value = normalizeText(slotValues.calendarMoveText) || slotValues.calendarMoveText;
+        const value =
+          normalizeText(slotValues.calendarMoveText) ||
+          slotValues.calendarMoveText;
         return {
           family,
           slotValue: value,
@@ -676,7 +701,9 @@ export function extractAlexaVoiceIntentCapture(
         };
       }
       if (slotValues.calendarCancelText) {
-        const value = normalizeText(slotValues.calendarCancelText) || slotValues.calendarCancelText;
+        const value =
+          normalizeText(slotValues.calendarCancelText) ||
+          slotValues.calendarCancelText;
         return {
           family,
           slotValue: value,
@@ -685,7 +712,8 @@ export function extractAlexaVoiceIntentCapture(
         };
       }
       if (slotValues.reminderText) {
-        const value = normalizeText(slotValues.reminderText) || slotValues.reminderText;
+        const value =
+          normalizeText(slotValues.reminderText) || slotValues.reminderText;
         return {
           family,
           slotValue: value,
@@ -718,7 +746,9 @@ export function extractAlexaVoiceIntentCapture(
     }
     case ALEXA_CONVERSATION_CONTROL_INTENT:
     case ALEXA_ANYTHING_ELSE_INTENT: {
-      const candidates = dedupe(buildConversationControlCandidates(slotValue || ''));
+      const candidates = dedupe(
+        buildConversationControlCandidates(slotValue || ''),
+      );
       return {
         family,
         slotValue,
@@ -734,7 +764,9 @@ export function extractAlexaVoiceIntentCapture(
         candidateTexts: dedupe([slotValue || 'anything else']),
       };
     case ALEXA_MEMORY_CONTROL_INTENT: {
-      const candidates = dedupe(buildConversationControlCandidates(slotValue || ''));
+      const candidates = dedupe(
+        buildConversationControlCandidates(slotValue || ''),
+      );
       return {
         family,
         slotValue,
@@ -773,7 +805,9 @@ export function extractAlexaVoiceIntentCapture(
           ? `draft a follow up for ${slotValue}`
           : 'draft a follow up',
         candidateTexts: dedupe([
-          slotValue ? `draft a follow up for ${slotValue}` : 'draft a follow up',
+          slotValue
+            ? `draft a follow up for ${slotValue}`
+            : 'draft a follow up',
         ]),
       };
     case ALEXA_MY_DAY_INTENT:
@@ -822,7 +856,10 @@ export function extractAlexaVoiceIntentCapture(
       return {
         family,
         preferredText: 'what about Candace',
-        candidateTexts: ['what about Candace', "what's still open with Candace"],
+        candidateTexts: [
+          'what about Candace',
+          "what's still open with Candace",
+        ],
       };
     default:
       return null;
@@ -953,7 +990,9 @@ export function planAlexaDialogueTurn(
     };
   }
 
-  const policy = classifyAssistantRequest([buildSyntheticMessage(normalizedText)]);
+  const policy = classifyAssistantRequest([
+    buildSyntheticMessage(normalizedText),
+  ]);
   if (
     policy.route === 'control_plane' ||
     policy.route === 'code_plane' ||

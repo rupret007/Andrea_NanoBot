@@ -66,7 +66,9 @@ describe('assistant request routing', () => {
   });
 
   it('treats BlueBubbles @Andrea vibe checks as ordinary direct conversation', () => {
-    const policy = classifyAssistantRequest([{ content: "@Andrea what's up?" }]);
+    const policy = classifyAssistantRequest([
+      { content: "@Andrea what's up?" },
+    ]);
 
     expect(policy.route).toBe('direct_assistant');
     expect(policy.reason).toContain('greeting_or_vibe_check');

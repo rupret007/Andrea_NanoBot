@@ -65,13 +65,7 @@ export function buildPersonalityTexturePolicy(
       (input.context === 'pulse' || input.context === 'launch'),
     allowTexture,
     maxTextureLines:
-      input.channel === 'alexa'
-        ? allowTexture
-          ? 1
-          : 0
-        : allowTexture
-          ? 2
-          : 0,
+      input.channel === 'alexa' ? (allowTexture ? 1 : 0) : allowTexture ? 2 : 0,
   };
 }
 
@@ -134,4 +128,3 @@ export function consumePersonalityCooldown(
         cooldownTurnsRemaining: 0,
       };
 }
-

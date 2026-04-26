@@ -103,18 +103,18 @@ describe('alexa v1 prompt mapping', () => {
     expect(
       buildAlexaPersonalPrompt(ALEXA_WHAT_MATTERS_MOST_TODAY_INTENT),
     ).toContain('highest-priority thing');
-    expect(
-      buildAlexaPersonalPrompt(ALEXA_ANYTHING_IMPORTANT_INTENT),
-    ).toContain('Anything I should know');
+    expect(buildAlexaPersonalPrompt(ALEXA_ANYTHING_IMPORTANT_INTENT)).toContain(
+      'Anything I should know',
+    );
     expect(
       buildAlexaPersonalPrompt(ALEXA_WHAT_AM_I_FORGETTING_INTENT),
     ).toContain('What am I forgetting');
-    expect(
-      buildAlexaPersonalPrompt(ALEXA_EVENING_RESET_INTENT),
-    ).toContain('evening reset');
-    expect(
-      buildAlexaPersonalPrompt(ALEXA_FAMILY_UPCOMING_INTENT),
-    ).toContain('Candace or Travis');
+    expect(buildAlexaPersonalPrompt(ALEXA_EVENING_RESET_INTENT)).toContain(
+      'evening reset',
+    );
+    expect(buildAlexaPersonalPrompt(ALEXA_FAMILY_UPCOMING_INTENT)).toContain(
+      'Candace or Travis',
+    );
     expect(
       buildAlexaPersonalPrompt(ALEXA_REMIND_BEFORE_NEXT_MEETING_INTENT, {
         leadTimeText: '30 minutes',
@@ -134,7 +134,9 @@ describe('alexa v1 prompt mapping', () => {
       'Lead with the main thing first',
     );
     expect(
-      buildAlexaOpenConversationPrompt('help me figure out dinner with Candace'),
+      buildAlexaOpenConversationPrompt(
+        'help me figure out dinner with Candace',
+      ),
     ).toContain('Stay in the same Andrea Alexa conversation');
   });
 });
@@ -149,28 +151,22 @@ describe('alexa v1 speech helpers', () => {
     expect(buildAlexaHelpSpeech('Andrea')).toContain('Telegram');
     expect(buildAlexaHelpSpeech('Andrea')).not.toContain('Andrea Pulse');
     expect(buildAlexaHelpSpeech('Andrea')).not.toContain('Candace');
-    expect(buildAlexaWelcomeSpeech('Andrea')).toContain(
-      'This is Andrea.',
-    );
+    expect(buildAlexaWelcomeSpeech('Andrea')).toContain('This is Andrea.');
     expect(buildAlexaWelcomeSpeech('Andrea')).toContain('schedule');
     expect(buildAlexaWelcomeSpeech('Andrea')).toContain(
       'remind me to take my pills at 9',
     );
-    expect(buildAlexaWelcomeSpeech('Andrea')).toContain('what should I say back');
+    expect(buildAlexaWelcomeSpeech('Andrea')).toContain(
+      'what should I say back',
+    );
     expect(buildAlexaWelcomeSpeech('Andrea')).not.toContain('Candace');
-    expect(buildAlexaFallbackSpeech('Andrea')).toContain(
-      "didn't catch that",
-    );
-    expect(buildAlexaFallbackSpeech('Andrea')).toContain(
-      'your schedule',
-    );
+    expect(buildAlexaFallbackSpeech('Andrea')).toContain("didn't catch that");
+    expect(buildAlexaFallbackSpeech('Andrea')).toContain('your schedule');
     expect(buildAlexaFallbackSpeech('Andrea')).toContain('one reminder');
     expect(buildAlexaFallbackSpeech('Andrea')).toContain(
       'what should I say back',
     );
-    expect(ALEXA_DEFAULT_REPROMPT).toContain(
-      'remind me to take my pills at 9',
-    );
+    expect(ALEXA_DEFAULT_REPROMPT).toContain('remind me to take my pills at 9');
     expect(ALEXA_DEFAULT_REPROMPT).toContain("what's on my calendar tomorrow");
     expect(ALEXA_DEFAULT_REPROMPT).toContain('what should I say back');
     expect(ALEXA_DEFAULT_REPROMPT).not.toContain('Candace');

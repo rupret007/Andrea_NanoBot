@@ -320,8 +320,10 @@ function findFreshBlueBubblesAndreaContextMessage(params: {
   chatJids: string[];
   now: Date;
 }): ReturnType<typeof listRecentMessagesForChat>[number] | null {
-  const freshnessCutoff = params.now.getTime() - MESSAGE_ACTION_FOLLOWUP_CONTEXT_TTL_MS;
-  let freshest: ReturnType<typeof listRecentMessagesForChat>[number] | null = null;
+  const freshnessCutoff =
+    params.now.getTime() - MESSAGE_ACTION_FOLLOWUP_CONTEXT_TTL_MS;
+  let freshest: ReturnType<typeof listRecentMessagesForChat>[number] | null =
+    null;
   let freshestTimestamp = Number.NEGATIVE_INFINITY;
   for (const chatJid of [...new Set(params.chatJids)]) {
     for (const message of listRecentMessagesForChat(chatJid, 12)) {
@@ -331,7 +333,8 @@ function findFreshBlueBubblesAndreaContextMessage(params: {
       }
       const fromAndrea =
         Boolean(message.is_bot_message) ||
-        (Boolean(message.is_from_me) && /^\s*Andrea:/i.test(message.content || ''));
+        (Boolean(message.is_from_me) &&
+          /^\s*Andrea:/i.test(message.content || ''));
       if (!fromAndrea || timestamp <= freshestTimestamp) {
         continue;
       }
@@ -342,7 +345,9 @@ function findFreshBlueBubblesAndreaContextMessage(params: {
   return freshest;
 }
 
-function normalizeBlueBubblesChatLookup(value: string | null | undefined): string {
+function normalizeBlueBubblesChatLookup(
+  value: string | null | undefined,
+): string {
   return normalizeText(value)
     .toLowerCase()
     .replace(/^the\s+/, '')
@@ -382,7 +387,9 @@ function parseJsonSafe<T>(value: string | null | undefined, fallback: T): T {
   }
 }
 
-function buildLinkedRefs(params: CreateMessageActionFromDraftParams): MessageActionLinkedRefs {
+function buildLinkedRefs(
+  params: CreateMessageActionFromDraftParams,
+): MessageActionLinkedRefs {
   return {
     actionBundleId: params.actionBundleId || undefined,
     communicationThreadId: params.communicationThreadId || undefined,
@@ -436,16 +443,24 @@ function resolveBlueBubblesSelfThreadPresentationChatJid(
 ): string | null {
   const presentationChatJid =
     resolveBlueBubblesConversationPresentationChatJid(action);
-  if (!presentationChatJid || !isBlueBubblesSelfThreadAliasJid(presentationChatJid)) {
+  if (
+    !presentationChatJid ||
+    !isBlueBubblesSelfThreadAliasJid(presentationChatJid)
+  ) {
     return null;
   }
   return presentationChatJid;
 }
 
 function getMessageActionFreshnessTimestamp(
-  action: Pick<MessageActionRecord, 'lastActionAt' | 'lastUpdatedAt' | 'createdAt'>,
+  action: Pick<
+    MessageActionRecord,
+    'lastActionAt' | 'lastUpdatedAt' | 'createdAt'
+  >,
 ): number {
-  return Date.parse(action.lastActionAt || action.lastUpdatedAt || action.createdAt || '');
+  return Date.parse(
+    action.lastActionAt || action.lastUpdatedAt || action.createdAt || '',
+  );
 }
 
 function buildBlueBubblesMessageActionContinuityKey(
@@ -458,7 +473,10 @@ function buildBlueBubblesMessageActionContinuityKey(
     | 'targetKind'
   >,
 ): string | null {
-  if (action.targetChannel !== 'bluebubbles' || action.targetKind !== 'external_thread') {
+  if (
+    action.targetChannel !== 'bluebubbles' ||
+    action.targetKind !== 'external_thread'
+  ) {
     return null;
   }
   const presentationChatJid =
@@ -481,7 +499,8 @@ function buildBlueBubblesSelfThreadContinuityKey(
     | 'targetKind'
   >,
 ): string | null {
-  const presentationChatJid = resolveBlueBubblesSelfThreadPresentationChatJid(action);
+  const presentationChatJid =
+    resolveBlueBubblesSelfThreadPresentationChatJid(action);
   if (!presentationChatJid) {
     return null;
   }
@@ -496,20 +515,24 @@ function findFreshBlueBubblesDraftPresentation(params: {
   now: Date;
 }): ReturnType<typeof listRecentMessagesForChat>[number] | null {
   const cutoff = params.now.getTime() - MESSAGE_ACTION_FOLLOWUP_CONTEXT_TTL_MS;
-  return params.chatJids
-    .flatMap((chatJid) => listRecentMessagesForChat(chatJid, 8))
-    .filter((message) => Boolean(message.is_bot_message))
-    .sort(
-      (left, right) =>
-        Date.parse(right.timestamp || '') - Date.parse(left.timestamp || ''),
-    )
-    .find((message) => {
-      const timestamp = Date.parse(message.timestamp || '');
-      if (!Number.isFinite(timestamp) || timestamp < cutoff) {
-        return false;
-      }
-      return Boolean(parseMessageActionPresentationText(message.content || ''));
-    }) || null;
+  return (
+    params.chatJids
+      .flatMap((chatJid) => listRecentMessagesForChat(chatJid, 8))
+      .filter((message) => Boolean(message.is_bot_message))
+      .sort(
+        (left, right) =>
+          Date.parse(right.timestamp || '') - Date.parse(left.timestamp || ''),
+      )
+      .find((message) => {
+        const timestamp = Date.parse(message.timestamp || '');
+        if (!Number.isFinite(timestamp) || timestamp < cutoff) {
+          return false;
+        }
+        return Boolean(
+          parseMessageActionPresentationText(message.content || ''),
+        );
+      }) || null
+  );
 }
 
 function findFreshBlueBubblesSelfThreadDraftPresentation(params: {
@@ -596,9 +619,7 @@ function containsHighRiskMessagingCue(text: string): boolean {
   ].some((pattern) => pattern.test(normalized));
 }
 
-function inferTarget(
-  params: CreateMessageActionFromDraftParams,
-): {
+function inferTarget(params: CreateMessageActionFromDraftParams): {
   targetKind: MessageActionTargetKind;
   targetChannel: MessageActionTargetChannel;
   target: MessageTarget;
@@ -611,15 +632,16 @@ function inferTarget(
           : 'self_companion',
       targetChannel:
         params.targetChannelOverride ||
-        (params.presentationChannel === 'bluebubbles' ? 'bluebubbles' : 'telegram'),
+        (params.presentationChannel === 'bluebubbles'
+          ? 'bluebubbles'
+          : 'telegram'),
       target: params.targetOverride,
     };
   }
 
-  const thread =
-    params.communicationThreadId
-      ? getCommunicationThread(params.communicationThreadId)
-      : undefined;
+  const thread = params.communicationThreadId
+    ? getCommunicationThread(params.communicationThreadId)
+    : undefined;
   const isBlueBubblesExternal =
     thread?.channel === 'bluebubbles' && Boolean(thread.channelChatJid);
 
@@ -679,7 +701,10 @@ function isNarrowSafeDelegatedSendCandidate(
 ): boolean {
   if (action.targetChannel !== 'bluebubbles') return false;
   if (action.targetKind !== 'external_thread') return false;
-  if (action.trustLevel === 'draft_only' || action.trustLevel === 'never_automate') {
+  if (
+    action.trustLevel === 'draft_only' ||
+    action.trustLevel === 'never_automate'
+  ) {
     return false;
   }
   if (target.kind !== 'external_thread' || target.isGroup) return false;
@@ -808,8 +833,7 @@ export function createOrRefreshMessageActionFromDraft(
     sendStatus,
     followupAt: reuseExisting ? existing?.followupAt || null : null,
     requiresApproval,
-    delegationRuleId:
-      params.delegationRuleId || ruleMatch.rule?.ruleId || null,
+    delegationRuleId: params.delegationRuleId || ruleMatch.rule?.ruleId || null,
     delegationMode:
       params.delegationMode || ruleMatch.effectiveApprovalMode || null,
     explanationJson: JSON.stringify(
@@ -832,7 +856,9 @@ export function createOrRefreshMessageActionFromDraft(
           params.delegationExplanation || ruleMatch.explanation || null,
       }),
     ),
-    platformMessageId: reuseExisting ? existing?.platformMessageId || null : null,
+    platformMessageId: reuseExisting
+      ? existing?.platformMessageId || null
+      : null,
     scheduledTaskId: reuseExisting ? existing?.scheduledTaskId || null : null,
     approvedAt: reuseExisting
       ? existing?.approvedAt || null
@@ -844,7 +870,9 @@ export function createOrRefreshMessageActionFromDraft(
       : sendStatus === 'approved'
         ? 'approved'
         : 'drafted',
-    lastActionAt: reuseExisting ? existing?.lastActionAt || null : now.toISOString(),
+    lastActionAt: reuseExisting
+      ? existing?.lastActionAt || null
+      : now.toISOString(),
     dedupeKey: buildDedupeKey({
       groupFolder: params.groupFolder,
       sourceType: params.sourceType,
@@ -856,7 +884,9 @@ export function createOrRefreshMessageActionFromDraft(
     }),
     presentationChatJid: params.presentationChatJid,
     presentationThreadId: params.presentationThreadId || null,
-    presentationMessageId: reuseExisting ? existing?.presentationMessageId || null : null,
+    presentationMessageId: reuseExisting
+      ? existing?.presentationMessageId || null
+      : null,
     createdAt: reuseExisting ? existing!.createdAt : now.toISOString(),
     lastUpdatedAt: now.toISOString(),
     sentAt: reuseExisting ? existing?.sentAt || null : null,
@@ -869,7 +899,10 @@ export function createOrRefreshMessageActionFromDraft(
 
 function parseTarget(record: MessageActionRecord): MessageTarget {
   return parseJsonSafe<MessageTarget>(record.targetConversationJson, {
-    kind: record.targetKind === 'external_thread' ? 'external_thread' : 'self_companion',
+    kind:
+      record.targetKind === 'external_thread'
+        ? 'external_thread'
+        : 'self_companion',
     chatJid: record.presentationChatJid || '',
   } as MessageTarget);
 }
@@ -878,7 +911,9 @@ function parseLinkedRefs(record: MessageActionRecord): MessageActionLinkedRefs {
   return parseJsonSafe<MessageActionLinkedRefs>(record.linkedRefsJson, {});
 }
 
-function parseExplanation(record: MessageActionRecord): MessageActionExplanation {
+function parseExplanation(
+  record: MessageActionRecord,
+): MessageActionExplanation {
   return parseJsonSafe<MessageActionExplanation>(record.explanationJson, {});
 }
 
@@ -932,7 +967,10 @@ function planMessageFollowupTiming(params: {
   groupFolder: string;
   chatJid: string;
   now: Date;
-}): { planned: ReturnType<typeof planContextualReminder>; normalizedHint: string } {
+}): {
+  planned: ReturnType<typeof planContextualReminder>;
+  normalizedHint: string;
+} {
   const { normalizedHint, usedDefault } = normalizeReminderTimingHint(
     params.timingHint,
     params.fallbackHint,
@@ -982,7 +1020,10 @@ function normalizeTrustLevelAfterQueue(
   ) {
     return 'delegated_safe_send';
   }
-  if (record.targetKind === 'external_thread' && record.targetChannel === 'bluebubbles') {
+  if (
+    record.targetKind === 'external_thread' &&
+    record.targetChannel === 'bluebubbles'
+  ) {
     return 'approve_before_send';
   }
   return classifyTrustLevel({
@@ -1020,7 +1061,13 @@ function inferUrgencyFromDueAt(
 function syncCommunicationThreadState(params: {
   action: MessageActionRecord;
   now: Date;
-  mode: 'sent' | 'scheduled_send' | 'reminder' | 'thread_saved' | 'drafted' | 'failed';
+  mode:
+    | 'sent'
+    | 'scheduled_send'
+    | 'reminder'
+    | 'thread_saved'
+    | 'drafted'
+    | 'failed';
   platformMessageId?: string | null;
   dueAt?: string | null;
 }): void {
@@ -1032,7 +1079,8 @@ function syncCommunicationThreadState(params: {
 
   if (params.mode === 'sent') {
     updateCommunicationThread(communicationThreadId, {
-      lastOutboundSummary: clipText(params.action.draftText, 220) || thread.lastOutboundSummary,
+      lastOutboundSummary:
+        clipText(params.action.draftText, 220) || thread.lastOutboundSummary,
       lastMessageId: params.platformMessageId || thread.lastMessageId,
       followupState: 'waiting_on_them',
       followupDueAt: null,
@@ -1095,25 +1143,35 @@ function syncCommunicationThreadState(params: {
   });
 }
 
-function validateScheduledSendEligibility(
-  action: MessageActionRecord,
-): { ok: boolean; reason?: string; target: MessageTarget } {
+function validateScheduledSendEligibility(action: MessageActionRecord): {
+  ok: boolean;
+  reason?: string;
+  target: MessageTarget;
+} {
   const target = parseTarget(action);
-  if (action.targetChannel !== 'bluebubbles' || action.targetKind !== 'external_thread') {
+  if (
+    action.targetChannel !== 'bluebubbles' ||
+    action.targetKind !== 'external_thread'
+  ) {
     return {
       ok: false,
-      reason: 'This kind of message is safer as a draft or reminder than a queued send.',
+      reason:
+        'This kind of message is safer as a draft or reminder than a queued send.',
       target,
     };
   }
   if (target.kind !== 'external_thread' || target.isGroup) {
     return {
       ok: false,
-      reason: 'Queued send is only available for an existing 1:1 Messages thread.',
+      reason:
+        'Queued send is only available for an existing 1:1 Messages thread.',
       target,
     };
   }
-  if (action.trustLevel === 'draft_only' || action.trustLevel === 'never_automate') {
+  if (
+    action.trustLevel === 'draft_only' ||
+    action.trustLevel === 'never_automate'
+  ) {
     return {
       ok: false,
       reason: 'This still looks too sensitive for scheduled delivery.',
@@ -1138,7 +1196,8 @@ function validateScheduledSendEligibility(
   ) {
     return {
       ok: false,
-      reason: 'I could not confirm the exact Messages thread for that queued send.',
+      reason:
+        'I could not confirm the exact Messages thread for that queued send.',
       target,
     };
   }
@@ -1167,13 +1226,16 @@ export function parseMessageActionPresentationText(
 ): ParsedMessageActionPresentation | null {
   const normalized = rawText.replace(/\r\n/g, '\n').trim();
   if (!normalized) return null;
-  const targetMatch = normalized.match(/^Target:\s*(.+?)(?: in Messages\.)$/mi);
-  const draftMatch = normalized.match(/(?:^|\n)Draft:\n([\s\S]*?)(?:\n\nStatus:|\nStatus:)/m);
+  const targetMatch = normalized.match(/^Target:\s*(.+?)(?: in Messages\.)$/im);
+  const draftMatch = normalized.match(
+    /(?:^|\n)Draft:\n([\s\S]*?)(?:\n\nStatus:|\nStatus:)/m,
+  );
   if (!draftMatch?.[1]) {
     return null;
   }
   const targetLabel =
-    targetMatch?.[1]?.trim() && targetMatch[1].trim().toLowerCase() !== 'that conversation'
+    targetMatch?.[1]?.trim() &&
+    targetMatch[1].trim().toLowerCase() !== 'that conversation'
       ? targetMatch[1].trim()
       : null;
   const draftText = draftMatch[1].trim();
@@ -1215,7 +1277,10 @@ function buildActionLead(record: MessageActionRecord): string {
   if (isScheduledSendAction(record)) {
     return 'Andrea: I queued that to send later.';
   }
-  if (record.sendStatus === 'deferred' && record.lastActionKind === 'save_to_thread') {
+  if (
+    record.sendStatus === 'deferred' &&
+    record.lastActionKind === 'save_to_thread'
+  ) {
     return 'Andrea: I saved that under the thread.';
   }
   switch (record.sendStatus) {
@@ -1243,10 +1308,16 @@ function buildStatusLine(record: MessageActionRecord): string {
       formatWhenLabel(record.followupAt) || record.followupAt || 'later'
     }.`;
   }
-  if (record.sendStatus === 'deferred' && record.lastActionKind === 'save_to_thread') {
+  if (
+    record.sendStatus === 'deferred' &&
+    record.lastActionKind === 'save_to_thread'
+  ) {
     return 'Status: saved under the thread for later follow-through.';
   }
-  if (record.sendStatus === 'deferred' && record.lastActionKind === 'remind_instead') {
+  if (
+    record.sendStatus === 'deferred' &&
+    record.lastActionKind === 'remind_instead'
+  ) {
     return `Status: kept unsent with a reminder${
       formatWhenLabel(record.followupAt)
         ? ` for ${formatWhenLabel(record.followupAt)}`
@@ -1282,10 +1353,16 @@ function buildStateNote(record: MessageActionRecord): string | null {
   if (isScheduledSendAction(record)) {
     return 'This draft is already approved. Andrea will send it at the scheduled time unless you revise it, cancel it, or switch to a reminder.';
   }
-  if (record.sendStatus === 'deferred' && record.lastActionKind === 'remind_instead') {
+  if (
+    record.sendStatus === 'deferred' &&
+    record.lastActionKind === 'remind_instead'
+  ) {
     return 'This message is still unsent. Andrea only set a reminder.';
   }
-  if (record.sendStatus === 'deferred' && record.lastActionKind === 'save_to_thread') {
+  if (
+    record.sendStatus === 'deferred' &&
+    record.lastActionKind === 'save_to_thread'
+  ) {
     return 'This message is still unsent. Andrea saved it under the thread for later follow-through.';
   }
   if (record.sendStatus === 'approved') {
@@ -1304,10 +1381,16 @@ function nextStepLine(record: MessageActionRecord): string {
   if (isScheduledSendAction(record)) {
     return 'Next: send it now, cancel the scheduled send, remind yourself instead, or revise it.';
   }
-  if (record.sendStatus === 'deferred' && record.lastActionKind === 'save_to_thread') {
+  if (
+    record.sendStatus === 'deferred' &&
+    record.lastActionKind === 'save_to_thread'
+  ) {
     return 'Next: show the draft again, send it, send it later, or remind yourself instead.';
   }
-  if (record.sendStatus === 'deferred' && record.lastActionKind === 'remind_instead') {
+  if (
+    record.sendStatus === 'deferred' &&
+    record.lastActionKind === 'remind_instead'
+  ) {
     return 'Next: send it when you are ready, change the reminder, save it under the thread, or keep editing it.';
   }
   if (record.sendStatus === 'deferred') {
@@ -1320,40 +1403,91 @@ function buildInlineRows(record: MessageActionRecord): ChannelInlineAction[][] {
   if (record.sendStatus === 'sent') {
     return [
       [
-        { label: 'Show draft', actionId: `/message-show ${record.messageActionId}` },
-        { label: 'Send again', actionId: `/message-send-again ${record.messageActionId}` },
+        {
+          label: 'Show draft',
+          actionId: `/message-show ${record.messageActionId}`,
+        },
+        {
+          label: 'Send again',
+          actionId: `/message-send-again ${record.messageActionId}`,
+        },
       ],
     ];
   }
   if (isScheduledSendAction(record)) {
     return [
       [
-        { label: 'Show draft', actionId: `/message-show ${record.messageActionId}` },
-        { label: 'Send now', actionId: `/message-send ${record.messageActionId}` },
-        { label: 'Cancel send later', actionId: `/message-cancel-later ${record.messageActionId}` },
+        {
+          label: 'Show draft',
+          actionId: `/message-show ${record.messageActionId}`,
+        },
+        {
+          label: 'Send now',
+          actionId: `/message-send ${record.messageActionId}`,
+        },
+        {
+          label: 'Cancel send later',
+          actionId: `/message-cancel-later ${record.messageActionId}`,
+        },
       ],
       [
-        { label: 'Shorter', actionId: `/message-rewrite ${record.messageActionId} shorter` },
-        { label: 'Warmer', actionId: `/message-rewrite ${record.messageActionId} warmer` },
-        { label: 'Remind me instead', actionId: `/message-remind ${record.messageActionId}` },
+        {
+          label: 'Shorter',
+          actionId: `/message-rewrite ${record.messageActionId} shorter`,
+        },
+        {
+          label: 'Warmer',
+          actionId: `/message-rewrite ${record.messageActionId} warmer`,
+        },
+        {
+          label: 'Remind me instead',
+          actionId: `/message-remind ${record.messageActionId}`,
+        },
       ],
     ];
   }
   return [
     [
-      { label: 'Show draft', actionId: `/message-show ${record.messageActionId}` },
-      { label: 'Shorter', actionId: `/message-rewrite ${record.messageActionId} shorter` },
-      { label: 'Warmer', actionId: `/message-rewrite ${record.messageActionId} warmer` },
+      {
+        label: 'Show draft',
+        actionId: `/message-show ${record.messageActionId}`,
+      },
+      {
+        label: 'Shorter',
+        actionId: `/message-rewrite ${record.messageActionId} shorter`,
+      },
+      {
+        label: 'Warmer',
+        actionId: `/message-rewrite ${record.messageActionId} warmer`,
+      },
     ],
     [
-      { label: 'More direct', actionId: `/message-rewrite ${record.messageActionId} direct` },
-      { label: 'Send now', actionId: `/message-send ${record.messageActionId}` },
-      { label: 'Send later', actionId: `/message-later ${record.messageActionId}` },
+      {
+        label: 'More direct',
+        actionId: `/message-rewrite ${record.messageActionId} direct`,
+      },
+      {
+        label: 'Send now',
+        actionId: `/message-send ${record.messageActionId}`,
+      },
+      {
+        label: 'Send later',
+        actionId: `/message-later ${record.messageActionId}`,
+      },
     ],
     [
-      { label: 'Remind me instead', actionId: `/message-remind ${record.messageActionId}` },
-      { label: 'Save under thread', actionId: `/message-save-thread ${record.messageActionId}` },
-      { label: 'Why this needs approval', actionId: `/message-why ${record.messageActionId}` },
+      {
+        label: 'Remind me instead',
+        actionId: `/message-remind ${record.messageActionId}`,
+      },
+      {
+        label: 'Save under thread',
+        actionId: `/message-save-thread ${record.messageActionId}`,
+      },
+      {
+        label: 'Why this needs approval',
+        actionId: `/message-why ${record.messageActionId}`,
+      },
     ],
   ];
 }
@@ -1406,7 +1540,9 @@ function rewriteDraft(
   const normalized = draftText.replace(/\r\n/g, '\n').trim();
   if (!normalized) return draftText;
   if (style === 'shorter') {
-    const firstSentence = normalized.match(/^[\s\S]*?[.!?](?:\s|$)/)?.[0]?.trim();
+    const firstSentence = normalized
+      .match(/^[\s\S]*?[.!?](?:\s|$)/)?.[0]
+      ?.trim();
     return clipText(firstSentence || normalized, 140);
   }
   if (style === 'warmer') {
@@ -1427,7 +1563,10 @@ function humanSendFailure(): string {
   return "Andrea: I couldn't send that right now.\n\nThe draft is still here if you want to try again or send it later.";
 }
 
-function describeSendSuccess(record: MessageActionRecord, target: MessageTarget): string {
+function describeSendSuccess(
+  record: MessageActionRecord,
+  target: MessageTarget,
+): string {
   if (target.kind === 'external_thread') {
     return `Andrea: I sent that${target.personName ? ` to ${target.personName}` : ' in the same thread'}.`;
   }
@@ -1436,7 +1575,10 @@ function describeSendSuccess(record: MessageActionRecord, target: MessageTarget)
 
 function parseTimingHintFromUtterance(rawText: string): string | null {
   const normalized = normalizeText(rawText).toLowerCase();
-  if (/^send it later tonight$/.test(normalized) || /^send it tonight$/.test(normalized)) {
+  if (
+    /^send it later tonight$/.test(normalized) ||
+    /^send it tonight$/.test(normalized)
+  ) {
     return 'today tonight';
   }
   if (/^send it tomorrow$/.test(normalized)) {
@@ -1474,7 +1616,9 @@ export function interpretMessageActionFollowup(
     /^(send using blue bubbles|send (?:it|that|this)(?: reply)? using blue bubbles|send (?:it|that|this)(?: reply)? with blue bubbles)$/.test(
       normalized,
     ) ||
-    /^(send it|send now|send that|send that reply|send this reply)$/.test(normalized) ||
+    /^(send it|send now|send that|send that reply|send this reply)$/.test(
+      normalized,
+    ) ||
     /^send (?:this|that|it)(?: reply)? to [a-z][a-z' -]+$/i.test(normalized)
   ) {
     return { kind: 'send' };
@@ -1485,7 +1629,9 @@ export function interpretMessageActionFollowup(
   if (/^send the warmer version(?: to [a-z][a-z' -]+)?$/i.test(normalized)) {
     return { kind: 'rewrite_and_send', style: 'warmer' };
   }
-  if (/^send the more direct version(?: to [a-z][a-z' -]+)?$/i.test(normalized)) {
+  if (
+    /^send the more direct version(?: to [a-z][a-z' -]+)?$/i.test(normalized)
+  ) {
     return { kind: 'rewrite_and_send', style: 'more_direct' };
   }
   if (/^send it later\b/.test(normalized)) {
@@ -1504,7 +1650,11 @@ export function interpretMessageActionFollowup(
       timingHint: parseTimingHintFromUtterance(rawText),
     };
   }
-  if (/^(keep (?:it|that)(?: as)? (?:a )?draft|keep as draft|leave it as draft)$/.test(normalized)) {
+  if (
+    /^(keep (?:it|that)(?: as)? (?:a )?draft|keep as draft|leave it as draft)$/.test(
+      normalized,
+    )
+  ) {
     return { kind: 'keep_draft' };
   }
   if (
@@ -1580,7 +1730,9 @@ export function resolveBlueBubblesThreadTargetByName(
   if (!normalizedQuery) return { state: 'missing' };
 
   const candidates = getAllChats()
-    .filter((chat) => chat.channel === 'bluebubbles' || chat.jid.startsWith('bb:'))
+    .filter(
+      (chat) => chat.channel === 'bluebubbles' || chat.jid.startsWith('bb:'),
+    )
     .filter(
       (chat) =>
         canonicalizeBlueBubblesSelfThreadJid(chat.jid) !==
@@ -1605,8 +1757,11 @@ export function resolveBlueBubblesThreadTargetByName(
       candidate.chatJid.toLowerCase() === normalizedQuery,
   );
   if (exactMatches.length === 1) {
-    const { normalizedName: _normalizedName, lastMessageTime: _lastMessageTime, ...target } =
-      exactMatches[0]!;
+    const {
+      normalizedName: _normalizedName,
+      lastMessageTime: _lastMessageTime,
+      ...target
+    } = exactMatches[0]!;
     return { state: 'resolved', target };
   }
   if (exactMatches.length > 1) {
@@ -1615,10 +1770,17 @@ export function resolveBlueBubblesThreadTargetByName(
       matches: exactMatches
         .sort(
           (left, right) =>
-            Date.parse(right.lastMessageTime || '') - Date.parse(left.lastMessageTime || ''),
+            Date.parse(right.lastMessageTime || '') -
+            Date.parse(left.lastMessageTime || ''),
         )
         .slice(0, 3)
-        .map(({ normalizedName: _normalizedName, lastMessageTime: _lastMessageTime, ...target }) => target),
+        .map(
+          ({
+            normalizedName: _normalizedName,
+            lastMessageTime: _lastMessageTime,
+            ...target
+          }) => target,
+        ),
     };
   }
 
@@ -1628,8 +1790,11 @@ export function resolveBlueBubblesThreadTargetByName(
       normalizedQuery.includes(candidate.normalizedName),
   );
   if (fuzzyMatches.length === 1) {
-    const { normalizedName: _normalizedName, lastMessageTime: _lastMessageTime, ...target } =
-      fuzzyMatches[0]!;
+    const {
+      normalizedName: _normalizedName,
+      lastMessageTime: _lastMessageTime,
+      ...target
+    } = fuzzyMatches[0]!;
     return { state: 'resolved', target };
   }
   if (fuzzyMatches.length > 1) {
@@ -1638,10 +1803,17 @@ export function resolveBlueBubblesThreadTargetByName(
       matches: fuzzyMatches
         .sort(
           (left, right) =>
-            Date.parse(right.lastMessageTime || '') - Date.parse(left.lastMessageTime || ''),
+            Date.parse(right.lastMessageTime || '') -
+            Date.parse(left.lastMessageTime || ''),
         )
         .slice(0, 3)
-        .map(({ normalizedName: _normalizedName, lastMessageTime: _lastMessageTime, ...target }) => target),
+        .map(
+          ({
+            normalizedName: _normalizedName,
+            lastMessageTime: _lastMessageTime,
+            ...target
+          }) => target,
+        ),
     };
   }
 
@@ -1687,7 +1859,8 @@ async function persistDeferredReminder(params: {
     linkedRefsJson: JSON.stringify(linkedRefs),
     lastUpdatedAt: params.now.toISOString(),
   });
-  const updatedAction = getMessageAction(params.action.messageActionId) || params.action;
+  const updatedAction =
+    getMessageAction(params.action.messageActionId) || params.action;
   syncCommunicationThreadState({
     action: updatedAction,
     now: params.now,
@@ -1707,10 +1880,9 @@ async function persistDeferredReminder(params: {
       delegationMode: linkedRefs.delegationMode || null,
       delegationExplanation: linkedRefs.delegationExplanation || null,
     },
-    summaryText:
-      params.reminderOnly
-        ? 'A reminder will bring this reply back into view later.'
-        : 'This draft is saved to revisit before sending.',
+    summaryText: params.reminderOnly
+      ? 'A reminder will bring this reply back into view later.'
+      : 'This draft is saved to revisit before sending.',
     now: params.now,
   });
   const hint = formatWhenLabel(planned.task.next_run) || 'then';
@@ -1739,7 +1911,9 @@ function buildScheduledTask(params: {
 }): ScheduledTask {
   const linkedRefs = parseLinkedRefs(params.action);
   const personName =
-    linkedRefs.personName || clipText(params.action.sourceSummary, 48) || 'that thread';
+    linkedRefs.personName ||
+    clipText(params.action.sourceSummary, 48) ||
+    'that thread';
   return {
     id: randomUUID(),
     group_folder: params.action.groupFolder,
@@ -1803,7 +1977,8 @@ async function createScheduledSend(params: {
     linkedRefsJson: JSON.stringify(linkedRefs),
     lastUpdatedAt: params.now.toISOString(),
   });
-  const updatedAction = getMessageAction(params.action.messageActionId) || params.action;
+  const updatedAction =
+    getMessageAction(params.action.messageActionId) || params.action;
   syncCommunicationThreadState({
     action: updatedAction,
     now: params.now,
@@ -1840,7 +2015,8 @@ function cancelScheduledSend(params: {
     lastActionAt: params.now.toISOString(),
     lastUpdatedAt: params.now.toISOString(),
   });
-  const updatedAction = getMessageAction(params.action.messageActionId) || params.action;
+  const updatedAction =
+    getMessageAction(params.action.messageActionId) || params.action;
   syncCommunicationThreadState({
     action: updatedAction,
     now: params.now,
@@ -1848,7 +2024,8 @@ function cancelScheduledSend(params: {
   });
   syncOutcomeFromMessageActionRecord(updatedAction, params.now);
   return {
-    replyText: 'Andrea: Okay, I canceled the scheduled send and kept the draft ready.',
+    replyText:
+      'Andrea: Okay, I canceled the scheduled send and kept the draft ready.',
     updatedAction,
   };
 }
@@ -1872,7 +2049,8 @@ function keepMessageAsDraft(params: {
     lastActionAt: params.now.toISOString(),
     lastUpdatedAt: params.now.toISOString(),
   });
-  const updatedAction = getMessageAction(params.action.messageActionId) || params.action;
+  const updatedAction =
+    getMessageAction(params.action.messageActionId) || params.action;
   syncCommunicationThreadState({
     action: updatedAction,
     now: params.now,
@@ -1904,7 +2082,8 @@ async function markFailedSend(params: {
     lastActionAt: params.now.toISOString(),
     lastUpdatedAt: params.now.toISOString(),
   });
-  const updatedAction = getMessageAction(params.action.messageActionId) || params.action;
+  const updatedAction =
+    getMessageAction(params.action.messageActionId) || params.action;
   if (updatedAction.delegationRuleId) {
     recordDelegationRuleUsage({
       ruleId: updatedAction.delegationRuleId,
@@ -1967,7 +2146,8 @@ async function executeSendOperation(params: {
       lastActionAt: params.now.toISOString(),
       lastUpdatedAt: params.now.toISOString(),
     });
-    const updatedAction = getMessageAction(params.action.messageActionId) || params.action;
+    const updatedAction =
+      getMessageAction(params.action.messageActionId) || params.action;
     if (updatedAction.delegationRuleId) {
       recordDelegationRuleUsage({
         ruleId: updatedAction.delegationRuleId,
@@ -2110,7 +2290,7 @@ export async function applyMessageActionOperation(
       replyText:
         explanation.approvalReason ||
         explanation.safetyReason ||
-        "Andrea: I still want your approval before sending that.",
+        'Andrea: I still want your approval before sending that.',
       presentation: buildMessageActionPresentation(
         action,
         deps.channel === 'bluebubbles' ? 'bluebubbles' : 'telegram',
@@ -2139,7 +2319,8 @@ export async function applyMessageActionOperation(
     pauseScheduledTask(action.scheduledTaskId);
     updateMessageAction(action.messageActionId, {
       draftText:
-        modelRewrite?.draftText || rewriteDraft(action.draftText, operation.style),
+        modelRewrite?.draftText ||
+        rewriteDraft(action.draftText, operation.style),
       sendStatus: 'drafted',
       requiresApproval: true,
       followupAt: null,
@@ -2274,7 +2455,8 @@ export async function applyMessageActionOperation(
     const existingLinkedRefs = parseLinkedRefs(action);
     const nextLinkedRefs = {
       ...existingLinkedRefs,
-      threadId: result.referencedThread?.id || existingLinkedRefs.threadId || undefined,
+      threadId:
+        result.referencedThread?.id || existingLinkedRefs.threadId || undefined,
     };
     updateMessageAction(action.messageActionId, {
       sendStatus: 'deferred',
@@ -2478,8 +2660,7 @@ export function resolveMessageActionForFollowup(
         .includes(explicitPersonName.toLowerCase()),
     )
     .sort(
-      (left, right) =>
-        Date.parse(right.updatedAt) - Date.parse(left.updatedAt),
+      (left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt),
     )[0];
   if (!matchedThread) {
     return current;
@@ -2489,7 +2670,9 @@ export function resolveMessageActionForFollowup(
       params.groupFolder,
       'communication_thread',
       matchedThread.id,
-    ) || current || recovered
+    ) ||
+    current ||
+    recovered
   );
 }
 
@@ -2522,7 +2705,9 @@ export function findLatestChatMessageAction(params: {
     )[0];
 }
 
-export function listOpenMessageActionsForGroup(groupFolder: string): MessageActionRecord[] {
+export function listOpenMessageActionsForGroup(
+  groupFolder: string,
+): MessageActionRecord[] {
   return listMessageActionsForGroup({
     groupFolder,
     includeSent: false,
@@ -2554,7 +2739,10 @@ function compareBlueBubblesContinuitySnapshots(
   if (leftKind !== rightKind) {
     return leftKind - rightKind;
   }
-  return Date.parse(right.recentTargetAt || '') - Date.parse(left.recentTargetAt || '');
+  return (
+    Date.parse(right.recentTargetAt || '') -
+    Date.parse(left.recentTargetAt || '')
+  );
 }
 
 export function reconcileBlueBubblesMessageActionContinuity(params: {
@@ -2571,11 +2759,13 @@ export function reconcileBlueBubblesMessageActionContinuity(params: {
   const canonicalSelfThreadChatJid =
     normalizeBlueBubblesConversationChatJid(sourceSelfThreadChatJid) ||
     BLUEBUBBLES_CANONICAL_SELF_THREAD_JID;
-  const conversationKind =
-    resolveBlueBubblesConversationKind(canonicalSelfThreadChatJid);
+  const conversationKind = resolveBlueBubblesConversationKind(
+    canonicalSelfThreadChatJid,
+  );
   const supersededActionIds: string[] = [];
   const nowIso = now.toISOString();
-  const freshnessCutoff = now.getTime() - MESSAGE_ACTION_FOLLOWUP_CONTEXT_TTL_MS;
+  const freshnessCutoff =
+    now.getTime() - MESSAGE_ACTION_FOLLOWUP_CONTEXT_TTL_MS;
   let continuityCandidates = listBlueBubblesMessageActionContinuityCandidates({
     groupFolder: params.groupFolder,
     canonicalChatJid: canonicalSelfThreadChatJid,
@@ -2614,7 +2804,8 @@ export function reconcileBlueBubblesMessageActionContinuity(params: {
           lastUpdatedAt: nowIso,
         });
         const refreshed =
-          getMessageAction(duplicate.action.messageActionId) || duplicate.action;
+          getMessageAction(duplicate.action.messageActionId) ||
+          duplicate.action;
         syncOutcomeFromMessageActionRecord(refreshed, now);
         supersededActionIds.push(duplicate.action.messageActionId);
       });
@@ -2629,14 +2820,19 @@ export function reconcileBlueBubblesMessageActionContinuity(params: {
   let rehydratedActionId: string | null = null;
   let recoveredFromChatJid: string | null = null;
   let activeActionCandidate =
-    continuityCandidates.find((candidate) =>
-      isActionableBlueBubblesDecisionStatus(candidate.action.sendStatus) &&
-      candidate.engagedAtMs >= freshnessCutoff,
+    continuityCandidates.find(
+      (candidate) =>
+        isActionableBlueBubblesDecisionStatus(candidate.action.sendStatus) &&
+        candidate.engagedAtMs >= freshnessCutoff,
     ) || null;
   if (!activeActionCandidate && params.allowRehydrate) {
     const draftChatJids =
       conversationKind === 'self_thread'
-        ? [...new Set(expandBlueBubblesLogicalSelfThreadJids(sourceSelfThreadChatJid))]
+        ? [
+            ...new Set(
+              expandBlueBubblesLogicalSelfThreadJids(sourceSelfThreadChatJid),
+            ),
+          ]
         : [canonicalSelfThreadChatJid];
     const freshDraftPresentation = findFreshBlueBubblesDraftPresentation({
       chatJids: draftChatJids,
@@ -2653,14 +2849,18 @@ export function reconcileBlueBubblesMessageActionContinuity(params: {
       if (recovered) {
         rehydratedActionId = recovered.messageActionId;
         recoveredFromChatJid = freshDraftPresentation.chat_jid;
-        continuityCandidates = listBlueBubblesMessageActionContinuityCandidates({
-          groupFolder: params.groupFolder,
-          canonicalChatJid: canonicalSelfThreadChatJid,
-        });
+        continuityCandidates = listBlueBubblesMessageActionContinuityCandidates(
+          {
+            groupFolder: params.groupFolder,
+            canonicalChatJid: canonicalSelfThreadChatJid,
+          },
+        );
         activeActionCandidate =
-          continuityCandidates.find((candidate) =>
-            isActionableBlueBubblesDecisionStatus(candidate.action.sendStatus) &&
-            candidate.engagedAtMs >= freshnessCutoff,
+          continuityCandidates.find(
+            (candidate) =>
+              isActionableBlueBubblesDecisionStatus(
+                candidate.action.sendStatus,
+              ) && candidate.engagedAtMs >= freshnessCutoff,
           ) || null;
       }
     }
@@ -2669,14 +2869,22 @@ export function reconcileBlueBubblesMessageActionContinuity(params: {
   const freshDraftPresentation = findFreshBlueBubblesDraftPresentation({
     chatJids:
       conversationKind === 'self_thread'
-        ? [...new Set(expandBlueBubblesLogicalSelfThreadJids(sourceSelfThreadChatJid))]
+        ? [
+            ...new Set(
+              expandBlueBubblesLogicalSelfThreadJids(sourceSelfThreadChatJid),
+            ),
+          ]
         : [canonicalSelfThreadChatJid],
     now,
   });
   const recentAndreaContextMessage = findFreshBlueBubblesAndreaContextMessage({
     chatJids:
       conversationKind === 'self_thread'
-        ? [...new Set(expandBlueBubblesLogicalSelfThreadJids(sourceSelfThreadChatJid))]
+        ? [
+            ...new Set(
+              expandBlueBubblesLogicalSelfThreadJids(sourceSelfThreadChatJid),
+            ),
+          ]
         : [canonicalSelfThreadChatJid],
     now,
   });
@@ -2689,8 +2897,7 @@ export function reconcileBlueBubblesMessageActionContinuity(params: {
     resolveBlueBubblesConversationalEligibility(decisionPolicy);
   const requiresExplicitMention =
     resolveBlueBubblesRequiresExplicitMention(decisionPolicy);
-  const eligibleFollowups =
-    resolveBlueBubblesEligibleFollowups(decisionPolicy);
+  const eligibleFollowups = resolveBlueBubblesEligibleFollowups(decisionPolicy);
   const continuityState:
     | 'idle'
     | 'draft_open'
@@ -2705,7 +2912,9 @@ export function reconcileBlueBubblesMessageActionContinuity(params: {
   const recentTargetChatJid =
     activeActionCandidate?.presentationChatJid ||
     normalizeBlueBubblesConversationChatJid(freshDraftPresentation?.chat_jid) ||
-    normalizeBlueBubblesConversationChatJid(recentAndreaContextMessage?.chat_jid) ||
+    normalizeBlueBubblesConversationChatJid(
+      recentAndreaContextMessage?.chat_jid,
+    ) ||
     freshDraftPresentation?.chat_jid ||
     recentAndreaContextMessage?.chat_jid ||
     'none';
@@ -2749,7 +2958,8 @@ export function reconcileBlueBubblesMessageActionContinuity(params: {
     decisionPolicy,
     conversationalEligibility,
     requiresExplicitMention,
-    activeMessageActionId: activeActionCandidate?.action.messageActionId || null,
+    activeMessageActionId:
+      activeActionCandidate?.action.messageActionId || null,
     activeAction: activeActionCandidate?.action || null,
     activePresentationAt,
     recentTargetChatJid,
@@ -2758,7 +2968,9 @@ export function reconcileBlueBubblesMessageActionContinuity(params: {
     continuityState,
     proofCandidateChatJid:
       activeActionCandidate?.presentationChatJid ||
-      normalizeBlueBubblesConversationChatJid(freshDraftPresentation?.chat_jid) ||
+      normalizeBlueBubblesConversationChatJid(
+        freshDraftPresentation?.chat_jid,
+      ) ||
       freshDraftPresentation?.chat_jid ||
       'none',
     eligibleFollowups: continuityState === 'idle' ? [] : [...eligibleFollowups],
@@ -2783,7 +2995,9 @@ export function listBlueBubblesMessageActionContinuitySnapshots(params: {
   allowRehydrate?: boolean;
 }): BlueBubblesMessageActionContinuitySnapshot[] {
   const now = params.now || new Date();
-  const candidateChatJids = new Set<string>([BLUEBUBBLES_CANONICAL_SELF_THREAD_JID]);
+  const candidateChatJids = new Set<string>([
+    BLUEBUBBLES_CANONICAL_SELF_THREAD_JID,
+  ]);
   for (const chat of getAllChats()) {
     if (!chat.jid.startsWith('bb:')) continue;
     const normalizedChatJid = normalizeBlueBubblesConversationChatJid(chat.jid);
@@ -2796,7 +3010,10 @@ export function listBlueBubblesMessageActionContinuitySnapshots(params: {
     includeSent: false,
     limit: 200,
   })) {
-    if (action.targetChannel !== 'bluebubbles' || action.targetKind !== 'external_thread') {
+    if (
+      action.targetChannel !== 'bluebubbles' ||
+      action.targetKind !== 'external_thread'
+    ) {
       continue;
     }
     const presentationChatJid =
@@ -2969,7 +3186,8 @@ function rehydrateBlueBubblesSelfThreadMessageAction(
   const explicitPersonName = extractExplicitPersonName(params.rawText);
   if (
     recovered &&
-    (!explicitPersonName || actionMatchesPersonName(recovered, explicitPersonName))
+    (!explicitPersonName ||
+      actionMatchesPersonName(recovered, explicitPersonName))
   ) {
     return recovered;
   }

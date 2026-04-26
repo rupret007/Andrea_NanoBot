@@ -318,7 +318,9 @@ export function resolveAlexaConversationFollowup(
   ) {
     return resolveSupported('send_details');
   }
-  if (/^(send me the full version|send me the fuller version)\b/i.test(normalized)) {
+  if (
+    /^(send me the full version|send me the fuller version)\b/i.test(normalized)
+  ) {
     return resolveSupported('send_details');
   }
   if (/^(do that|do all that|approve all)\b/i.test(normalized)) {
@@ -412,7 +414,9 @@ export function resolveAlexaConversationFollowup(
   ) {
     return resolveSupported('delegation_control');
   }
-  if (/^(yes|save it|remember that default|use that default)\b/i.test(normalized)) {
+  if (
+    /^(yes|save it|remember that default|use that default)\b/i.test(normalized)
+  ) {
     return resolveSupported('delegation_control');
   }
   if (/^(show my rules)\b/i.test(normalized)) {

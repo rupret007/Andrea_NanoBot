@@ -119,7 +119,9 @@ describe('runtime backend job cache accessors', () => {
       updated_at: '2026-04-03T10:00:00.000Z',
     });
 
-    expect(getRuntimeBackendChatSelection('andrea_openai', 'tg:1')).toMatchObject({
+    expect(
+      getRuntimeBackendChatSelection('andrea_openai', 'tg:1'),
+    ).toMatchObject({
       job_id: 'job_001',
       group_folder: 'main',
     });
@@ -132,12 +134,14 @@ describe('runtime backend job cache accessors', () => {
       updated_at: '2026-04-03T11:00:00.000Z',
     });
 
-    expect(getRuntimeBackendChatSelection('andrea_openai', 'tg:1')?.job_id).toBe(
-      'job_002',
-    );
+    expect(
+      getRuntimeBackendChatSelection('andrea_openai', 'tg:1')?.job_id,
+    ).toBe('job_002');
 
     deleteRuntimeBackendChatSelection('andrea_openai', 'tg:1');
-    expect(getRuntimeBackendChatSelection('andrea_openai', 'tg:1')).toBeUndefined();
+    expect(
+      getRuntimeBackendChatSelection('andrea_openai', 'tg:1'),
+    ).toBeUndefined();
   });
 
   it('deletes individual runtime card contexts when a specific card becomes stale', () => {

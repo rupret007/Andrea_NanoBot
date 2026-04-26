@@ -32,9 +32,7 @@ import {
   resolveAlexaVoiceIntentFamily,
   type AlexaVoiceIntentFamily,
 } from './alexa-dialogue.js';
-import {
-  resolveAlexaIntentToCapability,
-} from './assistant-capability-router.js';
+import { resolveAlexaIntentToCapability } from './assistant-capability-router.js';
 import {
   executeAssistantCapability,
   type AssistantCapabilityConversationSeed,
@@ -140,9 +138,7 @@ import {
 } from './db.js';
 import { readEnvFile } from './env.js';
 import { assertValidGroupFolder } from './group-folder.js';
-import {
-  handleLifeThreadCommand,
-} from './life-threads.js';
+import { handleLifeThreadCommand } from './life-threads.js';
 import { logger } from './logger.js';
 import {
   completePilotJourney,
@@ -324,12 +320,15 @@ function isQualifyingHandledAlexaProofState(
 ): state is AlexaSignedRequestState {
   return Boolean(
     state &&
-      state.requestType === 'IntentRequest' &&
-      state.applicationIdVerified &&
-      state.linkingResolved &&
-      ['local_companion', 'life_thread_local', 'assistant_bridge', 'bridge'].includes(
-        state.responseSource,
-      ),
+    state.requestType === 'IntentRequest' &&
+    state.applicationIdVerified &&
+    state.linkingResolved &&
+    [
+      'local_companion',
+      'life_thread_local',
+      'assistant_bridge',
+      'bridge',
+    ].includes(state.responseSource),
   );
 }
 
@@ -598,7 +597,10 @@ export function getAlexaStatus(
   config = resolveAlexaConfig(),
   running = false,
   boundPort?: number,
-  oauthConfig = resolveAlexaOAuthConfig(process.env, config?.path || DEFAULT_ALEXA_PATH),
+  oauthConfig = resolveAlexaOAuthConfig(
+    process.env,
+    config?.path || DEFAULT_ALEXA_PATH,
+  ),
 ): AlexaStatus {
   const lastSignedRequest = readAlexaLastSignedRequestState();
   const envFile = readEnvFile(['ALEXA_PUBLIC_BASE_URL']);
@@ -907,9 +909,7 @@ export function shapeAlexaSpeech(text: string): string {
       key &&
       selectedKeys.some(
         (existing) =>
-          existing === key ||
-          existing.includes(key) ||
-          key.includes(existing),
+          existing === key || existing.includes(key) || key.includes(existing),
       )
     ) {
       continue;
@@ -1061,9 +1061,7 @@ function resolveAlexaIsoWeekDate(
   const januaryFourth = new Date(Date.UTC(year, 0, 4, 12, 0, 0));
   const januaryFourthDay = januaryFourth.getUTCDay() || 7;
   const mondayOfWeekOne = new Date(januaryFourth);
-  mondayOfWeekOne.setUTCDate(
-    januaryFourth.getUTCDate() - januaryFourthDay + 1,
-  );
+  mondayOfWeekOne.setUTCDate(januaryFourth.getUTCDate() - januaryFourthDay + 1);
   mondayOfWeekOne.setUTCDate(
     mondayOfWeekOne.getUTCDate() + (week - 1) * 7 + (dayOfWeek - 1),
   );
@@ -1091,8 +1089,7 @@ function formatAlexaStructuredDate(
   }
 
   const weekDateMatch =
-    resolvedDate ||
-    !trimmed.match(/^(\d{4})-W(\d{2})-(\d)$/)
+    resolvedDate || !trimmed.match(/^(\d{4})-W(\d{2})-(\d)$/)
       ? null
       : trimmed.match(/^(\d{4})-W(\d{2})-(\d)$/);
   if (!resolvedDate && weekDateMatch) {
@@ -1142,7 +1139,8 @@ function formatAlexaStructuredDate(
     return undefined;
   }
 
-  const sameYear = resolvedMidday.getFullYear() === referenceMidday.getFullYear();
+  const sameYear =
+    resolvedMidday.getFullYear() === referenceMidday.getFullYear();
   return new Intl.DateTimeFormat('en-US', {
     month: 'long',
     day: 'numeric',
@@ -1342,35 +1340,38 @@ function getIntentSlotValues(
       slotValues.calendarMoveTargetTime ||
       slotValues.targetTime)
   ) {
-    const sourceTime = slotValues.calendarMoveSourceTime || slotValues.sourceTime
-      ? formatAlexaStructuredClockTime(
-          slotValues.calendarMoveSourceTime || slotValues.sourceTime,
-        )
-      : undefined;
-    const targetDate = slotValues.calendarMoveTargetDate || slotValues.targetDate
-      ? formatAlexaStructuredDate(
-          slotValues.calendarMoveTargetDate || slotValues.targetDate,
-          referenceDate,
-          'calendar',
-        )
-      : undefined;
-    const targetTime = slotValues.calendarMoveTargetTime || slotValues.targetTime
-      ? formatAlexaStructuredClockTime(
-          slotValues.calendarMoveTargetTime || slotValues.targetTime,
-        )
-      : undefined;
+    const sourceTime =
+      slotValues.calendarMoveSourceTime || slotValues.sourceTime
+        ? formatAlexaStructuredClockTime(
+            slotValues.calendarMoveSourceTime || slotValues.sourceTime,
+          )
+        : undefined;
+    const targetDate =
+      slotValues.calendarMoveTargetDate || slotValues.targetDate
+        ? formatAlexaStructuredDate(
+            slotValues.calendarMoveTargetDate || slotValues.targetDate,
+            referenceDate,
+            'calendar',
+          )
+        : undefined;
+    const targetTime =
+      slotValues.calendarMoveTargetTime || slotValues.targetTime
+        ? formatAlexaStructuredClockTime(
+            slotValues.calendarMoveTargetTime || slotValues.targetTime,
+          )
+        : undefined;
     clarificationSpeech =
       clarificationSpeech ||
       buildAlexaStructuredDateClarification({
         needsDate: Boolean(
           (slotValues.calendarMoveTargetDate || slotValues.targetDate) &&
-            !targetDate,
+          !targetDate,
         ),
         needsTime: Boolean(
           ((slotValues.calendarMoveSourceTime || slotValues.sourceTime) &&
             !sourceTime) ||
-            ((slotValues.calendarMoveTargetTime || slotValues.targetTime) &&
-              !targetTime),
+          ((slotValues.calendarMoveTargetTime || slotValues.targetTime) &&
+            !targetTime),
         ),
       });
     if (!clarificationSpeech) {
@@ -1589,9 +1590,7 @@ function buildAlexaCompanionConversationState(params: {
   );
 }
 
-function parseAlexaJsonField<T>(
-  raw: string | undefined,
-): T | undefined {
+function parseAlexaJsonField<T>(raw: string | undefined): T | undefined {
   const trimmed = raw?.trim();
   if (!trimmed) return undefined;
   try {
@@ -1815,14 +1814,19 @@ function extractAlexaReminderTiming(utterance: string): string | undefined {
   if (trimmed.endsWith(' to')) {
     return trimmed.replace(/\s+to$/, '');
   }
-  return trimmed.startsWith('at ') ? trimmed.replace(/\s+today$/, ' today') : trimmed;
+  return trimmed.startsWith('at ')
+    ? trimmed.replace(/\s+today$/, ' today')
+    : trimmed;
 }
 
 function escapeAlexaRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function buildAlexaReminderPrompt(reminderBody: string, state?: AlexaConversationState): string {
+function buildAlexaReminderPrompt(
+  reminderBody: string,
+  state?: AlexaConversationState,
+): string {
   const cleaned = reminderBody.trim().replace(/[.?!]+$/g, '');
   const entityLabel = state?.subjectData.activeEntityLabel?.trim();
   const escapedEntity = entityLabel ? escapeAlexaRegex(entityLabel) : null;
@@ -1949,24 +1953,16 @@ function resolveAlexaEventSearchWindow(
   return { start, end: addAlexaDays(start, 14) };
 }
 
-function extractAlexaEventLookupQuery(
-  utterance: string,
-): string | undefined {
+function extractAlexaEventLookupQuery(utterance: string): string | undefined {
   let normalized = normalizeVoicePrompt(utterance)
-    .replace(
-      /^(?:please\s+)?(?:move|reschedule|cancel|delete|remove)\s+/i,
-      '',
-    )
+    .replace(/^(?:please\s+)?(?:move|reschedule|cancel|delete|remove)\s+/i, '')
     .trim();
   normalized = normalized
     .replace(
       /\b(?:to|for)\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?(?:\s+(?:today|tomorrow))?\b.*$/i,
       '',
     )
-    .replace(
-      /\b(?:today|tomorrow|this afternoon|tonight|this evening)\b/gi,
-      '',
-    )
+    .replace(/\b(?:today|tomorrow|this afternoon|tonight|this evening)\b/gi, '')
     .trim();
   return normalized || undefined;
 }
@@ -2076,17 +2072,18 @@ function buildFallbackDailyCompanionContextFromAlexaState(
       activePeople: state.subjectData.activePeople,
       householdFocus: state.subjectData.householdFocus,
     },
-    extraDetails:
-      state.subjectData.threadSummaryLines?.length
-        ? state.subjectData.threadSummaryLines
-        : recommendationText && recommendationText !== summaryText
-          ? [summaryText]
-          : [],
+    extraDetails: state.subjectData.threadSummaryLines?.length
+      ? state.subjectData.threadSummaryLines
+      : recommendationText && recommendationText !== summaryText
+        ? [summaryText]
+        : [],
     memoryLines: [],
     usedThreadIds: threadId ? [threadId] : [],
     usedThreadTitles: threadTitle ? [threadTitle] : [],
     usedThreadReasons:
-      threadTitle || threadId ? ['it was the active thread in the last answer'] : [],
+      threadTitle || threadId
+        ? ['it was the active thread in the last answer']
+        : [],
     threadSummaryLines: state.subjectData.threadSummaryLines || [],
     comparisonKeys: {
       nextEvent: null,
@@ -2185,11 +2182,14 @@ function buildAlexaStateFromDailyCompanion(
           ? 'communication_draft'
           : 'planning_guidance',
       activeTaskSummary:
-        context.recommendationText || context.summaryText || baseState.summaryText,
+        context.recommendationText ||
+        context.summaryText ||
+        baseState.summaryText,
       activeEntityLabel:
         context.subjectData.personName ||
         context.usedThreadTitles?.[0] ||
-        (context.subjectData as AlexaConversationSubjectData).activeSubjectLabel,
+        (context.subjectData as AlexaConversationSubjectData)
+          .activeSubjectLabel,
       activeVoiceFamily:
         baseState.subjectData.activeVoiceFamily ||
         baseState.subjectData.lastIntentFamily ||
@@ -2328,8 +2328,8 @@ function buildAlexaStateFromCapabilitySeed(
     clarifierHints?: string[];
   } = {},
 ): AlexaConversationState {
-  const seedSubjectData =
-    (seed.subjectData || {}) as AlexaConversationSubjectData;
+  const seedSubjectData = (seed.subjectData ||
+    {}) as AlexaConversationSubjectData;
   return buildAlexaCompanionConversationState({
     flowKey: seed.flowKey,
     subjectKind: seed.subjectKind,
@@ -2337,13 +2337,13 @@ function buildAlexaStateFromCapabilitySeed(
     guidanceGoal: seed.guidanceGoal,
     subjectData: {
       ...seedSubjectData,
-      lastIntentFamily: options.intentFamily || seedSubjectData.lastIntentFamily,
+      lastIntentFamily:
+        options.intentFamily || seedSubjectData.lastIntentFamily,
       lastRouteOutcome:
         options.routeOutcome || seedSubjectData.lastRouteOutcome,
       lastUserUtterance:
         options.userUtterance || seedSubjectData.lastUserUtterance,
-      clarifierHints:
-        options.clarifierHints || seedSubjectData.clarifierHints,
+      clarifierHints: options.clarifierHints || seedSubjectData.clarifierHints,
       activeVoiceFamily:
         options.intentFamily ||
         seedSubjectData.activeVoiceFamily ||
@@ -2440,10 +2440,8 @@ function buildAlexaNextStateForFollowupAction(
     return buildAlexaCompanionConversationState({
       flowKey: conversationState?.flowKey || 'followup',
       subjectKind: conversationState?.subjectKind || 'general',
-      summaryText:
-        conversationState?.summaryText || 'recent assistant context',
-      guidanceGoal:
-        conversationState?.styleHints.guidanceGoal || 'daily_brief',
+      summaryText: conversationState?.summaryText || 'recent assistant context',
+      guidanceGoal: conversationState?.styleHints.guidanceGoal || 'daily_brief',
       subjectData: {
         ...(conversationState?.subjectData || {}),
         ...nextVoiceMetadata,
@@ -2464,10 +2462,8 @@ function buildAlexaNextStateForFollowupAction(
     return buildAlexaCompanionConversationState({
       flowKey: conversationState?.flowKey || 'followup',
       subjectKind: conversationState?.subjectKind || 'general',
-      summaryText:
-        conversationState?.summaryText || 'recent assistant context',
-      guidanceGoal:
-        conversationState?.styleHints.guidanceGoal || 'daily_brief',
+      summaryText: conversationState?.summaryText || 'recent assistant context',
+      guidanceGoal: conversationState?.styleHints.guidanceGoal || 'daily_brief',
       subjectData: {
         ...(conversationState?.subjectData || {}),
         ...nextVoiceMetadata,
@@ -2511,8 +2507,7 @@ function buildAlexaNextStateForFollowupAction(
   return buildAlexaCompanionConversationState({
     flowKey: conversationState?.flowKey || 'followup',
     subjectKind: conversationState?.subjectKind || 'general',
-    summaryText:
-      conversationState?.summaryText || 'recent assistant context',
+    summaryText: conversationState?.summaryText || 'recent assistant context',
     guidanceGoal:
       action === 'action_guidance'
         ? 'action_follow_through'
@@ -2554,7 +2549,7 @@ function buildAlexaNextStateForFollowupAction(
 
 function baseFollowupsForSubject(
   subjectKind: AlexaConversationState['subjectKind'],
-) : import('./types.js').AlexaConversationFollowupAction[] {
+): import('./types.js').AlexaConversationFollowupAction[] {
   const common: AlexaConversationState['supportedFollowups'] = [
     'anything_else',
     'shorter',
@@ -2618,8 +2613,9 @@ function buildAlexaFallbackSuggestions(
 ): string[] {
   const personName = state?.subjectData.personName?.trim().toLowerCase();
   const activePeople =
-    state?.subjectData.activePeople?.map((value) => value.trim().toLowerCase()) ||
-    [];
+    state?.subjectData.activePeople?.map((value) =>
+      value.trim().toLowerCase(),
+    ) || [];
   const threadTitle = state?.subjectData.threadTitle?.trim().toLowerCase();
 
   const candaceFocused =
@@ -2697,11 +2693,11 @@ function buildAlexaContextualFallbackRecovery(
 
   const hasStrongContext = Boolean(
     state.subjectData.personName?.trim() ||
-      state.subjectData.threadTitle?.trim() ||
-      state.subjectData.lastRecommendation?.trim() ||
-      state.subjectData.pendingActionText?.trim() ||
-      state.subjectData.lastAnswerSummary?.trim() ||
-      state.subjectData.conversationFocus?.trim(),
+    state.subjectData.threadTitle?.trim() ||
+    state.subjectData.lastRecommendation?.trim() ||
+    state.subjectData.pendingActionText?.trim() ||
+    state.subjectData.lastAnswerSummary?.trim() ||
+    state.subjectData.conversationFocus?.trim(),
   );
   if (!hasStrongContext) return undefined;
 
@@ -2755,7 +2751,11 @@ function inferAlexaSubjectKindForUtterance(
   ) {
     return /\b(candace|travis)\b/.test(normalized) ? 'person' : 'household';
   }
-  if (/\b(meeting|calendar|schedule|next|today|tonight|tomorrow)\b/.test(normalized)) {
+  if (
+    /\b(meeting|calendar|schedule|next|today|tonight|tomorrow)\b/.test(
+      normalized,
+    )
+  ) {
     return 'day_brief';
   }
   return conversationState?.subjectKind || 'general';
@@ -2767,7 +2767,9 @@ function inferAlexaGuidanceGoalForUtterance(
 ): AlexaCompanionGuidanceGoal {
   const normalized = utterance.toLowerCase();
   if (/\b(candace|family|household|home)\b/.test(normalized)) {
-    return /\b(candace)\b/.test(normalized) ? 'shared_plans' : 'family_guidance';
+    return /\b(candace)\b/.test(normalized)
+      ? 'shared_plans'
+      : 'family_guidance';
   }
   if (/\b(tonight|evening)\b/.test(normalized)) {
     return 'evening_reset';
@@ -3133,13 +3135,15 @@ export function createAlexaSkill(
   const buildAlexaCalendarActionPromptSpeech = (
     state: PendingGoogleCalendarEventActionState,
   ): string => {
-      if (state.action === 'delete') {
-        return `Do you want me to cancel ${state.sourceEvent.title} on ${formatAlexaCalendarWhen({
+    if (state.action === 'delete') {
+      return `Do you want me to cancel ${state.sourceEvent.title} on ${formatAlexaCalendarWhen(
+        {
           startIso: state.sourceEvent.startIso,
           endIso: state.sourceEvent.endIso,
           allDay: state.sourceEvent.allDay,
-        })}?`;
-      }
+        },
+      )}?`;
+    }
     if (state.step === 'choose_calendar') {
       if (state.calendars.length === 2) {
         return `Which calendar should I move ${state.sourceEvent.title} to: ${state.calendars[0]!.summary} or ${state.calendars[1]!.summary}?`;
@@ -3177,8 +3181,7 @@ export function createAlexaSkill(
     if (!plannedReminder) {
       return {
         handled: true as const,
-        speech:
-          'Tell me when, like today at 4, tomorrow morning, or tonight.',
+        speech: 'Tell me when, like today at 4, tomorrow morning, or tonight.',
       };
     }
 
@@ -3264,7 +3267,11 @@ export function createAlexaSkill(
   };
 
   const toAlexaActiveEventContextState = (
-    event: CalendarActiveEventContext | GoogleCalendarEventRecord | null | undefined,
+    event:
+      | CalendarActiveEventContext
+      | GoogleCalendarEventRecord
+      | null
+      | undefined,
     now: Date,
   ): ActiveGoogleCalendarEventContextState | null => {
     if (!event?.calendarId) return null;
@@ -3288,7 +3295,11 @@ export function createAlexaSkill(
     utterance: string;
     speech: string;
     activeEventContext?: CalendarActiveEventContext | null;
-    schedulingContext?: { title: string; durationMinutes: number; timeZone: string } | null;
+    schedulingContext?: {
+      title: string;
+      durationMinutes: number;
+      timeZone: string;
+    } | null;
     now: Date;
   }): AlexaConversationState =>
     buildAlexaAssistantTaskState({
@@ -3348,12 +3359,10 @@ export function createAlexaSkill(
       input.slotValues.calendarReadText
         ? `what do I have ${input.slotValues.calendarReadText}`
         : '',
-      input.slotValues.guidanceText
-        && guidanceLooksCalendarish
+      input.slotValues.guidanceText && guidanceLooksCalendarish
         ? `what do I have ${input.slotValues.guidanceText}`
         : '',
-      input.slotValues.guidanceText
-        && guidanceLooksCalendarish
+      input.slotValues.guidanceText && guidanceLooksCalendarish
         ? `what is on my calendar ${input.slotValues.guidanceText}`
         : '',
       input.slotValues.calendarCreateText
@@ -3425,8 +3434,8 @@ export function createAlexaSkill(
       googleConfig,
     );
     const calendarName =
-      input.calendars.find((calendar) => calendar.id === input.calendarId)?.summary ||
-      created.calendarName;
+      input.calendars.find((calendar) => calendar.id === input.calendarId)
+        ?.summary || created.calendarName;
     const speech =
       shapeAlexaSpeech(
         buildCalendarCompanionEventReply({
@@ -3510,7 +3519,8 @@ export function createAlexaSkill(
         {
           sourceCalendarId: input.state.sourceEvent.calendarId,
           destinationCalendarId:
-            input.state.selectedCalendarId || input.state.sourceEvent.calendarId,
+            input.state.selectedCalendarId ||
+            input.state.sourceEvent.calendarId,
           eventId: input.state.sourceEvent.id,
         },
         googleConfig,
@@ -3558,7 +3568,10 @@ export function createAlexaSkill(
         taskSummary: `Updated ${updatedEvent.title}`,
         entityLabel: updatedEvent.title,
         dateTimeContext: formatAlexaCalendarWhen(updatedEvent),
-        activeEventContext: toAlexaActiveEventContextState(updatedEvent, input.now),
+        activeEventContext: toAlexaActiveEventContextState(
+          updatedEvent,
+          input.now,
+        ),
         subjectData: clearAlexaAssistantPendingState(input.conversationState),
         supportedFollowups: ['anything_else', 'shorter', 'say_more'],
         prioritizationLens: 'calendar',
@@ -3588,14 +3601,19 @@ export function createAlexaSkill(
       input.conversationState,
       now,
     );
-    const schedulingContext = parseAlexaSchedulingContext(input.conversationState);
-    const pendingCreate = parseAlexaPendingCalendarCreate(input.conversationState);
+    const schedulingContext = parseAlexaSchedulingContext(
+      input.conversationState,
+    );
+    const pendingCreate = parseAlexaPendingCalendarCreate(
+      input.conversationState,
+    );
     const pendingEventAction = parseAlexaPendingCalendarEventAction(
       input.conversationState,
       now,
     );
     const pendingReminderBody =
-      input.conversationState?.subjectData.pendingReminderBody?.trim() || undefined;
+      input.conversationState?.subjectData.pendingReminderBody?.trim() ||
+      undefined;
 
     const persistPendingCreate = (
       state: PendingGoogleCalendarCreateState,
@@ -3684,7 +3702,10 @@ export function createAlexaSkill(
 
     if (pendingCreate) {
       for (const candidate of assistantCandidates) {
-        const continued = advancePendingGoogleCalendarCreate(candidate, pendingCreate);
+        const continued = advancePendingGoogleCalendarCreate(
+          candidate,
+          pendingCreate,
+        );
         if (continued.kind === 'no_match') continue;
         if (continued.kind === 'cancelled') {
           saveLinkedConversationState(
@@ -3698,7 +3719,9 @@ export function createAlexaSkill(
               taskKind: 'calendar_write',
               taskSummary: pendingCreate.draft.title,
               entityLabel: pendingCreate.draft.title,
-              subjectData: clearAlexaAssistantPendingState(input.conversationState),
+              subjectData: clearAlexaAssistantPendingState(
+                input.conversationState,
+              ),
               supportedFollowups: ['anything_else'],
               prioritizationLens: 'calendar',
             }),
@@ -3781,7 +3804,9 @@ export function createAlexaSkill(
                 pendingEventAction.sourceEvent,
                 now,
               ),
-              subjectData: clearAlexaAssistantPendingState(input.conversationState),
+              subjectData: clearAlexaAssistantPendingState(
+                input.conversationState,
+              ),
               supportedFollowups: ['anything_else'],
               prioritizationLens: 'calendar',
             }),
@@ -3859,7 +3884,9 @@ export function createAlexaSkill(
               reminderRequest.reminderBody,
             pendingWriteAction: 'create_reminder',
             pendingReminderBody: reminderRequest.reminderBody,
-            subjectData: clearAlexaAssistantPendingState(input.conversationState),
+            subjectData: clearAlexaAssistantPendingState(
+              input.conversationState,
+            ),
             supportedFollowups: ['anything_else', 'shorter'],
             prioritizationLens: 'general',
             hasActionItem: true,
@@ -3937,11 +3964,16 @@ export function createAlexaSkill(
         );
         if (createPlan.kind === 'none') continue;
         if (createPlan.kind === 'needs_details') {
-          return { speech: shapeAlexaSpeech(createPlan.message) || createPlan.message };
+          return {
+            speech: shapeAlexaSpeech(createPlan.message) || createPlan.message,
+          };
         }
         if (calendars.writableCalendars.length === 0) {
           return {
-            speech: buildAlexaCalendarFailureSpeech('create_event', new Error('calendar auth unavailable')),
+            speech: buildAlexaCalendarFailureSpeech(
+              'create_event',
+              new Error('calendar auth unavailable'),
+            ),
           };
         }
         const selectedCalendarId =
@@ -3969,7 +4001,9 @@ export function createAlexaSkill(
         persistPendingCreate(pendingState, speech);
         return { speech };
       } catch (error) {
-        return { speech: buildAlexaCalendarFailureSpeech('create_event', error) };
+        return {
+          speech: buildAlexaCalendarFailureSpeech('create_event', error),
+        };
       }
     }
 
@@ -3989,7 +4023,8 @@ export function createAlexaSkill(
           if (lookup.kind === 'missing' || lookup.kind === 'ambiguous') {
             return { speech: lookup.speech };
           }
-          resolvedContext = lookup.kind === 'resolved' ? lookup.context : undefined;
+          resolvedContext =
+            lookup.kind === 'resolved' ? lookup.context : undefined;
         }
         const actionPlan = planGoogleCalendarEventAction(
           candidate,
@@ -4029,7 +4064,9 @@ export function createAlexaSkill(
         persistPendingEventAction(actionPlan.state, speech);
         return { speech };
       } catch (error) {
-        return { speech: buildAlexaCalendarFailureSpeech('update_event', error) };
+        return {
+          speech: buildAlexaCalendarFailureSpeech('update_event', error),
+        };
       }
     }
 
@@ -4117,7 +4154,9 @@ export function createAlexaSkill(
     handlerInput: HandlerInput,
     linked: Extract<ReturnType<typeof resolveAlexaLinkedAccount>, { ok: true }>,
     conversationState: AlexaConversationState,
-    response: NonNullable<Awaited<ReturnType<typeof buildDailyCompanionResponse>>>,
+    response: NonNullable<
+      Awaited<ReturnType<typeof buildDailyCompanionResponse>>
+    >,
   ) => {
     const speech =
       shapeAlexaSpeech(response.reply) ||
@@ -4176,8 +4215,7 @@ export function createAlexaSkill(
     });
     const nextState = buildAlexaCompanionConversationState({
       flowKey: `outcome_review_${match.kind}`,
-      subjectKind:
-        match.kind === 'still_open_person' ? 'person' : 'day_brief',
+      subjectKind: match.kind === 'still_open_person' ? 'person' : 'day_brief',
       summaryText:
         conversationState?.summaryText ||
         presentation.summaryText ||
@@ -4329,7 +4367,8 @@ export function createAlexaSkill(
               generatedAt: new Date().toISOString(),
               summaryText: result.responseText || result.referencedThread.title,
               shortText: result.responseText || result.referencedThread.title,
-              extendedText: result.responseText || result.referencedThread.title,
+              extendedText:
+                result.responseText || result.referencedThread.title,
               leadReason: 'life_thread',
               signalsUsed: ['life_threads'],
               signalsOmitted: [],
@@ -4337,16 +4376,24 @@ export function createAlexaSkill(
               recommendationKind: 'none',
               recommendationText: null,
               subjectKind: 'life_thread',
-              supportedFollowups: ['anything_else', 'shorter', 'say_more', 'memory_control'],
+              supportedFollowups: [
+                'anything_else',
+                'shorter',
+                'say_more',
+                'memory_control',
+              ],
               subjectData: {},
               toneProfile: 'balanced',
               extraDetails: [],
               memoryLines: [],
               usedThreadIds: [result.referencedThread.id],
               usedThreadTitles: [result.referencedThread.title],
-              usedThreadReasons: ['it was the active thread in the last answer'],
+              usedThreadReasons: [
+                'it was the active thread in the last answer',
+              ],
               threadSummaryLines: [
-                result.referencedThread.nextAction || result.referencedThread.summary,
+                result.referencedThread.nextAction ||
+                  result.referencedThread.summary,
               ],
               comparisonKeys: {
                 nextEvent: null,
@@ -4355,11 +4402,17 @@ export function createAlexaSkill(
                 household: null,
                 focus: result.referencedThread.id,
                 thread:
-                  result.referencedThread.nextAction || result.referencedThread.summary,
+                  result.referencedThread.nextAction ||
+                  result.referencedThread.summary,
               },
             } satisfies DailyCompanionContext),
           },
-          supportedFollowups: ['anything_else', 'shorter', 'say_more', 'memory_control'],
+          supportedFollowups: [
+            'anything_else',
+            'shorter',
+            'say_more',
+            'memory_control',
+          ],
         }),
       );
     }
@@ -4480,14 +4533,18 @@ export function createAlexaSkill(
           kind: 'message',
           title: 'Draft follow-up',
           text: result.text,
-          followupSuggestions: ['I can send the full draft to Telegram if you want.'],
+          followupSuggestions: [
+            'I can send the full draft to Telegram if you want.',
+          ],
         },
         threadId: conversationState?.subjectData.threadId,
         threadTitle: conversationState?.subjectData.threadTitle,
         knowledgeSourceIds: conversationState?.subjectData.knowledgeSourceIds,
         knowledgeSourceTitles:
           conversationState?.subjectData.knowledgeSourceTitles,
-        followupSuggestions: ['I can send the full draft to Telegram if you want.'],
+        followupSuggestions: [
+          'I can send the full draft to Telegram if you want.',
+        ],
       };
 
       saveAlexaConversationState(
@@ -4567,7 +4624,8 @@ export function createAlexaSkill(
     const systemsInvolved = new Set<string>();
     const capabilityId = result.capabilityId || '';
     if (result.dailyResponse) systemsInvolved.add('daily_companion');
-    if (result.lifeThreadResult?.referencedThread) systemsInvolved.add('life_threads');
+    if (result.lifeThreadResult?.referencedThread)
+      systemsInvolved.add('life_threads');
     if (capabilityId.startsWith('communication.')) {
       systemsInvolved.add('communication_companion');
     }
@@ -4575,9 +4633,12 @@ export function createAlexaSkill(
       systemsInvolved.add('missions');
       systemsInvolved.add('chief_of_staff');
     }
-    if (capabilityId.startsWith('staff.')) systemsInvolved.add('chief_of_staff');
-    if (capabilityId.startsWith('knowledge.')) systemsInvolved.add('knowledge_library');
-    if (capabilityId.startsWith('threads.')) systemsInvolved.add('life_threads');
+    if (capabilityId.startsWith('staff.'))
+      systemsInvolved.add('chief_of_staff');
+    if (capabilityId.startsWith('knowledge.'))
+      systemsInvolved.add('knowledge_library');
+    if (capabilityId.startsWith('threads.'))
+      systemsInvolved.add('life_threads');
     if (result.trace?.responseSource?.startsWith('research')) {
       systemsInvolved.add('research');
     }
@@ -4619,7 +4680,7 @@ export function createAlexaSkill(
       handoffCreated: false,
       missionCreated: Boolean(
         result.conversationSeed?.subjectData?.missionId ||
-          result.continuationCandidate?.missionId,
+        result.continuationCandidate?.missionId,
       ),
       threadSaved: Boolean(result.lifeThreadResult?.referencedThread),
       librarySaved: capabilityId === 'knowledge.save_source',
@@ -4653,7 +4714,10 @@ export function createAlexaSkill(
     if (result.handoffResult) {
       systemsInvolved.add('cross_channel_handoffs');
     }
-    if (result.bridgeSaveForLaterText || result.lifeThreadResult?.referencedThread) {
+    if (
+      result.bridgeSaveForLaterText ||
+      result.lifeThreadResult?.referencedThread
+    ) {
       systemsInvolved.add('life_threads');
     }
     if (result.reminderTaskId) {
@@ -4671,10 +4735,11 @@ export function createAlexaSkill(
       handoffCreated: Boolean(result.handoffResult),
       missionCreated: Boolean(
         capabilityOutcome?.missionCreated ||
-          result.capabilityResult?.conversationSeed?.subjectData?.missionId,
+        result.capabilityResult?.conversationSeed?.subjectData?.missionId,
       ),
       threadSaved: Boolean(
-        result.bridgeSaveForLaterText || result.lifeThreadResult?.referencedThread,
+        result.bridgeSaveForLaterText ||
+        result.lifeThreadResult?.referencedThread,
       ),
       reminderCreated: Boolean(result.reminderTaskId),
       librarySaved: Boolean(capabilityOutcome?.librarySaved),
@@ -4696,8 +4761,7 @@ export function createAlexaSkill(
     utterance: string,
     conversationState?: AlexaConversationState,
   ) => {
-    const completionAction =
-      action === 'save_that' ? 'save_for_later' : action;
+    const completionAction = action === 'save_that' ? 'save_for_later' : action;
     const pilotRecord = startPilotJourney({
       journeyId: 'cross_channel_handoff',
       systemsInvolved: ['alexa', 'cross_channel_handoffs'],
@@ -4734,7 +4798,9 @@ export function createAlexaSkill(
           blockerClass: 'alexa_companion_completion_failed',
           blockerOwner: 'repo_side',
           summaryText:
-            err instanceof Error ? err.message : 'alexa companion completion failed',
+            err instanceof Error
+              ? err.message
+              : 'alexa companion completion failed',
         });
       }
       throw err;
@@ -4819,7 +4885,9 @@ export function createAlexaSkill(
         linked.principalKey,
         linked.account.accessTokenHash,
         linked.account.groupFolder,
-        buildAlexaStateFromCapabilitySeed(result.capabilityResult.conversationSeed),
+        buildAlexaStateFromCapabilitySeed(
+          result.capabilityResult.conversationSeed,
+        ),
       );
     } else if (result.lifeThreadResult?.referencedThread) {
       saveAlexaConversationState(
@@ -4842,7 +4910,8 @@ export function createAlexaSkill(
                 result.lifeThreadResult.referencedThread.summary,
             ],
             lastAnswerSummary:
-              result.replyText || result.lifeThreadResult.referencedThread.title,
+              result.replyText ||
+              result.lifeThreadResult.referencedThread.title,
           },
           supportedFollowups: [
             'anything_else',
@@ -4865,19 +4934,19 @@ export function createAlexaSkill(
           subjectKind: conversationState?.subjectKind || 'saved_item',
           summaryText: result.replyText || 'action complete',
           guidanceGoal:
-            conversationState?.styleHints.guidanceGoal || 'action_follow_through',
+            conversationState?.styleHints.guidanceGoal ||
+            'action_follow_through',
           subjectData: {
             ...(conversationState?.subjectData || {}),
             fallbackCount: 0,
             lastAnswerSummary: result.replyText || 'action complete',
           },
-          supportedFollowups:
-            conversationState?.supportedFollowups || [
-              'anything_else',
-              'shorter',
-              'say_more',
-              'memory_control',
-            ],
+          supportedFollowups: conversationState?.supportedFollowups || [
+            'anything_else',
+            'shorter',
+            'say_more',
+            'memory_control',
+          ],
           prioritizationLens:
             conversationState?.styleHints.prioritizationLens || 'general',
           responseSource: 'local_companion',
@@ -4972,7 +5041,9 @@ export function createAlexaSkill(
           blockerClass: 'alexa_shared_capability_failed',
           blockerOwner: 'repo_side',
           summaryText:
-            err instanceof Error ? err.message : 'alexa shared capability failed',
+            err instanceof Error
+              ? err.message
+              : 'alexa shared capability failed',
         });
       }
       throw err;
@@ -4993,9 +5064,11 @@ export function createAlexaSkill(
     if (actionBundle) {
       const voiceSummary = buildActionBundleVoiceSummary(actionBundle);
       if (result.dailyResponse) {
-        result.dailyResponse.reply = `${result.dailyResponse.reply} ${voiceSummary.summary}`.trim();
+        result.dailyResponse.reply =
+          `${result.dailyResponse.reply} ${voiceSummary.summary}`.trim();
       } else {
-        result.replyText = `${result.replyText || 'Okay.'} ${voiceSummary.summary}`.trim();
+        result.replyText =
+          `${result.replyText || 'Okay.'} ${voiceSummary.summary}`.trim();
       }
       if (result.conversationSeed) {
         const firstRuleAction = actionBundle.actions.find(
@@ -5024,8 +5097,10 @@ export function createAlexaSkill(
         );
       }
       if (result.continuationCandidate) {
-        result.continuationCandidate.actionBundleId = actionBundle.bundle.bundleId;
-        result.continuationCandidate.actionBundleTitle = actionBundle.bundle.title;
+        result.continuationCandidate.actionBundleId =
+          actionBundle.bundle.bundleId;
+        result.continuationCandidate.actionBundleTitle =
+          actionBundle.bundle.title;
         result.continuationCandidate.actionBundleSummary = actionBundle.actions
           .slice(0, 3)
           .map((action) => action.summary)
@@ -5099,10 +5174,13 @@ export function createAlexaSkill(
         'confirm_companion_completion',
         {
           action: 'send_details',
-          companionContinuationJson: JSON.stringify(result.continuationCandidate),
+          companionContinuationJson: JSON.stringify(
+            result.continuationCandidate,
+          ),
           replyText: result.replyText,
           conversationSummary:
-            result.conversationSeed?.summaryText || conversationState?.summaryText,
+            result.conversationSeed?.summaryText ||
+            conversationState?.summaryText,
         },
       );
     }
@@ -5159,10 +5237,12 @@ export function createAlexaSkill(
           .filter(Boolean)
           .map((value) => value.toLowerCase()),
       ),
-    ).map((lower) =>
-      [utterance, ...(options.candidateTexts || [])].find(
-        (candidate) => normalizeVoicePrompt(candidate).trim().toLowerCase() === lower,
-      ) || utterance,
+    ).map(
+      (lower) =>
+        [utterance, ...(options.candidateTexts || [])].find(
+          (candidate) =>
+            normalizeVoicePrompt(candidate).trim().toLowerCase() === lower,
+        ) || utterance,
     );
     const plan =
       candidateTexts
@@ -5275,8 +5355,7 @@ export function createAlexaSkill(
                   }),
                 buildAlexaCompanionConversationState({
                   flowKey: conversationState?.flowKey || 'memory_control',
-                  subjectKind:
-                    conversationState?.subjectKind || 'memory_fact',
+                  subjectKind: conversationState?.subjectKind || 'memory_fact',
                   summaryText:
                     conversationState?.summaryText ||
                     memoryResult.responseText ||
@@ -5284,8 +5363,9 @@ export function createAlexaSkill(
                   guidanceGoal:
                     conversationState?.styleHints.guidanceGoal ||
                     'open_conversation',
-                  supportedFollowups:
-                    conversationState?.supportedFollowups || ['memory_control'],
+                  supportedFollowups: conversationState?.supportedFollowups || [
+                    'memory_control',
+                  ],
                   responseSource: 'local_companion',
                   subjectData: {
                     ...(conversationState?.subjectData || {}),
@@ -5393,10 +5473,10 @@ export function createAlexaSkill(
           reason: 'open conversation matched shared capability',
         },
         conversationState,
-          {
-            intentFamily: options.family,
-            routeOutcome: 'shared_capability',
-          },
+        {
+          intentFamily: options.family,
+          routeOutcome: 'shared_capability',
+        },
       );
       if (capabilityResponse) {
         return capabilityResponse;
@@ -5443,8 +5523,7 @@ export function createAlexaSkill(
       completePilotJourney({
         eventId: reviewPilotRecord.eventId,
         outcome: 'degraded_usable',
-        blockerClass:
-          plan.blockerClass || 'fallback_unmatched_open_utterance',
+        blockerClass: plan.blockerClass || 'fallback_unmatched_open_utterance',
         blockerOwner: 'repo_side',
         summaryText: plan.normalizedText,
       });
@@ -5557,7 +5636,10 @@ export function createAlexaSkill(
       );
       const priorCompanionContext =
         resolveAlexaCompanionPriorContext(conversationState);
-      const voiceCapture = extractAlexaVoiceIntentCapture(intentName, slotValues);
+      const voiceCapture = extractAlexaVoiceIntentCapture(
+        intentName,
+        slotValues,
+      );
 
       if (slotValueResult.clarificationSpeech) {
         recordHandledRequest(handlerInput.requestEnvelope, {
@@ -5627,7 +5709,8 @@ export function createAlexaSkill(
           },
           conversationState,
           {
-            intentFamily: resolveAlexaVoiceIntentFamily(intentName) || undefined,
+            intentFamily:
+              resolveAlexaVoiceIntentFamily(intentName) || undefined,
             routeOutcome: 'shared_capability',
           },
         );
@@ -5775,7 +5858,8 @@ export function createAlexaSkill(
           buildAlexaCompanionConversationState({
             flowKey: 'family_upcoming',
             subjectKind: 'household',
-            summaryText: 'family plans, household logistics, and what the family needs',
+            summaryText:
+              'family plans, household logistics, and what the family needs',
             guidanceGoal: 'family_guidance',
             subjectData: {
               activePeople: ['Candace', 'Travis'],
@@ -5833,7 +5917,8 @@ export function createAlexaSkill(
           buildAlexaCompanionConversationState({
             flowKey: 'what_am_i_forgetting',
             subjectKind: 'day_brief',
-            summaryText: 'likely loose ends, prep gaps, and what you may be forgetting',
+            summaryText:
+              'likely loose ends, prep gaps, and what you may be forgetting',
             guidanceGoal: 'what_am_i_forgetting',
             prioritizationLens: 'general',
             hasActionItem: true,
@@ -5852,7 +5937,8 @@ export function createAlexaSkill(
           buildAlexaCompanionConversationState({
             flowKey: 'evening_reset',
             subjectKind: 'day_brief',
-            summaryText: 'what to wrap up today, what to remember tonight, and what to tee up for tomorrow',
+            summaryText:
+              'what to wrap up today, what to remember tonight, and what to tee up for tomorrow',
             guidanceGoal: 'evening_reset',
             prioritizationLens: 'evening',
             hasActionItem: true,
@@ -6018,8 +6104,7 @@ export function createAlexaSkill(
                       : conversationState?.subjectData.personName,
                   outcomeReviewPromptJson: JSON.stringify(refreshedPrompt),
                   outcomeReviewFocusOutcomeIds: presentation.focusOutcomeIds,
-                  outcomeReviewPrimaryOutcomeId:
-                    presentation.primaryOutcomeId,
+                  outcomeReviewPrimaryOutcomeId: presentation.primaryOutcomeId,
                   outcomeReviewSummary: presentation.summaryText,
                 },
                 responseSource: 'local_companion',
@@ -6074,14 +6159,17 @@ export function createAlexaSkill(
           (earlyResolution.action === 'delegation_control' ||
             earlyResolution.action === 'show_rules');
         if (!hasDelegationFollowup) {
-          const localResponse = await buildDailyCompanionResponse(followupText, {
-            channel: 'alexa',
-            groupFolder: linked.account.groupFolder,
-            tasks: getAllTasks().filter(
-              (task) => task.group_folder === linked.account.groupFolder,
-            ),
-            priorContext: priorCompanionContext || null,
-          });
+          const localResponse = await buildDailyCompanionResponse(
+            followupText,
+            {
+              channel: 'alexa',
+              groupFolder: linked.account.groupFolder,
+              tasks: getAllTasks().filter(
+                (task) => task.group_folder === linked.account.groupFolder,
+              ),
+              priorContext: priorCompanionContext || null,
+            },
+          );
           if (localResponse) {
             return respondWithLocalCompanion(
               handlerInput,
@@ -6091,9 +6179,10 @@ export function createAlexaSkill(
                   flowKey: 'daily_companion_followup',
                   subjectKind: localResponse.context.subjectKind,
                   summaryText: localResponse.context.summaryText,
-                  guidanceGoal: localResponse.context.subjectKind === 'person'
-                    ? 'shared_plans'
-                    : 'open_conversation',
+                  guidanceGoal:
+                    localResponse.context.subjectKind === 'person'
+                      ? 'shared_plans'
+                      : 'open_conversation',
                   subjectData: {
                     ...localResponse.context.subjectData,
                     threadId: localResponse.context.usedThreadIds?.[0],
@@ -6106,7 +6195,9 @@ export function createAlexaSkill(
                     localResponse.context.subjectKind === 'household'
                       ? 'family'
                       : 'general',
-                  hasActionItem: Boolean(localResponse.context.recommendationText),
+                  hasActionItem: Boolean(
+                    localResponse.context.recommendationText,
+                  ),
                   responseSource: 'local_companion',
                 }),
               localResponse,
@@ -6254,7 +6345,10 @@ export function createAlexaSkill(
               .reprompt(DEFAULT_ALEXA_REPROMPT)
               .getResponse();
           }
-          if (focusedRuleId && /^why did that fire\b/i.test(followupText.trim())) {
+          if (
+            focusedRuleId &&
+            /^why did that fire\b/i.test(followupText.trim())
+          ) {
             const rule = getDelegationRule(focusedRuleId);
             const explanation = rule
               ? `I used ${rule.title} because it matched this kind of flow. It is set to ${rule.approvalMode.replace(/_/g, ' ')}.`
@@ -6271,7 +6365,9 @@ export function createAlexaSkill(
           }
 
           const currentBundle = conversationState?.subjectData.actionBundleId
-            ? getActionBundleSnapshot(conversationState.subjectData.actionBundleId)
+            ? getActionBundleSnapshot(
+                conversationState.subjectData.actionBundleId,
+              )
             : undefined;
           const previewResult = buildDelegationRulePreview({
             utterance: followupText,
@@ -6323,7 +6419,9 @@ export function createAlexaSkill(
                 supportedFollowups: ['delegation_control', 'show_rules'],
                 subjectData: {
                   ...(conversationState?.subjectData || {}),
-                  delegationRulePreviewJson: JSON.stringify(previewResult.preview),
+                  delegationRulePreviewJson: JSON.stringify(
+                    previewResult.preview,
+                  ),
                 },
               }),
             );
@@ -6420,8 +6518,7 @@ export function createAlexaSkill(
                   conversationState?.supportedFollowups ||
                   baseFollowupsForSubject('general'),
                 prioritizationLens:
-                  conversationState?.styleHints.prioritizationLens ||
-                  'general',
+                  conversationState?.styleHints.prioritizationLens || 'general',
                 hasActionItem: conversationState?.styleHints.hasActionItem,
                 hasRiskSignal: conversationState?.styleHints.hasRiskSignal,
                 reminderCandidate:
@@ -6436,8 +6533,7 @@ export function createAlexaSkill(
                     conversationState?.summaryText ||
                     'recent assistant context',
                   guidanceGoal:
-                    conversationState?.styleHints.guidanceGoal ||
-                    'daily_brief',
+                    conversationState?.styleHints.guidanceGoal || 'daily_brief',
                   subjectData: conversationState?.subjectData || {},
                   supportedFollowups:
                     conversationState?.supportedFollowups ||
@@ -6451,57 +6547,58 @@ export function createAlexaSkill(
                     conversationState?.styleHints.reminderCandidate,
                   responseStyle: 'expanded',
                 })
-            : resolution.action === 'switch_person'
-              ? buildAlexaCompanionConversationState({
-                  flowKey: 'person_followup',
-                  subjectKind: 'person',
-                  summaryText: `follow-up about ${personName || 'that person'}`,
-                  guidanceGoal:
-                    conversationState?.subjectKind === 'household' ||
-                    conversationState?.styleHints.guidanceGoal ===
-                      'family_guidance'
-                      ? 'family_guidance'
-                      : 'shared_plans',
-                  subjectData: {
-                    personName,
-                    activePeople: personName ? [personName] : undefined,
-                  },
-                  prioritizationLens: 'family',
-                  hasActionItem: true,
-                  hasRiskSignal: conversationState?.styleHints.hasRiskSignal,
-                  reminderCandidate:
-                    conversationState?.styleHints.reminderCandidate,
-                })
-              : buildAlexaCompanionConversationState({
-                  flowKey: conversationState?.flowKey || 'followup',
-                  subjectKind: conversationState?.subjectKind || 'general',
-                  summaryText:
-                    conversationState?.summaryText || 'recent assistant context',
-                  guidanceGoal:
-                    resolution.action === 'action_guidance'
-                      ? 'action_follow_through'
-                      : resolution.action === 'risk_check'
-                        ? 'risk_check'
-                        : conversationState?.styleHints.guidanceGoal ||
-                          'daily_brief',
-                  subjectData: conversationState?.subjectData || {},
-                  supportedFollowups:
-                    conversationState?.supportedFollowups ||
-                    baseFollowupsForSubject('general'),
-                  prioritizationLens:
-                    conversationState?.styleHints.prioritizationLens ||
-                    'general',
-                  hasActionItem:
-                    resolution.action === 'action_guidance'
-                      ? true
-                      : conversationState?.styleHints.hasActionItem,
-                  hasRiskSignal:
-                    resolution.action === 'risk_check'
-                      ? true
-                      : conversationState?.styleHints.hasRiskSignal,
-                  reminderCandidate:
-                    conversationState?.styleHints.reminderCandidate,
-                });
+              : resolution.action === 'switch_person'
+                ? buildAlexaCompanionConversationState({
+                    flowKey: 'person_followup',
+                    subjectKind: 'person',
+                    summaryText: `follow-up about ${personName || 'that person'}`,
+                    guidanceGoal:
+                      conversationState?.subjectKind === 'household' ||
+                      conversationState?.styleHints.guidanceGoal ===
+                        'family_guidance'
+                        ? 'family_guidance'
+                        : 'shared_plans',
+                    subjectData: {
+                      personName,
+                      activePeople: personName ? [personName] : undefined,
+                    },
+                    prioritizationLens: 'family',
+                    hasActionItem: true,
+                    hasRiskSignal: conversationState?.styleHints.hasRiskSignal,
+                    reminderCandidate:
+                      conversationState?.styleHints.reminderCandidate,
+                  })
+                : buildAlexaCompanionConversationState({
+                    flowKey: conversationState?.flowKey || 'followup',
+                    subjectKind: conversationState?.subjectKind || 'general',
+                    summaryText:
+                      conversationState?.summaryText ||
+                      'recent assistant context',
+                    guidanceGoal:
+                      resolution.action === 'action_guidance'
+                        ? 'action_follow_through'
+                        : resolution.action === 'risk_check'
+                          ? 'risk_check'
+                          : conversationState?.styleHints.guidanceGoal ||
+                            'daily_brief',
+                    subjectData: conversationState?.subjectData || {},
+                    supportedFollowups:
+                      conversationState?.supportedFollowups ||
+                      baseFollowupsForSubject('general'),
+                    prioritizationLens:
+                      conversationState?.styleHints.prioritizationLens ||
+                      'general',
+                    hasActionItem:
+                      resolution.action === 'action_guidance'
+                        ? true
+                        : conversationState?.styleHints.hasActionItem,
+                    hasRiskSignal:
+                      resolution.action === 'risk_check'
+                        ? true
+                        : conversationState?.styleHints.hasRiskSignal,
+                    reminderCandidate:
+                      conversationState?.styleHints.reminderCandidate,
+                  });
 
         return runLinkedAlexaTurn(
           handlerInput,
@@ -6871,9 +6968,8 @@ export function createAlexaSkill(
         linked.account.accessTokenHash,
       );
       const now = getRequestTimestampDate(handlerInput.requestEnvelope);
-      const pendingConversationCreate = parseAlexaPendingCalendarCreate(
-        conversationState,
-      );
+      const pendingConversationCreate =
+        parseAlexaPendingCalendarCreate(conversationState);
       if (
         pendingConversationCreate?.step === 'confirm_create' &&
         pendingConversationCreate.selectedCalendarId
@@ -7003,7 +7099,9 @@ export function createAlexaSkill(
                     flowKey: 'companion_handoff',
                     subjectKind: 'saved_item',
                     summaryText:
-                      payload.conversationSummary || payload.replyText || 'recent context',
+                      payload.conversationSummary ||
+                      payload.replyText ||
+                      'recent context',
                     guidanceGoal: 'action_follow_through',
                   })),
                 subjectData: {
@@ -7106,17 +7204,20 @@ export function createAlexaSkill(
         linked.principalKey,
         linked.account.accessTokenHash,
       );
-      const pendingConversationCreate = parseAlexaPendingCalendarCreate(
-        conversationState,
-      );
-      const pendingConversationAction = parseAlexaPendingCalendarEventAction(
-        conversationState,
-      );
+      const pendingConversationCreate =
+        parseAlexaPendingCalendarCreate(conversationState);
+      const pendingConversationAction =
+        parseAlexaPendingCalendarEventAction(conversationState);
       const pendingReminderBody =
         conversationState?.subjectData.pendingReminderBody?.trim() || undefined;
       clearAlexaPendingSession(linked.principalKey);
 
-      if (!pending && !pendingConversationCreate && !pendingConversationAction && !pendingReminderBody) {
+      if (
+        !pending &&
+        !pendingConversationCreate &&
+        !pendingConversationAction &&
+        !pendingReminderBody
+      ) {
         recordHandledRequest(handlerInput.requestEnvelope, {
           responseSource: 'fallback',
           linked: true,
@@ -7125,7 +7226,11 @@ export function createAlexaSkill(
         return handlerInput.responseBuilder.speak('Okay.').getResponse();
       }
 
-      if (pendingConversationCreate || pendingConversationAction || pendingReminderBody) {
+      if (
+        pendingConversationCreate ||
+        pendingConversationAction ||
+        pendingReminderBody
+      ) {
         saveLinkedConversationState(
           linked,
           buildAlexaCompanionConversationState({
@@ -7138,10 +7243,12 @@ export function createAlexaSkill(
               conversationState?.summaryText ||
               'Okay.',
             guidanceGoal:
-              conversationState?.styleHints.guidanceGoal || 'action_follow_through',
+              conversationState?.styleHints.guidanceGoal ||
+              'action_follow_through',
             subjectData: clearAlexaAssistantPendingState(conversationState),
-            supportedFollowups:
-              conversationState?.supportedFollowups || ['anything_else'],
+            supportedFollowups: conversationState?.supportedFollowups || [
+              'anything_else',
+            ],
             prioritizationLens:
               conversationState?.styleHints.prioritizationLens || 'general',
             responseSource:
@@ -7181,14 +7288,14 @@ export function createAlexaSkill(
             ? `Okay, I will not save that for later.`
             : pending.pendingKind === 'confirm_companion_completion'
               ? `Okay, I will not send that to Telegram.`
-            : pending.pendingKind === 'confirm_profile_fact'
-              ? (() => {
-                  if (payload.profileFactId) {
-                    rejectProposedProfileFact(payload.profileFactId);
-                  }
-                  return `Okay, I will not keep that.`;
-                })()
-            : `Okay, never mind.`;
+              : pending.pendingKind === 'confirm_profile_fact'
+                ? (() => {
+                    if (payload.profileFactId) {
+                      rejectProposedProfileFact(payload.profileFactId);
+                    }
+                    return `Okay, I will not keep that.`;
+                  })()
+                : `Okay, never mind.`;
 
       recordHandledRequest(handlerInput.requestEnvelope, {
         responseSource: 'barrier',

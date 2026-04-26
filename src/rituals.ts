@@ -139,7 +139,9 @@ function defaultScheduleForRitual(ritualType: RitualType): {
   }
 }
 
-function defaultTimingForRitual(ritualType: RitualType): RitualProfile['timing'] {
+function defaultTimingForRitual(
+  ritualType: RitualType,
+): RitualProfile['timing'] {
   switch (ritualType) {
     case 'morning_brief':
       return { localTime: '07:15', weekdaysOnly: true, anchor: 'morning' };
@@ -236,9 +238,13 @@ export function listResolvedRitualProfiles(
   now = new Date(),
 ): RitualProfile[] {
   const stored = listRitualProfilesForGroup(groupFolder);
-  const byType = new Map(stored.map((profile) => [profile.ritualType, profile]));
+  const byType = new Map(
+    stored.map((profile) => [profile.ritualType, profile]),
+  );
   return DEFAULT_RITUAL_ORDER.map(
-    (ritualType) => byType.get(ritualType) || buildDefaultRitualProfile(groupFolder, ritualType, now),
+    (ritualType) =>
+      byType.get(ritualType) ||
+      buildDefaultRitualProfile(groupFolder, ritualType, now),
   );
 }
 
@@ -253,12 +259,17 @@ export function getResolvedRitualProfile(
   );
 }
 
-function computeNextRunFromCron(value: string, now = new Date()): string | null {
+function computeNextRunFromCron(
+  value: string,
+  now = new Date(),
+): string | null {
   try {
     return CronExpressionParser.parse(value, {
       currentDate: now,
       tz: TIMEZONE,
-    }).next().toISOString();
+    })
+      .next()
+      .toISOString();
   } catch {
     return null;
   }
@@ -274,7 +285,9 @@ function syncScheduledTaskForProfile(
   if (!schedule || !prompt) {
     return profile;
   }
-  const taskId = profile.linkedTaskId || ritualTaskId(profile.groupFolder, profile.ritualType);
+  const taskId =
+    profile.linkedTaskId ||
+    ritualTaskId(profile.groupFolder, profile.ritualType);
   const nextRun = computeNextRunFromCron(schedule.scheduleValue, now);
   const existing = getTaskById(taskId);
   if (existing) {
@@ -283,7 +296,10 @@ function syncScheduledTaskForProfile(
       schedule_type: schedule.scheduleType,
       schedule_value: schedule.scheduleValue,
       next_run: nextRun,
-      status: profile.enabled && profile.triggerStyle === 'scheduled' ? 'active' : 'paused',
+      status:
+        profile.enabled && profile.triggerStyle === 'scheduled'
+          ? 'active'
+          : 'paused',
     });
   } else {
     createTask({
@@ -296,7 +312,10 @@ function syncScheduledTaskForProfile(
       schedule_value: schedule.scheduleValue,
       context_mode: 'group',
       next_run: nextRun,
-      status: profile.enabled && profile.triggerStyle === 'scheduled' ? 'active' : 'paused',
+      status:
+        profile.enabled && profile.triggerStyle === 'scheduled'
+          ? 'active'
+          : 'paused',
       created_at: now.toISOString(),
     });
   }
@@ -360,7 +379,9 @@ function buildStatusReply(
         ? [
             `${ritualLabel(first.ritualType)} is ${first.triggerStyle.replace('_', ' ')}.`,
           ]
-        : ['Morning and evening rituals are still on request unless you opt in.'],
+        : [
+            'Morning and evening rituals are still on request unless you opt in.',
+          ],
       maxDetails: 1,
     });
   }
@@ -377,7 +398,9 @@ function buildStatusReply(
             : '';
         return `- ${ritualLabel(profile.ritualType)}: ${profile.triggerStyle.replace('_', ' ')}${nextDue}`;
       })
-    : ['- None active yet. Morning and evening rituals are still on request unless you opt in.'];
+    : [
+        '- None active yet. Morning and evening rituals are still on request unless you opt in.',
+      ];
   return ['Rituals right now:', ...lines].join('\n');
 }
 
@@ -541,7 +564,11 @@ export function handleRitualCommand(
   if (/^reset my routine preferences[.!?]*$/i.test(raw)) {
     for (const profile of listResolvedRitualProfiles(input.groupFolder, now)) {
       const reset = {
-        ...buildDefaultRitualProfile(input.groupFolder, profile.ritualType, now),
+        ...buildDefaultRitualProfile(
+          input.groupFolder,
+          profile.ritualType,
+          now,
+        ),
         updatedAt: now.toISOString(),
       };
       upsertRitualProfile(reset);
@@ -558,16 +585,22 @@ export function handleRitualCommand(
     /^(?:enable|turn on|start) (?:the )?(morning brief|midday re-grounding|midday reground|evening reset|follow-through prompts|household check-ins|leave prompt)\b/i,
   );
   if (enableMatch) {
-    const ritualType = ({
-      'morning brief': 'morning_brief',
-      'midday re-grounding': 'midday_reground',
-      'midday reground': 'midday_reground',
-      'evening reset': 'evening_reset',
-      'follow-through prompts': 'thread_followthrough',
-      'household check-ins': 'household_checkin',
-      'leave prompt': 'transition_prompt',
-    } as Record<string, RitualType>)[enableMatch[1]!.toLowerCase()];
-    const existing = getResolvedRitualProfile(input.groupFolder, ritualType, now);
+    const ritualType = (
+      {
+        'morning brief': 'morning_brief',
+        'midday re-grounding': 'midday_reground',
+        'midday reground': 'midday_reground',
+        'evening reset': 'evening_reset',
+        'follow-through prompts': 'thread_followthrough',
+        'household check-ins': 'household_checkin',
+        'leave prompt': 'transition_prompt',
+      } as Record<string, RitualType>
+    )[enableMatch[1]!.toLowerCase()];
+    const existing = getResolvedRitualProfile(
+      input.groupFolder,
+      ritualType,
+      now,
+    );
     let updated: RitualProfile = {
       ...existing,
       enabled: true,
@@ -596,9 +629,7 @@ export function handleRitualCommand(
     };
   }
 
-  if (
-    /^(stop doing that|don'?t remind me like that)[.!?]*$/i.test(raw)
-  ) {
+  if (/^(stop doing that|don'?t remind me like that)[.!?]*$/i.test(raw)) {
     const ritualType = ritualTypeFromPriorMode(input.priorCompanionMode);
     if (!ritualType) {
       return {
@@ -607,7 +638,11 @@ export function handleRitualCommand(
           'Tell me which ritual or reminder style you want me to quiet down, and I will narrow it.',
       };
     }
-    const existing = getResolvedRitualProfile(input.groupFolder, ritualType, now);
+    const existing = getResolvedRitualProfile(
+      input.groupFolder,
+      ritualType,
+      now,
+    );
     const updated = {
       ...existing,
       enabled: false,

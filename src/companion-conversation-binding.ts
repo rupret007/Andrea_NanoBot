@@ -144,7 +144,9 @@ export function listCompanionConversationChatJids(
   const groupFolder = bluebubbles?.groupFolder?.trim() || 'main';
   if (
     bluebubbles?.enabled === true &&
-    Object.values(registeredGroups).some((group) => group.folder === groupFolder)
+    Object.values(registeredGroups).some(
+      (group) => group.folder === groupFolder,
+    )
   ) {
     for (const chatJid of listScopedBlueBubblesChatJids(bluebubbles)) {
       jids.add(chatJid);

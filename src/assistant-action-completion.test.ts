@@ -46,8 +46,7 @@ function seedDelegationRule(
     channelApplicabilityJson:
       overrides.channelApplicabilityJson ||
       JSON.stringify(['telegram', 'alexa', 'bluebubbles']),
-    safetyLevel:
-      overrides.safetyLevel || 'safe_to_auto_after_delegation',
+    safetyLevel: overrides.safetyLevel || 'safe_to_auto_after_delegation',
   };
   upsertDelegationRule(record);
   return record;
@@ -186,7 +185,9 @@ describe('assistant action completion', () => {
       {
         resolveTelegramMainChat: () => ({ chatJid: 'tg:main' }),
         resolveBlueBubblesCompanionChat: () => ({ chatJid: 'bb:chat-1' }),
-        sendTelegramMessage: vi.fn(async () => ({ platformMessageId: 'tg-unused' })),
+        sendTelegramMessage: vi.fn(async () => ({
+          platformMessageId: 'tg-unused',
+        })),
         sendBlueBubblesMessage,
       },
     );
@@ -223,9 +224,9 @@ describe('assistant action completion', () => {
 
     expect(result.handled).toBe(true);
     expect(result.replyText).toContain('remind you');
-    expect(getAllTasks().some((task) => task.prompt.includes('band thing'))).toBe(
-      true,
-    );
+    expect(
+      getAllTasks().some((task) => task.prompt.includes('band thing')),
+    ).toBe(true);
   });
 
   it('routes save-for-later follow-ups through the shared bridge-backed path', async () => {
@@ -465,13 +466,17 @@ describe('assistant action completion', () => {
       },
       {
         resolveTelegramMainChat: () => ({ chatJid: 'tg:main' }),
-        sendTelegramMessage: vi.fn(async () => ({ platformMessageId: 'tg-msg-1' })),
+        sendTelegramMessage: vi.fn(async () => ({
+          platformMessageId: 'tg-msg-1',
+        })),
       },
     );
 
     expect(result.handled).toBe(true);
     expect(result.replyText).toContain('Andrea:');
-    expect(getAllTasks().some((task) => task.chat_jid === 'tg:main')).toBe(true);
+    expect(getAllTasks().some((task) => task.chat_jid === 'tg:main')).toBe(
+      true,
+    );
   });
 
   it('can hand the action bundle to Telegram from Alexa', async () => {
@@ -488,7 +493,8 @@ describe('assistant action completion', () => {
           text: 'Kindle is the safer battery pick for long travel days.',
           followupSuggestions: ['Save it if useful.'],
         },
-        completionText: 'Kindle is the safer battery pick for long travel days.',
+        completionText:
+          'Kindle is the safer battery pick for long travel days.',
       },
       summaryText: 'Kindle is the safer battery pick.',
       utterance: 'compare kindle versus kobo',
@@ -515,7 +521,8 @@ describe('assistant action completion', () => {
               text: 'Kindle is the safer battery pick for long travel days.',
               followupSuggestions: ['Save it if useful.'],
             },
-            completionText: 'Kindle is the safer battery pick for long travel days.',
+            completionText:
+              'Kindle is the safer battery pick for long travel days.',
           }),
         },
       },

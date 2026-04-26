@@ -84,59 +84,69 @@ export interface AndreaPlatformConfigSnapshotInput {
   snapshot: Record<string, unknown>;
 }
 
-export const ANDREA_MEMORY_PROFILE_PACK: readonly AndreaMemoryTierDescriptor[] = [
-  {
-    id: 'working',
-    label: 'Working memory',
-    includes: [
-      'active session context',
-      'current priorities',
-      'current open loops',
-      'current mode and recent continuity',
-    ],
-    storageAuthority: 'chat/session state plus open-loop context in Andrea_NanoBot',
-    freshnessRule: 'refresh every live turn; never treated as permanent memory on its own',
-  },
-  {
-    id: 'semantic',
-    label: 'Semantic memory',
-    includes: [
-      'people',
-      'projects',
-      'domains and context',
-      'life threads',
-      'knowledge library entries',
-      'glossary and canonical terms',
-    ],
-    storageAuthority: 'profile subjects/facts, life threads, and knowledge library records',
-    freshnessRule: 'updated on accepted facts, saved sources, and life-thread changes',
-  },
-  {
-    id: 'procedural',
-    label: 'Procedural memory',
-    includes: [
-      'delegation rules',
-      'playbooks',
-      'rituals',
-      'preferences',
-      'decision patterns',
-      'outcome-review learnings',
-    ],
-    storageAuthority: 'ritual profiles, operating preferences, and review-oriented rules',
-    freshnessRule: 'changes only when Andrea behavior, preferences, or review learnings actually change',
-  },
-] as const;
+export const ANDREA_MEMORY_PROFILE_PACK: readonly AndreaMemoryTierDescriptor[] =
+  [
+    {
+      id: 'working',
+      label: 'Working memory',
+      includes: [
+        'active session context',
+        'current priorities',
+        'current open loops',
+        'current mode and recent continuity',
+      ],
+      storageAuthority:
+        'chat/session state plus open-loop context in Andrea_NanoBot',
+      freshnessRule:
+        'refresh every live turn; never treated as permanent memory on its own',
+    },
+    {
+      id: 'semantic',
+      label: 'Semantic memory',
+      includes: [
+        'people',
+        'projects',
+        'domains and context',
+        'life threads',
+        'knowledge library entries',
+        'glossary and canonical terms',
+      ],
+      storageAuthority:
+        'profile subjects/facts, life threads, and knowledge library records',
+      freshnessRule:
+        'updated on accepted facts, saved sources, and life-thread changes',
+    },
+    {
+      id: 'procedural',
+      label: 'Procedural memory',
+      includes: [
+        'delegation rules',
+        'playbooks',
+        'rituals',
+        'preferences',
+        'decision patterns',
+        'outcome-review learnings',
+      ],
+      storageAuthority:
+        'ritual profiles, operating preferences, and review-oriented rules',
+      freshnessRule:
+        'changes only when Andrea behavior, preferences, or review learnings actually change',
+    },
+  ] as const;
 
 export const ANDREA_TASK_STATE_MODEL: readonly AndreaTaskStateDescriptor[] = [
   {
     state: 'active',
-    mapsTo: 'current focus, running follow-through, or immediately actionable open loop',
-    summary: 'Keep this in the day picture and surface it proactively when it matters.',
+    mapsTo:
+      'current focus, running follow-through, or immediately actionable open loop',
+    summary:
+      'Keep this in the day picture and surface it proactively when it matters.',
   },
   {
     state: 'waiting',
     mapsTo: 'pending reply, blocked follow-up, or deferred dependency',
-    summary: 'Track it, but surface it as waiting instead of pretending it is ready to execute.',
+    summary:
+      'Track it, but surface it as waiting instead of pretending it is ready to execute.',
   },
   {
     state: 'someday',
@@ -146,7 +156,8 @@ export const ANDREA_TASK_STATE_MODEL: readonly AndreaTaskStateDescriptor[] = [
   {
     state: 'done',
     mapsTo: 'closed loop, archived decision, or completed outcome',
-    summary: 'Move it out of the active picture and keep the learnings in outcome review.',
+    summary:
+      'Move it out of the active picture and keep the learnings in outcome review.',
   },
 ] as const;
 
@@ -160,13 +171,19 @@ export const ANDREA_CAPABILITY_PACKAGES: readonly AndreaCapabilityPackage[] = [
   {
     id: 'meeting_prep',
     label: 'Meeting prep',
-    examplePrompts: ['prep me for my next meeting', 'what matters before my next meeting'],
+    examplePrompts: [
+      'prep me for my next meeting',
+      'what matters before my next meeting',
+    ],
     supportingCapabilities: ['staff.prepare'],
   },
   {
     id: 'repo_standup',
     label: 'Repo standup and work cockpit',
-    examplePrompts: ["what's on deck for my repos", "show me what's running right now"],
+    examplePrompts: [
+      "what's on deck for my repos",
+      "show me what's running right now",
+    ],
     supportingCapabilities: ['work.current_summary'],
   },
   {
@@ -188,7 +205,10 @@ export const ANDREA_CAPABILITY_PACKAGES: readonly AndreaCapabilityPackage[] = [
   {
     id: 'life_threads',
     label: 'Life threads and open loops',
-    examplePrompts: ['what life threads are open', 'what threads do I have open'],
+    examplePrompts: [
+      'what life threads are open',
+      'what threads do I have open',
+    ],
     supportingCapabilities: ['threads.list_open', 'threads.explicit_lookup'],
   },
   {
@@ -200,114 +220,128 @@ export const ANDREA_CAPABILITY_PACKAGES: readonly AndreaCapabilityPackage[] = [
   {
     id: 'watchlist_research',
     label: 'Watchlists and research',
-    examplePrompts: ['what changed today', 'what should I know before deciding'],
-    supportingCapabilities: ['research.topic', 'research.compare', 'research.recommend'],
+    examplePrompts: [
+      'what changed today',
+      'what should I know before deciding',
+    ],
+    supportingCapabilities: [
+      'research.topic',
+      'research.compare',
+      'research.recommend',
+    ],
   },
 ] as const;
 
-export const ANDREA_INTEGRATION_CAPABILITY_REGISTRY: readonly AndreaIntegrationCapability[] = [
-  {
-    id: 'google_calendar',
-    label: 'Google Calendar',
-    status: 'live_proven',
-    journeys: [
-      'calendar reads and writes',
-      'meeting prep',
-      'before-next-meeting guidance',
-      'schedule follow-through',
-    ],
-    requiredAuth: ['Google Calendar OAuth'],
-    degradedWording:
-      'Calendar help should say exactly what is blocked and fall back to planning guidance instead of pretending a write succeeded.',
-    proofCriteria:
-      'One read plus one create/move/cancel chain on this host with truthful cleanup.',
-  },
-  {
-    id: 'messages_threads',
-    label: 'Messages / thread context',
-    status: 'live_proven',
-    journeys: [
-      'reply help',
-      'message summary',
-      'open communication loops',
-      'same-thread send or defer decisions',
-    ],
-    requiredAuth: ['BlueBubbles bridge for Messages'],
-    degradedWording:
-      'When the bridge is unhealthy, Andrea should keep reply help bounded and point people back to Telegram as the dependable lane.',
-    proofCriteria:
-      'One thread summary plus one draft/defer follow-up chain with same-thread continuity.',
-  },
-  {
-    id: 'github_repo_context',
-    label: 'GitHub and repo context',
-    status: 'degraded_but_usable',
-    journeys: [
-      'repo standup',
-      'project status',
-      'what changed in active repos',
-      'coding/work readiness',
-    ],
-    requiredAuth: ['GitHub connector or operator-visible repo context'],
-    degradedWording:
-      'Repo standups should fall back to current work, active jobs, and explicit GitHub state instead of claiming a richer repo view than Andrea really has.',
-    proofCriteria:
-      'Operator-visible repo or work snapshot with grounded status and no fabricated repository detail.',
-  },
-  {
-    id: 'gmail_inbox_triage',
-    label: 'Inbox triage',
-    status: 'near_live_only',
-    journeys: [
-      'inbox triage',
-      'owed replies',
-      'drafting from connected mail context',
-    ],
-    requiredAuth: ['Gmail connector'],
-    degradedWording:
-      'If Gmail is not connected, Andrea should still offer reply strategy from pasted context, but clearly say inbox triage is not live on this host yet.',
-    proofCriteria:
-      'Connected inbox search, thread brief, and one grounded draft recommendation.',
-  },
-  {
-    id: 'google_drive_context',
-    label: 'Google Drive document context',
-    status: 'near_live_only',
-    journeys: [
-      'document-backed meeting prep',
-      'Drive context in project briefs',
-      'saved material follow-through',
-    ],
-    requiredAuth: ['Google Drive connector'],
-    degradedWording:
-      'When Drive is not connected, Andrea should ask for pasted material or fall back to saved local knowledge instead of implying document access.',
-    proofCriteria:
-      'One meeting or project brief that cites connected Drive material truthfully.',
-  },
-  {
-    id: 'live_research_watchlist',
-    label: 'Live research and watchlists',
-    status: 'externally_blocked',
-    journeys: [
-      'what changed',
-      'watchlists',
-      'market scans',
-      'recommend/compare with live facts',
-    ],
-    requiredAuth: ['provider-backed research lane'],
-    degradedWording:
-      'Provider-backed research should say when the lane is quota-blocked and keep the answer grounded in saved context instead of bluffing.',
-    proofCriteria:
-      'One live lookup or watchlist brief with recent sources and explicit citations.',
-  },
-] as const;
+export const ANDREA_INTEGRATION_CAPABILITY_REGISTRY: readonly AndreaIntegrationCapability[] =
+  [
+    {
+      id: 'google_calendar',
+      label: 'Google Calendar',
+      status: 'live_proven',
+      journeys: [
+        'calendar reads and writes',
+        'meeting prep',
+        'before-next-meeting guidance',
+        'schedule follow-through',
+      ],
+      requiredAuth: ['Google Calendar OAuth'],
+      degradedWording:
+        'Calendar help should say exactly what is blocked and fall back to planning guidance instead of pretending a write succeeded.',
+      proofCriteria:
+        'One read plus one create/move/cancel chain on this host with truthful cleanup.',
+    },
+    {
+      id: 'messages_threads',
+      label: 'Messages / thread context',
+      status: 'live_proven',
+      journeys: [
+        'reply help',
+        'message summary',
+        'open communication loops',
+        'same-thread send or defer decisions',
+      ],
+      requiredAuth: ['BlueBubbles bridge for Messages'],
+      degradedWording:
+        'When the bridge is unhealthy, Andrea should keep reply help bounded and point people back to Telegram as the dependable lane.',
+      proofCriteria:
+        'One thread summary plus one draft/defer follow-up chain with same-thread continuity.',
+    },
+    {
+      id: 'github_repo_context',
+      label: 'GitHub and repo context',
+      status: 'degraded_but_usable',
+      journeys: [
+        'repo standup',
+        'project status',
+        'what changed in active repos',
+        'coding/work readiness',
+      ],
+      requiredAuth: ['GitHub connector or operator-visible repo context'],
+      degradedWording:
+        'Repo standups should fall back to current work, active jobs, and explicit GitHub state instead of claiming a richer repo view than Andrea really has.',
+      proofCriteria:
+        'Operator-visible repo or work snapshot with grounded status and no fabricated repository detail.',
+    },
+    {
+      id: 'gmail_inbox_triage',
+      label: 'Inbox triage',
+      status: 'near_live_only',
+      journeys: [
+        'inbox triage',
+        'owed replies',
+        'drafting from connected mail context',
+      ],
+      requiredAuth: ['Gmail connector'],
+      degradedWording:
+        'If Gmail is not connected, Andrea should still offer reply strategy from pasted context, but clearly say inbox triage is not live on this host yet.',
+      proofCriteria:
+        'Connected inbox search, thread brief, and one grounded draft recommendation.',
+    },
+    {
+      id: 'google_drive_context',
+      label: 'Google Drive document context',
+      status: 'near_live_only',
+      journeys: [
+        'document-backed meeting prep',
+        'Drive context in project briefs',
+        'saved material follow-through',
+      ],
+      requiredAuth: ['Google Drive connector'],
+      degradedWording:
+        'When Drive is not connected, Andrea should ask for pasted material or fall back to saved local knowledge instead of implying document access.',
+      proofCriteria:
+        'One meeting or project brief that cites connected Drive material truthfully.',
+    },
+    {
+      id: 'live_research_watchlist',
+      label: 'Live research and watchlists',
+      status: 'externally_blocked',
+      journeys: [
+        'what changed',
+        'watchlists',
+        'market scans',
+        'recommend/compare with live facts',
+      ],
+      requiredAuth: ['provider-backed research lane'],
+      degradedWording:
+        'Provider-backed research should say when the lane is quota-blocked and keep the answer grounded in saved context instead of bluffing.',
+      proofCriteria:
+        'One live lookup or watchlist brief with recent sources and explicit citations.',
+    },
+  ] as const;
 
 export const ANDREA_RITUAL_MANIFEST: readonly AndreaRitualManifestEntry[] = [
   {
     id: 'morning_brief',
     label: 'Morning brief',
     trigger: 'scheduled weekdays at 07:15 local',
-    inputs: ['calendar', 'reminders', 'life_threads', 'current_work', 'profile_facts'],
+    inputs: [
+      'calendar',
+      'reminders',
+      'life_threads',
+      'current_work',
+      'profile_facts',
+    ],
     outputShape: 'day brief with priorities and blockers',
     proofTarget: 'daily guidance freshness',
     blockerState: 'degraded if calendar or reminder signals are missing',
@@ -334,10 +368,17 @@ export const ANDREA_RITUAL_MANIFEST: readonly AndreaRitualManifestEntry[] = [
     id: 'open_guidance',
     label: 'Open guidance',
     trigger: 'on request',
-    inputs: ['calendar', 'reminders', 'life_threads', 'current_work', 'knowledge_library'],
+    inputs: [
+      'calendar',
+      'reminders',
+      'life_threads',
+      'current_work',
+      'knowledge_library',
+    ],
     outputShape: 'what matters / what changed / what next brief',
     proofTarget: 'flagship chief-of-staff guidance',
-    blockerState: 'near-live if deeper context is missing but grounded guidance still works',
+    blockerState:
+      'near-live if deeper context is missing but grounded guidance still works',
   },
   {
     id: 'thread_followthrough',
@@ -378,7 +419,9 @@ function safeLatestTimestamp(
 }
 
 function safeGroupFolders(groupFolders: readonly string[]): string[] {
-  return [...new Set(groupFolders.map((value) => value.trim()).filter(Boolean))];
+  return [
+    ...new Set(groupFolders.map((value) => value.trim()).filter(Boolean)),
+  ];
 }
 
 function safeList<T>(fn: () => T[]): T[] {
@@ -417,16 +460,18 @@ export function buildAndreaMemoryFreshnessRollup(
   let scheduledTasks = 0;
 
   for (const groupFolder of groups) {
-    const subjects = safeList(() => listProfileSubjectsForGroup(groupFolder)).filter(
-      (subject) => !subject.disabledAt,
-    );
+    const subjects = safeList(() =>
+      listProfileSubjectsForGroup(groupFolder),
+    ).filter((subject) => !subject.disabledAt);
     const facts = safeList(() => listProfileFactsForGroup(groupFolder)).filter(
       (fact) => fact.state !== 'rejected' && fact.state !== 'disabled',
     );
-    const threads = safeList(() => listLifeThreadsForGroup(groupFolder, ['active']));
-    const sources = safeList(() => listKnowledgeSourcesForGroup(groupFolder)).filter(
-      (source) => !source.deletedAt && !source.disabledAt,
+    const threads = safeList(() =>
+      listLifeThreadsForGroup(groupFolder, ['active']),
     );
+    const sources = safeList(() =>
+      listKnowledgeSourcesForGroup(groupFolder),
+    ).filter((source) => !source.deletedAt && !source.disabledAt);
     const rituals = safeList(() => listRitualProfilesForGroup(groupFolder));
     const tasks = safeList(() => getTasksForGroup(groupFolder)).filter(
       (task) => task.status !== 'completed',
@@ -465,13 +510,16 @@ export function buildAndreaMemoryFreshnessRollup(
     semanticMemory: `${profileSubjects} subjects, ${profileFacts} accepted facts, ${knowledgeSources} saved knowledge sources`,
     proceduralMemory: `${ritualProfiles} configured ritual profiles plus explicit preference/delegation rules`,
     latestTouchedAt:
-      latestTouched > 0 ? new Date(latestTouched).toISOString() : 'not_yet_indexed',
+      latestTouched > 0
+        ? new Date(latestTouched).toISOString()
+        : 'not_yet_indexed',
     indexStatus: 'seeded_profile_pack_and_db_backed',
     changelogStatus: 'append_only',
     arbitrationStatus: 'active_memory_intelligence',
     semanticPromotionPolicy: 'grounded_or_confirmed_only',
     proceduralPromotionPolicy: 'repeated_success_or_outcome_review',
-    ownership: 'raw memory stays in the product layer; platform only sees freshness metadata',
+    ownership:
+      'raw memory stays in the product layer; platform only sees freshness metadata',
     taskStates:
       'active=current focus/open loops; waiting=blocked follow-up; someday=backlog; done=outcome reviewed',
   };
@@ -535,8 +583,11 @@ export function buildAndreaRitualStatusRollup(
     suggested: String(suggestedCount),
     onRequest: String(onRequestCount),
     latestTouchedAt:
-      latestTouched > 0 ? new Date(latestTouched).toISOString() : 'not_yet_configured',
-    proofModel: 'ritual outcomes live in product truth and roll up into platform metadata',
+      latestTouched > 0
+        ? new Date(latestTouched).toISOString()
+        : 'not_yet_configured',
+    proofModel:
+      'ritual outcomes live in product truth and roll up into platform metadata',
   };
 }
 

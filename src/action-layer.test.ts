@@ -276,9 +276,7 @@ describe('buildActionLayerResponse', () => {
     expect(response.state.originChatJid).toBe(
       'bb:iMessage;-;jeffstory007@gmail.com',
     );
-    expect(response.state.canonicalChatJid).toBe(
-      'bb:iMessage;-;+14695405551',
-    );
+    expect(response.state.canonicalChatJid).toBe('bb:iMessage;-;+14695405551');
   });
 
   it('leaves broad summarize-my-actions asks to the shared chief-of-staff layer', async () => {
@@ -634,7 +632,8 @@ describe('action-layer pending flows', () => {
       {
         version: 1,
         createdAt: '2026-04-10T10:55:00.000Z',
-        label: "create an adoption barrier for Wintrust's new defect with agent login",
+        label:
+          "create an adoption barrier for Wintrust's new defect with agent login",
         originChatJid: 'bb:iMessage;-;jeffstory007@gmail.com',
         canonicalChatJid: 'bb:iMessage;-;+14695405551',
       },
@@ -660,7 +659,8 @@ describe('action-layer pending flows', () => {
     const createdState = {
       version: 1 as const,
       createdAt: '2026-04-10T10:56:00.000Z',
-      label: "create an adoption barrier for Wintrust's new defect with agent login",
+      label:
+        "create an adoption barrier for Wintrust's new defect with agent login",
       status: 'created' as const,
       originChatJid: 'bb:iMessage;-;jeffstory007@gmail.com',
       canonicalChatJid: 'bb:iMessage;-;+14695405551',

@@ -230,7 +230,9 @@ describe('profile subjects and facts', () => {
     });
 
     expect(
-      listProfileFactsForGroup('main', ['accepted']).map((fact) => fact.factKey),
+      listProfileFactsForGroup('main', ['accepted']).map(
+        (fact) => fact.factKey,
+      ),
     ).toContain('response_style');
 
     expect(

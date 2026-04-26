@@ -310,7 +310,8 @@ describe('missions', () => {
         laneLabel: 'Cursor',
         title: 'Reply with exactly: live cloud smoke ok',
         statusLabel: 'Running',
-        summary: 'Reply with exactly: live cloud smoke ok. Do not modify files.',
+        summary:
+          'Reply with exactly: live cloud smoke ok. Do not modify files.',
       },
       now,
     });

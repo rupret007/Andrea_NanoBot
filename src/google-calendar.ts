@@ -316,7 +316,8 @@ function resolveGoogleCalendarAliasId(
     };
   }
 
-  const metadata = calendars.find((calendar) => calendar.id === calendarId) || null;
+  const metadata =
+    calendars.find((calendar) => calendar.id === calendarId) || null;
   return {
     resolvedCalendarId: calendarId,
     metadata,
@@ -458,11 +459,11 @@ export async function listGoogleCalendars(
       selected: isSelectedCalendarId(calendar, selectedIds),
     }))
     .sort((left, right) => {
-    if (left.primary !== right.primary) {
-      return left.primary ? -1 : 1;
-    }
-    return left.summary.localeCompare(right.summary);
-  });
+      if (left.primary !== right.primary) {
+        return left.primary ? -1 : 1;
+      }
+      return left.summary.localeCompare(right.summary);
+    });
 }
 
 export async function validateGoogleCalendarConfig(

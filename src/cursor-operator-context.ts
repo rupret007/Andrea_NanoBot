@@ -464,7 +464,9 @@ export function getActiveCursorOperatorContext(
     chatJid: record.chat_jid,
     threadId: record.thread_id || undefined,
     selectedLaneId,
-    selectedAgentId: selectedLaneId ? getSelectedJobId(record, selectedLaneId) : null,
+    selectedAgentId: selectedLaneId
+      ? getSelectedJobId(record, selectedLaneId)
+      : null,
     selectedJobsByLane,
     lastListSnapshotsByLane,
     lastListSnapshot:
@@ -548,10 +550,12 @@ export function resolveCursorReplyContext(params: {
   const replyMessageId = params.replyMessageId?.trim() || '';
   const replyText = params.replyText?.trim() || '';
   const payloadProvider =
-    params.payload?.provider === 'desktop' || params.payload?.provider === 'cloud'
+    params.payload?.provider === 'desktop' ||
+    params.payload?.provider === 'cloud'
       ? params.payload.provider
       : null;
-  const detectedProvider = payloadProvider || detectCursorReplyProvider(replyText);
+  const detectedProvider =
+    payloadProvider || detectCursorReplyProvider(replyText);
 
   if (!replyMessageId || !detectedProvider) {
     return {
@@ -789,7 +793,9 @@ function summarizeCursorRecord(record: CursorAgentView): string | null {
   );
 }
 
-function clipCursorPromptPreview(text: string | null | undefined): string | null {
+function clipCursorPromptPreview(
+  text: string | null | undefined,
+): string | null {
   const trimmed = text?.trim() || '';
   if (!trimmed) return null;
   return trimmed.length <= 180 ? trimmed : `${trimmed.slice(0, 177)}...`;

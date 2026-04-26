@@ -62,8 +62,7 @@ function normalizeSurfaceState(
     nextAction: typeof record.nextAction === 'string' ? record.nextAction : '',
     checkedAt: typeof record.checkedAt === 'string' ? record.checkedAt : '',
     source:
-      record.source === 'verify' ||
-      record.source === 'debug_google_calendar'
+      record.source === 'verify' || record.source === 'debug_google_calendar'
         ? record.source
         : 'debug_research_mode',
   };

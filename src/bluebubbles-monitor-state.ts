@@ -74,9 +74,7 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
-function normalizeEvidence(
-  value: unknown,
-): BlueBubblesMonitorEvidence | null {
+function normalizeEvidence(value: unknown): BlueBubblesMonitorEvidence | null {
   if (!value || typeof value !== 'object') return null;
   const input = value as Partial<BlueBubblesMonitorEvidence>;
   const kind =
@@ -124,7 +122,8 @@ export function reconcileBlueBubblesWebhookCatchUp(
   const webhookObservedAt = parseIsoTime(state.mostRecentWebhookObservedAt);
   const webhookCaughtUp =
     Boolean(state.mostRecentServerSeenChatJid) &&
-    state.mostRecentServerSeenChatJid === state.mostRecentWebhookObservedChatJid &&
+    state.mostRecentServerSeenChatJid ===
+      state.mostRecentWebhookObservedChatJid &&
     serverSeenAt != null &&
     webhookObservedAt != null &&
     webhookObservedAt >= serverSeenAt;
@@ -232,7 +231,9 @@ function normalizeState(value: unknown): BlueBubblesMonitorState | null {
       : 'idle';
   return reconcileBlueBubblesWebhookCatchUp({
     ...createDefaultBlueBubblesMonitorState(
-      isNonEmptyString(input.updatedAt) ? input.updatedAt : new Date().toISOString(),
+      isNonEmptyString(input.updatedAt)
+        ? input.updatedAt
+        : new Date().toISOString(),
     ),
     updatedAt: isNonEmptyString(input.updatedAt)
       ? input.updatedAt
@@ -257,7 +258,9 @@ function normalizeState(value: unknown): BlueBubblesMonitorState | null {
     lastOutboundObservedAt: isNonEmptyString(input.lastOutboundObservedAt)
       ? input.lastOutboundObservedAt
       : null,
-    lastOutboundObservedChatJid: isNonEmptyString(input.lastOutboundObservedChatJid)
+    lastOutboundObservedChatJid: isNonEmptyString(
+      input.lastOutboundObservedChatJid,
+    )
       ? input.lastOutboundObservedChatJid
       : null,
     lastOutboundTargetKind: isNonEmptyString(input.lastOutboundTargetKind)
@@ -269,12 +272,16 @@ function normalizeState(value: unknown): BlueBubblesMonitorState | null {
     lastSendErrorDetail: isNonEmptyString(input.lastSendErrorDetail)
       ? input.lastSendErrorDetail
       : null,
-    lastMetadataHydrationSource: isNonEmptyString(input.lastMetadataHydrationSource)
+    lastMetadataHydrationSource: isNonEmptyString(
+      input.lastMetadataHydrationSource,
+    )
       ? input.lastMetadataHydrationSource
       : null,
-    lastAttemptedTargetSequence: Array.isArray(input.lastAttemptedTargetSequence)
-      ? input.lastAttemptedTargetSequence.filter(
-          (entry): entry is string => isNonEmptyString(entry),
+    lastAttemptedTargetSequence: Array.isArray(
+      input.lastAttemptedTargetSequence,
+    )
+      ? input.lastAttemptedTargetSequence.filter((entry): entry is string =>
+          isNonEmptyString(entry),
         )
       : [],
     shadowPollLastOkAt: isNonEmptyString(input.shadowPollLastOkAt)
@@ -293,13 +300,19 @@ function normalizeState(value: unknown): BlueBubblesMonitorState | null {
     mostRecentServerSeenAt: isNonEmptyString(input.mostRecentServerSeenAt)
       ? input.mostRecentServerSeenAt
       : null,
-    mostRecentServerSeenChatJid: isNonEmptyString(input.mostRecentServerSeenChatJid)
+    mostRecentServerSeenChatJid: isNonEmptyString(
+      input.mostRecentServerSeenChatJid,
+    )
       ? input.mostRecentServerSeenChatJid
       : null,
-    mostRecentServerSeenMessageId: isNonEmptyString(input.mostRecentServerSeenMessageId)
+    mostRecentServerSeenMessageId: isNonEmptyString(
+      input.mostRecentServerSeenMessageId,
+    )
       ? input.mostRecentServerSeenMessageId
       : null,
-    mostRecentWebhookObservedAt: isNonEmptyString(input.mostRecentWebhookObservedAt)
+    mostRecentWebhookObservedAt: isNonEmptyString(
+      input.mostRecentWebhookObservedAt,
+    )
       ? input.mostRecentWebhookObservedAt
       : null,
     mostRecentWebhookObservedChatJid: isNonEmptyString(
@@ -307,7 +320,9 @@ function normalizeState(value: unknown): BlueBubblesMonitorState | null {
     )
       ? input.mostRecentWebhookObservedChatJid
       : null,
-    lastIgnoredAt: isNonEmptyString(input.lastIgnoredAt) ? input.lastIgnoredAt : null,
+    lastIgnoredAt: isNonEmptyString(input.lastIgnoredAt)
+      ? input.lastIgnoredAt
+      : null,
     lastIgnoredChatJid: isNonEmptyString(input.lastIgnoredChatJid)
       ? input.lastIgnoredChatJid
       : null,
@@ -319,7 +334,9 @@ function normalizeState(value: unknown): BlueBubblesMonitorState | null {
     lastReplySendFailureAt: isNonEmptyString(input.lastReplySendFailureAt)
       ? input.lastReplySendFailureAt
       : null,
-    lastReplySendFailureChatJid: isNonEmptyString(input.lastReplySendFailureChatJid)
+    lastReplySendFailureChatJid: isNonEmptyString(
+      input.lastReplySendFailureChatJid,
+    )
       ? input.lastReplySendFailureChatJid
       : null,
     lastReplySendFailureStage: isNonEmptyString(input.lastReplySendFailureStage)
@@ -355,7 +372,9 @@ export function readBlueBubblesMonitorState(
   }
   try {
     const raw = fs.readFileSync(statePath, 'utf8').replace(/^\uFEFF/, '');
-    return normalizeState(JSON.parse(raw)) || createDefaultBlueBubblesMonitorState();
+    return (
+      normalizeState(JSON.parse(raw)) || createDefaultBlueBubblesMonitorState()
+    );
   } catch {
     return createDefaultBlueBubblesMonitorState();
   }
@@ -367,7 +386,9 @@ export function writeBlueBubblesMonitorState(
 ): BlueBubblesMonitorState {
   const statePath = getMonitorStatePath(projectRoot);
   const next = reconcileBlueBubblesWebhookCatchUp({
-    ...createDefaultBlueBubblesMonitorState(state.updatedAt || new Date().toISOString()),
+    ...createDefaultBlueBubblesMonitorState(
+      state.updatedAt || new Date().toISOString(),
+    ),
     ...state,
   });
   fs.mkdirSync(resolveHostControlPaths(projectRoot).runtimeStateDir, {
@@ -377,7 +398,9 @@ export function writeBlueBubblesMonitorState(
   return next;
 }
 
-export function clearBlueBubblesMonitorState(projectRoot = process.cwd()): void {
+export function clearBlueBubblesMonitorState(
+  projectRoot = process.cwd(),
+): void {
   try {
     fs.rmSync(getMonitorStatePath(projectRoot), { force: true });
   } catch {

@@ -59,7 +59,8 @@ export function classifyTelegramTransportFailure(input: {
 }): TelegramTransportFailureClassification {
   const raw = normalizeErrorText(input.error);
   const normalized = raw.toLowerCase();
-  const repeatedExternalConflict = (input.consecutiveExternalConflicts ?? 0) >= 1;
+  const repeatedExternalConflict =
+    (input.consecutiveExternalConflicts ?? 0) >= 1;
   const webhookUrl = input.webhookUrl?.trim() || null;
 
   if (

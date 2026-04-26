@@ -47,7 +47,13 @@ async function startBlueBubblesApiStub(
     ) {
       res.statusCode = 200;
       res.setHeader('Content-Type', 'application/json');
-      res.end(JSON.stringify({ status: 200, message: 'Ping received!', data: 'pong' }));
+      res.end(
+        JSON.stringify({
+          status: 200,
+          message: 'Ping received!',
+          data: 'pong',
+        }),
+      );
       return;
     }
     const chunks: Buffer[] = [];
@@ -208,7 +214,9 @@ describe('BlueBubbles channel', () => {
       );
 
       expect(inspection.state).toBe('registered');
-      expect(inspection.detail).toContain('registered on the BlueBubbles server');
+      expect(inspection.detail).toContain(
+        'registered on the BlueBubbles server',
+      );
       expect(inspection.webhookId).toBe(7);
     } finally {
       await apiStub.close();
@@ -340,7 +348,13 @@ describe('BlueBubbles channel', () => {
       storeMessage(message);
     });
     const onChatMetadata = vi.fn(
-      async (chatJid: string, timestamp: string, name?: string, channel?: string, isGroup?: boolean) => {
+      async (
+        chatJid: string,
+        timestamp: string,
+        name?: string,
+        channel?: string,
+        isGroup?: boolean,
+      ) => {
         storeChatMetadata(chatJid, timestamp, name, channel, isGroup);
       },
     );
@@ -426,7 +440,13 @@ describe('BlueBubbles channel', () => {
       storeMessage(message);
     });
     const onChatMetadata = vi.fn(
-      async (chatJid: string, timestamp: string, name?: string, channel?: string, isGroup?: boolean) => {
+      async (
+        chatJid: string,
+        timestamp: string,
+        name?: string,
+        channel?: string,
+        isGroup?: boolean,
+      ) => {
         storeChatMetadata(chatJid, timestamp, name, channel, isGroup);
       },
     );
@@ -600,12 +620,18 @@ describe('BlueBubbles channel', () => {
       if (parsed.chatGuid === 'iMessage;-;jeffstory007@gmail.com') {
         res.statusCode = 200;
         res.setHeader('Content-Type', 'application/json');
-        res.end(JSON.stringify({ data: { guid: `server-msg-${requests.length}` } }));
+        res.end(
+          JSON.stringify({ data: { guid: `server-msg-${requests.length}` } }),
+        );
         return;
       }
       res.statusCode = 500;
       res.setHeader('Content-Type', 'application/json');
-      res.end(JSON.stringify({ error: `unexpected target ${String(parsed.chatGuid || 'none')}` }));
+      res.end(
+        JSON.stringify({
+          error: `unexpected target ${String(parsed.chatGuid || 'none')}`,
+        }),
+      );
     });
 
     const onMessage = vi.fn(async (_chatJid, message) => {
@@ -620,9 +646,11 @@ describe('BlueBubbles channel', () => {
       }),
       {
         onMessage,
-        onChatMetadata: vi.fn(async (chatJid, timestamp, name, channelName, isGroup) => {
-          storeChatMetadata(chatJid, timestamp, name, channelName, isGroup);
-        }),
+        onChatMetadata: vi.fn(
+          async (chatJid, timestamp, name, channelName, isGroup) => {
+            storeChatMetadata(chatJid, timestamp, name, channelName, isGroup);
+          },
+        ),
         registeredGroups: () => ({}),
         onHealthUpdate: vi.fn((snapshot) => {
           healthDetails.push(snapshot.detail || '');
@@ -695,9 +723,9 @@ describe('BlueBubbles channel', () => {
         'iMessage;-;+14695405551',
         'iMessage;-;jeffstory007@gmail.com',
       ]);
-      expect(requests.every((request) => request.method === 'apple-script')).toBe(
-        true,
-      );
+      expect(
+        requests.every((request) => request.method === 'apple-script'),
+      ).toBe(true);
       expect(
         requests.every(
           (request) =>
@@ -716,7 +744,10 @@ describe('BlueBubbles channel', () => {
           kind: 'service_specific_last_addressed_handle',
           chatGuid: 'iMessage;-;jeffstory007@gmail.com',
         },
-        { kind: 'last_addressed_handle', chatGuid: 'any;-;jeffstory007@gmail.com' },
+        {
+          kind: 'last_addressed_handle',
+          chatGuid: 'any;-;jeffstory007@gmail.com',
+        },
         { kind: 'chat_identifier', chatGuid: 'any;-;+14695405551' },
       ]);
       expect(
@@ -945,7 +976,9 @@ describe('BlueBubbles channel', () => {
       });
 
       expect(response.status).toBe(202);
-      expect(await response.text()).toBe('Ignored outgoing message without @Andrea mention');
+      expect(await response.text()).toBe(
+        'Ignored outgoing message without @Andrea mention',
+      );
       expect(onMessage).not.toHaveBeenCalled();
       expect(onChatMetadata).not.toHaveBeenCalled();
     } finally {
@@ -1113,7 +1146,9 @@ describe('BlueBubbles channel', () => {
       requests.push(JSON.parse(body) as Record<string, unknown>);
       res.statusCode = 200;
       res.setHeader('Content-Type', 'application/json');
-      res.end(JSON.stringify({ data: { guid: `server-msg-${requests.length}` } }));
+      res.end(
+        JSON.stringify({ data: { guid: `server-msg-${requests.length}` } }),
+      );
     });
 
     const channel = new BlueBubblesChannel(
@@ -1209,9 +1244,13 @@ describe('BlueBubbles channel', () => {
 
     try {
       await channel.connect();
-      await channel.sendMessage('bb:chat-1', 'Yes, tonight still works for me.', {
-        suppressSenderLabel: true,
-      });
+      await channel.sendMessage(
+        'bb:chat-1',
+        'Yes, tonight still works for me.',
+        {
+          suppressSenderLabel: true,
+        },
+      );
 
       expect(requests[0]?.body).toMatchObject({
         chatGuid: 'chat-1',
@@ -1307,11 +1346,13 @@ describe('BlueBubbles channel', () => {
   });
 
   it('fails cleanly when outbound sends are disabled or receipts are missing', async () => {
-    const noReceiptStub = await startBlueBubblesApiStub(async (_req, _body, res) => {
-      res.statusCode = 200;
-      res.setHeader('Content-Type', 'application/json');
-      res.end(JSON.stringify({ ok: true }));
-    });
+    const noReceiptStub = await startBlueBubblesApiStub(
+      async (_req, _body, res) => {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ ok: true }));
+      },
+    );
 
     const disabled = new BlueBubblesChannel(
       buildConfig({ baseUrl: noReceiptStub.baseUrl, sendEnabled: false }),
@@ -1395,7 +1436,9 @@ describe('BlueBubbles channel', () => {
       requests.push(JSON.parse(body) as Record<string, unknown>);
       res.statusCode = 200;
       res.setHeader('Content-Type', 'application/json');
-      res.end(JSON.stringify({ data: { guid: `server-msg-${requests.length}` } }));
+      res.end(
+        JSON.stringify({ data: { guid: `server-msg-${requests.length}` } }),
+      );
     });
 
     const onMessage = vi.fn(async (_chatJid, message) => {
@@ -1410,9 +1453,11 @@ describe('BlueBubbles channel', () => {
       }),
       {
         onMessage,
-        onChatMetadata: vi.fn(async (chatJid, timestamp, name, channelName, isGroup) => {
-          storeChatMetadata(chatJid, timestamp, name, channelName, isGroup);
-        }),
+        onChatMetadata: vi.fn(
+          async (chatJid, timestamp, name, channelName, isGroup) => {
+            storeChatMetadata(chatJid, timestamp, name, channelName, isGroup);
+          },
+        ),
         registeredGroups: () => ({}),
         onHealthUpdate: vi.fn(),
       },
@@ -1430,7 +1475,10 @@ describe('BlueBubbles channel', () => {
             chat: {
               guid: 'iMessage;+;chat-2',
               displayName: 'Family',
-              participants: [{ address: '+15551234567' }, { address: '+15557654321' }],
+              participants: [
+                { address: '+15551234567' },
+                { address: '+15557654321' },
+              ],
               isGroup: true,
             },
             message: {
@@ -1706,9 +1754,9 @@ describe('BlueBubbles channel', () => {
 
       const monitorState = readBlueBubblesMonitorState();
       expect(monitorState.activeBaseUrl).toBe(apiStub.baseUrl);
-      expect(monitorState.candidateProbeResults['http://127.0.0.1:9']).toContain(
-        'unreachable',
-      );
+      expect(
+        monitorState.candidateProbeResults['http://127.0.0.1:9'],
+      ).toContain('unreachable');
       expect(monitorState.candidateProbeResults[apiStub.baseUrl]).toBe(
         'reachable/auth ok (200)',
       );
@@ -1767,7 +1815,9 @@ describe('BlueBubbles channel', () => {
       const monitorState = readBlueBubblesMonitorState();
       expect(monitorState.detectionState).toBe('healthy');
       const latestHealth = onHealthUpdate.mock.calls.at(-1)?.[0];
-      expect(latestHealth?.detail).toContain(`active endpoint ${apiStub.baseUrl}`);
+      expect(latestHealth?.detail).toContain(
+        `active endpoint ${apiStub.baseUrl}`,
+      );
     } finally {
       await channel.disconnect();
       await apiStub.close();
@@ -1834,33 +1884,35 @@ describe('BlueBubbles channel', () => {
       res.setHeader('Content-Type', 'application/json');
       res.end(JSON.stringify({ data: { guid: 'stale-should-not-send' } }));
     });
-    const healthyStub = await startBlueBubblesApiStub(async (req, body, res) => {
-      if ((req.url || '').startsWith('/api/v1/webhook')) {
+    const healthyStub = await startBlueBubblesApiStub(
+      async (req, body, res) => {
+        if ((req.url || '').startsWith('/api/v1/webhook')) {
+          res.statusCode = 200;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ data: [] }));
+          return;
+        }
+        if ((req.url || '').startsWith('/api/v1/server/info')) {
+          res.statusCode = 200;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ data: { private_api: false } }));
+          return;
+        }
+        if (
+          (req.method || 'GET').toUpperCase() === 'GET' &&
+          (req.url || '').startsWith('/api/v1/message')
+        ) {
+          res.statusCode = 200;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ data: [] }));
+          return;
+        }
+        failoverRequests.push(JSON.parse(body) as Record<string, unknown>);
         res.statusCode = 200;
         res.setHeader('Content-Type', 'application/json');
-        res.end(JSON.stringify({ data: [] }));
-        return;
-      }
-      if ((req.url || '').startsWith('/api/v1/server/info')) {
-        res.statusCode = 200;
-        res.setHeader('Content-Type', 'application/json');
-        res.end(JSON.stringify({ data: { private_api: false } }));
-        return;
-      }
-      if (
-        (req.method || 'GET').toUpperCase() === 'GET' &&
-        (req.url || '').startsWith('/api/v1/message')
-      ) {
-        res.statusCode = 200;
-        res.setHeader('Content-Type', 'application/json');
-        res.end(JSON.stringify({ data: [] }));
-        return;
-      }
-      failoverRequests.push(JSON.parse(body) as Record<string, unknown>);
-      res.statusCode = 200;
-      res.setHeader('Content-Type', 'application/json');
-      res.end(JSON.stringify({ data: { guid: 'healthy-after-failover' } }));
-    });
+        res.end(JSON.stringify({ data: { guid: 'healthy-after-failover' } }));
+      },
+    );
 
     const channel = new BlueBubblesChannel(
       buildConfig({
@@ -1884,7 +1936,10 @@ describe('BlueBubbles channel', () => {
       await staleStub.close();
       staleClosed = true;
 
-      const result = await channel.sendMessage('bb:chat-1', 'Hello after failover.');
+      const result = await channel.sendMessage(
+        'bb:chat-1',
+        'Hello after failover.',
+      );
       const monitorState = readBlueBubblesMonitorState();
 
       expect(result.platformMessageId).toBe('bb:healthy-after-failover');
@@ -1942,7 +1997,9 @@ describe('BlueBubbles channel', () => {
       expect(onCrossSurfaceFallback).toHaveBeenCalledTimes(1);
       expect(onCrossSurfaceFallback).toHaveBeenCalledWith({
         sourceChannel: 'bluebubbles',
-        detail: expect.stringContaining('could not reach the BlueBubbles server'),
+        detail: expect.stringContaining(
+          'could not reach the BlueBubbles server',
+        ),
         chatJid: null,
       });
       expect(monitorState.crossSurfaceFallbackState).toBe('sent');
@@ -2034,7 +2091,9 @@ describe('BlueBubbles channel', () => {
       const monitorState = readBlueBubblesMonitorState();
       expect(response.status).toBe(202);
       expect(monitorState.detectionState).toBe('ignored_by_gate_or_scope');
-      expect(monitorState.lastIgnoredChatJid).toBe('bb:iMessage;-;+14695550123');
+      expect(monitorState.lastIgnoredChatJid).toBe(
+        'bb:iMessage;-;+14695550123',
+      );
       expect(monitorState.lastIgnoredReason).toBe('mention_required');
       expect(monitorState.crossSurfaceFallbackState).toBe('idle');
       expect(onCrossSurfaceFallback).not.toHaveBeenCalled();
@@ -2143,7 +2202,13 @@ describe('BlueBubbles channel', () => {
       storeMessage(message);
     });
     const onChatMetadata = vi.fn(
-      async (chatJid: string, timestamp: string, name?: string, channel?: string, isGroup?: boolean) => {
+      async (
+        chatJid: string,
+        timestamp: string,
+        name?: string,
+        channel?: string,
+        isGroup?: boolean,
+      ) => {
         storeChatMetadata(chatJid, timestamp, name, channel, isGroup);
       },
     );
@@ -2308,7 +2373,11 @@ describe('BlueBubbles channel', () => {
         res.end('Not Found');
         return;
       }
-      if ((req.url || '').includes('/api/v1/chat/iMessage%3B-%3B%2B14695405551/message')) {
+      if (
+        (req.url || '').includes(
+          '/api/v1/chat/iMessage%3B-%3B%2B14695405551/message',
+        )
+      ) {
         res.statusCode = 200;
         res.setHeader('Content-Type', 'application/json');
         res.end(
@@ -2335,7 +2404,11 @@ describe('BlueBubbles channel', () => {
         );
         return;
       }
-      if ((req.url || '').includes('/api/v1/chat/iMessage%3B-%3B%2B12147254219/message')) {
+      if (
+        (req.url || '').includes(
+          '/api/v1/chat/iMessage%3B-%3B%2B12147254219/message',
+        )
+      ) {
         res.statusCode = 200;
         res.setHeader('Content-Type', 'application/json');
         res.end(
@@ -2394,7 +2467,9 @@ describe('BlueBubbles channel', () => {
 
       const monitorState = readBlueBubblesMonitorState();
       expect(monitorState.shadowPollLastError).toBeNull();
-      expect(monitorState.shadowPollMostRecentChat).toBe('bb:iMessage;-;+12147254219');
+      expect(monitorState.shadowPollMostRecentChat).toBe(
+        'bb:iMessage;-;+12147254219',
+      );
       expect(monitorState.mostRecentServerSeenChatJid).toBe(
         'bb:iMessage;-;+12147254219',
       );
@@ -2427,7 +2502,11 @@ describe('BlueBubbles channel', () => {
         res.end('Not Found');
         return;
       }
-      if ((req.url || '').includes('/api/v1/chat/iMessage%3B-%3B%2B14695405551/message')) {
+      if (
+        (req.url || '').includes(
+          '/api/v1/chat/iMessage%3B-%3B%2B14695405551/message',
+        )
+      ) {
         res.statusCode = 200;
         res.setHeader('Content-Type', 'application/json');
         res.end(JSON.stringify({ data: [] }));

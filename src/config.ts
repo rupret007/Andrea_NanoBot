@@ -133,8 +133,9 @@ export const ANDREA_PLATFORM_SHELL_GATEWAY_URL =
   envConfig.ANDREA_PLATFORM_SHELL_GATEWAY_URL ||
   '';
 export const CODEX_LOCAL_ENABLED =
-  (process.env.CODEX_LOCAL_ENABLED || envConfig.CODEX_LOCAL_ENABLED || 'true') !==
-  'false';
+  (process.env.CODEX_LOCAL_ENABLED ||
+    envConfig.CODEX_LOCAL_ENABLED ||
+    'true') !== 'false';
 export const CODEX_LOCAL_MODEL =
   process.env.CODEX_LOCAL_MODEL || envConfig.CODEX_LOCAL_MODEL || '';
 export const CONTAINER_RUNTIME = normalizeConfiguredContainerRuntime(

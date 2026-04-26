@@ -317,7 +317,8 @@ function completeEveningCarryover(
               lifeThreadResult.responseText ||
               'Okay.',
             stillOpen: resolveOpenLoopText(params, candidate, completionText),
-            nextSuggestion: 'check your evening reset when you want the fuller list',
+            nextSuggestion:
+              'check your evening reset when you want the fuller list',
           }),
           lifeThreadResult,
           ritualResult,
@@ -329,7 +330,8 @@ function completeEveningCarryover(
           channel: 'alexa',
           didWhat: lifeThreadResult.responseText || 'Okay.',
           stillOpen: resolveOpenLoopText(params, candidate, completionText),
-          nextSuggestion: 'check your evening reset when you want the fuller list',
+          nextSuggestion:
+            'check your evening reset when you want the fuller list',
         }),
         lifeThreadResult,
       };
@@ -589,8 +591,12 @@ export async function completeAssistantActionFromAlexa(
     const targetChannel = resolveRequestedHandoffTarget(params.utterance);
     const canSendBundleToTelegram =
       targetChannel === 'telegram' &&
-      Boolean(bundleId && deps.resolveTelegramMainChat && deps.sendTelegramMessage);
-    const hasCandidateDetails = Boolean(candidate?.handoffPayload || completionText);
+      Boolean(
+        bundleId && deps.resolveTelegramMainChat && deps.sendTelegramMessage,
+      );
+    const hasCandidateDetails = Boolean(
+      candidate?.handoffPayload || completionText,
+    );
 
     let deliveryResult: AssistantActionCompletionResult | null = null;
     if (hasCandidateDetails) {
@@ -707,13 +713,13 @@ export async function completeAssistantActionFromAlexa(
       return completeEveningCarryover(params, candidate, completionText);
     }
     const reminderRule = findMatchingDelegationRule({
-        groupFolder: params.groupFolder,
-        channel: 'alexa',
-        actionType: 'create_reminder',
-        originKind: deriveOriginKind(candidate, params.priorSubjectData),
-        personName: candidate?.threadTitle || null,
-        threadTitle: candidate?.threadTitle || null,
-        promptPattern: 'save_that',
+      groupFolder: params.groupFolder,
+      channel: 'alexa',
+      actionType: 'create_reminder',
+      originKind: deriveOriginKind(candidate, params.priorSubjectData),
+      personName: candidate?.threadTitle || null,
+      threadTitle: candidate?.threadTitle || null,
+      promptPattern: 'save_that',
       communicationContext: candidate?.communicationThreadId
         ? 'reply_followthrough'
         : 'general',
@@ -780,13 +786,13 @@ export async function completeAssistantActionFromAlexa(
       }
     }
     const threadRule = findMatchingDelegationRule({
-        groupFolder: params.groupFolder,
-        channel: 'alexa',
-        actionType: 'save_to_thread',
-        originKind: deriveOriginKind(candidate, params.priorSubjectData),
-        personName: candidate?.threadTitle || null,
-        threadTitle: candidate?.threadTitle || null,
-        promptPattern: 'save_for_later',
+      groupFolder: params.groupFolder,
+      channel: 'alexa',
+      actionType: 'save_to_thread',
+      originKind: deriveOriginKind(candidate, params.priorSubjectData),
+      personName: candidate?.threadTitle || null,
+      threadTitle: candidate?.threadTitle || null,
+      promptPattern: 'save_for_later',
       communicationContext: candidate?.communicationThreadId
         ? 'reply_followthrough'
         : 'general',
@@ -841,13 +847,13 @@ export async function completeAssistantActionFromAlexa(
       };
     }
     const threadRule = findMatchingDelegationRule({
-        groupFolder: params.groupFolder,
-        channel: 'alexa',
-        actionType: 'save_to_thread',
-        originKind: deriveOriginKind(candidate, params.priorSubjectData),
-        personName: candidate?.threadTitle || null,
-        threadTitle: candidate?.threadTitle || null,
-        communicationContext: candidate?.communicationThreadId
+      groupFolder: params.groupFolder,
+      channel: 'alexa',
+      actionType: 'save_to_thread',
+      originKind: deriveOriginKind(candidate, params.priorSubjectData),
+      personName: candidate?.threadTitle || null,
+      threadTitle: candidate?.threadTitle || null,
+      communicationContext: candidate?.communicationThreadId
         ? 'reply_followthrough'
         : 'general',
     });
@@ -870,7 +876,8 @@ export async function completeAssistantActionFromAlexa(
       recordDelegationRuleUsage({
         ruleId: threadRule.rule.ruleId,
         autoApplied: Boolean(
-          threadRule.autoApplied && !extractTrackThreadTitle(params.utterance, candidate),
+          threadRule.autoApplied &&
+          !extractTrackThreadTitle(params.utterance, candidate),
         ),
         outcomeStatus: result.handled ? 'completed' : 'failed',
         now: params.now,
@@ -881,7 +888,8 @@ export async function completeAssistantActionFromAlexa(
       replyText: buildSignaturePostActionConfirmation({
         channel: 'alexa',
         didWhat:
-          threadRule.rule && !extractTrackThreadTitle(params.utterance, candidate)
+          threadRule.rule &&
+          !extractTrackThreadTitle(params.utterance, candidate)
             ? `${result.responseText || 'Okay.'} I used your usual thread rule here.`
             : result.responseText || 'Okay.',
         stillOpen: resolveOpenLoopText(params, candidate, completionText),
@@ -917,13 +925,13 @@ export async function completeAssistantActionFromAlexa(
       };
     }
     const reminderRule = findMatchingDelegationRule({
-        groupFolder: params.groupFolder,
-        channel: 'alexa',
-        actionType: 'create_reminder',
-        originKind: deriveOriginKind(candidate, params.priorSubjectData),
-        personName: candidate?.threadTitle || null,
-        threadTitle: candidate?.threadTitle || null,
-        communicationContext: candidate?.communicationThreadId
+      groupFolder: params.groupFolder,
+      channel: 'alexa',
+      actionType: 'create_reminder',
+      originKind: deriveOriginKind(candidate, params.priorSubjectData),
+      personName: candidate?.threadTitle || null,
+      threadTitle: candidate?.threadTitle || null,
+      communicationContext: candidate?.communicationThreadId
         ? 'reply_followthrough'
         : 'general',
     });

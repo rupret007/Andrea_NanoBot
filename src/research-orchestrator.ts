@@ -179,7 +179,9 @@ function normalizeResearchTaskPrompt(prompt: string): string {
 function normalizeResearchLifeThreadText(
   value: string | null | undefined,
 ): string {
-  const trimmed = normalizeVoicePrompt(value || '').replace(/\s+/g, ' ').trim();
+  const trimmed = normalizeVoicePrompt(value || '')
+    .replace(/\s+/g, ' ')
+    .trim();
   if (!trimmed) return '';
   const normalized = trimmed
     .replace(
@@ -198,8 +200,13 @@ function normalizeResearchLifeThreadText(
 }
 
 function isGenericLifeThreadTitle(title: string | null | undefined): boolean {
-  const normalized = normalizeVoicePrompt(title || '').replace(/\s+/g, ' ').trim();
-  return Boolean(normalized) && GENERIC_LIFE_THREAD_TITLES.has(normalized.toLowerCase());
+  const normalized = normalizeVoicePrompt(title || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return (
+    Boolean(normalized) &&
+    GENERIC_LIFE_THREAD_TITLES.has(normalized.toLowerCase())
+  );
 }
 
 function buildResearchLifeThreadLine(
@@ -382,9 +389,7 @@ interface OpenAiResearchProviderFailure {
   debugPath: string[];
 }
 
-function classifyOpenAiUsageOutcome(
-  detail: string,
-): 'blocked' | 'failed' {
+function classifyOpenAiUsageOutcome(detail: string): 'blocked' | 'failed' {
   return /quota|billing|rejected the configured api key|denied by the provider|not configured/i.test(
     detail,
   )

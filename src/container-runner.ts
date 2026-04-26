@@ -154,7 +154,11 @@ const CONTAINER_HOST_ALIAS_HOSTS = new Set([
   'host.docker.internal',
 ]);
 const NINE_ROUTER_DEFAULT_PORT = '20128';
-const CODEX_AUTH_SYNC_FILENAMES = ['auth.json', 'cap_sid', 'config.toml'] as const;
+const CODEX_AUTH_SYNC_FILENAMES = [
+  'auth.json',
+  'cap_sid',
+  'config.toml',
+] as const;
 const LOG_SAFE_ENV_KEYS = new Set([
   'TZ',
   'HOME',
@@ -804,7 +808,12 @@ function buildVolumeMounts(
       readonly: false,
     });
   } else {
-    const groupCodexDir = path.join(DATA_DIR, 'sessions', group.folder, '.codex');
+    const groupCodexDir = path.join(
+      DATA_DIR,
+      'sessions',
+      group.folder,
+      '.codex',
+    );
     fs.mkdirSync(groupCodexDir, { recursive: true });
     // Shared runtime lanes that are not direct-assistant voice turns can stay
     // on the lighter per-group Codex copy.
@@ -976,7 +985,10 @@ async function buildContainerArgs(
   args.push('-e', 'CODEX_HOME=/home/node/.codex');
   args.push('-e', `AGENT_RUNTIME_DEFAULT=${AGENT_RUNTIME_DEFAULT}`);
   args.push('-e', `AGENT_RUNTIME_FALLBACK=${AGENT_RUNTIME_FALLBACK}`);
-  args.push('-e', `CODEX_LOCAL_ENABLED=${CODEX_LOCAL_ENABLED ? 'true' : 'false'}`);
+  args.push(
+    '-e',
+    `CODEX_LOCAL_ENABLED=${CODEX_LOCAL_ENABLED ? 'true' : 'false'}`,
+  );
   args.push('-e', `OPENAI_MODEL_FALLBACK=${OPENAI_MODEL_FALLBACK}`);
   if (CODEX_LOCAL_MODEL) {
     args.push('-e', `CODEX_LOCAL_MODEL=${CODEX_LOCAL_MODEL}`);

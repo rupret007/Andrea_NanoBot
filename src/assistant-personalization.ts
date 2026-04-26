@@ -26,10 +26,7 @@ export type AssistantChannelMode =
   | 'alexa_companion'
   | 'telegram_default'
   | 'bluebubbles_default';
-export type AssistantInitiativeLevel =
-  | 'measured'
-  | 'restrained'
-  | 'coach_like';
+export type AssistantInitiativeLevel = 'measured' | 'restrained' | 'coach_like';
 
 export interface AssistantPromptContextOptions {
   channel: AssistantExpressionChannel;
@@ -82,11 +79,13 @@ const GUIDANCE_FOCUS_FACT_KEY = 'guidance_focus';
 const REMINDER_HELPFULNESS_FACT_KEY = 'reminder_helpfulness';
 
 function slugifyName(value: string): string {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '') || 'unknown';
+  return (
+    value
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '') || 'unknown'
+  );
 }
 
 function stableNoteFactKey(summary: string): string {
@@ -253,7 +252,8 @@ function describeFact(fact: ProfileFactWithSubject): string {
       : 'reminder nudges should stay rare unless you ask for them';
   }
   if (fact.category === 'relationships') {
-    const relation = typeof value.relation === 'string' ? value.relation : 'family';
+    const relation =
+      typeof value.relation === 'string' ? value.relation : 'family';
     return `${fact.subjectDisplayName} is your ${relation}`;
   }
   if (fact.factKey === 'dietary_preference') {
@@ -262,7 +262,9 @@ function describeFact(fact: ProfileFactWithSubject): string {
   }
   if (fact.factKey.startsWith('note:')) {
     const summary =
-      typeof value.summary === 'string' ? value.summary.trim() : fact.sourceSummary;
+      typeof value.summary === 'string'
+        ? value.summary.trim()
+        : fact.sourceSummary;
     return summary || 'a saved personal note';
   }
   return fact.sourceSummary || `${fact.subjectDisplayName}: ${fact.factKey}`;
@@ -293,16 +295,16 @@ function summarizeFactsForChannel(
   ].join('\n');
 }
 
-function buildAcceptedProfileLines(
-  groupFolder: string,
-): string[] {
+function buildAcceptedProfileLines(groupFolder: string): string[] {
   const facts = listProfileFactsForGroup(groupFolder, ['accepted']);
   const lines: string[] = [];
 
   for (const fact of facts) {
     const value = safeJsonParse<Record<string, unknown>>(fact.valueJson, {});
     if (fact.factKey === DIRECT_STYLE_FACT_KEY) {
-      lines.push('Prefer short, direct answers unless extra detail is clearly useful.');
+      lines.push(
+        'Prefer short, direct answers unless extra detail is clearly useful.',
+      );
       continue;
     }
     if (fact.factKey === PERSONALIZATION_LEVEL_FACT_KEY) {
@@ -372,13 +374,16 @@ function buildAcceptedProfileLines(
       continue;
     }
     if (fact.category === 'relationships') {
-      const relation = typeof value.relation === 'string' ? value.relation : 'family';
+      const relation =
+        typeof value.relation === 'string' ? value.relation : 'family';
       lines.push(`${fact.subjectDisplayName} is the user's ${relation}.`);
       continue;
     }
     if (fact.factKey === 'dietary_preference') {
       const diet = typeof value.diet === 'string' ? value.diet : 'noted';
-      lines.push(`${fact.subjectDisplayName} has a ${diet} dietary preference.`);
+      lines.push(
+        `${fact.subjectDisplayName} has a ${diet} dietary preference.`,
+      );
       continue;
     }
     if (fact.factKey.startsWith('note:')) {
@@ -430,9 +435,7 @@ function buildChannelExpressionLines(
   ];
 }
 
-function buildGuidanceLines(
-  options: AssistantPromptContextOptions,
-): string[] {
+function buildGuidanceLines(options: AssistantPromptContextOptions): string[] {
   if (options.channel !== 'alexa') return [];
 
   const lines: string[] = [];
@@ -540,14 +543,14 @@ export function buildAssistantPromptWithPersonalization(
   const sections: string[] = [];
 
   sections.push(
-      `<assistant_channel channel="${escapeXml(options.channel)}" mode="${escapeXml(
-        options.channelMode ||
-          (options.channel === 'alexa'
-            ? 'alexa_companion'
-            : options.channel === 'bluebubbles'
-              ? 'bluebubbles_default'
-              : 'telegram_default'),
-      )}">\n${channelLines
+    `<assistant_channel channel="${escapeXml(options.channel)}" mode="${escapeXml(
+      options.channelMode ||
+        (options.channel === 'alexa'
+          ? 'alexa_companion'
+          : options.channel === 'bluebubbles'
+            ? 'bluebubbles_default'
+            : 'telegram_default'),
+    )}">\n${channelLines
       .map((line) => `<rule>${escapeXml(line)}</rule>`)
       .join('\n')}\n</assistant_channel>`,
   );
@@ -643,9 +646,13 @@ function buildPersonalizationExplanation(
 
   const lines = [contextLead];
   if (descriptions.length > 0) {
-    lines.push(`Saved personalization in play: ${joinNaturalLanguage(descriptions)}.`);
+    lines.push(
+      `Saved personalization in play: ${joinNaturalLanguage(descriptions)}.`,
+    );
   } else {
-    lines.push('There are no active saved personalization defaults in play right now.');
+    lines.push(
+      'There are no active saved personalization defaults in play right now.',
+    );
   }
   return lines.join('\n');
 }
@@ -674,7 +681,12 @@ export function handlePersonalizationCommand(
   const now = input.now ?? new Date();
   const nowIso = now.toISOString();
   const raw = normalizeCommandText(input.text);
-  const selfSubject = ensureProfileSubject(input.groupFolder, 'self', 'you', now);
+  const selfSubject = ensureProfileSubject(
+    input.groupFolder,
+    'self',
+    'you',
+    now,
+  );
 
   if (/^(?:be )?(?:a little |a bit )?more direct[.!?]*$/i.test(raw)) {
     const fact = upsertStructuredFact({
@@ -690,8 +702,7 @@ export function handlePersonalizationCommand(
     });
     return {
       handled: true,
-      responseText:
-        'Okay. I will keep my answers shorter and more direct.',
+      responseText: 'Okay. I will keep my answers shorter and more direct.',
       referencedFactId: fact.id,
     };
   }
@@ -734,7 +745,8 @@ export function handlePersonalizationCommand(
     });
     return {
       handled: true,
-      responseText: 'Okay. I will keep the tone a little less personal unless you ask for that context.',
+      responseText:
+        'Okay. I will keep the tone a little less personal unless you ask for that context.',
       referencedFactId: fact.id,
     };
   }
@@ -763,7 +775,9 @@ export function handlePersonalizationCommand(
     };
   }
 
-  if (/^(lead with the main thing|prioritize what matters most)[.!?]*$/i.test(raw)) {
+  if (
+    /^(lead with the main thing|prioritize what matters most)[.!?]*$/i.test(raw)
+  ) {
     const fact = upsertStructuredFact({
       groupFolder: input.groupFolder,
       subject: selfSubject,
@@ -894,7 +908,11 @@ export function handlePersonalizationCommand(
     };
   }
 
-  if (/^(suggest reminders when helpful|nudge me about reminders when helpful)[.!?]*$/i.test(raw)) {
+  if (
+    /^(suggest reminders when helpful|nudge me about reminders when helpful)[.!?]*$/i.test(
+      raw,
+    )
+  ) {
     const fact = upsertStructuredFact({
       groupFolder: input.groupFolder,
       subject: selfSubject,
@@ -972,7 +990,9 @@ export function handlePersonalizationCommand(
     };
   }
 
-  const subjectMatch = raw.match(/^what do you remember about ([a-z][a-z' -]+)\??$/i);
+  const subjectMatch = raw.match(
+    /^what do you remember about ([a-z][a-z' -]+)\??$/i,
+  );
   if (subjectMatch) {
     const subjectName = normalizeCommandText(subjectMatch[1]);
     const subject = ensureProfileSubject(
@@ -1107,10 +1127,7 @@ function hasRecentProactiveAsk(groupFolder: string, now: Date): boolean {
   return facts.some((fact) => Date.parse(fact.updatedAt) >= threshold);
 }
 
-function countRecentSignals(
-  chatJid: string,
-  matcher: RegExp,
-): number {
+function countRecentSignals(chatJid: string, matcher: RegExp): number {
   return listRecentMessagesForChat(chatJid, 12).filter((message) =>
     matcher.test(message.content),
   ).length;
@@ -1124,7 +1141,12 @@ export function maybeCreateProactiveProfileCandidate(
     return null;
   }
 
-  const selfSubject = ensureProfileSubject(input.groupFolder, 'self', 'you', now);
+  const selfSubject = ensureProfileSubject(
+    input.groupFolder,
+    'self',
+    'you',
+    now,
+  );
   const raw = normalizeCommandText(input.text);
 
   const existingDirect = getProfileFactByKey(

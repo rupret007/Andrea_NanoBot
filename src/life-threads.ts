@@ -107,7 +107,10 @@ export function getPendingLifeThreadSuggestion(
   now = new Date(),
 ): PendingLifeThreadSuggestionState | null {
   const raw = getRouterState(getPendingSuggestionKey(chatJid));
-  const parsed = safeJsonParse<PendingLifeThreadSuggestionState | null>(raw, null);
+  const parsed = safeJsonParse<PendingLifeThreadSuggestionState | null>(
+    raw,
+    null,
+  );
   if (!parsed || parsed.version !== 1 || !parsed.expiresAt) {
     if (raw) deleteRouterState(getPendingSuggestionKey(chatJid));
     return null;
@@ -137,7 +140,12 @@ export function getLastReferencedLifeThread(
 ): LastReferencedLifeThreadState | null {
   const raw = getRouterState(getLastReferencedThreadKey(chatJid));
   const parsed = safeJsonParse<LastReferencedLifeThreadState | null>(raw, null);
-  if (!parsed || parsed.version !== 1 || !parsed.createdAt || !parsed.threadId) {
+  if (
+    !parsed ||
+    parsed.version !== 1 ||
+    !parsed.createdAt ||
+    !parsed.threadId
+  ) {
     if (raw) deleteRouterState(getLastReferencedThreadKey(chatJid));
     return null;
   }
@@ -232,10 +240,7 @@ function ensureProfileSubject(
   return subject;
 }
 
-function inferCategoryScope(params: {
-  title: string;
-  summary: string;
-}): {
+function inferCategoryScope(params: { title: string; summary: string }): {
   category: LifeThreadCategory;
   scope: LifeThreadScope;
   sensitivity: LifeThreadSensitivity;
@@ -243,7 +248,8 @@ function inferCategoryScope(params: {
 } {
   const haystack = `${params.title} ${params.summary}`.toLowerCase();
   const tags = new Set<string>();
-  const add = (...values: string[]) => values.forEach((value) => tags.add(value));
+  const add = (...values: string[]) =>
+    values.forEach((value) => tags.add(value));
 
   if (/\b(candace|wife|partner|spouse|relationship)\b/.test(haystack)) {
     add('candace', 'relationship');
@@ -265,7 +271,11 @@ function inferCategoryScope(params: {
       contextTags: [...tags],
     };
   }
-  if (/\b(house|home|errand|chores?|logistics|dinner|grocer|household)\b/.test(haystack)) {
+  if (
+    /\b(house|home|errand|chores?|logistics|dinner|grocer|household)\b/.test(
+      haystack,
+    )
+  ) {
     add('household');
     return {
       category: 'household',
@@ -292,7 +302,9 @@ function inferCategoryScope(params: {
       contextTags: [...tags],
     };
   }
-  if (/\b(work|project|client|repo|deploy|docs|cursor|codex)\b/.test(haystack)) {
+  if (
+    /\b(work|project|client|repo|deploy|docs|cursor|codex)\b/.test(haystack)
+  ) {
     add('work');
     return {
       category: /\bproject\b/.test(haystack) ? 'project' : 'work',
@@ -328,7 +340,8 @@ function extractRelatedSubjectIds(
   const subjects = listProfileSubjectsForGroup(groupFolder);
   const matches = subjects
     .filter((subject) => {
-      if (subject.kind !== 'person' && subject.kind !== 'household') return false;
+      if (subject.kind !== 'person' && subject.kind !== 'household')
+        return false;
       return haystack.includes(subject.displayName.toLowerCase());
     })
     .map((subject) => subject.id);
@@ -342,7 +355,9 @@ function extractRelatedSubjectIds(
     ];
   }
   if (/\bfamily|household|home\b/i.test(haystack)) {
-    return [ensureProfileSubject(groupFolder, 'household', 'household', now).id];
+    return [
+      ensureProfileSubject(groupFolder, 'household', 'household', now).id,
+    ];
   }
   return [];
 }
@@ -352,10 +367,7 @@ function formatThreadSummaryLine(thread: LifeThread): string {
   return `${thread.title}: ${main}`;
 }
 
-function inferFollowupAnchor(
-  rawText: string,
-  now: Date,
-): string | null {
+function inferFollowupAnchor(rawText: string, now: Date): string | null {
   const normalized = rawText.toLowerCase();
   if (/\btonight\b/.test(normalized)) {
     const target = new Date(now);
@@ -389,12 +401,15 @@ function formatThreadListTelegram(threads: LifeThread[]): string {
   }
   const lines = threads.slice(0, 6).map((thread) => {
     const followup = thread.nextFollowupAt
-      ? ` · follow up ${new Date(thread.nextFollowupAt).toLocaleString('en-US', {
-          month: 'short',
-          day: 'numeric',
-          hour: 'numeric',
-          minute: '2-digit',
-        })}`
+      ? ` · follow up ${new Date(thread.nextFollowupAt).toLocaleString(
+          'en-US',
+          {
+            month: 'short',
+            day: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+          },
+        )}`
       : '';
     return `- ${formatThreadSummaryLine(thread)} (${thread.scope}, ${thread.status})${followup}`;
   });
@@ -434,11 +449,15 @@ function findThreadByPersonName(
   const titleKey = normalizeTitleKey(personName);
   return listLifeThreadsForGroup(groupFolder).find((thread) => {
     if (normalizeTitleKey(thread.title) === titleKey) return true;
-    return thread.contextTags.some((tag) => normalizeTitleKey(tag) === titleKey);
+    return thread.contextTags.some(
+      (tag) => normalizeTitleKey(tag) === titleKey,
+    );
   });
 }
 
-function isGenericAutomaticThreadText(value: string | null | undefined): boolean {
+function isGenericAutomaticThreadText(
+  value: string | null | undefined,
+): boolean {
   const normalized = normalizeText(value || '').toLowerCase();
   if (!normalized) return true;
   return (
@@ -449,7 +468,9 @@ function isGenericAutomaticThreadText(value: string | null | undefined): boolean
   );
 }
 
-export function isAutomaticSurfaceWorthyLifeThread(thread: LifeThread): boolean {
+export function isAutomaticSurfaceWorthyLifeThread(
+  thread: LifeThread,
+): boolean {
   const summary = thread.summary || '';
   const nextAction = thread.nextAction || '';
   if (!summary.trim() && !nextAction.trim()) {
@@ -477,14 +498,20 @@ export function findLifeThreadForExplicitLookup(params: {
   );
   return (
     threads.find((thread) => normalizeTitleKey(thread.title) === queryKey) ||
-    threads.find((thread) => normalizeTitleKey(thread.title).includes(queryKey)) ||
-    threads.find((thread) => queryKey.includes(normalizeTitleKey(thread.title))) ||
+    threads.find((thread) =>
+      normalizeTitleKey(thread.title).includes(queryKey),
+    ) ||
+    threads.find((thread) =>
+      queryKey.includes(normalizeTitleKey(thread.title)),
+    ) ||
     threads.find((thread) =>
       thread.contextTags.some((tag) => normalizeTitleKey(tag) === queryKey),
     ) ||
     threads.find((thread) =>
-      thread.contextTags.some((tag) =>
-        normalizeTitleKey(tag).includes(queryKey) || queryKey.includes(normalizeTitleKey(tag)),
+      thread.contextTags.some(
+        (tag) =>
+          normalizeTitleKey(tag).includes(queryKey) ||
+          queryKey.includes(normalizeTitleKey(tag)),
       ),
     ) ||
     findThreadByPersonName(params.groupFolder, params.query) ||
@@ -500,7 +527,10 @@ function resolveContextThread(params: {
   now: Date;
 }): LifeThread | undefined {
   if (params.explicitTitle) {
-    const explicit = findThreadByTitle(params.groupFolder, params.explicitTitle);
+    const explicit = findThreadByTitle(
+      params.groupFolder,
+      params.explicitTitle,
+    );
     if (explicit) return explicit;
   }
   if (params.priorContext?.usedThreadIds?.length === 1) {
@@ -566,7 +596,9 @@ function upsertExplicitLifeThread(params: {
           relatedSubjectIds.length > 0
             ? relatedSubjectIds
             : existing.relatedSubjectIds,
-        contextTags: [...new Set([...existing.contextTags, ...inferred.contextTags])],
+        contextTags: [
+          ...new Set([...existing.contextTags, ...inferred.contextTags]),
+        ],
         sourceKind: params.sourceKind || 'explicit',
         confidenceKind: 'explicit',
         userConfirmed: true,
@@ -591,7 +623,10 @@ function upsertExplicitLifeThread(params: {
         relatedSubjectIds,
         contextTags: inferred.contextTags,
         summary,
-        nextAction: params.nextAction !== undefined ? params.nextAction : defaultNextAction,
+        nextAction:
+          params.nextAction !== undefined
+            ? params.nextAction
+            : defaultNextAction,
         nextFollowupAt: params.nextFollowupAt || null,
         sourceKind: params.sourceKind || 'explicit',
         confidenceKind: 'explicit',
@@ -665,7 +700,9 @@ export function maybeCreatePendingLifeThreadSuggestion(input: {
   if (inferred.sensitivity === 'sensitive') {
     return null;
   }
-  if (findThreadByTitle(input.groupFolder, inferredTitle, ['active', 'paused'])) {
+  if (
+    findThreadByTitle(input.groupFolder, inferredTitle, ['active', 'paused'])
+  ) {
     return null;
   }
 
@@ -676,8 +713,8 @@ export function maybeCreatePendingLifeThreadSuggestion(input: {
       .join('|')}\\b`,
     'i',
   );
-  const messages = listRecentMessagesForChat(input.chatJid, 20).filter((message) =>
-    topicMatcher.test(message.content),
+  const messages = listRecentMessagesForChat(input.chatJid, 20).filter(
+    (message) => topicMatcher.test(message.content),
   );
   const distinctDays = new Set(
     messages.map((message) => {
@@ -707,7 +744,9 @@ export function maybeCreatePendingLifeThreadSuggestion(input: {
     ),
     contextTags: inferred.contextTags,
     createdAt: now.toISOString(),
-    expiresAt: new Date(now.getTime() + PENDING_THREAD_SUGGESTION_TTL_MS).toISOString(),
+    expiresAt: new Date(
+      now.getTime() + PENDING_THREAD_SUGGESTION_TTL_MS,
+    ).toISOString(),
   };
   setPendingLifeThreadSuggestion(input.chatJid, suggestion);
   return suggestion;
@@ -761,12 +800,17 @@ export function buildLifeThreadSnapshot(params: {
       return Date.parse(right.lastUpdatedAt) - Date.parse(left.lastUpdatedAt);
     });
 
-  const automaticThreads = activeThreads.filter(isAutomaticSurfaceWorthyLifeThread);
+  const automaticThreads = activeThreads.filter(
+    isAutomaticSurfaceWorthyLifeThread,
+  );
 
   const dueFollowups = automaticThreads.filter((thread) => {
     if (!thread.nextFollowupAt) return false;
     const followupMs = Date.parse(thread.nextFollowupAt);
-    return Number.isFinite(followupMs) && followupMs <= now.getTime() + 24 * 60 * 60 * 1000;
+    return (
+      Number.isFinite(followupMs) &&
+      followupMs <= now.getTime() + 24 * 60 * 60 * 1000
+    );
   });
 
   const slippingThreads = automaticThreads.filter((thread) => {
@@ -776,23 +820,32 @@ export function buildLifeThreadSnapshot(params: {
   });
 
   const householdCarryover =
-    automaticThreads.find((thread) =>
-      ['household', 'family', 'mixed'].includes(thread.scope) ||
-      thread.category === 'relationship' ||
-      thread.contextTags.some((tag) =>
-        ['candace', 'family', 'household', 'home'].includes(normalizeTitleKey(tag)),
-      ),
+    automaticThreads.find(
+      (thread) =>
+        ['household', 'family', 'mixed'].includes(thread.scope) ||
+        thread.category === 'relationship' ||
+        thread.contextTags.some((tag) =>
+          ['candace', 'family', 'household', 'home'].includes(
+            normalizeTitleKey(tag),
+          ),
+        ),
     ) || null;
 
   const recommendedNextThread =
     dueFollowups.find((thread) => {
       if (!params.selectedWorkTitle) return true;
-      return normalizeTitleKey(thread.title) !== normalizeTitleKey(params.selectedWorkTitle);
+      return (
+        normalizeTitleKey(thread.title) !==
+        normalizeTitleKey(params.selectedWorkTitle)
+      );
     }) ||
     automaticThreads.find((thread) => {
       if (!thread.nextAction && !thread.summary) return false;
       if (!params.selectedWorkTitle) return true;
-      return normalizeTitleKey(thread.title) !== normalizeTitleKey(params.selectedWorkTitle);
+      return (
+        normalizeTitleKey(thread.title) !==
+        normalizeTitleKey(params.selectedWorkTitle)
+      );
     }) ||
     null;
 
@@ -814,12 +867,15 @@ function buildThreadDetailReply(
     `Summary: ${thread.summary}`,
     thread.nextAction ? `Next action: ${thread.nextAction}` : null,
     thread.nextFollowupAt
-      ? `Next follow-up: ${new Date(thread.nextFollowupAt).toLocaleString('en-US', {
-          month: 'short',
-          day: 'numeric',
-          hour: 'numeric',
-          minute: '2-digit',
-        })}`
+      ? `Next follow-up: ${new Date(thread.nextFollowupAt).toLocaleString(
+          'en-US',
+          {
+            month: 'short',
+            day: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+          },
+        )}`
       : null,
     signals[0] ? `Latest signal: ${signals[0].summaryText}` : null,
   ].filter((line): line is string => Boolean(line));
@@ -885,9 +941,10 @@ function buildThreadExplainabilityReply(
       maxDetails: 1,
     });
   }
-  return ['Thread context in play:', ...details.map((detail) => `- ${detail}`)].join(
-    '\n',
-  );
+  return [
+    'Thread context in play:',
+    ...details.map((detail) => `- ${detail}`),
+  ].join('\n');
 }
 
 function buildSaveConfirmation(
@@ -911,7 +968,10 @@ function normalizeLifeThreadSummaryLine(value: string): string {
     .replace(/^(?:still open|still in view):\s*/i, '')
     .replace(/^summary:\s*/i, '')
     .replace(/^save (?:that|it|this)(?: for later)?[:,-]?\s*/i, '')
-    .replace(/^keep track of (?:that|it|this)(?: for (?:later|tonight))?[:,-]?\s*/i, '')
+    .replace(
+      /^keep track of (?:that|it|this)(?: for (?:later|tonight))?[:,-]?\s*/i,
+      '',
+    )
     .trim();
 }
 
@@ -925,7 +985,9 @@ function extractLifeThreadSummaryCandidate(value: string | undefined): string {
     if (/^draft:/i.test(line)) {
       break;
     }
-    if (/^(?:next|why this came up|keep in mind|follow-up|urgency):/i.test(line)) {
+    if (
+      /^(?:next|why this came up|keep in mind|follow-up|urgency):/i.test(line)
+    ) {
       continue;
     }
     const normalized = normalizeLifeThreadSummaryLine(line);
@@ -1011,7 +1073,11 @@ export function handleLifeThreadCommand(
     }
   }
 
-  if (/^(what threads do i have open|what('?s| is) active right now)\b/i.test(normalized)) {
+  if (
+    /^(what threads do i have open|what('?s| is) active right now)\b/i.test(
+      normalized,
+    )
+  ) {
     const threads = listLifeThreadsForGroup(input.groupFolder, ['active']);
     return {
       handled: true,
@@ -1023,7 +1089,9 @@ export function handleLifeThreadCommand(
     };
   }
 
-  const stillOpenMatch = raw.match(/^what('?s| is) still open with ([a-z][a-z' /-]+)\??$/i);
+  const stillOpenMatch = raw.match(
+    /^what('?s| is) still open with ([a-z][a-z' /-]+)\??$/i,
+  );
   if (stillOpenMatch) {
     const thread = findThreadByPersonName(input.groupFolder, stillOpenMatch[2]);
     return {
@@ -1035,7 +1103,11 @@ export function handleLifeThreadCommand(
     };
   }
 
-  if (/^is there anything i still need to handle for (the )?(house|home)\??$/i.test(normalized)) {
+  if (
+    /^is there anything i still need to handle for (the )?(house|home)\??$/i.test(
+      normalized,
+    )
+  ) {
     const thread =
       findThreadByTitle(input.groupFolder, 'Household', ['active']) ||
       listLifeThreadsForGroup(input.groupFolder, ['active']).find(
@@ -1051,7 +1123,9 @@ export function handleLifeThreadCommand(
     };
   }
 
-  const mergeMatch = raw.match(/^merge (?:the )?(.+?) thread into (?:the )?(.+?) thread$/i);
+  const mergeMatch = raw.match(
+    /^merge (?:the )?(.+?) thread into (?:the )?(.+?) thread$/i,
+  );
   if (mergeMatch) {
     const fromThread = findThreadByTitle(input.groupFolder, mergeMatch[1]);
     const toThread = findThreadByTitle(input.groupFolder, mergeMatch[2]);
@@ -1090,7 +1164,10 @@ export function handleLifeThreadCommand(
   const renameMatch = raw.match(/^rename (?:that|this|the)? ?thread to (.+)$/i);
   if (renameMatch) {
     if (!thread) {
-      return { handled: true, responseText: 'I need the thread first before I can rename it.' };
+      return {
+        handled: true,
+        responseText: 'I need the thread first before I can rename it.',
+      };
     }
     const nextTitle = clipSummary(renameMatch[1], 60);
     updateLifeThread(thread.id, {
@@ -1101,13 +1178,23 @@ export function handleLifeThreadCommand(
     return {
       handled: true,
       responseText: `Okay. I renamed that thread to ${nextTitle}.`,
-      referencedThread: getLifeThread(thread.id) || { ...thread, title: nextTitle },
+      referencedThread: getLifeThread(thread.id) || {
+        ...thread,
+        title: nextTitle,
+      },
     };
   }
 
-  if (/^(close that thread|close that|archive that thread|archive that)\b/i.test(normalized)) {
+  if (
+    /^(close that thread|close that|archive that thread|archive that)\b/i.test(
+      normalized,
+    )
+  ) {
     if (!thread) {
-      return { handled: true, responseText: 'I need the thread first before I can close it.' };
+      return {
+        handled: true,
+        responseText: 'I need the thread first before I can close it.',
+      };
     }
     const nextStatus = normalized.includes('archive') ? 'archived' : 'closed';
     updateLifeThread(thread.id, {
@@ -1124,7 +1211,10 @@ export function handleLifeThreadCommand(
 
   if (/^(pause that thread|pause that)\b/i.test(normalized)) {
     if (!thread) {
-      return { handled: true, responseText: 'I need the thread first before I can pause it.' };
+      return {
+        handled: true,
+        responseText: 'I need the thread first before I can pause it.',
+      };
     }
     updateLifeThread(thread.id, {
       status: 'paused',
@@ -1138,9 +1228,14 @@ export function handleLifeThreadCommand(
     };
   }
 
-  if (/^(forget that thread|forget that|delete that thread)\b/i.test(normalized)) {
+  if (
+    /^(forget that thread|forget that|delete that thread)\b/i.test(normalized)
+  ) {
     if (!thread) {
-      return { handled: true, responseText: 'I need the thread first before I can delete it.' };
+      return {
+        handled: true,
+        responseText: 'I need the thread first before I can delete it.',
+      };
     }
     deleteLifeThread(thread.id);
     return {
@@ -1150,15 +1245,26 @@ export function handleLifeThreadCommand(
     };
   }
 
-  if (/^(what thread are you using here|what thread are you using there)\b/i.test(normalized)) {
+  if (
+    /^(what thread are you using here|what thread are you using there)\b/i.test(
+      normalized,
+    )
+  ) {
     return {
       handled: true,
-      responseText: buildThreadExplainabilityReply(input.channel, input.priorContext),
+      responseText: buildThreadExplainabilityReply(
+        input.channel,
+        input.priorContext,
+      ),
       referencedThread: thread || null,
     };
   }
 
-  if (/^(what('?s| is) in that thread|what do you know about this thread)\b/i.test(normalized)) {
+  if (
+    /^(what('?s| is) in that thread|what do you know about this thread)\b/i.test(
+      normalized,
+    )
+  ) {
     return {
       handled: true,
       responseText: thread
@@ -1178,9 +1284,16 @@ export function handleLifeThreadCommand(
     };
   }
 
-  if (/^(stop using thread context for this|don'?t bring this up automatically)\b/i.test(normalized)) {
+  if (
+    /^(stop using thread context for this|don'?t bring this up automatically)\b/i.test(
+      normalized,
+    )
+  ) {
     if (!thread) {
-      return { handled: true, responseText: 'I need the thread first before I can quiet it down.' };
+      return {
+        handled: true,
+        responseText: 'I need the thread first before I can quiet it down.',
+      };
     }
     updateLifeThread(thread.id, {
       surfaceMode: 'manual_only',
@@ -1214,7 +1327,9 @@ export function handleLifeThreadCommand(
           ? formatThreadListAlexa(threads.slice(0, 3))
           : [
               'Follow-through right now:',
-              ...(threads.slice(0, 5).map((candidate) => `- ${formatThreadSummaryLine(candidate)}`)),
+              ...threads
+                .slice(0, 5)
+                .map((candidate) => `- ${formatThreadSummaryLine(candidate)}`),
             ].join('\n'),
       referencedThread: threads[0] || null,
     };
@@ -1241,20 +1356,27 @@ export function handleLifeThreadCommand(
               })
             : [
                 'The follow-through items most likely to be slipping:',
-                ...threads.slice(0, 4).map((candidate) =>
-                  `- ${formatThreadSummaryLine(candidate)}`,
-                ),
+                ...threads
+                  .slice(0, 4)
+                  .map(
+                    (candidate) => `- ${formatThreadSummaryLine(candidate)}`,
+                  ),
               ].join('\n'),
       referencedThread: threads[0] || null,
     };
   }
 
-  const saveUnderMatch = raw.match(/^(?:save|track|keep track of)(?: this| that)? (?:under|to|in) (?:the )?(.+?) thread\b/i);
+  const saveUnderMatch = raw.match(
+    /^(?:save|track|keep track of)(?: this| that)? (?:under|to|in) (?:the )?(.+?) thread\b/i,
+  );
   if (saveUnderMatch) {
     const title = clipSummary(saveUnderMatch[1], 60);
     const summary = getSummarySource(input);
     if (!summary) {
-      return { handled: true, responseText: 'Tell me what you want saved first.' };
+      return {
+        handled: true,
+        responseText: 'Tell me what you want saved first.',
+      };
     }
     const savedThread = upsertExplicitLifeThread({
       groupFolder: input.groupFolder,
@@ -1278,12 +1400,14 @@ export function handleLifeThreadCommand(
   if (rememberTalkMatch) {
     const personName = clipSummary(rememberTalkMatch[1], 40);
     const capturedSummary = rememberTalkMatch[2]?.trim() || '';
-    const summaryBase =
-      /^this$/i.test(capturedSummary)
-        ? getSummarySource(input)
-        : clipSummary(capturedSummary);
+    const summaryBase = /^this$/i.test(capturedSummary)
+      ? getSummarySource(input)
+      : clipSummary(capturedSummary);
     if (!summaryBase) {
-      return { handled: true, responseText: 'Tell me what you want saved first.' };
+      return {
+        handled: true,
+        responseText: 'Tell me what you want saved first.',
+      };
     }
     const savedThread = upsertExplicitLifeThread({
       groupFolder: input.groupFolder,
@@ -1302,10 +1426,17 @@ export function handleLifeThreadCommand(
     };
   }
 
-  if (/^(keep track of this for later|save this for later|keep track of this|save this)\b/i.test(normalized)) {
+  if (
+    /^(keep track of this for later|save this for later|keep track of this|save this)\b/i.test(
+      normalized,
+    )
+  ) {
     const summary = getSummarySource(input);
     if (!summary) {
-      return { handled: true, responseText: 'Tell me what you want saved first.' };
+      return {
+        handled: true,
+        responseText: 'Tell me what you want saved first.',
+      };
     }
     const title = deriveTitleFromSummary(summary);
     const savedThread = upsertExplicitLifeThread({
@@ -1330,12 +1461,14 @@ export function handleLifeThreadCommand(
   );
   if (remindTalkMatch) {
     const personName = clipSummary(remindTalkMatch[1], 40);
-    const summaryBase =
-      /^this$/i.test(remindTalkMatch[2] || '')
-        ? getSummarySource(input)
-        : clipSummary(remindTalkMatch[2] || '');
+    const summaryBase = /^this$/i.test(remindTalkMatch[2] || '')
+      ? getSummarySource(input)
+      : clipSummary(remindTalkMatch[2] || '');
     if (!summaryBase) {
-      return { handled: true, responseText: 'Tell me what you want carried first.' };
+      return {
+        handled: true,
+        responseText: 'Tell me what you want carried first.',
+      };
     }
     const followupAt = inferFollowupAnchor(remindTalkMatch[3] || raw, now);
     const savedThread = upsertExplicitLifeThread({
@@ -1366,12 +1499,14 @@ export function handleLifeThreadCommand(
     /^don'?t let me forget (this|that|.+?)(?: (tonight|tomorrow|before i leave))?[.!?]*$/i,
   );
   if (dontForgetMatch) {
-    const summaryBase =
-      /^(this|that)$/i.test(dontForgetMatch[1] || '')
-        ? getSummarySource(input)
-        : clipSummary(dontForgetMatch[1] || '');
+    const summaryBase = /^(this|that)$/i.test(dontForgetMatch[1] || '')
+      ? getSummarySource(input)
+      : clipSummary(dontForgetMatch[1] || '');
     if (!summaryBase) {
-      return { handled: true, responseText: 'Tell me what you do not want to lose first.' };
+      return {
+        handled: true,
+        responseText: 'Tell me what you do not want to lose first.',
+      };
     }
     const followupAt = inferFollowupAnchor(dontForgetMatch[2] || raw, now);
     const title = deriveTitleFromSummary(summaryBase);

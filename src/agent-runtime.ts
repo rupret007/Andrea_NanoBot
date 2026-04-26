@@ -46,7 +46,9 @@ export function classifyRuntimeRoute(
 ): RuntimeRoute {
   const normalizedPrompt = prompt.trim();
 
-  if (LOCAL_REQUIRED_MARKERS.some((pattern) => pattern.test(normalizedPrompt))) {
+  if (
+    LOCAL_REQUIRED_MARKERS.some((pattern) => pattern.test(normalizedPrompt))
+  ) {
     return 'local_required';
   }
 

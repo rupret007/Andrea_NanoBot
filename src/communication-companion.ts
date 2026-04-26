@@ -17,7 +17,10 @@ import {
   upsertCommunicationThread,
   upsertProfileSubject,
 } from './db.js';
-import { findLifeThreadForExplicitLookup, handleLifeThreadCommand } from './life-threads.js';
+import {
+  findLifeThreadForExplicitLookup,
+  handleLifeThreadCommand,
+} from './life-threads.js';
 import { planContextualReminder } from './local-reminder.js';
 import {
   syncOutcomeFromCommunicationThreadRecord,
@@ -160,7 +163,9 @@ function normalizeDraftTopicSummary(value: string): string {
   return normalized;
 }
 
-function normalizeSpokenPersonName(value: string | undefined): string | undefined {
+function normalizeSpokenPersonName(
+  value: string | undefined,
+): string | undefined {
   if (!value) return undefined;
   const trimmed = value.trim();
   if (!trimmed) return undefined;
@@ -215,7 +220,10 @@ function normalizeCommunicationSupportLine(value: string): string {
     )
     .replace(/^save this (?:note )?to my library:\s*/i, '')
     .replace(/^save (?:that|it|this)(?: for later)?[:,-]?\s*/i, '')
-    .replace(/^keep track of (?:that|it|this)(?: for (?:later|tonight))?[:,-]?\s*/i, '')
+    .replace(
+      /^keep track of (?:that|it|this)(?: for (?:later|tonight))?[:,-]?\s*/i,
+      '',
+    )
     .replace(/^(?:still open|still in view):\s*/i, '')
     .replace(/^summary:\s*/i, '')
     .replace(/\bdraft:\s*[\s\S]*$/i, '')
@@ -261,8 +269,7 @@ function isRedundantCommunicationSupportLine(input: {
   return (
     /^(?:[a-z]+ )?(?:wants an answer|wants a follow up|said they would get back to you|sounds settled) about\b/.test(
       supportLine,
-    ) ||
-    /^(?:reply|follow up|save|track)\b/.test(supportLine)
+    ) || /^(?:reply|follow up|save|track)\b/.test(supportLine)
   );
 }
 
@@ -301,7 +308,10 @@ function isCommandOnlyCommunicationPrompt(value: string): boolean {
 }
 
 function isCommandOnlyCommunicationFollowup(
-  input: Pick<CommunicationContextInput, 'text' | 'priorContext' | 'conversationSummary'>,
+  input: Pick<
+    CommunicationContextInput,
+    'text' | 'priorContext' | 'conversationSummary'
+  >,
 ): boolean {
   const rawPromptText = input.text || '';
   return (
@@ -309,8 +319,8 @@ function isCommandOnlyCommunicationFollowup(
     (isMeaninglessCommunicationBody(cleanMessageBody(rawPromptText)) &&
       Boolean(
         input.priorContext?.communicationThreadId ||
-          input.priorContext?.lastCommunicationSummary ||
-          input.conversationSummary,
+        input.priorContext?.lastCommunicationSummary ||
+        input.conversationSummary,
       ))
   );
 }
@@ -359,7 +369,9 @@ function isMeaninglessCommunicationBody(
   return !normalized || /^[?!.,:;-]+$/.test(normalized);
 }
 
-function extractQuotedCommunicationPromptBody(value: string | undefined): string {
+function extractQuotedCommunicationPromptBody(
+  value: string | undefined,
+): string {
   const raw = value?.trim() || '';
   if (!raw) return '';
   const quoted =
@@ -418,7 +430,8 @@ function extractLatestBlueBubblesSelfCompanionContext(
     )
     .sort(
       (a, b) =>
-        Date.parse(b.last_message_time || '') - Date.parse(a.last_message_time || ''),
+        Date.parse(b.last_message_time || '') -
+        Date.parse(a.last_message_time || ''),
     );
 
   for (const chat of chats) {
@@ -445,7 +458,9 @@ function extractLatestBlueBubblesSelfCompanionContext(
   return {};
 }
 
-function looksAssistantNarratedContext(text: string | null | undefined): boolean {
+function looksAssistantNarratedContext(
+  text: string | null | undefined,
+): boolean {
   const normalized = cleanMessageBody(text || '');
   if (!normalized) return false;
   return /^(?:Andrea:|The main thing still open with |The conversation most likely to slip is |The next thing that still needs attention is |With [A-Z][a-z' -]+, I'd |For tonight, |Thread follow-up: |Open conversation: |Plan carryover: |Conversation carryover: )/i.test(
@@ -453,7 +468,9 @@ function looksAssistantNarratedContext(text: string | null | undefined): boolean
   );
 }
 
-function looksLikeMalformedCommunicationSummary(value: string | null | undefined): boolean {
+function looksLikeMalformedCommunicationSummary(
+  value: string | null | undefined,
+): boolean {
   const normalized = normalizeText(value || '');
   if (!normalized) return true;
   return (
@@ -514,10 +531,14 @@ function hasConcreteCommunicationRewriteContext(
   const priorSummary = normalizeUsableCommunicationSummary(
     input.priorContext?.lastCommunicationSummary,
   );
-  return Boolean(priorSummary && looksLikeCommunicationContextText(priorSummary));
+  return Boolean(
+    priorSummary && looksLikeCommunicationContextText(priorSummary),
+  );
 }
 
-function looksLikeCommunicationContextText(value: string | null | undefined): boolean {
+function looksLikeCommunicationContextText(
+  value: string | null | undefined,
+): boolean {
   const normalized = normalizeText(value || '');
   if (!normalized) return false;
   if (looksLikeMalformedCommunicationSummary(normalized)) return false;
@@ -567,17 +588,22 @@ function findFallbackCommunicationThread(
   const sameChatWithContext = threads.find(
     (thread) =>
       thread.channelChatJid === input.chatJid &&
-      (thread.linkedSubjectIds.length > 0 || thread.linkedLifeThreadIds.length > 0),
+      (thread.linkedSubjectIds.length > 0 ||
+        thread.linkedLifeThreadIds.length > 0),
   );
   if (sameChatWithContext) return sameChatWithContext;
 
   const anyThreadWithContext = threads.find(
     (thread) =>
-      thread.linkedSubjectIds.length > 0 || thread.linkedLifeThreadIds.length > 0,
+      thread.linkedSubjectIds.length > 0 ||
+      thread.linkedLifeThreadIds.length > 0,
   );
   if (anyThreadWithContext) return anyThreadWithContext;
 
-  return threads.find((thread) => thread.channelChatJid === input.chatJid) || threads[0];
+  return (
+    threads.find((thread) => thread.channelChatJid === input.chatJid) ||
+    threads[0]
+  );
 }
 
 function buildCommandOnlyCommunicationFallbackSummary(params: {
@@ -586,7 +612,9 @@ function buildCommandOnlyCommunicationFallbackSummary(params: {
   linkedSubjects: ProfileSubject[];
   rawText?: string;
 }): string | null {
-  const existingSummary = normalizeText(params.existing?.lastInboundSummary || '');
+  const existingSummary = normalizeText(
+    params.existing?.lastInboundSummary || '',
+  );
   if (
     existingSummary &&
     !looksLikeMalformedCommunicationSummary(existingSummary) &&
@@ -605,7 +633,9 @@ function buildCommandOnlyCommunicationFallbackSummary(params: {
     return clipText(lifeThreadSummary, 140);
   }
 
-  const explicitTopic = extractExplicitDraftTopicFromPrompt(params.rawText || '');
+  const explicitTopic = extractExplicitDraftTopicFromPrompt(
+    params.rawText || '',
+  );
   if (explicitTopic) {
     const personName = params.linkedSubjects[0]?.displayName?.trim();
     return personName
@@ -628,10 +658,9 @@ function repairCommandOnlyDraftInput(
     return input;
   }
 
-  const existing =
-    input.priorContext?.communicationThreadId
-      ? getCommunicationThread(input.priorContext.communicationThreadId)
-      : undefined;
+  const existing = input.priorContext?.communicationThreadId
+    ? getCommunicationThread(input.priorContext.communicationThreadId)
+    : undefined;
   const summaryCandidate =
     normalizeText(input.priorContext?.lastCommunicationSummary || '') ||
     normalizeText(input.conversationSummary || '') ||
@@ -669,7 +698,10 @@ function repairCommandOnlyDraftInput(
       ...input.priorContext,
       threadTitle: input.priorContext?.threadTitle || fallbackThread?.title,
       communicationLifeThreadIds: Array.from(
-        new Set([...(input.priorContext?.communicationLifeThreadIds || []), ...lifeThreadIds]),
+        new Set([
+          ...(input.priorContext?.communicationLifeThreadIds || []),
+          ...lifeThreadIds,
+        ]),
       ),
       lastCommunicationSummary: repairedSummary,
     },
@@ -708,7 +740,10 @@ function extractMessageText(input: CommunicationContextInput): {
   if (sameChat.text && prior && looksAssistantNarratedContext(prior)) {
     return { ...sameChat, source: 'chat' };
   }
-  if (!isMeaninglessCommunicationBody(prior) && looksLikeCommunicationContextText(prior)) {
+  if (
+    !isMeaninglessCommunicationBody(prior) &&
+    looksLikeCommunicationContextText(prior)
+  ) {
     return { text: prior, source: 'prior' };
   }
   if (sameChat.text) {
@@ -831,7 +866,10 @@ function resolveLifeThreads(
   input: CommunicationContextInput,
   linkedSubjects: ProfileSubject[],
 ): LifeThread[] {
-  const threads = listLifeThreadsForGroup(input.groupFolder, ['active', 'paused']);
+  const threads = listLifeThreadsForGroup(input.groupFolder, [
+    'active',
+    'paused',
+  ]);
   const subjectIds = new Set(linkedSubjects.map((subject) => subject.id));
   const matched = new Map<string, LifeThread>();
 
@@ -843,7 +881,9 @@ function resolveLifeThreads(
   }
 
   for (const thread of threads) {
-    if (thread.relatedSubjectIds.some((subjectId) => subjectIds.has(subjectId))) {
+    if (
+      thread.relatedSubjectIds.some((subjectId) => subjectIds.has(subjectId))
+    ) {
       matched.set(thread.id, thread);
     }
   }
@@ -872,15 +912,26 @@ function inferUrgency(
   if (/\btonight|this evening|before tonight\b/.test(normalized)) {
     return 'tonight';
   }
-  if (/\btomorrow|tomorrow morning|tomorrow afternoon|tomorrow evening\b/.test(normalized)) {
+  if (
+    /\btomorrow|tomorrow morning|tomorrow afternoon|tomorrow evening\b/.test(
+      normalized,
+    )
+  ) {
     return 'tomorrow';
   }
-  if (/\basap|soon|later today|by end of day|before i leave|when you can\b/.test(normalized)) {
+  if (
+    /\basap|soon|later today|by end of day|before i leave|when you can\b/.test(
+      normalized,
+    )
+  ) {
     return 'soon';
   }
   if (timestamp) {
     const then = new Date(timestamp);
-    if (!Number.isNaN(then.getTime()) && now.getTime() - then.getTime() > 36 * 60 * 60 * 1000) {
+    if (
+      !Number.isNaN(then.getTime()) &&
+      now.getTime() - then.getTime() > 36 * 60 * 60 * 1000
+    ) {
       return 'overdue';
     }
   }
@@ -932,7 +983,9 @@ function inferFollowupState(
     /\bneed you to\b/,
   ];
   if (askPatterns.some((pattern) => pattern.test(normalized))) {
-    return urgency === 'tonight' || urgency === 'tomorrow' ? 'scheduled' : 'reply_needed';
+    return urgency === 'tonight' || urgency === 'tomorrow'
+      ? 'scheduled'
+      : 'reply_needed';
   }
 
   if (/\bfyi\b|\bjust wanted to let you know\b/.test(normalized)) {
@@ -953,12 +1006,16 @@ function pickSuggestedActions(
     case 'scheduled':
       return ['save_for_later', 'create_reminder'];
     case 'waiting_on_them':
-      return linkedLifeThreads.length > 0 ? ['link_thread', 'ignore'] : ['ignore'];
+      return linkedLifeThreads.length > 0
+        ? ['link_thread', 'ignore']
+        : ['ignore'];
     case 'resolved':
     case 'ignored':
       return ['ignore'];
     default:
-      return linkedLifeThreads.length > 0 ? ['draft_reply', 'link_thread'] : ['link_thread'];
+      return linkedLifeThreads.length > 0
+        ? ['draft_reply', 'link_thread']
+        : ['link_thread'];
   }
 }
 
@@ -1087,7 +1144,9 @@ function resolveExistingThread(
   linkedSubjects: ProfileSubject[],
 ): CommunicationThreadRecord | undefined {
   if (input.priorContext?.communicationThreadId) {
-    const existing = getCommunicationThread(input.priorContext.communicationThreadId);
+    const existing = getCommunicationThread(
+      input.priorContext.communicationThreadId,
+    );
     const shouldBypassGenericPriorThread =
       existing !== undefined &&
       isCommandOnlyCommunicationPrompt(input.text || '') &&
@@ -1103,12 +1162,14 @@ function resolveExistingThread(
   if (!subjectId) {
     return findFallbackCommunicationThread(input);
   }
-  return listCommunicationThreadsForGroup({
-    groupFolder: input.groupFolder,
-    subjectId,
-    includeDisabled: false,
-    limit: 1,
-  })[0] || findFallbackCommunicationThread(input);
+  return (
+    listCommunicationThreadsForGroup({
+      groupFolder: input.groupFolder,
+      subjectId,
+      includeDisabled: false,
+      limit: 1,
+    })[0] || findFallbackCommunicationThread(input)
+  );
 }
 
 function upsertThreadFromAnalysis(input: {
@@ -1132,7 +1193,8 @@ function upsertThreadFromAnalysis(input: {
     id: input.existing?.id || randomUUID(),
     groupFolder: input.groupFolder,
     title:
-      input.existing?.title || buildThreadTitle(input.linkedSubjects, input.linkedLifeThreads),
+      input.existing?.title ||
+      buildThreadTitle(input.linkedSubjects, input.linkedLifeThreads),
     linkedSubjectIds: input.linkedSubjects.map((subject) => subject.id),
     linkedLifeThreadIds: input.linkedLifeThreads.map((thread) => thread.id),
     channel: input.sourceChannel,
@@ -1214,7 +1276,8 @@ function buildRelationshipAwareDraft(input: {
         ? `Hey ${personName},`
         : 'Hey,';
   const draftTopic =
-    normalizeDraftTopicSummary(input.summaryText) || input.summaryText.replace(/\.$/, '');
+    normalizeDraftTopicSummary(input.summaryText) ||
+    input.summaryText.replace(/\.$/, '');
   const resolvedAcknowledgement =
     input.followupState === 'resolved'
       ? (() => {
@@ -1227,7 +1290,9 @@ function buildRelationshipAwareDraft(input: {
             )
           ) {
             return [
-              input.style === 'warmer' ? 'Sounds good to me too.' : 'Sounds good.',
+              input.style === 'warmer'
+                ? 'Sounds good to me too.'
+                : 'Sounds good.',
               seeYouPhrase
                 ? `${seeYouPhrase.charAt(0).toUpperCase()}${seeYouPhrase.slice(1)}.`
                 : null,
@@ -1253,7 +1318,8 @@ function buildRelationshipAwareDraft(input: {
     input.linkedLifeThreads[0]?.summary ||
     input.toneHints[0] ||
     '';
-  const normalizedSupportLine = normalizeCommunicationSupportLine(rawSupportLine);
+  const normalizedSupportLine =
+    normalizeCommunicationSupportLine(rawSupportLine);
   const supportLine =
     (normalizedSupportLine &&
     !isRedundantCommunicationSupportLine({
@@ -1262,16 +1328,14 @@ function buildRelationshipAwareDraft(input: {
       draftTopic,
     })
       ? normalizedSupportLine
-      : '') ||
-    '';
-  const closer =
-    draftTopic.startsWith('whether ')
-      ? ''
-      : input.style === 'short'
-        ? 'Let me know.'
-        : input.style === 'warmer'
-          ? 'No rush, but let me know what feels right.'
-          : 'Let me know what works for you.';
+      : '') || '';
+  const closer = draftTopic.startsWith('whether ')
+    ? ''
+    : input.style === 'short'
+      ? 'Let me know.'
+      : input.style === 'warmer'
+        ? 'No rush, but let me know what feels right.'
+        : 'Let me know what works for you.';
 
   return [opener, baseBody, clipText(supportLine, 120), closer]
     .filter(Boolean)
@@ -1305,7 +1369,8 @@ function inferPersonScopeFromText(
 
 function formatOpenLoopLine(item: CommunicationOpenLoopItem): string {
   const prefix = item.personName || item.title;
-  const summary = normalizeText(item.summaryText) || 'This conversation still looks open.';
+  const summary =
+    normalizeText(item.summaryText) || 'This conversation still looks open.';
   if (!prefix) return summary;
   if (summary.toLowerCase().startsWith(prefix.toLowerCase())) {
     return summary;
@@ -1342,7 +1407,9 @@ export function analyzeCommunicationMessage(
     linkedSubjects.length > 0 || !existing
       ? linkedSubjects
       : existing.linkedSubjectIds
-          .map((subjectId) => subjects.find((subject) => subject.id === subjectId))
+          .map((subjectId) =>
+            subjects.find((subject) => subject.id === subjectId),
+          )
           .filter((subject): subject is ProfileSubject => Boolean(subject));
   const availableLifeThreads = listLifeThreadsForGroup(input.groupFolder, [
     'active',
@@ -1352,9 +1419,13 @@ export function analyzeCommunicationMessage(
     linkedLifeThreads.length > 0 || !existing
       ? linkedLifeThreads
       : existing.linkedLifeThreadIds
-          .map((threadId) => availableLifeThreads.find((thread) => thread.id === threadId))
+          .map((threadId) =>
+            availableLifeThreads.find((thread) => thread.id === threadId),
+          )
           .filter((thread): thread is LifeThread => Boolean(thread));
-  const profileFacts = listProfileFactsForGroup(input.groupFolder, ['accepted']);
+  const profileFacts = listProfileFactsForGroup(input.groupFolder, [
+    'accepted',
+  ]);
   const toneHints = buildToneHints(profileFacts, effectiveLinkedSubjects);
   const recoveredSummary =
     commandOnlyPrompt &&
@@ -1377,20 +1448,19 @@ export function analyzeCommunicationMessage(
       isMeaninglessCommunicationBody(messageText) ||
       looksLikeMalformedCommunicationSummary(messageText) ||
       !looksLikeCommunicationMessageBody(messageText));
-  const preservedCommandSummary =
-    shouldForceCommandContext
-      ? [
-          normalizeText(input.priorContext?.lastCommunicationSummary || ''),
-          normalizeText(input.conversationSummary || ''),
-          normalizeText(existing?.lastInboundSummary || ''),
-          normalizeText(recoveredSummary || ''),
-        ].find(
-          (candidate) =>
-            !isMeaninglessCommunicationBody(candidate) &&
-            !looksLikeMalformedCommunicationSummary(candidate) &&
-            looksLikeCommunicationContextText(candidate),
-        ) || null
-      : null;
+  const preservedCommandSummary = shouldForceCommandContext
+    ? [
+        normalizeText(input.priorContext?.lastCommunicationSummary || ''),
+        normalizeText(input.conversationSummary || ''),
+        normalizeText(existing?.lastInboundSummary || ''),
+        normalizeText(recoveredSummary || ''),
+      ].find(
+        (candidate) =>
+          !isMeaninglessCommunicationBody(candidate) &&
+          !looksLikeMalformedCommunicationSummary(candidate) &&
+          looksLikeCommunicationContextText(candidate),
+      ) || null
+    : null;
   if (!messageText) {
     return {
       ok: false,
@@ -1409,20 +1479,19 @@ export function analyzeCommunicationMessage(
     existing &&
     !recoveredSummary &&
     !looksLikeMalformedCommunicationSummary(existing.lastInboundSummary);
-  const urgency =
-    shouldReuseExistingPriorState
-      ? existing.urgency
-      : inferUrgency(effectiveMessageText, now, extracted.timestamp);
-  const followupState =
-    shouldReuseExistingPriorState
-      ? existing.followupState
-      : inferFollowupState(effectiveMessageText, urgency);
+  const urgency = shouldReuseExistingPriorState
+    ? existing.urgency
+    : inferUrgency(effectiveMessageText, now, extracted.timestamp);
+  const followupState = shouldReuseExistingPriorState
+    ? existing.followupState
+    : inferFollowupState(effectiveMessageText, urgency);
   const suggestedActions = pickSuggestedActions(
     followupState,
     effectiveLinkedLifeThreads,
   );
   const shouldPreserveEffectiveSummary =
-    commandOnlyPrompt && looksLikeCommunicationContextText(effectiveMessageText);
+    commandOnlyPrompt &&
+    looksLikeCommunicationContextText(effectiveMessageText);
   const summaryText =
     shouldReuseExistingPriorState && existing?.lastInboundSummary
       ? existing.lastInboundSummary
@@ -1629,7 +1698,9 @@ function buildDeterministicCommunicationDraft(input: {
   groupFolder: string;
   style: CommunicationDraftResult['style'];
 }): string {
-  const profileFacts = listProfileFactsForGroup(input.groupFolder, ['accepted']);
+  const profileFacts = listProfileFactsForGroup(input.groupFolder, [
+    'accepted',
+  ]);
   return buildRelationshipAwareDraft({
     linkedSubjects: input.analysis.linkedSubjects,
     linkedLifeThreads: input.analysis.linkedLifeThreads,
@@ -1773,8 +1844,7 @@ export function buildCommunicationOpenLoops(
   const personScope =
     (input.priorContext?.communicationSubjectIds || [])
       .map((subjectId) => subjects.find((subject) => subject.id === subjectId))
-      .find(Boolean) ||
-    inferPersonScopeFromText(input.text || '', subjects);
+      .find(Boolean) || inferPersonScopeFromText(input.text || '', subjects);
   const threads = listCommunicationThreadsForGroup({
     groupFolder: input.groupFolder,
     includeDisabled: false,
@@ -1792,7 +1862,8 @@ export function buildCommunicationOpenLoops(
     .map<CommunicationOpenLoopItem | null>((thread) => {
       const personName =
         personScope?.displayName ||
-        subjects.find((subject) => thread.linkedSubjectIds.includes(subject.id))?.displayName;
+        subjects.find((subject) => thread.linkedSubjectIds.includes(subject.id))
+          ?.displayName;
       const inboundSummary = normalizeUsableCommunicationSummary(
         thread.lastInboundSummary,
       );
@@ -1874,7 +1945,11 @@ export function manageCommunicationTracking(
     };
   }
 
-  if (/don't surface this automatically|dont surface this automatically/i.test(utterance)) {
+  if (
+    /don't surface this automatically|dont surface this automatically/i.test(
+      utterance,
+    )
+  ) {
     updateCommunicationThread(thread.id, { trackingMode: 'manual_only' });
     return {
       ok: true,
@@ -1882,8 +1957,10 @@ export function manageCommunicationTracking(
         channel: input.channel,
         didWhat:
           'Okay. I will keep it available, but I will stop surfacing it automatically.',
-        stillOpen: thread.lastInboundSummary || thread.lastOutboundSummary || null,
-        nextSuggestion: 'Ask what is still open here whenever you want it back.',
+        stillOpen:
+          thread.lastInboundSummary || thread.lastOutboundSummary || null,
+        nextSuggestion:
+          'Ask what is still open here whenever you want it back.',
       }),
       thread: readUpdatedThread(),
     };
@@ -1898,7 +1975,8 @@ export function manageCommunicationTracking(
       replyText: buildSignaturePostActionConfirmation({
         channel: input.channel,
         didWhat: 'Okay. I will stop tracking that conversation thread.',
-        nextSuggestion: 'Bring the message back if you want me to pick it up again.',
+        nextSuggestion:
+          'Bring the message back if you want me to pick it up again.',
       }),
       thread: readUpdatedThread(),
     };
@@ -1920,14 +1998,21 @@ export function manageCommunicationTracking(
   }
   if (/forget this conversation thread completely/i.test(utterance)) {
     deleteCommunicationThread(thread.id);
-    return { ok: true, replyText: 'Okay. I removed that conversation thread entirely.' };
+    return {
+      ok: true,
+      replyText: 'Okay. I removed that conversation thread entirely.',
+    };
   }
   if (/save this conversation under .+ thread/i.test(utterance)) {
     const threadTitle =
-      utterance.match(/save this conversation under (?:the )?(.+?)(?: thread)?$/i)?.[1]?.trim() ||
-      input.priorContext?.threadTitle;
+      utterance
+        .match(/save this conversation under (?:the )?(.+?)(?: thread)?$/i)?.[1]
+        ?.trim() || input.priorContext?.threadTitle;
     if (!threadTitle) {
-      return { ok: false, replyText: 'Tell me which thread you want me to attach it to.' };
+      return {
+        ok: false,
+        replyText: 'Tell me which thread you want me to attach it to.',
+      };
     }
     const result = handleLifeThreadCommand({
       groupFolder: input.groupFolder,
@@ -1953,7 +2038,8 @@ export function manageCommunicationTracking(
             result.responseText ||
             `Okay. I linked that under ${result.referencedThread.title}.`,
           stillOpen: analysis.summaryText || thread.lastInboundSummary || null,
-          nextSuggestion: 'If you want, I can remind you about the reply later.',
+          nextSuggestion:
+            'If you want, I can remind you about the reply later.',
         }),
         thread: getCommunicationThread(thread.id),
       };
@@ -1961,8 +2047,9 @@ export function manageCommunicationTracking(
   }
   if (/remind me to reply later|remind me to answer later/i.test(utterance)) {
     const timing =
-      utterance.match(/\b(tonight|tomorrow(?: morning| afternoon| evening)?|today(?: morning| afternoon| evening)?|before i leave)\b/i)?.[1] ||
-      '';
+      utterance.match(
+        /\b(tonight|tomorrow(?: morning| afternoon| evening)?|today(?: morning| afternoon| evening)?|before i leave)\b/i,
+      )?.[1] || '';
     if (!timing) {
       return {
         ok: false,
@@ -1985,7 +2072,11 @@ export function manageCommunicationTracking(
       now,
     );
     if (!planned) {
-      return { ok: false, replyText: 'I could not pin down a reminder time from that yet.', thread };
+      return {
+        ok: false,
+        replyText: 'I could not pin down a reminder time from that yet.',
+        thread,
+      };
     }
     createTask(planned.task);
     syncOutcomeFromReminderTask(planned.task, {
@@ -2003,7 +2094,9 @@ export function manageCommunicationTracking(
       linkedTaskId: planned.task.id,
       followupState: 'scheduled',
       suggestedNextAction: 'create_reminder',
-      urgency: timing.toLowerCase().includes('tomorrow') ? 'tomorrow' : 'tonight',
+      urgency: timing.toLowerCase().includes('tomorrow')
+        ? 'tomorrow'
+        : 'tonight',
     });
     return {
       ok: true,
@@ -2012,16 +2105,17 @@ export function manageCommunicationTracking(
         didWhat: planned.confirmation,
         stillOpen:
           analysis.summaryText || thread.lastInboundSummary || thread.title,
-          nextSuggestion: "If you want, I can draft the reply when you're ready.",
-        }),
-        reminderTaskId: planned.task.id,
-        thread: readUpdatedThread(),
-      };
+        nextSuggestion: "If you want, I can draft the reply when you're ready.",
+      }),
+      reminderTaskId: planned.task.id,
+      thread: readUpdatedThread(),
+    };
   }
 
   return {
     ok: true,
-    replyText: 'I can remind you later, keep it tied to this thread, or mark it handled.',
+    replyText:
+      'I can remind you later, keep it tied to this thread, or mark it handled.',
     thread,
   };
 }
@@ -2106,12 +2200,11 @@ export function formatCommunicationDraftReply(
       .filter(Boolean)
       .join('\n');
   }
-  const whyLine =
-    result.fallbackNote
-      ? result.fallbackNote
-      : result.linkedSubjects[0]?.displayName
-        ? `This is shaped around ${result.linkedSubjects[0].displayName} and the current conversation.`
-        : 'This stays grounded in the conversation you brought in here.';
+  const whyLine = result.fallbackNote
+    ? result.fallbackNote
+    : result.linkedSubjects[0]?.displayName
+      ? `This is shaped around ${result.linkedSubjects[0].displayName} and the current conversation.`
+      : 'This stays grounded in the conversation you brought in here.';
   return buildSignatureFlowText({
     lead: result.summaryText || 'I drafted a reply.',
     bodyText: [`Draft:`, result.draftText].filter(Boolean).join('\n'),
@@ -2133,11 +2226,12 @@ export function formatCommunicationOpenLoopsReply(
   }
   return buildSignatureFlowText({
     lead: result.summaryText,
-    detailLines: result.items.slice(0, 3).map((item) => formatOpenLoopLine(item)),
+    detailLines: result.items
+      .slice(0, 3)
+      .map((item) => formatOpenLoopLine(item)),
     nextAction: result.bestNextStep,
-    whyLine:
-      result.items[0]?.personName
-        ? `The lead open loop is with ${result.items[0].personName}.`
-        : undefined,
+    whyLine: result.items[0]?.personName
+      ? `The lead open loop is with ${result.items[0].personName}.`
+      : undefined,
   });
 }

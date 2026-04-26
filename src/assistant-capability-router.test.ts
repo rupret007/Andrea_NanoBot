@@ -37,7 +37,9 @@ describe('assistant capability router', () => {
       capabilityId: 'daily.evening_reset',
     });
     expect(
-      matchAssistantCapabilityRequest('What should I not lose sight of tonight?'),
+      matchAssistantCapabilityRequest(
+        'What should I not lose sight of tonight?',
+      ),
     ).toMatchObject({
       capabilityId: 'daily.evening_reset',
     });
@@ -150,9 +152,7 @@ describe('assistant capability router', () => {
     ).toMatchObject({
       capabilityId: 'knowledge.save_source',
     });
-    expect(
-      matchAssistantCapabilityRequest('Capture this idea'),
-    ).toMatchObject({
+    expect(matchAssistantCapabilityRequest('Capture this idea')).toMatchObject({
       capabilityId: 'knowledge.save_source',
     });
     expect(
@@ -192,7 +192,9 @@ describe('assistant capability router', () => {
     ).toMatchObject({
       capabilityId: 'communication.draft_reply',
     });
-    expect(matchAssistantCapabilityRequest('Make that less stiff')).toMatchObject({
+    expect(
+      matchAssistantCapabilityRequest('Make that less stiff'),
+    ).toMatchObject({
       capabilityId: 'communication.draft_reply',
     });
     expect(matchAssistantCapabilityRequest('More blunt')).toMatchObject({
@@ -203,7 +205,9 @@ describe('assistant capability router', () => {
     ).toMatchObject({
       capabilityId: 'communication.open_loops',
     });
-    expect(matchAssistantCapabilityRequest('What texts need me?')).toMatchObject({
+    expect(
+      matchAssistantCapabilityRequest('What texts need me?'),
+    ).toMatchObject({
       capabilityId: 'communication.open_loops',
     });
     expect(
@@ -525,7 +529,9 @@ describe('assistant capability router', () => {
     expect(matchAssistantCapabilityRequest('this felt weird')).toMatchObject({
       capabilityId: 'pilot.capture_issue',
     });
-    expect(matchAssistantCapabilityRequest('that answer was off')).toMatchObject({
+    expect(
+      matchAssistantCapabilityRequest('that answer was off'),
+    ).toMatchObject({
       capabilityId: 'pilot.capture_issue',
     });
     expect(

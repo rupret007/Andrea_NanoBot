@@ -26,9 +26,7 @@ export type CalendarCompanionFailureKind =
   | 'calendar_access_unavailable'
   | 'calendar_auth_unavailable';
 
-export type CalendarCompanionSuccessAction =
-  | 'create_event'
-  | 'update_event';
+export type CalendarCompanionSuccessAction = 'create_event' | 'update_event';
 
 function normalizeText(input: string): string {
   return input
@@ -121,7 +119,9 @@ export function isLiveLookupConversationalPrompt(text: string): boolean {
   );
 }
 
-export function classifyConversationalTurn(text: string): ConversationalTurnClass {
+export function classifyConversationalTurn(
+  text: string,
+): ConversationalTurnClass {
   const normalized = normalizeText(text);
 
   if (!normalized) {
@@ -268,8 +268,7 @@ export function buildGracefulDegradedReply(params: {
     return buildChannelVariant(channel, {
       telegram:
         "I'm here, but that one didn't come through cleanly. Give me one simple thing and I'll keep it moving.",
-      alexa:
-        "That one didn't come through cleanly. Give me one simple thing.",
+      alexa: "That one didn't come through cleanly. Give me one simple thing.",
       bluebubbles:
         "I'm here, but that one didn't come through cleanly. Give me one simple thing and I'll keep it moving.",
     });
@@ -312,10 +311,8 @@ export function buildGracefulDegradedReply(params: {
     return buildChannelVariant(channel, {
       telegram:
         "I need the account linked before I can do that here. Once that's linked, I can pick it back up.",
-      alexa:
-        "I need the account linked before I can do that here.",
-      bluebubbles:
-        "I need the account linked before I can do that here.",
+      alexa: 'I need the account linked before I can do that here.',
+      bluebubbles: 'I need the account linked before I can do that here.',
     });
   }
 
@@ -323,10 +320,9 @@ export function buildGracefulDegradedReply(params: {
     return buildChannelVariant(channel, {
       telegram:
         "I lost the thread on that. Give me one short line of context and I'll pick it back up.",
-      alexa:
-        "I lost the thread on that. Give me one short line of context.",
+      alexa: 'I lost the thread on that. Give me one short line of context.',
       bluebubbles:
-        "I lost the thread on that. One short line of context will get me back in.",
+        'I lost the thread on that. One short line of context will get me back in.',
     });
   }
 

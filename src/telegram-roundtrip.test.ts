@@ -44,7 +44,9 @@ describe('telegram roundtrip health', () => {
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
-  function seedRunningHost(readyAt = '2026-04-04T12:00:00.000Z'): NanoclawHostState {
+  function seedRunningHost(
+    readyAt = '2026-04-04T12:00:00.000Z',
+  ): NanoclawHostState {
     const hostState: NanoclawHostState = {
       bootId: 'boot-roundtrip',
       phase: 'running_ready',

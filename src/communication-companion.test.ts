@@ -292,7 +292,8 @@ describe('communication companion', () => {
       scope: 'personal',
       relatedSubjectIds: ['subject-candace'],
       contextTags: ['candace', 'dinner'],
-      summary: 'Candace wants a follow-up about whether dinner still works tonight.',
+      summary:
+        'Candace wants a follow-up about whether dinner still works tonight.',
       nextAction:
         'Candace wants a follow-up about whether dinner still works tonight.',
       nextFollowupAt: null,
@@ -542,25 +543,25 @@ describe('communication companion', () => {
     seedCandace();
     vi.stubEnv('OPENAI_API_KEY', 'test-key');
     vi.stubEnv('OPENAI_BASE_URL', 'https://openai.test/v1');
-    globalThis.fetch = vi.fn(async () =>
-      new Response(
-        JSON.stringify({
-          output_text:
-            '{"draftText":"Hey Candace, tonight still works for me. If you want, we can keep it simple."}',
-        }),
-        {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        },
-      ),
+    globalThis.fetch = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            output_text:
+              '{"draftText":"Hey Candace, tonight still works for me. If you want, we can keep it simple."}',
+          }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          },
+        ),
     ) as typeof fetch;
 
     const result = await draftCommunicationReplyWithChannelFluidity({
       channel: 'bluebubbles',
       groupFolder: 'main',
       chatJid: 'bb:self',
-      text:
-        'Make it warmer: Candace: Can you let me know if dinner still works tonight?',
+      text: 'Make it warmer: Candace: Can you let me know if dinner still works tonight?',
       now: new Date('2026-04-06T09:00:00.000Z'),
     });
 
@@ -652,8 +653,7 @@ describe('communication companion', () => {
       channel: 'bluebubbles',
       groupFolder: 'main',
       chatJid: 'bb:test',
-      text:
-        'Summarize this message: Candace: Can you let me know if dinner still works tonight? If not, we should move it.',
+      text: 'Summarize this message: Candace: Can you let me know if dinner still works tonight? If not, we should move it.',
       now: new Date('2026-04-06T09:00:00.000Z'),
     });
 
@@ -673,7 +673,9 @@ describe('communication companion', () => {
     });
 
     expect(analysis.ok).toBe(true);
-    expect(analysis.summaryText).toContain('whether dinner still works tonight');
+    expect(analysis.summaryText).toContain(
+      'whether dinner still works tonight',
+    );
     expect(analysis.summaryText).not.toContain('if not');
     expect(draft.ok).toBe(true);
     expect(draft.draftText).toContain('whether dinner still works tonight');
@@ -714,7 +716,8 @@ describe('communication companion', () => {
       channel: 'telegram',
       groupFolder: 'main',
       text: 'what should I say back',
-      conversationSummary: 'Candace wants a follow-up about whether dinner still works tonight.',
+      conversationSummary:
+        'Candace wants a follow-up about whether dinner still works tonight.',
       priorContext: {
         lastCommunicationSummary:
           'Candace wants a follow-up about whether dinner still works tonight.',
@@ -836,7 +839,9 @@ describe('communication companion', () => {
 
     expect(result.ok).toBe(true);
     expect(result.draftText).toContain('circle back on dinner plans tonight');
-    expect(result.draftText).not.toContain('The main thing still open with Candace');
+    expect(result.draftText).not.toContain(
+      'The main thing still open with Candace',
+    );
   });
 
   it('normalizes lowercase person names into cleaner Alexa-safe draft speech', () => {
@@ -892,9 +897,9 @@ describe('communication companion', () => {
     expect(formatCommunicationOpenLoopsReply('telegram', openLoops)).toContain(
       'Candace wants a follow-up about whether dinner still works tonight.',
     );
-    expect(formatCommunicationOpenLoopsReply('telegram', openLoops)).not.toContain(
-      'Candace: Candace wants a follow-up',
-    );
+    expect(
+      formatCommunicationOpenLoopsReply('telegram', openLoops),
+    ).not.toContain('Candace: Candace wants a follow-up');
 
     const suppressed = manageCommunicationTracking({
       channel: 'telegram',
@@ -948,9 +953,9 @@ describe('communication companion', () => {
     expect(formatCommunicationOpenLoopsReply('telegram', openLoops)).toContain(
       'Candace wants a follow-up about whether dinner still works tonight.',
     );
-    expect(formatCommunicationOpenLoopsReply('telegram', openLoops)).not.toContain(
-      'They sounds settled on sounds good see you at 7.',
-    );
+    expect(
+      formatCommunicationOpenLoopsReply('telegram', openLoops),
+    ).not.toContain('They sounds settled on sounds good see you at 7.');
   });
 
   it('ignores command-like carried-forward summaries when summarizing open loops', () => {
@@ -979,12 +984,12 @@ describe('communication companion', () => {
     });
 
     expect(openLoops.summaryText).toMatch(/still needs attention/);
-    expect(formatCommunicationOpenLoopsReply('telegram', openLoops)).not.toContain(
-      'What do I still need to reply to?',
-    );
-    expect(formatCommunicationOpenLoopsReply('telegram', openLoops)).not.toContain(
-      'I wanted to circle back on What do I',
-    );
+    expect(
+      formatCommunicationOpenLoopsReply('telegram', openLoops),
+    ).not.toContain('What do I still need to reply to?');
+    expect(
+      formatCommunicationOpenLoopsReply('telegram', openLoops),
+    ).not.toContain('I wanted to circle back on What do I');
     expect(formatCommunicationOpenLoopsReply('telegram', openLoops)).toContain(
       'Candace',
     );
@@ -1006,9 +1011,9 @@ describe('communication companion', () => {
     expect(result.replyText).toContain(
       "I'll remind you tonight to reply to Candace about whether dinner still works tonight.",
     );
-    expect(getAllTasks().some((task) => task.id === result.reminderTaskId)).toBe(
-      true,
-    );
+    expect(
+      getAllTasks().some((task) => task.id === result.reminderTaskId),
+    ).toBe(true);
     expect(
       getAllTasks().some(
         (task) =>

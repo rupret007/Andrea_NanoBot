@@ -140,7 +140,9 @@ describe('research orchestrator', () => {
     });
 
     expect(result.handled).toBe(true);
-    expect(result.summaryText).toContain('decide whether to switch dinner plans');
+    expect(result.summaryText).toContain(
+      'decide whether to switch dinner plans',
+    );
     expect(result.summaryText).not.toContain('Send a concise reminder');
     expect(result.fullText).not.toContain('Send a concise reminder');
   });
@@ -184,7 +186,9 @@ describe('research orchestrator', () => {
     expect(result.handled).toBe(true);
     expect(result.summaryText).toContain('Pest control is coming at 1:00 PM');
     expect(result.summaryText).not.toContain('Follow-Up');
-    expect(result.summaryText).not.toContain('The first fixed point in your day is');
+    expect(result.summaryText).not.toContain(
+      'The first fixed point in your day is',
+    );
     expect(result.structuredFindings[0]?.items[0]).toBe(
       'Pest control is coming at 1:00 PM.',
     );
@@ -346,7 +350,9 @@ describe('research orchestrator', () => {
 
     expect(globalThis.fetch).toHaveBeenCalled();
     const firstCallBody = JSON.parse(
-      String((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0]?.[1]?.body),
+      String(
+        (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0]?.[1]?.body,
+      ),
     ) as { model: string };
     expect(firstCallBody.model).toBe('gpt-5.4-complex');
     expect(result.handled).toBe(true);
@@ -559,7 +565,7 @@ describe('research orchestrator', () => {
     expect(result.providerUsed).toBeUndefined();
     expect(result.summaryText).toContain("can't check that live right now");
     expect(result.routeExplanation).toContain('live lookup');
-    expect(result.routeExplanation).not.toContain("OpenAI research path");
+    expect(result.routeExplanation).not.toContain('OpenAI research path');
     expect(result.debugPath).toContain('openai.failed=true');
     expect(result.fullText).not.toContain('Band');
   });

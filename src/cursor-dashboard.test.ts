@@ -259,17 +259,19 @@ describe('cursor dashboard helpers', () => {
 
     expect(cursorRender.text).toContain('*Current Work*');
     expect(cursorRender.text).toContain('Lane: Cursor Cloud');
-    expect(cursorRender.inlineActionRows.flat().map((action) => action.label)).toContain(
-      'Continue',
-    );
+    expect(
+      cursorRender.inlineActionRows.flat().map((action) => action.label),
+    ).toContain('Continue');
 
     expect(runtimeRender.text).toContain('*Current Work*');
     expect(runtimeRender.text).toContain('Lane: Codex/OpenAI runtime');
-    expect(runtimeRender.inlineActionRows.flat().map((action) => action.label)).toContain(
-      'View Output',
-    );
+    expect(
+      runtimeRender.inlineActionRows.flat().map((action) => action.label),
+    ).toContain('View Output');
 
-    expect(emptyRender.text).toContain('No current work is selected in this chat yet');
+    expect(emptyRender.text).toContain(
+      'No current work is selected in this chat yet',
+    );
   });
 
   it('shows repo and prompt preview in the create confirmation view', () => {

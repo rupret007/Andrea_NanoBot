@@ -372,9 +372,10 @@ export function planSimpleReminder(
   const daypartTimeMatch = explicitMatch
     ? null
     : normalizedMessage.match(DAYPART_TIME_REMINDER_PATTERN);
-  const flexibleMatch = explicitMatch || daypartTimeMatch
-    ? null
-    : normalizedMessage.match(FLEXIBLE_REMINDER_PATTERN);
+  const flexibleMatch =
+    explicitMatch || daypartTimeMatch
+      ? null
+      : normalizedMessage.match(FLEXIBLE_REMINDER_PATTERN);
   if (!explicitMatch && !daypartTimeMatch && !flexibleMatch) return null;
 
   let dayPhrase: string;
@@ -399,8 +400,15 @@ export function planSimpleReminder(
         : `${dayPhrase[0].toUpperCase()}${dayPhrase.slice(1).toLowerCase()} at ${timeLabel}`;
     reminderBodyRaw = explicitBody;
   } else if (daypartTimeMatch) {
-    const [, explicitDayPhrase, dayPart, hourText, minuteText, meridiem, explicitBody] =
-      daypartTimeMatch;
+    const [
+      ,
+      explicitDayPhrase,
+      dayPart,
+      hourText,
+      minuteText,
+      meridiem,
+      explicitBody,
+    ] = daypartTimeMatch;
     const hour = Number.parseInt(hourText, 10);
     minute = minuteText ? Number.parseInt(minuteText, 10) : 0;
     if (!Number.isInteger(hour) || hour < 1 || hour > 12) return null;

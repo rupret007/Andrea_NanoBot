@@ -54,8 +54,7 @@ function seedDelegationRule(
     channelApplicabilityJson:
       overrides.channelApplicabilityJson ||
       JSON.stringify(['telegram', 'alexa', 'bluebubbles']),
-    safetyLevel:
-      overrides.safetyLevel || 'safe_to_auto_after_delegation',
+    safetyLevel: overrides.safetyLevel || 'safe_to_auto_after_delegation',
   };
   upsertDelegationRule(record);
   return record;
@@ -73,7 +72,8 @@ describe('action bundles', () => {
   it('creates and reuses a mission bundle while it is still open', () => {
     const continuationCandidate = {
       capabilityId: 'missions.propose',
-      voiceSummary: 'You should follow up with Candace and keep the plan from slipping.',
+      voiceSummary:
+        'You should follow up with Candace and keep the plan from slipping.',
       missionId: 'mission-1',
       missionSummary: 'Candace dinner follow-up',
       missionSuggestedActionsJson: JSON.stringify([
@@ -135,7 +135,8 @@ describe('action bundles', () => {
   it('uses more natural voice phrasing for research bundles', () => {
     const continuationCandidate = {
       capabilityId: 'research.answer',
-      voiceSummary: 'Meal delivery saves time, but grocery delivery costs less.',
+      voiceSummary:
+        'Meal delivery saves time, but grocery delivery costs less.',
       handoffPayload: {
         kind: 'message' as const,
         title: 'Busy week tradeoffs',
@@ -190,7 +191,9 @@ describe('action bundles', () => {
     const presentation = buildActionBundlePresentation(snapshot!);
     expect(presentation.text).toContain('*Action bundle*');
     expect(presentation.text).toContain('1. [ready]');
-    expect(presentation.inlineActionRows[0]?.[0]?.label).toContain('Approve all');
+    expect(presentation.inlineActionRows[0]?.[0]?.label).toContain(
+      'Approve all',
+    );
     expect(
       interpretActionBundleFollowup('just the reminder', snapshot!),
     ).toEqual({
@@ -255,7 +258,8 @@ describe('action bundles', () => {
           text: 'Kindle is the safer battery pick for long travel days.',
           followupSuggestions: ['Save it if useful.'],
         },
-        completionText: 'Kindle is the safer battery pick for long travel days.',
+        completionText:
+          'Kindle is the safer battery pick for long travel days.',
       },
       summaryText: 'Kindle is the safer battery pick.',
       utterance: 'compare kindle versus kobo',
@@ -271,7 +275,9 @@ describe('action bundles', () => {
         chatJid: 'bb:chat-1',
         currentTime: new Date('2026-04-08T10:05:00.000Z'),
         resolveTelegramMainChat: () => undefined,
-        sendTelegramMessage: vi.fn(async () => ({ platformMessageId: 'unused' })),
+        sendTelegramMessage: vi.fn(async () => ({
+          platformMessageId: 'unused',
+        })),
       },
     );
 
@@ -315,7 +321,9 @@ describe('action bundles', () => {
         chatJid: 'tg:main',
         currentTime: new Date('2026-04-08T10:15:00.000Z'),
         resolveTelegramMainChat: () => ({ chatJid: 'tg:main' }),
-        sendTelegramMessage: vi.fn(async () => ({ platformMessageId: 'unused' })),
+        sendTelegramMessage: vi.fn(async () => ({
+          platformMessageId: 'unused',
+        })),
       },
     );
 
@@ -347,8 +355,9 @@ describe('action bundles', () => {
 
     expect(snapshot).toBeTruthy();
     expect(
-      snapshot!.actions.find((action) => action.actionType === 'create_reminder')
-        ?.status,
+      snapshot!.actions.find(
+        (action) => action.actionType === 'create_reminder',
+      )?.status,
     ).toBe('approved');
 
     const presentation = buildActionBundlePresentation(snapshot!);
@@ -364,7 +373,9 @@ describe('action bundles', () => {
         chatJid: 'tg:main',
         currentTime: new Date('2026-04-08T10:15:00.000Z'),
         resolveTelegramMainChat: () => ({ chatJid: 'tg:main' }),
-        sendTelegramMessage: vi.fn(async () => ({ platformMessageId: 'unused' })),
+        sendTelegramMessage: vi.fn(async () => ({
+          platformMessageId: 'unused',
+        })),
       },
     );
 

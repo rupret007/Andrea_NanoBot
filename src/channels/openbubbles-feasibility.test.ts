@@ -9,24 +9,30 @@ describe('buildOpenBubblesFeasibilityReport', () => {
   it('keeps OpenBubbles partially ready but not shippable until Andrea has a supported Windows observation and reply surface', () => {
     const report = buildOpenBubblesFeasibilityReport({
       nowIso: '2026-04-12T21:00:00.000Z',
-      detectedInstallPaths: ['C:\\Users\\rupret\\AppData\\Local\\Programs\\OpenBubbles'],
+      detectedInstallPaths: [
+        'C:\\Users\\rupret\\AppData\\Local\\Programs\\OpenBubbles',
+      ],
     });
 
     expect(report.providerName).toBe('openbubbles');
     expect(report.verdict).toBe('partially_ready_but_not_shippable');
-    expect(report.summary).toContain('Telegram remains the dependable main path');
+    expect(report.summary).toContain(
+      'Telegram remains the dependable main path',
+    );
     expect(report.detectedInstallPaths).toHaveLength(1);
     expect(
-      report.criteria.find((criterion) => criterion.id === 'mac_offline_runtime')
-        ?.status,
+      report.criteria.find(
+        (criterion) => criterion.id === 'mac_offline_runtime',
+      )?.status,
     ).toBe('pass');
     expect(
       report.criteria.find((criterion) => criterion.id === 'windows_surface')
         ?.status,
     ).toBe('unproven');
     expect(
-      report.criteria.find((criterion) => criterion.id === 'inbound_observation')
-        ?.status,
+      report.criteria.find(
+        (criterion) => criterion.id === 'inbound_observation',
+      )?.status,
     ).toBe('blocked');
     expect(
       report.criteria.find((criterion) => criterion.id === 'outbound_reply')
@@ -43,7 +49,8 @@ describe('buildOpenBubblesFeasibilityReport', () => {
     expect(report.verdict).toBe('blocked_for_now');
     expect(report.summary).toContain('blocked for now');
     expect(
-      report.criteria.find((criterion) => criterion.id === 'windows_surface')?.status,
+      report.criteria.find((criterion) => criterion.id === 'windows_surface')
+        ?.status,
     ).toBe('blocked');
   });
 
@@ -60,23 +67,31 @@ describe('buildOpenBubblesFeasibilityReport', () => {
   it('can graduate to ready when a supported Windows surface and reply path are explicitly proven', () => {
     const report = buildOpenBubblesFeasibilityReport({
       nowIso: '2026-04-12T22:15:00.000Z',
-      detectedInstallPaths: ['C:\\Users\\rupret\\AppData\\Local\\Programs\\OpenBubbles'],
+      detectedInstallPaths: [
+        'C:\\Users\\rupret\\AppData\\Local\\Programs\\OpenBubbles',
+      ],
       supportedWindowsSurfaceDetected: true,
       inboundObservationSupported: true,
       outboundReplySupported: true,
     });
 
     expect(report.verdict).toBe('ready_for_provider');
-    expect(report.summary).toContain('ready to become an Andrea Messages bridge provider');
+    expect(report.summary).toContain(
+      'ready to become an Andrea Messages bridge provider',
+    );
     expect(report.supportedWindowsSurfaceDetected).toBe(true);
     expect(
-      report.criteria.find((criterion) => criterion.id === 'windows_surface')?.status,
+      report.criteria.find((criterion) => criterion.id === 'windows_surface')
+        ?.status,
     ).toBe('pass');
     expect(
-      report.criteria.find((criterion) => criterion.id === 'inbound_observation')?.status,
+      report.criteria.find(
+        (criterion) => criterion.id === 'inbound_observation',
+      )?.status,
     ).toBe('pass');
     expect(
-      report.criteria.find((criterion) => criterion.id === 'outbound_reply')?.status,
+      report.criteria.find((criterion) => criterion.id === 'outbound_reply')
+        ?.status,
     ).toBe('pass');
   });
 });

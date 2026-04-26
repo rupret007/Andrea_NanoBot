@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { getMediaProviderStatus, runImageGeneration } from './media-generation.js';
+import {
+  getMediaProviderStatus,
+  runImageGeneration,
+} from './media-generation.js';
 import * as openAiProvider from './openai-provider.js';
 
 const originalFetch = globalThis.fetch;
@@ -35,7 +38,9 @@ describe('media generation', () => {
       researchModel: 'gpt-5.4',
       imageModel: 'gpt-image-1',
     });
-    vi.spyOn(openAiProvider, 'resolveOpenAiProviderConfig').mockReturnValue(null);
+    vi.spyOn(openAiProvider, 'resolveOpenAiProviderConfig').mockReturnValue(
+      null,
+    );
 
     const status = getMediaProviderStatus();
     const result = await runImageGeneration({

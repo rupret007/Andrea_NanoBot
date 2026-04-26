@@ -106,12 +106,7 @@ export interface OutcomeReviewPresentation {
 }
 
 export interface OutcomeReviewControl {
-  kind:
-    | 'mark_handled'
-    | 'still_open'
-    | 'remind_tomorrow'
-    | 'hide'
-    | 'show';
+  kind: 'mark_handled' | 'still_open' | 'remind_tomorrow' | 'hide' | 'show';
 }
 
 export interface ApplyOutcomeReviewControlResult {
@@ -391,20 +386,22 @@ function dedupeReviewItems(items: OutcomeReviewItem[]): OutcomeReviewItem[] {
     grouped.set(key, existing);
   }
   return [...grouped.values()]
-    .map((group) =>
-      group.sort((left, right) => {
-        const rankDiff =
-          statusRank(left.outcome.status) - statusRank(right.outcome.status);
-        if (rankDiff !== 0) return rankDiff;
-        return (
-          Date.parse(right.outcome.updatedAt) -
-          Date.parse(left.outcome.updatedAt)
-        );
-      })[0]!,
+    .map(
+      (group) =>
+        group.sort((left, right) => {
+          const rankDiff =
+            statusRank(left.outcome.status) - statusRank(right.outcome.status);
+          if (rankDiff !== 0) return rankDiff;
+          return (
+            Date.parse(right.outcome.updatedAt) -
+            Date.parse(left.outcome.updatedAt)
+          );
+        })[0]!,
     )
     .sort(
       (left, right) =>
-        Date.parse(right.outcome.updatedAt) - Date.parse(left.outcome.updatedAt),
+        Date.parse(right.outcome.updatedAt) -
+        Date.parse(left.outcome.updatedAt),
     );
 }
 
@@ -476,7 +473,9 @@ function buildOutcomeInlineRows(
   return rows;
 }
 
-function outcomeStatusFromBundle(snapshot: ActionBundleSnapshot): OutcomeStatus {
+function outcomeStatusFromBundle(
+  snapshot: ActionBundleSnapshot,
+): OutcomeStatus {
   const statuses = snapshot.actions.map((action) => action.status);
   if (statuses.length === 0) return 'unknown';
   if (statuses.every((status) => status === 'executed')) return 'completed';
@@ -490,9 +489,14 @@ function outcomeStatusFromBundle(snapshot: ActionBundleSnapshot): OutcomeStatus 
   }
   if (
     statuses.some((status) =>
-      ['approved', 'proposed', 'executed', 'failed', 'skipped', 'deferred'].includes(
-        status,
-      ),
+      [
+        'approved',
+        'proposed',
+        'executed',
+        'failed',
+        'skipped',
+        'deferred',
+      ].includes(status),
     )
   ) {
     return 'partial';
@@ -543,7 +547,10 @@ function buildLifeThreadSummary(thread: LifeThread): string {
   );
 }
 
-function personScopeMatches(item: OutcomeReviewItem, personName: string): boolean {
+function personScopeMatches(
+  item: OutcomeReviewItem,
+  personName: string,
+): boolean {
   const normalized = personName.toLowerCase();
   const candidates = [
     item.linkedRefs.personName,
@@ -626,7 +633,9 @@ export function syncOutcomeFromBundleSnapshot(
     snapshot.bundle.relatedRefsJson,
     {},
   );
-  const firstRuleAction = snapshot.actions.find((action) => action.delegationRuleId);
+  const firstRuleAction = snapshot.actions.find(
+    (action) => action.delegationRuleId,
+  );
   return upsertOutcomeRecord({
     groupFolder: snapshot.bundle.groupFolder,
     sourceType: 'action_bundle',
@@ -661,13 +670,17 @@ export function syncOutcomeFromMessageActionRecord(
   action: MessageActionRecord,
   now = new Date(),
 ): OutcomeRecord {
-  const linkedRefs = parseJsonSafe<OutcomeLinkedRefs>(action.linkedRefsJson, {});
+  const linkedRefs = parseJsonSafe<OutcomeLinkedRefs>(
+    action.linkedRefsJson,
+    {},
+  );
   const scheduledSend =
     action.sendStatus === 'deferred' &&
     action.trustLevel === 'schedule_send' &&
     Boolean(action.scheduledTaskId);
   const savedUnderThread =
-    action.sendStatus === 'deferred' && action.lastActionKind === 'save_to_thread';
+    action.sendStatus === 'deferred' &&
+    action.lastActionKind === 'save_to_thread';
   const reminderBackedDefer =
     action.sendStatus === 'deferred' && !scheduledSend && !savedUnderThread;
   const status: OutcomeStatus =
@@ -684,29 +697,40 @@ export function syncOutcomeFromMessageActionRecord(
     action.sendStatus === 'sent'
       ? clipText(action.sourceSummary || 'Sent the reply.', 140)
       : scheduledSend
-        ? clipText(action.sourceSummary || 'Queued this reply to send later.', 140)
+        ? clipText(
+            action.sourceSummary || 'Queued this reply to send later.',
+            140,
+          )
         : savedUnderThread
           ? clipText(
               action.sourceSummary ||
                 'Saved this reply under the thread for later follow-through.',
               140,
             )
-        : reminderBackedDefer
-          ? action.lastActionKind === 'remind_instead'
-            ? clipText(
-                action.sourceSummary ||
-                  'Converted this reply into a reminder instead of sending it.',
-                140,
-              )
-            : clipText(
-                action.sourceSummary || 'Saved this draft to revisit before sending.',
-                140,
-              )
-          : action.sendStatus === 'approved'
-            ? clipText(action.sourceSummary || 'Approved and ready to send.', 140)
-            : action.sendStatus === 'failed'
-              ? clipText(action.sourceSummary || 'The message still needs to go out.', 140)
-              : clipText(action.sourceSummary || action.draftText, 140);
+          : reminderBackedDefer
+            ? action.lastActionKind === 'remind_instead'
+              ? clipText(
+                  action.sourceSummary ||
+                    'Converted this reply into a reminder instead of sending it.',
+                  140,
+                )
+              : clipText(
+                  action.sourceSummary ||
+                    'Saved this draft to revisit before sending.',
+                  140,
+                )
+            : action.sendStatus === 'approved'
+              ? clipText(
+                  action.sourceSummary || 'Approved and ready to send.',
+                  140,
+                )
+              : action.sendStatus === 'failed'
+                ? clipText(
+                    action.sourceSummary ||
+                      'The message still needs to go out.',
+                    140,
+                  )
+                : clipText(action.sourceSummary || action.draftText, 140);
   const nextFollowupText =
     action.sendStatus === 'sent'
       ? 'That message already went out.'
@@ -716,19 +740,19 @@ export function syncOutcomeFromMessageActionRecord(
           }.`
         : savedUnderThread
           ? 'This message is still unsent and saved under the thread for later follow-through.'
-        : reminderBackedDefer
-          ? action.lastActionKind === 'remind_instead'
-            ? `Converted to a reminder${
-                formatWhenLabel(action.followupAt)
-                  ? ` for ${formatWhenLabel(action.followupAt)}`
-                  : ''
-              }.`
-            : 'This draft is saved to revisit before sending.'
-          : action.sendStatus === 'failed'
-            ? 'The draft is still here if you want to retry or send it later.'
-            : action.sendStatus === 'approved'
-              ? 'This is approved but not sent yet.'
-              : 'A reply is drafted, but it still needs your approval to send.';
+          : reminderBackedDefer
+            ? action.lastActionKind === 'remind_instead'
+              ? `Converted to a reminder${
+                  formatWhenLabel(action.followupAt)
+                    ? ` for ${formatWhenLabel(action.followupAt)}`
+                    : ''
+                }.`
+              : 'This draft is saved to revisit before sending.'
+            : action.sendStatus === 'failed'
+              ? 'The draft is still here if you want to retry or send it later.'
+              : action.sendStatus === 'approved'
+                ? 'This is approved but not sent yet.'
+                : 'A reply is drafted, but it still needs your approval to send.';
   return upsertOutcomeRecord({
     groupFolder: action.groupFolder,
     sourceType: 'message_action',
@@ -1108,7 +1132,9 @@ function buildSections(
   const deferred = items.filter((item) => item.outcome.status === 'deferred');
   const owedReplies = items.filter(
     (item) =>
-      ['communication_thread', 'message_action'].includes(item.outcome.sourceType) &&
+      ['communication_thread', 'message_action'].includes(
+        item.outcome.sourceType,
+      ) &&
       item.outcome.status !== 'completed' &&
       item.outcome.status !== 'skipped',
   );
@@ -1134,21 +1160,23 @@ function buildSections(
     const action = getMessageAction(item.outcome.sourceKey);
     return Boolean(
       action &&
-        action.sendStatus === 'sent' &&
-        isSameLocalDay(action.sentAt || item.outcome.updatedAt, now, timeZone),
+      action.sendStatus === 'sent' &&
+      isSameLocalDay(action.sentAt || item.outcome.updatedAt, now, timeZone),
     );
   });
   const messageWaitingApproval = rawMessageItems.filter((item) => {
     const action = getMessageAction(item.outcome.sourceKey);
-    return Boolean(action && action.sendStatus === 'drafted' && action.requiresApproval);
+    return Boolean(
+      action && action.sendStatus === 'drafted' && action.requiresApproval,
+    );
   });
   const messageScheduled = rawMessageItems.filter((item) => {
     const action = getMessageAction(item.outcome.sourceKey);
     return Boolean(
       action &&
-        action.sendStatus === 'deferred' &&
-        action.trustLevel === 'schedule_send' &&
-        action.scheduledTaskId,
+      action.sendStatus === 'deferred' &&
+      action.trustLevel === 'schedule_send' &&
+      action.scheduledTaskId,
     );
   });
   const messageFailed = rawMessageItems.filter((item) => {
@@ -1158,7 +1186,8 @@ function buildSections(
   const messageUnsentDrafts = rawMessageItems.filter((item) => {
     const action = getMessageAction(item.outcome.sourceKey);
     if (!action) return false;
-    if (action.sendStatus === 'drafted' || action.sendStatus === 'approved') return true;
+    if (action.sendStatus === 'drafted' || action.sendStatus === 'approved')
+      return true;
     return action.sendStatus === 'deferred' && !action.scheduledTaskId;
   });
   const messageChangedAfterApproval = rawMessageItems.filter((item) => {
@@ -1208,7 +1237,10 @@ export function buildReviewSnapshot(params: {
     limit: 400,
     now: now.toISOString(),
   }).filter((record) => {
-    if (params.match.kind === 'weekly_review' || params.match.kind === 'review_weekend') {
+    if (
+      params.match.kind === 'weekly_review' ||
+      params.match.kind === 'review_weekend'
+    ) {
       return record.showInWeeklyReview;
     }
     return record.showInDailyReview;
@@ -1271,7 +1303,10 @@ function buildTelegramReviewText(snapshot: OutcomeReviewSnapshot): string {
       break;
     case 'messages_sent_today':
       addSection('Sent Today', snapshot.messageSentToday);
-      addSection('What Changed After Approval', snapshot.messageChangedAfterApproval);
+      addSection(
+        'What Changed After Approval',
+        snapshot.messageChangedAfterApproval,
+      );
       break;
     case 'messages_unsent':
       addSection('Waiting For Approval', snapshot.messageWaitingApproval);
@@ -1289,7 +1324,10 @@ function buildTelegramReviewText(snapshot: OutcomeReviewSnapshot): string {
       addSection('Unsent Drafts', snapshot.messageUnsentDrafts);
       break;
     case 'messages_after_approval':
-      addSection('What Changed After Approval', snapshot.messageChangedAfterApproval);
+      addSection(
+        'What Changed After Approval',
+        snapshot.messageChangedAfterApproval,
+      );
       addSection('Scheduled Sends', snapshot.messageScheduled);
       addSection('Sent Today', snapshot.messageSentToday);
       break;
@@ -1332,10 +1370,7 @@ function buildTelegramReviewText(snapshot: OutcomeReviewSnapshot): string {
               : snapshot.owedReplies,
       );
       addSection('Failed Sends', snapshot.messageFailed);
-      addSection(
-        'Carry Into Tomorrow',
-        snapshot.carryIntoTomorrow,
-      );
+      addSection('Carry Into Tomorrow', snapshot.carryIntoTomorrow);
       addSection('Blocked', snapshot.blocked);
       break;
     case 'daily_review':
@@ -1534,13 +1569,21 @@ export function matchOutcomeReviewPrompt(
   if (/what messages are still unsent|what unsent drafts/.test(normalized)) {
     return { kind: 'messages_unsent' };
   }
-  if (/what is scheduled to send later|what messages are scheduled|what is queued to send later/.test(normalized)) {
+  if (
+    /what is scheduled to send later|what messages are scheduled|what is queued to send later/.test(
+      normalized,
+    )
+  ) {
     return { kind: 'messages_scheduled' };
   }
   if (/what failed to send|what messages failed to send/.test(normalized)) {
     return { kind: 'messages_failed' };
   }
-  if (/what changed after i approved something|what changed after approval/.test(normalized)) {
+  if (
+    /what changed after i approved something|what changed after approval/.test(
+      normalized,
+    )
+  ) {
     return { kind: 'messages_after_approval' };
   }
   if (/what actually got done today|what got done today/.test(normalized)) {
@@ -1603,7 +1646,9 @@ export function interpretOutcomeReviewControl(
   ) {
     return { kind: 'hide' };
   }
-  if (/^(show thread again|show plan again|show that again)\b/.test(normalized)) {
+  if (
+    /^(show thread again|show plan again|show that again)\b/.test(normalized)
+  ) {
     return { kind: 'show' };
   }
   return null;
@@ -1838,11 +1883,16 @@ export function applyOutcomeReviewControl(params: {
           followupAt: planned.task.next_run,
           lastUpdatedAt: now.toISOString(),
           linkedRefsJson: JSON.stringify({
-            ...parseJsonSafe<OutcomeLinkedRefs>(messageAction.linkedRefsJson, {}),
+            ...parseJsonSafe<OutcomeLinkedRefs>(
+              messageAction.linkedRefsJson,
+              {},
+            ),
             reminderTaskId: planned.task.id,
           }),
         });
-        const updatedMessageAction = getMessageAction(messageAction.messageActionId);
+        const updatedMessageAction = getMessageAction(
+          messageAction.messageActionId,
+        );
         if (updatedMessageAction) {
           syncOutcomeFromMessageActionRecord(updatedMessageAction, now);
         }

@@ -440,7 +440,9 @@ function looksLikeExplicitCalendarCreate(normalized: string): boolean {
   );
 }
 
-export function isExplicitGoogleCalendarCreateRequest(message: string): boolean {
+export function isExplicitGoogleCalendarCreateRequest(
+  message: string,
+): boolean {
   const normalized = normalizeMessage(message).toLowerCase();
   if (!normalized) {
     return false;
@@ -698,12 +700,12 @@ export function planGoogleCalendarCreate(
     title = schedulingContext.title;
   }
   if (!title) {
-      return {
-        kind: 'needs_details',
-        message: /\b(?:that|it)\b/i.test(working)
-          ? 'What should I put on your calendar?'
-          : 'I can add that, but I still need a title.',
-      };
+    return {
+      kind: 'needs_details',
+      message: /\b(?:that|it)\b/i.test(working)
+        ? 'What should I put on your calendar?'
+        : 'I can add that, but I still need a title.',
+    };
   }
 
   if (!allDay && !timeInfo.start && !daypartInfo) {
@@ -1047,7 +1049,10 @@ function looksLikePendingDraftAdjustmentMessage(input: {
     end: { hours: number; minutes: number; displayLabel: string } | null;
     matchedText: string | null;
   };
-  daypartInfo: { name: keyof typeof DAYPART_RANGES; matchedText: string } | null;
+  daypartInfo: {
+    name: keyof typeof DAYPART_RANGES;
+    matchedText: string;
+  } | null;
   allDay: boolean;
 }): boolean {
   if (
@@ -1155,7 +1160,10 @@ export function advancePendingGoogleCalendarCreate(
 
     const nextState: PendingGoogleCalendarCreateState = {
       ...state,
-      step: selection?.id || state.selectedCalendarId ? 'confirm_create' : 'choose_calendar',
+      step:
+        selection?.id || state.selectedCalendarId
+          ? 'confirm_create'
+          : 'choose_calendar',
       draft: adjustedDraft || state.draft,
       selectedCalendarId: selection?.id || state.selectedCalendarId,
       conflictSummary: null,

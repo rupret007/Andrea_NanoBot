@@ -492,11 +492,17 @@ function buildDailyContinuationCandidate(
       .replace(/^the easiest thing to forget right now is\s+/i, '')
       .replace(/^the main prep move is to get\s+/i, '')
       .replace(/^the main prep move is to\s+/i, '')
-      .replace(/^for (?:today|tonight|tomorrow|this week|weekend|next few days),\s+/i, '')
+      .replace(
+        /^for (?:today|tonight|tomorrow|this week|weekend|next few days),\s+/i,
+        '',
+      )
       .replace(/\s+ready\.$/i, '')
       .replace(/[.!?]+$/g, '')
       .trim();
-    if (summaryTarget && summaryTarget.toLowerCase() !== summaryText.toLowerCase()) {
+    if (
+      summaryTarget &&
+      summaryTarget.toLowerCase() !== summaryText.toLowerCase()
+    ) {
       return summaryTarget;
     }
 
@@ -556,8 +562,7 @@ function buildDailyContinuationCandidate(
           ? `Using ${response.context.signalsUsed.join(', ')}`
           : undefined,
     }),
-    completionText:
-      buildDailyCompletionText(),
+    completionText: buildDailyCompletionText(),
     threadId: response.context.usedThreadIds?.[0],
     threadTitle: response.context.usedThreadTitles?.[0],
     followupSuggestions,
@@ -628,9 +633,7 @@ function buildDailySeed(
 
 type ReminderOverviewWindow = 'upcoming' | 'today' | 'tomorrow' | 'this_week';
 
-function resolveReminderOverviewWindow(
-  value: string,
-): ReminderOverviewWindow {
+function resolveReminderOverviewWindow(value: string): ReminderOverviewWindow {
   const lower = value.toLowerCase();
   if (/\btomorrow\b/.test(lower)) return 'tomorrow';
   if (/\btoday\b/.test(lower)) return 'today';
@@ -682,7 +685,9 @@ function filterReminderOverviewByWindow(
 
   return reminders.filter((reminder) => {
     const runAt = new Date(reminder.nextRunIso);
-    return runAt.getTime() >= start.getTime() && runAt.getTime() < end.getTime();
+    return (
+      runAt.getTime() >= start.getTime() && runAt.getTime() < end.getTime()
+    );
   });
 }
 
@@ -710,7 +715,9 @@ function buildReminderOverviewLead(
     : `You have ${count} upcoming reminders.`;
 }
 
-function buildReminderOverviewEmptyReply(window: ReminderOverviewWindow): string {
+function buildReminderOverviewEmptyReply(
+  window: ReminderOverviewWindow,
+): string {
   if (window === 'today') {
     return "You don't have any reminders left today.";
   }
@@ -737,9 +744,16 @@ function formatReminderOverviewItem(
   if (window === 'tomorrow') {
     return `${timeLabel} ${reminder.label}`;
   }
-  const tomorrowStart = startOfLocalDay(new Date(now.getTime() + 24 * 60 * 60 * 1000));
-  const tomorrowEnd = endOfLocalDay(new Date(now.getTime() + 24 * 60 * 60 * 1000));
-  if (runAt.getTime() >= now.getTime() && runAt.getTime() < endOfLocalDay(now).getTime()) {
+  const tomorrowStart = startOfLocalDay(
+    new Date(now.getTime() + 24 * 60 * 60 * 1000),
+  );
+  const tomorrowEnd = endOfLocalDay(
+    new Date(now.getTime() + 24 * 60 * 60 * 1000),
+  );
+  if (
+    runAt.getTime() >= now.getTime() &&
+    runAt.getTime() < endOfLocalDay(now).getTime()
+  ) {
     return `Today at ${timeLabel} ${reminder.label}`;
   }
   if (
@@ -1911,7 +1925,8 @@ function buildMissionContinuationCandidate(input: {
       bodyText: input.detailText,
       nextAction,
       whyLine:
-        input.blockers[0] || 'This is staying anchored to your current mission.',
+        input.blockers[0] ||
+        'This is staying anchored to your current mission.',
       followupSuggestions,
       sourceSummary: 'Using your current mission context.',
     }),
@@ -2416,7 +2431,9 @@ function getThreadSummarySpeakerKey(message: NewMessage): string {
   if (message.is_from_me) {
     return '__you__';
   }
-  return normalizeText(message.sender_name || message.sender || '') || '__unknown__';
+  return (
+    normalizeText(message.sender_name || message.sender || '') || '__unknown__'
+  );
 }
 
 function buildThreadSummarySpeakerLabels(params: {
@@ -2467,14 +2484,17 @@ function buildThreadSummaryTranscript(params: {
     .slice(-120)
     .map((message) => {
       const speaker =
-        params.speakerLabels.get(getThreadSummarySpeakerKey(message)) || 'Someone';
+        params.speakerLabels.get(getThreadSummarySpeakerKey(message)) ||
+        'Someone';
       return `${speaker}: ${clipText(message.content || '', 240)}`;
     })
     .filter(Boolean)
     .join('\n');
 }
 
-function pickRepresentativeThreadMessages(messages: NewMessage[]): NewMessage[] {
+function pickRepresentativeThreadMessages(
+  messages: NewMessage[],
+): NewMessage[] {
   const substantive = messages.filter(
     (message) => normalizeText(message.content || '').length >= 16,
   );
@@ -2533,7 +2553,8 @@ function buildFallbackThreadSummaryReply(params: {
   const lead = `Here’s the gist from ${params.chatName} ${params.windowLabel === 'today' ? 'today' : `over ${params.windowLabel}`}.`;
   const digestSentences = highlights.slice(0, 3).map((message, index) => {
     const speaker =
-      params.speakerLabels.get(getThreadSummarySpeakerKey(message)) || 'Someone';
+      params.speakerLabels.get(getThreadSummarySpeakerKey(message)) ||
+      'Someone';
     const content = clipText(
       message.content || '',
       params.channel === 'bluebubbles' ? 90 : 140,
@@ -2549,9 +2570,14 @@ function buildFallbackThreadSummaryReply(params: {
   const bullets = highlights
     .map((message, index) => {
       const speaker =
-        params.speakerLabels.get(getThreadSummarySpeakerKey(message)) || 'Someone';
+        params.speakerLabels.get(getThreadSummarySpeakerKey(message)) ||
+        'Someone';
       const prefix =
-        index === 0 ? 'Early on' : index === highlights.length - 1 ? 'Latest turn' : 'Later';
+        index === 0
+          ? 'Early on'
+          : index === highlights.length - 1
+            ? 'Latest turn'
+            : 'Later';
       return `${prefix}: ${speaker} said "${clipText(message.content || '', 120)}".`;
     })
     .slice(0, params.channel === 'bluebubbles' ? 2 : 4);
@@ -2565,7 +2591,13 @@ function buildFallbackThreadSummaryReply(params: {
       .join('\n');
   }
 
-  return [lead, '', digestSentences.join(' '), '', ...bullets.map((line) => `- ${line}`)]
+  return [
+    lead,
+    '',
+    digestSentences.join(' '),
+    '',
+    ...bullets.map((line) => `- ${line}`),
+  ]
     .filter(Boolean)
     .join('\n');
 }
@@ -2630,7 +2662,8 @@ function buildAllSyncedMessagesSummaryReply(params: {
     })
     .filter((entry) => entry.messages.length > 0)
     .sort((left, right) => {
-      const leftLatest = left.messages[left.messages.length - 1]?.timestamp || '';
+      const leftLatest =
+        left.messages[left.messages.length - 1]?.timestamp || '';
       const rightLatest =
         right.messages[right.messages.length - 1]?.timestamp || '';
       return rightLatest.localeCompare(leftLatest);
@@ -2645,8 +2678,9 @@ function buildAllSyncedMessagesSummaryReply(params: {
     0,
   );
   const lead = `I found ${totalMessages} synced Messages turn${totalMessages === 1 ? '' : 's'} across ${threads.length} chat${threads.length === 1 ? '' : 's'} over ${params.window.label}.`;
-  const rows = threads.slice(0, params.channel === 'bluebubbles' ? 3 : 6).map(
-    (entry) => {
+  const rows = threads
+    .slice(0, params.channel === 'bluebubbles' ? 3 : 6)
+    .map((entry) => {
       const label = formatSafeSyncedThreadLabel({
         jid: entry.chat.jid,
         name: entry.chat.name,
@@ -2655,8 +2689,7 @@ function buildAllSyncedMessagesSummaryReply(params: {
       const latest = entry.messages[entry.messages.length - 1];
       const latestText = clipText(latest?.content || '', 120);
       return `- ${label}: ${entry.messages.length} turn${entry.messages.length === 1 ? '' : 's'}${latestText ? `. Latest: "${latestText}"` : ''}`;
-    },
-  );
+    });
   const hiddenCount = Math.max(0, threads.length - rows.length);
   const tail =
     hiddenCount > 0
@@ -2743,7 +2776,9 @@ async function runCommunicationThreadSummaryCapability(
     };
   }
   if (resolution.state === 'ambiguous') {
-    const matches = resolution.matches.map((match) => match.displayName).join(', ');
+    const matches = resolution.matches
+      .map((match) => match.displayName)
+      .join(', ');
     return {
       handled: true,
       capabilityId: descriptor.id,
@@ -3002,14 +3037,17 @@ async function runCommunicationDraftCapability(
             sourceKey: draft.thread.id,
             sourceSummary: draft.summaryText || 'Drafted reply',
             draftText: draft.draftText || replyText,
-            personName: draft.linkedSubjects[0]?.displayName || draft.thread.title,
-            threadTitle: draft.linkedLifeThreads[0]?.title || draft.thread.title,
+            personName:
+              draft.linkedSubjects[0]?.displayName || draft.thread.title,
+            threadTitle:
+              draft.linkedLifeThreads[0]?.title || draft.thread.title,
             communicationThreadId: draft.thread.id,
             threadId: draft.linkedLifeThreads[0]?.id,
             communicationContext: 'reply_followthrough',
             now: context.now,
           })
-        : context.channel === 'bluebubbles' && draft.linkedSubjects[0]?.displayName
+        : context.channel === 'bluebubbles' &&
+            draft.linkedSubjects[0]?.displayName
           ? (() => {
               const resolvedTarget = resolveBlueBubblesThreadTargetByName(
                 draft.linkedSubjects[0]!.displayName,
@@ -3025,7 +3063,8 @@ async function runCommunicationDraftCapability(
                 groupFolder: context.groupFolder,
                 presentationChannel: 'bluebubbles',
                 presentationChatJid: context.chatJid,
-                presentationThreadId: context.priorSubjectData?.threadId || null,
+                presentationThreadId:
+                  context.priorSubjectData?.threadId || null,
                 sourceType: 'manual_prompt',
                 sourceKey: `bluebubbles-channel-draft:${resolvedTarget.target.chatJid}:${dedupeSeed}`,
                 sourceSummary:
@@ -3034,7 +3073,8 @@ async function runCommunicationDraftCapability(
                 draftText: draft.draftText || replyText,
                 personName: resolvedTarget.target.displayName,
                 threadTitle:
-                  draft.linkedLifeThreads[0]?.title || resolvedTarget.target.displayName,
+                  draft.linkedLifeThreads[0]?.title ||
+                  resolvedTarget.target.displayName,
                 threadId: draft.linkedLifeThreads[0]?.id,
                 communicationContext: 'general',
                 targetOverride: {
@@ -3462,7 +3502,8 @@ async function runMissionCapability(
               : 'today evening';
       const reminderTarget = executionContext.stepFocus?.title
         ? `${executionContext.stepFocus.title.charAt(0).toLowerCase()}${executionContext.stepFocus.title.slice(1)}`
-        : executionContext.mission.summary || executionContext.mission.objective;
+        : executionContext.mission.summary ||
+          executionContext.mission.objective;
       const plannedReminder = planContextualReminder(
         timing,
         reminderTarget,
@@ -3629,11 +3670,14 @@ async function runMissionCapability(
     updatedMission?.missionId || executionContext.mission.missionId,
   );
   const blockers = parseJsonSafe<string[]>(
-    updatedMission?.blockersJson || context.priorSubjectData?.missionBlockersJson,
+    updatedMission?.blockersJson ||
+      context.priorSubjectData?.missionBlockersJson,
     [],
   );
   const nextSuggestion =
-    refreshed?.suggestedActions[0]?.label || refreshed?.stepFocus?.title || null;
+    refreshed?.suggestedActions[0]?.label ||
+    refreshed?.stepFocus?.title ||
+    null;
   const stillOpen =
     refreshed?.stepFocus?.title ||
     blockers[0] ||
@@ -3650,20 +3694,16 @@ async function runMissionCapability(
       blockers[0] ? `Blocker: ${blockers[0]}` : null,
     ],
     nextAction: nextSuggestion,
-    whyLine:
-      refreshed?.stepFocus
-        ? 'This is the next open step on the plan.'
-        : blockers[0]
-          ? 'There is still one blocker worth clearing.'
-          : undefined,
+    whyLine: refreshed?.stepFocus
+      ? 'This is the next open step on the plan.'
+      : blockers[0]
+        ? 'There is still one blocker worth clearing.'
+        : undefined,
   });
   const replyTextWithContinuity = buildSignaturePostActionConfirmation({
     channel: context.channel,
     didWhat: replyText,
-    stillOpen:
-      updatedMission?.status === 'completed'
-        ? null
-        : stillOpen,
+    stillOpen: updatedMission?.status === 'completed' ? null : stillOpen,
     nextSuggestion:
       updatedMission?.status === 'completed'
         ? 'Come back if you want me to turn the next goal into a plan.'
@@ -3833,7 +3873,8 @@ async function runPilotCaptureCapability(
     return {
       handled: true,
       capabilityId: descriptor.id,
-      replyText: 'I can only save pilot issues from a registered assistant context.',
+      replyText:
+        'I can only save pilot issues from a registered assistant context.',
       outputShape: descriptor.preferredOutputShape[context.channel],
       trace: buildCapabilityTrace(
         descriptor,
@@ -3892,7 +3933,8 @@ async function runEverydayCaptureCapability(
     return {
       handled: true,
       capabilityId: descriptor.id,
-      replyText: 'I need your registered Andrea context before I can manage lists for you.',
+      replyText:
+        'I need your registered Andrea context before I can manage lists for you.',
       outputShape: descriptor.preferredOutputShape[context.channel],
       trace: buildCapabilityTrace(
         descriptor,
@@ -3914,15 +3956,16 @@ async function runEverydayCaptureCapability(
     text: utterance,
     replyText: context.replyText,
     conversationSummary: context.conversationSummary,
-      priorContext: {
-        activeListGroupId: context.priorSubjectData?.activeListGroupId,
-        activeListItemIds: context.priorSubjectData?.activeListItemIds,
-        activeListScope: context.priorSubjectData?.activeListScope,
-        activeOperatingProfileId: context.priorSubjectData?.activeOperatingProfileId,
-        activeTaskKind: context.priorSubjectData?.activeTaskKind,
-        conversationFocus: context.priorSubjectData?.conversationFocus,
-        lastAnswerSummary: context.priorSubjectData?.lastAnswerSummary,
-        threadId: context.priorSubjectData?.threadId,
+    priorContext: {
+      activeListGroupId: context.priorSubjectData?.activeListGroupId,
+      activeListItemIds: context.priorSubjectData?.activeListItemIds,
+      activeListScope: context.priorSubjectData?.activeListScope,
+      activeOperatingProfileId:
+        context.priorSubjectData?.activeOperatingProfileId,
+      activeTaskKind: context.priorSubjectData?.activeTaskKind,
+      conversationFocus: context.priorSubjectData?.conversationFocus,
+      lastAnswerSummary: context.priorSubjectData?.lastAnswerSummary,
+      threadId: context.priorSubjectData?.threadId,
       threadTitle: context.priorSubjectData?.threadTitle,
     },
     now: context.now,
@@ -3931,7 +3974,8 @@ async function runEverydayCaptureCapability(
     return { handled: false };
   }
 
-  const supportedFollowups = result.supportedFollowups || descriptor.followupActions;
+  const supportedFollowups =
+    result.supportedFollowups || descriptor.followupActions;
   return {
     handled: true,
     capabilityId: descriptor.id,
@@ -3951,19 +3995,23 @@ async function runEverydayCaptureCapability(
           : 'action_follow_through',
       subjectData: {
         activeCapabilityId: descriptor.id,
-        lastAnswerSummary: result.summaryText || result.replyText || descriptor.label,
+        lastAnswerSummary:
+          result.summaryText || result.replyText || descriptor.label,
         conversationFocus: result.summaryText || utterance,
-          activeListGroupId: result.conversationData?.activeListGroupId,
-          activeListItemIds: result.conversationData?.activeListItemIds,
-          activeListScope: result.conversationData?.activeListScope,
-          activeOperatingProfileId: result.conversationData?.activeOperatingProfileId,
-          activeTaskKind: result.conversationData?.activeTaskKind,
-        },
+        activeListGroupId: result.conversationData?.activeListGroupId,
+        activeListItemIds: result.conversationData?.activeListItemIds,
+        activeListScope: result.conversationData?.activeListScope,
+        activeOperatingProfileId:
+          result.conversationData?.activeOperatingProfileId,
+        activeTaskKind: result.conversationData?.activeTaskKind,
+      },
       supportedFollowups,
       responseSource: 'local_companion',
     },
     handoffOffer:
-      context.channel === 'alexa' ? result.handoffOffer || undefined : undefined,
+      context.channel === 'alexa'
+        ? result.handoffOffer || undefined
+        : undefined,
     trace: buildCapabilityTrace(
       descriptor,
       context,

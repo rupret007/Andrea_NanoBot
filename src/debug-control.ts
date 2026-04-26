@@ -443,13 +443,17 @@ export function formatDebugStatus(): string {
     `- OpenAI-guided routing backend: ${ANDREA_OPENAI_BACKEND_ENABLED ? `enabled at ${ANDREA_OPENAI_BACKEND_URL}` : 'disabled in this NanoBot runtime'}`,
     `- OpenAI-guided routing last source: ${guidedRouting?.source || 'none yet'}`,
     ...(guidedRouting?.routeKind
-      ? [`- OpenAI-guided routing last route: ${guidedRouting.routeKind}${guidedRouting.capabilityId ? ` (${guidedRouting.capabilityId})` : ''}`]
+      ? [
+          `- OpenAI-guided routing last route: ${guidedRouting.routeKind}${guidedRouting.capabilityId ? ` (${guidedRouting.capabilityId})` : ''}`,
+        ]
       : []),
     ...(guidedRouting?.confidence
       ? [`- OpenAI-guided routing confidence: ${guidedRouting.confidence}`]
       : []),
     ...(guidedRouting?.selectedModelTier
-      ? [`- OpenAI-guided routing model tier: ${guidedRouting.selectedModelTier}`]
+      ? [
+          `- OpenAI-guided routing model tier: ${guidedRouting.selectedModelTier}`,
+        ]
       : []),
     ...(guidedRouting?.selectedModel
       ? [`- OpenAI-guided routing model: ${guidedRouting.selectedModel}`]
@@ -483,17 +487,22 @@ export function formatDebugStatus(): string {
     `- Launch summary: ${fieldTrialTruth.launchReadiness.summary}`,
     `- Alexa model sync: ${fieldTrialTruth.launchReadiness.manualSurfaceSyncs.alexa.syncStatus}`,
     `- Alexa model hash: ${fieldTrialTruth.launchReadiness.manualSurfaceSyncs.alexa.interactionModelHash}`,
-    ...(fieldTrialTruth.launchReadiness.manualSurfaceSyncs.alexa.lastSyncedAt !== 'none'
+    ...(fieldTrialTruth.launchReadiness.manualSurfaceSyncs.alexa
+      .lastSyncedAt !== 'none'
       ? [
           `- Alexa model last synced at: ${fieldTrialTruth.launchReadiness.manualSurfaceSyncs.alexa.lastSyncedAt}`,
           `- Alexa model last synced by: ${fieldTrialTruth.launchReadiness.manualSurfaceSyncs.alexa.lastSyncedBy}`,
         ]
       : []),
     ...(fieldTrialTruth.launchReadiness.coreBlockers.length > 0
-      ? [`- Core blockers: ${fieldTrialTruth.launchReadiness.coreBlockers.join(' | ')}`]
+      ? [
+          `- Core blockers: ${fieldTrialTruth.launchReadiness.coreBlockers.join(' | ')}`,
+        ]
       : []),
     ...(fieldTrialTruth.launchReadiness.manualSyncSteps.length > 0
-      ? [`- Manual sync steps: ${fieldTrialTruth.launchReadiness.manualSyncSteps.join(' | ')}`]
+      ? [
+          `- Manual sync steps: ${fieldTrialTruth.launchReadiness.manualSyncSteps.join(' | ')}`,
+        ]
       : []),
     ...(fieldTrialTruth.launchReadiness.optionalProviderBlockers.length > 0
       ? [
@@ -601,7 +610,9 @@ export function formatDebugStatus(): string {
       ? [`- Google Calendar blocker: ${fieldTrialTruth.googleCalendar.blocker}`]
       : []),
     ...(fieldTrialTruth.googleCalendar.nextAction
-      ? [`- Google Calendar next step: ${fieldTrialTruth.googleCalendar.nextAction}`]
+      ? [
+          `- Google Calendar next step: ${fieldTrialTruth.googleCalendar.nextAction}`,
+        ]
       : []),
     `- Outward research proof: ${fieldTrialTruth.research.proofState}`,
     `- Outward research detail: ${fieldTrialTruth.research.detail}`,
@@ -614,10 +625,14 @@ export function formatDebugStatus(): string {
     `- Image generation proof: ${fieldTrialTruth.imageGeneration.proofState}`,
     `- Image generation detail: ${fieldTrialTruth.imageGeneration.detail}`,
     ...(fieldTrialTruth.imageGeneration.blocker
-      ? [`- Image generation blocker: ${fieldTrialTruth.imageGeneration.blocker}`]
+      ? [
+          `- Image generation blocker: ${fieldTrialTruth.imageGeneration.blocker}`,
+        ]
       : []),
     ...(fieldTrialTruth.imageGeneration.nextAction
-      ? [`- Image generation next step: ${fieldTrialTruth.imageGeneration.nextAction}`]
+      ? [
+          `- Image generation next step: ${fieldTrialTruth.imageGeneration.nextAction}`,
+        ]
       : []),
     `- Host health proof: ${fieldTrialTruth.hostHealth.proofState}`,
     `- Host health detail: ${fieldTrialTruth.hostHealth.detail}`,

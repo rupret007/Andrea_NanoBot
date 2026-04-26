@@ -50,9 +50,9 @@ describe('runtime-chat-context helpers', () => {
   });
 
   it('computes a 24-hour reply-context expiry window', () => {
-    expect(
-      computeRuntimeCardContextExpiry('2026-04-03T10:00:00.000Z'),
-    ).toBe('2026-04-04T10:00:00.000Z');
+    expect(computeRuntimeCardContextExpiry('2026-04-03T10:00:00.000Z')).toBe(
+      '2026-04-04T10:00:00.000Z',
+    );
   });
 
   it('resolves explicit and selected runtime job targets', () => {
@@ -74,7 +74,9 @@ describe('runtime-chat-context helpers', () => {
   });
 
   it('resolves current logs requests from selection without overriding explicit job ids', () => {
-    expect(resolveRuntimeLogsTarget(undefined, undefined, 'job_selected')).toEqual({
+    expect(
+      resolveRuntimeLogsTarget(undefined, undefined, 'job_selected'),
+    ).toEqual({
       jobId: 'job_selected',
       usedSelection: true,
       missingSelection: false,

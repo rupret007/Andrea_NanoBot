@@ -271,8 +271,12 @@ describe('alexa oauth', () => {
     };
 
     const rendered = formatAlexaStatusMessage(status);
-    expect(rendered).toContain('Public HTTPS base: https://example.ngrok-free.dev');
-    expect(rendered).toContain('Public ingress type: wildcard_certificate_domain');
+    expect(rendered).toContain(
+      'Public HTTPS base: https://example.ngrok-free.dev',
+    );
+    expect(rendered).toContain(
+      'Public ingress type: wildcard_certificate_domain',
+    );
     expect(rendered).toContain('wildcard certificate option');
     expect(rendered).toContain('ngrok-skip-browser-warning');
   });
@@ -433,10 +437,9 @@ describe('alexa oauth', () => {
     const baseUrl = `http://127.0.0.1:${runtime!.getStatus().port}`;
     const redirectUri = 'https://layla.amazon.com/api/skill/link/test';
     const verifier = 'pkce-verifier-123456789';
-    const challenge = await crypto.subtle.digest(
-      'SHA-256',
-      new TextEncoder().encode(verifier),
-    ).then((buffer) => Buffer.from(buffer).toString('base64url'));
+    const challenge = await crypto.subtle
+      .digest('SHA-256', new TextEncoder().encode(verifier))
+      .then((buffer) => Buffer.from(buffer).toString('base64url'));
 
     const { code } = await authorizeAndApprove(
       baseUrl,
@@ -509,7 +512,9 @@ describe('alexa oauth', () => {
     });
     expect(intentResponse.status).toBe(200);
     const responseEnvelope = (await intentResponse.json()) as ResponseEnvelope;
-    expect(extractSpeechText(responseEnvelope).toLowerCase()).toContain('tomorrow');
+    expect(extractSpeechText(responseEnvelope).toLowerCase()).toContain(
+      'tomorrow',
+    );
     expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
 
     const bound = getAlexaLinkedAccountByAccessTokenHash(

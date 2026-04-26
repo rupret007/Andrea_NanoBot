@@ -1,5 +1,9 @@
 import { randomUUID } from 'crypto';
-import http, { type IncomingMessage, type Server, type ServerResponse } from 'http';
+import http, {
+  type IncomingMessage,
+  type Server,
+  type ServerResponse,
+} from 'http';
 
 import {
   createDefaultBlueBubblesMonitorState,
@@ -201,9 +205,14 @@ export function resolveConfiguredBlueBubblesReplyGateMode(
 }
 
 export function buildBlueBubblesListenerWebhookUrl(
-  config: Pick<BlueBubblesConfig, 'host' | 'port' | 'webhookPath' | 'webhookSecret'>,
+  config: Pick<
+    BlueBubblesConfig,
+    'host' | 'port' | 'webhookPath' | 'webhookSecret'
+  >,
 ): string {
-  const url = new URL(`http://${config.host}:${config.port}${config.webhookPath}`);
+  const url = new URL(
+    `http://${config.host}:${config.port}${config.webhookPath}`,
+  );
   if (config.webhookSecret) {
     url.searchParams.set('secret', config.webhookSecret);
   }
@@ -451,7 +460,9 @@ function summarizeBlueBubblesCandidateProbeResults(
   if (entries.length === 0) {
     return 'none';
   }
-  return entries.map(([baseUrl, detail]) => `${baseUrl} => ${detail}`).join(' || ');
+  return entries
+    .map(([baseUrl, detail]) => `${baseUrl} => ${detail}`)
+    .join(' || ');
 }
 
 function firstString(...values: unknown[]): string | null {
@@ -577,7 +588,12 @@ function extractBlueBubblesReceiptId(payload: unknown): string | null {
 function extractBlueBubblesPrivateApiState(payload: unknown): boolean | null {
   const root = asRecord(payload);
   const data = asRecord(root.data);
-  return firstBoolean(data.private_api, data.privateApi, root.private_api, root.privateApi);
+  return firstBoolean(
+    data.private_api,
+    data.privateApi,
+    root.private_api,
+    root.privateApi,
+  );
 }
 
 function buildAuthSearchParams(password: string): URLSearchParams {
@@ -631,7 +647,12 @@ export function normalizeBlueBubblesWebhookEvent(
       message.guid,
       message.messageGuid,
     ),
-    chatGuid: firstString(root.chatGuid, data.chatGuid, chat.guid, chat.chatGuid),
+    chatGuid: firstString(
+      root.chatGuid,
+      data.chatGuid,
+      chat.guid,
+      chat.chatGuid,
+    ),
     data,
   };
 }
@@ -671,7 +692,12 @@ export function normalizeBlueBubblesContactRef(
       message.senderName,
       message.contactName,
     ),
-    address: firstString(sender.address, data.address, message.address, root.address),
+    address: firstString(
+      sender.address,
+      data.address,
+      message.address,
+      root.address,
+    ),
     service: firstString(
       sender.service,
       message.service,
@@ -706,7 +732,9 @@ export function normalizeBlueBubblesChatRef(
       firstString(root.chatGuid, data.chatGuid, chat.guid, chat.chatGuid) ||
       'unknown',
     displayName: firstString(chat.displayName, chat.name),
-    isGroup: firstBoolean(chat.isGroup, data.isGroup, root.isGroup) ?? participants.length > 1,
+    isGroup:
+      firstBoolean(chat.isGroup, data.isGroup, root.isGroup) ??
+      participants.length > 1,
     participants,
     chatIdentifier: firstString(
       chat.chatIdentifier,
@@ -757,7 +785,8 @@ export function normalizeBlueBubblesIncomingMessage(
   const chat = normalizeBlueBubblesChatRef(payload);
   const contact = normalizeBlueBubblesContactRef(payload);
   const messageGuid =
-    event.messageGuid || `${chat.chatGuid}:${normalizeTimestamp(message.date, now)}`;
+    event.messageGuid ||
+    `${chat.chatGuid}:${normalizeTimestamp(message.date, now)}`;
 
   return {
     chatJid: `bb:${chat.chatGuid}`,
@@ -892,7 +921,8 @@ export async function inspectBlueBubblesWebhookRegistration(
     if (!matched) {
       return {
         state: 'missing',
-        detail: 'no matching Andrea webhook is registered on the BlueBubbles server',
+        detail:
+          'no matching Andrea webhook is registered on the BlueBubbles server',
       };
     }
     return {
@@ -971,7 +1001,10 @@ function normalizeBlueBubblesHistoryPayload(
             firstString(handle.service, message.service, chat.service) ||
             extractBlueBubblesServiceFromChatGuid(chatGuid),
         },
-        replyToGuid: firstString(message.replyToGuid, message.associatedMessageGuid),
+        replyToGuid: firstString(
+          message.replyToGuid,
+          message.associatedMessageGuid,
+        ),
         dateCreated:
           message.dateCreated || message.date || message.dateCreatedEpoch,
         isFromMe: Boolean(message.isFromMe),
@@ -1010,16 +1043,16 @@ class BlueBubblesMessagesProvider implements AppleMessagesProvider {
     }
 
     const candidateResults: Record<string, string> = {};
-    let firstAuthFailed:
-      | {
-          baseUrl: string;
-          detail: string;
-        }
-      | null = null;
+    let firstAuthFailed: {
+      baseUrl: string;
+      detail: string;
+    } | null = null;
 
     for (const candidate of candidates) {
       const url = new URL('/api/v1/ping', candidate);
-      for (const [key, value] of buildAuthSearchParams(config.password).entries()) {
+      for (const [key, value] of buildAuthSearchParams(
+        config.password,
+      ).entries()) {
         url.searchParams.set(key, value);
       }
 
@@ -1027,7 +1060,8 @@ class BlueBubblesMessagesProvider implements AppleMessagesProvider {
         const response = await fetchBlueBubblesWithTimeout(url);
         const responseText = await response.text();
         if (response.ok) {
-          candidateResults[candidate] = `reachable/auth ok (${response.status})`;
+          candidateResults[candidate] =
+            `reachable/auth ok (${response.status})`;
           return {
             provider: this.name,
             status: 'reachable',
@@ -1037,7 +1071,10 @@ class BlueBubblesMessagesProvider implements AppleMessagesProvider {
           };
         }
         if (response.status === 401 || response.status === 403) {
-          const detail = extractBlueBubblesErrorText(response.status, responseText);
+          const detail = extractBlueBubblesErrorText(
+            response.status,
+            responseText,
+          );
           candidateResults[candidate] = `auth failed (${detail})`;
           if (!firstAuthFailed) {
             firstAuthFailed = {
@@ -1047,10 +1084,11 @@ class BlueBubblesMessagesProvider implements AppleMessagesProvider {
           }
           continue;
         }
-        candidateResults[candidate] = `unreachable (${extractBlueBubblesErrorText(
-          response.status,
-          responseText,
-        )})`;
+        candidateResults[candidate] =
+          `unreachable (${extractBlueBubblesErrorText(
+            response.status,
+            responseText,
+          )})`;
       } catch (error) {
         candidateResults[candidate] = `unreachable (${
           error instanceof Error ? error.message : 'transport probe failed'
@@ -1112,7 +1150,9 @@ class BlueBubblesMessagesProvider implements AppleMessagesProvider {
     }
 
     const url = new URL('/api/v1/message/text', config.baseUrl);
-    for (const [key, value] of buildAuthSearchParams(config.password).entries()) {
+    for (const [key, value] of buildAuthSearchParams(
+      config.password,
+    ).entries()) {
       url.searchParams.set(key, value);
     }
 
@@ -1135,7 +1175,9 @@ class BlueBubblesMessagesProvider implements AppleMessagesProvider {
     });
     const responseText = await response.text();
     if (!response.ok) {
-      throw new Error(extractBlueBubblesErrorText(response.status, responseText));
+      throw new Error(
+        extractBlueBubblesErrorText(response.status, responseText),
+      );
     }
     const parsed = parseBlueBubblesJson(responseText);
     const receiptId = extractBlueBubblesReceiptId(parsed);
@@ -1171,12 +1213,15 @@ class BlueBubblesMessagesProvider implements AppleMessagesProvider {
       };
     }
 
-    const webhookInspection = await inspectBlueBubblesWebhookRegistration(config);
+    const webhookInspection =
+      await inspectBlueBubblesWebhookRegistration(config);
     let privateApiAvailable: boolean | null = null;
     let sendMethod: BlueBubblesSendMethod = 'private-api';
 
     const url = new URL('/api/v1/server/info', config.baseUrl);
-    for (const [key, value] of buildAuthSearchParams(config.password).entries()) {
+    for (const [key, value] of buildAuthSearchParams(
+      config.password,
+    ).entries()) {
       url.searchParams.set(key, value);
     }
 
@@ -1187,7 +1232,8 @@ class BlueBubblesMessagesProvider implements AppleMessagesProvider {
         privateApiAvailable = extractBlueBubblesPrivateApiState(
           parseBlueBubblesJson(responseText),
         );
-        sendMethod = privateApiAvailable === false ? 'apple-script' : 'private-api';
+        sendMethod =
+          privateApiAvailable === false ? 'apple-script' : 'private-api';
       } else {
         logger.info(
           {
@@ -1281,7 +1327,10 @@ async function fetchNormalizedBlueBubblesRecentMessages(
   const response = await fetchBlueBubblesWithTimeout(url);
   const responseText = await response.text();
   if (!response.ok) {
-    const errorText = extractBlueBubblesErrorText(response.status, responseText);
+    const errorText = extractBlueBubblesErrorText(
+      response.status,
+      responseText,
+    );
     if (response.status !== 404 || candidateChatJids.length === 0) {
       throw new Error(errorText);
     }
@@ -1324,7 +1373,11 @@ async function fetchNormalizedBlueBubblesRecentMessagesFromRecentChats(
   limit: number,
   originalErrorText: string,
 ): Promise<NormalizedBlueBubblesHistoryRow[]> {
-  const uniqueChatJids = [...new Set(candidateChatJids.filter((chatJid) => chatJid.startsWith('bb:')))];
+  const uniqueChatJids = [
+    ...new Set(
+      candidateChatJids.filter((chatJid) => chatJid.startsWith('bb:')),
+    ),
+  ];
   const mergedRows = new Map<string, NormalizedBlueBubblesHistoryRow>();
   const errors: string[] = [];
 
@@ -1345,7 +1398,9 @@ async function fetchNormalizedBlueBubblesRecentMessagesFromRecentChats(
     } catch (error) {
       errors.push(
         `${chatJid}: ${
-          error instanceof Error ? error.message : 'recent chat history probe failed'
+          error instanceof Error
+            ? error.message
+            : 'recent chat history probe failed'
         }`,
       );
     }
@@ -1607,7 +1662,9 @@ export class BlueBubblesChannel implements Channel {
       lastAddressedHandle: normalizeBlueBubblesDirectTargetValue(
         input.chat.lastAddressedHandle,
       ),
-      handleAddress: normalizeBlueBubblesDirectTargetValue(input.contact.address),
+      handleAddress: normalizeBlueBubblesDirectTargetValue(
+        input.contact.address,
+      ),
       service:
         normalizeBlueBubblesDirectTargetValue(input.contact.service) ||
         normalizeBlueBubblesDirectTargetValue(input.chat.service) ||
@@ -1643,7 +1700,8 @@ export class BlueBubblesChannel implements Channel {
     if (!normalizedChatJid) {
       return false;
     }
-    const freshnessCutoff = Date.now() - BLUEBUBBLES_MISSED_INBOUND_GRACE_MS * 15;
+    const freshnessCutoff =
+      Date.now() - BLUEBUBBLES_MISSED_INBOUND_GRACE_MS * 15;
     return listRecentMessagesForChat(normalizedChatJid, 12).some((message) => {
       const timestamp = Date.parse(message.timestamp || '');
       if (!Number.isFinite(timestamp) || timestamp < freshnessCutoff) {
@@ -1848,8 +1906,9 @@ export class BlueBubblesChannel implements Channel {
       return cached;
     }
     const inferredIdentifier =
-      normalizeBlueBubblesDirectTargetValue(chatGuid.split(';').slice(2).join(';')) ||
-      null;
+      normalizeBlueBubblesDirectTargetValue(
+        chatGuid.split(';').slice(2).join(';'),
+      ) || null;
     return {
       chatJid,
       chatGuid,
@@ -2002,7 +2061,10 @@ export class BlueBubblesChannel implements Channel {
     this.monitorState.recentEvidence = this.monitorState.recentEvidence.filter(
       (entry) => {
         const parsed = Date.parse(entry.observedAt);
-        return Number.isFinite(parsed) && nowMs - parsed <= BLUEBUBBLES_EVIDENCE_WINDOW_MS;
+        return (
+          Number.isFinite(parsed) &&
+          nowMs - parsed <= BLUEBUBBLES_EVIDENCE_WINDOW_MS
+        );
       },
     );
   }
@@ -2069,7 +2131,10 @@ export class BlueBubblesChannel implements Channel {
   }
 
   private pruneRecentIngressFingerprints(nowMs = Date.now()): void {
-    for (const [fingerprint, observedAtMs] of this.recentIngressFingerprints.entries()) {
+    for (const [
+      fingerprint,
+      observedAtMs,
+    ] of this.recentIngressFingerprints.entries()) {
       if (nowMs - observedAtMs > BLUEBUBBLES_INGRESS_FINGERPRINT_WINDOW_MS) {
         this.recentIngressFingerprints.delete(fingerprint);
       }
@@ -2078,7 +2143,10 @@ export class BlueBubblesChannel implements Channel {
 
   private hasRecentIngressFingerprint(
     chatJid: string,
-    message: Pick<NewMessage, 'content' | 'timestamp' | 'sender' | 'is_from_me'>,
+    message: Pick<
+      NewMessage,
+      'content' | 'timestamp' | 'sender' | 'is_from_me'
+    >,
   ): boolean {
     this.pruneRecentIngressFingerprints();
     return this.recentIngressFingerprints.has(
@@ -2091,7 +2159,10 @@ export class BlueBubblesChannel implements Channel {
 
   private noteIngressFingerprint(
     chatJid: string,
-    message: Pick<NewMessage, 'content' | 'timestamp' | 'sender' | 'is_from_me'>,
+    message: Pick<
+      NewMessage,
+      'content' | 'timestamp' | 'sender' | 'is_from_me'
+    >,
   ): void {
     this.pruneRecentIngressFingerprints();
     this.recentIngressFingerprints.set(
@@ -2143,7 +2214,9 @@ export class BlueBubblesChannel implements Channel {
     ].join(':');
     if (
       !this.monitorState.recentEvidence.some(
-        (entry) => entry.kind === 'reply_delivery_failed' && entry.signature === signature,
+        (entry) =>
+          entry.kind === 'reply_delivery_failed' &&
+          entry.signature === signature,
       )
     ) {
       this.monitorState.recentEvidence.push({
@@ -2186,7 +2259,8 @@ export class BlueBubblesChannel implements Channel {
     }
 
     if (
-      recentQualifyingEvidence.length < BLUEBUBBLES_FALLBACK_EVIDENCE_THRESHOLD ||
+      recentQualifyingEvidence.length <
+        BLUEBUBBLES_FALLBACK_EVIDENCE_THRESHOLD ||
       !this.opts.onCrossSurfaceFallback
     ) {
       this.monitorState.crossSurfaceFallbackState = 'armed';
@@ -2207,7 +2281,8 @@ export class BlueBubblesChannel implements Channel {
     });
     if (result.sent) {
       this.monitorState.crossSurfaceFallbackState = 'sent';
-      this.monitorState.crossSurfaceFallbackLastSentAt = new Date().toISOString();
+      this.monitorState.crossSurfaceFallbackLastSentAt =
+        new Date().toISOString();
       this.monitorState.crossSurfaceFallbackLastDetail = result.detail;
     } else {
       this.monitorState.crossSurfaceFallbackState = 'armed';
@@ -2248,29 +2323,26 @@ export class BlueBubblesChannel implements Channel {
         this.monitorState.mostRecentServerSeenMessageId = newest.message.id;
       }
 
-      let latestIgnored:
-        | {
-            chatJid: string;
-            at: string;
-            reason: 'mention_required' | 'chat_scope';
-            isGroup: boolean;
-          }
-        | null = null;
-      let latestMissed:
-        | {
-            chatJid: string;
-            at: string;
-            id: string;
-            reason: string;
-            nextAction: string;
-          }
-        | null = null;
+      let latestIgnored: {
+        chatJid: string;
+        at: string;
+        reason: 'mention_required' | 'chat_scope';
+        isGroup: boolean;
+      } | null = null;
+      let latestMissed: {
+        chatJid: string;
+        at: string;
+        id: string;
+        reason: string;
+        nextAction: string;
+      } | null = null;
 
       for (let index = recentMessages.length - 1; index >= 0; index -= 1) {
         const row = recentMessages[index]!;
         const previous = this.monitorState.perChatServerSeen[row.chatJid];
         if (!previous || previous < row.message.timestamp) {
-          this.monitorState.perChatServerSeen[row.chatJid] = row.message.timestamp;
+          this.monitorState.perChatServerSeen[row.chatJid] =
+            row.message.timestamp;
         }
 
         const eligible = isBlueBubblesChatEligible(
@@ -2295,12 +2367,17 @@ export class BlueBubblesChannel implements Channel {
           continue;
         }
 
-        const observedAt = this.monitorState.perChatWebhookObserved[row.chatJid];
+        const observedAt =
+          this.monitorState.perChatWebhookObserved[row.chatJid];
         const observed =
           (observedAt && observedAt >= row.message.timestamp) ||
           hasStoredMessage(row.chatJid, row.message.id);
         const ageMs = nowMs - Date.parse(row.message.timestamp);
-        if (!observed && Number.isFinite(ageMs) && ageMs >= BLUEBUBBLES_MISSED_INBOUND_GRACE_MS) {
+        if (
+          !observed &&
+          Number.isFinite(ageMs) &&
+          ageMs >= BLUEBUBBLES_MISSED_INBOUND_GRACE_MS
+        ) {
           if (!latestMissed) {
             latestMissed = {
               chatJid: row.chatJid,
@@ -2339,7 +2416,8 @@ export class BlueBubblesChannel implements Channel {
           latestMissed.nextAction,
         );
       } else if (hasRecentReplyFailure) {
-        const chatLabel = this.monitorState.lastReplySendFailureChatJid || 'that same chat';
+        const chatLabel =
+          this.monitorState.lastReplySendFailureChatJid || 'that same chat';
         this.setDetectionState(
           'reply_delivery_broken',
           `Andrea observed a Messages turn in ${chatLabel}, but reply delivery failed before anything came back to the thread.`,
@@ -2369,7 +2447,9 @@ export class BlueBubblesChannel implements Channel {
       this.persistMonitorState();
     } catch (error) {
       const errorText =
-        error instanceof Error ? error.message : 'BlueBubbles shadow poll failed';
+        error instanceof Error
+          ? error.message
+          : 'BlueBubbles shadow poll failed';
       const nowIso = new Date(nowMs).toISOString();
       try {
         await this.probeBlueBubblesTransport();
@@ -2424,7 +2504,10 @@ export class BlueBubblesChannel implements Channel {
     this.stopShadowMonitor();
     this.shadowPollTimer = setInterval(() => {
       this.runShadowMonitorOnce().catch((error) => {
-        logger.warn({ err: error }, 'BlueBubbles shadow monitor iteration failed');
+        logger.warn(
+          { err: error },
+          'BlueBubbles shadow monitor iteration failed',
+        );
       });
     }, BLUEBUBBLES_SHADOW_POLL_INTERVAL_MS);
   }
@@ -2571,9 +2654,9 @@ export class BlueBubblesChannel implements Channel {
   private isReadyForTraffic(): boolean {
     return Boolean(
       this.connected &&
-        this.config.enabled &&
-        isBlueBubblesRoutingConfigured(this.config) &&
-        this.config.sendEnabled,
+      this.config.enabled &&
+      isBlueBubblesRoutingConfigured(this.config) &&
+      this.config.sendEnabled,
     );
   }
 
@@ -2644,7 +2727,9 @@ export class BlueBubblesChannel implements Channel {
       writeResponse(res, 503, 'BlueBubbles channel is not ready');
       return;
     }
-    if (!String(req.headers['content-type'] || '').includes('application/json')) {
+    if (
+      !String(req.headers['content-type'] || '').includes('application/json')
+    ) {
       writeResponse(res, 400, 'BlueBubbles webhook requires application/json');
       return;
     }
@@ -2693,7 +2778,10 @@ export class BlueBubblesChannel implements Channel {
       chatJid: normalized.chatJid,
       isGroup: normalized.chat.isGroup,
     });
-    if (normalized.message.is_from_me && isBlueBubblesAndreaBotEcho(normalized.message.content)) {
+    if (
+      normalized.message.is_from_me &&
+      isBlueBubblesAndreaBotEcho(normalized.message.content)
+    ) {
       writeResponse(res, 202, 'Ignored Andrea outbound echo');
       return;
     }
@@ -2708,7 +2796,11 @@ export class BlueBubblesChannel implements Channel {
         'mention_required',
         normalized.chat.isGroup,
       );
-      writeResponse(res, 202, 'Ignored outgoing message without @Andrea mention');
+      writeResponse(
+        res,
+        202,
+        'Ignored outgoing message without @Andrea mention',
+      );
       return;
     }
     if (
@@ -2747,7 +2839,9 @@ export class BlueBubblesChannel implements Channel {
       writeResponse(res, 200, 'OK');
     } catch (error) {
       this.lastErrorText =
-        error instanceof Error ? error.message : 'Unknown BlueBubbles ingress error';
+        error instanceof Error
+          ? error.message
+          : 'Unknown BlueBubbles ingress error';
       this.emitHealth({ state: 'degraded' });
       writeResponse(res, 500, this.lastErrorText);
     } finally {
@@ -2760,10 +2854,10 @@ export class BlueBubblesChannel implements Channel {
     text: string,
     replyToGuid?: string,
   ): Promise<SendMessageResult> {
-      const activeBaseUrl = await this.ensureActiveBaseUrl({
-        recheck: true,
-        refreshReadiness: true,
-      });
+    const activeBaseUrl = await this.ensureActiveBaseUrl({
+      recheck: true,
+      refreshReadiness: true,
+    });
     if (!activeBaseUrl || !this.config.password || !chatGuid) {
       throw new Error(
         this.transportProbeDetail ||
@@ -2799,7 +2893,11 @@ export class BlueBubblesChannel implements Channel {
     if (replyToGuid) {
       try {
         this.updateLastOutboundAttempt({ kind: 'chat_guid', chatGuid });
-        const result = await this.postBlueBubblesText(chatGuid, text, replyToGuid);
+        const result = await this.postBlueBubblesText(
+          chatGuid,
+          text,
+          replyToGuid,
+        );
         this.successfulOutboundTargetByJid.set(jid, {
           kind: 'chat_guid',
           chatGuid,
@@ -2833,7 +2931,9 @@ export class BlueBubblesChannel implements Channel {
         return result;
       } catch (error) {
         const errorText =
-          error instanceof Error ? error.message : 'Unknown BlueBubbles send error';
+          error instanceof Error
+            ? error.message
+            : 'Unknown BlueBubbles send error';
         this.lastSendErrorDetail = errorText;
         lastErrorText = errorText;
         const directMetadata = this.getDirectChatMetadata(jid, chatGuid);
@@ -2894,7 +2994,9 @@ export class BlueBubblesChannel implements Channel {
     this.server = http.createServer((req, res) => {
       this.handleWebhookRequest(req, res).catch((error) => {
         this.lastErrorText =
-          error instanceof Error ? error.message : 'Unknown BlueBubbles listener error';
+          error instanceof Error
+            ? error.message
+            : 'Unknown BlueBubbles listener error';
         this.emitHealth({ state: 'degraded' });
         writeResponse(res, 500, this.lastErrorText);
       });
@@ -2926,7 +3028,10 @@ export class BlueBubblesChannel implements Channel {
         ? null
         : this.webhookRegistrationDetail || this.transportProbeDetail;
     await this.runShadowMonitorOnce().catch((error) => {
-      logger.warn({ err: error }, 'Initial BlueBubbles shadow monitor run failed');
+      logger.warn(
+        { err: error },
+        'Initial BlueBubbles shadow monitor run failed',
+      );
     });
     this.startShadowMonitor();
     this.emitHealth();
@@ -2959,7 +3064,11 @@ export class BlueBubblesChannel implements Channel {
     const isCompanionLabeled = !options?.suppressSenderLabel;
 
     try {
-      const result = await this.sendBlueBubblesReply(jid, renderedText, options);
+      const result = await this.sendBlueBubblesReply(
+        jid,
+        renderedText,
+        options,
+      );
       const sentAt = new Date().toISOString();
       this.rememberLastOutboundObservation(jid, sentAt);
       this.lastErrorText = null;
@@ -2969,19 +3078,18 @@ export class BlueBubblesChannel implements Channel {
         this.monitorState.lastReplySendFailureAt = null;
         this.monitorState.lastReplySendFailureChatJid = null;
         this.monitorState.lastReplySendFailureStage = null;
-        this.monitorState.recentEvidence = this.monitorState.recentEvidence.filter(
-          (entry) =>
-            !(
-              entry.kind === 'reply_delivery_failed' && entry.chatJid === jid
-            ),
-        );
+        this.monitorState.recentEvidence =
+          this.monitorState.recentEvidence.filter(
+            (entry) =>
+              !(
+                entry.kind === 'reply_delivery_failed' && entry.chatJid === jid
+              ),
+          );
         this.persistMonitorState();
       }
       storeChatMetadata(jid, sentAt, undefined, 'bluebubbles');
       storeMessageDirect({
-        id:
-          result.platformMessageId ||
-          `bb:outbound:${chatGuid}:${sentAt}`,
+        id: result.platformMessageId || `bb:outbound:${chatGuid}:${sentAt}`,
         chat_jid: jid,
         sender: isCompanionLabeled ? 'Andrea' : 'Me',
         sender_name: isCompanionLabeled ? 'Andrea' : 'You',
@@ -2996,7 +3104,9 @@ export class BlueBubblesChannel implements Channel {
       return result;
     } catch (error) {
       this.lastErrorText =
-        error instanceof Error ? error.message : 'Unknown BlueBubbles send error';
+        error instanceof Error
+          ? error.message
+          : 'Unknown BlueBubbles send error';
       this.noteReplySendFailure(jid, this.lastErrorText);
       await this.maybeEscalateCrossSurfaceFallback();
       this.emitHealth({ state: 'degraded' });
@@ -3066,7 +3176,8 @@ export class BlueBubblesChannel implements Channel {
       transportDetail: this.transportProbeDetail || 'none',
       shadowPollLastOkAt: this.monitorState.shadowPollLastOkAt || 'none',
       shadowPollLastError: this.monitorState.shadowPollLastError || 'none',
-      shadowPollMostRecentChat: this.monitorState.shadowPollMostRecentChat || 'none',
+      shadowPollMostRecentChat:
+        this.monitorState.shadowPollMostRecentChat || 'none',
       configuredReplyGateMode: this.getConfiguredReplyGateMode(),
       effectiveReplyGateMode: this.getEffectiveReplyGateMode(),
       lastInboundObservedAt: this.lastInboundObservedAt || 'none',
@@ -3117,7 +3228,10 @@ export class BlueBubblesChannel implements Channel {
           resolve();
         });
       }).catch((error) => {
-        logger.warn({ err: error }, 'Failed to close BlueBubbles listener cleanly');
+        logger.warn(
+          { err: error },
+          'Failed to close BlueBubbles listener cleanly',
+        );
       });
       this.server = undefined;
     }

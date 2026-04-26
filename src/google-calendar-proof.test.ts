@@ -73,87 +73,81 @@ describe('google calendar proof', () => {
   it('marks Google Calendar live-proven after validate, create, read-back, and cleanup succeed', async () => {
     let eventsGetCount = 0;
 
-    vi.stubGlobal('fetch', async (input: string | URL | Request, init?: RequestInit) => {
-      const url =
-        typeof input === 'string'
-          ? input
-          : input instanceof URL
-            ? input.toString()
-            : input.url;
-      const method = init?.method || 'GET';
+    vi.stubGlobal(
+      'fetch',
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const url =
+          typeof input === 'string'
+            ? input
+            : input instanceof URL
+              ? input.toString()
+              : input.url;
+        const method = init?.method || 'GET';
 
-      if (
-        method === 'GET' &&
-        url.includes('/users/me/calendarList')
-      ) {
-        return new Response(
-          JSON.stringify({
-            items: [
-              {
-                id: 'primary',
-                summary: 'Jeff',
-                primary: true,
-                accessRole: 'owner',
-              },
-            ],
-          }),
-          { status: 200 },
-        );
-      }
-
-      if (
-        method === 'GET' &&
-        url.includes('/calendars/primary/events')
-      ) {
-        eventsGetCount += 1;
-        if (eventsGetCount >= 3) {
+        if (method === 'GET' && url.includes('/users/me/calendarList')) {
           return new Response(
             JSON.stringify({
-              summary: 'Jeff',
               items: [
                 {
-                  id: 'proof-event-1',
-                  summary: 'Andrea calendar proof 2026-04-09T13-30-00-000Z',
-                  start: { dateTime: '2026-04-10T16:00:00.000Z' },
-                  end: { dateTime: '2026-04-10T16:15:00.000Z' },
+                  id: 'primary',
+                  summary: 'Jeff',
+                  primary: true,
+                  accessRole: 'owner',
                 },
               ],
             }),
             { status: 200 },
           );
         }
-        return new Response(
-          JSON.stringify({
-            summary: 'Jeff',
-            items: [],
-          }),
-          { status: 200 },
-        );
-      }
 
-      if (
-        method === 'POST' &&
-        url.endsWith('/calendars/primary/events')
-      ) {
-        return new Response(
-          JSON.stringify({
-            id: 'proof-event-1',
-            summary: 'Andrea calendar proof 2026-04-09T13-30-00-000Z',
-            htmlLink: 'https://calendar.google.com/proof-event-1',
-            organizer: { displayName: 'Jeff' },
-            start: { dateTime: '2026-04-10T16:00:00.000Z' },
-            end: { dateTime: '2026-04-10T16:15:00.000Z' },
-          }),
-          { status: 200 },
-        );
-      }
+        if (method === 'GET' && url.includes('/calendars/primary/events')) {
+          eventsGetCount += 1;
+          if (eventsGetCount >= 3) {
+            return new Response(
+              JSON.stringify({
+                summary: 'Jeff',
+                items: [
+                  {
+                    id: 'proof-event-1',
+                    summary: 'Andrea calendar proof 2026-04-09T13-30-00-000Z',
+                    start: { dateTime: '2026-04-10T16:00:00.000Z' },
+                    end: { dateTime: '2026-04-10T16:15:00.000Z' },
+                  },
+                ],
+              }),
+              { status: 200 },
+            );
+          }
+          return new Response(
+            JSON.stringify({
+              summary: 'Jeff',
+              items: [],
+            }),
+            { status: 200 },
+          );
+        }
 
-      if (method === 'DELETE' && url.includes('/calendars/primary/events/')) {
-        return new Response(null, { status: 204 });
-      }
+        if (method === 'POST' && url.endsWith('/calendars/primary/events')) {
+          return new Response(
+            JSON.stringify({
+              id: 'proof-event-1',
+              summary: 'Andrea calendar proof 2026-04-09T13-30-00-000Z',
+              htmlLink: 'https://calendar.google.com/proof-event-1',
+              organizer: { displayName: 'Jeff' },
+              start: { dateTime: '2026-04-10T16:00:00.000Z' },
+              end: { dateTime: '2026-04-10T16:15:00.000Z' },
+            }),
+            { status: 200 },
+          );
+        }
 
-      throw new Error(`Unhandled fetch call: ${method} ${url}`);
-    });
+        if (method === 'DELETE' && url.includes('/calendars/primary/events/')) {
+          return new Response(null, { status: 204 });
+        }
+
+        throw new Error(`Unhandled fetch call: ${method} ${url}`);
+      },
+    );
 
     const result = await runGoogleCalendarProof({
       projectRoot: tempDir,

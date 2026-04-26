@@ -87,12 +87,9 @@ export function buildOpenBubblesFeasibilityReport(params?: {
     params?.supportedWindowsSurfaceDetected || false;
   const inboundObservationSupported =
     params?.inboundObservationSupported || false;
-  const outboundReplySupported =
-    params?.outboundReplySupported || false;
-  const macOfflineRuntimeSupported =
-    params?.macOfflineRuntimeSupported ?? true;
-  const noUiScrapingRequired =
-    params?.noUiScrapingRequired ?? true;
+  const outboundReplySupported = params?.outboundReplySupported || false;
+  const macOfflineRuntimeSupported = params?.macOfflineRuntimeSupported ?? true;
+  const noUiScrapingRequired = params?.noUiScrapingRequired ?? true;
   const criteria: OpenBubblesFeasibilityCriterion[] = [
     {
       id: 'windows_surface',
@@ -101,10 +98,9 @@ export function buildOpenBubblesFeasibilityReport(params?: {
         : detectedInstallPaths.length > 0
           ? 'unproven'
           : 'blocked',
-      detail:
-        supportedWindowsSurfaceDetected
-          ? 'Andrea has a supported Windows-native surface available to attach to for OpenBubbles feasibility work.'
-          : detectedInstallPaths.length > 0
+      detail: supportedWindowsSurfaceDetected
+        ? 'Andrea has a supported Windows-native surface available to attach to for OpenBubbles feasibility work.'
+        : detectedInstallPaths.length > 0
           ? 'OpenBubbles app files were detected on this PC, but Andrea still does not have a documented Windows-native webhook or API surface to attach to.'
           : 'No local OpenBubbles install was detected on this PC, and Andrea does not have a documented Windows-native webhook or API surface to attach to yet.',
       nextAction:
@@ -117,10 +113,9 @@ export function buildOpenBubblesFeasibilityReport(params?: {
         : supportedWindowsSurfaceDetected
           ? 'unproven'
           : 'blocked',
-      detail:
-        inboundObservationSupported
-          ? 'Andrea can prove direct inbound 1:1 observation from the supported OpenBubbles Windows surface.'
-          : 'Andrea cannot yet prove direct inbound 1:1 observation from a supported OpenBubbles Windows surface.',
+      detail: inboundObservationSupported
+        ? 'Andrea can prove direct inbound 1:1 observation from the supported OpenBubbles Windows surface.'
+        : 'Andrea cannot yet prove direct inbound 1:1 observation from a supported OpenBubbles Windows surface.',
       nextAction:
         'Do not migrate the Messages bridge until a supported Windows observation path is verified without UI scraping.',
     },
@@ -131,32 +126,31 @@ export function buildOpenBubblesFeasibilityReport(params?: {
         : supportedWindowsSurfaceDetected
           ? 'unproven'
           : 'blocked',
-      detail:
-        outboundReplySupported
-          ? 'Andrea can prove programmatic outbound reply through the supported OpenBubbles Windows surface.'
-          : 'Andrea cannot yet prove programmatic outbound reply through a supported OpenBubbles Windows surface.',
+      detail: outboundReplySupported
+        ? 'Andrea can prove programmatic outbound reply through the supported OpenBubbles Windows surface.'
+        : 'Andrea cannot yet prove programmatic outbound reply through a supported OpenBubbles Windows surface.',
       nextAction:
         'Do not migrate the Messages bridge until a stable supported reply path is verified without UI scraping.',
     },
     {
       id: 'mac_offline_runtime',
       status: macOfflineRuntimeSupported ? 'pass' : 'blocked',
-      detail:
-        macOfflineRuntimeSupported
-          ? 'Official OpenBubbles docs say normal use can continue with the Mac offline after activation or renewal, which matches the PC-first product goal.'
-          : 'The current OpenBubbles path does not yet satisfy the Mac-offline runtime requirement for Andrea.',
+      detail: macOfflineRuntimeSupported
+        ? 'Official OpenBubbles docs say normal use can continue with the Mac offline after activation or renewal, which matches the PC-first product goal.'
+        : 'The current OpenBubbles path does not yet satisfy the Mac-offline runtime requirement for Andrea.',
     },
     {
       id: 'no_ui_scraping',
       status: noUiScrapingRequired ? 'pass' : 'blocked',
-      detail:
-        noUiScrapingRequired
-          ? 'Andrea intentionally rejects Windows UI scraping as the primary Messages bridge, so the feasibility gate stays aligned with the supported-surface requirement.'
-          : 'The current OpenBubbles path would require UI scraping, which Andrea does not allow for the primary Messages bridge.',
+      detail: noUiScrapingRequired
+        ? 'Andrea intentionally rejects Windows UI scraping as the primary Messages bridge, so the feasibility gate stays aligned with the supported-surface requirement.'
+        : 'The current OpenBubbles path would require UI scraping, which Andrea does not allow for the primary Messages bridge.',
     },
   ];
 
-  const allCriteriaPass = criteria.every((criterion) => criterion.status === 'pass');
+  const allCriteriaPass = criteria.every(
+    (criterion) => criterion.status === 'pass',
+  );
   const verdict =
     supportedWindowsSurfaceDetected && allCriteriaPass
       ? 'ready_for_provider'

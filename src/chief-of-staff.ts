@@ -128,9 +128,9 @@ function isCompletedSelectedWork(
 ): boolean {
   return Boolean(
     work &&
-      /^(done|succeeded|success|completed|complete|stopped|cancelled|canceled)$/i.test(
-        work.statusLabel.trim(),
-      ),
+    /^(done|succeeded|success|completed|complete|stopped|cancelled|canceled)$/i.test(
+      work.statusLabel.trim(),
+    ),
   );
 }
 
@@ -177,7 +177,10 @@ function buildDefaultPreferences(
     if (fact.factKey === 'response_style' && parsed.mode === 'short_direct') {
       toneStyle = 'direct';
     }
-    if (fact.factKey === 'guidance_focus' && parsed.mode === 'main_thing_first') {
+    if (
+      fact.factKey === 'guidance_focus' &&
+      parsed.mode === 'main_thing_first'
+    ) {
       mainThingFirst = true;
     }
     if (fact.factKey === 'companion_tone' && parsed.mode === 'plain') {
@@ -329,7 +332,10 @@ function importanceFromScope(
   return 'low';
 }
 
-function minutesUntil(iso: string | undefined | null, now: Date): number | null {
+function minutesUntil(
+  iso: string | undefined | null,
+  now: Date,
+): number | null {
   if (!iso) return null;
   const ms = Date.parse(iso);
   if (!Number.isFinite(ms)) return null;
@@ -420,8 +426,9 @@ function buildLifeThreadSignal(
   if (!thread) return null;
   const scope = thread.scope as import('./types.js').ChiefOfStaffScope;
   const summaryText =
-    normalizeLifeThreadDetail(thread.nextAction || thread.summary || thread.title) ||
-    thread.title;
+    normalizeLifeThreadDetail(
+      thread.nextAction || thread.summary || thread.title,
+    ) || thread.title;
   const displayTitle = /^(?:follow[- ]?up|thread|carryover|open loops?)$/i.test(
     normalizeText(thread.title),
   )
@@ -686,7 +693,9 @@ function resolveCommunicationCandidate(
 ): CommunicationThreadRecord | undefined {
   if (priorSubjectIds?.length) {
     return threads.find((thread) =>
-      priorSubjectIds.some((subjectId) => thread.linkedSubjectIds.includes(subjectId)),
+      priorSubjectIds.some((subjectId) =>
+        thread.linkedSubjectIds.includes(subjectId),
+      ),
     );
   }
   return threads[0];
@@ -763,7 +772,9 @@ function formatChiefOfStaffReply(
   return buildDetailText(snapshot);
 }
 
-function buildFollowupSuggestions(mode: ChiefOfStaffTurnInput['mode']): string[] {
+function buildFollowupSuggestions(
+  mode: ChiefOfStaffTurnInput['mode'],
+): string[] {
   switch (mode) {
     case 'prepare':
       return [
@@ -772,7 +783,11 @@ function buildFollowupSuggestions(mode: ChiefOfStaffTurnInput['mode']): string[]
         'send the details to Telegram',
       ];
     case 'decision_support':
-      return ['say more', 'send the details to Telegram', 'save that for later'];
+      return [
+        'say more',
+        'send the details to Telegram',
+        'save that for later',
+      ];
     case 'plan_horizon':
       return [
         'what should I do next',
@@ -832,14 +847,13 @@ export async function buildChiefOfStaffSnapshot(
     communicationThreads,
     input.priorCommunicationSubjectIds,
   );
-  const horizonCalendar =
-    input.groundedSnapshot
-      ? horizon === 'today'
-        ? grounded.calendar
-        : null
-      : horizon === 'today'
-        ? grounded.calendar
-        : await loadHorizonCalendarSnapshot(horizon, now);
+  const horizonCalendar = input.groundedSnapshot
+    ? horizon === 'today'
+      ? grounded.calendar
+      : null
+    : horizon === 'today'
+      ? grounded.calendar
+      : await loadHorizonCalendarSnapshot(horizon, now);
   const primaryEvent =
     horizonCalendar?.nextTimedEvent ||
     horizonCalendar?.activeAllDayEvents?.[0] ||
@@ -888,8 +902,8 @@ export async function buildChiefOfStaffSnapshot(
         query: focusTopic || input.text,
         requestedSourceIds: input.priorKnowledgeSourceIds,
         limit: 3,
-      }).sources
-        .slice(0, 2)
+      })
+        .sources.slice(0, 2)
         .map((source) => `Check ${source.title} if you need the saved details.`)
     : [];
 
@@ -935,7 +949,9 @@ export async function buildChiefOfStaffSnapshot(
   const signalsUsed = [
     eventSignal ? 'calendar' : null,
     reminderSignal ? 'reminders' : null,
-    dueThreadSignal || slippingSignal || carryoverSignal ? 'life_threads' : null,
+    dueThreadSignal || slippingSignal || carryoverSignal
+      ? 'life_threads'
+      : null,
     communicationSignal ? 'communication_threads' : null,
     workSignal ? 'current_work' : null,
     knowledgeItems.length > 0 ? 'knowledge_library' : null,
@@ -955,7 +971,9 @@ export async function buildChiefOfStaffSnapshot(
   ].filter((value): value is string => Boolean(value));
   const opportunities = [
     opportunitySignal?.summaryText || null,
-    workSignal && opportunitySignal ? `Use an open window to move ${workSignal.title}.` : null,
+    workSignal && opportunitySignal
+      ? `Use an open window to move ${workSignal.title}.`
+      : null,
   ].filter((value): value is string => Boolean(value));
   const explainabilityLines = buildExplainabilityLines({
     mainSignal,
@@ -965,8 +983,7 @@ export async function buildChiefOfStaffSnapshot(
   });
 
   let summaryText =
-    mainSignal?.summaryText ||
-    buildLowConfidenceSummary(horizon, scope);
+    mainSignal?.summaryText || buildLowConfidenceSummary(horizon, scope);
   if (input.mode === 'prepare' && prepChecklist.length > 0) {
     summaryText = buildPrepareSummaryText(prepChecklist) || summaryText;
   } else if (input.mode === 'plan_horizon' && mainSignal) {
@@ -1073,8 +1090,11 @@ export async function buildChiefOfStaffTurn(
     if (/reset/.test(normalized)) {
       resetChiefOfStaffPreferences(input.groupFolder, now);
       delete sessionOverrides.suppressWorkSuggestions;
-      summaryText = 'I reset your planning preferences back to the default read.';
-    } else if (/less aggressive.*family|stop surfacing family/.test(normalized)) {
+      summaryText =
+        'I reset your planning preferences back to the default read.';
+    } else if (
+      /less aggressive.*family|stop surfacing family/.test(normalized)
+    ) {
       updatedPreferences.familyAggressiveness = 'lighter';
       persistChiefOfStaffPreferences({
         groupFolder: input.groupFolder,
@@ -1083,7 +1103,8 @@ export async function buildChiefOfStaffTurn(
         sourceSummary: input.text,
         now,
       });
-      summaryText = 'I will keep family context lighter unless it looks more important.';
+      summaryText =
+        'I will keep family context lighter unless it looks more important.';
     } else if (/be more direct/.test(normalized)) {
       updatedPreferences.toneStyle = 'direct';
       persistChiefOfStaffPreferences({
@@ -1106,7 +1127,8 @@ export async function buildChiefOfStaffTurn(
       summaryText = 'I will keep the planning read calmer.';
     } else if (/don'?t suggest work right now/.test(normalized)) {
       sessionOverrides.suppressWorkSuggestions = true;
-      summaryText = 'Okay. I will keep work suggestions out of this read for now.';
+      summaryText =
+        'Okay. I will keep work suggestions out of this read for now.';
     }
 
     const { snapshot } = await buildChiefOfStaffSnapshot({
@@ -1159,7 +1181,11 @@ export async function buildChiefOfStaffTurn(
     return {
       replyText:
         input.channel === 'alexa'
-          ? buildVoiceReply({ summary: summaryText, details: [], offerMore: false })
+          ? buildVoiceReply({
+              summary: summaryText,
+              details: [],
+              offerMore: false,
+            })
           : summaryText,
       summaryText,
       detailText: buildDetailText(configuredSnapshot),

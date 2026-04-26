@@ -38,7 +38,13 @@ async function startBlueBubblesApiStub(
     ) {
       res.statusCode = 200;
       res.setHeader('Content-Type', 'application/json');
-      res.end(JSON.stringify({ status: 200, message: 'Ping received!', data: 'pong' }));
+      res.end(
+        JSON.stringify({
+          status: 200,
+          message: 'Ping received!',
+          data: 'pong',
+        }),
+      );
       return;
     }
     if (
@@ -56,7 +62,9 @@ async function startBlueBubblesApiStub(
     ) {
       res.statusCode = 200;
       res.setHeader('Content-Type', 'application/json');
-      res.end(JSON.stringify({ data: [{ id: 1, url: 'http://example.test/hook' }] }));
+      res.end(
+        JSON.stringify({ data: [{ id: 1, url: 'http://example.test/hook' }] }),
+      );
       return;
     }
     if (
@@ -91,7 +99,9 @@ async function startBlueBubblesApiStub(
     }
     res.statusCode = 200;
     res.setHeader('Content-Type', 'application/json');
-    res.end(JSON.stringify({ data: { guid: `server-msg-${sentBodies.length}` } }));
+    res.end(
+      JSON.stringify({ data: { guid: `server-msg-${sentBodies.length}` } }),
+    );
   });
   await new Promise<void>((resolve) =>
     server.listen(0, '127.0.0.1', () => resolve()),
@@ -144,7 +154,8 @@ function buildTruth(
     blocker: 'same-thread message_action proof leg missing',
     blockerOwner: 'repo_side',
     nextAction: 'Use send it in that same BlueBubbles chat.',
-    detail: 'Real Messages bridge traffic is flowing, but the proof chain is incomplete.',
+    detail:
+      'Real Messages bridge traffic is flowing, but the proof chain is incomplete.',
     providerName: 'bluebubbles',
     bridgeAvailability: 'available',
     configured: true,
@@ -155,9 +166,11 @@ function buildTruth(
       'http://macbook-pro.local:1234 => reachable/auth ok (200)',
     listenerHost: '127.0.0.1',
     listenerPort: 4305,
-    publicWebhookUrl: 'http://192.168.5.136:4305/bluebubbles/webhook?secret=***',
+    publicWebhookUrl:
+      'http://192.168.5.136:4305/bluebubbles/webhook?secret=***',
     webhookRegistrationState: 'registered',
-    webhookRegistrationDetail: 'registered on the BlueBubbles server as webhook 1',
+    webhookRegistrationDetail:
+      'registered on the BlueBubbles server as webhook 1',
     chatScope: 'all_synced',
     configuredReplyGateMode: 'mention_required',
     effectiveReplyGateMode: 'direct_1to1',
@@ -209,7 +222,8 @@ function buildTruth(
     messageActionProofState: 'none',
     messageActionProofChatJid: 'none',
     messageActionProofAt: 'none',
-    messageActionProofDetail: 'No fresh BlueBubbles message-action decision is recorded yet.',
+    messageActionProofDetail:
+      'No fresh BlueBubbles message-action decision is recorded yet.',
     ...overrides,
   };
 }
@@ -317,7 +331,9 @@ describe('BlueBubbles control server', () => {
       }),
     });
 
-    const unauthorized = await fetch(`${control.baseUrl}/v1/bluebubbles/status`);
+    const unauthorized = await fetch(
+      `${control.baseUrl}/v1/bluebubbles/status`,
+    );
     expect(unauthorized.status).toBe(401);
 
     const authorized = await fetch(`${control.baseUrl}/v1/bluebubbles/status`, {
@@ -345,12 +361,16 @@ describe('BlueBubbles control server', () => {
     };
     expect(statusBody.status.configuredReplyGateMode).toBe('mention_required');
     expect(statusBody.status.effectiveReplyGateMode).toBe('direct_1to1');
-    expect(statusBody.status.recentTargetChatJid).toBe(BLUEBUBBLES_CANONICAL_SELF_THREAD_JID);
+    expect(statusBody.status.recentTargetChatJid).toBe(
+      BLUEBUBBLES_CANONICAL_SELF_THREAD_JID,
+    );
     expect(statusBody.status.continuityState).toBe('draft_open');
     expect(statusBody.status.activeMessageActionId).toBe('none');
     expect(statusBody.status.conversationKind).toBe('self_thread');
     expect(statusBody.status.decisionPolicy).toBe('semi_auto_self_thread');
-    expect(statusBody.status.conversationalEligibility).toBe('conversational_now');
+    expect(statusBody.status.conversationalEligibility).toBe(
+      'conversational_now',
+    );
     expect(statusBody.status.requiresExplicitMention).toBe(false);
     expect(statusBody.status.activePresentationAt).toBeNull();
     expect(statusBody.status.eligibleFollowups).toEqual([]);
@@ -361,11 +381,14 @@ describe('BlueBubbles control server', () => {
     expect(JSON.stringify(statusBody)).toContain('secret=***');
     expect(statusBody.status.transportState).toBe('ready');
 
-    const proofResponse = await fetch(`${control.baseUrl}/v1/bluebubbles/proof`, {
-      headers: {
-        Authorization: 'Bearer control-token',
+    const proofResponse = await fetch(
+      `${control.baseUrl}/v1/bluebubbles/proof`,
+      {
+        headers: {
+          Authorization: 'Bearer control-token',
+        },
       },
-    });
+    );
     const proofBody = (await proofResponse.json()) as {
       proof: {
         messageActionProofState: string;
@@ -381,11 +404,15 @@ describe('BlueBubbles control server', () => {
     };
     expect(proofBody.proof.messageActionProofState).toBe('none');
     expect(proofBody.proof.blocker).toContain('message_action');
-    expect(proofBody.proof.recentTargetChatJid).toBe(BLUEBUBBLES_CANONICAL_SELF_THREAD_JID);
+    expect(proofBody.proof.recentTargetChatJid).toBe(
+      BLUEBUBBLES_CANONICAL_SELF_THREAD_JID,
+    );
     expect(proofBody.proof.openMessageActionCount).toBe(1);
     expect(proofBody.proof.conversationKind).toBe('self_thread');
     expect(proofBody.proof.decisionPolicy).toBe('semi_auto_self_thread');
-    expect(proofBody.proof.conversationalEligibility).toBe('conversational_now');
+    expect(proofBody.proof.conversationalEligibility).toBe(
+      'conversational_now',
+    );
     expect(proofBody.proof.requiresExplicitMention).toBe(false);
     expect(proofBody.proof.canonicalSelfThreadChatJid).toBe(
       BLUEBUBBLES_CANONICAL_SELF_THREAD_JID,
@@ -431,14 +458,17 @@ describe('BlueBubbles control server', () => {
       }),
     });
 
-    const refreshResponse = await fetch(`${control.baseUrl}/v1/bluebubbles/refresh`, {
-      method: 'POST',
-      headers: {
-        Authorization: 'Bearer control-token',
-        'Content-Type': 'application/json',
+    const refreshResponse = await fetch(
+      `${control.baseUrl}/v1/bluebubbles/refresh`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer control-token',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ mode: 'all' }),
       },
-      body: JSON.stringify({ mode: 'all' }),
-    });
+    );
     expect(refreshResponse.status).toBe(200);
     const refreshBody = (await refreshResponse.json()) as {
       refreshed: string;
@@ -460,17 +490,20 @@ describe('BlueBubbles control server', () => {
     });
     expect(sendResponse.status).toBe(200);
 
-    const blockedGroupSend = await fetch(`${control.baseUrl}/v1/bluebubbles/send`, {
-      method: 'POST',
-      headers: {
-        Authorization: 'Bearer control-token',
-        'Content-Type': 'application/json',
+    const blockedGroupSend = await fetch(
+      `${control.baseUrl}/v1/bluebubbles/send`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer control-token',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          chatJid: 'bb:iMessage;+;group-proof',
+          text: 'Unsafe group send',
+        }),
       },
-      body: JSON.stringify({
-        chatJid: 'bb:iMessage;+;group-proof',
-        text: 'Unsafe group send',
-      }),
-    });
+    );
     expect(blockedGroupSend.status).toBe(400);
     expect(await blockedGroupSend.json()).toMatchObject({
       error: expect.stringContaining('Direct BlueBubbles send is only allowed'),
@@ -581,7 +614,11 @@ describe('BlueBubbles control server', () => {
     );
     expect(actionsResponse.status).toBe(200);
     const actionsBody = (await actionsResponse.json()) as {
-      actions: Array<{ actionId: string; allowedOperations: string[]; isActive: boolean }>;
+      actions: Array<{
+        actionId: string;
+        allowedOperations: string[];
+        isActive: boolean;
+      }>;
       recentTargetChatJid: string;
       openMessageActionCount: number;
       continuityState: string;
@@ -595,7 +632,9 @@ describe('BlueBubbles control server', () => {
         }),
       ]),
     );
-    expect(actionsBody.recentTargetChatJid).toBe(BLUEBUBBLES_CANONICAL_SELF_THREAD_JID);
+    expect(actionsBody.recentTargetChatJid).toBe(
+      BLUEBUBBLES_CANONICAL_SELF_THREAD_JID,
+    );
     expect(actionsBody.openMessageActionCount).toBeGreaterThanOrEqual(1);
     expect(actionsBody.continuityState).toBe('draft_open');
 
@@ -627,9 +666,11 @@ describe('BlueBubbles control server', () => {
       conversationalEligibility: 'conversational_now',
       requiresExplicitMention: false,
     });
-    expect(allActionsBody.actions.some((entry) => entry.conversationKind === 'group')).toBe(
-      true,
-    );
+    expect(
+      allActionsBody.actions.some(
+        (entry) => entry.conversationKind === 'group',
+      ),
+    ).toBe(true);
 
     const executeResponse = await fetch(
       `${control.baseUrl}/v1/bluebubbles/message-actions/${action.messageActionId}/execute`,

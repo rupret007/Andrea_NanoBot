@@ -167,9 +167,9 @@ function isCompletedSelectedWork(
 ): boolean {
   return Boolean(
     work &&
-      /^(done|succeeded|success|completed|complete|stopped|cancelled|canceled)$/i.test(
-        work.statusLabel.trim(),
-      ),
+    /^(done|succeeded|success|completed|complete|stopped|cancelled|canceled)$/i.test(
+      work.statusLabel.trim(),
+    ),
   );
 }
 
@@ -470,7 +470,9 @@ function buildMissionExplainability(params: {
       ),
     ];
     if (humanizedSignals.length > 0) {
-      lines.push(`I pulled that from ${joinHumanReadableList(humanizedSignals)}.`);
+      lines.push(
+        `I pulled that from ${joinHumanReadableList(humanizedSignals)}.`,
+      );
     }
   }
   if (threadAnchor) {
@@ -1181,7 +1183,12 @@ export async function buildMissionTurn(
     ok: true,
     summaryText: mission.summary,
     detailText: buildMissionDetailText(finalSnapshot),
-    replyText: formatMissionReply(input, input.channel, finalSnapshot, stepFocus),
+    replyText: formatMissionReply(
+      input,
+      input.channel,
+      finalSnapshot,
+      stepFocus,
+    ),
     mission,
     steps,
     blockers,

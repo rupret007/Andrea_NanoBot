@@ -722,7 +722,9 @@ describe('registered main chat repair', () => {
       createdAt: '2026-04-04T18:37:12.000Z',
     });
 
-    expect(pruneChatBoundEphemeralContexts('tg:runtime-proof')).toBeGreaterThan(0);
+    expect(pruneChatBoundEphemeralContexts('tg:runtime-proof')).toBeGreaterThan(
+      0,
+    );
     expect(getCursorOperatorContext('tg:runtime-proof')).toBeUndefined();
     expect(getCursorMessageContext('tg:runtime-proof', '9001')).toBeUndefined();
     expect(getRegisteredMainChat()?.jid).toBe('tg:runtime-proof');

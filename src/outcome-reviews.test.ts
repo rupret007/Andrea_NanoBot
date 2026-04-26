@@ -61,7 +61,8 @@ function seedMission(
     summary: overrides.summary || 'Lock timing and send the follow-up.',
     suggestedNextActionJson: overrides.suggestedNextActionJson || null,
     blockersJson:
-      overrides.blockersJson || JSON.stringify(['Candace still needs an answer.']),
+      overrides.blockersJson ||
+      JSON.stringify(['Candace still needs an answer.']),
     dueHorizon: overrides.dueHorizon || 'tonight',
     dueAt: overrides.dueAt || '2026-04-08T23:00:00.000Z',
     mutedSuggestedActionKinds: overrides.mutedSuggestedActionKinds || [],
@@ -190,7 +191,8 @@ describe('outcome reviews', () => {
           text: 'Kindle is the safer battery pick for long travel days.',
           followupSuggestions: ['Save it if useful.'],
         },
-        completionText: 'Kindle is the safer battery pick for long travel days.',
+        completionText:
+          'Kindle is the safer battery pick for long travel days.',
       },
       summaryText: 'Kindle is the safer battery pick.',
       utterance: 'compare kindle versus kobo',
@@ -206,7 +208,9 @@ describe('outcome reviews', () => {
         chatJid: 'bb:chat-1',
         currentTime: new Date('2026-04-08T19:05:00.000Z'),
         resolveTelegramMainChat: () => undefined,
-        sendTelegramMessage: vi.fn(async () => ({ platformMessageId: 'unused' })),
+        sendTelegramMessage: vi.fn(async () => ({
+          platformMessageId: 'unused',
+        })),
       },
     );
 
@@ -230,9 +234,9 @@ describe('outcome reviews', () => {
 
     seedOutcomeRecordsForGroup('main', new Date('2026-04-08T19:10:00.000Z'));
 
-    expect(getOutcomeBySource('main', 'mission', mission.missionId)?.status).toBe(
-      'partial',
-    );
+    expect(
+      getOutcomeBySource('main', 'mission', mission.missionId)?.status,
+    ).toBe('partial');
     expect(
       getOutcomeBySource('main', 'communication_thread', communication.id)
         ?.status,
@@ -301,12 +305,14 @@ describe('outcome reviews', () => {
     });
 
     expect(snapshot.completedToday[0]?.summaryText).toContain('Wrapped');
-    expect(snapshot.stillOpenTonight.some((item) => item.sourceLabel === 'Candace')).toBe(
-      true,
-    );
-    expect(snapshot.blocked.some((item) => item.sourceLabel.includes('Weekend prep'))).toBe(
-      true,
-    );
+    expect(
+      snapshot.stillOpenTonight.some((item) => item.sourceLabel === 'Candace'),
+    ).toBe(true);
+    expect(
+      snapshot.blocked.some((item) =>
+        item.sourceLabel.includes('Weekend prep'),
+      ),
+    ).toBe(true);
 
     const personSnapshot = buildReviewSnapshot({
       groupFolder: 'main',
@@ -323,7 +329,9 @@ describe('outcome reviews', () => {
       now,
     });
     expect(presentation.text).toContain('*Still Open Tonight*');
-    expect(presentation.inlineActionRows[0]?.[0]?.label).toContain('Mark handled');
+    expect(presentation.inlineActionRows[0]?.[0]?.label).toContain(
+      'Mark handled',
+    );
   });
 
   it('surfaces rule-driven follow-through in review output', () => {
@@ -540,8 +548,14 @@ describe('outcome reviews', () => {
       sentAt: null,
     });
 
-    syncOutcomeFromMessageActionRecord(getMessageAction('msg-thread-save')!, now);
-    syncOutcomeFromMessageActionRecord(getMessageAction('msg-reminder-save')!, now);
+    syncOutcomeFromMessageActionRecord(
+      getMessageAction('msg-thread-save')!,
+      now,
+    );
+    syncOutcomeFromMessageActionRecord(
+      getMessageAction('msg-reminder-save')!,
+      now,
+    );
 
     const presentation = buildOutcomeReviewResponse({
       groupFolder: 'main',
@@ -572,7 +586,9 @@ describe('outcome reviews', () => {
       now,
     });
     expect(handled.handled).toBe(true);
-    expect(getCommunicationThread('comm-handle')?.followupState).toBe('resolved');
+    expect(getCommunicationThread('comm-handle')?.followupState).toBe(
+      'resolved',
+    );
     expect(
       getOutcomeBySource('main', 'communication_thread', 'comm-handle')?.status,
     ).toBe('completed');
@@ -591,12 +607,14 @@ describe('outcome reviews', () => {
       now,
     });
     expect(deferred.handled).toBe(true);
-    expect(getAllTasks().some((task) => task.id === getLifeThread('thread-remind')?.linkedTaskId)).toBe(
-      true,
-    );
-    expect(getOutcomeBySource('main', 'life_thread', 'thread-remind')?.status).toBe(
-      'deferred',
-    );
+    expect(
+      getAllTasks().some(
+        (task) => task.id === getLifeThread('thread-remind')?.linkedTaskId,
+      ),
+    ).toBe(true);
+    expect(
+      getOutcomeBySource('main', 'life_thread', 'thread-remind')?.status,
+    ).toBe('deferred');
 
     const hidden = applyOutcomeReviewControl({
       groupFolder: 'main',
@@ -653,12 +671,16 @@ describe('outcome reviews', () => {
       kind: 'still_open_person',
       personName: 'Candace',
     });
-    expect(matchOutcomeReviewPrompt('what should I remember tonight')).toBeNull();
+    expect(
+      matchOutcomeReviewPrompt('what should I remember tonight'),
+    ).toBeNull();
     expect(interpretOutcomeReviewControl("that's done")).toEqual({
       kind: 'mark_handled',
     });
-    expect(interpretOutcomeReviewControl('remind me tomorrow instead')).toEqual({
-      kind: 'remind_tomorrow',
-    });
+    expect(interpretOutcomeReviewControl('remind me tomorrow instead')).toEqual(
+      {
+        kind: 'remind_tomorrow',
+      },
+    );
   });
 });

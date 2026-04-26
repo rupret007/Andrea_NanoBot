@@ -193,13 +193,18 @@ function parseAuthorizeRequest(
     throw new Error('authorize_invalid_redirect_uri');
   }
 
-  const scope = normalizeScope(url.searchParams.get('scope') || '', config.scope);
+  const scope = normalizeScope(
+    url.searchParams.get('scope') || '',
+    config.scope,
+  );
   if (scope !== config.scope) {
     throw new Error('authorize_invalid_scope');
   }
 
   const codeChallenge = (url.searchParams.get('code_challenge') || '').trim();
-  const rawMethod = (url.searchParams.get('code_challenge_method') || '').trim();
+  const rawMethod = (
+    url.searchParams.get('code_challenge_method') || ''
+  ).trim();
   let codeChallengeMethod: 'plain' | 'S256' | undefined;
   if (codeChallenge) {
     codeChallengeMethod = rawMethod === 'S256' ? 'S256' : 'plain';
@@ -229,9 +234,7 @@ function buildApprovalPayload(
     ...request,
     displayName: config.displayName,
     groupFolder: config.groupFolder,
-    expiresAt: new Date(
-      now.getTime() + config.codeTtlSec * 1000,
-    ).toISOString(),
+    expiresAt: new Date(now.getTime() + config.codeTtlSec * 1000).toISOString(),
   };
 }
 
@@ -251,7 +254,9 @@ function parseApprovalPayload(
     throw new Error('approval_invalid_signature');
   }
 
-  const payload = JSON.parse(base64UrlDecode(encodedPayload)) as ApprovalPayload;
+  const payload = JSON.parse(
+    base64UrlDecode(encodedPayload),
+  ) as ApprovalPayload;
   if (payload.expiresAt <= now) {
     throw new Error('approval_expired_request');
   }
@@ -312,7 +317,10 @@ function verifyPkce(
   if (method === 'plain') {
     return verifier === challenge;
   }
-  const hashed = crypto.createHash('sha256').update(verifier).digest('base64url');
+  const hashed = crypto
+    .createHash('sha256')
+    .update(verifier)
+    .digest('base64url');
   return hashed === challenge;
 }
 
@@ -624,7 +632,10 @@ function authenticateClient(
   if (!auth) {
     throw new Error('invalid_client');
   }
-  if (auth.clientId !== config.clientId || auth.clientSecret !== config.clientSecret) {
+  if (
+    auth.clientId !== config.clientId ||
+    auth.clientSecret !== config.clientSecret
+  ) {
     throw new Error('invalid_client');
   }
   return auth;
@@ -639,7 +650,11 @@ async function handleAuthorizeRequest(
   const payload = buildApprovalPayload(request, config);
   const encodedPayload = base64UrlEncode(JSON.stringify(payload));
   const signature = signApprovalPayload(encodedPayload, config);
-  writeHtml(response, 200, renderApprovalPage(encodedPayload, signature, payload));
+  writeHtml(
+    response,
+    200,
+    renderApprovalPage(encodedPayload, signature, payload),
+  );
 }
 
 async function handleApprovalRequest(
@@ -720,7 +735,10 @@ async function handleTokenRequest(
     if (!record || record.usedAt || record.expiresAt <= nowIso()) {
       throw new Error('invalid_grant');
     }
-    if (record.clientId !== config.clientId || record.redirectUri !== redirectUri) {
+    if (
+      record.clientId !== config.clientId ||
+      record.redirectUri !== redirectUri
+    ) {
       throw new Error('invalid_grant');
     }
     if (record.codeChallenge) {
@@ -831,7 +849,10 @@ export async function handleAlexaOAuthRequest(
   }
 
   if (!config) {
-    if (request.method === 'GET' && pathname === pathFor(oauthBasePath, '/health')) {
+    if (
+      request.method === 'GET' &&
+      pathname === pathFor(oauthBasePath, '/health')
+    ) {
       writeJson(response, 503, {
         ok: false,
         configured: false,
@@ -881,8 +902,7 @@ export async function handleAlexaOAuthRequest(
     return true;
   } catch (err) {
     logger.warn({ err }, 'Alexa OAuth request failed');
-    const message =
-      err instanceof Error ? err.message : 'oauth_request_failed';
+    const message = err instanceof Error ? err.message : 'oauth_request_failed';
     switch (message) {
       case 'invalid_client':
         writeJson(
@@ -904,13 +924,15 @@ export async function handleAlexaOAuthRequest(
       case 'unsupported_grant_type':
         writeJson(response, 400, {
           error: 'unsupported_grant_type',
-          error_description: 'This OAuth server only supports authorization_code and refresh_token.',
+          error_description:
+            'This OAuth server only supports authorization_code and refresh_token.',
         });
         return true;
       case 'invalid_grant':
         writeJson(response, 400, {
           error: 'invalid_grant',
-          error_description: 'The authorization code or refresh token is invalid.',
+          error_description:
+            'The authorization code or refresh token is invalid.',
         });
         return true;
       case 'authorize_unsupported_response_type':

@@ -41,7 +41,10 @@ function renderJobLead(job: RuntimeBackendJob): string {
     return `Andrea OpenAI job ${job.jobId} is stopping.`;
   }
 
-  if (job.status === 'running' && (job.finalOutputText || job.latestOutputText)) {
+  if (
+    job.status === 'running' &&
+    (job.finalOutputText || job.latestOutputText)
+  ) {
     return `Andrea OpenAI job ${job.jobId} is still running, and useful output is already available.`;
   }
 
@@ -55,7 +58,10 @@ function renderJobLead(job: RuntimeBackendJob): string {
 function renderJobOutputLabel(job: RuntimeBackendJob): string {
   if (job.errorText) return 'Error summary';
   if (job.finalOutputText) return 'Final output';
-  if (job.latestOutputText && (job.status === 'running' || job.status === 'queued')) {
+  if (
+    job.latestOutputText &&
+    (job.status === 'running' || job.status === 'queued')
+  ) {
     return 'Latest useful output';
   }
   return 'Output';

@@ -50,7 +50,8 @@ export async function routeCompanionTurnWithOpenAiBackend(input: {
     return {
       decision: {
         ...decision,
-        canonicalText: normalizeText(decision.canonicalText) || normalizeText(input.text),
+        canonicalText:
+          normalizeText(decision.canonicalText) || normalizeText(input.text),
       },
       source: 'openai_router',
     };

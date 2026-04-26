@@ -67,7 +67,11 @@ export interface AssistantHealthState {
   channels: ChannelHealthSnapshot[];
 }
 
-export type AssistantHealthStatus = 'healthy' | 'missing' | 'stale' | 'degraded';
+export type AssistantHealthStatus =
+  | 'healthy'
+  | 'missing'
+  | 'stale'
+  | 'degraded';
 
 export type TelegramRoundtripSource =
   | 'organic'
@@ -451,7 +455,9 @@ export function getReadyStatePath(projectRoot = process.cwd()): string {
   return resolveHostControlPaths(projectRoot).readyStatePath;
 }
 
-export function getAssistantHealthStatePath(projectRoot = process.cwd()): string {
+export function getAssistantHealthStatePath(
+  projectRoot = process.cwd(),
+): string {
   return resolveHostControlPaths(projectRoot).assistantHealthStatePath;
 }
 
@@ -699,7 +705,9 @@ function normalizeTelegramTransportState(
       : null,
     externalConsumerSuspected: input.externalConsumerSuspected,
     tokenRotationRequired: input.tokenRotationRequired,
-    consecutiveExternalConflicts: Math.trunc(input.consecutiveExternalConflicts),
+    consecutiveExternalConflicts: Math.trunc(
+      input.consecutiveExternalConflicts,
+    ),
   };
 }
 
@@ -707,7 +715,8 @@ function normalizeRuntimeAuditState(value: unknown): RuntimeAuditState | null {
   if (!value || typeof value !== 'object') return null;
   const input = value as Partial<RuntimeAuditState>;
   const assistantNameSource =
-    input.assistantNameSource === 'env' || input.assistantNameSource === 'default'
+    input.assistantNameSource === 'env' ||
+    input.assistantNameSource === 'default'
       ? input.assistantNameSource
       : null;
   if (
@@ -790,10 +799,10 @@ function isQualifyingHandledAlexaLiveProofIntent(
 ): value is AlexaSignedRequestState {
   return Boolean(
     value &&
-      value.requestType === 'IntentRequest' &&
-      value.applicationIdVerified &&
-      value.linkingResolved &&
-      ALEXA_HANDLED_LIVE_PROOF_RESPONSE_SOURCES.has(value.responseSource),
+    value.requestType === 'IntentRequest' &&
+    value.applicationIdVerified &&
+    value.linkingResolved &&
+    ALEXA_HANDLED_LIVE_PROOF_RESPONSE_SOURCES.has(value.responseSource),
   );
 }
 
@@ -1090,10 +1099,14 @@ export function writeRuntimeAuditState(
 
 function readGitRef(projectRoot: string, args: string[]): string {
   try {
-    return execFileSync('git', ['-C', resolveProjectRoot(projectRoot), ...args], {
-      encoding: 'utf-8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim();
+    return execFileSync(
+      'git',
+      ['-C', resolveProjectRoot(projectRoot), ...args],
+      {
+        encoding: 'utf-8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      },
+    ).trim();
   } catch {
     return 'unknown';
   }
@@ -1101,9 +1114,7 @@ function readGitRef(projectRoot: string, args: string[]): string {
 
 function normalizePathForComparison(input: string): string {
   const normalized = path.resolve(input);
-  return process.platform === 'win32'
-    ? normalized.toLowerCase()
-    : normalized;
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
 }
 
 export function buildRuntimeCommitTruth(options?: {
@@ -1121,7 +1132,10 @@ export function buildRuntimeCommitTruth(options?: {
     '--abbrev-ref',
     'HEAD',
   ]);
-  const workspaceGitCommit = readGitRef(workspaceRepoRoot, ['rev-parse', 'HEAD']);
+  const workspaceGitCommit = readGitRef(workspaceRepoRoot, [
+    'rev-parse',
+    'HEAD',
+  ]);
   const workspaceMatchesActiveRepoRoot =
     normalizePathForComparison(activeRepoRoot) ===
     normalizePathForComparison(workspaceRepoRoot);
@@ -1297,13 +1311,15 @@ export function formatAlexaProofAgeLabel(
     : `${totalDays}d`;
 }
 
-export function assessAlexaLiveProof(input: {
-  projectRoot?: string;
-  lastSignedRequest?: AlexaSignedRequestState | null;
-  lastHandledProofIntent?: AlexaSignedRequestState | null;
-  now?: Date;
-  freshnessMs?: number;
-} = {}): AlexaLiveProofAssessment {
+export function assessAlexaLiveProof(
+  input: {
+    projectRoot?: string;
+    lastSignedRequest?: AlexaSignedRequestState | null;
+    lastHandledProofIntent?: AlexaSignedRequestState | null;
+    now?: Date;
+    freshnessMs?: number;
+  } = {},
+): AlexaLiveProofAssessment {
   const persistedProofState =
     input.lastSignedRequest === undefined &&
     input.lastHandledProofIntent === undefined
@@ -1316,9 +1332,9 @@ export function assessAlexaLiveProof(input: {
   const handledProofCandidate =
     input.lastHandledProofIntent === undefined
       ? (persistedProofState?.lastHandledProofIntent ??
-          (isQualifyingHandledAlexaLiveProofIntent(lastSignedRequest)
-            ? lastSignedRequest
-            : null))
+        (isQualifyingHandledAlexaLiveProofIntent(lastSignedRequest)
+          ? lastSignedRequest
+          : null))
       : input.lastHandledProofIntent;
   const lastHandledProofIntent = isQualifyingHandledAlexaLiveProofIntent(
     handledProofCandidate,
@@ -1329,7 +1345,7 @@ export function assessAlexaLiveProof(input: {
   const freshnessMs =
     input.freshnessMs ?? DEFAULT_ALEXA_LIVE_PROOF_FRESHNESS_MS;
   const canonicalNextAction =
-    "Use a real device or authenticated Alexa Developer Console simulator, say `Open Andrea Assistant`, then `What am I forgetting?`, and run `npm run services:status`.";
+    'Use a real device or authenticated Alexa Developer Console simulator, say `Open Andrea Assistant`, then `What am I forgetting?`, and run `npm run services:status`.';
 
   if (!lastSignedRequest && !lastHandledProofIntent) {
     return {
@@ -1341,7 +1357,8 @@ export function assessAlexaLiveProof(input: {
       proofAgeMs: null,
       proofAgeMinutes: null,
       proofAgeLabel: 'none',
-      blocker: 'No handled signed Alexa IntentRequest is recorded on this host yet.',
+      blocker:
+        'No handled signed Alexa IntentRequest is recorded on this host yet.',
       detail:
         'No signed Alexa request has been recorded on this host, so Alexa remains near-live only.',
       nextAction: canonicalNextAction,
@@ -1409,7 +1426,8 @@ export function assessAlexaLiveProof(input: {
       proofAgeMs: null,
       proofAgeMinutes: null,
       proofAgeLabel: 'none',
-      blocker: 'No handled signed Alexa IntentRequest is recorded on this host yet.',
+      blocker:
+        'No handled signed Alexa IntentRequest is recorded on this host yet.',
       detail:
         'No signed Alexa request has been recorded on this host, so Alexa remains near-live only.',
       nextAction: canonicalNextAction,
@@ -1497,7 +1515,9 @@ export function assessTelegramRoundtripState(input: {
     };
   }
 
-  const readyAtMs = parseTime(readyState?.readyAt || hostState?.readyAt || null);
+  const readyAtMs = parseTime(
+    readyState?.readyAt || hostState?.readyAt || null,
+  );
   const inStartupGrace =
     readyAtMs != null && now.getTime() - readyAtMs < startupGraceMs;
 
@@ -1559,11 +1579,13 @@ export function assessTelegramRoundtripState(input: {
       ? nextDueAtMs
       : computedTopOfHourNextDueAtMs != null
         ? computedTopOfHourNextDueAtMs
-      : lastSuccessAtMs != null
-        ? lastSuccessAtMs + probeIntervalMs
-        : null;
+        : lastSuccessAtMs != null
+          ? lastSuccessAtMs + probeIntervalMs
+          : null;
   const due =
-    computedNextDueAt == null ? roundtrip.status !== 'healthy' : now.getTime() >= computedNextDueAt;
+    computedNextDueAt == null
+      ? roundtrip.status !== 'healthy'
+      : now.getTime() >= computedNextDueAt;
   const overdueRecently =
     roundtrip.status === 'healthy' &&
     due &&

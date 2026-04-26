@@ -26,7 +26,9 @@ function stripTrailingPunctuation(value: string): string {
 }
 
 function ensureSentence(value: string | null | undefined): string {
-  const normalized = normalizeText(value).replace(/[.!?]+$/g, '').trim();
+  const normalized = normalizeText(value)
+    .replace(/[.!?]+$/g, '')
+    .trim();
   if (!normalized) return '';
   return `${normalized}.`;
 }
@@ -56,7 +58,10 @@ export function stripSignatureFlowSystemPrefix(
 
   return normalized
     .replace(/^(?:conversation carryover|open conversation):\s*/i, '')
-    .replace(/^(?:mission carryover|plan carryover|chief-of-staff read):\s*/i, '')
+    .replace(
+      /^(?:mission carryover|plan carryover|chief-of-staff read):\s*/i,
+      '',
+    )
     .replace(/^current work:\s*/i, 'Work: ')
     .replace(/^household:\s*/i, 'At home, ')
     .trim();
@@ -67,8 +72,7 @@ export function buildSignatureSignalsWhyLine(
 ): string | undefined {
   const labels = dedupeLines(
     (signalsUsed || []).map(
-      (signal) =>
-        SIGNATURE_SIGNAL_LABELS[signal] || signal.replace(/_/g, ' '),
+      (signal) => SIGNATURE_SIGNAL_LABELS[signal] || signal.replace(/_/g, ' '),
     ),
   );
 
@@ -82,7 +86,9 @@ export function buildSignatureSignalsWhyLine(
   return `This came from ${labels.slice(0, -1).join(', ')}, and ${labels.at(-1)}.`;
 }
 
-function normalizeActionText(value: string | null | undefined): string | undefined {
+function normalizeActionText(
+  value: string | null | undefined,
+): string | undefined {
   const normalized = normalizeText(value);
   if (!normalized) return undefined;
   return normalized
@@ -91,7 +97,10 @@ function normalizeActionText(value: string | null | undefined): string | undefin
     .trim();
 }
 
-function formatLabelLine(label: string, value: string | null | undefined): string | null {
+function formatLabelLine(
+  label: string,
+  value: string | null | undefined,
+): string | null {
   const normalized = normalizeText(value);
   if (!normalized) return null;
   return `${label}: ${ensureSentence(normalized)}`;
@@ -161,7 +170,10 @@ export function buildSignatureFlowPayload(input: {
       whyLine: input.whyLine,
     }),
     sourceSummary: normalizeText(input.sourceSummary) || undefined,
-    followupSuggestions: dedupeLines(input.followupSuggestions || []).slice(0, 3),
+    followupSuggestions: dedupeLines(input.followupSuggestions || []).slice(
+      0,
+      3,
+    ),
   };
 }
 

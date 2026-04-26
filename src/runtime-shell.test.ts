@@ -51,7 +51,9 @@ function makeStatus(
   };
 }
 
-function makeJob(overrides: Partial<RuntimeBackendJob> = {}): RuntimeBackendJob {
+function makeJob(
+  overrides: Partial<RuntimeBackendJob> = {},
+): RuntimeBackendJob {
   return {
     backend: 'andrea_openai',
     jobId: 'runtime-job-create-12345-abcd',
@@ -106,7 +108,9 @@ describe('runtime-shell formatting', () => {
       'Andrea OpenAI backend is reachable and codex_local execution is authenticated.',
     );
     expect(available).toContain('- Group folder: main');
-    expect(available).toContain('- Local execution state: available_authenticated');
+    expect(available).toContain(
+      '- Local execution state: available_authenticated',
+    );
     expect(notReady).toContain('Andrea OpenAI backend is not ready yet.');
     expect(notReady).toContain('No local execution lane is ready right now.');
     expect(
@@ -151,7 +155,9 @@ describe('runtime-shell formatting', () => {
         MAIN_GROUP,
         'http://127.0.0.1:3210',
       ),
-    ).toContain('Andrea OpenAI backend is not enabled in this NanoBot runtime.');
+    ).toContain(
+      'Andrea OpenAI backend is not enabled in this NanoBot runtime.',
+    );
   });
 
   it('renders accepted create messages with the job card', () => {
@@ -160,7 +166,9 @@ describe('runtime-shell formatting', () => {
     expect(text).toContain('Andrea OpenAI job accepted.');
     expect(text).toContain('- Job ID: runtime-job-create-12345-abcd');
     expect(text).toContain('- Selected runtime: codex_local');
-    expect(text).toContain('- Reply: reply to this card to continue the same runtime job');
+    expect(text).toContain(
+      '- Reply: reply to this card to continue the same runtime job',
+    );
   });
 
   it('renders job cards with visible thread metadata and output summary', () => {
@@ -199,7 +207,9 @@ describe('runtime-shell formatting', () => {
       'Andrea OpenAI logs are not ready yet for job runtime-job-follow_up-999, but useful output is already available.',
     );
     expect(text).toContain('- Current status: running');
-    expect(text).toContain('- Latest useful output: Useful output is already here.');
+    expect(text).toContain(
+      '- Latest useful output: Useful output is already here.',
+    );
   });
 
   it('renders real log text cleanly when terminal output exists', () => {

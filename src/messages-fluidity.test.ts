@@ -31,24 +31,25 @@ describe('messages fluidity', () => {
   });
 
   it('interprets a direct BlueBubbles turn through the OpenAI lane when available', async () => {
-    globalThis.fetch = vi.fn(async () =>
-      new Response(
-        JSON.stringify({
-          routeKind: 'assistant_capability',
-          capabilityId: 'communication.manage_tracking',
-          canonicalText: 'make it warmer',
-          arguments: {
-            replyStyle: 'warmer',
+    globalThis.fetch = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            routeKind: 'assistant_capability',
+            capabilityId: 'communication.manage_tracking',
+            canonicalText: 'make it warmer',
+            arguments: {
+              replyStyle: 'warmer',
+            },
+            confidence: 'high',
+            clarificationPrompt: null,
+            reason: 'matched draft rewrite follow-up',
+          }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
           },
-          confidence: 'high',
-          clarificationPrompt: null,
-          reason: 'matched draft rewrite follow-up',
-        }),
-        {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        },
-      ),
+        ),
     ) as typeof fetch;
 
     const result = await interpretBlueBubblesDirectTurn({

@@ -194,7 +194,8 @@ describe('field-trial readiness', () => {
         pid: process.pid,
         status: 'failed',
         source: 'live_smoke',
-        detail: 'Telegram roundtrip probe is overdue, but the last /ping succeeded on this boot.',
+        detail:
+          'Telegram roundtrip probe is overdue, but the last /ping succeeded on this boot.',
         chatTarget: 'Andrea',
         expectedReply: '/ping',
         updatedAt: '2026-04-08T10:45:00.000Z',
@@ -349,7 +350,9 @@ describe('field-trial readiness', () => {
     expect(truth.alexa.proofState).toBe('near_live_only');
     expect(truth.alexa.proofKind).toBe('none');
     expect(truth.alexa.proofFreshness).toBe('none');
-    expect(truth.alexa.blocker).toContain('No handled signed Alexa IntentRequest');
+    expect(truth.alexa.blocker).toContain(
+      'No handled signed Alexa IntentRequest',
+    );
     expect(truth.alexa.nextAction).toContain('What am I forgetting?');
     expect(truth.alexa.confirmCommand).toBe('npm run services:status');
   });
@@ -363,11 +366,16 @@ describe('field-trial readiness', () => {
       'interaction-model.en-US.json',
     );
     fs.mkdirSync(path.dirname(modelSyncPath), { recursive: true });
-    fs.writeFileSync(modelSyncPath, '{"interactionModel":{"languageModel":{"invocationName":"andrea assistant"}}}');
+    fs.writeFileSync(
+      modelSyncPath,
+      '{"interactionModel":{"languageModel":{"invocationName":"andrea assistant"}}}',
+    );
 
     const truth = buildFieldTrialOperatorTruth({ projectRoot: tempDir });
 
-    expect(truth.launchReadiness.manualSurfaceSyncs.alexa.syncStatus).toBe('pending');
+    expect(truth.launchReadiness.manualSurfaceSyncs.alexa.syncStatus).toBe(
+      'pending',
+    );
     expect(truth.alexa.detail).toContain('interaction model');
     expect(truth.alexa.nextAction).toContain('alexa-model-sync mark-synced');
     expect(truth.alexa.nextAction).toContain('What am I forgetting?');
@@ -396,7 +404,8 @@ describe('field-trial readiness', () => {
       blockerClass: 'response_feedback_repo_side_broken',
       blockerOwner: 'repo_side',
       originalUserText: "what's the news today",
-      assistantReplyText: 'I can help with updates and practical follow-through.',
+      assistantReplyText:
+        'I can help with updates and practical follow-through.',
       linkedRefs: {
         responseFeedbackId: 'feedback-1',
       },
@@ -505,12 +514,8 @@ describe('field-trial readiness', () => {
 
     expect(truth.alexa.proofState).toBe('live_proven');
     expect(truth.alexa.lastSignedRequestType).toBe('SessionEndedRequest');
-    expect(truth.alexa.lastHandledProofIntent).toBe(
-      'WhatAmIForgettingIntent',
-    );
-    expect(truth.alexa.lastHandledProofResponseSource).toBe(
-      'local_companion',
-    );
+    expect(truth.alexa.lastHandledProofIntent).toBe('WhatAmIForgettingIntent');
+    expect(truth.alexa.lastHandledProofResponseSource).toBe('local_companion');
     expect(truth.alexa.lastHandledProofAt).not.toBe('none');
   });
 
@@ -525,7 +530,8 @@ describe('field-trial readiness', () => {
       updatedAt: '2026-04-07T18:00:00.000Z',
       research: {
         proofState: 'externally_blocked',
-        blocker: "Andrea's OpenAI research path on this machine has hit a quota or billing limit.",
+        blocker:
+          "Andrea's OpenAI research path on this machine has hit a quota or billing limit.",
         detail: 'OpenAI-backed outward research is blocked on this host.',
         nextAction:
           'Restore direct provider quota/billing or credentials, then rerun npm run debug:research-mode.',
@@ -534,7 +540,8 @@ describe('field-trial readiness', () => {
       },
       imageGeneration: {
         proofState: 'externally_blocked',
-        blocker: 'the OpenAI image account on this machine has hit a quota or billing limit.',
+        blocker:
+          'the OpenAI image account on this machine has hit a quota or billing limit.',
         detail: 'Image generation is blocked on this host.',
         nextAction:
           'Restore direct provider quota/billing or credentials, then rerun npm run debug:research-mode.',
@@ -546,7 +553,9 @@ describe('field-trial readiness', () => {
     const truth = buildFieldTrialOperatorTruth({ projectRoot: tempDir });
 
     expect(truth.bluebubbles.proofState).toBe('externally_blocked');
-    expect(truth.bluebubbles.blocker).toContain('Messages bridge is not configured on this PC');
+    expect(truth.bluebubbles.blocker).toContain(
+      'Messages bridge is not configured on this PC',
+    );
     expect(truth.bluebubbles.nextAction).toContain('BLUEBUBBLES_*');
     expect(truth.bluebubbles.chatScope).toBe('allowlist');
     expect(truth.research.proofState).toBe('externally_blocked');
@@ -563,7 +572,10 @@ describe('field-trial readiness', () => {
     vi.stubEnv('BLUEBUBBLES_PASSWORD', 'secret');
     vi.stubEnv('BLUEBUBBLES_GROUP_FOLDER', 'main');
     vi.stubEnv('BLUEBUBBLES_CHAT_SCOPE', 'all_synced');
-    vi.stubEnv('BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL', 'http://192.168.5.136:4305');
+    vi.stubEnv(
+      'BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL',
+      'http://192.168.5.136:4305',
+    );
     vi.stubEnv('BLUEBUBBLES_WEBHOOK_SECRET', 'hook-secret');
     vi.stubEnv('BLUEBUBBLES_SEND_ENABLED', 'true');
 
@@ -583,7 +595,8 @@ describe('field-trial readiness', () => {
             configured: true,
             state: 'ready',
             updatedAt: '2026-04-07T20:10:00.000Z',
-            detail: 'listener 0.0.0.0:4305/bluebubbles/webhook | scope all_synced | reply gate mention_required | transport reachable/auth ok (200)',
+            detail:
+              'listener 0.0.0.0:4305/bluebubbles/webhook | scope all_synced | reply gate mention_required | transport reachable/auth ok (200)',
           },
         ],
       },
@@ -688,7 +701,10 @@ describe('field-trial readiness', () => {
       delegationRuleId: null,
       delegationMode: null,
       explanationJson: null,
-      linkedRefsJson: JSON.stringify({ communicationThreadId: 'comm-proof', personName: 'Candace' }),
+      linkedRefsJson: JSON.stringify({
+        communicationThreadId: 'comm-proof',
+        personName: 'Candace',
+      }),
       platformMessageId: 'bb:sent-proof-1',
       scheduledTaskId: null,
       approvedAt: '2026-04-07T20:04:00.000Z',
@@ -710,14 +726,22 @@ describe('field-trial readiness', () => {
     });
 
     expect(truth.bluebubbles.proofState).toBe('live_proven');
-    expect(truth.bluebubbles.mostRecentEngagedChatJid).toBe('bb:iMessage;+;chat-proof');
+    expect(truth.bluebubbles.mostRecentEngagedChatJid).toBe(
+      'bb:iMessage;+;chat-proof',
+    );
     expect(truth.bluebubbles.transportState).toBe('ready');
     expect(truth.bluebubbles.replyGateMode).toBe('mention_required');
     expect(truth.bluebubbles.publicWebhookUrl).toContain('secret=***');
-    expect(truth.bluebubbles.lastInboundObservedAt).toBe('2026-04-07T20:00:00.000Z');
-    expect(truth.bluebubbles.lastOutboundResult).toContain('bb:iMessage;+;chat-proof');
+    expect(truth.bluebubbles.lastInboundObservedAt).toBe(
+      '2026-04-07T20:00:00.000Z',
+    );
+    expect(truth.bluebubbles.lastOutboundResult).toContain(
+      'bb:iMessage;+;chat-proof',
+    );
     expect(truth.bluebubbles.messageActionProofState).toBe('fresh');
-    expect(truth.bluebubbles.messageActionProofChatJid).toBe('bb:iMessage;+;chat-proof');
+    expect(truth.bluebubbles.messageActionProofChatJid).toBe(
+      'bb:iMessage;+;chat-proof',
+    );
   });
 
   it('credits BlueBubbles live proof from a self-thread deferred decision plus confirmation', () => {
@@ -726,7 +750,10 @@ describe('field-trial readiness', () => {
     vi.stubEnv('BLUEBUBBLES_PASSWORD', 'secret');
     vi.stubEnv('BLUEBUBBLES_GROUP_FOLDER', 'main');
     vi.stubEnv('BLUEBUBBLES_CHAT_SCOPE', 'all_synced');
-    vi.stubEnv('BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL', 'http://192.168.5.136:4305');
+    vi.stubEnv(
+      'BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL',
+      'http://192.168.5.136:4305',
+    );
     vi.stubEnv('BLUEBUBBLES_WEBHOOK_SECRET', 'hook-secret');
     vi.stubEnv('BLUEBUBBLES_SEND_ENABLED', 'true');
 
@@ -746,7 +773,8 @@ describe('field-trial readiness', () => {
             configured: true,
             state: 'ready',
             updatedAt: '2026-04-07T20:10:00.000Z',
-            detail: 'listener 0.0.0.0:4305/bluebubbles/webhook | scope all_synced | reply gate direct_1to1 | transport reachable/auth ok (200) | webhook registration registered on the BlueBubbles server as webhook 1 | webhook registration state registered | transport probe state reachable | detection healthy',
+            detail:
+              'listener 0.0.0.0:4305/bluebubbles/webhook | scope all_synced | reply gate direct_1to1 | transport reachable/auth ok (200) | webhook registration registered on the BlueBubbles server as webhook 1 | webhook registration state registered | transport probe state reachable | detection healthy',
           },
         ],
       },
@@ -839,7 +867,10 @@ describe('field-trial readiness', () => {
       delegationRuleId: null,
       delegationMode: null,
       explanationJson: null,
-      linkedRefsJson: JSON.stringify({ communicationThreadId: 'comm-candace-proof', personName: 'Candace' }),
+      linkedRefsJson: JSON.stringify({
+        communicationThreadId: 'comm-candace-proof',
+        personName: 'Candace',
+      }),
       platformMessageId: null,
       scheduledTaskId: 'scheduled-bluebubbles-proof',
       approvedAt: '2026-04-07T20:04:30.000Z',
@@ -862,7 +893,9 @@ describe('field-trial readiness', () => {
 
     expect(truth.bluebubbles.proofState).toBe('live_proven');
     expect(truth.bluebubbles.messageActionProofState).toBe('fresh');
-    expect(truth.bluebubbles.messageActionProofChatJid).toBe('bb:iMessage;-;+14695405551');
+    expect(truth.bluebubbles.messageActionProofChatJid).toBe(
+      'bb:iMessage;-;+14695405551',
+    );
     expect(truth.bluebubbles.detail).toContain("Andrea's confirmation");
   });
 
@@ -872,7 +905,10 @@ describe('field-trial readiness', () => {
     vi.stubEnv('BLUEBUBBLES_PASSWORD', 'secret');
     vi.stubEnv('BLUEBUBBLES_GROUP_FOLDER', 'main');
     vi.stubEnv('BLUEBUBBLES_CHAT_SCOPE', 'all_synced');
-    vi.stubEnv('BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL', 'http://192.168.5.136:4305');
+    vi.stubEnv(
+      'BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL',
+      'http://192.168.5.136:4305',
+    );
     vi.stubEnv('BLUEBUBBLES_WEBHOOK_SECRET', 'hook-secret');
     vi.stubEnv('BLUEBUBBLES_SEND_ENABLED', 'true');
 
@@ -913,7 +949,9 @@ describe('field-trial readiness', () => {
     expect(truth.bluebubbles.decisionPolicy).toBe('semi_auto_self_thread');
     expect(truth.bluebubbles.requiresExplicitMention).toBe(false);
     expect(truth.bluebubbles.eligibleFollowups).toEqual([]);
-    expect(truth.bluebubbles.detail).toContain('Messages bridge configuration is present');
+    expect(truth.bluebubbles.detail).toContain(
+      'Messages bridge configuration is present',
+    );
   });
 
   it('prefers active self-thread message-action continuity over stale pilot-only targeting', () => {
@@ -922,7 +960,10 @@ describe('field-trial readiness', () => {
     vi.stubEnv('BLUEBUBBLES_PASSWORD', 'secret');
     vi.stubEnv('BLUEBUBBLES_GROUP_FOLDER', 'main');
     vi.stubEnv('BLUEBUBBLES_CHAT_SCOPE', 'all_synced');
-    vi.stubEnv('BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL', 'http://192.168.5.136:4305');
+    vi.stubEnv(
+      'BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL',
+      'http://192.168.5.136:4305',
+    );
     vi.stubEnv('BLUEBUBBLES_WEBHOOK_SECRET', 'hook-secret');
     vi.stubEnv('BLUEBUBBLES_SEND_ENABLED', 'true');
 
@@ -1018,17 +1059,25 @@ describe('field-trial readiness', () => {
       windowsHost: null,
     });
 
-    expect(truth.bluebubbles.recentTargetChatJid).toBe('bb:iMessage;-;+14695405551');
+    expect(truth.bluebubbles.recentTargetChatJid).toBe(
+      'bb:iMessage;-;+14695405551',
+    );
     expect(truth.bluebubbles.recentTargetAt).toBe('2026-04-10T00:11:30.000Z');
     expect(truth.bluebubbles.openMessageActionCount).toBeGreaterThanOrEqual(1);
     expect(truth.bluebubbles.continuityState).toBe('draft_open');
-    expect(truth.bluebubbles.proofCandidateChatJid).toBe('bb:iMessage;-;+14695405551');
+    expect(truth.bluebubbles.proofCandidateChatJid).toBe(
+      'bb:iMessage;-;+14695405551',
+    );
     expect(truth.bluebubbles.effectiveReplyGateMode).toBe('direct_1to1');
     expect(truth.bluebubbles.conversationKind).toBe('self_thread');
     expect(truth.bluebubbles.decisionPolicy).toBe('semi_auto_self_thread');
     expect(truth.bluebubbles.requiresExplicitMention).toBe(false);
-    expect(truth.bluebubbles.activePresentationAt).toBe('2026-04-10T00:11:30.000Z');
-    expect(truth.bluebubbles.eligibleFollowups).toContain('send it later tonight');
+    expect(truth.bluebubbles.activePresentationAt).toBe(
+      '2026-04-10T00:11:30.000Z',
+    );
+    expect(truth.bluebubbles.eligibleFollowups).toContain(
+      'send it later tonight',
+    );
   });
 
   it('uses persisted outbound diagnostics when the live bridge detail has not rehydrated them yet', () => {
@@ -1037,7 +1086,10 @@ describe('field-trial readiness', () => {
     vi.stubEnv('BLUEBUBBLES_PASSWORD', 'secret');
     vi.stubEnv('BLUEBUBBLES_GROUP_FOLDER', 'main');
     vi.stubEnv('BLUEBUBBLES_CHAT_SCOPE', 'all_synced');
-    vi.stubEnv('BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL', 'http://192.168.5.136:4305');
+    vi.stubEnv(
+      'BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL',
+      'http://192.168.5.136:4305',
+    );
     vi.stubEnv('BLUEBUBBLES_WEBHOOK_SECRET', 'hook-secret');
     vi.stubEnv('BLUEBUBBLES_SEND_ENABLED', 'true');
 
@@ -1088,7 +1140,9 @@ describe('field-trial readiness', () => {
     });
 
     expect(truth.bluebubbles.lastOutboundTargetKind).toBe('chat_guid');
-    expect(truth.bluebubbles.lastOutboundTarget).toBe('iMessage;-;+14695405551');
+    expect(truth.bluebubbles.lastOutboundTarget).toBe(
+      'iMessage;-;+14695405551',
+    );
     expect(truth.bluebubbles.lastMetadataHydrationSource).toBe('history');
     expect(truth.bluebubbles.attemptedTargetSequence).toBe(
       'chat_guid -> service_specific_direct',
@@ -1101,7 +1155,10 @@ describe('field-trial readiness', () => {
     vi.stubEnv('BLUEBUBBLES_PASSWORD', 'secret');
     vi.stubEnv('BLUEBUBBLES_GROUP_FOLDER', 'main');
     vi.stubEnv('BLUEBUBBLES_CHAT_SCOPE', 'all_synced');
-    vi.stubEnv('BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL', 'http://192.168.5.136:4305');
+    vi.stubEnv(
+      'BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL',
+      'http://192.168.5.136:4305',
+    );
     vi.stubEnv('BLUEBUBBLES_WEBHOOK_SECRET', 'hook-secret');
     vi.stubEnv('BLUEBUBBLES_SEND_ENABLED', 'true');
 
@@ -1267,7 +1324,10 @@ describe('field-trial readiness', () => {
     vi.stubEnv('BLUEBUBBLES_PASSWORD', 'secret');
     vi.stubEnv('BLUEBUBBLES_GROUP_FOLDER', 'main');
     vi.stubEnv('BLUEBUBBLES_CHAT_SCOPE', 'all_synced');
-    vi.stubEnv('BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL', 'http://192.168.5.136:4305');
+    vi.stubEnv(
+      'BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL',
+      'http://192.168.5.136:4305',
+    );
     vi.stubEnv('BLUEBUBBLES_WEBHOOK_SECRET', 'hook-secret');
     vi.stubEnv('BLUEBUBBLES_SEND_ENABLED', 'true');
 
@@ -1349,7 +1409,8 @@ describe('field-trial readiness', () => {
       groupFolder: 'main',
       sourceType: 'communication_thread',
       sourceKey: 'comm-continuation-proof',
-      sourceSummary: 'Draft reply was sent from the canonical BlueBubbles proof chat.',
+      sourceSummary:
+        'Draft reply was sent from the canonical BlueBubbles proof chat.',
       targetKind: 'external_thread',
       targetChannel: 'bluebubbles',
       targetConversationJson: JSON.stringify({
@@ -1391,7 +1452,9 @@ describe('field-trial readiness', () => {
     expect(truth.bluebubbles.messageActionProofChatJid).toBe(
       'bb:iMessage;-;+14695405551',
     );
-    expect(truth.bluebubbles.detail).toContain('fresh same-thread continuation');
+    expect(truth.bluebubbles.detail).toContain(
+      'fresh same-thread continuation',
+    );
   });
 
   it('keeps BlueBubbles near-live when same-chat pilot proof exists but message-action proof is missing', () => {
@@ -1400,7 +1463,10 @@ describe('field-trial readiness', () => {
     vi.stubEnv('BLUEBUBBLES_PASSWORD', 'secret');
     vi.stubEnv('BLUEBUBBLES_GROUP_FOLDER', 'main');
     vi.stubEnv('BLUEBUBBLES_CHAT_SCOPE', 'all_synced');
-    vi.stubEnv('BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL', 'http://192.168.5.136:4305');
+    vi.stubEnv(
+      'BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL',
+      'http://192.168.5.136:4305',
+    );
     vi.stubEnv('BLUEBUBBLES_WEBHOOK_SECRET', 'hook-secret');
     vi.stubEnv('BLUEBUBBLES_SEND_ENABLED', 'true');
 
@@ -1420,7 +1486,8 @@ describe('field-trial readiness', () => {
             configured: true,
             state: 'ready',
             updatedAt: '2026-04-07T20:10:00.000Z',
-            detail: 'listener 0.0.0.0:4305/bluebubbles/webhook | scope all_synced | reply gate mention_required | transport reachable/auth ok (200)',
+            detail:
+              'listener 0.0.0.0:4305/bluebubbles/webhook | scope all_synced | reply gate mention_required | transport reachable/auth ok (200)',
           },
         ],
       },
@@ -1522,7 +1589,10 @@ describe('field-trial readiness', () => {
     vi.stubEnv('BLUEBUBBLES_PASSWORD', 'secret');
     vi.stubEnv('BLUEBUBBLES_GROUP_FOLDER', 'main');
     vi.stubEnv('BLUEBUBBLES_CHAT_SCOPE', 'all_synced');
-    vi.stubEnv('BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL', 'http://192.168.5.136:4305');
+    vi.stubEnv(
+      'BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL',
+      'http://192.168.5.136:4305',
+    );
     vi.stubEnv('BLUEBUBBLES_WEBHOOK_SECRET', 'hook-secret');
     vi.stubEnv('BLUEBUBBLES_SEND_ENABLED', 'true');
 
@@ -1579,11 +1649,17 @@ describe('field-trial readiness', () => {
     });
 
     expect(truth.bluebubbles.proofState).toBe('degraded_but_usable');
-    expect(truth.bluebubbles.blocker).toContain('received your @Andrea message');
+    expect(truth.bluebubbles.blocker).toContain(
+      'received your @Andrea message',
+    );
     expect(truth.bluebubbles.blockerOwner).toBe('repo_side');
     expect(truth.bluebubbles.nextAction).toContain('self-chat');
-    expect(truth.bluebubbles.lastInboundObservedAt).toBe('2026-04-08T05:10:24.440Z');
-    expect(truth.bluebubbles.lastInboundChatJid).toBe('bb:iMessage;-;+14695405551');
+    expect(truth.bluebubbles.lastInboundObservedAt).toBe(
+      '2026-04-08T05:10:24.440Z',
+    );
+    expect(truth.bluebubbles.lastInboundChatJid).toBe(
+      'bb:iMessage;-;+14695405551',
+    );
     expect(truth.bluebubbles.lastInboundWasSelfAuthored).toBe(true);
     expect(truth.bluebubbles.lastOutboundResult).toBe('none');
     expect(truth.bluebubbles.lastOutboundTargetKind).toBe(
@@ -1607,7 +1683,10 @@ describe('field-trial readiness', () => {
     vi.stubEnv('BLUEBUBBLES_PASSWORD', 'secret');
     vi.stubEnv('BLUEBUBBLES_GROUP_FOLDER', 'main');
     vi.stubEnv('BLUEBUBBLES_CHAT_SCOPE', 'all_synced');
-    vi.stubEnv('BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL', 'http://192.168.5.136:4305');
+    vi.stubEnv(
+      'BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL',
+      'http://192.168.5.136:4305',
+    );
     vi.stubEnv('BLUEBUBBLES_WEBHOOK_SECRET', 'hook-secret');
     vi.stubEnv('BLUEBUBBLES_SEND_ENABLED', 'true');
 
@@ -1714,7 +1793,10 @@ describe('field-trial readiness', () => {
     vi.stubEnv('BLUEBUBBLES_PASSWORD', 'secret');
     vi.stubEnv('BLUEBUBBLES_GROUP_FOLDER', 'main');
     vi.stubEnv('BLUEBUBBLES_CHAT_SCOPE', 'all_synced');
-    vi.stubEnv('BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL', 'http://192.168.5.136:4305');
+    vi.stubEnv(
+      'BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL',
+      'http://192.168.5.136:4305',
+    );
     vi.stubEnv('BLUEBUBBLES_WEBHOOK_SECRET', 'hook-secret');
     vi.stubEnv('BLUEBUBBLES_SEND_ENABLED', 'true');
 
@@ -1813,9 +1895,7 @@ describe('field-trial readiness', () => {
     expect(truth.bluebubbles.messageActionProofDetail).toContain(
       'Canonical self-thread: bb:iMessage;-;+14695405551.',
     );
-    expect(truth.bluebubbles.detail).toContain(
-      'bb:iMessage;-;+14695405551',
-    );
+    expect(truth.bluebubbles.detail).toContain('bb:iMessage;-;+14695405551');
   });
 
   it('surfaces suspected missed 1:1 inbound detection and Telegram fallback state in BlueBubbles truth', () => {
@@ -2182,7 +2262,9 @@ describe('field-trial readiness', () => {
 
     expect(truth.bluebubbles.detectionState).toBe('healthy');
     expect(truth.bluebubbles.bridgeAvailability).toBe('available');
-    expect(truth.bluebubbles.activeServerBaseUrl).toBe('http://192.168.5.22:1234');
+    expect(truth.bluebubbles.activeServerBaseUrl).toBe(
+      'http://192.168.5.22:1234',
+    );
     expect(truth.bluebubbles.webhookRegistrationState).toBe('registered');
     expect(truth.bluebubbles.crossSurfaceFallbackState).toBe('idle');
   });
@@ -2296,7 +2378,9 @@ describe('field-trial readiness', () => {
 
     expect(truth.bluebubbles.bridgeAvailability).toBe('available');
     expect(truth.bluebubbles.detectionState).toBe('mixed_degraded');
-    expect(truth.bluebubbles.blocker).toContain('same-thread health check is failing');
+    expect(truth.bluebubbles.blocker).toContain(
+      'same-thread health check is failing',
+    );
     expect(truth.bluebubbles.blockerOwner).toBe('repo_side');
     expect(truth.bluebubbles.detectionNextAction).toContain('shadow-poll path');
   });
@@ -2307,7 +2391,8 @@ describe('field-trial readiness', () => {
       research: {
         proofState: 'live_proven',
         blocker: '',
-        detail: 'OpenAI-backed outward research returned a live answer on this host.',
+        detail:
+          'OpenAI-backed outward research returned a live answer on this host.',
         nextAction: '',
         checkedAt: '2026-04-08T01:00:00.000Z',
         source: 'debug_research_mode',
@@ -2399,7 +2484,9 @@ describe('field-trial readiness', () => {
     expect(truth.alexa.lastSignedRequestAt).toBe('none');
     expect(truth.alexa.lastHandledProofAt).toBe('2026-04-08T11:55:12.000Z');
     expect(truth.alexa.lastHandledProofIntent).toBe('alexa_orientation');
-    expect(truth.alexa.lastHandledProofResponseSource).toBe('pilot_recent_success');
+    expect(truth.alexa.lastHandledProofResponseSource).toBe(
+      'pilot_recent_success',
+    );
     expect(truth.journeys.alexa_orientation.proofState).toBe('live_proven');
   });
 
@@ -2457,7 +2544,11 @@ describe('field-trial readiness', () => {
 
     const truth = buildFieldTrialOperatorTruth({ projectRoot: tempDir });
 
-    expect(truth.journeys.cross_channel_handoff.proofState).toBe('degraded_but_usable');
-    expect(truth.journeys.cross_channel_handoff.blocker).toContain('local degraded path');
+    expect(truth.journeys.cross_channel_handoff.proofState).toBe(
+      'degraded_but_usable',
+    );
+    expect(truth.journeys.cross_channel_handoff.blocker).toContain(
+      'local degraded path',
+    );
   });
 });

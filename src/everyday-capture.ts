@@ -90,7 +90,11 @@ export interface EverydayCapturePriorContext {
 }
 
 export interface EverydayCaptureConversationData {
-  activeTaskKind?: 'list_capture' | 'list_read' | 'list_update' | 'profile_setup';
+  activeTaskKind?:
+    | 'list_capture'
+    | 'list_read'
+    | 'list_update'
+    | 'profile_setup';
   activeListGroupId?: string;
   activeListItemIds?: string[];
   activeListScope?: EverydayListScope;
@@ -269,7 +273,9 @@ const WEEKDAY_INDEX: Record<string, number> = {
   saturday: 6,
 };
 
-function defaultScopeForGroupKind(kind: EverydayListGroupKind): EverydayListScope {
+function defaultScopeForGroupKind(
+  kind: EverydayListGroupKind,
+): EverydayListScope {
   return kind === 'household' ? 'household' : 'personal';
 }
 
@@ -397,7 +403,9 @@ function writeProfileSetupState(
   setRouterState(profileSetupKey(chatJid), JSON.stringify(state));
 }
 
-function readPendingReminderState(chatJid: string): PendingReminderState | null {
+function readPendingReminderState(
+  chatJid: string,
+): PendingReminderState | null {
   const raw = getRouterState(reminderStateKey(chatJid));
   const parsed = safeJsonParse<PendingReminderState | null>(raw, null);
   return parsed?.version === 1 ? parsed : null;
@@ -475,7 +483,9 @@ function extractIntake(rawText: string): OperatingProfileIntake {
     addUnique(trackingPriorities, 'errands');
     addUnique(defaultGroups, 'Errands');
   }
-  if (/\bbill|bills|rent|mortgage|utility|water bill|electric|pay\b/.test(lower)) {
+  if (
+    /\bbill|bills|rent|mortgage|utility|water bill|electric|pay\b/.test(lower)
+  ) {
     addUnique(trackingPriorities, 'bills');
     addUnique(defaultGroups, 'Bills');
   }
@@ -502,7 +512,8 @@ function extractIntake(rawText: string): OperatingProfileIntake {
   }
   if (/\btelegram\b/.test(lower)) addUnique(integrationsWanted, 'Telegram');
   if (/\balexa\b/.test(lower)) addUnique(integrationsWanted, 'Alexa');
-  if (/\bcalendar\b/.test(lower)) addUnique(integrationsWanted, 'Google Calendar');
+  if (/\bcalendar\b/.test(lower))
+    addUnique(integrationsWanted, 'Google Calendar');
   if (/\bbluebubbles|messages|imessage\b/.test(lower)) {
     addUnique(integrationsWanted, 'BlueBubbles');
   }
@@ -560,11 +571,18 @@ function buildDeterministicPlan(
         : '',
     ].filter(Boolean),
     richerSurface: intake.richerSurface,
-    desiredIntegrations: ['Telegram', 'Alexa', 'BlueBubbles', 'Google Calendar'].map(
+    desiredIntegrations: [
+      'Telegram',
+      'Alexa',
+      'BlueBubbles',
+      'Google Calendar',
+    ].map(
       (name): OperatingProfilePlanIntegration => ({
         name,
         readiness: intake.integrationsWanted.includes(name)
-          ? name === 'Google Calendar' || name === 'Telegram' || name === 'Alexa'
+          ? name === 'Google Calendar' ||
+            name === 'Telegram' ||
+            name === 'Alexa'
             ? 'connected'
             : 'missing_manual'
           : 'not_requested',
@@ -624,12 +642,17 @@ async function synthesizePlanWithOpenAi(
           selectedModelTier: candidate.tier,
           selectedModel: candidate.model,
           providerMode,
-          outcome: /quota|billing|rejected the configured api key|denied by the provider/i.test(
+          outcome:
+            /quota|billing|rejected the configured api key|denied by the provider/i.test(
+              text,
+            )
+              ? 'blocked'
+              : 'failed',
+          detail: describeOpenAiProviderFailure(
+            response.status,
             text,
-          )
-            ? 'blocked'
-            : 'failed',
-          detail: describeOpenAiProviderFailure(response.status, text, 'research'),
+            'research',
+          ),
         });
         return null;
       }
@@ -687,7 +710,10 @@ function formatPlanForChannel(
   const groups = plan.defaultGroups.map((group) => group.title);
   const integrations = plan.desiredIntegrations
     .filter((item) => item.readiness !== 'not_requested')
-    .map((item) => `${item.name} (${item.readiness === 'connected' ? 'connected' : 'manual'})`);
+    .map(
+      (item) =>
+        `${item.name} (${item.readiness === 'connected' ? 'connected' : 'manual'})`,
+    );
   if (channel === 'alexa') {
     return [
       plan.summary,
@@ -852,9 +878,9 @@ function proposeStarterSuggestion(
   suggestion: Record<string, unknown>,
   nowIso: string,
 ): void {
-  const existing = listOperatingProfileSuggestions(groupFolder, ['proposed']).find(
-    (item) => item.title.toLowerCase() === title.toLowerCase(),
-  );
+  const existing = listOperatingProfileSuggestions(groupFolder, [
+    'proposed',
+  ]).find((item) => item.title.toLowerCase() === title.toLowerCase());
   if (existing) return;
   upsertOperatingProfileSuggestion({
     suggestionId: crypto.randomUUID(),
@@ -893,7 +919,7 @@ function upcomingWeekEnd(now: Date): Date {
 
 function startOfNextWeek(now: Date): Date {
   const target = new Date(now);
-  const daysUntilMonday = ((8 - target.getDay()) % 7) || 7;
+  const daysUntilMonday = (8 - target.getDay()) % 7 || 7;
   target.setDate(target.getDate() + daysUntilMonday);
   target.setHours(9, 0, 0, 0);
   return target;
@@ -929,7 +955,11 @@ function addDays(reference: Date, days: number): Date {
   return target;
 }
 
-function addMonths(reference: Date, months: number, dayOfMonth?: number | null): Date {
+function addMonths(
+  reference: Date,
+  months: number,
+  dayOfMonth?: number | null,
+): Date {
   const target = new Date(reference);
   const preferredDay = dayOfMonth || target.getDate();
   target.setMonth(target.getMonth() + months, 1);
@@ -942,11 +972,16 @@ function addMonths(reference: Date, months: number, dayOfMonth?: number | null):
   return target;
 }
 
-function parseItemDetailMeta(item: Pick<EverydayListItem, 'detailJson'>): EverydayItemDetailMeta {
+function parseItemDetailMeta(
+  item: Pick<EverydayListItem, 'detailJson'>,
+): EverydayItemDetailMeta {
   return safeJsonParse<EverydayItemDetailMeta>(item.detailJson, {});
 }
 
-function buildDeferDetailPatch(item: Pick<EverydayListItem, 'detailJson'>, nowIso: string) {
+function buildDeferDetailPatch(
+  item: Pick<EverydayListItem, 'detailJson'>,
+  nowIso: string,
+) {
   const detail = parseItemDetailMeta(item);
   return {
     deferCount: (detail.deferCount || 0) + 1,
@@ -956,7 +991,8 @@ function buildDeferDetailPatch(item: Pick<EverydayListItem, 'detailJson'>, nowIs
 
 function resetDeferDetailPatch(item: Pick<EverydayListItem, 'detailJson'>) {
   const detail = parseItemDetailMeta(item);
-  if (!detail.deferCount && !detail.lastDeferredAt) return item.detailJson || null;
+  if (!detail.deferCount && !detail.lastDeferredAt)
+    return item.detailJson || null;
   return mergeDetailJson(item.detailJson, {
     deferCount: 0,
     lastDeferredAt: null,
@@ -964,7 +1000,11 @@ function resetDeferDetailPatch(item: Pick<EverydayListItem, 'detailJson'>) {
 }
 
 function isActionableItem(item: EverydayListItem): boolean {
-  return item.state === 'open' || item.state === 'snoozed' || item.state === 'deferred';
+  return (
+    item.state === 'open' ||
+    item.state === 'snoozed' ||
+    item.state === 'deferred'
+  );
 }
 
 function parseIsoOrNull(value: string | null | undefined): number | null {
@@ -995,7 +1035,8 @@ function getItemTargetMoment(item: EverydayListItem): number | null {
 }
 
 function isOverdue(item: EverydayListItem, now: Date): boolean {
-  const target = parseIsoOrNull(item.dueAt) || parseIsoOrNull(item.recurrenceNextDueAt);
+  const target =
+    parseIsoOrNull(item.dueAt) || parseIsoOrNull(item.recurrenceNextDueAt);
   return target !== null && target < now.getTime();
 }
 
@@ -1032,16 +1073,32 @@ function itemTokenSet(value: string): Set<string> {
       .filter(
         (token) =>
           token.length > 2 &&
-          !['for', 'the', 'and', 'with', 'from', 'that', 'this', 'idea', 'meal', 'dinner'].includes(token),
+          ![
+            'for',
+            'the',
+            'and',
+            'with',
+            'from',
+            'that',
+            'this',
+            'idea',
+            'meal',
+            'dinner',
+          ].includes(token),
       ),
   );
 }
 
-function buildGroupMap(groups: EverydayListGroup[]): Map<string, EverydayListGroup> {
+function buildGroupMap(
+  groups: EverydayListGroup[],
+): Map<string, EverydayListGroup> {
   return new Map(groups.map((group) => [group.groupId, group]));
 }
 
-function isGroupTitle(group: EverydayListGroup | undefined, title: string): boolean {
+function isGroupTitle(
+  group: EverydayListGroup | undefined,
+  title: string,
+): boolean {
   return (group?.title || '').toLowerCase() === title.toLowerCase();
 }
 
@@ -1063,11 +1120,15 @@ function isTonightItem(
 ): boolean {
   const group = groupsById.get(item.groupId);
   if (isGroupTitle(group, 'Tonight')) return true;
-  const target = parseIsoOrNull(item.scheduledFor) || parseIsoOrNull(item.dueAt);
+  const target =
+    parseIsoOrNull(item.scheduledFor) || parseIsoOrNull(item.dueAt);
   return target !== null && target <= endOfDay(now).getTime();
 }
 
-function sortItemsByUrgency(items: EverydayListItem[], now: Date): EverydayListItem[] {
+function sortItemsByUrgency(
+  items: EverydayListItem[],
+  now: Date,
+): EverydayListItem[] {
   return [...items].sort((left, right) => {
     const leftOverdue = isOverdue(left, now) ? 0 : 1;
     const rightOverdue = isOverdue(right, now) ? 0 : 1;
@@ -1102,7 +1163,9 @@ function resolveRecurrenceBaseDate(
   return Number.isFinite(parsed) ? new Date(parsed) : new Date(now);
 }
 
-function buildRecurrenceDetail(recurrence: EverydayListRecurrence): Record<string, unknown> {
+function buildRecurrenceDetail(
+  recurrence: EverydayListRecurrence,
+): Record<string, unknown> {
   return {
     recurrenceKind: recurrence.kind,
     recurrenceInterval: recurrence.interval,
@@ -1124,7 +1187,10 @@ function mergeDetailJson(
   });
 }
 
-function extractRecurrence(text: string, now: Date): EverydayListRecurrence | null {
+function extractRecurrence(
+  text: string,
+  now: Date,
+): EverydayListRecurrence | null {
   const normalized = normalizeText(text).toLowerCase();
   if (/\b(?:every day|daily)\b/.test(normalized)) {
     return {
@@ -1195,12 +1261,20 @@ function computeNextRecurrenceDueAt(
       (day) => Number.isInteger(day) && day >= 0 && day <= 6,
     );
     if (days.length > 0) {
-      return nextWeekdayAt(completedAt, days[0]!, base.getHours() || 9).toISOString();
+      return nextWeekdayAt(
+        completedAt,
+        days[0]!,
+        base.getHours() || 9,
+      ).toISOString();
     }
     return addDays(base, 7 * recurrenceInterval).toISOString();
   }
   if (recurrenceKind === 'monthly') {
-    return addMonths(base, recurrenceInterval, item.recurrenceDayOfMonth).toISOString();
+    return addMonths(
+      base,
+      recurrenceInterval,
+      item.recurrenceDayOfMonth,
+    ).toISOString();
   }
   return null;
 }
@@ -1271,7 +1345,11 @@ function parseEverydayActionToken(text: string): EverydayActionToken | null {
     const group = codeToGroup(parts[2] || '');
     if (!group) return null;
     if (group.kind === 'recurring') {
-      return { targetMode: 'read', action: 'view_recurring', groupKind: 'recurring' };
+      return {
+        targetMode: 'read',
+        action: 'view_recurring',
+        groupKind: 'recurring',
+      };
     }
     return { targetMode: 'read', action: 'view_group', groupKind: group.kind };
   }
@@ -1344,15 +1422,21 @@ function ensureListGroup(params: {
     params.title?.trim() || DEFAULT_GROUP_TEMPLATES[params.kind].title;
   const shouldPreferExplicitTitle =
     Boolean(params.title?.trim()) &&
-    title.toLowerCase() !== DEFAULT_GROUP_TEMPLATES[params.kind].title.toLowerCase();
+    title.toLowerCase() !==
+      DEFAULT_GROUP_TEMPLATES[params.kind].title.toLowerCase();
   const existing = shouldPreferExplicitTitle
     ? findEverydayListGroupByTitle(params.groupFolder, title)
     : findEverydayListGroupByTitle(params.groupFolder, title) ||
-      findEverydayListGroupByKind(params.groupFolder, params.kind, params.scope);
+      findEverydayListGroupByKind(
+        params.groupFolder,
+        params.kind,
+        params.scope,
+      );
   const record: EverydayListGroup = existing
     ? {
         ...existing,
-        operatingProfileId: params.operatingProfileId || existing.operatingProfileId,
+        operatingProfileId:
+          params.operatingProfileId || existing.operatingProfileId,
         scope: params.scope,
         sourceSummary: params.sourceSummary,
         updatedAt: params.nowIso,
@@ -1522,21 +1606,53 @@ function buildTelegramEverydayInlineActionRows(params: {
 
   rows.push([
     primary.state === 'done'
-      ? { label: 'Reopen', actionId: buildEverydayActionId('reopen', primary.itemId) }
-      : { label: 'Done', actionId: buildEverydayActionId('done', primary.itemId) },
-    { label: 'Defer', actionId: buildEverydayActionId('defer_week', primary.itemId) },
-    { label: 'Remind', actionId: buildEverydayActionId('convert_reminder', primary.itemId) },
+      ? {
+          label: 'Reopen',
+          actionId: buildEverydayActionId('reopen', primary.itemId),
+        }
+      : {
+          label: 'Done',
+          actionId: buildEverydayActionId('done', primary.itemId),
+        },
+    {
+      label: 'Defer',
+      actionId: buildEverydayActionId('defer_week', primary.itemId),
+    },
+    {
+      label: 'Remind',
+      actionId: buildEverydayActionId('convert_reminder', primary.itemId),
+    },
   ]);
   rows.push([
-    { label: 'Groceries', actionId: buildEverydayMoveActionId('shopping', primary.itemId) },
-    { label: 'Tonight', actionId: buildEverydayMoveActionId('checklist', primary.itemId) },
-    { label: 'Weekend', actionId: `${EVERYDAY_ACTION_PREFIX}g:w:${primary.itemId}` },
+    {
+      label: 'Groceries',
+      actionId: buildEverydayMoveActionId('shopping', primary.itemId),
+    },
+    {
+      label: 'Tonight',
+      actionId: buildEverydayMoveActionId('checklist', primary.itemId),
+    },
+    {
+      label: 'Weekend',
+      actionId: `${EVERYDAY_ACTION_PREFIX}g:w:${primary.itemId}`,
+    },
   ]);
   rows.push([
-    { label: 'Plan', actionId: buildEverydayActionId('convert_plan', primary.itemId) },
-    { label: 'Thread', actionId: buildEverydayActionId('convert_thread', primary.itemId) },
+    {
+      label: 'Plan',
+      actionId: buildEverydayActionId('convert_plan', primary.itemId),
+    },
+    {
+      label: 'Thread',
+      actionId: buildEverydayActionId('convert_thread', primary.itemId),
+    },
     ...(primary.recurrenceKind && primary.recurrenceKind !== 'none'
-      ? [{ label: 'Stop repeat', actionId: buildEverydayActionId('stop_repeat', primary.itemId) }]
+      ? [
+          {
+            label: 'Stop repeat',
+            actionId: buildEverydayActionId('stop_repeat', primary.itemId),
+          },
+        ]
       : []),
   ]);
   return rows.filter((row) => row.length > 0);
@@ -1608,14 +1724,17 @@ function parseCaptureTarget(
   const stripRecurrenceLanguage = (value: string): string =>
     clip(
       value
-        .replace(/\b(?:every day|daily|every week|weekly|every month|monthly)\b/gi, '')
+        .replace(
+          /\b(?:every day|daily|every week|weekly|every month|monthly)\b/gi,
+          '',
+        )
         .replace(
           /\bevery (monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi,
           '',
         )
         .replace(/\s+/g, ' ')
         .trim(),
-      );
+    );
 
   const rawWithoutRecurrence = stripRecurrenceLanguage(raw);
   const lower = rawWithoutRecurrence.toLowerCase();
@@ -1625,7 +1744,9 @@ function parseCaptureTarget(
     rawWithoutRecurrence.match(
       /^(?:add|put)\s+(.+?)\s+to\s+(?:my\s+)?(?:shopping|grocery) list$/i,
     ) ||
-    rawWithoutRecurrence.match(/^(?:add|put)\s+(.+?)\s+on\s+(?:my\s+)?list$/i) ||
+    rawWithoutRecurrence.match(
+      /^(?:add|put)\s+(.+?)\s+on\s+(?:my\s+)?list$/i,
+    ) ||
     rawWithoutRecurrence.match(/^(?:add|put)\s+(.+?)\s+to groceries$/i);
   if (shoppingMatch?.[1]) {
     return {
@@ -1653,11 +1774,11 @@ function parseCaptureTarget(
   }
 
   const billMatch =
-      rawWithoutRecurrence.match(/^add (.+?) to (?:my\s+)?list$/i) &&
-      /\bbill|pay\b/i.test(rawWithoutRecurrence)
-        ? rawWithoutRecurrence.match(/^add (.+?) to (?:my\s+)?list$/i)
-        : rawWithoutRecurrence.match(/^add (.+?) to bills$/i) ||
-          raw.match(/^make (?:this|that) a monthly bill$/i);
+    rawWithoutRecurrence.match(/^add (.+?) to (?:my\s+)?list$/i) &&
+    /\bbill|pay\b/i.test(rawWithoutRecurrence)
+      ? rawWithoutRecurrence.match(/^add (.+?) to (?:my\s+)?list$/i)
+      : rawWithoutRecurrence.match(/^add (.+?) to bills$/i) ||
+        raw.match(/^make (?:this|that) a monthly bill$/i);
   if (billMatch?.[1]) {
     const title = stripRecurrenceLanguage(billMatch[1]);
     return {
@@ -1665,9 +1786,9 @@ function parseCaptureTarget(
       groupKind: 'bills',
       itemKind: 'bill',
       scope,
-        dueAt: /\bthis week\b/i.test(rawWithoutRecurrence)
-          ? upcomingWeekEnd(now).toISOString()
-          : null,
+      dueAt: /\bthis week\b/i.test(rawWithoutRecurrence)
+        ? upcomingWeekEnd(now).toISOString()
+        : null,
       recurrence:
         recurrence || /\bmonthly bill\b/i.test(raw)
           ? recurrence || {
@@ -1682,40 +1803,38 @@ function parseCaptureTarget(
   }
 
   const mealMatch =
-      rawWithoutRecurrence.match(/^add (.+?) for friday$/i) ||
-      rawWithoutRecurrence.match(/^add (.+?) to meals$/i) ||
-      rawWithoutRecurrence.match(/^add (.+?) for this week$/i) ||
-      rawWithoutRecurrence.match(/^add dinner idea for friday$/i);
+    rawWithoutRecurrence.match(/^add (.+?) for friday$/i) ||
+    rawWithoutRecurrence.match(/^add (.+?) to meals$/i) ||
+    rawWithoutRecurrence.match(/^add (.+?) for this week$/i) ||
+    rawWithoutRecurrence.match(/^add dinner idea for friday$/i);
   if (mealMatch) {
-    const title =
-        /^add dinner idea for friday$/i.test(rawWithoutRecurrence)
-          ? 'Dinner idea'
-          : stripRecurrenceLanguage(mealMatch[1] || 'Meal');
+    const title = /^add dinner idea for friday$/i.test(rawWithoutRecurrence)
+      ? 'Dinner idea'
+      : stripRecurrenceLanguage(mealMatch[1] || 'Meal');
     return {
       title,
       groupKind: 'meals',
       itemKind: 'meal_entry',
       scope,
       scheduledFor:
-          /\bfriday\b/i.test(rawWithoutRecurrence) ||
-          /^add dinner idea for friday$/i.test(rawWithoutRecurrence)
-            ? upcomingFridayOrNull(now, rawWithoutRecurrence)
-            : /\bthis week\b/i.test(rawWithoutRecurrence)
-              ? upcomingWeekEnd(now).toISOString()
-              : null,
+        /\bfriday\b/i.test(rawWithoutRecurrence) ||
+        /^add dinner idea for friday$/i.test(rawWithoutRecurrence)
+          ? upcomingFridayOrNull(now, rawWithoutRecurrence)
+          : /\bthis week\b/i.test(rawWithoutRecurrence)
+            ? upcomingWeekEnd(now).toISOString()
+            : null,
       recurrence: recurrence || undefined,
     };
   }
 
   const tonightMatch =
-      rawWithoutRecurrence.match(/^add (.+?) to tonight$/i) ||
-      rawWithoutRecurrence.match(/^put (.+?) in tonight'?s plan$/i) ||
-      rawWithoutRecurrence.match(/^add my pills to tonight$/i);
+    rawWithoutRecurrence.match(/^add (.+?) to tonight$/i) ||
+    rawWithoutRecurrence.match(/^put (.+?) in tonight'?s plan$/i) ||
+    rawWithoutRecurrence.match(/^add my pills to tonight$/i);
   if (tonightMatch) {
-    const title =
-        /^add my pills to tonight$/i.test(rawWithoutRecurrence)
-          ? 'Take pills'
-          : clip(tonightMatch[1] || resolveReferenceText(input));
+    const title = /^add my pills to tonight$/i.test(rawWithoutRecurrence)
+      ? 'Take pills'
+      : clip(tonightMatch[1] || resolveReferenceText(input));
     return {
       title,
       groupKind: 'checklist',
@@ -1730,8 +1849,12 @@ function parseCaptureTarget(
   }
 
   const weekendMatch =
-      rawWithoutRecurrence.match(/^put (?:this|that|(.+?)) on the weekend list$/i) ||
-      rawWithoutRecurrence.match(/^make (?:this|that|(.+?)) part of my weekend list$/i);
+    rawWithoutRecurrence.match(
+      /^put (?:this|that|(.+?)) on the weekend list$/i,
+    ) ||
+    rawWithoutRecurrence.match(
+      /^make (?:this|that|(.+?)) part of my weekend list$/i,
+    );
   if (weekendMatch) {
     const title = stripRecurrenceLanguage(
       resolveReferenceText(input, weekendMatch[1] || null),
@@ -1749,28 +1872,27 @@ function parseCaptureTarget(
   }
 
   if (
-      /^save that under the household thread$/i.test(rawWithoutRecurrence) ||
-      /^save this under the household thread$/i.test(rawWithoutRecurrence)
+    /^save that under the household thread$/i.test(rawWithoutRecurrence) ||
+    /^save this under the household thread$/i.test(rawWithoutRecurrence)
   ) {
     return null;
   }
 
-    const saveUnderMatch = rawWithoutRecurrence.match(
-      /^(?:save|track) (?:this|that|(.+?)) under ([a-z][a-z0-9' -]+)$/i,
-    );
+  const saveUnderMatch = rawWithoutRecurrence.match(
+    /^(?:save|track) (?:this|that|(.+?)) under ([a-z][a-z0-9' -]+)$/i,
+  );
   if (saveUnderMatch) {
     return {
       title: stripRecurrenceLanguage(
         resolveReferenceText(input, saveUnderMatch[1] || null),
       ),
-      groupKind:
-        /grocery|grocer|shopping/i.test(saveUnderMatch[2])
-          ? 'shopping'
-          : /weekend/i.test(saveUnderMatch[2])
-            ? 'checklist'
-            : /household|home/i.test(saveUnderMatch[2])
-              ? 'household'
-              : 'general',
+      groupKind: /grocery|grocer|shopping/i.test(saveUnderMatch[2])
+        ? 'shopping'
+        : /weekend/i.test(saveUnderMatch[2])
+          ? 'checklist'
+          : /household|home/i.test(saveUnderMatch[2])
+            ? 'household'
+            : 'general',
       itemKind: 'general_item',
       groupTitle: toTitleCase(saveUnderMatch[2]),
       scope,
@@ -1821,7 +1943,9 @@ function parseCaptureTarget(
     };
   }
 
-  const contextualAddMatch = rawWithoutRecurrence.match(/^(?:add|put)\s+(.+?)$/i);
+  const contextualAddMatch = rawWithoutRecurrence.match(
+    /^(?:add|put)\s+(.+?)$/i,
+  );
   if (
     contextualAddMatch?.[1] &&
     input.priorContext?.activeListGroupId &&
@@ -1829,7 +1953,9 @@ function parseCaptureTarget(
       input.priorContext.activeTaskKind || '',
     )
   ) {
-    const activeGroup = getEverydayListGroup(input.priorContext.activeListGroupId);
+    const activeGroup = getEverydayListGroup(
+      input.priorContext.activeListGroupId,
+    );
     const title = stripRecurrenceLanguage(contextualAddMatch[1]);
     if (activeGroup && title) {
       return {
@@ -1875,15 +2001,15 @@ function parseReadTarget(text: string): ReadTarget | null {
               ? 'bills this week'
               : actionToken.groupKind === 'meals'
                 ? 'meals this week'
-            : actionToken.groupKind === 'household'
-              ? 'household'
-              : actionToken.groupKind === 'weekend'
-                ? 'this weekend'
-                : actionToken.groupKind === 'recently_completed'
-                  ? 'recently completed'
-                  : actionToken.groupKind === 'dinner_missing'
-                    ? 'dinner'
-              : actionToken.groupKind,
+                : actionToken.groupKind === 'household'
+                  ? 'household'
+                  : actionToken.groupKind === 'weekend'
+                    ? 'this weekend'
+                    : actionToken.groupKind === 'recently_completed'
+                      ? 'recently completed'
+                      : actionToken.groupKind === 'dinner_missing'
+                        ? 'dinner'
+                        : actionToken.groupKind,
       };
     }
     return { kind: 'all', summary: 'your list' };
@@ -1948,7 +2074,11 @@ function parseReadTarget(text: string): ReadTarget | null {
   if (/^what('?s| is) missing for dinner\b/.test(normalized)) {
     return { kind: 'dinner_missing', summary: 'dinner' };
   }
-  if (/^what recurring (?:things|items) (?:are )?(?:coming back|coming up)(?: soon)?\b/.test(normalized)) {
+  if (
+    /^what recurring (?:things|items) (?:are )?(?:coming back|coming up)(?: soon)?\b/.test(
+      normalized,
+    )
+  ) {
     return { kind: 'recurring', summary: 'recurring items' };
   }
   if (/^what did i (?:finish|get done) lately\b/.test(normalized)) {
@@ -2059,16 +2189,19 @@ function parseMoveGroupRequest(
     return null;
   }
   const moveMatch =
-    normalized.match(/^(?:move|save|add) (?:that|this) to ([a-z][a-z0-9' -]+)$/i) ||
+    normalized.match(
+      /^(?:move|save|add) (?:that|this) to ([a-z][a-z0-9' -]+)$/i,
+    ) ||
     normalized.match(/^(?:save) (?:that|this) under ([a-z][a-z0-9' -]+)$/i) ||
-    normalized.match(/^make (?:that|this) part of my ([a-z][a-z0-9' -]+) list$/i) ||
+    normalized.match(
+      /^make (?:that|this) part of my ([a-z][a-z0-9' -]+) list$/i,
+    ) ||
     normalized.match(/^put (?:that|this) in tonight'?s plan$/i);
 
   if (!moveMatch) return null;
-  const rawTarget =
-    /^put (?:that|this) in tonight'?s plan$/i.test(normalized)
-      ? 'Tonight'
-      : moveMatch[1];
+  const rawTarget = /^put (?:that|this) in tonight'?s plan$/i.test(normalized)
+    ? 'Tonight'
+    : moveMatch[1];
   const lower = rawTarget.toLowerCase();
   if (/grocery|grocer|shopping/.test(lower)) {
     return { groupKind: 'shopping', groupTitle: 'Groceries' };
@@ -2102,7 +2235,9 @@ function parseStopRepeatingRequest(text: string): boolean {
   ) {
     return true;
   }
-  return /^(stop repeating that|stop repeating this)$/i.test(normalizeText(text));
+  return /^(stop repeating that|stop repeating this)$/i.test(
+    normalizeText(text),
+  );
 }
 
 function parseRecurringUpdate(
@@ -2188,7 +2323,10 @@ function resolveActiveItem(
   return fallback || null;
 }
 
-function buildSection(title: string, items: EverydayListItem[]): HouseholdSmartViewSection | null {
+function buildSection(
+  title: string,
+  items: EverydayListItem[],
+): HouseholdSmartViewSection | null {
   return items.length > 0 ? { title, items } : null;
 }
 
@@ -2214,7 +2352,8 @@ function buildHouseholdSmartView(params: {
   const actionableItems = allItems.filter(isActionableItem);
   const recentlyCompleted = sortItemsByUrgency(
     allItems.filter(
-      (item) => item.state === 'done' && isWithinRecentDays(item.completedAt, now, 3),
+      (item) =>
+        item.state === 'done' && isWithinRecentDays(item.completedAt, now, 3),
     ),
     now,
   );
@@ -2263,8 +2402,10 @@ function buildHouseholdSmartView(params: {
     })
     .filter((item) => !item.scheduledFor || isDueWithinDays(item, now, 7))
     .sort((left, right) => {
-      const leftTime = parseIsoOrNull(left.scheduledFor) ?? Number.MAX_SAFE_INTEGER;
-      const rightTime = parseIsoOrNull(right.scheduledFor) ?? Number.MAX_SAFE_INTEGER;
+      const leftTime =
+        parseIsoOrNull(left.scheduledFor) ?? Number.MAX_SAFE_INTEGER;
+      const rightTime =
+        parseIsoOrNull(right.scheduledFor) ?? Number.MAX_SAFE_INTEGER;
       if (leftTime !== rightTime) return leftTime - rightTime;
       return Date.parse(right.updatedAt) - Date.parse(left.updatedAt);
     });
@@ -2278,7 +2419,8 @@ function buildHouseholdSmartView(params: {
   const tonight = sortItemsByUrgency(
     actionableItems.filter((item) => {
       if (isTonightItem(item, groupsById, now)) return true;
-      if (item.itemKind === 'bill' && isDueWithinDays(item, now, 2)) return true;
+      if (item.itemKind === 'bill' && isDueWithinDays(item, now, 2))
+        return true;
       return false;
     }),
     now,
@@ -2302,7 +2444,8 @@ function buildHouseholdSmartView(params: {
       const targetTime = getItemTargetMoment(item);
       return (
         deferCount >= 2 ||
-        (targetTime !== null && targetTime < startOfDay(addDays(now, -2)).getTime())
+        (targetTime !== null &&
+          targetTime < startOfDay(addDays(now, -2)).getTime())
       );
     }),
     now,
@@ -2317,7 +2460,8 @@ function buildHouseholdSmartView(params: {
         const mealHints = parseItemDetailMeta(tonightMeal).mealHints || [];
         const itemTitle = normalizeText(item.title).toLowerCase();
         const mealTitle = normalizeText(tonightMeal.title).toLowerCase();
-        if (mealHints.some((hint) => itemTitle.includes(hint.toLowerCase()))) return true;
+        if (mealHints.some((hint) => itemTitle.includes(hint.toLowerCase())))
+          return true;
         if (mealTitle.includes(itemTitle)) return true;
         const groceryTokens = itemTokenSet(item.title);
         const mealTokens = itemTokenSet(tonightMeal.title);
@@ -2348,9 +2492,13 @@ function buildHouseholdSmartView(params: {
           (section): section is HouseholdSmartViewSection => Boolean(section),
         ),
         handoffOffer:
-          groceries.length > 4 ? 'If you want, I can send the fuller store list to Telegram.' : undefined,
+          groceries.length > 4
+            ? 'If you want, I can send the fuller store list to Telegram.'
+            : undefined,
         nextStep:
-          tonight.length > 0 ? 'I can tell you what matters most for tonight too.' : undefined,
+          tonight.length > 0
+            ? 'I can tell you what matters most for tonight too.'
+            : undefined,
       };
     case 'errands':
       return {
@@ -2364,7 +2512,9 @@ function buildHouseholdSmartView(params: {
           (section): section is HouseholdSmartViewSection => Boolean(section),
         ),
         handoffOffer:
-          errands.length > 4 ? 'If you want, I can send the fuller errand list to Telegram.' : undefined,
+          errands.length > 4
+            ? 'If you want, I can send the fuller errand list to Telegram.'
+            : undefined,
       };
     case 'bills':
       return {
@@ -2380,7 +2530,9 @@ function buildHouseholdSmartView(params: {
           (section): section is HouseholdSmartViewSection => Boolean(section),
         ),
         handoffOffer:
-          bills.length > 3 ? 'If you want, I can send the fuller bills view to Telegram.' : undefined,
+          bills.length > 3
+            ? 'If you want, I can send the fuller bills view to Telegram.'
+            : undefined,
       };
     case 'meals':
       return {
@@ -2394,9 +2546,13 @@ function buildHouseholdSmartView(params: {
           (section): section is HouseholdSmartViewSection => Boolean(section),
         ),
         handoffOffer:
-          meals.length > 3 ? 'If you want, I can send the fuller meal view to Telegram.' : undefined,
+          meals.length > 3
+            ? 'If you want, I can send the fuller meal view to Telegram.'
+            : undefined,
         nextStep:
-          groceries.length > 0 ? "I can check what's missing for dinner too." : undefined,
+          groceries.length > 0
+            ? "I can check what's missing for dinner too."
+            : undefined,
       };
     case 'household':
       return {
@@ -2410,37 +2566,49 @@ function buildHouseholdSmartView(params: {
           (section): section is HouseholdSmartViewSection => Boolean(section),
         ),
         handoffOffer:
-          household.length > 4 ? 'If you want, I can send the fuller household view to Telegram.' : undefined,
+          household.length > 4
+            ? 'If you want, I can send the fuller household view to Telegram.'
+            : undefined,
       };
-    case 'tonight':
-      {
-        const tonightCarryover = [
-          ...tonight,
-          ...bills.slice(0, 2),
-          ...groceries.slice(0, 3),
-        ].filter(
-          (item, index, all) => all.findIndex((candidate) => candidate.itemId === item.itemId) === index,
-        );
-        return {
-          lead:
-            tonight.length > 0
-              ? `For tonight, ${summarizeSlice(tonight, 2)} are the main loose ends.`
-              : groceries.length > 0
-                ? 'For tonight, the store run is the main loose end.'
-                : bills.length > 0
-                  ? `For tonight, the biggest thing still hanging over the week is ${bills[0]!.title}.`
-            : null,
+    case 'tonight': {
+      const tonightCarryover = [
+        ...tonight,
+        ...bills.slice(0, 2),
+        ...groceries.slice(0, 3),
+      ].filter(
+        (item, index, all) =>
+          all.findIndex((candidate) => candidate.itemId === item.itemId) ===
+          index,
+      );
+      return {
+        lead:
+          tonight.length > 0
+            ? `For tonight, ${summarizeSlice(tonight, 2)} are the main loose ends.`
+            : groceries.length > 0
+              ? 'For tonight, the store run is the main loose end.'
+              : bills.length > 0
+                ? `For tonight, the biggest thing still hanging over the week is ${bills[0]!.title}.`
+                : null,
         emptyLine: 'Tonight looks fairly clear right now.',
         items: tonightCarryover,
         sections: [
-          buildSection('Tonight', tonight.filter((item) => isTonightItem(item, groupsById, now)).slice(0, 4)),
+          buildSection(
+            'Tonight',
+            tonight
+              .filter((item) => isTonightItem(item, groupsById, now))
+              .slice(0, 4),
+          ),
           buildSection('Bills This Week', bills.slice(0, 2)),
           buildSection('Groceries', groceries.slice(0, 3)),
-        ].filter((section): section is HouseholdSmartViewSection => Boolean(section)),
+        ].filter((section): section is HouseholdSmartViewSection =>
+          Boolean(section),
+        ),
         handoffOffer:
-          tonightCarryover.length > 3 ? 'If you want, I can send the fuller tonight view to Telegram.' : undefined,
+          tonightCarryover.length > 3
+            ? 'If you want, I can send the fuller tonight view to Telegram.'
+            : undefined,
       };
-      }
+    }
     case 'weekend':
       return {
         lead:
@@ -2450,12 +2618,33 @@ function buildHouseholdSmartView(params: {
         emptyLine: 'This weekend looks fairly clear right now.',
         items: weekend,
         sections: [
-          buildSection('Weekend', weekend.filter((item) => isGroupTitle(groupsById.get(item.groupId), 'Weekend')).slice(0, 4)),
-          buildSection('Errands', errands.filter((item) => isWeekendItem(item, groupsById, now)).slice(0, 3)),
-          buildSection('Household Open', household.filter((item) => isWeekendItem(item, groupsById, now)).slice(0, 3)),
-        ].filter((section): section is HouseholdSmartViewSection => Boolean(section)),
+          buildSection(
+            'Weekend',
+            weekend
+              .filter((item) =>
+                isGroupTitle(groupsById.get(item.groupId), 'Weekend'),
+              )
+              .slice(0, 4),
+          ),
+          buildSection(
+            'Errands',
+            errands
+              .filter((item) => isWeekendItem(item, groupsById, now))
+              .slice(0, 3),
+          ),
+          buildSection(
+            'Household Open',
+            household
+              .filter((item) => isWeekendItem(item, groupsById, now))
+              .slice(0, 3),
+          ),
+        ].filter((section): section is HouseholdSmartViewSection =>
+          Boolean(section),
+        ),
         handoffOffer:
-          weekend.length > 4 ? 'If you want, I can send the fuller weekend view to Telegram.' : undefined,
+          weekend.length > 4
+            ? 'If you want, I can send the fuller weekend view to Telegram.'
+            : undefined,
       };
     case 'recurring':
       return {
@@ -2475,10 +2664,13 @@ function buildHouseholdSmartView(params: {
           recentlyCompleted.length > 0
             ? `Recently finished, you closed ${summarizeSlice(recentlyCompleted, 2)}.`
             : null,
-        emptyLine: 'Nothing was completed recently enough to call out right now.',
+        emptyLine:
+          'Nothing was completed recently enough to call out right now.',
         items: recentlyCompleted,
-        sections: [buildSection('Recently Completed', recentlyCompleted)].filter(
-          (section): section is HouseholdSmartViewSection => Boolean(section),
+        sections: [
+          buildSection('Recently Completed', recentlyCompleted),
+        ].filter((section): section is HouseholdSmartViewSection =>
+          Boolean(section),
         ),
       };
     case 'slipping':
@@ -2503,31 +2695,41 @@ function buildHouseholdSmartView(params: {
             (section): section is HouseholdSmartViewSection => Boolean(section),
           ),
           nextStep:
-            meals.length > 0 ? 'I can show the meal ideas you do have this week.' : undefined,
+            meals.length > 0
+              ? 'I can show the meal ideas you do have this week.'
+              : undefined,
         };
       }
       if (dinnerMissing.length === 0) {
         return {
           lead: 'Dinner looks planned, and nothing specific is flagged as missing.',
-          emptyLine: 'Dinner looks planned, and nothing specific is flagged as missing.',
+          emptyLine:
+            'Dinner looks planned, and nothing specific is flagged as missing.',
           items: [tonightMeal],
           sections: [buildSection('Dinner Tonight', [tonightMeal])].filter(
             (section): section is HouseholdSmartViewSection => Boolean(section),
           ),
           nextStep:
-            groceries.length > 0 ? 'I can still show the store list if you want.' : undefined,
+            groceries.length > 0
+              ? 'I can still show the store list if you want.'
+              : undefined,
         };
       }
       return {
         lead: `Dinner looks planned, but you're still missing ${summarizeSlice(dinnerMissing, 3)}.`,
-        emptyLine: 'Dinner looks planned, and nothing specific is flagged as missing.',
+        emptyLine:
+          'Dinner looks planned, and nothing specific is flagged as missing.',
         items: dinnerMissing,
         sections: [
           buildSection('Dinner Tonight', [tonightMeal]),
           buildSection('Still Missing', dinnerMissing),
-        ].filter((section): section is HouseholdSmartViewSection => Boolean(section)),
+        ].filter((section): section is HouseholdSmartViewSection =>
+          Boolean(section),
+        ),
         handoffOffer:
-          dinnerMissing.length > 3 ? 'If you want, I can send the fuller dinner breakdown to Telegram.' : undefined,
+          dinnerMissing.length > 3
+            ? 'If you want, I can send the fuller dinner breakdown to Telegram.'
+            : undefined,
       };
     case 'all':
     default:
@@ -2548,7 +2750,9 @@ function buildHouseholdSmartView(params: {
             ? 'If you want, I can send the fuller household review to Telegram.'
             : undefined,
         nextStep:
-          tonight.length > 0 ? "I can tell you what's left for tonight next." : undefined,
+          tonight.length > 0
+            ? "I can tell you what's left for tonight next."
+            : undefined,
       };
   }
 }
@@ -2574,7 +2778,10 @@ function formatReadout(params: {
           ? {
               inlineActionRows: [
                 [
-                  { label: 'Groceries', actionId: buildViewActionId('shopping') },
+                  {
+                    label: 'Groceries',
+                    actionId: buildViewActionId('shopping'),
+                  },
                   { label: 'Bills', actionId: buildViewActionId('bills') },
                   { label: 'Tonight', actionId: buildViewActionId('tonight') },
                 ],
@@ -2604,9 +2811,11 @@ function formatReadout(params: {
         params.view.items.length > 3 || Boolean(params.view.handoffOffer)
           ? `${summary} ${params.view.handoffOffer || 'If you want, I can send the fuller list to Telegram.'}`
           : summary,
-      handoffOffer: params.view.handoffOffer || (params.view.items.length > 3
-        ? 'If you want, I can send the fuller list to Telegram.'
-        : undefined),
+      handoffOffer:
+        params.view.handoffOffer ||
+        (params.view.items.length > 3
+          ? 'If you want, I can send the fuller list to Telegram.'
+          : undefined),
     };
   }
 
@@ -2617,7 +2826,9 @@ function formatReadout(params: {
   }
   for (const section of params.view.sections) {
     lines.push(`*${section.title}*`);
-    lines.push(...section.items.map((item) => `- ${formatItemLine(item, params.now)}`));
+    lines.push(
+      ...section.items.map((item) => `- ${formatItemLine(item, params.now)}`),
+    );
     lines.push('');
   }
   if (params.view.nextStep) lines.push(params.view.nextStep);
@@ -2692,10 +2903,13 @@ async function handleProfileSetup(
     });
   }
 
-  if (state?.draftProfileId && /^(approve that|approve|yes|use that)\b/i.test(lower)) {
-    const draft = listOperatingProfilesForGroup(input.groupFolder, ['draft']).find(
-      (candidate) => candidate.profileId === state.draftProfileId,
-    );
+  if (
+    state?.draftProfileId &&
+    /^(approve that|approve|yes|use that)\b/i.test(lower)
+  ) {
+    const draft = listOperatingProfilesForGroup(input.groupFolder, [
+      'draft',
+    ]).find((candidate) => candidate.profileId === state.draftProfileId);
     if (!draft) {
       return buildResult({
         mode: 'profile_setup',
@@ -2704,7 +2918,11 @@ async function handleProfileSetup(
         subjectKind: 'general',
       });
     }
-    supersedeActiveOperatingProfiles(input.groupFolder, nowIso, draft.profileId);
+    supersedeActiveOperatingProfiles(
+      input.groupFolder,
+      nowIso,
+      draft.profileId,
+    );
     upsertOperatingProfile({
       ...draft,
       status: 'active',
@@ -2909,7 +3127,8 @@ async function handleReadItems(
   const contextGroup =
     (view.items[0]
       ? getEverydayListGroup(view.items[0].groupId) || null
-      : null) || resolveConversationGroupForReadTarget(input.groupFolder, target);
+      : null) ||
+    resolveConversationGroupForReadTarget(input.groupFolder, target);
   const formatted = formatReadout({
     channel: input.channel,
     target,
@@ -3012,7 +3231,10 @@ async function handleUpdateItem(
     updateEverydayListItem(item.itemId, {
       state: 'deferred',
       deferUntil: startOfNextWeek(now).toISOString(),
-      detailJson: mergeDetailJson(item.detailJson, buildDeferDetailPatch(item, nowIso)),
+      detailJson: mergeDetailJson(
+        item.detailJson,
+        buildDeferDetailPatch(item, nowIso),
+      ),
       updatedAt: nowIso,
     });
     return buildResult({
@@ -3036,8 +3258,7 @@ async function handleUpdateItem(
       operatingProfileId: item.operatingProfileId,
       title: moveGroup.groupTitle,
       kind: moveGroup.groupKind,
-      scope:
-        moveGroup.groupKind === 'household' ? 'household' : item.scope,
+      scope: moveGroup.groupKind === 'household' ? 'household' : item.scope,
       sourceSummary: `Organized from ${input.channel} everyday capture`,
       nowIso,
     });
@@ -3073,23 +3294,27 @@ async function handleUpdateItem(
   }
   const recurrence = parseRecurringUpdate(input.text, now);
   if (recurrence) {
-    const targetGroup =
-      /^make (?:this|that) a monthly bill$/i.test(normalizeText(input.text))
-        ? ensureListGroup({
-            groupFolder: input.groupFolder,
-            operatingProfileId: item.operatingProfileId,
-            title: 'Bills',
-            kind: 'bills',
-            scope: item.scope,
-            sourceSummary: 'Recurring bills',
-            nowIso,
-          })
-        : null;
+    const targetGroup = /^make (?:this|that) a monthly bill$/i.test(
+      normalizeText(input.text),
+    )
+      ? ensureListGroup({
+          groupFolder: input.groupFolder,
+          operatingProfileId: item.operatingProfileId,
+          title: 'Bills',
+          kind: 'bills',
+          scope: item.scope,
+          sourceSummary: 'Recurring bills',
+          nowIso,
+        })
+      : null;
     updateEverydayListItem(item.itemId, {
       groupId: targetGroup?.groupId || item.groupId,
       itemKind: targetGroup ? 'bill' : item.itemKind,
       state: 'open',
-      detailJson: mergeDetailJson(item.detailJson, buildRecurrenceDetail(recurrence)),
+      detailJson: mergeDetailJson(
+        item.detailJson,
+        buildRecurrenceDetail(recurrence),
+      ),
       recurrenceKind: recurrence.kind,
       recurrenceInterval: recurrence.interval,
       recurrenceDaysJson: recurrence.days
@@ -3163,7 +3388,10 @@ async function handleUpdateItem(
     updateEverydayListItem(item.itemId, {
       state: 'snoozed',
       deferUntil: tomorrowAtHour(now, 9).toISOString(),
-      detailJson: mergeDetailJson(item.detailJson, buildDeferDetailPatch(item, nowIso)),
+      detailJson: mergeDetailJson(
+        item.detailJson,
+        buildDeferDetailPatch(item, nowIso),
+      ),
       updatedAt: nowIso,
     });
     return buildResult({
@@ -3201,7 +3429,8 @@ async function handleConvertItem(
     if (!input.chatJid) {
       return buildResult({
         mode: 'convert_item',
-        replyText: 'Tell me when, like tomorrow at 3, and I can turn that into a reminder.',
+        replyText:
+          'Tell me when, like tomorrow at 3, and I can turn that into a reminder.',
         summaryText: item.title,
         subjectKind: 'saved_item',
       });
@@ -3327,19 +3556,23 @@ export function getEverydayCaptureSignal(params: {
             { kind: 'shopping', summary: 'groceries' },
           ] as ReadTarget[])
         : ([{ kind: 'all', summary: 'your list' }] as ReadTarget[]);
-  const items = targets.flatMap((target) =>
-    buildHouseholdSmartView({
-      groupFolder: params.groupFolder!,
-      target,
-      groups,
-      now,
-    }).items,
+  const items = targets.flatMap(
+    (target) =>
+      buildHouseholdSmartView({
+        groupFolder: params.groupFolder!,
+        target,
+        groups,
+        now,
+      }).items,
   );
-  const unique = [...new Map(items.map((item) => [item.itemId, item])).values()];
+  const unique = [
+    ...new Map(items.map((item) => [item.itemId, item])).values(),
+  ];
   return unique.slice(0, limit).map((item) => {
     if (item.itemKind === 'bill') return `Bill: ${item.title}`;
     if (item.itemKind === 'meal_entry') return `Meal: ${item.title}`;
-    if (/pills?|meds?|medication/i.test(item.title)) return `Tonight: ${item.title}`;
+    if (/pills?|meds?|medication/i.test(item.title))
+      return `Tonight: ${item.title}`;
     return item.title;
   });
 }
@@ -3348,10 +3581,12 @@ export async function handleEverydayCaptureCommand(
   input: EverydayCaptureCommandInput,
 ): Promise<EverydayCaptureCommandResult> {
   const normalized = normalizeText(input.text).toLowerCase();
-  const pendingReminder =
-    input.chatJid ? readPendingReminderState(input.chatJid) : null;
-  const profileSetupState =
-    input.chatJid ? readProfileSetupState(input.chatJid) : null;
+  const pendingReminder = input.chatJid
+    ? readPendingReminderState(input.chatJid)
+    : null;
+  const profileSetupState = input.chatJid
+    ? readProfileSetupState(input.chatJid)
+    : null;
   if (pendingReminder && input.chatJid) {
     const item = getEverydayListItem(pendingReminder.itemId);
     if (item) {
@@ -3416,9 +3651,15 @@ export async function handleEverydayCaptureCommand(
   if (convertResult.handled) return convertResult;
 
   if (/^(dismiss that suggestion|reject that suggestion)\b/i.test(normalized)) {
-    const suggestion = listOperatingProfileSuggestions(input.groupFolder, ['proposed'])[0];
+    const suggestion = listOperatingProfileSuggestions(input.groupFolder, [
+      'proposed',
+    ])[0];
     if (suggestion) {
-      updateOperatingProfileSuggestionState(suggestion.suggestionId, 'dismissed', new Date().toISOString());
+      updateOperatingProfileSuggestionState(
+        suggestion.suggestionId,
+        'dismissed',
+        new Date().toISOString(),
+      );
       return buildResult({
         mode: 'profile_review',
         replyText: 'Okay. I will leave that suggestion alone.',

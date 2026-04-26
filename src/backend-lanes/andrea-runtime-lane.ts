@@ -121,7 +121,9 @@ function summarizeRuntimeOutput(job: RuntimeBackendJob): string | null {
 }
 
 function resolveGroupContext(
-  resolveGroupByFolder: (folder: string) => { jid: string; group: RegisteredGroup } | null,
+  resolveGroupByFolder: (
+    folder: string,
+  ) => { jid: string; group: RegisteredGroup } | null,
   groupFolder: string,
 ): { jid: string; group: RegisteredGroup } {
   const resolved = resolveGroupByFolder(groupFolder);

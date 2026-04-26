@@ -127,9 +127,10 @@ describe('alexa conversation state', () => {
     expect(
       resolveAlexaConversationFollowup('make that shorter', state),
     ).toMatchObject({ ok: true, action: 'shorter' });
-    expect(
-      resolveAlexaConversationFollowup('say more', state),
-    ).toMatchObject({ ok: true, action: 'say_more' });
+    expect(resolveAlexaConversationFollowup('say more', state)).toMatchObject({
+      ok: true,
+      action: 'say_more',
+    });
     expect(
       resolveAlexaConversationFollowup('remember that', state),
     ).toMatchObject({ ok: true, action: 'save_that' });
@@ -152,10 +153,16 @@ describe('alexa conversation state', () => {
       resolveAlexaConversationFollowup('save that in my library', state),
     ).toMatchObject({ ok: true, action: 'save_to_library' });
     expect(
-      resolveAlexaConversationFollowup('track that under Candace thread', state),
+      resolveAlexaConversationFollowup(
+        'track that under Candace thread',
+        state,
+      ),
     ).toMatchObject({ ok: true, action: 'track_thread' });
     expect(
-      resolveAlexaConversationFollowup('turn that into a reminder tonight', state),
+      resolveAlexaConversationFollowup(
+        'turn that into a reminder tonight',
+        state,
+      ),
     ).toMatchObject({ ok: true, action: 'create_reminder' });
     expect(
       resolveAlexaConversationFollowup('just the reminder', state),
@@ -169,9 +176,10 @@ describe('alexa conversation state', () => {
     expect(
       resolveAlexaConversationFollowup('draft a message about that', state),
     ).toMatchObject({ ok: true, action: 'draft_follow_up' });
-    expect(
-      resolveAlexaConversationFollowup('do that', state),
-    ).toMatchObject({ ok: true, action: 'approve_bundle' });
+    expect(resolveAlexaConversationFollowup('do that', state)).toMatchObject({
+      ok: true,
+      action: 'approve_bundle',
+    });
     expect(
       resolveAlexaConversationFollowup('show me the actions again', state),
     ).toMatchObject({ ok: true, action: 'show_bundle' });
@@ -182,7 +190,10 @@ describe('alexa conversation state', () => {
       resolveAlexaConversationFollowup('what should I do about that', state),
     ).toMatchObject({ ok: true, action: 'action_guidance' });
     expect(
-      resolveAlexaConversationFollowup('should I be worried about anything', state),
+      resolveAlexaConversationFollowup(
+        'should I be worried about anything',
+        state,
+      ),
     ).toMatchObject({ ok: true, action: 'risk_check' });
     expect(
       resolveAlexaConversationFollowup('be a little more direct', state),
@@ -239,11 +250,7 @@ describe('alexa conversation state', () => {
         householdFocus: true,
       },
       summaryText: 'family plans and household logistics',
-      supportedFollowups: [
-        'anything_else',
-        'switch_person',
-        'memory_control',
-      ],
+      supportedFollowups: ['anything_else', 'switch_person', 'memory_control'],
       styleHints: {},
     };
 
@@ -271,9 +278,7 @@ describe('alexa conversation state', () => {
       styleHints: {},
     };
 
-    expect(
-      resolveAlexaConversationFollowup('save that', state),
-    ).toMatchObject({
+    expect(resolveAlexaConversationFollowup('save that', state)).toMatchObject({
       ok: false,
       speech: expect.stringContaining('Candace dinner plans'),
     });

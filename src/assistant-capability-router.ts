@@ -166,32 +166,32 @@ function matchEverydayCapturePrompt(
       reason: 'matched everyday capture phrasing',
     };
   }
-    if (
-      /^(show me (?:my )?(?:grocery|shopping) list|what('?s| is) on my (?:grocery|shopping) list|what('?s| is) on my list|what('?s| is) on groceries|what do (?:we|i) need from the store(?: again)?|what do i still need to buy|what errands do i have|what('?s| is) (?:still )?on my errands list|what bills do i need to pay(?: this week| soon)?|what bills are due this week|what meals have i planned(?: this week)?|what meal ideas do i have this week|what meal do i have planned|what household (?:items|things|stuff) (?:are )?(?:still open|do i have)|what should i remember to get tonight|what('?s| is) left for tonight|what should i handle this weekend|what('?s| is) missing for dinner|what recurring (?:things|items) (?:are )?(?:coming back|coming up)(?: soon)?)\b/.test(
-        lower,
-      )
-    ) {
+  if (
+    /^(show me (?:my )?(?:grocery|shopping) list|what('?s| is) on my (?:grocery|shopping) list|what('?s| is) on my list|what('?s| is) on groceries|what do (?:we|i) need from the store(?: again)?|what do i still need to buy|what errands do i have|what('?s| is) (?:still )?on my errands list|what bills do i need to pay(?: this week| soon)?|what bills are due this week|what meals have i planned(?: this week)?|what meal ideas do i have this week|what meal do i have planned|what household (?:items|things|stuff) (?:are )?(?:still open|do i have)|what should i remember to get tonight|what('?s| is) left for tonight|what should i handle this weekend|what('?s| is) missing for dinner|what recurring (?:things|items) (?:are )?(?:coming back|coming up)(?: soon)?)\b/.test(
+      lower,
+    )
+  ) {
     return {
       capabilityId: 'capture.read_items',
       normalizedText: normalized,
       canonicalText: normalized,
       reason: 'matched everyday list readout phrasing',
     };
-    }
-    if (
-      /^(repeat (?:this|that) (?:every day|daily|every week|weekly|every month|monthly|every (?:monday|tuesday|wednesday|thursday|friday|saturday|sunday))|stop repeating (?:this|that)|reopen (?:this|that)|move (?:this|that) to groceries|save (?:this|that) under groceries|make (?:this|that) part of my weekend list|put (?:this|that) in tonight'?s plan)\b/.test(
-        lower,
-      )
-    ) {
-      return {
-        capabilityId: 'capture.update_item',
-        normalizedText: normalized,
-        canonicalText: normalized,
-        reason: 'matched everyday list update phrasing',
-      };
-    }
-    return null;
   }
+  if (
+    /^(repeat (?:this|that) (?:every day|daily|every week|weekly|every month|monthly|every (?:monday|tuesday|wednesday|thursday|friday|saturday|sunday))|stop repeating (?:this|that)|reopen (?:this|that)|move (?:this|that) to groceries|save (?:this|that) under groceries|make (?:this|that) part of my weekend list|put (?:this|that) in tonight'?s plan)\b/.test(
+      lower,
+    )
+  ) {
+    return {
+      capabilityId: 'capture.update_item',
+      normalizedText: normalized,
+      canonicalText: normalized,
+      reason: 'matched everyday list update phrasing',
+    };
+  }
+  return null;
+}
 
 function buildOpenAskCandidates(query: string): string[] {
   const trimmed = normalizeText(query);
@@ -204,8 +204,7 @@ function buildOpenAskCandidates(query: string): string[] {
   }
 
   const figureOutTopic =
-    trimmed.match(/^(?:help me )?figure out (.+)$/i)?.[1]?.trim() ||
-    undefined;
+    trimmed.match(/^(?:help me )?figure out (.+)$/i)?.[1]?.trim() || undefined;
   if (figureOutTopic) {
     return [
       `help me plan ${figureOutTopic}`,
@@ -264,7 +263,10 @@ function buildBroadAlexaCandidates(
       return ["what's next on my calendar", "what's coming up"];
     }
     if (/\b(first meeting tomorrow|first meeting)\b/.test(lower)) {
-      return ['when is my first meeting tomorrow', 'what is on my calendar tomorrow'];
+      return [
+        'when is my first meeting tomorrow',
+        'what is on my calendar tomorrow',
+      ];
     }
     if (/\b(pills?|meds?|medication|medicine)\b/.test(lower)) {
       return ['remind me to take my pills at 9', 'add my pills to tonight'];
@@ -276,7 +278,10 @@ function buildBroadAlexaCandidates(
       return ["what's on my list", 'what do I still need to buy'];
     }
     if (/\b(meal|meals|meal plan)\b/.test(lower)) {
-      return ['help me plan meals this week', 'what meals have I planned this week'];
+      return [
+        'help me plan meals this week',
+        'what meals have I planned this week',
+      ];
     }
     if (
       /\b(forget|forgetting|forgot|missing|overlook|loose end|loose ends|not handled)\b/.test(
@@ -331,7 +336,10 @@ function buildBroadAlexaCandidates(
       return ['send me the full version'];
     }
     if (/\b(list|groceries)\b/.test(lower)) {
-      return [`add ${trimmed} to my shopping list`, `save ${trimmed} for later`];
+      return [
+        `add ${trimmed} to my shopping list`,
+        `save ${trimmed} for later`,
+      ];
     }
     if (isBareAlexaReference(trimmed)) {
       return [
@@ -719,7 +727,8 @@ function matchCommunicationPrompt(
   normalized: string,
 ): AssistantCapabilityMatch | null {
   const lower = normalized.toLowerCase();
-  const allSyncedSummaryIntent = parseAllSyncedMessagesSummaryIntent(normalized);
+  const allSyncedSummaryIntent =
+    parseAllSyncedMessagesSummaryIntent(normalized);
   if (allSyncedSummaryIntent) {
     return {
       capabilityId: 'communication.summarize_thread',
@@ -744,7 +753,8 @@ function matchCommunicationPrompt(
       capabilityId: 'communication.summarize_thread',
       normalizedText: normalized,
       canonicalText: normalized,
-      reason: 'matched generic synced Messages summary phrasing that needs a thread clarification',
+      reason:
+        'matched generic synced Messages summary phrasing that needs a thread clarification',
     };
   }
   if (
@@ -916,7 +926,9 @@ function matchStaffPrompt(normalized: string): AssistantCapabilityMatch | null {
     /^walk me through tonight\b/.test(lower) ||
     /^talk me through tonight\b/.test(lower) ||
     /^what are the biggest open loops right now\b/.test(lower) ||
-    /^what bills do i need to pay(?: this week| this month| soon)?\b/.test(lower) ||
+    /^what bills do i need to pay(?: this week| this month| soon)?\b/.test(
+      lower,
+    ) ||
     /^what bills are coming up\b/.test(lower) ||
     /^what do i need to pay(?: this week| this month)?\b/.test(lower)
   ) {
@@ -1273,13 +1285,15 @@ function continueAssistantCapabilityFromActiveCapability(
           ? 'staff.explain'
           : /^what matters before my next meeting\b/.test(lower)
             ? 'staff.prepare'
-          : /^be less aggressive about surfacing family stuff\b/.test(lower) ||
-              /^don'?t suggest work right now\b/.test(lower) ||
-              /^be more direct\b/.test(lower) ||
-              /^be calmer\b/.test(lower) ||
-              /^reset my planning preferences\b/.test(lower)
-            ? 'staff.configure'
-            : 'staff.prioritize';
+            : /^be less aggressive about surfacing family stuff\b/.test(
+                  lower,
+                ) ||
+                /^don'?t suggest work right now\b/.test(lower) ||
+                /^be more direct\b/.test(lower) ||
+                /^be calmer\b/.test(lower) ||
+                /^reset my planning preferences\b/.test(lower)
+              ? 'staff.configure'
+              : 'staff.prioritize';
     return {
       capabilityId: nextCapabilityId,
       normalizedText: normalized,

@@ -12,7 +12,12 @@ async function startControlStub(): Promise<{
   requests: Array<{ method: string; url: string; body: string; auth: string }>;
   close(): Promise<void>;
 }> {
-  const requests: Array<{ method: string; url: string; body: string; auth: string }> = [];
+  const requests: Array<{
+    method: string;
+    url: string;
+    body: string;
+    auth: string;
+  }> = [];
   const server = http.createServer(async (req, res) => {
     const chunks: Buffer[] = [];
     for await (const chunk of req) {
@@ -27,7 +32,9 @@ async function startControlStub(): Promise<{
     res.statusCode = 200;
     res.setHeader('Content-Type', 'application/json');
     if ((req.url || '').startsWith('/v1/bluebubbles/status')) {
-      res.end(JSON.stringify({ status: { proofState: 'degraded_but_usable' } }));
+      res.end(
+        JSON.stringify({ status: { proofState: 'degraded_but_usable' } }),
+      );
       return;
     }
     if ((req.url || '').startsWith('/v1/bluebubbles/send')) {

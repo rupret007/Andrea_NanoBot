@@ -65,7 +65,7 @@ export function hasGoogleCalendarCredentialMaterial(
 ): boolean {
   return Boolean(
     config.accessToken ||
-      (config.refreshToken && config.clientId && config.clientSecret),
+    (config.refreshToken && config.clientId && config.clientSecret),
   );
 }
 
@@ -81,7 +81,8 @@ export function buildGoogleCalendarBlockedProofSurface(
     case 'missing_config':
       return {
         proofState: 'externally_blocked',
-        blocker: 'Google Calendar is not connected in Andrea_NanoBot on this host.',
+        blocker:
+          'Google Calendar is not connected in Andrea_NanoBot on this host.',
         detail:
           compact ||
           'Andrea_NanoBot does not currently have usable Google Calendar credentials in its own .env.',
@@ -106,8 +107,7 @@ export function buildGoogleCalendarBlockedProofSurface(
     case 'token_refresh_failed':
       return {
         proofState: 'externally_blocked',
-        blocker:
-          'Google Calendar token refresh is failing on this host.',
+        blocker: 'Google Calendar token refresh is failing on this host.',
         detail: compact || 'Google Calendar token refresh failed.',
         nextAction:
           'Re-run the current-repo Google Calendar auth flow, then validate again.',
@@ -139,8 +139,11 @@ export function buildGoogleCalendarBlockedProofSurface(
     case 'temporary_unavailable':
       return {
         proofState: 'near_live_only',
-        blocker: 'Google Calendar is configured, but the provider is temporarily unavailable right now.',
-        detail: compact || 'Google Calendar did not respond cleanly during this proof attempt.',
+        blocker:
+          'Google Calendar is configured, but the provider is temporarily unavailable right now.',
+        detail:
+          compact ||
+          'Google Calendar did not respond cleanly during this proof attempt.',
         nextAction:
           'Retry the same validate or proof command once the network/provider issue clears.',
         checkedAt,
@@ -182,13 +185,11 @@ export function buildGoogleCalendarBlockedProofSurface(
   }
 }
 
-export function buildGoogleCalendarNearLiveSurface(
-  input: {
-    checkedAt: string;
-    source: ProviderProofSource;
-    validatedCalendars: GoogleCalendarMetadata[];
-  },
-): ProviderProofSurfaceState {
+export function buildGoogleCalendarNearLiveSurface(input: {
+  checkedAt: string;
+  source: ProviderProofSource;
+  validatedCalendars: GoogleCalendarMetadata[];
+}): ProviderProofSurfaceState {
   const names = describeCalendarList(input.validatedCalendars);
   return {
     proofState: 'near_live_only',
@@ -212,8 +213,9 @@ function resolveTargetCalendar(
   if (writableCalendars.length === 0) return null;
   if (preferredCalendarId) {
     return (
-      writableCalendars.find((calendar) => calendar.id === preferredCalendarId) ||
-      null
+      writableCalendars.find(
+        (calendar) => calendar.id === preferredCalendarId,
+      ) || null
     );
   }
   return (

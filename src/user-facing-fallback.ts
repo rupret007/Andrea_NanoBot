@@ -23,7 +23,12 @@ export function buildSilentSuccessFallback(
   const normalized = normalize(lastContent);
 
   if (route === 'direct_assistant') {
-    return buildDirectAssistantRuntimeFailureReply(messages, null, new Date(), channel);
+    return buildDirectAssistantRuntimeFailureReply(
+      messages,
+      null,
+      new Date(),
+      channel,
+    );
   }
 
   if (route === 'protected_assistant') {
@@ -69,11 +74,7 @@ export function maybeShieldProtectedAssistantOutput(
       (options.forceLiveLookupFallback || normalizedOutput.length > 0)) ||
     looksRuntimeish
   ) {
-    return buildSilentSuccessFallback(
-      'protected_assistant',
-      messages,
-      channel,
-    );
+    return buildSilentSuccessFallback('protected_assistant', messages, channel);
   }
 
   return null;

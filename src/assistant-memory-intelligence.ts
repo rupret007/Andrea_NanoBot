@@ -118,7 +118,11 @@ export function buildMemoryReadPlan(
         safeWriteClasses: ['episode_record', 'outcome_learning'],
         reason:
           'Chief-of-staff and planning work need continuity, personal context, and procedural guidance together.',
-        sources: ['active life threads', 'accepted profile facts', 'ritual profiles'],
+        sources: [
+          'active life threads',
+          'accepted profile facts',
+          'ritual profiles',
+        ],
       };
     case 'communication':
       return {
@@ -128,7 +132,11 @@ export function buildMemoryReadPlan(
         safeWriteClasses: ['episode_record', 'preference_candidate'],
         reason:
           'Reply help needs recent continuity plus stable people/preferences context, but durable writes stay conservative.',
-        sources: ['thread continuity', 'people facts', 'communication preferences'],
+        sources: [
+          'thread continuity',
+          'people facts',
+          'communication preferences',
+        ],
       };
     case 'calendar':
       return {
@@ -173,7 +181,11 @@ export function buildMemoryReadPlan(
         ],
         reason:
           'Capture flows read enough context to avoid duplication, then stage structured candidates instead of writing blind.',
-        sources: ['saved knowledge sources', 'accepted facts', 'current continuity'],
+        sources: [
+          'saved knowledge sources',
+          'accepted facts',
+          'current continuity',
+        ],
       };
     case 'unknown':
     default:
@@ -214,7 +226,9 @@ export function classifyMemoryCandidate(
     hotPath = false;
   } else if (grounded || explicitUserConfirmation) {
     writeClass =
-      input.taskFamily === 'communication' ? 'preference_candidate' : 'fact_candidate';
+      input.taskFamily === 'communication'
+        ? 'preference_candidate'
+        : 'fact_candidate';
     targetTier = 'semantic';
     hotPath = false;
   }
@@ -336,23 +350,31 @@ export function buildMemoryConsolidationReport(
 
   for (const groupFolder of groupFolders) {
     const tasks = safeList(() => getTasksForGroup(groupFolder));
-    const activeThreads = safeList(() => listLifeThreadsForGroup(groupFolder, ['active']));
+    const activeThreads = safeList(() =>
+      listLifeThreadsForGroup(groupFolder, ['active']),
+    );
     const facts = safeList(() => listProfileFactsForGroup(groupFolder)).filter(
       (fact) => fact.state === 'accepted',
     );
-    const sources = safeList(() => listKnowledgeSourcesForGroup(groupFolder)).filter(
-      (source) => !source.deletedAt && !source.disabledAt,
-    );
-    const rituals = safeList(() => listRitualProfilesForGroup(groupFolder)).filter(
-      (ritual) => ritual.enabled,
-    );
+    const sources = safeList(() =>
+      listKnowledgeSourcesForGroup(groupFolder),
+    ).filter((source) => !source.deletedAt && !source.disabledAt);
+    const rituals = safeList(() =>
+      listRitualProfilesForGroup(groupFolder),
+    ).filter((ritual) => ritual.enabled);
 
     const openTasks = tasks.filter((task) => task.status === 'active');
     const archivalCandidates = tasks.filter((task) => task.status !== 'active');
 
     episodesReviewed += openTasks.length + activeThreads.length;
-    semanticCandidates += Math.min(activeThreads.length + sources.length, facts.length + sources.length);
-    proceduralCandidates += Math.min(rituals.length + Math.floor(openTasks.length / 2), activeThreads.length + openTasks.length);
+    semanticCandidates += Math.min(
+      activeThreads.length + sources.length,
+      facts.length + sources.length,
+    );
+    proceduralCandidates += Math.min(
+      rituals.length + Math.floor(openTasks.length / 2),
+      activeThreads.length + openTasks.length,
+    );
     staleWorkingContextsExpired += archivalCandidates.length;
 
     const seenFactKeys = new Set<string>();
@@ -386,8 +408,8 @@ export function buildMemoryConsolidationReport(
       conflictsDetected > 0
         ? 'review_required'
         : semanticCandidates > 0 || proceduralCandidates > 0
-        ? 'candidate_ready'
-        : 'idle',
+          ? 'candidate_ready'
+          : 'idle',
     latestTouchedAt,
   };
 }
@@ -398,7 +420,8 @@ export function buildMemoryIntelligenceReport(
   const consolidation = buildMemoryConsolidationReport(groupFolders);
   return {
     arbitrationMode: 'task_family_scoped',
-    readPolicy: 'working_every_turn_semantic_when_grounded_procedural_when_relevant',
+    readPolicy:
+      'working_every_turn_semantic_when_grounded_procedural_when_relevant',
     writePolicy:
       'working_hot_path_semantic_grounded_or_confirmed_procedural_repeated_success_or_review',
     plannerPosture: 'low_risk_auto',
@@ -407,7 +430,9 @@ export function buildMemoryIntelligenceReport(
     episodesReviewed: String(consolidation.episodesReviewed),
     semanticCandidates: String(consolidation.semanticCandidates),
     proceduralCandidates: String(consolidation.proceduralCandidates),
-    staleWorkingContextsExpired: String(consolidation.staleWorkingContextsExpired),
+    staleWorkingContextsExpired: String(
+      consolidation.staleWorkingContextsExpired,
+    ),
     conflictsDetected: String(consolidation.conflictsDetected),
     promotionStatus: consolidation.promotionStatus,
     latestTouchedAt: consolidation.latestTouchedAt,

@@ -17,7 +17,13 @@ import {
 
 beforeEach(() => {
   _initTestDatabase();
-  storeChatMetadata('tg:1', '2026-04-03T08:00:00.000Z', 'Telegram', 'telegram', false);
+  storeChatMetadata(
+    'tg:1',
+    '2026-04-03T08:00:00.000Z',
+    'Telegram',
+    'telegram',
+    false,
+  );
 });
 
 describe('assistant personalization', () => {
@@ -122,7 +128,7 @@ describe('assistant personalization', () => {
       text: 'what do you remember about Candace',
     });
     expect(summary.handled).toBe(true);
-    expect(summary.responseText).toContain("Candace is your spouse");
+    expect(summary.responseText).toContain('Candace is your spouse');
   });
 
   it('uses conversation context for remember this and disables a referenced fact', () => {
@@ -173,7 +179,12 @@ describe('assistant personalization', () => {
 
     expect(candidate?.askText).toContain('short direct answers');
     expect(getProfileFact(candidate!.factId)?.state).toBe('proposed');
-    expect(acceptProposedProfileFact(candidate!.factId, new Date('2026-04-03T08:03:00.000Z'))).toBe(true);
+    expect(
+      acceptProposedProfileFact(
+        candidate!.factId,
+        new Date('2026-04-03T08:03:00.000Z'),
+      ),
+    ).toBe(true);
     expect(getProfileFact(candidate!.factId)?.state).toBe('accepted');
   });
 
@@ -204,7 +215,12 @@ describe('assistant personalization', () => {
     });
 
     expect(candidate).toBeTruthy();
-    expect(rejectProposedProfileFact(candidate!.factId, new Date('2026-04-03T09:03:00.000Z'))).toBe(true);
+    expect(
+      rejectProposedProfileFact(
+        candidate!.factId,
+        new Date('2026-04-03T09:03:00.000Z'),
+      ),
+    ).toBe(true);
     expect(getProfileFact(candidate!.factId)?.state).toBe('rejected');
   });
 
@@ -283,6 +299,8 @@ describe('assistant personalization', () => {
 
     const accepted = listProfileFactsForGroup('main', ['accepted']);
     expect(accepted.map((fact) => fact.factKey)).toContain('relation_to_user');
-    expect(accepted.map((fact) => fact.factKey)).not.toContain('response_style');
+    expect(accepted.map((fact) => fact.factKey)).not.toContain(
+      'response_style',
+    );
   });
 });

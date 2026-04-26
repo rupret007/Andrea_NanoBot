@@ -23,7 +23,8 @@ describe('buildAssistantCapabilityExecutionInput', () => {
 
   it('keeps explicit thread targets on named synced-thread summary asks', () => {
     const result = buildAssistantCapabilityExecutionInput({
-      lastContent: 'Summarize the texts today from the Pops of Punk text thread please',
+      lastContent:
+        'Summarize the texts today from the Pops of Punk text thread please',
       capabilityMatch: {
         capabilityId: 'communication.summarize_thread',
         canonicalText: 'summarize my text messages in Pops of Punk from today',

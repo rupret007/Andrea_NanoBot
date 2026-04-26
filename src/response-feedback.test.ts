@@ -93,8 +93,7 @@ describe('response feedback helpers', () => {
       [
         {
           label: 'Not helpful',
-          actionId:
-            'feedback:11111111-2222-3333-4444-555555555555:capture',
+          actionId: 'feedback:11111111-2222-3333-4444-555555555555:capture',
         },
       ],
     ]);
@@ -132,20 +131,17 @@ describe('response feedback helpers', () => {
       [
         {
           label: 'Commit + push',
-          actionId:
-            'feedback:11111111-2222-3333-4444-555555555555:commit_push',
+          actionId: 'feedback:11111111-2222-3333-4444-555555555555:commit_push',
         },
         {
           label: 'Commit only',
-          actionId:
-            'feedback:11111111-2222-3333-4444-555555555555:commit_only',
+          actionId: 'feedback:11111111-2222-3333-4444-555555555555:commit_only',
         },
       ],
       [
         {
           label: 'Keep local',
-          actionId:
-            'feedback:11111111-2222-3333-4444-555555555555:keep_local',
+          actionId: 'feedback:11111111-2222-3333-4444-555555555555:keep_local',
         },
         {
           label: 'Why',
@@ -197,20 +193,17 @@ describe('response feedback helpers', () => {
       [
         {
           label: 'Commit + push',
-          actionId:
-            'feedback:11111111-2222-3333-4444-555555555555:commit_push',
+          actionId: 'feedback:11111111-2222-3333-4444-555555555555:commit_push',
         },
         {
           label: 'Commit only',
-          actionId:
-            'feedback:11111111-2222-3333-4444-555555555555:commit_only',
+          actionId: 'feedback:11111111-2222-3333-4444-555555555555:commit_only',
         },
       ],
       [
         {
           label: 'Keep local',
-          actionId:
-            'feedback:11111111-2222-3333-4444-555555555555:keep_local',
+          actionId: 'feedback:11111111-2222-3333-4444-555555555555:keep_local',
         },
         {
           label: 'Why',
@@ -223,7 +216,8 @@ describe('response feedback helpers', () => {
   it('classifies manual-sync-only misses', () => {
     const result = classifyResponseFeedbackCandidate({
       originalUserText: 'why did Alexa miss that',
-      assistantReplyText: 'Please import the interaction model and Build Model.',
+      assistantReplyText:
+        'Please import the interaction model and Build Model.',
       routeKey: 'alexa.answer',
       capabilityId: 'alexa.answer',
       responseSource: 'fallback',
@@ -238,7 +232,8 @@ describe('response feedback helpers', () => {
   it('classifies blocked-provider misses', () => {
     const result = classifyResponseFeedbackCandidate({
       originalUserText: 'make me an image of a waterfall',
-      assistantReplyText: 'Image generation is blocked by provider quota right now.',
+      assistantReplyText:
+        'Image generation is blocked by provider quota right now.',
       routeKey: 'media.image_generate',
       capabilityId: 'media.image_generate',
       responseSource: 'media_handoff',

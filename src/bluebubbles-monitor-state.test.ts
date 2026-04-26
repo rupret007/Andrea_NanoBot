@@ -32,4 +32,3 @@ describe('BlueBubbles monitor state', () => {
     expect(reconciled.recentEvidence).toEqual([]);
   });
 });
-

@@ -19,9 +19,7 @@ import {
   type SelectedWorkContext,
   type UpcomingReminderSummary,
 } from './daily-command-center.js';
-import {
-  isExplicitGoogleCalendarCreateRequest,
-} from './google-calendar-create.js';
+import { isExplicitGoogleCalendarCreateRequest } from './google-calendar-create.js';
 import {
   planContextualReminder,
   planSimpleReminder,
@@ -143,18 +141,20 @@ export function shouldInterruptPendingActionLayerFlow(
   if (!trimmed) {
     return false;
   }
-  const freshCapabilityPrompt = Boolean(matchAssistantCapabilityRequest(message));
+  const freshCapabilityPrompt = Boolean(
+    matchAssistantCapabilityRequest(message),
+  );
   return Boolean(
     trimmed.startsWith('/') ||
-      looksLikeFreshDiscoveryPrompt(message) ||
-      looksLikeFreshWorkCockpitPrompt(message) ||
-      isPotentialDailyCompanionPrompt(message) ||
-      planCalendarAssistantLookup(message, now, timeZone) ||
-      isExplicitGoogleCalendarCreateRequest(message) ||
-      freshCapabilityPrompt ||
-      (params.groupFolder &&
-        params.chatJid &&
-        planSimpleReminder(message, params.groupFolder, params.chatJid, now)),
+    looksLikeFreshDiscoveryPrompt(message) ||
+    looksLikeFreshWorkCockpitPrompt(message) ||
+    isPotentialDailyCompanionPrompt(message) ||
+    planCalendarAssistantLookup(message, now, timeZone) ||
+    isExplicitGoogleCalendarCreateRequest(message) ||
+    freshCapabilityPrompt ||
+    (params.groupFolder &&
+      params.chatJid &&
+      planSimpleReminder(message, params.groupFolder, params.chatJid, now)),
   );
 }
 
@@ -232,7 +232,8 @@ function buildPendingReminderState(params: {
     label: params.label,
     status: params.status || 'awaiting_time',
     originChatJid: params.chatJid || null,
-    canonicalChatJid: canonicalizeBlueBubblesSelfThreadJid(params.chatJid) || null,
+    canonicalChatJid:
+      canonicalizeBlueBubblesSelfThreadJid(params.chatJid) || null,
     confirmation: params.confirmation || null,
     taskId: params.taskId || null,
   };
@@ -1304,9 +1305,7 @@ export function advancePendingActionReminder(
     if (!normalized) {
       return {
         kind: 'reply',
-        reply:
-          state.confirmation ||
-          `Yes. I'll remind you to ${state.label}.`,
+        reply: state.confirmation || `Yes. I'll remind you to ${state.label}.`,
         actionContext: buildActionSuggestionContext(state.label, now),
         activeEventContext: null,
       };
@@ -1314,9 +1313,7 @@ export function advancePendingActionReminder(
     if (isReminderConfirmationPrompt(normalized)) {
       return {
         kind: 'reply',
-        reply:
-          state.confirmation ||
-          `Yes. I'll remind you to ${state.label}.`,
+        reply: state.confirmation || `Yes. I'll remind you to ${state.label}.`,
         actionContext: buildActionSuggestionContext(state.label, now),
         activeEventContext: null,
       };
@@ -1578,7 +1575,9 @@ export async function buildActionLayerResponse(
     case 'capture_reminder': {
       const reminderLabel =
         intent.explicitTopic ||
-        (actionReference ? buildCaptureReminderLabel(actionReference, now) : null);
+        (actionReference
+          ? buildCaptureReminderLabel(actionReference, now)
+          : null);
       if (!reminderLabel) {
         return {
           kind: 'reply',
@@ -1601,7 +1600,8 @@ export async function buildActionLayerResponse(
             confirmation: plannedReminder.confirmation,
             task: plannedReminder.task,
             actionContext:
-              actionReference || buildActionSuggestionContext(reminderLabel, now),
+              actionReference ||
+              buildActionSuggestionContext(reminderLabel, now),
             state: buildPendingReminderState({
               label: reminderLabel,
               now,

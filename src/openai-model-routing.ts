@@ -96,10 +96,7 @@ export function detectOpenAiProviderMode(baseUrl: string): OpenAiProviderMode {
   }
 }
 
-export function isOpenAiModelRejection(
-  status: number,
-  body: string,
-): boolean {
+export function isOpenAiModelRejection(status: number, body: string): boolean {
   if (status !== 400 && status !== 404) {
     return false;
   }

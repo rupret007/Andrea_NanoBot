@@ -17,7 +17,10 @@ describe('assistant memory intelligence', () => {
     });
 
     expect(
-      buildMemoryReadPlan({ taskFamily: 'repo_operator', asksForMemory: false }),
+      buildMemoryReadPlan({
+        taskFamily: 'repo_operator',
+        asksForMemory: false,
+      }),
     ).toMatchObject({
       taskFamily: 'repo_operator',
       readTiers: ['working', 'procedural'],

@@ -10,19 +10,18 @@ describe('andrea platform shell bridge', () => {
   });
 
   it('posts shell intent and health events when the bridge is enabled', async () => {
-    vi.stubEnv(
-      'ANDREA_PLATFORM_SHELL_GATEWAY_URL',
-      'http://127.0.0.1:4401/',
-    );
+    vi.stubEnv('ANDREA_PLATFORM_SHELL_GATEWAY_URL', 'http://127.0.0.1:4401/');
 
     const calls: Array<{ url: string; body: unknown }> = [];
-    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
-      calls.push({
-        url: String(input),
-        body: init?.body,
-      });
-      return new Response(null, { status: 202 });
-    });
+    const fetchImpl = vi.fn(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        calls.push({
+          url: String(input),
+          body: init?.body,
+        });
+        return new Response(null, { status: 202 });
+      },
+    );
     vi.stubGlobal('fetch', fetchImpl as unknown as typeof fetch);
 
     const bridge = await import('./andrea-platform-bridge.js');
@@ -187,22 +186,24 @@ describe('andrea platform shell bridge', () => {
     vi.stubEnv('ANDREA_PLATFORM_FALLBACK_TO_DIRECT_RUNTIME', 'false');
 
     const calls: Array<{ url: string; body: unknown }> = [];
-    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
-      calls.push({
-        url: String(input),
-        body: init?.body,
-      });
-      return new Response(
-        JSON.stringify({
-          task: { task_ledger_id: 'task-1' },
-          progress: { progress_ledger_id: 'progress-1' },
-          reflection: { reflection_id: 'reflection-1' },
-          evaluation: { evaluation_id: 'evaluation-1' },
-          learning: { learning_id: 'learning-1' },
-        }),
-        { status: 200 },
-      );
-    });
+    const fetchImpl = vi.fn(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        calls.push({
+          url: String(input),
+          body: init?.body,
+        });
+        return new Response(
+          JSON.stringify({
+            task: { task_ledger_id: 'task-1' },
+            progress: { progress_ledger_id: 'progress-1' },
+            reflection: { reflection_id: 'reflection-1' },
+            evaluation: { evaluation_id: 'evaluation-1' },
+            learning: { learning_id: 'learning-1' },
+          }),
+          { status: 200 },
+        );
+      },
+    );
     vi.stubGlobal('fetch', fetchImpl as unknown as typeof fetch);
 
     const bridge = await import('./andrea-platform-bridge.js');
@@ -269,7 +270,8 @@ describe('andrea platform shell bridge', () => {
 
     expect(bridge.mapShellHealthFromChannelHealth(channelHealth)).toEqual({
       severity: 'healthy',
-      summary: 'NanoBot shell is running and all configured channels are ready.',
+      summary:
+        'NanoBot shell is running and all configured channels are ready.',
       detail: 'telegram, bluebubbles',
       metadata: {
         configuredChannels: '2',

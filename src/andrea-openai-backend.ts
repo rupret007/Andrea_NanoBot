@@ -181,7 +181,9 @@ function looksLikePlatformCoordinatorStatusBundle(
   if (!value || typeof value !== 'object') return false;
   const bundle = value as Record<string, unknown>;
   const snapshot = bundle.snapshot as Record<string, unknown> | undefined;
-  const backendStatus = bundle.backend_status as Record<string, unknown> | undefined;
+  const backendStatus = bundle.backend_status as
+    | Record<string, unknown>
+    | undefined;
   return (
     snapshot !== undefined &&
     typeof snapshot.lifecycle_state === 'string' &&
@@ -383,9 +385,7 @@ export class AndreaOpenAiBackendClient {
       !ANDREA_PLATFORM_FALLBACK_TO_DIRECT_RUNTIME
         ? ANDREA_PLATFORM_COORDINATOR_URL
         : ANDREA_OPENAI_BACKEND_URL);
-    this.baseUrl = trimTrailingSlashes(
-      resolvedBaseUrl,
-    );
+    this.baseUrl = trimTrailingSlashes(resolvedBaseUrl);
     this.timeoutMs = options.timeoutMs ?? ANDREA_OPENAI_BACKEND_TIMEOUT_MS;
     this.fetchImpl = options.fetchImpl ?? fetch;
   }
@@ -400,8 +400,9 @@ export class AndreaOpenAiBackendClient {
     );
   }
 
-  private async getStatusSnapshot():
-    Promise<RuntimeBackendStatusSnapshot | PlatformCoordinatorStatusBundle | null> {
+  private async getStatusSnapshot(): Promise<
+    RuntimeBackendStatusSnapshot | PlatformCoordinatorStatusBundle | null
+  > {
     try {
       const snapshot = await requestJson<unknown>(
         this.fetchImpl,
@@ -571,10 +572,12 @@ export class AndreaOpenAiBackendClient {
     });
   }
 
-  async capturePlatformReplay(input: {
-    sessionId?: string;
-    notes?: string;
-  } = {}): Promise<Record<string, unknown>> {
+  async capturePlatformReplay(
+    input: {
+      sessionId?: string;
+      notes?: string;
+    } = {},
+  ): Promise<Record<string, unknown>> {
     return requestJson<Record<string, unknown>>(
       this.fetchImpl,
       this.baseUrl,

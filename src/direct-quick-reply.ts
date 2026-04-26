@@ -27,11 +27,11 @@ function stripAndreaAddressing(normalized: string): string {
 function normalizeText(input: string): string {
   return stripAndreaAddressing(
     input
-    .toLowerCase()
-    .replace(/[\u201c\u201d]/g, '"')
-    .replace(/[\u2018\u2019]/g, "'")
-    .replace(/\s+/g, ' ')
-    .trim(),
+      .toLowerCase()
+      .replace(/[\u201c\u201d]/g, '"')
+      .replace(/[\u2018\u2019]/g, "'")
+      .replace(/\s+/g, ' ')
+      .trim(),
   );
 }
 
@@ -90,7 +90,10 @@ function pickDeterministicVariant(
   normalized: string,
   variants: readonly string[],
 ): string {
-  const seed = [...normalized].reduce((sum, char) => sum + char.charCodeAt(0), 0);
+  const seed = [...normalized].reduce(
+    (sum, char) => sum + char.charCodeAt(0),
+    0,
+  );
   return variants[seed % variants.length] || variants[0] || '';
 }
 
@@ -315,17 +318,13 @@ export function maybeBuildDirectQuickReply(
   ) {
     return pickDeterministicVariant(normalized, [
       'Keeping an eye on things and ready to help.',
-      "Hanging out quietly until you throw me something useful.",
+      'Hanging out quietly until you throw me something useful.',
       'Staying ready and trying not to make your chat weird.',
     ]);
   }
 
   if (
-    isStandalonePrompt(
-      normalized,
-      /^(?:can you help me|help me)\??[!. ]*$/,
-      5,
-    )
+    isStandalonePrompt(normalized, /^(?:can you help me|help me)\??[!. ]*$/, 5)
   ) {
     return pickDeterministicVariant(normalized, [
       'Yes. Tell me what you want to get done and I will help you work through it.',
@@ -344,7 +343,7 @@ export function maybeBuildDirectQuickReply(
     return pickDeterministicVariant(normalized, [
       "I'm here.",
       "I'm here and ready.",
-      "Still here.",
+      'Still here.',
     ]);
   }
 

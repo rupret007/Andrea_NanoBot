@@ -46,13 +46,17 @@ describe('companion conversation binding', () => {
   });
 
   it('maps all-synced BlueBubbles chats into the shared companion folder without making them main', () => {
-    const binding = resolveCompanionConversationBinding('bb:chat-123', registeredGroups, {
-      bluebubbles: {
-        enabled: true,
-        chatScope: 'all_synced',
-        groupFolder: 'main',
+    const binding = resolveCompanionConversationBinding(
+      'bb:chat-123',
+      registeredGroups,
+      {
+        bluebubbles: {
+          enabled: true,
+          chatScope: 'all_synced',
+          groupFolder: 'main',
+        },
       },
-    });
+    );
 
     expect(binding).toMatchObject({
       chatJid: 'bb:chat-123',
@@ -141,22 +145,30 @@ describe('companion conversation binding', () => {
     );
 
     expect(
-      resolveCompanionConversationBinding('bb:iMessage;+;chat-dm', registeredGroups, {
-        bluebubbles: {
-          enabled: true,
-          chatScope: 'contacts_only',
-          groupFolder: 'main',
+      resolveCompanionConversationBinding(
+        'bb:iMessage;+;chat-dm',
+        registeredGroups,
+        {
+          bluebubbles: {
+            enabled: true,
+            chatScope: 'contacts_only',
+            groupFolder: 'main',
+          },
         },
-      }),
+      ),
     ).toBeTruthy();
     expect(
-      resolveCompanionConversationBinding('bb:iMessage;+;chat-group', registeredGroups, {
-        bluebubbles: {
-          enabled: true,
-          chatScope: 'contacts_only',
-          groupFolder: 'main',
+      resolveCompanionConversationBinding(
+        'bb:iMessage;+;chat-group',
+        registeredGroups,
+        {
+          bluebubbles: {
+            enabled: true,
+            chatScope: 'contacts_only',
+            groupFolder: 'main',
+          },
         },
-      }),
+      ),
     ).toBeUndefined();
   });
 

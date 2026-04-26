@@ -238,7 +238,8 @@ function planRuntimeExecution(
     request.routeHint ||
     classifyRuntimeRoute(request.requestPolicy, request.prompt);
   const preferredRuntime =
-    request.requestedRuntime || selectPreferredRuntime(existingThread, runtimeRoute);
+    request.requestedRuntime ||
+    selectPreferredRuntime(existingThread, runtimeRoute);
   const reusedThreadId =
     existingThread &&
     shouldReuseExistingThread(existingThread, preferredRuntime)
@@ -366,7 +367,9 @@ function reconcileOrphanedRunningJob(
     return job;
   }
 
-  const startedAtMs = Date.parse(job.startedAt || job.updatedAt || job.createdAt);
+  const startedAtMs = Date.parse(
+    job.startedAt || job.updatedAt || job.createdAt,
+  );
   if (
     Number.isFinite(startedAtMs) &&
     Date.now() - startedAtMs < ORPHANED_RUNNING_JOB_GRACE_MS
@@ -787,17 +790,17 @@ export function createRuntimeOrchestrationService(
         limit: clampJobListLimit(query.limit),
       });
 
-        return {
-          jobs: result.jobs.map(
-            (job) =>
-              toPublicJob(
-                reconcileOrphanedRunningJob(deps, job.jobId) ||
-                  (job as RuntimeOrchestrationJobRecord),
-              )!,
-          ),
-          nextBeforeJobId: result.nextBeforeJobId || null,
-        };
-      },
+      return {
+        jobs: result.jobs.map(
+          (job) =>
+            toPublicJob(
+              reconcileOrphanedRunningJob(deps, job.jobId) ||
+                (job as RuntimeOrchestrationJobRecord),
+            )!,
+        ),
+        nextBeforeJobId: result.nextBeforeJobId || null,
+      };
+    },
 
     getJobLogs(query: GetRuntimeJobLogsRequest): RuntimeJobLogsResult {
       const job = getRuntimeOrchestrationJob(query.jobId);

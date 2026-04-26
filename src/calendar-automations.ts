@@ -241,7 +241,9 @@ export type CalendarAutomationPlanResult =
       message: string;
     };
 
-function looksLikeCalendarEventDeleteFollowThrough(normalized: string): boolean {
+function looksLikeCalendarEventDeleteFollowThrough(
+  normalized: string,
+): boolean {
   if (!/^(?:delete|remove)\b/.test(normalized)) {
     return false;
   }

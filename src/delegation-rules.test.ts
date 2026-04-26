@@ -53,8 +53,7 @@ function seedRule(
     channelApplicabilityJson:
       overrides.channelApplicabilityJson ||
       JSON.stringify(['telegram', 'alexa', 'bluebubbles']),
-    safetyLevel:
-      overrides.safetyLevel || 'safe_to_auto_after_delegation',
+    safetyLevel: overrides.safetyLevel || 'safe_to_auto_after_delegation',
   };
   upsertDelegationRule(record);
   return record;

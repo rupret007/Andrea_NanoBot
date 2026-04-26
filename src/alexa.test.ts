@@ -60,10 +60,9 @@ vi.mock('./alexa-bridge.js', async () => {
 });
 
 vi.mock('./daily-companion.js', async () => {
-  const actual =
-    await vi.importActual<typeof import('./daily-companion.js')>(
-      './daily-companion.js',
-    );
+  const actual = await vi.importActual<typeof import('./daily-companion.js')>(
+    './daily-companion.js',
+  );
   return {
     ...actual,
     buildDailyCompanionResponse: vi.fn(),
@@ -71,10 +70,9 @@ vi.mock('./daily-companion.js', async () => {
 });
 
 vi.mock('./google-calendar.js', async () => {
-  const actual =
-    await vi.importActual<typeof import('./google-calendar.js')>(
-      './google-calendar.js',
-    );
+  const actual = await vi.importActual<typeof import('./google-calendar.js')>(
+    './google-calendar.js',
+  );
   return {
     ...actual,
     createGoogleCalendarEvent: vi.fn(),
@@ -87,7 +85,9 @@ vi.mock('./google-calendar.js', async () => {
 });
 
 const mockedRunAlexaAssistantTurn = vi.mocked(runAlexaAssistantTurn);
-const mockedBuildDailyCompanionResponse = vi.mocked(buildDailyCompanionResponse);
+const mockedBuildDailyCompanionResponse = vi.mocked(
+  buildDailyCompanionResponse,
+);
 const mockedCreateGoogleCalendarEvent = vi.mocked(createGoogleCalendarEvent);
 const mockedListGoogleCalendarEvents = vi.mocked(listGoogleCalendarEvents);
 const mockedListGoogleCalendars = vi.mocked(listGoogleCalendars);
@@ -95,8 +95,7 @@ const mockedUpdateGoogleCalendarEvent = vi.mocked(updateGoogleCalendarEvent);
 const ALEXA_LAST_SIGNED_REQUEST_STATE_SUFFIX = process.env.VITEST_WORKER_ID
   ? `-${process.env.VITEST_WORKER_ID}`
   : '';
-const ALEXA_LAST_SIGNED_REQUEST_STATE_PATH =
-  `C:/Users/rupret/Desktop/Andrea_NanoBot/data/runtime/alexa-last-signed-request${ALEXA_LAST_SIGNED_REQUEST_STATE_SUFFIX}.json`;
+const ALEXA_LAST_SIGNED_REQUEST_STATE_PATH = `C:/Users/rupret/Desktop/Andrea_NanoBot/data/runtime/alexa-last-signed-request${ALEXA_LAST_SIGNED_REQUEST_STATE_SUFFIX}.json`;
 
 function buildBaseEnvelope(): RequestEnvelope {
   return {
@@ -200,22 +199,21 @@ function buildCompanionResponse(
   const channel = overrides.channel ?? 'alexa';
   const mode = overrides.mode ?? 'morning_brief';
   const subjectKind = overrides.context?.subjectKind ?? 'day_brief';
-  const supportedFollowups =
-    overrides.context?.supportedFollowups ?? [
-      'anything_else',
-      'shorter',
-      'say_more',
-      'action_guidance',
-      'risk_check',
-      'switch_person',
-      'memory_control',
-      'send_details',
-      'save_to_library',
-      'track_thread',
-      'create_reminder',
-      'save_for_later',
-      'draft_follow_up',
-    ];
+  const supportedFollowups = overrides.context?.supportedFollowups ?? [
+    'anything_else',
+    'shorter',
+    'say_more',
+    'action_guidance',
+    'risk_check',
+    'switch_person',
+    'memory_control',
+    'send_details',
+    'save_to_library',
+    'track_thread',
+    'create_reminder',
+    'save_for_later',
+    'draft_follow_up',
+  ];
 
   return {
     reply,
@@ -249,8 +247,9 @@ function buildCompanionResponse(
       supportedFollowups,
       subjectData: overrides.context?.subjectData ?? {},
       toneProfile: overrides.context?.toneProfile ?? 'balanced',
-      extraDetails:
-        overrides.context?.extraDetails ?? ['A little more context.'],
+      extraDetails: overrides.context?.extraDetails ?? [
+        'A little more context.',
+      ],
       memoryLines: overrides.context?.memoryLines ?? [],
       usedThreadIds: overrides.context?.usedThreadIds ?? [],
       usedThreadTitles: overrides.context?.usedThreadTitles ?? [],
@@ -313,8 +312,7 @@ function seedDelegationRule(
     channelApplicabilityJson:
       overrides.channelApplicabilityJson ||
       JSON.stringify(['telegram', 'alexa', 'bluebubbles']),
-    safetyLevel:
-      overrides.safetyLevel || 'safe_to_auto_after_delegation',
+    safetyLevel: overrides.safetyLevel || 'safe_to_auto_after_delegation',
   };
   upsertDelegationRule(record);
   return record;
@@ -419,9 +417,7 @@ describe('Alexa speech shaping', () => {
     expect(normalized).toContain(
       'At 2:00 PM to 3:00 PM, Appointment with Lifetime Dental Flower Mound.',
     );
-    expect(normalized).toContain(
-      'At 7:00 PM to 8:00 PM, dinner with Candace',
-    );
+    expect(normalized).toContain('At 7:00 PM to 8:00 PM, dinner with Candace');
     expect(normalized).not.toContain('3208 Long Prairie Road');
     expect(normalized).not.toContain('save the key result to the library');
   });
@@ -449,10 +445,11 @@ describe('createAlexaSkill', () => {
     mockedListGoogleCalendarEvents.mockReset();
     mockedListGoogleCalendars.mockReset();
     mockedUpdateGoogleCalendarEvent.mockReset();
-    mockedBuildDailyCompanionResponse.mockImplementation(async (message, deps) =>
-      buildCompanionResponse(`Local companion: ${message}`, {
-        channel: deps.channel,
-      }),
+    mockedBuildDailyCompanionResponse.mockImplementation(
+      async (message, deps) =>
+        buildCompanionResponse(`Local companion: ${message}`, {
+          channel: deps.channel,
+        }),
     );
     setRegisteredGroup('tg:main', {
       name: 'Main',
@@ -469,9 +466,7 @@ describe('createAlexaSkill', () => {
     const skill = createAlexaSkill(buildConfig());
     const response = await skill.invoke(buildBaseEnvelope());
 
-    expect(extractSpeechText(response)).toContain(
-      `This is ${ASSISTANT_NAME}.`,
-    );
+    expect(extractSpeechText(response)).toContain(`This is ${ASSISTANT_NAME}.`);
   });
 
   it('returns a link-account response for personal intents with no token', async () => {
@@ -632,7 +627,9 @@ describe('createAlexaSkill', () => {
     );
 
     const skill = createAlexaSkill(buildConfig());
-    const response = await skill.invoke(buildIntentEnvelope('FamilyUpcomingIntent'));
+    const response = await skill.invoke(
+      buildIntentEnvelope('FamilyUpcomingIntent'),
+    );
 
     expect(mockedBuildDailyCompanionResponse).toHaveBeenCalledWith(
       'what does the family have going on',
@@ -687,7 +684,9 @@ describe('createAlexaSkill', () => {
     );
 
     expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
-    expect(extractSpeechText(response)).toContain('added that to the family thread');
+    expect(extractSpeechText(response)).toContain(
+      'added that to the family thread',
+    );
   });
 
   it('routes AnythingImportantIntent as risk-aware guidance', async () => {
@@ -788,7 +787,9 @@ describe('createAlexaSkill', () => {
     );
 
     const skill = createAlexaSkill(buildConfig());
-    const response = await skill.invoke(buildIntentEnvelope('EveningResetIntent'));
+    const response = await skill.invoke(
+      buildIntentEnvelope('EveningResetIntent'),
+    );
 
     expect(mockedBuildDailyCompanionResponse).toHaveBeenCalledWith(
       'give me an evening reset',
@@ -816,14 +817,19 @@ describe('createAlexaSkill', () => {
         ),
       )
       .mockResolvedValueOnce(
-        buildCompanionResponse('You also have a free stretch in the afternoon.', {
-          mode: 'open_guidance',
-        }),
+        buildCompanionResponse(
+          'You also have a free stretch in the afternoon.',
+          {
+            mode: 'open_guidance',
+          },
+        ),
       );
 
     const skill = createAlexaSkill(buildConfig());
     await skill.invoke(buildIntentEnvelope('TomorrowCalendarIntent'));
-    const response = await skill.invoke(buildIntentEnvelope('AnythingElseIntent'));
+    const response = await skill.invoke(
+      buildIntentEnvelope('AnythingElseIntent'),
+    );
 
     expect(mockedBuildDailyCompanionResponse).toHaveBeenLastCalledWith(
       'anything else',
@@ -841,10 +847,12 @@ describe('createAlexaSkill', () => {
 
   it('nudges the user back to a clear anchor when anything else has no Alexa context yet', async () => {
     const skill = createAlexaSkill(buildConfig());
-    const response = await skill.invoke(buildIntentEnvelope('AnythingElseIntent'));
+    const response = await skill.invoke(
+      buildIntentEnvelope('AnythingElseIntent'),
+    );
 
     expect(extractSpeechText(response)).toContain(
-      "Start with what you want to check",
+      'Start with what you want to check',
     );
     expect(extractSpeechText(response)).toContain("what you're forgetting");
     expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
@@ -1243,10 +1251,7 @@ describe('createAlexaSkill', () => {
 
   it('rejects literal digits in Alexa interaction-model sample utterances', () => {
     const interactionModel = JSON.parse(
-      fs.readFileSync(
-        'docs/alexa/interaction-model.en-US.json',
-        'utf8',
-      ),
+      fs.readFileSync('docs/alexa/interaction-model.en-US.json', 'utf8'),
     ) as {
       interactionModel?: {
         languageModel?: {
@@ -1259,22 +1264,19 @@ describe('createAlexaSkill', () => {
     };
 
     const invalidSamples =
-      interactionModel.interactionModel?.languageModel?.intents
-        ?.flatMap((intent) =>
+      interactionModel.interactionModel?.languageModel?.intents?.flatMap(
+        (intent) =>
           (intent.samples || [])
             .filter((sample) => /\d/.test(sample))
             .map((sample) => `${intent.name}: ${sample}`),
-        ) || [];
+      ) || [];
 
     expect(invalidSamples).toEqual([]);
   });
 
   it('rejects SearchQuery-plus-structured-slot mixing anywhere in the Alexa interaction model', () => {
     const interactionModel = JSON.parse(
-      fs.readFileSync(
-        'docs/alexa/interaction-model.en-US.json',
-        'utf8',
-      ),
+      fs.readFileSync('docs/alexa/interaction-model.en-US.json', 'utf8'),
     ) as {
       interactionModel?: {
         languageModel?: {
@@ -1291,10 +1293,13 @@ describe('createAlexaSkill', () => {
     };
 
     const invalidSamples =
-      interactionModel.interactionModel?.languageModel?.intents
-        ?.flatMap((intent) => {
+      interactionModel.interactionModel?.languageModel?.intents?.flatMap(
+        (intent) => {
           const slotTypes = Object.fromEntries(
-            (intent.slots || []).map((slot) => [slot.name || '', slot.type || '']),
+            (intent.slots || []).map((slot) => [
+              slot.name || '',
+              slot.type || '',
+            ]),
           );
           return (intent.samples || []).flatMap((sample) => {
             const slotNames = [...sample.matchAll(/\{([^}]+)\}/g)].map(
@@ -1308,17 +1313,15 @@ describe('createAlexaSkill', () => {
             );
             return mixesSearchQuery ? [`${intent.name}: ${sample}`] : [];
           });
-        }) || [];
+        },
+      ) || [];
 
     expect(invalidSamples).toEqual([]);
   });
 
   it('references every Alexa interaction-model slot in at least one sample', () => {
     const interactionModel = JSON.parse(
-      fs.readFileSync(
-        'docs/alexa/interaction-model.en-US.json',
-        'utf8',
-      ),
+      fs.readFileSync('docs/alexa/interaction-model.en-US.json', 'utf8'),
     ) as {
       interactionModel?: {
         languageModel?: {
@@ -1355,10 +1358,7 @@ describe('createAlexaSkill', () => {
 
   it('tracks the focused write intents and repeat intent in the Alexa interaction model', () => {
     const interactionModel = JSON.parse(
-      fs.readFileSync(
-        'docs/alexa/interaction-model.en-US.json',
-        'utf8',
-      ),
+      fs.readFileSync('docs/alexa/interaction-model.en-US.json', 'utf8'),
     ) as {
       interactionModel?: {
         languageModel?: {
@@ -1418,9 +1418,12 @@ describe('createAlexaSkill', () => {
 
   it('keeps what should I remember tonight on the guidance path instead of treating it like a calendar lookup', async () => {
     mockedBuildDailyCompanionResponse.mockResolvedValue(
-      buildCompanionResponse('Tonight is mostly about closing the dinner loop.', {
-        mode: 'evening_reset',
-      }),
+      buildCompanionResponse(
+        'Tonight is mostly about closing the dinner loop.',
+        {
+          mode: 'evening_reset',
+        },
+      ),
     );
 
     const skill = createAlexaSkill(buildConfig());
@@ -1483,7 +1486,9 @@ describe('createAlexaSkill', () => {
           'Your next step is to review the agenda for that meeting.',
         ),
       )
-      .mockResolvedValueOnce(buildCompanionResponse('Review the agenda first.'));
+      .mockResolvedValueOnce(
+        buildCompanionResponse('Review the agenda first.'),
+      );
 
     const skill = createAlexaSkill(buildConfig());
     await skill.invoke(buildIntentEnvelope('WhatNextIntent'));
@@ -1506,7 +1511,9 @@ describe('createAlexaSkill', () => {
 
   it('repeats the last Alexa companion answer cleanly', async () => {
     mockedBuildDailyCompanionResponse.mockResolvedValue(
-      buildCompanionResponse('Today is light. The main thing is your afternoon review.'),
+      buildCompanionResponse(
+        'Today is light. The main thing is your afternoon review.',
+      ),
     );
 
     const skill = createAlexaSkill(buildConfig());
@@ -1566,7 +1573,10 @@ describe('createAlexaSkill', () => {
             context: {
               ...buildCompanionResponse('x').context,
               subjectKind: 'household',
-              subjectData: { householdFocus: true, activePeople: ['Candace', 'Travis'] },
+              subjectData: {
+                householdFocus: true,
+                activePeople: ['Candace', 'Travis'],
+              },
             },
           },
         ),
@@ -1639,19 +1649,22 @@ describe('createAlexaSkill', () => {
         ),
       )
       .mockResolvedValueOnce(
-        buildCompanionResponse('Review the agenda, then send the short update.', {
-          mode: 'open_guidance',
-          context: {
-            ...buildCompanionResponse('x').context,
-            summaryText: 'review the agenda before the call',
-            recommendationText: null,
-            supportedFollowups: ['memory_control'],
-            usedThreadIds: [],
-            usedThreadTitles: [],
-            threadSummaryLines: [],
-            shortText: 'Review the agenda, then send the short update.',
+        buildCompanionResponse(
+          'Review the agenda, then send the short update.',
+          {
+            mode: 'open_guidance',
+            context: {
+              ...buildCompanionResponse('x').context,
+              summaryText: 'review the agenda before the call',
+              recommendationText: null,
+              supportedFollowups: ['memory_control'],
+              usedThreadIds: [],
+              usedThreadTitles: [],
+              threadSummaryLines: [],
+              shortText: 'Review the agenda, then send the short update.',
+            },
           },
-        }),
+        ),
       );
 
     const skill = createAlexaSkill(buildConfig());
@@ -1769,18 +1782,23 @@ describe('createAlexaSkill', () => {
 
   it('restyles the active companion frame for broad conversation-control directness turns', async () => {
     mockedBuildDailyCompanionResponse.mockResolvedValue(
-      buildCompanionResponse('Keep it simple. Review the agenda, then send the update.', {
-        mode: 'open_guidance',
-        context: {
-          ...buildCompanionResponse('x').context,
-          summaryText: 'review the agenda before the call',
-          recommendationText: 'Review the agenda, then send the update.',
-          shortText: 'Review the agenda, then send the update.',
-          usedThreadIds: ['thread-client-call'],
-          usedThreadTitles: ['Client call'],
-          threadSummaryLines: ['Client call prep still needs a quick review.'],
+      buildCompanionResponse(
+        'Keep it simple. Review the agenda, then send the update.',
+        {
+          mode: 'open_guidance',
+          context: {
+            ...buildCompanionResponse('x').context,
+            summaryText: 'review the agenda before the call',
+            recommendationText: 'Review the agenda, then send the update.',
+            shortText: 'Review the agenda, then send the update.',
+            usedThreadIds: ['thread-client-call'],
+            usedThreadTitles: ['Client call'],
+            threadSummaryLines: [
+              'Client call prep still needs a quick review.',
+            ],
+          },
         },
-      }),
+      ),
     );
 
     const linked = seedLinkedAccount('main');
@@ -1943,7 +1961,9 @@ describe('createAlexaSkill', () => {
       }),
     );
 
-    expect(extractSpeechText(response)).toContain("didn't come through cleanly");
+    expect(extractSpeechText(response)).toContain(
+      "didn't come through cleanly",
+    );
     expect(extractSpeechText(response)).not.toContain('sk-test-secret');
   });
 
@@ -2174,7 +2194,9 @@ describe('createAlexaSkill', () => {
 
     const skill = createAlexaSkill(buildConfig(), {
       resolveTelegramMainChat: () => ({ chatJid: 'tg:main' }),
-      sendTelegramMessage: vi.fn(async () => ({ platformMessageId: 'tg-msg-2' })),
+      sendTelegramMessage: vi.fn(async () => ({
+        platformMessageId: 'tg-msg-2',
+      })),
     });
 
     await skill.invoke(buildIntentEnvelope('WhatAmIForgettingIntent'));
@@ -2185,9 +2207,9 @@ describe('createAlexaSkill', () => {
     );
 
     expect(extractSpeechText(response)).toContain('remind you');
-    expect(getAllTasks().some((task) => task.prompt.includes('band thing'))).toBe(
-      true,
-    );
+    expect(
+      getAllTasks().some((task) => task.prompt.includes('band thing')),
+    ).toBe(true);
     expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
   });
 
@@ -2203,7 +2225,8 @@ describe('createAlexaSkill', () => {
       {
         flowKey: 'open_guidance',
         subjectKind: 'person',
-        summaryText: 'Keep Candace in view, but it can wait for a calmer moment.',
+        summaryText:
+          'Keep Candace in view, but it can wait for a calmer moment.',
         subjectData: {
           personName: 'Candace',
           activeEntityLabel: 'Candace',
@@ -2346,7 +2369,9 @@ describe('createAlexaSkill', () => {
     expect(extractSpeechText(confirmResponse)).toContain(
       'saved that as a delegation rule',
     );
-    expect(listDelegationRulesForGroup({ groupFolder: 'main' })).toHaveLength(1);
+    expect(listDelegationRulesForGroup({ groupFolder: 'main' })).toHaveLength(
+      1,
+    );
   });
 
   it('uses a saved rule during an Alexa reminder follow-up and explains it briefly', async () => {
@@ -2371,7 +2396,9 @@ describe('createAlexaSkill', () => {
 
     const skill = createAlexaSkill(buildConfig(), {
       resolveTelegramMainChat: () => ({ chatJid: 'tg:main' }),
-      sendTelegramMessage: vi.fn(async () => ({ platformMessageId: 'tg-msg-2' })),
+      sendTelegramMessage: vi.fn(async () => ({
+        platformMessageId: 'tg-msg-2',
+      })),
     });
 
     await skill.invoke(buildIntentEnvelope('WhatAmIForgettingIntent'));
@@ -2407,7 +2434,9 @@ describe('createAlexaSkill', () => {
 
     const skill = createAlexaSkill(buildConfig(), {
       resolveTelegramMainChat: () => ({ chatJid: 'tg:main' }),
-      sendTelegramMessage: vi.fn(async () => ({ platformMessageId: 'tg-msg-3' })),
+      sendTelegramMessage: vi.fn(async () => ({
+        platformMessageId: 'tg-msg-3',
+      })),
     });
 
     await skill.invoke(buildIntentEnvelope('WhatAmIForgettingIntent'));
@@ -2419,7 +2448,9 @@ describe('createAlexaSkill', () => {
 
     expect(mockedRunAlexaAssistantTurn).toHaveBeenCalledWith(
       expect.objectContaining({
-        utterance: expect.stringContaining('Draft a short follow-up for Candace'),
+        utterance: expect.stringContaining(
+          'Draft a short follow-up for Candace',
+        ),
       }),
       expect.any(Object),
     );
@@ -2477,10 +2508,11 @@ describe('startAlexaServer', () => {
     _initTestDatabase();
     mockedRunAlexaAssistantTurn.mockReset();
     mockedBuildDailyCompanionResponse.mockReset();
-    mockedBuildDailyCompanionResponse.mockImplementation(async (message, deps) =>
-      buildCompanionResponse(`Local companion: ${message}`, {
-        channel: deps.channel,
-      }),
+    mockedBuildDailyCompanionResponse.mockImplementation(
+      async (message, deps) =>
+        buildCompanionResponse(`Local companion: ${message}`, {
+          channel: deps.channel,
+        }),
     );
     setRegisteredGroup('tg:main', {
       name: 'Main',
@@ -2530,7 +2562,9 @@ describe('startAlexaServer', () => {
 
     expect(response.status).toBe(200);
     const payload = (await response.json()) as ResponseEnvelope;
-    expect(extractSpeechText(payload)).toContain('Tomorrow has one timed event');
+    expect(extractSpeechText(payload)).toContain(
+      'Tomorrow has one timed event',
+    );
     const updatedStatus = runtime!.getStatus();
     expect(updatedStatus.lastSignedRequestType).toBe('IntentRequest');
     expect(updatedStatus.lastSignedIntent).toBe('TomorrowCalendarIntent');
@@ -2561,7 +2595,10 @@ describe('startAlexaServer', () => {
 
 describe('formatAlexaStatusMessage', () => {
   it('renders both disabled and enabled status states clearly', () => {
-    const disabled = formatAlexaStatusMessage({ enabled: false, running: false });
+    const disabled = formatAlexaStatusMessage({
+      enabled: false,
+      running: false,
+    });
     expect(disabled).toContain('Status: disabled');
     expect(disabled).toContain('configure the skill ID');
     expect(disabled).not.toContain('serenades');

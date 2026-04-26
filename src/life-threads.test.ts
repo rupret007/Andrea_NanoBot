@@ -76,7 +76,9 @@ describe('life threads', () => {
     expect(threads).toHaveLength(1);
     expect(threads[0]?.title).toBe('Candace');
     expect(threads[0]?.summary).toContain('dinner plans tonight');
-    expect(threads[0]?.nextAction).toContain('Talk to Candace about dinner plans tonight');
+    expect(threads[0]?.nextAction).toContain(
+      'Talk to Candace about dinner plans tonight',
+    );
   });
 
   it('can rename, pause, close, and forget a referenced thread', () => {
@@ -101,7 +103,9 @@ describe('life threads', () => {
         usedThreadIds: [created.referencedThread!.id],
         usedThreadTitles: ['family'],
         usedThreadReasons: ['it was the active thread in the last answer'],
-        threadSummaryLines: ['family: Talk about dinner plans and school pickup.'],
+        threadSummaryLines: [
+          'family: Talk about dinner plans and school pickup.',
+        ],
       },
       now: new Date('2026-04-04T09:05:00.000Z'),
     });
@@ -117,7 +121,9 @@ describe('life threads', () => {
         usedThreadIds: [created.referencedThread!.id],
         usedThreadTitles: ['Candace'],
         usedThreadReasons: ['it was the active thread in the last answer'],
-        threadSummaryLines: ['Candace: Talk about dinner plans and school pickup.'],
+        threadSummaryLines: [
+          'Candace: Talk about dinner plans and school pickup.',
+        ],
       },
       now: new Date('2026-04-04T09:06:00.000Z'),
     });
@@ -133,7 +139,9 @@ describe('life threads', () => {
         usedThreadIds: [created.referencedThread!.id],
         usedThreadTitles: ['Candace'],
         usedThreadReasons: ['it was the active thread in the last answer'],
-        threadSummaryLines: ['Candace: Talk about dinner plans and school pickup.'],
+        threadSummaryLines: [
+          'Candace: Talk about dinner plans and school pickup.',
+        ],
       },
       now: new Date('2026-04-04T09:07:00.000Z'),
     });
@@ -149,7 +157,9 @@ describe('life threads', () => {
         usedThreadIds: [created.referencedThread!.id],
         usedThreadTitles: ['Candace'],
         usedThreadReasons: ['it was the active thread in the last answer'],
-        threadSummaryLines: ['Candace: Talk about dinner plans and school pickup.'],
+        threadSummaryLines: [
+          'Candace: Talk about dinner plans and school pickup.',
+        ],
       },
       now: new Date('2026-04-04T09:08:00.000Z'),
     });
@@ -254,8 +264,12 @@ describe('life threads', () => {
     });
 
     const threads = listLifeThreadsForGroup('main', ['active']);
-    const candace = threads.find((thread) => thread.title.toLowerCase() === 'candace');
-    const work = threads.find((thread) => thread.title.toLowerCase() === 'work');
+    const candace = threads.find(
+      (thread) => thread.title.toLowerCase() === 'candace',
+    );
+    const work = threads.find(
+      (thread) => thread.title.toLowerCase() === 'work',
+    );
     expect(candace).toBeDefined();
     expect(work).toBeDefined();
 
@@ -305,7 +319,9 @@ describe('life threads', () => {
     });
 
     expect(explicit?.title).toBe('Candace');
-    expect(snapshot.activeThreads.map((thread) => thread.title)).not.toContain('Candace');
+    expect(snapshot.activeThreads.map((thread) => thread.title)).not.toContain(
+      'Candace',
+    );
   });
 
   it('keeps low-value placeholder threads out of automatic recommendations', () => {
@@ -439,7 +455,9 @@ describe('life threads', () => {
       now: new Date('2026-04-04T21:00:00-05:00'),
     });
 
-    expect(snapshot.slippingThreads.map((thread) => thread.id)).toContain(due.id);
+    expect(snapshot.slippingThreads.map((thread) => thread.id)).toContain(
+      due.id,
+    );
     expect(snapshot.activeThreads.map((thread) => thread.id)).not.toContain(
       manual.id,
     );

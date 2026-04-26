@@ -261,6 +261,8 @@ describe('runAlexaAssistantTurn', () => {
     expect(deps.deleteAgentThread).toHaveBeenCalledWith('main');
     expect(deps.runContainerAgent).toHaveBeenCalledTimes(2);
     expect(deps.setSession).toHaveBeenCalledWith('main', 'session-2');
-    expect(result.text).toContain('Fresh answer after resetting the stale session.');
+    expect(result.text).toContain(
+      'Fresh answer after resetting the stale session.',
+    );
   });
 });

@@ -185,9 +185,12 @@ function titleCaseAction(actionType: ActionBundleActionType): string {
   }
 }
 
-function formatChannelList(channels: ActionBundlePresentationChannel[]): string {
+function formatChannelList(
+  channels: ActionBundlePresentationChannel[],
+): string {
   const unique = [...new Set(channels)];
-  if (unique.length === DEFAULT_RULE_CHANNELS.length) return 'all Andrea channels';
+  if (unique.length === DEFAULT_RULE_CHANNELS.length)
+    return 'all Andrea channels';
   return unique.join(', ');
 }
 
@@ -270,7 +273,10 @@ function textFieldMatches(
   actual: string | null | undefined,
 ): boolean {
   if (!normalizeText(expected)) return true;
-  return normalizeText(expected).toLowerCase() === normalizeText(actual).toLowerCase();
+  return (
+    normalizeText(expected).toLowerCase() ===
+    normalizeText(actual).toLowerCase()
+  );
 }
 
 function ruleMatchesContext(
@@ -279,16 +285,20 @@ function ruleMatchesContext(
 ): boolean {
   if (!parseRuleChannels(rule).includes(context.channel)) return false;
   const conditions = parseRuleConditions(rule);
-  if (!actionTypeMatches(conditions.actionType, context.actionType)) return false;
-  if (conditions.originKind && conditions.originKind !== context.originKind) return false;
+  if (!actionTypeMatches(conditions.actionType, context.actionType))
+    return false;
+  if (conditions.originKind && conditions.originKind !== context.originKind)
+    return false;
   if (
     conditions.missionCategory &&
     conditions.missionCategory !== context.missionCategory
   ) {
     return false;
   }
-  if (!textFieldMatches(conditions.personName, context.personName)) return false;
-  if (!textFieldMatches(conditions.threadTitle, context.threadTitle)) return false;
+  if (!textFieldMatches(conditions.personName, context.personName))
+    return false;
+  if (!textFieldMatches(conditions.threadTitle, context.threadTitle))
+    return false;
   if (
     conditions.promptPattern &&
     conditions.promptPattern !== context.promptPattern
@@ -358,10 +368,7 @@ function effectiveApprovalModeForRule(
     return rule.approvalMode === 'suggest_only' ? 'suggest_only' : 'always_ask';
   }
   if (safetyLevel === 'safe_to_suggest_only') return 'suggest_only';
-  if (
-    rule.approvalMode === 'ask_once_then_remember' &&
-    rule.timesUsed < 1
-  ) {
+  if (rule.approvalMode === 'ask_once_then_remember' && rule.timesUsed < 1) {
     return 'always_ask';
   }
   if (rule.approvalMode === 'ask_once_then_remember') {
@@ -385,7 +392,10 @@ export function findMatchingDelegationRule(
         specificityScore(parseRuleConditions(right)) -
         specificityScore(parseRuleConditions(left));
       if (specificityDiff !== 0) return specificityDiff;
-      return approvalModeSafetyRank(left.approvalMode) - approvalModeSafetyRank(right.approvalMode);
+      return (
+        approvalModeSafetyRank(left.approvalMode) -
+        approvalModeSafetyRank(right.approvalMode)
+      );
     });
 
   const rule = candidates[0];
@@ -407,12 +417,22 @@ export function findMatchingDelegationRule(
     delegatedAction,
     effectiveApprovalMode,
     safetyLevel,
-    explanation: explanationForMatch(rule, effectiveApprovalMode, context.actionType),
+    explanation: explanationForMatch(
+      rule,
+      effectiveApprovalMode,
+      context.actionType,
+    ),
     autoApplied: effectiveApprovalMode === 'auto_apply_when_safe',
   };
 }
 
-function withDelegatedOverrides<TPayload extends { type?: string; timingHint?: string | null; threadTitle?: string | null }>(
+function withDelegatedOverrides<
+  TPayload extends {
+    type?: string;
+    timingHint?: string | null;
+    threadTitle?: string | null;
+  },
+>(
   payload: TPayload,
   delegatedAction: DelegationRuleAction | undefined,
 ): TPayload {
@@ -426,25 +446,29 @@ function withDelegatedOverrides<TPayload extends { type?: string; timingHint?: s
   return payload;
 }
 
-export function applyDelegationRulesToActionPlans<TPayload extends { type?: string; timingHint?: string | null; threadTitle?: string | null }>(
-  params: {
-    groupFolder: string;
-    channel: ActionBundlePresentationChannel;
-    originKind?: ActionBundleOriginKind | null;
-    missionCategory?: MissionCategory | null;
-    personName?: string | null;
+export function applyDelegationRulesToActionPlans<
+  TPayload extends {
+    type?: string;
+    timingHint?: string | null;
     threadTitle?: string | null;
-    promptPattern?: DelegationPromptPattern | null;
-    ritualType?: RitualType | null;
-    reviewHorizon?: OutcomeReviewHorizon | null;
-    communicationContext?:
-      | 'reply_followthrough'
-      | 'household_followthrough'
-      | 'general'
-      | null;
-    actions: RuleAwareActionPlan<TPayload>[];
   },
-): RuleAwareActionPlan<TPayload>[] {
+>(params: {
+  groupFolder: string;
+  channel: ActionBundlePresentationChannel;
+  originKind?: ActionBundleOriginKind | null;
+  missionCategory?: MissionCategory | null;
+  personName?: string | null;
+  threadTitle?: string | null;
+  promptPattern?: DelegationPromptPattern | null;
+  ritualType?: RitualType | null;
+  reviewHorizon?: OutcomeReviewHorizon | null;
+  communicationContext?:
+    | 'reply_followthrough'
+    | 'household_followthrough'
+    | 'general'
+    | null;
+  actions: RuleAwareActionPlan<TPayload>[];
+}): RuleAwareActionPlan<TPayload>[] {
   return params.actions.map((action) => {
     const match = findMatchingDelegationRule({
       groupFolder: params.groupFolder,
@@ -463,7 +487,8 @@ export function applyDelegationRulesToActionPlans<TPayload extends { type?: stri
     return {
       ...action,
       payload: withDelegatedOverrides(action.payload, match.delegatedAction),
-      requiresConfirmation: match.effectiveApprovalMode !== 'auto_apply_when_safe',
+      requiresConfirmation:
+        match.effectiveApprovalMode !== 'auto_apply_when_safe',
       initialStatus:
         match.effectiveApprovalMode === 'auto_apply_when_safe'
           ? 'approved'
@@ -485,8 +510,7 @@ export function recordDelegationRuleUsage(params: {
   if (!rule) return;
   updateDelegationRule(rule.ruleId, {
     timesUsed: rule.timesUsed + 1,
-    timesAutoApplied:
-      rule.timesAutoApplied + (params.autoApplied ? 1 : 0),
+    timesAutoApplied: rule.timesAutoApplied + (params.autoApplied ? 1 : 0),
     lastUsedAt: (params.now || new Date()).toISOString(),
     lastOutcomeStatus:
       params.outcomeStatus !== undefined
@@ -657,7 +681,8 @@ export function buildDelegationRulePreview(params: {
   const focusedAction =
     explicitActionType ||
     params.context.actionTypeHint ||
-    actionFromSnapshot(params.utterance, params.context.currentBundle)?.actionType;
+    actionFromSnapshot(params.utterance, params.context.currentBundle)
+      ?.actionType;
   if (!focusedAction) {
     return {
       handled: true,
@@ -671,10 +696,10 @@ export function buildDelegationRulePreview(params: {
     params.context.currentBundle,
   );
   const payload = actionRecord
-    ? parseJsonSafe<{ timingHint?: string | null; threadTitle?: string | null }>(
-        actionRecord.payloadJson,
-        {},
-      )
+    ? parseJsonSafe<{
+        timingHint?: string | null;
+        threadTitle?: string | null;
+      }>(actionRecord.payloadJson, {})
     : {};
   const safetyLevel = classifyDelegationSafety(focusedAction);
   const triggerType = intent.explicitTriggerType || 'bundle_type';
@@ -687,16 +712,22 @@ export function buildDelegationRulePreview(params: {
     payload.threadTitle ||
     null;
   const conditions: DelegationRuleConditions = {
-    promptPattern: intent.explicitPromptPattern || params.context.promptPattern || undefined,
+    promptPattern:
+      intent.explicitPromptPattern || params.context.promptPattern || undefined,
     actionType: focusedAction,
-    originKind: params.context.originKind || params.context.currentBundle?.bundle.originKind || undefined,
+    originKind:
+      params.context.originKind ||
+      params.context.currentBundle?.bundle.originKind ||
+      undefined,
     missionCategory: params.context.missionCategory || undefined,
     personName,
     threadTitle,
     ritualType: params.context.ritualType || undefined,
     reviewHorizon: params.context.reviewHorizon || undefined,
     communicationContext:
-      intent.communicationContext || params.context.communicationContext || undefined,
+      intent.communicationContext ||
+      params.context.communicationContext ||
+      undefined,
   };
   const delegatedActions: DelegationRuleAction[] = [
     {
@@ -800,7 +831,9 @@ function describeRule(rule: DelegationRuleRecord): string {
   const helpfulness = getDelegationRuleHelpfulness(rule);
   const conditions = parseRuleConditions(rule);
   const target = parseRuleActions(rule)[0];
-  const targetLabel = target ? titleCaseAction(target.actionType) : 'follow-through';
+  const targetLabel = target
+    ? titleCaseAction(target.actionType)
+    : 'follow-through';
   const scope =
     conditions.personName ||
     conditions.threadTitle ||
@@ -825,19 +858,38 @@ export function buildDelegationRuleListPresentation(params: {
     };
   }
   const focusRules = rules.slice(0, 2);
-  const lines = ['*Delegation rules*', ...rules.slice(0, 6).map((rule, index) => `${index + 1}. ${rule.title} — ${describeRule(rule)}`)];
+  const lines = [
+    '*Delegation rules*',
+    ...rules
+      .slice(0, 6)
+      .map(
+        (rule, index) => `${index + 1}. ${rule.title} — ${describeRule(rule)}`,
+      ),
+  ];
   const rows: ChannelInlineAction[][] = [];
   for (const [index, rule] of focusRules.entries()) {
     const prefix = `${index + 1}.`;
     rows.push([
       { label: `${prefix} Pause`, actionId: `/rule-pause ${rule.ruleId}` },
-      { label: `${prefix} Always ask`, actionId: `/rule-always-ask ${rule.ruleId}` },
-      { label: `${prefix} Why this fired`, actionId: `/rule-why ${rule.ruleId}` },
+      {
+        label: `${prefix} Always ask`,
+        actionId: `/rule-always-ask ${rule.ruleId}`,
+      },
+      {
+        label: `${prefix} Why this fired`,
+        actionId: `/rule-why ${rule.ruleId}`,
+      },
     ]);
     rows.push([
       { label: `${prefix} Disable`, actionId: `/rule-disable ${rule.ruleId}` },
-      { label: `${prefix} Auto-apply when safe`, actionId: `/rule-auto-safe ${rule.ruleId}` },
-      { label: `${prefix} Use only here`, actionId: `/rule-use-here ${rule.ruleId}` },
+      {
+        label: `${prefix} Auto-apply when safe`,
+        actionId: `/rule-auto-safe ${rule.ruleId}`,
+      },
+      {
+        label: `${prefix} Use only here`,
+        actionId: `/rule-use-here ${rule.ruleId}`,
+      },
     ]);
   }
   return {
@@ -848,9 +900,7 @@ export function buildDelegationRuleListPresentation(params: {
   };
 }
 
-export function buildDelegationRuleWhyText(
-  rule: DelegationRuleRecord,
-): string {
+export function buildDelegationRuleWhyText(rule: DelegationRuleRecord): string {
   const conditions = parseRuleConditions(rule);
   const actions = parseRuleActions(rule);
   const action = actions[0];

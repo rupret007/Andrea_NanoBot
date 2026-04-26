@@ -218,7 +218,8 @@ describe('assistant capabilities', () => {
       chat_jid: 'bb:iMessage;+;chat-pops-clean',
       sender: 'bb:+14697852580',
       sender_name: '+14697852580',
-      content: 'Yesterday everyone was still just figuring out whether to read the comics first.',
+      content:
+        'Yesterday everyone was still just figuring out whether to read the comics first.',
       timestamp: '2026-04-14T23:10:00.000Z',
       is_from_me: false,
     });
@@ -227,7 +228,8 @@ describe('assistant capabilities', () => {
       chat_jid: 'bb:iMessage;+;chat-pops-clean',
       sender: 'bb:+14697852580',
       sender_name: '+14697852580',
-      content: 'I think Fallout works because it keeps the world right while still telling a continuation story.',
+      content:
+        'I think Fallout works because it keeps the world right while still telling a continuation story.',
       timestamp: '2026-04-15T16:46:28.314Z',
       is_from_me: false,
     });
@@ -236,7 +238,8 @@ describe('assistant capabilities', () => {
       chat_jid: 'bb:iMessage;+;chat-pops-clean',
       sender: 'bb:+13373027596',
       sender_name: '+13373027596',
-      content: 'I do not want an adaptation to just repeat the exact same material with a different format.',
+      content:
+        'I do not want an adaptation to just repeat the exact same material with a different format.',
       timestamp: '2026-04-15T16:48:09.713Z',
       is_from_me: false,
     });
@@ -245,7 +248,8 @@ describe('assistant capabilities', () => {
       chat_jid: 'bb:iMessage;+;chat-pops-clean',
       sender: 'bb:+13373027596',
       sender_name: '+13373027596',
-      content: 'Yeah I like the Fallout story but I do not know too much about the world yet.',
+      content:
+        'Yeah I like the Fallout story but I do not know too much about the world yet.',
       timestamp: '2026-04-15T18:51:51.947Z',
       is_from_me: false,
     });
@@ -267,10 +271,14 @@ describe('assistant capabilities', () => {
     });
 
     expect(result.handled).toBe(true);
-    expect(result.replyText).toContain('Here’s the gist from Pops of Punk today.');
+    expect(result.replyText).toContain(
+      'Here’s the gist from Pops of Punk today.',
+    );
     expect(result.replyText).not.toContain('+14697852580');
     expect(result.replyText).not.toContain('+13373027596');
-    expect(result.replyText).not.toContain('Yesterday everyone was still just figuring out');
+    expect(result.replyText).not.toContain(
+      'Yesterday everyone was still just figuring out',
+    );
   });
 
   it('summarizes all synced Messages activity for broad today requests', async () => {
@@ -514,7 +522,9 @@ describe('assistant capabilities', () => {
 
     expect(add.handled).toBe(true);
     expect(add.replyText).toContain('groceries');
-    expect(add.conversationSeed?.subjectData?.activeListItemIds).toHaveLength(1);
+    expect(add.conversationSeed?.subjectData?.activeListItemIds).toHaveLength(
+      1,
+    );
     expect(add.sendOptions?.inlineActionRows?.flat()).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ label: 'Done' }),
@@ -539,7 +549,9 @@ describe('assistant capabilities', () => {
 
     expect(read.handled).toBe(true);
     expect(read.replyText?.toLowerCase()).toContain('milk');
-    expect(read.conversationSeed?.subjectData?.activeTaskKind).toBe('list_read');
+    expect(read.conversationSeed?.subjectData?.activeTaskKind).toBe(
+      'list_read',
+    );
   });
 
   it('keeps grocery-list read capability on the read path for explicit show-me phrasing', async () => {
@@ -573,7 +585,9 @@ describe('assistant capabilities', () => {
     expect(read.handled).toBe(true);
     expect(read.replyText).toContain('*Groceries*');
     expect(read.replyText?.toLowerCase()).toContain('eggs');
-    expect(read.conversationSeed?.subjectData?.activeTaskKind).toBe('list_read');
+    expect(read.conversationSeed?.subjectData?.activeTaskKind).toBe(
+      'list_read',
+    );
   });
 
   it('keeps explicit store read asks on the read path even if they land on the update capability', async () => {
@@ -607,7 +621,9 @@ describe('assistant capabilities', () => {
     expect(read.handled).toBe(true);
     expect(read.replyText).toContain('*Groceries*');
     expect(read.replyText?.toLowerCase()).toContain('milk');
-    expect(read.conversationSeed?.subjectData?.activeTaskKind).toBe('list_read');
+    expect(read.conversationSeed?.subjectData?.activeTaskKind).toBe(
+      'list_read',
+    );
   });
 
   it('adds companion continuation payloads to Alexa-safe daily answers', async () => {
@@ -955,30 +971,34 @@ describe('assistant capabilities', () => {
       },
       input: {
         text: 'What should I say back to Candace about dinner tonight?',
-        canonicalText: 'what should i say back to candace about dinner tonight?',
+        canonicalText:
+          'what should i say back to candace about dinner tonight?',
       },
     });
 
     expect(draft.handled).toBe(true);
     expect(draft.replyText).toContain('Hey Candace,');
-    expect(draft.replyText).toMatch(/dinner still works tonight|dinner tonight/i);
+    expect(draft.replyText).toMatch(
+      /dinner still works tonight|dinner tonight/i,
+    );
     expect(draft.replyText).not.toContain('circle back on What do I');
   });
 
   it('uses the Messages model lane for BlueBubbles draft replies when available', async () => {
     vi.stubEnv('OPENAI_API_KEY', 'test-key');
     vi.stubEnv('OPENAI_BASE_URL', 'https://openai.test/v1');
-    globalThis.fetch = vi.fn(async () =>
-      new Response(
-        JSON.stringify({
-          output_text:
-            '{"draftText":"Hey Candace, tonight still works for me. Let me know what feels easiest."}',
-        }),
-        {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        },
-      ),
+    globalThis.fetch = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            output_text:
+              '{"draftText":"Hey Candace, tonight still works for me. Let me know what feels easiest."}',
+          }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          },
+        ),
     ) as typeof fetch;
 
     const draft = await executeAssistantCapability({

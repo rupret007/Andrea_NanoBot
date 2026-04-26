@@ -72,7 +72,9 @@ function splitPathname(pathname: string): string[] {
   return pathname.split('/').filter(Boolean);
 }
 
-async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {
+async function readJsonBody(
+  req: IncomingMessage,
+): Promise<Record<string, unknown>> {
   const chunks: Buffer[] = [];
   for await (const chunk of req) {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
@@ -110,7 +112,9 @@ function clipPreview(value: string | null | undefined, max = 180): string {
     : `${normalized.slice(0, max - 3).trimEnd()}...`;
 }
 
-function buildProofReport(truth: FieldTrialBlueBubblesTruth): BlueBubblesProofReport {
+function buildProofReport(
+  truth: FieldTrialBlueBubblesTruth,
+): BlueBubblesProofReport {
   return {
     proofState: truth.proofState,
     blocker: truth.blocker,
@@ -167,26 +171,24 @@ function buildStatus(params: {
     listenerHost: snapshot?.listenerHost || config.host,
     listenerPort: snapshot?.listenerPort || config.port,
     configuredBaseUrl: snapshot?.configuredBaseUrl || config.baseUrl,
-    activeBaseUrl: snapshot?.activeBaseUrl || params.truth.activeServerBaseUrl || null,
+    activeBaseUrl:
+      snapshot?.activeBaseUrl || params.truth.activeServerBaseUrl || null,
     candidateBaseUrls: snapshot?.candidateBaseUrls || config.baseUrlCandidates,
-    publicWebhookUrl: snapshot?.publicWebhookUrl || params.truth.publicWebhookUrl,
-    webhookRegistrationState:
-      params.truth.webhookRegistrationState,
-    webhookRegistrationDetail:
-      params.truth.webhookRegistrationDetail,
+    publicWebhookUrl:
+      snapshot?.publicWebhookUrl || params.truth.publicWebhookUrl,
+    webhookRegistrationState: params.truth.webhookRegistrationState,
+    webhookRegistrationDetail: params.truth.webhookRegistrationDetail,
     transportState: params.truth.transportState,
     transportDetail: params.truth.transportDetail,
     shadowPollLastOkAt: params.truth.shadowPollLastOkAt,
     shadowPollLastError: params.truth.shadowPollLastError,
     shadowPollMostRecentChat: params.truth.shadowPollMostRecentChat,
-    configuredReplyGateMode:
-      params.truth.configuredReplyGateMode as
-        | 'mention_required'
-        | 'direct_1to1',
-    effectiveReplyGateMode:
-      params.truth.effectiveReplyGateMode as
-        | 'mention_required'
-        | 'direct_1to1',
+    configuredReplyGateMode: params.truth.configuredReplyGateMode as
+      | 'mention_required'
+      | 'direct_1to1',
+    effectiveReplyGateMode: params.truth.effectiveReplyGateMode as
+      | 'mention_required'
+      | 'direct_1to1',
     proofState: params.truth.proofState,
     blocker: params.truth.blocker,
     blockerOwner: params.truth.blockerOwner,
@@ -196,15 +198,19 @@ function buildStatus(params: {
     detectionNextAction: params.truth.detectionNextAction,
     mostRecentEngagedChatJid: params.truth.mostRecentEngagedChatJid,
     mostRecentEngagedAt: params.truth.mostRecentEngagedAt,
-    lastInboundAt: snapshot?.lastInboundObservedAt || params.truth.lastInboundObservedAt,
+    lastInboundAt:
+      snapshot?.lastInboundObservedAt || params.truth.lastInboundObservedAt,
     lastInboundChatJid:
       snapshot?.lastInboundChatJid || params.truth.lastInboundChatJid,
     lastInboundWasSelfAuthored:
-      snapshot?.lastInboundWasSelfAuthored ?? params.truth.lastInboundWasSelfAuthored,
-    lastOutboundResult: snapshot?.lastOutboundResult || params.truth.lastOutboundResult,
+      snapshot?.lastInboundWasSelfAuthored ??
+      params.truth.lastInboundWasSelfAuthored,
+    lastOutboundResult:
+      snapshot?.lastOutboundResult || params.truth.lastOutboundResult,
     lastOutboundTargetKind:
       snapshot?.lastOutboundTargetKind || params.truth.lastOutboundTargetKind,
-    lastOutboundTarget: snapshot?.lastOutboundTarget || params.truth.lastOutboundTarget,
+    lastOutboundTarget:
+      snapshot?.lastOutboundTarget || params.truth.lastOutboundTarget,
     recentTargetChatJid: params.truth.recentTargetChatJid,
     recentTargetAt: params.truth.recentTargetAt,
     openMessageActionCount: params.truth.openMessageActionCount,
@@ -248,12 +254,16 @@ function listChats(limit: number): BlueBubblesChatSummary[] {
     })
     .sort(
       (left, right) =>
-        Date.parse(right.lastMessageAt || '') - Date.parse(left.lastMessageAt || ''),
+        Date.parse(right.lastMessageAt || '') -
+        Date.parse(left.lastMessageAt || ''),
     )
     .slice(0, limit);
 }
 
-function listMessages(chatJid: string, limit: number): BlueBubblesMessageView[] {
+function listMessages(
+  chatJid: string,
+  limit: number,
+): BlueBubblesMessageView[] {
   return listRecentMessagesForChat(chatJid, limit).map((message) => ({
     messageId: message.id,
     chatJid: message.chat_jid,
@@ -322,7 +332,8 @@ function listOpenBlueBubblesMessageActions(
         if (kind === 'direct_1to1') return 1;
         return 2;
       };
-      const kindRank = rank(left.conversationKind) - rank(right.conversationKind);
+      const kindRank =
+        rank(left.conversationKind) - rank(right.conversationKind);
       if (kindRank !== 0) {
         return kindRank;
       }
@@ -438,7 +449,10 @@ export class BlueBubblesControlServer {
     return true;
   }
 
-  private requireKnownChat(chatJid: string): { name: string | null; isGroup: boolean } {
+  private requireKnownChat(chatJid: string): {
+    name: string | null;
+    isGroup: boolean;
+  } {
     const chat = getAllChats().find((entry) => entry.jid === chatJid);
     if (!chat) {
       throw new Error(`Unknown BlueBubbles chat: ${chatJid}`);
@@ -461,7 +475,9 @@ export class BlueBubblesControlServer {
       throw new Error('This message action is not owned by BlueBubbles.');
     }
     if (!action.presentationChatJid?.startsWith('bb:')) {
-      throw new Error('This BlueBubbles message action is missing a presentation chat.');
+      throw new Error(
+        'This BlueBubbles message action is missing a presentation chat.',
+      );
     }
     const operation = resolveOperation(request);
     const result = await applyMessageActionOperation(
@@ -479,7 +495,9 @@ export class BlueBubblesControlServer {
           options?: SendMessageOptions,
         ) => {
           if (targetChannel !== 'bluebubbles') {
-            throw new Error('This control surface only executes BlueBubbles sends.');
+            throw new Error(
+              'This control surface only executes BlueBubbles sends.',
+            );
           }
           return this.requireChannel().sendMessage(chatJid, text, options);
         },
@@ -490,7 +508,8 @@ export class BlueBubblesControlServer {
     }
     let confirmationMessageId: string | null = null;
     let confirmationError: string | null = null;
-    const confirmationText = result.replyText || result.presentation?.text || null;
+    const confirmationText =
+      result.replyText || result.presentation?.text || null;
     if (confirmationText) {
       try {
         const confirmation = await this.requireChannel().sendMessage(
@@ -499,8 +518,7 @@ export class BlueBubblesControlServer {
         );
         confirmationMessageId = confirmation.platformMessageId || null;
       } catch (err) {
-        confirmationError =
-          err instanceof Error ? err.message : String(err);
+        confirmationError = err instanceof Error ? err.message : String(err);
         logger.warn(
           { err, actionId, chatJid: action.presentationChatJid },
           'BlueBubbles control API executed a message action but could not post the same-thread confirmation',
@@ -602,10 +620,7 @@ export class BlueBubblesControlServer {
         return;
       }
 
-      if (
-        method === 'POST' &&
-        url.pathname === '/v1/bluebubbles/refresh'
-      ) {
+      if (method === 'POST' && url.pathname === '/v1/bluebubbles/refresh') {
         const body = await readJsonBody(req);
         const mode =
           body.mode === 'transport' ||
@@ -673,7 +688,9 @@ export class BlueBubblesControlServer {
           body.operation !== 'remind_instead' &&
           body.operation !== 'save_to_thread'
         ) {
-          throw new Error('operation must be send, defer, remind_instead, or save_to_thread.');
+          throw new Error(
+            'operation must be send, defer, remind_instead, or save_to_thread.',
+          );
         }
         writeJson(
           res,

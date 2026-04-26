@@ -204,7 +204,8 @@ describe('host control state', () => {
       pid: process.pid,
       mode: 'long_polling',
       status: 'blocked',
-      detail: 'Rotate the Telegram bot token and retire the competing consumer.',
+      detail:
+        'Rotate the Telegram bot token and retire the competing consumer.',
       updatedAt: '2026-04-04T12:00:00.000Z',
       lastError:
         "Call to 'getUpdates' failed! (409: Conflict: terminated by setWebhook request)",
@@ -523,7 +524,9 @@ describe('Alexa live-proof assessment', () => {
 
     expect(assessment.proofState).toBe('live_proven');
     expect(assessment.proofKind).toBe('handled_intent');
-    expect(assessment.lastSignedRequest?.requestType).toBe('SessionEndedRequest');
+    expect(assessment.lastSignedRequest?.requestType).toBe(
+      'SessionEndedRequest',
+    );
     expect(assessment.lastHandledProofIntent?.intentName).toBe(
       'WhatAmIForgettingIntent',
     );
@@ -556,7 +559,9 @@ describe('Alexa live-proof assessment', () => {
 
     expect(assessment.proofState).toBe('live_proven');
     expect(assessment.proofKind).toBe('handled_intent');
-    expect(assessment.lastSignedRequest?.intentName).toBe('MemoryControlIntent');
+    expect(assessment.lastSignedRequest?.intentName).toBe(
+      'MemoryControlIntent',
+    );
     expect(assessment.lastHandledProofIntent?.intentName).toBe(
       'WhatAmIForgettingIntent',
     );

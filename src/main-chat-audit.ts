@@ -37,7 +37,8 @@ export function isSyntheticTelegramChatJid(jid: string): boolean {
 function sortChatsByLastMessageDesc(chats: ChatInfo[]): ChatInfo[] {
   return [...chats].sort(
     (left, right) =>
-      parseIsoTime(right.last_message_time) - parseIsoTime(left.last_message_time),
+      parseIsoTime(right.last_message_time) -
+      parseIsoTime(left.last_message_time),
   );
 }
 
@@ -58,9 +59,7 @@ export function auditRegisteredMainChat(params: {
       registeredMainChat: null,
       registeredMainChatPresentInChats: false,
       latestTelegramChat,
-      warning: latestTelegramChat
-        ? 'No registered main chat was found.'
-        : null,
+      warning: latestTelegramChat ? 'No registered main chat was found.' : null,
       repairTargetChat: null,
     };
   }

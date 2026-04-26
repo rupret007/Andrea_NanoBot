@@ -83,7 +83,8 @@ function resolveBlueBubblesCompanionConversationKind(
   if (isBlueBubblesSelfThreadAliasJid(chatJid)) {
     return 'self_thread';
   }
-  const normalizedChatJid = canonicalizeBlueBubblesSelfThreadJid(chatJid) || chatJid || null;
+  const normalizedChatJid =
+    canonicalizeBlueBubblesSelfThreadJid(chatJid) || chatJid || null;
   const knownChat = normalizedChatJid
     ? getAllChats().find((chat) => chat.jid === normalizedChatJid)
     : null;
@@ -113,11 +114,13 @@ export function isBlueBubblesExplicitAsk(
     chatJid?: string | null;
   } = {},
 ): boolean {
-  const conversationKind =
-    resolveBlueBubblesCompanionConversationKind(options.chatJid);
+  const conversationKind = resolveBlueBubblesCompanionConversationKind(
+    options.chatJid,
+  );
   const directSelfThread = conversationKind === 'self_thread';
   const recentConversationalDirectChat =
-    conversationKind === 'direct_1to1' && Boolean(options.hasRecentCompanionContext);
+    conversationKind === 'direct_1to1' &&
+    Boolean(options.hasRecentCompanionContext);
   const hasMention = hasBlueBubblesAndreaMention(text);
   if (!hasMention && !directSelfThread && !recentConversationalDirectChat) {
     return false;
@@ -170,7 +173,9 @@ export function resolveBlueBubblesPendingLocalContinuationKind(input: {
     input.chatJid,
   );
 
-  if (candidateChatJids.some((chatJid) => input.hasGoogleCalendarCreate(chatJid))) {
+  if (
+    candidateChatJids.some((chatJid) => input.hasGoogleCalendarCreate(chatJid))
+  ) {
     return 'google_calendar_create';
   }
   if (
@@ -187,7 +192,9 @@ export function resolveBlueBubblesPendingLocalContinuationKind(input: {
   ) {
     return 'google_calendar_event_action';
   }
-  if (candidateChatJids.some((chatJid) => input.hasCalendarAutomation(chatJid))) {
+  if (
+    candidateChatJids.some((chatJid) => input.hasCalendarAutomation(chatJid))
+  ) {
     return 'calendar_automation';
   }
   if (candidateChatJids.some((chatJid) => input.hasActionReminder(chatJid))) {
@@ -215,7 +222,10 @@ function resolveBlueBubblesActionPresentationChat(action: {
   const presentationChatJid = canonicalizeBlueBubblesSelfThreadJid(
     action.presentationChatJid,
   );
-  if (presentationChatJid && isBlueBubblesSelfThreadAliasJid(presentationChatJid)) {
+  if (
+    presentationChatJid &&
+    isBlueBubblesSelfThreadAliasJid(presentationChatJid)
+  ) {
     return presentationChatJid;
   }
   const target = parseJsonSafe<{ chatJid?: string | null }>(
@@ -267,7 +277,8 @@ export function resolveMostRecentBlueBubblesCompanionChat(params: {
   now?: Date;
 }): { chatJid: string; engagedAt: string } | null {
   const now = params.now || new Date();
-  const cutoff = now.getTime() - Math.max(1, params.maxAgeHours || 12) * 60 * 60 * 1000;
+  const cutoff =
+    now.getTime() - Math.max(1, params.maxAgeHours || 12) * 60 * 60 * 1000;
   const continuitySnapshots = listBlueBubblesMessageActionContinuitySnapshots({
     groupFolder: params.groupFolder,
     now,
@@ -275,9 +286,11 @@ export function resolveMostRecentBlueBubblesCompanionChat(params: {
   });
   const prioritizedContinuity = continuitySnapshots.find((snapshot) => {
     const recentTargetAt = Date.parse(snapshot.recentTargetAt || '');
-    return snapshot.recentTargetChatJid !== 'none' &&
+    return (
+      snapshot.recentTargetChatJid !== 'none' &&
       Number.isFinite(recentTargetAt) &&
-      recentTargetAt >= cutoff;
+      recentTargetAt >= cutoff
+    );
   });
   if (prioritizedContinuity) {
     return {
@@ -314,11 +327,16 @@ export function resolveMostRecentBlueBubblesCompanionChat(params: {
         action.lastActionAt || action.lastUpdatedAt || action.createdAt;
       const engagedAtMs = Date.parse(engagedAt || '');
       const chatJid = resolveBlueBubblesActionPresentationChat(action);
-      return chatJid && engagedAt && Number.isFinite(engagedAtMs) && engagedAtMs >= cutoff
+      return chatJid &&
+        engagedAt &&
+        Number.isFinite(engagedAtMs) &&
+        engagedAtMs >= cutoff
         ? { chatJid, engagedAt }
         : null;
     })
-    .filter((entry): entry is { chatJid: string; engagedAt: string } => Boolean(entry))
+    .filter((entry): entry is { chatJid: string; engagedAt: string } =>
+      Boolean(entry),
+    )
     .sort(
       (left, right) =>
         Date.parse(right.engagedAt || '') - Date.parse(left.engagedAt || ''),
@@ -333,11 +351,12 @@ export function resolveMostRecentBlueBubblesCompanionChat(params: {
     includeSent: true,
     limit: 80,
   })
-    .filter((action) =>
-      ['sent', 'deferred'].includes(action.sendStatus) ||
-      ['sent', 'scheduled_send', 'remind_instead', 'save_to_thread'].includes(
-        action.lastActionKind || '',
-      ),
+    .filter(
+      (action) =>
+        ['sent', 'deferred'].includes(action.sendStatus) ||
+        ['sent', 'scheduled_send', 'remind_instead', 'save_to_thread'].includes(
+          action.lastActionKind || '',
+        ),
     )
     .filter((action) => action.targetChannel === 'bluebubbles')
     .map((action) => {
@@ -348,11 +367,16 @@ export function resolveMostRecentBlueBubblesCompanionChat(params: {
         action.createdAt;
       const engagedAtMs = Date.parse(engagedAt || '');
       const chatJid = resolveBlueBubblesActionPresentationChat(action);
-      return chatJid && engagedAt && Number.isFinite(engagedAtMs) && engagedAtMs >= cutoff
+      return chatJid &&
+        engagedAt &&
+        Number.isFinite(engagedAtMs) &&
+        engagedAtMs >= cutoff
         ? { chatJid, engagedAt }
         : null;
     })
-    .filter((entry): entry is { chatJid: string; engagedAt: string } => Boolean(entry))
+    .filter((entry): entry is { chatJid: string; engagedAt: string } =>
+      Boolean(entry),
+    )
     .sort(
       (left, right) =>
         Date.parse(right.engagedAt || '') - Date.parse(left.engagedAt || ''),
@@ -379,7 +403,8 @@ export function resolveMostRecentBlueBubblesCompanionChat(params: {
   if (candidate?.chatJid) {
     return {
       chatJid:
-        canonicalizeBlueBubblesSelfThreadJid(candidate.chatJid) || candidate.chatJid,
+        canonicalizeBlueBubblesSelfThreadJid(candidate.chatJid) ||
+        candidate.chatJid,
       engagedAt: candidate.completedAt || candidate.startedAt,
     };
   }
@@ -389,7 +414,9 @@ export function resolveMostRecentBlueBubblesCompanionChat(params: {
   )
     .flatMap((chatJid) => listRecentMessagesForChat(chatJid, 8))
     .map((message) => ({
-      chatJid: canonicalizeBlueBubblesSelfThreadJid(message.chat_jid) || message.chat_jid,
+      chatJid:
+        canonicalizeBlueBubblesSelfThreadJid(message.chat_jid) ||
+        message.chat_jid,
       engagedAt: message.timestamp,
     }))
     .filter((entry) => {

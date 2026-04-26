@@ -3,7 +3,10 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { buildChiefOfStaffTurn } from './chief-of-staff.js';
 import { analyzeCommunicationMessage } from './communication-companion.js';
 import { _initTestDatabase, createTask } from './db.js';
-import { buildLifeThreadSnapshot, handleLifeThreadCommand } from './life-threads.js';
+import {
+  buildLifeThreadSnapshot,
+  handleLifeThreadCommand,
+} from './life-threads.js';
 import type {
   GroundedDaySnapshot,
   SelectedWorkContext,
@@ -18,7 +21,10 @@ const selectedWork: SelectedWorkContext = {
   summary: 'Finish the release summary and check handoff notes.',
 };
 
-function createReminder(label: string, nextRunIso: string): UpcomingReminderSummary {
+function createReminder(
+  label: string,
+  nextRunIso: string,
+): UpcomingReminderSummary {
   return {
     id: `reminder-${label.replace(/\s+/g, '-').toLowerCase()}`,
     label,
@@ -70,7 +76,11 @@ function createLifeThreadSnapshot(): LifeThreadSnapshot {
   };
 }
 
-function createTaskRecord(id: string, prompt: string, nextRun: string): ScheduledTask {
+function createTaskRecord(
+  id: string,
+  prompt: string,
+  nextRun: string,
+): ScheduledTask {
   return {
     id,
     group_folder: 'main',
@@ -116,7 +126,13 @@ describe('chief-of-staff', () => {
       text: 'what matters most today',
       mode: 'prioritize',
       now,
-      tasks: [createTaskRecord('task-candace', 'Reply to Candace about dinner', reminder.nextRunIso)],
+      tasks: [
+        createTaskRecord(
+          'task-candace',
+          'Reply to Candace about dinner',
+          reminder.nextRunIso,
+        ),
+      ],
       selectedWork,
       groundedSnapshot,
       lifeThreadSnapshot,
@@ -124,7 +140,11 @@ describe('chief-of-staff', () => {
 
     expect(result.snapshot.mainSignal?.title).toBeTruthy();
     expect(result.snapshot.signalsUsed).toEqual(
-      expect.arrayContaining(['reminders', 'communication_threads', 'current_work']),
+      expect.arrayContaining([
+        'reminders',
+        'communication_threads',
+        'current_work',
+      ]),
     );
     expect(result.snapshot.mainSignal?.urgency).toBeDefined();
     expect(result.snapshot.mainSignal?.importance).toBeDefined();
@@ -145,7 +165,13 @@ describe('chief-of-staff', () => {
       text: 'should I handle this tonight or tomorrow',
       mode: 'decision_support',
       now,
-      tasks: [createTaskRecord('task-tonight', 'Send the dinner answer', reminder.nextRunIso)],
+      tasks: [
+        createTaskRecord(
+          'task-tonight',
+          'Send the dinner answer',
+          reminder.nextRunIso,
+        ),
+      ],
       selectedWork,
       groundedSnapshot: createGroundedSnapshot(now, reminder),
       lifeThreadSnapshot: createLifeThreadSnapshot(),
@@ -231,7 +257,9 @@ describe('chief-of-staff', () => {
     });
 
     expect(result.snapshot.mainSignal?.summaryText).toContain('breathing room');
-    expect(result.snapshot.mainSignal?.summaryText).not.toContain('300 minutes');
+    expect(result.snapshot.mainSignal?.summaryText).not.toContain(
+      '300 minutes',
+    );
   });
 
   it('uses a natural prep summary for before-my-next-meeting guidance', async () => {

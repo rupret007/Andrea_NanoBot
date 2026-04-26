@@ -305,9 +305,9 @@ function isCompletedSelectedWork(
 ): boolean {
   return Boolean(
     selectedWork &&
-      /^(done|succeeded|success|completed|complete|stopped|cancelled|canceled)$/i.test(
-        selectedWork.statusLabel.trim(),
-      ),
+    /^(done|succeeded|success|completed|complete|stopped|cancelled|canceled)$/i.test(
+      selectedWork.statusLabel.trim(),
+    ),
   );
 }
 
@@ -477,7 +477,9 @@ function summarizeThread(thread: LifeThread | null): string | null {
       : candidate;
   };
   const title = trimTerminalPunctuation(thread.title);
-  const detail = normalizeThreadDetail(thread.nextAction || thread.summary || null);
+  const detail = normalizeThreadDetail(
+    thread.nextAction || thread.summary || null,
+  );
   if (!detail) return title;
   if (!title) return detail;
   if (/^(?:follow[- ]?up|thread|carryover|open loops?)$/i.test(title)) {
@@ -793,7 +795,10 @@ function chooseRecommendation(
   kind: DailyCompanionRecommendationKind;
   focusKey: string | null;
 } {
-  const work = visibleSelectedWork(snapshot.selectedWork, prefs.workContextEnabled);
+  const work = visibleSelectedWork(
+    snapshot.selectedWork,
+    prefs.workContextEnabled,
+  );
   const nextEvent = snapshot.calendar.nextTimedEvent;
   const nextReminder = snapshot.todayReminders[0];
   const nextWindow = summarizeWindow(snapshot);
@@ -986,9 +991,10 @@ function buildAlexaVoiceDetailLines(params: {
   return selected;
 }
 
-function pickAlexaContinuationDetails(
-  context: DailyCompanionContext,
-): { summary: string; detail?: string } {
+function pickAlexaContinuationDetails(context: DailyCompanionContext): {
+  summary: string;
+  detail?: string;
+} {
   const seen = [context.summaryText];
   const preferredThreadSummary = context.threadSummaryLines
     .map((line) => humanizeAlexaDetailLine(line))
@@ -1011,10 +1017,7 @@ function pickAlexaContinuationDetails(
   }
 
   if (selected.length > 0) {
-    if (
-      preferredThreadSummary &&
-      /^(?:Keep|Touch)\b/i.test(selected[0]!)
-    ) {
+    if (preferredThreadSummary && /^(?:Keep|Touch)\b/i.test(selected[0]!)) {
       return {
         summary: preferredThreadSummary,
         detail: selected[0],
@@ -1039,7 +1042,8 @@ function pickAlexaContinuationDetails(
   }
 
   return {
-    summary: 'That is the main thing. Nothing else feels especially urgent right now.',
+    summary:
+      'That is the main thing. Nothing else feels especially urgent right now.',
   };
 }
 
@@ -1160,10 +1164,7 @@ function shouldOverrideCarryoverLead(
     return draft.leadReason === 'schedule_only';
   }
   if (draft.mode === 'evening_reset') {
-    return (
-      isWeakOrGenericCarryoverLead(draft) &&
-      chosen.kind !== 'mission'
-    );
+    return isWeakOrGenericCarryoverLead(draft) && chosen.kind !== 'mission';
   }
   if (draft.mode === 'open_guidance') {
     return isWeakOrGenericCarryoverLead(draft);
@@ -1217,14 +1218,18 @@ function buildChiefOfStaffCarryoverFocus(params: {
   draft: CompanionDraft;
   staff: Awaited<ReturnType<typeof buildChiefOfStaffSnapshot>>;
 }): CarryoverFocusDecision | null {
-  if (!params.staff.snapshot.mainSignal && !params.staff.snapshot.bestNextAction) {
+  if (
+    !params.staff.snapshot.mainSignal &&
+    !params.staff.snapshot.bestNextAction
+  ) {
     return null;
   }
   const mainSignal = params.staff.snapshot.mainSignal;
   const priority =
     mainSignal?.kind === 'deadline' || mainSignal?.kind === 'slip_risk'
       ? 100
-      : mainSignal?.kind === 'open_loop' || mainSignal?.kind === 'pressure_point'
+      : mainSignal?.kind === 'open_loop' ||
+          mainSignal?.kind === 'pressure_point'
         ? 96
         : mainSignal?.kind === 'prep_needed'
           ? 92
@@ -1235,19 +1240,21 @@ function buildChiefOfStaffCarryoverFocus(params: {
     priority,
     kind: 'chief_of_staff',
     lead:
-      params.draft.leadReason === 'weak_signal' && params.staff.snapshot.mainSignal
+      params.draft.leadReason === 'weak_signal' &&
+      params.staff.snapshot.mainSignal
         ? params.staff.snapshot.summaryText
         : params.staff.snapshot.mainSignal?.summaryText ||
           params.staff.snapshot.summaryText,
-      leadReason:
-        params.draft.leadReason === 'weak_signal' && params.staff.snapshot.mainSignal
-          ? 'chief_of_staff'
-          : params.draft.leadReason,
-      detailLine:
-        params.staff.snapshot.mainSignal?.summaryText ||
-        params.staff.snapshot.summaryText,
-      recommendationText: params.staff.snapshot.bestNextAction || null,
-      signalsUsed: ['chief_of_staff'],
+    leadReason:
+      params.draft.leadReason === 'weak_signal' &&
+      params.staff.snapshot.mainSignal
+        ? 'chief_of_staff'
+        : params.draft.leadReason,
+    detailLine:
+      params.staff.snapshot.mainSignal?.summaryText ||
+      params.staff.snapshot.summaryText,
+    recommendationText: params.staff.snapshot.bestNextAction || null,
+    signalsUsed: ['chief_of_staff'],
   };
 }
 
@@ -1309,7 +1316,10 @@ async function applyPrioritizedCarryoverFocus(params: {
     mode: staffMode,
     now: params.now,
     tasks: params.tasks,
-    selectedWork: visibleSelectedWork(params.groundedSnapshot.selectedWork, true),
+    selectedWork: visibleSelectedWork(
+      params.groundedSnapshot.selectedWork,
+      true,
+    ),
     groundedSnapshot: params.groundedSnapshot,
     lifeThreadSnapshot: params.threadSnapshot,
   });
@@ -1329,7 +1339,9 @@ async function applyPrioritizedCarryoverFocus(params: {
       draft: params.draft,
       staff,
     }),
-  ].filter((candidate): candidate is CarryoverFocusDecision => Boolean(candidate));
+  ].filter((candidate): candidate is CarryoverFocusDecision =>
+    Boolean(candidate),
+  );
 
   const chosen =
     focusCandidates.sort((left, right) => right.priority - left.priority)[0] ||
@@ -1354,10 +1366,10 @@ async function applyPrioritizedCarryoverFocus(params: {
     chosen.detailLine,
     ...params.draft.detailLines.filter(
       (line) =>
-          !/^Conversation carryover: |^Mission carryover: |^Chief-of-staff read: |^(?:Why this came up|Keep in mind): |^Open conversation: |^Plan carryover: /i.test(
-            line,
-          ),
-      ),
+        !/^Conversation carryover: |^Mission carryover: |^Chief-of-staff read: |^(?:Why this came up|Keep in mind): |^Open conversation: |^Plan carryover: /i.test(
+          line,
+        ),
+    ),
   ].slice(0, 5);
   const mergedExtraDetails = [
     chosen.detailLine,
@@ -1383,7 +1395,9 @@ async function applyPrioritizedCarryoverFocus(params: {
       params.draft.recommendationKind === 'none'
         ? 'do_now'
         : params.draft.recommendationKind,
-    signalsUsed: [...new Set([...params.draft.signalsUsed, ...chosen.signalsUsed])],
+    signalsUsed: [
+      ...new Set([...params.draft.signalsUsed, ...chosen.signalsUsed]),
+    ],
     signalsOmitted: [
       ...new Set([
         ...params.draft.signalsOmitted,
@@ -1435,14 +1449,13 @@ function finalizeDraft(
         )
       : shouldUseSignatureJourneyEnvelope(channel, draft.mode)
         ? flagshipTextReply
-      : formatTextReply(
-          draft.lead,
-          [
-            ...draft.detailLines,
-            draft.recommendationText || null,
-          ].filter(Boolean) as string[],
-          personalityLine,
-        );
+        : formatTextReply(
+            draft.lead,
+            [...draft.detailLines, draft.recommendationText || null].filter(
+              Boolean,
+            ) as string[],
+            personalityLine,
+          );
 
   const shortText =
     channel === 'alexa'
@@ -1457,10 +1470,9 @@ function finalizeDraft(
         ? flagshipTextReply
         : formatTextReply(
             draft.lead,
-            [
-              ...draft.detailLines,
-              draft.recommendationText || null,
-            ].filter(Boolean) as string[],
+            [...draft.detailLines, draft.recommendationText || null].filter(
+              Boolean,
+            ) as string[],
             personalityLine,
           )
       : reply;
@@ -1641,7 +1653,7 @@ function buildMorningDraft(params: {
     usedThreadTitles: threadContext.usedThreadTitles,
     usedThreadReasons: threadContext.usedThreadReasons,
     threadSummaryLines: threadContext.threadSummaryLines,
-  comparisonKeys: {
+    comparisonKeys: {
       nextEvent: nextEvent ? `${nextEvent.id}:${nextEvent.startIso}` : null,
       nextReminder: nextReminder
         ? `${nextReminder.id}:${nextReminder.nextRunIso}`
@@ -1676,7 +1688,9 @@ function applyEverydayCaptureSignalToDraft(
   if (!firstSignal) return draft;
   const line = `List: ${firstSignal}`;
   if (
-    draft.detailLines.some((existing) => existing.toLowerCase() === line.toLowerCase())
+    draft.detailLines.some(
+      (existing) => existing.toLowerCase() === line.toLowerCase(),
+    )
   ) {
     return draft;
   }

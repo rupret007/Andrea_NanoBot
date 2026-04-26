@@ -50,9 +50,9 @@ describe('planGoogleCalendarCreate', () => {
         'Put Andrea calendar live proof lunch with Sam on tomorrow afternoon.',
       ),
     ).toBe(true);
-    expect(isExplicitGoogleCalendarCreateRequest('Remind me tomorrow at 3pm.')).toBe(
-      false,
-    );
+    expect(
+      isExplicitGoogleCalendarCreateRequest('Remind me tomorrow at 3pm.'),
+    ).toBe(false);
   });
 
   it('ignores reminder phrasing', () => {
@@ -113,7 +113,7 @@ describe('planGoogleCalendarCreate', () => {
     expect(plan.selectedCalendarId).toBe('family@group.calendar.google.com');
   });
 
-  it("strips possessive calendar-target phrasing out of the event title", () => {
+  it('strips possessive calendar-target phrasing out of the event title', () => {
     const plan = planGoogleCalendarCreate(
       "Add Andrea calendar proof to Jeff's calendar tomorrow at 4pm.",
       [...writableCalendars],

@@ -224,7 +224,9 @@ describe('runtime commands', () => {
       }),
     );
 
-    expect(text).toContain('Prompt preview: Continue the long-running proof task');
+    expect(text).toContain(
+      'Prompt preview: Continue the long-running proof task',
+    );
     expect(text).toContain('Job ID: runtime-job-1');
     expect(text).toContain('Workspace: main');
     expect(text).toContain('Runtime: codex_local');
@@ -243,7 +245,8 @@ describe('runtime commands', () => {
           groupFolder: 'main',
           threadId: 'thread-1',
           selectedRuntime: 'codex_local',
-          errorText: 'Agent execution failed after the container reported an auth error.',
+          errorText:
+            'Agent execution failed after the container reported an auth error.',
         },
       }),
     );

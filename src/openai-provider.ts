@@ -48,7 +48,11 @@ function normalizeBaseUrl(value: string | undefined): string {
 
 export function getOpenAiProviderStatus(): OpenAiProviderStatus {
   const env = readOpenAiEnv();
-  const apiKey = (process.env.OPENAI_API_KEY || env.OPENAI_API_KEY || '').trim();
+  const apiKey = (
+    process.env.OPENAI_API_KEY ||
+    env.OPENAI_API_KEY ||
+    ''
+  ).trim();
   const baseUrl = normalizeBaseUrl(
     process.env.OPENAI_BASE_URL || env.OPENAI_BASE_URL,
   );

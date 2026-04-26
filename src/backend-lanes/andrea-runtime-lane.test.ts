@@ -20,7 +20,9 @@ const MAIN_GROUP: RegisteredGroup = {
   isMain: true,
 };
 
-function buildJob(overrides: Partial<RuntimeBackendJob> = {}): RuntimeBackendJob {
+function buildJob(
+  overrides: Partial<RuntimeBackendJob> = {},
+): RuntimeBackendJob {
   return {
     backend: ANDREA_OPENAI_BACKEND_ID,
     jobId: 'runtime-job-1',

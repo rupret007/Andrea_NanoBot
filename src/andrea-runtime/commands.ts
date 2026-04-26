@@ -201,7 +201,9 @@ function clipRuntimeTaskText(
 ): string | null {
   const trimmed = text?.trim() || '';
   if (!trimmed) return null;
-  return trimmed.length <= limit ? trimmed : `${trimmed.slice(0, limit - 3)}...`;
+  return trimmed.length <= limit
+    ? trimmed
+    : `${trimmed.slice(0, limit - 3)}...`;
 }
 
 export function formatRuntimeJobCard(job: BackendJobDetails): string {
@@ -240,18 +242,14 @@ export function formatRuntimeJobCard(job: BackendJobDetails): string {
         ? `${errorText ? 'Error summary' : 'Output summary'}: ${outputSummary}`
         : null,
     ],
-    summary:
-      errorText && outputSummary
-        ? 'Needs attention'
-        : job.summary,
+    summary: errorText && outputSummary ? 'Needs attention' : job.summary,
     updatedAt: job.updatedAt,
   });
 }
 
 export function formatRuntimeNextStep(jobId: string): string {
   return formatTaskNextStepMessage({
-    primaryActions:
-      `Use this task card, \`/runtime-job ${jobId}\`, or \`/runtime-logs ${jobId}\` to refresh this task or view output.`,
+    primaryActions: `Use this task card, \`/runtime-job ${jobId}\`, or \`/runtime-logs ${jobId}\` to refresh this task or view output.`,
     canReplyContinue: true,
     explicitFallback: `\`/runtime-followup ${jobId} <text>\`, \`/runtime-logs ${jobId}\`, and \`/runtime-stop ${jobId}\` still work when you want exact-id fallbacks.`,
   });
@@ -384,10 +382,7 @@ function maybeClearRuntimeSelection(params: {
   context: RuntimeCommandContext;
   target: ResolvedRuntimeTarget;
 }): boolean {
-  if (
-    params.target.via !== 'current' &&
-    params.target.via !== 'selected'
-  ) {
+  if (params.target.via !== 'current' && params.target.via !== 'selected') {
     return false;
   }
   params.deps.clearCurrentSelection?.({
@@ -565,7 +560,9 @@ async function handleRuntimeJob(
         operation: 'Andrea runtime task lookup failed',
         err,
         targetDisplay: resolution.target.jobId,
-        guidance: buildRuntimeSelectionClearedGuidance(Boolean(clearedSelection)),
+        guidance: buildRuntimeSelectionClearedGuidance(
+          Boolean(clearedSelection),
+        ),
       }),
     );
   }
@@ -674,7 +671,9 @@ async function handleRuntimeFollowup(
           operation: 'Andrea runtime follow-up failed',
           err,
           targetDisplay: resolution.target.jobId,
-          guidance: buildRuntimeSelectionClearedGuidance(Boolean(clearedSelection)),
+          guidance: buildRuntimeSelectionClearedGuidance(
+            Boolean(clearedSelection),
+          ),
         }),
       );
       return;
@@ -788,7 +787,9 @@ async function handleRuntimeStop(
           operation: 'Andrea runtime stop failed',
           err,
           targetDisplay: resolution.target.jobId,
-          guidance: buildRuntimeSelectionClearedGuidance(Boolean(clearedSelection)),
+          guidance: buildRuntimeSelectionClearedGuidance(
+            Boolean(clearedSelection),
+          ),
         }),
       );
       return;
@@ -981,7 +982,9 @@ async function handleRuntimeLogs(
           operation: 'Andrea runtime output lookup failed',
           err,
           targetDisplay: resolution.target.jobId,
-          guidance: buildRuntimeSelectionClearedGuidance(Boolean(clearedSelection)),
+          guidance: buildRuntimeSelectionClearedGuidance(
+            Boolean(clearedSelection),
+          ),
         }),
       );
       return;

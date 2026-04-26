@@ -171,7 +171,10 @@ function summarizeCurrentWork(params: {
   currentJob?: CursorAgentView | null;
   currentRuntimeTask?: BackendJobDetails | null;
 }): string {
-  if (params.currentFocusLaneId === 'andrea_runtime' && params.currentRuntimeTask) {
+  if (
+    params.currentFocusLaneId === 'andrea_runtime' &&
+    params.currentRuntimeTask
+  ) {
     return `Codex/OpenAI runtime ${summarizeRuntimeTask(params.currentRuntimeTask)}`;
   }
   if (params.currentFocusLaneId === 'cursor' && params.currentJob) {
@@ -392,7 +395,10 @@ export function buildCursorDashboardWorkCurrent(params: {
   executionEnabled: boolean;
   currentJobResultCount?: number;
 }): CursorDashboardRender {
-  if (params.currentFocusLaneId === 'andrea_runtime' && params.currentRuntimeTask) {
+  if (
+    params.currentFocusLaneId === 'andrea_runtime' &&
+    params.currentRuntimeTask
+  ) {
     const rows: ChannelInlineAction[][] = [
       [
         { label: 'Refresh', actionId: '/cursor-ui runtime-refresh' },
@@ -455,7 +461,10 @@ export function buildCursorDashboardWorkCurrent(params: {
             { label: 'View Output', actionId: '/cursor-ui text' },
           ],
           [
-            { label: 'Terminal Status', actionId: '/cursor-ui terminal-status' },
+            {
+              label: 'Terminal Status',
+              actionId: '/cursor-ui terminal-status',
+            },
             { label: 'Terminal Log', actionId: '/cursor-ui terminal-log' },
           ],
           [{ label: 'Terminal Help', actionId: '/cursor-ui terminal-help' }],
@@ -466,7 +475,10 @@ export function buildCursorDashboardWorkCurrent(params: {
       text: [
         '*Current Work*',
         '',
-        formatCursorJobCard(params.currentJob, params.currentJobResultCount || 0),
+        formatCursorJobCard(
+          params.currentJob,
+          params.currentJobResultCount || 0,
+        ),
         '',
         formatTaskContinuationGuidance({
           lane: isCloud ? 'cursor_cloud' : 'cursor_desktop',

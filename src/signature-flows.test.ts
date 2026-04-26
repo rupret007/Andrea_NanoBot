@@ -85,11 +85,14 @@ describe('signature flows', () => {
         'You have about 1431 minutes of usable breathing room.',
         'Keep Open window in view, but it does not need force right now.',
       ],
-      nextAction: 'Keep Open window in view, but it does not need force right now.',
+      nextAction:
+        'Keep Open window in view, but it does not need force right now.',
       whyLine: 'It is the strongest combined pressure in view right now.',
     });
 
-    expect(text).toContain('You have about 1431 minutes of usable breathing room.');
+    expect(text).toContain(
+      'You have about 1431 minutes of usable breathing room.',
+    );
     expect(text).toContain(
       'Next: Keep Open window in view, but it does not need force right now.',
     );
@@ -132,7 +135,9 @@ describe('signature flows', () => {
     });
 
     expect(daily.handled).toBe(true);
-    expect(daily.continuationCandidate?.handoffPayload?.text).toContain('Next:');
+    expect(daily.continuationCandidate?.handoffPayload?.text).toContain(
+      'Next:',
+    );
     expect(daily.continuationCandidate?.handoffPayload?.text).toContain(
       'Keep in mind:',
     );
@@ -141,7 +146,10 @@ describe('signature flows', () => {
     );
 
     const sendTelegramMessage = vi.fn(
-      async (_targetChatJid: string, _text: string): Promise<SendMessageResult> => ({
+      async (
+        _targetChatJid: string,
+        _text: string,
+      ): Promise<SendMessageResult> => ({
         platformMessageId: 'tg-signature-daily-1',
       }),
     );
@@ -152,7 +160,9 @@ describe('signature flows', () => {
         action: 'send_details',
         utterance: 'send me the fuller version',
         conversationSummary:
-          daily.conversationSeed?.summaryText || daily.replyText || 'Daily summary',
+          daily.conversationSeed?.summaryText ||
+          daily.replyText ||
+          'Daily summary',
         priorSubjectData: buildAlexaPriorSubjectData(
           daily.continuationCandidate,
           daily.replyText,
@@ -289,7 +299,8 @@ describe('signature flows', () => {
         chatJid,
         now,
         priorSubjectData:
-          draft.conversationSeed?.subjectData || openLoops.conversationSeed?.subjectData,
+          draft.conversationSeed?.subjectData ||
+          openLoops.conversationSeed?.subjectData,
       },
       input: {
         canonicalText: 'save this conversation under the Candace thread',
@@ -353,9 +364,9 @@ describe('signature flows', () => {
     expect(executed.handled).toBe(true);
     expect(executed.replyText).toContain('Still in view:');
     expect(executed.replyText).toContain('check in with Candace');
-    expect(getMission(missionId!)?.linkedReminderIds.length || 0).toBeGreaterThan(
-      0,
-    );
+    expect(
+      getMission(missionId!)?.linkedReminderIds.length || 0,
+    ).toBeGreaterThan(0);
   });
 
   it('keeps plain mission follow-ups on the same mission in direct chat', async () => {
@@ -429,7 +440,8 @@ describe('signature flows', () => {
 
     const blockerMatch = continueAssistantCapabilityFromPriorSubjectData(
       "what's blocking this",
-      nextStep.conversationSeed?.subjectData || proposed.conversationSeed?.subjectData,
+      nextStep.conversationSeed?.subjectData ||
+        proposed.conversationSeed?.subjectData,
     );
     expect(blockerMatch).toMatchObject({
       capabilityId: 'missions.explain',
@@ -489,7 +501,10 @@ describe('signature flows', () => {
     expect(research.replyText).toContain('Want');
 
     const sendTelegramMessage = vi.fn(
-      async (_targetChatJid: string, _text: string): Promise<SendMessageResult> => ({
+      async (
+        _targetChatJid: string,
+        _text: string,
+      ): Promise<SendMessageResult> => ({
         platformMessageId: 'tg-signature-research-1',
       }),
     );
@@ -586,7 +601,8 @@ describe('signature flows', () => {
         chatJid: bbChatJid,
         now,
         priorSubjectData:
-          draft.conversationSeed?.subjectData || understand.conversationSeed?.subjectData,
+          draft.conversationSeed?.subjectData ||
+          understand.conversationSeed?.subjectData,
       },
       input: {
         canonicalText: 'remind me to reply later tonight',
@@ -594,7 +610,10 @@ describe('signature flows', () => {
     });
 
     const sendTelegramMessage = vi.fn(
-      async (_targetChatJid: string, _text: string): Promise<SendMessageResult> => ({
+      async (
+        _targetChatJid: string,
+        _text: string,
+      ): Promise<SendMessageResult> => ({
         platformMessageId: 'tg-signature-bluebubbles-1',
       }),
     );
@@ -606,8 +625,7 @@ describe('signature flows', () => {
         targetChannel: 'telegram',
         capabilityId: draft.capabilityId,
         voiceSummary: draft.replyText || 'Draft reply',
-        payload:
-          draft.handoffPayload ||
+        payload: draft.handoffPayload ||
           draft.continuationCandidate?.handoffPayload || {
             kind: 'message',
             title: 'Draft reply',

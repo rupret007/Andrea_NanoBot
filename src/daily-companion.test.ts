@@ -46,7 +46,9 @@ function createGoogleCalendarFetchMock(input: {
       );
     }
 
-    for (const [calendarId, response] of Object.entries(input.eventsByCalendar)) {
+    for (const [calendarId, response] of Object.entries(
+      input.eventsByCalendar,
+    )) {
       if (url.includes(`/calendars/${encodeURIComponent(calendarId)}/events`)) {
         return new Response(
           JSON.stringify(
@@ -112,9 +114,9 @@ describe('isPotentialDailyCompanionPrompt', () => {
     expect(isPotentialDailyCompanionPrompt('Give me my morning brief')).toBe(
       true,
     );
-    expect(
-      isPotentialDailyCompanionPrompt('What am I probably missing?'),
-    ).toBe(true);
+    expect(isPotentialDailyCompanionPrompt('What am I probably missing?')).toBe(
+      true,
+    );
     expect(
       isPotentialDailyCompanionPrompt('What should I not forget before bed?'),
     ).toBe(true);
@@ -135,9 +137,7 @@ describe('isPotentialDailyCompanionPrompt', () => {
     expect(
       isPotentialDailyCompanionPrompt('What is on my calendar tomorrow?'),
     ).toBe(true);
-    expect(isPotentialDailyCompanionPrompt('Can you write a poem')).toBe(
-      false,
-    );
+    expect(isPotentialDailyCompanionPrompt('Can you write a poem')).toBe(false);
   });
 });
 
@@ -179,7 +179,9 @@ describe('buildDailyCompanionResponse', () => {
     );
 
     expect(response?.mode).toBe('morning_brief');
-    expect(response?.reply).toContain('The first thing I would keep in mind is');
+    expect(response?.reply).toContain(
+      'The first thing I would keep in mind is',
+    );
     expect(response?.reply).toContain('Next: 4:00 PM-5:00 PM Team sync');
     expect(response?.reply).toContain('Reminder: 1:30 PM check on the demo');
     expect(response?.reply).toContain('Next:');
@@ -202,16 +204,19 @@ describe('buildDailyCompanionResponse', () => {
       },
     });
 
-    const response = await buildDailyCompanionResponse('What should I do now?', {
-      channel: 'telegram',
-      groupFolder: 'main',
-      now: new Date('2026-04-04T12:00:00-05:00'),
-      timeZone: 'America/Chicago',
-      env: baseEnv,
-      fetchImpl,
-      selectedWork,
-      tasks: [],
-    });
+    const response = await buildDailyCompanionResponse(
+      'What should I do now?',
+      {
+        channel: 'telegram',
+        groupFolder: 'main',
+        now: new Date('2026-04-04T12:00:00-05:00'),
+        timeZone: 'America/Chicago',
+        env: baseEnv,
+        fetchImpl,
+        selectedWork,
+        tasks: [],
+      },
+    );
 
     expect(response?.mode).toBe('midday_reground');
     expect(response?.reply).toContain('The best next move is still Ship docs.');
@@ -268,15 +273,18 @@ describe('buildDailyCompanionResponse', () => {
       },
     });
 
-    const response = await buildDailyCompanionResponse('What should I do next?', {
-      channel: 'telegram',
-      groupFolder: 'main',
-      now: new Date('2026-04-04T12:00:00-05:00'),
-      timeZone: 'America/Chicago',
-      env: baseEnv,
-      fetchImpl,
-      tasks: [],
-    });
+    const response = await buildDailyCompanionResponse(
+      'What should I do next?',
+      {
+        channel: 'telegram',
+        groupFolder: 'main',
+        now: new Date('2026-04-04T12:00:00-05:00'),
+        timeZone: 'America/Chicago',
+        env: baseEnv,
+        fetchImpl,
+        tasks: [],
+      },
+    );
 
     expect(response?.reply).toContain('Candace');
     expect(response?.signalsUsed).toContain('life_threads');
@@ -292,22 +300,25 @@ describe('buildDailyCompanionResponse', () => {
       },
     });
 
-    const response = await buildDailyCompanionResponse('What am I forgetting?', {
-      channel: 'telegram',
-      groupFolder: 'main',
-      now: new Date('2026-04-04T12:00:00-05:00'),
-      timeZone: 'America/Chicago',
-      env: baseEnv,
-      fetchImpl,
-      selectedWork,
-      tasks: [
-        createReminderTask(
-          'reply to Candace about dinner',
-          '2026-04-04T18:30:00.000Z',
-          'reminder-chief-of-staff',
-        ),
-      ],
-    });
+    const response = await buildDailyCompanionResponse(
+      'What am I forgetting?',
+      {
+        channel: 'telegram',
+        groupFolder: 'main',
+        now: new Date('2026-04-04T12:00:00-05:00'),
+        timeZone: 'America/Chicago',
+        env: baseEnv,
+        fetchImpl,
+        selectedWork,
+        tasks: [
+          createReminderTask(
+            'reply to Candace about dinner',
+            '2026-04-04T18:30:00.000Z',
+            'reminder-chief-of-staff',
+          ),
+        ],
+      },
+    );
 
     expect(response?.mode).toBe('open_guidance');
     expect(response?.signalsUsed).toContain('chief_of_staff');
@@ -374,15 +385,18 @@ describe('buildDailyCompanionResponse', () => {
       },
     });
 
-    const response = await buildDailyCompanionResponse('What am I forgetting?', {
-      channel: 'telegram',
-      groupFolder: 'main',
-      now: new Date('2026-04-04T12:00:00-05:00'),
-      timeZone: 'America/Chicago',
-      env: baseEnv,
-      fetchImpl,
-      tasks: [],
-    });
+    const response = await buildDailyCompanionResponse(
+      'What am I forgetting?',
+      {
+        channel: 'telegram',
+        groupFolder: 'main',
+        now: new Date('2026-04-04T12:00:00-05:00'),
+        timeZone: 'America/Chicago',
+        env: baseEnv,
+        fetchImpl,
+        tasks: [],
+      },
+    );
 
     expect(response?.reply).toContain('Candace wants a follow-up');
     expect(response?.reply).toContain('Keep in mind:');
@@ -526,25 +540,30 @@ describe('buildDailyCompanionResponse', () => {
       },
     });
 
-    const response = await buildDailyCompanionResponse('What am I forgetting?', {
-      channel: 'telegram',
-      groupFolder: 'main',
-      now: new Date('2026-04-04T16:00:00-05:00'),
-      timeZone: 'America/Chicago',
-      env: baseEnv,
-      fetchImpl,
-      tasks: [
-        createReminderTask(
-          'call Candace',
-          '2026-04-04T22:30:00.000Z',
-          'reminder-call-candace',
-        ),
-      ],
-    });
+    const response = await buildDailyCompanionResponse(
+      'What am I forgetting?',
+      {
+        channel: 'telegram',
+        groupFolder: 'main',
+        now: new Date('2026-04-04T16:00:00-05:00'),
+        timeZone: 'America/Chicago',
+        env: baseEnv,
+        fetchImpl,
+        tasks: [
+          createReminderTask(
+            'call Candace',
+            '2026-04-04T22:30:00.000Z',
+            'reminder-call-candace',
+          ),
+        ],
+      },
+    );
 
     expect(response?.mode).toBe('open_guidance');
     expect(response?.leadReason).toBe('due_reminder');
-    expect(response?.reply).toContain('The easiest thing to forget right now is call Candace.');
+    expect(response?.reply).toContain(
+      'The easiest thing to forget right now is call Candace.',
+    );
     expect(response?.reply).not.toContain(
       'The next grounded thing is your schedule, because I do not have a better signal than that yet.',
     );
@@ -633,7 +652,9 @@ describe('buildDailyCompanionResponse', () => {
         usedThreadIds: [saved.referencedThread!.id],
         usedThreadTitles: ['Candace'],
         usedThreadReasons: ['it was the active thread in the last answer'],
-        threadSummaryLines: ['Candace: Confirm dinner plans and pickup timing.'],
+        threadSummaryLines: [
+          'Candace: Confirm dinner plans and pickup timing.',
+        ],
       },
       now: new Date('2026-04-04T10:05:00-05:00'),
     });
@@ -739,7 +760,8 @@ describe('buildDailyCompanionResponse', () => {
       channel: 'telegram',
       chatJid: 'tg:8004355504',
       text: 'save this under the Candace thread',
-      replyText: 'Candace wants a follow-up about whether dinner still works tonight.',
+      replyText:
+        'Candace wants a follow-up about whether dinner still works tonight.',
       now: new Date('2026-04-04T10:00:00-05:00'),
     });
 
@@ -867,7 +889,8 @@ describe('buildDailyCompanionResponse', () => {
       channel: 'telegram',
       chatJid: 'tg:8004355504',
       text: 'save this for later',
-      replyText: 'The first fixed point in your day is pest control is coming today at 1:00 PM.',
+      replyText:
+        'The first fixed point in your day is pest control is coming today at 1:00 PM.',
       now: new Date('2026-04-04T10:00:00-05:00'),
     });
 
@@ -890,7 +913,9 @@ describe('buildDailyCompanionResponse', () => {
       },
     );
 
-    expect(response?.reply).toContain('Pest control is coming today at 1:00 PM');
+    expect(response?.reply).toContain(
+      'Pest control is coming today at 1:00 PM',
+    );
     expect(response?.reply).not.toContain(
       'The first fixed point in your day is pest control is coming today at 1:00 PM',
     );
@@ -965,9 +990,9 @@ describe('buildDailyCompanionResponse', () => {
       priorContext,
     });
 
-    expect(response?.reply.startsWith('Pickup after rehearsal keeps it simpler.')).toBe(
-      true,
-    );
+    expect(
+      response?.reply.startsWith('Pickup after rehearsal keeps it simpler.'),
+    ).toBe(true);
     expect(response?.reply).not.toContain(
       'Dinner plans tonight still need a clean answer. Dinner plans tonight still need a clean answer.',
     );
@@ -1005,7 +1030,8 @@ describe('buildDailyCompanionResponse', () => {
       comparisonKeys: {
         nextEvent: null,
         nextReminder: null,
-        recommendation: 'Keep Candace in view, but it can wait for a calmer moment.',
+        recommendation:
+          'Keep Candace in view, but it can wait for a calmer moment.',
         household: 'Candace',
         focus: 'Dinner plans tonight',
         thread: 'Candace',
@@ -1030,9 +1056,9 @@ describe('buildDailyCompanionResponse', () => {
       priorContext,
     });
 
-    expect(response?.reply.startsWith('Candace still needs a dinner answer.')).toBe(
-      true,
-    );
+    expect(
+      response?.reply.startsWith('Candace still needs a dinner answer.'),
+    ).toBe(true);
   });
 
   it('surfaces slipping thread pressure during midday re-grounding', async () => {
@@ -1044,21 +1070,24 @@ describe('buildDailyCompanionResponse', () => {
       now: new Date('2026-04-04T09:00:00-05:00'),
     });
 
-    const response = await buildDailyCompanionResponse('Anything I should know?', {
-      channel: 'telegram',
-      groupFolder: 'main',
-      now: new Date('2026-04-04T21:00:00-05:00'),
-      timeZone: 'America/Chicago',
-      env: baseEnv,
-      fetchImpl: createGoogleCalendarFetchMock({
-        eventsByCalendar: {
-          primary: {
-            items: [],
+    const response = await buildDailyCompanionResponse(
+      'Anything I should know?',
+      {
+        channel: 'telegram',
+        groupFolder: 'main',
+        now: new Date('2026-04-04T21:00:00-05:00'),
+        timeZone: 'America/Chicago',
+        env: baseEnv,
+        fetchImpl: createGoogleCalendarFetchMock({
+          eventsByCalendar: {
+            primary: {
+              items: [],
+            },
           },
-        },
-      }),
-      tasks: [],
-    });
+        }),
+        tasks: [],
+      },
+    );
 
     expect(response?.mode).toBe('midday_reground');
     expect(response?.leadReason).toBe('thread_followup');
@@ -1227,26 +1256,32 @@ describe('buildDailyCompanionResponse', () => {
       tasks: [],
     });
 
-    const explain = await buildDailyCompanionResponse('What are you using to answer this?', {
-      channel: 'telegram',
-      groupFolder: 'main',
-      now: new Date('2026-04-04T09:05:00-05:00'),
-      timeZone: 'America/Chicago',
-      env: baseEnv,
-      fetchImpl,
-      tasks: [],
-      priorContext: first?.context as DailyCompanionContext,
-    });
-    const memory = await buildDailyCompanionResponse('What do you remember that affects this?', {
-      channel: 'telegram',
-      groupFolder: 'main',
-      now: new Date('2026-04-04T09:05:00-05:00'),
-      timeZone: 'America/Chicago',
-      env: baseEnv,
-      fetchImpl,
-      tasks: [],
-      priorContext: first?.context as DailyCompanionContext,
-    });
+    const explain = await buildDailyCompanionResponse(
+      'What are you using to answer this?',
+      {
+        channel: 'telegram',
+        groupFolder: 'main',
+        now: new Date('2026-04-04T09:05:00-05:00'),
+        timeZone: 'America/Chicago',
+        env: baseEnv,
+        fetchImpl,
+        tasks: [],
+        priorContext: first?.context as DailyCompanionContext,
+      },
+    );
+    const memory = await buildDailyCompanionResponse(
+      'What do you remember that affects this?',
+      {
+        channel: 'telegram',
+        groupFolder: 'main',
+        now: new Date('2026-04-04T09:05:00-05:00'),
+        timeZone: 'America/Chicago',
+        env: baseEnv,
+        fetchImpl,
+        tasks: [],
+        priorContext: first?.context as DailyCompanionContext,
+      },
+    );
 
     expect(explain?.reply).toContain('Thread context in play');
     expect(explain?.reply).toContain('Band');

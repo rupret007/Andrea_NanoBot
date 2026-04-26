@@ -149,7 +149,9 @@ export interface AlexaUtteranceReviewDigest {
 }
 
 export function isPilotLoggingEnabled(): boolean {
-  const raw = (process.env.ANDREA_PILOT_LOGGING_ENABLED || '').trim().toLowerCase();
+  const raw = (process.env.ANDREA_PILOT_LOGGING_ENABLED || '')
+    .trim()
+    .toLowerCase();
   if (!raw) return true;
   return !PILOT_LOGGING_DISABLED_VALUES.has(raw);
 }
@@ -268,7 +270,10 @@ export function resolvePilotJourneyFromCapability(params: {
     };
   }
 
-  if (params.capabilityId.startsWith('knowledge.') && /^save /.test(lowerText)) {
+  if (
+    params.capabilityId.startsWith('knowledge.') &&
+    /^save /.test(lowerText)
+  ) {
     return {
       journeyId: 'cross_channel_handoff',
       systemsInvolved: ['knowledge_library', 'cross_channel_handoffs'],
@@ -280,9 +285,15 @@ export function resolvePilotJourneyFromCapability(params: {
   return null;
 }
 
-export function resolveOrdinaryChatPilotJourney(text: string): PilotJourneySeed | null {
+export function resolveOrdinaryChatPilotJourney(
+  text: string,
+): PilotJourneySeed | null {
   const normalized = normalizeText(text);
-  if (normalized === 'hi' || normalized === "what's up" || normalized === 'whats up') {
+  if (
+    normalized === 'hi' ||
+    normalized === "what's up" ||
+    normalized === 'whats up'
+  ) {
     return {
       journeyId: 'ordinary_chat',
       systemsInvolved: ['assistant_shell'],
@@ -293,7 +304,9 @@ export function resolveOrdinaryChatPilotJourney(text: string): PilotJourneySeed 
   return null;
 }
 
-export function resolveCrossChannelPilotJourney(text: string): PilotJourneySeed | null {
+export function resolveCrossChannelPilotJourney(
+  text: string,
+): PilotJourneySeed | null {
   const normalized = normalizeText(text);
   if (
     /^send me the full version\b/.test(normalized) ||
@@ -395,7 +408,10 @@ export function completePilotJourney(
     completedAt,
     durationMs,
     systemsInvolved: [
-      ...new Set([...(existing.systemsInvolved || []), ...(params.systemsInvolved || [])]),
+      ...new Set([
+        ...(existing.systemsInvolved || []),
+        ...(params.systemsInvolved || []),
+      ]),
     ],
   });
 }
@@ -407,7 +423,7 @@ function buildIssueReply(kind: PilotIssueKind): string {
     case 'answer_off':
       return 'Okay. I saved that answer as a private pilot issue for review.';
     case 'should_not_happen':
-      return "Okay. I saved that as a private pilot issue.";
+      return 'Okay. I saved that as a private pilot issue.';
     case 'awkward_flow':
       return 'Okay. I marked this flow as awkward for review.';
     case 'manual_pilot_issue':
@@ -423,7 +439,8 @@ export function capturePilotIssue(params: PilotIssueCaptureParams): {
   replyText: string;
   record?: PilotIssueRecord;
 } {
-  const issueKind = params.issueKindOverride || classifyPilotIssueKind(params.utterance);
+  const issueKind =
+    params.issueKindOverride || classifyPilotIssueKind(params.utterance);
   if (!issueKind) {
     return { handled: false, replyText: '' };
   }
@@ -471,9 +488,7 @@ export function capturePilotIssue(params: PilotIssueCaptureParams): {
         ? params.blockerClassOverride
         : linkedJourney?.blockerClass || null,
     blockerOwner:
-      params.blockerOwnerOverride ||
-      linkedJourney?.blockerOwner ||
-      'none',
+      params.blockerOwnerOverride || linkedJourney?.blockerOwner || 'none',
     summaryText,
     assistantContextSummary: contextSummary,
     linkedRefs: params.linkedRefs || {},
@@ -517,10 +532,12 @@ function buildJourneyReviewDigest(
   usage7dCutoffIso: string,
 ): PilotJourneyReviewDigest {
   const latestEvent = events[0] || null;
-  const latestSuccess = events.find((event) => event.outcome === 'success') || null;
+  const latestSuccess =
+    events.find((event) => event.outcome === 'success') || null;
   const latestUsable =
     events.find(
-      (event) => event.outcome === 'success' || event.outcome === 'degraded_usable',
+      (event) =>
+        event.outcome === 'success' || event.outcome === 'degraded_usable',
     ) || null;
   const latestProblemEvent =
     events.find(
@@ -529,13 +546,17 @@ function buildJourneyReviewDigest(
         event.outcome === 'externally_blocked' ||
         event.outcome === 'internal_failure',
     ) || null;
-  const latestSuccessAt = latestSuccess?.completedAt || latestSuccess?.startedAt || null;
-  const latestUsableAt = latestUsable?.completedAt || latestUsable?.startedAt || null;
+  const latestSuccessAt =
+    latestSuccess?.completedAt || latestSuccess?.startedAt || null;
+  const latestUsableAt =
+    latestUsable?.completedAt || latestUsable?.startedAt || null;
 
   return {
     journeyId,
-    usage24h: events.filter((event) => event.startedAt >= usage24hCutoffIso).length,
-    usage7d: events.filter((event) => event.startedAt >= usage7dCutoffIso).length,
+    usage24h: events.filter((event) => event.startedAt >= usage24hCutoffIso)
+      .length,
+    usage7d: events.filter((event) => event.startedAt >= usage7dCutoffIso)
+      .length,
     latestEvent,
     latestSuccessAt,
     latestUsableAt,
@@ -623,7 +644,9 @@ export function buildPilotReviewDigest(now = new Date()): PilotReviewDigest {
   ).toISOString();
   const journeyDigests = Object.fromEntries(
     FLAGSHIP_PILOT_JOURNEYS.map((journeyId) => {
-      const events = snapshot.recentEvents.filter((event) => event.journeyId === journeyId);
+      const events = snapshot.recentEvents.filter(
+        (event) => event.journeyId === journeyId,
+      );
       return [
         journeyId,
         buildJourneyReviewDigest(

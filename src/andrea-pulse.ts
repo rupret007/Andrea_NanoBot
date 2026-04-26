@@ -41,7 +41,8 @@ const PULSE_CATALOG: AndreaPulseItem[] = [
   {
     id: 'pulse-banana-berry',
     title: 'Banana berry',
-    summary: 'A botanical oddity: bananas count as berries, but strawberries do not.',
+    summary:
+      'A botanical oddity: bananas count as berries, but strawberries do not.',
     detail:
       'Botanists classify them by how the fruit develops, not by how the grocery store labels them.',
     tags: ['weird', 'food'],
@@ -90,7 +91,8 @@ const PULSE_CATALOG: AndreaPulseItem[] = [
   {
     id: 'pulse-pigeons-navigation',
     title: 'Pigeon navigation',
-    summary: "Pigeons can use Earth's magnetic field as part of how they navigate.",
+    summary:
+      "Pigeons can use Earth's magnetic field as part of how they navigate.",
     detail:
       'They also combine that with visual landmarks and smell, which is a pretty capable stack for a bird.',
     tags: ['interesting', 'nature'],
@@ -165,20 +167,21 @@ export function buildAndreaPulseReply(params: {
   const now = params.now || new Date();
   const toneProfile = params.toneProfile || 'balanced';
   const wantsMore = /^(say more|tell me more)\b/i.test(params.query.trim());
-  const wantsShorter = /^(make that shorter|shorter|be (a little |a bit )?more direct)\b/i.test(
-    params.query.trim(),
-  );
+  const wantsShorter =
+    /^(make that shorter|shorter|be (a little |a bit )?more direct)\b/i.test(
+      params.query.trim(),
+    );
   const item = choosePulseItem(params.query, now, params.previousSummary, {
     reusePrevious: wantsMore || wantsShorter,
   });
   const textureLine = wantsShorter
     ? null
     : buildCompanionTextureLine({
-    channel: params.channel,
-    context: 'pulse',
-    toneProfile,
-    lowStakes: true,
-  });
+        channel: params.channel,
+        context: 'pulse',
+        toneProfile,
+        lowStakes: true,
+      });
 
   const replyText =
     params.channel === 'alexa'

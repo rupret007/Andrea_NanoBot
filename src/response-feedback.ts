@@ -128,7 +128,9 @@ async function lookupRuntimeStatusFromBackend(
     const job = await client.getJob(jobId);
     return job.status || null;
   } catch {
-    return getRuntimeBackendJob(ANDREA_OPENAI_BACKEND_ID, jobId)?.status || null;
+    return (
+      getRuntimeBackendJob(ANDREA_OPENAI_BACKEND_ID, jobId)?.status || null
+    );
   }
 }
 
@@ -227,14 +229,22 @@ export async function refreshResponseFeedbackRecordTruth(
     const taskStatus = options.runtimeStatusLookup
       ? await options.runtimeStatusLookup(record.remediationJobId)
       : await lookupRuntimeStatusFromBackend(record.remediationJobId);
-    return syncResponseFeedbackRecordFromTaskStatus(record, taskStatus, options);
+    return syncResponseFeedbackRecordFromTaskStatus(
+      record,
+      taskStatus,
+      options,
+    );
   }
 
   if (record.remediationLaneId === 'cursor') {
     const taskStatus = options.cursorStatusLookup
       ? options.cursorStatusLookup(record.remediationJobId)
       : getCursorAgentById(record.remediationJobId)?.status;
-    return syncResponseFeedbackRecordFromTaskStatus(record, taskStatus, options);
+    return syncResponseFeedbackRecordFromTaskStatus(
+      record,
+      taskStatus,
+      options,
+    );
   }
 
   return record;
@@ -250,7 +260,9 @@ export async function refreshRecentResponseFeedbackTruth(
 ): Promise<ResponseFeedbackRecord[]> {
   const records = listRecentResponseFeedback(params);
   const refreshed = await Promise.all(
-    records.map((record) => refreshResponseFeedbackRecordTruth(record, options)),
+    records.map((record) =>
+      refreshResponseFeedbackRecordTruth(record, options),
+    ),
   );
   return refreshed.sort(
     (left, right) =>
@@ -307,7 +319,10 @@ export function parseResponseFeedbackAction(
 }
 
 export function shouldCancelPendingContinuationForFeedback(
-  record: Pick<ResponseFeedbackRecord, 'routeKey' | 'capabilityId' | 'handlerKind'>,
+  record: Pick<
+    ResponseFeedbackRecord,
+    'routeKey' | 'capabilityId' | 'handlerKind'
+  >,
 ): boolean {
   const routeKey = normalizeText(record.routeKey).toLowerCase();
   const capabilityId = normalizeText(record.capabilityId).toLowerCase();
@@ -427,7 +442,10 @@ export function classifyResponseFeedbackCandidate(params: {
 }
 
 export function buildResponseFeedbackActionRows(
-  record: Pick<ResponseFeedbackRecord, 'feedbackId' | 'status' | 'classification'>,
+  record: Pick<
+    ResponseFeedbackRecord,
+    'feedbackId' | 'status' | 'classification'
+  >,
 ): SendMessageOptions['inlineActionRows'] {
   if (record.status === 'resolved_locally') {
     return [
@@ -536,7 +554,10 @@ export function buildResponseFeedbackActionRows(
 }
 
 export function appendResponseFeedbackActionRows(params: {
-  record: Pick<ResponseFeedbackRecord, 'feedbackId' | 'status' | 'classification'>;
+  record: Pick<
+    ResponseFeedbackRecord,
+    'feedbackId' | 'status' | 'classification'
+  >;
   inlineActions?: ChannelInlineAction[] | null;
   inlineActionRows?: ChannelInlineAction[][] | null;
 }): SendMessageOptions['inlineActionRows'] {
@@ -701,10 +722,12 @@ export function selectResponseFeedbackRetryLane(params: {
   return selection;
 }
 
-function buildExpectedBehavior(record: Pick<
-  ResponseFeedbackRecord,
-  'originalUserText' | 'routeKey' | 'capabilityId' | 'classification'
->): string {
+function buildExpectedBehavior(
+  record: Pick<
+    ResponseFeedbackRecord,
+    'originalUserText' | 'routeKey' | 'capabilityId' | 'classification'
+  >,
+): string {
   const ask = normalizeText(record.originalUserText).toLowerCase();
   const routeKey = normalizeText(record.routeKey).toLowerCase();
   const capabilityId = normalizeText(record.capabilityId).toLowerCase();
@@ -719,7 +742,10 @@ function buildExpectedBehavior(record: Pick<
   if (routeKey.includes('calendar') || capabilityId.includes('calendar')) {
     return 'Answer as a calendar request, keep the same-thread continuation intact, and ask only for the one missing detail when needed.';
   }
-  if (routeKey.includes('communication') || capabilityId.includes('communication')) {
+  if (
+    routeKey.includes('communication') ||
+    capabilityId.includes('communication')
+  ) {
     return 'Give a grounded draft or summary, preserve rewrite continuity, and avoid generic or template-shaped reply help.';
   }
   if (routeKey.includes('daily') || capabilityId.includes('daily')) {
@@ -734,13 +760,19 @@ function buildExpectedBehavior(record: Pick<
 function buildTraceSummary(
   record: Pick<
     ResponseFeedbackRecord,
-    'capabilityId' | 'routeKey' | 'responseSource' | 'traceReason' | 'blockerClass'
+    | 'capabilityId'
+    | 'routeKey'
+    | 'responseSource'
+    | 'traceReason'
+    | 'blockerClass'
   >,
 ): string[] {
   return [
     record.capabilityId ? `- Capability: ${record.capabilityId}` : null,
     record.routeKey ? `- Route key: ${record.routeKey}` : null,
-    record.responseSource ? `- Response source: ${record.responseSource}` : null,
+    record.responseSource
+      ? `- Response source: ${record.responseSource}`
+      : null,
     record.traceReason ? `- Trace reason: ${record.traceReason}` : null,
     record.blockerClass ? `- Blocker class: ${record.blockerClass}` : null,
   ].filter((line): line is string => Boolean(line));
@@ -754,7 +786,9 @@ export function buildResponseFeedbackRemediationPrompt(params: {
   const { record, laneSelection, hostTruthLines } = params;
   const expectedBehavior = buildExpectedBehavior(record);
   const traceSummary = buildTraceSummary(record);
-  const prefix = laneSelection.promptPrefix ? `${laneSelection.promptPrefix}\n\n` : '';
+  const prefix = laneSelection.promptPrefix
+    ? `${laneSelection.promptPrefix}\n\n`
+    : '';
   return [
     prefix +
       'Andrea just received a Telegram main-control-chat reply that was downvoted as `Not helpful`.',

@@ -53,9 +53,11 @@ function normalizeForMatch(value: string): string {
   return stripAndreaAddressing(normalizeText(value));
 }
 
-function parseWindow(
-  text: string,
-): { cleanedText: string; kind: CompanionRouteTimeWindowKind; value: number | null } {
+function parseWindow(text: string): {
+  cleanedText: string;
+  kind: CompanionRouteTimeWindowKind;
+  value: number | null;
+} {
   const normalized = normalizeText(text);
   const lower = normalized.toLowerCase();
   const patterns: Array<{
@@ -254,10 +256,7 @@ export function parseThreadSummaryIntent(
   const withoutLead = normalizeText(
     normalizeText(
       cleanedText
-        .replace(
-          /^(?:can you|could you|please|hey|hi|hello)\s+/i,
-          '',
-        )
+        .replace(/^(?:can you|could you|please|hey|hi|hello)\s+/i, '')
         .replace(/\b(?:summari[sz]e|summerize|sumarize)\b/i, ''),
     )
       .replace(/^my\s+/i, '')
