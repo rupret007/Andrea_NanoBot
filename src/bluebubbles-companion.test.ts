@@ -96,9 +96,9 @@ describe('bluebubbles companion helpers', () => {
     expect(
       isBlueBubblesProofDrillStartRequest('@Andrea start bluebubbles proof'),
     ).toBe(true);
-    expect(isBlueBubblesProofDrillStartRequest('start blue bubbles proof')).toBe(
-      true,
-    );
+    expect(
+      isBlueBubblesProofDrillStartRequest('start blue bubbles proof'),
+    ).toBe(true);
     expect(isBlueBubblesProofDrillStartRequest('send it later tonight')).toBe(
       false,
     );

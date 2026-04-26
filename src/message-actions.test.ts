@@ -418,7 +418,9 @@ describe('message actions', () => {
     expect(snapshot.proofDrillState).toBe('active');
     expect(snapshot.proofDrillActionId).toBe(second.action.messageActionId);
     expect(continuity.openMessageActionCount).toBe(1);
-    expect(continuity.activeMessageActionId).toBe(second.action.messageActionId);
+    expect(continuity.activeMessageActionId).toBe(
+      second.action.messageActionId,
+    );
     expect(buildBlueBubblesProofDrillPresentationText(second.action)).toContain(
       'send it later tonight',
     );

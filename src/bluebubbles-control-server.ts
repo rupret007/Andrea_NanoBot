@@ -454,9 +454,11 @@ function listOpenBlueBubblesMessageActions(
     });
 }
 
-function buildAllowedOperations(
-  action: { sendStatus: string; sourceKey: string; linkedRefsJson?: string | null },
-): BlueBubblesMessageActionOperationKind[] {
+function buildAllowedOperations(action: {
+  sendStatus: string;
+  sourceKey: string;
+  linkedRefsJson?: string | null;
+}): BlueBubblesMessageActionOperationKind[] {
   if (action.sendStatus === 'sent' || action.sendStatus === 'skipped') {
     return [];
   }

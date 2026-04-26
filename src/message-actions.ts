@@ -988,7 +988,10 @@ function listBlueBubblesProofDrillActions(
     limit: 200,
   })
     .filter(isBlueBubblesProofDrillAction)
-    .sort((left, right) => proofDrillTouchedAtMs(right) - proofDrillTouchedAtMs(left));
+    .sort(
+      (left, right) =>
+        proofDrillTouchedAtMs(right) - proofDrillTouchedAtMs(left),
+    );
 }
 
 function stampBlueBubblesProofDrillAction(params: {
@@ -1118,8 +1121,11 @@ export function startBlueBubblesProofDrill(params: {
     );
   }
 
-  const freshnessCutoff = now.getTime() - MESSAGE_ACTION_FOLLOWUP_CONTEXT_TTL_MS;
-  let activeProofDrill = listBlueBubblesProofDrillActions(params.groupFolder).find(
+  const freshnessCutoff =
+    now.getTime() - MESSAGE_ACTION_FOLLOWUP_CONTEXT_TTL_MS;
+  let activeProofDrill = listBlueBubblesProofDrillActions(
+    params.groupFolder,
+  ).find(
     (action) =>
       isActionableBlueBubblesDecisionStatus(action.sendStatus) &&
       proofDrillTouchedAtMs(action) >= freshnessCutoff,
@@ -1175,7 +1181,8 @@ export function startBlueBubblesProofDrill(params: {
     now,
     allowRehydrate: false,
   });
-  const action = getMessageAction(activeProofDrill.messageActionId) || activeProofDrill;
+  const action =
+    getMessageAction(activeProofDrill.messageActionId) || activeProofDrill;
   return {
     action,
     presentationText: buildBlueBubblesProofDrillPresentationText(action),
