@@ -59,6 +59,23 @@ describe('classifyTelegramTransportFailure', () => {
     );
   });
 
+  it('treats Telegram 401 Unauthorized as a token/config blocker instead of a restartable local failure', () => {
+    const classification = classifyTelegramTransportFailure({
+      error: "Call to 'getMe' failed! (401: Unauthorized)",
+      consecutiveExternalConflicts: 0,
+    });
+
+    expect(classification).toEqual(
+      expect.objectContaining({
+        errorClass: 'token_rotation_required',
+        status: 'blocked',
+        externalConsumerSuspected: false,
+        tokenRotationRequired: true,
+      }),
+    );
+    expect(classification.detail).toContain('TELEGRAM_BOT_TOKEN');
+  });
+
   it('treats an active webhook after cleanup as an external blocker', () => {
     const classification = classifyTelegramTransportFailure({
       error: 'Telegram webhook is still active after local cleanup.',

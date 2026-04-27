@@ -276,7 +276,7 @@ describe('response feedback helpers', () => {
     expect(result.status).toBe('awaiting_confirmation');
   });
 
-  it('prefers codex local, then codex cloud, then cursor cloud, and never auto-selects cursor desktop', () => {
+  it('prefers cloud repair lanes before falling back to codex local, and never auto-selects cursor desktop', () => {
     expect(
       selectResponseFeedbackLane({
         runtimeAvailable: true,
@@ -285,7 +285,7 @@ describe('response feedback helpers', () => {
         cursorCloudAvailable: true,
         cursorDesktopAvailable: true,
       }).runtimePreference,
-    ).toBe('codex_local');
+    ).toBe('cursor_cloud');
 
     expect(
       selectResponseFeedbackLane({
@@ -295,17 +295,27 @@ describe('response feedback helpers', () => {
         cursorCloudAvailable: true,
         cursorDesktopAvailable: true,
       }).runtimePreference,
+    ).toBe('cursor_cloud');
+
+    expect(
+      selectResponseFeedbackLane({
+        runtimeAvailable: true,
+        runtimeLocalPreferred: false,
+        runtimeCloudAllowed: true,
+        cursorCloudAvailable: false,
+        cursorDesktopAvailable: true,
+      }).runtimePreference,
     ).toBe('codex_cloud');
 
     expect(
       selectResponseFeedbackLane({
-        runtimeAvailable: false,
-        runtimeLocalPreferred: false,
+        runtimeAvailable: true,
+        runtimeLocalPreferred: true,
         runtimeCloudAllowed: false,
-        cursorCloudAvailable: true,
+        cursorCloudAvailable: false,
         cursorDesktopAvailable: true,
       }).runtimePreference,
-    ).toBe('cursor_cloud');
+    ).toBe('codex_local');
 
     const desktopOnly = selectResponseFeedbackLane({
       runtimeAvailable: false,
@@ -318,7 +328,7 @@ describe('response feedback helpers', () => {
     expect(desktopOnly.runtimePreference).toBe('cursor_local');
   });
 
-  it('falls back to codex cloud when retrying after a codex-local failure', () => {
+  it('keeps retries on the healthiest cloud repair lane after a codex-local failure', () => {
     const selection = selectResponseFeedbackRetryLane({
       record: buildRecord({
         status: 'failed',
@@ -333,9 +343,27 @@ describe('response feedback helpers', () => {
       },
     });
 
-    expect(selection.laneId).toBe('andrea_runtime');
-    expect(selection.runtimePreference).toBe('codex_cloud');
-    expect(selection.label).toBe('Codex cloud');
+    expect(selection.laneId).toBe('cursor');
+    expect(selection.runtimePreference).toBe('cursor_cloud');
+    expect(selection.label).toBe('Cursor Cloud');
+
+    const noCursorSelection = selectResponseFeedbackRetryLane({
+      record: buildRecord({
+        status: 'failed',
+        remediationRuntimePreference: 'codex_local',
+      }),
+      availability: {
+        runtimeAvailable: true,
+        runtimeLocalPreferred: true,
+        runtimeCloudAllowed: true,
+        cursorCloudAvailable: false,
+        cursorDesktopAvailable: false,
+      },
+    });
+
+    expect(noCursorSelection.laneId).toBe('andrea_runtime');
+    expect(noCursorSelection.runtimePreference).toBe('codex_cloud');
+    expect(noCursorSelection.label).toBe('Codex cloud');
   });
 
   it('builds a remediation prompt with the ask, validation, restart, and no-commit rules', () => {

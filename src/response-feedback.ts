@@ -597,6 +597,7 @@ export function buildResponseFeedbackCaptureReply(
   return [
     'I saved that as a private pilot issue.',
     `This looks like a ${classification}, and I can prep a targeted fix job if you want.`,
+    'I will prefer a cloud repair agent first when one is healthy; local Codex is fallback only.',
     explanation,
     `Saved reply excerpt: "${replyPreview}"`,
   ].join('\n');
@@ -635,15 +636,15 @@ export function buildResponseFeedbackWhyText(
 export function selectResponseFeedbackLane(
   availability: ResponseFeedbackLaneAvailability,
 ): ResponseFeedbackLaneSelection {
-  if (availability.runtimeAvailable && availability.runtimeLocalPreferred) {
+  if (availability.cursorCloudAvailable) {
     return {
-      laneId: 'andrea_runtime',
-      runtimePreference: 'codex_local',
-      label: 'Codex local',
-      promptPrefix: '[runtime: local]',
+      laneId: 'cursor',
+      runtimePreference: 'cursor_cloud',
+      label: 'Cursor Cloud',
+      promptPrefix: '',
       reason:
-        availability.runtimeDetail ||
-        'Codex local is healthy and authenticated on this host, so it is the best remediation lane.',
+        availability.cursorCloudDetail ||
+        'Cursor Cloud is the healthiest queued remediation lane available right now.',
     };
   }
 
@@ -659,15 +660,15 @@ export function selectResponseFeedbackLane(
     };
   }
 
-  if (availability.cursorCloudAvailable) {
+  if (availability.runtimeAvailable && availability.runtimeLocalPreferred) {
     return {
-      laneId: 'cursor',
-      runtimePreference: 'cursor_cloud',
-      label: 'Cursor Cloud',
-      promptPrefix: '',
+      laneId: 'andrea_runtime',
+      runtimePreference: 'codex_local',
+      label: 'Codex local',
+      promptPrefix: '[runtime: local]',
       reason:
-        availability.cursorCloudDetail ||
-        'Cursor Cloud is the healthiest queued remediation lane available right now.',
+        availability.runtimeDetail ||
+        'No cloud repair lane is ready, so Andrea is falling back to authenticated Codex local on this host.',
     };
   }
 

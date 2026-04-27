@@ -63,6 +63,17 @@ export function classifyTelegramTransportFailure(input: {
     (input.consecutiveExternalConflicts ?? 0) >= 1;
   const webhookUrl = input.webhookUrl?.trim() || null;
 
+  if (normalized.includes('401') && normalized.includes('unauthorized')) {
+    return {
+      detail:
+        'Telegram rejected this bot token with 401 Unauthorized. Rotate or replace TELEGRAM_BOT_TOKEN for this host before trusting Telegram bot polling again.',
+      errorClass: 'token_rotation_required',
+      status: 'blocked',
+      externalConsumerSuspected: false,
+      tokenRotationRequired: true,
+    };
+  }
+
   if (
     normalized.includes('terminated by setwebhook request') ||
     normalized.includes('setwebhook request')

@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  interpretBlueBubblesDirectTurn,
   resolveBlueBubblesReplyGateMode,
   summarizeBlueBubblesThreadDigest,
 } from './messages-fluidity.js';
@@ -31,6 +30,11 @@ describe('messages fluidity', () => {
   });
 
   it('interprets a direct BlueBubbles turn through the OpenAI lane when available', async () => {
+    vi.stubEnv('ANDREA_OPENAI_BACKEND_ENABLED', 'true');
+    vi.resetModules();
+    const { interpretBlueBubblesDirectTurn } = await import(
+      './messages-fluidity.js'
+    );
     globalThis.fetch = vi.fn(
       async () =>
         new Response(
@@ -64,6 +68,11 @@ describe('messages fluidity', () => {
   });
 
   it('returns an honest fallback envelope when the OpenAI lane is unavailable', async () => {
+    vi.stubEnv('ANDREA_OPENAI_BACKEND_ENABLED', 'true');
+    vi.resetModules();
+    const { interpretBlueBubblesDirectTurn } = await import(
+      './messages-fluidity.js'
+    );
     globalThis.fetch = vi.fn(async () => {
       throw new Error('connect ECONNREFUSED');
     }) as typeof fetch;
