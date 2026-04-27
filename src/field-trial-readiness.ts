@@ -1283,6 +1283,7 @@ function buildTelegramTruth(
   const roundtrip = assessTelegramRoundtripState({
     assistantHealthState: hostSnapshot.assistantHealthState,
     telegramRoundtripState: hostSnapshot.telegramRoundtripState,
+    telegramTransportState: hostSnapshot.telegramTransportState,
     hostState: hostSnapshot.hostState,
     readyState: hostSnapshot.readyState,
   });

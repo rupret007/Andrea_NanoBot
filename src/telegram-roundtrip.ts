@@ -256,6 +256,7 @@ export function getTelegramRoundtripAssessment(
   return assessTelegramRoundtripState({
     assistantHealthState: snapshot.assistantHealthState,
     telegramRoundtripState: snapshot.telegramRoundtripState,
+    telegramTransportState: snapshot.telegramTransportState,
     hostState: snapshot.hostState,
     readyState: snapshot.readyState,
   });

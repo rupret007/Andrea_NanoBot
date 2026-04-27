@@ -12,8 +12,10 @@ import {
   clearAssistantHealthState,
   clearAssistantReadyState,
   clearTelegramRoundtripState,
+  clearTelegramTransportState,
   readTelegramRoundtripState,
   type NanoclawHostState,
+  writeTelegramTransportState,
 } from './host-control.js';
 import {
   buildExpectedTelegramPingReply,
@@ -38,6 +40,7 @@ describe('telegram roundtrip health', () => {
 
   afterEach(() => {
     clearTelegramRoundtripState();
+    clearTelegramTransportState();
     clearAssistantHealthState();
     clearAssistantReadyState();
     process.chdir(previousCwd);
@@ -250,6 +253,60 @@ describe('telegram roundtrip health', () => {
 
     expect(assessment.status).toBe('healthy');
     expect(assessment.due).toBe(false);
+  });
+
+  it('degrades a healthy user-session probe when the local bot token is blocked', () => {
+    const hostState = seedRunningHost('2026-04-04T12:00:00.000Z');
+    const readyState = writeAssistantReadyState('1.2.42');
+    const assistantHealthState = writeAssistantHealthState({
+      appVersion: '1.2.42',
+      channelHealth: [
+        {
+          name: 'telegram',
+          configured: true,
+          state: 'degraded',
+          updatedAt: '2026-04-04T12:10:00.000Z',
+          lastReadyAt: null,
+          detail: "Call to 'getMe' failed! (401: Unauthorized)",
+        },
+      ],
+    });
+
+    const roundtrip = recordTelegramProbeSuccess({
+      source: 'live_smoke',
+      target: '@andrea_nanobot',
+      observedAt: '2026-04-04T12:10:00.000Z',
+    });
+    const transport = writeTelegramTransportState({
+      bootId: 'boot-roundtrip',
+      pid: process.pid,
+      mode: 'long_polling',
+      status: 'blocked',
+      detail:
+        'Telegram rejected this bot token with 401 Unauthorized. Rotate or replace TELEGRAM_BOT_TOKEN.',
+      updatedAt: '2026-04-04T12:10:00.000Z',
+      lastError: "Call to 'getMe' failed! (401: Unauthorized)",
+      lastErrorClass: 'token_rotation_required',
+      webhookPresent: false,
+      webhookUrl: null,
+      lastWebhookCheckAt: null,
+      lastPollConflictAt: null,
+      externalConsumerSuspected: false,
+      tokenRotationRequired: true,
+      consecutiveExternalConflicts: 0,
+    });
+
+    const assessment = assessTelegramRoundtripState({
+      assistantHealthState,
+      telegramRoundtripState: roundtrip,
+      telegramTransportState: transport,
+      hostState,
+      readyState,
+      now: new Date('2026-04-04T12:12:00.000Z'),
+    });
+
+    expect(assessment.status).toBe('degraded');
+    expect(assessment.detail).toContain('another consumer or host');
   });
 
   it('records unconfigured probes with the attempted timestamp', () => {

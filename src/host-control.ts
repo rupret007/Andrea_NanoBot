@@ -1481,6 +1481,7 @@ export function assessAlexaLiveProof(
 export function assessTelegramRoundtripState(input: {
   assistantHealthState: AssistantHealthState | null;
   telegramRoundtripState: TelegramRoundtripState | null;
+  telegramTransportState?: TelegramTransportState | null;
   hostState?: NanoclawHostState | null;
   readyState?: NanoclawReadyState | null;
   now?: Date;
@@ -1497,6 +1498,7 @@ export function assessTelegramRoundtripState(input: {
     input.overdueGraceMs ?? DEFAULT_TELEGRAM_ROUNDTRIP_OVERDUE_GRACE_MS;
   const assistantHealthState = input.assistantHealthState;
   const roundtrip = input.telegramRoundtripState;
+  const telegramTransportState = input.telegramTransportState || null;
   const readyState = input.readyState || null;
   const hostState = input.hostState || null;
   const telegramChannel = assistantHealthState?.channels.find(
@@ -1593,6 +1595,27 @@ export function assessTelegramRoundtripState(input: {
     now.getTime() - computedNextDueAt < overdueGraceMs &&
     lastSuccessAtMs != null &&
     now.getTime() - lastSuccessAtMs < probeIntervalMs;
+
+  if (
+    roundtrip.status === 'healthy' &&
+    telegramTransportState?.status === 'blocked'
+  ) {
+    return {
+      status: 'degraded',
+      detail:
+        'Telegram /ping replied, but this host cannot currently own Telegram polling: ' +
+        telegramTransportState.detail +
+        ' The reply likely came from another consumer or host.',
+      updatedAt: roundtrip.updatedAt,
+      lastOkAt: roundtrip.lastSuccessAt,
+      lastProbeAt: roundtrip.lastProbeAt,
+      nextDueAt:
+        computedNextDueAt != null
+          ? new Date(computedNextDueAt).toISOString()
+          : roundtrip.nextDueAt,
+      due,
+    };
+  }
 
   if (roundtrip.status === 'healthy' && (!due || overdueRecently)) {
     return {
