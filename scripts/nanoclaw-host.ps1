@@ -1080,6 +1080,7 @@ function Get-TelegramRoundtripStatus {
     [object] $AssistantHealthMarker = $null,
     [object] $HostState = $null,
     [object] $ReadyState = $null,
+    [object] $TelegramTransport = $null,
     [int] $ProbeIntervalSeconds = 3600,
     [int] $StartupGraceSeconds = 300
   )
@@ -1203,6 +1204,26 @@ function Get-TelegramRoundtripStatus {
   $due = $true
   if ($hasComputedNextDue) {
     $due = $now -ge $computedNextDue.ToUniversalTime()
+  }
+
+  if (
+    [string] $state.status -eq 'healthy' -and
+    $TelegramTransport -and
+    [string] $TelegramTransport.status -eq 'blocked'
+  ) {
+    $transportDetail = [string] $TelegramTransport.detail
+    if ([string]::IsNullOrWhiteSpace($transportDetail)) {
+      $transportDetail = 'Telegram transport is blocked on this host.'
+    }
+    return [pscustomobject]@{
+      status = 'degraded'
+      detail = "Telegram /ping replied, but this host cannot currently own Telegram polling: $transportDetail The reply likely came from another consumer or host."
+      updatedAt = [string] $state.updatedAt
+      lastOkAt = $lastOkAt
+      lastProbeAt = $lastProbeAt
+      nextDueAt = $nextDueAt
+      due = $due
+    }
   }
 
   if ([string] $state.status -eq 'healthy' -and -not $due) {
@@ -1399,7 +1420,8 @@ function Invoke-TelegramRoundtripProbe {
   $output = & $nodeExe @args 2>&1 | Out-String
   $exitCode = $LASTEXITCODE
   $assistantHealthMarker = Read-JsonFile $assistantHealthPath
-  $assessment = Get-TelegramRoundtripStatus -AssistantHealthMarker $assistantHealthMarker -HostState (Read-JsonFile $hostStatePath) -ReadyState (Read-JsonFile $readyStatePath)
+  $telegramTransport = Get-TelegramTransportStatus -AssistantHealthMarker $assistantHealthMarker
+  $assessment = Get-TelegramRoundtripStatus -AssistantHealthMarker $assistantHealthMarker -HostState (Read-JsonFile $hostStatePath) -ReadyState (Read-JsonFile $readyStatePath) -TelegramTransport $telegramTransport
 
   return [pscustomobject]@{
     exitCode = $exitCode
@@ -2158,7 +2180,7 @@ function Ensure-NanoClaw {
 
   $assistantHealth = Get-AssistantHealthStatus -HostState $hostState -ReadyState $readyState -RuntimePid $runtimePid
   $telegramTransport = Get-TelegramTransportStatus -AssistantHealthMarker $assistantHealthMarker
-  $telegramRoundtrip = Get-TelegramRoundtripStatus -AssistantHealthMarker $assistantHealthMarker -HostState $hostState -ReadyState $readyState
+  $telegramRoundtrip = Get-TelegramRoundtripStatus -AssistantHealthMarker $assistantHealthMarker -HostState $hostState -ReadyState $readyState -TelegramTransport $telegramTransport
   $telegramProbeConfig = Get-TelegramLiveProbeConfigStatus
   $inStartupGrace = Test-InStartupGrace -HostState $hostState -ReadyState $readyState
   $dotEnv = Read-DotEnv
@@ -2318,7 +2340,7 @@ function Show-Status {
   $installedArtifactMode = Get-InstalledArtifactMode
   $assistantHealth = Get-AssistantHealthStatus -HostState $hostState -ReadyState $readyState -RuntimePid $runtimePid
   $telegramTransport = Get-TelegramTransportStatus -AssistantHealthMarker $assistantHealthMarker
-  $telegramRoundtrip = Get-TelegramRoundtripStatus -AssistantHealthMarker $assistantHealthMarker -HostState $hostState -ReadyState $readyState
+  $telegramRoundtrip = Get-TelegramRoundtripStatus -AssistantHealthMarker $assistantHealthMarker -HostState $hostState -ReadyState $readyState -TelegramTransport $telegramTransport
     $telegramProbeConfig = Get-TelegramLiveProbeConfigStatus
     $alexaLocal = Get-AlexaLocalStatus -DotEnv (Read-DotEnv)
     $alexaPublic = Get-AlexaPublicStatus -DotEnv (Read-DotEnv) -LocalStatus $alexaLocal
