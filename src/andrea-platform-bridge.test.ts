@@ -392,6 +392,82 @@ describe('andrea platform shell bridge', () => {
     });
   });
 
+  it('posts scoped repair approval and external execution evidence', async () => {
+    vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_ENABLED', 'true');
+    vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_URL', 'http://127.0.0.1:4400/');
+    vi.stubEnv('ANDREA_PLATFORM_FALLBACK_TO_DIRECT_RUNTIME', 'false');
+
+    const calls: Array<{ url: string; body: unknown }> = [];
+    const fetchImpl = vi.fn(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        calls.push({ url: String(input), body: init?.body });
+        if (String(input).endsWith('/repair/approve')) {
+          return new Response(
+            JSON.stringify({
+              approval: { approval_id: 'approval-1' },
+              repair_run: { repair_run_id: 'repair-run-1' },
+            }),
+            { status: 200 },
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            repair_plan: { repair_plan_id: 'repair-plan-1' },
+            execution: { execution_id: 'execution-1' },
+            verification: { evidence_id: 'evidence-1' },
+            repair_run: { repair_run_id: 'repair-run-1' },
+            trace_grade: {
+              trace_grade_id: 'trace-grade-1',
+              status: 'pass',
+            },
+          }),
+          { status: 200 },
+        );
+      },
+    );
+    vi.stubGlobal('fetch', fetchImpl as unknown as typeof fetch);
+
+    const bridge = await import('./andrea-platform-bridge.js');
+    const approval = await bridge.emitAndreaPlatformRepairApproval({
+      repairPlanId: 'repair-plan-1',
+      approvedBy: 'Jeff',
+      metadata: { approvalScope: 'feedback:1; repo:Andrea_NanoBot' },
+    });
+    const execution = await bridge.emitAndreaPlatformRepairExecution({
+      repairPlanId: 'repair-plan-1',
+      approvalId: approval?.approvalId,
+      externalJobId: 'cursor-job-1',
+      externalLaneId: 'cursor',
+      workerId: 'cursor_cloud',
+      jobStatus: 'queued',
+    });
+
+    expect(approval).toEqual({
+      approvalId: 'approval-1',
+      repairRunId: 'repair-run-1',
+    });
+    expect(execution).toMatchObject({
+      repairPlanId: 'repair-plan-1',
+      repairRunId: 'repair-run-1',
+      executionId: 'execution-1',
+      verificationEvidenceId: 'evidence-1',
+      traceGradeId: 'trace-grade-1',
+      traceGradeStatus: 'pass',
+    });
+    expect(calls.map((call) => call.url)).toEqual([
+      'http://127.0.0.1:4400/repair/approve',
+      'http://127.0.0.1:4400/repair/execute',
+    ]);
+    expect(JSON.parse(String(calls[1]?.body ?? '{}'))).toMatchObject({
+      repairPlanId: 'repair-plan-1',
+      approvalId: 'approval-1',
+      externalJobId: 'cursor-job-1',
+      externalLaneId: 'cursor',
+      workerId: 'cursor_cloud',
+      metadata: { sourceSystem: 'andrea_nanobot' },
+    });
+  });
+
   it('maps configured ready channels to a healthy shell state', async () => {
     const bridge = await import('./andrea-platform-bridge.js');
     const channelHealth: ChannelHealthSnapshot[] = [

@@ -5,6 +5,7 @@ import {
   appendResponseFeedbackInlineRow,
   buildResponseFeedbackActionId,
   buildResponseFeedbackActionRows,
+  buildResponseFeedbackCaptureReply,
   buildResponseFeedbackRemediationPrompt,
   classifyResponseFeedbackCandidate,
   parseResponseFeedbackAction,
@@ -78,6 +79,14 @@ describe('response feedback helpers', () => {
       operation: 'commit_push',
     });
     expect(parseResponseFeedbackAction('/help')).toBeNull();
+    expect(
+      parseResponseFeedbackAction(
+        'feedback:11111111-2222-3333-4444-555555555555:approve_local',
+      ),
+    ).toEqual({
+      feedbackId: '11111111-2222-3333-4444-555555555555',
+      operation: 'approve_local',
+    });
   });
 
   it('appends a not-helpful row without clobbering existing inline rows', () => {
@@ -174,6 +183,51 @@ describe('response feedback helpers', () => {
         },
       ],
     ]);
+  });
+
+  it('requires an explicit local-fallback approval action for codex local repairs', () => {
+    const rows = buildResponseFeedbackActionRows(
+      buildRecord({
+        status: 'awaiting_confirmation',
+        remediationLaneId: 'andrea_runtime',
+        remediationRuntimePreference: 'codex_local',
+        linkedRefs: {
+          platformRepairPlanId: 'repair-plan-1',
+          repairFallbackPolicy:
+            'cloud_unavailable_explicit_local_fallback_required',
+        },
+      }),
+    );
+
+    expect(rows?.[0]?.[0]).toEqual({
+      label: 'Approve local fallback',
+      actionId:
+        'feedback:11111111-2222-3333-4444-555555555555:approve_local',
+    });
+    expect(rows?.[0]?.map((action) => action.actionId)).not.toContain(
+      'feedback:11111111-2222-3333-4444-555555555555:start',
+    );
+  });
+
+  it('renders a bounded approval card once a repair plan is staged', () => {
+    const reply = buildResponseFeedbackCaptureReply(
+      buildRecord({
+        status: 'awaiting_confirmation',
+        classification: 'repo_side_rough_edge',
+        remediationLaneId: 'cursor',
+        remediationRuntimePreference: 'cursor_cloud',
+        linkedRefs: {
+          platformRepairPlanId: 'repair-plan-1',
+          repairApprovalScope: 'feedback:111; repo:Andrea_NanoBot',
+        },
+      }),
+      'Platform staged the repair plan.',
+    );
+
+    expect(reply).toContain('staged a bounded repair plan');
+    expect(reply).toContain('Selected lane: Cursor Cloud');
+    expect(reply).toContain('One approval is scoped');
+    expect(reply).toContain('no secrets or external-account changes');
   });
 
   it('appends landing rows after existing task actions when a hotfix is local-only', () => {
@@ -366,13 +420,19 @@ describe('response feedback helpers', () => {
     expect(noCursorSelection.label).toBe('Codex cloud');
   });
 
-  it('builds a remediation prompt with the ask, validation, restart, and no-commit rules', () => {
+  it('builds a remediation prompt with the ask, validation, and approval-scoped landing rules', () => {
     const prompt = buildResponseFeedbackRemediationPrompt({
       record: buildRecord({
         classification: 'repo_side_broken',
         responseSource: 'assistant_completion',
         blockerClass: null,
         blockerOwner: 'repo_side',
+        linkedRefs: {
+          repairApprovalScope:
+            'feedback:111; repos:Andrea_NanoBot; landing:commit_push_restart',
+          repairFallbackPolicy:
+            'cloud_preferred_no_local_fallback_without_new_approval',
+        },
       }),
       laneSelection: {
         laneId: 'andrea_runtime',
@@ -391,8 +451,12 @@ describe('response feedback helpers', () => {
     expect(prompt).toContain('Andrea reply: I can help with updates');
     expect(prompt).toContain('npm run typecheck');
     expect(prompt).toContain('npm run build');
+    expect(prompt).toContain('Repair approval scope: feedback:111');
+    expect(prompt).toContain(
+      'Fallback policy: cloud_preferred_no_local_fallback_without_new_approval',
+    );
+    expect(prompt).toContain('Commit, push, restart, or deploy only when');
     expect(prompt).toContain('restart with npm run services:restart');
-    expect(prompt).toContain('Do not commit or push');
   });
 
   it('refreshes a running remediation record to failed when the live task already died', async () => {

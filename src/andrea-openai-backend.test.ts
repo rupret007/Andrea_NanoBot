@@ -94,6 +94,7 @@ describe('AndreaOpenAiBackendClient', () => {
     );
     const client = new AndreaOpenAiBackendClient({
       enabled: true,
+      baseUrl: 'http://127.0.0.1:3210',
       fetchImpl: fetchImpl as unknown as typeof fetch,
     });
 
@@ -153,6 +154,7 @@ describe('AndreaOpenAiBackendClient', () => {
     });
     const client = new AndreaOpenAiBackendClient({
       enabled: true,
+      baseUrl: 'http://127.0.0.1:3210',
       fetchImpl: fetchImpl as unknown as typeof fetch,
     });
 
@@ -448,6 +450,7 @@ describe('AndreaOpenAiBackendClient', () => {
     });
     const client = new AndreaOpenAiBackendClient({
       enabled: true,
+      baseUrl: 'http://127.0.0.1:3210',
       fetchImpl: fetchImpl as unknown as typeof fetch,
     });
 

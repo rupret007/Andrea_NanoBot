@@ -23,6 +23,7 @@ import type {
 export type ResponseFeedbackActionKind =
   | 'capture'
   | 'start'
+  | 'approve_local'
   | 'why'
   | 'not_now'
   | 'keep_local'
@@ -309,7 +310,7 @@ export function parseResponseFeedbackAction(
 ): ParsedResponseFeedbackAction | null {
   const trimmed = normalizeText(text);
   const match = trimmed.match(
-    /^feedback:([a-f0-9-]{8,}):(capture|start|why|not_now|keep_local|commit_only|commit_push)$/i,
+    /^feedback:([a-f0-9-]{8,}):(capture|start|approve_local|why|not_now|keep_local|commit_only|commit_push)$/i,
   );
   if (!match) return null;
   return {
@@ -444,7 +445,11 @@ export function classifyResponseFeedbackCandidate(params: {
 export function buildResponseFeedbackActionRows(
   record: Pick<
     ResponseFeedbackRecord,
-    'feedbackId' | 'status' | 'classification'
+    | 'feedbackId'
+    | 'status'
+    | 'classification'
+    | 'remediationRuntimePreference'
+    | 'linkedRefs'
   >,
 ): SendMessageOptions['inlineActionRows'] {
   if (record.status === 'resolved_locally') {
@@ -535,10 +540,36 @@ export function buildResponseFeedbackActionRows(
       ],
     ];
   }
+  if (
+    record.status === 'awaiting_confirmation' &&
+    record.remediationRuntimePreference === 'codex_local'
+  ) {
+    return [
+      [
+        {
+          label: 'Approve local fallback',
+          actionId: buildResponseFeedbackActionId(
+            record.feedbackId,
+            'approve_local',
+          ),
+        },
+        {
+          label: 'Why',
+          actionId: buildResponseFeedbackActionId(record.feedbackId, 'why'),
+        },
+        {
+          label: 'Not now',
+          actionId: buildResponseFeedbackActionId(record.feedbackId, 'not_now'),
+        },
+      ],
+    ];
+  }
   return [
     [
       {
-        label: 'Start fix',
+        label: record.linkedRefs?.platformRepairPlanId
+          ? 'Approve repair'
+          : 'Prepare repair',
         actionId: buildResponseFeedbackActionId(record.feedbackId, 'start'),
       },
       {
@@ -556,7 +587,11 @@ export function buildResponseFeedbackActionRows(
 export function appendResponseFeedbackActionRows(params: {
   record: Pick<
     ResponseFeedbackRecord,
-    'feedbackId' | 'status' | 'classification'
+    | 'feedbackId'
+    | 'status'
+    | 'classification'
+    | 'remediationRuntimePreference'
+    | 'linkedRefs'
   >;
   inlineActions?: ChannelInlineAction[] | null;
   inlineActionRows?: ChannelInlineAction[][] | null;
@@ -576,7 +611,13 @@ export function appendResponseFeedbackActionRows(params: {
 export function buildResponseFeedbackCaptureReply(
   record: Pick<
     ResponseFeedbackRecord,
-    'classification' | 'assistantReplyText' | 'feedbackId' | 'status'
+    | 'classification'
+    | 'assistantReplyText'
+    | 'feedbackId'
+    | 'status'
+    | 'remediationLaneId'
+    | 'remediationRuntimePreference'
+    | 'linkedRefs'
   >,
   explanation: string,
 ): string {
@@ -594,10 +635,29 @@ export function buildResponseFeedbackCaptureReply(
       `Saved reply excerpt: "${replyPreview}"`,
     ].join('\n');
   }
+  const stagedPlan = record.linkedRefs?.platformRepairPlanId;
+  const selectedWorker =
+    record.remediationRuntimePreference === 'cursor_cloud'
+      ? 'Cursor Cloud'
+      : record.remediationRuntimePreference === 'codex_cloud'
+        ? 'Codex cloud'
+        : record.remediationRuntimePreference === 'codex_local'
+          ? 'Codex local fallback'
+          : null;
   return [
     'I saved that as a private pilot issue.',
-    `This looks like a ${classification}, and I can prep a targeted fix job if you want.`,
-    'I will prefer a cloud repair agent first when one is healthy; local Codex is fallback only.',
+    stagedPlan
+      ? `This looks like a ${classification}, and I staged a bounded repair plan for approval.`
+      : `This looks like a ${classification}, and I can prep a targeted repair plan if you want.`,
+    selectedWorker
+      ? `Selected lane: ${selectedWorker}.`
+      : 'Repair lane: not selected yet.',
+    record.remediationRuntimePreference === 'codex_local'
+      ? 'Cloud repair is not ready, so local Codex will only run if you approve that fallback explicitly.'
+      : 'Cloud repair is preferred; local Codex remains fallback only.',
+    stagedPlan
+      ? `Plan: ${stagedPlan}. One approval is scoped to this feedback item, Andrea_NanoBot, focused tests/build, and no secrets or external-account changes.`
+      : 'Next step: prepare a repair plan, then approve only if the scope looks right.',
     explanation,
     `Saved reply excerpt: "${replyPreview}"`,
   ].join('\n');
@@ -790,6 +850,12 @@ export function buildResponseFeedbackRemediationPrompt(params: {
   const prefix = laneSelection.promptPrefix
     ? `${laneSelection.promptPrefix}\n\n`
     : '';
+  const approvalScope =
+    record.linkedRefs?.repairApprovalScope ||
+    'No landing approval has been granted yet; prepare a bounded fix and stop before commit/push/restart unless a later approval scope says otherwise.';
+  const fallbackPolicy =
+    record.linkedRefs?.repairFallbackPolicy ||
+    'Use the selected repair lane only; do not silently fall back to local execution.';
   return [
     prefix +
       'Andrea just received a Telegram main-control-chat reply that was downvoted as `Not helpful`.',
@@ -812,6 +878,8 @@ export function buildResponseFeedbackRemediationPrompt(params: {
     '- Keep Telegram as the richer action surface and preserve current trust boundaries.',
     '- If this turns out to be mainly an external/manual blocker, do not overclaim a code bug. Improve fallback wording or routing only if that would help.',
     '- Keep the fix small and repo-local.',
+    `- Repair approval scope: ${approvalScope}`,
+    `- Fallback policy: ${fallbackPolicy}`,
     '',
     'Validation before you report success:',
     '- Run focused tests for touched areas.',
@@ -821,7 +889,8 @@ export function buildResponseFeedbackRemediationPrompt(params: {
     '- If messaging or Telegram behavior changed, rerun npm run telegram:user:smoke.',
     '',
     'Local host handling:',
-    '- If you applied a local hotfix and validation passed on this host, restart with npm run services:restart.',
-    '- Do not commit or push. Report exactly what changed, what passed, and whether the host restarted cleanly.',
+    '- Commit, push, restart, or deploy only when the active repair approval scope explicitly authorizes landing and the required tests/builds pass.',
+    '- If landing is not authorized, stop with the hotfix ready for review and report exactly what changed and what passed.',
+    '- If landing is authorized and validation passed on this host, restart with npm run services:restart and link the verification evidence.',
   ].join('\n');
 }

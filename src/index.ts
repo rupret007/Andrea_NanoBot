@@ -172,6 +172,8 @@ import {
 import {
   emitAndreaPlatformDiagnosis,
   emitAndreaPlatformProofEvent,
+  emitAndreaPlatformRepairApproval,
+  emitAndreaPlatformRepairExecution,
   emitAndreaPlatformRepairPlan,
   emitAndreaPlatformFeedbackReflection,
   emitAndreaPlatformShellConfigSnapshot,
@@ -180,6 +182,12 @@ import {
   emitAndreaPlatformTransportEvent,
   mapShellHealthFromChannelHealth,
 } from './andrea-platform-bridge.js';
+import {
+  beginTurnAgentHarness,
+  evaluateTurnReply,
+  reflectTurnAgentOutcome,
+  type TurnAgentHarnessContext,
+} from './turn-agent-harness.js';
 import {
   listCompanionConversationChatJids,
   resolveCompanionConversationBinding,
@@ -3532,6 +3540,21 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     ? normalizeBlueBubblesCompanionPrompt(rawLastContent)
     : rawLastContent;
   const now = new Date();
+  const turnAgentHarness: TurnAgentHarnessContext | null =
+    await beginTurnAgentHarness({
+      turnId:
+        latestUserMessage?.id ||
+        `${conversationChannel}:${chatJid}:${now.toISOString()}`,
+      channel:
+        String(channel.name) === 'bluebubbles'
+          ? 'bluebubbles'
+          : String(channel.name) === 'alexa'
+            ? 'alexa'
+            : 'telegram',
+      groupFolder: group.folder,
+      text: lastContent,
+      requestRoute: requestPolicy.route,
+    });
   const sendAssistantReplyWithFeedback = async (params: {
     text: string;
     sendOptions?: SendMessageOptions;
@@ -3546,7 +3569,16 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     linkedRefs?: ResponseFeedbackRecord['linkedRefs'];
     allowFeedback?: boolean;
   }) => {
-    const replyText = params.text.trim();
+    const turnEvaluation = evaluateTurnReply({
+      context: turnAgentHarness,
+      text: params.text,
+      routeKey: params.routeKey || requestPolicy.route,
+      capabilityId: params.capabilityId,
+      handlerKind: params.handlerKind,
+      responseSource: params.responseSource,
+      blockerClass: params.blockerClass,
+    });
+    const replyText = turnEvaluation.rewrittenText.trim();
     const shouldAttachFeedback =
       params.allowFeedback !== false &&
       channel.name === 'telegram' &&
@@ -3558,6 +3590,22 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         ? appendResponseFeedbackInlineRow(params.sendOptions || {}, feedbackId)
         : params.sendOptions || {};
     const sent = await channel.sendMessage(chatJid, replyText, sendOptions);
+    const platformReflection = await reflectTurnAgentOutcome({
+      context: turnAgentHarness,
+      evaluation: turnEvaluation,
+      routeUsed: params.routeKey || requestPolicy.route,
+      answerClass: params.blockerClass
+        ? 'blocked'
+        : params.responseSource === 'container_agent'
+          ? 'handled'
+          : params.handlerKind?.includes('fallback')
+            ? 'fallback'
+            : 'handled',
+      blockerClass: params.blockerClass,
+      fallbackUsed:
+        params.handlerKind?.includes('fallback') ||
+        params.responseSource === 'local_companion',
+    });
     if (channel.name === 'bluebubbles') {
       ensureBlueBubblesSelfThreadMessageActionForReplyText({
         groupFolder: group.folder,
@@ -3601,7 +3649,22 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       blockerOwner: params.blockerOwner || classification.blockerOwner,
       originalUserText: rawLastContent || lastContent,
       assistantReplyText: replyText,
-      linkedRefs: params.linkedRefs || {},
+      linkedRefs: {
+        ...(params.linkedRefs || {}),
+        platformTaskLedgerId:
+          platformReflection.reflection?.taskLedgerId ||
+          turnAgentHarness?.deliberation?.taskLedgerId,
+        platformProgressLedgerId:
+          platformReflection.reflection?.progressLedgerId ||
+          turnAgentHarness?.deliberation?.progressLedgerId,
+        platformReflectionId: platformReflection.reflection?.reflectionId,
+        platformEvaluationId:
+          platformReflection.reflection?.evaluationId ||
+          turnAgentHarness?.deliberation?.evaluationId,
+        platformTraceGradeId:
+          platformReflection.reflection?.traceGradeId ||
+          turnAgentHarness?.deliberation?.traceGradeId,
+      },
       issueId: null,
       remediationLaneId: null,
       remediationJobId: null,
@@ -3640,6 +3703,40 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     });
     return sent;
   };
+  if (
+    turnAgentHarness?.platformHoldReply &&
+    (requestPolicy.route === 'direct_assistant' ||
+      requestPolicy.route === 'protected_assistant')
+  ) {
+    await sendAssistantReplyWithFeedback({
+      text: turnAgentHarness.platformHoldReply,
+      routeKey: `turn_agent_harness.${turnAgentHarness.deliberation?.executionPosture || 'hold'}`,
+      capabilityId: turnAgentHarness.selectedSkill.skillId,
+      handlerKind: 'turn_agent_harness_hold',
+      responseSource: 'local_companion',
+      traceReason:
+        'honored platform deliberation hold before executing the selected route',
+      blockerClass:
+        turnAgentHarness.deliberation?.executionPosture === 'blocked'
+          ? turnAgentHarness.deliberation.policyHoldReason ||
+            'platform_policy_hold'
+          : null,
+    });
+    clearSharedAssistantCapabilitySeed(chatJid);
+    logger.info(
+      {
+        component: 'assistant',
+        chatJid,
+        groupFolder: group.folder,
+        group: group.name,
+        requestRoute: requestPolicy.route,
+        executionPosture: turnAgentHarness.deliberation?.executionPosture,
+        selectedPolicyId: turnAgentHarness.deliberation?.selectedPolicyId,
+      },
+      'Handled turn via platform deliberation hold',
+    );
+    return true;
+  }
   const openAiGuidedUserText = lastContent;
   const guidedRequestRoute =
     requestPolicy.route === 'protected_assistant'
@@ -9188,6 +9285,119 @@ async function main(): Promise<void> {
     }
   }
 
+  function buildResponseFeedbackApprovalScope(
+    record: ResponseFeedbackRecord,
+  ): string {
+    return [
+      `feedback:${record.feedbackId}`,
+      `classification:${record.classification}`,
+      'repo:Andrea_NanoBot',
+      'tests:npm run typecheck,npm run build,npm test',
+      'secrets:false',
+      'external_accounts:false',
+      'outbound_messages:false',
+    ].join('; ');
+  }
+
+  function buildResponseFeedbackFallbackPolicy(
+    laneSelection: ResponseFeedbackLaneSelection,
+  ): string {
+    if (laneSelection.runtimePreference === 'codex_local') {
+      return 'cloud_unavailable_explicit_local_fallback_required';
+    }
+    if (
+      laneSelection.runtimePreference === 'cursor_cloud' ||
+      laneSelection.runtimePreference === 'codex_cloud'
+    ) {
+      return 'cloud_preferred_no_local_fallback_without_new_approval';
+    }
+    return 'no_ready_repair_lane';
+  }
+
+  function buildResponseFeedbackLaneSelectionFromRecord(
+    record: ResponseFeedbackRecord,
+  ): ResponseFeedbackLaneSelection | null {
+    if (!record.remediationRuntimePreference || !record.remediationLaneId) {
+      return null;
+    }
+    const reason =
+      record.operatorNote ||
+      'Andrea staged this repair lane during the feedback capture step.';
+    switch (record.remediationRuntimePreference) {
+      case 'cursor_cloud':
+        return {
+          laneId: 'cursor',
+          runtimePreference: 'cursor_cloud',
+          label: 'Cursor Cloud',
+          promptPrefix: '',
+          reason,
+        };
+      case 'codex_cloud':
+        return {
+          laneId: 'andrea_runtime',
+          runtimePreference: 'codex_cloud',
+          label: 'Codex cloud',
+          promptPrefix: '[runtime: cloud]',
+          reason,
+        };
+      case 'codex_local':
+        return {
+          laneId: 'andrea_runtime',
+          runtimePreference: 'codex_local',
+          label: 'Codex local',
+          promptPrefix: '[runtime: local]',
+          reason,
+        };
+      case 'cursor_local':
+        return {
+          laneId: null,
+          runtimePreference: 'cursor_local',
+          label: 'Cursor desktop bridge',
+          promptPrefix: '',
+          reason,
+        };
+      default:
+        return null;
+    }
+  }
+
+  async function selectCurrentResponseFeedbackRepairLane(
+    record: ResponseFeedbackRecord,
+  ): Promise<ResponseFeedbackLaneSelection> {
+    const runtimeStatus = await getAndreaOpenAiBackendStatus();
+    const cursorCloudStatus = getCursorCloudStatus();
+    const cursorDesktopStatus = await getCursorDesktopStatus({ probe: true });
+    return selectResponseFeedbackRetryLane({
+      record,
+      availability: {
+        runtimeAvailable: runtimeStatus.state === 'available',
+        runtimeLocalPreferred:
+          runtimeStatus.state === 'available' &&
+          runtimeStatus.meta?.localExecutionState === 'available_authenticated',
+        runtimeCloudAllowed: runtimeStatus.state === 'available',
+        runtimeDetail:
+          runtimeStatus.meta?.localExecutionState === 'available_authenticated'
+            ? 'Codex local is healthy and authenticated on this host.'
+            : runtimeStatus.detail ||
+              runtimeStatus.meta?.operatorGuidance ||
+              null,
+        cursorCloudAvailable:
+          cursorCloudStatus.enabled && cursorCloudStatus.hasApiKey,
+        cursorCloudDetail:
+          cursorCloudStatus.enabled && cursorCloudStatus.hasApiKey
+            ? 'Cursor Cloud is configured and ready for queued coding jobs.'
+            : null,
+        cursorDesktopAvailable:
+          cursorDesktopStatus.enabled &&
+          cursorDesktopStatus.hasToken &&
+          cursorDesktopStatus.probeStatus === 'ok' &&
+          cursorDesktopStatus.agentJobCompatibility === 'validated',
+        cursorDesktopDetail:
+          cursorDesktopStatus.agentJobDetail || cursorDesktopStatus.probeDetail,
+      },
+    });
+  }
+
   async function emitResponseFeedbackRepairAutopilotPlan(
     record: ResponseFeedbackRecord,
     laneSelection: ResponseFeedbackLaneSelection,
@@ -9223,8 +9433,16 @@ async function main(): Promise<void> {
         capabilityId: record.capabilityId || '',
         laneId: laneSelection.laneId || '',
         runtimePreference: laneSelection.runtimePreference || '',
+        cloudRepairReadiness:
+          laneSelection.runtimePreference === 'cursor_cloud' ||
+          laneSelection.runtimePreference === 'codex_cloud'
+            ? 'healthy'
+            : 'unavailable',
+        fallbackPolicy: buildResponseFeedbackFallbackPolicy(laneSelection),
       }),
     });
+    const approvalScope = buildResponseFeedbackApprovalScope(record);
+    const fallbackPolicy = buildResponseFeedbackFallbackPolicy(laneSelection);
     const repairPlan = await emitAndreaPlatformRepairPlan({
       goal,
       diagnosisId: diagnosis?.diagnosisId || null,
@@ -9243,6 +9461,19 @@ async function main(): Promise<void> {
         selectedLaneId: laneSelection.laneId || '',
         selectedRuntimePreference: laneSelection.runtimePreference || '',
         selectedLaneLabel: laneSelection.label,
+        selectedWorkerReason: laneSelection.reason,
+        approvalScope,
+        executionGate: 'explicit_feedback_approval_required',
+        verificationGate: 'typecheck_build_full_test_before_landing',
+        landingGate: 'commit_push_restart_only_when_approval_scope_allows',
+        fallbackPolicy,
+        localFallbackRequiresExplicitApproval:
+          laneSelection.runtimePreference === 'codex_local' ? 'true' : 'false',
+        cloudRepairReadiness:
+          laneSelection.runtimePreference === 'cursor_cloud' ||
+          laneSelection.runtimePreference === 'codex_cloud'
+            ? 'healthy'
+            : 'unavailable',
         cloudPreferred:
           laneSelection.runtimePreference === 'cursor_cloud' ||
           laneSelection.runtimePreference === 'codex_cloud'
@@ -9260,11 +9491,16 @@ async function main(): Promise<void> {
         platformRepairPlanId: repairPlan?.repairPlanId,
         platformRepairRunId:
           repairPlan?.repairRunId || diagnosis?.repairRunId || undefined,
+        repairApprovalScope: approvalScope,
+        repairSelectedWorker: laneSelection.runtimePreference || undefined,
+        repairFallbackPolicy: fallbackPolicy,
       },
+      remediationLaneId: laneSelection.laneId,
+      remediationRuntimePreference: laneSelection.runtimePreference,
       operatorNote:
         laneSelection.runtimePreference === 'codex_local'
           ? `${laneSelection.reason} Platform staged a one-approval repair plan first; local Codex is the fallback because no cloud repair lane is ready.`
-          : laneSelection.reason,
+          : repairPlan?.approvalSummary || laneSelection.reason,
     });
   }
 
@@ -9589,7 +9825,27 @@ async function main(): Promise<void> {
         clearPendingGoogleCalendarCreateState(chatJid);
         clearGoogleCalendarSchedulingContext(chatJid);
       }
-      const captured = await emitResponseFeedbackCognition(ensurePilotIssue());
+      let captured = await emitResponseFeedbackCognition(ensurePilotIssue());
+      if (
+        captured.classification !== 'externally_blocked' &&
+        captured.classification !== 'manual_sync_only' &&
+        !captured.linkedRefs.platformRepairPlanId
+      ) {
+        const laneSelection =
+          await selectCurrentResponseFeedbackRepairLane(captured);
+        if (laneSelection.laneId) {
+          captured = await emitResponseFeedbackRepairAutopilotPlan(
+            captured,
+            laneSelection,
+          );
+        } else {
+          captured = updateResponseFeedback(captured.feedbackId, {
+            status: 'captured',
+            remediationRuntimePreference: laneSelection.runtimePreference,
+            operatorNote: laneSelection.reason,
+          });
+        }
+      }
       await channel.sendMessage(
         chatJid,
         buildResponseFeedbackCaptureReply(
@@ -9756,38 +10012,9 @@ async function main(): Promise<void> {
       return true;
     }
 
-    const runtimeStatus = await getAndreaOpenAiBackendStatus();
-    const cursorCloudStatus = getCursorCloudStatus();
-    const cursorDesktopStatus = await getCursorDesktopStatus({ probe: true });
-    const laneSelection = selectResponseFeedbackRetryLane({
-      record: captured,
-      availability: {
-        runtimeAvailable: runtimeStatus.state === 'available',
-        runtimeLocalPreferred:
-          runtimeStatus.state === 'available' &&
-          runtimeStatus.meta?.localExecutionState === 'available_authenticated',
-        runtimeCloudAllowed: runtimeStatus.state === 'available',
-        runtimeDetail:
-          runtimeStatus.meta?.localExecutionState === 'available_authenticated'
-            ? 'Codex local is healthy and authenticated on this host.'
-            : runtimeStatus.detail ||
-              runtimeStatus.meta?.operatorGuidance ||
-              null,
-        cursorCloudAvailable:
-          cursorCloudStatus.enabled && cursorCloudStatus.hasApiKey,
-        cursorCloudDetail:
-          cursorCloudStatus.enabled && cursorCloudStatus.hasApiKey
-            ? 'Cursor Cloud is configured and ready for queued coding jobs.'
-            : null,
-        cursorDesktopAvailable:
-          cursorDesktopStatus.enabled &&
-          cursorDesktopStatus.hasToken &&
-          cursorDesktopStatus.probeStatus === 'ok' &&
-          cursorDesktopStatus.agentJobCompatibility === 'validated',
-        cursorDesktopDetail:
-          cursorDesktopStatus.agentJobDetail || cursorDesktopStatus.probeDetail,
-      },
-    });
+    let laneSelection =
+      buildResponseFeedbackLaneSelectionFromRecord(captured) ||
+      (await selectCurrentResponseFeedbackRepairLane(captured));
 
     if (!laneSelection.laneId) {
       const updated = updateResponseFeedback(captured.feedbackId, {
@@ -9810,11 +10037,50 @@ async function main(): Promise<void> {
       return true;
     }
 
-    const repairPlanned = await emitResponseFeedbackRepairAutopilotPlan(
-      captured,
-      laneSelection,
-    );
-    const repairRecord = repairPlanned || captured;
+    if (!captured.linkedRefs.platformRepairPlanId) {
+      const repairPlanned = await emitResponseFeedbackRepairAutopilotPlan(
+        captured,
+        laneSelection,
+      );
+      await channel.sendMessage(
+        chatJid,
+        buildResponseFeedbackCaptureReply(
+          repairPlanned,
+          repairPlanned.operatorNote ||
+            'I staged a bounded self-repair plan. Review the scope before approving execution.',
+        ),
+        buildOperatorSendOptions(msg, {
+          inlineActionRows: buildResponseFeedbackActionRows(repairPlanned),
+        }),
+      );
+      return true;
+    }
+
+    if (
+      laneSelection.runtimePreference === 'codex_local' &&
+      action.operation !== 'approve_local'
+    ) {
+      const updated = updateResponseFeedback(captured.feedbackId, {
+        operatorNote:
+          'Cloud repair is not ready. Local Codex is available, but this fallback requires the explicit `Approve local fallback` action.',
+      });
+      await channel.sendMessage(
+        chatJid,
+        [
+          'I staged the repair, but I am not starting local Codex silently.',
+          'Cloud repair is not ready, so local fallback needs a separate explicit approval.',
+        ].join('\n'),
+        buildOperatorSendOptions(msg, {
+          inlineActionRows: buildResponseFeedbackActionRows(updated),
+        }),
+      );
+      return true;
+    }
+
+    const repairRecord = captured;
+    laneSelection =
+      buildResponseFeedbackLaneSelectionFromRecord(repairRecord) ||
+      laneSelection;
 
     const remediationPrompt = buildResponseFeedbackRemediationPrompt({
       record: repairRecord,
@@ -9825,6 +10091,32 @@ async function main(): Promise<void> {
       ...linkedRefs,
       repoHeadAtStart: readGitRef(['rev-parse', 'HEAD']),
       repoDirtyPathsAtStart: listCurrentGitDirtyPaths(),
+    };
+    const approval = repairRecord.linkedRefs.platformRepairPlanId
+      ? await emitAndreaPlatformRepairApproval({
+          repairPlanId: repairRecord.linkedRefs.platformRepairPlanId,
+          approvedBy: msg.sender,
+          metadata: compactPlatformStrings({
+            feedbackId: repairRecord.feedbackId,
+            approvalScope:
+              repairRecord.linkedRefs.repairApprovalScope ||
+              buildResponseFeedbackApprovalScope(repairRecord),
+            selectedWorker: laneSelection.runtimePreference || '',
+            fallbackPolicy:
+              repairRecord.linkedRefs.repairFallbackPolicy ||
+              buildResponseFeedbackFallbackPolicy(laneSelection),
+            explicitLocalFallback:
+              action.operation === 'approve_local' ? 'true' : 'false',
+          }),
+        })
+      : null;
+    const linkedRefsWithApproval: ResponseFeedbackRecord['linkedRefs'] = {
+      ...linkedRefsWithRepoBaseline,
+      repairApprovalId: approval?.approvalId || undefined,
+      platformRepairRunId:
+        approval?.repairRunId ||
+        repairRecord.linkedRefs.platformRepairRunId ||
+        undefined,
     };
 
     if (laneSelection.laneId === 'andrea_runtime') {
@@ -9840,7 +10132,7 @@ async function main(): Promise<void> {
       const updated = updateResponseFeedback(repairRecord.feedbackId, {
         linkedRefs: {
           ...(repairRecord.linkedRefs || {}),
-          ...linkedRefsWithRepoBaseline,
+          ...linkedRefsWithApproval,
           backendLaneId: 'andrea_runtime',
           backendJobId: created.handle.jobId,
         },
@@ -9851,6 +10143,38 @@ async function main(): Promise<void> {
         remediationPrompt,
         operatorNote: laneSelection.reason,
       });
+      const execution = updated.linkedRefs.platformRepairPlanId
+        ? await emitAndreaPlatformRepairExecution({
+            repairPlanId: updated.linkedRefs.platformRepairPlanId,
+            approvalId: updated.linkedRefs.repairApprovalId,
+            groupFolder: updated.groupFolder,
+            channel: updated.channel,
+            actorId: msg.sender,
+            externalJobId: created.handle.jobId,
+            externalLaneId: 'andrea_runtime',
+            workerId: laneSelection.runtimePreference || 'codex_cloud',
+            jobStatus: created.status,
+            metadata: compactPlatformStrings({
+              feedbackId: updated.feedbackId,
+              backendJobId: created.handle.jobId,
+              selectedWorker: laneSelection.runtimePreference || '',
+            }),
+          })
+        : null;
+      if (execution) {
+        updateResponseFeedback(updated.feedbackId, {
+          linkedRefs: {
+            ...updated.linkedRefs,
+            platformRepairRunId:
+              execution.repairRunId || updated.linkedRefs.platformRepairRunId,
+            platformTraceGradeId:
+              execution.traceGradeId || updated.linkedRefs.platformTraceGradeId,
+            verificationEvidenceIds: execution.verificationEvidenceId
+              ? [execution.verificationEvidenceId]
+              : updated.linkedRefs.verificationEvidenceIds,
+          },
+        });
+      }
       await sendBackendJobMessage({
         chatJid,
         laneId: 'andrea_runtime',
@@ -9892,7 +10216,7 @@ async function main(): Promise<void> {
     const updated = updateResponseFeedback(repairRecord.feedbackId, {
       linkedRefs: {
         ...(repairRecord.linkedRefs || {}),
-        ...linkedRefsWithRepoBaseline,
+        ...linkedRefsWithApproval,
         backendLaneId: 'cursor',
         backendJobId: created.id,
       },
@@ -9903,6 +10227,38 @@ async function main(): Promise<void> {
       remediationPrompt,
       operatorNote: laneSelection.reason,
     });
+    const execution = updated.linkedRefs.platformRepairPlanId
+      ? await emitAndreaPlatformRepairExecution({
+          repairPlanId: updated.linkedRefs.platformRepairPlanId,
+          approvalId: updated.linkedRefs.repairApprovalId,
+          groupFolder: updated.groupFolder,
+          channel: updated.channel,
+          actorId: msg.sender,
+          externalJobId: created.id,
+          externalLaneId: 'cursor',
+          workerId: laneSelection.runtimePreference || 'cursor_cloud',
+          jobStatus: created.status,
+          metadata: compactPlatformStrings({
+            feedbackId: updated.feedbackId,
+            backendJobId: created.id,
+            selectedWorker: laneSelection.runtimePreference || '',
+          }),
+        })
+      : null;
+    if (execution) {
+      updateResponseFeedback(updated.feedbackId, {
+        linkedRefs: {
+          ...updated.linkedRefs,
+          platformRepairRunId:
+            execution.repairRunId || updated.linkedRefs.platformRepairRunId,
+          platformTraceGradeId:
+            execution.traceGradeId || updated.linkedRefs.platformTraceGradeId,
+          verificationEvidenceIds: execution.verificationEvidenceId
+            ? [execution.verificationEvidenceId]
+            : updated.linkedRefs.verificationEvidenceIds,
+        },
+      });
+    }
     await sendCursorAgentMessage({
       chatJid,
       agentId: created.id,

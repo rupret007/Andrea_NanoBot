@@ -52,7 +52,7 @@ type TraceKind =
   | 'operator'
   | 'config'
   | 'replay';
-type PlatformTaskFamily =
+export type PlatformTaskFamily =
   | 'calendar'
   | 'communication'
   | 'research'
@@ -260,6 +260,8 @@ export interface AndreaPlatformFeedbackReflectionResult {
   reflectionId?: string;
   evaluationId?: string;
   learningId?: string;
+  traceGradeId?: string;
+  traceGradeStatus?: string;
 }
 
 function pickString(value: unknown): string | undefined {
@@ -298,6 +300,83 @@ function pickNestedString(
   return pickString(pickRecord(body[objectKey])?.[fieldKey]);
 }
 
+function pickTraceGradeId(body: Record<string, unknown>): string | undefined {
+  return (
+    pickNestedString(body, 'trace_grade', 'grade_id') ||
+    pickNestedString(body, 'trace_grade', 'trace_grade_id')
+  );
+}
+
+function pickTraceGradeStatus(
+  body: Record<string, unknown>,
+): string | undefined {
+  return pickNestedString(body, 'trace_grade', 'status');
+}
+
+function pickRouteScores(
+  value: unknown,
+): AndreaPlatformDeliberationResult['routeScores'] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const scores = value
+    .map((item) => {
+      const record = pickRecord(item);
+      if (!record) return null;
+      const routeId = pickString(record.route_id) || pickString(record.routeId);
+      const score = pickNumber(record.score);
+      const confidence = pickNumber(record.confidence);
+      if (!routeId || score === undefined || confidence === undefined) {
+        return null;
+      }
+      return {
+        routeId,
+        score,
+        confidence,
+        evidenceRequirement:
+          pickString(record.evidence_requirement) ||
+          pickString(record.evidenceRequirement),
+        approvalRequired:
+          pickBoolean(record.approval_required) ||
+          pickBoolean(record.approvalRequired),
+        blockerClass:
+          pickString(record.blocker_class) || pickString(record.blockerClass),
+        reason: pickString(record.reason),
+      };
+    })
+    .filter((item): item is NonNullable<typeof item> => Boolean(item));
+  return scores.length > 0 ? scores : undefined;
+}
+
+function pickEvidenceCards(
+  value: unknown,
+): AndreaPlatformDeliberationResult['evidenceCards'] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const cards = value
+    .map((item) => {
+      const record = pickRecord(item);
+      if (!record) return null;
+      const routeId = pickString(record.route_id) || pickString(record.routeId);
+      if (!routeId) return null;
+      return {
+        routeId,
+        sourceClass:
+          pickString(record.source_class) || pickString(record.sourceClass),
+        expectedLevel:
+          pickString(record.expected_level) || pickString(record.expectedLevel),
+        actualLevel:
+          pickString(record.actual_level) || pickString(record.actualLevel),
+        freshness: pickString(record.freshness),
+        blockerClass:
+          pickString(record.blocker_class) || pickString(record.blockerClass),
+        confidenceImpact:
+          pickNumber(record.confidence_impact) ||
+          pickNumber(record.confidenceImpact),
+        summary: pickString(record.summary),
+      };
+    })
+    .filter((item): item is NonNullable<typeof item> => Boolean(item));
+  return cards.length > 0 ? cards : undefined;
+}
+
 export interface AndreaPlatformDeliberationResult {
   taskLedgerId?: string;
   progressLedgerId?: string;
@@ -314,6 +393,39 @@ export interface AndreaPlatformDeliberationResult {
   missingInformation?: string[];
   policyHoldReason?: string;
   expectedEvidence?: string;
+  sideEffectBudget?: string;
+  riskFlags?: string[];
+  routeScores?: Array<{
+    routeId: string;
+    score: number;
+    confidence: number;
+    evidenceRequirement?: string;
+    approvalRequired?: boolean;
+    blockerClass?: string;
+    reason?: string;
+  }>;
+  evidenceCards?: Array<{
+    routeId: string;
+    sourceClass?: string;
+    expectedLevel?: string;
+    actualLevel?: string;
+    freshness?: string;
+    blockerClass?: string;
+    confidenceImpact?: number;
+    summary?: string;
+  }>;
+  traceGradeId?: string;
+  traceGradeStatus?: string;
+}
+
+export interface AndreaPlatformTurnReflectionResult {
+  taskLedgerId?: string;
+  progressLedgerId?: string;
+  reflectionId?: string;
+  evaluationId?: string;
+  learningId?: string;
+  traceGradeId?: string;
+  traceGradeStatus?: string;
 }
 
 export async function emitAndreaPlatformDeliberation(input: {
@@ -383,6 +495,60 @@ export async function emitAndreaPlatformDeliberation(input: {
     missingInformation: pickStringArray(decision?.missing_information),
     policyHoldReason: pickString(decision?.policy_hold_reason),
     expectedEvidence: pickString(decision?.expected_evidence),
+    sideEffectBudget: pickString(decision?.side_effect_budget),
+    riskFlags: pickStringArray(decision?.risk_flags),
+    routeScores: pickRouteScores(decision?.route_scores),
+    evidenceCards: pickEvidenceCards(decision?.evidence_cards),
+    traceGradeId: pickTraceGradeId(body),
+    traceGradeStatus: pickTraceGradeStatus(body),
+  };
+}
+
+export async function emitAndreaPlatformTurnReflection(input: {
+  taskLedgerId: string;
+  progressLedgerId?: string | null;
+  planId?: string | null;
+  feedbackId?: string | null;
+  trigger?: string | null;
+  summary: string;
+  planCorrectness?: 'strong' | 'partial' | 'weak';
+  workerFit?: 'strong' | 'partial' | 'weak';
+  memoryEffect?: 'helpful' | 'neutral' | 'harmful' | 'unknown';
+  approvalCorrectness?: 'correct' | 'needs_review' | 'unknown';
+  metadata?: Record<string, string>;
+}): Promise<AndreaPlatformTurnReflectionResult | null> {
+  const response = await postCoordinatorJson('/reflect', {
+    taskLedgerId: input.taskLedgerId,
+    ...(input.progressLedgerId
+      ? { progressLedgerId: input.progressLedgerId }
+      : {}),
+    ...(input.planId ? { planId: input.planId } : {}),
+    ...(input.feedbackId ? { feedbackId: input.feedbackId } : {}),
+    trigger: input.trigger || 'turn_agent_harness',
+    summary: input.summary,
+    planCorrectness: input.planCorrectness || 'partial',
+    workerFit: input.workerFit || 'partial',
+    memoryEffect: input.memoryEffect || 'unknown',
+    approvalCorrectness: input.approvalCorrectness || 'unknown',
+    metadata: {
+      sourceSystem: 'andrea_nanobot',
+      turn_intelligence_version: 'v8',
+      ...(input.metadata || {}),
+    },
+  });
+  if (!response || typeof response !== 'object') return null;
+  const body = response as Record<string, unknown>;
+  const reflection = pickRecord(body.reflection);
+  const evaluation = pickRecord(body.evaluation);
+  const learning = pickRecord(body.learning);
+  return {
+    taskLedgerId: input.taskLedgerId,
+    progressLedgerId: input.progressLedgerId || undefined,
+    reflectionId: pickString(reflection?.reflection_id),
+    evaluationId: pickString(evaluation?.evaluation_id),
+    learningId: pickString(learning?.learning_id),
+    traceGradeId: pickTraceGradeId(body),
+    traceGradeStatus: pickTraceGradeStatus(body),
   };
 }
 
@@ -465,6 +631,8 @@ export async function emitAndreaPlatformFeedbackReflection(input: {
     reflectionId: pickString(reflection?.reflection_id),
     evaluationId: pickString(evaluation?.evaluation_id),
     learningId: pickString(learning?.learning_id),
+    traceGradeId: pickTraceGradeId(body),
+    traceGradeStatus: pickTraceGradeStatus(body),
   };
 }
 
@@ -591,6 +759,58 @@ export async function emitAndreaPlatformRepairApproval(input: {
   return {
     approvalId: pickNestedString(body, 'approval', 'approval_id'),
     repairRunId: pickNestedString(body, 'repair_run', 'repair_run_id'),
+  };
+}
+
+export interface AndreaPlatformRepairExecutionResult {
+  repairPlanId?: string;
+  repairRunId?: string;
+  executionId?: string;
+  verificationEvidenceId?: string;
+  traceGradeId?: string;
+  traceGradeStatus?: string;
+}
+
+export async function emitAndreaPlatformRepairExecution(input: {
+  repairPlanId: string;
+  approvalId?: string | null;
+  groupFolder?: string | null;
+  channel?: 'telegram' | 'bluebubbles' | 'alexa' | 'system';
+  actorId?: string | null;
+  externalJobId?: string | null;
+  externalLaneId?: string | null;
+  workerId?: string | null;
+  jobStatus?: string | null;
+  metadata?: Record<string, string>;
+}): Promise<AndreaPlatformRepairExecutionResult | null> {
+  const response = await postCoordinatorJson('/repair/execute', {
+    repairPlanId: input.repairPlanId,
+    ...(input.approvalId ? { approvalId: input.approvalId } : {}),
+    ...(input.groupFolder ? { groupFolder: input.groupFolder } : {}),
+    ...(input.channel ? { channel: input.channel } : {}),
+    ...(input.actorId ? { actorId: input.actorId } : {}),
+    ...(input.externalJobId ? { externalJobId: input.externalJobId } : {}),
+    ...(input.externalLaneId ? { externalLaneId: input.externalLaneId } : {}),
+    ...(input.workerId ? { workerId: input.workerId } : {}),
+    ...(input.jobStatus ? { jobStatus: input.jobStatus } : {}),
+    metadata: {
+      sourceSystem: 'andrea_nanobot',
+      ...(input.metadata || {}),
+    },
+  });
+  if (!response || typeof response !== 'object') return null;
+  const body = response as Record<string, unknown>;
+  const plan = pickRecord(body.repair_plan);
+  const run = pickRecord(body.repair_run);
+  const execution = pickRecord(body.execution);
+  const verification = pickRecord(body.verification);
+  return {
+    repairPlanId: pickString(plan?.repair_plan_id) || input.repairPlanId,
+    repairRunId: pickString(run?.repair_run_id),
+    executionId: pickString(execution?.execution_id),
+    verificationEvidenceId: pickString(verification?.evidence_id),
+    traceGradeId: pickTraceGradeId(body),
+    traceGradeStatus: pickTraceGradeStatus(body),
   };
 }
 
