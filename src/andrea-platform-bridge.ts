@@ -378,7 +378,8 @@ export async function emitAndreaPlatformDeliberation(input: {
     selectedPolicyId: pickString(decision?.selected_policy_id),
     requiredApproval: pickBoolean(decision?.required_approval),
     confidence:
-      pickNumber(decision?.confidence) || pickNumber(pickRecord(body.plan)?.confidence),
+      pickNumber(decision?.confidence) ||
+      pickNumber(pickRecord(body.plan)?.confidence),
     missingInformation: pickStringArray(decision?.missing_information),
     policyHoldReason: pickString(decision?.policy_hold_reason),
     expectedEvidence: pickString(decision?.expected_evidence),
@@ -489,7 +490,9 @@ export async function emitAndreaPlatformDiagnosis(input: {
     ...(input.taskFamily ? { category: input.taskFamily } : {}),
     channel: input.channel || 'telegram',
     includePlatformSignals: input.includePlatformSignals ?? true,
-    ...(input.signals && input.signals.length > 0 ? { signals: input.signals } : {}),
+    ...(input.signals && input.signals.length > 0
+      ? { signals: input.signals }
+      : {}),
     metadata: {
       sourceSystem: 'andrea_nanobot',
       ...(input.metadata || {}),
