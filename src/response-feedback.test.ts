@@ -201,8 +201,7 @@ describe('response feedback helpers', () => {
 
     expect(rows?.[0]?.[0]).toEqual({
       label: 'Approve local fallback',
-      actionId:
-        'feedback:11111111-2222-3333-4444-555555555555:approve_local',
+      actionId: 'feedback:11111111-2222-3333-4444-555555555555:approve_local',
     });
     expect(rows?.[0]?.map((action) => action.actionId)).not.toContain(
       'feedback:11111111-2222-3333-4444-555555555555:start',
