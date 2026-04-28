@@ -1459,6 +1459,10 @@ export interface PilotIssueLinkedRefs {
   platformReflectionId?: string;
   platformEvaluationId?: string;
   platformLearningId?: string;
+  platformDiagnosisId?: string;
+  platformRepairPlanId?: string;
+  platformRepairRunId?: string;
+  platformTraceGradeId?: string;
   repoHeadAtStart?: string;
   repoDirtyPathsAtStart?: string[];
   landingCommitSha?: string;

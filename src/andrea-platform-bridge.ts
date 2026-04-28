@@ -52,6 +52,15 @@ type TraceKind =
   | 'operator'
   | 'config'
   | 'replay';
+type PlatformTaskFamily =
+  | 'calendar'
+  | 'communication'
+  | 'research'
+  | 'media'
+  | 'assistant'
+  | 'operator'
+  | 'code'
+  | 'unknown';
 
 function shellGatewayRoute(path: string): string | null {
   if (!SHELL_GATEWAY_BASE_URL) return null;
@@ -257,20 +266,131 @@ function pickString(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined;
 }
 
+function pickBoolean(value: unknown): boolean | undefined {
+  return typeof value === 'boolean' ? value : undefined;
+}
+
+function pickNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? value
+    : undefined;
+}
+
+function pickStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const strings = value.filter(
+    (item): item is string => typeof item === 'string' && item.length > 0,
+  );
+  return strings.length > 0 ? strings : undefined;
+}
+
+function pickRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function pickNestedString(
+  body: Record<string, unknown>,
+  objectKey: string,
+  fieldKey: string,
+): string | undefined {
+  return pickString(pickRecord(body[objectKey])?.[fieldKey]);
+}
+
+export interface AndreaPlatformDeliberationResult {
+  taskLedgerId?: string;
+  progressLedgerId?: string;
+  evaluationId?: string;
+  planId?: string;
+  decisionId?: string;
+  selectedRoute?: string;
+  selectedWorker?: string;
+  executionPosture?: string;
+  answerStrategy?: string;
+  selectedPolicyId?: string;
+  requiredApproval?: boolean;
+  confidence?: number;
+  missingInformation?: string[];
+  policyHoldReason?: string;
+  expectedEvidence?: string;
+}
+
+export async function emitAndreaPlatformDeliberation(input: {
+  goal: string;
+  taskFamily: PlatformTaskFamily;
+  channel?: 'telegram' | 'bluebubbles' | 'alexa' | 'system';
+  groupFolder?: string | null;
+  correlationId?: string | null;
+  approvalPosture?: string | null;
+  routeCandidates?: string[];
+  memoryMetadata?: Record<string, string>;
+  knownBlockers?: string[];
+  metadata?: Record<string, string>;
+}): Promise<AndreaPlatformDeliberationResult | null> {
+  const response = await postCoordinatorJson('/deliberate', {
+    goal: input.goal,
+    category: input.taskFamily,
+    channel: input.channel || 'telegram',
+    ...(input.groupFolder ? { groupFolder: input.groupFolder } : {}),
+    ...(input.correlationId ? { correlationId: input.correlationId } : {}),
+    ...(input.approvalPosture
+      ? { approvalPosture: input.approvalPosture }
+      : {}),
+    ...(input.routeCandidates && input.routeCandidates.length > 0
+      ? { routeCandidates: input.routeCandidates }
+      : {}),
+    metadata: {
+      sourceSystem: 'andrea_nanobot',
+      turn_intelligence_version: 'v7',
+      ...(input.memoryMetadata || {}),
+      ...(input.knownBlockers && input.knownBlockers.length > 0
+        ? { known_blockers: input.knownBlockers.join(',') }
+        : {}),
+      ...(input.metadata || {}),
+    },
+  });
+  if (!response || typeof response !== 'object') return null;
+  const body = response as Record<string, unknown>;
+  const decision = pickRecord(body.decision);
+  return {
+    taskLedgerId:
+      pickNestedString(body, 'task', 'task_ledger_id') ||
+      pickString(decision?.task_ledger_id),
+    progressLedgerId:
+      pickNestedString(body, 'progress', 'progress_ledger_id') ||
+      pickString(decision?.progress_ledger_id),
+    evaluationId:
+      pickNestedString(body, 'evaluation', 'evaluation_id') ||
+      pickString(decision?.evaluation_id),
+    planId:
+      pickNestedString(body, 'plan', 'plan_id') ||
+      pickString(decision?.plan_id),
+    decisionId: pickString(decision?.decision_id),
+    selectedRoute:
+      pickString(decision?.selected_route) ||
+      pickNestedString(body, 'plan', 'route'),
+    selectedWorker:
+      pickString(decision?.selected_worker) ||
+      pickStringArray(pickRecord(body.plan)?.selected_workers)?.[0],
+    executionPosture: pickString(decision?.execution_posture),
+    answerStrategy: pickString(decision?.answer_strategy),
+    selectedPolicyId: pickString(decision?.selected_policy_id),
+    requiredApproval: pickBoolean(decision?.required_approval),
+    confidence:
+      pickNumber(decision?.confidence) || pickNumber(pickRecord(body.plan)?.confidence),
+    missingInformation: pickStringArray(decision?.missing_information),
+    policyHoldReason: pickString(decision?.policy_hold_reason),
+    expectedEvidence: pickString(decision?.expected_evidence),
+  };
+}
+
 export async function emitAndreaPlatformFeedbackReflection(input: {
   feedbackId: string;
   issueId?: string | null;
   status: string;
   classification: string;
-  taskFamily:
-    | 'calendar'
-    | 'communication'
-    | 'research'
-    | 'media'
-    | 'assistant'
-    | 'operator'
-    | 'code'
-    | 'unknown';
+  taskFamily: PlatformTaskFamily;
   channel: 'telegram';
   groupFolder: string;
   chatJid: string;
@@ -344,6 +464,130 @@ export async function emitAndreaPlatformFeedbackReflection(input: {
     reflectionId: pickString(reflection?.reflection_id),
     evaluationId: pickString(evaluation?.evaluation_id),
     learningId: pickString(learning?.learning_id),
+  };
+}
+
+export interface AndreaPlatformDiagnosisResult {
+  diagnosisId?: string;
+  status?: string;
+  suspectedCause?: string;
+  repairRunId?: string;
+}
+
+export async function emitAndreaPlatformDiagnosis(input: {
+  goal: string;
+  correlationId?: string | null;
+  taskFamily?: PlatformTaskFamily;
+  channel?: 'telegram' | 'bluebubbles' | 'alexa' | 'system';
+  includePlatformSignals?: boolean;
+  signals?: Array<Record<string, unknown>>;
+  metadata?: Record<string, string>;
+}): Promise<AndreaPlatformDiagnosisResult | null> {
+  const response = await postCoordinatorJson('/diagnose', {
+    goal: input.goal,
+    ...(input.correlationId ? { correlationId: input.correlationId } : {}),
+    ...(input.taskFamily ? { category: input.taskFamily } : {}),
+    channel: input.channel || 'telegram',
+    includePlatformSignals: input.includePlatformSignals ?? true,
+    ...(input.signals && input.signals.length > 0 ? { signals: input.signals } : {}),
+    metadata: {
+      sourceSystem: 'andrea_nanobot',
+      ...(input.metadata || {}),
+    },
+  });
+  if (!response || typeof response !== 'object') return null;
+  const body = response as Record<string, unknown>;
+  const diagnosis = pickRecord(body.diagnosis);
+  const repairRun = pickRecord(body.repair_run);
+  return {
+    diagnosisId: pickString(diagnosis?.diagnosis_id),
+    status: pickString(diagnosis?.status),
+    suspectedCause: pickString(diagnosis?.suspected_cause),
+    repairRunId: pickString(repairRun?.repair_run_id),
+  };
+}
+
+export interface AndreaPlatformRepairPlanResult {
+  diagnosisId?: string;
+  repairPlanId?: string;
+  repairRunId?: string;
+  status?: string;
+  workerId?: string;
+  cloudWorkerId?: string;
+  approvalSummary?: string;
+}
+
+export async function emitAndreaPlatformRepairPlan(input: {
+  goal: string;
+  diagnosisId?: string | null;
+  correlationId?: string | null;
+  title?: string | null;
+  workerId?: string | null;
+  cloudWorkerId?: string | null;
+  affectedRepos?: string[];
+  affectedServices?: string[];
+  testsRequired?: string[];
+  restartRequired?: boolean;
+  deployAllowed?: boolean;
+  metadata?: Record<string, string>;
+}): Promise<AndreaPlatformRepairPlanResult | null> {
+  const response = await postCoordinatorJson('/repair/plan', {
+    goal: input.goal,
+    ...(input.diagnosisId ? { diagnosisId: input.diagnosisId } : {}),
+    ...(input.correlationId ? { correlationId: input.correlationId } : {}),
+    ...(input.title ? { title: input.title } : {}),
+    ...(input.workerId ? { workerId: input.workerId } : {}),
+    ...(input.cloudWorkerId ? { cloudWorkerId: input.cloudWorkerId } : {}),
+    ...(input.affectedRepos && input.affectedRepos.length > 0
+      ? { affectedRepos: input.affectedRepos }
+      : {}),
+    ...(input.affectedServices && input.affectedServices.length > 0
+      ? { affectedServices: input.affectedServices }
+      : {}),
+    ...(input.testsRequired && input.testsRequired.length > 0
+      ? { testsRequired: input.testsRequired }
+      : {}),
+    restartRequired: input.restartRequired ?? false,
+    deployAllowed: input.deployAllowed ?? false,
+    metadata: {
+      sourceSystem: 'andrea_nanobot',
+      ...(input.metadata || {}),
+    },
+  });
+  if (!response || typeof response !== 'object') return null;
+  const body = response as Record<string, unknown>;
+  const diagnosis = pickRecord(body.diagnosis);
+  const plan = pickRecord(body.repair_plan);
+  const run = pickRecord(body.repair_run);
+  return {
+    diagnosisId: pickString(diagnosis?.diagnosis_id),
+    repairPlanId: pickString(plan?.repair_plan_id),
+    repairRunId: pickString(run?.repair_run_id),
+    status: pickString(plan?.status) || pickString(run?.status),
+    workerId: pickString(plan?.worker_id),
+    cloudWorkerId: pickString(plan?.cloud_worker_id),
+    approvalSummary: pickString(plan?.approval_summary),
+  };
+}
+
+export async function emitAndreaPlatformRepairApproval(input: {
+  repairPlanId: string;
+  approvedBy?: string | null;
+  metadata?: Record<string, string>;
+}): Promise<{ approvalId?: string; repairRunId?: string } | null> {
+  const response = await postCoordinatorJson('/repair/approve', {
+    repairPlanId: input.repairPlanId,
+    approvedBy: input.approvedBy || 'andrea_nanobot',
+    metadata: {
+      sourceSystem: 'andrea_nanobot',
+      ...(input.metadata || {}),
+    },
+  });
+  if (!response || typeof response !== 'object') return null;
+  const body = response as Record<string, unknown>;
+  return {
+    approvalId: pickNestedString(body, 'approval', 'approval_id'),
+    repairRunId: pickNestedString(body, 'repair_run', 'repair_run_id'),
   };
 }
 

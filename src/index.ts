@@ -170,7 +170,9 @@ import {
   writeAssistantReadyState,
 } from './host-control.js';
 import {
+  emitAndreaPlatformDiagnosis,
   emitAndreaPlatformProofEvent,
+  emitAndreaPlatformRepairPlan,
   emitAndreaPlatformFeedbackReflection,
   emitAndreaPlatformShellConfigSnapshot,
   emitAndreaPlatformShellHealth,
@@ -613,6 +615,7 @@ import {
   buildResponseFeedbackWhyText,
   classifyResponseFeedbackCandidate,
   parseResponseFeedbackAction,
+  type ResponseFeedbackLaneSelection,
   selectResponseFeedbackRetryLane,
   shouldCancelPendingContinuationForFeedback,
 } from './response-feedback.js';
@@ -9168,6 +9171,103 @@ async function main(): Promise<void> {
     ];
   }
 
+  function mapResponseFeedbackRepairWorker(
+    runtimePreference: ResponseFeedbackRecord['remediationRuntimePreference'],
+  ): { workerId: string | null; cloudWorkerId: string | null } {
+    switch (runtimePreference) {
+      case 'cursor_cloud':
+        return { workerId: 'openai_cloud', cloudWorkerId: 'cursor_cloud' };
+      case 'codex_cloud':
+        return { workerId: 'openai_cloud', cloudWorkerId: 'codex_cloud' };
+      case 'codex_local':
+        return { workerId: 'codex_local', cloudWorkerId: null };
+      case 'cursor_local':
+        return { workerId: 'codex_local', cloudWorkerId: 'cursor_local' };
+      default:
+        return { workerId: null, cloudWorkerId: null };
+    }
+  }
+
+  async function emitResponseFeedbackRepairAutopilotPlan(
+    record: ResponseFeedbackRecord,
+    laneSelection: ResponseFeedbackLaneSelection,
+  ): Promise<ResponseFeedbackRecord> {
+    const taskFamily = mapResponseFeedbackTaskFamily(record);
+    const repairWorker = mapResponseFeedbackRepairWorker(
+      laneSelection.runtimePreference,
+    );
+    const goal = `Diagnose and repair downvoted ${taskFamily} response ${record.feedbackId}.`;
+    const diagnosis = await emitAndreaPlatformDiagnosis({
+      goal,
+      correlationId: record.feedbackId,
+      taskFamily,
+      channel: record.channel,
+      includePlatformSignals: true,
+      signals: [
+        {
+          signalKind: 'response_feedback_downvote',
+          severity:
+            record.classification === 'repo_side_broken' ? 'error' : 'warn',
+          source: 'andrea_nanobot',
+          feedbackId: record.feedbackId,
+          issueId: record.issueId || '',
+          taskFamily,
+          classification: record.classification,
+          blockerOwner: record.blockerOwner,
+        },
+      ],
+      metadata: compactPlatformStrings({
+        feedbackId: record.feedbackId,
+        issueId: record.issueId || '',
+        routeKey: record.routeKey || '',
+        capabilityId: record.capabilityId || '',
+        laneId: laneSelection.laneId || '',
+        runtimePreference: laneSelection.runtimePreference || '',
+      }),
+    });
+    const repairPlan = await emitAndreaPlatformRepairPlan({
+      goal,
+      diagnosisId: diagnosis?.diagnosisId || null,
+      correlationId: record.feedbackId,
+      title: `Repair downvoted ${taskFamily} response`,
+      workerId: repairWorker.workerId,
+      cloudWorkerId: repairWorker.cloudWorkerId,
+      affectedRepos: ['Andrea_NanoBot'],
+      affectedServices: ['nanobot'],
+      testsRequired: ['npm run typecheck', 'npm run build', 'npm test'],
+      restartRequired: false,
+      deployAllowed: false,
+      metadata: compactPlatformStrings({
+        feedbackId: record.feedbackId,
+        issueId: record.issueId || '',
+        selectedLaneId: laneSelection.laneId || '',
+        selectedRuntimePreference: laneSelection.runtimePreference || '',
+        selectedLaneLabel: laneSelection.label,
+        cloudPreferred:
+          laneSelection.runtimePreference === 'cursor_cloud' ||
+          laneSelection.runtimePreference === 'codex_cloud'
+            ? 'true'
+            : 'false',
+        localFallback:
+          laneSelection.runtimePreference === 'codex_local' ? 'true' : 'false',
+      }),
+    });
+    if (!diagnosis && !repairPlan) return record;
+    return updateResponseFeedback(record.feedbackId, {
+      linkedRefs: {
+        ...(record.linkedRefs || {}),
+        platformDiagnosisId: diagnosis?.diagnosisId,
+        platformRepairPlanId: repairPlan?.repairPlanId,
+        platformRepairRunId:
+          repairPlan?.repairRunId || diagnosis?.repairRunId || undefined,
+      },
+      operatorNote:
+        laneSelection.runtimePreference === 'codex_local'
+          ? `${laneSelection.reason} Platform staged a one-approval repair plan first; local Codex is the fallback because no cloud repair lane is ready.`
+          : laneSelection.reason,
+    });
+  }
+
   function runGitCommand(args: string[]): string {
     try {
       return execFileSync('git', ['-C', ACTIVE_REPO_ROOT, ...args], {
@@ -9710,8 +9810,14 @@ async function main(): Promise<void> {
       return true;
     }
 
+    const repairPlanned = await emitResponseFeedbackRepairAutopilotPlan(
+      captured,
+      laneSelection,
+    );
+    const repairRecord = repairPlanned || captured;
+
     const remediationPrompt = buildResponseFeedbackRemediationPrompt({
-      record: captured,
+      record: repairRecord,
       laneSelection,
       hostTruthLines: buildResponseFeedbackHostTruthLines(),
     });
@@ -9723,7 +9829,7 @@ async function main(): Promise<void> {
 
     if (laneSelection.laneId === 'andrea_runtime') {
       const created = await getAndreaRuntimeLane().createJob({
-        groupFolder: captured.groupFolder,
+        groupFolder: repairRecord.groupFolder,
         chatJid,
         promptText: remediationPrompt,
         requestedBy: msg.sender,
@@ -9731,8 +9837,9 @@ async function main(): Promise<void> {
           laneSelection.runtimePreference,
         ),
       });
-      const updated = updateResponseFeedback(captured.feedbackId, {
+      const updated = updateResponseFeedback(repairRecord.feedbackId, {
         linkedRefs: {
+          ...(repairRecord.linkedRefs || {}),
           ...linkedRefsWithRepoBaseline,
           backendLaneId: 'andrea_runtime',
           backendJobId: created.handle.jobId,
@@ -9765,6 +9872,9 @@ async function main(): Promise<void> {
         jobStatus: created.status,
         text: [
           `Andrea started a self-fix task for that downvoted reply using ${laneSelection.label}.`,
+          laneSelection.runtimePreference === 'codex_local'
+            ? 'Cloud repair was not ready, so this is the explicit local fallback path for the approved feedback card.'
+            : 'This used the cloud-preferred repair lane selected by the current health checks.',
           formatRuntimeJobCard(created),
           formatRuntimeNextStep(created.handle.jobId),
           'If the hotfix validates locally, I will still ask before any commit or push.',
@@ -9774,13 +9884,14 @@ async function main(): Promise<void> {
     }
 
     const created = await cursorBackendLane.createCursorJob({
-      groupFolder: captured.groupFolder,
+      groupFolder: repairRecord.groupFolder,
       chatJid,
       promptText: remediationPrompt,
       requestedBy: msg.sender,
     });
-    const updated = updateResponseFeedback(captured.feedbackId, {
+    const updated = updateResponseFeedback(repairRecord.feedbackId, {
       linkedRefs: {
+        ...(repairRecord.linkedRefs || {}),
         ...linkedRefsWithRepoBaseline,
         backendLaneId: 'cursor',
         backendJobId: created.id,
@@ -9815,6 +9926,7 @@ async function main(): Promise<void> {
       jobStatus: created.status,
       text: [
         `Andrea started a self-fix task for that downvoted reply using ${laneSelection.label}.`,
+        'This used the cloud-preferred repair lane selected by the current health checks.',
         '',
         formatCursorJobCard(created),
         '',

@@ -249,6 +249,149 @@ describe('andrea platform shell bridge', () => {
     });
   });
 
+  it('posts deliberation and repair requests to the platform coordinator when enabled', async () => {
+    vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_ENABLED', 'true');
+    vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_URL', 'http://127.0.0.1:4400/');
+    vi.stubEnv('ANDREA_PLATFORM_FALLBACK_TO_DIRECT_RUNTIME', 'false');
+
+    const calls: Array<{ url: string; body: unknown }> = [];
+    const fetchImpl = vi.fn(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        calls.push({
+          url: String(input),
+          body: init?.body,
+        });
+        if (String(input).endsWith('/deliberate')) {
+          return new Response(
+            JSON.stringify({
+              task: { task_ledger_id: 'task-1' },
+              progress: { progress_ledger_id: 'progress-1' },
+              evaluation: { evaluation_id: 'evaluation-1' },
+              plan: {
+                plan_id: 'plan-1',
+                route: 'local_capability',
+                selected_workers: ['andrea_shell'],
+                confidence: 0.82,
+              },
+              decision: {
+                decision_id: 'decision-1',
+                selected_route: 'local_capability',
+                selected_worker: 'andrea_shell',
+                execution_posture: 'execute_now',
+                answer_strategy: 'direct_answer',
+                selected_policy_id: 'local_capability',
+                required_approval: false,
+                confidence: 0.82,
+                expected_evidence: 'partial',
+              },
+            }),
+            { status: 200 },
+          );
+        }
+        if (String(input).endsWith('/diagnose')) {
+          return new Response(
+            JSON.stringify({
+              diagnosis: {
+                diagnosis_id: 'diagnosis-1',
+                status: 'diagnosed',
+                suspected_cause: 'route_miss',
+              },
+              repair_run: { repair_run_id: 'repair-run-1' },
+            }),
+            { status: 200 },
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            diagnosis: { diagnosis_id: 'diagnosis-1' },
+            repair_plan: {
+              repair_plan_id: 'repair-plan-1',
+              status: 'awaiting_approval',
+              worker_id: 'codex_cloud',
+              cloud_worker_id: 'cursor_cloud',
+              approval_summary: 'One approval lets Andrea repair this.',
+            },
+            repair_run: { repair_run_id: 'repair-run-1' },
+          }),
+          { status: 200 },
+        );
+      },
+    );
+    vi.stubGlobal('fetch', fetchImpl as unknown as typeof fetch);
+
+    const bridge = await import('./andrea-platform-bridge.js');
+    const decision = await bridge.emitAndreaPlatformDeliberation({
+      goal: 'Fix this downvoted reply.',
+      taskFamily: 'assistant',
+      groupFolder: 'main',
+      correlationId: 'feedback-1',
+      routeCandidates: ['local_capability', 'clarify_first'],
+      memoryMetadata: { memory_read_tiers: 'working' },
+    });
+    const diagnosis = await bridge.emitAndreaPlatformDiagnosis({
+      goal: 'Diagnose response feedback feedback-1.',
+      correlationId: 'feedback-1',
+      taskFamily: 'assistant',
+      signals: [{ signalKind: 'downvote', severity: 'warn' }],
+    });
+    const repairPlan = await bridge.emitAndreaPlatformRepairPlan({
+      goal: 'Repair response feedback feedback-1.',
+      diagnosisId: diagnosis?.diagnosisId,
+      correlationId: 'feedback-1',
+      workerId: 'codex_cloud',
+      cloudWorkerId: 'cursor_cloud',
+      affectedRepos: ['Andrea_NanoBot'],
+      testsRequired: ['npm test'],
+    });
+
+    expect(decision).toMatchObject({
+      taskLedgerId: 'task-1',
+      progressLedgerId: 'progress-1',
+      evaluationId: 'evaluation-1',
+      planId: 'plan-1',
+      decisionId: 'decision-1',
+      selectedRoute: 'local_capability',
+      executionPosture: 'execute_now',
+      selectedPolicyId: 'local_capability',
+      requiredApproval: false,
+      confidence: 0.82,
+    });
+    expect(diagnosis).toMatchObject({
+      diagnosisId: 'diagnosis-1',
+      status: 'diagnosed',
+      repairRunId: 'repair-run-1',
+    });
+    expect(repairPlan).toMatchObject({
+      diagnosisId: 'diagnosis-1',
+      repairPlanId: 'repair-plan-1',
+      repairRunId: 'repair-run-1',
+      workerId: 'codex_cloud',
+      cloudWorkerId: 'cursor_cloud',
+    });
+
+    expect(calls.map((call) => call.url)).toEqual([
+      'http://127.0.0.1:4400/deliberate',
+      'http://127.0.0.1:4400/diagnose',
+      'http://127.0.0.1:4400/repair/plan',
+    ]);
+    expect(JSON.parse(String(calls[0]?.body ?? '{}'))).toMatchObject({
+      goal: 'Fix this downvoted reply.',
+      category: 'assistant',
+      correlationId: 'feedback-1',
+      metadata: {
+        sourceSystem: 'andrea_nanobot',
+        turn_intelligence_version: 'v7',
+        memory_read_tiers: 'working',
+      },
+    });
+    expect(JSON.parse(String(calls[2]?.body ?? '{}'))).toMatchObject({
+      diagnosisId: 'diagnosis-1',
+      workerId: 'codex_cloud',
+      cloudWorkerId: 'cursor_cloud',
+      affectedRepos: ['Andrea_NanoBot'],
+    });
+  });
+
   it('maps configured ready channels to a healthy shell state', async () => {
     const bridge = await import('./andrea-platform-bridge.js');
     const channelHealth: ChannelHealthSnapshot[] = [
