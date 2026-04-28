@@ -40,7 +40,7 @@ $pinnedNodeLauncher = Join-Path $projectRoot 'scripts\run-with-pinned-node.mjs'
 $watchdogLogPath = Join-Path $logsDir 'nanoclaw.watchdog.log'
 $watchdogErrorLogPath = Join-Path $logsDir 'nanoclaw.watchdog.error.log'
 $compatibilityShimPath = Join-Path $projectRoot 'start-nanoclaw.ps1'
-$defaultAndreaPlatformRoot = Join-Path (Join-Path (Split-Path -Parent $projectRoot) 'ANDREA') 'andrea_platform'
+$defaultAndreaPlatformRoot = Join-Path (Split-Path -Parent $projectRoot) 'andrea_platform'
 $startupFolderScriptPath = if ($env:APPDATA) {
   Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup\nanoclaw-start.cmd'
 } else {
