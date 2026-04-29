@@ -343,9 +343,7 @@ describe('andrea platform shell bridge', () => {
         raw_content_policy: 'metadata_only',
       },
     });
-    expect(calls[1]?.url).toBe(
-      'http://127.0.0.1:4400/skill-evolution-report',
-    );
+    expect(calls[1]?.url).toBe('http://127.0.0.1:4400/skill-evolution-report');
   });
 
   it('posts deliberation and repair requests to the platform coordinator when enabled', async () => {

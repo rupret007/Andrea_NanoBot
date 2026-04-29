@@ -398,7 +398,9 @@ async function attachActiveSkillCandidates(
   const activeSkillCandidates =
     await listAndreaPlatformActiveSkillCandidates(taskFamily);
   if (activeSkillCandidates.length === 0) return context;
-  const candidateIds = activeSkillCandidates.map((candidate) => candidate.candidateId);
+  const candidateIds = activeSkillCandidates.map(
+    (candidate) => candidate.candidateId,
+  );
   const skillIds = activeSkillCandidates.map((candidate) => candidate.skillId);
   return {
     ...context,

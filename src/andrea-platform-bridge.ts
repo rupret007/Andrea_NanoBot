@@ -350,10 +350,8 @@ function pickSkillCandidateSummary(
   const candidateId =
     pickString(record.candidate_id) || pickString(record.candidateId);
   const skillId = pickString(record.skill_id) || pickString(record.skillId);
-  const taskFamily =
-    (pickString(record.task_family) || pickString(record.taskFamily)) as
-      | PlatformTaskFamily
-      | undefined;
+  const taskFamily = (pickString(record.task_family) ||
+    pickString(record.taskFamily)) as PlatformTaskFamily | undefined;
   if (!candidateId || !skillId || !taskFamily) return undefined;
   return {
     candidateId,
@@ -679,8 +677,7 @@ export async function emitAndreaPlatformSkillCandidate(input: {
     ...(input.linkedEvaluationIds && input.linkedEvaluationIds.length > 0
       ? { linkedEvaluationIds: input.linkedEvaluationIds }
       : {}),
-    ...(input.linkedCapabilityGapIds &&
-    input.linkedCapabilityGapIds.length > 0
+    ...(input.linkedCapabilityGapIds && input.linkedCapabilityGapIds.length > 0
       ? { linkedCapabilityGapIds: input.linkedCapabilityGapIds }
       : {}),
     metadata: {
@@ -705,12 +702,10 @@ export async function listAndreaPlatformActiveSkillCandidates(
   const active = Array.isArray(body.active_skills) ? body.active_skills : [];
   return active
     .map((item) => pickSkillCandidateSummary(item))
-    .filter(
-      (item): item is AndreaPlatformSkillCandidateSummary => {
-        if (!item) return false;
-        return !taskFamily || item.taskFamily === taskFamily;
-      },
-    )
+    .filter((item): item is AndreaPlatformSkillCandidateSummary => {
+      if (!item) return false;
+      return !taskFamily || item.taskFamily === taskFamily;
+    })
     .slice(0, 8);
 }
 
