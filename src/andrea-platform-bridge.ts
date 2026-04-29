@@ -142,6 +142,40 @@ async function postCoordinatorJson(
   }
 }
 
+async function getCoordinatorJson(path: string): Promise<unknown | null> {
+  const url = coordinatorRoute(path);
+  if (!url) return null;
+
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+    });
+    if (!response.ok) {
+      logger.warn(
+        {
+          component: 'andrea_platform_coordinator_bridge',
+          path,
+          status: response.status,
+        },
+        'Andrea platform coordinator bridge returned a non-2xx response.',
+      );
+      return null;
+    }
+    return (await response.json()) as unknown;
+  } catch (err) {
+    logger.debug(
+      {
+        component: 'andrea_platform_coordinator_bridge',
+        path,
+        err,
+      },
+      'Andrea platform coordinator bridge get failed.',
+    );
+    return null;
+  }
+}
+
 export function isAndreaPlatformShellBridgeEnabled(): boolean {
   return Boolean(SHELL_GATEWAY_BASE_URL);
 }
@@ -260,8 +294,24 @@ export interface AndreaPlatformFeedbackReflectionResult {
   reflectionId?: string;
   evaluationId?: string;
   learningId?: string;
+  skillCandidateId?: string;
   traceGradeId?: string;
   traceGradeStatus?: string;
+}
+
+export interface AndreaPlatformSkillCandidateSummary {
+  candidateId: string;
+  skillId: string;
+  taskFamily: PlatformTaskFamily;
+  lifecycleStatus: string;
+  summary: string;
+  evidenceCount: number;
+  riskLevel: string;
+  approvalRequired: boolean;
+}
+
+export interface AndreaPlatformSkillCandidateResult {
+  candidate?: AndreaPlatformSkillCandidateSummary;
 }
 
 function pickString(value: unknown): string | undefined {
@@ -290,6 +340,41 @@ function pickRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined;
+}
+
+function pickSkillCandidateSummary(
+  value: unknown,
+): AndreaPlatformSkillCandidateSummary | undefined {
+  const record = pickRecord(value);
+  if (!record) return undefined;
+  const candidateId =
+    pickString(record.candidate_id) || pickString(record.candidateId);
+  const skillId = pickString(record.skill_id) || pickString(record.skillId);
+  const taskFamily =
+    (pickString(record.task_family) || pickString(record.taskFamily)) as
+      | PlatformTaskFamily
+      | undefined;
+  if (!candidateId || !skillId || !taskFamily) return undefined;
+  return {
+    candidateId,
+    skillId,
+    taskFamily,
+    lifecycleStatus:
+      pickString(record.lifecycle_status) ||
+      pickString(record.lifecycleStatus) ||
+      'staged',
+    summary: pickString(record.summary) || '',
+    evidenceCount:
+      pickNumber(record.evidence_count) ||
+      pickNumber(record.evidenceCount) ||
+      1,
+    riskLevel:
+      pickString(record.risk_level) || pickString(record.riskLevel) || 'low',
+    approvalRequired:
+      pickBoolean(record.approval_required) ||
+      pickBoolean(record.approvalRequired) ||
+      false,
+  };
 }
 
 function pickNestedString(
@@ -454,7 +539,7 @@ export async function emitAndreaPlatformDeliberation(input: {
       : {}),
     metadata: {
       sourceSystem: 'andrea_nanobot',
-      turn_intelligence_version: 'v7',
+      turn_intelligence_version: 'v10',
       ...(input.memoryMetadata || {}),
       ...(input.knownBlockers && input.knownBlockers.length > 0
         ? { known_blockers: input.knownBlockers.join(',') }
@@ -532,7 +617,7 @@ export async function emitAndreaPlatformTurnReflection(input: {
     approvalCorrectness: input.approvalCorrectness || 'unknown',
     metadata: {
       sourceSystem: 'andrea_nanobot',
-      turn_intelligence_version: 'v8',
+      turn_intelligence_version: 'v10',
       ...(input.metadata || {}),
     },
   });
@@ -550,6 +635,83 @@ export async function emitAndreaPlatformTurnReflection(input: {
     traceGradeId: pickTraceGradeId(body),
     traceGradeStatus: pickTraceGradeStatus(body),
   };
+}
+
+export async function emitAndreaPlatformSkillCandidate(input: {
+  skillId: string;
+  taskFamily: PlatformTaskFamily;
+  sourceKind:
+    | 'repeated_success'
+    | 'downvote'
+    | 'repair_success'
+    | 'eval_failure'
+    | 'guardrail_trip'
+    | 'capability_gap'
+    | 'operator_review';
+  summary: string;
+  evidenceCount?: number;
+  riskLevel?: 'none' | 'low' | 'medium' | 'high';
+  approvalRequired?: boolean;
+  linkedTraceIds?: string[];
+  linkedFeedbackIds?: string[];
+  linkedRepairPlanIds?: string[];
+  linkedEvaluationIds?: string[];
+  linkedCapabilityGapIds?: string[];
+  metadata?: Record<string, string>;
+}): Promise<AndreaPlatformSkillCandidateResult | null> {
+  const response = await postCoordinatorJson('/skill-candidate', {
+    skillId: input.skillId,
+    taskFamily: input.taskFamily,
+    sourceKind: input.sourceKind,
+    summary: input.summary,
+    evidenceCount: input.evidenceCount || 1,
+    riskLevel: input.riskLevel || 'low',
+    approvalRequired: input.approvalRequired || false,
+    ...(input.linkedTraceIds && input.linkedTraceIds.length > 0
+      ? { linkedTraceIds: input.linkedTraceIds }
+      : {}),
+    ...(input.linkedFeedbackIds && input.linkedFeedbackIds.length > 0
+      ? { linkedFeedbackIds: input.linkedFeedbackIds }
+      : {}),
+    ...(input.linkedRepairPlanIds && input.linkedRepairPlanIds.length > 0
+      ? { linkedRepairPlanIds: input.linkedRepairPlanIds }
+      : {}),
+    ...(input.linkedEvaluationIds && input.linkedEvaluationIds.length > 0
+      ? { linkedEvaluationIds: input.linkedEvaluationIds }
+      : {}),
+    ...(input.linkedCapabilityGapIds &&
+    input.linkedCapabilityGapIds.length > 0
+      ? { linkedCapabilityGapIds: input.linkedCapabilityGapIds }
+      : {}),
+    metadata: {
+      sourceSystem: 'andrea_nanobot',
+      raw_content_policy: 'metadata_only',
+      ...(input.metadata || {}),
+    },
+  });
+  if (!response || typeof response !== 'object') return null;
+  const body = response as Record<string, unknown>;
+  return {
+    candidate: pickSkillCandidateSummary(body.candidate),
+  };
+}
+
+export async function listAndreaPlatformActiveSkillCandidates(
+  taskFamily?: PlatformTaskFamily | null,
+): Promise<AndreaPlatformSkillCandidateSummary[]> {
+  const response = await getCoordinatorJson('/skill-evolution-report');
+  if (!response || typeof response !== 'object') return [];
+  const body = response as Record<string, unknown>;
+  const active = Array.isArray(body.active_skills) ? body.active_skills : [];
+  return active
+    .map((item) => pickSkillCandidateSummary(item))
+    .filter(
+      (item): item is AndreaPlatformSkillCandidateSummary => {
+        if (!item) return false;
+        return !taskFamily || item.taskFamily === taskFamily;
+      },
+    )
+    .slice(0, 8);
 }
 
 export async function emitAndreaPlatformFeedbackReflection(input: {
@@ -624,6 +786,7 @@ export async function emitAndreaPlatformFeedbackReflection(input: {
   const reflection = body.reflection as Record<string, unknown> | undefined;
   const evaluation = body.evaluation as Record<string, unknown> | undefined;
   const learning = body.learning as Record<string, unknown> | undefined;
+  const skillCandidate = pickRecord(body.skill_candidate);
   return {
     feedbackId: input.feedbackId,
     taskLedgerId: pickString(task?.task_ledger_id),
@@ -631,6 +794,7 @@ export async function emitAndreaPlatformFeedbackReflection(input: {
     reflectionId: pickString(reflection?.reflection_id),
     evaluationId: pickString(evaluation?.evaluation_id),
     learningId: pickString(learning?.learning_id),
+    skillCandidateId: pickString(skillCandidate?.candidate_id),
     traceGradeId: pickTraceGradeId(body),
     traceGradeStatus: pickTraceGradeStatus(body),
   };

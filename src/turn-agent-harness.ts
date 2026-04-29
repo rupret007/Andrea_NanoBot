@@ -6,8 +6,11 @@ import {
 } from './assistant-memory-intelligence.js';
 import {
   emitAndreaPlatformDeliberation,
+  emitAndreaPlatformSkillCandidate,
   emitAndreaPlatformTurnReflection,
+  listAndreaPlatformActiveSkillCandidates,
   type AndreaPlatformDeliberationResult,
+  type AndreaPlatformSkillCandidateSummary,
   type AndreaPlatformTurnReflectionResult,
   type PlatformTaskFamily,
 } from './andrea-platform-bridge.js';
@@ -45,6 +48,7 @@ export interface SkillAffordanceCard {
 export interface ContextCompileResult {
   readPlan: MemoryReadPlan;
   selectedSkill: SkillAffordanceCard;
+  activeSkillCandidates?: AndreaPlatformSkillCandidateSummary[];
   memoryTiers: AndreaMemoryTierId[];
   metadata: Record<string, string>;
 }
@@ -387,6 +391,28 @@ export function compileTurnContext(input: {
   };
 }
 
+async function attachActiveSkillCandidates(
+  context: ContextCompileResult,
+  taskFamily: PlatformTaskFamily,
+): Promise<ContextCompileResult> {
+  const activeSkillCandidates =
+    await listAndreaPlatformActiveSkillCandidates(taskFamily);
+  if (activeSkillCandidates.length === 0) return context;
+  const candidateIds = activeSkillCandidates.map((candidate) => candidate.candidateId);
+  const skillIds = activeSkillCandidates.map((candidate) => candidate.skillId);
+  return {
+    ...context,
+    activeSkillCandidates,
+    metadata: {
+      ...context.metadata,
+      active_skill_candidate_count: String(activeSkillCandidates.length),
+      active_skill_candidate_ids: candidateIds.join(','),
+      active_skill_ids: skillIds.join(','),
+      skill_evolution_mode: 'active_verified_only',
+    },
+  };
+}
+
 function routeCandidatesForSkill(skill: SkillAffordanceCard): string[] {
   const candidates = ['local_capability', 'clarify_first', 'learn_first'];
   if (skill.taskFamily === 'calendar' || skill.taskFamily === 'research') {
@@ -449,16 +475,19 @@ export async function beginTurnAgentHarness(
 ): Promise<TurnAgentHarnessContext | null> {
   if (isSimpleTurn(input.text)) return null;
   const taskFamily = classifyTurnTaskFamily(input);
-  const contextCompile = compileTurnContext({
+  const contextCompile = await attachActiveSkillCandidates(
+    compileTurnContext({
+      taskFamily,
+      channel: input.channel,
+      text: input.text,
+      capabilityId: input.capabilityId,
+      stateChanging:
+        /\b(send|create|move|cancel|delete|forget|remember|repair|deploy|push)\b/i.test(
+          input.text,
+        ),
+    }),
     taskFamily,
-    channel: input.channel,
-    text: input.text,
-    capabilityId: input.capabilityId,
-    stateChanging:
-      /\b(send|create|move|cancel|delete|forget|remember|repair|deploy|push)\b/i.test(
-        input.text,
-      ),
-  });
+  );
   const approvalPosture =
     contextCompile.selectedSkill.approvalNeed === 'explicit'
       ? 'approval_required'
@@ -478,7 +507,7 @@ export async function beginTurnAgentHarness(
     metadata: {
       request_route: input.requestRoute || '',
       capability_id: input.capabilityId || '',
-      turn_agent_harness: 'v8',
+      turn_agent_harness: 'v10',
       text_shape: sanitizeMetadataValue(describeTextShape(input.text)),
     },
   });
@@ -749,6 +778,60 @@ export async function reflectTurnAgentOutcome(input: {
       ),
     },
   });
+  const evaluatorFlags = input.evaluation.evaluatorFlags.filter(
+    (flag) => flag && flag !== 'none',
+  );
+  const shouldStageSkillCandidate =
+    evaluatorFlags.length > 0 ||
+    input.evaluation.evidenceGap === 'major' ||
+    input.evaluation.evidenceGap === 'blocked' ||
+    input.evaluation.safeRewriteApplied ||
+    (input.evaluation.status === 'pass' &&
+      !input.blockerClass &&
+      input.answerClass === 'handled');
+  if (shouldStageSkillCandidate) {
+    const sourceKind =
+      input.evaluation.evidenceGap === 'blocked'
+        ? 'capability_gap'
+        : evaluatorFlags.some((flag) =>
+              /\b(approval|leakage|send|provider|calendar|guardrail)\b/i.test(
+                flag,
+              ),
+            )
+          ? 'guardrail_trip'
+          : input.evaluation.status === 'pass'
+            ? 'repeated_success'
+            : 'eval_failure';
+    await emitAndreaPlatformSkillCandidate({
+      skillId: context.selectedSkill.skillId,
+      taskFamily: context.taskFamily,
+      sourceKind,
+      summary:
+        sourceKind === 'repeated_success'
+          ? `Successful ${context.taskFamily} turn reinforced ${context.selectedSkill.skillId}.`
+          : `Evaluator staged a reusable ${context.taskFamily} skill candidate from ${sourceKind}.`,
+      evidenceCount: sourceKind === 'repeated_success' ? 1 : 1,
+      riskLevel: context.selectedSkill.sideEffectRisk,
+      approvalRequired: context.selectedSkill.approvalNeed !== 'none',
+      linkedTraceIds: [
+        context.deliberation.taskLedgerId,
+        context.deliberation.traceGradeId || '',
+      ].filter(Boolean),
+      linkedEvaluationIds: [
+        reflection?.evaluationId || context.deliberation.evaluationId || '',
+      ].filter(Boolean),
+      metadata: {
+        source_system: 'andrea_nanobot',
+        trigger: 'post_turn_reflection',
+        selected_policy_id: context.deliberation.selectedPolicyId || '',
+        self_check_status: input.evaluation.status,
+        evaluator_flags: evaluatorFlags.join(',') || 'none',
+        evidence_gap: input.evaluation.evidenceGap,
+        safe_rewrite_applied: String(input.evaluation.safeRewriteApplied),
+        raw_content_policy: 'metadata_only',
+      },
+    });
+  }
   return {
     routeUsed: input.routeUsed,
     answerClass: input.answerClass || 'unknown',

@@ -9220,6 +9220,10 @@ async function main(): Promise<void> {
         platformReflectionId: platform.reflectionId,
         platformEvaluationId: platform.evaluationId,
         platformLearningId: platform.learningId,
+        platformSkillCandidateIds: [
+          ...((record.linkedRefs || {}).platformSkillCandidateIds || []),
+          ...(platform.skillCandidateId ? [platform.skillCandidateId] : []),
+        ],
       },
     });
   }

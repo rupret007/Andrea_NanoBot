@@ -1459,6 +1459,7 @@ export interface PilotIssueLinkedRefs {
   platformReflectionId?: string;
   platformEvaluationId?: string;
   platformLearningId?: string;
+  platformSkillCandidateIds?: string[];
   platformDiagnosisId?: string;
   platformRepairPlanId?: string;
   platformRepairRunId?: string;

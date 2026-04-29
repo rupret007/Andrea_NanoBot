@@ -226,7 +226,7 @@ describe('andrea platform shell bridge', () => {
       assistantReplyPreview: "I don't see anything at 3 PM tomorrow.",
     });
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       feedbackId: 'feedback-1',
       taskLedgerId: 'task-1',
       progressLedgerId: 'progress-1',
@@ -247,6 +247,105 @@ describe('andrea platform shell bridge', () => {
         capabilityId: 'calendar.local_lookup',
       },
     });
+  });
+
+  it('posts and reads skill-evolution records through the platform coordinator', async () => {
+    vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_ENABLED', 'true');
+    vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_URL', 'http://127.0.0.1:4400/');
+    vi.stubEnv('ANDREA_PLATFORM_FALLBACK_TO_DIRECT_RUNTIME', 'false');
+
+    const calls: Array<{ url: string; method?: string; body?: unknown }> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        calls.push({
+          url: String(input),
+          method: init?.method,
+          body: init?.body,
+        });
+        if (init?.method === 'GET') {
+          return new Response(
+            JSON.stringify({
+              active_skills: [
+                {
+                  candidate_id: 'candidate-1',
+                  skill_id: 'calendar.narrow_availability',
+                  task_family: 'calendar',
+                  lifecycle_status: 'active',
+                  summary: 'Use narrow calendar wording.',
+                  evidence_count: 3,
+                  risk_level: 'low',
+                  approval_required: false,
+                },
+                {
+                  candidate_id: 'candidate-2',
+                  skill_id: 'communication.approval_gate',
+                  task_family: 'communication',
+                  lifecycle_status: 'active',
+                  summary: 'Require approval before send claims.',
+                  evidence_count: 4,
+                  risk_level: 'high',
+                  approval_required: true,
+                },
+              ],
+            }),
+            { status: 200 },
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            candidate: {
+              candidate_id: 'candidate-3',
+              skill_id: 'calendar.narrow_availability',
+              task_family: 'calendar',
+              lifecycle_status: 'staged',
+              summary: 'Stage narrow calendar wording.',
+              evidence_count: 1,
+              risk_level: 'low',
+              approval_required: false,
+            },
+          }),
+          { status: 200 },
+        );
+      }) as unknown as typeof fetch,
+    );
+
+    const bridge = await import('./andrea-platform-bridge.js');
+    const created = await bridge.emitAndreaPlatformSkillCandidate({
+      skillId: 'calendar.narrow_availability',
+      taskFamily: 'calendar',
+      sourceKind: 'eval_failure',
+      summary: 'Stage narrow calendar wording.',
+      riskLevel: 'low',
+      linkedTraceIds: ['trace-1'],
+      linkedEvaluationIds: ['evaluation-1'],
+    });
+    const activeCalendarSkills =
+      await bridge.listAndreaPlatformActiveSkillCandidates('calendar');
+
+    expect(created?.candidate).toMatchObject({
+      candidateId: 'candidate-3',
+      skillId: 'calendar.narrow_availability',
+      lifecycleStatus: 'staged',
+    });
+    expect(activeCalendarSkills).toHaveLength(1);
+    expect(activeCalendarSkills[0]).toMatchObject({
+      candidateId: 'candidate-1',
+      skillId: 'calendar.narrow_availability',
+    });
+    expect(calls[0]?.url).toBe('http://127.0.0.1:4400/skill-candidate');
+    expect(JSON.parse(String(calls[0]?.body ?? '{}'))).toMatchObject({
+      skillId: 'calendar.narrow_availability',
+      taskFamily: 'calendar',
+      sourceKind: 'eval_failure',
+      metadata: {
+        sourceSystem: 'andrea_nanobot',
+        raw_content_policy: 'metadata_only',
+      },
+    });
+    expect(calls[1]?.url).toBe(
+      'http://127.0.0.1:4400/skill-evolution-report',
+    );
   });
 
   it('posts deliberation and repair requests to the platform coordinator when enabled', async () => {
@@ -380,7 +479,7 @@ describe('andrea platform shell bridge', () => {
       correlationId: 'feedback-1',
       metadata: {
         sourceSystem: 'andrea_nanobot',
-        turn_intelligence_version: 'v7',
+        turn_intelligence_version: 'v10',
         memory_read_tiers: 'working',
       },
     });

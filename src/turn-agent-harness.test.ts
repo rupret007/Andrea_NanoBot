@@ -41,6 +41,25 @@ describe('turn agent harness', () => {
             unknown
           >,
         });
+        if (String(input).endsWith('/skill-evolution-report')) {
+          return new Response(
+            JSON.stringify({
+              active_skills: [
+                {
+                  candidate_id: 'candidate-1',
+                  skill_id: 'assistant.daily_guidance.confirmed_focus',
+                  task_family: 'assistant',
+                  lifecycle_status: 'active',
+                  summary: 'Prefer a short focus-first daily answer.',
+                  evidence_count: 3,
+                  risk_level: 'low',
+                  approval_required: false,
+                },
+              ],
+            }),
+            { status: 200 },
+          );
+        }
         return new Response(
           JSON.stringify({
             task: { task_ledger_id: 'task-1' },
@@ -110,17 +129,22 @@ describe('turn agent harness', () => {
       score: 0.82,
     });
     expect(calls[0]).toMatchObject({
+      url: 'http://127.0.0.1:4400/skill-evolution-report',
+    });
+    expect(calls[1]).toMatchObject({
       url: 'http://127.0.0.1:4400/deliberate',
     });
-    expect(calls[0]?.body).toMatchObject({
+    expect(calls[1]?.body).toMatchObject({
       goal: 'Handle assistant turn from telegram via direct_assistant.',
       category: 'assistant',
       correlationId: 'turn-1',
       metadata: {
         sourceSystem: 'andrea_nanobot',
-        turn_intelligence_version: 'v7',
-        turn_agent_harness: 'v8',
+        turn_intelligence_version: 'v10',
+        turn_agent_harness: 'v10',
         skill_id: 'assistant.daily_guidance',
+        active_skill_candidate_count: '1',
+        skill_evolution_mode: 'active_verified_only',
         memory_read_tiers: 'working,semantic,procedural',
         raw_content_policy: 'local_only',
       },
@@ -339,11 +363,19 @@ describe('turn agent harness', () => {
       trigger: 'turn_agent_harness',
       metadata: {
         sourceSystem: 'andrea_nanobot',
-        turn_intelligence_version: 'v8',
+        turn_intelligence_version: 'v10',
         route_used: 'daily.what_matters',
         actual_evidence: 'partial',
       },
     });
     expect(JSON.stringify(calls[0]?.body)).not.toContain('Here is the plan.');
+    expect(calls[1]).toMatchObject({
+      url: 'http://127.0.0.1:4400/skill-candidate',
+    });
+    expect(calls[1]?.body).toMatchObject({
+      skillId: 'assistant.daily_guidance',
+      taskFamily: 'assistant',
+      sourceKind: 'repeated_success',
+    });
   });
 });
