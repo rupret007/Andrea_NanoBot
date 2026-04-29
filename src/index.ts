@@ -3554,6 +3554,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       groupFolder: group.folder,
       text: lastContent,
       requestRoute: requestPolicy.route,
+      // v13 B4 caller-side completion: pass the per-message sender (group
+      // chats) or fall back to chatJid (1-on-1) so the platform's user-belief
+      // state actually accumulates per actor instead of staying empty.
+      actorId: latestUserMessage?.sender || chatJid,
     });
   const sendAssistantReplyWithFeedback = async (params: {
     text: string;

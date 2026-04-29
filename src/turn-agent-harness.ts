@@ -45,10 +45,40 @@ export interface SkillAffordanceCard {
   examples: string[];
 }
 
+export type ActiveSkillDirective =
+  | 'narrow_calendar_wording'
+  | 'explain_provider_blocker'
+  | 'require_send_approval'
+  | 'bluebubbles_same_thread_proof'
+  | 'downvote_to_repair_handoff'
+  | 'strip_internal_leakage'
+  | 'abstain_low_confidence'
+  | 'request_clarification'
+  | 'recursive_intent_check_required'
+  | 'belief_aware_communication'
+  | 'extended_reasoning_engaged'
+  | 'verifier_chain_engaged';
+
+export const SUPPORTED_ACTIVE_SKILL_DIRECTIVES: readonly ActiveSkillDirective[] = [
+  'narrow_calendar_wording',
+  'explain_provider_blocker',
+  'require_send_approval',
+  'bluebubbles_same_thread_proof',
+  'downvote_to_repair_handoff',
+  'strip_internal_leakage',
+  'abstain_low_confidence',
+  'request_clarification',
+  'recursive_intent_check_required',
+  'belief_aware_communication',
+  'extended_reasoning_engaged',
+  'verifier_chain_engaged',
+];
+
 export interface ContextCompileResult {
   readPlan: MemoryReadPlan;
   selectedSkill: SkillAffordanceCard;
   activeSkillCandidates?: AndreaPlatformSkillCandidateSummary[];
+  effectiveDirectives?: ActiveSkillDirective[];
   memoryTiers: AndreaMemoryTierId[];
   metadata: Record<string, string>;
 }
@@ -103,6 +133,7 @@ export interface TurnAgentHarnessContext {
   contextCompile: ContextCompileResult;
   deliberation?: AndreaPlatformDeliberationResult | null;
   platformHoldReply?: string | null;
+  actorId?: string | null;
 }
 
 export interface BeginTurnAgentHarnessInput {
@@ -113,6 +144,7 @@ export interface BeginTurnAgentHarnessInput {
   requestRoute?: string | null;
   capabilityId?: string | null;
   knownBlockers?: string[];
+  actorId?: string | null;
 }
 
 export interface EvaluateTurnReplyInput {
@@ -391,6 +423,33 @@ export function compileTurnContext(input: {
   };
 }
 
+function isLowRiskReadOnlyCandidate(
+  candidate: AndreaPlatformSkillCandidateSummary,
+): boolean {
+  if (candidate.lifecycleStatus !== 'active') return false;
+  if (candidate.approvalRequired) return false;
+  return candidate.riskLevel === 'none' || candidate.riskLevel === 'low';
+}
+
+function collectEffectiveDirectives(
+  candidates: AndreaPlatformSkillCandidateSummary[],
+): ActiveSkillDirective[] {
+  const allowed = new Set<string>(SUPPORTED_ACTIVE_SKILL_DIRECTIVES);
+  const seen = new Set<ActiveSkillDirective>();
+  const out: ActiveSkillDirective[] = [];
+  for (const candidate of candidates) {
+    if (!isLowRiskReadOnlyCandidate(candidate)) continue;
+    for (const directive of candidate.directives) {
+      if (!allowed.has(directive)) continue;
+      const typed = directive as ActiveSkillDirective;
+      if (seen.has(typed)) continue;
+      seen.add(typed);
+      out.push(typed);
+    }
+  }
+  return out;
+}
+
 async function attachActiveSkillCandidates(
   context: ContextCompileResult,
   taskFamily: PlatformTaskFamily,
@@ -402,15 +461,24 @@ async function attachActiveSkillCandidates(
     (candidate) => candidate.candidateId,
   );
   const skillIds = activeSkillCandidates.map((candidate) => candidate.skillId);
+  const effectiveDirectives = collectEffectiveDirectives(activeSkillCandidates);
+  const directiveMetadata: Record<string, string> = effectiveDirectives.length
+    ? {
+        active_skill_directives: effectiveDirectives.join(','),
+        active_skill_directive_mode: 'low_risk_read_only',
+      }
+    : {};
   return {
     ...context,
     activeSkillCandidates,
+    effectiveDirectives,
     metadata: {
       ...context.metadata,
       active_skill_candidate_count: String(activeSkillCandidates.length),
       active_skill_candidate_ids: candidateIds.join(','),
       active_skill_ids: skillIds.join(','),
       skill_evolution_mode: 'active_verified_only',
+      ...directiveMetadata,
     },
   };
 }
@@ -445,6 +513,13 @@ function buildPlatformHoldReply(
     | undefined;
   if (!posture || posture === 'execute_now') return null;
   if (!decision) return null;
+  if (decision.abstentionDirective === 'abstain_low_confidence') {
+    const probText =
+      typeof decision.abstentionPosteriorProb === 'number'
+        ? ` (confidence ${(decision.abstentionPosteriorProb * 100).toFixed(0)}%)`
+        : '';
+    return `I'd rather not guess on this${probText}. Want me to ask one clarifying question, or lean on saved context instead?`;
+  }
   if (posture === 'clarify_first') {
     const missing = decision.missingInformation?.[0];
     return missing
@@ -506,6 +581,7 @@ export async function beginTurnAgentHarness(
     routeCandidates: routeCandidatesForSkill(contextCompile.selectedSkill),
     memoryMetadata: contextCompile.metadata,
     knownBlockers: input.knownBlockers,
+    actorId: input.actorId,
     metadata: {
       request_route: input.requestRoute || '',
       capability_id: input.capabilityId || '',
@@ -524,6 +600,7 @@ export async function beginTurnAgentHarness(
     contextCompile,
     deliberation,
     platformHoldReply: buildPlatformHoldReply(deliberation, contextCompile),
+    actorId: input.actorId,
   };
 }
 
@@ -622,12 +699,48 @@ function narrowCalendarCertainty(text: string): string {
   );
 }
 
+function narrowCalendarCertaintyExtended(text: string): string {
+  return text
+    .replace(
+      /\b(?:your calendar is clear|nothing is on your calendar|you have nothing on your calendar|you're wide open|you are wide open)\b/gi,
+      "I don't see anything in the calendar evidence I checked",
+    )
+    .replace(
+      /\b(?:you have nothing|you've got nothing|you have no events|you have no meetings)\b/gi,
+      "I don't see anything",
+    );
+}
+
 function repairCommunicationSendOverreach(text: string): string {
   if (!/\b(i sent|sent it|message sent)\b/i.test(text)) return text;
   return text.replace(
     /\b(i sent|sent it|message sent)\b/gi,
     'I drafted it for approval',
   );
+}
+
+function repairCommunicationSendOverreachExtended(text: string): string {
+  return text.replace(
+    /\b(?:i'?ll send it|i am sending|i'?m sending|sending it now|i'?ll text them|i'?ll reply for you|i replied for you|i'?ll fire that off)\b/gi,
+    'I drafted it for your approval',
+  );
+}
+
+function appendBluebubblesContinuityProof(text: string): string {
+  if (/same[- ]thread proof/i.test(text)) return text;
+  return `${text.trimEnd()} (Same-thread BlueBubbles proof is still pending until I see the inbound continuation.)`;
+}
+
+function appendDownvoteRepairHandoff(text: string): string {
+  if (/rerun|repair|fix again/i.test(text)) return text;
+  return `${text.trimEnd()} If this still misses, I can stage a repair plan and rerun with explicit approval.`;
+}
+
+function explainProviderBlockerSoft(text: string): string {
+  if (/\b(provider|quota|block|unavailable|saved context)\b/i.test(text)) {
+    return text;
+  }
+  return `Heads up: I'm answering from saved context because the live provider lane isn't currently verified. ${text}`;
 }
 
 export function evaluateTurnReply(
@@ -637,6 +750,9 @@ export function evaluateTurnReply(
   const flags: string[] = [];
   let rewritten = input.text;
   let safeRewriteApplied = false;
+  const directives = new Set<ActiveSkillDirective>(
+    input.context?.contextCompile.effectiveDirectives || [],
+  );
 
   if (
     input.context?.taskFamily === 'calendar' &&
@@ -645,6 +761,18 @@ export function evaluateTurnReply(
     rewritten = narrowCalendarCertainty(rewritten);
     flags.push('calendar_certainty_repaired');
     safeRewriteApplied = true;
+  }
+
+  if (
+    directives.has('narrow_calendar_wording') &&
+    input.context?.taskFamily === 'calendar'
+  ) {
+    const before = rewritten;
+    rewritten = narrowCalendarCertaintyExtended(rewritten);
+    if (rewritten !== before) {
+      flags.push('directive:narrow_calendar_wording');
+      safeRewriteApplied = true;
+    }
   }
 
   const providerBlocked =
@@ -657,6 +785,17 @@ export function evaluateTurnReply(
     rewritten = `I can't verify that live right now because the provider lane is blocked. ${rewritten}`;
     flags.push('provider_blocker_explained');
     safeRewriteApplied = true;
+  } else if (
+    !providerBlocked &&
+    directives.has('explain_provider_blocker') &&
+    input.context?.taskFamily === 'research'
+  ) {
+    const before = rewritten;
+    rewritten = explainProviderBlockerSoft(rewritten);
+    if (rewritten !== before) {
+      flags.push('directive:explain_provider_blocker');
+      safeRewriteApplied = true;
+    }
   }
 
   const communicationSendRisk =
@@ -675,10 +814,58 @@ export function evaluateTurnReply(
     safeRewriteApplied = true;
   }
 
+  if (
+    directives.has('require_send_approval') &&
+    input.context?.taskFamily === 'communication'
+  ) {
+    const before = rewritten;
+    rewritten = repairCommunicationSendOverreachExtended(rewritten);
+    if (rewritten !== before) {
+      flags.push('directive:require_send_approval');
+      safeRewriteApplied = true;
+    }
+  }
+
+  if (
+    directives.has('bluebubbles_same_thread_proof') &&
+    input.context?.channel === 'bluebubbles'
+  ) {
+    const before = rewritten;
+    rewritten = appendBluebubblesContinuityProof(rewritten);
+    if (rewritten !== before) {
+      flags.push('directive:bluebubbles_same_thread_proof');
+      safeRewriteApplied = true;
+    }
+  }
+
+  if (
+    directives.has('downvote_to_repair_handoff') &&
+    /\b(downvote|not helpful|feedback|missed)\b/i.test(
+      [
+        input.routeKey,
+        input.capabilityId,
+        input.handlerKind,
+        input.responseSource,
+      ]
+        .filter(Boolean)
+        .join(' '),
+    )
+  ) {
+    const before = rewritten;
+    rewritten = appendDownvoteRepairHandoff(rewritten);
+    if (rewritten !== before) {
+      flags.push('directive:downvote_to_repair_handoff');
+      safeRewriteApplied = true;
+    }
+  }
+
   if (hasInternalLeakage(rewritten)) {
     rewritten = stripInternalLeakage(rewritten);
     flags.push('operator_leakage_repaired');
     safeRewriteApplied = true;
+  }
+  if (directives.has('strip_internal_leakage')) {
+    flags.push('directive:strip_internal_leakage_active');
   }
 
   const actualEvidence = evidence[0]?.actualLevel || 'unknown';
@@ -743,6 +930,7 @@ export async function reflectTurnAgentOutcome(input: {
     workerFit: 'partial',
     memoryEffect: input.evaluation.memoryEffect,
     approvalCorrectness: input.evaluation.approvalCorrectness,
+    actorId: context.actorId,
     metadata: {
       selected_policy_id: context.deliberation.selectedPolicyId || '',
       selected_route: context.deliberation.selectedRoute || '',

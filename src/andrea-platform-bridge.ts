@@ -308,6 +308,7 @@ export interface AndreaPlatformSkillCandidateSummary {
   evidenceCount: number;
   riskLevel: string;
   approvalRequired: boolean;
+  directives: string[];
 }
 
 export interface AndreaPlatformSkillCandidateResult {
@@ -342,6 +343,37 @@ function pickRecord(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
+const DIRECTIVE_TOKEN_PATTERN = /^[a-z0-9_.]{1,60}$/;
+
+function parseDirectiveList(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const item of value) {
+      if (typeof item !== 'string') continue;
+      const cleaned = item.trim().toLowerCase();
+      if (DIRECTIVE_TOKEN_PATTERN.test(cleaned) && !seen.has(cleaned)) {
+        seen.add(cleaned);
+        out.push(cleaned);
+      }
+    }
+    return out;
+  }
+  if (typeof value === 'string') {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const token of value.split(',')) {
+      const cleaned = token.trim().toLowerCase();
+      if (DIRECTIVE_TOKEN_PATTERN.test(cleaned) && !seen.has(cleaned)) {
+        seen.add(cleaned);
+        out.push(cleaned);
+      }
+    }
+    return out;
+  }
+  return [];
+}
+
 function pickSkillCandidateSummary(
   value: unknown,
 ): AndreaPlatformSkillCandidateSummary | undefined {
@@ -353,6 +385,8 @@ function pickSkillCandidateSummary(
   const taskFamily = (pickString(record.task_family) ||
     pickString(record.taskFamily)) as PlatformTaskFamily | undefined;
   if (!candidateId || !skillId || !taskFamily) return undefined;
+  const metadata = pickRecord(record.metadata);
+  const directives = parseDirectiveList(metadata?.directives);
   return {
     candidateId,
     skillId,
@@ -372,6 +406,7 @@ function pickSkillCandidateSummary(
       pickBoolean(record.approval_required) ||
       pickBoolean(record.approvalRequired) ||
       false,
+    directives,
   };
 }
 
@@ -499,6 +534,10 @@ export interface AndreaPlatformDeliberationResult {
   }>;
   traceGradeId?: string;
   traceGradeStatus?: string;
+  contextDirectives?: string[];
+  abstentionDirective?: string;
+  abstentionPosteriorProb?: number;
+  evidencePosteriorProb?: number;
 }
 
 export interface AndreaPlatformTurnReflectionResult {
@@ -521,6 +560,7 @@ export async function emitAndreaPlatformDeliberation(input: {
   routeCandidates?: string[];
   memoryMetadata?: Record<string, string>;
   knownBlockers?: string[];
+  actorId?: string | null;
   metadata?: Record<string, string>;
 }): Promise<AndreaPlatformDeliberationResult | null> {
   const response = await postCoordinatorJson('/deliberate', {
@@ -535,9 +575,11 @@ export async function emitAndreaPlatformDeliberation(input: {
     ...(input.routeCandidates && input.routeCandidates.length > 0
       ? { routeCandidates: input.routeCandidates }
       : {}),
+    ...(input.actorId ? { actorId: input.actorId } : {}),
     metadata: {
       sourceSystem: 'andrea_nanobot',
       turn_intelligence_version: 'v10',
+      ...(input.actorId ? { actor_id: input.actorId } : {}),
       ...(input.memoryMetadata || {}),
       ...(input.knownBlockers && input.knownBlockers.length > 0
         ? { known_blockers: input.knownBlockers.join(',') }
@@ -584,6 +626,30 @@ export async function emitAndreaPlatformDeliberation(input: {
     evidenceCards: pickEvidenceCards(decision?.evidence_cards),
     traceGradeId: pickTraceGradeId(body),
     traceGradeStatus: pickTraceGradeStatus(body),
+    contextDirectives: pickStringArray(decision?.context_directives),
+    abstentionDirective: pickString(
+      pickRecord(decision?.metadata)?.abstention_directive,
+    ),
+    abstentionPosteriorProb: (() => {
+      const raw = pickString(
+        pickRecord(decision?.metadata)?.abstention_posterior_prob,
+      );
+      const parsed = raw ? Number.parseFloat(raw) : Number.NaN;
+      return Number.isFinite(parsed) ? parsed : undefined;
+    })(),
+    evidencePosteriorProb: (() => {
+      const cards = Array.isArray(decision?.evidence_cards)
+        ? decision?.evidence_cards
+        : [];
+      for (const card of cards) {
+        const meta = pickRecord((card as Record<string, unknown>)?.metadata);
+        const raw = pickString(meta?.evidence_posterior_prob);
+        if (!raw) continue;
+        const parsed = Number.parseFloat(raw);
+        if (Number.isFinite(parsed)) return parsed;
+      }
+      return undefined;
+    })(),
   };
 }
 
@@ -598,6 +664,7 @@ export async function emitAndreaPlatformTurnReflection(input: {
   workerFit?: 'strong' | 'partial' | 'weak';
   memoryEffect?: 'helpful' | 'neutral' | 'harmful' | 'unknown';
   approvalCorrectness?: 'correct' | 'needs_review' | 'unknown';
+  actorId?: string | null;
   metadata?: Record<string, string>;
 }): Promise<AndreaPlatformTurnReflectionResult | null> {
   const response = await postCoordinatorJson('/reflect', {
@@ -613,9 +680,11 @@ export async function emitAndreaPlatformTurnReflection(input: {
     workerFit: input.workerFit || 'partial',
     memoryEffect: input.memoryEffect || 'unknown',
     approvalCorrectness: input.approvalCorrectness || 'unknown',
+    ...(input.actorId ? { actorId: input.actorId } : {}),
     metadata: {
       sourceSystem: 'andrea_nanobot',
       turn_intelligence_version: 'v10',
+      ...(input.actorId ? { actor_id: input.actorId } : {}),
       ...(input.metadata || {}),
     },
   });

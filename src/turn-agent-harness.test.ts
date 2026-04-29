@@ -253,6 +253,241 @@ describe('turn agent harness', () => {
     expect(evaluation.evaluatorFlags).toContain('operator_leakage_repaired');
   });
 
+  it('filters high-risk active skills from hot-path directives but exposes low-risk directives', async () => {
+    vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_ENABLED', 'true');
+    vi.stubEnv('ANDREA_PLATFORM_FALLBACK_TO_DIRECT_RUNTIME', 'false');
+    vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_URL', 'http://127.0.0.1:4400');
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        calls.push({
+          url: String(input),
+          body: JSON.parse(String(init?.body || '{}')) as Record<
+            string,
+            unknown
+          >,
+        });
+        if (String(input).endsWith('/skill-evolution-report')) {
+          return new Response(
+            JSON.stringify({
+              active_skills: [
+                {
+                  candidate_id: 'low-risk-candidate',
+                  skill_id: 'calendar.narrow_certainty',
+                  task_family: 'calendar',
+                  lifecycle_status: 'active',
+                  summary: 'Use narrow calendar wording.',
+                  evidence_count: 4,
+                  risk_level: 'low',
+                  approval_required: false,
+                  metadata: {
+                    directives: 'narrow_calendar_wording,strip_internal_leakage',
+                  },
+                },
+                {
+                  candidate_id: 'high-risk-candidate',
+                  skill_id: 'communication.unsafe_send',
+                  task_family: 'calendar',
+                  lifecycle_status: 'active',
+                  summary: 'Should not influence hot path because high risk.',
+                  evidence_count: 5,
+                  risk_level: 'high',
+                  approval_required: true,
+                  metadata: {
+                    directives: 'require_send_approval',
+                  },
+                },
+              ],
+            }),
+            { status: 200 },
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            task: { task_ledger_id: 'task-cal' },
+            progress: { progress_ledger_id: 'progress-cal' },
+            plan: { plan_id: 'plan-cal', route: 'direct_integration' },
+            decision: {
+              decision_id: 'decision-cal',
+              selected_route: 'direct_integration',
+              execution_posture: 'execute_now',
+              answer_strategy: 'narrow_claim',
+              selected_policy_id: 'direct_integration',
+              expected_evidence: 'strong',
+            },
+          }),
+          { status: 200 },
+        );
+      }) as unknown as typeof fetch,
+    );
+
+    const { beginTurnAgentHarness } = await import('./turn-agent-harness.js');
+    const context = await beginTurnAgentHarness({
+      turnId: 'turn-cal-directives',
+      channel: 'telegram',
+      groupFolder: 'main',
+      text: 'do I have anything at 3 tomorrow',
+      requestRoute: 'direct_assistant',
+    });
+
+    expect(context?.contextCompile.effectiveDirectives).toEqual([
+      'narrow_calendar_wording',
+      'strip_internal_leakage',
+    ]);
+    expect(context?.contextCompile.metadata.active_skill_directives).toBe(
+      'narrow_calendar_wording,strip_internal_leakage',
+    );
+    expect(context?.contextCompile.metadata.active_skill_directive_mode).toBe(
+      'low_risk_read_only',
+    );
+    const deliberationCall = calls.find((call) =>
+      call.url.endsWith('/deliberate'),
+    );
+    expect(deliberationCall?.body).toMatchObject({
+      metadata: {
+        active_skill_directives: 'narrow_calendar_wording,strip_internal_leakage',
+        active_skill_directive_mode: 'low_risk_read_only',
+      },
+    });
+    const directivesString = String(
+      (deliberationCall?.body as { metadata?: Record<string, unknown> })
+        ?.metadata?.active_skill_directives ?? '',
+    );
+    expect(directivesString).not.toContain('require_send_approval');
+  });
+
+  it('honors active narrow_calendar_wording directive for broader phrasing', async () => {
+    const { evaluateTurnReply } = await import('./turn-agent-harness.js');
+
+    const evaluation = evaluateTurnReply({
+      context: {
+        turnId: 'turn-cal-broad',
+        channel: 'telegram',
+        groupFolder: 'main',
+        requestRoute: 'direct_assistant',
+        taskFamily: 'calendar',
+        meaningful: true,
+        selectedSkill: {
+          skillId: 'calendar.availability',
+          taskFamily: 'calendar',
+          purpose: 'calendar',
+          inputs: [],
+          outputs: [],
+          evidenceLevel: 'strong',
+          sideEffectRisk: 'medium',
+          approvalNeed: 'conditional',
+          failureModes: [],
+          examples: [],
+        },
+        contextCompile: {
+          readPlan: {
+            taskFamily: 'calendar',
+            readTiers: ['working'],
+            hotPath: true,
+            safeWriteClasses: ['episode_record'],
+            reason: 'calendar',
+            sources: [],
+          },
+          selectedSkill: {
+            skillId: 'calendar.availability',
+            taskFamily: 'calendar',
+            purpose: 'calendar',
+            inputs: [],
+            outputs: [],
+            evidenceLevel: 'strong',
+            sideEffectRisk: 'medium',
+            approvalNeed: 'conditional',
+            failureModes: [],
+            examples: [],
+          },
+          memoryTiers: ['working'],
+          metadata: {},
+          effectiveDirectives: ['narrow_calendar_wording'],
+        },
+        deliberation: {
+          selectedRoute: 'direct_integration',
+          expectedEvidence: 'strong',
+        },
+        platformHoldReply: null,
+      },
+      text: 'Your calendar is clear all afternoon.',
+      routeKey: 'calendar_lookup',
+      responseSource: 'local_companion',
+    });
+
+    expect(evaluation.safeRewriteApplied).toBe(true);
+    expect(evaluation.rewrittenText).toContain(
+      "I don't see anything in the calendar evidence",
+    );
+    expect(evaluation.evaluatorFlags).toContain(
+      'directive:narrow_calendar_wording',
+    );
+  });
+
+  it('honors require_send_approval directive on communication drafts', async () => {
+    const { evaluateTurnReply } = await import('./turn-agent-harness.js');
+
+    const evaluation = evaluateTurnReply({
+      context: {
+        turnId: 'turn-comm-directive',
+        channel: 'telegram',
+        groupFolder: 'main',
+        requestRoute: 'direct_assistant',
+        taskFamily: 'communication',
+        meaningful: true,
+        selectedSkill: {
+          skillId: 'communication.reply_help',
+          taskFamily: 'communication',
+          purpose: 'communication',
+          inputs: [],
+          outputs: [],
+          evidenceLevel: 'partial',
+          sideEffectRisk: 'high',
+          approvalNeed: 'explicit',
+          failureModes: [],
+          examples: [],
+        },
+        contextCompile: {
+          readPlan: {
+            taskFamily: 'communication',
+            readTiers: ['working'],
+            hotPath: true,
+            safeWriteClasses: ['episode_record'],
+            reason: 'communication',
+            sources: [],
+          },
+          selectedSkill: {
+            skillId: 'communication.reply_help',
+            taskFamily: 'communication',
+            purpose: 'communication',
+            inputs: [],
+            outputs: [],
+            evidenceLevel: 'partial',
+            sideEffectRisk: 'high',
+            approvalNeed: 'explicit',
+            failureModes: [],
+            examples: [],
+          },
+          memoryTiers: ['working'],
+          metadata: {},
+          effectiveDirectives: ['require_send_approval'],
+        },
+        deliberation: { selectedRoute: 'local_capability' },
+        platformHoldReply: null,
+      },
+      text: "I'll send it now.",
+      routeKey: 'message.reply',
+      responseSource: 'local_companion',
+    });
+
+    expect(evaluation.safeRewriteApplied).toBe(true);
+    expect(evaluation.rewrittenText).toContain('drafted it for your approval');
+    expect(evaluation.evaluatorFlags).toContain(
+      'directive:require_send_approval',
+    );
+  });
+
   it('reflects handled turns back to the platform without raw message content', async () => {
     vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_ENABLED', 'true');
     vi.stubEnv('ANDREA_PLATFORM_FALLBACK_TO_DIRECT_RUNTIME', 'false');
