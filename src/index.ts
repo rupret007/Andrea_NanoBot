@@ -448,6 +448,9 @@ import {
   parseCursorCreateCommand,
   tokenizeCommandArguments,
 } from './cursor-command-parser.js';
+import { dispatchUnifiedJob } from './job-dispatch.js';
+import { buildJobDispatchAdapters } from './job-dispatch-adapters.js';
+import { parseUnifiedJobCommand } from './unified-job-command-parser.js';
 import {
   formatUserFacingOperationFailure,
   getUserFacingErrorDetail,
@@ -613,6 +616,7 @@ import {
   RUNTIME_STOP_COMMANDS,
   REMOTE_CONTROL_START_COMMANDS,
   REMOTE_CONTROL_STOP_COMMANDS,
+  UNIFIED_JOB_COMMANDS,
 } from './operator-command-gate.js';
 import {
   appendResponseFeedbackActionRows,
@@ -11641,6 +11645,56 @@ async function main(): Promise<void> {
     );
   }
 
+  async function handleUnifiedJob(
+    chatJid: string,
+    rawMessage: string,
+    msg: NewMessage,
+  ): Promise<void> {
+    const channel = findChannel(channels, chatJid);
+    if (!channel) return;
+    const parsed = parseUnifiedJobCommand(rawMessage);
+    if (parsed.error) {
+      await channel.sendMessage(chatJid, parsed.error);
+      return;
+    }
+    const group = registeredGroups[chatJid];
+    if (!group) {
+      await channel.sendMessage(
+        chatJid,
+        'This chat is not registered yet. Run /registermain in a DM first to enable job dispatch.',
+      );
+      return;
+    }
+    const adapters = buildJobDispatchAdapters({
+      resolveGroup: (jid: string) => registeredGroups[jid] ?? null,
+    });
+    try {
+      await dispatchUnifiedJob({
+        channel: {
+          sendMessage: channel.sendMessage.bind(channel),
+          editMessage: channel.editMessage
+            ? channel.editMessage.bind(channel)
+            : undefined,
+        },
+        input: {
+          chatJid,
+          prompt: parsed.prompt,
+          laneOverride: parsed.laneOverride,
+          actorId: msg.sender || chatJid,
+        },
+        adapters,
+      });
+    } catch (err) {
+      logger.error({ err, chatJid }, 'Unified /job dispatch failed');
+      await channel.sendMessage(
+        chatJid,
+        `/job dispatch error: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  }
+
   async function handleRuntimeCreate(
     chatJid: string,
     promptText: string,
@@ -14342,6 +14396,13 @@ async function main(): Promise<void> {
           now: new Date(),
         }).catch((err) =>
           logger.error({ err, chatJid }, 'Delegation rule command error'),
+        );
+        return;
+      }
+
+      if (UNIFIED_JOB_COMMANDS.has(commandToken)) {
+        handleUnifiedJob(chatJid, rawTrimmed, msg).catch((err) =>
+          logger.error({ err, chatJid }, 'Unified /job command error'),
         );
         return;
       }

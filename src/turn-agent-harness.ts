@@ -59,20 +59,21 @@ export type ActiveSkillDirective =
   | 'extended_reasoning_engaged'
   | 'verifier_chain_engaged';
 
-export const SUPPORTED_ACTIVE_SKILL_DIRECTIVES: readonly ActiveSkillDirective[] = [
-  'narrow_calendar_wording',
-  'explain_provider_blocker',
-  'require_send_approval',
-  'bluebubbles_same_thread_proof',
-  'downvote_to_repair_handoff',
-  'strip_internal_leakage',
-  'abstain_low_confidence',
-  'request_clarification',
-  'recursive_intent_check_required',
-  'belief_aware_communication',
-  'extended_reasoning_engaged',
-  'verifier_chain_engaged',
-];
+export const SUPPORTED_ACTIVE_SKILL_DIRECTIVES: readonly ActiveSkillDirective[] =
+  [
+    'narrow_calendar_wording',
+    'explain_provider_blocker',
+    'require_send_approval',
+    'bluebubbles_same_thread_proof',
+    'downvote_to_repair_handoff',
+    'strip_internal_leakage',
+    'abstain_low_confidence',
+    'request_clarification',
+    'recursive_intent_check_required',
+    'belief_aware_communication',
+    'extended_reasoning_engaged',
+    'verifier_chain_engaged',
+  ];
 
 export interface ContextCompileResult {
   readPlan: MemoryReadPlan;

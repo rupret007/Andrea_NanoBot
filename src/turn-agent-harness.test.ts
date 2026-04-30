@@ -282,7 +282,8 @@ describe('turn agent harness', () => {
                   risk_level: 'low',
                   approval_required: false,
                   metadata: {
-                    directives: 'narrow_calendar_wording,strip_internal_leakage',
+                    directives:
+                      'narrow_calendar_wording,strip_internal_leakage',
                   },
                 },
                 {
@@ -346,7 +347,8 @@ describe('turn agent harness', () => {
     );
     expect(deliberationCall?.body).toMatchObject({
       metadata: {
-        active_skill_directives: 'narrow_calendar_wording,strip_internal_leakage',
+        active_skill_directives:
+          'narrow_calendar_wording,strip_internal_leakage',
         active_skill_directive_mode: 'low_risk_read_only',
       },
     });

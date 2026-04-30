@@ -86,6 +86,15 @@ export const CURSOR_CREATE_COMMANDS = new Set([
   '/cursor_create',
 ]);
 
+// v14 Phase 1: unified dispatch. Available outside main control on purpose
+// — the underlying lane functions enforce per-chat quotas and approval
+// gates, and the goal is for the user to be able to send a job from any
+// registered chat instead of going to the main control group.
+export const UNIFIED_JOB_COMMANDS = new Set([
+  '/job',
+  '/work',
+]);
+
 export const CURSOR_SYNC_COMMANDS = new Set(['/cursor-sync', '/cursor_sync']);
 
 export const CURSOR_SELECT_COMMANDS = new Set([
