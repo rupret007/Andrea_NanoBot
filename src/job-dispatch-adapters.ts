@@ -79,11 +79,7 @@ function cursorViewToUnified(view: CursorAgentView): UnifiedJobView {
     lastUpdate: view.summary,
     outputTail: null, // Cursor's structured output flows via conversation/artifacts; we surface artifacts on completion via finalOutput.
     errorText: null,
-    finalOutput:
-      view.targetPrUrl ||
-      view.targetUrl ||
-      view.summary ||
-      null,
+    finalOutput: view.targetPrUrl || view.targetUrl || view.summary || null,
     pctComplete: null,
   };
 }
@@ -252,7 +248,8 @@ export function buildJobDispatchAdapters(args: {
 }): JobDispatchAdapters {
   return {
     cursor: createCursorJobLaneAdapter({
-      resolveGroupFolder: (chatJid) => args.resolveGroup(chatJid)?.folder ?? null,
+      resolveGroupFolder: (chatJid) =>
+        args.resolveGroup(chatJid)?.folder ?? null,
       ...args.cursorOptions,
     }),
     codex: createCodexJobLaneAdapter({

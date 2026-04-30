@@ -29,7 +29,9 @@ const LANE_FLAG_PATTERN = /^--lane[=:](.*)$/i;
 const USAGE_MESSAGE =
   'Usage: /job [--lane=cursor|codex|auto] <prompt>. Example: /job refactor handlers.ts to use async/await';
 
-export function parseUnifiedJobCommand(rawMessage: string): ParsedUnifiedJobCommand {
+export function parseUnifiedJobCommand(
+  rawMessage: string,
+): ParsedUnifiedJobCommand {
   const tokens = tokenizeCommandArguments((rawMessage || '').trim());
   // Drop the leading command token (/job, /work, etc.); the dispatcher
   // already validated which command was matched.

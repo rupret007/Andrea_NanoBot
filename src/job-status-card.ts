@@ -95,10 +95,10 @@ function formatDuration(ms: number): string {
 export function renderJobStatusCard(state: JobStatusCardState): string {
   const lines: string[] = [];
   const icon = STATUS_ICON[state.status];
+  lines.push(`${icon} Job [${state.laneLabel}] · ${state.jobId}`);
   lines.push(
-    `${icon} Job [${state.laneLabel}] · ${state.jobId}`,
+    `Status: ${state.status} (${formatDuration(state.updatedAt - state.startedAt)})`,
   );
-  lines.push(`Status: ${state.status} (${formatDuration(state.updatedAt - state.startedAt)})`);
   if (state.pctComplete !== null) {
     const pct = Math.max(0, Math.min(100, Math.round(state.pctComplete)));
     lines.push(`Progress: ${pct}%`);
@@ -188,11 +188,7 @@ export class JobStatusCard {
     patch: Partial<
       Pick<
         JobStatusCardState,
-        | 'status'
-        | 'lastUpdate'
-        | 'outputTail'
-        | 'errorText'
-        | 'pctComplete'
+        'status' | 'lastUpdate' | 'outputTail' | 'errorText' | 'pctComplete'
       >
     >,
   ): Promise<void> {

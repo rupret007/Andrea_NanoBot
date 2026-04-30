@@ -60,7 +60,10 @@ export interface JobLaneAdapter {
   label: string;
   /** Create a new job. Throws on failure; the dispatcher catches and
    * surfaces a failed status to the user. */
-  createJob(prompt: string, ctx: { chatJid: string; actorId?: string | null }): Promise<UnifiedJobView>;
+  createJob(
+    prompt: string,
+    ctx: { chatJid: string; actorId?: string | null },
+  ): Promise<UnifiedJobView>;
   /** Re-fetch the current state of an in-flight job. */
   fetchJob(jobId: string, ctx: { chatJid: string }): Promise<UnifiedJobView>;
 }
@@ -113,12 +116,15 @@ export async function dispatchUnifiedJob(args: {
   const config = args.config ?? {};
   const sleep =
     config.sleep ??
-    ((ms: number) =>
-      new Promise<void>((resolve) => setTimeout(resolve, ms)));
+    ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const now = config.now ?? (() => Date.now());
 
   const lanePick = input.laneOverride
-    ? { lane: input.laneOverride, reason: 'override', matchedTokens: [] as string[] }
+    ? {
+        lane: input.laneOverride,
+        reason: 'override',
+        matchedTokens: [] as string[],
+      }
     : pickLaneForPrompt(input.prompt);
 
   if (lanePick.lane === 'ambiguous') {

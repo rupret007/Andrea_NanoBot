@@ -15,7 +15,14 @@ interface CapturedSend {
 }
 
 function makeChannel(): {
-  channel: { sendMessage: (jid: string, text: string) => Promise<SendMessageResult>; editMessage: (jid: string, id: string, text: string) => Promise<SendMessageResult> };
+  channel: {
+    sendMessage: (jid: string, text: string) => Promise<SendMessageResult>;
+    editMessage: (
+      jid: string,
+      id: string,
+      text: string,
+    ) => Promise<SendMessageResult>;
+  };
   sends: CapturedSend[];
   edits: { messageId: string; text: string }[];
 } {
@@ -49,7 +56,8 @@ function makeAdapter(
     label,
     async createJob() {
       const initial = scriptedSnapshots[0];
-      if (!initial) throw new Error('test: createJob with no scripted snapshots');
+      if (!initial)
+        throw new Error('test: createJob with no scripted snapshots');
       index = 1;
       return initial;
     },
@@ -241,7 +249,9 @@ describe('dispatchUnifiedJob — streaming through completion', () => {
     expect(edits.some((e) => e.text.includes('Status: running'))).toBe(true);
     expect(edits.some((e) => e.text.includes('Status: completed'))).toBe(true);
     // Final output sent as a fresh message, not an edit
-    expect(sends[sends.length - 1].text).toBe('PR opened: https://example/pr/1');
+    expect(sends[sends.length - 1].text).toBe(
+      'PR opened: https://example/pr/1',
+    );
   });
 
   it('returns dispatched immediately when create returns terminal status', async () => {

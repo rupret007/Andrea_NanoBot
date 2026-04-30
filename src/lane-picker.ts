@@ -128,8 +128,7 @@ export function formatLaneClarificationPrompt(
   result: LanePickResult,
 ): string {
   const trimmed = rawPrompt.trim();
-  const snippet =
-    trimmed.length > 80 ? `${trimmed.slice(0, 77)}...` : trimmed;
+  const snippet = trimmed.length > 80 ? `${trimmed.slice(0, 77)}...` : trimmed;
   return [
     `I can't tell whether to send this to Cursor (repo-aware code edits) or`,
     `Codex (local execution / build / test). Reply with one of:`,
