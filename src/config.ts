@@ -81,12 +81,13 @@ function normalizeConfiguredAgentRuntime(
   if (
     value === 'codex_local' ||
     value === 'openai_cloud' ||
+    value === 'minimax_cloud' ||
     value === 'claude_legacy'
   ) {
     return value;
   }
   throw new Error(
-    `Unsupported agent runtime "${value}". Expected codex_local, openai_cloud, or claude_legacy.`,
+    `Unsupported agent runtime "${value}". Expected codex_local, openai_cloud, minimax_cloud, or claude_legacy.`,
   );
 }
 

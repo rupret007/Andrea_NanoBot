@@ -11,6 +11,17 @@ import {
 } from './google-calendar.js';
 import { logger } from './logger.js';
 import {
+  describeBraveConfigBlocker,
+  getBraveSearchStatus,
+  searchBraveWeb,
+  type BraveSearchFailure,
+} from './brave-search.js';
+import {
+  describeMiniMaxConfigBlocker,
+  getMiniMaxProviderStatus,
+  runMiniMaxAnthropicText,
+} from './minimax-provider.js';
+import {
   describeOpenAiConfigBlocker,
   describeOpenAiProviderFailure,
   getOpenAiProviderStatus,
@@ -40,12 +51,17 @@ export type ResearchSourceName =
   | 'local_context'
   | 'knowledge_library'
   | 'openai_responses'
+  | 'brave_search'
   | 'runtime_delegate';
 
 export type ResearchProviderUsed =
   | 'local_context'
   | 'knowledge_library'
   | 'openai_responses'
+  | 'brave_search'
+  | 'brave_search_plus_openai'
+  | 'brave_search_plus_minimax'
+  | 'minimax_anthropic'
   | 'hybrid';
 
 export interface ResearchRequest {
@@ -66,6 +82,7 @@ export interface ResearchSourceSet {
   localContext: boolean;
   knowledgeLibrary: boolean;
   openAiResponses: boolean;
+  braveSearch: boolean;
   runtimeDelegate: boolean;
   webSearch: boolean;
 }
@@ -96,6 +113,7 @@ export interface ResearchSupportingSource {
   sourceType?: string;
   scope?: string;
   excerpt?: string;
+  url?: string;
   retrievalScore?: number;
   matchReason?: string;
 }
@@ -138,6 +156,15 @@ interface KnowledgeResearchContext {
   search: KnowledgeSearchResult;
   contextBlock: string;
   supportingSources: ResearchSupportingSource[];
+}
+
+interface OutsideResearchContext {
+  provider: 'brave_search';
+  query: string;
+  contextBlock: string;
+  supportingSources: ResearchSupportingSource[];
+  debugPath: string[];
+  failure?: string;
 }
 
 const EXTERNAL_FACT_RE =
@@ -324,6 +351,15 @@ function buildKnowledgeSourceNotes(
     .slice(0, 4);
 }
 
+function buildOutsideSourceNotes(
+  supportingSources: ResearchSupportingSource[],
+): string[] {
+  return supportingSources
+    .map((source) => (source.url ? `${source.title} (${source.url})` : source.title))
+    .filter(Boolean)
+    .slice(0, 4);
+}
+
 function buildRouteExplanation(
   plan: ResearchPlan,
   options: {
@@ -374,6 +410,18 @@ function buildRouteExplanation(
   if (options.providerUsed === 'hybrid') {
     return 'I used Andrea local context plus OpenAI-backed synthesis because the question mixed personal context with a broader comparison.';
   }
+  if (options.providerUsed === 'brave_search') {
+    return 'I used Brave Search for live web grounding and kept the answer limited to the source snippets I could verify.';
+  }
+  if (options.providerUsed === 'brave_search_plus_openai') {
+    return 'I used Brave Search for live grounding, then OpenAI for bounded synthesis over those public source snippets.';
+  }
+  if (options.providerUsed === 'brave_search_plus_minimax') {
+    return 'I used Brave Search for live grounding, then MiniMax for complex synthesis over sanitized public source snippets.';
+  }
+  if (options.providerUsed === 'minimax_anthropic') {
+    return 'I used MiniMax for complex synthesis because the task needed broader reasoning than local context alone.';
+  }
   if (options.providerUsed === 'openai_responses') {
     return plan.sources.webSearch
       ? 'I used OpenAI-backed research with web search because this was outward-facing or comparison-heavy.'
@@ -385,6 +433,11 @@ function buildRouteExplanation(
 }
 
 interface OpenAiResearchProviderFailure {
+  providerFailure: string;
+  debugPath: string[];
+}
+
+interface MiniMaxResearchProviderFailure {
   providerFailure: string;
   debugPath: string[];
 }
@@ -414,6 +467,88 @@ function selectResearchModelTier(
     return 'simple';
   }
   return 'standard';
+}
+
+async function collectOutsideResearchContext(
+  request: ResearchRequest,
+): Promise<OutsideResearchContext | null> {
+  const braveStatus = getBraveSearchStatus();
+  if (!braveStatus.configured) {
+    return {
+      provider: 'brave_search',
+      query: normalizeQuery(request.query),
+      contextBlock: '',
+      supportingSources: [],
+      debugPath: [
+        'brave_search.blocked=true',
+        `brave_search.missing=${braveStatus.missing.join(',') || 'unknown'}`,
+      ],
+      failure: describeBraveConfigBlocker(braveStatus.missing),
+    };
+  }
+
+  try {
+    const result = await searchBraveWeb(normalizeQuery(request.query));
+    if (!result) {
+      return null;
+    }
+    if ('providerFailure' in result) {
+      const failure = result as BraveSearchFailure;
+      return {
+        provider: 'brave_search',
+        query: normalizeQuery(request.query),
+        contextBlock: '',
+        supportingSources: [],
+        debugPath: [
+          'brave_search.failed=true',
+          `provider_failure=${failure.providerFailure}`,
+          failure.status ? `status=${failure.status}` : 'status=unknown',
+          failure.requestId
+            ? `request_id=${failure.requestId}`
+            : 'request_id=missing',
+        ],
+        failure: failure.providerFailure,
+      };
+    }
+    const supportingSources = result.results.slice(0, 5).map((item, index) => ({
+      origin: 'outside_research' as const,
+      title: item.title,
+      url: item.url,
+      excerpt: item.description,
+      sourceType: 'brave_search',
+      retrievalScore: 1 - index * 0.08,
+      matchReason: 'Brave Search live web result',
+    }));
+    const contextBlock = supportingSources
+      .map((source, index) =>
+        `${index + 1}. ${source.title} (${source.url || 'no url'}): ${
+          source.excerpt || ''
+        }`.trim(),
+      )
+      .join('\n');
+    return {
+      provider: 'brave_search',
+      query: result.query,
+      contextBlock,
+      supportingSources,
+      debugPath: [
+        'brave_search.used=true',
+        `brave_search.results=${supportingSources.length}`,
+        result.requestId ? `request_id=${result.requestId}` : 'request_id=missing',
+      ],
+    };
+  } catch (err) {
+    logger.warn({ err }, 'Research orchestrator Brave Search request errored');
+    return {
+      provider: 'brave_search',
+      query: normalizeQuery(request.query),
+      contextBlock: '',
+      supportingSources: [],
+      debugPath: ['brave_search.failed=true', 'request_exception=true'],
+      failure:
+        'Brave Search errored before Andrea could ground this live lookup.',
+    };
+  }
 }
 
 function buildResearchText(
@@ -583,6 +718,7 @@ export function planResearchRequest(request: ResearchRequest): ResearchPlan {
     openAiResponses: shouldUseKnowledgeLibrary
       ? savedMaterialMode === 'combine'
       : shouldUseOpenAi,
+    braveSearch: false,
     runtimeDelegate: needsRuntimeDelegate,
     webSearch: Boolean(
       request.allowWebSearch ??
@@ -593,6 +729,7 @@ export function planResearchRequest(request: ResearchRequest): ResearchPlan {
           /\b(current|latest|today|this week)\b/i.test(lower))),
     ),
   };
+  sources.braveSearch = sources.webSearch && savedMaterialMode !== 'only';
 
   if (needsRuntimeDelegate) {
     return {
@@ -903,6 +1040,77 @@ function summarizeKnowledgeResearch(
   };
 }
 
+function summarizeOutsideResearch(
+  request: ResearchRequest,
+  plan: ResearchPlan,
+  outside: OutsideResearchContext,
+  options: {
+    note?: string;
+  } = {},
+): ResearchResult {
+  const supportingSources = outside.supportingSources;
+  if (supportingSources.length === 0) {
+    const blocker =
+      outside.failure ||
+      'Brave Search did not return usable live web results for that request.';
+    return buildResearchBlockerResult(request, plan, blocker, [
+      ...outside.debugPath,
+      'fallback=outside_research_empty',
+    ]);
+  }
+
+  const top = supportingSources[0]!;
+  const summaryText =
+    plan.kind === 'compare'
+      ? `The live web signal starts with ${top.title}; I would treat this as source-grounded but still light, because I only used search snippets.`
+      : plan.kind === 'recommend'
+        ? `The strongest live search signal points first to ${top.title}; I would use that as a starting point, not a final decision by itself.`
+        : `${top.title} is the clearest live source result I found. ${top.excerpt || ''}`.trim();
+  const structuredFindings = [
+    {
+      title: 'Live web signals',
+      items: supportingSources.slice(0, 4).map((source) =>
+        source.url
+          ? `${source.title}: ${source.excerpt || source.url}`
+          : `${source.title}: ${source.excerpt || ''}`.trim(),
+      ),
+    },
+  ];
+  const routeExplanation = buildRouteExplanation(plan, {
+    providerUsed: 'brave_search',
+  });
+  return {
+    handled: true,
+    kind: plan.kind,
+    plan,
+    providerUsed: 'brave_search',
+    summaryText,
+    spokenText: buildSpokenResearchText(summaryText, {
+      firstFinding: structuredFindings[0]?.items[0],
+    }),
+    fullText: buildResearchText(
+      summaryText,
+      structuredFindings,
+      undefined,
+      routeExplanation,
+    ),
+    routeExplanation,
+    structuredFindings,
+    followupSuggestions:
+      request.channel === 'alexa'
+        ? []
+        : ['Want me to do a deeper synthesis over these sources?'],
+    saveForLaterCandidate: summaryText,
+    sourceNotes: [
+      'Brave Search',
+      ...buildOutsideSourceNotes(supportingSources),
+      options.note || '',
+    ].filter(Boolean),
+    debugPath: [...outside.debugPath, 'fallback=brave_snippet_summary'],
+    supportingSources,
+  };
+}
+
 function summarizeLocalResearch(
   request: ResearchRequest,
   context: LocalResearchContext,
@@ -1121,11 +1329,164 @@ function parseOpenAiResearchOutput(
   };
 }
 
+async function runMiniMaxResearch(
+  request: ResearchRequest,
+  plan: ResearchPlan,
+  context: LocalResearchContext,
+  knowledge?: KnowledgeResearchContext | null,
+  outside?: OutsideResearchContext | null,
+): Promise<ResearchResult | MiniMaxResearchProviderFailure | null> {
+  const status = getMiniMaxProviderStatus();
+  if (!status.configured) {
+    return status.enabled
+      ? {
+          providerFailure: describeMiniMaxConfigBlocker(status.missing),
+          debugPath: [
+            `plan.primary=${plan.primarySource}`,
+            `minimax.blocked=${status.missing.join(',') || 'unknown'}`,
+          ],
+        }
+      : null;
+  }
+
+  const localContextBlock = [
+    plan.sources.localContext && context.threadLines.length
+      ? `Life threads:\n- ${context.threadLines.join('\n- ')}`
+      : '',
+    plan.sources.localContext && context.taskLines.length
+      ? `Active tasks:\n- ${context.taskLines.join('\n- ')}`
+      : '',
+    plan.sources.localContext && context.calendarLines.length
+      ? `Upcoming calendar:\n- ${context.calendarLines.join('\n- ')}`
+      : '',
+    plan.sources.localContext && context.memoryLines.length
+      ? `Relevant preferences:\n- ${context.memoryLines.join('\n- ')}`
+      : '',
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+  const prompt = [
+    'Return plain text in exactly this shape:',
+    'Summary: <one or two sentences>',
+    'Findings:',
+    '- <2 to 4 short findings>',
+    'Recommendation: <one sentence or None>',
+    'Follow-ups:',
+    '- <1 to 3 short next questions or handoffs>',
+    localContextBlock
+      ? `Use this personal context only when it genuinely helps:\n${localContextBlock}`
+      : '',
+    knowledge?.contextBlock
+      ? `Use this saved source material when it genuinely helps:\n${knowledge.contextBlock}`
+      : '',
+    outside?.contextBlock
+      ? `Use these Brave Search public web snippets as live grounding. Cite titles or URLs when useful, and do not invent facts beyond the snippets:\n${outside.contextBlock}`
+      : '',
+    `User request: ${normalizeQuery(request.query)}`,
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+
+  const result = await runMiniMaxAnthropicText({
+    system:
+      'You are Andrea, a calm capable personal assistant doing bounded research. Do not mention internal tools, secrets, providers, or implementation details.',
+    prompt,
+    modelTier: plan.kind === 'summary' ? 'fast' : 'complex',
+    maxTokens: request.channel === 'alexa' ? 650 : 1000,
+  });
+  if (!result) return null;
+  if ('providerFailure' in result) {
+    return {
+      providerFailure: result.providerFailure,
+      debugPath: [
+        `plan.primary=${plan.primarySource}`,
+        'minimax.failed=true',
+        `provider_failure=${result.providerFailure}`,
+        result.status ? `status=${result.status}` : 'status=unknown',
+        result.requestId ? `request_id=${result.requestId}` : 'request_id=missing',
+      ],
+    };
+  }
+
+  const parsed = parseOpenAiResearchOutput(result.text, plan.kind);
+  const providerUsed: ResearchProviderUsed = outside?.supportingSources.length
+    ? 'brave_search_plus_minimax'
+    : 'minimax_anthropic';
+  const routeExplanation = buildRouteExplanation(plan, {
+    providerUsed,
+    knowledgeCount: knowledge?.supportingSources.length || 0,
+  });
+  return {
+    handled: true,
+    kind: plan.kind,
+    plan,
+    providerUsed,
+    summaryText: parsed.summaryText,
+    spokenText: buildSpokenResearchText(parsed.summaryText, {
+      recommendationText:
+        request.channel === 'alexa' ? parsed.recommendationText : undefined,
+      firstFinding: request.channel === 'alexa' ? parsed.findings[0] : undefined,
+    }),
+    fullText: buildResearchText(
+      parsed.summaryText,
+      parsed.findings.length
+        ? [
+            {
+              title: plan.kind === 'compare' ? 'Tradeoffs' : 'Findings',
+              items: parsed.findings,
+            },
+          ]
+        : [],
+      parsed.recommendationText,
+      routeExplanation,
+    ),
+    recommendationText: parsed.recommendationText,
+    routeExplanation,
+    structuredFindings: parsed.findings.length
+      ? [
+          {
+            title: plan.kind === 'compare' ? 'Tradeoffs' : 'Findings',
+            items: parsed.findings,
+          },
+        ]
+      : [],
+    followupSuggestions: parsed.followupSuggestions,
+    saveForLaterCandidate: parsed.summaryText,
+    sourceNotes: [
+      plan.sources.localContext && localContextBlock ? 'local context' : '',
+      knowledge?.supportingSources.length ? 'knowledge library' : '',
+      outside?.supportingSources.length ? 'Brave Search' : 'MiniMax synthesis',
+      ...buildOutsideSourceNotes(outside?.supportingSources || []),
+    ].filter(Boolean),
+    handoffOption:
+      plan.needsTelegramHandoff && request.channel === 'alexa'
+        ? {
+            channel: 'telegram',
+            reason: 'the result is richer than a spoken answer should be',
+            prompt: normalizeQuery(request.query),
+          }
+        : undefined,
+    debugPath: [
+      `plan.primary=${plan.primarySource}`,
+      `provider=${providerUsed}`,
+      `selected_model=${result.model}`,
+      ...(knowledge?.search.debugPath || []),
+      ...(outside?.debugPath || []),
+      result.requestId ? `request_id=${result.requestId}` : 'request_id=missing',
+    ],
+    supportingSources: [
+      ...(knowledge?.supportingSources || []),
+      ...(outside?.supportingSources || []),
+    ],
+  };
+}
+
 async function runOpenAiResearch(
   request: ResearchRequest,
   plan: ResearchPlan,
   context: LocalResearchContext,
   knowledge?: KnowledgeResearchContext | null,
+  outside?: OutsideResearchContext | null,
 ): Promise<ResearchResult | OpenAiResearchProviderFailure | null> {
   const openAi = resolveOpenAiProviderConfig();
   if (!openAi) return null;
@@ -1167,6 +1528,9 @@ async function runOpenAiResearch(
     knowledge?.contextBlock
       ? `Use this saved source material when it genuinely helps, and keep it distinct from outside knowledge:\n${knowledge.contextBlock}`
       : '',
+    outside?.contextBlock
+      ? `Use these Brave Search public web snippets as the live grounding layer. Cite titles or URLs when useful, and do not invent facts beyond the snippets:\n${outside.contextBlock}`
+      : '',
     `User request: ${normalizeQuery(request.query)}`,
   ]
     .filter(Boolean)
@@ -1175,7 +1539,7 @@ async function runOpenAiResearch(
   const body: Record<string, unknown> = {
     input: synthesisPrompt,
   };
-  if (plan.sources.webSearch) {
+  if (plan.sources.webSearch && !outside?.supportingSources.length) {
     body.tools = [
       {
         type: 'web_search',
@@ -1278,10 +1642,16 @@ async function runOpenAiResearch(
 
       const parsed = parseOpenAiResearchOutput(output, plan.kind);
       const providerUsed =
-        (plan.sources.localContext && localContextBlock) ||
-        knowledge?.supportingSources.length
+        outside?.supportingSources.length &&
+        ((plan.sources.localContext && localContextBlock) ||
+          knowledge?.supportingSources.length)
           ? 'hybrid'
-          : 'openai_responses';
+          : outside?.supportingSources.length
+            ? 'brave_search_plus_openai'
+            : (plan.sources.localContext && localContextBlock) ||
+                knowledge?.supportingSources.length
+              ? 'hybrid'
+              : 'openai_responses';
       const routeExplanation = buildRouteExplanation(plan, {
         providerUsed,
         knowledgeCount: knowledge?.supportingSources.length || 0,
@@ -1335,9 +1705,12 @@ async function runOpenAiResearch(
         sourceNotes: [
           plan.sources.localContext && localContextBlock ? 'local context' : '',
           knowledge?.supportingSources.length ? 'knowledge library' : '',
-          plan.sources.webSearch
-            ? 'OpenAI web search'
-            : 'OpenAI Responses synthesis',
+          outside?.supportingSources.length
+            ? 'Brave Search'
+            : plan.sources.webSearch
+              ? 'OpenAI web search'
+              : 'OpenAI Responses synthesis',
+          ...buildOutsideSourceNotes(outside?.supportingSources || []),
         ].filter(Boolean),
         handoffOption:
           plan.needsTelegramHandoff && request.channel === 'alexa'
@@ -1353,10 +1726,18 @@ async function runOpenAiResearch(
           `selected_model_tier=${candidate.tier}`,
           `selected_model=${candidate.model}`,
           ...(knowledge?.search.debugPath || []),
-          plan.sources.webSearch ? 'tool=web_search' : 'tool=none',
+          ...(outside?.debugPath || []),
+          plan.sources.webSearch && !outside?.supportingSources.length
+            ? 'tool=web_search'
+            : outside?.supportingSources.length
+              ? 'tool=brave_search'
+              : 'tool=none',
           requestId ? `request_id=${requestId}` : 'request_id=missing',
         ],
-        supportingSources: knowledge?.supportingSources || [],
+        supportingSources: [
+          ...(knowledge?.supportingSources || []),
+          ...(outside?.supportingSources || []),
+        ],
       };
     } catch (err) {
       logger.warn({ err }, 'Research orchestrator OpenAI request errored');
@@ -1439,6 +1820,9 @@ export async function runResearchOrchestrator(
     plan.sources.knowledgeLibrary || plan.primarySource === 'knowledge_library'
       ? collectKnowledgeLibraryContext(normalizedRequest)
       : null;
+  const outsideContext = plan.sources.braveSearch
+    ? await collectOutsideResearchContext(normalizedRequest)
+    : null;
 
   if (plan.primarySource === 'knowledge_library') {
     if (!normalizedRequest.groupFolder) {
@@ -1490,6 +1874,19 @@ export async function runResearchOrchestrator(
     const openAiStatus = getOpenAiProviderStatus();
     if (!openAiStatus.configured) {
       const blocker = describeOpenAiConfigBlocker(openAiStatus.missing);
+      const miniMaxKnowledgeResult = await runMiniMaxResearch(
+        normalizedRequest,
+        plan,
+        context,
+        groundedKnowledge,
+        outsideContext,
+      );
+      if (
+        miniMaxKnowledgeResult &&
+        !('providerFailure' in miniMaxKnowledgeResult)
+      ) {
+        return miniMaxKnowledgeResult;
+      }
       if (groundedKnowledge.supportingSources.length > 0) {
         return summarizeKnowledgeResearch(
           normalizedRequest,
@@ -1504,6 +1901,11 @@ export async function runResearchOrchestrator(
           },
         );
       }
+      if (outsideContext?.supportingSources.length) {
+        return summarizeOutsideResearch(normalizedRequest, plan, outsideContext, {
+          note: `OpenAI unavailable: ${blocker}`,
+        });
+      }
       return buildResearchBlockerResult(normalizedRequest, plan, blocker, [
         'plan.primary=knowledge_library',
         `openai.blocked=${openAiStatus.missing.join(',') || 'unknown'}`,
@@ -1515,6 +1917,7 @@ export async function runResearchOrchestrator(
       plan,
       context,
       groundedKnowledge,
+      outsideContext,
     );
     if (
       openAiKnowledgeResult &&
@@ -1532,6 +1935,20 @@ export async function runResearchOrchestrator(
         ? openAiKnowledgeResult.debugPath
         : ['plan.primary=knowledge_library', 'openai.failed=true'];
 
+    const miniMaxKnowledgeResult = await runMiniMaxResearch(
+      normalizedRequest,
+      plan,
+      context,
+      groundedKnowledge,
+      outsideContext,
+    );
+    if (
+      miniMaxKnowledgeResult &&
+      !('providerFailure' in miniMaxKnowledgeResult)
+    ) {
+      return miniMaxKnowledgeResult;
+    }
+
     if (groundedKnowledge.supportingSources.length > 0) {
       return summarizeKnowledgeResearch(
         normalizedRequest,
@@ -1547,6 +1964,12 @@ export async function runResearchOrchestrator(
       );
     }
 
+    if (outsideContext?.supportingSources.length) {
+      return summarizeOutsideResearch(normalizedRequest, plan, outsideContext, {
+        note: `OpenAI request failed: ${providerFailure}`,
+      });
+    }
+
     return buildResearchBlockerResult(
       normalizedRequest,
       plan,
@@ -1559,6 +1982,21 @@ export async function runResearchOrchestrator(
     const openAiStatus = getOpenAiProviderStatus();
     if (!openAiStatus.configured) {
       const blocker = describeOpenAiConfigBlocker(openAiStatus.missing);
+      const miniMaxResult = await runMiniMaxResearch(
+        normalizedRequest,
+        plan,
+        context,
+        null,
+        outsideContext,
+      );
+      if (miniMaxResult && !('providerFailure' in miniMaxResult)) {
+        return miniMaxResult;
+      }
+      if (outsideContext?.supportingSources.length) {
+        return summarizeOutsideResearch(normalizedRequest, plan, outsideContext, {
+          note: `OpenAI unavailable: ${blocker}`,
+        });
+      }
       if (plan.sources.localContext) {
         const localFallback = summarizeLocalResearch(request, context, plan, {
           routeExplanation: buildRouteExplanation(plan, {
@@ -1587,6 +2025,8 @@ export async function runResearchOrchestrator(
       normalizedRequest,
       plan,
       context,
+      null,
+      outsideContext,
     );
     if (openAiResult && !('providerFailure' in openAiResult)) {
       return openAiResult;
@@ -1613,6 +2053,23 @@ export async function runResearchOrchestrator(
       if (localFallback.handled) {
         return localFallback;
       }
+    }
+
+    const miniMaxResult = await runMiniMaxResearch(
+      normalizedRequest,
+      plan,
+      context,
+      null,
+      outsideContext,
+    );
+    if (miniMaxResult && !('providerFailure' in miniMaxResult)) {
+      return miniMaxResult;
+    }
+
+    if (outsideContext?.supportingSources.length) {
+      return summarizeOutsideResearch(normalizedRequest, plan, outsideContext, {
+        note: `OpenAI request failed: ${providerFailure}`,
+      });
     }
 
     return buildResearchBlockerResult(

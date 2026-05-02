@@ -25,6 +25,7 @@ describe('research orchestrator', () => {
     delete process.env.OPENAI_MODEL_SIMPLE;
     delete process.env.OPENAI_MODEL_STANDARD;
     delete process.env.OPENAI_MODEL_COMPLEX;
+    vi.stubEnv('BRAVE_SEARCH_ENABLED', 'false');
     globalThis.fetch = originalFetch;
     vi.restoreAllMocks();
   });

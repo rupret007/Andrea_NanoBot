@@ -100,11 +100,17 @@ async function main(): Promise<void> {
       .trim() ||
     '';
   const researchProof =
-    external.providerUsed === 'openai_responses'
+    external.providerUsed === 'openai_responses' ||
+    external.providerUsed === 'brave_search_plus_openai' ||
+    external.providerUsed === 'brave_search_plus_minimax' ||
+    external.providerUsed === 'minimax_anthropic' ||
+    external.providerUsed === 'brave_search'
       ? {
           proofState: 'live_proven' as const,
           blocker: '',
-          detail: external.summaryText || 'OpenAI-backed outward research succeeded.',
+          detail:
+            external.summaryText ||
+            'Provider-backed outward research succeeded with live grounding or synthesis.',
           nextAction: '',
           checkedAt,
           source: 'debug_research_mode' as const,

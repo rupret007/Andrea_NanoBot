@@ -207,6 +207,14 @@ import { interpretBlueBubblesDirectTurn } from './messages-fluidity.js';
 import { recordOrganicTelegramRoundtripSuccess } from './telegram-roundtrip.js';
 import { readEnvFile } from './env.js';
 import {
+  collectProviderHealthSnapshots,
+  formatProviderHealthAlertMessage,
+  resolveSystemAlertConfig,
+  type AlertEventSnapshot,
+  type ProviderHealthSnapshot,
+  type ProviderHealthState,
+} from './provider-health.js';
+import {
   advancePendingActionDraft,
   advancePendingActionReminder,
   buildActionLayerContextFromDailyCommandCenter,
@@ -8713,6 +8721,9 @@ async function main(): Promise<void> {
   const appVersion = resolveAppVersion();
   const channelHealthByName = new Map<string, ChannelHealthSnapshot>();
   let assistantHealthInterval: ReturnType<typeof setInterval> | null = null;
+  let systemAlertInterval: ReturnType<typeof setInterval> | null = null;
+  const systemAlertLastStateByKey = new Map<string, string>();
+  const systemAlertLastSentAtByKey = new Map<string, number>();
   const writeCurrentAssistantHealth = () => {
     try {
       const currentChannelHealth = [...channelHealthByName.values()];
@@ -8742,10 +8753,195 @@ async function main(): Promise<void> {
       logger.warn({ err }, 'Failed to persist assistant health marker');
     }
   };
+  const sendSystemAlertMessage = async (
+    targetChannel: 'telegram' | 'bluebubbles',
+    message: string,
+  ): Promise<boolean> => {
+    const target =
+      targetChannel === 'telegram'
+        ? resolveTelegramMainChatForAlexa('main')
+        : resolveBlueBubblesCompanionChat('main');
+    if (!target?.chatJid) return false;
+    const channel = findChannel(channels, target.chatJid);
+    if (
+      !channel ||
+      channel.name !== targetChannel ||
+      channel.isConnected() !== true
+    ) {
+      return false;
+    }
+    await channel.sendMessage(target.chatJid, message);
+    return true;
+  };
+  const maybeSendSystemAlert = async (params: {
+    dedupeKey: string;
+    state: string;
+    message: string;
+  }): Promise<void> => {
+    const alertConfig = resolveSystemAlertConfig();
+    if (!alertConfig.enabled) return;
+
+    const now = Date.now();
+    const cooldownMs = alertConfig.cooldownMinutes * 60_000;
+    const lastSentAt = systemAlertLastSentAtByKey.get(params.dedupeKey) || 0;
+    if (lastSentAt > 0 && now - lastSentAt < cooldownMs) {
+      return;
+    }
+
+    const attempted: string[] = [];
+    let sent = false;
+    for (const channelName of alertConfig.channels) {
+      attempted.push(channelName);
+      try {
+        if (await sendSystemAlertMessage(channelName, params.message)) {
+          sent = true;
+        }
+      } catch (err) {
+        logger.warn(
+          { err, channelName, dedupeKey: params.dedupeKey },
+          'System alert channel send failed',
+        );
+      }
+    }
+
+    if (sent) {
+      systemAlertLastSentAtByKey.set(params.dedupeKey, now);
+    } else {
+      logger.warn(
+        { attempted, dedupeKey: params.dedupeKey, state: params.state },
+        'System alert could not be delivered to any configured channel',
+      );
+    }
+  };
+  const providerTransitionForState = (
+    state: ProviderHealthState,
+  ): 'down' | 'degraded' =>
+    state === 'degraded' || state === 'externally_blocked'
+      ? 'degraded'
+      : 'down';
+  const providerSeverityForState = (
+    state: ProviderHealthState,
+  ): AlertEventSnapshot['severity'] =>
+    state === 'not_configured'
+      ? 'info'
+      : state === 'healthy'
+        ? 'info'
+        : 'warning';
+  const emitProviderAlertIfNeeded = async (
+    provider: ProviderHealthSnapshot,
+  ): Promise<void> => {
+    const key = `provider:${provider.providerId}`;
+    const previousState = systemAlertLastStateByKey.get(key);
+    systemAlertLastStateByKey.set(key, provider.state);
+
+    if (provider.state === 'healthy') {
+      if (previousState && previousState !== 'healthy') {
+        await maybeSendSystemAlert({
+          dedupeKey: `${key}:recovered`,
+          state: provider.state,
+          message: formatProviderHealthAlertMessage({
+            provider,
+            transition: 'recovered',
+            severity: 'info',
+          }),
+        });
+      }
+      return;
+    }
+
+    await maybeSendSystemAlert({
+      dedupeKey: `${key}:${provider.failureClass}`,
+      state: provider.state,
+      message: formatProviderHealthAlertMessage({
+        provider,
+        transition: providerTransitionForState(provider.state),
+        severity: providerSeverityForState(provider.state),
+      }),
+    });
+  };
+  const formatChannelAlertMessage = (params: {
+    snapshot: ChannelHealthSnapshot;
+    transition: 'down' | 'degraded' | 'recovered';
+    severity: AlertEventSnapshot['severity'];
+  }): string => {
+    const { snapshot, transition, severity } = params;
+    const symptom =
+      transition === 'recovered'
+        ? `${snapshot.name} recovered and is ready again.`
+        : snapshot.detail ||
+          snapshot.lastError ||
+          `${snapshot.name} channel is ${snapshot.state}.`;
+    const nextAction =
+      transition === 'recovered'
+        ? 'No action needed. Andrea will keep monitoring.'
+        : snapshot.name === 'bluebubbles'
+          ? 'Confirm the Mac BlueBubbles server is online/reachable, then rerun debug:bluebubbles.'
+          : snapshot.name === 'telegram'
+            ? 'Regenerate or replace the Telegram bot token, then restart services.'
+            : 'Review channel configuration and rerun debug:status.';
+    return [
+      'Andrea system alert',
+      `System: ${snapshot.name}`,
+      `Severity: ${severity}`,
+      `Transition: ${transition}`,
+      `Symptom: ${symptom}`,
+      `Likely cause: ${snapshot.lastError ? 'channel transport error' : 'channel health transition'}`,
+      `Next action: ${nextAction}`,
+      'Class: external/manual-or-host',
+    ].join('\n');
+  };
+  const emitChannelAlertIfNeeded = async (
+    snapshot: ChannelHealthSnapshot,
+  ): Promise<void> => {
+    const key = `channel:${snapshot.name}`;
+    const state = snapshot.state === 'ready' ? 'healthy' : snapshot.state;
+    const previousState = systemAlertLastStateByKey.get(key);
+    systemAlertLastStateByKey.set(key, state);
+
+    if (state === 'healthy') {
+      if (previousState && previousState !== 'healthy') {
+        await maybeSendSystemAlert({
+          dedupeKey: `${key}:recovered`,
+          state,
+          message: formatChannelAlertMessage({
+            snapshot,
+            transition: 'recovered',
+            severity: 'info',
+          }),
+        });
+      }
+      return;
+    }
+
+    await maybeSendSystemAlert({
+      dedupeKey: `${key}:${snapshot.state}`,
+      state,
+      message: formatChannelAlertMessage({
+        snapshot,
+        transition: snapshot.state === 'stopped' ? 'down' : 'degraded',
+        severity: snapshot.state === 'stopped' ? 'critical' : 'warning',
+      }),
+    });
+  };
+  const dispatchSystemHealthAlerts = async (): Promise<void> => {
+    const alertConfig = resolveSystemAlertConfig();
+    if (!alertConfig.enabled) return;
+    const checkedAt = new Date().toISOString();
+    for (const provider of collectProviderHealthSnapshots(checkedAt)) {
+      await emitProviderAlertIfNeeded(provider);
+    }
+    for (const snapshot of channelHealthByName.values()) {
+      await emitChannelAlertIfNeeded(snapshot);
+    }
+  };
   const stopAssistantHealthLoop = () => {
     if (assistantHealthInterval) {
       clearInterval(assistantHealthInterval);
       assistantHealthInterval = null;
+    }
+    if (systemAlertInterval) {
+      clearInterval(systemAlertInterval);
+      systemAlertInterval = null;
     }
     clearAssistantHealthState();
     clearTelegramTransportState();
@@ -15613,6 +15809,14 @@ async function main(): Promise<void> {
     writeCurrentAssistantHealth();
   }, 30_000);
   assistantHealthInterval.unref?.();
+  void dispatchSystemHealthAlerts();
+  const systemAlertConfig = resolveSystemAlertConfig();
+  if (systemAlertConfig.enabled) {
+    systemAlertInterval = setInterval(() => {
+      void dispatchSystemHealthAlerts();
+    }, systemAlertConfig.providerHealthIntervalMinutes * 60_000);
+    systemAlertInterval.unref?.();
+  }
   recoverPendingMessages();
   startMessageLoop().catch((err) => {
     stopAssistantHealthLoop();

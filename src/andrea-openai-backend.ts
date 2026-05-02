@@ -609,7 +609,12 @@ export class AndreaOpenAiBackendClient {
   async createJob(input: {
     groupFolder: string;
     prompt: string;
-    requestedRuntime?: 'codex_local' | 'openai_cloud' | 'claude_legacy' | null;
+    requestedRuntime?:
+      | 'codex_local'
+      | 'openai_cloud'
+      | 'minimax_cloud'
+      | 'claude_legacy'
+      | null;
     source: OrchestrationSource;
   }): Promise<RuntimeBackendJob> {
     await this.emitConductorPlanForRuntimeJob(input);
