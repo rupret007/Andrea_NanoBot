@@ -20,7 +20,11 @@ function isSelfImprovementReference(message: string): boolean {
 export function isSelfImprovementStatusRequest(message: string): boolean {
   const normalized = normalizeText(message);
   if (!normalized) return false;
-  if (/\b(did it fix itself|has it fixed itself|did the fix land|did the repair land)\b/i.test(normalized)) {
+  if (
+    /\b(did it fix itself|has it fixed itself|did the fix land|did the repair land)\b/i.test(
+      normalized,
+    )
+  ) {
     return true;
   }
   return (
@@ -31,7 +35,9 @@ export function isSelfImprovementStatusRequest(message: string): boolean {
   );
 }
 
-export function isSelfImprovementStatusFollowupRequest(message: string): boolean {
+export function isSelfImprovementStatusFollowupRequest(
+  message: string,
+): boolean {
   const normalized = normalizeText(message);
   if (!normalized) return false;
   return /\b(has it been a minute|been a minute|do not see an update|don't see an update|dont see an update|this is the update|what'?s the status|what is the status|is it running|did it work)\b/i.test(
@@ -39,7 +45,9 @@ export function isSelfImprovementStatusFollowupRequest(message: string): boolean
   );
 }
 
-export function isSelfImprovementStatusMonitorRequest(message: string): boolean {
+export function isSelfImprovementStatusMonitorRequest(
+  message: string,
+): boolean {
   const normalized = normalizeText(message);
   if (!normalized) return false;
   return (
@@ -52,7 +60,9 @@ export function isSelfImprovementStatusMonitorRequest(message: string): boolean 
   );
 }
 
-export function isSelfImprovementStatusTask(task: Pick<ScheduledTask, 'prompt'>): boolean {
+export function isSelfImprovementStatusTask(
+  task: Pick<ScheduledTask, 'prompt'>,
+): boolean {
   return task.prompt.startsWith(STATUS_MONITOR_PROMPT_PREFIX);
 }
 
@@ -97,9 +107,12 @@ function formatStatusMeaning(record: ResponseFeedbackRecord): string {
 }
 
 function formatNextAction(record: ResponseFeedbackRecord): string {
-  if (record.status === 'landed') return 'No action needed unless the behavior regresses.';
-  if (record.status === 'resolved_locally') return 'Use the feedback card landing action after validation.';
-  if (record.status === 'running') return 'Wait for the repair job to finish, then refresh status.';
+  if (record.status === 'landed')
+    return 'No action needed unless the behavior regresses.';
+  if (record.status === 'resolved_locally')
+    return 'Use the feedback card landing action after validation.';
+  if (record.status === 'running')
+    return 'Wait for the repair job to finish, then refresh status.';
   if (
     record.status === 'awaiting_confirmation' &&
     record.remediationRuntimePreference === 'codex_local'
@@ -109,8 +122,12 @@ function formatNextAction(record: ResponseFeedbackRecord): string {
   if (record.status === 'awaiting_confirmation') {
     return 'Use Approve repair on the feedback card to start the bounded repair run.';
   }
-  if (record.status === 'failed') return 'Use Retry fix, preferably on a cloud lane if available.';
-  if (record.status === 'blocked_external' || record.status === 'manual_sync_only') {
+  if (record.status === 'failed')
+    return 'Use Retry fix, preferably on a cloud lane if available.';
+  if (
+    record.status === 'blocked_external' ||
+    record.status === 'manual_sync_only'
+  ) {
     return 'Fix the external/manual blocker; repo code should not fake this.';
   }
   return 'Review the feedback card or ask for a repair plan.';
@@ -150,7 +167,9 @@ export function buildSelfImprovementStatusText(
       : 'Repair plan: not linked yet',
     latest.remediationJobId ? `Repair job: ${latest.remediationJobId}` : null,
     `Selected worker: ${formatWorker(latest)}.`,
-    latest.operatorNote ? `Note: ${normalizeText(latest.operatorNote).slice(0, 220)}` : null,
+    latest.operatorNote
+      ? `Note: ${normalizeText(latest.operatorNote).slice(0, 220)}`
+      : null,
     `Next action: ${formatNextAction(latest)}`,
     `Open tracked items: ${active.length}`,
     `Checked: ${now.toISOString()}`,
@@ -164,7 +183,10 @@ export function planSelfImprovementStatusMonitor(
   groupFolder: string,
   chatJid: string,
   now = new Date(),
-): { confirmation: string; task: Omit<ScheduledTask, 'last_run' | 'last_result'> } | null {
+): {
+  confirmation: string;
+  task: Omit<ScheduledTask, 'last_run' | 'last_result'>;
+} | null {
   if (!isSelfImprovementStatusMonitorRequest(message)) return null;
   const nextRun = new Date(now.getTime() + 60_000);
   return {

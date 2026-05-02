@@ -42,7 +42,8 @@ function buildFeedbackRecord(
     remediationJobId: null,
     remediationRuntimePreference: 'codex_local',
     remediationPrompt: null,
-    operatorNote: 'Cloud repair unavailable; waiting for explicit local approval.',
+    operatorNote:
+      'Cloud repair unavailable; waiting for explicit local approval.',
     ...overrides,
   };
 }

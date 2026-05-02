@@ -7295,10 +7295,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     }
 
     await sendAssistantReplyWithFeedback({
-      text: buildSelfImprovementStatusText(
-        recentFeedback,
-        now,
-      ),
+      text: buildSelfImprovementStatusText(recentFeedback, now),
       routeKey: 'self_improvement.status',
       capabilityId: 'self_improvement.status',
       handlerKind: 'local_self_improvement_status',
