@@ -18,6 +18,7 @@ import {
   getAllTasks,
   getDueTasks,
   getTaskById,
+  listRecentResponseFeedback,
   logTaskRun,
   updateCalendarAutomation,
   updateTask,
@@ -28,6 +29,8 @@ import { resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './logger.js';
 import { classifyScheduledTaskRequest } from './assistant-routing.js';
 import { runScheduledMessageActionByTaskId } from './message-actions.js';
+import { buildPlainReminderDeliveryText } from './scheduled-reminder-delivery.js';
+import { buildScheduledSelfImprovementStatusUpdate } from './self-improvement-status.js';
 import { formatOutbound } from './router.js';
 import {
   executeCalendarAutomation,
@@ -258,6 +261,73 @@ async function runTask(
       null,
       'Scheduled message task lost its linked message action.',
     );
+    return;
+  }
+
+  const plainReminderText = buildPlainReminderDeliveryText(task);
+  if (plainReminderText) {
+    try {
+      await deps.sendMessage(task.chat_jid, plainReminderText);
+      const durationMs = Date.now() - startTime;
+      logTaskRun({
+        task_id: task.id,
+        run_at: new Date().toISOString(),
+        duration_ms: durationMs,
+        status: 'success',
+        result: plainReminderText,
+        error: null,
+      });
+      updateTaskAfterRun(task.id, computeNextRun(task), plainReminderText);
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      const durationMs = Date.now() - startTime;
+      logTaskRun({
+        task_id: task.id,
+        run_at: new Date().toISOString(),
+        duration_ms: durationMs,
+        status: 'error',
+        result: null,
+        error,
+      });
+      updateTaskAfterRun(task.id, computeNextRun(task), `Error: ${error}`);
+    }
+    return;
+  }
+
+  const selfImprovementStatusText = buildScheduledSelfImprovementStatusUpdate(
+    task,
+    listRecentResponseFeedback({ chatJid: task.chat_jid, limit: 10 }),
+  );
+  if (selfImprovementStatusText) {
+    try {
+      await deps.sendMessage(task.chat_jid, selfImprovementStatusText);
+      const durationMs = Date.now() - startTime;
+      logTaskRun({
+        task_id: task.id,
+        run_at: new Date().toISOString(),
+        duration_ms: durationMs,
+        status: 'success',
+        result: selfImprovementStatusText.slice(0, 200),
+        error: null,
+      });
+      updateTaskAfterRun(
+        task.id,
+        computeNextRun(task),
+        selfImprovementStatusText.slice(0, 200),
+      );
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      const durationMs = Date.now() - startTime;
+      logTaskRun({
+        task_id: task.id,
+        run_at: new Date().toISOString(),
+        duration_ms: durationMs,
+        status: 'error',
+        result: null,
+        error,
+      });
+      updateTaskAfterRun(task.id, computeNextRun(task), `Error: ${error}`);
+    }
     return;
   }
 

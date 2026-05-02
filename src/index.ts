@@ -68,6 +68,7 @@ import {
   getRegisteredMainChat,
   getResponseFeedback,
   getResponseFeedbackByRemediationJob,
+  listRecentResponseFeedback,
   listAllCursorAgents,
   listCalendarAutomationsForChat,
   getAllRegisteredGroups,
@@ -388,6 +389,13 @@ import {
   shouldDropIncomingMessageBeforeCommands,
 } from './sender-allowlist.js';
 import { startSchedulerLoop } from './task-scheduler.js';
+import {
+  buildSelfImprovementStatusText,
+  isSelfImprovementStatusFollowupRequest,
+  isSelfImprovementStatusRequest,
+  isSelfImprovementStatusTask,
+  planSelfImprovementStatusMonitor,
+} from './self-improvement-status.js';
 import {
   AgentRuntimeName,
   AgentThreadState,
@@ -7221,6 +7229,95 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     return true;
   }
 
+  const tryHandleSelfImprovementStatus = async (): Promise<boolean> => {
+    const statusMonitor = planSelfImprovementStatusMonitor(
+      lastContent,
+      group.folder,
+      chatJid,
+      now,
+    );
+    if (statusMonitor) {
+      try {
+        createTask(statusMonitor.task);
+        refreshTaskSnapshots(registeredGroups);
+        clearSharedAssistantCapabilitySeed(chatJid);
+        await sendAssistantReplyWithFeedback({
+          text: statusMonitor.confirmation,
+          routeKey: 'self_improvement.status_monitor',
+          capabilityId: 'self_improvement.status',
+          handlerKind: 'local_self_improvement_status',
+          responseSource: 'local_companion',
+          traceReason:
+            'created a recurring self-improvement status monitor task',
+          linkedRefs: {
+            reminderTaskId: statusMonitor.task.id,
+          },
+        });
+        logger.info(
+          {
+            component: 'assistant',
+            chatJid,
+            groupFolder: group.folder,
+            group: group.name,
+            taskId: statusMonitor.task.id,
+          },
+          'Created self-improvement status monitor task',
+        );
+        return true;
+      } catch (err) {
+        lastAgentTimestamp[chatJid] = previousCursor;
+        saveState();
+        logger.warn(
+          { group: group.name, err },
+          'Self-improvement status monitor creation failed, rolled back cursor for retry',
+        );
+        return false;
+      }
+    }
+
+    const recentFeedback = listRecentResponseFeedback({ chatJid, limit: 10 });
+    const hasSelfImprovementContext =
+      recentFeedback.length > 0 ||
+      getAllTasks().some(
+        (task) =>
+          task.chat_jid === chatJid &&
+          task.status === 'active' &&
+          isSelfImprovementStatusTask(task),
+      );
+    if (
+      !isSelfImprovementStatusRequest(lastContent) &&
+      !(
+        isSelfImprovementStatusFollowupRequest(lastContent) &&
+        hasSelfImprovementContext
+      )
+    ) {
+      return false;
+    }
+
+    await sendAssistantReplyWithFeedback({
+      text: buildSelfImprovementStatusText(
+        recentFeedback,
+        now,
+      ),
+      routeKey: 'self_improvement.status',
+      capabilityId: 'self_improvement.status',
+      handlerKind: 'local_self_improvement_status',
+      responseSource: 'local_companion',
+      traceReason:
+        'answered self-improvement status from response-feedback repair truth',
+    });
+    return true;
+  };
+
+  if (
+    requestPolicy.route === 'direct_assistant' ||
+    requestPolicy.route === 'protected_assistant'
+  ) {
+    if (await tryHandleSelfImprovementStatus()) {
+      return true;
+    }
+  }
+
   const hasPendingActionLayerContinuation = Boolean(
     getPendingActionReminderState(chatJid) ||
     getPendingActionDraftState(chatJid),
@@ -7364,6 +7461,57 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   if (requestPolicy.route === 'direct_assistant') {
     if (await tryHandleLocalActionLayer('direct')) {
       return true;
+    }
+
+    const plannedReminder = planSimpleReminder(
+      lastContent,
+      group.folder,
+      chatJid,
+    );
+    if (plannedReminder) {
+      try {
+        createTask(plannedReminder.task);
+        syncOutcomeFromReminderTask(plannedReminder.task, {
+          linkedRefs: {
+            reminderTaskId: plannedReminder.task.id,
+            chatJid,
+          },
+          summaryText: plannedReminder.confirmation,
+          now,
+        });
+        refreshTaskSnapshots(registeredGroups);
+        clearSharedAssistantCapabilitySeed(chatJid);
+        await sendAssistantReplyWithFeedback({
+          text: plannedReminder.confirmation,
+          routeKey: 'local_reminder',
+          capabilityId: 'capture.reminder',
+          handlerKind: 'local_reminder',
+          responseSource: 'local_companion',
+          traceReason: 'handled simple reminder via local direct fast path',
+          linkedRefs: {
+            reminderTaskId: plannedReminder.task.id,
+          },
+        });
+        logger.info(
+          {
+            component: 'assistant',
+            chatJid,
+            groupFolder: group.folder,
+            group: group.name,
+            taskId: plannedReminder.task.id,
+          },
+          'Handled reminder via local direct fast path',
+        );
+        return true;
+      } catch (err) {
+        lastAgentTimestamp[chatJid] = previousCursor;
+        saveState();
+        logger.warn(
+          { group: group.name, err },
+          'Local direct reminder path failed, rolled back cursor for retry',
+        );
+        return false;
+      }
     }
 
     if (await tryHandleLocalDailyCompanion('direct')) {
