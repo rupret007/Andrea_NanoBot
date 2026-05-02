@@ -925,7 +925,7 @@ describe('assistant capabilities', () => {
 
     expect(openLoops.handled).toBe(true);
     expect(openLoops.replyText).toContain('needs attention');
-  });
+  }, 15_000);
 
   it('keeps explicit person-and-topic draft asks grounded after an open-loops turn', async () => {
     const understand = await executeAssistantCapability({

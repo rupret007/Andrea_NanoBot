@@ -18,7 +18,6 @@ import {
   getAllTasks,
   getDueTasks,
   getTaskById,
-  listRecentResponseFeedback,
   logTaskRun,
   updateCalendarAutomation,
   updateTask,
@@ -31,6 +30,7 @@ import { classifyScheduledTaskRequest } from './assistant-routing.js';
 import { runScheduledMessageActionByTaskId } from './message-actions.js';
 import { buildPlainReminderDeliveryText } from './scheduled-reminder-delivery.js';
 import { buildScheduledSelfImprovementStatusUpdate } from './self-improvement-status.js';
+import { refreshRecentResponseFeedbackTruth } from './response-feedback.js';
 import { formatOutbound } from './router.js';
 import {
   executeCalendarAutomation,
@@ -296,7 +296,10 @@ async function runTask(
 
   const selfImprovementStatusText = buildScheduledSelfImprovementStatusUpdate(
     task,
-    listRecentResponseFeedback({ chatJid: task.chat_jid, limit: 10 }),
+    await refreshRecentResponseFeedbackTruth({
+      chatJid: task.chat_jid,
+      limit: 10,
+    }),
   );
   if (selfImprovementStatusText) {
     try {

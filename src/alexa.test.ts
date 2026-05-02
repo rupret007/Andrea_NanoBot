@@ -2506,6 +2506,8 @@ describe('startAlexaServer', () => {
 
   beforeEach(() => {
     _initTestDatabase();
+    vi.stubEnv('ALEXA_OAUTH_CLIENT_ID', 'test-alexa-client');
+    vi.stubEnv('ALEXA_OAUTH_CLIENT_SECRET', 'test-alexa-secret');
     mockedRunAlexaAssistantTurn.mockReset();
     mockedBuildDailyCompanionResponse.mockReset();
     mockedBuildDailyCompanionResponse.mockImplementation(
@@ -2533,6 +2535,7 @@ describe('startAlexaServer', () => {
     try {
       fs.unlinkSync(ALEXA_LAST_SIGNED_REQUEST_STATE_PATH);
     } catch {}
+    vi.unstubAllEnvs();
   });
 
   it('serves a health endpoint and handles unsigned local requests when verification is disabled', async () => {

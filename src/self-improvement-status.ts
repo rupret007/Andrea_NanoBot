@@ -165,8 +165,32 @@ export function buildSelfImprovementStatusText(
     latest.linkedRefs?.platformRepairPlanId
       ? `Repair plan: ${latest.linkedRefs.platformRepairPlanId}`
       : 'Repair plan: not linked yet',
+    latest.linkedRefs?.repairApprovalId
+      ? `Approval: ${latest.linkedRefs.repairApprovalId}`
+      : latest.status === 'awaiting_confirmation'
+        ? 'Approval: pending'
+        : null,
+    latest.linkedRefs?.platformRepairRunId
+      ? `Repair run: ${latest.linkedRefs.platformRepairRunId}`
+      : null,
     latest.remediationJobId ? `Repair job: ${latest.remediationJobId}` : null,
     `Selected worker: ${formatWorker(latest)}.`,
+    latest.linkedRefs?.verificationEvidenceIds?.length
+      ? `Verification evidence: ${latest.linkedRefs.verificationEvidenceIds.length} linked`
+      : latest.status === 'running'
+        ? 'Verification evidence: waiting'
+        : null,
+    latest.linkedRefs?.landingCommitSha
+      ? `Landing commit: ${latest.linkedRefs.landingCommitSha}`
+      : null,
+    latest.linkedRefs?.landingPushedAt
+      ? `Pushed: ${latest.linkedRefs.landingPushedAt}`
+      : latest.status === 'landed'
+        ? 'Pushed: not recorded'
+        : null,
+    latest.linkedRefs?.platformTraceGradeId
+      ? `Trace grade: ${latest.linkedRefs.platformTraceGradeId}`
+      : null,
     latest.operatorNote
       ? `Note: ${normalizeText(latest.operatorNote).slice(0, 220)}`
       : null,

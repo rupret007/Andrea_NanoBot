@@ -12,6 +12,22 @@ describe('scheduled reminder delivery', () => {
     ).toBe('Reminder: call Sam.');
   });
 
+  it('renders calendar-style and status-style reminder prompts directly', () => {
+    expect(
+      buildPlainReminderDeliveryText({
+        prompt:
+          'Send a concise reminder that Google timed proof is scheduled.',
+        script: null,
+      }),
+    ).toBe('Reminder: Google timed proof is scheduled.');
+    expect(
+      buildPlainReminderDeliveryText({
+        prompt: 'Send a concise reminder about the self-improvement check.',
+        script: null,
+      }),
+    ).toBe('Reminder: the self-improvement check.');
+  });
+
   it('ignores scripted or non-reminder scheduled tasks', () => {
     expect(
       buildPlainReminderDeliveryText({

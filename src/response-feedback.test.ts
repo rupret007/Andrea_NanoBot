@@ -10,6 +10,7 @@ import {
   classifyResponseFeedbackCandidate,
   parseResponseFeedbackAction,
   refreshResponseFeedbackRecordTruth,
+  resolvePendingResponseFeedbackApproval,
   selectResponseFeedbackLane,
   selectResponseFeedbackRetryLane,
   shouldCancelPendingContinuationForFeedback,
@@ -87,6 +88,102 @@ describe('response feedback helpers', () => {
       feedbackId: '11111111-2222-3333-4444-555555555555',
       operation: 'approve_local',
     });
+  });
+
+  it('binds natural-language approval to the freshest pending cloud repair', () => {
+    const older = buildRecord({
+      feedbackId: '22222222-2222-3333-4444-555555555555',
+      updatedAt: '2026-05-02T04:00:00.000Z',
+      linkedRefs: { platformRepairPlanId: 'repair-plan-old' },
+      remediationLaneId: 'andrea_runtime',
+      remediationRuntimePreference: 'codex_cloud',
+    });
+    const newest = buildRecord({
+      feedbackId: '33333333-2222-3333-4444-555555555555',
+      updatedAt: '2026-05-02T04:10:00.000Z',
+      linkedRefs: { platformRepairPlanId: 'repair-plan-new' },
+      remediationLaneId: 'cursor',
+      remediationRuntimePreference: 'cursor_cloud',
+    });
+
+    const result = resolvePendingResponseFeedbackApproval(
+      'Ok you have my approval',
+      [older, newest],
+      { now: new Date('2026-05-02T04:12:00.000Z') },
+    );
+
+    expect(result.state).toBe('ready');
+    expect(result.state === 'ready' ? result.action : null).toEqual({
+      feedbackId: '33333333-2222-3333-4444-555555555555',
+      operation: 'start',
+    });
+  });
+
+  it('requires explicit local fallback wording before natural approval maps to approve_local', () => {
+    const record = buildRecord({
+      updatedAt: '2026-05-02T04:10:00.000Z',
+      linkedRefs: { platformRepairPlanId: 'repair-plan-local' },
+      remediationLaneId: 'andrea_runtime',
+      remediationRuntimePreference: 'codex_local',
+    });
+
+    expect(
+      resolvePendingResponseFeedbackApproval('do it', [record], {
+        now: new Date('2026-05-02T04:12:00.000Z'),
+      }),
+    ).toMatchObject({
+      state: 'ready',
+      action: {
+        feedbackId: '11111111-2222-3333-4444-555555555555',
+        operation: 'start',
+      },
+    });
+    expect(
+      resolvePendingResponseFeedbackApproval('approve local fallback', [record], {
+        now: new Date('2026-05-02T04:12:00.000Z'),
+      }),
+    ).toMatchObject({
+      state: 'ready',
+      action: {
+        feedbackId: '11111111-2222-3333-4444-555555555555',
+        operation: 'approve_local',
+      },
+    });
+  });
+
+  it('does not silently approve stale or external repair records', () => {
+    expect(
+      resolvePendingResponseFeedbackApproval(
+        'start the repair',
+        [
+          buildRecord({
+            updatedAt: '2026-05-01T00:00:00.000Z',
+            linkedRefs: { platformRepairPlanId: 'repair-plan-stale' },
+            remediationLaneId: 'cursor',
+            remediationRuntimePreference: 'cursor_cloud',
+          }),
+        ],
+        {
+          now: new Date('2026-05-02T04:12:00.000Z'),
+          maxAgeMs: 60 * 60 * 1000,
+        },
+      ).state,
+    ).toBe('stale');
+    expect(
+      resolvePendingResponseFeedbackApproval(
+        'you have my approval',
+        [
+          buildRecord({
+            classification: 'externally_blocked',
+            blockerOwner: 'external',
+            linkedRefs: { platformRepairPlanId: 'repair-plan-external' },
+            remediationLaneId: 'cursor',
+            remediationRuntimePreference: 'cursor_cloud',
+          }),
+        ],
+        { now: new Date('2026-05-02T04:12:00.000Z') },
+      ).state,
+    ).toBe('not_found');
   });
 
   it('appends a not-helpful row without clobbering existing inline rows', () => {

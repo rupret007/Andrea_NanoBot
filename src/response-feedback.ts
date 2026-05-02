@@ -35,6 +35,21 @@ export interface ParsedResponseFeedbackAction {
   operation: ResponseFeedbackActionKind;
 }
 
+export type PendingRepairApprovalResolution =
+  | { state: 'not_approval' }
+  | { state: 'not_found' }
+  | {
+      state: 'stale';
+      record: ResponseFeedbackRecord;
+      ageMs: number;
+    }
+  | {
+      state: 'ready';
+      action: ParsedResponseFeedbackAction;
+      record: ResponseFeedbackRecord;
+      ageMs: number;
+    };
+
 export interface ResponseFeedbackClassificationResult {
   classification: ResponseFeedbackClassification;
   status: ResponseFeedbackRecord['status'];
@@ -316,6 +331,117 @@ export function parseResponseFeedbackAction(
   return {
     feedbackId: match[1] || '',
     operation: (match[2] || 'capture') as ResponseFeedbackActionKind,
+  };
+}
+
+function getNaturalRepairApprovalOperation(
+  text: string | null | undefined,
+): ResponseFeedbackActionKind | null {
+  const normalized = normalizeText(text).toLowerCase();
+  if (!normalized) return null;
+  if (
+    /\b(?:do not|don't|dont|no|not)\s+(?:approve|start|run|do|proceed|fix|repair)\b/i.test(
+      normalized,
+    )
+  ) {
+    return null;
+  }
+  if (
+    /\b(?:approve|approved|start|run|use|try|fallback to|fall back to)\b.{0,40}\b(?:local codex|codex local|local fallback|local repair)\b/i.test(
+      normalized,
+    ) ||
+    /\bapprove local fallback\b/i.test(normalized)
+  ) {
+    return 'approve_local';
+  }
+  const approvalPatterns = [
+    /\byou have my approval\b/i,
+    /\bi approve\b/i,
+    /\bapproved\b/i,
+    /\bgo ahead\b/i,
+    /\bdo it\b/i,
+    /\bstart (?:the )?(?:repair|fix|self[- ]?repair|self[- ]?fix)\b/i,
+    /\brun (?:the )?(?:repair|fix|self[- ]?repair|self[- ]?fix)\b/i,
+    /\bproceed\b/i,
+    /\bmake (?:the )?fix\b/i,
+    /\bfix (?:it|that|what'?s broken|the issue)\b/i,
+    /\brepair (?:it|that|the issue|the response)\b/i,
+  ];
+  return approvalPatterns.some((pattern) => pattern.test(normalized))
+    ? 'start'
+    : null;
+}
+
+function getResponseFeedbackApprovalAgeMs(
+  record: Pick<ResponseFeedbackRecord, 'createdAt' | 'updatedAt'>,
+  now: Date,
+): number {
+  const timestamps = [record.updatedAt, record.createdAt]
+    .map((value) => Date.parse(value || ''))
+    .filter((value) => Number.isFinite(value));
+  const newest = timestamps.length ? Math.max(...timestamps) : 0;
+  return newest > 0
+    ? Math.max(0, now.getTime() - newest)
+    : Number.POSITIVE_INFINITY;
+}
+
+function isRepairApprovalCandidate(record: ResponseFeedbackRecord): boolean {
+  if (
+    record.classification === 'externally_blocked' ||
+    record.classification === 'manual_sync_only'
+  ) {
+    return false;
+  }
+  if (
+    record.status !== 'awaiting_confirmation' &&
+    record.status !== 'failed' &&
+    record.status !== 'captured'
+  ) {
+    return false;
+  }
+  return Boolean(
+    record.linkedRefs?.platformRepairPlanId ||
+      record.remediationLaneId ||
+      record.remediationRuntimePreference,
+  );
+}
+
+export function resolvePendingResponseFeedbackApproval(
+  text: string | null | undefined,
+  records: ResponseFeedbackRecord[],
+  options: { now?: Date; maxAgeMs?: number } = {},
+): PendingRepairApprovalResolution {
+  const operation = getNaturalRepairApprovalOperation(text);
+  if (!operation) return { state: 'not_approval' };
+
+  const now = options.now || new Date();
+  const maxAgeMs = options.maxAgeMs ?? 12 * 60 * 60 * 1000;
+  const candidates = records
+    .filter(isRepairApprovalCandidate)
+    .map((record) => ({
+      record,
+      ageMs: getResponseFeedbackApprovalAgeMs(record, now),
+    }))
+    .sort((a, b) => a.ageMs - b.ageMs);
+
+  const selected = candidates[0];
+  if (!selected) return { state: 'not_found' };
+  if (selected.ageMs > maxAgeMs) {
+    return {
+      state: 'stale',
+      record: selected.record,
+      ageMs: selected.ageMs,
+    };
+  }
+
+  return {
+    state: 'ready',
+    record: selected.record,
+    ageMs: selected.ageMs,
+    action: {
+      feedbackId: selected.record.feedbackId,
+      operation,
+    },
   };
 }
 

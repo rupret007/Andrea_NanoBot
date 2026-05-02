@@ -643,6 +643,8 @@ import {
   buildResponseFeedbackWhyText,
   classifyResponseFeedbackCandidate,
   parseResponseFeedbackAction,
+  refreshRecentResponseFeedbackTruth,
+  resolvePendingResponseFeedbackApproval,
   type ResponseFeedbackLaneSelection,
   selectResponseFeedbackRetryLane,
   shouldCancelPendingContinuationForFeedback,
@@ -7275,7 +7277,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       }
     }
 
-    const recentFeedback = listRecentResponseFeedback({ chatJid, limit: 10 });
+    const recentFeedback = await refreshRecentResponseFeedbackTruth({
+      chatJid,
+      limit: 10,
+    });
     const hasSelfImprovementContext =
       recentFeedback.length > 0 ||
       getAllTasks().some(
@@ -14647,6 +14652,46 @@ async function main(): Promise<void> {
           logger.error({ err, chatJid }, 'Response feedback action error'),
         );
         return;
+      }
+
+      // Natural self-repair approvals bind to the most recent safe feedback card before generic chat.
+      const naturalRepairApproval = resolvePendingResponseFeedbackApproval(
+        rawTrimmed,
+        await refreshRecentResponseFeedbackTruth({ chatJid, limit: 10 }),
+      );
+      if (naturalRepairApproval.state === 'ready') {
+        handleResponseFeedbackAction(
+          chatJid,
+          msg,
+          naturalRepairApproval.action,
+        ).catch((err) =>
+          logger.error(
+            { err, chatJid },
+            'Natural response feedback repair approval error',
+          ),
+        );
+        return;
+      }
+      if (naturalRepairApproval.state === 'stale') {
+        const channel = findChannel(channels, chatJid);
+        if (channel) {
+          channel
+            .sendMessage(
+              chatJid,
+              [
+                'I found an older repair plan, but I am not going to start a stale self-repair from a loose approval phrase.',
+                'Tap the current feedback card approval button, or ask me for the self-improvement status so I can show the latest safe action.',
+              ].join('\n'),
+              buildOperatorSendOptions(msg),
+            )
+            .catch((err) =>
+              logger.error(
+                { err, chatJid },
+                'Natural response feedback stale approval notice error',
+              ),
+            );
+          return;
+        }
       }
 
       // Remote control commands — intercept before storage

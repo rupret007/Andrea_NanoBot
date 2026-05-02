@@ -95,4 +95,33 @@ describe('self-improvement status', () => {
     expect(text).toContain('Selected worker: Codex local fallback');
     expect(text).toContain('Approve local fallback');
   });
+
+  it('reports the approval, repair run, verification, and landing chain when linked', () => {
+    const text = buildSelfImprovementStatusText(
+      [
+        buildFeedbackRecord({
+          status: 'landed',
+          remediationRuntimePreference: 'cursor_cloud',
+          remediationJobId: 'cursor-job-1',
+          linkedRefs: {
+            platformRepairPlanId: 'repair-plan-1',
+            repairApprovalId: 'approval-1',
+            platformRepairRunId: 'repair-run-1',
+            verificationEvidenceIds: ['verification-1'],
+            landingCommitSha: 'abcdef123456',
+            landingPushedAt: '2026-05-02T05:00:00.000Z',
+            platformTraceGradeId: 'trace-grade-1',
+          },
+        }),
+      ],
+      new Date('2026-05-02T05:05:00.000Z'),
+    );
+
+    expect(text).toContain('Approval: approval-1');
+    expect(text).toContain('Repair run: repair-run-1');
+    expect(text).toContain('Verification evidence: 1 linked');
+    expect(text).toContain('Landing commit: abcdef123456');
+    expect(text).toContain('Pushed: 2026-05-02T05:00:00.000Z');
+    expect(text).toContain('Trace grade: trace-grade-1');
+  });
 });
