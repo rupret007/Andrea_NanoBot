@@ -71,7 +71,9 @@ function normalizeBaseUrl(value: string): string {
 export function resolveBraveSearchConfig(): BraveSearchConfig | null {
   const enabledValue = readConfigValue('BRAVE_SEARCH_ENABLED');
   const enabled =
-    enabledValue === '' ? Boolean(resolveApiKey().key) : enabledValue !== 'false';
+    enabledValue === ''
+      ? Boolean(resolveApiKey().key)
+      : enabledValue !== 'false';
   if (!enabled) return null;
   const { key } = resolveApiKey();
   if (!key) return null;
@@ -107,12 +109,19 @@ export function describeBraveConfigBlocker(missing: string[]): string {
   return 'Brave Search is not configured for this host.';
 }
 
-export function describeBraveSearchFailure(status: number, body: string): string {
+export function describeBraveSearchFailure(
+  status: number,
+  body: string,
+): string {
   const normalized = body.toLowerCase();
   if (status === 401 || status === 403) {
     return 'Brave Search rejected the configured subscription token. Regenerate or replace the Brave Search key, then rerun provider health checks.';
   }
-  if (status === 429 || normalized.includes('rate') || normalized.includes('quota')) {
+  if (
+    status === 429 ||
+    normalized.includes('rate') ||
+    normalized.includes('quota')
+  ) {
     return 'Brave Search rate limit or quota blocked this request. Wait for quota recovery or adjust the Brave Search plan.';
   }
   if (status >= 500) {
@@ -121,7 +130,9 @@ export function describeBraveSearchFailure(status: number, body: string): string
   return 'Brave Search returned an unexpected error before Andrea could ground the live lookup.';
 }
 
-function resultFromRecord(record: Record<string, unknown>): BraveSearchResult | null {
+function resultFromRecord(
+  record: Record<string, unknown>,
+): BraveSearchResult | null {
   const title = typeof record.title === 'string' ? record.title.trim() : '';
   const url = typeof record.url === 'string' ? record.url.trim() : '';
   const description =

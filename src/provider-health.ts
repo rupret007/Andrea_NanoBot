@@ -84,7 +84,9 @@ const alertEnvConfig = readEnvFile([
   'PROVIDER_HEALTH_INTERVAL_MINUTES',
 ]);
 
-function readAlertConfigValue(key: keyof typeof alertEnvConfig | string): string {
+function readAlertConfigValue(
+  key: keyof typeof alertEnvConfig | string,
+): string {
   return process.env[key] || alertEnvConfig[key] || '';
 }
 
@@ -149,7 +151,9 @@ export function collectProviderHealthSnapshots(
       credentialState: openAi.configured ? 'configured' : 'missing',
       knownExpiresAt: null,
       rotationDueAt: rotationDueAt(),
-      blocker: openAi.configured ? '' : describeOpenAiConfigBlocker(openAi.missing),
+      blocker: openAi.configured
+        ? ''
+        : describeOpenAiConfigBlocker(openAi.missing),
       nextAction: openAi.configured
         ? ''
         : 'Set a valid OpenAI API key in local environment config, then rerun provider checks.',
@@ -197,7 +201,9 @@ export function collectProviderHealthSnapshots(
       credentialState: brave.configured ? 'configured' : 'missing',
       knownExpiresAt: null,
       rotationDueAt: rotationDueAt(),
-      blocker: brave.configured ? '' : describeBraveConfigBlocker(brave.missing),
+      blocker: brave.configured
+        ? ''
+        : describeBraveConfigBlocker(brave.missing),
       nextAction: brave.configured
         ? ''
         : 'Set BRAVE_SEARCH_API_KEY or BRACE_SEARCH_API_KEY in local environment config, then rerun provider checks.',
@@ -272,7 +278,8 @@ export function formatProviderHealthAlertMessage(params: {
   const nextAction =
     transition === 'recovered'
       ? 'No action needed. Andrea will keep monitoring.'
-      : provider.nextAction || 'Review provider health and rerun debug:providers.';
+      : provider.nextAction ||
+        'Review provider health and rerun debug:providers.';
   const owner =
     provider.failureClass === 'missing_credentials' ||
     provider.failureClass === 'manual_external' ||

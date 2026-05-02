@@ -77,7 +77,8 @@ export function resolveMiniMaxProviderConfig(): MiniMaxProviderConfig | null {
       'https://api.minimax.io/v1',
     ),
     complexModel: readConfigValue('MINIMAX_MODEL_COMPLEX') || 'MiniMax-M2.7',
-    fastModel: readConfigValue('MINIMAX_MODEL_FAST') || 'MiniMax-M2.7-highspeed',
+    fastModel:
+      readConfigValue('MINIMAX_MODEL_FAST') || 'MiniMax-M2.7-highspeed',
   };
 }
 
@@ -104,7 +105,8 @@ export function getMiniMaxProviderStatus(): MiniMaxProviderStatus {
       'https://api.minimax.io/v1',
     ),
     complexModel: readConfigValue('MINIMAX_MODEL_COMPLEX') || 'MiniMax-M2.7',
-    fastModel: readConfigValue('MINIMAX_MODEL_FAST') || 'MiniMax-M2.7-highspeed',
+    fastModel:
+      readConfigValue('MINIMAX_MODEL_FAST') || 'MiniMax-M2.7-highspeed',
   };
 }
 
@@ -126,7 +128,11 @@ export function describeMiniMaxProviderFailure(
   if (status === 403) {
     return 'MiniMax denied the request for this account or model. Check MiniMax account permissions and model access.';
   }
-  if (status === 429 || normalized.includes('quota') || normalized.includes('rate')) {
+  if (
+    status === 429 ||
+    normalized.includes('quota') ||
+    normalized.includes('rate')
+  ) {
     return 'MiniMax rate limit or quota blocked this request. Wait for quota recovery or adjust the MiniMax plan.';
   }
   if (status >= 500) {

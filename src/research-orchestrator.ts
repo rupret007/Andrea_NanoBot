@@ -355,7 +355,9 @@ function buildOutsideSourceNotes(
   supportingSources: ResearchSupportingSource[],
 ): string[] {
   return supportingSources
-    .map((source) => (source.url ? `${source.title} (${source.url})` : source.title))
+    .map((source) =>
+      source.url ? `${source.title} (${source.url})` : source.title,
+    )
     .filter(Boolean)
     .slice(0, 4);
 }
@@ -534,7 +536,9 @@ async function collectOutsideResearchContext(
       debugPath: [
         'brave_search.used=true',
         `brave_search.results=${supportingSources.length}`,
-        result.requestId ? `request_id=${result.requestId}` : 'request_id=missing',
+        result.requestId
+          ? `request_id=${result.requestId}`
+          : 'request_id=missing',
       ],
     };
   } catch (err) {
@@ -1069,11 +1073,13 @@ function summarizeOutsideResearch(
   const structuredFindings = [
     {
       title: 'Live web signals',
-      items: supportingSources.slice(0, 4).map((source) =>
-        source.url
-          ? `${source.title}: ${source.excerpt || source.url}`
-          : `${source.title}: ${source.excerpt || ''}`.trim(),
-      ),
+      items: supportingSources
+        .slice(0, 4)
+        .map((source) =>
+          source.url
+            ? `${source.title}: ${source.excerpt || source.url}`
+            : `${source.title}: ${source.excerpt || ''}`.trim(),
+        ),
     },
   ];
   const routeExplanation = buildRouteExplanation(plan, {
@@ -1403,7 +1409,9 @@ async function runMiniMaxResearch(
         'minimax.failed=true',
         `provider_failure=${result.providerFailure}`,
         result.status ? `status=${result.status}` : 'status=unknown',
-        result.requestId ? `request_id=${result.requestId}` : 'request_id=missing',
+        result.requestId
+          ? `request_id=${result.requestId}`
+          : 'request_id=missing',
       ],
     };
   }
@@ -1425,7 +1433,8 @@ async function runMiniMaxResearch(
     spokenText: buildSpokenResearchText(parsed.summaryText, {
       recommendationText:
         request.channel === 'alexa' ? parsed.recommendationText : undefined,
-      firstFinding: request.channel === 'alexa' ? parsed.findings[0] : undefined,
+      firstFinding:
+        request.channel === 'alexa' ? parsed.findings[0] : undefined,
     }),
     fullText: buildResearchText(
       parsed.summaryText,
@@ -1472,7 +1481,9 @@ async function runMiniMaxResearch(
       `selected_model=${result.model}`,
       ...(knowledge?.search.debugPath || []),
       ...(outside?.debugPath || []),
-      result.requestId ? `request_id=${result.requestId}` : 'request_id=missing',
+      result.requestId
+        ? `request_id=${result.requestId}`
+        : 'request_id=missing',
     ],
     supportingSources: [
       ...(knowledge?.supportingSources || []),
@@ -1902,9 +1913,14 @@ export async function runResearchOrchestrator(
         );
       }
       if (outsideContext?.supportingSources.length) {
-        return summarizeOutsideResearch(normalizedRequest, plan, outsideContext, {
-          note: `OpenAI unavailable: ${blocker}`,
-        });
+        return summarizeOutsideResearch(
+          normalizedRequest,
+          plan,
+          outsideContext,
+          {
+            note: `OpenAI unavailable: ${blocker}`,
+          },
+        );
       }
       return buildResearchBlockerResult(normalizedRequest, plan, blocker, [
         'plan.primary=knowledge_library',
@@ -1993,9 +2009,14 @@ export async function runResearchOrchestrator(
         return miniMaxResult;
       }
       if (outsideContext?.supportingSources.length) {
-        return summarizeOutsideResearch(normalizedRequest, plan, outsideContext, {
-          note: `OpenAI unavailable: ${blocker}`,
-        });
+        return summarizeOutsideResearch(
+          normalizedRequest,
+          plan,
+          outsideContext,
+          {
+            note: `OpenAI unavailable: ${blocker}`,
+          },
+        );
       }
       if (plan.sources.localContext) {
         const localFallback = summarizeLocalResearch(request, context, plan, {

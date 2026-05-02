@@ -1,9 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import {
-  getBraveSearchStatus,
-  searchBraveWeb,
-} from './brave-search.js';
+import { getBraveSearchStatus, searchBraveWeb } from './brave-search.js';
 import {
   getMiniMaxProviderStatus,
   runMiniMaxAnthropicText,
@@ -50,9 +47,9 @@ describe('provider expansion', () => {
     vi.stubEnv('BRAVE_SEARCH_API_KEY', 'test-brave-key');
     globalThis.fetch = vi.fn(async (url, init) => {
       expect(String(url)).toContain('/web/search');
-      expect((init?.headers as Record<string, string>)['X-Subscription-Token']).toBe(
-        'test-brave-key',
-      );
+      expect(
+        (init?.headers as Record<string, string>)['X-Subscription-Token'],
+      ).toBe('test-brave-key');
       return new Response(
         JSON.stringify({
           web: {
@@ -104,18 +101,20 @@ describe('provider expansion', () => {
     vi.stubEnv('BRAVE_SEARCH_ENABLED', 'true');
     vi.stubEnv('BRAVE_SEARCH_API_KEY', 'test-brave-key');
 
-    const providers = collectProviderHealthSnapshots('2026-05-01T12:00:00.000Z');
+    const providers = collectProviderHealthSnapshots(
+      '2026-05-01T12:00:00.000Z',
+    );
     const serialized = JSON.stringify({
       providers,
       alerts: buildProviderAlertEvents(providers, '2026-05-01T12:00:00.000Z'),
     });
 
-    expect(providers.some((provider) => provider.providerId === 'minimax_cloud')).toBe(
-      true,
-    );
-    expect(providers.some((provider) => provider.providerId === 'brave_search')).toBe(
-      true,
-    );
+    expect(
+      providers.some((provider) => provider.providerId === 'minimax_cloud'),
+    ).toBe(true);
+    expect(
+      providers.some((provider) => provider.providerId === 'brave_search'),
+    ).toBe(true);
     expect(serialized).not.toContain('test-minimax-key');
     expect(serialized).not.toContain('test-brave-key');
   });
