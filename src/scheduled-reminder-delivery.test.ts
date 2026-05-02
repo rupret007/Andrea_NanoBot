@@ -15,8 +15,7 @@ describe('scheduled reminder delivery', () => {
   it('renders calendar-style and status-style reminder prompts directly', () => {
     expect(
       buildPlainReminderDeliveryText({
-        prompt:
-          'Send a concise reminder that Google timed proof is scheduled.',
+        prompt: 'Send a concise reminder that Google timed proof is scheduled.',
         script: null,
       }),
     ).toBe('Reminder: Google timed proof is scheduled.');

@@ -20,8 +20,9 @@ export function parsePlainReminderTask(
 ): string | null {
   if (task.script) return null;
   const body = normalizeReminderBody(
-    REMINDER_PROMPT_PATTERNS.map((pattern) => task.prompt.match(pattern)?.[1])
-      .find((value): value is string => Boolean(value)) || '',
+    REMINDER_PROMPT_PATTERNS.map(
+      (pattern) => task.prompt.match(pattern)?.[1],
+    ).find((value): value is string => Boolean(value)) || '',
   );
   if (!body) return null;
   return body;

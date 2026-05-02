@@ -139,9 +139,13 @@ describe('response feedback helpers', () => {
       },
     });
     expect(
-      resolvePendingResponseFeedbackApproval('approve local fallback', [record], {
-        now: new Date('2026-05-02T04:12:00.000Z'),
-      }),
+      resolvePendingResponseFeedbackApproval(
+        'approve local fallback',
+        [record],
+        {
+          now: new Date('2026-05-02T04:12:00.000Z'),
+        },
+      ),
     ).toMatchObject({
       state: 'ready',
       action: {

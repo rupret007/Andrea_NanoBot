@@ -401,8 +401,8 @@ function isRepairApprovalCandidate(record: ResponseFeedbackRecord): boolean {
   }
   return Boolean(
     record.linkedRefs?.platformRepairPlanId ||
-      record.remediationLaneId ||
-      record.remediationRuntimePreference,
+    record.remediationLaneId ||
+    record.remediationRuntimePreference,
   );
 }
 
