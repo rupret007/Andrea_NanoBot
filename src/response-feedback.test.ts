@@ -119,6 +119,42 @@ describe('response feedback helpers', () => {
     });
   });
 
+  it('absorbs approval-utterance feedback into the prior pending repair', () => {
+    const priorRepair = buildRecord({
+      feedbackId: '22222222-2222-3333-4444-555555555555',
+      originalUserText: 'Ok I want you to take that repo and improve your self',
+      assistantReplyText: 'I staged a bounded repair plan.',
+      updatedAt: '2026-05-02T04:08:00.000Z',
+      linkedRefs: { platformRepairPlanId: 'repair-plan-prior' },
+      remediationLaneId: 'cursor',
+      remediationRuntimePreference: 'cursor_cloud',
+    });
+    const orphanApproval = buildRecord({
+      feedbackId: '33333333-2222-3333-4444-555555555555',
+      originalUserText: 'Ok you have my approval',
+      assistantReplyText:
+        'Thanks, Jeff. What would you like me to help you with next?',
+      updatedAt: '2026-05-02T04:10:00.000Z',
+      linkedRefs: { platformRepairPlanId: 'repair-plan-orphan' },
+      remediationLaneId: 'cursor',
+      remediationRuntimePreference: 'cursor_cloud',
+    });
+
+    const result = resolvePendingResponseFeedbackApproval(
+      'do it',
+      [orphanApproval, priorRepair],
+      { now: new Date('2026-05-02T04:12:00.000Z') },
+    );
+
+    expect(result.state).toBe('ready');
+    expect(result.state === 'ready' ? result.action : null).toEqual({
+      feedbackId: '22222222-2222-3333-4444-555555555555',
+      operation: 'start',
+    });
+    expect(result.state === 'ready' ? result.absorbedRecord?.feedbackId : null)
+      .toBe('33333333-2222-3333-4444-555555555555');
+  });
+
   it('requires explicit local fallback wording before natural approval maps to approve_local', () => {
     const record = buildRecord({
       updatedAt: '2026-05-02T04:10:00.000Z',

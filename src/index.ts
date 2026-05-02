@@ -10465,12 +10465,28 @@ async function main(): Promise<void> {
               buildResponseFeedbackFallbackPolicy(laneSelection),
             explicitLocalFallback:
               action.operation === 'approve_local' ? 'true' : 'false',
+            approvalUtteranceMessageId: msg.id,
+            approvalBoundFeedbackId: repairRecord.feedbackId,
+            repairBindingState:
+              action.operation === 'approve_local'
+                ? 'explicit_local_fallback_approval'
+                : 'natural_approval_bound',
           }),
         })
       : null;
     const linkedRefsWithApproval: ResponseFeedbackRecord['linkedRefs'] = {
       ...linkedRefsWithRepoBaseline,
       repairApprovalId: approval?.approvalId || undefined,
+      approvalUtteranceMessageId: msg.id,
+      approvalBoundFeedbackId: repairRecord.feedbackId,
+      repairBindingState:
+        action.operation === 'approve_local'
+          ? 'explicit_local_fallback_approval'
+          : 'natural_approval_bound',
+      repairExecutionState:
+        laneSelection.runtimePreference === 'codex_local'
+          ? 'local_fallback_explicitly_approved'
+          : 'cloud_preferred_execution_requested',
       platformRepairRunId:
         approval?.repairRunId ||
         repairRecord.linkedRefs.platformRepairRunId ||
@@ -14660,6 +14676,33 @@ async function main(): Promise<void> {
         await refreshRecentResponseFeedbackTruth({ chatJid, limit: 10 }),
       );
       if (naturalRepairApproval.state === 'ready') {
+        if (naturalRepairApproval.absorbedRecord) {
+          const absorbed = naturalRepairApproval.absorbedRecord;
+          updateResponseFeedback(naturalRepairApproval.record.feedbackId, {
+            linkedRefs: {
+              ...(naturalRepairApproval.record.linkedRefs || {}),
+              absorbedFeedbackIds: Array.from(
+                new Set([
+                  ...(naturalRepairApproval.record.linkedRefs
+                    ?.absorbedFeedbackIds || []),
+                  absorbed.feedbackId,
+                ]),
+              ),
+              repairBindingState: 'natural_approval_absorbed_prior_feedback',
+            },
+          });
+          updateResponseFeedback(absorbed.feedbackId, {
+            status: 'cancelled',
+            linkedRefs: {
+              ...(absorbed.linkedRefs || {}),
+              approvalBoundFeedbackId: naturalRepairApproval.record.feedbackId,
+              repairBindingState: 'absorbed_by_repair_approval',
+              repairExecutionState: 'approval_bound_to_prior_repair',
+            },
+            operatorNote:
+              'This feedback row was an approval utterance. Andrea bound it to the prior pending repair instead of starting a second orphan repair.',
+          });
+        }
         handleResponseFeedbackAction(
           chatJid,
           msg,

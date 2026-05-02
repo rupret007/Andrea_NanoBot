@@ -31,6 +31,7 @@ import { runScheduledMessageActionByTaskId } from './message-actions.js';
 import { buildPlainReminderDeliveryText } from './scheduled-reminder-delivery.js';
 import { buildScheduledSelfImprovementStatusUpdate } from './self-improvement-status.js';
 import { refreshRecentResponseFeedbackTruth } from './response-feedback.js';
+import { emitAndreaPlatformDiagnosis } from './andrea-platform-bridge.js';
 import { formatOutbound } from './router.js';
 import {
   executeCalendarAutomation,
@@ -83,6 +84,42 @@ export function computeNextRun(task: ScheduledTask): string | null {
   }
 
   return null;
+}
+
+async function emitReminderDeliveryFailureDiagnostic(input: {
+  task: ScheduledTask;
+  error: string;
+  kind: 'plain_reminder' | 'self_improvement_status';
+}): Promise<void> {
+  await emitAndreaPlatformDiagnosis({
+    goal: `Diagnose failed ${input.kind.replace(/_/g, ' ')} delivery.`,
+    correlationId: input.task.id,
+    taskFamily: 'assistant',
+    channel: 'system',
+    includePlatformSignals: false,
+    signals: [
+      {
+        signal_kind: 'reminder_delivery_failure',
+        source: 'andrea_task_scheduler',
+        severity: 'warning',
+        summary: 'Scheduled reminder delivery failed.',
+        metadata: {
+          task_id: input.task.id,
+          group_folder: input.task.group_folder,
+          schedule_type: input.task.schedule_type,
+          delivery_kind: input.kind,
+          error_class: 'send_message_failed',
+        },
+      },
+    ],
+    metadata: {
+      taskId: input.task.id,
+      deliveryKind: input.kind,
+      failureClass: 'send_message_failed',
+      errorSummary: input.error.slice(0, 180),
+      rawContentPolicy: 'metadata_only',
+    },
+  });
 }
 
 export interface SchedulerDependencies {
@@ -290,6 +327,11 @@ async function runTask(
         error,
       });
       updateTaskAfterRun(task.id, computeNextRun(task), `Error: ${error}`);
+      await emitReminderDeliveryFailureDiagnostic({
+        task,
+        error,
+        kind: 'plain_reminder',
+      });
     }
     return;
   }
@@ -330,6 +372,11 @@ async function runTask(
         error,
       });
       updateTaskAfterRun(task.id, computeNextRun(task), `Error: ${error}`);
+      await emitReminderDeliveryFailureDiagnostic({
+        task,
+        error,
+        kind: 'self_improvement_status',
+      });
     }
     return;
   }

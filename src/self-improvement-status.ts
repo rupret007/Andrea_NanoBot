@@ -106,7 +106,33 @@ function formatStatusMeaning(record: ResponseFeedbackRecord): string {
   }
 }
 
-function formatNextAction(record: ResponseFeedbackRecord): string {
+function deriveRepairExecutionState(record: ResponseFeedbackRecord): string {
+  if (record.linkedRefs?.repairExecutionState) {
+    return record.linkedRefs.repairExecutionState;
+  }
+  if (record.status === 'landed') return 'landed';
+  if (record.status === 'resolved_locally') return 'needs_local_landing';
+  if (record.status === 'running') {
+    return record.remediationRuntimePreference === 'cursor_cloud' ||
+      record.remediationRuntimePreference === 'codex_cloud'
+      ? 'waiting_for_cloud_result'
+      : 'running';
+  }
+  if (record.status === 'awaiting_confirmation')
+    return record.linkedRefs?.repairApprovalId
+      ? 'approved_not_started'
+      : 'awaiting_approval';
+  if (record.status === 'failed') return 'failed_tests';
+  if (
+    record.status === 'blocked_external' ||
+    record.status === 'manual_sync_only'
+  ) {
+    return 'blocked_external';
+  }
+  return record.status;
+}
+
+function formatNextLegalAction(record: ResponseFeedbackRecord): string {
   if (record.status === 'landed')
     return 'No action needed unless the behavior regresses.';
   if (record.status === 'resolved_locally')
@@ -175,6 +201,19 @@ export function buildSelfImprovementStatusText(
       : null,
     latest.remediationJobId ? `Repair job: ${latest.remediationJobId}` : null,
     `Selected worker: ${formatWorker(latest)}.`,
+    `Execution state: ${deriveRepairExecutionState(latest)}.`,
+    latest.linkedRefs?.repairBindingState
+      ? `Approval binding: ${latest.linkedRefs.repairBindingState}`
+      : null,
+    latest.linkedRefs?.approvalBoundFeedbackId
+      ? `Approval bound to feedback: ${latest.linkedRefs.approvalBoundFeedbackId}`
+      : null,
+    latest.linkedRefs?.absorbedFeedbackIds?.length
+      ? `Absorbed feedback rows: ${latest.linkedRefs.absorbedFeedbackIds.join(', ')}`
+      : null,
+    latest.linkedRefs?.repoDirtyPathsAtStart?.length
+      ? `Dirty paths at approval: ${latest.linkedRefs.repoDirtyPathsAtStart.join(', ')}`
+      : null,
     latest.linkedRefs?.verificationEvidenceIds?.length
       ? `Verification evidence: ${latest.linkedRefs.verificationEvidenceIds.length} linked`
       : latest.status === 'running'
@@ -188,13 +227,16 @@ export function buildSelfImprovementStatusText(
       : latest.status === 'landed'
         ? 'Pushed: not recorded'
         : null,
+    latest.linkedRefs?.restartVerifiedAt
+      ? `Restart verified: ${latest.linkedRefs.restartVerifiedAt}`
+      : null,
     latest.linkedRefs?.platformTraceGradeId
       ? `Trace grade: ${latest.linkedRefs.platformTraceGradeId}`
       : null,
     latest.operatorNote
       ? `Note: ${normalizeText(latest.operatorNote).slice(0, 220)}`
       : null,
-    `Next action: ${formatNextAction(latest)}`,
+    `Next legal action: ${formatNextLegalAction(latest)}`,
     `Open tracked items: ${active.length}`,
     `Checked: ${now.toISOString()}`,
   ].filter((line): line is string => Boolean(line));

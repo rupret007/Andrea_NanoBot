@@ -1469,6 +1469,11 @@ export interface PilotIssueLinkedRefs {
   platformRepairRunId?: string;
   platformTraceGradeId?: string;
   repairApprovalId?: string;
+  approvalUtteranceMessageId?: string;
+  approvalBoundFeedbackId?: string;
+  absorbedFeedbackIds?: string[];
+  repairBindingState?: string;
+  repairExecutionState?: string;
   repairApprovalScope?: string;
   repairSelectedWorker?: string;
   repairFallbackPolicy?: string;
@@ -1478,6 +1483,7 @@ export interface PilotIssueLinkedRefs {
   repoDirtyPathsAtStart?: string[];
   landingCommitSha?: string;
   landingPushedAt?: string;
+  restartVerifiedAt?: string;
 }
 
 export interface PilotIssueRecord {

@@ -93,6 +93,8 @@ describe('self-improvement status', () => {
     expect(text).toContain('repair is staged and waiting for approval');
     expect(text).toContain('Repair plan: repair-plan-1');
     expect(text).toContain('Selected worker: Codex local fallback');
+    expect(text).toContain('Execution state: awaiting_approval');
+    expect(text).toContain('Next legal action: Cloud repair is not ready');
     expect(text).toContain('Approve local fallback');
   });
 
@@ -107,9 +109,12 @@ describe('self-improvement status', () => {
             platformRepairPlanId: 'repair-plan-1',
             repairApprovalId: 'approval-1',
             platformRepairRunId: 'repair-run-1',
+            repairBindingState: 'natural_approval_bound',
+            repairExecutionState: 'landed',
             verificationEvidenceIds: ['verification-1'],
             landingCommitSha: 'abcdef123456',
             landingPushedAt: '2026-05-02T05:00:00.000Z',
+            restartVerifiedAt: '2026-05-02T05:03:00.000Z',
             platformTraceGradeId: 'trace-grade-1',
           },
         }),
@@ -119,9 +124,12 @@ describe('self-improvement status', () => {
 
     expect(text).toContain('Approval: approval-1');
     expect(text).toContain('Repair run: repair-run-1');
+    expect(text).toContain('Execution state: landed');
+    expect(text).toContain('Approval binding: natural_approval_bound');
     expect(text).toContain('Verification evidence: 1 linked');
     expect(text).toContain('Landing commit: abcdef123456');
     expect(text).toContain('Pushed: 2026-05-02T05:00:00.000Z');
+    expect(text).toContain('Restart verified: 2026-05-02T05:03:00.000Z');
     expect(text).toContain('Trace grade: trace-grade-1');
   });
 });

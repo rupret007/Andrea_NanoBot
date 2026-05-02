@@ -48,6 +48,7 @@ export type PendingRepairApprovalResolution =
       action: ParsedResponseFeedbackAction;
       record: ResponseFeedbackRecord;
       ageMs: number;
+      absorbedRecord?: ResponseFeedbackRecord;
     };
 
 export interface ResponseFeedbackClassificationResult {
@@ -406,6 +407,22 @@ function isRepairApprovalCandidate(record: ResponseFeedbackRecord): boolean {
   );
 }
 
+function isNaturalRepairApprovalFeedbackRecord(
+  record: ResponseFeedbackRecord,
+): boolean {
+  if (getNaturalRepairApprovalOperation(record.originalUserText) !== 'start') {
+    return false;
+  }
+  const reply = normalizeText(record.assistantReplyText).toLowerCase();
+  const routeKey = normalizeText(record.routeKey).toLowerCase();
+  const capabilityId = normalizeText(record.capabilityId).toLowerCase();
+  return (
+    /\b(?:what would you like|how can i help|let me know|next)\b/.test(reply) ||
+    routeKey.includes('direct_assistant') ||
+    capabilityId.includes('assistant')
+  );
+}
+
 export function resolvePendingResponseFeedbackApproval(
   text: string | null | undefined,
   records: ResponseFeedbackRecord[],
@@ -426,20 +443,35 @@ export function resolvePendingResponseFeedbackApproval(
 
   const selected = candidates[0];
   if (!selected) return { state: 'not_found' };
-  if (selected.ageMs > maxAgeMs) {
+
+  let target = selected;
+  let absorbedRecord: ResponseFeedbackRecord | undefined;
+  if (isNaturalRepairApprovalFeedbackRecord(selected.record)) {
+    const prior = candidates.find(
+      (candidate) =>
+        candidate.record.feedbackId !== selected.record.feedbackId &&
+        !isNaturalRepairApprovalFeedbackRecord(candidate.record),
+    );
+    if (!prior) return { state: 'not_found' };
+    target = prior;
+    absorbedRecord = selected.record;
+  }
+
+  if (target.ageMs > maxAgeMs) {
     return {
       state: 'stale',
-      record: selected.record,
-      ageMs: selected.ageMs,
+      record: target.record,
+      ageMs: target.ageMs,
     };
   }
 
   return {
     state: 'ready',
-    record: selected.record,
-    ageMs: selected.ageMs,
+    record: target.record,
+    ageMs: target.ageMs,
+    absorbedRecord,
     action: {
-      feedbackId: selected.record.feedbackId,
+      feedbackId: target.record.feedbackId,
       operation,
     },
   };
