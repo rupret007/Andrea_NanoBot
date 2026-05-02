@@ -151,8 +151,9 @@ describe('response feedback helpers', () => {
       feedbackId: '22222222-2222-3333-4444-555555555555',
       operation: 'start',
     });
-    expect(result.state === 'ready' ? result.absorbedRecord?.feedbackId : null)
-      .toBe('33333333-2222-3333-4444-555555555555');
+    expect(
+      result.state === 'ready' ? result.absorbedRecord?.feedbackId : null,
+    ).toBe('33333333-2222-3333-4444-555555555555');
   });
 
   it('requires explicit local fallback wording before natural approval maps to approve_local', () => {
