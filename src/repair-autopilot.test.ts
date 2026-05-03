@@ -99,7 +99,9 @@ describe('repair autopilot worker result contract', () => {
 
     expect(result.secretRedacted).toBe(true);
     expect(result.verificationSummary).toContain('[redacted-secret]');
-    expect(result.verificationSummary).not.toContain('sk-proj-abcdefghijklmnopqrstuvwxyz');
+    expect(result.verificationSummary).not.toContain(
+      'sk-proj-abcdefghijklmnopqrstuvwxyz',
+    );
   });
 
   it('splits execution-only approval from explicit landing approval', () => {

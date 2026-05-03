@@ -9971,7 +9971,8 @@ async function main(): Promise<void> {
       return record;
     }
 
-    const lane = laneId === 'cursor' ? cursorBackendLane : getAndreaRuntimeLane();
+    const lane =
+      laneId === 'cursor' ? cursorBackendLane : getAndreaRuntimeLane();
     const outputText = await collectRepairWorkerOutput({
       lane,
       job,
@@ -10017,14 +10018,16 @@ async function main(): Promise<void> {
 
     const verificationIds: string[] = [
       ...(record.linkedRefs.verificationEvidenceIds || []),
-      ...(evidence?.verificationEvidenceId ? [evidence.verificationEvidenceId] : []),
+      ...(evidence?.verificationEvidenceId
+        ? [evidence.verificationEvidenceId]
+        : []),
     ].filter(
       (value, index, values): value is string =>
         Boolean(value) && values.indexOf(value) === index,
     );
-    let platformComplete:
-      | Awaited<ReturnType<typeof emitAndreaPlatformRepairComplete>>
-      | null = null;
+    let platformComplete: Awaited<
+      ReturnType<typeof emitAndreaPlatformRepairComplete>
+    > | null = null;
     if (verification.passed && !result.needsLocalApply) {
       platformComplete = await emitAndreaPlatformRepairComplete({
         repairPlanId: record.linkedRefs.platformRepairPlanId,
@@ -10083,7 +10086,9 @@ async function main(): Promise<void> {
         repairWorkerResultSummary: result.verificationSummary,
         repairWorkerResultBlockerClass: result.blockerClass || undefined,
         repairWorkerNeedsLocalApply: String(result.needsLocalApply),
-        repairVerificationState: verification.passed ? 'verified' : 'not_verified',
+        repairVerificationState: verification.passed
+          ? 'verified'
+          : 'not_verified',
         repairLandingScope: landingScope,
         repairNextLegalAction: nextLegalAction,
         repairPatchArtifact: result.patchArtifact || undefined,
@@ -10501,7 +10506,8 @@ async function main(): Promise<void> {
             correlationId: updated.feedbackId,
             commitSha: landed.commitSha,
             services: ['nanobot'],
-            status: action.operation === 'commit_push' ? 'deployed' : 'not_started',
+            status:
+              action.operation === 'commit_push' ? 'deployed' : 'not_started',
             verificationEvidenceIds: updated.linkedRefs.verificationEvidenceIds,
             summary:
               action.operation === 'commit_push'
@@ -10540,9 +10546,11 @@ async function main(): Promise<void> {
                 deployment?.deploymentId ||
                 updated.linkedRefs.deploymentAttemptId,
               platformRepairRunId:
-                completed?.repairRunId || updated.linkedRefs.platformRepairRunId,
+                completed?.repairRunId ||
+                updated.linkedRefs.platformRepairRunId,
               platformTraceGradeId:
-                completed?.traceGradeId || updated.linkedRefs.platformTraceGradeId,
+                completed?.traceGradeId ||
+                updated.linkedRefs.platformTraceGradeId,
               repairFinalHealthState:
                 action.operation === 'commit_push'
                   ? 'landed_push_recorded'

@@ -86,8 +86,8 @@ describe('response feedback helpers', () => {
       ),
     ).toEqual({
       feedbackId: '11111111-2222-3333-4444-555555555555',
-        operation: 'approve_local',
-      });
+      operation: 'approve_local',
+    });
     expect(
       parseResponseFeedbackAction(
         'feedback:11111111-2222-3333-4444-555555555555:approve_landing',

@@ -1055,7 +1055,14 @@ export async function emitAndreaPlatformRepairEvidence(input: {
   repairPlanId: string;
   executionId?: string | null;
   correlationId?: string | null;
-  evidenceKind?: 'test' | 'build' | 'status' | 'smoke' | 'audit' | 'trace' | 'manual';
+  evidenceKind?:
+    | 'test'
+    | 'build'
+    | 'status'
+    | 'smoke'
+    | 'audit'
+    | 'trace'
+    | 'manual';
   command?: string | null;
   passed: boolean;
   summary: string;
@@ -1087,7 +1094,8 @@ export async function emitAndreaPlatformRepairEvidence(input: {
   return {
     repairPlanId: pickString(plan?.repair_plan_id) || input.repairPlanId,
     repairRunId: pickString(run?.repair_run_id),
-    executionId: pickString(execution?.execution_id) || input.executionId || undefined,
+    executionId:
+      pickString(execution?.execution_id) || input.executionId || undefined,
     verificationEvidenceId: pickString(verification?.evidence_id),
     traceGradeId: pickTraceGradeId(body),
     traceGradeStatus: pickTraceGradeStatus(body),
@@ -1115,9 +1123,12 @@ export async function emitAndreaPlatformRepairDeployment(input: {
     ...(input.executionId ? { executionId: input.executionId } : {}),
     ...(input.correlationId ? { correlationId: input.correlationId } : {}),
     ...(input.commitSha ? { commitSha: input.commitSha } : {}),
-    ...(input.services && input.services.length > 0 ? { services: input.services } : {}),
+    ...(input.services && input.services.length > 0
+      ? { services: input.services }
+      : {}),
     status: input.status || 'not_started',
-    ...(input.verificationEvidenceIds && input.verificationEvidenceIds.length > 0
+    ...(input.verificationEvidenceIds &&
+    input.verificationEvidenceIds.length > 0
       ? { verificationEvidenceIds: input.verificationEvidenceIds }
       : {}),
     summary: input.summary,
@@ -1157,7 +1168,9 @@ export async function emitAndreaPlatformRepairComplete(input: {
     ...(input.deploymentId ? { deploymentId: input.deploymentId } : {}),
     ...(input.correlationId ? { correlationId: input.correlationId } : {}),
     status: input.status || 'completed',
-    ...(input.finalHealthState ? { finalHealthState: input.finalHealthState } : {}),
+    ...(input.finalHealthState
+      ? { finalHealthState: input.finalHealthState }
+      : {}),
     summary: input.summary,
     metadata: {
       sourceSystem: 'andrea_nanobot',

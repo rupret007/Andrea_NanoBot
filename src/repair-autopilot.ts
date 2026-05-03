@@ -1,8 +1,9 @@
-import type { BackendJobDetails, BackendPrimaryOutputResult } from './backend-lanes/types.js';
+import type {
+  BackendJobDetails,
+  BackendPrimaryOutputResult,
+} from './backend-lanes/types.js';
 
-export type RepairApprovalScope =
-  | 'execution_only'
-  | 'execution_and_landing';
+export type RepairApprovalScope = 'execution_only' | 'execution_and_landing';
 
 export type RepairWorkerResultStatus =
   | 'waiting_for_cloud_result'
@@ -27,7 +28,14 @@ export interface RepairWorkerResult {
 }
 
 export interface RepairVerificationBundle {
-  evidenceKind: 'test' | 'build' | 'status' | 'smoke' | 'audit' | 'trace' | 'manual';
+  evidenceKind:
+    | 'test'
+    | 'build'
+    | 'status'
+    | 'smoke'
+    | 'audit'
+    | 'trace'
+    | 'manual';
   passed: boolean;
   summary: string;
   command: string | null;
@@ -46,7 +54,10 @@ function compactString(value: unknown, fallback = '', max = 500): string {
   return text.replace(/\s+/g, ' ').trim().slice(0, max);
 }
 
-function sanitizeString(value: unknown, max = 500): {
+function sanitizeString(
+  value: unknown,
+  max = 500,
+): {
   value: string;
   redacted: boolean;
 } {
@@ -59,11 +70,18 @@ function sanitizeString(value: unknown, max = 500): {
   return { value: valueOut, redacted };
 }
 
-function sanitizeStringArray(value: unknown, maxItems = 12): {
+function sanitizeStringArray(
+  value: unknown,
+  maxItems = 12,
+): {
   values: string[];
   redacted: boolean;
 } {
-  const items = Array.isArray(value) ? value : typeof value === 'string' ? [value] : [];
+  const items = Array.isArray(value)
+    ? value
+    : typeof value === 'string'
+      ? [value]
+      : [];
   let redacted = false;
   const values = items
     .map((item) => {
@@ -351,7 +369,10 @@ export async function collectRepairWorkerOutput(params: {
     metadata.errorText,
     metadata.summary,
   ]
-    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    .filter(
+      (value): value is string =>
+        typeof value === 'string' && value.trim().length > 0,
+    )
     .join('\n');
   if (metadataText.trim()) return metadataText;
   const output = await params.lane.getPrimaryOutput({
