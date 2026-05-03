@@ -27,6 +27,7 @@ export type ResponseFeedbackActionKind =
   | 'why'
   | 'not_now'
   | 'keep_local'
+  | 'approve_landing'
   | 'commit_only'
   | 'commit_push';
 
@@ -326,7 +327,7 @@ export function parseResponseFeedbackAction(
 ): ParsedResponseFeedbackAction | null {
   const trimmed = normalizeText(text);
   const match = trimmed.match(
-    /^feedback:([a-f0-9-]{8,}):(capture|start|approve_local|why|not_now|keep_local|commit_only|commit_push)$/i,
+    /^feedback:([a-f0-9-]{8,}):(capture|start|approve_local|why|not_now|keep_local|approve_landing|commit_only|commit_push)$/i,
   );
   if (!match) return null;
   return {
@@ -612,6 +613,15 @@ export function buildResponseFeedbackActionRows(
 ): SendMessageOptions['inlineActionRows'] {
   if (record.status === 'resolved_locally') {
     return [
+      [
+        {
+          label: 'Approve landing',
+          actionId: buildResponseFeedbackActionId(
+            record.feedbackId,
+            'approve_landing',
+          ),
+        },
+      ],
       [
         {
           label: 'Commit + push',
@@ -1050,5 +1060,11 @@ export function buildResponseFeedbackRemediationPrompt(params: {
     '- Commit, push, restart, or deploy only when the active repair approval scope explicitly authorizes landing and the required tests/builds pass.',
     '- If landing is not authorized, stop with the hotfix ready for review and report exactly what changed and what passed.',
     '- If landing is authorized and validation passed on this host, restart with npm run services:restart and link the verification evidence.',
+    '',
+    'Required final worker result contract:',
+    '- End with one JSON object named `repairWorkerResult`.',
+    '- Include: status, changedFiles, testsRun, testsPassed, patchArtifact, commitSha, blockerClass, needsLocalApply, verificationSummary, nextLegalAction.',
+    '- Use status `verified` only when the focused tests/builds passed. Use `failed_tests`, `blocked_external`, or `needs_local_landing` when appropriate.',
+    '- Do not include secrets, tokens, private message bodies, personal memory content, or raw credentials in the result.',
   ].join('\n');
 }

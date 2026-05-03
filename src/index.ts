@@ -174,6 +174,9 @@ import {
   emitAndreaPlatformDiagnosis,
   emitAndreaPlatformProofEvent,
   emitAndreaPlatformRepairApproval,
+  emitAndreaPlatformRepairComplete,
+  emitAndreaPlatformRepairDeployment,
+  emitAndreaPlatformRepairEvidence,
   emitAndreaPlatformRepairExecution,
   emitAndreaPlatformRepairPlan,
   emitAndreaPlatformFeedbackReflection,
@@ -183,6 +186,14 @@ import {
   emitAndreaPlatformTransportEvent,
   mapShellHealthFromChannelHealth,
 } from './andrea-platform-bridge.js';
+import {
+  buildRepairVerificationBundle,
+  collectRepairWorkerOutput,
+  deriveRepairNextLegalAction,
+  parseRepairApprovalScopeFromText,
+  parseRepairWorkerResult,
+  type RepairApprovalScope,
+} from './repair-autopilot.js';
 import {
   beginTurnAgentHarness,
   evaluateTurnReply,
@@ -9645,12 +9656,14 @@ async function main(): Promise<void> {
 
   function buildResponseFeedbackApprovalScope(
     record: ResponseFeedbackRecord,
+    scope: RepairApprovalScope = 'execution_only',
   ): string {
     return [
       `feedback:${record.feedbackId}`,
       `classification:${record.classification}`,
       'repo:Andrea_NanoBot',
       'tests:npm run typecheck,npm run build,npm test',
+      `landing_scope:${scope}`,
       'secrets:false',
       'external_accounts:false',
       'outbound_messages:false',
@@ -9941,6 +9954,150 @@ async function main(): Promise<void> {
     return record;
   }
 
+  async function syncResponseFeedbackWorkerResult(params: {
+    record: ResponseFeedbackRecord;
+    laneId: NonNullable<ResponseFeedbackRecord['remediationLaneId']>;
+    job: BackendJobDetails;
+  }): Promise<ResponseFeedbackRecord> {
+    const { record, laneId, job } = params;
+    if (!record.linkedRefs.platformRepairPlanId) return record;
+    if (!isSuccessfulResponseFeedbackTaskStatus(job.status)) return record;
+    const existingResultAt = record.linkedRefs.repairWorkerResultAt;
+    if (
+      existingResultAt &&
+      record.linkedRefs.repairWorkerResultStatus &&
+      record.linkedRefs.repairWorkerResultStatus !== 'waiting_for_cloud_result'
+    ) {
+      return record;
+    }
+
+    const lane = laneId === 'cursor' ? cursorBackendLane : getAndreaRuntimeLane();
+    const outputText = await collectRepairWorkerOutput({
+      lane,
+      job,
+      groupFolder: record.groupFolder,
+      chatJid: record.chatJid,
+    });
+    const result = parseRepairWorkerResult(outputText, job.metadata || null);
+    const landingScope: RepairApprovalScope =
+      record.linkedRefs.repairLandingScope === 'execution_and_landing'
+        ? 'execution_and_landing'
+        : (record.linkedRefs.repairApprovalScope || '').includes(
+              'landing_scope:execution_and_landing',
+            )
+          ? 'execution_and_landing'
+          : 'execution_only';
+    const nextLegalAction =
+      result.nextLegalAction ||
+      deriveRepairNextLegalAction(
+        result.status,
+        result.needsLocalApply,
+        landingScope,
+      );
+    const verification = buildRepairVerificationBundle(result, {
+      feedbackId: record.feedbackId,
+      repairPlanId: record.linkedRefs.platformRepairPlanId,
+      executionId: record.linkedRefs.platformRepairExecutionId || null,
+      workerId: record.remediationRuntimePreference || null,
+      laneId,
+      jobId: record.remediationJobId,
+    });
+
+    const evidence = await emitAndreaPlatformRepairEvidence({
+      repairPlanId: record.linkedRefs.platformRepairPlanId,
+      correlationId: record.feedbackId,
+      evidenceKind: verification.evidenceKind,
+      command: verification.command,
+      passed: verification.passed,
+      summary: verification.summary,
+      artifactPath: result.patchArtifact,
+      final: true,
+      metadata: compactPlatformStrings(verification.metadata),
+    });
+
+    const verificationIds: string[] = [
+      ...(record.linkedRefs.verificationEvidenceIds || []),
+      ...(evidence?.verificationEvidenceId ? [evidence.verificationEvidenceId] : []),
+    ].filter(
+      (value, index, values): value is string =>
+        Boolean(value) && values.indexOf(value) === index,
+    );
+    let platformComplete:
+      | Awaited<ReturnType<typeof emitAndreaPlatformRepairComplete>>
+      | null = null;
+    if (verification.passed && !result.needsLocalApply) {
+      platformComplete = await emitAndreaPlatformRepairComplete({
+        repairPlanId: record.linkedRefs.platformRepairPlanId,
+        executionId: record.linkedRefs.platformRepairExecutionId,
+        correlationId: record.feedbackId,
+        status: 'completed',
+        finalHealthState: 'verified_worker_result',
+        summary: result.verificationSummary,
+        metadata: compactPlatformStrings({
+          feedbackId: record.feedbackId,
+          workerResultStatus: result.status,
+          nextLegalAction,
+        }),
+      });
+    }
+
+    const status: ResponseFeedbackRecord['status'] =
+      result.status === 'failed_tests'
+        ? 'failed'
+        : result.status === 'blocked_external'
+          ? 'blocked_external'
+          : verification.passed
+            ? 'resolved_locally'
+            : 'captured';
+    const operatorNote =
+      result.status === 'waiting_for_cloud_result'
+        ? 'The repair worker finished, but it did not return the required structured verification contract yet.'
+        : result.status === 'failed_tests'
+          ? 'The repair worker returned failed test evidence, so Andrea paused before any landing step.'
+          : result.status === 'blocked_external'
+            ? 'The repair worker found an external/manual blocker, so Andrea paused without pretending this is repo-fixed.'
+            : result.needsLocalApply
+              ? 'The repair worker returned a verified patch artifact. Andrea needs explicit landing approval before local apply/commit/push/restart.'
+              : 'The repair worker returned passing verification evidence. Andrea linked it to the repair run.';
+
+    return updateResponseFeedback(record.feedbackId, {
+      linkedRefs: {
+        ...(record.linkedRefs || {}),
+        platformRepairRunId:
+          evidence?.repairRunId ||
+          platformComplete?.repairRunId ||
+          record.linkedRefs.platformRepairRunId,
+        platformTraceGradeId:
+          evidence?.traceGradeId ||
+          platformComplete?.traceGradeId ||
+          record.linkedRefs.platformTraceGradeId,
+        platformSkillCandidateIds: platformComplete?.skillCandidateId
+          ? [
+              ...(record.linkedRefs.platformSkillCandidateIds || []),
+              platformComplete.skillCandidateId,
+            ]
+          : record.linkedRefs.platformSkillCandidateIds,
+        verificationEvidenceIds: verificationIds,
+        repairWorkerResultStatus: result.status,
+        repairWorkerResultAt: new Date().toISOString(),
+        repairWorkerResultSummary: result.verificationSummary,
+        repairWorkerResultBlockerClass: result.blockerClass || undefined,
+        repairWorkerNeedsLocalApply: String(result.needsLocalApply),
+        repairVerificationState: verification.passed ? 'verified' : 'not_verified',
+        repairLandingScope: landingScope,
+        repairNextLegalAction: nextLegalAction,
+        repairPatchArtifact: result.patchArtifact || undefined,
+        repairTestsPassed:
+          result.testsPassed === null ? 'unknown' : String(result.testsPassed),
+        repairFinalHealthState: platformComplete
+          ? 'verified_worker_result'
+          : undefined,
+      },
+      status,
+      operatorNote,
+    });
+  }
+
   async function refreshRunningResponseFeedbackRecord(
     record: ResponseFeedbackRecord,
   ): Promise<ResponseFeedbackRecord> {
@@ -9959,13 +10116,17 @@ async function main(): Promise<void> {
           chatJid: record.chatJid,
         });
         if (!job) return record;
-        return (
+        const synced =
           syncResponseFeedbackFromTaskStatus(
             'andrea_runtime',
             record.remediationJobId,
             job.status,
-          ) || record
-        );
+          ) || record;
+        return syncResponseFeedbackWorkerResult({
+          record: synced,
+          laneId: 'andrea_runtime',
+          job,
+        });
       }
 
       const job = await cursorBackendLane.getJob({
@@ -9977,13 +10138,17 @@ async function main(): Promise<void> {
         chatJid: record.chatJid,
       });
       if (!job) return record;
-      return (
+      const synced =
         syncResponseFeedbackFromTaskStatus(
           'cursor',
           record.remediationJobId,
           job.status,
-        ) || record
-      );
+        ) || record;
+      return syncResponseFeedbackWorkerResult({
+        record: synced,
+        laneId: 'cursor',
+        job,
+      });
     } catch (err) {
       logger.warn(
         {
@@ -10246,6 +10411,44 @@ async function main(): Promise<void> {
       return true;
     }
 
+    if (action.operation === 'approve_landing') {
+      if (
+        existing.status !== 'resolved_locally' &&
+        existing.status !== 'landed'
+      ) {
+        await channel.sendMessage(
+          chatJid,
+          'Landing is not ready yet. Andrea needs a verified repair result before commit, push, or restart can be approved.',
+          buildOperatorSendOptions(msg, {
+            inlineActionRows: buildResponseFeedbackActionRows(existing),
+          }),
+        );
+        return true;
+      }
+      const updated = updateResponseFeedback(existing.feedbackId, {
+        linkedRefs: {
+          ...linkedRefs,
+          repairLandingScope: 'execution_and_landing',
+          repairApprovalScope: buildResponseFeedbackApprovalScope(
+            existing,
+            'execution_and_landing',
+          ),
+          repairNextLegalAction:
+            'Landing approved; commit/push only after dirty-path and test gates pass.',
+        },
+        operatorNote:
+          'Landing scope is approved for this verified repair. Commit/push still checks dirty-path and test gates.',
+      });
+      await channel.sendMessage(
+        chatJid,
+        'Landing scope approved. Use Commit + push or Commit only when the expected hotfix files are present and tests remain green.',
+        buildOperatorSendOptions(msg, {
+          inlineActionRows: buildResponseFeedbackActionRows(updated),
+        }),
+      );
+      return true;
+    }
+
     if (
       action.operation === 'commit_only' ||
       action.operation === 'commit_push'
@@ -10257,6 +10460,16 @@ async function main(): Promise<void> {
         await channel.sendMessage(
           chatJid,
           'That hotfix is not ready to land yet. Refresh the remediation task card after it completes locally, then use the landing buttons there.',
+          buildOperatorSendOptions(msg, {
+            inlineActionRows: buildResponseFeedbackActionRows(existing),
+          }),
+        );
+        return true;
+      }
+      if (existing.linkedRefs.repairLandingScope !== 'execution_and_landing') {
+        await channel.sendMessage(
+          chatJid,
+          'I need explicit landing approval before commit, push, or restart. Use Approve landing first, or say “repair and land” when approving the repair card.',
           buildOperatorSendOptions(msg, {
             inlineActionRows: buildResponseFeedbackActionRows(existing),
           }),
@@ -10281,6 +10494,62 @@ async function main(): Promise<void> {
               ? `Committed and pushed ${landed.commitSha.slice(0, 7)} on ${landed.branch}.`
               : `Committed ${landed.commitSha.slice(0, 7)} locally on ${landed.branch}.`,
         });
+        if (updated.linkedRefs.platformRepairPlanId) {
+          const deployment = await emitAndreaPlatformRepairDeployment({
+            repairPlanId: updated.linkedRefs.platformRepairPlanId,
+            executionId: updated.linkedRefs.platformRepairExecutionId,
+            correlationId: updated.feedbackId,
+            commitSha: landed.commitSha,
+            services: ['nanobot'],
+            status: action.operation === 'commit_push' ? 'deployed' : 'not_started',
+            verificationEvidenceIds: updated.linkedRefs.verificationEvidenceIds,
+            summary:
+              action.operation === 'commit_push'
+                ? `Repair commit ${landed.commitSha.slice(0, 7)} was pushed to ${landed.branch}.`
+                : `Repair commit ${landed.commitSha.slice(0, 7)} was created locally on ${landed.branch}.`,
+            metadata: compactPlatformStrings({
+              feedbackId: updated.feedbackId,
+              branch: landed.branch,
+              pushed: String(Boolean(landed.pushedAt)),
+            }),
+          });
+          const completed = await emitAndreaPlatformRepairComplete({
+            repairPlanId: updated.linkedRefs.platformRepairPlanId,
+            executionId: updated.linkedRefs.platformRepairExecutionId,
+            deploymentId: deployment?.deploymentId,
+            correlationId: updated.feedbackId,
+            status: 'completed',
+            finalHealthState:
+              action.operation === 'commit_push'
+                ? 'landed_push_recorded'
+                : 'local_commit_recorded',
+            summary:
+              action.operation === 'commit_push'
+                ? 'Repair landed and push evidence was recorded.'
+                : 'Repair committed locally; push/restart not requested.',
+            metadata: compactPlatformStrings({
+              feedbackId: updated.feedbackId,
+              landingCommitSha: landed.commitSha,
+              pushedAt: landed.pushedAt || '',
+            }),
+          });
+          updateResponseFeedback(updated.feedbackId, {
+            linkedRefs: {
+              ...updated.linkedRefs,
+              deploymentAttemptId:
+                deployment?.deploymentId ||
+                updated.linkedRefs.deploymentAttemptId,
+              platformRepairRunId:
+                completed?.repairRunId || updated.linkedRefs.platformRepairRunId,
+              platformTraceGradeId:
+                completed?.traceGradeId || updated.linkedRefs.platformTraceGradeId,
+              repairFinalHealthState:
+                action.operation === 'commit_push'
+                  ? 'landed_push_recorded'
+                  : 'local_commit_recorded',
+            },
+          });
+        }
         await channel.sendMessage(
           chatJid,
           [
@@ -10439,6 +10708,11 @@ async function main(): Promise<void> {
     laneSelection =
       buildResponseFeedbackLaneSelectionFromRecord(repairRecord) ||
       laneSelection;
+    const approvalScopeKind = parseRepairApprovalScopeFromText(msg.content);
+    const approvalScope = buildResponseFeedbackApprovalScope(
+      repairRecord,
+      approvalScopeKind,
+    );
 
     const remediationPrompt = buildResponseFeedbackRemediationPrompt({
       record: repairRecord,
@@ -10456,9 +10730,8 @@ async function main(): Promise<void> {
           approvedBy: msg.sender,
           metadata: compactPlatformStrings({
             feedbackId: repairRecord.feedbackId,
-            approvalScope:
-              repairRecord.linkedRefs.repairApprovalScope ||
-              buildResponseFeedbackApprovalScope(repairRecord),
+            approvalScope,
+            repairLandingScope: approvalScopeKind,
             selectedWorker: laneSelection.runtimePreference || '',
             fallbackPolicy:
               repairRecord.linkedRefs.repairFallbackPolicy ||
@@ -10483,6 +10756,8 @@ async function main(): Promise<void> {
         action.operation === 'approve_local'
           ? 'explicit_local_fallback_approval'
           : 'natural_approval_bound',
+      repairApprovalScope: approvalScope,
+      repairLandingScope: approvalScopeKind,
       repairExecutionState:
         laneSelection.runtimePreference === 'codex_local'
           ? 'local_fallback_explicitly_approved'
@@ -10541,6 +10816,9 @@ async function main(): Promise<void> {
             ...updated.linkedRefs,
             platformRepairRunId:
               execution.repairRunId || updated.linkedRefs.platformRepairRunId,
+            platformRepairExecutionId:
+              execution.executionId ||
+              updated.linkedRefs.platformRepairExecutionId,
             platformTraceGradeId:
               execution.traceGradeId || updated.linkedRefs.platformTraceGradeId,
             verificationEvidenceIds: execution.verificationEvidenceId
@@ -10625,6 +10903,9 @@ async function main(): Promise<void> {
           ...updated.linkedRefs,
           platformRepairRunId:
             execution.repairRunId || updated.linkedRefs.platformRepairRunId,
+          platformRepairExecutionId:
+            execution.executionId ||
+            updated.linkedRefs.platformRepairExecutionId,
           platformTraceGradeId:
             execution.traceGradeId || updated.linkedRefs.platformTraceGradeId,
           verificationEvidenceIds: execution.verificationEvidenceId

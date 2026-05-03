@@ -565,6 +565,121 @@ describe('andrea platform shell bridge', () => {
     });
   });
 
+  it('posts repair verification, deployment, and completion evidence', async () => {
+    vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_ENABLED', 'true');
+    vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_URL', 'http://127.0.0.1:4400/');
+    vi.stubEnv('ANDREA_PLATFORM_FALLBACK_TO_DIRECT_RUNTIME', 'false');
+
+    const calls: Array<{ url: string; body: unknown }> = [];
+    const fetchImpl = vi.fn(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        calls.push({ url: String(input), body: init?.body });
+        if (String(input).endsWith('/repair/evidence')) {
+          return new Response(
+            JSON.stringify({
+              repair_plan: { repair_plan_id: 'repair-plan-1' },
+              execution: { execution_id: 'execution-1' },
+              verification: { evidence_id: 'evidence-1' },
+              repair_run: { repair_run_id: 'repair-run-1' },
+              trace_grade: {
+                trace_grade_id: 'trace-grade-1',
+                status: 'pass',
+              },
+            }),
+            { status: 200 },
+          );
+        }
+        if (String(input).endsWith('/repair/deployment')) {
+          return new Response(
+            JSON.stringify({
+              deployment: { deployment_id: 'deployment-1' },
+              repair_run: { repair_run_id: 'repair-run-1' },
+              trace_grade: {
+                trace_grade_id: 'trace-grade-2',
+                status: 'pass',
+              },
+            }),
+            { status: 200 },
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            repair_run: { repair_run_id: 'repair-run-1' },
+            skill_candidate: { candidate_id: 'skill-1' },
+            trace_grade: {
+              trace_grade_id: 'trace-grade-3',
+              status: 'pass',
+            },
+          }),
+          { status: 200 },
+        );
+      },
+    );
+    vi.stubGlobal('fetch', fetchImpl as unknown as typeof fetch);
+
+    const bridge = await import('./andrea-platform-bridge.js');
+    const evidence = await bridge.emitAndreaPlatformRepairEvidence({
+      repairPlanId: 'repair-plan-1',
+      executionId: 'execution-1',
+      evidenceKind: 'test',
+      command: 'npm test',
+      passed: true,
+      summary: 'Tests passed.',
+      final: true,
+      metadata: { workerResultStatus: 'verified' },
+    });
+    const deployment = await bridge.emitAndreaPlatformRepairDeployment({
+      repairPlanId: 'repair-plan-1',
+      executionId: 'execution-1',
+      commitSha: 'abcdef1',
+      services: ['nanobot'],
+      status: 'deployed',
+      verificationEvidenceIds: ['evidence-1'],
+      summary: 'Pushed and restarted.',
+    });
+    const completed = await bridge.emitAndreaPlatformRepairComplete({
+      repairPlanId: 'repair-plan-1',
+      executionId: 'execution-1',
+      deploymentId: deployment?.deploymentId,
+      status: 'completed',
+      finalHealthState: 'running_ready',
+      summary: 'Repair verified.',
+    });
+
+    expect(evidence).toMatchObject({
+      repairPlanId: 'repair-plan-1',
+      repairRunId: 'repair-run-1',
+      executionId: 'execution-1',
+      verificationEvidenceId: 'evidence-1',
+      traceGradeId: 'trace-grade-1',
+    });
+    expect(deployment).toMatchObject({
+      deploymentId: 'deployment-1',
+      traceGradeId: 'trace-grade-2',
+    });
+    expect(completed).toMatchObject({
+      repairRunId: 'repair-run-1',
+      skillCandidateId: 'skill-1',
+      traceGradeId: 'trace-grade-3',
+    });
+    expect(calls.map((call) => call.url)).toEqual([
+      'http://127.0.0.1:4400/repair/evidence',
+      'http://127.0.0.1:4400/repair/deployment',
+      'http://127.0.0.1:4400/repair/complete',
+    ]);
+    expect(JSON.parse(String(calls[0]?.body ?? '{}'))).toMatchObject({
+      repairPlanId: 'repair-plan-1',
+      executionId: 'execution-1',
+      evidenceKind: 'test',
+      passed: true,
+      final: true,
+      metadata: {
+        sourceSystem: 'andrea_nanobot',
+        workerResultStatus: 'verified',
+      },
+    });
+  });
+
   it('maps configured ready channels to a healthy shell state', async () => {
     const bridge = await import('./andrea-platform-bridge.js');
     const channelHealth: ChannelHealthSnapshot[] = [

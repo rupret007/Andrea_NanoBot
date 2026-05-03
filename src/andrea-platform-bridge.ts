@@ -1042,6 +1042,138 @@ export async function emitAndreaPlatformRepairExecution(input: {
   };
 }
 
+export interface AndreaPlatformRepairEvidenceResult {
+  repairPlanId?: string;
+  repairRunId?: string;
+  executionId?: string;
+  verificationEvidenceId?: string;
+  traceGradeId?: string;
+  traceGradeStatus?: string;
+}
+
+export async function emitAndreaPlatformRepairEvidence(input: {
+  repairPlanId: string;
+  executionId?: string | null;
+  correlationId?: string | null;
+  evidenceKind?: 'test' | 'build' | 'status' | 'smoke' | 'audit' | 'trace' | 'manual';
+  command?: string | null;
+  passed: boolean;
+  summary: string;
+  artifactPath?: string | null;
+  final?: boolean;
+  metadata?: Record<string, string>;
+}): Promise<AndreaPlatformRepairEvidenceResult | null> {
+  const response = await postCoordinatorJson('/repair/evidence', {
+    repairPlanId: input.repairPlanId,
+    ...(input.executionId ? { executionId: input.executionId } : {}),
+    ...(input.correlationId ? { correlationId: input.correlationId } : {}),
+    evidenceKind: input.evidenceKind || 'manual',
+    ...(input.command ? { command: input.command } : {}),
+    passed: input.passed,
+    summary: input.summary,
+    ...(input.artifactPath ? { artifactPath: input.artifactPath } : {}),
+    final: input.final ?? true,
+    metadata: {
+      sourceSystem: 'andrea_nanobot',
+      ...(input.metadata || {}),
+    },
+  });
+  if (!response || typeof response !== 'object') return null;
+  const body = response as Record<string, unknown>;
+  const plan = pickRecord(body.repair_plan);
+  const run = pickRecord(body.repair_run);
+  const execution = pickRecord(body.execution);
+  const verification = pickRecord(body.verification);
+  return {
+    repairPlanId: pickString(plan?.repair_plan_id) || input.repairPlanId,
+    repairRunId: pickString(run?.repair_run_id),
+    executionId: pickString(execution?.execution_id) || input.executionId || undefined,
+    verificationEvidenceId: pickString(verification?.evidence_id),
+    traceGradeId: pickTraceGradeId(body),
+    traceGradeStatus: pickTraceGradeStatus(body),
+  };
+}
+
+export async function emitAndreaPlatformRepairDeployment(input: {
+  repairPlanId: string;
+  executionId?: string | null;
+  correlationId?: string | null;
+  commitSha?: string | null;
+  services?: string[];
+  status?: 'not_started' | 'restarted' | 'deployed' | 'failed' | 'blocked';
+  verificationEvidenceIds?: string[];
+  summary: string;
+  metadata?: Record<string, string>;
+}): Promise<{
+  deploymentId?: string;
+  repairRunId?: string;
+  traceGradeId?: string;
+  traceGradeStatus?: string;
+} | null> {
+  const response = await postCoordinatorJson('/repair/deployment', {
+    repairPlanId: input.repairPlanId,
+    ...(input.executionId ? { executionId: input.executionId } : {}),
+    ...(input.correlationId ? { correlationId: input.correlationId } : {}),
+    ...(input.commitSha ? { commitSha: input.commitSha } : {}),
+    ...(input.services && input.services.length > 0 ? { services: input.services } : {}),
+    status: input.status || 'not_started',
+    ...(input.verificationEvidenceIds && input.verificationEvidenceIds.length > 0
+      ? { verificationEvidenceIds: input.verificationEvidenceIds }
+      : {}),
+    summary: input.summary,
+    metadata: {
+      sourceSystem: 'andrea_nanobot',
+      ...(input.metadata || {}),
+    },
+  });
+  if (!response || typeof response !== 'object') return null;
+  const body = response as Record<string, unknown>;
+  return {
+    deploymentId: pickNestedString(body, 'deployment', 'deployment_id'),
+    repairRunId: pickNestedString(body, 'repair_run', 'repair_run_id'),
+    traceGradeId: pickTraceGradeId(body),
+    traceGradeStatus: pickTraceGradeStatus(body),
+  };
+}
+
+export async function emitAndreaPlatformRepairComplete(input: {
+  repairPlanId: string;
+  executionId?: string | null;
+  deploymentId?: string | null;
+  correlationId?: string | null;
+  status?: 'completed' | 'blocked' | 'cancelled';
+  finalHealthState?: string | null;
+  summary: string;
+  metadata?: Record<string, string>;
+}): Promise<{
+  repairRunId?: string;
+  traceGradeId?: string;
+  traceGradeStatus?: string;
+  skillCandidateId?: string;
+} | null> {
+  const response = await postCoordinatorJson('/repair/complete', {
+    repairPlanId: input.repairPlanId,
+    ...(input.executionId ? { executionId: input.executionId } : {}),
+    ...(input.deploymentId ? { deploymentId: input.deploymentId } : {}),
+    ...(input.correlationId ? { correlationId: input.correlationId } : {}),
+    status: input.status || 'completed',
+    ...(input.finalHealthState ? { finalHealthState: input.finalHealthState } : {}),
+    summary: input.summary,
+    metadata: {
+      sourceSystem: 'andrea_nanobot',
+      ...(input.metadata || {}),
+    },
+  });
+  if (!response || typeof response !== 'object') return null;
+  const body = response as Record<string, unknown>;
+  return {
+    repairRunId: pickNestedString(body, 'repair_run', 'repair_run_id'),
+    traceGradeId: pickTraceGradeId(body),
+    traceGradeStatus: pickTraceGradeStatus(body),
+    skillCandidateId: pickNestedString(body, 'skill_candidate', 'candidate_id'),
+  };
+}
+
 export async function emitAndreaPlatformIntentRequest(input: {
   channel: 'telegram' | 'bluebubbles';
   text: string;

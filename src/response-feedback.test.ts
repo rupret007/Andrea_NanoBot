@@ -86,7 +86,15 @@ describe('response feedback helpers', () => {
       ),
     ).toEqual({
       feedbackId: '11111111-2222-3333-4444-555555555555',
-      operation: 'approve_local',
+        operation: 'approve_local',
+      });
+    expect(
+      parseResponseFeedbackAction(
+        'feedback:11111111-2222-3333-4444-555555555555:approve_landing',
+      ),
+    ).toEqual({
+      feedbackId: '11111111-2222-3333-4444-555555555555',
+      operation: 'approve_landing',
     });
   });
 
@@ -277,6 +285,13 @@ describe('response feedback helpers', () => {
     expect(rows).toEqual([
       [
         {
+          label: 'Approve landing',
+          actionId:
+            'feedback:11111111-2222-3333-4444-555555555555:approve_landing',
+        },
+      ],
+      [
+        {
           label: 'Commit + push',
           actionId: 'feedback:11111111-2222-3333-4444-555555555555:commit_push',
         },
@@ -380,6 +395,13 @@ describe('response feedback helpers', () => {
       [
         { label: 'Refresh', actionId: '/runtime-status' },
         { label: 'Open Work', actionId: '/runtime-jobs' },
+      ],
+      [
+        {
+          label: 'Approve landing',
+          actionId:
+            'feedback:11111111-2222-3333-4444-555555555555:approve_landing',
+        },
       ],
       [
         {

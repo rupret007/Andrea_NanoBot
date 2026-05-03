@@ -1467,6 +1467,7 @@ export interface PilotIssueLinkedRefs {
   platformDiagnosisId?: string;
   platformRepairPlanId?: string;
   platformRepairRunId?: string;
+  platformRepairExecutionId?: string;
   platformTraceGradeId?: string;
   repairApprovalId?: string;
   approvalUtteranceMessageId?: string;
@@ -1477,6 +1478,17 @@ export interface PilotIssueLinkedRefs {
   repairApprovalScope?: string;
   repairSelectedWorker?: string;
   repairFallbackPolicy?: string;
+  repairWorkerResultStatus?: string;
+  repairWorkerResultAt?: string;
+  repairWorkerResultSummary?: string;
+  repairWorkerResultBlockerClass?: string;
+  repairWorkerNeedsLocalApply?: string;
+  repairVerificationState?: string;
+  repairLandingScope?: string;
+  repairNextLegalAction?: string;
+  repairPatchArtifact?: string;
+  repairTestsPassed?: string;
+  repairFinalHealthState?: string;
   verificationEvidenceIds?: string[];
   deploymentAttemptId?: string;
   repoHeadAtStart?: string;
