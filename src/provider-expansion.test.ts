@@ -19,11 +19,17 @@ describe('provider expansion', () => {
     vi.unstubAllEnvs();
     delete process.env.MINIMAX_API_KEY;
     delete process.env.MINIMAX_ENABLED;
+    delete process.env.MINIMAX_QUOTA_STATE;
     delete process.env.BRAVE_SEARCH_API_KEY;
     delete process.env.BRACE_SEARCH_API_KEY;
     delete process.env.SYSTEM_ALERTS_ENABLED;
     delete process.env.SYSTEM_ALERT_CHANNELS;
+    vi.stubEnv('MINIMAX_ENABLED', '');
+    vi.stubEnv('MINIMAX_API_KEY', '');
+    vi.stubEnv('MINIMAX_QUOTA_STATE', '');
     vi.stubEnv('BRAVE_SEARCH_ENABLED', 'false');
+    vi.stubEnv('BRAVE_SEARCH_API_KEY', '');
+    vi.stubEnv('BRACE_SEARCH_API_KEY', '');
     globalThis.fetch = originalFetch;
   });
 
@@ -78,7 +84,14 @@ describe('provider expansion', () => {
     vi.stubEnv('MINIMAX_API_KEY', 'test-minimax-key');
     globalThis.fetch = vi.fn(async (_url, init) => {
       const headers = init?.headers as Record<string, string>;
-      expect(headers['x-api-key']).toBe('test-minimax-key');
+      expect(headers.Authorization).toBe('Bearer test-minimax-key');
+      expect(headers['x-api-key']).toBeUndefined();
+      const body = JSON.parse(String(init?.body || '{}')) as {
+        messages?: Array<{ content?: unknown }>;
+        temperature?: number;
+      };
+      expect(body.messages?.[0]?.content).toBe('test');
+      expect(body.temperature).toBeGreaterThan(0);
       return new Response(
         JSON.stringify({
           content: [{ type: 'text', text: 'MiniMax grounded answer.' }],
@@ -90,6 +103,7 @@ describe('provider expansion', () => {
     const result = await runMiniMaxAnthropicText({
       prompt: 'test',
       modelTier: 'complex',
+      temperature: 0,
     });
 
     expect(result && !('providerFailure' in result)).toBe(true);
@@ -127,6 +141,21 @@ describe('provider expansion', () => {
     expect(status.enabled).toBe(true);
     expect(status.configured).toBe(false);
     expect(status.missing).toContain('MINIMAX_API_KEY');
+  });
+
+  it('classifies MiniMax balance blockers as external quota blockers', () => {
+    vi.stubEnv('MINIMAX_ENABLED', 'true');
+    vi.stubEnv('MINIMAX_API_KEY', 'test-minimax-key');
+    vi.stubEnv('MINIMAX_QUOTA_STATE', 'insufficient_balance');
+
+    const provider = collectProviderHealthSnapshots(
+      '2026-05-01T12:00:00.000Z',
+    ).find((snapshot) => snapshot.providerId === 'minimax_cloud');
+
+    expect(provider?.state).toBe('externally_blocked');
+    expect(provider?.failureClass).toBe('quota_or_rate_limit');
+    expect(provider?.quotaState).toBe('blocked');
+    expect(JSON.stringify(provider)).not.toContain('test-minimax-key');
   });
 
   it('formats proactive alerts without exposing secret material', () => {

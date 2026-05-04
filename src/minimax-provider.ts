@@ -7,6 +7,7 @@ const envConfig = readEnvFile([
   'MINIMAX_OPENAI_BASE_URL',
   'MINIMAX_MODEL_COMPLEX',
   'MINIMAX_MODEL_FAST',
+  'MINIMAX_QUOTA_STATE',
 ]);
 
 export interface MiniMaxProviderConfig {
@@ -22,6 +23,7 @@ export interface MiniMaxProviderStatus {
   enabled: boolean;
   configured: boolean;
   missing: string[];
+  quotaState: 'ok' | 'blocked' | 'unknown';
   anthropicBaseUrl: string;
   openAiBaseUrl: string;
   complexModel: string;
@@ -48,12 +50,34 @@ export interface MiniMaxProviderFailure {
   requestId?: string;
 }
 
+const MINIMAX_BLOCKED_QUOTA_STATES = new Set([
+  'blocked',
+  'quota_blocked',
+  'rate_limited',
+  'insufficient_balance',
+  'externally_blocked',
+]);
+
 function readConfigValue(key: keyof typeof envConfig | string): string {
-  return process.env[key] || envConfig[key] || '';
+  if (Object.prototype.hasOwnProperty.call(process.env, key)) {
+    return process.env[key] || '';
+  }
+  return envConfig[key] || '';
 }
 
 function normalizeBaseUrl(value: string, fallback: string): string {
   return (value || fallback).replace(/\/+$/g, '');
+}
+
+function normalizeTemperature(value: number | undefined): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 0.4;
+  return Math.min(1, Math.max(0.01, value));
+}
+
+function resolveMiniMaxQuotaState(): MiniMaxProviderStatus['quotaState'] {
+  const value = readConfigValue('MINIMAX_QUOTA_STATE').trim().toLowerCase();
+  if (!value) return 'unknown';
+  return MINIMAX_BLOCKED_QUOTA_STATES.has(value) ? 'blocked' : 'ok';
 }
 
 export function resolveMiniMaxProviderConfig(): MiniMaxProviderConfig | null {
@@ -96,6 +120,7 @@ export function getMiniMaxProviderStatus(): MiniMaxProviderStatus {
     enabled,
     configured: enabled && missing.length === 0,
     missing,
+    quotaState: resolveMiniMaxQuotaState(),
     anthropicBaseUrl: normalizeBaseUrl(
       readConfigValue('MINIMAX_ANTHROPIC_BASE_URL'),
       'https://api.minimax.io/anthropic',
@@ -131,7 +156,9 @@ export function describeMiniMaxProviderFailure(
   if (
     status === 429 ||
     normalized.includes('quota') ||
-    normalized.includes('rate')
+    normalized.includes('rate') ||
+    normalized.includes('insufficient balance') ||
+    normalized.includes('balance')
   ) {
     return 'MiniMax rate limit or quota blocked this request. Wait for quota recovery or adjust the MiniMax plan.';
   }
@@ -167,24 +194,31 @@ export async function runMiniMaxAnthropicText(
 ): Promise<MiniMaxTextResult | MiniMaxProviderFailure | null> {
   const config = resolveMiniMaxProviderConfig();
   if (!config) return null;
+  if (resolveMiniMaxQuotaState() === 'blocked') {
+    return {
+      providerFailure:
+        'MiniMax rate limit or quota blocked this request. Wait for quota recovery or adjust the MiniMax plan.',
+      status: 429,
+    };
+  }
   const model =
     request.modelTier === 'fast' ? config.fastModel : config.complexModel;
   const response = await fetch(`${config.anthropicBaseUrl}/v1/messages`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'x-api-key': config.apiKey,
+      Authorization: `Bearer ${config.apiKey}`,
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
       model,
       max_tokens: Math.max(64, request.maxTokens || 900),
-      temperature: request.temperature ?? 0.4,
+      temperature: normalizeTemperature(request.temperature),
       ...(request.system ? { system: request.system } : {}),
       messages: [
         {
           role: 'user',
-          content: [{ type: 'text', text: request.prompt }],
+          content: request.prompt,
         },
       ],
     }),

@@ -139,6 +139,8 @@ export function collectProviderHealthSnapshots(
   const openAi = getOpenAiProviderStatus();
   const miniMax = getMiniMaxProviderStatus();
   const brave = getBraveSearchStatus();
+  const miniMaxQuotaBlocked =
+    miniMax.configured && miniMax.quotaState === 'blocked';
   return [
     {
       providerId: 'openai_cloud',
@@ -165,24 +167,35 @@ export function collectProviderHealthSnapshots(
     {
       providerId: 'minimax_cloud',
       kind: 'llm',
-      state: miniMax.configured
-        ? 'healthy'
-        : miniMax.enabled
-          ? 'degraded'
-          : 'not_configured',
-      lastHealthyAt: miniMax.configured ? checkedAt : null,
+      state: miniMaxQuotaBlocked
+        ? 'externally_blocked'
+        : miniMax.configured
+          ? 'healthy'
+          : miniMax.enabled
+            ? 'degraded'
+            : 'not_configured',
+      lastHealthyAt:
+        miniMax.configured && !miniMaxQuotaBlocked ? checkedAt : null,
       lastCheckedAt: checkedAt,
-      failureClass: miniMax.configured ? 'none' : 'missing_credentials',
-      quotaState: 'unknown',
+      failureClass: miniMaxQuotaBlocked
+        ? 'quota_or_rate_limit'
+        : miniMax.configured
+          ? 'none'
+          : 'missing_credentials',
+      quotaState: miniMaxQuotaBlocked ? 'blocked' : 'unknown',
       credentialState: miniMax.configured ? 'configured' : 'missing',
       knownExpiresAt: null,
       rotationDueAt: rotationDueAt(),
-      blocker: miniMax.configured
-        ? ''
-        : describeMiniMaxConfigBlocker(miniMax.missing),
-      nextAction: miniMax.configured
-        ? ''
-        : 'Set MINIMAX_API_KEY in local environment config, then rerun provider checks.',
+      blocker: miniMaxQuotaBlocked
+        ? 'MiniMax account balance or quota is blocked.'
+        : miniMax.configured
+          ? ''
+          : describeMiniMaxConfigBlocker(miniMax.missing),
+      nextAction: miniMaxQuotaBlocked
+        ? 'Add MiniMax balance or wait for quota/rate-limit recovery, then clear MINIMAX_QUOTA_STATE and rerun provider checks.'
+        : miniMax.configured
+          ? ''
+          : 'Set MINIMAX_API_KEY in local environment config, then rerun provider checks.',
       metadata: {
         anthropicBaseUrl: miniMax.anthropicBaseUrl,
         openAiBaseUrl: miniMax.openAiBaseUrl,

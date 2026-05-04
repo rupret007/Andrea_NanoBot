@@ -50,7 +50,10 @@ export interface BraveSearchFailure {
 }
 
 function readConfigValue(key: keyof typeof envConfig | string): string {
-  return process.env[key] || envConfig[key] || '';
+  if (Object.prototype.hasOwnProperty.call(process.env, key)) {
+    return process.env[key] || '';
+  }
+  return envConfig[key] || '';
 }
 
 function resolveApiKey(): {
