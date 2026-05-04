@@ -574,6 +574,36 @@ export interface AndreaPlatformProviderCouncilResult {
   riskFlags?: string[];
 }
 
+export interface AndreaPlatformIntelligenceScenarioResult {
+  scenarioId: string;
+  scenarioTitle: string;
+  taskFamily: PlatformTaskFamily | 'simple';
+  critical: boolean;
+  passed: boolean;
+  score: number;
+  gates: Array<{
+    gateId: string;
+    passed: boolean;
+    score: number;
+    summary: string;
+    critical?: boolean;
+  }>;
+  expected: Record<string, string>;
+  actual: Record<string, string>;
+  traceIds?: string[];
+  metadata?: Record<string, string>;
+}
+
+export interface AndreaPlatformIntelligenceRegressionResult {
+  reportId?: string;
+  status?: 'pass' | 'warn' | 'fail';
+  mode?: 'baseline' | 'regression';
+  totalScore?: number;
+  criticalScore?: number;
+  scenarioCount?: number;
+  criticalFailureCount?: number;
+}
+
 export async function emitAndreaPlatformDeliberation(input: {
   goal: string;
   taskFamily: PlatformTaskFamily;
@@ -743,6 +773,56 @@ export async function emitAndreaPlatformProviderCouncil(input: {
     skippedMemberCount,
     blockedMemberCount,
     riskFlags: pickStringArray(verdict?.risk_flags),
+  };
+}
+
+export async function emitAndreaPlatformIntelligenceRegression(input: {
+  runId: string;
+  mode: 'baseline' | 'regression';
+  status: 'pass' | 'warn' | 'fail';
+  totalScore: number;
+  criticalScore: number;
+  criticalFailureCount?: number;
+  scenarioResults: AndreaPlatformIntelligenceScenarioResult[];
+  baselineReportId?: string | null;
+  metadata?: Record<string, string>;
+}): Promise<AndreaPlatformIntelligenceRegressionResult | null> {
+  const response = await postCoordinatorJson('/intelligence-regression', {
+    runId: input.runId,
+    mode: input.mode,
+    status: input.status,
+    totalScore: input.totalScore,
+    criticalScore: input.criticalScore,
+    ...(input.criticalFailureCount !== undefined
+      ? { criticalFailureCount: input.criticalFailureCount }
+      : {}),
+    scenarioResults: input.scenarioResults,
+    ...(input.baselineReportId
+      ? { baselineReportId: input.baselineReportId }
+      : {}),
+    metadata: {
+      sourceSystem: 'andrea_nanobot',
+      harness_version: 'v14',
+      raw_private_memory_allowed: 'false',
+      secret_material_allowed: 'false',
+      ...(input.metadata || {}),
+    },
+  });
+  if (!response || typeof response !== 'object') return null;
+  const body = response as Record<string, unknown>;
+  const report = pickRecord(body.report);
+  return {
+    reportId: pickString(report?.report_id),
+    status: pickString(report?.status) as
+      | AndreaPlatformIntelligenceRegressionResult['status']
+      | undefined,
+    mode: pickString(report?.mode) as
+      | AndreaPlatformIntelligenceRegressionResult['mode']
+      | undefined,
+    totalScore: pickNumber(report?.total_score),
+    criticalScore: pickNumber(report?.critical_score),
+    scenarioCount: pickNumber(report?.scenario_count),
+    criticalFailureCount: pickNumber(report?.critical_failure_count),
   };
 }
 

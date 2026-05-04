@@ -301,6 +301,13 @@ export function classifyTurnTaskFamily(input: {
     .join(' ')
     .toLowerCase();
   if (
+    /\b(research|news|weather|rain|changed today|compare|recommend|buy|model council|architecture review|evidence scout|latest)\b/.test(
+      haystack,
+    )
+  ) {
+    return 'research';
+  }
+  if (
     /\b(calendar|schedule|reschedule|event|meeting|tomorrow|today|3pm|3 pm)\b/.test(
       haystack,
     )
@@ -314,18 +321,21 @@ export function classifyTurnTaskFamily(input: {
   ) {
     return 'communication';
   }
-  if (
-    /\b(research|news|weather|rain|changed today|compare|recommend|buy)\b/.test(
-      haystack,
-    )
-  ) {
-    return 'research';
-  }
   if (/\b(image|picture|generate art|media)\b/.test(haystack)) {
     return 'media';
   }
   if (
     /\b(runtime|cursor|codex|repo|debug|diagnose|repair|deploy|service|commit|push)\b/.test(
+      haystack,
+    )
+  ) {
+    return 'operator';
+  }
+  if (
+    /\b(approval|approve|approved|do it|go ahead|start the repair|repair and land|fix it)\b/.test(
+      haystack,
+    ) &&
+    /\b(approval|repair|feedback|fix|self[- ]?improvement|not helpful)\b/.test(
       haystack,
     )
   ) {
@@ -594,7 +604,9 @@ function selectProviderCouncilMode(input: {
   const text = normalize(input.text);
   if (
     input.taskFamily === 'operator' &&
-    /\b(repair|diagnose|fix|deploy|restart|commit|push)\b/.test(text)
+    /\b(repair|diagnose|fix|deploy|restart|commit|push|approval|approve|approved|go ahead|do it)\b/.test(
+      text,
+    )
   ) {
     return 'repair_council';
   }
@@ -827,9 +839,15 @@ function narrowCalendarCertaintyExtended(text: string): string {
 }
 
 function repairCommunicationSendOverreach(text: string): string {
-  if (!/\b(i sent|sent it|message sent)\b/i.test(text)) return text;
+  if (
+    !/\b(i sent|sent it|message sent|i'?ll send it|i am sending|i'?m sending|sending it now|i'?ll text them|i'?ll reply for you|i replied for you|i'?ll fire that off)\b/i.test(
+      text,
+    )
+  ) {
+    return text;
+  }
   return text.replace(
-    /\b(i sent|sent it|message sent)\b/gi,
+    /\b(i sent|sent it|message sent|i'?ll send it|i am sending|i'?m sending|sending it now|i'?ll text them|i'?ll reply for you|i replied for you|i'?ll fire that off)\b/gi,
     'I drafted it for approval',
   );
 }
@@ -892,7 +910,9 @@ export function evaluateTurnReply(
 
   const providerBlocked =
     input.blockerClass &&
-    /\b(provider|quota|externally_blocked|auth)\b/i.test(input.blockerClass);
+    /(?:^|[_\W])(provider|quota|externally_blocked|auth)(?:$|[_\W])/i.test(
+      input.blockerClass,
+    );
   if (
     providerBlocked &&
     !/\b(block|quota|provider|unavailable|cannot|can't)\b/i.test(rewritten)

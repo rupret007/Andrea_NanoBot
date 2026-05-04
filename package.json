@@ -32,6 +32,8 @@
     "test:watch": "node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs",
     "test:major": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-major-iteration.ts",
     "test:major:ci": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-major-iteration.ts --skip-live-verify",
+    "test:intelligence": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-intelligence-regression.ts",
+    "test:intelligence:baseline": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-intelligence-regression.ts --baseline",
     "test:stability": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-stability-gate.ts",
     "test:stability:live": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-stability-gate.ts --with-live-verify",
     "services:start": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/nanoclaw-host.ps1 start",

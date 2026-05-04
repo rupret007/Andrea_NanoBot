@@ -26,11 +26,14 @@ describe('research orchestrator', () => {
     delete process.env.OPENAI_MODEL_STANDARD;
     delete process.env.OPENAI_MODEL_COMPLEX;
     vi.stubEnv('BRAVE_SEARCH_ENABLED', 'false');
+    vi.stubEnv('MINIMAX_ENABLED', 'false');
+    vi.stubEnv('MINIMAX_API_KEY', '');
     globalThis.fetch = originalFetch;
     vi.restoreAllMocks();
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     process.env.OPENAI_API_KEY = originalApiKey;
     process.env.OPENAI_BASE_URL = originalBaseUrl;
     process.env.OPENAI_MODEL_SIMPLE = originalSimpleModel;
