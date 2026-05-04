@@ -7,6 +7,10 @@ import {
   getMiniMaxProviderStatus,
 } from './minimax-provider.js';
 import {
+  describeGeminiConfigBlocker,
+  getGeminiProviderStatus,
+} from './gemini-provider.js';
+import {
   describeOpenAiConfigBlocker,
   getOpenAiProviderStatus,
 } from './openai-provider.js';
@@ -138,9 +142,12 @@ export function collectProviderHealthSnapshots(
 ): ProviderHealthSnapshot[] {
   const openAi = getOpenAiProviderStatus();
   const miniMax = getMiniMaxProviderStatus();
+  const gemini = getGeminiProviderStatus();
   const brave = getBraveSearchStatus();
   const miniMaxQuotaBlocked =
     miniMax.configured && miniMax.quotaState === 'blocked';
+  const geminiQuotaBlocked =
+    gemini.configured && gemini.quotaState === 'blocked';
   return [
     {
       providerId: 'openai_cloud',
@@ -201,6 +208,45 @@ export function collectProviderHealthSnapshots(
         openAiBaseUrl: miniMax.openAiBaseUrl,
         complexModel: miniMax.complexModel,
         fastModel: miniMax.fastModel,
+      },
+    },
+    {
+      providerId: 'gemini_cloud',
+      kind: 'llm',
+      state: geminiQuotaBlocked
+        ? 'externally_blocked'
+        : gemini.configured
+          ? 'healthy'
+          : gemini.enabled
+            ? 'degraded'
+            : 'not_configured',
+      lastHealthyAt:
+        gemini.configured && !geminiQuotaBlocked ? checkedAt : null,
+      lastCheckedAt: checkedAt,
+      failureClass: geminiQuotaBlocked
+        ? 'quota_or_rate_limit'
+        : gemini.configured
+          ? 'none'
+          : 'missing_credentials',
+      quotaState: geminiQuotaBlocked ? 'blocked' : 'unknown',
+      credentialState: gemini.configured ? 'configured' : 'missing',
+      knownExpiresAt: null,
+      rotationDueAt: rotationDueAt(),
+      blocker: geminiQuotaBlocked
+        ? 'Gemini account quota or rate limit is blocked.'
+        : gemini.configured
+          ? ''
+          : describeGeminiConfigBlocker(gemini.missing),
+      nextAction: geminiQuotaBlocked
+        ? 'Wait for Gemini quota/rate-limit recovery or adjust the Gemini plan, then clear GEMINI_QUOTA_STATE and rerun provider checks.'
+        : gemini.configured
+          ? ''
+          : 'Set GEMINI_API_KEY in local environment config, then rerun provider checks.',
+      metadata: {
+        openAiBaseUrl: gemini.openAiBaseUrl,
+        criticModel: gemini.criticModel,
+        fastModel: gemini.fastModel,
+        role: 'critic_verifier',
       },
     },
     {

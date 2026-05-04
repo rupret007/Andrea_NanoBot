@@ -6,6 +6,10 @@ import {
   runMiniMaxAnthropicText,
 } from './minimax-provider.js';
 import {
+  getGeminiProviderStatus,
+  runGeminiOpenAiText,
+} from './gemini-provider.js';
+import {
   buildProviderAlertEvents,
   collectProviderHealthSnapshots,
   formatProviderHealthAlertMessage,
@@ -20,6 +24,9 @@ describe('provider expansion', () => {
     delete process.env.MINIMAX_API_KEY;
     delete process.env.MINIMAX_ENABLED;
     delete process.env.MINIMAX_QUOTA_STATE;
+    delete process.env.GEMINI_API_KEY;
+    delete process.env.GEMINI_ENABLED;
+    delete process.env.GEMINI_QUOTA_STATE;
     delete process.env.BRAVE_SEARCH_API_KEY;
     delete process.env.BRACE_SEARCH_API_KEY;
     delete process.env.SYSTEM_ALERTS_ENABLED;
@@ -27,6 +34,9 @@ describe('provider expansion', () => {
     vi.stubEnv('MINIMAX_ENABLED', '');
     vi.stubEnv('MINIMAX_API_KEY', '');
     vi.stubEnv('MINIMAX_QUOTA_STATE', '');
+    vi.stubEnv('GEMINI_ENABLED', '');
+    vi.stubEnv('GEMINI_API_KEY', '');
+    vi.stubEnv('GEMINI_QUOTA_STATE', '');
     vi.stubEnv('BRAVE_SEARCH_ENABLED', 'false');
     vi.stubEnv('BRAVE_SEARCH_API_KEY', '');
     vi.stubEnv('BRACE_SEARCH_API_KEY', '');
@@ -110,8 +120,50 @@ describe('provider expansion', () => {
     expect(result && 'text' in result ? result.text : '').toContain('MiniMax');
   });
 
+  it('parses Gemini OpenAI-compatible text responses without exposing secrets', async () => {
+    vi.stubEnv('GEMINI_API_KEY', 'test-gemini-key');
+    globalThis.fetch = vi.fn(async (url, init) => {
+      expect(String(url)).toBe(
+        'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+      );
+      const headers = init?.headers as Record<string, string>;
+      expect(headers.Authorization).toBe('Bearer test-gemini-key');
+      const body = JSON.parse(String(init?.body || '{}')) as {
+        model?: string;
+        messages?: Array<{ role?: string; content?: unknown }>;
+        temperature?: number;
+      };
+      expect(body.model).toBe('gemini-2.5-pro');
+      expect(body.messages?.at(-1)?.content).toBe('critique this');
+      expect(body.temperature).toBeGreaterThan(0);
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                role: 'assistant',
+                content: 'Gemini independent critique.',
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }) as unknown as typeof fetch;
+
+    const result = await runGeminiOpenAiText({
+      prompt: 'critique this',
+      modelTier: 'critic',
+      temperature: 0,
+    });
+
+    expect(result && !('providerFailure' in result)).toBe(true);
+    expect(result && 'text' in result ? result.text : '').toContain('Gemini');
+  });
+
   it('reports provider and alert metadata without raw credential values', () => {
     vi.stubEnv('MINIMAX_API_KEY', 'test-minimax-key');
+    vi.stubEnv('GEMINI_API_KEY', 'test-gemini-key');
     vi.stubEnv('BRAVE_SEARCH_ENABLED', 'true');
     vi.stubEnv('BRAVE_SEARCH_API_KEY', 'test-brave-key');
 
@@ -127,9 +179,13 @@ describe('provider expansion', () => {
       providers.some((provider) => provider.providerId === 'minimax_cloud'),
     ).toBe(true);
     expect(
+      providers.some((provider) => provider.providerId === 'gemini_cloud'),
+    ).toBe(true);
+    expect(
       providers.some((provider) => provider.providerId === 'brave_search'),
     ).toBe(true);
     expect(serialized).not.toContain('test-minimax-key');
+    expect(serialized).not.toContain('test-gemini-key');
     expect(serialized).not.toContain('test-brave-key');
   });
 
@@ -141,6 +197,16 @@ describe('provider expansion', () => {
     expect(status.enabled).toBe(true);
     expect(status.configured).toBe(false);
     expect(status.missing).toContain('MINIMAX_API_KEY');
+  });
+
+  it('surfaces Gemini configuration state separately from OpenAI and MiniMax', () => {
+    vi.stubEnv('GEMINI_ENABLED', 'true');
+
+    const status = getGeminiProviderStatus();
+
+    expect(status.enabled).toBe(true);
+    expect(status.configured).toBe(false);
+    expect(status.missing).toContain('GEMINI_API_KEY');
   });
 
   it('classifies MiniMax balance blockers as external quota blockers', () => {
@@ -156,6 +222,21 @@ describe('provider expansion', () => {
     expect(provider?.failureClass).toBe('quota_or_rate_limit');
     expect(provider?.quotaState).toBe('blocked');
     expect(JSON.stringify(provider)).not.toContain('test-minimax-key');
+  });
+
+  it('classifies Gemini quota blockers as external provider blockers', () => {
+    vi.stubEnv('GEMINI_ENABLED', 'true');
+    vi.stubEnv('GEMINI_API_KEY', 'test-gemini-key');
+    vi.stubEnv('GEMINI_QUOTA_STATE', 'rate_limited');
+
+    const provider = collectProviderHealthSnapshots(
+      '2026-05-01T12:00:00.000Z',
+    ).find((snapshot) => snapshot.providerId === 'gemini_cloud');
+
+    expect(provider?.state).toBe('externally_blocked');
+    expect(provider?.failureClass).toBe('quota_or_rate_limit');
+    expect(provider?.quotaState).toBe('blocked');
+    expect(JSON.stringify(provider)).not.toContain('test-gemini-key');
   });
 
   it('formats proactive alerts without exposing secret material', () => {
