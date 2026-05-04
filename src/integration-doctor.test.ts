@@ -161,6 +161,26 @@ describe('integration doctor', () => {
     expect(selfRepair?.detail).toContain('1 pending/stale repair');
   });
 
+  it('does not treat planless old feedback confirmations as active repair plans', () => {
+    const report = buildIntegrationDoctorReport({
+      now: new Date('2026-05-04T12:00:00.000Z'),
+      truth: truth(),
+      providers: [],
+      recentFeedback: [
+        feedback({
+          status: 'awaiting_confirmation',
+          linkedRefs: {},
+          originalUserText: 'you have my approval',
+        }),
+      ],
+    });
+
+    const selfRepair = report.statuses.find(
+      (status) => status.integrationId === 'self_repair',
+    );
+    expect(selfRepair?.state).toBe('healthy');
+  });
+
   it('redacts secret-like material from reports', () => {
     const text = redactIntegrationDoctorText(
       'token=8755969867:AAFUMkQogpCP-aC344HSI5cnQjWLK8-UDZY password=abc123 sk-proj-abcdefabcdefabcdefabcdef',

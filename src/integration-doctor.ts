@@ -408,6 +408,12 @@ function normalizeSelfRepair(
   recentFeedback: ResponseFeedbackRecord[],
 ): IntegrationStatus {
   const pending = recentFeedback.filter((record) => {
+    const hasRepairChain =
+      !!record.linkedRefs.platformRepairPlanId ||
+      !!record.linkedRefs.platformRepairExecutionId ||
+      !!record.linkedRefs.platformRepairRunId ||
+      !!record.linkedRefs.repairApprovalId;
+    if (!hasRepairChain) return false;
     const state =
       record.linkedRefs.repairExecutionState ||
       record.linkedRefs.repairBindingState ||
