@@ -489,6 +489,84 @@ describe('andrea platform shell bridge', () => {
     });
   });
 
+  it('posts provider council requests to the platform coordinator', async () => {
+    vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_ENABLED', 'true');
+    vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_URL', 'http://127.0.0.1:4400/');
+    vi.stubEnv('ANDREA_PLATFORM_FALLBACK_TO_DIRECT_RUNTIME', 'false');
+
+    const calls: Array<{ url: string; body: unknown }> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        calls.push({ url: String(input), body: init?.body });
+        return new Response(
+          JSON.stringify({
+            council: {
+              council_run_id: 'council-1',
+              request_id: 'request-1',
+              mode: 'max_iq_council',
+              status: 'completed',
+              trace_id: 'turn-1',
+              members: [
+                { member_id: 'openai_cloud', status: 'completed' },
+                { member_id: 'minimax_cloud', status: 'completed' },
+                { member_id: 'andrea_platform', status: 'completed' },
+              ],
+            },
+            verdict: {
+              verdict_id: 'verdict-1',
+              final_route: 'max_iq_council',
+              answer_strategy: 'verified_synthesis',
+              confidence: 0.88,
+              approval_required: false,
+              risk_flags: [],
+            },
+          }),
+          { status: 200 },
+        );
+      }) as unknown as typeof fetch,
+    );
+
+    const bridge = await import('./andrea-platform-bridge.js');
+    const result = await bridge.emitAndreaPlatformProviderCouncil({
+      goal: 'Handle research turn from telegram via direct_assistant.',
+      taskFamily: 'research',
+      channel: 'telegram',
+      groupFolder: 'main',
+      correlationId: 'turn-1',
+      requestedMode: 'max_iq_council',
+      riskLevel: 'medium',
+      requiredEvidence: 'strong',
+      allowedSideEffects: 'read_only',
+    });
+
+    expect(result).toMatchObject({
+      councilRunId: 'council-1',
+      requestId: 'request-1',
+      verdictId: 'verdict-1',
+      mode: 'max_iq_council',
+      finalRoute: 'max_iq_council',
+      answerStrategy: 'verified_synthesis',
+      confidence: 0.88,
+      approvalRequired: false,
+      memberCount: 3,
+      skippedMemberCount: 0,
+      blockedMemberCount: 0,
+    });
+    expect(calls[0]?.url).toBe('http://127.0.0.1:4400/council-run');
+    expect(JSON.parse(String(calls[0]?.body ?? '{}'))).toMatchObject({
+      goal: 'Handle research turn from telegram via direct_assistant.',
+      taskFamily: 'research',
+      correlationId: 'turn-1',
+      requestedMode: 'max_iq_council',
+      metadata: {
+        sourceSystem: 'andrea_nanobot',
+        council_bridge_version: 'v1',
+        raw_private_memory_allowed: 'false',
+      },
+    });
+  });
+
   it('posts scoped repair approval and external execution evidence', async () => {
     vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_ENABLED', 'true');
     vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_URL', 'http://127.0.0.1:4400/');

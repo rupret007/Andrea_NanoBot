@@ -51,7 +51,8 @@ type TraceKind =
   | 'commit'
   | 'operator'
   | 'config'
-  | 'replay';
+  | 'replay'
+  | 'council';
 export type PlatformTaskFamily =
   | 'calendar'
   | 'communication'
@@ -550,6 +551,29 @@ export interface AndreaPlatformTurnReflectionResult {
   traceGradeStatus?: string;
 }
 
+export type AndreaPlatformCouncilMode =
+  | 'single_model'
+  | 'dual_review'
+  | 'max_iq_council'
+  | 'repair_council';
+
+export interface AndreaPlatformProviderCouncilResult {
+  councilRunId?: string;
+  requestId?: string;
+  verdictId?: string;
+  mode?: AndreaPlatformCouncilMode;
+  status?: string;
+  traceId?: string;
+  finalRoute?: string;
+  answerStrategy?: string;
+  confidence?: number;
+  approvalRequired?: boolean;
+  memberCount?: number;
+  skippedMemberCount?: number;
+  blockedMemberCount?: number;
+  riskFlags?: string[];
+}
+
 export async function emitAndreaPlatformDeliberation(input: {
   goal: string;
   taskFamily: PlatformTaskFamily;
@@ -650,6 +674,73 @@ export async function emitAndreaPlatformDeliberation(input: {
       }
       return undefined;
     })(),
+  };
+}
+
+export async function emitAndreaPlatformProviderCouncil(input: {
+  goal: string;
+  taskFamily: PlatformTaskFamily;
+  channel?: 'telegram' | 'bluebubbles' | 'alexa' | 'system';
+  groupFolder?: string | null;
+  correlationId?: string | null;
+  requestedMode?: AndreaPlatformCouncilMode | null;
+  riskLevel?: 'low' | 'medium' | 'high';
+  requiredEvidence?: 'strong' | 'partial' | 'weak' | 'unknown';
+  allowedSideEffects?: 'none' | 'read_only' | 'approval_required';
+  rawContentPolicy?: 'metadata_only' | 'local_only' | 'sanitized_snippets';
+  metadata?: Record<string, string>;
+}): Promise<AndreaPlatformProviderCouncilResult | null> {
+  const response = await postCoordinatorJson('/council-run', {
+    goal: input.goal,
+    taskFamily: input.taskFamily,
+    channel: input.channel || 'telegram',
+    ...(input.groupFolder ? { groupFolder: input.groupFolder } : {}),
+    ...(input.correlationId ? { correlationId: input.correlationId } : {}),
+    ...(input.requestedMode ? { requestedMode: input.requestedMode } : {}),
+    ...(input.riskLevel ? { riskLevel: input.riskLevel } : {}),
+    ...(input.requiredEvidence
+      ? { requiredEvidence: input.requiredEvidence }
+      : {}),
+    ...(input.allowedSideEffects
+      ? { allowedSideEffects: input.allowedSideEffects }
+      : {}),
+    ...(input.rawContentPolicy
+      ? { rawContentPolicy: input.rawContentPolicy }
+      : {}),
+    metadata: {
+      sourceSystem: 'andrea_nanobot',
+      council_bridge_version: 'v1',
+      raw_private_memory_allowed: 'false',
+      secret_material_allowed: 'false',
+      ...(input.metadata || {}),
+    },
+  });
+  if (!response || typeof response !== 'object') return null;
+  const body = response as Record<string, unknown>;
+  const council = pickRecord(body.council);
+  const verdict = pickRecord(body.verdict) || pickRecord(council?.verdict);
+  const members = Array.isArray(council?.members) ? council.members : [];
+  const skippedMemberCount = members.filter(
+    (member) => pickString((member as Record<string, unknown>)?.status) === 'skipped',
+  ).length;
+  const blockedMemberCount = members.filter(
+    (member) => pickString((member as Record<string, unknown>)?.status) === 'blocked',
+  ).length;
+  return {
+    councilRunId: pickString(council?.council_run_id),
+    requestId: pickString(council?.request_id),
+    verdictId: pickString(verdict?.verdict_id),
+    mode: pickString(council?.mode) as AndreaPlatformCouncilMode | undefined,
+    status: pickString(council?.status),
+    traceId: pickString(council?.trace_id),
+    finalRoute: pickString(verdict?.final_route),
+    answerStrategy: pickString(verdict?.answer_strategy),
+    confidence: pickNumber(verdict?.confidence),
+    approvalRequired: pickBoolean(verdict?.approval_required),
+    memberCount: members.length,
+    skippedMemberCount,
+    blockedMemberCount,
+    riskFlags: pickStringArray(verdict?.risk_flags),
   };
 }
 

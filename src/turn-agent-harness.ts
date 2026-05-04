@@ -6,10 +6,13 @@ import {
 } from './assistant-memory-intelligence.js';
 import {
   emitAndreaPlatformDeliberation,
+  emitAndreaPlatformProviderCouncil,
   emitAndreaPlatformSkillCandidate,
   emitAndreaPlatformTurnReflection,
   listAndreaPlatformActiveSkillCandidates,
   type AndreaPlatformDeliberationResult,
+  type AndreaPlatformCouncilMode,
+  type AndreaPlatformProviderCouncilResult,
   type AndreaPlatformSkillCandidateSummary,
   type AndreaPlatformTurnReflectionResult,
   type PlatformTaskFamily,
@@ -133,6 +136,7 @@ export interface TurnAgentHarnessContext {
   selectedSkill: SkillAffordanceCard;
   contextCompile: ContextCompileResult;
   deliberation?: AndreaPlatformDeliberationResult | null;
+  providerCouncil?: AndreaPlatformProviderCouncilResult | null;
   platformHoldReply?: string | null;
   actorId?: string | null;
 }
@@ -548,6 +552,80 @@ function buildPlatformHoldReply(
   return null;
 }
 
+function shouldRunProviderCouncil(input: {
+  text: string;
+  taskFamily: PlatformTaskFamily;
+  selectedSkill: SkillAffordanceCard;
+  deliberation?: AndreaPlatformDeliberationResult | null;
+}): boolean {
+  const text = normalize(input.text);
+  if (input.taskFamily === 'operator' || input.taskFamily === 'code') {
+    return true;
+  }
+  if (input.taskFamily === 'research') {
+    return /\b(deep|compare|latest|research|evaluate|recommend|market|architecture|strategy)\b/.test(
+      text,
+    );
+  }
+  if (
+    /\b(complex|hard|deep|architecture|self[- ]?improve|diagnose|repair|debug|review|critic|second opinion|unimaginable|autonomous|agentic)\b/.test(
+      text,
+    )
+  ) {
+    return true;
+  }
+  if (
+    input.selectedSkill.sideEffectRisk === 'high' &&
+    /\b(send|deploy|repair|fix|commit|push|restart)\b/.test(text)
+  ) {
+    return true;
+  }
+  return (
+    input.deliberation?.executionPosture === 'learn_first' ||
+    input.deliberation?.executionPosture === 'approval_first'
+  );
+}
+
+function selectProviderCouncilMode(input: {
+  text: string;
+  taskFamily: PlatformTaskFamily;
+  selectedSkill: SkillAffordanceCard;
+}): AndreaPlatformCouncilMode {
+  const text = normalize(input.text);
+  if (
+    input.taskFamily === 'operator' &&
+    /\b(repair|diagnose|fix|deploy|restart|commit|push)\b/.test(text)
+  ) {
+    return 'repair_council';
+  }
+  if (
+    input.taskFamily === 'operator' ||
+    input.taskFamily === 'code' ||
+    input.taskFamily === 'research' ||
+    /\b(max[- ]?iq|deep|architecture|autonomous|agentic|unimaginable)\b/.test(text)
+  ) {
+    return 'max_iq_council';
+  }
+  if (input.selectedSkill.sideEffectRisk === 'high') return 'dual_review';
+  return 'dual_review';
+}
+
+function riskLevelForCouncil(skill: SkillAffordanceCard): 'low' | 'medium' | 'high' {
+  return skill.sideEffectRisk === 'high'
+    ? 'high'
+    : skill.sideEffectRisk === 'medium'
+      ? 'medium'
+      : 'low';
+}
+
+function sideEffectsForCouncil(
+  skill: SkillAffordanceCard,
+): 'none' | 'read_only' | 'approval_required' {
+  if (skill.approvalNeed === 'explicit') return 'approval_required';
+  if (skill.sideEffectRisk === 'none') return 'none';
+  return 'read_only';
+}
+
 export async function beginTurnAgentHarness(
   input: BeginTurnAgentHarnessInput,
 ): Promise<TurnAgentHarnessContext | null> {
@@ -590,6 +668,37 @@ export async function beginTurnAgentHarness(
       text_shape: sanitizeMetadataValue(describeTextShape(input.text)),
     },
   });
+  const providerCouncil = shouldRunProviderCouncil({
+    text: input.text,
+    taskFamily,
+    selectedSkill: contextCompile.selectedSkill,
+    deliberation,
+  })
+    ? await emitAndreaPlatformProviderCouncil({
+        goal: buildSanitizedGoal(input, taskFamily),
+        taskFamily,
+        channel: input.channel,
+        groupFolder: input.groupFolder,
+        correlationId: input.turnId,
+        requestedMode: selectProviderCouncilMode({
+          text: input.text,
+          taskFamily,
+          selectedSkill: contextCompile.selectedSkill,
+        }),
+        riskLevel: riskLevelForCouncil(contextCompile.selectedSkill),
+        requiredEvidence: contextCompile.selectedSkill.evidenceLevel,
+        allowedSideEffects: sideEffectsForCouncil(contextCompile.selectedSkill),
+        rawContentPolicy: 'metadata_only',
+        metadata: {
+          request_route: input.requestRoute || '',
+          capability_id: input.capabilityId || '',
+          turn_agent_harness: 'v11_provider_council',
+          skill_id: contextCompile.selectedSkill.skillId,
+          selected_policy_id: deliberation?.selectedPolicyId || '',
+          raw_content_policy: 'metadata_only',
+        },
+      })
+    : null;
   return {
     turnId: input.turnId,
     channel: input.channel,
@@ -600,6 +709,7 @@ export async function beginTurnAgentHarness(
     selectedSkill: contextCompile.selectedSkill,
     contextCompile,
     deliberation,
+    providerCouncil,
     platformHoldReply: buildPlatformHoldReply(deliberation, contextCompile),
     actorId: input.actorId,
   };
@@ -937,6 +1047,12 @@ export async function reflectTurnAgentOutcome(input: {
       selected_route: context.deliberation.selectedRoute || '',
       answer_strategy: context.deliberation.answerStrategy || '',
       execution_posture: context.deliberation.executionPosture || '',
+      provider_council_id: context.providerCouncil?.councilRunId || '',
+      provider_council_mode: context.providerCouncil?.mode || '',
+      provider_council_verdict: context.providerCouncil?.finalRoute || '',
+      provider_council_approval_required: String(
+        context.providerCouncil?.approvalRequired === true,
+      ),
       route_used: input.routeUsed,
       answer_class: input.answerClass || 'unknown',
       self_check_status: input.evaluation.status,

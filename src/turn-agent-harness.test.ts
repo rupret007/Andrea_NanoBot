@@ -188,6 +188,98 @@ describe('turn agent harness', () => {
     expect(context?.platformHoldReply).toContain('Which thread should I use?');
   });
 
+  it('runs provider council for complex research and operator turns', async () => {
+    vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_ENABLED', 'true');
+    vi.stubEnv('ANDREA_PLATFORM_FALLBACK_TO_DIRECT_RUNTIME', 'false');
+    vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_URL', 'http://127.0.0.1:4400');
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        calls.push({
+          url: String(input),
+          body: JSON.parse(String(init?.body || '{}')) as Record<
+            string,
+            unknown
+          >,
+        });
+        if (String(input).endsWith('/skill-evolution-report')) {
+          return new Response(JSON.stringify({ active_skills: [] }), {
+            status: 200,
+          });
+        }
+        if (String(input).endsWith('/council-run')) {
+          return new Response(
+            JSON.stringify({
+              council: {
+                council_run_id: 'council-1',
+                request_id: 'request-1',
+                mode: 'max_iq_council',
+                status: 'completed',
+                trace_id: 'turn-research',
+                members: [
+                  { member_id: 'openai_cloud', status: 'completed' },
+                  { member_id: 'minimax_cloud', status: 'completed' },
+                  { member_id: 'andrea_platform', status: 'completed' },
+                ],
+              },
+              verdict: {
+                verdict_id: 'verdict-1',
+                final_route: 'max_iq_council',
+                answer_strategy: 'verified_synthesis',
+                confidence: 0.86,
+                approval_required: false,
+              },
+            }),
+            { status: 200 },
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            task: { task_ledger_id: 'task-research' },
+            progress: { progress_ledger_id: 'progress-research' },
+            plan: { plan_id: 'plan-research', route: 'direct_integration' },
+            decision: {
+              decision_id: 'decision-research',
+              selected_route: 'direct_integration',
+              execution_posture: 'execute_now',
+              answer_strategy: 'narrow_claim',
+              selected_policy_id: 'direct_integration',
+              expected_evidence: 'strong',
+            },
+          }),
+          { status: 200 },
+        );
+      }) as unknown as typeof fetch,
+    );
+
+    const { beginTurnAgentHarness } = await import('./turn-agent-harness.js');
+    const context = await beginTurnAgentHarness({
+      turnId: 'turn-research',
+      channel: 'telegram',
+      groupFolder: 'main',
+      text: 'do deep research and compare the latest model council options',
+      requestRoute: 'direct_assistant',
+    });
+
+    expect(context?.providerCouncil).toMatchObject({
+      councilRunId: 'council-1',
+      mode: 'max_iq_council',
+      finalRoute: 'max_iq_council',
+    });
+    const councilCall = calls.find((call) => call.url.endsWith('/council-run'));
+    expect(councilCall?.body).toMatchObject({
+      goal: 'Handle research turn from telegram via direct_assistant.',
+      taskFamily: 'research',
+      requestedMode: 'max_iq_council',
+      requiredEvidence: 'strong',
+      metadata: {
+        turn_agent_harness: 'v11_provider_council',
+        raw_content_policy: 'metadata_only',
+      },
+    });
+  });
+
   it('repairs risky wording before the reply is sent', async () => {
     const { evaluateTurnReply } = await import('./turn-agent-harness.js');
 
