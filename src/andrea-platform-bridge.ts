@@ -721,10 +721,12 @@ export async function emitAndreaPlatformProviderCouncil(input: {
   const verdict = pickRecord(body.verdict) || pickRecord(council?.verdict);
   const members = Array.isArray(council?.members) ? council.members : [];
   const skippedMemberCount = members.filter(
-    (member) => pickString((member as Record<string, unknown>)?.status) === 'skipped',
+    (member) =>
+      pickString((member as Record<string, unknown>)?.status) === 'skipped',
   ).length;
   const blockedMemberCount = members.filter(
-    (member) => pickString((member as Record<string, unknown>)?.status) === 'blocked',
+    (member) =>
+      pickString((member as Record<string, unknown>)?.status) === 'blocked',
   ).length;
   return {
     councilRunId: pickString(council?.council_run_id),

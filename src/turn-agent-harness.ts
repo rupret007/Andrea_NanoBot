@@ -602,7 +602,9 @@ function selectProviderCouncilMode(input: {
     input.taskFamily === 'operator' ||
     input.taskFamily === 'code' ||
     input.taskFamily === 'research' ||
-    /\b(max[- ]?iq|deep|architecture|autonomous|agentic|unimaginable)\b/.test(text)
+    /\b(max[- ]?iq|deep|architecture|autonomous|agentic|unimaginable)\b/.test(
+      text,
+    )
   ) {
     return 'max_iq_council';
   }
@@ -610,7 +612,9 @@ function selectProviderCouncilMode(input: {
   return 'dual_review';
 }
 
-function riskLevelForCouncil(skill: SkillAffordanceCard): 'low' | 'medium' | 'high' {
+function riskLevelForCouncil(
+  skill: SkillAffordanceCard,
+): 'low' | 'medium' | 'high' {
   return skill.sideEffectRisk === 'high'
     ? 'high'
     : skill.sideEffectRisk === 'medium'
