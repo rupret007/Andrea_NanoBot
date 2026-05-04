@@ -408,6 +408,13 @@ import {
   planSelfImprovementStatusMonitor,
 } from './self-improvement-status.js';
 import {
+  buildIntegrationDoctorReport,
+  buildIntegrationFixGuidance,
+  formatIntegrationDoctorReport,
+  isIntegrationDoctorRequest,
+  parseIntegrationFixTarget,
+} from './integration-doctor.js';
+import {
   AgentRuntimeName,
   AgentThreadState,
   Channel,
@@ -7322,11 +7329,37 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     return true;
   };
 
+  const tryHandleIntegrationDoctor = async (): Promise<boolean> => {
+    const fixTarget = parseIntegrationFixTarget(lastContent);
+    const isStatusRequest = isIntegrationDoctorRequest(lastContent);
+    if (!fixTarget && !isStatusRequest) {
+      return false;
+    }
+
+    const text = fixTarget
+      ? buildIntegrationFixGuidance(fixTarget)
+      : formatIntegrationDoctorReport(buildIntegrationDoctorReport(), 'doctor');
+    await sendAssistantReplyWithFeedback({
+      text,
+      routeKey: fixTarget ? 'integrations.fix_guidance' : 'integrations.doctor',
+      capabilityId: 'integrations.status',
+      handlerKind: 'local_integration_doctor',
+      responseSource: 'local_companion',
+      traceReason:
+        'answered integration health from canonical integration doctor truth',
+    });
+    clearSharedAssistantCapabilitySeed(chatJid);
+    return true;
+  };
+
   if (
     requestPolicy.route === 'direct_assistant' ||
     requestPolicy.route === 'protected_assistant'
   ) {
     if (await tryHandleSelfImprovementStatus()) {
+      return true;
+    }
+    if (await tryHandleIntegrationDoctor()) {
       return true;
     }
   }
