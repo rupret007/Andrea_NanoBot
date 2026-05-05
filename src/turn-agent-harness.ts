@@ -6,7 +6,6 @@ import {
 } from './assistant-memory-intelligence.js';
 import {
   emitAndreaPlatformDeliberation,
-  emitAndreaPlatformProviderCouncil,
   emitAndreaPlatformSkillCandidate,
   emitAndreaPlatformTurnReflection,
   listAndreaPlatformActiveSkillCandidates,
@@ -17,6 +16,7 @@ import {
   type AndreaPlatformTurnReflectionResult,
   type PlatformTaskFamily,
 } from './andrea-platform-bridge.js';
+import { runObservableProviderCouncil } from './provider-council-runner.js';
 
 export type TurnAgentChannel = 'telegram' | 'bluebubbles' | 'alexa' | 'system';
 
@@ -690,7 +690,7 @@ export async function beginTurnAgentHarness(
     selectedSkill: contextCompile.selectedSkill,
     deliberation,
   })
-    ? await emitAndreaPlatformProviderCouncil({
+    ? await runObservableProviderCouncil({
         goal: buildSanitizedGoal(input, taskFamily),
         taskFamily,
         channel: input.channel,
@@ -708,7 +708,7 @@ export async function beginTurnAgentHarness(
         metadata: {
           request_route: input.requestRoute || '',
           capability_id: input.capabilityId || '',
-          turn_agent_harness: 'v11_provider_council',
+          turn_agent_harness: 'v14_observable_provider_council',
           skill_id: contextCompile.selectedSkill.skillId,
           selected_policy_id: deliberation?.selectedPolicyId || '',
           raw_content_policy: 'metadata_only',

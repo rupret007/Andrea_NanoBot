@@ -274,7 +274,7 @@ describe('turn agent harness', () => {
       requestedMode: 'max_iq_council',
       requiredEvidence: 'strong',
       metadata: {
-        turn_agent_harness: 'v11_provider_council',
+        turn_agent_harness: 'v14_observable_provider_council',
         raw_content_policy: 'metadata_only',
       },
     });

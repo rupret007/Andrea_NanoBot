@@ -567,6 +567,76 @@ describe('andrea platform shell bridge', () => {
     });
   });
 
+  it('posts council observatory events, member results, and finalize calls', async () => {
+    vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_ENABLED', 'true');
+    vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_URL', 'http://127.0.0.1:4400/');
+    vi.stubEnv('ANDREA_PLATFORM_FALLBACK_TO_DIRECT_RUNTIME', 'false');
+
+    const calls: Array<{ url: string; body: unknown }> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        calls.push({ url: String(input), body: init?.body });
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }) as unknown as typeof fetch,
+    );
+
+    const bridge = await import('./andrea-platform-bridge.js');
+    await bridge.emitAndreaPlatformCouncilEvent({
+      councilRunId: 'council-1',
+      correlationId: 'turn-1',
+      eventType: 'prompt_sent',
+      actorId: 'openai_cloud',
+      actorRole: 'planner',
+      providerId: 'openai_cloud',
+      model: 'gpt-5.4',
+      status: 'running',
+      inputSummary: 'Planner prompt sent.',
+      visiblePrompt: 'Plan the task.',
+    });
+    await bridge.emitAndreaPlatformCouncilMemberResult({
+      councilRunId: 'council-1',
+      memberId: 'gemini_cloud',
+      role: 'verifier',
+      providerId: 'gemini_cloud',
+      model: 'gemini-2.5-pro',
+      status: 'completed',
+      summary: 'Gemini verified the council output.',
+      visibleResponse: 'Proceed with verified synthesis.',
+      confidence: 0.81,
+    });
+    await bridge.finalizeAndreaPlatformCouncil({
+      councilRunId: 'council-1',
+      finalRoute: 'max_iq_council',
+      platformArbitrationReason:
+        'Platform arbitration accepted the verified route.',
+    });
+
+    expect(calls.map((call) => call.url)).toEqual([
+      'http://127.0.0.1:4400/council/event',
+      'http://127.0.0.1:4400/council/member-result',
+      'http://127.0.0.1:4400/council/finalize',
+    ]);
+    expect(JSON.parse(String(calls[0]?.body ?? '{}'))).toMatchObject({
+      councilRunId: 'council-1',
+      eventType: 'prompt_sent',
+      actorId: 'openai_cloud',
+      metadata: {
+        council_observatory_version: 'v1',
+        raw_private_memory_allowed: 'false',
+      },
+    });
+    expect(JSON.parse(String(calls[1]?.body ?? '{}'))).toMatchObject({
+      memberId: 'gemini_cloud',
+      role: 'verifier',
+      model: 'gemini-2.5-pro',
+    });
+    expect(JSON.parse(String(calls[2]?.body ?? '{}'))).toMatchObject({
+      councilRunId: 'council-1',
+      finalRoute: 'max_iq_council',
+    });
+  });
+
   it('posts scoped repair approval and external execution evidence', async () => {
     vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_ENABLED', 'true');
     vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_URL', 'http://127.0.0.1:4400/');

@@ -574,6 +574,69 @@ export interface AndreaPlatformProviderCouncilResult {
   riskFlags?: string[];
 }
 
+export type AndreaPlatformCouncilEventType =
+  | 'assignment'
+  | 'start'
+  | 'prompt_sent'
+  | 'response_received'
+  | 'critique'
+  | 'handoff'
+  | 'tool_call'
+  | 'tool_result'
+  | 'verifier_verdict'
+  | 'platform_arbitration'
+  | 'blocked'
+  | 'error'
+  | 'completion';
+
+export interface AndreaPlatformCouncilEventInput {
+  councilRunId: string;
+  correlationId?: string | null;
+  eventType: AndreaPlatformCouncilEventType;
+  actorId: string;
+  actorRole:
+    | 'planner'
+    | 'critic'
+    | 'evidence_scout'
+    | 'repair_worker'
+    | 'synthesizer'
+    | 'verifier'
+    | 'platform_arbiter'
+    | 'conductor';
+  providerId?: string | null;
+  model?: string | null;
+  status?: 'planned' | 'running' | 'completed' | 'blocked' | 'error';
+  inputSummary?: string;
+  outputSummary?: string;
+  visiblePrompt?: string | null;
+  visibleResponse?: string | null;
+  evidenceIds?: string[];
+  handoffTarget?: string | null;
+  latencyMs?: number | null;
+  estimatedTokenCount?: number | null;
+  estimatedCostTier?: 'low' | 'medium' | 'high' | 'unknown';
+  riskFlags?: string[];
+  metadata?: Record<string, string>;
+}
+
+export interface AndreaPlatformCouncilMemberResultInput extends Omit<
+  AndreaPlatformCouncilEventInput,
+  'eventType' | 'actorId' | 'actorRole'
+> {
+  memberId: string;
+  role:
+    | 'planner'
+    | 'critic'
+    | 'evidence_scout'
+    | 'repair_worker'
+    | 'synthesizer'
+    | 'verifier';
+  summary: string;
+  critique?: string | null;
+  recommendedRoute?: string | null;
+  confidence?: number;
+}
+
 export interface AndreaPlatformIntelligenceScenarioResult {
   scenarioId: string;
   scenarioTitle: string;
@@ -774,6 +837,123 @@ export async function emitAndreaPlatformProviderCouncil(input: {
     blockedMemberCount,
     riskFlags: pickStringArray(verdict?.risk_flags),
   };
+}
+
+export async function emitAndreaPlatformCouncilEvent(
+  input: AndreaPlatformCouncilEventInput,
+): Promise<Record<string, unknown> | null> {
+  const response = await postCoordinatorJson('/council/event', {
+    councilRunId: input.councilRunId,
+    ...(input.correlationId ? { correlationId: input.correlationId } : {}),
+    eventType: input.eventType,
+    actorId: input.actorId,
+    actorRole: input.actorRole,
+    ...(input.providerId ? { providerId: input.providerId } : {}),
+    ...(input.model ? { model: input.model } : {}),
+    status: input.status || 'planned',
+    inputSummary: input.inputSummary || '',
+    outputSummary: input.outputSummary || '',
+    ...(input.visiblePrompt ? { visiblePrompt: input.visiblePrompt } : {}),
+    ...(input.visibleResponse
+      ? { visibleResponse: input.visibleResponse }
+      : {}),
+    ...(input.evidenceIds?.length ? { evidenceIds: input.evidenceIds } : {}),
+    ...(input.handoffTarget ? { handoffTarget: input.handoffTarget } : {}),
+    ...(typeof input.latencyMs === 'number'
+      ? { latencyMs: Math.max(0, Math.round(input.latencyMs)) }
+      : {}),
+    ...(typeof input.estimatedTokenCount === 'number'
+      ? {
+          estimatedTokenCount: Math.max(
+            0,
+            Math.round(input.estimatedTokenCount),
+          ),
+        }
+      : {}),
+    estimatedCostTier: input.estimatedCostTier || 'unknown',
+    riskFlags: input.riskFlags || [],
+    metadata: {
+      sourceSystem: 'andrea_nanobot',
+      council_observatory_version: 'v1',
+      raw_private_memory_allowed: 'false',
+      secret_material_allowed: 'false',
+      ...(input.metadata || {}),
+    },
+  });
+  return pickRecord(response) || null;
+}
+
+export async function emitAndreaPlatformCouncilMemberResult(
+  input: AndreaPlatformCouncilMemberResultInput,
+): Promise<Record<string, unknown> | null> {
+  const response = await postCoordinatorJson('/council/member-result', {
+    councilRunId: input.councilRunId,
+    ...(input.correlationId ? { correlationId: input.correlationId } : {}),
+    memberId: input.memberId,
+    role: input.role,
+    status: input.status || 'completed',
+    summary: input.summary,
+    ...(input.critique ? { critique: input.critique } : {}),
+    ...(input.recommendedRoute
+      ? { recommendedRoute: input.recommendedRoute }
+      : {}),
+    ...(input.providerId ? { providerId: input.providerId } : {}),
+    ...(input.model ? { model: input.model } : {}),
+    ...(typeof input.confidence === 'number'
+      ? { confidence: input.confidence }
+      : {}),
+    inputSummary: input.inputSummary || '',
+    outputSummary: input.outputSummary || input.summary,
+    ...(input.visiblePrompt ? { visiblePrompt: input.visiblePrompt } : {}),
+    ...(input.visibleResponse
+      ? { visibleResponse: input.visibleResponse }
+      : {}),
+    ...(input.evidenceIds?.length ? { evidenceIds: input.evidenceIds } : {}),
+    ...(typeof input.latencyMs === 'number'
+      ? { latencyMs: Math.max(0, Math.round(input.latencyMs)) }
+      : {}),
+    ...(typeof input.estimatedTokenCount === 'number'
+      ? {
+          estimatedTokenCount: Math.max(
+            0,
+            Math.round(input.estimatedTokenCount),
+          ),
+        }
+      : {}),
+    estimatedCostTier: input.estimatedCostTier || 'unknown',
+    riskFlags: input.riskFlags || [],
+    metadata: {
+      sourceSystem: 'andrea_nanobot',
+      council_observatory_version: 'v1',
+      raw_private_memory_allowed: 'false',
+      secret_material_allowed: 'false',
+      ...(input.metadata || {}),
+    },
+  });
+  return pickRecord(response) || null;
+}
+
+export async function finalizeAndreaPlatformCouncil(input: {
+  councilRunId: string;
+  correlationId?: string | null;
+  finalRoute?: string | null;
+  platformArbitrationReason: string;
+  metadata?: Record<string, string>;
+}): Promise<Record<string, unknown> | null> {
+  const response = await postCoordinatorJson('/council/finalize', {
+    councilRunId: input.councilRunId,
+    ...(input.correlationId ? { correlationId: input.correlationId } : {}),
+    ...(input.finalRoute ? { finalRoute: input.finalRoute } : {}),
+    platformArbitrationReason: input.platformArbitrationReason,
+    metadata: {
+      sourceSystem: 'andrea_nanobot',
+      council_observatory_version: 'v1',
+      raw_private_memory_allowed: 'false',
+      secret_material_allowed: 'false',
+      ...(input.metadata || {}),
+    },
+  });
+  return pickRecord(response) || null;
 }
 
 export async function emitAndreaPlatformIntelligenceRegression(input: {

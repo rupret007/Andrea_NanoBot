@@ -30,6 +30,26 @@ export interface OpenAiProviderStatus {
   imageModel: string;
 }
 
+export interface OpenAiTextRequest {
+  system?: string;
+  prompt: string;
+  modelTier?: 'simple' | 'standard' | 'complex';
+  maxTokens?: number;
+  temperature?: number;
+}
+
+export interface OpenAiTextResult {
+  text: string;
+  model: string;
+  requestId?: string;
+}
+
+export interface OpenAiProviderFailure {
+  providerFailure: string;
+  status?: number;
+  requestId?: string;
+}
+
 function readOpenAiEnv(): Record<string, string> {
   return readEnvFile([
     'OPENAI_API_KEY',
@@ -166,4 +186,80 @@ export function describeOpenAiProviderFailure(
   return surface === 'image'
     ? 'The image provider rejected the live generation request.'
     : 'The live OpenAI research request failed at the provider.';
+}
+
+function normalizeTemperature(value: number | undefined): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 0.25;
+  return Math.min(1, Math.max(0.01, value));
+}
+
+function extractOpenAiText(payload: unknown): string {
+  if (!payload || typeof payload !== 'object') return '';
+  const record = payload as Record<string, unknown>;
+  const choices = record.choices;
+  if (!Array.isArray(choices)) return '';
+  return choices
+    .map((choice) => {
+      if (!choice || typeof choice !== 'object') return '';
+      const message = (choice as Record<string, unknown>).message;
+      if (!message || typeof message !== 'object') return '';
+      const content = (message as Record<string, unknown>).content;
+      return typeof content === 'string' ? content : '';
+    })
+    .filter(Boolean)
+    .join('\n')
+    .trim();
+}
+
+export async function runOpenAiChatText(
+  request: OpenAiTextRequest,
+): Promise<OpenAiTextResult | OpenAiProviderFailure | null> {
+  const config = resolveOpenAiProviderConfig();
+  if (!config) return null;
+  const model =
+    request.modelTier === 'complex'
+      ? config.complexModel
+      : request.modelTier === 'simple'
+        ? config.simpleModel
+        : config.standardModel;
+  const response = await fetch(`${config.baseUrl}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${config.apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: Math.max(64, request.maxTokens || 900),
+      temperature: normalizeTemperature(request.temperature),
+      messages: [
+        ...(request.system
+          ? [{ role: 'system', content: request.system }]
+          : []),
+        { role: 'user', content: request.prompt },
+      ],
+    }),
+  });
+  const requestId = response.headers.get('x-request-id') || undefined;
+  if (!response.ok) {
+    const body = await response.text();
+    return {
+      providerFailure: describeOpenAiProviderFailure(
+        response.status,
+        body,
+        'research',
+      ),
+      status: response.status,
+      requestId,
+    };
+  }
+  const payload = (await response.json()) as unknown;
+  const text = extractOpenAiText(payload);
+  if (!text) {
+    return {
+      providerFailure: 'OpenAI returned an empty text payload.',
+      requestId,
+    };
+  }
+  return { text, model, requestId };
 }
