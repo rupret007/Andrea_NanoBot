@@ -158,4 +158,79 @@ describe('provider council runner', () => {
       ]),
     );
   });
+
+  it('falls back to the fast Gemini verifier when Pro produces no artifact', async () => {
+    const members: Array<Record<string, unknown>> = [];
+    const runGemini = vi
+      .fn()
+      .mockResolvedValueOnce({
+        providerFailure: 'Gemini returned an empty text payload.',
+      })
+      .mockResolvedValueOnce({
+        text: 'Fast verifier verdict: warn, proceed only with evidence gates.',
+        model: 'gemini-2.5-flash',
+        requestId: 'gemini-fast-1',
+      });
+
+    const result = await runObservableProviderCouncil(
+      {
+        goal: 'Review a high-impact repair policy.',
+        taskFamily: 'operator',
+        channel: 'system',
+        correlationId: 'turn-council-gemini-fallback',
+        requestedMode: 'max_iq_council',
+        requiredEvidence: 'strong',
+      },
+      {
+        emitProviderCouncil: vi.fn(async () => ({
+          councilRunId: 'council-gemini-fallback',
+          mode: 'max_iq_council' as const,
+          traceId: 'turn-council-gemini-fallback',
+        })),
+        emitCouncilEvent: vi.fn(async () => ({})),
+        emitMemberResult: vi.fn(async (member) => {
+          members.push(member as unknown as Record<string, unknown>);
+          return {};
+        }),
+        finalizeCouncil: vi.fn(async () => ({})),
+        searchBrave: vi.fn(async () => ({
+          query: 'q',
+          results: [
+            {
+              title: 'Evidence',
+              url: 'https://example.com/evidence',
+              description: 'Verification needs evidence.',
+            },
+          ],
+        })),
+        runOpenAi: vi.fn(async () => ({
+          text: 'Planner artifact.',
+          model: 'gpt-5.4',
+        })),
+        runMiniMax: vi.fn(async () => ({
+          text: 'Critic artifact.',
+          model: 'MiniMax-M2.7',
+        })),
+        runGemini,
+      },
+    );
+
+    expect(runGemini).toHaveBeenCalledTimes(2);
+    expect(runGemini.mock.calls[0]?.[0]).toMatchObject({
+      modelTier: 'critic',
+    });
+    expect(runGemini.mock.calls[1]?.[0]).toMatchObject({
+      modelTier: 'fast',
+    });
+    expect(
+      members.find((member) => member.memberId === 'gemini_cloud'),
+    ).toMatchObject({
+      status: 'completed',
+      model: 'gemini-2.5-flash',
+      riskFlags: ['gemini_fast_fallback_used'],
+    });
+    expect(result?.providerFailures || []).not.toContain(
+      'gemini_verifier_unavailable',
+    );
+  });
 });

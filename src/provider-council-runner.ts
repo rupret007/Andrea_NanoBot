@@ -3,6 +3,8 @@ import {
   emitAndreaPlatformCouncilMemberResult,
   emitAndreaPlatformProviderCouncil,
   finalizeAndreaPlatformCouncil,
+  type AndreaPlatformCouncilEventInput,
+  type AndreaPlatformCouncilMemberResultInput,
   type AndreaPlatformCouncilMode,
   type AndreaPlatformProviderCouncilResult,
   type PlatformTaskFamily,
@@ -169,11 +171,65 @@ export async function runObservableProviderCouncil(
   const mode = council.mode || input.requestedMode || 'single_model';
   const correlationId = input.correlationId || council.traceId || councilRunId;
   const goal = sanitizeObservableText(input.goal, 900);
+  const observedMemberIds: string[] = [];
+  const observedRoles: string[] = [];
+  const emittedEventIds: string[] = [];
+  const providerFailures: string[] = [];
+  const observedEvidenceIds: string[] = [];
   let evidenceSummary =
     'No live evidence gathered; rely on local metadata and provider health truth.';
   let evidenceIds: string[] = [];
 
-  await emitCouncilEvent({
+  async function recordEvent(
+    event: AndreaPlatformCouncilEventInput,
+  ): Promise<void> {
+    const response = await emitCouncilEvent(event);
+    const eventRecord =
+      response && typeof response === 'object'
+        ? ((response as Record<string, unknown>).event as
+            | Record<string, unknown>
+            | undefined) || (response as Record<string, unknown>)
+        : undefined;
+    const eventId =
+      typeof eventRecord?.event_id === 'string'
+        ? eventRecord.event_id
+        : typeof eventRecord?.eventId === 'string'
+          ? eventRecord.eventId
+          : undefined;
+    if (eventId) emittedEventIds.push(eventId);
+    if (event.evidenceIds?.length)
+      observedEvidenceIds.push(...event.evidenceIds);
+  }
+
+  async function recordMember(
+    member: AndreaPlatformCouncilMemberResultInput,
+  ): Promise<void> {
+    observedMemberIds.push(member.memberId);
+    observedRoles.push(member.role);
+    if (member.evidenceIds?.length)
+      observedEvidenceIds.push(...member.evidenceIds);
+    if (member.status === 'blocked') {
+      providerFailures.push(
+        member.riskFlags?.[0] || `${member.memberId}_unavailable`,
+      );
+    }
+    const response = await emitMemberResult(member);
+    const eventRecord =
+      response && typeof response === 'object'
+        ? ((response as Record<string, unknown>).event as
+            | Record<string, unknown>
+            | undefined)
+        : undefined;
+    const eventId =
+      typeof eventRecord?.event_id === 'string'
+        ? eventRecord.event_id
+        : typeof eventRecord?.eventId === 'string'
+          ? eventRecord.eventId
+          : undefined;
+    if (eventId) emittedEventIds.push(eventId);
+  }
+
+  await recordEvent({
     councilRunId,
     correlationId,
     eventType: 'start',
@@ -205,7 +261,7 @@ export async function runObservableProviderCouncil(
       evidenceIds = brave.results
         .slice(0, 3)
         .map((item, index) => `brave:${index + 1}:${item.url.slice(0, 80)}`);
-      await emitMemberResult({
+      await recordMember({
         councilRunId,
         correlationId,
         memberId: 'brave_search',
@@ -227,7 +283,7 @@ export async function runObservableProviderCouncil(
       });
     } else {
       const failure = normalizeProviderArtifact(brave);
-      await emitMemberResult({
+      await recordMember({
         councilRunId,
         correlationId,
         memberId: 'brave_search',
@@ -274,7 +330,7 @@ export async function runObservableProviderCouncil(
     planner.text ||
     planner.providerFailure ||
     'OpenAI planner produced no artifact.';
-  await emitMemberResult({
+  await recordMember({
     councilRunId,
     correlationId,
     memberId: 'openai_cloud',
@@ -325,7 +381,7 @@ export async function runObservableProviderCouncil(
       critic.text ||
       critic.providerFailure ||
       'MiniMax critic produced no artifact.';
-    await emitMemberResult({
+    await recordMember({
       councilRunId,
       correlationId,
       memberId: 'minimax_cloud',
@@ -354,24 +410,55 @@ export async function runObservableProviderCouncil(
       plannerText,
       criticText,
     });
-    const verifierCall = await callTimed(
+    let verifierPromptForCall = verifierPrompt;
+    let verifierCall = await callTimed(
       () =>
         runGemini({
           system:
             'You are Andrea council independent verifier. Produce a pass/warn/block verdict with evidence and safety notes.',
-          prompt: verifierPrompt,
+          prompt: verifierPromptForCall,
           modelTier: mode === 'max_iq_council' ? 'critic' : 'fast',
           maxTokens: 700,
           temperature: 0.2,
         }),
       now,
     );
-    const verifier = normalizeProviderArtifact(verifierCall.result);
+    let verifier = normalizeProviderArtifact(verifierCall.result);
+    let verifierFallbackReason = '';
+    if (!verifier.text && mode === 'max_iq_council') {
+      verifierFallbackReason =
+        verifier.providerFailure || 'Gemini Pro verifier produced no artifact.';
+      verifierPromptForCall = [
+        verifierPrompt,
+        `Primary Gemini Pro verifier fallback reason: ${verifierFallbackReason}`,
+        'Use the fast verifier model to produce a concise pass/warn/block verdict now.',
+      ].join('\n');
+      const fallbackCall = await callTimed(
+        () =>
+          runGemini({
+            system:
+              'You are Andrea council independent verifier. Produce a concise pass/warn/block verdict with evidence and safety notes.',
+            prompt: verifierPromptForCall,
+            modelTier: 'fast',
+            maxTokens: 700,
+            temperature: 0.15,
+          }),
+        now,
+      );
+      const fallback = normalizeProviderArtifact(fallbackCall.result);
+      if (fallback.text) {
+        verifier = fallback;
+        verifierCall = {
+          result: fallbackCall.result,
+          latencyMs: verifierCall.latencyMs + fallbackCall.latencyMs,
+        };
+      }
+    }
     const verifierText =
       verifier.text ||
       verifier.providerFailure ||
       'Gemini verifier produced no artifact.';
-    await emitMemberResult({
+    await recordMember({
       councilRunId,
       correlationId,
       memberId: 'gemini_cloud',
@@ -380,18 +467,27 @@ export async function runObservableProviderCouncil(
       status: verifier.text ? 'completed' : 'blocked',
       model: verifier.model || 'gemini-2.5-pro',
       summary: verifier.text
-        ? 'Gemini verifier checked the council result.'
+        ? verifierFallbackReason
+          ? 'Gemini fast verifier checked the council result after Pro fallback.'
+          : 'Gemini verifier checked the council result.'
         : verifierText,
       critique: verifierText,
       confidence: verifier.text ? 0.8 : 0,
-      visiblePrompt: verifierPrompt,
+      visiblePrompt: verifierPromptForCall,
       visibleResponse: verifierText,
       evidenceIds,
       latencyMs: verifierCall.latencyMs,
       estimatedTokenCount: estimateTokens(verifierPrompt, verifierText),
       estimatedCostTier: mode === 'max_iq_council' ? 'high' : 'medium',
-      riskFlags: verifier.text ? [] : ['gemini_verifier_unavailable'],
-      metadata: { request_id: verifier.requestId || '' },
+      riskFlags: verifier.text
+        ? verifierFallbackReason
+          ? ['gemini_fast_fallback_used']
+          : []
+        : ['gemini_verifier_unavailable'],
+      metadata: {
+        request_id: verifier.requestId || '',
+        fallback_reason: verifier.text ? verifierFallbackReason : '',
+      },
     });
   }
 
@@ -408,5 +504,18 @@ export async function runObservableProviderCouncil(
     },
   });
 
-  return council;
+  return {
+    ...council,
+    observedMemberIds: Array.from(new Set(observedMemberIds)),
+    observedRoles: Array.from(new Set(observedRoles)),
+    eventIds: Array.from(new Set(emittedEventIds)),
+    evidenceIds: Array.from(new Set([...evidenceIds, ...observedEvidenceIds])),
+    providerFailures: Array.from(new Set(providerFailures)),
+    estimatedCostTier:
+      mode === 'max_iq_council' || mode === 'repair_council'
+        ? 'high'
+        : mode === 'dual_review'
+          ? 'medium'
+          : 'low',
+  };
 }

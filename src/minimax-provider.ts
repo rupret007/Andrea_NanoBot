@@ -74,6 +74,15 @@ function normalizeTemperature(value: number | undefined): number {
   return Math.min(1, Math.max(0.01, value));
 }
 
+function resolveCompletionBudget(request: MiniMaxTextRequest): number {
+  // MiniMax M2.7 responses can include non-visible thinking blocks before the
+  // text block. Keep transcripts clean by ignoring thinking, but reserve enough
+  // total output budget for a visible critique/verdict to appear.
+  const requested = Math.max(64, request.maxTokens || 900);
+  const floor = request.modelTier === 'complex' ? 2048 : 1536;
+  return Math.max(requested, floor);
+}
+
 function resolveMiniMaxQuotaState(): MiniMaxProviderStatus['quotaState'] {
   const value = readConfigValue('MINIMAX_QUOTA_STATE').trim().toLowerCase();
   if (!value) return 'unknown';
@@ -212,7 +221,7 @@ export async function runMiniMaxAnthropicText(
     },
     body: JSON.stringify({
       model,
-      max_tokens: Math.max(64, request.maxTokens || 900),
+      max_tokens: resolveCompletionBudget(request),
       temperature: normalizeTemperature(request.temperature),
       ...(request.system ? { system: request.system } : {}),
       messages: [

@@ -230,7 +230,7 @@ export async function runOpenAiChatText(
     },
     body: JSON.stringify({
       model,
-      max_tokens: Math.max(64, request.maxTokens || 900),
+      max_completion_tokens: Math.max(64, request.maxTokens || 900),
       temperature: normalizeTemperature(request.temperature),
       messages: [
         ...(request.system

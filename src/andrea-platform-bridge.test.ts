@@ -637,6 +637,76 @@ describe('andrea platform shell bridge', () => {
     });
   });
 
+  it('posts council challenge ladder reports without raw private content', async () => {
+    vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_ENABLED', 'true');
+    vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_URL', 'http://127.0.0.1:4400/');
+    vi.stubEnv('ANDREA_PLATFORM_FALLBACK_TO_DIRECT_RUNTIME', 'false');
+
+    const calls: Array<{ url: string; body: unknown }> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        calls.push({ url: String(input), body: init?.body });
+        return new Response(
+          JSON.stringify({
+            run: {
+              run_id: 'challenge-1',
+              status: 'fail',
+              total_score: 0.6,
+              critical_failure_count: 1,
+            },
+            issues: [{ issue_id: 'issue-1' }],
+          }),
+          { status: 200 },
+        );
+      }) as unknown as typeof fetch,
+    );
+
+    const bridge = await import('./andrea-platform-bridge.js');
+    const result = await bridge.emitAndreaPlatformCouncilChallenge({
+      runId: 'challenge-1',
+      tier: 'large',
+      status: 'fail',
+      totalScore: 0.6,
+      criticalFailureCount: 1,
+      scenarios: [
+        {
+          scenarioId: 'large.max_iq',
+          tier: 'large',
+          prompt: 'Run a sanitized Max-IQ challenge.',
+        },
+      ],
+      results: [
+        {
+          scenarioId: 'large.max_iq',
+          tier: 'large',
+          status: 'fail',
+          score: 0.6,
+          criticalFailures: ['required_role_missing'],
+        },
+      ],
+    });
+
+    expect(result).toMatchObject({
+      runId: 'challenge-1',
+      status: 'fail',
+      totalScore: 0.6,
+      criticalFailureCount: 1,
+      issueCount: 1,
+    });
+    expect(calls[0]?.url).toBe('http://127.0.0.1:4400/council-challenge');
+    expect(JSON.parse(String(calls[0]?.body ?? '{}'))).toMatchObject({
+      runId: 'challenge-1',
+      tier: 'large',
+      metadata: {
+        council_challenge_version: 'v2',
+        one_approval_required_for_mutation: 'true',
+        raw_private_memory_allowed: 'false',
+        secret_material_allowed: 'false',
+      },
+    });
+  });
+
   it('posts scoped repair approval and external execution evidence', async () => {
     vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_ENABLED', 'true');
     vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_URL', 'http://127.0.0.1:4400/');

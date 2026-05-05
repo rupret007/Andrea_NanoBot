@@ -572,6 +572,20 @@ export interface AndreaPlatformProviderCouncilResult {
   skippedMemberCount?: number;
   blockedMemberCount?: number;
   riskFlags?: string[];
+  observedMemberIds?: string[];
+  observedRoles?: string[];
+  eventIds?: string[];
+  evidenceIds?: string[];
+  providerFailures?: string[];
+  estimatedCostTier?: 'low' | 'medium' | 'high' | 'unknown';
+}
+
+export interface AndreaPlatformCouncilChallengeResult {
+  runId?: string;
+  status?: 'pass' | 'warn' | 'fail' | 'degraded';
+  totalScore?: number;
+  criticalFailureCount?: number;
+  issueCount?: number;
 }
 
 export type AndreaPlatformCouncilEventType =
@@ -954,6 +968,52 @@ export async function finalizeAndreaPlatformCouncil(input: {
     },
   });
   return pickRecord(response) || null;
+}
+
+export async function emitAndreaPlatformCouncilChallenge(input: {
+  runId: string;
+  tier: 'small' | 'medium' | 'large' | 'xl' | 'ladder';
+  mode?: 'mostly_live' | 'mocked' | 'baseline';
+  status: 'pass' | 'warn' | 'fail' | 'degraded';
+  totalScore: number;
+  criticalFailureCount: number;
+  providerHealth?: Record<string, string>;
+  scenarios: Array<Record<string, unknown>>;
+  results: Array<Record<string, unknown>>;
+  metadata?: Record<string, string>;
+}): Promise<AndreaPlatformCouncilChallengeResult | null> {
+  const response = await postCoordinatorJson('/council-challenge', {
+    runId: input.runId,
+    tier: input.tier,
+    mode: input.mode || 'mostly_live',
+    status: input.status,
+    totalScore: input.totalScore,
+    criticalFailureCount: input.criticalFailureCount,
+    providerHealth: input.providerHealth || {},
+    scenarios: input.scenarios,
+    results: input.results,
+    metadata: {
+      sourceSystem: 'andrea_nanobot',
+      council_challenge_version: 'v2',
+      one_approval_required_for_mutation: 'true',
+      raw_private_memory_allowed: 'false',
+      secret_material_allowed: 'false',
+      ...(input.metadata || {}),
+    },
+  });
+  if (!response || typeof response !== 'object') return null;
+  const body = response as Record<string, unknown>;
+  const run = pickRecord(body.run);
+  const issues = Array.isArray(body.issues) ? body.issues : [];
+  return {
+    runId: pickString(run?.run_id),
+    status: pickString(run?.status) as
+      | AndreaPlatformCouncilChallengeResult['status']
+      | undefined,
+    totalScore: pickNumber(run?.total_score),
+    criticalFailureCount: pickNumber(run?.critical_failure_count),
+    issueCount: issues.length,
+  };
 }
 
 export async function emitAndreaPlatformIntelligenceRegression(input: {

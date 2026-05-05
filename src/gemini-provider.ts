@@ -71,6 +71,15 @@ function normalizeTemperature(value: number | undefined): number {
   return Math.min(1, Math.max(0.01, value));
 }
 
+function resolveCompletionBudget(request: GeminiTextRequest): number {
+  // Gemini 2.5 Pro may spend part of this OpenAI-compatible budget on
+  // internal reasoning before emitting visible text, so verifier calls need
+  // a larger floor than the requested visible answer size.
+  const requested = Math.max(64, request.maxTokens || 900);
+  const floor = request.modelTier === 'critic' ? 2048 : 1024;
+  return Math.max(requested, floor);
+}
+
 export function getGeminiQuotaState(): GeminiProviderStatus['quotaState'] {
   const value = readConfigValue('GEMINI_QUOTA_STATE').trim().toLowerCase();
   if (!value) return 'unknown';
@@ -200,7 +209,7 @@ export async function runGeminiOpenAiText(
     },
     body: JSON.stringify({
       model,
-      max_tokens: Math.max(64, request.maxTokens || 900),
+      max_tokens: resolveCompletionBudget(request),
       temperature: normalizeTemperature(request.temperature),
       messages: [
         ...(request.system

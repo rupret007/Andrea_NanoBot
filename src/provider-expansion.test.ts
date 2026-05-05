@@ -9,6 +9,7 @@ import {
   getGeminiProviderStatus,
   runGeminiOpenAiText,
 } from './gemini-provider.js';
+import { runOpenAiChatText } from './openai-provider.js';
 import {
   buildProviderAlertEvents,
   collectProviderHealthSnapshots,
@@ -29,6 +30,9 @@ describe('provider expansion', () => {
     delete process.env.GEMINI_QUOTA_STATE;
     delete process.env.BRAVE_SEARCH_API_KEY;
     delete process.env.BRACE_SEARCH_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.OPENAI_BASE_URL;
+    delete process.env.OPENAI_MODEL_STANDARD;
     delete process.env.SYSTEM_ALERTS_ENABLED;
     delete process.env.SYSTEM_ALERT_CHANNELS;
     vi.stubEnv('MINIMAX_ENABLED', '');
@@ -40,6 +44,9 @@ describe('provider expansion', () => {
     vi.stubEnv('BRAVE_SEARCH_ENABLED', 'false');
     vi.stubEnv('BRAVE_SEARCH_API_KEY', '');
     vi.stubEnv('BRACE_SEARCH_API_KEY', '');
+    vi.stubEnv('OPENAI_API_KEY', '');
+    vi.stubEnv('OPENAI_BASE_URL', '');
+    vi.stubEnv('OPENAI_MODEL_STANDARD', '');
     globalThis.fetch = originalFetch;
   });
 
@@ -98,9 +105,11 @@ describe('provider expansion', () => {
       expect(headers['x-api-key']).toBeUndefined();
       const body = JSON.parse(String(init?.body || '{}')) as {
         messages?: Array<{ content?: unknown }>;
+        max_tokens?: number;
         temperature?: number;
       };
       expect(body.messages?.[0]?.content).toBe('test');
+      expect(body.max_tokens).toBeGreaterThanOrEqual(2048);
       expect(body.temperature).toBeGreaterThan(0);
       return new Response(
         JSON.stringify({
@@ -131,10 +140,12 @@ describe('provider expansion', () => {
       const body = JSON.parse(String(init?.body || '{}')) as {
         model?: string;
         messages?: Array<{ role?: string; content?: unknown }>;
+        max_tokens?: number;
         temperature?: number;
       };
       expect(body.model).toBe('gemini-2.5-pro');
       expect(body.messages?.at(-1)?.content).toBe('critique this');
+      expect(body.max_tokens).toBeGreaterThanOrEqual(2048);
       expect(body.temperature).toBeGreaterThan(0);
       return new Response(
         JSON.stringify({
@@ -159,6 +170,44 @@ describe('provider expansion', () => {
 
     expect(result && !('providerFailure' in result)).toBe(true);
     expect(result && 'text' in result ? result.text : '').toContain('Gemini');
+  });
+
+  it('uses max_completion_tokens for OpenAI chat completions models', async () => {
+    vi.stubEnv('OPENAI_API_KEY', 'test-openai-key');
+    vi.stubEnv('OPENAI_MODEL_STANDARD', 'gpt-5.4-nano');
+    globalThis.fetch = vi.fn(async (url, init) => {
+      expect(String(url)).toBe('https://api.openai.com/v1/chat/completions');
+      const headers = init?.headers as Record<string, string>;
+      expect(headers.Authorization).toBe('Bearer test-openai-key');
+      const body = JSON.parse(String(init?.body || '{}')) as {
+        max_tokens?: number;
+        max_completion_tokens?: number;
+        model?: string;
+      };
+      expect(body.model).toBe('gpt-5.4-nano');
+      expect(body.max_tokens).toBeUndefined();
+      expect(body.max_completion_tokens).toBe(123);
+      return new Response(
+        JSON.stringify({
+          choices: [{ message: { role: 'assistant', content: 'ok' } }],
+        }),
+        {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/json',
+            'x-request-id': 'openai-test-1',
+          },
+        },
+      );
+    }) as unknown as typeof fetch;
+
+    const result = await runOpenAiChatText({
+      prompt: 'Return one word: ok',
+      maxTokens: 123,
+    });
+
+    expect(result && !('providerFailure' in result)).toBe(true);
+    expect(result && 'text' in result ? result.text : '').toBe('ok');
   });
 
   it('reports provider and alert metadata without raw credential values', () => {
