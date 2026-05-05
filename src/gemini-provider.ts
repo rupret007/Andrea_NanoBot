@@ -1,4 +1,8 @@
 import { readEnvFile } from './env.js';
+import {
+  describeProviderTransportFailure,
+  providerRequestSignal,
+} from './provider-http.js';
 
 const envConfig = readEnvFile([
   'GEMINI_ENABLED',
@@ -201,24 +205,32 @@ export async function runGeminiOpenAiText(
   }
   const model =
     request.modelTier === 'fast' ? config.fastModel : config.criticModel;
-  const response = await fetch(`${config.openAiBaseUrl}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${config.apiKey}`,
-    },
-    body: JSON.stringify({
-      model,
-      max_tokens: resolveCompletionBudget(request),
-      temperature: normalizeTemperature(request.temperature),
-      messages: [
-        ...(request.system
-          ? [{ role: 'system', content: request.system }]
-          : []),
-        { role: 'user', content: request.prompt },
-      ],
-    }),
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${config.openAiBaseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${config.apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: resolveCompletionBudget(request),
+        temperature: normalizeTemperature(request.temperature),
+        messages: [
+          ...(request.system
+            ? [{ role: 'system', content: request.system }]
+            : []),
+          { role: 'user', content: request.prompt },
+        ],
+      }),
+      signal: providerRequestSignal(),
+    });
+  } catch (err) {
+    return {
+      providerFailure: describeProviderTransportFailure('Gemini', err),
+    };
+  }
   const requestId =
     response.headers.get('x-request-id') ||
     response.headers.get('x-goog-request-id') ||

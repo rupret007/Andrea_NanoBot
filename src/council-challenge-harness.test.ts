@@ -4,6 +4,11 @@ import {
   listCouncilChallengeScenarios,
   runCouncilChallengeHarness,
 } from './council-challenge-harness.js';
+import {
+  SOURCE_REPO_MANIFEST,
+  compareCouncilChallengeScore,
+  scoreIntelligenceAdvancement,
+} from './agent-source-intelligence.js';
 
 describe('council challenge harness', () => {
   it('selects scenarios by tier and records a passing observable council run', async () => {
@@ -43,7 +48,7 @@ describe('council challenge harness', () => {
       },
     );
 
-    expect(listCouncilChallengeScenarios('small')).toHaveLength(1);
+    expect(listCouncilChallengeScenarios('small')).toHaveLength(2);
     expect(report.status).toBe('pass');
     expect(report.totalScore).toBe(1);
     expect(report.results[0]).toMatchObject({
@@ -51,6 +56,7 @@ describe('council challenge harness', () => {
       status: 'pass',
       rolesObserved: ['openai_cloud'],
       missingRoles: [],
+      intelligenceAdvancementScore: 1,
     });
     expect(emitChallenge).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -122,5 +128,54 @@ describe('council challenge harness', () => {
         }),
       }),
     );
+  });
+
+  it('tracks source-guided KPI coverage and detects score regressions', () => {
+    const directCandidates = SOURCE_REPO_MANIFEST.filter(
+      (repo) => repo.licensePolicy === 'direct_import_allowed_with_notice',
+    );
+    const score = scoreIntelligenceAdvancement({
+      scenarioId: 'large.verifier_override_disagreement',
+      expectedCouncilMode: 'max_iq_council',
+      requiredRoles: [
+        'brave_search',
+        'openai_cloud',
+        'minimax_cloud',
+        'gemini_cloud',
+      ],
+      rolesObserved: [
+        'brave_search',
+        'openai_cloud',
+        'minimax_cloud',
+        'gemini_cloud',
+      ],
+      missingRoles: [],
+      requiredEvidence: 'strong',
+      evidenceLevel: 'strong',
+      criticalFailures: [],
+      providerFailures: [],
+      eventIds: ['event-1'],
+      councilRunId: 'council-1',
+      status: 'pass',
+      sideEffectPolicy: 'read_only',
+      repairPolicy: 'one_approval',
+      sourcePatternIds: ['agents_sdk.tracing_guardrails_handoffs'],
+    });
+    const regression = compareCouncilChallengeScore({
+      latestTotalScore: 0.98,
+      latestCriticalFailureCount: 0,
+      baseline: {
+        totalScore: 1,
+        criticalFailureCount: 0,
+        criticalScenarioIds: [],
+      },
+    });
+
+    expect(directCandidates.length).toBeGreaterThan(0);
+    expect(score.totalScore).toBe(1);
+    expect(score.components.map((component) => component.kpiId)).toContain(
+      'verifier_participation',
+    );
+    expect(regression.status).toBe('regressed');
   });
 });

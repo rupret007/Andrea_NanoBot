@@ -19,6 +19,7 @@ const COORDINATOR_BASE_URL = (
 )
   .trim()
   .replace(/\/+$/, '');
+const DEFAULT_PLATFORM_BRIDGE_TIMEOUT_MS = 15_000;
 
 type IntentResponseOutcome = 'handled' | 'blocked' | 'degraded' | 'fallback';
 type ProofState =
@@ -73,6 +74,22 @@ function coordinatorRoute(path: string): string | null {
   return `${COORDINATOR_BASE_URL}${path}`;
 }
 
+function platformBridgeSignal(): AbortSignal | undefined {
+  const timeout = (
+    AbortSignal as unknown as {
+      timeout?: (ms: number) => AbortSignal;
+    }
+  ).timeout;
+  const parsed = Number.parseInt(
+    process.env.ANDREA_PLATFORM_BRIDGE_TIMEOUT_MS || '',
+    10,
+  );
+  const timeoutMs = Number.isFinite(parsed)
+    ? Math.max(1000, Math.min(parsed, 60_000))
+    : DEFAULT_PLATFORM_BRIDGE_TIMEOUT_MS;
+  return typeof timeout === 'function' ? timeout(timeoutMs) : undefined;
+}
+
 async function postShellGateway(path: string, payload: object): Promise<void> {
   const url = shellGatewayRoute(path);
   if (!url) return;
@@ -82,6 +99,7 @@ async function postShellGateway(path: string, payload: object): Promise<void> {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
+      signal: platformBridgeSignal(),
     });
     if (!response.ok) {
       logger.warn(
@@ -117,6 +135,7 @@ async function postCoordinatorJson(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
+      signal: platformBridgeSignal(),
     });
     if (!response.ok) {
       logger.warn(
@@ -151,6 +170,7 @@ async function getCoordinatorJson(path: string): Promise<unknown | null> {
     const response = await fetch(url, {
       method: 'GET',
       headers: { Accept: 'application/json' },
+      signal: platformBridgeSignal(),
     });
     if (!response.ok) {
       logger.warn(

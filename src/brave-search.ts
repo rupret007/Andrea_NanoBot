@@ -1,4 +1,8 @@
 import { readEnvFile } from './env.js';
+import {
+  describeProviderTransportFailure,
+  providerRequestSignal,
+} from './provider-http.js';
 
 const envConfig = readEnvFile([
   'BRAVE_SEARCH_ENABLED',
@@ -171,12 +175,20 @@ export async function searchBraveWeb(
   url.searchParams.set('search_lang', config.language);
   url.searchParams.set('safesearch', config.safeSearch);
 
-  const response = await fetch(url, {
-    headers: {
-      Accept: 'application/json',
-      'X-Subscription-Token': config.apiKey,
-    },
-  });
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      headers: {
+        Accept: 'application/json',
+        'X-Subscription-Token': config.apiKey,
+      },
+      signal: providerRequestSignal(),
+    });
+  } catch (err) {
+    return {
+      providerFailure: describeProviderTransportFailure('Brave Search', err),
+    };
+  }
   const requestId = response.headers.get('x-request-id') || undefined;
   if (!response.ok) {
     const body = await response.text();

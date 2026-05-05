@@ -1,4 +1,8 @@
 import { readEnvFile } from './env.js';
+import {
+  describeProviderTransportFailure,
+  providerRequestSignal,
+} from './provider-http.js';
 
 const envConfig = readEnvFile([
   'MINIMAX_ENABLED',
@@ -212,26 +216,34 @@ export async function runMiniMaxAnthropicText(
   }
   const model =
     request.modelTier === 'fast' ? config.fastModel : config.complexModel;
-  const response = await fetch(`${config.anthropicBaseUrl}/v1/messages`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${config.apiKey}`,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model,
-      max_tokens: resolveCompletionBudget(request),
-      temperature: normalizeTemperature(request.temperature),
-      ...(request.system ? { system: request.system } : {}),
-      messages: [
-        {
-          role: 'user',
-          content: request.prompt,
-        },
-      ],
-    }),
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${config.anthropicBaseUrl}/v1/messages`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${config.apiKey}`,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: resolveCompletionBudget(request),
+        temperature: normalizeTemperature(request.temperature),
+        ...(request.system ? { system: request.system } : {}),
+        messages: [
+          {
+            role: 'user',
+            content: request.prompt,
+          },
+        ],
+      }),
+      signal: providerRequestSignal(),
+    });
+  } catch (err) {
+    return {
+      providerFailure: describeProviderTransportFailure('MiniMax', err),
+    };
+  }
   const requestId = response.headers.get('x-request-id') || undefined;
   if (!response.ok) {
     const body = await response.text();

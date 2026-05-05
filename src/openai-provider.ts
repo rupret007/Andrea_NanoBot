@@ -5,6 +5,10 @@ import {
   OPENAI_MODEL_STANDARD,
 } from './config.js';
 import { readEnvFile } from './env.js';
+import {
+  describeProviderTransportFailure,
+  providerRequestSignal,
+} from './provider-http.js';
 
 export const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com/v1';
 export const DEFAULT_OPENAI_IMAGE_MODEL = 'gpt-image-1';
@@ -222,24 +226,32 @@ export async function runOpenAiChatText(
       : request.modelTier === 'simple'
         ? config.simpleModel
         : config.standardModel;
-  const response = await fetch(`${config.baseUrl}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${config.apiKey}`,
-    },
-    body: JSON.stringify({
-      model,
-      max_completion_tokens: Math.max(64, request.maxTokens || 900),
-      temperature: normalizeTemperature(request.temperature),
-      messages: [
-        ...(request.system
-          ? [{ role: 'system', content: request.system }]
-          : []),
-        { role: 'user', content: request.prompt },
-      ],
-    }),
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${config.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${config.apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        max_completion_tokens: Math.max(64, request.maxTokens || 900),
+        temperature: normalizeTemperature(request.temperature),
+        messages: [
+          ...(request.system
+            ? [{ role: 'system', content: request.system }]
+            : []),
+          { role: 'user', content: request.prompt },
+        ],
+      }),
+      signal: providerRequestSignal(),
+    });
+  } catch (err) {
+    return {
+      providerFailure: describeProviderTransportFailure('OpenAI', err),
+    };
+  }
   const requestId = response.headers.get('x-request-id') || undefined;
   if (!response.ok) {
     const body = await response.text();

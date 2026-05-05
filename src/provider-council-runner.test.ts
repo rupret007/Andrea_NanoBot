@@ -159,6 +159,58 @@ describe('provider council runner', () => {
     );
   });
 
+  it('contains transport exceptions as provider degradation', async () => {
+    const members: Array<Record<string, unknown>> = [];
+
+    const result = await runObservableProviderCouncil(
+      {
+        goal: 'Research the current provider status safely.',
+        taskFamily: 'research',
+        channel: 'system',
+        correlationId: 'turn-council-transport-error',
+        requestedMode: 'max_iq_council',
+      },
+      {
+        emitProviderCouncil: vi.fn(async () => ({
+          councilRunId: 'council-transport-error',
+          mode: 'max_iq_council' as const,
+          traceId: 'turn-council-transport-error',
+        })),
+        emitCouncilEvent: vi.fn(async () => ({})),
+        emitMemberResult: vi.fn(async (member) => {
+          members.push(member as unknown as Record<string, unknown>);
+          return {};
+        }),
+        finalizeCouncil: vi.fn(async () => ({})),
+        searchBrave: vi.fn(async () => {
+          throw new TypeError('fetch failed');
+        }),
+        runOpenAi: vi.fn(async () => ({
+          text: 'Planner can continue with degraded live evidence.',
+          model: 'gpt-5.4',
+        })),
+        runMiniMax: vi.fn(async () => ({
+          text: 'Critic flags missing live evidence.',
+          model: 'MiniMax-M2.7',
+        })),
+        runGemini: vi.fn(async () => ({
+          text: 'Verifier says proceed only with blocker wording.',
+          model: 'gemini-2.5-pro',
+        })),
+      },
+    );
+
+    expect(
+      members.find((member) => member.memberId === 'brave_search'),
+    ).toMatchObject({
+      status: 'blocked',
+      riskFlags: ['brave_unavailable_saved_context'],
+    });
+    expect(result?.providerFailures || []).toContain(
+      'brave_unavailable_saved_context',
+    );
+  });
+
   it('falls back to the fast Gemini verifier when Pro produces no artifact', async () => {
     const members: Array<Record<string, unknown>> = [];
     const runGemini = vi

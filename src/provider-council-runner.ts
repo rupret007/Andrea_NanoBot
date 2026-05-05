@@ -136,15 +136,35 @@ function shouldUseReviewer(
 async function callTimed<T>(
   fn: () => Promise<T>,
   now: () => number,
+  onError?: (err: unknown) => T,
 ): Promise<{ result: T; latencyMs: number }> {
   const started = now();
-  const result = await fn();
+  let result: T;
+  try {
+    result = await fn();
+  } catch (err) {
+    if (!onError) throw err;
+    result = onError(err);
+  }
   return { result, latencyMs: Math.max(0, Math.round(now() - started)) };
 }
 
 function normalizeProviderArtifact(result: unknown): TextProviderResult {
   if (!result || typeof result !== 'object') return {};
   return result as TextProviderResult;
+}
+
+function providerFailureFromException(
+  providerName: string,
+  err: unknown,
+): { providerFailure: string; status?: number; requestId?: string } {
+  const detail =
+    err instanceof Error && err.message
+      ? ` ${sanitizeObservableText(err.message, 240)}`
+      : '';
+  return {
+    providerFailure: `${providerName} request failed before Andrea could receive a provider response.${detail}`,
+  };
 }
 
 export async function runObservableProviderCouncil(
@@ -251,7 +271,11 @@ export async function runObservableProviderCouncil(
 
   if (shouldUseEvidenceScout(mode, input.taskFamily)) {
     const prompt = `Gather public/live evidence for this sanitized Andrea task: ${goal}`;
-    const { result, latencyMs } = await callTimed(() => searchBrave(goal), now);
+    const { result, latencyMs } = await callTimed(
+      () => searchBrave(goal),
+      now,
+      (err) => providerFailureFromException('Brave Search', err),
+    );
     const brave = result && typeof result === 'object' ? result : null;
     if (brave && 'results' in brave && Array.isArray(brave.results)) {
       evidenceSummary = brave.results
@@ -324,6 +348,7 @@ export async function runObservableProviderCouncil(
         temperature: 0.2,
       }),
     now,
+    (err) => providerFailureFromException('OpenAI planner', err),
   );
   const planner = normalizeProviderArtifact(plannerCall.result);
   const plannerText =
@@ -375,6 +400,7 @@ export async function runObservableProviderCouncil(
           temperature: 0.25,
         }),
       now,
+      (err) => providerFailureFromException('MiniMax critic', err),
     );
     const critic = normalizeProviderArtifact(criticCall.result);
     criticText =
@@ -422,6 +448,7 @@ export async function runObservableProviderCouncil(
           temperature: 0.2,
         }),
       now,
+      (err) => providerFailureFromException('Gemini verifier', err),
     );
     let verifier = normalizeProviderArtifact(verifierCall.result);
     let verifierFallbackReason = '';
@@ -444,6 +471,7 @@ export async function runObservableProviderCouncil(
             temperature: 0.15,
           }),
         now,
+        (err) => providerFailureFromException('Gemini fast verifier', err),
       );
       const fallback = normalizeProviderArtifact(fallbackCall.result);
       if (fallback.text) {
