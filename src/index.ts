@@ -227,6 +227,10 @@ import {
   type ProviderHealthState,
 } from './provider-health.js';
 import {
+  clearPendingBootAlert,
+  readPendingBootAlert,
+} from './startup-autostart.js';
+import {
   advancePendingActionDraft,
   advancePendingActionReminder,
   buildActionLayerContextFromDailyCommandCenter,
@@ -8916,6 +8920,7 @@ async function main(): Promise<void> {
   const channelHealthByName = new Map<string, ChannelHealthSnapshot>();
   let assistantHealthInterval: ReturnType<typeof setInterval> | null = null;
   let systemAlertInterval: ReturnType<typeof setInterval> | null = null;
+  let bootAlertInterval: ReturnType<typeof setInterval> | null = null;
   const systemAlertLastStateByKey = new Map<string, string>();
   const systemAlertLastSentAtByKey = new Map<string, number>();
   const writeCurrentAssistantHealth = () => {
@@ -8971,15 +8976,15 @@ async function main(): Promise<void> {
     dedupeKey: string;
     state: string;
     message: string;
-  }): Promise<void> => {
+  }): Promise<boolean> => {
     const alertConfig = resolveSystemAlertConfig();
-    if (!alertConfig.enabled) return;
+    if (!alertConfig.enabled) return false;
 
     const now = Date.now();
     const cooldownMs = alertConfig.cooldownMinutes * 60_000;
     const lastSentAt = systemAlertLastSentAtByKey.get(params.dedupeKey) || 0;
     if (lastSentAt > 0 && now - lastSentAt < cooldownMs) {
-      return;
+      return false;
     }
 
     const attempted: string[] = [];
@@ -9005,6 +9010,19 @@ async function main(): Promise<void> {
         { attempted, dedupeKey: params.dedupeKey, state: params.state },
         'System alert could not be delivered to any configured channel',
       );
+    }
+    return sent;
+  };
+  const dispatchPendingBootSummaryAlert = async (): Promise<void> => {
+    const pending = readPendingBootAlert();
+    if (!pending) return;
+    const sent = await maybeSendSystemAlert({
+      dedupeKey: pending.dedupeKey,
+      state: pending.status,
+      message: pending.message,
+    });
+    if (sent) {
+      clearPendingBootAlert(pending.alertId);
     }
   };
   const providerTransitionForState = (
@@ -9120,6 +9138,7 @@ async function main(): Promise<void> {
   const dispatchSystemHealthAlerts = async (): Promise<void> => {
     const alertConfig = resolveSystemAlertConfig();
     if (!alertConfig.enabled) return;
+    await dispatchPendingBootSummaryAlert();
     const checkedAt = new Date().toISOString();
     for (const provider of collectProviderHealthSnapshots(checkedAt)) {
       await emitProviderAlertIfNeeded(provider);
@@ -9136,6 +9155,10 @@ async function main(): Promise<void> {
     if (systemAlertInterval) {
       clearInterval(systemAlertInterval);
       systemAlertInterval = null;
+    }
+    if (bootAlertInterval) {
+      clearInterval(bootAlertInterval);
+      bootAlertInterval = null;
     }
     clearAssistantHealthState();
     clearTelegramTransportState();
@@ -16364,6 +16387,10 @@ async function main(): Promise<void> {
     writeCurrentAssistantHealth();
   }, 30_000);
   assistantHealthInterval.unref?.();
+  bootAlertInterval = setInterval(() => {
+    void dispatchPendingBootSummaryAlert();
+  }, 10_000);
+  bootAlertInterval.unref?.();
   void dispatchSystemHealthAlerts();
   const systemAlertConfig = resolveSystemAlertConfig();
   if (systemAlertConfig.enabled) {

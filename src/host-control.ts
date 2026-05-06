@@ -3,6 +3,10 @@ import fs from 'fs';
 import path from 'path';
 
 import { computeNextTelegramRoundtripDueAt } from './ping-presence.js';
+import {
+  ANDREA_STARTUP_TASK_NAME,
+  LEGACY_NANOCLAW_TASK_NAME,
+} from './startup-autostart.js';
 import type { ChannelHealthSnapshot } from './types.js';
 
 export type NanoclawInstallMode =
@@ -263,6 +267,8 @@ export interface HostControlSnapshot {
 
 export interface WindowsInstallArtifacts {
   hasScheduledTask: boolean;
+  hasAndreaStartupTask: boolean;
+  hasLegacyNanoclawTask: boolean;
   hasStartupFolder: boolean;
   startupFolderScriptPath: string | null;
   startupFolderScriptIsLegacy: boolean;
@@ -1783,19 +1789,38 @@ export function detectWindowsInstallArtifacts(options?: {
   projectRoot?: string;
   appData?: string;
   hasScheduledTask?: boolean;
+  hasAndreaStartupTask?: boolean;
+  hasLegacyNanoclawTask?: boolean;
 }): WindowsInstallArtifacts {
   const paths = resolveHostControlPaths(options?.projectRoot, options?.appData);
-  let hasScheduledTask = options?.hasScheduledTask ?? false;
-  if (options?.hasScheduledTask == null) {
-    try {
-      execFileSync('schtasks.exe', ['/Query', '/TN', 'NanoClaw'], {
-        stdio: 'ignore',
-      });
-      hasScheduledTask = true;
-    } catch {
-      hasScheduledTask = false;
-    }
+  let hasAndreaStartupTask = options?.hasAndreaStartupTask;
+  let hasLegacyNanoclawTask = options?.hasLegacyNanoclawTask;
+
+  if (
+    options?.hasScheduledTask != null &&
+    hasAndreaStartupTask == null &&
+    hasLegacyNanoclawTask == null
+  ) {
+    hasAndreaStartupTask = options.hasScheduledTask;
+    hasLegacyNanoclawTask = false;
+  } else if (hasAndreaStartupTask == null || hasLegacyNanoclawTask == null) {
+    const taskExists = (taskName: string): boolean => {
+      try {
+        execFileSync('schtasks.exe', ['/Query', '/TN', taskName], {
+          stdio: 'ignore',
+        });
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    hasAndreaStartupTask ??= taskExists(ANDREA_STARTUP_TASK_NAME);
+    hasLegacyNanoclawTask ??= taskExists(LEGACY_NANOCLAW_TASK_NAME);
   }
+
+  const hasScheduledTask =
+    options?.hasScheduledTask ??
+    Boolean(hasAndreaStartupTask || hasLegacyNanoclawTask);
 
   const startupFolderScriptPath = paths.startupFolderScriptPath;
   const hasStartupFolder = Boolean(
@@ -1813,6 +1838,8 @@ export function detectWindowsInstallArtifacts(options?: {
 
   return {
     hasScheduledTask,
+    hasAndreaStartupTask: Boolean(hasAndreaStartupTask),
+    hasLegacyNanoclawTask: Boolean(hasLegacyNanoclawTask),
     hasStartupFolder,
     startupFolderScriptPath,
     startupFolderScriptIsLegacy,

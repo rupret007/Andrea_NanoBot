@@ -41,6 +41,8 @@ $watchdogLogPath = Join-Path $logsDir 'nanoclaw.watchdog.log'
 $watchdogErrorLogPath = Join-Path $logsDir 'nanoclaw.watchdog.error.log'
 $compatibilityShimPath = Join-Path $projectRoot 'start-nanoclaw.ps1'
 $defaultAndreaPlatformRoot = Join-Path (Split-Path -Parent $projectRoot) 'andrea_platform'
+$andreaStartupTaskName = 'Andrea-All-Services'
+$legacyNanoclawTaskName = 'NanoClaw'
 $startupFolderScriptPath = if ($env:APPDATA) {
   Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup\nanoclaw-start.cmd'
 } else {
@@ -103,9 +105,12 @@ function Get-InstalledArtifactMode {
   $hasScheduledTask = $false
   if (Get-Command schtasks.exe -ErrorAction SilentlyContinue) {
     try {
-      & schtasks.exe /Query /TN 'NanoClaw' *> $null
-      if ($LASTEXITCODE -eq 0) {
-        $hasScheduledTask = $true
+      foreach ($taskName in @($andreaStartupTaskName, $legacyNanoclawTaskName)) {
+        & schtasks.exe /Query /TN $taskName *> $null
+        if ($LASTEXITCODE -eq 0) {
+          $hasScheduledTask = $true
+          break
+        }
       }
     } catch {
       $hasScheduledTask = $false
@@ -744,7 +749,7 @@ function Get-CanonicalCompatibilityShimContent {
 function Get-CanonicalStartupFolderScriptContent {
   return @(
     '@echo off'
-    ('"powershell.exe" "-NoProfile" "-ExecutionPolicy" "Bypass" "-File" "{0}" "start" "-InstallMode" "startup_folder"' -f (Join-Path $projectRoot 'scripts\nanoclaw-host.ps1'))
+    ('"powershell.exe" "-NoProfile" "-ExecutionPolicy" "Bypass" "-WindowStyle" "Hidden" "-File" "{0}" "boot"' -f (Join-Path $projectRoot 'scripts\andrea-startup.ps1'))
   ) -join "`r`n"
 }
 
@@ -2120,7 +2125,9 @@ function Stop-NanoClaw {
 
   if (Get-Command schtasks.exe -ErrorAction SilentlyContinue) {
     try {
-      & schtasks.exe /End /TN 'NanoClaw' *> $null
+      foreach ($taskName in @($andreaStartupTaskName, $legacyNanoclawTaskName)) {
+        & schtasks.exe /End /TN $taskName *> $null
+      }
     } catch {
       # ignore missing task
     }
