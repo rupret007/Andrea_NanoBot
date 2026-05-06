@@ -177,4 +177,92 @@ describe('intelligence regression harness', () => {
       'send that text',
     );
   });
+
+  it('can run a filtered scenario subset for targeted council diagnostics', async () => {
+    vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_ENABLED', 'true');
+    vi.stubEnv('ANDREA_PLATFORM_FALLBACK_TO_DIRECT_RUNTIME', 'false');
+    vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_URL', 'http://127.0.0.1:4400');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input);
+        const body = JSON.parse(String(init?.body || '{}')) as Record<
+          string,
+          unknown
+        >;
+        if (url.endsWith('/skill-evolution-report')) {
+          return new Response(JSON.stringify({ active_skills: [] }), {
+            status: 200,
+          });
+        }
+        if (url.endsWith('/council-run')) {
+          return new Response(
+            JSON.stringify({
+              council: {
+                council_run_id: 'council-filtered',
+                mode: body.requestedMode || 'max_iq_council',
+                status: 'completed',
+                trace_id: body.correlationId || 'trace-filtered',
+                members: [
+                  { member_id: 'openai_cloud', status: 'completed' },
+                  { member_id: 'minimax_cloud', status: 'completed' },
+                  { member_id: 'gemini_cloud', status: 'completed' },
+                  { member_id: 'brave_search', status: 'completed' },
+                ],
+              },
+              verdict: {
+                verdict_id: 'verdict-filtered',
+                final_route: body.requestedMode || 'max_iq_council',
+                answer_strategy: 'verified_synthesis',
+                confidence: 0.86,
+              },
+            }),
+            { status: 200 },
+          );
+        }
+        if (url.endsWith('/intelligence-regression')) {
+          return new Response(
+            JSON.stringify({
+              report: {
+                report_id: 'intel-report-filtered',
+                status: body.status,
+                scenario_count: Array.isArray(body.scenarioResults)
+                  ? body.scenarioResults.length
+                  : 0,
+                critical_failure_count: body.criticalFailureCount || 0,
+              },
+            }),
+            { status: 200 },
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            task: { task_ledger_id: 'task-filtered' },
+            progress: { progress_ledger_id: 'progress-filtered' },
+            plan: { plan_id: 'plan-filtered', route: 'runtime_conductor' },
+            decision: {
+              selected_route: 'runtime_conductor',
+              execution_posture: 'execute_now',
+              answer_strategy: 'verified_synthesis',
+              selected_policy_id: 'runtime_conductor',
+              expected_evidence: 'strong',
+            },
+            trace_grade: { grade_id: 'grade-filtered', status: 'pass' },
+          }),
+          { status: 200 },
+        );
+      }) as unknown as typeof fetch,
+    );
+
+    const { runIntelligenceRegressionHarness } =
+      await import('./intelligence-regression-harness.js');
+    const report = await runIntelligenceRegressionHarness({
+      runId: 'intel-filtered-run',
+      scenarioIds: ['council.max_iq_roles'],
+    });
+
+    expect(report.scenarioCount).toBe(1);
+    expect(report.scenarios[0]?.scenarioId).toBe('council.max_iq_roles');
+    expect(report.scenarios[0]?.actual.council_id).toBe('council-filtered');
+  });
 });

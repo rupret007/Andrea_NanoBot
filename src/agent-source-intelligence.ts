@@ -408,6 +408,10 @@ export function scoreIntelligenceAdvancement(
   const requiredRoleCount = Math.max(1, input.requiredRoles.length);
   const roleCoverage =
     (requiredRoleCount - input.missingRoles.length) / requiredRoleCount;
+  const providerReliability =
+    input.providerFailures.length === 0
+      ? 1
+      : Math.max(0, 1 - input.providerFailures.length / requiredRoleCount);
   const highImpactCouncil = ['max_iq_council', 'repair_council'].includes(
     input.expectedCouncilMode,
   );
@@ -434,8 +438,10 @@ export function scoreIntelligenceAdvancement(
     ),
     component(
       'role_coverage',
-      roleCoverage,
-      `${input.requiredRoles.length - input.missingRoles.length}/${input.requiredRoles.length} required role(s) observed.`,
+      Math.min(roleCoverage, providerReliability),
+      input.providerFailures.length > 0
+        ? `${input.requiredRoles.length - input.missingRoles.length}/${input.requiredRoles.length} required role(s) observed, but ${input.providerFailures.length} provider role(s) degraded.`
+        : `${input.requiredRoles.length - input.missingRoles.length}/${input.requiredRoles.length} required role(s) observed.`,
     ),
     component(
       'evidence_strength',
@@ -455,7 +461,11 @@ export function scoreIntelligenceAdvancement(
       'disagreement_resolution',
       input.expectedCouncilMode === 'single_model'
         ? 1
-        : input.rolesObserved.includes('minimax_cloud') && verifierObserved
+        : input.rolesObserved.includes('minimax_cloud') &&
+            verifierObserved &&
+            !input.providerFailures.some((failure) =>
+              /minimax|gemini|critic|verifier/i.test(failure),
+            )
           ? 1
           : 0.5,
       'Critic/verifier roles provide bounded disagreement resolution.',

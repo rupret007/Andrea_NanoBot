@@ -55,6 +55,7 @@ export interface IntelligenceRegressionHarnessOptions {
   recordToPlatform?: boolean;
   reflectTurns?: boolean;
   failOnCriticalRegression?: boolean;
+  scenarioIds?: string[];
 }
 
 export interface IntelligenceRegressionHarnessReport {
@@ -562,7 +563,14 @@ export async function runIntelligenceRegressionHarness(
   const reflectTurns = options.reflectTurns !== false;
   const recordToPlatform = options.recordToPlatform !== false;
   const scenarios: AndreaPlatformIntelligenceScenarioResult[] = [];
-  for (const scenario of SCENARIOS) {
+  const requestedScenarioIds = new Set(options.scenarioIds || []);
+  const selectedScenarios =
+    requestedScenarioIds.size > 0
+      ? SCENARIOS.filter((scenario) =>
+          requestedScenarioIds.has(scenario.scenarioId),
+        )
+      : SCENARIOS;
+  for (const scenario of selectedScenarios) {
     scenarios.push(await runScenario(scenario, { reflectTurns }));
   }
   const criticalFailures = scenarios.filter((scenario) =>

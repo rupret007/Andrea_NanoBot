@@ -607,11 +607,16 @@ export async function runCouncilChallengeHarness(
           ).toFixed(3),
         )
       : 0;
+  const hasDegradedScenario = results.some(
+    (result) => result.status === 'degraded',
+  );
   const status: CouncilChallengeStatus =
     criticalFailureCount > 0
       ? results.some((result) => result.status === 'fail')
         ? 'fail'
         : 'degraded'
+      : hasDegradedScenario
+        ? 'degraded'
       : totalScore >= 0.9
         ? 'pass'
         : 'warn';
