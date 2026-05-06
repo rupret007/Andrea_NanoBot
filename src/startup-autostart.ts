@@ -52,8 +52,13 @@ export function redactStartupText(value: string): string {
   return output;
 }
 
-function summarizeAlertField(value: string | undefined, maxLength = 240): string {
-  const redacted = redactStartupText(value || '').replace(/\s+/g, ' ').trim();
+function summarizeAlertField(
+  value: string | undefined,
+  maxLength = 240,
+): string {
+  const redacted = redactStartupText(value || '')
+    .replace(/\s+/g, ' ')
+    .trim();
   if (redacted.length <= maxLength) return redacted;
   return `${redacted.slice(0, maxLength - 3).trimEnd()}...`;
 }
@@ -80,9 +85,7 @@ export function buildBootAlertMessage(params: {
   for (const component of params.components) {
     const detail = summarizeAlertField(component.detail);
     lines.push(
-      `${component.label}: ${component.status}${
-        detail ? ` - ${detail}` : ''
-      }`,
+      `${component.label}: ${component.status}${detail ? ` - ${detail}` : ''}`,
     );
   }
 
