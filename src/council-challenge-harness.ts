@@ -617,9 +617,9 @@ export async function runCouncilChallengeHarness(
         : 'degraded'
       : hasDegradedScenario
         ? 'degraded'
-      : totalScore >= 0.9
-        ? 'pass'
-        : 'warn';
+        : totalScore >= 0.9
+          ? 'pass'
+          : 'warn';
   const report: CouncilChallengeHarnessReport = {
     runId,
     tier: options.tier,
