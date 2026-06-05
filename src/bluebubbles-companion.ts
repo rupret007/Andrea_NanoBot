@@ -1,8 +1,8 @@
 import { resolveAlexaConversationFollowup } from './alexa-conversation.js';
 import { matchAssistantCapabilityRequest } from './assistant-capability-router.js';
 import {
-  BLUEBUBBLES_CANONICAL_SELF_THREAD_JID,
   expandBlueBubblesLogicalSelfThreadJids,
+  getBlueBubblesCanonicalSelfThreadJid,
   isBlueBubblesSelfThreadAliasJid,
   canonicalizeBlueBubblesSelfThreadJid,
 } from './bluebubbles-self-thread.js';
@@ -257,6 +257,12 @@ export function decideBlueBubblesCompanionIngress(
     chatJid?: string | null;
   } = {},
 ): BlueBubblesCompanionIngressDecision {
+  if (options.hasOpenMessageActionFollowup) {
+    return {
+      kind: 'pending_local_continuation',
+      continuationKind: 'action_draft',
+    };
+  }
   if (
     isBlueBubblesExplicitAsk(text, {
       hasRecentCompanionContext: options.hasRecentCompanionContext,
@@ -264,12 +270,6 @@ export function decideBlueBubblesCompanionIngress(
     })
   ) {
     return { kind: 'explicit_ask' };
-  }
-  if (options.hasOpenMessageActionFollowup) {
-    return {
-      kind: 'pending_local_continuation',
-      continuationKind: 'action_draft',
-    };
   }
   if (options.pendingLocalContinuationKind) {
     return {
@@ -309,7 +309,7 @@ export function resolveMostRecentBlueBubblesCompanionChat(params: {
   }
   const continuity = reconcileBlueBubblesSelfThreadContinuity({
     groupFolder: params.groupFolder,
-    chatJid: BLUEBUBBLES_CANONICAL_SELF_THREAD_JID,
+    chatJid: getBlueBubblesCanonicalSelfThreadJid(),
     now,
     allowRehydrate: true,
   });
@@ -419,7 +419,7 @@ export function resolveMostRecentBlueBubblesCompanionChat(params: {
   }
 
   const recentSelfThreadActivity = expandBlueBubblesLogicalSelfThreadJids(
-    'bb:iMessage;-;+14695405551',
+    getBlueBubblesCanonicalSelfThreadJid(),
   )
     .flatMap((chatJid) => listRecentMessagesForChat(chatJid, 8))
     .map((message) => ({

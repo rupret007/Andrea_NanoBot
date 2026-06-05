@@ -36,6 +36,38 @@ describe('council challenge harness', () => {
           evidenceIds: ['local:metadata'],
           providerFailures: [],
           estimatedCostTier: 'low' as const,
+          structuredVerdict: {
+            status: 'pass',
+            recommendedAction: 'answer',
+            confidence: 0.9,
+            evidenceGrade: 'partial',
+            approvalNeed: 'none',
+            riskFlags: [],
+            evidenceIds: ['local:metadata'],
+            usableMemberCount: 1,
+            blockedMemberCount: 0,
+            quality: {
+              ledgerVersion: 'v3',
+              retention: '90d_or_1000_runs',
+              rawPromptsStored: false,
+              rawPrivateBodiesStored: false,
+              outcomeSignalCount: 1,
+            },
+            calibration: {
+              requestedMode: 'single_model',
+              chosenMode: 'single_model',
+              changedMode: false,
+              protectedMode: false,
+              reason: 'history_ok_default_route',
+              recentRuns: 1,
+              lowConfidenceRuns: 0,
+              schemaInvalidRuns: 0,
+              verifierBlockRuns: 0,
+              negativeFeedbackRuns: 0,
+              degradedProviderIds: [],
+              providerReliability: [],
+            },
+          },
         })),
         emitChallenge,
         now: (() => {
@@ -48,7 +80,7 @@ describe('council challenge harness', () => {
       },
     );
 
-    expect(listCouncilChallengeScenarios('small')).toHaveLength(2);
+    expect(listCouncilChallengeScenarios('small')).toHaveLength(3);
     expect(report.status).toBe('pass');
     expect(report.totalScore).toBe(1);
     expect(report.results[0]).toMatchObject({

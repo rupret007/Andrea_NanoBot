@@ -2,13 +2,22 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   TelegramChannel,
+  buildTelegramBlueBubblesStatusText,
   buildTelegramChatIdText,
+  buildTelegramCognitionText,
+  buildTelegramCouncilText,
   buildTelegramCommandsText,
   buildTelegramFeaturesText,
+  buildTelegramForgetText,
+  buildTelegramMainChatStatusText,
   buildTelegramHelpText,
+  buildTelegramLearningText,
+  buildTelegramMemoryText,
   buildTelegramPingText,
+  buildTelegramThinkingText,
   buildTelegramUnregisteredDmText,
   buildTelegramWelcomeText,
+  resolveTelegramMainChatStatus,
   extractTelegramReplyRef,
   extractTelegramLeadingCommand,
   splitTelegramMessage,
@@ -22,6 +31,14 @@ import {
 describe('extractTelegramLeadingCommand', () => {
   it('extracts plain slash commands', () => {
     expect(extractTelegramLeadingCommand('/registermain')).toBe('registermain');
+  });
+
+  it('extracts /mainchat as a plain slash command', () => {
+    expect(extractTelegramLeadingCommand('/mainchat')).toBe('mainchat');
+  });
+
+  it('extracts /bluebubbles as a plain slash command', () => {
+    expect(extractTelegramLeadingCommand('/bluebubbles')).toBe('bluebubbles');
   });
 
   it('extracts slash commands targeted to this bot', () => {
@@ -39,6 +56,12 @@ describe('extractTelegramLeadingCommand', () => {
         '/registermain@other_bot',
         'andrea_nanobot',
       ),
+    ).toBeNull();
+  });
+
+  it('ignores /mainchat when it targets another bot', () => {
+    expect(
+      extractTelegramLeadingCommand('/mainchat@other_bot', 'andrea_nanobot'),
     ).toBeNull();
   });
 
@@ -135,8 +158,16 @@ describe('buildTelegramCommandsText', () => {
     expect(commands).toContain('*Telegram Commands*');
     expect(commands).toContain('*Start Here*');
     expect(commands).toContain('*Useful Checks*');
+    expect(commands).toContain('*Thinking and Memory*');
     expect(commands).toContain('*In Groups*');
     expect(commands).toContain('/cursor_status');
+    expect(commands).toContain('/bluebubbles');
+    expect(commands).toContain('/thinking');
+    expect(commands).toContain('/council');
+    expect(commands).toContain('/cognition');
+    expect(commands).toContain('/memory');
+    expect(commands).toContain('/learning');
+    expect(commands).toContain('/forget');
     expect(commands).toContain(
       'Most people can ignore commands and just type normally.',
     );
@@ -155,6 +186,44 @@ describe('buildTelegramCommandsText', () => {
   });
 });
 
+describe('buildTelegramBlueBubblesStatusText', () => {
+  it('returns the operator-safe BlueBubbles proof summary', () => {
+    const text = buildTelegramBlueBubblesStatusText();
+
+    expect(text).toContain('BlueBubbles Status');
+    expect(text).toContain('Proof:');
+    expect(text).toContain('Message-action proof:');
+    expect(text).not.toContain('secret=');
+  });
+});
+
+describe('Telegram thinking, council, and memory command text', () => {
+  it('explains deep/quick thinking controls and learning safety rails', () => {
+    const thinking = buildTelegramThinkingText('Andrea');
+    const council = buildTelegramCouncilText();
+    const cognition = buildTelegramCognitionText();
+    const memory = buildTelegramMemoryText('Andrea');
+    const learning = buildTelegramLearningText('Andrea');
+    const forget = buildTelegramForgetText();
+
+    expect(thinking).toContain('Smart auto is on');
+    expect(thinking).toContain('ultrathink');
+    expect(thinking).toContain('think harder');
+    expect(thinking).toContain('quick answer');
+    expect(council).toContain('Council Status');
+    expect(council).toContain('Privacy:');
+    expect(council).not.toMatch(/sk-(?:proj|ant|api)|AIza|Bearer\s+/);
+    expect(cognition).toContain('Cognition Status');
+    expect(cognition).toContain('metadata-only');
+    expect(cognition).not.toMatch(/sk-(?:proj|ant|api)|AIza|Bearer\s+/);
+    expect(memory).toContain('working context');
+    expect(memory).toContain('what did you learn?');
+    expect(learning).toContain('Aggressive learning is on');
+    expect(learning).toContain('raw hidden reasoning');
+    expect(forget).toContain('forget that');
+  });
+});
+
 describe('buildTelegramChatIdText', () => {
   it('renders chat info without markdown-sensitive formatting', () => {
     const text = buildTelegramChatIdText('123', 'Ops_[Alpha]*', 'supergroup');
@@ -169,6 +238,50 @@ describe('buildTelegramUnregisteredDmText', () => {
 
     expect(text).toContain('this chat is not set up yet');
     expect(text).toContain('/start');
+    expect(text).toContain('/registermain');
+    expect(text).toContain('/mainchat');
+  });
+});
+
+describe('buildTelegramMainChatStatusText', () => {
+  const registeredGroups = {
+    'tg:100': {
+      name: 'Jeff Main',
+      folder: 'main',
+      trigger: '@Andrea',
+      added_at: '2026-04-01T10:00:00.000Z',
+      requiresTrigger: false,
+      isMain: true,
+    },
+  };
+
+  it('reports the registered main chat and gives non-main recovery steps', () => {
+    const text = buildTelegramMainChatStatusText(registeredGroups, 'tg:200');
+
+    expect(text).toContain('Main Control Chat Status');
+    expect(text).toContain('Registered main control chat: Jeff Main (tg:100)');
+    expect(text).toContain(
+      'This chat is not the registered main control chat.',
+    );
+    expect(text).toContain('/registermain');
+    expect(text).toContain('/mainchat');
+  });
+
+  it('marks the current DM as main when it matches the registered main chat', () => {
+    const status = resolveTelegramMainChatStatus(registeredGroups, 'tg:100');
+
+    expect(status).toEqual({
+      hasMainChat: true,
+      mainChatJid: 'tg:100',
+      mainChatName: 'Jeff Main',
+      isCurrentChatMain: true,
+    });
+  });
+
+  it('gives deterministic first-registration guidance when no main exists', () => {
+    const text = buildTelegramMainChatStatusText({}, 'tg:200');
+
+    expect(text).toContain('No main control chat is currently registered');
     expect(text).toContain('/registermain');
   });
 });

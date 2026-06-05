@@ -36,6 +36,7 @@ UX defaults for Telegram:
 - `/start` should feel like a quick welcome and example launcher, not a wall of help text
 - `/help` should explain how to use Andrea here in one screen
 - `/commands` should stay focused on setup and status, not become the primary way to talk to Andrea
+- `/thinking`, `/council`, `/cognition`, `/memory`, and `/learning` should explain how Andrea reasons, plans tasks, and learns without exposing hidden provider traces
 - `/features` should answer what Andrea is best at here and when another surface is better
 - group menus should stay slimmer than DM menus so the bot feels lighter in shared chats
 - list capture should work without setup friction and seed sensible default groups on first use
@@ -50,8 +51,11 @@ Recommended direct-message flow:
 1. Open a DM with the bot.
 2. Run `/start`.
 3. Run `/registermain`.
-4. Run `/help` or `/commands`.
-5. Send a plain-language request.
+4. Run `/mainchat` to confirm this DM is the registered main control chat.
+5. Run `/help` or `/commands`.
+6. Send a plain-language request.
+
+If `/registermain` says a main chat is already registered, that is not a failure by itself. Run `/mainchat`; it will print the current registered main chat and whether the current DM matches it. If you ask for calendar or operator features from a different DM, Andrea should tell you the current main chat and send you back through `/mainchat` plus `/registermain` instead of replying with generic setup text.
 
 Good first requests:
 
@@ -97,6 +101,13 @@ Most users should still start with a plain-language request.
 - `/ping` - basic health check
 - `/chatid` - show the current Telegram chat ID and type
 - `/registermain` - register this DM as the main control chat
+- `/mainchat` - show the registered main control chat and exact recovery steps
+- `/thinking` - show smart auto thinking mode plus `ultrathink` / `ultracode` / `think harder` / `quick answer` controls
+- `/council` - show redacted council quality, calibration, task-ease drills, and provider reliability
+- `/cognition` - show the cognitive task engine, active skill, durable goal, blackboard trail, autonomy budget, evidence gaps, approval blockers, and next repair action
+- `/memory` - show memory behavior and natural memory controls
+- `/learning` - show durable learning policy and safety rails
+- `/forget` - show how to disable a remembered detail
 - `/cursor_status` - safe Cursor readiness check only
 
 Menu behavior:
@@ -137,7 +148,9 @@ This repo keeps the public chat experience intentionally small:
 If the channel experience feels wrong:
 
 1. Run `/help`.
-2. Run `/commands`.
-3. Run `/ping`.
-4. Run `/cursor_status` if the issue touches coding/status readiness.
-5. Ask your admin to check the admin guide and release runbook.
+2. Run `/mainchat` and confirm the current DM matches the registered main chat.
+3. Run `/commands`.
+4. Run `/ping`.
+5. Retry the plain-language ask, such as `What's on my calendar tomorrow?`.
+6. Run `/cursor_status` if the issue touches coding/status readiness.
+7. Ask your admin to check the admin guide and release runbook.

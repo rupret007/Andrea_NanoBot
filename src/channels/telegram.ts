@@ -4,6 +4,7 @@ import { Api, Bot, InlineKeyboard, InputFile } from 'grammy';
 
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
 import { readEnvFile } from '../env.js';
+import { buildFieldTrialOperatorTruth } from '../field-trial-readiness.js';
 import { buildAndreaPingPresenceReply } from '../ping-presence.js';
 import {
   readNanoclawHostState,
@@ -13,6 +14,14 @@ import {
   type TelegramTransportState,
 } from '../host-control.js';
 import { logger } from '../logger.js';
+import {
+  buildForgetHelpText,
+  buildLearningStatusText,
+  buildMemoryStatusText,
+  buildThinkingStatusText,
+} from '../thinking-controls.js';
+import { buildTelegramCouncilStatusText } from '../council-quality.js';
+import { buildTelegramCognitionStatusText } from '../cognitive-kernel.js';
 import {
   classifyTelegramTransportFailure,
   normalizeTelegramWebhookInfo,
@@ -119,6 +128,71 @@ export function buildTelegramCommandsText(): string {
   return buildTelegramCommandLines().join('\n');
 }
 
+export function buildTelegramThinkingText(
+  assistantName = ASSISTANT_NAME,
+): string {
+  return buildThinkingStatusText(assistantName);
+}
+
+export function buildTelegramCouncilText(): string {
+  return buildTelegramCouncilStatusText();
+}
+
+export function buildTelegramCognitionText(): string {
+  return buildTelegramCognitionStatusText();
+}
+
+export function buildTelegramMemoryText(
+  assistantName = ASSISTANT_NAME,
+): string {
+  return buildMemoryStatusText(assistantName);
+}
+
+export function buildTelegramLearningText(
+  assistantName = ASSISTANT_NAME,
+): string {
+  return buildLearningStatusText(assistantName);
+}
+
+export function buildTelegramForgetText(): string {
+  return buildForgetHelpText();
+}
+
+export function buildTelegramBlueBubblesStatusText(): string {
+  let truth: ReturnType<typeof buildFieldTrialOperatorTruth>['bluebubbles'];
+  try {
+    truth = buildFieldTrialOperatorTruth().bluebubbles;
+  } catch {
+    return [
+      'BlueBubbles Status',
+      '',
+      'Proof: unavailable',
+      'Transport: unknown',
+      'Webhook: unknown',
+      'Active endpoint: unknown',
+      'Message-action proof: unknown',
+      'Blocker: BlueBubbles truth is not initialized in this process yet.',
+      'Next: run npm run debug:bluebubbles -- --live on the host.',
+    ].join('\n');
+  }
+  return [
+    'BlueBubbles Status',
+    '',
+    `Proof: ${truth.proofState}`,
+    `Transport: ${truth.transportState}`,
+    `Webhook: ${truth.webhookRegistrationState}`,
+    `Active endpoint: ${truth.activeServerBaseUrl || 'none'}`,
+    `Candidates: ${truth.serverBaseUrlCandidates || 'none'}`,
+    `Local listener: ${truth.listenerHost}:${truth.listenerPort}`,
+    `Canonical self-thread: ${truth.canonicalSelfThreadChatJid}`,
+    `Last inbound: ${truth.lastInboundObservedAt || 'none'} (${truth.lastInboundChatJid || 'none'})`,
+    `Last outbound: ${truth.lastOutboundResult || 'none'}`,
+    `Message-action proof: ${truth.messageActionProofState}`,
+    truth.blocker ? `Blocker: ${truth.blocker}` : 'Blocker: none',
+    truth.nextAction ? `Next: ${truth.nextAction}` : 'Next: none',
+  ].join('\n');
+}
+
 export function buildTelegramChatIdText(
   chatId: string | number,
   chatName: string,
@@ -130,7 +204,71 @@ export function buildTelegramChatIdText(
 export function buildTelegramUnregisteredDmText(
   assistantName = ASSISTANT_NAME,
 ): string {
-  return `I'm ${assistantName}, but this chat is not set up yet. Run /start for the quick guide or /registermain here to make this your main control chat.`;
+  return `I'm ${assistantName}, but this chat is not set up yet. Run /start for the quick guide, then either /registermain here or /mainchat to see the exact control-chat status.`;
+}
+
+export interface TelegramMainChatStatus {
+  hasMainChat: boolean;
+  mainChatJid: string | null;
+  mainChatName: string | null;
+  isCurrentChatMain: boolean;
+}
+
+export function resolveTelegramMainChatStatus(
+  registeredGroups: Record<string, RegisteredGroup>,
+  chatJid: string,
+): TelegramMainChatStatus {
+  const mainChatEntry =
+    Object.entries(registeredGroups).find(([, group]) => group.isMain) ||
+    Object.entries(registeredGroups).find(
+      ([, group]) => group.folder === 'main',
+    );
+
+  if (!mainChatEntry) {
+    return {
+      hasMainChat: false,
+      mainChatJid: null,
+      mainChatName: null,
+      isCurrentChatMain: false,
+    };
+  }
+
+  const [mainChatJid, mainChat] = mainChatEntry;
+  return {
+    hasMainChat: true,
+    mainChatJid,
+    mainChatName: mainChat.name || 'Main',
+    isCurrentChatMain: mainChatJid === chatJid,
+  };
+}
+
+export function buildTelegramMainChatStatusText(
+  registeredGroups: Record<string, RegisteredGroup>,
+  chatJid: string,
+): string {
+  const status = resolveTelegramMainChatStatus(registeredGroups, chatJid);
+
+  if (!status.hasMainChat) {
+    return [
+      '*Main Control Chat Status*',
+      '',
+      'No main control chat is currently registered. Send `/registermain` here to make this your main control chat.',
+    ].join('\n');
+  }
+
+  const nextStepLine = status.isCurrentChatMain
+    ? 'To switch this control chat, send `/registermain` in the target chat, then return here and run `/mainchat` for exact follow-up guidance.'
+    : 'To switch to this chat, send /registermain here. If /registermain reports another main, run /mainchat in the registered chat and follow its on-screen transfer flow.';
+
+  return [
+    '*Main Control Chat Status*',
+    '',
+    `Registered main control chat: ${status.mainChatName} (${status.mainChatJid})`,
+    status.isCurrentChatMain
+      ? 'This chat is currently the registered main control chat.'
+      : 'This chat is not the registered main control chat.',
+    nextStepLine,
+  ].join('\n');
 }
 
 export function buildTelegramFeaturesText(
@@ -862,6 +1000,69 @@ export class TelegramChannel implements Channel {
       );
     });
 
+    this.bot.command('thinking', (ctx) => {
+      return replyAndTrack(
+        ctx,
+        buildTelegramThinkingText(),
+        { parse_mode: 'Markdown' },
+        'Observed a Telegram /thinking roundtrip.',
+      );
+    });
+
+    this.bot.command('council', (ctx) => {
+      return replyAndTrack(
+        ctx,
+        buildTelegramCouncilText(),
+        undefined,
+        'Observed a Telegram /council roundtrip.',
+      );
+    });
+
+    this.bot.command('cognition', (ctx) => {
+      return replyAndTrack(
+        ctx,
+        buildTelegramCognitionText(),
+        undefined,
+        'Observed a Telegram /cognition roundtrip.',
+      );
+    });
+
+    this.bot.command('memory', (ctx) => {
+      return replyAndTrack(
+        ctx,
+        buildTelegramMemoryText(),
+        { parse_mode: 'Markdown' },
+        'Observed a Telegram /memory roundtrip.',
+      );
+    });
+
+    this.bot.command('learning', (ctx) => {
+      return replyAndTrack(
+        ctx,
+        buildTelegramLearningText(),
+        { parse_mode: 'Markdown' },
+        'Observed a Telegram /learning roundtrip.',
+      );
+    });
+
+    this.bot.command('forget', (ctx) => {
+      return replyAndTrack(
+        ctx,
+        buildTelegramForgetText(),
+        { parse_mode: 'Markdown' },
+        'Observed a Telegram /forget roundtrip.',
+      );
+    });
+
+    this.bot.command('bluebubbles', (ctx) => {
+      return replyAndTrack(
+        ctx,
+        buildTelegramBlueBubblesStatusText(),
+        undefined,
+        'Observed a Telegram /bluebubbles roundtrip.',
+      );
+    });
+
     this.bot.command('start', (ctx) => {
       return replyAndTrack(
         ctx,
@@ -904,6 +1105,16 @@ export class TelegramChannel implements Channel {
       );
     });
 
+    this.bot.command('mainchat', (ctx) => {
+      const chatJid = `tg:${ctx.chat.id}`;
+      return replyAndTrack(
+        ctx,
+        buildTelegramMainChatStatusText(this.opts.registeredGroups(), chatJid),
+        { parse_mode: 'Markdown' },
+        'Observed a Telegram /mainchat roundtrip.',
+      );
+    });
+
     this.bot.command('ping', (ctx) => {
       return replyAndTrack(
         ctx,
@@ -915,12 +1126,18 @@ export class TelegramChannel implements Channel {
 
     const TELEGRAM_BOT_COMMANDS = new Set([
       'chatid',
+      'bluebubbles',
       'commands',
       'features',
+      'forget',
       'help',
+      'learning',
+      'mainchat',
+      'memory',
       'ping',
       'registermain',
       'start',
+      'thinking',
     ]);
 
     this.bot.on('message:text', async (ctx) => {

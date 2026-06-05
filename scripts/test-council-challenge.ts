@@ -6,6 +6,7 @@ import {
   DEFAULT_COUNCIL_CHALLENGE_BASELINE,
   type CouncilChallengeBaseline,
 } from '../src/agent-source-intelligence.js';
+import { initDatabase } from '../src/db.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -39,6 +40,7 @@ function parseArgs(): {
 }
 
 const options = parseArgs();
+initDatabase();
 const baselinePath = path.join(
   process.cwd(),
   'state',

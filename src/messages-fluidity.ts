@@ -1,9 +1,11 @@
 import { isBlueBubblesSelfThreadAliasJid } from './bluebubbles-self-thread.js';
+import { clipCouncilText } from './council-safety.js';
 import { interpretBlueBubblesDirectTurnWithBackend } from './openai-guided-routing.js';
 import {
   describeOpenAiProviderFailure,
   resolveOpenAiProviderConfig,
 } from './openai-provider.js';
+import { runObservableProviderCouncil } from './provider-council-runner.js';
 import {
   buildOpenAiModelCandidates,
   detectOpenAiProviderMode,
@@ -19,6 +21,7 @@ import type {
 const THREAD_SUMMARY_FALLBACK_NOTE =
   "I kept this one grounded locally because the richer Messages summary lane isn't available right now.";
 const THREAD_SUMMARY_OPENAI_TIMEOUT_MS = 12_000;
+const BLUEBUBBLES_COUNCIL_SNIPPET_LIMIT = 900;
 
 function normalizeText(value: string | undefined): string {
   return (value || '')
@@ -26,6 +29,70 @@ function normalizeText(value: string | undefined): string {
     .replace(/[\u2018\u2019]/g, "'")
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function clipCouncilSnippet(
+  value: string,
+  max = BLUEBUBBLES_COUNCIL_SNIPPET_LIMIT,
+): string {
+  return clipCouncilText(normalizeText(value), max);
+}
+
+function shouldRunBlueBubblesMessagesCouncil(input: {
+  text: string;
+  transcript?: string;
+  style?: string;
+}): boolean {
+  const combined = normalizeText(
+    [input.text, input.transcript, input.style].filter(Boolean).join(' '),
+  ).toLowerCase();
+  if (
+    /\b(?:ultra[- ]?think|think harder|use all models|max iq|deep dive|think deeply)\b/.test(
+      combined,
+    )
+  ) {
+    return true;
+  }
+  if (
+    /\b(?:what should i say back|draft|reply|summari[sz]e)\b/.test(combined)
+  ) {
+    return (
+      combined.length > 500 ||
+      /\b(?:sensitive|awkward|conflict|upset|angry|apologize|sorry|deadline|money|family|relationship|risk)\b/.test(
+        combined,
+      )
+    );
+  }
+  return false;
+}
+
+async function runBlueBubblesMessagesCouncil(input: {
+  kind: 'thread_summary' | 'draft_reply';
+  goal: string;
+  snippet: string;
+  threadTitle?: string | null;
+  style?: string | null;
+}): Promise<string | null> {
+  const council = await runObservableProviderCouncil({
+    goal: input.goal,
+    taskFamily: 'communication',
+    channel: 'bluebubbles',
+    groupFolder: 'main',
+    requestedMode: 'dual_review',
+    riskLevel: 'medium',
+    requiredEvidence: 'weak',
+    allowedSideEffects: 'none',
+    rawContentPolicy: 'sanitized_snippets',
+    metadata: {
+      surface: 'bluebubbles_messages_fluidity',
+      kind: input.kind,
+      thread_title: clipCouncilSnippet(input.threadTitle || 'unknown', 120),
+      style: input.style || '',
+      sanitized_snippet: clipCouncilSnippet(input.snippet),
+      private_bodies_persisted: 'false',
+    },
+  });
+  return council?.answerGuidance?.visibleVerdict || null;
 }
 
 function safeJsonParse<T>(value: string, fallback: T): T {
@@ -151,6 +218,7 @@ export async function summarizeBlueBubblesThreadDigest(input: {
   transcript: string;
   channel: 'telegram' | 'bluebubbles';
   timeoutMs?: number;
+  thinkingMode?: 'auto' | 'deep' | 'quick';
 }): Promise<{
   lead: string | null;
   digest: string | null;
@@ -158,6 +226,22 @@ export async function summarizeBlueBubblesThreadDigest(input: {
   source: 'openai' | 'fallback';
   fallbackNote?: string;
 }> {
+  const shouldUseCouncil =
+    input.thinkingMode === 'deep' ||
+    (input.thinkingMode !== 'quick' &&
+      shouldRunBlueBubblesMessagesCouncil({
+        text: `${input.chatName} ${input.windowLabel}`,
+        transcript: input.transcript,
+      }));
+  if (shouldUseCouncil) {
+    await runBlueBubblesMessagesCouncil({
+      kind: 'thread_summary',
+      goal: 'Review a private BlueBubbles thread-summary request and return concise guidance for a safe, grounded digest.',
+      snippet: input.transcript,
+      threadTitle: input.chatName,
+    }).catch(() => null);
+  }
+
   const openAi = resolveOpenAiProviderConfig();
   if (!openAi) {
     return buildThreadSummaryFallbackResult();
@@ -290,11 +374,29 @@ export async function draftBlueBubblesCommunicationReply(input: {
   threadTitle?: string;
   toneHints?: string[];
   linkedLifeThreadSummary?: string | null;
+  thinkingMode?: 'auto' | 'deep' | 'quick';
 }): Promise<{
   draftText: string | null;
   source: 'openai' | 'fallback';
   fallbackNote?: string;
 }> {
+  const shouldUseCouncil =
+    input.thinkingMode === 'deep' ||
+    (input.thinkingMode !== 'quick' &&
+      shouldRunBlueBubblesMessagesCouncil({
+        text: `${input.messageText} ${input.summaryText}`,
+        style: input.style,
+      }));
+  if (shouldUseCouncil) {
+    await runBlueBubblesMessagesCouncil({
+      kind: 'draft_reply',
+      goal: 'Review a private BlueBubbles reply-drafting request and return concise guidance for a safe, human, approval-first draft.',
+      snippet: `${input.summaryText}\n${input.messageText}`,
+      threadTitle: input.threadTitle || input.personName || null,
+      style: input.style,
+    }).catch(() => null);
+  }
+
   const openAi = resolveOpenAiProviderConfig();
   if (!openAi) {
     return {

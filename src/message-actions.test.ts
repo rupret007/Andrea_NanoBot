@@ -12,6 +12,7 @@ import {
   upsertCommunicationThread,
   upsertDelegationRule,
 } from './db.js';
+import { getBlueBubblesCanonicalSelfThreadJid } from './bluebubbles-self-thread.js';
 import {
   applyMessageActionOperation,
   buildBlueBubblesProofDrillPresentationText,
@@ -239,7 +240,9 @@ describe('message actions', () => {
     });
 
     expect(action?.messageActionId).toBeTruthy();
-    expect(action?.presentationChatJid).toBe('bb:iMessage;-;+14695405551');
+    expect(action?.presentationChatJid).toBe(
+      getBlueBubblesCanonicalSelfThreadJid(),
+    );
     expect(action?.presentationMessageId).toBe('bb:self-thread-draft-1');
     expect(action?.draftText).toBe('Hey Candace, tonight still works for me.');
     expect(JSON.parse(action?.targetConversationJson || '{}')).toMatchObject({
@@ -282,7 +285,9 @@ describe('message actions', () => {
     });
 
     expect(action?.messageActionId).toBeTruthy();
-    expect(action?.presentationChatJid).toBe('bb:iMessage;-;+14695405551');
+    expect(action?.presentationChatJid).toBe(
+      getBlueBubblesCanonicalSelfThreadJid(),
+    );
     expect(action?.presentationMessageId).toBe('bb:self-thread-draft-ensure');
     expect(action?.draftText).toBe('Hey Candace, tonight still works for me.');
   });
@@ -1322,6 +1327,24 @@ describe('message actions', () => {
     expect(isBlueBubblesExplicitSendAlias('send that using blue bubbles')).toBe(
       true,
     );
+  });
+
+  it('accepts @Andrea-prefixed BlueBubbles action follow-ups', () => {
+    expect(
+      interpretMessageActionFollowup('@Andrea send it later tonight'),
+    ).toEqual({
+      kind: 'defer',
+      timingHint: 'today tonight',
+    });
+    expect(
+      interpretMessageActionFollowup('@Andrea, send it later tonight'),
+    ).toEqual({
+      kind: 'defer',
+      timingHint: 'today tonight',
+    });
+    expect(
+      isBlueBubblesExplicitSendAlias('@Andrea send that using blue bubbles'),
+    ).toBe(true);
   });
 
   it('treats natural rewrite aliases as message-action followups', () => {

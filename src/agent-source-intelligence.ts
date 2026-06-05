@@ -121,6 +121,32 @@ const KPI_WEIGHTS: Record<IntelligenceKpiId, number> = {
 
 export const SOURCE_REPO_MANIFEST: SourceRepoInsight[] = [
   {
+    repoId: 'gbrain',
+    name: 'GBrain',
+    url: 'https://github.com/garrytan/gbrain',
+    license: 'MIT',
+    licensePolicy: 'direct_import_allowed_with_notice',
+    languageFit: 'strong',
+    reusablePatterns: [
+      'source attribution for every claim',
+      'brain-first lookup before external search',
+      'evidence/create-safety contracts',
+      'plain-English metric glossary',
+      'family-level retrieval quality gates',
+    ],
+    exactCodeCandidates: [
+      'metric glossary accessor/rendering pattern',
+      'evidence/create-safety classifier pattern',
+      'retrieval-quality family gate harness pattern',
+      'fact duplicate/supersede fallback classifier pattern',
+    ],
+    risk: 'low',
+    targetSubsystem:
+      'council evidence contracts, task quality gates, and diagnostics',
+    adoptionMode: 'direct_import_candidate',
+    noticeRequired: true,
+  },
+  {
     repoId: 'openai_agents_sdk',
     name: 'OpenAI Agents SDK',
     url: 'https://github.com/openai/openai-agents-python',
@@ -305,6 +331,33 @@ export const SOURCE_REPO_MANIFEST: SourceRepoInsight[] = [
 ];
 
 export const SOURCE_PATTERN_CANDIDATES: SourcePatternCandidate[] = [
+  {
+    patternId: 'gbrain.brain_first_evidence_contract',
+    sourceRepoIds: ['gbrain'],
+    summary:
+      'Council evidence should check local/private context first, attach source-priority/citation/create-safety metadata, and use Brave only for public/live gaps.',
+    targetSubsystem: 'council_evidence',
+    adoptionMode: 'direct_import_candidate',
+    verificationScenarioId: 'small.gbrain_evidence_contract',
+  },
+  {
+    patternId: 'gbrain.metric_glossary_quality_gates',
+    sourceRepoIds: ['gbrain'],
+    summary:
+      'Council doctor and task drills should expose plain-English metric glosses and family-level quality gates.',
+    targetSubsystem: 'council_quality',
+    adoptionMode: 'direct_import_candidate',
+    verificationScenarioId: 'small.gbrain_metric_quality_gate',
+  },
+  {
+    patternId: 'gbrain.source_attribution_conflict_policy',
+    sourceRepoIds: ['gbrain'],
+    summary:
+      'Council claims should cite evidence IDs and surface conflicts instead of silently choosing a winner.',
+    targetSubsystem: 'provider_council_runner',
+    adoptionMode: 'clean_room_pattern',
+    verificationScenarioId: 'medium.gbrain_source_conflict_policy',
+  },
   {
     patternId: 'agents_sdk.tracing_guardrails_handoffs',
     sourceRepoIds: ['openai_agents_sdk'],
@@ -528,6 +581,10 @@ export function scoreIntelligenceAdvancement(
       'wrong_council_mode',
       'required_role_missing',
       'strong_evidence_missing',
+      'raw_content_leakage',
+      'council_quality_metadata_missing',
+      'council_calibration_missing',
+      'unprotected_high_risk_downshift',
     ].includes(failure),
   );
   return {
@@ -603,6 +660,7 @@ export function summarizeSourceAdoptionManifest(): Record<string, string> {
     direct_import_candidate_count: String(directCandidates),
     clean_room_pattern_count: String(cleanRoom),
     direct_code_imported_in_v15: 'false',
+    direct_code_imported_in_v5: 'true',
     third_party_notice_required_for_future_imports: 'true',
   };
 }

@@ -135,7 +135,7 @@ describe('turn agent harness', () => {
       url: 'http://127.0.0.1:4400/deliberate',
     });
     expect(calls[1]?.body).toMatchObject({
-      goal: 'Handle assistant turn from telegram via direct_assistant.',
+      goal: 'Handle assistant turn from telegram via direct_assistant. Safe user intent: what am I forgetting tonight.',
       category: 'assistant',
       correlationId: 'turn-1',
       metadata: {
@@ -269,15 +269,304 @@ describe('turn agent harness', () => {
     });
     const councilCall = calls.find((call) => call.url.endsWith('/council-run'));
     expect(councilCall?.body).toMatchObject({
-      goal: 'Handle research turn from telegram via direct_assistant.',
+      goal: 'Handle research turn from telegram via direct_assistant. Safe user intent: do deep research and compare the latest model council options.',
       taskFamily: 'research',
       requestedMode: 'max_iq_council',
       requiredEvidence: 'strong',
       metadata: {
-        turn_agent_harness: 'v14_observable_provider_council',
-        raw_content_policy: 'metadata_only',
+        turn_agent_harness: 'v15_multi_llm_answer_guidance',
+        raw_content_policy: 'sanitized_snippets',
       },
     });
+  });
+
+  it('honors natural quick/deep thinking controls and applies council guidance visibly', async () => {
+    vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_ENABLED', 'true');
+    vi.stubEnv('ANDREA_PLATFORM_FALLBACK_TO_DIRECT_RUNTIME', 'false');
+    vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_URL', 'http://127.0.0.1:4400');
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        calls.push({
+          url: String(input),
+          body: JSON.parse(String(init?.body || '{}')) as Record<
+            string,
+            unknown
+          >,
+        });
+        if (String(input).endsWith('/skill-evolution-report')) {
+          return new Response(JSON.stringify({ active_skills: [] }), {
+            status: 200,
+          });
+        }
+        if (String(input).endsWith('/council-run')) {
+          return new Response(
+            JSON.stringify({
+              council: {
+                council_run_id: 'council-thinking',
+                mode: calls.at(-1)?.body.requestedMode || 'max_iq_council',
+                status: 'completed',
+                trace_id: calls.at(-1)?.body.correlationId || 'trace-thinking',
+                members: [
+                  { member_id: 'openai_cloud', status: 'completed' },
+                  { member_id: 'anthropic_cloud', status: 'completed' },
+                  { member_id: 'minimax_cloud', status: 'completed' },
+                  { member_id: 'gemini_cloud', status: 'completed' },
+                ],
+              },
+              verdict: {
+                verdict_id: 'verdict-thinking',
+                final_route: calls.at(-1)?.body.requestedMode,
+                answer_strategy: 'verified_synthesis',
+                confidence: 0.86,
+              },
+            }),
+            { status: 200 },
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            task: { task_ledger_id: 'task-thinking' },
+            progress: { progress_ledger_id: 'progress-thinking' },
+            plan: { plan_id: 'plan-thinking', route: 'local_capability' },
+            decision: {
+              decision_id: 'decision-thinking',
+              selected_route: 'local_capability',
+              execution_posture: 'execute_now',
+              selected_policy_id: 'local_capability',
+              expected_evidence: 'partial',
+            },
+          }),
+          { status: 200 },
+        );
+      }) as unknown as typeof fetch,
+    );
+
+    const { beginTurnAgentHarness, evaluateTurnReply } =
+      await import('./turn-agent-harness.js');
+    const quick = await beginTurnAgentHarness({
+      turnId: 'turn-quick',
+      channel: 'telegram',
+      groupFolder: 'main',
+      text: 'quick answer: what should I remember tonight',
+      requestRoute: 'direct_assistant',
+    });
+    const deep = await beginTurnAgentHarness({
+      turnId: 'turn-deep',
+      channel: 'telegram',
+      groupFolder: 'main',
+      text: 'think harder about what I should prioritize tomorrow',
+      requestRoute: 'direct_assistant',
+    });
+
+    expect(quick?.providerCouncil).toBeNull();
+    expect(deep?.providerCouncil?.mode).toBe('max_iq_council');
+    expect(
+      calls.find(
+        (call) =>
+          call.url.endsWith('/council-run') &&
+          call.body.correlationId === 'turn-deep',
+      )?.body,
+    ).toMatchObject({
+      rawContentPolicy: 'sanitized_snippets',
+      metadata: { thinking_control: 'deep' },
+    });
+
+    const guided = evaluateTurnReply({
+      context: {
+        ...deep!,
+        providerCouncil: {
+          ...deep!.providerCouncil!,
+          answerGuidance: {
+            status: 'warn',
+            visibleVerdict: 'Proceed carefully and name the priority tradeoff.',
+            answerDirection: 'Lead with the most practical next step.',
+            confidence: 0.64,
+            uncertainty: 'A time constraint is still unknown.',
+            sourceMemberIds: ['openai_cloud', 'anthropic_cloud'],
+          },
+        },
+      },
+      text: 'Start with the deadline that matters most.',
+      routeKey: 'daily.priority',
+    });
+
+    expect(guided.rewrittenText).toContain('Council check:');
+    expect(guided.evaluatorFlags).toContain(
+      'provider_council_guidance_applied',
+    );
+  });
+
+  it('keeps visible council guidance concise before user-facing answers', async () => {
+    const { evaluateTurnReply } = await import('./turn-agent-harness.js');
+    const longVerdict = Array.from(
+      { length: 60 },
+      (_, index) => `word${index}`,
+    ).join(' ');
+
+    const evaluation = evaluateTurnReply({
+      context: {
+        turnId: 'turn-long-council-guidance',
+        channel: 'telegram',
+        groupFolder: 'main',
+        requestRoute: 'direct_assistant',
+        taskFamily: 'calendar',
+        meaningful: true,
+        selectedSkill: {
+          skillId: 'calendar.availability',
+          taskFamily: 'calendar',
+          purpose: 'calendar',
+          inputs: [],
+          outputs: [],
+          evidenceLevel: 'partial',
+          sideEffectRisk: 'medium',
+          approvalNeed: 'conditional',
+          failureModes: [],
+          examples: [],
+        },
+        contextCompile: {
+          readPlan: {
+            taskFamily: 'calendar',
+            readTiers: ['working'],
+            hotPath: true,
+            safeWriteClasses: [],
+            reason: 'calendar',
+            sources: [],
+          },
+          selectedSkill: {
+            skillId: 'calendar.availability',
+            taskFamily: 'calendar',
+            purpose: 'calendar',
+            inputs: [],
+            outputs: [],
+            evidenceLevel: 'partial',
+            sideEffectRisk: 'medium',
+            approvalNeed: 'conditional',
+            failureModes: [],
+            examples: [],
+          },
+          memoryTiers: ['working'],
+          metadata: { raw_content_policy: 'local_only' },
+          effectiveDirectives: [],
+        },
+        deliberation: {
+          selectedRoute: 'direct_integration',
+          expectedEvidence: 'partial',
+        },
+        platformHoldReply: null,
+        providerCouncil: {
+          councilRunId: 'council-long-visible',
+          mode: 'dual_review',
+          finalRoute: 'dual_review',
+          approvalRequired: false,
+          answerGuidance: {
+            status: 'warn',
+            visibleVerdict: longVerdict,
+            answerDirection: 'Answer briefly.',
+            confidence: 0.7,
+            uncertainty: 'none',
+            sourceMemberIds: ['openai_cloud'],
+          },
+        },
+      },
+      text: "I don't see anything at 3 PM tomorrow.",
+      routeKey: 'calendar_lookup',
+    });
+
+    const firstLine = evaluation.rewrittenText.split('\n')[0] || '';
+    expect(firstLine.split(/\s+/).length).toBeLessThanOrEqual(34);
+    expect(firstLine).toMatch(/\.\.\.$/);
+    expect(evaluation.rewrittenText).toContain(
+      "I don't see anything at 3 PM tomorrow.",
+    );
+  });
+
+  it('keeps approval-first message sending even when council guidance sounds permissive', async () => {
+    const { evaluateTurnReply } = await import('./turn-agent-harness.js');
+
+    const evaluation = evaluateTurnReply({
+      context: {
+        turnId: 'turn-approval-first',
+        channel: 'bluebubbles',
+        groupFolder: 'main',
+        requestRoute: 'direct_assistant',
+        taskFamily: 'communication',
+        meaningful: true,
+        selectedSkill: {
+          skillId: 'communication.reply_draft',
+          taskFamily: 'communication',
+          purpose: 'communication',
+          inputs: [],
+          outputs: [],
+          evidenceLevel: 'partial',
+          sideEffectRisk: 'high',
+          approvalNeed: 'explicit',
+          failureModes: [],
+          examples: [],
+        },
+        contextCompile: {
+          readPlan: {
+            taskFamily: 'communication',
+            readTiers: ['working'],
+            hotPath: true,
+            safeWriteClasses: ['episode_record'],
+            reason: 'communication',
+            sources: [],
+          },
+          selectedSkill: {
+            skillId: 'communication.reply_draft',
+            taskFamily: 'communication',
+            purpose: 'communication',
+            inputs: [],
+            outputs: [],
+            evidenceLevel: 'partial',
+            sideEffectRisk: 'high',
+            approvalNeed: 'explicit',
+            failureModes: [],
+            examples: [],
+          },
+          memoryTiers: ['working'],
+          metadata: {},
+          effectiveDirectives: ['require_send_approval'],
+        },
+        deliberation: {
+          selectedRoute: 'local_capability',
+          expectedEvidence: 'partial',
+        },
+        platformHoldReply: null,
+        providerCouncil: {
+          councilRunId: 'council-approval',
+          mode: 'max_iq_council',
+          finalRoute: 'max_iq_council',
+          approvalRequired: false,
+          answerGuidance: {
+            status: 'pass',
+            visibleVerdict: "Proceed; I'll send it now.",
+            answerDirection: 'Send the message.',
+            confidence: 0.9,
+            uncertainty: 'none',
+            sourceMemberIds: ['gemini_cloud'],
+            recommendedAction: 'answer',
+            approvalNeed: 'none',
+          },
+        },
+      },
+      text: "I'll send it now.",
+      routeKey: 'communication.reply',
+    });
+
+    expect(evaluation.rewrittenText).toContain(
+      'I drafted it for your approval',
+    );
+    expect(evaluation.rewrittenText).not.toContain("I'll send it now");
+    expect(evaluation.evaluatorFlags).toEqual(
+      expect.arrayContaining([
+        'provider_council_guidance_applied',
+        'communication_send_repaired',
+        'directive:require_send_approval',
+      ]),
+    );
   });
 
   it('repairs risky wording before the reply is sent', async () => {

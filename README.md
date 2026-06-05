@@ -85,27 +85,20 @@ Treat that flagship-flow suite and harness as the main product proof. The subsys
 
 ## Field-Trial Truth
 
-Current host truth for the Windows field-trial machine:
+Current host truth for the Mac mini:
 
-- `LAUNCH_CANDIDATE_STATUS=core_ready_with_manual_surface_sync` is the current honest launch overlay on this host.
-- Core live-proven surfaces:
-  - Telegram companion
-  - Alexa companion while the handled proof stays fresh
-  - Google Calendar write path
-  - unified `/cursor` work cockpit plus the Codex/OpenAI runtime lane
-  - life threads, communication companion, chief-of-staff / missions, knowledge library, and action-bundle / outcome-review flows
-  - startup / watchdog / host health
-- Manual human sync still pending:
-  - the latest repo Alexa interaction model hash has not been marked as synced locally yet
-  - after importing and building `docs/alexa/interaction-model.en-US.json` in the Alexa Developer Console, run `npm run setup -- --step alexa-model-sync mark-synced`
-- Optional Messages bridge:
-  - BlueBubbles is currently `live_proven` on this Windows host: transport, webhook registration, and the recent-activity shadow poll are healthy, and a fresh same-thread message-action proof chain was recorded on April 14, 2026 in the canonical self-thread `bb:iMessage;-;+14695405551`
-- Optional provider-blocked lanes:
-  - outward research
-  - Telegram image generation
-  - the local Anthropic-compatible LiteLLM compatibility lane
-- Freshness gaps that should not be confused with host failure:
-  - `journey_daily_guidance=near_live_only` until one fresh `what am I forgetting` or `what should I remember tonight` turn lands on this host
+- `Host state: running_ready` is the canonical runtime health signal for this machine.
+- Healthy/configured lanes:
+  - host-control, watchdog, and local runtime health
+  - OpenAI, Anthropic/Claude, Gemini, MiniMax, and Brave Search provider diagnostics
+  - BlueBubbles transport on local-first `127.0.0.1:1234` with the Cloudflare server URL kept as fallback/diagnostic only
+- Proof-gated lanes:
+  - Telegram has a real request/response marker, but should be refreshed with `npm run telegram:user:smoke` when judging launch freshness
+  - BlueBubbles is transport-ready with a registered private webhook, but becomes `live_proven` only after the fresh same-thread proof records inbound, outbound, and a same-thread message-action decision
+  - outward research, image generation, and flagship product journeys still need same-host proof turns before they should be called fresh/live
+- External/manual blockers:
+  - Google Calendar is not connected on this host until the OAuth setup flow is completed
+  - Alexa still needs the Developer Console model sync plus one real signed simulator/device IntentRequest
 - `npm run services:status`, `npm run setup -- --step verify`, and `npm run debug:status` are the operator truth surfaces and should agree on the same core/manual-sync/provider-blocked story
 - `npm run debug:pilot` is the proof-freshness and dogfooding surface for flagship journeys, degraded-but-usable fallback, and exact next steps
 
@@ -204,11 +197,11 @@ Then use this setup flow:
 4. Start the bot and open a DM with Andrea in Telegram
 5. In Telegram, run `/start`
 6. In Telegram, run `/registermain`
-7. In Telegram, run `/help`
+7. In Telegram, run `/mainchat`
+8. In Telegram, run `/help`
 
 After `/registermain`, that exact DM should become Andrea's main control chat.
-If operator-only surfaces later feel flat or unavailable, run `npm run services:status`
-and confirm `registered_main_chat_jid` matches the real Telegram DM you use.
+If operator-only surfaces later feel flat or unavailable, run `/mainchat` first, then run `npm run services:status` and confirm `registered_main_chat_jid` matches the real Telegram DM you use.
 
 ## Pick Your Guide
 
@@ -326,9 +319,9 @@ BlueBubbles is now Andrea's optional bounded Messages bridge, not a core require
 - richer details still hand off explicitly to Telegram when that is the better surface
 - BlueBubbles does **not** become a main control chat and does not expose work-cockpit or admin/runtime controls
 
-On this host, the Messages bridge is currently `live_proven`: Andrea has the live `BLUEBUBBLES_*` configuration loaded, the Mac-side endpoint is reachable, the webhook is registered, the recent-activity shadow poll is healthy, and a fresh same-thread `message_action` proof chain was recorded on April 14, 2026 in `bb:iMessage;-;+14695405551`. Telegram still remains Andrea's dependable main messaging surface, while BlueBubbles is now an honestly proven optional bridge.
+On this Mac mini, the Messages bridge is local-first: Andrea has the live `BLUEBUBBLES_*` configuration loaded, the local endpoint is reachable at `127.0.0.1:1234`, the webhook is registered, and the Cloudflare BlueBubbles URL is fallback/diagnostic only. Telegram remains Andrea's dependable main messaging surface; BlueBubbles becomes `live_proven` only after a fresh same-thread inbound, outbound, and `message_action` proof chain lands on this host.
 
-OpenBubbles is still not an active Andrea provider on this PC. Its official docs support the Mac-offline goal after activation or renewal, but Andrea does not yet have a supported Windows-native observation/reply surface to bind to there.
+OpenBubbles is still not an active Andrea provider for this Mac mini BlueBubbles bridge.
 
 See [docs/BLUEBUBBLES_CHANNEL_PREP.md](docs/BLUEBUBBLES_CHANNEL_PREP.md) for the live V1 scope, config, webhook/send model, and exact current limits.
 
@@ -398,6 +391,7 @@ Typical prompts now include:
 - `Stop doing that`
 
 See [docs/PROACTIVE_RITUALS.md](docs/PROACTIVE_RITUALS.md) for the model, controls, and limits.
+
 - bounded research now returns a summary first, structured findings, route explanation, and exact blocker truth when web-backed OpenAI research is unavailable
 - bounded research can now use local context, the Knowledge Library, optional OpenAI-backed synthesis with `web_search` when configured, and runtime delegation only when the request is clearly execution-heavy
 - Telegram image generation is now wired through the shared media capability when OpenAI credentials are present and the provider account is usable; Alexa keeps media at the handoff layer
@@ -579,7 +573,7 @@ Notes:
 - if the browser reaches the Google callback but `auth` still times out, finish the same current-repo OAuth run with `npm run setup -- --step google-calendar auth-complete --callback-url "http://127.0.0.1:PORT/?state=...&code=..."`
 - reminder phrasing still creates reminders, not Google Calendar events
 - a host is only live-proven for Google Calendar writes after `auth`, `discover`, `validate`, and one disposable create-event proof all succeed on that host
-- on this Windows host, Google Calendar read/write is now live-proven through `npm run debug:google-calendar` and a real Telegram assistant-style create confirmation flow
+- on this Mac mini, Google Calendar currently remains an external setup blocker until the OAuth flow is completed and validated
 
 ## What Andrea Can Do
 
@@ -667,6 +661,7 @@ Andrea currently supports:
 - Node.js 22.x
 - Docker, Podman, and Apple Container
 - Anthropic-compatible model endpoints
+- first-class provider council roles for OpenAI, Anthropic/Claude, Gemini, MiniMax, and Brave Search when configured
 - OpenAI-key-backed gateways exposed through Anthropic-compatible APIs
 - optional 9router / Cursor-backed runtime-routing paths
 - optional Cursor Cloud Agents API control via `CURSOR_API_KEY` and optional `CURSOR_API_AUTH_MODE=auto|bearer|basic`

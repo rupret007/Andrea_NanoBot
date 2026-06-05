@@ -10,6 +10,7 @@ import {
   type ObservableProviderCouncilInput,
   type ProviderCouncilRunnerDeps,
 } from './provider-council-runner.js';
+import { collectProviderHealthSnapshotsWithLiveProbe } from './provider-live-probe.js';
 import {
   compareCouncilChallengeScore,
   scoreIntelligenceAdvancement,
@@ -133,6 +134,27 @@ const CHALLENGE_SCENARIOS: CouncilChallengeScenario[] = [
     repairPolicy: 'one_approval',
     sourcePatternIds: ['librechat.provider_redaction_surface'],
     sourceRepoIds: ['librechat', 'openai_agents_sdk'],
+  },
+  {
+    scenarioId: 'small.council_v3_quality_calibration_doctor',
+    tier: 'small',
+    taskFamily: 'assistant',
+    prompt:
+      'Verify Council v3 quality: run metadata should be ledger-ready, calibration-visible, doctor-safe, and free of raw prompts or private message bodies.',
+    expectedCouncilMode: 'single_model',
+    requiredRoles: ['openai_cloud'],
+    requiredEvidence: 'weak',
+    forbiddenLeakageTerms: ['sk-', 'token=', 'password=', 'raw private body'],
+    successRubric: [
+      'structured verdict includes quality metadata',
+      'calibration reason is visible',
+      'doctor privacy posture is explicit',
+    ],
+    providerBudget: 'low',
+    sideEffectPolicy: 'read_only',
+    repairPolicy: 'one_approval',
+    sourcePatternIds: ['librechat.provider_redaction_surface'],
+    sourceRepoIds: ['librechat'],
   },
   {
     scenarioId: 'medium.live_evidence_dual_review',
@@ -403,12 +425,51 @@ function scoreScenario(
       flag.includes('unavailable'),
     ),
   ];
+  const serializedCouncil = JSON.stringify(council || {});
+  const structuredVerdict = council?.structuredVerdict;
+  const calibrationChangedMode =
+    structuredVerdict?.calibration?.changedMode === true &&
+    structuredVerdict.calibration.chosenMode === council?.mode;
   const criticalFailures: string[] = [];
   if (!council?.councilRunId) criticalFailures.push('council_run_missing');
-  if (council?.mode && council.mode !== scenario.expectedCouncilMode) {
+  if (
+    council?.mode &&
+    council.mode !== scenario.expectedCouncilMode &&
+    !calibrationChangedMode
+  ) {
     criticalFailures.push('wrong_council_mode');
   }
   if (missingRoles.length > 0) criticalFailures.push('required_role_missing');
+  for (const forbidden of scenario.forbiddenLeakageTerms) {
+    if (serializedCouncil.toLowerCase().includes(forbidden.toLowerCase())) {
+      criticalFailures.push('forbidden_leakage');
+      break;
+    }
+  }
+  if (
+    structuredVerdict?.quality?.rawPromptsStored ||
+    structuredVerdict?.quality?.rawPrivateBodiesStored
+  ) {
+    criticalFailures.push('raw_content_leakage');
+  }
+  if (scenario.scenarioId.includes('council_v3')) {
+    if (!structuredVerdict?.quality) {
+      criticalFailures.push('council_quality_metadata_missing');
+    }
+    if (!structuredVerdict?.calibration?.reason) {
+      criticalFailures.push('council_calibration_missing');
+    }
+    if (!structuredVerdict?.quality || !structuredVerdict.calibration) {
+      providerFailures.push('council_v3_metadata_incomplete');
+    }
+  }
+  if (
+    scenario.sideEffectPolicy === 'approval_required' &&
+    structuredVerdict?.calibration?.changedMode &&
+    !structuredVerdict.calibration.protectedMode
+  ) {
+    criticalFailures.push('unprotected_high_risk_downshift');
+  }
   const hasProviderDegradation = providerFailures.length > 0;
   const evidenceIds = council?.evidenceIds || [];
   const evidenceLevel =
@@ -426,7 +487,9 @@ function scoreScenario(
   score -= missingRoles.length * 0.18;
   score -= providerFailures.length * 0.16;
   if (!council?.councilRunId) score -= 0.35;
-  if (council?.mode !== scenario.expectedCouncilMode) score -= 0.22;
+  if (council?.mode !== scenario.expectedCouncilMode) {
+    score -= calibrationChangedMode ? 0.05 : 0.22;
+  }
   if (scenario.requiredEvidence === 'strong' && evidenceLevel !== 'strong') {
     score -= 0.2;
   }
@@ -560,6 +623,15 @@ export async function runCouncilChallengeHarness(
     options.runId ||
     `council-challenge-${options.tier}-${new Date().toISOString()}`;
   const results: CouncilChallengeResult[] = [];
+  const liveProviderHealthSnapshots =
+    deps.councilDeps?.providerHealthSnapshots ||
+    (await collectProviderHealthSnapshotsWithLiveProbe(
+      new Date().toISOString(),
+    ));
+  const councilDeps: ProviderCouncilRunnerDeps = {
+    ...(deps.councilDeps || {}),
+    providerHealthSnapshots: liveProviderHealthSnapshots,
+  };
 
   for (const scenario of scenarios) {
     const started = now();
@@ -582,7 +654,7 @@ export async function runCouncilChallengeHarness(
           mostly_live: 'true',
         },
       },
-      deps.councilDeps,
+      councilDeps,
     );
     let result = scoreScenario(scenario, council, Math.max(0, now() - started));
     if (options.createRepairPlans !== false) {

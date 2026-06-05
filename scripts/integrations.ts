@@ -4,13 +4,14 @@ import {
   formatIntegrationDoctorReport,
 } from '../src/integration-doctor.js';
 import { initDatabase } from '../src/db.js';
+import { collectProviderHealthSnapshotsWithLiveProbe } from '../src/provider-live-probe.js';
 
 function printUsage(): void {
   console.log(
     [
       'Usage:',
-      '  tsx scripts/integrations.ts status [--json]',
-      '  tsx scripts/integrations.ts doctor [--json]',
+      '  tsx scripts/integrations.ts status [--json] [--config-only]',
+      '  tsx scripts/integrations.ts doctor [--json] [--config-only]',
       '  tsx scripts/integrations.ts fix --id <integration>',
       '',
       'Examples:',
@@ -32,9 +33,14 @@ async function main(): Promise<void> {
   const [rawCommand, ...args] = process.argv.slice(2);
   const command = (rawCommand || 'status').toLowerCase();
   const json = args.includes('--json');
+  const configOnly = args.includes('--config-only');
 
   if (command === 'status' || command === 'doctor') {
-    const report = buildIntegrationDoctorReport();
+    const now = new Date();
+    const providers = configOnly
+      ? undefined
+      : await collectProviderHealthSnapshotsWithLiveProbe(now.toISOString());
+    const report = buildIntegrationDoctorReport({ now, providers });
     if (json) {
       console.log(JSON.stringify(report, null, 2));
       return;

@@ -21,11 +21,13 @@ import {
   resolveBlueBubblesProofDrillSnapshot,
 } from './message-actions.js';
 import {
-  BLUEBUBBLES_CANONICAL_SELF_THREAD_JID,
   canonicalizeBlueBubblesSelfThreadJid,
   expandBlueBubblesLogicalSelfThreadJids,
+  getBlueBubblesCanonicalSelfThreadJid,
+  getBlueBubblesSelfThreadAliasJids,
   isBlueBubblesSelfThreadAliasJid,
 } from './bluebubbles-self-thread.js';
+import { buildBlueBubblesProofReconciliationReport } from './bluebubbles-proof-reconciliation.js';
 import { readEnvFile } from './env.js';
 import {
   buildGoogleCalendarBlockedProofSurface,
@@ -991,7 +993,7 @@ function buildLaunchReadinessTruth(params: {
       nearLiveCoreSurfaces[0]?.[0] === 'alexa' &&
       params.telegram.proofState === 'live_proven';
     summary = onlyAlexaNeedsFreshProof
-      ? 'Andrea core companion is usable on this PC. Telegram is already dependable, and Alexa still needs one fresh same-host proof turn.'
+      ? 'Andrea core companion is usable on this host. Telegram is already dependable, and Alexa still needs one fresh same-host proof turn.'
       : 'Andrea core companion is close, but one core surface still needs a same-host fresh proof step.';
   } else if (manualSyncSteps.length > 0) {
     coreStatus = 'manual_sync_pending';
@@ -1003,8 +1005,8 @@ function buildLaunchReadinessTruth(params: {
     status = 'provider_blocked_but_core_usable';
     summary =
       params.bluebubbles.bridgeAvailability === 'available'
-        ? 'Andrea core companion is ready on this PC. Messages is a best-effort bridge right now, and Telegram remains the dependable main path.'
-        : 'Andrea core companion is ready on this PC. The Messages bridge is unavailable right now, so use Telegram as the dependable main path.';
+        ? 'Andrea core companion is ready on this host. Messages is a best-effort bridge right now, and Telegram remains the dependable main path.'
+        : 'Andrea core companion is ready on this host. The Messages bridge is unavailable right now, so use Telegram as the dependable main path.';
   } else if (optionalProviderBlockers.length > 0) {
     coreStatus = 'healthy';
     status = 'provider_blocked_but_core_usable';
@@ -1640,7 +1642,7 @@ function buildBlueBubblesTruth(
     : null;
   const continuity = reconcileBlueBubblesSelfThreadContinuity({
     groupFolder: config.groupFolder || 'main',
-    chatJid: BLUEBUBBLES_CANONICAL_SELF_THREAD_JID,
+    chatJid: getBlueBubblesCanonicalSelfThreadJid(),
     now,
     allowRehydrate: true,
   });
@@ -1784,6 +1786,10 @@ function buildBlueBubblesTruth(
     groupFolder: config.groupFolder || 'main',
     now,
   });
+  const proofReconciliation = buildBlueBubblesProofReconciliationReport({
+    groupFolder: config.groupFolder || 'main',
+    now,
+  });
   const effectiveReplyGateIsGroup = effectiveReplyGateChatJid
     ? (bluebubblesChats.find((chat) => chat.jid === effectiveReplyGateChatJid)
         ?.is_group ?? 0) !== 0
@@ -1827,7 +1833,7 @@ function buildBlueBubblesTruth(
     isBlueBubblesSelfThreadAliasJid(lastInboundChatJid) ||
     isBlueBubblesSelfThreadAliasJid(lastOutboundChatJid) ||
     isBlueBubblesSelfThreadAliasJid(recentEngagement?.chatJid)
-      ? ` Canonical self-thread: ${BLUEBUBBLES_CANONICAL_SELF_THREAD_JID}. Alias support stays enabled for bb:iMessage;-;jeffstory007@gmail.com.`
+      ? ` Canonical self-thread: ${getBlueBubblesCanonicalSelfThreadJid()}. Alias support stays enabled for ${getBlueBubblesSelfThreadAliasJids().join(', ')}.`
       : '';
   const rawDerivedDetectionState = extractBlueBubblesDetailField(
     channelDetail,
@@ -1995,7 +2001,7 @@ function buildBlueBubblesTruth(
       monitorState.detectionState === 'mixed_degraded')
       ? null
       : shadowMonitorUnstable
-        ? `Andrea can reach the BlueBubbles bridge from this PC, but the recent-activity shadow poll is failing (${effectiveShadowPollLastError}), so the same-thread health check is not trustworthy yet.`
+        ? `Andrea can reach the BlueBubbles bridge from this host, but the recent-activity shadow poll is failing (${effectiveShadowPollLastError}), so the same-thread health check is not trustworthy yet.`
         : liveDetectionEnvelopePresent
           ? derivedDetectionDetail || null
           : monitorState.detectionDetail ||
@@ -2012,12 +2018,12 @@ function buildBlueBubblesTruth(
       monitorState.detectionState === 'mixed_degraded')
       ? null
       : shadowMonitorUnstable
-        ? 'Check the BlueBubbles recent-message endpoint and shadow-poll path for this Windows host, then retry the same 1:1 Messages thread.'
+        ? 'Check the BlueBubbles recent-message endpoint and shadow-poll path for this host, then retry the same 1:1 Messages thread.'
         : liveDetectionEnvelopePresent
           ? derivedDetectionNextAction || null
           : monitorState.detectionNextAction ||
             (effectiveDetectionState === 'transport_unreachable'
-              ? 'Check the BlueBubbles server endpoint for this Windows host, prefer a stable IP or explicit candidate list over a .local hostname, then retry the same 1:1 Messages thread.'
+              ? 'Check the BlueBubbles server endpoint for this host, prefer a stable IP or explicit candidate list over a .local hostname, then retry the same 1:1 Messages thread.'
               : null) ||
             null;
   const effectiveChannelDetail =
@@ -2158,44 +2164,58 @@ function buildBlueBubblesTruth(
     eligibleFollowups: [...representativeContinuity.eligibleFollowups],
     canonicalSelfThreadChatJid:
       representativeContinuity.canonicalSelfThreadChatJid ||
-      BLUEBUBBLES_CANONICAL_SELF_THREAD_JID,
+      getBlueBubblesCanonicalSelfThreadJid(),
     sourceSelfThreadChatJid:
       representativeContinuity.sourceSelfThreadChatJid ||
       representativeContinuity.canonicalSelfThreadChatJid ||
-      BLUEBUBBLES_CANONICAL_SELF_THREAD_JID,
-    messageActionProofState: matchingProofChainMessageAction
-      ? 'fresh'
-      : recentMessageActionProofs.length > 0
-        ? 'stale'
-        : 'none',
+      getBlueBubblesCanonicalSelfThreadJid(),
+    messageActionProofState:
+      proofReconciliation.messageActionProofState === 'fresh'
+        ? 'fresh'
+        : matchingProofChainMessageAction
+          ? 'fresh'
+          : proofReconciliation.messageActionProofState === 'stale' ||
+              recentMessageActionProofs.length > 0
+            ? 'stale'
+            : 'none',
     messageActionProofChatJid:
-      matchingProofChainMessageAction?.proofChatJid ||
-      recentMessageActionProofs[0]?.proofChatJid ||
-      'none',
+      proofReconciliation.lastDecisionChatJid !== 'none'
+        ? proofReconciliation.lastDecisionChatJid
+        : matchingProofChainMessageAction?.proofChatJid ||
+          recentMessageActionProofs[0]?.proofChatJid ||
+          'none',
     messageActionProofAt:
-      matchingProofChainMessageAction?.action.lastActionAt ||
-      matchingProofChainMessageAction?.action.sentAt ||
-      recentMessageActionProofs[0]?.action.lastActionAt ||
-      recentMessageActionProofs[0]?.action.sentAt ||
-      'none',
-    messageActionProofDetail: matchingProofChainMessageAction
-      ? `Recent same-chat message action is recorded in ${matchingProofChainMessageAction.proofChatJid}.${blueBubblesSelfThreadAliasDetail}`
-      : continuity.activeMessageActionId
-        ? `A fresh BlueBubbles same-thread draft is active in ${continuity.canonicalSelfThreadChatJid || proofChainChatJid || BLUEBUBBLES_CANONICAL_SELF_THREAD_JID}, and it is waiting for a decision.${blueBubblesSelfThreadAliasDetail}`
-        : draftLikeReplyWithoutAction && proofChainChatJid
-          ? continuityState === 'idle'
-            ? `Andrea drafted in ${draftLikeReplyMessage?.chat_jid || proofChainChatJid} earlier, but that self-thread draft is no longer fresh and no active message-action record remains.${blueBubblesSelfThreadAliasDetail}`
-            : `Andrea drafted in ${draftLikeReplyMessage?.chat_jid || proofChainChatJid}, but no fresh message-action record was created yet.${blueBubblesSelfThreadAliasDetail}`
-          : recentMessageActionProofs.length > 0
-            ? `A recent BlueBubbles message-action decision exists in ${recentMessageActionProofs[0]!.proofChatJid}, but not in the same chat as the current proof chain.${blueBubblesSelfThreadAliasDetail}`
-            : `No fresh BlueBubbles message-action decision is recorded yet.${blueBubblesSelfThreadAliasDetail}`,
+      proofReconciliation.lastDecisionAt !== 'none'
+        ? proofReconciliation.lastDecisionAt
+        : matchingProofChainMessageAction?.action.lastActionAt ||
+          matchingProofChainMessageAction?.action.sentAt ||
+          recentMessageActionProofs[0]?.action.lastActionAt ||
+          recentMessageActionProofs[0]?.action.sentAt ||
+          'none',
+    messageActionProofDetail:
+      proofReconciliation.messageActionProofState === 'fresh'
+        ? `Reconciled same-thread message-action proof is fresh in ${proofReconciliation.lastDecisionChatJid}; confirmation at ${proofReconciliation.confirmationAt}.${blueBubblesSelfThreadAliasDetail}`
+        : !draftLikeReplyWithoutAction &&
+            proofReconciliation.blockerCategory !== 'no_action' &&
+            proofReconciliation.blockerCategory !== 'no_canonical_traffic'
+          ? `${proofReconciliation.blocker} ${proofReconciliation.nextAction}${blueBubblesSelfThreadAliasDetail}`
+          : matchingProofChainMessageAction
+            ? `Recent same-chat message action is recorded in ${matchingProofChainMessageAction.proofChatJid}.${blueBubblesSelfThreadAliasDetail}`
+            : continuity.activeMessageActionId
+              ? `A fresh BlueBubbles same-thread draft is active in ${continuity.canonicalSelfThreadChatJid || proofChainChatJid || getBlueBubblesCanonicalSelfThreadJid()}, and it is waiting for a decision.${blueBubblesSelfThreadAliasDetail}`
+              : draftLikeReplyWithoutAction && proofChainChatJid
+                ? continuityState === 'idle'
+                  ? `Andrea drafted in ${draftLikeReplyMessage?.chat_jid || proofChainChatJid} earlier, but that self-thread draft is no longer fresh and no active message-action record remains.${blueBubblesSelfThreadAliasDetail}`
+                  : `Andrea drafted in ${draftLikeReplyMessage?.chat_jid || proofChainChatJid}, but no fresh message-action record was created yet.${blueBubblesSelfThreadAliasDetail}`
+                : recentMessageActionProofs.length > 0
+                  ? `A recent BlueBubbles message-action decision exists in ${recentMessageActionProofs[0]!.proofChatJid}, but not in the same chat as the current proof chain.${blueBubblesSelfThreadAliasDetail}`
+                  : `No fresh BlueBubbles message-action decision is recorded yet.${blueBubblesSelfThreadAliasDetail}`,
     proofDrillState: proofDrill.proofDrillState,
     proofDrillActionId: proofDrill.proofDrillActionId,
     proofDrillStartedAt: proofDrill.proofDrillStartedAt,
     proofDrillNextStep: proofDrill.proofDrillNextStep,
   };
-  const directOneToOneMode = base.effectiveReplyGateMode === 'direct_1to1';
-  const blueBubblesPromptPrefix = directOneToOneMode ? '' : '@Andrea ';
+  const blueBubblesPromptPrefix = '@Andrea ';
   const blueBubblesWarmupPrompt = `\`${blueBubblesPromptPrefix}hi\``;
   const blueBubblesLooseEndsPrompt = `\`${blueBubblesPromptPrefix}what am I forgetting\``;
   const blueBubblesDraftPrompt = `\`${blueBubblesPromptPrefix}what should I say back\``;
@@ -2212,12 +2232,12 @@ function buildBlueBubblesTruth(
       ...buildTruth({
         proofState: 'externally_blocked',
         blocker:
-          "Messages bridge is not configured on this PC, so use Telegram as Andrea's dependable main messaging surface.",
+          "Messages bridge is not configured on this host, so use Telegram as Andrea's dependable main messaging surface.",
         blockerOwner: 'external',
         nextAction:
-          'Load the BLUEBUBBLES_* connection values on this Windows host, wire the Mac-side webhook to Andrea, and repro one real inbound -> reply -> follow-up flow.',
+          'Load the BLUEBUBBLES_* connection values on this host, wire the BlueBubbles webhook to Andrea, and repro one real inbound -> reply -> follow-up flow.',
         detail:
-          'Repo-side BlueBubbles harnesses can still pass here, but Andrea does not currently have a live Messages bridge configured on this PC.',
+          'Repo-side BlueBubbles harnesses can still pass here, but Andrea does not currently have a live Messages bridge configured on this host.',
       }),
       ...base,
     };
@@ -2228,7 +2248,7 @@ function buildBlueBubblesTruth(
       ...buildTruth({
         proofState: 'externally_blocked',
         blocker:
-          "Messages bridge is disabled on this PC, so use Telegram as Andrea's dependable main messaging surface.",
+          "Messages bridge is disabled on this host, so use Telegram as Andrea's dependable main messaging surface.",
         blockerOwner: 'external',
         nextAction:
           'Enable BLUEBUBBLES_ENABLED and point this host at the reachable BlueBubbles server/webhook.',
@@ -2252,7 +2272,7 @@ function buildBlueBubblesTruth(
             ? 'Finish the BLUEBUBBLES_* connection values and set one or more allowed chat GUIDs for this host.'
             : 'Finish the BLUEBUBBLES_* connection values for this host.',
         detail:
-          'The BlueBubbles bridge is enabled in code, but this PC is not yet configured for live scoped Messages conversations.',
+          'The BlueBubbles bridge is enabled in code, but this host is not yet configured for live scoped Messages conversations.',
       }),
       ...base,
     };
@@ -2263,12 +2283,12 @@ function buildBlueBubblesTruth(
       ...buildTruth({
         proofState: 'externally_blocked',
         blocker:
-          'Messages bridge does not have a public webhook URL configured for this Windows host, so Telegram remains the reliable main path.',
+          'Messages bridge does not have a BlueBubbles-reachable webhook URL configured for this host, so Telegram remains the reliable main path.',
         blockerOwner: 'external',
         nextAction:
-          'Set BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL to the Mac-reachable Andrea listener URL, then update the Mac-side BlueBubbles webhook.',
+          'Set BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL to the BlueBubbles-reachable Andrea listener URL, then update the BlueBubbles webhook.',
         detail:
-          'Andrea can listen locally, but the Mac-side BlueBubbles server still needs a public webhook target that points back to this Windows host.',
+          'Andrea can listen locally, but the BlueBubbles server still needs a webhook target that points back to this Andrea host.',
       }),
       ...base,
     };
@@ -2284,7 +2304,7 @@ function buildBlueBubblesTruth(
         nextAction:
           'Enable BLUEBUBBLES_SEND_ENABLED and repro one real inbound -> reply -> follow-up flow.',
         detail:
-          'Inbound webhook handling is configured, but this PC cannot yet prove a full live reply-back flow.',
+          'Inbound webhook handling is configured, but this host cannot yet prove a full live reply-back flow.',
       }),
       ...base,
     };
@@ -2315,7 +2335,7 @@ function buildBlueBubblesTruth(
       ...buildTruth({
         proofState: 'externally_blocked',
         blocker:
-          'Messages bridge is unavailable from this Windows host right now, so Messages may miss 1:1 texts before Andrea ever sees them. Use Telegram as the dependable main path.',
+          'Messages bridge is unavailable from this host right now, so Messages may miss 1:1 texts before Andrea ever sees them. Use Telegram as the dependable main path.',
         blockerOwner: 'external',
         nextAction:
           base.detectionNextAction !== 'none'
@@ -2334,7 +2354,7 @@ function buildBlueBubblesTruth(
     const shadowMonitorBlocked =
       shadowMonitorUnstable && base.shadowPollLastError !== 'none';
     const blocker = shadowMonitorBlocked
-      ? 'Messages bridge is reachable on this PC, but the same-thread health check is failing, so Andrea cannot trust what it is seeing there yet.'
+      ? 'Messages bridge is reachable on this host, but the same-thread health check is failing, so Andrea cannot trust what it is seeing there yet.'
       : effectiveDetectionState === 'mixed_degraded'
         ? 'BlueBubbles is seeing newer chat activity than Andrea on the webhook side, and a recent reply-back attempt failed too.'
         : 'BlueBubbles server is seeing newer chat activity than Andrea on the webhook side.';
@@ -2366,7 +2386,7 @@ function buildBlueBubblesTruth(
         nextAction:
           base.detectionNextAction !== 'none'
             ? base.detectionNextAction
-            : 'Check the Mac-side webhook target and Windows listener reachability, then retry the same Messages thread.',
+            : 'Check the BlueBubbles webhook target and Andrea listener reachability, then retry the same Messages thread.',
         detail: detailParts.join(' '),
       }),
       ...base,
@@ -2474,28 +2494,36 @@ function buildBlueBubblesTruth(
         blockerOwner: 'external',
         nextAction: `Register Andrea's public webhook on the BlueBubbles server, then send ${blueBubblesWarmupPrompt} from the companion thread.`,
         detail:
-          'Andrea is listening on this Windows host and the BlueBubbles server is reachable, but the Mac-side server still needs the matching webhook entry before real inbound traffic can reach Andrea.',
+          'Andrea is listening on this host and the BlueBubbles server is reachable, but the BlueBubbles server still needs the matching webhook entry before real inbound traffic can reach Andrea.',
       }),
       ...base,
     };
   }
 
   if (
-    creditedLiveProofChatJid &&
-    matchingProofChainMessageAction &&
+    ((creditedLiveProofChatJid && matchingProofChainMessageAction) ||
+      proofReconciliation.messageActionProofState === 'fresh') &&
     (sameThreadProof ||
+      proofReconciliation.confirmationAt !== 'none' ||
       (liveProofChatJid &&
         lastInboundObservedAt !== 'none' &&
         lastOutboundResult !== 'none'))
   ) {
+    const creditedChatJid =
+      proofReconciliation.lastDecisionChatJid !== 'none'
+        ? proofReconciliation.lastDecisionChatJid
+        : creditedLiveProofChatJid || getBlueBubblesCanonicalSelfThreadJid();
     return {
       ...buildTruth({
         proofState: 'live_proven',
-        detail: sameThreadContinuationProof
-          ? `Messages bridge is available on this host through BlueBubbles. Recent same-thread proof is anchored in ${creditedLiveProofChatJid}, including a fresh message-action decision and a fresh same-thread continuation after it.`
-          : sameThreadDecisionConfirmationProof
-            ? `Messages bridge is available on this host through BlueBubbles. Recent same-thread proof is anchored in ${creditedLiveProofChatJid}, including a fresh message-action decision and Andrea's confirmation in that same chat.`
-            : `Messages bridge is available on this host through BlueBubbles. Recent same-thread proof is anchored in ${creditedLiveProofChatJid}, including a fresh message-action decision in that same chat.`,
+        detail:
+          proofReconciliation.messageActionProofState === 'fresh'
+            ? `Messages bridge is available on this host through BlueBubbles. Reconciled proof is anchored in ${creditedChatJid}, including a fresh safe message-action decision and Andrea's confirmation in that same chat.`
+            : sameThreadContinuationProof
+              ? `Messages bridge is available on this host through BlueBubbles. Recent same-thread proof is anchored in ${creditedChatJid}, including a fresh message-action decision and a fresh same-thread continuation after it.`
+              : sameThreadDecisionConfirmationProof
+                ? `Messages bridge is available on this host through BlueBubbles. Recent same-thread proof is anchored in ${creditedChatJid}, including a fresh message-action decision and Andrea's confirmation in that same chat.`
+                : `Messages bridge is available on this host through BlueBubbles. Recent same-thread proof is anchored in ${creditedChatJid}, including a fresh message-action decision in that same chat.`,
       }),
       ...base,
     };

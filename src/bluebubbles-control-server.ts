@@ -43,6 +43,17 @@ import type {
   SendMessageOptions,
 } from './types.js';
 
+type BlueBubblesDoctorBlockerCategory =
+  | 'healthy'
+  | 'not_configured'
+  | 'transport'
+  | 'webhook'
+  | 'mention_gate'
+  | 'proof_needed'
+  | 'send_failure'
+  | 'manual_external'
+  | 'unknown';
+
 interface BlueBubblesControlServerDeps {
   getChannel(): BlueBubblesChannel | null;
   buildTruth?(): FieldTrialBlueBubblesTruth;
@@ -269,6 +280,11 @@ function buildStatus(params: {
     candidateBaseUrls: snapshot?.candidateBaseUrls || config.baseUrlCandidates,
     publicWebhookUrl:
       snapshot?.publicWebhookUrl || params.truth.publicWebhookUrl,
+    serverPublicUrl: snapshot?.serverPublicUrl || config.serverPublicUrl,
+    localPort: snapshot?.localPort || config.localPort,
+    imessageAccountLabel:
+      snapshot?.imessageAccountLabel || config.imessageAccountLabel,
+    computerId: snapshot?.computerId || config.computerId,
     webhookRegistrationState: params.truth.webhookRegistrationState,
     webhookRegistrationDetail: params.truth.webhookRegistrationDetail,
     transportState: params.truth.transportState,
@@ -304,6 +320,8 @@ function buildStatus(params: {
       snapshot?.lastOutboundTargetKind || params.truth.lastOutboundTargetKind,
     lastOutboundTarget:
       snapshot?.lastOutboundTarget || params.truth.lastOutboundTarget,
+    lastSendErrorDetail:
+      snapshot?.lastSendErrorDetail || params.truth.lastSendErrorDetail,
     recentTargetChatJid: params.truth.recentTargetChatJid,
     recentTargetAt: params.truth.recentTargetAt,
     openMessageActionCount: params.truth.openMessageActionCount,
@@ -322,6 +340,60 @@ function buildStatus(params: {
     messageActionProofChatJid: params.truth.messageActionProofChatJid,
     messageActionProofAt: params.truth.messageActionProofAt,
     ...proofDrill,
+  };
+}
+
+function classifyBlueBubblesDoctorBlocker(
+  status: BlueBubblesControlStatus,
+): BlueBubblesDoctorBlockerCategory {
+  if (status.proofState === 'live_proven') return 'healthy';
+  if (!status.enabled || !status.configured) return 'not_configured';
+  if (
+    /unreachable|auth_failed|not_checked/i.test(status.transportState) ||
+    /unreachable|timed out|ECONNREFUSED|ENOTFOUND/i.test(status.transportDetail)
+  ) {
+    return 'transport';
+  }
+  if (!/registered/i.test(status.webhookRegistrationState)) return 'webhook';
+  if (
+    status.detectionState === 'ignored_by_gate_or_scope' ||
+    /mention_required|@Andrea/i.test(status.detectionDetail)
+  ) {
+    return 'mention_gate';
+  }
+  if (
+    status.detectionState === 'reply_delivery_broken' ||
+    status.lastSendErrorDetail !== 'none'
+  ) {
+    return 'send_failure';
+  }
+  if (
+    status.proofState === 'near_live_only' ||
+    status.messageActionProofState !== 'fresh'
+  ) {
+    return 'proof_needed';
+  }
+  if (status.blockerOwner === 'external') return 'manual_external';
+  return 'unknown';
+}
+
+function buildDoctorResponse(params: {
+  status: BlueBubblesControlStatus;
+  proof: BlueBubblesProofReport;
+}): Record<string, unknown> {
+  const blockerCategory = classifyBlueBubblesDoctorBlocker(params.status);
+  return {
+    ok: blockerCategory === 'healthy',
+    blockerCategory,
+    nextAction: params.status.nextAction || params.proof.nextAction || 'none',
+    status: params.status,
+    proof: params.proof,
+    privacy: {
+      bluebubblesPublicServerUrlIsFallbackOnly: true,
+      andreaWebhookIsPrivate: params.status.listenerHost === '127.0.0.1',
+      controlApiIsPrivate: true,
+      secretsRedacted: true,
+    },
   };
 }
 
@@ -803,6 +875,25 @@ export class BlueBubblesControlServer {
             now,
           }),
         });
+        return;
+      }
+
+      if (method === 'GET' && url.pathname === '/v1/bluebubbles/doctor') {
+        const now = this.now();
+        const truth = this.buildTruth();
+        const status = buildStatus({
+          truth,
+          channel: this.deps.getChannel(),
+          now,
+        });
+        writeJson(
+          res,
+          200,
+          buildDoctorResponse({
+            status,
+            proof: buildProofReport(truth, now),
+          }),
+        );
         return;
       }
 

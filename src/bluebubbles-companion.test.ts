@@ -166,6 +166,24 @@ describe('bluebubbles companion helpers', () => {
     });
   });
 
+  it('routes @Andrea-prefixed message-action follow-ups before generic asks', () => {
+    expect(
+      decideBlueBubblesCompanionIngress('@Andrea send it later tonight', {
+        chatJid: 'bb:iMessage;-;+14695405551',
+        hasOpenMessageActionFollowup: true,
+      }),
+    ).toEqual({
+      kind: 'pending_local_continuation',
+      continuationKind: 'action_draft',
+    });
+    expect(
+      decideBlueBubblesCompanionIngress('@Andrea what am I forgetting', {
+        chatJid: 'bb:iMessage;-;+14695405551',
+        hasOpenMessageActionFollowup: false,
+      }),
+    ).toEqual({ kind: 'explicit_ask' });
+  });
+
   it('allows a bare follow-up when a pending calendar create exists on the canonical self-thread alias', () => {
     const seenChatJids: string[] = [];
     const pendingKind = resolveBlueBubblesPendingLocalContinuationKind({

@@ -21,6 +21,10 @@ import {
   storeMessage,
 } from '../src/db.js';
 import { buildFieldTrialOperatorTruth } from '../src/field-trial-readiness.js';
+import {
+  buildBlueBubblesProofReconciliationReport,
+  formatBlueBubblesProofReconciliationReport,
+} from '../src/bluebubbles-proof-reconciliation.js';
 import { saveKnowledgeSource } from '../src/knowledge-library.js';
 
 function printBlock(title: string, lines: string[]): void {
@@ -32,12 +36,19 @@ function printBlock(title: string, lines: string[]): void {
 }
 
 async function startBlueBubblesApiStub() {
-  const sentMessages: Array<{ url: string; body: Record<string, unknown> }> = [];
+  const sentMessages: Array<{ url: string; body: Record<string, unknown> }> =
+    [];
   const server = http.createServer(async (req, res) => {
     if ((req.method || 'GET').toUpperCase() === 'GET') {
       res.statusCode = 200;
       res.setHeader('Content-Type', 'application/json');
-      res.end(JSON.stringify({ status: 200, message: 'Ping received!', data: 'pong' }));
+      res.end(
+        JSON.stringify({
+          status: 200,
+          message: 'Ping received!',
+          data: 'pong',
+        }),
+      );
       return;
     }
     const chunks: Buffer[] = [];
@@ -83,7 +94,9 @@ async function runLiveMode(): Promise<void> {
   initDatabase();
   const config = resolveBlueBubblesConfig();
   const truth = buildFieldTrialOperatorTruth();
-  const chats = getAllChats().filter((chat) => chat.jid.startsWith('bb:')).slice(0, 5);
+  const chats = getAllChats()
+    .filter((chat) => chat.jid.startsWith('bb:'))
+    .slice(0, 5);
 
   printBlock('BLUEBUBBLES LIVE CONFIG', [
     `enabled: ${config.enabled}`,
@@ -93,6 +106,10 @@ async function runLiveMode(): Promise<void> {
         ? config.baseUrlCandidates.join(' | ')
         : 'missing'
     }`,
+    `bluebubbles_public_server_url: ${config.serverPublicUrl || 'missing'}`,
+    `bluebubbles_local_port: ${config.localPort || 'missing'}`,
+    `imessage_account_label: ${config.imessageAccountLabel || 'missing'}`,
+    `computer_id: ${config.computerId || 'missing'}`,
     `public_webhook_url: ${
       config.enabled
         ? redactBlueBubblesWebhookUrl(buildBlueBubblesWebhookUrl(config))
@@ -137,8 +154,8 @@ async function runLiveMode(): Promise<void> {
     `last_ignored_chat: ${truth.bluebubbles.lastIgnoredChatJid}`,
     `last_ignored_reason: ${truth.bluebubbles.lastIgnoredReason}`,
     `last_outbound: ${truth.bluebubbles.lastOutboundResult}`,
-      `last_outbound_target_kind: ${truth.bluebubbles.lastOutboundTargetKind}`,
-      `last_outbound_target: ${truth.bluebubbles.lastOutboundTarget}`,
+    `last_outbound_target_kind: ${truth.bluebubbles.lastOutboundTargetKind}`,
+    `last_outbound_target: ${truth.bluebubbles.lastOutboundTarget}`,
     `last_send_error: ${truth.bluebubbles.lastSendErrorDetail}`,
     `send_method: ${truth.bluebubbles.sendMethod}`,
     `private_api_available: ${truth.bluebubbles.privateApiAvailable}`,
@@ -175,6 +192,16 @@ async function runLiveMode(): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  if (process.argv.includes('--proof-timeline')) {
+    initDatabase();
+    process.stdout.write(
+      `${formatBlueBubblesProofReconciliationReport(
+        buildBlueBubblesProofReconciliationReport(),
+      )}\n`,
+    );
+    return;
+  }
+
   if (process.argv.includes('--live')) {
     await runLiveMode();
     return;
@@ -215,6 +242,10 @@ async function main(): Promise<void> {
       port: 0,
       groupFolder: 'main',
       webhookPublicBaseUrl: null,
+      serverPublicUrl: null,
+      localPort: null,
+      imessageAccountLabel: null,
+      computerId: null,
       chatScope: 'allowlist',
       allowedChatGuids: ['chat-proof'],
       allowedChatGuid: 'chat-proof',
@@ -223,7 +254,13 @@ async function main(): Promise<void> {
       sendEnabled: true,
     },
     {
-      onChatMetadata: async (chatJid, timestamp, name, channelName, isGroup) => {
+      onChatMetadata: async (
+        chatJid,
+        timestamp,
+        name,
+        channelName,
+        isGroup,
+      ) => {
         storeChatMetadata(chatJid, timestamp, name, channelName, isGroup);
       },
       onMessage: async (chatJid, message) => {
@@ -259,7 +296,10 @@ async function main(): Promise<void> {
         const promptText = normalizeBlueBubblesCompanionPrompt(message.content);
         const match = matchAssistantCapabilityRequest(promptText);
         if (!match) {
-          await channel.sendMessage(chatJid, "I'm here. Ask me naturally and I'll keep going.");
+          await channel.sendMessage(
+            chatJid,
+            "I'm here. Ask me naturally and I'll keep going.",
+          );
           return;
         }
         const result = await executeAssistantCapability({
@@ -292,7 +332,8 @@ async function main(): Promise<void> {
                 result.replyText ||
                 'Andrea follow-up',
               payload: result.continuationCandidate.handoffPayload,
-              knowledgeSourceIds: result.continuationCandidate.knowledgeSourceIds,
+              knowledgeSourceIds:
+                result.continuationCandidate.knowledgeSourceIds,
               followupSuggestions:
                 result.continuationCandidate.followupSuggestions,
             },

@@ -235,7 +235,8 @@ function setupLaunchd(
     <key>ProgramArguments</key>
     <array>
         <string>${nodePath}</string>
-        <string>${projectRoot}/dist/index.js</string>
+        <string>${projectRoot}/scripts/run-with-pinned-node.mjs</string>
+        <string>dist/index.js</string>
     </array>
     <key>WorkingDirectory</key>
     <string>${projectRoot}</string>
@@ -246,7 +247,7 @@ function setupLaunchd(
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
-        <string>/usr/local/bin:/usr/bin:/bin:${homeDir}/.local/bin</string>
+        <string>/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:${homeDir}/.local/bin</string>
         <key>HOME</key>
         <string>${homeDir}</string>
     </dict>

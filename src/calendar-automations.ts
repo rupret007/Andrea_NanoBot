@@ -2290,6 +2290,7 @@ function buildScopedGoogleEnv(
     GOOGLE_CALENDAR_CLIENT_ID: config.clientId || undefined,
     GOOGLE_CALENDAR_CLIENT_SECRET: config.clientSecret || undefined,
     GOOGLE_CALENDAR_IDS: calendarIds.join(','),
+    APPLE_CALENDAR_LOCAL_ENABLED: 'false',
   };
 }
 

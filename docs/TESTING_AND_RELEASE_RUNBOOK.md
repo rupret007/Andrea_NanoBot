@@ -83,12 +83,18 @@ npm run debug:cross-channel-handoffs
 For BlueBubbles channel changes, add:
 
 ```bash
-node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/channels/bluebubbles.test.ts src/companion-conversation-binding.test.ts src/cross-channel-handoffs.test.ts src/assistant-action-completion.test.ts
+node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/bluebubbles-self-thread.test.ts src/channels/bluebubbles.test.ts src/messages-fluidity.test.ts src/bluebubbles-control-server.test.ts src/bluebubbles-monitor-state.test.ts src/message-actions.test.ts src/field-trial-readiness.test.ts src/companion-conversation-binding.test.ts src/cross-channel-handoffs.test.ts src/assistant-action-completion.test.ts
 npm run debug:bluebubbles
-npm run debug:openbubbles-feasibility
+npm run debug:bluebubbles -- --live
 ```
 
-On Windows, prefer a stable IP or an explicit `BLUEBUBBLES_BASE_URL_CANDIDATES` list over Bonjour-only `.local` discovery. If Andrea cannot resolve the Mac host, `debug:bluebubbles -- --live` should read as `transport_unreachable`, not a generic healthy/degraded blur.
+On the Mac mini, prefer local `127.0.0.1:1234` first and keep the Cloudflare BlueBubbles URL as fallback/diagnostic only. If Andrea cannot reach the local endpoint, `debug:bluebubbles -- --live` should read as `transport_unreachable`, not a generic healthy/degraded blur.
+
+Optional Mac-offline feasibility check only:
+
+```bash
+npm run debug:openbubbles-feasibility
+```
 
 For ritual and follow-through changes, add:
 
@@ -300,8 +306,8 @@ Important truth for this host:
 - keep `EXTERNAL_BLOCKERS` and `MISSING_REQUIREMENTS` only as compatibility aliases, not as the whole product story
 - Alexa can be `live_proven` while the latest repo interaction-model hash still needs one local sync confirmation; that should read as `core_ready_with_manual_surface_sync`, not `near_live_only`
 - if Alexa ages out later, the likely blocker becomes `alexa_live_signed_turn_missing` or `alexa_live_signed_turn_stale`, not a broken service
-- BlueBubbles may now surface `transport_unreachable` separately when the Mac endpoint itself is not reachable from Windows; do not confuse that with same-thread proof freshness
-- when Windows name resolution is brittle, prefer `BLUEBUBBLES_BASE_URL_CANDIDATES` with a stable IP first and `.local` as a fallback candidate, not the only endpoint
+- BlueBubbles may now surface `transport_unreachable` separately when the configured endpoint itself is not reachable from the Andrea host; do not confuse that with same-thread proof freshness
+- when hostname resolution is brittle, prefer `BLUEBUBBLES_BASE_URL_CANDIDATES` with `127.0.0.1` first on the Mac mini and the Cloudflare URL as fallback/diagnostic only
 - after repo-side messaging changes, restart the local services before judging live proof so `SERVING_COMMIT_MATCHES_WORKSPACE_HEAD: true` reflects the current candidate
 - if `SERVICE: running_ready` and the blocker is external, treat that as an exact release-candidate caveat rather than a host failure
 - for Google Calendar specifically, `FAILURE_KIND: missing_config` means the current repo lacks usable credentials, and `FAILURE_KIND: invalid_refresh_token` means the stored refresh token is stale or revoked and you should rerun the current repo auth flow
@@ -315,11 +321,51 @@ Then validate the public-safe Telegram surface:
 - `/help`
 - `npm run telegram:user:smoke`
 - `/commands`
+- `/thinking`
+- `/council`
+- `/cognition`
+- `/memory`
+- `/learning`
 - simple quick reply prompt
+- `ultrathink what I should prioritize tomorrow`
+- `think harder about what I should prioritize tomorrow`
+- `quick answer: what should I remember tonight`
 - simple factoid prompt
 - one blocked-path prompt that should stay free of setup/runtime/operator wording
 - reminder prompt
+- `npm run debug:council`
+- `npm run debug:council -- --metrics`
+- `npm run debug:council -- --evidence --json`
+- `npm run debug:cognition -- --json`
+- `npm run debug:cognition -- --config-only --json`
+- `npm run debug:cognition -- --resume`
+- `npm run debug:cognition -- --trace`
+- `npm run debug:cognition -- --benchmarks`
+- `npm run test:council:tasks`
+- `npm run test:council:ultrathink`
+- `npm run test:cognition`
+- `npm run test:cognition:skills`
+- `npm run test:cognition:benchmarks`
+- `npm run test:cognition:traces`
+- `npm run test:cognition:executor`
 - `/cursor_status`
+
+The cognition benchmark ladder must prove more than answer quality: each drill
+should persist a redacted goal lifecycle row, a metadata-only blackboard trail,
+an autonomy budget with mutating actions disabled by default, checkpoint/resume
+state, tool-policy validation, approval gating, and outcome metadata.
+The harness trace checks must also prove sanitized trace spans, provider
+cooldown snapshots, deterministic tool-plan simulation, replayable checkpoints,
+and a next safe action without storing raw prompts, private message bodies,
+hidden reasoning, secrets, or raw tool output.
+
+Council provider participation should be explicit in `/council` and
+`debug:council`: `full` means all planned roles participated, `degraded` means
+optional roles were skipped or a verifier fallback was used, `minimal` means a
+required non-verifier route is blocked, and `none` means no replayable council
+run exists yet. A fallback like `verifier:gemini_cloud->openai_cloud` is useful
+but should be read as reduced provider independence, not full multi-provider
+agreement.
 
 For pilot-mode and daily dogfooding specifically, also validate:
 
@@ -757,16 +803,31 @@ Important rule:
 Then rerun a small live smoke:
 
 - `/ping`
+- `/mainchat`
 - `/help`
 - `/cursor_status`
 - `npm run telegram:user:smoke`
+
+For registration and recovery hardening, run:
+
+```bash
+npm run hardening:registration
+npm run debug:providers
+npm run test -- src/provider-expansion.test.ts src/provider-council-runner.test.ts src/turn-agent-harness.test.ts src/assistant-personalization.test.ts src/channels/telegram.test.ts
+```
+
+Then complete one live user-path proof in Telegram:
+
+- run `/mainchat` in the main DM and confirm it says this chat is the registered main control chat
+- run `/mainchat` in any other DM or chat you are testing and confirm it names the registered main
+- ask `What's on my calendar tomorrow?` from the registered main DM
 
 If the change touched direct work-lane commands, also rerun one live lane-specific proof:
 
 - one `/cursor-*` proof that includes `current` plus one exact-id fallback
 - one `/runtime-*` proof that includes `current` plus one exact-id fallback
 
-If `/cursor_status` still behaves like an unregistered shell, stop and compare the real DM against `registered_main_chat_jid`, `latest_telegram_chat_jid`, and `main_chat_audit_warning` in `npm run services:status` before assuming a code rollback.
+If `/cursor_status` or a calendar ask still behaves like an unregistered shell, run `/mainchat` first, then compare the real DM against `registered_main_chat_jid`, `latest_telegram_chat_jid`, and `main_chat_audit_warning` in `npm run services:status` before assuming a code rollback.
 
 Telegram live-testing truth:
 

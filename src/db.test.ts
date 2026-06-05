@@ -6,21 +6,48 @@ import {
   deleteRegisteredGroup,
   deleteTask,
   getAllChats,
+  findOpenCognitiveCheckpoint,
   getCursorMessageContext,
   getCursorOperatorContext,
   getAllRegisteredGroups,
+  getCognitiveCheckpoint,
+  getCognitiveGoal,
   getRegisteredMainChat,
   getLastBotMessageTimestamp,
   getMessagesSince,
   getNewMessages,
   getRegisteredGroup,
   getTaskById,
+  insertCognitiveBenchmarkAttempt,
+  insertCognitiveReflection,
+  insertCognitiveRewardSignal,
+  listCognitiveAutonomyBudgets,
+  listCognitiveBenchmarkAttempts,
+  listCognitiveBlackboardEntries,
+  listCognitiveCheckpoints,
+  listCognitiveGoals,
+  listCognitiveReflections,
+  listCognitiveRewardSignals,
+  listCognitiveRuns,
+  listCognitiveSubgoalsForRun,
+  listCognitiveToolRegistry,
+  listCognitiveWorldBeliefs,
+  pruneCognitiveKernelData,
   pruneChatBoundEphemeralContexts,
   repairRegisteredMainChat,
+  replaceCognitiveSubgoalsForRun,
+  resolveCognitiveCheckpoint,
   setRegisteredGroup,
   storeCursorMessageContext,
   storeChatMetadata,
   storeMessage,
+  upsertCognitiveCheckpoint,
+  upsertCognitiveAutonomyBudget,
+  upsertCognitiveBlackboardEntry,
+  upsertCognitiveGoal,
+  upsertCognitiveRun,
+  upsertCognitiveToolRegistry,
+  upsertCognitiveWorldBelief,
   upsertCursorOperatorContext,
   updateTask,
 } from './db.js';
@@ -811,5 +838,416 @@ describe('cursor message context accessors', () => {
     expect(row?.lane_id).toBe('cursor');
     expect(row?.context_kind).toBe('cursor_job_card');
     expect(row?.thread_id).toBe('42');
+  });
+});
+
+describe('cognitive kernel persistence', () => {
+  function storeCognitiveRun(runId: string, createdAt: string) {
+    upsertCognitiveRun({
+      runId,
+      createdAt,
+      updatedAt: createdAt,
+      groupFolder: null,
+      channel: 'telegram',
+      taskFamily: 'assistant',
+      turnId: runId,
+      goalSummary: 'metadata-only test goal',
+      selectedSkillId: 'assistant.daily_guidance',
+      status: 'planned',
+      autonomyLevel: 'plan_draft_only',
+      cognitiveMode: 'reactive_plan',
+      taskGraphJson: '{}',
+      evidenceContractJson: '{}',
+      providerUsabilityJson: '{}',
+      councilRunId: null,
+      verificationJson: '{}',
+      outcomeScore: 0.5,
+      nextAction: 'continue',
+      privacyJson: '{}',
+      linkedSkillCardId: null,
+    });
+  }
+
+  it('prunes cognitive run children before pruning old run metadata', () => {
+    storeCognitiveRun('cog-old', '2026-01-01T00:00:00.000Z');
+    replaceCognitiveSubgoalsForRun('cog-old', [
+      {
+        subgoalId: 'subgoal-old',
+        runId: 'cog-old',
+        position: 1,
+        title: 'Frame',
+        status: 'ready',
+        requiredEvidence: 'sanitized_goal',
+        allowedActionsJson: '[]',
+        approvalNeed: 'none',
+        stopCondition: 'framed',
+        toolPlanJson: '[]',
+        verificationJson: '{}',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      },
+    ]);
+    insertCognitiveRewardSignal({
+      signalId: 'reward-old',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      runId: 'cog-old',
+      skillId: null,
+      signalKind: 'task_answered',
+      score: 0.5,
+      summary: 'metadata-only reward',
+      flagsJson: '[]',
+    });
+    insertCognitiveReflection({
+      reflectionId: 'reflection-old',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      groupFolder: null,
+      runId: 'cog-old',
+      skillId: null,
+      taskFamily: 'assistant',
+      reflectionKind: 'success',
+      summary: 'metadata-only reflection',
+      routeKey: 'assistant.daily_guidance',
+      providerStateJson: '{}',
+      nextRule: 'continue',
+      confidence: 0.5,
+      privacyJson: '{}',
+    });
+    upsertCognitiveGoal({
+      goalId: 'goal-old',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      groupFolder: null,
+      parentGoalId: null,
+      rootRunId: 'cog-old',
+      taskFamily: 'assistant',
+      objectiveSummary: 'old metadata-only goal',
+      status: 'active',
+      priority: 0.5,
+      successCriteriaJson: '{}',
+      decompositionJson: '[]',
+      linkedRunIdsJson: '["cog-old"]',
+      activeCheckpointId: null,
+      rewardScore: 0.5,
+      nextAction: 'old',
+      closedAt: null,
+      privacyJson: '{}',
+    });
+    upsertCognitiveBlackboardEntry({
+      entryId: 'blackboard-old',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      groupFolder: null,
+      goalId: 'goal-old',
+      runId: 'cog-old',
+      entryKind: 'observation',
+      source: 'kernel',
+      status: 'active',
+      summary: 'old metadata-only observation',
+      evidenceRefsJson: '["cog-old"]',
+      confidence: 0.5,
+      expiresAt: null,
+      privacyJson: '{}',
+    });
+
+    pruneCognitiveKernelData({
+      cutoffIso: '2026-02-01T00:00:00.000Z',
+      retainLimit: 1000,
+    });
+
+    expect(listCognitiveRuns({ limit: 10 })).toEqual([]);
+    expect(listCognitiveSubgoalsForRun('cog-old')).toEqual([]);
+    expect(listCognitiveRewardSignals({ runId: 'cog-old' })).toEqual([]);
+    expect(listCognitiveReflections({ taskFamily: 'assistant' })).toEqual([]);
+    expect(listCognitiveBlackboardEntries({ runId: 'cog-old' })).toEqual([]);
+    expect(getCognitiveGoal('goal-old')?.rootRunId).toBeNull();
+  });
+
+  it('rejects cognitive subgoals that belong to another run', () => {
+    storeCognitiveRun('cog-a', '2026-01-01T00:00:00.000Z');
+
+    expect(() =>
+      replaceCognitiveSubgoalsForRun('cog-a', [
+        {
+          subgoalId: 'subgoal-b',
+          runId: 'cog-b',
+          position: 1,
+          title: 'Mismatched',
+          status: 'ready',
+          requiredEvidence: 'sanitized_goal',
+          allowedActionsJson: '[]',
+          approvalNeed: 'none',
+          stopCondition: 'framed',
+          toolPlanJson: '[]',
+          verificationJson: '{}',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        },
+      ]),
+    ).toThrow(/belongs to cog-b/);
+  });
+
+  it('stores checkpoint, tool, world belief, and benchmark metadata', () => {
+    storeCognitiveRun('cog-v7', '2026-06-05T12:00:00.000Z');
+
+    upsertCognitiveCheckpoint({
+      checkpointId: 'checkpoint-v7',
+      createdAt: '2026-06-05T12:00:00.000Z',
+      updatedAt: '2026-06-05T12:00:00.000Z',
+      runId: 'cog-v7',
+      subgoalId: null,
+      groupFolder: 'main',
+      channel: 'telegram',
+      checkpointKind: 'approval_wait',
+      status: 'open',
+      summary: 'metadata-only checkpoint',
+      stateJson: '{"approvalRequired":true}',
+      nextAction: 'wait for approval',
+      continuationKey: 'assistant:daily',
+      expiresAt: null,
+      resolvedAt: null,
+      privacyJson: '{"rawPrivateBodiesStored":false}',
+    });
+    expect(getCognitiveCheckpoint('checkpoint-v7')?.status).toBe('open');
+    expect(
+      listCognitiveCheckpoints({ groupFolder: 'main', channel: 'telegram' }),
+    ).toHaveLength(1);
+
+    resolveCognitiveCheckpoint('checkpoint-v7', {
+      resolvedAt: '2026-06-05T12:05:00.000Z',
+      nextAction: 'closed safely',
+    });
+    expect(getCognitiveCheckpoint('checkpoint-v7')?.status).toBe('closed');
+
+    upsertCognitiveToolRegistry({
+      toolId: 'tool-v7',
+      createdAt: '2026-06-05T12:00:00.000Z',
+      updatedAt: '2026-06-05T12:00:00.000Z',
+      toolKind: 'read_only_integration',
+      displayName: 'Tool v7',
+      purpose: 'Read only metadata.',
+      allowedActionsJson: '["read"]',
+      approvalPolicy: 'read_only',
+      riskLevel: 'medium',
+      evidenceProducedJson: '["metadata"]',
+      failureModesJson: '["blocked"]',
+      lastVerifiedAt: '2026-06-05T12:00:00.000Z',
+      healthState: 'healthy',
+      privacyJson: '{}',
+    });
+    expect(
+      listCognitiveToolRegistry({ toolKind: 'read_only_integration' })[0],
+    ).toMatchObject({ toolId: 'tool-v7' });
+
+    upsertCognitiveWorldBelief({
+      beliefId: 'belief-v7',
+      createdAt: '2026-06-05T12:00:00.000Z',
+      updatedAt: '2026-06-05T12:00:00.000Z',
+      groupFolder: 'main',
+      runId: 'cog-v7',
+      source: 'provider_health',
+      subject: 'provider_health',
+      summary: 'providers usable',
+      confidence: 0.8,
+      freshness: 'fresh',
+      supersedesBeliefId: null,
+      privacyJson: '{}',
+    });
+    expect(listCognitiveWorldBeliefs({ runId: 'cog-v7' })[0]).toMatchObject({
+      beliefId: 'belief-v7',
+    });
+
+    upsertCognitiveGoal({
+      goalId: 'goal-v8',
+      createdAt: '2026-06-05T12:00:00.000Z',
+      updatedAt: '2026-06-05T12:00:00.000Z',
+      groupFolder: 'main',
+      parentGoalId: null,
+      rootRunId: 'cog-v7',
+      taskFamily: 'assistant',
+      objectiveSummary:
+        'metadata-only goal with phone +14695405551 and key sk-testexample1234567890',
+      status: 'active',
+      priority: 0.8,
+      successCriteriaJson:
+        '{"secret":"sk-testexample1234567890","email":"person@example.com"}',
+      decompositionJson: '[{"title":"metadata only"}]',
+      linkedRunIdsJson: '["cog-v7","+14695405551"]',
+      activeCheckpointId: null,
+      rewardScore: 0.7,
+      nextAction: 'continue without raw private bodies',
+      closedAt: null,
+      privacyJson: '{"rawPrivateBodiesStored":false}',
+    });
+    expect(getCognitiveGoal('goal-v8')).toMatchObject({
+      goalId: 'goal-v8',
+      status: 'active',
+    });
+    expect(JSON.stringify(getCognitiveGoal('goal-v8'))).not.toMatch(
+      /sk-testexample|14695405551|person@example\.com/,
+    );
+    expect(listCognitiveGoals({ taskFamily: 'assistant' })[0]?.goalId).toBe(
+      'goal-v8',
+    );
+
+    upsertCognitiveBlackboardEntry({
+      entryId: 'blackboard-v8',
+      createdAt: '2026-06-05T12:00:00.000Z',
+      updatedAt: '2026-06-05T12:00:00.000Z',
+      groupFolder: 'main',
+      goalId: 'goal-v8',
+      runId: 'cog-v7',
+      entryKind: 'constraint',
+      source: 'kernel',
+      status: 'active',
+      summary:
+        'metadata-only blackboard entry with token Bearer abcdefghijklmnop',
+      evidenceRefsJson: '["person@example.com","+14695405551"]',
+      confidence: 0.8,
+      expiresAt: null,
+      privacyJson: '{"secretsRedacted":true}',
+    });
+    expect(
+      listCognitiveBlackboardEntries({ runId: 'cog-v7' })[0],
+    ).toMatchObject({ entryId: 'blackboard-v8', entryKind: 'constraint' });
+    expect(
+      JSON.stringify(listCognitiveBlackboardEntries({ runId: 'cog-v7' })),
+    ).not.toMatch(/abcdefghijklmnop|person@example\.com|14695405551/);
+
+    upsertCognitiveAutonomyBudget({
+      budgetId: 'budget-v8',
+      createdAt: '2026-06-05T12:00:00.000Z',
+      updatedAt: '2026-06-05T12:00:00.000Z',
+      cognitiveMode: 'read_only_react',
+      taskFamily: 'assistant',
+      maxToolSteps: 4,
+      maxCouncilCalls: 0,
+      maxReadOnlyCalls: 2,
+      mutatingAllowed: false,
+      approvalRequired: false,
+      maxRuntimeMs: 15000,
+      clarificationAfterBlockedSteps: 1,
+      budgetJson: '{"token":"sk-testexample1234567890","readOnly":true}',
+      privacyJson: '{"rawToolOutputStored":false}',
+    });
+    expect(
+      listCognitiveAutonomyBudgets({
+        cognitiveMode: 'read_only_react',
+        taskFamily: 'assistant',
+      })[0],
+    ).toMatchObject({ budgetId: 'budget-v8', mutatingAllowed: false });
+    expect(JSON.stringify(listCognitiveAutonomyBudgets())).not.toMatch(
+      /sk-testexample/,
+    );
+
+    insertCognitiveBenchmarkAttempt({
+      attemptId: 'bench-v7',
+      createdAt: '2026-06-05T12:00:00.000Z',
+      taskId: 'quick-guidance',
+      taskFamily: 'assistant',
+      status: 'pass',
+      score: 1,
+      runId: 'cog-v7',
+      checkpointCount: 4,
+      toolPolicyPass: true,
+      approvalGatePass: true,
+      privacyPass: true,
+      outcomeCaptured: true,
+      nextAction: 'continue',
+      detailJson: '{}',
+    });
+    expect(
+      listCognitiveBenchmarkAttempts({ taskId: 'quick-guidance' })[0],
+    ).toMatchObject({ attemptId: 'bench-v7', status: 'pass' });
+  });
+
+  it('does not resume expired cognitive checkpoints', () => {
+    storeCognitiveRun('cog-expired', '2026-06-05T12:00:00.000Z');
+    upsertCognitiveCheckpoint({
+      checkpointId: 'checkpoint-expired',
+      createdAt: '2026-06-05T12:00:00.000Z',
+      updatedAt: '2026-06-05T12:00:00.000Z',
+      runId: 'cog-expired',
+      subgoalId: null,
+      groupFolder: 'main',
+      channel: 'bluebubbles',
+      checkpointKind: 'approval_wait',
+      status: 'open',
+      summary: 'expired approval checkpoint',
+      stateJson: '{}',
+      nextAction: 'should not resume',
+      continuationKey: 'communication:reply',
+      expiresAt: '2000-01-01T00:00:00.000Z',
+      resolvedAt: null,
+      privacyJson: '{}',
+    });
+
+    expect(
+      findOpenCognitiveCheckpoint({
+        groupFolder: 'main',
+        channel: 'bluebubbles',
+        continuationKey: 'communication:reply',
+      }),
+    ).toBeUndefined();
+  });
+
+  it('prunes v7 cognitive metadata linked to old runs', () => {
+    storeCognitiveRun('cog-old-v7', '2026-01-01T00:00:00.000Z');
+    upsertCognitiveCheckpoint({
+      checkpointId: 'checkpoint-old-v7',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      runId: 'cog-old-v7',
+      subgoalId: null,
+      groupFolder: null,
+      channel: 'telegram',
+      checkpointKind: 'frame',
+      status: 'closed',
+      summary: 'old',
+      stateJson: '{}',
+      nextAction: 'old',
+      continuationKey: null,
+      expiresAt: null,
+      resolvedAt: '2026-01-01T00:00:00.000Z',
+      privacyJson: '{}',
+    });
+    upsertCognitiveWorldBelief({
+      beliefId: 'belief-old-v7',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      groupFolder: null,
+      runId: 'cog-old-v7',
+      source: 'local_metadata',
+      subject: 'old',
+      summary: 'old',
+      confidence: 0.5,
+      freshness: 'stale',
+      supersedesBeliefId: null,
+      privacyJson: '{}',
+    });
+    insertCognitiveBenchmarkAttempt({
+      attemptId: 'bench-old-v7',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      taskId: 'old',
+      taskFamily: 'assistant',
+      status: 'pass',
+      score: 1,
+      runId: 'cog-old-v7',
+      checkpointCount: 4,
+      toolPolicyPass: true,
+      approvalGatePass: true,
+      privacyPass: true,
+      outcomeCaptured: true,
+      nextAction: 'old',
+      detailJson: '{}',
+    });
+
+    pruneCognitiveKernelData({
+      cutoffIso: '2026-02-01T00:00:00.000Z',
+      retainLimit: 1000,
+    });
+
+    expect(listCognitiveCheckpoints({ runId: 'cog-old-v7' })).toEqual([]);
+    expect(listCognitiveWorldBeliefs({ runId: 'cog-old-v7' })).toEqual([]);
+    expect(listCognitiveBenchmarkAttempts({ taskId: 'old' })).toEqual([]);
   });
 });

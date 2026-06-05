@@ -1,0 +1,672 @@
+import { randomUUID } from 'node:crypto';
+
+import {
+  getCouncilRunLedger,
+  insertCouncilOutcomeSignal,
+  listCouncilOutcomeSignals,
+  listCouncilRunLedger,
+  upsertCouncilRunLedger,
+} from './db.js';
+import { redactCouncilText } from './council-safety.js';
+import { buildCouncilTaskEaseReport } from './council-task-drills.js';
+import type {
+  AndreaPlatformCouncilMode,
+  AndreaPlatformProviderCouncilResult,
+  PlatformTaskFamily,
+} from './andrea-platform-bridge.js';
+import type {
+  CouncilCalibrationSnapshot,
+  CouncilDoctorReport,
+  CouncilOutcomeSignalKind,
+  CouncilProviderReliabilitySnapshot,
+  CouncilRunLedgerRecord,
+} from './types.js';
+
+const LOW_CONFIDENCE_THRESHOLD = 0.55;
+const CALIBRATION_LOOKBACK = 40;
+const DOCTOR_LOOKBACK = 50;
+
+interface CouncilMemberStatusForQuality {
+  memberId?: string;
+  providerId?: string;
+  role?: string;
+  status?: string;
+  verdict?: string;
+  confidence?: number;
+  schemaStatus?: string;
+  riskFlags?: string[];
+}
+
+export interface CouncilCalibrationInput {
+  taskFamily: PlatformTaskFamily;
+  requestedMode?: AndreaPlatformCouncilMode | null;
+  riskLevel?: 'low' | 'medium' | 'high';
+  allowedSideEffects?: 'none' | 'read_only' | 'approval_required';
+  thinkingControl?: string | null;
+}
+
+export interface RecordCouncilRunLedgerInput {
+  councilRunId: string;
+  groupFolder?: string | null;
+  taskFamily: PlatformTaskFamily;
+  channel?: string | null;
+  requestedMode?: string | null;
+  chosenMode: string;
+  calibration: CouncilCalibrationSnapshot;
+  status?: string | null;
+  structuredVerdict?: AndreaPlatformProviderCouncilResult['structuredVerdict'];
+  providerFailures?: string[];
+  riskFlags?: string[];
+  now?: string;
+}
+
+export interface RecordCouncilOutcomeSignalInput {
+  councilRunId?: string | null;
+  signalKind: CouncilOutcomeSignalKind;
+  groupFolder?: string | null;
+  channel?: string | null;
+  routeKey?: string | null;
+  capabilityId?: string | null;
+  blockerClass?: string | null;
+  feedbackId?: string | null;
+  repairPlanId?: string | null;
+  flags?: string[];
+  summary: string;
+  now?: string;
+}
+
+export function calibrateCouncilMode(
+  input: CouncilCalibrationInput,
+): CouncilCalibrationSnapshot {
+  const requestedMode = input.requestedMode || 'dual_review';
+  const recentRuns = safeListCouncilRunLedger({
+    taskFamily: input.taskFamily,
+    limit: CALIBRATION_LOOKBACK,
+  });
+  const providerReliability = buildCouncilProviderReliability(recentRuns);
+  const degradedProviderIds = providerReliability
+    .filter((provider) => provider.degraded)
+    .map((provider) => provider.providerId);
+  const lowConfidenceRuns = recentRuns.filter(
+    (run) => run.confidence < LOW_CONFIDENCE_THRESHOLD,
+  ).length;
+  const schemaInvalidRuns = recentRuns.filter((run) =>
+    hasSchemaInvalidFallback(run),
+  ).length;
+  const verifierBlockRuns = recentRuns.filter((run) =>
+    hasVerifierBlock(run),
+  ).length;
+  const negativeFeedbackRuns = recentRuns.filter((run) =>
+    /feedback_negative|repair_linked|answer_blocked/i.test(
+      run.outcomeStatus || '',
+    ),
+  ).length;
+  const protectedMode = isProtectedCouncilRoute(input);
+  const degradationScore =
+    lowConfidenceRuns +
+    schemaInvalidRuns * 2 +
+    verifierBlockRuns * 2 +
+    negativeFeedbackRuns * 2 +
+    degradedProviderIds.length;
+  const shouldPromote = recentRuns.length >= 2 && degradationScore >= 2;
+  const chosenMode =
+    !protectedMode && shouldPromote
+      ? promoteCouncilMode(requestedMode)
+      : requestedMode;
+  const changedMode = chosenMode !== requestedMode;
+  const reason = protectedMode
+    ? 'protected_route_no_downshift'
+    : changedMode
+      ? `promoted_due_to_recent_quality_signals:${degradationScore}`
+      : recentRuns.length === 0
+        ? 'no_history_default_route'
+        : 'history_ok_default_route';
+
+  return {
+    taskFamily: input.taskFamily,
+    requestedMode,
+    chosenMode,
+    changedMode,
+    protectedMode,
+    reason,
+    recentRuns: recentRuns.length,
+    lowConfidenceRuns,
+    schemaInvalidRuns,
+    verifierBlockRuns,
+    negativeFeedbackRuns,
+    degradedProviderIds,
+    providerReliability,
+  };
+}
+
+export function buildCouncilProviderReliability(
+  records: CouncilRunLedgerRecord[],
+): CouncilProviderReliabilitySnapshot[] {
+  const byProvider = new Map<
+    string,
+    {
+      providerId: string;
+      role: string;
+      runs: number;
+      completed: number;
+      blocked: number;
+      skipped: number;
+    }
+  >();
+  for (const run of records) {
+    for (const member of parseMemberStatuses(run.memberStatusesJson)) {
+      const providerId = member.providerId || member.memberId || 'unknown';
+      const role = member.role || 'unknown';
+      const key = `${providerId}:${role}`;
+      const bucket = byProvider.get(key) || {
+        providerId,
+        role,
+        runs: 0,
+        completed: 0,
+        blocked: 0,
+        skipped: 0,
+      };
+      bucket.runs += 1;
+      if (member.status === 'completed') bucket.completed += 1;
+      else if (member.status === 'skipped') bucket.skipped += 1;
+      else bucket.blocked += 1;
+      byProvider.set(key, bucket);
+    }
+  }
+  return Array.from(byProvider.values())
+    .map((item) => {
+      const recentFailureRate =
+        item.runs > 0 ? (item.blocked + item.skipped) / item.runs : 0;
+      return {
+        ...item,
+        recentFailureRate: Number(recentFailureRate.toFixed(3)),
+        degraded: item.runs >= 3 && recentFailureRate >= 0.67,
+      };
+    })
+    .sort((a, b) => b.recentFailureRate - a.recentFailureRate);
+}
+
+export function recordCouncilRunLedger(
+  input: RecordCouncilRunLedgerInput,
+): CouncilRunLedgerRecord {
+  const now = input.now || new Date().toISOString();
+  const existing = safeGetCouncilRunLedger(input.councilRunId);
+  const verdict = input.structuredVerdict;
+  const replayArtifact = verdict?.replayArtifact;
+  const record: CouncilRunLedgerRecord = {
+    councilRunId: input.councilRunId,
+    createdAt: existing?.createdAt || now,
+    updatedAt: now,
+    groupFolder: input.groupFolder || null,
+    taskFamily: input.taskFamily,
+    channel: input.channel || null,
+    requestedMode: input.requestedMode || null,
+    chosenMode: input.chosenMode,
+    calibrationReason: input.calibration.reason,
+    calibrationChanged: input.calibration.changedMode,
+    protectedMode: input.calibration.protectedMode,
+    status: sanitizeScalar(input.status || 'completed', 80),
+    finalStatus: sanitizeScalar(verdict?.status || 'inconclusive', 80),
+    recommendedAction: sanitizeScalar(
+      verdict?.recommendedAction || 'answer',
+      80,
+    ),
+    confidence: clampConfidence(verdict?.confidence),
+    evidenceGrade: sanitizeScalar(verdict?.evidenceGrade || 'unknown', 80),
+    approvalNeed: sanitizeScalar(verdict?.approvalNeed || 'none', 80),
+    memberStatusesJson: safeJson(
+      replayArtifact?.memberStatuses ||
+        parseMemberStatuses(existing?.memberStatusesJson || '[]'),
+      12000,
+    ),
+    providerFailuresJson: safeJson(input.providerFailures || [], 8000),
+    schemaStatusJson: safeJson(verdict?.schemaStatusSummary || {}, 2000),
+    evidenceScorecardJson: safeJson(verdict?.evidenceScorecard || {}, 8000),
+    confidenceMathJson: safeJson(verdict?.confidenceMath || {}, 4000),
+    budgetJson: safeJson(verdict?.budget || {}, 4000),
+    replaySummary: redactCouncilText(verdict?.replaySummary || '', 1000),
+    riskFlagsJson: safeJson(input.riskFlags || verdict?.riskFlags || [], 8000),
+    outcomeSignalCount: existing?.outcomeSignalCount || 0,
+    latestOutcomeAt: existing?.latestOutcomeAt || null,
+    outcomeStatus: existing?.outcomeStatus || null,
+  };
+  try {
+    upsertCouncilRunLedger(record);
+  } catch {
+    // The council runner is allowed to operate in isolated harnesses before DB
+    // initialization. Persistence is best-effort; answering should continue.
+  }
+  return record;
+}
+
+export function recordCouncilOutcomeSignal(
+  input: RecordCouncilOutcomeSignalInput,
+): boolean {
+  if (!input.councilRunId) return false;
+  const now = input.now || new Date().toISOString();
+  try {
+    if (!getCouncilRunLedger(input.councilRunId)) return false;
+    insertCouncilOutcomeSignal({
+      signalId: randomUUID(),
+      councilRunId: input.councilRunId,
+      createdAt: now,
+      groupFolder: input.groupFolder || null,
+      channel: input.channel || null,
+      signalKind: input.signalKind,
+      routeKey: sanitizeNullable(input.routeKey, 120),
+      capabilityId: sanitizeNullable(input.capabilityId, 120),
+      blockerClass: sanitizeNullable(input.blockerClass, 180),
+      feedbackId: sanitizeNullable(input.feedbackId, 120),
+      repairPlanId: sanitizeNullable(input.repairPlanId, 120),
+      flagsJson: safeJson(input.flags || [], 4000),
+      summary: redactCouncilText(input.summary, 700),
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function safeGetCouncilRunLedger(
+  councilRunId: string,
+): CouncilRunLedgerRecord | undefined {
+  try {
+    return getCouncilRunLedger(councilRunId);
+  } catch {
+    return undefined;
+  }
+}
+
+function safeListCouncilRunLedger(params: {
+  taskFamily?: string;
+  limit?: number;
+}): CouncilRunLedgerRecord[] {
+  try {
+    return listCouncilRunLedger(params);
+  } catch {
+    return [];
+  }
+}
+
+export function buildCouncilDoctorReport(
+  now = new Date().toISOString(),
+): CouncilDoctorReport {
+  const runs = listCouncilRunLedger({ limit: DOCTOR_LOOKBACK });
+  const signals = listCouncilOutcomeSignals({ limit: DOCTOR_LOOKBACK });
+  const taskEase = buildCouncilTaskEaseReport({ now: new Date(now) });
+  const providerReliability = buildCouncilProviderReliability(runs);
+  const providerParticipation = buildLatestProviderParticipation(runs);
+  const lowConfidenceRuns = runs.filter(
+    (run) => run.confidence < LOW_CONFIDENCE_THRESHOLD,
+  ).length;
+  const schemaInvalidRuns = runs.filter((run) =>
+    hasSchemaInvalidFallback(run),
+  ).length;
+  const degradedRuns = runs.filter((run) => isDegradedRun(run)).length;
+  const averageConfidence =
+    runs.length > 0
+      ? Number(
+          (
+            runs.reduce((sum, run) => sum + run.confidence, 0) / runs.length
+          ).toFixed(3),
+        )
+      : 0;
+  const degradedReasons = collectDegradedReasons(runs);
+  const evidenceGaps = collectEvidenceGaps(runs);
+  const ok =
+    runs.length > 0 &&
+    lowConfidenceRuns === 0 &&
+    schemaInvalidRuns === 0 &&
+    providerReliability.every((provider) => !provider.degraded);
+  const nextAction =
+    runs.length === 0
+      ? 'Run one `ultrathink` Telegram proof turn, then rerun npm run debug:council.'
+      : ok
+        ? 'Run a fresh live `ultrathink` proof after major changes, then keep the challenge ladder green.'
+        : 'Run npm run test:council:medium and one live `ultrathink` proof, then inspect degraded provider/replay reasons.';
+  const lastRun = runs[0];
+
+  return {
+    generatedAt: now,
+    ok,
+    summary:
+      runs.length === 0
+        ? 'Council quality ledger has no recorded runs yet.'
+        : `${runs.length} recent council run(s); ${degradedRuns} degraded; average confidence ${averageConfidence.toFixed(2)}.`,
+    lastRun: lastRun
+      ? {
+          councilRunId: lastRun.councilRunId,
+          createdAt: lastRun.createdAt,
+          taskFamily: lastRun.taskFamily,
+          mode: lastRun.chosenMode,
+          finalStatus: lastRun.finalStatus,
+          confidence: lastRun.confidence,
+          replaySummary: lastRun.replaySummary,
+        }
+      : null,
+    recent: {
+      totalRuns: runs.length,
+      degradedRuns,
+      averageConfidence,
+      schemaInvalidRuns,
+      lowConfidenceRuns,
+      outcomeSignals: signals.length,
+    },
+    providerReliability,
+    providerParticipation,
+    degradedReasons,
+    evidenceGaps,
+    taskEase: {
+      status: taskEase.status,
+      score: taskEase.score,
+      lastAttemptId: taskEase.outcome.attemptId,
+      lastOutcome: taskEase.attempts[0]?.outcome || 'none',
+      outcomeSignalCount: taskEase.outcome.outcomeSignalCount,
+      sourcePatternCoverage: `${taskEase.sourcePatternCoverage.filter((pattern) => pattern.verified).length}/${taskEase.sourcePatternCoverage.length}`,
+      qualityGateCoverage: `${taskEase.qualityGates.filter((gate) => gate.status === 'pass').length}/${taskEase.qualityGates.length}`,
+      nextAction: taskEase.nextAction,
+    },
+    nextAction,
+    privacy: {
+      secretsRedacted: true,
+      rawPromptsStored: false,
+      rawPrivateBodiesStored: false,
+    },
+  };
+}
+
+export function formatCouncilDoctorReport(report: CouncilDoctorReport): string {
+  const degradedProviders = report.providerReliability
+    .filter((provider) => provider.degraded)
+    .slice(0, 5)
+    .map(
+      (provider) =>
+        `${provider.providerId}/${provider.role} ${(provider.recentFailureRate * 100).toFixed(0)}%`,
+    );
+  return [
+    'Council Status',
+    '',
+    `Health: ${report.ok ? 'healthy' : 'needs attention'}`,
+    `Summary: ${report.summary}`,
+    report.lastRun
+      ? `Last run: ${report.lastRun.taskFamily} ${report.lastRun.mode} ${report.lastRun.finalStatus} confidence=${report.lastRun.confidence.toFixed(2)}`
+      : 'Last run: none',
+    `Outcome signals: ${report.recent.outcomeSignals}`,
+    `Schema invalid runs: ${report.recent.schemaInvalidRuns}`,
+    `Low-confidence runs: ${report.recent.lowConfidenceRuns}`,
+    `Degraded providers: ${degradedProviders.join(', ') || 'none'}`,
+    report.providerParticipation
+      ? `Provider participation: ${report.providerParticipation.status} skipped=${report.providerParticipation.skippedProviderIds.join(', ') || 'none'} substituted=${report.providerParticipation.substitutedRoles.join(', ') || 'none'}`
+      : 'Provider participation: none recorded',
+    `Evidence gaps: ${report.evidenceGaps.slice(0, 4).join(', ') || 'none'}`,
+    report.taskEase
+      ? `Task-ease: ${report.taskEase.status} score=${report.taskEase.score.toFixed(2)} source_patterns=${report.taskEase.sourcePatternCoverage} quality_gates=${report.taskEase.qualityGateCoverage} outcome_signals=${report.taskEase.outcomeSignalCount}`
+      : 'Task-ease: unavailable',
+    `Privacy: secrets redacted, raw prompts stored=${report.privacy.rawPromptsStored}, raw private bodies stored=${report.privacy.rawPrivateBodiesStored}`,
+    `Next: ${report.taskEase?.nextAction || report.nextAction}`,
+  ].join('\n');
+}
+
+function buildLatestProviderParticipation(
+  records: CouncilRunLedgerRecord[],
+): CouncilDoctorReport['providerParticipation'] {
+  const latest = records[0];
+  if (!latest) {
+    return {
+      status: 'none',
+      skippedProviderIds: [],
+      substitutedRoles: [],
+      riskFlags: [],
+      nextAction:
+        'Run one council proof turn before judging provider participation.',
+    };
+  }
+  const members = parseMemberStatuses(latest.memberStatusesJson);
+  const skippedProviderIds = Array.from(
+    new Set(
+      members
+        .filter(
+          (member) =>
+            member.status === 'skipped' || member.status === 'blocked',
+        )
+        .map((member) => member.providerId || member.memberId || 'unknown')
+        .filter((providerId) => providerId !== 'unknown'),
+    ),
+  );
+  const riskFlags = Array.from(
+    new Set([
+      ...parseJsonArray(latest.providerFailuresJson).map((flag) =>
+        redactCouncilText(String(flag), 120),
+      ),
+      ...members.flatMap((member) =>
+        (member.riskFlags || []).map((flag) => redactCouncilText(flag, 120)),
+      ),
+    ]),
+  ).filter(Boolean);
+  const substitutedRoles = Array.from(
+    new Set(
+      members.flatMap((member) => {
+        const flags = member.riskFlags || [];
+        if (
+          member.memberId === 'openai_verifier_fallback' ||
+          flags.includes('verifier_substituted_openai_for_gemini')
+        ) {
+          return ['verifier:gemini_cloud->openai_cloud'];
+        }
+        return [];
+      }),
+    ),
+  );
+  const requiredBlocked = members.some(
+    (member) =>
+      member.status === 'blocked' &&
+      member.role !== 'verifier' &&
+      member.role !== 'critic' &&
+      member.role !== 'evidence_scout',
+  );
+  const status =
+    members.length === 0
+      ? 'none'
+      : requiredBlocked
+        ? 'minimal'
+        : skippedProviderIds.length > 0 ||
+            substitutedRoles.length > 0 ||
+            riskFlags.some((flag) =>
+              /provider|quota|auth|rate|blocked/i.test(flag),
+            )
+          ? 'degraded'
+          : 'full';
+  return {
+    status,
+    skippedProviderIds,
+    substitutedRoles,
+    riskFlags: riskFlags.slice(0, 12),
+    nextAction:
+      status === 'full'
+        ? 'Provider participation is full for the latest council run.'
+        : status === 'none'
+          ? 'Run one council proof turn before judging provider participation.'
+          : status === 'minimal'
+            ? 'Repair required provider health before trusting deep council routes.'
+            : 'Proceed with degraded-provider wording and rerun provider diagnostics after quota/auth recovery.',
+  };
+}
+
+export function buildTelegramCouncilStatusText(): string {
+  try {
+    return formatCouncilDoctorReport(buildCouncilDoctorReport());
+  } catch {
+    return [
+      'Council Status',
+      '',
+      'Health: unavailable',
+      'Summary: council quality ledger is not initialized in this process yet.',
+      'Last run: none',
+      'Outcome signals: unknown',
+      'Schema invalid runs: unknown',
+      'Low-confidence runs: unknown',
+      'Degraded providers: unknown',
+      'Evidence gaps: unknown',
+      'Task-ease: unavailable',
+      'Privacy: secrets redacted, raw prompts stored=false, raw private bodies stored=false',
+      'Next: run npm run debug:council on the host.',
+    ].join('\n');
+  }
+}
+
+export function isCouncilDoctorRequest(message: string): boolean {
+  const normalized = message.trim().toLowerCase();
+  return (
+    /\bcouncil\s+(?:status|doctor|health|debug)\b/.test(normalized) ||
+    /\bcouncil\s+tasks?\b/.test(normalized) ||
+    /\b(?:how|what).*\bcouncil\b.*\b(?:doing|healthy|status)\b/.test(normalized)
+  );
+}
+
+function isProtectedCouncilRoute(input: CouncilCalibrationInput): boolean {
+  return (
+    input.thinkingControl === 'deep' ||
+    input.taskFamily === 'operator' ||
+    input.taskFamily === 'code' ||
+    input.requestedMode === 'max_iq_council' ||
+    input.requestedMode === 'repair_council' ||
+    input.allowedSideEffects === 'approval_required' ||
+    input.riskLevel === 'high'
+  );
+}
+
+function promoteCouncilMode(
+  mode: AndreaPlatformCouncilMode,
+): AndreaPlatformCouncilMode {
+  if (mode === 'single_model') return 'dual_review';
+  if (mode === 'dual_review') return 'max_iq_council';
+  return mode;
+}
+
+function hasSchemaInvalidFallback(run: CouncilRunLedgerRecord): boolean {
+  const schema = parseJsonObject(run.schemaStatusJson);
+  return Number(schema.invalid_fallback || 0) > 0;
+}
+
+function hasVerifierBlock(run: CouncilRunLedgerRecord): boolean {
+  if (run.finalStatus === 'block') return true;
+  return parseMemberStatuses(run.memberStatusesJson).some(
+    (member) => member.role === 'verifier' && member.verdict === 'block',
+  );
+}
+
+function isDegradedRun(run: CouncilRunLedgerRecord): boolean {
+  return (
+    run.finalStatus === 'block' ||
+    run.finalStatus === 'inconclusive' ||
+    run.confidence < LOW_CONFIDENCE_THRESHOLD ||
+    hasSchemaInvalidFallback(run) ||
+    parseJsonArray(run.providerFailuresJson).length > 0 ||
+    /degraded|exceeded/i.test(run.budgetJson)
+  );
+}
+
+function collectDegradedReasons(records: CouncilRunLedgerRecord[]): string[] {
+  const reasons = new Set<string>();
+  for (const run of records.slice(0, DOCTOR_LOOKBACK)) {
+    if (run.confidence < LOW_CONFIDENCE_THRESHOLD) {
+      reasons.add(`low_confidence:${run.taskFamily}`);
+    }
+    if (hasSchemaInvalidFallback(run)) reasons.add('schema_invalid_fallback');
+    for (const failure of parseJsonArray(run.providerFailuresJson).slice(
+      0,
+      5,
+    )) {
+      reasons.add(redactCouncilText(String(failure), 120));
+    }
+    for (const flag of parseJsonArray(run.riskFlagsJson).slice(0, 5)) {
+      if (
+        /schema|repeated|provider|evidence|block|degraded/i.test(String(flag))
+      ) {
+        reasons.add(redactCouncilText(String(flag), 120));
+      }
+    }
+  }
+  return Array.from(reasons).slice(0, 10);
+}
+
+function collectEvidenceGaps(records: CouncilRunLedgerRecord[]): string[] {
+  const gaps = new Set<string>();
+  for (const run of records.slice(0, DOCTOR_LOOKBACK)) {
+    const scorecard = parseJsonObject(run.evidenceScorecardJson);
+    const gapIds = Array.isArray(scorecard.gapIds) ? scorecard.gapIds : [];
+    for (const gap of gapIds.slice(0, 6)) {
+      gaps.add(redactCouncilText(String(gap), 120));
+    }
+  }
+  return Array.from(gaps).slice(0, 10);
+}
+
+function parseMemberStatuses(value: string): CouncilMemberStatusForQuality[] {
+  return parseJsonArray(value)
+    .filter((item): item is Record<string, unknown> =>
+      Boolean(item && typeof item === 'object' && !Array.isArray(item)),
+    )
+    .map((item) => ({
+      memberId: typeof item.memberId === 'string' ? item.memberId : undefined,
+      providerId:
+        typeof item.providerId === 'string' ? item.providerId : undefined,
+      role: typeof item.role === 'string' ? item.role : undefined,
+      status: typeof item.status === 'string' ? item.status : undefined,
+      verdict: typeof item.verdict === 'string' ? item.verdict : undefined,
+      confidence:
+        typeof item.confidence === 'number' ? item.confidence : undefined,
+      schemaStatus:
+        typeof item.schemaStatus === 'string' ? item.schemaStatus : undefined,
+      riskFlags: Array.isArray(item.riskFlags)
+        ? item.riskFlags.filter(
+            (flag): flag is string => typeof flag === 'string',
+          )
+        : [],
+    }));
+}
+
+function parseJsonArray(value: string): unknown[] {
+  try {
+    const parsed = JSON.parse(value || '[]') as unknown;
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseJsonObject(value: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(value || '{}') as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function safeJson(value: unknown, limit: number): string {
+  try {
+    return redactCouncilText(JSON.stringify(value ?? null), limit) || 'null';
+  } catch {
+    return 'null';
+  }
+}
+
+function sanitizeScalar(value: string, limit: number): string {
+  return redactCouncilText(String(value || ''), limit);
+}
+
+function sanitizeNullable(
+  value: string | null | undefined,
+  limit: number,
+): string | null {
+  const sanitized = sanitizeScalar(value || '', limit);
+  return sanitized || null;
+}
+
+function clampConfidence(value: unknown): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(0, Math.min(1, parsed)) : 0;
+}

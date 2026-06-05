@@ -3,6 +3,10 @@ import {
   getBraveSearchStatus,
 } from './brave-search.js';
 import {
+  describeAnthropicConfigBlocker,
+  getAnthropicProviderStatus,
+} from './anthropic-provider.js';
+import {
   describeMiniMaxConfigBlocker,
   getMiniMaxProviderStatus,
 } from './minimax-provider.js';
@@ -143,11 +147,14 @@ export function collectProviderHealthSnapshots(
   const openAi = getOpenAiProviderStatus();
   const miniMax = getMiniMaxProviderStatus();
   const gemini = getGeminiProviderStatus();
+  const anthropic = getAnthropicProviderStatus();
   const brave = getBraveSearchStatus();
   const miniMaxQuotaBlocked =
     miniMax.configured && miniMax.quotaState === 'blocked';
   const geminiQuotaBlocked =
     gemini.configured && gemini.quotaState === 'blocked';
+  const anthropicQuotaBlocked =
+    anthropic.configured && anthropic.quotaState === 'blocked';
   return [
     {
       providerId: 'openai_cloud',
@@ -247,6 +254,46 @@ export function collectProviderHealthSnapshots(
         criticModel: gemini.criticModel,
         fastModel: gemini.fastModel,
         role: 'critic_verifier',
+      },
+    },
+    {
+      providerId: 'anthropic_cloud',
+      kind: 'llm',
+      state: anthropicQuotaBlocked
+        ? 'externally_blocked'
+        : anthropic.configured
+          ? 'healthy'
+          : anthropic.enabled
+            ? 'degraded'
+            : 'not_configured',
+      lastHealthyAt:
+        anthropic.configured && !anthropicQuotaBlocked ? checkedAt : null,
+      lastCheckedAt: checkedAt,
+      failureClass: anthropicQuotaBlocked
+        ? 'quota_or_rate_limit'
+        : anthropic.configured
+          ? 'none'
+          : 'missing_credentials',
+      quotaState: anthropicQuotaBlocked ? 'blocked' : 'unknown',
+      credentialState: anthropic.configured ? 'configured' : 'missing',
+      knownExpiresAt: null,
+      rotationDueAt: rotationDueAt(),
+      blocker: anthropicQuotaBlocked
+        ? 'Anthropic account quota or rate limit is blocked.'
+        : anthropic.configured
+          ? ''
+          : describeAnthropicConfigBlocker(anthropic.missing),
+      nextAction: anthropicQuotaBlocked
+        ? 'Wait for Anthropic quota/rate-limit recovery or adjust the Anthropic plan, then clear ANTHROPIC_QUOTA_STATE and rerun provider checks.'
+        : anthropic.configured
+          ? ''
+          : 'Set ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN in local environment config, then rerun provider checks.',
+      metadata: {
+        baseUrl: anthropic.baseUrl,
+        complexModel: anthropic.complexModel,
+        fastModel: anthropic.fastModel,
+        authMode: anthropic.authMode,
+        role: 'independent_reasoner',
       },
     },
     {

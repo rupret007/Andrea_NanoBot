@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import {
+  getAnthropicProviderStatus,
+  runAnthropicText,
+} from './anthropic-provider.js';
 import { getBraveSearchStatus, searchBraveWeb } from './brave-search.js';
 import {
   getMiniMaxProviderStatus,
@@ -28,6 +32,12 @@ describe('provider expansion', () => {
     delete process.env.GEMINI_API_KEY;
     delete process.env.GEMINI_ENABLED;
     delete process.env.GEMINI_QUOTA_STATE;
+    delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.ANTHROPIC_AUTH_TOKEN;
+    delete process.env.ANTHROPIC_ENABLED;
+    delete process.env.ANTHROPIC_QUOTA_STATE;
+    delete process.env.ANTHROPIC_MODEL_COMPLEX;
+    delete process.env.ANTHROPIC_MODEL_FAST;
     delete process.env.BRAVE_SEARCH_API_KEY;
     delete process.env.BRACE_SEARCH_API_KEY;
     delete process.env.OPENAI_API_KEY;
@@ -41,6 +51,12 @@ describe('provider expansion', () => {
     vi.stubEnv('GEMINI_ENABLED', '');
     vi.stubEnv('GEMINI_API_KEY', '');
     vi.stubEnv('GEMINI_QUOTA_STATE', '');
+    vi.stubEnv('ANTHROPIC_ENABLED', '');
+    vi.stubEnv('ANTHROPIC_API_KEY', '');
+    vi.stubEnv('ANTHROPIC_AUTH_TOKEN', '');
+    vi.stubEnv('ANTHROPIC_QUOTA_STATE', '');
+    vi.stubEnv('ANTHROPIC_MODEL_COMPLEX', '');
+    vi.stubEnv('ANTHROPIC_MODEL_FAST', '');
     vi.stubEnv('BRAVE_SEARCH_ENABLED', 'false');
     vi.stubEnv('BRAVE_SEARCH_API_KEY', '');
     vi.stubEnv('BRACE_SEARCH_API_KEY', '');
@@ -172,6 +188,57 @@ describe('provider expansion', () => {
     expect(result && 'text' in result ? result.text : '').toContain('Gemini');
   });
 
+  it('parses Anthropic native messages responses without exposing secrets', async () => {
+    vi.stubEnv('ANTHROPIC_API_KEY', 'test-anthropic-key');
+    vi.stubEnv('ANTHROPIC_MODEL_COMPLEX', 'claude-test-sonnet');
+    globalThis.fetch = vi.fn(async (url, init) => {
+      expect(String(url)).toBe('https://api.anthropic.com/v1/messages');
+      const headers = init?.headers as Record<string, string>;
+      expect(headers['x-api-key']).toBe('test-anthropic-key');
+      expect(headers.Authorization).toBeUndefined();
+      expect(headers['anthropic-version']).toBe('2023-06-01');
+      const body = JSON.parse(String(init?.body || '{}')) as {
+        model?: string;
+        messages?: Array<{ role?: string; content?: unknown }>;
+        max_tokens?: number;
+        temperature?: number;
+      };
+      expect(body.model).toBe('claude-test-sonnet');
+      expect(body.messages?.[0]?.content).toBe('reason independently');
+      expect(body.max_tokens).toBeGreaterThanOrEqual(1536);
+      expect(body.temperature).toBeGreaterThan(0);
+      return new Response(
+        JSON.stringify({
+          content: [
+            {
+              type: 'text',
+              text: 'Claude independent reasoning artifact.',
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/json',
+            'request-id': 'anthropic-test-1',
+          },
+        },
+      );
+    }) as unknown as typeof fetch;
+
+    const result = await runAnthropicText({
+      prompt: 'reason independently',
+      modelTier: 'complex',
+      temperature: 0,
+    });
+
+    expect(result && !('providerFailure' in result)).toBe(true);
+    expect(result && 'text' in result ? result.text : '').toContain('Claude');
+    expect(result && 'requestId' in result ? result.requestId : '').toBe(
+      'anthropic-test-1',
+    );
+  });
+
   it('uses max_completion_tokens for OpenAI chat completions models', async () => {
     vi.stubEnv('OPENAI_API_KEY', 'test-openai-key');
     vi.stubEnv('OPENAI_MODEL_STANDARD', 'gpt-5.4-nano');
@@ -213,6 +280,7 @@ describe('provider expansion', () => {
   it('reports provider and alert metadata without raw credential values', () => {
     vi.stubEnv('MINIMAX_API_KEY', 'test-minimax-key');
     vi.stubEnv('GEMINI_API_KEY', 'test-gemini-key');
+    vi.stubEnv('ANTHROPIC_API_KEY', 'test-anthropic-key');
     vi.stubEnv('BRAVE_SEARCH_ENABLED', 'true');
     vi.stubEnv('BRAVE_SEARCH_API_KEY', 'test-brave-key');
 
@@ -231,10 +299,14 @@ describe('provider expansion', () => {
       providers.some((provider) => provider.providerId === 'gemini_cloud'),
     ).toBe(true);
     expect(
+      providers.some((provider) => provider.providerId === 'anthropic_cloud'),
+    ).toBe(true);
+    expect(
       providers.some((provider) => provider.providerId === 'brave_search'),
     ).toBe(true);
     expect(serialized).not.toContain('test-minimax-key');
     expect(serialized).not.toContain('test-gemini-key');
+    expect(serialized).not.toContain('test-anthropic-key');
     expect(serialized).not.toContain('test-brave-key');
   });
 
@@ -256,6 +328,18 @@ describe('provider expansion', () => {
     expect(status.enabled).toBe(true);
     expect(status.configured).toBe(false);
     expect(status.missing).toContain('GEMINI_API_KEY');
+  });
+
+  it('surfaces Anthropic configuration state separately from gateway runtime config', () => {
+    vi.stubEnv('ANTHROPIC_ENABLED', 'true');
+
+    const status = getAnthropicProviderStatus();
+
+    expect(status.enabled).toBe(true);
+    expect(status.configured).toBe(false);
+    expect(status.missing).toContain(
+      'ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN',
+    );
   });
 
   it('classifies MiniMax balance blockers as external quota blockers', () => {
@@ -286,6 +370,21 @@ describe('provider expansion', () => {
     expect(provider?.failureClass).toBe('quota_or_rate_limit');
     expect(provider?.quotaState).toBe('blocked');
     expect(JSON.stringify(provider)).not.toContain('test-gemini-key');
+  });
+
+  it('classifies Anthropic quota blockers as external provider blockers', () => {
+    vi.stubEnv('ANTHROPIC_ENABLED', 'true');
+    vi.stubEnv('ANTHROPIC_API_KEY', 'test-anthropic-key');
+    vi.stubEnv('ANTHROPIC_QUOTA_STATE', 'rate_limited');
+
+    const provider = collectProviderHealthSnapshots(
+      '2026-05-01T12:00:00.000Z',
+    ).find((snapshot) => snapshot.providerId === 'anthropic_cloud');
+
+    expect(provider?.state).toBe('externally_blocked');
+    expect(provider?.failureClass).toBe('quota_or_rate_limit');
+    expect(provider?.quotaState).toBe('blocked');
+    expect(JSON.stringify(provider)).not.toContain('test-anthropic-key');
   });
 
   it('formats proactive alerts without exposing secret material', () => {

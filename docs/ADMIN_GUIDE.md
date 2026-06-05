@@ -204,7 +204,8 @@ Important truth:
    - `/setup`
    - `/add-telegram`
 4. Register the main Telegram control chat with `/registermain` in the exact DM you want to use for operator work.
-   - After that, `npm run services:status` should show `assistant_name=Andrea` and `registered_main_chat_jid` set to that same Telegram DM.
+   - After that, run `/mainchat`; it should say this DM is the registered main control chat.
+   - `npm run services:status` should also show `assistant_name=Andrea` and `registered_main_chat_jid` set to that same Telegram DM.
 5. Run:
    - `npm run setup -- --step verify`
 6. Start services:

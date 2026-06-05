@@ -9,6 +9,7 @@ import {
   createDefaultBlueBubblesMonitorState,
   writeBlueBubblesMonitorState,
 } from './bluebubbles-monitor-state.js';
+import { getBlueBubblesCanonicalSelfThreadJid } from './bluebubbles-self-thread.js';
 import {
   _closeDatabase,
   _initTestDatabase,
@@ -554,7 +555,7 @@ describe('field-trial readiness', () => {
 
     expect(truth.bluebubbles.proofState).toBe('externally_blocked');
     expect(truth.bluebubbles.blocker).toContain(
-      'Messages bridge is not configured on this PC',
+      'Messages bridge is not configured on this host',
     );
     expect(truth.bluebubbles.nextAction).toContain('BLUEBUBBLES_*');
     expect(truth.bluebubbles.chatScope).toBe('allowlist');
@@ -894,7 +895,7 @@ describe('field-trial readiness', () => {
     expect(truth.bluebubbles.proofState).toBe('live_proven');
     expect(truth.bluebubbles.messageActionProofState).toBe('fresh');
     expect(truth.bluebubbles.messageActionProofChatJid).toBe(
-      'bb:iMessage;-;+14695405551',
+      getBlueBubblesCanonicalSelfThreadJid(),
     );
     expect(truth.bluebubbles.detail).toContain("Andrea's confirmation");
   });
@@ -1181,13 +1182,13 @@ describe('field-trial readiness', () => {
     });
 
     expect(truth.bluebubbles.recentTargetChatJid).toBe(
-      'bb:iMessage;-;+14695405551',
+      getBlueBubblesCanonicalSelfThreadJid(),
     );
     expect(truth.bluebubbles.recentTargetAt).toBe('2026-04-10T00:11:30.000Z');
     expect(truth.bluebubbles.openMessageActionCount).toBeGreaterThanOrEqual(1);
     expect(truth.bluebubbles.continuityState).toBe('draft_open');
     expect(truth.bluebubbles.proofCandidateChatJid).toBe(
-      'bb:iMessage;-;+14695405551',
+      getBlueBubblesCanonicalSelfThreadJid(),
     );
     expect(truth.bluebubbles.effectiveReplyGateMode).toBe('direct_1to1');
     expect(truth.bluebubbles.conversationKind).toBe('self_thread');
@@ -1432,10 +1433,10 @@ describe('field-trial readiness', () => {
     expect(truth.bluebubbles.proofState).toBe('live_proven');
     expect(truth.bluebubbles.messageActionProofState).toBe('fresh');
     expect(truth.bluebubbles.messageActionProofChatJid).toBe(
-      'bb:iMessage;-;+14695405551',
+      getBlueBubblesCanonicalSelfThreadJid(),
     );
     expect(truth.bluebubbles.mostRecentEngagedChatJid).toBe(
-      'bb:iMessage;-;+14695405551',
+      getBlueBubblesCanonicalSelfThreadJid(),
     );
   });
 
@@ -1571,7 +1572,7 @@ describe('field-trial readiness', () => {
     expect(truth.bluebubbles.proofState).toBe('live_proven');
     expect(truth.bluebubbles.messageActionProofState).toBe('fresh');
     expect(truth.bluebubbles.messageActionProofChatJid).toBe(
-      'bb:iMessage;-;+14695405551',
+      getBlueBubblesCanonicalSelfThreadJid(),
     );
     expect(truth.bluebubbles.detail).toContain(
       'fresh same-thread continuation',
@@ -1897,7 +1898,7 @@ describe('field-trial readiness', () => {
 
     expect(truth.bluebubbles.proofState).toBe('degraded_but_usable');
     expect(truth.bluebubbles.mostRecentEngagedChatJid).toBe(
-      'bb:iMessage;-;+14695405551',
+      getBlueBubblesCanonicalSelfThreadJid(),
     );
     expect(truth.bluebubbles.mostRecentEngagedAt).toBe(
       '2026-04-09T23:45:38.765Z',
@@ -2000,7 +2001,7 @@ describe('field-trial readiness', () => {
 
     expect(truth.bluebubbles.proofState).toBe('degraded_but_usable');
     expect(truth.bluebubbles.mostRecentEngagedChatJid).toBe(
-      'bb:iMessage;-;+14695405551',
+      getBlueBubblesCanonicalSelfThreadJid(),
     );
     expect(truth.bluebubbles.mostRecentEngagedAt).toBe(
       '2026-04-10T00:11:29.973Z',
@@ -2014,9 +2015,11 @@ describe('field-trial readiness', () => {
       'no active message-action record remains',
     );
     expect(truth.bluebubbles.messageActionProofDetail).toContain(
-      'Canonical self-thread: bb:iMessage;-;+14695405551.',
+      `Canonical self-thread: ${getBlueBubblesCanonicalSelfThreadJid()}.`,
     );
-    expect(truth.bluebubbles.detail).toContain('bb:iMessage;-;+14695405551');
+    expect(truth.bluebubbles.detail).toContain(
+      getBlueBubblesCanonicalSelfThreadJid(),
+    );
   });
 
   it('surfaces suspected missed 1:1 inbound detection and Telegram fallback state in BlueBubbles truth', () => {
@@ -2308,7 +2311,7 @@ describe('field-trial readiness', () => {
       'http://macbook-pro.local:1234 => unreachable',
     );
     expect(truth.bluebubbles.blocker).toContain(
-      'Messages bridge is unavailable from this Windows host right now',
+      'Messages bridge is unavailable from this host right now',
     );
     expect(truth.launchReadiness.coreBlockers.join(' | ')).not.toContain(
       'bluebubbles',

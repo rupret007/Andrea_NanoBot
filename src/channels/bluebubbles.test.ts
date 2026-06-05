@@ -90,6 +90,10 @@ function buildConfig(
     port: 0,
     groupFolder: 'main',
     webhookPublicBaseUrl: null,
+    serverPublicUrl: null,
+    localPort: null,
+    imessageAccountLabel: null,
+    computerId: null,
     chatScope: 'allowlist',
     allowedChatGuids: ['chat-1'],
     allowedChatGuid: 'chat-1',
@@ -976,8 +980,8 @@ describe('BlueBubbles channel', () => {
       });
 
       expect(response.status).toBe(202);
-      expect(await response.text()).toBe(
-        'Ignored outgoing message without @Andrea mention',
+      expect(await response.text()).toContain(
+        'Use @Andrea once in this direct chat',
       );
       expect(onMessage).not.toHaveBeenCalled();
       expect(onChatMetadata).not.toHaveBeenCalled();

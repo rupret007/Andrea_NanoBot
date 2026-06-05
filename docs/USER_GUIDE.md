@@ -24,10 +24,11 @@ Andrea is strongest at:
 1. Open a direct message with `@andrea_nanobot`.
 2. Run `/start`.
 3. Run `/registermain`.
-4. Run `/help` or `/commands`.
-5. Send one plain-language request.
+4. Run `/mainchat`.
+5. Run `/help` or `/commands`.
+6. Send one plain-language request.
 
-`/registermain` should make that same DM Andrea's main control chat. If operator-style features still look unavailable after that, ask the operator to check `registered_main_chat_jid` in `npm run services:status`.
+`/registermain` should make that same DM Andrea's main control chat. If it says another main chat is already registered, run `/mainchat`; it will show the registered chat, whether this DM is it, and the next step. If you ask something like `What's on my calendar tomorrow?` from a non-main DM, move to the DM shown by `/mainchat` or run `/registermain` in the DM you want to use.
 
 Good first messages:
 
@@ -47,7 +48,23 @@ These are the commands normal users should rely on:
 - `/ping` - basic health check
 - `/chatid` - show the current Telegram chat ID and type
 - `/registermain` - register this DM as Andrea's main control chat
+- `/mainchat` - show the registered main control chat and recovery steps
+- `/thinking` - show smart auto thinking mode plus deep/quick controls
+- `/council` - show council quality, calibration, provider reliability, and next proof action
+- `/cognition` - show task-engine status, active skill, evidence gaps, approval blockers, and next repair action
+- `/memory` - show how memory is used and controlled
+- `/learning` - show durable learning policy and safety rails
+- `/forget` - show how to disable a remembered detail
 - `/cursor_status` - safe Cursor readiness check only
+
+Thinking and learning controls:
+
+- Say `ultrathink`, `ultracode`, `think harder`, `use all models`, `max IQ`, or `deep dive` when a request deserves the protected multi-model council.
+- Say `quick answer` or `keep it simple` when you want the fast path.
+- Andrea may show a concise council verdict, but not hidden reasoning or provider debate transcripts.
+- Use `/council`, `council status`, or `council tasks` to inspect the redacted council quality ledger, task-ease drills, and next repair action.
+- Use `/cognition`, `cognition status`, or `why did you choose that?` to inspect the safe task graph, selected skill, durable goal, blackboard trail, autonomy budget, open checkpoint, and outcome-learning status.
+- Say `what did you learn?`, `forget that`, or `do not learn from this` to inspect or steer memory.
 
 Important Cursor rule:
 
@@ -164,9 +181,11 @@ Those are operator-managed extras, not the baseline user surface.
 ## If Something Feels Off
 
 1. Run `/ping`.
-2. Run `/help`.
-3. Run `/cursor_status` if the coding/status path seems off.
-4. Send your admin the exact command, reply, and approximate time.
+2. Run `/mainchat` and confirm this DM is the registered main chat.
+3. Run `/help`.
+4. Retry the plain-language ask.
+5. Run `/cursor_status` if the coding/status path seems off.
+6. Send your admin the exact command, reply, and approximate time.
 
 ## One-Line Mental Model
 

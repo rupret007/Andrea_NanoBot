@@ -77,6 +77,7 @@ const WORK_CONTEXT_FACT_KEY = 'work_context_default';
 const EXPLANATION_DEPTH_FACT_KEY = 'explanation_depth';
 const GUIDANCE_FOCUS_FACT_KEY = 'guidance_focus';
 const REMINDER_HELPFULNESS_FACT_KEY = 'reminder_helpfulness';
+const THINKING_DEPTH_FACT_KEY = 'thinking_depth_default';
 
 function slugifyName(value: string): string {
   return (
@@ -944,6 +945,65 @@ export function handlePersonalizationCommand(
         input.groupFolder,
         input.conversationSummary,
       ),
+    };
+  }
+
+  if (/^(what did you learn|what have you learned)\??$/i.test(raw)) {
+    const accepted = listProfileFactsForGroup(input.groupFolder, [
+      'accepted',
+    ]).filter((fact) => fact.subjectId === selfSubject.id);
+    const proposed = listProfileFactsForGroup(input.groupFolder, [
+      'proposed',
+    ]).filter((fact) => fact.subjectId === selfSubject.id);
+    const acceptedDescriptions = accepted
+      .map(describeFact)
+      .filter(Boolean)
+      .slice(0, 5);
+    const proposedCount = proposed.length;
+    return {
+      handled: true,
+      responseText: [
+        acceptedDescriptions.length
+          ? `Here is what I am actively using: ${joinNaturalLanguage(acceptedDescriptions)}.`
+          : 'I do not have active saved self-preferences in play yet.',
+        proposedCount > 0
+          ? `${proposedCount} proposed learning item${proposedCount === 1 ? '' : 's'} still need review before I treat them as durable.`
+          : 'No proposed learning items are waiting for review.',
+        'Council and outcome learnings stay sanitized: no raw hidden reasoning, provider prompts, secrets, or full private message bodies.',
+      ].join('\n'),
+    };
+  }
+
+  if (
+    /^(do not learn from this|don'?t learn from this|do not remember this|don'?t remember this)[.!?]*$/i.test(
+      raw,
+    )
+  ) {
+    return {
+      handled: true,
+      responseText:
+        'Okay. I will keep this exchange temporary and avoid turning it into durable memory.',
+    };
+  }
+
+  if (/^think harder next time[.!?]*$/i.test(raw)) {
+    const fact = upsertStructuredFact({
+      groupFolder: input.groupFolder,
+      subject: selfSubject,
+      category: 'preferences',
+      factKey: THINKING_DEPTH_FACT_KEY,
+      value: { mode: 'prefer_deeper_when_uncertain' },
+      state: 'accepted',
+      sourceChannel: input.channel,
+      sourceSummary:
+        'User asked Andrea to prefer deeper reasoning next time when uncertainty is present.',
+      now,
+    });
+    return {
+      handled: true,
+      responseText:
+        'Okay. When a request looks ambiguous, high-impact, or multi-step, I will lean toward the deeper council path.',
+      referencedFactId: fact.id,
     };
   }
 

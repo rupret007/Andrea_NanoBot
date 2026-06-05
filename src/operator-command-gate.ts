@@ -298,7 +298,7 @@ export function getCommandAccessDecision(
       allowed: false,
       reason: 'main_control_only',
       message:
-        "That command is restricted to Andrea's main control chat. Use the registered main chat for admin and integration work.",
+        "That command is restricted to Andrea's main control chat. Run `/mainchat` for the exact control-chat status, then use `/registermain` in the right DM if a switch is needed.",
     };
   }
 
@@ -306,6 +306,6 @@ export function getCommandAccessDecision(
     allowed: false,
     reason: 'main_control_only',
     message:
-      "That command is restricted to Andrea's main control chat. Open a DM with Andrea and run /registermain first.",
+      "That command is restricted to Andrea's main control chat. Run `/mainchat` to verify your current control chat, then open that DM and run `/registermain` there.",
   };
 }

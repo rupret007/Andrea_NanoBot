@@ -73,6 +73,7 @@ export interface IntelligenceRegressionHarnessReport {
 const FORBIDDEN_LEAKAGE_TERMS = [
   'codex_local',
   'openai_cloud',
+  'anthropic_cloud',
   'minimax_cloud',
   'claude_legacy',
   'task_ledger',
@@ -124,7 +125,7 @@ const SCENARIOS: IntelligenceScenarioFixture[] = [
     expected: {
       meaningful: true,
       taskFamily: 'assistant',
-      councilMode: 'none',
+      councilMode: 'dual_review',
       evidenceLevel: 'partial',
       approvalNeed: 'none',
     },
@@ -139,7 +140,7 @@ const SCENARIOS: IntelligenceScenarioFixture[] = [
     expected: {
       meaningful: true,
       taskFamily: 'calendar',
-      councilMode: 'none',
+      councilMode: 'dual_review',
       evidenceLevel: 'partial',
       approvalNeed: 'conditional',
       safeRewriteApplied: true,
@@ -202,7 +203,7 @@ const SCENARIOS: IntelligenceScenarioFixture[] = [
     expected: {
       meaningful: true,
       taskFamily: 'assistant',
-      councilMode: 'none',
+      councilMode: 'dual_review',
       evidenceLevel: 'partial',
       approvalNeed: 'conditional',
     },
@@ -507,12 +508,13 @@ async function runScenario(
       'trace_completeness',
       !context ||
         Boolean(
-          context.deliberation?.taskLedgerId &&
-          (reflection?.reflection?.traceGradeId ||
-            context.deliberation.traceGradeId ||
-            context.providerCouncil?.councilRunId),
+          (context.deliberation?.taskLedgerId &&
+            (reflection?.reflection?.traceGradeId ||
+              context.deliberation.traceGradeId ||
+              context.providerCouncil?.councilRunId)) ||
+          context.providerCouncil?.councilRunId,
         ),
-      'Meaningful scenario is linked to deliberation plus trace-grade or council evidence.',
+      'Meaningful scenario is linked to deliberation, trace-grade, or local council evidence.',
       criticalGates,
     ),
   );

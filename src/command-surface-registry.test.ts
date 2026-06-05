@@ -41,6 +41,14 @@ describe('command surface registry', () => {
       '/ping',
       '/chatid',
       '/registermain',
+      '/mainchat',
+      '/bluebubbles',
+      '/thinking',
+      '/council',
+      '/cognition',
+      '/memory',
+      '/learning',
+      '/forget',
       '/cursor_status',
     ]);
 
@@ -298,14 +306,14 @@ describe('command surface docs', () => {
     expect(commandReference).toContain(
       'Surface-shape and access overlays still appear in this reference too:',
     );
-    expect(commandReference).toContain(
-      '| Planning and next steps | Telegram, Alexa | `near_live_only` |',
+    expect(commandReference).toMatch(
+      /\|\s*Planning and next steps\s*\|\s*Telegram, Alexa\s*\|\s*`near_live_only`\s*\|/,
     );
-    expect(commandReference).toContain(
-      '| Communication and reply help | Telegram, Alexa, BlueBubbles | `live_proven` |',
+    expect(commandReference).toMatch(
+      /\|\s*Communication and reply help\s*\|\s*Telegram, Alexa, BlueBubbles\s*\|\s*`live_proven`\s*\|/,
     );
-    expect(commandReference).toContain(
-      '| Compare, explain, and saved context | Telegram, Alexa | `degraded_but_usable` |',
+    expect(commandReference).toMatch(
+      /\|\s*Compare, explain, and saved context\s*\|\s*Telegram, Alexa\s*\|\s*`degraded_but_usable`\s*\|/,
     );
     expect(commandReference).toContain(
       'daily guidance still needs one fresh Telegram proof turn',

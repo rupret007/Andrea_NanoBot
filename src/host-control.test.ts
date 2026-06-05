@@ -81,6 +81,18 @@ describe('host control state', () => {
     expect(fs.existsSync(getReadyStatePath())).toBe(true);
   });
 
+  it('creates a self-hosted ready marker when no launcher host state exists', () => {
+    const ready = writeAssistantReadyState('1.2.42');
+    const snapshot = readHostControlSnapshot();
+
+    expect(ready.bootId).toMatch(/^host-/);
+    expect(snapshot.readyState?.bootId).toBe(ready.bootId);
+    if (process.platform !== 'win32') {
+      expect(snapshot.hostState?.phase).toBe('running_ready');
+      expect(snapshot.hostState?.pid).toBe(process.pid);
+    }
+  });
+
   it('reads host snapshots from runtime state files', () => {
     persistNanoclawHostState({
       bootId: 'boot-456',
@@ -132,7 +144,12 @@ describe('host control state', () => {
     });
 
     expect(getHostStatePath()).toBe(
-      path.join(tempDir, 'data', 'runtime', 'nanoclaw-host-state.json'),
+      path.join(
+        fs.realpathSync(tempDir),
+        'data',
+        'runtime',
+        'nanoclaw-host-state.json',
+      ),
     );
     expect(fs.existsSync(getHostStatePath())).toBe(true);
   });

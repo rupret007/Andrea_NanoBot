@@ -5,6 +5,7 @@ import {
   type FieldTrialProofState,
   type FieldTrialSurfaceTruth,
 } from './field-trial-readiness.js';
+import { readEnvFile } from './env.js';
 import {
   collectProviderHealthSnapshots,
   type ProviderHealthSnapshot,
@@ -276,8 +277,10 @@ function normalizeBlueBubbles(
 
 function normalizeAlexa(truth: FieldTrialOperatorTruth): IntegrationStatus {
   const missingSignedTurn = truth.alexa.proofState !== 'live_proven';
+  const envFile = readEnvFile(['ALEXA_PUBLIC_BASE_URL']);
   const baseUrlMissing =
     !process.env.ALEXA_PUBLIC_BASE_URL &&
+    !envFile.ALEXA_PUBLIC_BASE_URL &&
     !truth.alexa.detail.includes('public');
   return surfaceStatus({
     integrationId: 'alexa',

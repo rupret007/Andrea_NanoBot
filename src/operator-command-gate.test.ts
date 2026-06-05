@@ -19,6 +19,7 @@ describe('operator command gate', () => {
 
     expect(decision.allowed).toBe(false);
     expect(decision.reason).toBe('main_control_only');
+    expect(decision.message).toContain('/mainchat');
     expect(decision.message).toContain('/registermain');
   });
 
@@ -78,6 +79,7 @@ describe('operator command gate', () => {
     expect(decision.allowed).toBe(false);
     expect(decision.reason).toBe('main_control_only');
     expect(decision.message).toContain('main control chat');
+    expect(decision.message).toContain('/mainchat');
   });
 
   it('blocks optional operator commands in non-main chats across hyphen aliases too', () => {
@@ -92,6 +94,15 @@ describe('operator command gate', () => {
     expect(decision.allowed).toBe(false);
     expect(decision.reason).toBe('main_control_only');
     expect(decision.message).toContain('main control chat');
+    expect(decision.message).toContain('/registermain');
+  });
+
+  it('tells users to run both /mainchat and /registermain when blocked', () => {
+    const decision = getCommandAccessDecision('/cursor_create', undefined);
+
+    expect(decision.allowed).toBe(false);
+    expect(decision.message).toContain('/mainchat');
+    expect(decision.message).toContain('/registermain');
   });
 
   it('allows advanced commands from the main control chat', () => {

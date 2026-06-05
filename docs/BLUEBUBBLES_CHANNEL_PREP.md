@@ -8,12 +8,12 @@ It is one more channel edge on the shared Andrea core.
 
 ## Current Truth
 
-Current host reality for the Windows operator machine:
+Current host reality for the Mac mini operator machine:
 
-- the BlueBubbles desktop app is installed and connected to the Mac-side server
+- the BlueBubbles desktop app is installed and connected to the local Mac mini server
 - Andrea now has live `BLUEBUBBLES_*` config loaded on this host
-- Andrea can currently reach the configured BlueBubbles endpoint from this Windows host and the webhook is still registered
-- BlueBubbles is currently **degraded_but_usable** on this host because transport and webhook registration are healthy, but the fresh same-thread `message_action` proof leg is still missing in current live truth
+- Andrea reaches BlueBubbles locally at `http://127.0.0.1:1234`; the Cloudflare BlueBubbles URL is fallback/diagnostic only
+- BlueBubbles is below `live_proven` until the fresh same-thread inbound, outbound, and `message_action` proof leg lands on this host
 - the canonical proof thread is `bb:iMessage;-;+14695405551`, and alias support remains enabled for `bb:iMessage;-;jeffstory007@gmail.com`
 - Telegram remains Andrea's dependable main messaging surface, while BlueBubbles stays an optional bridge that still needs one fresh same-thread proof completion
 
@@ -25,9 +25,10 @@ Use these operator truth surfaces:
 - `npm run debug:bluebubbles -- --live`
 - `npm run debug:pilot`
 - `GET /v1/bluebubbles/status` on the BlueBubbles control API when `BLUEBUBBLES_CONTROL_API_ENABLED=true`
+- `GET /v1/bluebubbles/doctor` on the BlueBubbles control API for blocker taxonomy and next action
 - `npm run bluebubbles:mcp` for the thin stdio MCP bridge over that authenticated control API
 
-OpenBubbles is still an operator-only feasibility track on this PC. Its official docs support the Mac-offline goal after activation or renewal, but Andrea does not yet have a supported Windows-native observation/reply surface to bind to there.
+OpenBubbles is still an operator-only feasibility track. Andrea does not use it for this Mac mini BlueBubbles bridge.
 
 ## V1 Scope
 
@@ -131,13 +132,19 @@ BlueBubbles V1 uses these env settings:
 
 ```bash
 BLUEBUBBLES_ENABLED=true
-BLUEBUBBLES_BASE_URL=
-BLUEBUBBLES_BASE_URL_CANDIDATES=
+BLUEBUBBLES_BASE_URL=http://127.0.0.1:1234
+BLUEBUBBLES_BASE_URL_CANDIDATES=http://127.0.0.1:1234,http://localhost:1234,https://ensemble-mercy-population-spending.trycloudflare.com
 BLUEBUBBLES_PASSWORD=
-BLUEBUBBLES_HOST=0.0.0.0
+BLUEBUBBLES_HOST=127.0.0.1
 BLUEBUBBLES_PORT=4305
 BLUEBUBBLES_GROUP_FOLDER=main
-BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL=
+BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL=http://127.0.0.1:4305
+BLUEBUBBLES_SERVER_PUBLIC_URL=https://ensemble-mercy-population-spending.trycloudflare.com
+BLUEBUBBLES_LOCAL_PORT=1234
+BLUEBUBBLES_IMESSAGE_ACCOUNT_LABEL=jeffstory007@gmail.com
+BLUEBUBBLES_COMPUTER_ID=jeffstory@Jeffs-Mac-mini.local
+BLUEBUBBLES_CANONICAL_SELF_THREAD_JID=bb:iMessage;-;+14695405551
+BLUEBUBBLES_SELF_THREAD_ALIAS_JIDS=bb:iMessage;-;+14695405551,bb:iMessage;-;jeffstory007@gmail.com
 BLUEBUBBLES_CHAT_SCOPE=all_synced
 BLUEBUBBLES_ALLOWED_CHAT_GUIDS=
 BLUEBUBBLES_ALLOWED_CHAT_GUID=
@@ -149,8 +156,9 @@ BLUEBUBBLES_SEND_ENABLED=true
 Meaning:
 
 - `BLUEBUBBLES_GROUP_FOLDER` binds BlueBubbles companion state into Andrea's shared companion folder, usually `main`
-- prefer `BLUEBUBBLES_BASE_URL_CANDIDATES` with a stable IP first and `.local` only as a fallback candidate on Windows
-- `BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL` is the Mac-reachable Andrea URL, not the local bind address
+- prefer local `127.0.0.1` first; keep the Cloudflare BlueBubbles URL as fallback/diagnostic only
+- `BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL` stays local/private on this Mac mini
+- `BLUEBUBBLES_CANONICAL_SELF_THREAD_JID` and `BLUEBUBBLES_SELF_THREAD_ALIAS_JIDS` keep proof drills and follow-ups aligned with the live Messages self-thread
 - `BLUEBUBBLES_CHAT_SCOPE=all_synced` allows all synced personal and group chats
 - `BLUEBUBBLES_ALLOWED_CHAT_GUIDS` and `BLUEBUBBLES_ALLOWED_CHAT_GUID` are only for optional allowlist mode
 - `BLUEBUBBLES_SEND_ENABLED=true` is required for real reply-back
@@ -160,7 +168,7 @@ Meaning:
 Inbound:
 
 - Andrea listens locally on `http://<host>:<port><webhookPath>`
-- the Mac-side BlueBubbles server should call the public webhook URL, not `127.0.0.1`
+- the Mac mini BlueBubbles server can call Andrea's local webhook at `127.0.0.1`
 - if `BLUEBUBBLES_WEBHOOK_SECRET` is set, append it as `?secret=...`
 - Andrea accepts supported new-message webhook events only
 - messages from chats outside the configured scope are ignored
@@ -186,7 +194,7 @@ BlueBubbles is `live_proven` only after all of these happen on this host:
 5. one same-thread message-action decision is recorded in the same chat, such as `send it`, `send it later tonight`, `remind me instead`, or `save under thread`
 6. if the user approves a real reply, that same-thread outbound send lands without the companion prefix
 
-If config is present and the server, webhook, and recent-activity shadow poll are ready but the fresh same-thread proof chain is still incomplete, BlueBubbles stays below `live_proven` and should read as `degraded_but_usable` on that host. If Windows cannot reach the configured endpoint at all, the bridge should read as `externally_blocked` with `transport_unreachable`, and Telegram should be treated as the dependable main path.
+If config is present and the server, webhook, and recent-activity shadow poll are ready but the fresh same-thread proof chain is still incomplete, BlueBubbles stays below `live_proven` and should read as `degraded_but_usable` on that host. If this host cannot reach the configured endpoint at all, the bridge should read as `externally_blocked` with `transport_unreachable`, and Telegram should be treated as the dependable main path.
 
 On this host, that proof bar was satisfied on April 14, 2026 in `bb:iMessage;-;+14695405551` with a real same-thread ask, a fresh drafted message action, and a same-thread `send it` continuation.
 
@@ -205,8 +213,7 @@ Use this exact proof sequence:
 5. Send:
    - `@Andrea what should I say back`
 6. Make one same-thread message-action decision:
-   - `@Andrea send it`
-   - or `@Andrea send it later tonight`
+   - `@Andrea send it later tonight`
    - or `@Andrea remind me later`
    - or `@Andrea save that under the thread`
 7. Optionally send:
@@ -222,7 +229,13 @@ Success should show:
 - a recent `bluebubbles_most_recent_chat`
 - non-`none` `bluebubbles_last_inbound`
 - non-`none` `bluebubbles_last_outbound`
-- `message_action_proof_state=fresh`
+   - `message_action_proof_state=fresh`
+
+Use `npm run debug:bluebubbles -- --proof-timeline` when the proof state does
+not promote. It prints a metadata-only reconciliation of the canonical
+self-thread, aliases, inbound/outbound shapes, active action, last safe
+decision, confirmation, blocker category, and next step. It never prints raw
+private message bodies.
 - `message_action_proof_chat` matching the same BlueBubbles thread
 
 If the proof still says `degraded_but_usable` or `near_live_only`, treat that as honest host truth rather than a soft failure:

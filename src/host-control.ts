@@ -1035,10 +1035,46 @@ export function writeAssistantReadyState(
   projectRoot = process.cwd(),
 ): NanoclawReadyState {
   const hostState = readNanoclawHostState(projectRoot);
+  const readyAt = new Date().toISOString();
+  const shouldPersistSelfHostedState =
+    process.platform !== 'win32' &&
+    (!hostState ||
+      !hostState.bootId ||
+      hostState.pid !== process.pid ||
+      hostState.phase !== 'running_ready');
+  const bootId = hostState?.bootId || `host-${process.pid}-${Date.now()}`;
+
+  if (shouldPersistSelfHostedState) {
+    const paths = resolveHostControlPaths(projectRoot);
+    const preserveDegradedDependency =
+      hostState?.dependencyState === 'degraded';
+    persistNanoclawHostState(
+      {
+        bootId,
+        phase: 'running_ready',
+        pid: process.pid,
+        installMode: hostState?.installMode || 'manual_host_control',
+        nodePath: process.execPath,
+        nodeVersion: process.version,
+        startedAt: hostState?.startedAt || readyAt,
+        readyAt,
+        lastError: '',
+        dependencyState: preserveDegradedDependency ? 'degraded' : 'ok',
+        dependencyError: preserveDegradedDependency
+          ? hostState?.dependencyError || ''
+          : '',
+        stdoutLogPath: hostState?.stdoutLogPath || paths.assistantLogPath,
+        stderrLogPath: hostState?.stderrLogPath || paths.assistantErrorLogPath,
+        hostLogPath: hostState?.hostLogPath || paths.hostLogPath,
+      },
+      projectRoot,
+    );
+  }
+
   const readyState: NanoclawReadyState = {
-    bootId: hostState?.bootId || '',
+    bootId,
     pid: process.pid,
-    readyAt: new Date().toISOString(),
+    readyAt,
     appVersion,
   };
   writeJsonFile(getReadyStatePath(projectRoot), readyState);

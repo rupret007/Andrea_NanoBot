@@ -248,6 +248,34 @@ describe('assistant personalization', () => {
     expect(explanation.responseText).toContain('short, direct answers');
   });
 
+  it('handles natural aggressive-learning controls without storing raw content', () => {
+    const deeper = handlePersonalizationCommand({
+      groupFolder: 'main',
+      channel: 'telegram',
+      text: 'think harder next time',
+    });
+    const skip = handlePersonalizationCommand({
+      groupFolder: 'main',
+      channel: 'telegram',
+      text: 'do not learn from this',
+    });
+    const learned = handlePersonalizationCommand({
+      groupFolder: 'main',
+      channel: 'telegram',
+      text: 'what did you learn?',
+    });
+
+    expect(deeper.handled).toBe(true);
+    expect(deeper.responseText).toContain('deeper council path');
+    expect(skip.handled).toBe(true);
+    expect(skip.responseText).toContain('temporary');
+    expect(learned.handled).toBe(true);
+    expect(learned.responseText).toContain('sanitized');
+    expect(JSON.stringify(listProfileFactsForGroup('main'))).not.toContain(
+      'do not learn from this',
+    );
+  });
+
   it('creates a conservative guidance candidate for repeated open-ended planning requests', () => {
     storeMessage({
       id: 'm5',

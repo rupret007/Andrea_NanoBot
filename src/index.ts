@@ -419,6 +419,17 @@ import {
   parseIntegrationFixTarget,
 } from './integration-doctor.js';
 import {
+  formatCouncilDoctorReport,
+  buildCouncilDoctorReport,
+  isCouncilDoctorRequest,
+  recordCouncilOutcomeSignal,
+} from './council-quality.js';
+import {
+  buildCognitiveDoctorReport,
+  formatCognitiveDoctorReport,
+  isCognitionDoctorRequest,
+} from './cognitive-kernel.js';
+import {
   AgentRuntimeName,
   AgentThreadState,
   Channel,
@@ -932,6 +943,39 @@ function getCurrentMainChatAudit(): ReturnType<typeof auditRegisteredMainChat> {
     registeredMainChat,
     chats: getAllChats(),
   });
+}
+
+function getResolvedMainChatDisplayName(): string {
+  const registeredMainChat =
+    (getRegisteredMainChat() as
+      | (RegisteredMainChatRecord & { jid: string })
+      | undefined) || null;
+  if (!registeredMainChat) {
+    return 'No main control chat is currently registered.';
+  }
+
+  return `${registeredMainChat.name || 'Main'} (${registeredMainChat.jid})`;
+}
+
+function buildMainChatBlockedMessage(
+  context = 'advanced operator workflows',
+): string {
+  const details = getResolvedMainChatDisplayName();
+  const actionContext = context ? ` for ${context}` : '';
+  return [
+    `This chat is not set up yet${actionContext}.`,
+    `Andrea can only run these features in the registered main control chat.`,
+    details,
+    'Run `/mainchat` for the exact current status and recovery steps.',
+    'If this is your control chat, send `/registermain` here to bind it.',
+  ].join('\n');
+}
+
+function buildMainChatSummaryLine(
+  mainChatJid: string,
+  mainChat: RegisteredGroup,
+): string {
+  return `${mainChat.name || 'Main'} (${mainChatJid})`;
 }
 
 function writeCurrentRuntimeAuditState(warningOverride?: string | null): void {
@@ -2947,17 +2991,73 @@ async function bootstrapMainChatRegistration(
     return {
       ok: false,
       message:
-        'This chat is already registered as a non-main chat. Use your existing main chat for administration.',
+        'This chat is already registered as a non-main chat. Use your existing main chat for administration, or run /mainchat for the exact change flow.',
     };
+  }
+
+  const audit = getCurrentMainChatAudit();
+  if (
+    audit.registeredMainChat &&
+    audit.repairTargetChat &&
+    audit.repairTargetChat.jid === chatJid
+  ) {
+    try {
+      const repaired = repairRegisteredMainChat({
+        fromJid: audit.registeredMainChat.jid,
+        toJid: chatJid,
+        toName: chatName || 'Main',
+      });
+      loadState();
+      writeCurrentRuntimeAuditState(
+        `Main chat registration was repaired from ${audit.registeredMainChat.jid} to ${repaired.jid}.`,
+      );
+      logger.warn(
+        { fromJid: audit.registeredMainChat.jid, toJid: chatJid },
+        'Repaired stale main chat registration via /registermain',
+      );
+      return {
+        ok: true,
+        message: `Main chat registration was stale and has been repaired to ${buildMainChatSummaryLine(repaired.jid, repaired)}. This chat is now your main control chat. You can continue here.`,
+      };
+    } catch (err) {
+      logger.warn(
+        {
+          err,
+          chatJid,
+          fromJid: audit.registeredMainChat.jid,
+        },
+        'Failed deterministic main chat repair during /registermain flow',
+      );
+    }
   }
 
   const existingMain = Object.entries(registeredGroups).find(
     ([, group]) => group.isMain,
   );
+  const existingMainFolder = Object.entries(registeredGroups).find(
+    ([, group]) => group.folder === 'main',
+  );
   if (existingMain) {
+    const [existingMainJid, existingGroup] = existingMain;
+    const mainSummary = buildMainChatSummaryLine(
+      existingMainJid,
+      existingGroup,
+    );
     return {
       ok: false,
-      message: `Main chat is already registered as ${existingMain[0]}.`,
+      message: `A main chat is already registered as ${mainSummary}. To switch, run /mainchat in the current main chat and follow the on-screen transfer flow.`,
+    };
+  }
+
+  if (existingMainFolder && !existingMain) {
+    const [existingMainJid, existingGroup] = existingMainFolder;
+    const mainSummary = buildMainChatSummaryLine(
+      existingMainJid,
+      existingGroup,
+    );
+    return {
+      ok: false,
+      message: `A main chat is already registered as ${mainSummary}. To switch, run /mainchat in that chat and use its on-screen transfer flow.`,
     };
   }
 
@@ -2988,7 +3088,7 @@ async function bootstrapMainChatRegistration(
 
   return {
     ok: true,
-    message: `Main chat registered successfully (${chatJid}). You can now send commands to ${ASSISTANT_NAME} here.`,
+    message: `Main chat registered successfully (${chatJid}). You can now use main-control commands here with ${ASSISTANT_NAME}.`,
   };
 }
 
@@ -3712,6 +3812,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         platformTraceGradeId:
           platformReflection.reflection?.traceGradeId ||
           turnAgentHarness?.deliberation?.traceGradeId,
+        providerCouncilRunId: turnAgentHarness?.providerCouncil?.councilRunId,
+        providerCouncilMode: turnAgentHarness?.providerCouncil?.mode,
+        providerCouncilStatus:
+          turnAgentHarness?.providerCouncil?.answerGuidance?.status,
       },
       issueId: null,
       remediationLaneId: null,
@@ -3719,6 +3823,19 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       remediationRuntimePreference: null,
       remediationPrompt: null,
       operatorNote: classification.explanation,
+    });
+    recordCouncilOutcomeSignal({
+      councilRunId: turnAgentHarness?.providerCouncil?.councilRunId,
+      signalKind: 'feedback_attached',
+      groupFolder: group.folder,
+      channel: 'telegram',
+      routeKey: params.routeKey || requestPolicy.route,
+      capabilityId: params.capabilityId,
+      blockerClass: params.blockerClass,
+      feedbackId,
+      flags: ['feedback_card_attached'],
+      summary:
+        'Telegram feedback affordance attached to a council-guided response.',
     });
     void emitAndreaPlatformTraceEvent({
       traceId: feedbackId,
@@ -3914,30 +4031,59 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     });
   };
   const tryHandleMessageActionFollowup = async (): Promise<boolean> => {
-    let operation = interpretMessageActionFollowup(lastContent);
+    const rawMessageActionText = lastContent;
+    let messageActionCommandText =
+      conversationChannel === 'bluebubbles'
+        ? normalizeBlueBubblesCompanionPrompt(lastContent)
+        : lastContent;
+    let operation = interpretMessageActionFollowup(messageActionCommandText);
     if (!operation) {
       const interpretedTurn = await maybeInterpretBlueBubblesDirectTurn();
       if (
         interpretedTurn?.routeFamily === 'message_action_followup' &&
         interpretedTurn.assistantPrompt
       ) {
-        operation = interpretMessageActionFollowup(
-          interpretedTurn.assistantPrompt,
-        );
+        const interpretedCommandText =
+          conversationChannel === 'bluebubbles'
+            ? normalizeBlueBubblesCompanionPrompt(
+                interpretedTurn.assistantPrompt,
+              )
+            : interpretedTurn.assistantPrompt;
+        operation = interpretMessageActionFollowup(interpretedCommandText);
+        if (operation) {
+          messageActionCommandText = interpretedCommandText;
+        }
       }
     }
     if (!operation) return false;
     const messageAction = resolveMessageActionForFollowup({
       groupFolder: group.folder,
       chatJid,
-      rawText: lastContent,
+      rawText: messageActionCommandText,
       now,
     });
     if (!messageAction) {
       if (
         conversationChannel === 'bluebubbles' &&
+        operation.kind === 'defer' &&
+        isBlueBubblesSelfThreadAliasJid(chatJid)
+      ) {
+        const started = startBlueBubblesProofDrill({
+          groupFolder: group.folder,
+          chatJid,
+          now,
+        });
+        return applyAndPresentMessageAction({
+          chatJid,
+          messageActionId: started.action.messageActionId,
+          operation,
+          now,
+        });
+      }
+      if (
+        conversationChannel === 'bluebubbles' &&
         operation.kind === 'send' &&
-        isBlueBubblesExplicitSendAlias(lastContent)
+        isBlueBubblesExplicitSendAlias(messageActionCommandText)
       ) {
         await channel.sendMessage(
           chatJid,
@@ -3956,7 +4102,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       });
       if (
         !canApplyBlueBubblesMessageActionFollowup({
-          rawText: lastContent,
+          rawText: rawMessageActionText,
           operation,
           continuity,
         })
@@ -7356,11 +7502,51 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     return true;
   };
 
+  const tryHandleCouncilDoctor = async (): Promise<boolean> => {
+    if (!isCouncilDoctorRequest(lastContent)) {
+      return false;
+    }
+
+    await sendAssistantReplyWithFeedback({
+      text: formatCouncilDoctorReport(buildCouncilDoctorReport()),
+      routeKey: 'council.doctor',
+      capabilityId: 'council.status',
+      handlerKind: 'local_council_doctor',
+      responseSource: 'local_companion',
+      traceReason: 'answered council quality status from local metadata ledger',
+    });
+    clearSharedAssistantCapabilitySeed(chatJid);
+    return true;
+  };
+
+  const tryHandleCognitionDoctor = async (): Promise<boolean> => {
+    if (!isCognitionDoctorRequest(lastContent)) {
+      return false;
+    }
+
+    await sendAssistantReplyWithFeedback({
+      text: formatCognitiveDoctorReport(buildCognitiveDoctorReport()),
+      routeKey: 'cognition.doctor',
+      capabilityId: 'cognition.status',
+      handlerKind: 'local_cognition_doctor',
+      responseSource: 'local_companion',
+      traceReason: 'answered cognitive task status from local metadata ledger',
+    });
+    clearSharedAssistantCapabilitySeed(chatJid);
+    return true;
+  };
+
   if (
     requestPolicy.route === 'direct_assistant' ||
     requestPolicy.route === 'protected_assistant'
   ) {
     if (await tryHandleSelfImprovementStatus()) {
+      return true;
+    }
+    if (await tryHandleCouncilDoctor()) {
+      return true;
+    }
+    if (await tryHandleCognitionDoctor()) {
       return true;
     }
     if (await tryHandleIntegrationDoctor()) {
@@ -10430,6 +10616,25 @@ async function main(): Promise<void> {
           });
         }
       }
+      recordCouncilOutcomeSignal({
+        councilRunId: captured.linkedRefs.providerCouncilRunId,
+        signalKind: captured.linkedRefs.platformRepairPlanId
+          ? 'repair_linked'
+          : 'feedback_negative',
+        groupFolder: captured.groupFolder,
+        channel: 'telegram',
+        routeKey: captured.routeKey,
+        capabilityId: captured.capabilityId,
+        blockerClass: captured.blockerClass,
+        feedbackId: captured.feedbackId,
+        repairPlanId: captured.linkedRefs.platformRepairPlanId,
+        flags: [
+          `feedback_status:${captured.status}`,
+          `feedback_classification:${captured.classification}`,
+        ],
+        summary:
+          'User captured negative response feedback for a council-linked answer.',
+      });
       await channel.sendMessage(
         chatJid,
         buildResponseFeedbackCaptureReply(
@@ -11502,7 +11707,7 @@ async function main(): Promise<void> {
     if (!group) {
       return sendCursorMessage(
         params.chatJid,
-        'This chat is not registered yet. Run /registermain in a DM first.',
+        buildMainChatBlockedMessage('advanced operator workflows'),
         params.sourceMessage,
       );
     }
@@ -12072,7 +12277,7 @@ async function main(): Promise<void> {
     if (!group) {
       await channel.sendMessage(
         chatJid,
-        'This chat is not registered yet. Run /registermain in a DM first.',
+        buildMainChatBlockedMessage('advanced operator workflows'),
       );
       return null;
     }
@@ -12368,7 +12573,7 @@ async function main(): Promise<void> {
     if (!group) {
       await channel.sendMessage(
         chatJid,
-        'This chat is not registered yet. Run /registermain in a DM first to enable job dispatch.',
+        buildMainChatBlockedMessage('job dispatch'),
       );
       return;
     }
@@ -12874,7 +13079,7 @@ async function main(): Promise<void> {
     if (!group) {
       await channel.sendMessage(
         chatJid,
-        'This chat is not registered yet. Run /registermain in a DM first.',
+        buildMainChatBlockedMessage('advanced operator workflows'),
       );
       return;
     }
@@ -12907,7 +13112,7 @@ async function main(): Promise<void> {
     if (!group) {
       await channel.sendMessage(
         chatJid,
-        'This chat is not registered yet. Run /registermain in a DM first.',
+        buildMainChatBlockedMessage('advanced operator workflows'),
       );
       return;
     }
@@ -12938,7 +13143,7 @@ async function main(): Promise<void> {
     if (!group) {
       await channel.sendMessage(
         chatJid,
-        'This chat is not registered yet. Run /registermain in a DM first.',
+        buildMainChatBlockedMessage('advanced operator workflows'),
       );
       return;
     }
@@ -12974,7 +13179,7 @@ async function main(): Promise<void> {
     if (!group) {
       await channel.sendMessage(
         chatJid,
-        'This chat is not registered yet. Run /registermain in a DM first.',
+        buildMainChatBlockedMessage('advanced operator workflows'),
       );
       return;
     }
@@ -13009,7 +13214,7 @@ async function main(): Promise<void> {
     if (!group) {
       await channel.sendMessage(
         chatJid,
-        'This chat is not registered yet. Run /registermain in a DM first.',
+        buildMainChatBlockedMessage('advanced operator workflows'),
       );
       return;
     }
@@ -13656,7 +13861,7 @@ async function main(): Promise<void> {
     if (!group) {
       await sendCursorMessage(
         chatJid,
-        'This chat is not registered yet. Run /registermain in a DM first.',
+        buildMainChatBlockedMessage('advanced operator workflows'),
         sourceMessage,
       );
       return null;
@@ -13730,7 +13935,7 @@ async function main(): Promise<void> {
     if (!group) {
       await sendCursorMessage(
         chatJid,
-        'This chat is not registered yet. Run /registermain in a DM first.',
+        buildMainChatBlockedMessage('advanced operator workflows'),
         sourceMessage,
       );
       return;
@@ -13847,7 +14052,7 @@ async function main(): Promise<void> {
     if (!group) {
       await sendCursorMessage(
         chatJid,
-        'This chat is not registered yet. Run /registermain in a DM first.',
+        buildMainChatBlockedMessage('advanced operator workflows'),
         sourceMessage,
       );
       return;
@@ -13941,7 +14146,7 @@ async function main(): Promise<void> {
     if (!group) {
       await sendCursorMessage(
         chatJid,
-        'This chat is not registered yet. Run /registermain in a DM first.',
+        buildMainChatBlockedMessage('advanced operator workflows'),
         sourceMessage,
       );
       return;
@@ -14002,7 +14207,7 @@ async function main(): Promise<void> {
     if (!group) {
       await sendCursorMessage(
         chatJid,
-        'This chat is not registered yet. Run /registermain in a DM first.',
+        buildMainChatBlockedMessage('advanced operator workflows'),
         sourceMessage,
       );
       return;
@@ -14062,7 +14267,7 @@ async function main(): Promise<void> {
     if (!group) {
       await sendCursorMessage(
         chatJid,
-        'This chat is not registered yet. Run /registermain in a DM first.',
+        buildMainChatBlockedMessage('advanced operator workflows'),
         sourceMessage,
       );
       return;
@@ -14115,7 +14320,7 @@ async function main(): Promise<void> {
     if (!group) {
       await sendCursorMessage(
         chatJid,
-        'This chat is not registered yet. Run /registermain in a DM first.',
+        buildMainChatBlockedMessage('advanced operator workflows'),
         sourceMessage,
       );
       return;
@@ -14179,7 +14384,7 @@ async function main(): Promise<void> {
     if (!group) {
       await sendCursorMessage(
         chatJid,
-        'This chat is not registered yet. Run /registermain in a DM first.',
+        buildMainChatBlockedMessage('advanced operator workflows'),
         sourceMessage,
       );
       return;
@@ -14231,7 +14436,7 @@ async function main(): Promise<void> {
     if (!group) {
       await sendCursorMessage(
         chatJid,
-        'This chat is not registered yet. Run /registermain in a DM first.',
+        buildMainChatBlockedMessage('advanced operator workflows'),
         sourceMessage,
       );
       return;
@@ -14296,7 +14501,7 @@ async function main(): Promise<void> {
     if (!group) {
       await sendCursorMessage(
         chatJid,
-        'This chat is not registered yet. Run /registermain in a DM first.',
+        buildMainChatBlockedMessage('advanced operator workflows'),
         sourceMessage,
       );
       return;
@@ -14379,7 +14584,7 @@ async function main(): Promise<void> {
     if (!group) {
       await sendCursorMessage(
         chatJid,
-        'This chat is not registered yet. Run /registermain in a DM first.',
+        buildMainChatBlockedMessage('advanced operator workflows'),
         sourceMessage,
       );
       return;
@@ -14458,7 +14663,7 @@ async function main(): Promise<void> {
     if (!group) {
       await sendCursorMessage(
         chatJid,
-        'This chat is not registered yet. Run /registermain in a DM first.',
+        buildMainChatBlockedMessage('advanced operator workflows'),
         sourceMessage,
       );
       return;
@@ -14608,7 +14813,7 @@ async function main(): Promise<void> {
     if (!group) {
       await channel.sendMessage(
         chatJid,
-        'This chat is not registered yet. Run /registermain in a DM first.',
+        buildMainChatBlockedMessage('advanced operator workflows'),
         buildOperatorSendOptions(sourceMessage),
       );
       return;
@@ -16055,14 +16260,17 @@ async function main(): Promise<void> {
         );
         const pendingLocalContinuationKind =
           getPendingBlueBubblesLocalContinuationKind(chatJid, companionNow);
-        const interpretedMessageActionFollowup = interpretMessageActionFollowup(
+        const messageActionCommandText = normalizeBlueBubblesCompanionPrompt(
           msg.content,
+        );
+        const interpretedMessageActionFollowup = interpretMessageActionFollowup(
+          messageActionCommandText,
         );
         const resolvedMessageAction = interpretedMessageActionFollowup
           ? resolveMessageActionForFollowup({
               groupFolder: blueBubblesBinding.group.folder,
               chatJid,
-              rawText: msg.content,
+              rawText: messageActionCommandText,
               now: companionNow,
             })
           : null;
@@ -16079,7 +16287,7 @@ async function main(): Promise<void> {
           Boolean(resolvedMessageAction) &&
           Boolean(continuitySnapshot) &&
           canUseBareBlueBubblesMessageActionFollowup({
-            rawText: msg.content,
+            rawText: messageActionCommandText,
             operation: interpretedMessageActionFollowup!,
             continuity: continuitySnapshot!,
           });

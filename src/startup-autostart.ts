@@ -64,7 +64,11 @@ function summarizeAlertField(
 }
 
 export function buildStartupTaskActionArgument(projectRoot: string): string {
-  const startupScript = path.join(projectRoot, 'scripts', 'andrea-startup.ps1');
+  const startupScript = path.win32.join(
+    projectRoot,
+    'scripts',
+    'andrea-startup.ps1',
+  );
   return `-NoProfile -ExecutionPolicy Bypass -File "${startupScript}" boot`;
 }
 

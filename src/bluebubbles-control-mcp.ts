@@ -103,6 +103,10 @@ export class BlueBubblesControlClient {
     return this.request('GET', '/v1/bluebubbles/proof');
   }
 
+  async doctor(): Promise<unknown> {
+    return this.request('GET', '/v1/bluebubbles/doctor');
+  }
+
   async listChats(limit?: number): Promise<unknown> {
     const query = limit ? `?limit=${Math.max(1, Math.floor(limit))}` : '';
     return this.request('GET', `/v1/bluebubbles/chats${query}`);
@@ -163,6 +167,7 @@ export function createBlueBubblesMcpToolHandlers(
   return {
     bluebubbles_status: async () => client.status(),
     bluebubbles_proof: async () => client.proof(),
+    bluebubbles_doctor: async () => client.doctor(),
     bluebubbles_list_chats: async (args) =>
       client.listChats(typeof args.limit === 'number' ? args.limit : undefined),
     bluebubbles_get_messages: async (args) =>
@@ -232,6 +237,13 @@ export async function startBlueBubblesControlMcpServer(): Promise<void> {
     'Return the current BlueBubbles proof report and exact blocker.',
     {},
     async () => toTextResult(await handlers.bluebubbles_proof({})),
+  );
+
+  server.tool(
+    'bluebubbles_doctor',
+    'Return BlueBubbles blocker category, proof state, and exact next action.',
+    {},
+    async () => toTextResult(await handlers.bluebubbles_doctor({})),
   );
 
   server.tool(

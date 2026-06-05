@@ -476,6 +476,14 @@ describe('planCalendarAutomation', () => {
 describe('executeCalendarAutomation', () => {
   it('sends a real briefing message once per window', async () => {
     const fetchImpl = createGoogleCalendarFetchMock({
+      calendarList: [
+        {
+          id: 'primary',
+          summary: 'Jeff',
+          selected: true,
+          primary: true,
+        },
+      ],
       eventsByCalendar: {
         primary: {
           summary: 'Jeff',
@@ -678,6 +686,14 @@ describe('executeCalendarAutomation', () => {
 
   it('emits a no-gap watch message when there are no 30-minute openings', async () => {
     const fetchImpl = createGoogleCalendarFetchMock({
+      calendarList: [
+        {
+          id: 'primary',
+          summary: 'Jeff',
+          selected: true,
+          primary: true,
+        },
+      ],
       eventsByCalendar: {
         primary: {
           summary: 'Jeff',
@@ -710,7 +726,9 @@ describe('executeCalendarAutomation', () => {
         label: 'No-30-minute-gap watch for tomorrow afternoon at 10:00 AM',
         config: {
           kind: 'watch',
-          scopeKind: 'all',
+          scopeKind: 'named_calendar',
+          scopeCalendarId: 'primary',
+          scopeCalendarSummary: 'Jeff',
           schedule: {
             kind: 'once',
             triggerKind: 'once',

@@ -13,6 +13,7 @@ import {
   detectWindowsInstallMode,
   determineWindowsHostServiceState,
   formatInstallModeLabel,
+  isRepoOwnedNanoclawProcessRunning,
   readHostControlSnapshot,
   reconcileWindowsHostState,
 } from './host-control.js';
@@ -37,6 +38,24 @@ export const MAX_DEBUG_LOG_LINES = 200;
 
 function getLogsDir(): string {
   return path.join(process.cwd(), 'logs');
+}
+
+function resolvePrimaryServiceLogPath(): string {
+  const hostSnapshot = readHostControlSnapshot();
+  return (
+    hostSnapshot.hostState?.stdoutLogPath ||
+    hostSnapshot.paths.assistantLogPath ||
+    path.join(getLogsDir(), 'nanoclaw.log')
+  );
+}
+
+function resolvePrimaryServiceErrorLogPath(): string {
+  const hostSnapshot = readHostControlSnapshot();
+  return (
+    hostSnapshot.hostState?.stderrLogPath ||
+    hostSnapshot.paths.assistantErrorLogPath ||
+    path.join(getLogsDir(), 'nanoclaw.error.log')
+  );
 }
 
 export interface AssistantExecutionProbeState {
@@ -410,13 +429,20 @@ export function formatDebugStatus(): string {
           detectWindowsInstallMode(detectWindowsInstallArtifacts()),
         )
       : formatInstallModeLabel(hostSnapshot.hostState?.installMode);
+  const hostProcessRunning =
+    windowsHost?.processRunning ||
+    isRepoOwnedNanoclawProcessRunning(
+      hostSnapshot.hostState?.pid || hostSnapshot.readyState?.pid || null,
+    );
   const hostServiceState =
     windowsHost?.serviceState ||
     determineWindowsHostServiceState({
       hostState: hostSnapshot.hostState,
       readyState: hostSnapshot.readyState,
-      processRunning: false,
+      processRunning: hostProcessRunning,
     });
+  const hostDependencyError =
+    windowsHost?.dependencyError || hostSnapshot.hostState?.dependencyError;
 
   return [
     '*Debug Status*',
@@ -430,8 +456,8 @@ export function formatDebugStatus(): string {
       windowsHost?.activeLaunchMode || hostSnapshot.hostState?.installMode,
     )}`,
     `- Host dependency: ${windowsHost?.dependencyState || hostSnapshot.hostState?.dependencyState || 'unknown'}`,
-    ...(windowsHost?.dependencyError
-      ? [`- Host dependency detail: ${windowsHost.dependencyError}`]
+    ...(hostDependencyError
+      ? [`- Host dependency detail: ${hostDependencyError}`]
       : []),
     `- Active repo root: ${commitTruth.activeRepoRoot}`,
     `- Workspace repo root: ${commitTruth.workspaceRepoRoot}`,
@@ -690,7 +716,14 @@ export function formatDebugStatus(): string {
     ...(windowsHost?.launcherError
       ? [`- Host failure: ${windowsHost.launcherError}`]
       : []),
-    `- Host log path: ${hostSnapshot.paths.hostLogPath}`,
+    `- Host log path: ${
+      hostSnapshot.hostState?.stdoutLogPath ||
+      hostSnapshot.paths.assistantLogPath
+    }`,
+    `- Host stderr log path: ${
+      hostSnapshot.hostState?.stderrLogPath ||
+      hostSnapshot.paths.assistantErrorLogPath
+    }`,
     scopes.length > 0
       ? '- Active scoped overrides:'
       : '- Active scoped overrides: none',
@@ -817,7 +850,7 @@ export function readDebugLogs(params: {
 
   if (target === 'service') {
     const lines = tailLines(
-      readLogLines(path.join(getLogsDir(), 'nanoclaw.log')),
+      readLogLines(resolvePrimaryServiceLogPath()),
       lineCount,
     );
     return {
@@ -830,7 +863,7 @@ export function readDebugLogs(params: {
   }
 
   if (target === 'stderr') {
-    const preferredPath = path.join(getLogsDir(), 'nanoclaw.error.log');
+    const preferredPath = resolvePrimaryServiceErrorLogPath();
     const legacyPath = path.join(getLogsDir(), 'nanoclaw.stderr.log');
     const stderrLines = readLogLines(preferredPath);
     const lines = tailLines(
@@ -847,8 +880,11 @@ export function readDebugLogs(params: {
   }
 
   if (target === 'host') {
+    const primaryPath = resolvePrimaryServiceLogPath();
+    const legacyPath = path.join(getLogsDir(), 'nanoclaw.host.log');
+    const primaryLines = readLogLines(primaryPath);
     const lines = tailLines(
-      readLogLines(path.join(getLogsDir(), 'nanoclaw.host.log')),
+      primaryLines.length > 0 ? primaryLines : readLogLines(legacyPath),
       lineCount,
     );
     return {

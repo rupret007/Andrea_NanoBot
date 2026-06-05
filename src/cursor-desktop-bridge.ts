@@ -186,6 +186,10 @@ function extractTextFromJsonLine(line: string): string | null {
   return null;
 }
 
+function cursorCliBasename(cliPath: string): string {
+  return path.win32.basename(cliPath).trim().toLowerCase();
+}
+
 function resolveTerminalShellPath(): string {
   if (process.platform === 'win32') {
     return process.env.COMSPEC || 'cmd.exe';
@@ -194,7 +198,7 @@ function resolveTerminalShellPath(): string {
 }
 
 function resolveCursorDesktopCliMode(cliPath: string): CursorDesktopCliMode {
-  const normalized = path.basename(cliPath).trim().toLowerCase();
+  const normalized = cursorCliBasename(cliPath);
   if (
     normalized === 'cursor' ||
     normalized === 'cursor.cmd' ||
@@ -207,7 +211,7 @@ function resolveCursorDesktopCliMode(cliPath: string): CursorDesktopCliMode {
 
 function shouldUseShellForCursorDesktopCli(cliPath: string): boolean {
   if (process.platform !== 'win32') return false;
-  const normalized = path.basename(cliPath).trim().toLowerCase();
+  const normalized = cursorCliBasename(cliPath);
   return normalized.endsWith('.cmd') || normalized.endsWith('.bat');
 }
 

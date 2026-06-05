@@ -30,9 +30,9 @@ import {
 } from './outcome-reviews.js';
 import { resolveBlueBubblesConfig } from './channels/bluebubbles.js';
 import {
-  BLUEBUBBLES_CANONICAL_SELF_THREAD_JID,
   canonicalizeBlueBubblesSelfThreadJid,
   expandBlueBubblesLogicalSelfThreadJids,
+  getBlueBubblesCanonicalSelfThreadJid,
   isBlueBubblesSelfThreadAliasJid,
 } from './bluebubbles-self-thread.js';
 import { rewriteBlueBubblesMessageDraft } from './messages-fluidity.js';
@@ -246,6 +246,15 @@ const BLUEBUBBLES_EXPLICIT_ONLY_ELIGIBLE_FOLLOWUPS = [
 
 function normalizeText(value: string | null | undefined): string {
   return (value || '').replace(/\s+/g, ' ').trim();
+}
+
+function normalizeMessageActionCommand(
+  value: string | null | undefined,
+): string {
+  return normalizeText(value)
+    .replace(/^@andrea\b[,:;!?-]*/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function normalizeBlueBubblesConversationChatJid(
@@ -1114,7 +1123,7 @@ export function startBlueBubblesProofDrill(params: {
     (params.chatJid && isBlueBubblesSelfThreadAliasJid(params.chatJid)
       ? params.chatJid
       : null) ||
-    BLUEBUBBLES_CANONICAL_SELF_THREAD_JID;
+    getBlueBubblesCanonicalSelfThreadJid();
   if (!isBlueBubblesSelfThreadAliasJid(chatJid)) {
     throw new Error(
       'BlueBubbles proof drill can only run in the canonical self-thread.',
@@ -1898,7 +1907,7 @@ function describeSendSuccess(
 }
 
 function parseTimingHintFromUtterance(rawText: string): string | null {
-  const normalized = normalizeText(rawText).toLowerCase();
+  const normalized = normalizeMessageActionCommand(rawText).toLowerCase();
   if (
     /^send it later tonight$/.test(normalized) ||
     /^send it tonight$/.test(normalized)
@@ -1924,7 +1933,7 @@ function parseTimingHintFromUtterance(rawText: string): string | null {
 export function interpretMessageActionFollowup(
   rawText: string,
 ): MessageActionOperation | null {
-  const normalized = normalizeText(rawText).toLowerCase();
+  const normalized = normalizeMessageActionCommand(rawText).toLowerCase();
   if (!normalized) return null;
   if (
     /^(show (?:the )?draft|show it again|(?:ok|okay)\s+(?:let'?s|lets)\s+see (?:the )?draft again|(?:let'?s|lets)\s+see (?:the )?draft again|show me (?:the )?draft again|let me see (?:the )?draft again)$/.test(
@@ -2015,7 +2024,7 @@ export function interpretMessageActionFollowup(
 }
 
 export function isBlueBubblesExplicitSendAlias(rawText: string): boolean {
-  const normalized = normalizeText(rawText).toLowerCase();
+  const normalized = normalizeMessageActionCommand(rawText).toLowerCase();
   return /^(send using blue bubbles|send (?:it|that|this)(?: reply)? using blue bubbles|send (?:it|that|this)(?: reply)? with blue bubbles)$/.test(
     normalized,
   );
@@ -2060,7 +2069,7 @@ export function resolveBlueBubblesThreadTargetByName(
     .filter(
       (chat) =>
         canonicalizeBlueBubblesSelfThreadJid(chat.jid) !==
-        BLUEBUBBLES_CANONICAL_SELF_THREAD_JID,
+        getBlueBubblesCanonicalSelfThreadJid(),
     )
     .map((chat) => ({
       chatJid: chat.jid,
@@ -3105,10 +3114,10 @@ export function reconcileBlueBubblesMessageActionContinuity(params: {
   const sourceSelfThreadChatJid =
     params.chatJid && normalizeBlueBubblesConversationChatJid(params.chatJid)
       ? params.chatJid
-      : BLUEBUBBLES_CANONICAL_SELF_THREAD_JID;
+      : getBlueBubblesCanonicalSelfThreadJid();
   const canonicalSelfThreadChatJid =
     normalizeBlueBubblesConversationChatJid(sourceSelfThreadChatJid) ||
-    BLUEBUBBLES_CANONICAL_SELF_THREAD_JID;
+    getBlueBubblesCanonicalSelfThreadJid();
   const conversationKind = resolveBlueBubblesConversationKind(
     canonicalSelfThreadChatJid,
   );
@@ -3349,7 +3358,7 @@ export function listBlueBubblesMessageActionContinuitySnapshots(params: {
 }): BlueBubblesMessageActionContinuitySnapshot[] {
   const now = params.now || new Date();
   const candidateChatJids = new Set<string>([
-    BLUEBUBBLES_CANONICAL_SELF_THREAD_JID,
+    getBlueBubblesCanonicalSelfThreadJid(),
   ]);
   for (const chat of getAllChats()) {
     if (!chat.jid.startsWith('bb:')) continue;

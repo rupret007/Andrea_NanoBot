@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 
 import { ASSISTANT_NAME, DATA_DIR, STORE_DIR } from './config.js';
+import { redactCouncilText } from './council-safety.js';
 import { assertValidGroupFolder, isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
 import type {
@@ -38,6 +39,24 @@ import {
   KnowledgeSourceRecord,
   LifeThread,
   LifeThreadSignal,
+  CouncilOutcomeSignal,
+  CouncilRunLedgerRecord,
+  CognitiveAutonomyBudgetRecord,
+  CognitiveBenchmarkAttemptRecord,
+  CognitiveBlackboardEntryRecord,
+  CognitiveCheckpointRecord,
+  CognitiveGoalRecord,
+  CognitiveProviderCooldown,
+  CognitiveReflectionRecord,
+  CognitiveReplayPacket,
+  CognitiveRewardSignalRecord,
+  CognitiveRunRecord,
+  CognitiveSkillCardRecord,
+  CognitiveSubgoalRecord,
+  CognitiveToolSimulation,
+  CognitiveToolRegistryRecord,
+  CognitiveTraceSpan,
+  CognitiveWorldBeliefRecord,
   MissionRecord,
   MissionStepRecord,
   MessageActionRecord,
@@ -64,6 +83,10 @@ import {
 import type { CalendarAutomationRecordInput } from './calendar-automations.js';
 
 let db: Database.Database;
+
+function redactStoredCognitiveMetadata(value: string, limit = 12000): string {
+  return redactCouncilText(value || '', limit);
+}
 
 export interface CursorOperatorContextRecord {
   chat_jid: string;
@@ -988,6 +1011,377 @@ function createSchema(database: Database.Database): void {
       ON response_feedback(chat_jid, platform_message_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_response_feedback_status_updated
       ON response_feedback(status, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS council_run_ledger (
+      council_run_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      group_folder TEXT,
+      task_family TEXT NOT NULL,
+      channel TEXT,
+      requested_mode TEXT,
+      chosen_mode TEXT NOT NULL,
+      calibration_reason TEXT NOT NULL,
+      calibration_changed INTEGER NOT NULL DEFAULT 0,
+      protected_mode INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL,
+      final_status TEXT NOT NULL,
+      recommended_action TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      evidence_grade TEXT NOT NULL,
+      approval_need TEXT NOT NULL,
+      member_statuses_json TEXT NOT NULL,
+      provider_failures_json TEXT NOT NULL,
+      schema_status_json TEXT NOT NULL,
+      evidence_scorecard_json TEXT NOT NULL,
+      confidence_math_json TEXT NOT NULL,
+      budget_json TEXT NOT NULL,
+      replay_summary TEXT NOT NULL,
+      risk_flags_json TEXT NOT NULL,
+      outcome_signal_count INTEGER NOT NULL DEFAULT 0,
+      latest_outcome_at TEXT,
+      outcome_status TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_council_run_ledger_task_updated
+      ON council_run_ledger(task_family, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_council_run_ledger_mode_updated
+      ON council_run_ledger(chosen_mode, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_council_run_ledger_status_updated
+      ON council_run_ledger(final_status, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS council_outcome_signals (
+      signal_id TEXT PRIMARY KEY,
+      council_run_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      group_folder TEXT,
+      channel TEXT,
+      signal_kind TEXT NOT NULL,
+      route_key TEXT,
+      capability_id TEXT,
+      blocker_class TEXT,
+      feedback_id TEXT,
+      repair_plan_id TEXT,
+      flags_json TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      FOREIGN KEY (council_run_id) REFERENCES council_run_ledger(council_run_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_council_outcome_signals_run
+      ON council_outcome_signals(council_run_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_council_outcome_signals_kind
+      ON council_outcome_signals(signal_kind, created_at DESC);
+    CREATE TABLE IF NOT EXISTS cognitive_runs (
+      run_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      group_folder TEXT,
+      channel TEXT,
+      task_family TEXT NOT NULL,
+      turn_id TEXT,
+      goal_summary TEXT NOT NULL,
+      selected_skill_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      autonomy_level TEXT NOT NULL,
+      cognitive_mode TEXT NOT NULL,
+      task_graph_json TEXT NOT NULL,
+      evidence_contract_json TEXT NOT NULL,
+      provider_usability_json TEXT NOT NULL,
+      council_run_id TEXT,
+      verification_json TEXT NOT NULL,
+      outcome_score REAL NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      linked_skill_card_id TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_cognitive_runs_group_updated
+      ON cognitive_runs(group_folder, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_cognitive_runs_task_updated
+      ON cognitive_runs(task_family, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_cognitive_runs_status_updated
+      ON cognitive_runs(status, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS cognitive_subgoals (
+      subgoal_id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL,
+      position INTEGER NOT NULL,
+      title TEXT NOT NULL,
+      status TEXT NOT NULL,
+      required_evidence TEXT NOT NULL,
+      allowed_actions_json TEXT NOT NULL,
+      approval_need TEXT NOT NULL,
+      stop_condition TEXT NOT NULL,
+      tool_plan_json TEXT NOT NULL,
+      verification_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (run_id) REFERENCES cognitive_runs(run_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_cognitive_subgoals_run_position
+      ON cognitive_subgoals(run_id, position ASC);
+    CREATE TABLE IF NOT EXISTS cognitive_skill_cards (
+      skill_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      group_folder TEXT,
+      task_family TEXT NOT NULL,
+      trigger_summary TEXT NOT NULL,
+      skill_summary TEXT NOT NULL,
+      required_tools_json TEXT NOT NULL,
+      evidence_needs_json TEXT NOT NULL,
+      approval_rules_json TEXT NOT NULL,
+      failure_modes_json TEXT NOT NULL,
+      verification_checklist_json TEXT NOT NULL,
+      latest_outcome_score REAL NOT NULL,
+      promotion_state TEXT NOT NULL,
+      usage_count INTEGER NOT NULL DEFAULT 0,
+      last_used_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_cognitive_skill_cards_task_state
+      ON cognitive_skill_cards(task_family, promotion_state, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_cognitive_skill_cards_group
+      ON cognitive_skill_cards(group_folder, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS cognitive_reflections (
+      reflection_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      group_folder TEXT,
+      run_id TEXT,
+      skill_id TEXT,
+      task_family TEXT NOT NULL,
+      reflection_kind TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      route_key TEXT,
+      provider_state_json TEXT NOT NULL,
+      next_rule TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_cognitive_reflections_run
+      ON cognitive_reflections(run_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_cognitive_reflections_task
+      ON cognitive_reflections(task_family, created_at DESC);
+    CREATE TABLE IF NOT EXISTS cognitive_reward_signals (
+      signal_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      run_id TEXT NOT NULL,
+      skill_id TEXT,
+      signal_kind TEXT NOT NULL,
+      score REAL NOT NULL,
+      summary TEXT NOT NULL,
+      flags_json TEXT NOT NULL,
+      FOREIGN KEY (run_id) REFERENCES cognitive_runs(run_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_cognitive_reward_signals_run
+      ON cognitive_reward_signals(run_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_cognitive_reward_signals_kind
+      ON cognitive_reward_signals(signal_kind, created_at DESC);
+    CREATE TABLE IF NOT EXISTS cognitive_checkpoints (
+      checkpoint_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      run_id TEXT NOT NULL,
+      subgoal_id TEXT,
+      group_folder TEXT,
+      channel TEXT,
+      checkpoint_kind TEXT NOT NULL,
+      status TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      state_json TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      continuation_key TEXT,
+      expires_at TEXT,
+      resolved_at TEXT,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (run_id) REFERENCES cognitive_runs(run_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_cognitive_checkpoints_run_updated
+      ON cognitive_checkpoints(run_id, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_cognitive_checkpoints_scope
+      ON cognitive_checkpoints(group_folder, channel, status, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_cognitive_checkpoints_continuation
+      ON cognitive_checkpoints(continuation_key, status, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS cognitive_tool_registry (
+      tool_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      tool_kind TEXT NOT NULL,
+      display_name TEXT NOT NULL,
+      purpose TEXT NOT NULL,
+      allowed_actions_json TEXT NOT NULL,
+      approval_policy TEXT NOT NULL,
+      risk_level TEXT NOT NULL,
+      evidence_produced_json TEXT NOT NULL,
+      failure_modes_json TEXT NOT NULL,
+      last_verified_at TEXT,
+      health_state TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_cognitive_tool_registry_kind_health
+      ON cognitive_tool_registry(tool_kind, health_state, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS cognitive_world_beliefs (
+      belief_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      group_folder TEXT,
+      run_id TEXT,
+      source TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      freshness TEXT NOT NULL,
+      supersedes_belief_id TEXT,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (run_id) REFERENCES cognitive_runs(run_id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_cognitive_world_beliefs_group_source
+      ON cognitive_world_beliefs(group_folder, source, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_cognitive_world_beliefs_run
+      ON cognitive_world_beliefs(run_id, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS cognitive_benchmark_attempts (
+      attempt_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      task_id TEXT NOT NULL,
+      task_family TEXT NOT NULL,
+      status TEXT NOT NULL,
+      score REAL NOT NULL,
+      run_id TEXT,
+      checkpoint_count INTEGER NOT NULL,
+      tool_policy_pass INTEGER NOT NULL,
+      approval_gate_pass INTEGER NOT NULL,
+      privacy_pass INTEGER NOT NULL,
+      outcome_captured INTEGER NOT NULL,
+      next_action TEXT NOT NULL,
+      detail_json TEXT NOT NULL,
+      FOREIGN KEY (run_id) REFERENCES cognitive_runs(run_id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_cognitive_benchmark_attempts_task
+      ON cognitive_benchmark_attempts(task_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_cognitive_benchmark_attempts_status
+      ON cognitive_benchmark_attempts(status, created_at DESC);
+    CREATE TABLE IF NOT EXISTS cognitive_goals (
+      goal_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      group_folder TEXT,
+      parent_goal_id TEXT,
+      root_run_id TEXT,
+      task_family TEXT NOT NULL,
+      objective_summary TEXT NOT NULL,
+      status TEXT NOT NULL,
+      priority REAL NOT NULL,
+      success_criteria_json TEXT NOT NULL,
+      decomposition_json TEXT NOT NULL,
+      linked_run_ids_json TEXT NOT NULL,
+      active_checkpoint_id TEXT,
+      reward_score REAL NOT NULL,
+      next_action TEXT NOT NULL,
+      closed_at TEXT,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (root_run_id) REFERENCES cognitive_runs(run_id) ON DELETE SET NULL,
+      FOREIGN KEY (active_checkpoint_id) REFERENCES cognitive_checkpoints(checkpoint_id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_cognitive_goals_group_status
+      ON cognitive_goals(group_folder, status, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_cognitive_goals_task_status
+      ON cognitive_goals(task_family, status, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS cognitive_blackboard_entries (
+      entry_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      group_folder TEXT,
+      goal_id TEXT,
+      run_id TEXT,
+      entry_kind TEXT NOT NULL,
+      source TEXT NOT NULL,
+      status TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      evidence_refs_json TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      expires_at TEXT,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (goal_id) REFERENCES cognitive_goals(goal_id) ON DELETE CASCADE,
+      FOREIGN KEY (run_id) REFERENCES cognitive_runs(run_id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_cognitive_blackboard_goal_updated
+      ON cognitive_blackboard_entries(goal_id, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_cognitive_blackboard_run_updated
+      ON cognitive_blackboard_entries(run_id, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_cognitive_blackboard_kind_status
+      ON cognitive_blackboard_entries(entry_kind, status, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS cognitive_autonomy_budgets (
+      budget_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      cognitive_mode TEXT NOT NULL,
+      task_family TEXT NOT NULL,
+      max_tool_steps INTEGER NOT NULL,
+      max_council_calls INTEGER NOT NULL,
+      max_read_only_calls INTEGER NOT NULL,
+      mutating_allowed INTEGER NOT NULL,
+      approval_required INTEGER NOT NULL,
+      max_runtime_ms INTEGER NOT NULL,
+      clarification_after_blocked_steps INTEGER NOT NULL,
+      budget_json TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_cognitive_autonomy_budgets_mode_task
+      ON cognitive_autonomy_budgets(cognitive_mode, task_family, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS cognitive_trace_spans (
+      span_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      ended_at TEXT,
+      run_id TEXT,
+      goal_id TEXT,
+      parent_span_id TEXT,
+      span_kind TEXT NOT NULL,
+      status TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      input_summary TEXT NOT NULL,
+      output_summary TEXT NOT NULL,
+      metadata_json TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (run_id) REFERENCES cognitive_runs(run_id) ON DELETE CASCADE,
+      FOREIGN KEY (goal_id) REFERENCES cognitive_goals(goal_id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_cognitive_trace_spans_run_created
+      ON cognitive_trace_spans(run_id, created_at ASC);
+    CREATE INDEX IF NOT EXISTS idx_cognitive_trace_spans_kind_status
+      ON cognitive_trace_spans(span_kind, status, created_at DESC);
+    CREATE TABLE IF NOT EXISTS cognitive_tool_simulations (
+      simulation_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      run_id TEXT NOT NULL,
+      tool_id TEXT NOT NULL,
+      action_class TEXT NOT NULL,
+      status TEXT NOT NULL,
+      approval_required INTEGER NOT NULL,
+      read_only INTEGER NOT NULL,
+      risk_level TEXT NOT NULL,
+      evidence_expected_json TEXT NOT NULL,
+      failure_modes_json TEXT NOT NULL,
+      issues_json TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (run_id) REFERENCES cognitive_runs(run_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_cognitive_tool_simulations_run
+      ON cognitive_tool_simulations(run_id, created_at ASC);
+    CREATE INDEX IF NOT EXISTS idx_cognitive_tool_simulations_tool_status
+      ON cognitive_tool_simulations(tool_id, status, created_at DESC);
+    CREATE TABLE IF NOT EXISTS cognitive_provider_cooldowns (
+      provider_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      status TEXT NOT NULL,
+      failure_class TEXT NOT NULL,
+      source TEXT NOT NULL,
+      run_id TEXT,
+      cooldown_until TEXT NOT NULL,
+      last_failure TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      metadata_json TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (run_id) REFERENCES cognitive_runs(run_id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_cognitive_provider_cooldowns_status_until
+      ON cognitive_provider_cooldowns(status, cooldown_until DESC);
+    CREATE INDEX IF NOT EXISTS idx_cognitive_provider_cooldowns_updated
+      ON cognitive_provider_cooldowns(updated_at DESC);
     CREATE TABLE IF NOT EXISTS runtime_orchestration_jobs (
       job_id TEXT PRIMARY KEY,
       kind TEXT NOT NULL,
@@ -1379,10 +1773,19 @@ export function initDatabase(): void {
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 
   db = new Database(dbPath);
+  db.pragma('foreign_keys = ON');
   createSchema(db);
   prunePilotLoopData(
     new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
   );
+  pruneCouncilQualityData({
+    cutoffIso: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString(),
+    retainLimit: 1000,
+  });
+  pruneCognitiveKernelData({
+    cutoffIso: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString(),
+    retainLimit: 1000,
+  });
 
   // Migrate from JSON files if they exist
   migrateJsonState();
@@ -1391,10 +1794,19 @@ export function initDatabase(): void {
 /** @internal - for tests only. Creates a fresh in-memory database. */
 export function _initTestDatabase(): void {
   db = new Database(':memory:');
+  db.pragma('foreign_keys = ON');
   createSchema(db);
   prunePilotLoopData(
     new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
   );
+  pruneCouncilQualityData({
+    cutoffIso: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString(),
+    retainLimit: 1000,
+  });
+  pruneCognitiveKernelData({
+    cutoffIso: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString(),
+    retainLimit: 1000,
+  });
 }
 
 /** @internal - for tests only. */
@@ -6660,6 +7072,2454 @@ export function updateResponseFeedback(
   };
   upsertResponseFeedback(next);
   return next;
+}
+
+function assertOptionalGroupFolder(groupFolder?: string | null): void {
+  if (groupFolder) assertValidGroupFolder(groupFolder);
+}
+
+function mapCouncilRunLedgerRow(row: {
+  council_run_id: string;
+  created_at: string;
+  updated_at: string;
+  group_folder: string | null;
+  task_family: string;
+  channel: string | null;
+  requested_mode: string | null;
+  chosen_mode: string;
+  calibration_reason: string;
+  calibration_changed: number;
+  protected_mode: number;
+  status: string;
+  final_status: string;
+  recommended_action: string;
+  confidence: number;
+  evidence_grade: string;
+  approval_need: string;
+  member_statuses_json: string;
+  provider_failures_json: string;
+  schema_status_json: string;
+  evidence_scorecard_json: string;
+  confidence_math_json: string;
+  budget_json: string;
+  replay_summary: string;
+  risk_flags_json: string;
+  outcome_signal_count: number;
+  latest_outcome_at: string | null;
+  outcome_status: string | null;
+}): CouncilRunLedgerRecord {
+  return {
+    councilRunId: row.council_run_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    groupFolder:
+      row.group_folder && isValidGroupFolder(row.group_folder)
+        ? row.group_folder
+        : null,
+    taskFamily: row.task_family,
+    channel: row.channel,
+    requestedMode: row.requested_mode,
+    chosenMode: row.chosen_mode,
+    calibrationReason: row.calibration_reason,
+    calibrationChanged: row.calibration_changed === 1,
+    protectedMode: row.protected_mode === 1,
+    status: row.status,
+    finalStatus: row.final_status,
+    recommendedAction: row.recommended_action,
+    confidence: row.confidence,
+    evidenceGrade: row.evidence_grade,
+    approvalNeed: row.approval_need,
+    memberStatusesJson: row.member_statuses_json,
+    providerFailuresJson: row.provider_failures_json,
+    schemaStatusJson: row.schema_status_json,
+    evidenceScorecardJson: row.evidence_scorecard_json,
+    confidenceMathJson: row.confidence_math_json,
+    budgetJson: row.budget_json,
+    replaySummary: row.replay_summary,
+    riskFlagsJson: row.risk_flags_json,
+    outcomeSignalCount: row.outcome_signal_count,
+    latestOutcomeAt: row.latest_outcome_at,
+    outcomeStatus: row.outcome_status,
+  };
+}
+
+export function upsertCouncilRunLedger(record: CouncilRunLedgerRecord): void {
+  assertOptionalGroupFolder(record.groupFolder);
+  db.prepare(
+    `
+      INSERT INTO council_run_ledger (
+        council_run_id,
+        created_at,
+        updated_at,
+        group_folder,
+        task_family,
+        channel,
+        requested_mode,
+        chosen_mode,
+        calibration_reason,
+        calibration_changed,
+        protected_mode,
+        status,
+        final_status,
+        recommended_action,
+        confidence,
+        evidence_grade,
+        approval_need,
+        member_statuses_json,
+        provider_failures_json,
+        schema_status_json,
+        evidence_scorecard_json,
+        confidence_math_json,
+        budget_json,
+        replay_summary,
+        risk_flags_json,
+        outcome_signal_count,
+        latest_outcome_at,
+        outcome_status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(council_run_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        group_folder = excluded.group_folder,
+        task_family = excluded.task_family,
+        channel = excluded.channel,
+        requested_mode = excluded.requested_mode,
+        chosen_mode = excluded.chosen_mode,
+        calibration_reason = excluded.calibration_reason,
+        calibration_changed = excluded.calibration_changed,
+        protected_mode = excluded.protected_mode,
+        status = excluded.status,
+        final_status = excluded.final_status,
+        recommended_action = excluded.recommended_action,
+        confidence = excluded.confidence,
+        evidence_grade = excluded.evidence_grade,
+        approval_need = excluded.approval_need,
+        member_statuses_json = excluded.member_statuses_json,
+        provider_failures_json = excluded.provider_failures_json,
+        schema_status_json = excluded.schema_status_json,
+        evidence_scorecard_json = excluded.evidence_scorecard_json,
+        confidence_math_json = excluded.confidence_math_json,
+        budget_json = excluded.budget_json,
+        replay_summary = excluded.replay_summary,
+        risk_flags_json = excluded.risk_flags_json,
+        outcome_signal_count = excluded.outcome_signal_count,
+        latest_outcome_at = excluded.latest_outcome_at,
+        outcome_status = excluded.outcome_status
+    `,
+  ).run(
+    record.councilRunId,
+    record.createdAt,
+    record.updatedAt,
+    record.groupFolder || null,
+    record.taskFamily,
+    record.channel || null,
+    record.requestedMode || null,
+    record.chosenMode,
+    record.calibrationReason,
+    record.calibrationChanged ? 1 : 0,
+    record.protectedMode ? 1 : 0,
+    record.status,
+    record.finalStatus,
+    record.recommendedAction,
+    record.confidence,
+    record.evidenceGrade,
+    record.approvalNeed,
+    record.memberStatusesJson,
+    record.providerFailuresJson,
+    record.schemaStatusJson,
+    record.evidenceScorecardJson,
+    record.confidenceMathJson,
+    record.budgetJson,
+    record.replaySummary,
+    record.riskFlagsJson,
+    record.outcomeSignalCount,
+    record.latestOutcomeAt || null,
+    record.outcomeStatus || null,
+  );
+}
+
+export function getCouncilRunLedger(
+  councilRunId: string,
+): CouncilRunLedgerRecord | undefined {
+  const row = db
+    .prepare(
+      `
+        SELECT *
+        FROM council_run_ledger
+        WHERE council_run_id = ?
+        LIMIT 1
+      `,
+    )
+    .get(councilRunId) as
+    | Parameters<typeof mapCouncilRunLedgerRow>[0]
+    | undefined;
+  return row ? mapCouncilRunLedgerRow(row) : undefined;
+}
+
+export function listCouncilRunLedger(
+  params: { taskFamily?: string; limit?: number } = {},
+): CouncilRunLedgerRecord[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.taskFamily) {
+    clauses.push('task_family = ?');
+    args.push(params.taskFamily);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 100, 1000)));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM council_run_ledger
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapCouncilRunLedgerRow>[0]>;
+  return rows.map((row) => mapCouncilRunLedgerRow(row));
+}
+
+function mapCouncilOutcomeSignalRow(row: {
+  signal_id: string;
+  council_run_id: string;
+  created_at: string;
+  group_folder: string | null;
+  channel: string | null;
+  signal_kind: CouncilOutcomeSignal['signalKind'];
+  route_key: string | null;
+  capability_id: string | null;
+  blocker_class: string | null;
+  feedback_id: string | null;
+  repair_plan_id: string | null;
+  flags_json: string;
+  summary: string;
+}): CouncilOutcomeSignal {
+  return {
+    signalId: row.signal_id,
+    councilRunId: row.council_run_id,
+    createdAt: row.created_at,
+    groupFolder:
+      row.group_folder && isValidGroupFolder(row.group_folder)
+        ? row.group_folder
+        : null,
+    channel: row.channel,
+    signalKind: row.signal_kind,
+    routeKey: row.route_key,
+    capabilityId: row.capability_id,
+    blockerClass: row.blocker_class,
+    feedbackId: row.feedback_id,
+    repairPlanId: row.repair_plan_id,
+    flagsJson: row.flags_json,
+    summary: row.summary,
+  };
+}
+
+export function insertCouncilOutcomeSignal(signal: CouncilOutcomeSignal): void {
+  assertOptionalGroupFolder(signal.groupFolder);
+  db.prepare(
+    `
+      INSERT INTO council_outcome_signals (
+        signal_id,
+        council_run_id,
+        created_at,
+        group_folder,
+        channel,
+        signal_kind,
+        route_key,
+        capability_id,
+        blocker_class,
+        feedback_id,
+        repair_plan_id,
+        flags_json,
+        summary
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(signal_id) DO UPDATE SET
+        created_at = excluded.created_at,
+        group_folder = excluded.group_folder,
+        channel = excluded.channel,
+        signal_kind = excluded.signal_kind,
+        route_key = excluded.route_key,
+        capability_id = excluded.capability_id,
+        blocker_class = excluded.blocker_class,
+        feedback_id = excluded.feedback_id,
+        repair_plan_id = excluded.repair_plan_id,
+        flags_json = excluded.flags_json,
+        summary = excluded.summary
+    `,
+  ).run(
+    signal.signalId,
+    signal.councilRunId,
+    signal.createdAt,
+    signal.groupFolder || null,
+    signal.channel || null,
+    signal.signalKind,
+    signal.routeKey || null,
+    signal.capabilityId || null,
+    signal.blockerClass || null,
+    signal.feedbackId || null,
+    signal.repairPlanId || null,
+    signal.flagsJson,
+    signal.summary,
+  );
+  const aggregate = db
+    .prepare(
+      `
+        SELECT COUNT(*) AS total, MAX(created_at) AS latest
+        FROM council_outcome_signals
+        WHERE council_run_id = ?
+      `,
+    )
+    .get(signal.councilRunId) as { total: number; latest: string | null };
+  db.prepare(
+    `
+      UPDATE council_run_ledger
+      SET outcome_signal_count = ?,
+          latest_outcome_at = ?,
+          outcome_status = ?,
+          updated_at = ?
+      WHERE council_run_id = ?
+    `,
+  ).run(
+    aggregate.total,
+    aggregate.latest,
+    signal.signalKind,
+    signal.createdAt,
+    signal.councilRunId,
+  );
+}
+
+export function listCouncilOutcomeSignals(
+  params: { councilRunId?: string; limit?: number } = {},
+): CouncilOutcomeSignal[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.councilRunId) {
+    clauses.push('council_run_id = ?');
+    args.push(params.councilRunId);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 100, 1000)));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM council_outcome_signals
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapCouncilOutcomeSignalRow>[0]>;
+  return rows.map((row) => mapCouncilOutcomeSignalRow(row));
+}
+
+export function pruneCouncilQualityData(params: {
+  cutoffIso: string;
+  retainLimit: number;
+}): void {
+  db.prepare('DELETE FROM council_run_ledger WHERE created_at < ?').run(
+    params.cutoffIso,
+  );
+  db.prepare(
+    `
+      DELETE FROM council_run_ledger
+      WHERE council_run_id NOT IN (
+        SELECT council_run_id
+        FROM council_run_ledger
+        ORDER BY created_at DESC
+        LIMIT ?
+      )
+    `,
+  ).run(Math.max(1, params.retainLimit));
+}
+
+function mapCognitiveRunRow(row: {
+  run_id: string;
+  created_at: string;
+  updated_at: string;
+  group_folder: string | null;
+  channel: string | null;
+  task_family: string;
+  turn_id: string | null;
+  goal_summary: string;
+  selected_skill_id: string;
+  status: CognitiveRunRecord['status'];
+  autonomy_level: CognitiveRunRecord['autonomyLevel'];
+  cognitive_mode: CognitiveRunRecord['cognitiveMode'];
+  task_graph_json: string;
+  evidence_contract_json: string;
+  provider_usability_json: string;
+  council_run_id: string | null;
+  verification_json: string;
+  outcome_score: number;
+  next_action: string;
+  privacy_json: string;
+  linked_skill_card_id: string | null;
+}): CognitiveRunRecord {
+  return {
+    runId: row.run_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    groupFolder:
+      row.group_folder && isValidGroupFolder(row.group_folder)
+        ? row.group_folder
+        : null,
+    channel: row.channel,
+    taskFamily: row.task_family,
+    turnId: row.turn_id,
+    goalSummary: row.goal_summary,
+    selectedSkillId: row.selected_skill_id,
+    status: row.status,
+    autonomyLevel: row.autonomy_level,
+    cognitiveMode: row.cognitive_mode,
+    taskGraphJson: row.task_graph_json,
+    evidenceContractJson: row.evidence_contract_json,
+    providerUsabilityJson: row.provider_usability_json,
+    councilRunId: row.council_run_id,
+    verificationJson: row.verification_json,
+    outcomeScore: row.outcome_score,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+    linkedSkillCardId: row.linked_skill_card_id,
+  };
+}
+
+export function upsertCognitiveRun(record: CognitiveRunRecord): void {
+  assertOptionalGroupFolder(record.groupFolder);
+  db.prepare(
+    `
+      INSERT INTO cognitive_runs (
+        run_id,
+        created_at,
+        updated_at,
+        group_folder,
+        channel,
+        task_family,
+        turn_id,
+        goal_summary,
+        selected_skill_id,
+        status,
+        autonomy_level,
+        cognitive_mode,
+        task_graph_json,
+        evidence_contract_json,
+        provider_usability_json,
+        council_run_id,
+        verification_json,
+        outcome_score,
+        next_action,
+        privacy_json,
+        linked_skill_card_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(run_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        group_folder = excluded.group_folder,
+        channel = excluded.channel,
+        task_family = excluded.task_family,
+        turn_id = excluded.turn_id,
+        goal_summary = excluded.goal_summary,
+        selected_skill_id = excluded.selected_skill_id,
+        status = excluded.status,
+        autonomy_level = excluded.autonomy_level,
+        cognitive_mode = excluded.cognitive_mode,
+        task_graph_json = excluded.task_graph_json,
+        evidence_contract_json = excluded.evidence_contract_json,
+        provider_usability_json = excluded.provider_usability_json,
+        council_run_id = excluded.council_run_id,
+        verification_json = excluded.verification_json,
+        outcome_score = excluded.outcome_score,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json,
+        linked_skill_card_id = excluded.linked_skill_card_id
+    `,
+  ).run(
+    record.runId,
+    record.createdAt,
+    record.updatedAt,
+    record.groupFolder || null,
+    record.channel || null,
+    record.taskFamily,
+    record.turnId || null,
+    record.goalSummary,
+    record.selectedSkillId,
+    record.status,
+    record.autonomyLevel,
+    record.cognitiveMode,
+    record.taskGraphJson,
+    record.evidenceContractJson,
+    record.providerUsabilityJson,
+    record.councilRunId || null,
+    record.verificationJson,
+    record.outcomeScore,
+    record.nextAction,
+    record.privacyJson,
+    record.linkedSkillCardId || null,
+  );
+}
+
+export function getCognitiveRun(runId: string): CognitiveRunRecord | undefined {
+  const row = db
+    .prepare(
+      `
+        SELECT *
+        FROM cognitive_runs
+        WHERE run_id = ?
+        LIMIT 1
+      `,
+    )
+    .get(runId) as Parameters<typeof mapCognitiveRunRow>[0] | undefined;
+  return row ? mapCognitiveRunRow(row) : undefined;
+}
+
+export function listCognitiveRuns(
+  params: {
+    groupFolder?: string | null;
+    taskFamily?: string;
+    limit?: number;
+  } = {},
+): CognitiveRunRecord[] {
+  assertOptionalGroupFolder(params.groupFolder);
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.groupFolder) {
+    clauses.push('(group_folder = ? OR group_folder IS NULL)');
+    args.push(params.groupFolder);
+  }
+  if (params.taskFamily) {
+    clauses.push('task_family = ?');
+    args.push(params.taskFamily);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 50, 1000)));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM cognitive_runs
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapCognitiveRunRow>[0]>;
+  return rows.map((row) => mapCognitiveRunRow(row));
+}
+
+function mapCognitiveSubgoalRow(row: {
+  subgoal_id: string;
+  run_id: string;
+  position: number;
+  title: string;
+  status: CognitiveSubgoalRecord['status'];
+  required_evidence: string;
+  allowed_actions_json: string;
+  approval_need: string;
+  stop_condition: string;
+  tool_plan_json: string;
+  verification_json: string;
+  created_at: string;
+  updated_at: string;
+}): CognitiveSubgoalRecord {
+  return {
+    subgoalId: row.subgoal_id,
+    runId: row.run_id,
+    position: row.position,
+    title: row.title,
+    status: row.status,
+    requiredEvidence: row.required_evidence,
+    allowedActionsJson: row.allowed_actions_json,
+    approvalNeed: row.approval_need,
+    stopCondition: row.stop_condition,
+    toolPlanJson: row.tool_plan_json,
+    verificationJson: row.verification_json,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export function replaceCognitiveSubgoalsForRun(
+  runId: string,
+  subgoals: CognitiveSubgoalRecord[],
+): void {
+  for (const record of subgoals) {
+    if (record.runId !== runId) {
+      throw new Error(
+        `Cognitive subgoal ${record.subgoalId} belongs to ${record.runId}, not ${runId}`,
+      );
+    }
+  }
+  const tx = db.transaction((records: CognitiveSubgoalRecord[]) => {
+    db.prepare('DELETE FROM cognitive_subgoals WHERE run_id = ?').run(runId);
+    const insert = db.prepare(
+      `
+        INSERT INTO cognitive_subgoals (
+          subgoal_id,
+          run_id,
+          position,
+          title,
+          status,
+          required_evidence,
+          allowed_actions_json,
+          approval_need,
+          stop_condition,
+          tool_plan_json,
+          verification_json,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+    );
+    for (const record of records) {
+      insert.run(
+        record.subgoalId,
+        record.runId,
+        record.position,
+        record.title,
+        record.status,
+        record.requiredEvidence,
+        record.allowedActionsJson,
+        record.approvalNeed,
+        record.stopCondition,
+        record.toolPlanJson,
+        record.verificationJson,
+        record.createdAt,
+        record.updatedAt,
+      );
+    }
+  });
+  tx(subgoals);
+}
+
+export function listCognitiveSubgoalsForRun(
+  runId: string,
+): CognitiveSubgoalRecord[] {
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM cognitive_subgoals
+        WHERE run_id = ?
+        ORDER BY position ASC
+      `,
+    )
+    .all(runId) as Array<Parameters<typeof mapCognitiveSubgoalRow>[0]>;
+  return rows.map((row) => mapCognitiveSubgoalRow(row));
+}
+
+function mapCognitiveSkillCardRow(row: {
+  skill_id: string;
+  created_at: string;
+  updated_at: string;
+  group_folder: string | null;
+  task_family: string;
+  trigger_summary: string;
+  skill_summary: string;
+  required_tools_json: string;
+  evidence_needs_json: string;
+  approval_rules_json: string;
+  failure_modes_json: string;
+  verification_checklist_json: string;
+  latest_outcome_score: number;
+  promotion_state: CognitiveSkillCardRecord['promotionState'];
+  usage_count: number;
+  last_used_at: string | null;
+}): CognitiveSkillCardRecord {
+  return {
+    skillId: row.skill_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    groupFolder:
+      row.group_folder && isValidGroupFolder(row.group_folder)
+        ? row.group_folder
+        : null,
+    taskFamily: row.task_family,
+    triggerSummary: row.trigger_summary,
+    skillSummary: row.skill_summary,
+    requiredToolsJson: row.required_tools_json,
+    evidenceNeedsJson: row.evidence_needs_json,
+    approvalRulesJson: row.approval_rules_json,
+    failureModesJson: row.failure_modes_json,
+    verificationChecklistJson: row.verification_checklist_json,
+    latestOutcomeScore: row.latest_outcome_score,
+    promotionState: row.promotion_state,
+    usageCount: row.usage_count,
+    lastUsedAt: row.last_used_at,
+  };
+}
+
+export function upsertCognitiveSkillCard(
+  record: CognitiveSkillCardRecord,
+): void {
+  assertOptionalGroupFolder(record.groupFolder);
+  db.prepare(
+    `
+      INSERT INTO cognitive_skill_cards (
+        skill_id,
+        created_at,
+        updated_at,
+        group_folder,
+        task_family,
+        trigger_summary,
+        skill_summary,
+        required_tools_json,
+        evidence_needs_json,
+        approval_rules_json,
+        failure_modes_json,
+        verification_checklist_json,
+        latest_outcome_score,
+        promotion_state,
+        usage_count,
+        last_used_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(skill_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        group_folder = excluded.group_folder,
+        task_family = excluded.task_family,
+        trigger_summary = excluded.trigger_summary,
+        skill_summary = excluded.skill_summary,
+        required_tools_json = excluded.required_tools_json,
+        evidence_needs_json = excluded.evidence_needs_json,
+        approval_rules_json = excluded.approval_rules_json,
+        failure_modes_json = excluded.failure_modes_json,
+        verification_checklist_json = excluded.verification_checklist_json,
+        latest_outcome_score = excluded.latest_outcome_score,
+        promotion_state = excluded.promotion_state,
+        usage_count = excluded.usage_count,
+        last_used_at = excluded.last_used_at
+    `,
+  ).run(
+    record.skillId,
+    record.createdAt,
+    record.updatedAt,
+    record.groupFolder || null,
+    record.taskFamily,
+    record.triggerSummary,
+    record.skillSummary,
+    record.requiredToolsJson,
+    record.evidenceNeedsJson,
+    record.approvalRulesJson,
+    record.failureModesJson,
+    record.verificationChecklistJson,
+    record.latestOutcomeScore,
+    record.promotionState,
+    record.usageCount,
+    record.lastUsedAt || null,
+  );
+}
+
+export function listCognitiveSkillCards(
+  params: {
+    groupFolder?: string | null;
+    taskFamily?: string;
+    promotionStates?: CognitiveSkillCardRecord['promotionState'][];
+    limit?: number;
+  } = {},
+): CognitiveSkillCardRecord[] {
+  assertOptionalGroupFolder(params.groupFolder);
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.groupFolder) {
+    clauses.push('(group_folder = ? OR group_folder IS NULL)');
+    args.push(params.groupFolder);
+  }
+  if (params.taskFamily) {
+    clauses.push('task_family = ?');
+    args.push(params.taskFamily);
+  }
+  if (params.promotionStates?.length) {
+    clauses.push(
+      `promotion_state IN (${params.promotionStates.map(() => '?').join(', ')})`,
+    );
+    args.push(...params.promotionStates);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 25, 100)));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM cognitive_skill_cards
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY latest_outcome_score DESC, updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapCognitiveSkillCardRow>[0]>;
+  return rows.map((row) => mapCognitiveSkillCardRow(row));
+}
+
+function mapCognitiveReflectionRow(row: {
+  reflection_id: string;
+  created_at: string;
+  group_folder: string | null;
+  run_id: string | null;
+  skill_id: string | null;
+  task_family: string;
+  reflection_kind: CognitiveReflectionRecord['reflectionKind'];
+  summary: string;
+  route_key: string | null;
+  provider_state_json: string;
+  next_rule: string;
+  confidence: number;
+  privacy_json: string;
+}): CognitiveReflectionRecord {
+  return {
+    reflectionId: row.reflection_id,
+    createdAt: row.created_at,
+    groupFolder:
+      row.group_folder && isValidGroupFolder(row.group_folder)
+        ? row.group_folder
+        : null,
+    runId: row.run_id,
+    skillId: row.skill_id,
+    taskFamily: row.task_family,
+    reflectionKind: row.reflection_kind,
+    summary: row.summary,
+    routeKey: row.route_key,
+    providerStateJson: row.provider_state_json,
+    nextRule: row.next_rule,
+    confidence: row.confidence,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function insertCognitiveReflection(
+  record: CognitiveReflectionRecord,
+): void {
+  assertOptionalGroupFolder(record.groupFolder);
+  db.prepare(
+    `
+      INSERT INTO cognitive_reflections (
+        reflection_id,
+        created_at,
+        group_folder,
+        run_id,
+        skill_id,
+        task_family,
+        reflection_kind,
+        summary,
+        route_key,
+        provider_state_json,
+        next_rule,
+        confidence,
+        privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(reflection_id) DO UPDATE SET
+        created_at = excluded.created_at,
+        group_folder = excluded.group_folder,
+        run_id = excluded.run_id,
+        skill_id = excluded.skill_id,
+        task_family = excluded.task_family,
+        reflection_kind = excluded.reflection_kind,
+        summary = excluded.summary,
+        route_key = excluded.route_key,
+        provider_state_json = excluded.provider_state_json,
+        next_rule = excluded.next_rule,
+        confidence = excluded.confidence,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.reflectionId,
+    record.createdAt,
+    record.groupFolder || null,
+    record.runId || null,
+    record.skillId || null,
+    record.taskFamily,
+    record.reflectionKind,
+    record.summary,
+    record.routeKey || null,
+    record.providerStateJson,
+    record.nextRule,
+    record.confidence,
+    record.privacyJson,
+  );
+}
+
+export function listCognitiveReflections(
+  params: {
+    groupFolder?: string | null;
+    taskFamily?: string;
+    limit?: number;
+  } = {},
+): CognitiveReflectionRecord[] {
+  assertOptionalGroupFolder(params.groupFolder);
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.groupFolder) {
+    clauses.push('(group_folder = ? OR group_folder IS NULL)');
+    args.push(params.groupFolder);
+  }
+  if (params.taskFamily) {
+    clauses.push('task_family = ?');
+    args.push(params.taskFamily);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 50, 200)));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM cognitive_reflections
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapCognitiveReflectionRow>[0]>;
+  return rows.map((row) => mapCognitiveReflectionRow(row));
+}
+
+function mapCognitiveRewardSignalRow(row: {
+  signal_id: string;
+  created_at: string;
+  run_id: string;
+  skill_id: string | null;
+  signal_kind: CognitiveRewardSignalRecord['signalKind'];
+  score: number;
+  summary: string;
+  flags_json: string;
+}): CognitiveRewardSignalRecord {
+  return {
+    signalId: row.signal_id,
+    createdAt: row.created_at,
+    runId: row.run_id,
+    skillId: row.skill_id,
+    signalKind: row.signal_kind,
+    score: row.score,
+    summary: row.summary,
+    flagsJson: row.flags_json,
+  };
+}
+
+export function insertCognitiveRewardSignal(
+  record: CognitiveRewardSignalRecord,
+): void {
+  db.prepare(
+    `
+      INSERT INTO cognitive_reward_signals (
+        signal_id,
+        created_at,
+        run_id,
+        skill_id,
+        signal_kind,
+        score,
+        summary,
+        flags_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(signal_id) DO UPDATE SET
+        created_at = excluded.created_at,
+        skill_id = excluded.skill_id,
+        signal_kind = excluded.signal_kind,
+        score = excluded.score,
+        summary = excluded.summary,
+        flags_json = excluded.flags_json
+    `,
+  ).run(
+    record.signalId,
+    record.createdAt,
+    record.runId,
+    record.skillId || null,
+    record.signalKind,
+    record.score,
+    record.summary,
+    record.flagsJson,
+  );
+}
+
+export function listCognitiveRewardSignals(
+  params: { runId?: string; limit?: number } = {},
+): CognitiveRewardSignalRecord[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.runId) {
+    clauses.push('run_id = ?');
+    args.push(params.runId);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 50, 200)));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM cognitive_reward_signals
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapCognitiveRewardSignalRow>[0]>;
+  return rows.map((row) => mapCognitiveRewardSignalRow(row));
+}
+
+function mapCognitiveCheckpointRow(row: {
+  checkpoint_id: string;
+  created_at: string;
+  updated_at: string;
+  run_id: string;
+  subgoal_id: string | null;
+  group_folder: string | null;
+  channel: string | null;
+  checkpoint_kind: CognitiveCheckpointRecord['checkpointKind'];
+  status: CognitiveCheckpointRecord['status'];
+  summary: string;
+  state_json: string;
+  next_action: string;
+  continuation_key: string | null;
+  expires_at: string | null;
+  resolved_at: string | null;
+  privacy_json: string;
+}): CognitiveCheckpointRecord {
+  return {
+    checkpointId: row.checkpoint_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    runId: row.run_id,
+    subgoalId: row.subgoal_id,
+    groupFolder:
+      row.group_folder && isValidGroupFolder(row.group_folder)
+        ? row.group_folder
+        : null,
+    channel: row.channel,
+    checkpointKind: row.checkpoint_kind,
+    status: row.status,
+    summary: row.summary,
+    stateJson: row.state_json,
+    nextAction: row.next_action,
+    continuationKey: row.continuation_key,
+    expiresAt: row.expires_at,
+    resolvedAt: row.resolved_at,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertCognitiveCheckpoint(
+  record: CognitiveCheckpointRecord,
+): void {
+  assertOptionalGroupFolder(record.groupFolder);
+  db.prepare(
+    `
+      INSERT INTO cognitive_checkpoints (
+        checkpoint_id,
+        created_at,
+        updated_at,
+        run_id,
+        subgoal_id,
+        group_folder,
+        channel,
+        checkpoint_kind,
+        status,
+        summary,
+        state_json,
+        next_action,
+        continuation_key,
+        expires_at,
+        resolved_at,
+        privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(checkpoint_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        run_id = excluded.run_id,
+        subgoal_id = excluded.subgoal_id,
+        group_folder = excluded.group_folder,
+        channel = excluded.channel,
+        checkpoint_kind = excluded.checkpoint_kind,
+        status = excluded.status,
+        summary = excluded.summary,
+        state_json = excluded.state_json,
+        next_action = excluded.next_action,
+        continuation_key = excluded.continuation_key,
+        expires_at = excluded.expires_at,
+        resolved_at = excluded.resolved_at,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.checkpointId,
+    record.createdAt,
+    record.updatedAt,
+    record.runId,
+    record.subgoalId || null,
+    record.groupFolder || null,
+    record.channel || null,
+    record.checkpointKind,
+    record.status,
+    record.summary,
+    record.stateJson,
+    record.nextAction,
+    record.continuationKey || null,
+    record.expiresAt || null,
+    record.resolvedAt || null,
+    record.privacyJson,
+  );
+}
+
+export function getCognitiveCheckpoint(
+  checkpointId: string,
+): CognitiveCheckpointRecord | undefined {
+  const row = db
+    .prepare(
+      `
+        SELECT *
+        FROM cognitive_checkpoints
+        WHERE checkpoint_id = ?
+        LIMIT 1
+      `,
+    )
+    .get(checkpointId) as
+    | Parameters<typeof mapCognitiveCheckpointRow>[0]
+    | undefined;
+  return row ? mapCognitiveCheckpointRow(row) : undefined;
+}
+
+export function listCognitiveCheckpoints(
+  params: {
+    runId?: string;
+    groupFolder?: string | null;
+    channel?: string | null;
+    status?: CognitiveCheckpointRecord['status'];
+    limit?: number;
+  } = {},
+): CognitiveCheckpointRecord[] {
+  assertOptionalGroupFolder(params.groupFolder);
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.runId) {
+    clauses.push('run_id = ?');
+    args.push(params.runId);
+  }
+  if (params.groupFolder) {
+    clauses.push('(group_folder = ? OR group_folder IS NULL)');
+    args.push(params.groupFolder);
+  }
+  if (params.channel) {
+    clauses.push('channel = ?');
+    args.push(params.channel);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 25, 200)));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM cognitive_checkpoints
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapCognitiveCheckpointRow>[0]>;
+  return rows.map((row) => mapCognitiveCheckpointRow(row));
+}
+
+export function findOpenCognitiveCheckpoint(params: {
+  groupFolder?: string | null;
+  channel?: string | null;
+  continuationKey?: string | null;
+}): CognitiveCheckpointRecord | undefined {
+  assertOptionalGroupFolder(params.groupFolder);
+  const clauses = ["status = 'open'"];
+  const args: Array<string | number> = [];
+  clauses.push('(expires_at IS NULL OR expires_at > ?)');
+  args.push(new Date().toISOString());
+  if (params.groupFolder) {
+    clauses.push('(group_folder = ? OR group_folder IS NULL)');
+    args.push(params.groupFolder);
+  }
+  if (params.channel) {
+    clauses.push('channel = ?');
+    args.push(params.channel);
+  }
+  if (params.continuationKey) {
+    clauses.push('continuation_key = ?');
+    args.push(params.continuationKey);
+  }
+  const row = db
+    .prepare(
+      `
+        SELECT *
+        FROM cognitive_checkpoints
+        WHERE ${clauses.join(' AND ')}
+        ORDER BY updated_at DESC
+        LIMIT 1
+      `,
+    )
+    .get(...args) as
+    | Parameters<typeof mapCognitiveCheckpointRow>[0]
+    | undefined;
+  return row ? mapCognitiveCheckpointRow(row) : undefined;
+}
+
+export function resolveCognitiveCheckpoint(
+  checkpointId: string,
+  params: {
+    status?: CognitiveCheckpointRecord['status'];
+    resolvedAt: string;
+    nextAction?: string;
+  },
+): void {
+  db.prepare(
+    `
+      UPDATE cognitive_checkpoints
+      SET
+        status = ?,
+        updated_at = ?,
+        resolved_at = ?,
+        next_action = COALESCE(?, next_action)
+      WHERE checkpoint_id = ?
+    `,
+  ).run(
+    params.status || 'closed',
+    params.resolvedAt,
+    params.resolvedAt,
+    params.nextAction || null,
+    checkpointId,
+  );
+}
+
+function mapCognitiveToolRegistryRow(row: {
+  tool_id: string;
+  created_at: string;
+  updated_at: string;
+  tool_kind: CognitiveToolRegistryRecord['toolKind'];
+  display_name: string;
+  purpose: string;
+  allowed_actions_json: string;
+  approval_policy: CognitiveToolRegistryRecord['approvalPolicy'];
+  risk_level: CognitiveToolRegistryRecord['riskLevel'];
+  evidence_produced_json: string;
+  failure_modes_json: string;
+  last_verified_at: string | null;
+  health_state: CognitiveToolRegistryRecord['healthState'];
+  privacy_json: string;
+}): CognitiveToolRegistryRecord {
+  return {
+    toolId: row.tool_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    toolKind: row.tool_kind,
+    displayName: row.display_name,
+    purpose: row.purpose,
+    allowedActionsJson: row.allowed_actions_json,
+    approvalPolicy: row.approval_policy,
+    riskLevel: row.risk_level,
+    evidenceProducedJson: row.evidence_produced_json,
+    failureModesJson: row.failure_modes_json,
+    lastVerifiedAt: row.last_verified_at,
+    healthState: row.health_state,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertCognitiveToolRegistry(
+  record: CognitiveToolRegistryRecord,
+): void {
+  db.prepare(
+    `
+      INSERT INTO cognitive_tool_registry (
+        tool_id,
+        created_at,
+        updated_at,
+        tool_kind,
+        display_name,
+        purpose,
+        allowed_actions_json,
+        approval_policy,
+        risk_level,
+        evidence_produced_json,
+        failure_modes_json,
+        last_verified_at,
+        health_state,
+        privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(tool_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        tool_kind = excluded.tool_kind,
+        display_name = excluded.display_name,
+        purpose = excluded.purpose,
+        allowed_actions_json = excluded.allowed_actions_json,
+        approval_policy = excluded.approval_policy,
+        risk_level = excluded.risk_level,
+        evidence_produced_json = excluded.evidence_produced_json,
+        failure_modes_json = excluded.failure_modes_json,
+        last_verified_at = excluded.last_verified_at,
+        health_state = excluded.health_state,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.toolId,
+    record.createdAt,
+    record.updatedAt,
+    record.toolKind,
+    record.displayName,
+    record.purpose,
+    record.allowedActionsJson,
+    record.approvalPolicy,
+    record.riskLevel,
+    record.evidenceProducedJson,
+    record.failureModesJson,
+    record.lastVerifiedAt || null,
+    record.healthState,
+    record.privacyJson,
+  );
+}
+
+export function listCognitiveToolRegistry(
+  params: {
+    toolKind?: CognitiveToolRegistryRecord['toolKind'];
+    healthState?: CognitiveToolRegistryRecord['healthState'];
+    limit?: number;
+  } = {},
+): CognitiveToolRegistryRecord[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.toolKind) {
+    clauses.push('tool_kind = ?');
+    args.push(params.toolKind);
+  }
+  if (params.healthState) {
+    clauses.push('health_state = ?');
+    args.push(params.healthState);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 50, 200)));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM cognitive_tool_registry
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY tool_kind ASC, tool_id ASC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapCognitiveToolRegistryRow>[0]>;
+  return rows.map((row) => mapCognitiveToolRegistryRow(row));
+}
+
+function mapCognitiveWorldBeliefRow(row: {
+  belief_id: string;
+  created_at: string;
+  updated_at: string;
+  group_folder: string | null;
+  run_id: string | null;
+  source: CognitiveWorldBeliefRecord['source'];
+  subject: string;
+  summary: string;
+  confidence: number;
+  freshness: CognitiveWorldBeliefRecord['freshness'];
+  supersedes_belief_id: string | null;
+  privacy_json: string;
+}): CognitiveWorldBeliefRecord {
+  return {
+    beliefId: row.belief_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    groupFolder:
+      row.group_folder && isValidGroupFolder(row.group_folder)
+        ? row.group_folder
+        : null,
+    runId: row.run_id,
+    source: row.source,
+    subject: row.subject,
+    summary: row.summary,
+    confidence: row.confidence,
+    freshness: row.freshness,
+    supersedesBeliefId: row.supersedes_belief_id,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertCognitiveWorldBelief(
+  record: CognitiveWorldBeliefRecord,
+): void {
+  assertOptionalGroupFolder(record.groupFolder);
+  db.prepare(
+    `
+      INSERT INTO cognitive_world_beliefs (
+        belief_id,
+        created_at,
+        updated_at,
+        group_folder,
+        run_id,
+        source,
+        subject,
+        summary,
+        confidence,
+        freshness,
+        supersedes_belief_id,
+        privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(belief_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        group_folder = excluded.group_folder,
+        run_id = excluded.run_id,
+        source = excluded.source,
+        subject = excluded.subject,
+        summary = excluded.summary,
+        confidence = excluded.confidence,
+        freshness = excluded.freshness,
+        supersedes_belief_id = excluded.supersedes_belief_id,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.beliefId,
+    record.createdAt,
+    record.updatedAt,
+    record.groupFolder || null,
+    record.runId || null,
+    record.source,
+    record.subject,
+    record.summary,
+    record.confidence,
+    record.freshness,
+    record.supersedesBeliefId || null,
+    record.privacyJson,
+  );
+}
+
+export function listCognitiveWorldBeliefs(
+  params: {
+    groupFolder?: string | null;
+    runId?: string;
+    source?: CognitiveWorldBeliefRecord['source'];
+    limit?: number;
+  } = {},
+): CognitiveWorldBeliefRecord[] {
+  assertOptionalGroupFolder(params.groupFolder);
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.groupFolder) {
+    clauses.push('(group_folder = ? OR group_folder IS NULL)');
+    args.push(params.groupFolder);
+  }
+  if (params.runId) {
+    clauses.push('run_id = ?');
+    args.push(params.runId);
+  }
+  if (params.source) {
+    clauses.push('source = ?');
+    args.push(params.source);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 50, 200)));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM cognitive_world_beliefs
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapCognitiveWorldBeliefRow>[0]>;
+  return rows.map((row) => mapCognitiveWorldBeliefRow(row));
+}
+
+function mapCognitiveBenchmarkAttemptRow(row: {
+  attempt_id: string;
+  created_at: string;
+  task_id: string;
+  task_family: string;
+  status: CognitiveBenchmarkAttemptRecord['status'];
+  score: number;
+  run_id: string | null;
+  checkpoint_count: number;
+  tool_policy_pass: number;
+  approval_gate_pass: number;
+  privacy_pass: number;
+  outcome_captured: number;
+  next_action: string;
+  detail_json: string;
+}): CognitiveBenchmarkAttemptRecord {
+  return {
+    attemptId: row.attempt_id,
+    createdAt: row.created_at,
+    taskId: row.task_id,
+    taskFamily: row.task_family,
+    status: row.status,
+    score: row.score,
+    runId: row.run_id,
+    checkpointCount: row.checkpoint_count,
+    toolPolicyPass: row.tool_policy_pass === 1,
+    approvalGatePass: row.approval_gate_pass === 1,
+    privacyPass: row.privacy_pass === 1,
+    outcomeCaptured: row.outcome_captured === 1,
+    nextAction: row.next_action,
+    detailJson: row.detail_json,
+  };
+}
+
+export function insertCognitiveBenchmarkAttempt(
+  record: CognitiveBenchmarkAttemptRecord,
+): void {
+  db.prepare(
+    `
+      INSERT INTO cognitive_benchmark_attempts (
+        attempt_id,
+        created_at,
+        task_id,
+        task_family,
+        status,
+        score,
+        run_id,
+        checkpoint_count,
+        tool_policy_pass,
+        approval_gate_pass,
+        privacy_pass,
+        outcome_captured,
+        next_action,
+        detail_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(attempt_id) DO UPDATE SET
+        created_at = excluded.created_at,
+        task_id = excluded.task_id,
+        task_family = excluded.task_family,
+        status = excluded.status,
+        score = excluded.score,
+        run_id = excluded.run_id,
+        checkpoint_count = excluded.checkpoint_count,
+        tool_policy_pass = excluded.tool_policy_pass,
+        approval_gate_pass = excluded.approval_gate_pass,
+        privacy_pass = excluded.privacy_pass,
+        outcome_captured = excluded.outcome_captured,
+        next_action = excluded.next_action,
+        detail_json = excluded.detail_json
+    `,
+  ).run(
+    record.attemptId,
+    record.createdAt,
+    record.taskId,
+    record.taskFamily,
+    record.status,
+    record.score,
+    record.runId || null,
+    record.checkpointCount,
+    record.toolPolicyPass ? 1 : 0,
+    record.approvalGatePass ? 1 : 0,
+    record.privacyPass ? 1 : 0,
+    record.outcomeCaptured ? 1 : 0,
+    record.nextAction,
+    record.detailJson,
+  );
+}
+
+export function listCognitiveBenchmarkAttempts(
+  params: {
+    taskId?: string;
+    status?: CognitiveBenchmarkAttemptRecord['status'];
+    limit?: number;
+  } = {},
+): CognitiveBenchmarkAttemptRecord[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.taskId) {
+    clauses.push('task_id = ?');
+    args.push(params.taskId);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 25, 200)));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM cognitive_benchmark_attempts
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<
+    Parameters<typeof mapCognitiveBenchmarkAttemptRow>[0]
+  >;
+  return rows.map((row) => mapCognitiveBenchmarkAttemptRow(row));
+}
+
+function mapCognitiveGoalRow(row: {
+  goal_id: string;
+  created_at: string;
+  updated_at: string;
+  group_folder: string | null;
+  parent_goal_id: string | null;
+  root_run_id: string | null;
+  task_family: string;
+  objective_summary: string;
+  status: CognitiveGoalRecord['status'];
+  priority: number;
+  success_criteria_json: string;
+  decomposition_json: string;
+  linked_run_ids_json: string;
+  active_checkpoint_id: string | null;
+  reward_score: number;
+  next_action: string;
+  closed_at: string | null;
+  privacy_json: string;
+}): CognitiveGoalRecord {
+  return {
+    goalId: row.goal_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    groupFolder:
+      row.group_folder && isValidGroupFolder(row.group_folder)
+        ? row.group_folder
+        : null,
+    parentGoalId: row.parent_goal_id,
+    rootRunId: row.root_run_id,
+    taskFamily: row.task_family,
+    objectiveSummary: row.objective_summary,
+    status: row.status,
+    priority: row.priority,
+    successCriteriaJson: row.success_criteria_json,
+    decompositionJson: row.decomposition_json,
+    linkedRunIdsJson: row.linked_run_ids_json,
+    activeCheckpointId: row.active_checkpoint_id,
+    rewardScore: row.reward_score,
+    nextAction: row.next_action,
+    closedAt: row.closed_at,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertCognitiveGoal(record: CognitiveGoalRecord): void {
+  assertOptionalGroupFolder(record.groupFolder);
+  db.prepare(
+    `
+      INSERT INTO cognitive_goals (
+        goal_id,
+        created_at,
+        updated_at,
+        group_folder,
+        parent_goal_id,
+        root_run_id,
+        task_family,
+        objective_summary,
+        status,
+        priority,
+        success_criteria_json,
+        decomposition_json,
+        linked_run_ids_json,
+        active_checkpoint_id,
+        reward_score,
+        next_action,
+        closed_at,
+        privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(goal_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        group_folder = excluded.group_folder,
+        parent_goal_id = excluded.parent_goal_id,
+        root_run_id = excluded.root_run_id,
+        task_family = excluded.task_family,
+        objective_summary = excluded.objective_summary,
+        status = excluded.status,
+        priority = excluded.priority,
+        success_criteria_json = excluded.success_criteria_json,
+        decomposition_json = excluded.decomposition_json,
+        linked_run_ids_json = excluded.linked_run_ids_json,
+        active_checkpoint_id = excluded.active_checkpoint_id,
+        reward_score = excluded.reward_score,
+        next_action = excluded.next_action,
+        closed_at = excluded.closed_at,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.goalId,
+    record.createdAt,
+    record.updatedAt,
+    record.groupFolder || null,
+    record.parentGoalId || null,
+    record.rootRunId || null,
+    record.taskFamily,
+    redactStoredCognitiveMetadata(record.objectiveSummary, 520),
+    record.status,
+    record.priority,
+    redactStoredCognitiveMetadata(record.successCriteriaJson),
+    redactStoredCognitiveMetadata(record.decompositionJson),
+    redactStoredCognitiveMetadata(record.linkedRunIdsJson, 2000),
+    record.activeCheckpointId || null,
+    record.rewardScore,
+    redactStoredCognitiveMetadata(record.nextAction, 520),
+    record.closedAt || null,
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function getCognitiveGoal(
+  goalId: string,
+): CognitiveGoalRecord | undefined {
+  const row = db
+    .prepare(
+      `
+        SELECT *
+        FROM cognitive_goals
+        WHERE goal_id = ?
+        LIMIT 1
+      `,
+    )
+    .get(goalId) as Parameters<typeof mapCognitiveGoalRow>[0] | undefined;
+  return row ? mapCognitiveGoalRow(row) : undefined;
+}
+
+export function listCognitiveGoals(
+  params: {
+    groupFolder?: string | null;
+    taskFamily?: string;
+    status?: CognitiveGoalRecord['status'];
+    limit?: number;
+  } = {},
+): CognitiveGoalRecord[] {
+  assertOptionalGroupFolder(params.groupFolder);
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.groupFolder) {
+    clauses.push('(group_folder = ? OR group_folder IS NULL)');
+    args.push(params.groupFolder);
+  }
+  if (params.taskFamily) {
+    clauses.push('task_family = ?');
+    args.push(params.taskFamily);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 25, 200)));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM cognitive_goals
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY priority DESC, updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapCognitiveGoalRow>[0]>;
+  return rows.map((row) => mapCognitiveGoalRow(row));
+}
+
+function mapCognitiveBlackboardEntryRow(row: {
+  entry_id: string;
+  created_at: string;
+  updated_at: string;
+  group_folder: string | null;
+  goal_id: string | null;
+  run_id: string | null;
+  entry_kind: CognitiveBlackboardEntryRecord['entryKind'];
+  source: CognitiveBlackboardEntryRecord['source'];
+  status: CognitiveBlackboardEntryRecord['status'];
+  summary: string;
+  evidence_refs_json: string;
+  confidence: number;
+  expires_at: string | null;
+  privacy_json: string;
+}): CognitiveBlackboardEntryRecord {
+  return {
+    entryId: row.entry_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    groupFolder:
+      row.group_folder && isValidGroupFolder(row.group_folder)
+        ? row.group_folder
+        : null,
+    goalId: row.goal_id,
+    runId: row.run_id,
+    entryKind: row.entry_kind,
+    source: row.source,
+    status: row.status,
+    summary: row.summary,
+    evidenceRefsJson: row.evidence_refs_json,
+    confidence: row.confidence,
+    expiresAt: row.expires_at,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertCognitiveBlackboardEntry(
+  record: CognitiveBlackboardEntryRecord,
+): void {
+  assertOptionalGroupFolder(record.groupFolder);
+  db.prepare(
+    `
+      INSERT INTO cognitive_blackboard_entries (
+        entry_id,
+        created_at,
+        updated_at,
+        group_folder,
+        goal_id,
+        run_id,
+        entry_kind,
+        source,
+        status,
+        summary,
+        evidence_refs_json,
+        confidence,
+        expires_at,
+        privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(entry_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        group_folder = excluded.group_folder,
+        goal_id = excluded.goal_id,
+        run_id = excluded.run_id,
+        entry_kind = excluded.entry_kind,
+        source = excluded.source,
+        status = excluded.status,
+        summary = excluded.summary,
+        evidence_refs_json = excluded.evidence_refs_json,
+        confidence = excluded.confidence,
+        expires_at = excluded.expires_at,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.entryId,
+    record.createdAt,
+    record.updatedAt,
+    record.groupFolder || null,
+    record.goalId || null,
+    record.runId || null,
+    record.entryKind,
+    record.source,
+    record.status,
+    redactStoredCognitiveMetadata(record.summary, 640),
+    redactStoredCognitiveMetadata(record.evidenceRefsJson, 2400),
+    record.confidence,
+    record.expiresAt || null,
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listCognitiveBlackboardEntries(
+  params: {
+    goalId?: string;
+    runId?: string;
+    groupFolder?: string | null;
+    entryKind?: CognitiveBlackboardEntryRecord['entryKind'];
+    status?: CognitiveBlackboardEntryRecord['status'];
+    limit?: number;
+  } = {},
+): CognitiveBlackboardEntryRecord[] {
+  assertOptionalGroupFolder(params.groupFolder);
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.goalId) {
+    clauses.push('goal_id = ?');
+    args.push(params.goalId);
+  }
+  if (params.runId) {
+    clauses.push('run_id = ?');
+    args.push(params.runId);
+  }
+  if (params.groupFolder) {
+    clauses.push('(group_folder = ? OR group_folder IS NULL)');
+    args.push(params.groupFolder);
+  }
+  if (params.entryKind) {
+    clauses.push('entry_kind = ?');
+    args.push(params.entryKind);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 50, 200)));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM cognitive_blackboard_entries
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<
+    Parameters<typeof mapCognitiveBlackboardEntryRow>[0]
+  >;
+  return rows.map((row) => mapCognitiveBlackboardEntryRow(row));
+}
+
+function mapCognitiveAutonomyBudgetRow(row: {
+  budget_id: string;
+  created_at: string;
+  updated_at: string;
+  cognitive_mode: CognitiveAutonomyBudgetRecord['cognitiveMode'];
+  task_family: string;
+  max_tool_steps: number;
+  max_council_calls: number;
+  max_read_only_calls: number;
+  mutating_allowed: number;
+  approval_required: number;
+  max_runtime_ms: number;
+  clarification_after_blocked_steps: number;
+  budget_json: string;
+  privacy_json: string;
+}): CognitiveAutonomyBudgetRecord {
+  return {
+    budgetId: row.budget_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    cognitiveMode: row.cognitive_mode,
+    taskFamily: row.task_family,
+    maxToolSteps: row.max_tool_steps,
+    maxCouncilCalls: row.max_council_calls,
+    maxReadOnlyCalls: row.max_read_only_calls,
+    mutatingAllowed: row.mutating_allowed === 1,
+    approvalRequired: row.approval_required === 1,
+    maxRuntimeMs: row.max_runtime_ms,
+    clarificationAfterBlockedSteps: row.clarification_after_blocked_steps,
+    budgetJson: row.budget_json,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertCognitiveAutonomyBudget(
+  record: CognitiveAutonomyBudgetRecord,
+): void {
+  db.prepare(
+    `
+      INSERT INTO cognitive_autonomy_budgets (
+        budget_id,
+        created_at,
+        updated_at,
+        cognitive_mode,
+        task_family,
+        max_tool_steps,
+        max_council_calls,
+        max_read_only_calls,
+        mutating_allowed,
+        approval_required,
+        max_runtime_ms,
+        clarification_after_blocked_steps,
+        budget_json,
+        privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(budget_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        cognitive_mode = excluded.cognitive_mode,
+        task_family = excluded.task_family,
+        max_tool_steps = excluded.max_tool_steps,
+        max_council_calls = excluded.max_council_calls,
+        max_read_only_calls = excluded.max_read_only_calls,
+        mutating_allowed = excluded.mutating_allowed,
+        approval_required = excluded.approval_required,
+        max_runtime_ms = excluded.max_runtime_ms,
+        clarification_after_blocked_steps = excluded.clarification_after_blocked_steps,
+        budget_json = excluded.budget_json,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.budgetId,
+    record.createdAt,
+    record.updatedAt,
+    record.cognitiveMode,
+    record.taskFamily,
+    record.maxToolSteps,
+    record.maxCouncilCalls,
+    record.maxReadOnlyCalls,
+    record.mutatingAllowed ? 1 : 0,
+    record.approvalRequired ? 1 : 0,
+    record.maxRuntimeMs,
+    record.clarificationAfterBlockedSteps,
+    redactStoredCognitiveMetadata(record.budgetJson, 3200),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listCognitiveAutonomyBudgets(
+  params: {
+    cognitiveMode?: CognitiveAutonomyBudgetRecord['cognitiveMode'];
+    taskFamily?: string;
+    limit?: number;
+  } = {},
+): CognitiveAutonomyBudgetRecord[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.cognitiveMode) {
+    clauses.push('cognitive_mode = ?');
+    args.push(params.cognitiveMode);
+  }
+  if (params.taskFamily) {
+    clauses.push('(task_family = ? OR task_family = ?)');
+    args.push(params.taskFamily, '*');
+  }
+  args.push(Math.max(1, Math.min(params.limit || 50, 200)));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM cognitive_autonomy_budgets
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY task_family DESC, updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapCognitiveAutonomyBudgetRow>[0]>;
+  return rows.map((row) => mapCognitiveAutonomyBudgetRow(row));
+}
+
+function mapCognitiveTraceSpanRow(row: {
+  span_id: string;
+  created_at: string;
+  ended_at: string | null;
+  run_id: string | null;
+  goal_id: string | null;
+  parent_span_id: string | null;
+  span_kind: CognitiveTraceSpan['spanKind'];
+  status: CognitiveTraceSpan['status'];
+  summary: string;
+  input_summary: string;
+  output_summary: string;
+  metadata_json: string;
+  privacy_json: string;
+}): CognitiveTraceSpan {
+  return {
+    spanId: row.span_id,
+    createdAt: row.created_at,
+    endedAt: row.ended_at,
+    runId: row.run_id,
+    goalId: row.goal_id,
+    parentSpanId: row.parent_span_id,
+    spanKind: row.span_kind,
+    status: row.status,
+    summary: row.summary,
+    inputSummary: row.input_summary,
+    outputSummary: row.output_summary,
+    metadataJson: row.metadata_json,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertCognitiveTraceSpan(record: CognitiveTraceSpan): void {
+  db.prepare(
+    `
+      INSERT INTO cognitive_trace_spans (
+        span_id,
+        created_at,
+        ended_at,
+        run_id,
+        goal_id,
+        parent_span_id,
+        span_kind,
+        status,
+        summary,
+        input_summary,
+        output_summary,
+        metadata_json,
+        privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(span_id) DO UPDATE SET
+        ended_at = excluded.ended_at,
+        run_id = excluded.run_id,
+        goal_id = excluded.goal_id,
+        parent_span_id = excluded.parent_span_id,
+        span_kind = excluded.span_kind,
+        status = excluded.status,
+        summary = excluded.summary,
+        input_summary = excluded.input_summary,
+        output_summary = excluded.output_summary,
+        metadata_json = excluded.metadata_json,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.spanId,
+    record.createdAt,
+    record.endedAt || null,
+    record.runId || null,
+    record.goalId || null,
+    record.parentSpanId || null,
+    record.spanKind,
+    record.status,
+    redactStoredCognitiveMetadata(record.summary, 640),
+    redactStoredCognitiveMetadata(record.inputSummary, 640),
+    redactStoredCognitiveMetadata(record.outputSummary, 640),
+    redactStoredCognitiveMetadata(record.metadataJson, 3200),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listCognitiveTraceSpans(
+  params: {
+    runId?: string;
+    spanKind?: CognitiveTraceSpan['spanKind'];
+    status?: CognitiveTraceSpan['status'];
+    limit?: number;
+  } = {},
+): CognitiveTraceSpan[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.runId) {
+    clauses.push('run_id = ?');
+    args.push(params.runId);
+  }
+  if (params.spanKind) {
+    clauses.push('span_kind = ?');
+    args.push(params.spanKind);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 100, 500)));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM cognitive_trace_spans
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at ASC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapCognitiveTraceSpanRow>[0]>;
+  return rows.map((row) => mapCognitiveTraceSpanRow(row));
+}
+
+function mapCognitiveToolSimulationRow(row: {
+  simulation_id: string;
+  created_at: string;
+  run_id: string;
+  tool_id: string;
+  action_class: string;
+  status: CognitiveToolSimulation['status'];
+  approval_required: number;
+  read_only: number;
+  risk_level: CognitiveToolSimulation['riskLevel'];
+  evidence_expected_json: string;
+  failure_modes_json: string;
+  issues_json: string;
+  next_action: string;
+  privacy_json: string;
+}): CognitiveToolSimulation {
+  return {
+    simulationId: row.simulation_id,
+    createdAt: row.created_at,
+    runId: row.run_id,
+    toolId: row.tool_id,
+    actionClass: row.action_class,
+    status: row.status,
+    approvalRequired: row.approval_required === 1,
+    readOnly: row.read_only === 1,
+    riskLevel: row.risk_level,
+    evidenceExpectedJson: row.evidence_expected_json,
+    failureModesJson: row.failure_modes_json,
+    issuesJson: row.issues_json,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertCognitiveToolSimulation(
+  record: CognitiveToolSimulation,
+): void {
+  db.prepare(
+    `
+      INSERT INTO cognitive_tool_simulations (
+        simulation_id,
+        created_at,
+        run_id,
+        tool_id,
+        action_class,
+        status,
+        approval_required,
+        read_only,
+        risk_level,
+        evidence_expected_json,
+        failure_modes_json,
+        issues_json,
+        next_action,
+        privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(simulation_id) DO UPDATE SET
+        run_id = excluded.run_id,
+        tool_id = excluded.tool_id,
+        action_class = excluded.action_class,
+        status = excluded.status,
+        approval_required = excluded.approval_required,
+        read_only = excluded.read_only,
+        risk_level = excluded.risk_level,
+        evidence_expected_json = excluded.evidence_expected_json,
+        failure_modes_json = excluded.failure_modes_json,
+        issues_json = excluded.issues_json,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.simulationId,
+    record.createdAt,
+    record.runId,
+    record.toolId,
+    record.actionClass,
+    record.status,
+    record.approvalRequired ? 1 : 0,
+    record.readOnly ? 1 : 0,
+    record.riskLevel,
+    redactStoredCognitiveMetadata(record.evidenceExpectedJson, 2400),
+    redactStoredCognitiveMetadata(record.failureModesJson, 2400),
+    redactStoredCognitiveMetadata(record.issuesJson, 2400),
+    redactStoredCognitiveMetadata(record.nextAction, 640),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listCognitiveToolSimulations(
+  params: {
+    runId?: string;
+    status?: CognitiveToolSimulation['status'];
+    limit?: number;
+  } = {},
+): CognitiveToolSimulation[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.runId) {
+    clauses.push('run_id = ?');
+    args.push(params.runId);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 100, 500)));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM cognitive_tool_simulations
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at ASC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapCognitiveToolSimulationRow>[0]>;
+  return rows.map((row) => mapCognitiveToolSimulationRow(row));
+}
+
+function mapCognitiveProviderCooldownRow(row: {
+  provider_id: string;
+  created_at: string;
+  updated_at: string;
+  status: CognitiveProviderCooldown['status'];
+  failure_class: string;
+  source: CognitiveProviderCooldown['source'];
+  run_id: string | null;
+  cooldown_until: string;
+  last_failure: string;
+  next_action: string;
+  metadata_json: string;
+  privacy_json: string;
+}): CognitiveProviderCooldown {
+  return {
+    providerId: row.provider_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    status: row.status,
+    failureClass: row.failure_class,
+    source: row.source,
+    runId: row.run_id,
+    cooldownUntil: row.cooldown_until,
+    lastFailure: row.last_failure,
+    nextAction: row.next_action,
+    metadataJson: row.metadata_json,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertCognitiveProviderCooldown(
+  record: CognitiveProviderCooldown,
+): void {
+  db.prepare(
+    `
+      INSERT INTO cognitive_provider_cooldowns (
+        provider_id,
+        created_at,
+        updated_at,
+        status,
+        failure_class,
+        source,
+        run_id,
+        cooldown_until,
+        last_failure,
+        next_action,
+        metadata_json,
+        privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(provider_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        status = excluded.status,
+        failure_class = excluded.failure_class,
+        source = excluded.source,
+        run_id = excluded.run_id,
+        cooldown_until = excluded.cooldown_until,
+        last_failure = excluded.last_failure,
+        next_action = excluded.next_action,
+        metadata_json = excluded.metadata_json,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.providerId,
+    record.createdAt,
+    record.updatedAt,
+    record.status,
+    record.failureClass,
+    record.source,
+    record.runId || null,
+    record.cooldownUntil,
+    redactStoredCognitiveMetadata(record.lastFailure, 640),
+    redactStoredCognitiveMetadata(record.nextAction, 640),
+    redactStoredCognitiveMetadata(record.metadataJson, 2400),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listCognitiveProviderCooldowns(
+  params: {
+    status?: CognitiveProviderCooldown['status'];
+    activeAt?: string;
+    limit?: number;
+  } = {},
+): CognitiveProviderCooldown[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  if (params.activeAt) {
+    clauses.push('cooldown_until > ?');
+    args.push(params.activeAt);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 25, 200)));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM cognitive_provider_cooldowns
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<
+    Parameters<typeof mapCognitiveProviderCooldownRow>[0]
+  >;
+  return rows.map((row) => mapCognitiveProviderCooldownRow(row));
+}
+
+export function buildCognitiveReplayPacket(params: {
+  runId?: string | null;
+  generatedAt: string;
+  limit?: number;
+}): CognitiveReplayPacket {
+  const latestRun = params.runId
+    ? getCognitiveRun(params.runId) || null
+    : listCognitiveRuns({ limit: 1 })[0] || null;
+  const runId = params.runId || latestRun?.runId || null;
+  return {
+    generatedAt: params.generatedAt,
+    runId,
+    latestRun,
+    spans: runId
+      ? listCognitiveTraceSpans({ runId, limit: params.limit || 100 })
+      : [],
+    simulations: runId
+      ? listCognitiveToolSimulations({ runId, limit: params.limit || 100 })
+      : [],
+    providerCooldowns: listCognitiveProviderCooldowns({
+      status: 'active',
+      activeAt: params.generatedAt,
+      limit: 25,
+    }),
+    checkpoints: runId
+      ? listCognitiveCheckpoints({ runId, limit: params.limit || 50 })
+      : [],
+    privacy: {
+      metadataOnly: true,
+      rawPromptsStored: false,
+      rawPrivateBodiesStored: false,
+      hiddenReasoningStored: false,
+      secretsRedacted: true,
+    },
+  };
+}
+
+export function pruneCognitiveKernelData(params: {
+  cutoffIso: string;
+  retainLimit: number;
+}): void {
+  const childTables = [
+    'cognitive_subgoals',
+    'cognitive_reflections',
+    'cognitive_reward_signals',
+    'cognitive_checkpoints',
+    'cognitive_blackboard_entries',
+    'cognitive_trace_spans',
+    'cognitive_tool_simulations',
+  ];
+  for (const table of childTables) {
+    db.prepare(
+      `
+        DELETE FROM ${table}
+        WHERE run_id IN (
+          SELECT run_id
+          FROM cognitive_runs
+          WHERE created_at < ?
+        )
+      `,
+    ).run(params.cutoffIso);
+  }
+  db.prepare('DELETE FROM cognitive_runs WHERE created_at < ?').run(
+    params.cutoffIso,
+  );
+  for (const table of childTables) {
+    db.prepare(
+      `
+        DELETE FROM ${table}
+        WHERE run_id NOT IN (
+          SELECT run_id
+          FROM cognitive_runs
+          ORDER BY created_at DESC
+          LIMIT ?
+        )
+      `,
+    ).run(Math.max(1, params.retainLimit));
+  }
+  db.prepare(
+    `
+      DELETE FROM cognitive_runs
+      WHERE run_id NOT IN (
+        SELECT run_id
+        FROM cognitive_runs
+        ORDER BY created_at DESC
+        LIMIT ?
+      )
+    `,
+  ).run(Math.max(1, params.retainLimit));
+  db.prepare(
+    `
+      DELETE FROM cognitive_world_beliefs
+      WHERE run_id IS NOT NULL
+        AND run_id NOT IN (SELECT run_id FROM cognitive_runs)
+    `,
+  ).run();
+  db.prepare(
+    `
+      DELETE FROM cognitive_benchmark_attempts
+      WHERE run_id IS NOT NULL
+        AND run_id NOT IN (SELECT run_id FROM cognitive_runs)
+    `,
+  ).run();
+  db.prepare(
+    `
+      DELETE FROM cognitive_benchmark_attempts
+      WHERE created_at < ?
+    `,
+  ).run(params.cutoffIso);
+  db.prepare(
+    `
+      UPDATE cognitive_goals
+      SET root_run_id = NULL, active_checkpoint_id = NULL
+      WHERE root_run_id IS NOT NULL
+        AND root_run_id NOT IN (SELECT run_id FROM cognitive_runs)
+    `,
+  ).run();
 }
 
 export function prunePilotLoopData(cutoffIso: string): void {

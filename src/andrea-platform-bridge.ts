@@ -598,6 +598,198 @@ export interface AndreaPlatformProviderCouncilResult {
   evidenceIds?: string[];
   providerFailures?: string[];
   estimatedCostTier?: 'low' | 'medium' | 'high' | 'unknown';
+  answerGuidance?: AndreaPlatformCouncilAnswerGuidance;
+  structuredVerdict?: {
+    status: string;
+    recommendedAction: string;
+    confidence: number;
+    evidenceGrade: string;
+    approvalNeed: string;
+    riskFlags: string[];
+    evidenceIds: string[];
+    actionDirectives?: Array<{
+      directive: string;
+      priority: string;
+      reason: string;
+      routeOverride?: string | null;
+      requiredEvidence?: string | null;
+      question?: string | null;
+      approvalNeed?: string | null;
+      constraint?: string | null;
+      evidenceIds?: string[];
+      riskFlags?: string[];
+      stopReason?: string | null;
+    }>;
+    ultrathinkTrace?: {
+      requested: boolean;
+      trigger: string;
+      mode: string;
+      providerId?: string | null;
+      model?: string | null;
+      adaptiveThinkingRequested: boolean;
+      adaptiveThinkingSupported: boolean;
+      effortRequested?: string | null;
+      effortSent?: string | null;
+      display: string;
+      rawThinkingStored: false;
+      hiddenReasoningExposed: false;
+    };
+    usableMemberCount: number;
+    blockedMemberCount: number;
+    confidenceMath?: {
+      base: number;
+      degradedParticipationPenalty: number;
+      providerFailurePenalty: number;
+      evidencePenalty: number;
+      verdictPenalty: number;
+      schemaPenalty: number;
+      final: number;
+    };
+    schemaStatusSummary?: {
+      valid: number;
+      repaired: number;
+      invalid_fallback: number;
+    };
+    evidenceScorecard?: {
+      requiredGrade: string;
+      availableGrade: string;
+      freshnessCoverage: {
+        total: number;
+        fresh: number;
+        stale: number;
+        unknown: number;
+        notApplicable: number;
+      };
+      sourceCoverage: Partial<Record<string, number>>;
+      createSafetyCoverage?: Partial<Record<string, number>>;
+      citationCoverage?: {
+        total: number;
+        cited: number;
+        missing: number;
+      };
+      averageSourcePriority?: number;
+      privateContentPolicy: string;
+      gapCount: number;
+      gapIds: string[];
+      sourceClasses: string[];
+      confidencePenalty: number;
+    };
+    budget?: {
+      mode: string;
+      maxRoles: number;
+      roleTimeoutMs: number;
+      maxRetries: number;
+      maxConcurrency: number;
+      fallbackAllowed: boolean;
+      estimatedCostTier: string;
+      usedRoles: number;
+      retryCount: number;
+      loopGuardTriggered: boolean;
+      status: string;
+    };
+    providerParticipation?: {
+      status: string;
+      generatedAt: string;
+      skippedProviderIds: string[];
+      substitutedRoles: string[];
+      riskFlags: string[];
+      nextAction: string;
+      roles: Array<{
+        role: string;
+        providerId: string;
+        memberId: string;
+        required: boolean;
+        action: string;
+        substituteProviderId?: string | null;
+        reason: string;
+        riskFlag: string;
+        healthState: string;
+        failureClass: string;
+      }>;
+    };
+    replaySummary?: string;
+    replayArtifact?: {
+      replaySummary: string;
+      memberStatuses: Array<{
+        memberId: string;
+        providerId: string;
+        role: string;
+        status: string;
+        verdict: string;
+        confidence: number;
+        schemaStatus: string;
+        schemaIssues: string[];
+        evidenceIds: string[];
+        riskFlags: string[];
+      }>;
+      finalVerdict?: {
+        actionDirectives?: Array<{
+          directive: string;
+          priority: string;
+          reason: string;
+        }>;
+      };
+    };
+    quality?: {
+      ledgerVersion: string;
+      retention: string;
+      rawPromptsStored: boolean;
+      rawPrivateBodiesStored: boolean;
+      outcomeSignalCount: number;
+    };
+    calibration?: {
+      requestedMode: string;
+      chosenMode: string;
+      changedMode: boolean;
+      protectedMode: boolean;
+      reason: string;
+      recentRuns: number;
+      lowConfidenceRuns: number;
+      schemaInvalidRuns: number;
+      verifierBlockRuns: number;
+      negativeFeedbackRuns: number;
+      degradedProviderIds: string[];
+      providerReliability: Array<{
+        providerId: string;
+        role: string;
+        runs: number;
+        completed: number;
+        blocked: number;
+        skipped: number;
+        recentFailureRate: number;
+        degraded: boolean;
+      }>;
+    };
+  };
+}
+
+export interface AndreaPlatformCouncilAnswerGuidance {
+  status: 'pass' | 'warn' | 'clarify' | 'block';
+  visibleVerdict: string;
+  answerDirection: string;
+  confidence: number;
+  uncertainty: string;
+  clarifyingQuestion?: string | null;
+  blocker?: string | null;
+  sourceMemberIds: string[];
+  recommendedAction?: string;
+  approvalNeed?: string;
+  evidenceGrade?: string;
+  evidenceIds?: string[];
+  riskFlags?: string[];
+  actionDirectives?: Array<{
+    directive: string;
+    priority: string;
+    reason: string;
+    routeOverride?: string | null;
+    requiredEvidence?: string | null;
+    question?: string | null;
+    approvalNeed?: string | null;
+    constraint?: string | null;
+    evidenceIds?: string[];
+    riskFlags?: string[];
+    stopReason?: string | null;
+  }>;
 }
 
 export interface AndreaPlatformCouncilChallengeResult {
@@ -639,7 +831,13 @@ export interface AndreaPlatformCouncilEventInput {
     | 'conductor';
   providerId?: string | null;
   model?: string | null;
-  status?: 'planned' | 'running' | 'completed' | 'blocked' | 'error';
+  status?:
+    | 'planned'
+    | 'running'
+    | 'completed'
+    | 'blocked'
+    | 'skipped'
+    | 'error';
   inputSummary?: string;
   outputSummary?: string;
   visiblePrompt?: string | null;

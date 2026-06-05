@@ -21,6 +21,8 @@ function readScenarioIds(): string[] {
 }
 
 async function main(): Promise<void> {
+  process.env.PROVIDER_REQUEST_TIMEOUT_MS ||=
+    process.env.INTELLIGENCE_REGRESSION_PROVIDER_TIMEOUT_MS || '5000';
   const baseline = hasFlag('--baseline');
   const noRecord = hasFlag('--no-record');
   const noReflect = hasFlag('--no-reflect');

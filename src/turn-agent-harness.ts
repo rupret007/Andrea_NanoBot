@@ -1,5 +1,7 @@
 import {
   buildMemoryReadPlan,
+  classifyMemoryCandidate,
+  decideMemoryPromotion,
   type AndreaMemoryTaskFamily,
   type AndreaMemoryTierId,
   type MemoryReadPlan,
@@ -9,6 +11,7 @@ import {
   emitAndreaPlatformSkillCandidate,
   emitAndreaPlatformTurnReflection,
   listAndreaPlatformActiveSkillCandidates,
+  type AndreaPlatformCouncilAnswerGuidance,
   type AndreaPlatformDeliberationResult,
   type AndreaPlatformCouncilMode,
   type AndreaPlatformProviderCouncilResult,
@@ -17,6 +20,19 @@ import {
   type PlatformTaskFamily,
 } from './andrea-platform-bridge.js';
 import { runObservableProviderCouncil } from './provider-council-runner.js';
+import {
+  detectThinkingControlPreference,
+  detectThinkingControlTrigger,
+  sanitizeCouncilIntentSnippet,
+} from './thinking-controls.js';
+import { recordCouncilOutcomeSignal } from './council-quality.js';
+import { classifyCouncilLearningCandidate } from './council-learning-classifier.js';
+import {
+  beginCognitiveKernelRun,
+  finalizeCognitiveKernelOutcome,
+  type CognitiveKernelResult,
+} from './cognitive-kernel.js';
+import type { CouncilOutcomeSignalKind } from './types.js';
 
 export type TurnAgentChannel = 'telegram' | 'bluebubbles' | 'alexa' | 'system';
 
@@ -118,6 +134,12 @@ export interface PreSendEvaluation {
   summary: string;
 }
 
+export interface CouncilGuidedReply {
+  text: string;
+  applied: boolean;
+  flags: string[];
+}
+
 export interface PostTurnReflection {
   routeUsed: string;
   answerClass: 'handled' | 'blocked' | 'degraded' | 'fallback' | 'unknown';
@@ -137,6 +159,7 @@ export interface TurnAgentHarnessContext {
   contextCompile: ContextCompileResult;
   deliberation?: AndreaPlatformDeliberationResult | null;
   providerCouncil?: AndreaPlatformProviderCouncilResult | null;
+  cognitiveRun?: CognitiveKernelResult | null;
   platformHoldReply?: string | null;
   actorId?: string | null;
 }
@@ -516,7 +539,11 @@ function buildSanitizedGoal(
   taskFamily: PlatformTaskFamily,
 ): string {
   const route = input.requestRoute || 'unknown_route';
-  return `Handle ${taskFamily} turn from ${input.channel} via ${route}.`;
+  const sanitizedIntent =
+    taskFamily === 'communication'
+      ? `Communication help requested; raw thread/message body stays local. Shape: ${describeTextShape(input.text)}.`
+      : sanitizeCouncilIntentSnippet(input.text, 240);
+  return `Handle ${taskFamily} turn from ${input.channel} via ${route}. Safe user intent: ${sanitizedIntent || 'unspecified'}.`;
 }
 
 function buildPlatformHoldReply(
@@ -569,6 +596,18 @@ function shouldRunProviderCouncil(input: {
   deliberation?: AndreaPlatformDeliberationResult | null;
 }): boolean {
   const text = normalize(input.text);
+  const thinkingControl = detectThinkingControlPreference(input.text);
+  const highRiskRequired =
+    input.taskFamily === 'operator' ||
+    input.taskFamily === 'code' ||
+    (input.selectedSkill.sideEffectRisk === 'high' &&
+      /\b(send|deploy|repair|fix|commit|push|restart)\b/.test(text));
+  if (thinkingControl === 'quick' && !highRiskRequired) {
+    return false;
+  }
+  if (thinkingControl === 'deep') {
+    return true;
+  }
   if (input.taskFamily === 'operator' || input.taskFamily === 'code') {
     return true;
   }
@@ -590,6 +629,17 @@ function shouldRunProviderCouncil(input: {
   ) {
     return true;
   }
+  if (
+    (input.taskFamily === 'assistant' ||
+      input.taskFamily === 'calendar' ||
+      input.taskFamily === 'communication') &&
+    (input.text.trim().split(/\s+/).length >= 6 ||
+      /\b(should i|help me decide|what should|plan|prioriti[sz]e|tomorrow|this week|draft|make sense|solve|logic|calendar|schedule|reply|what am i forgetting|what matters)\b/.test(
+        text,
+      ))
+  ) {
+    return true;
+  }
   return (
     input.deliberation?.executionPosture === 'learn_first' ||
     input.deliberation?.executionPosture === 'approval_first'
@@ -602,6 +652,9 @@ function selectProviderCouncilMode(input: {
   selectedSkill: SkillAffordanceCard;
 }): AndreaPlatformCouncilMode {
   const text = normalize(input.text);
+  if (detectThinkingControlPreference(input.text) === 'deep') {
+    return 'max_iq_council';
+  }
   if (
     input.taskFamily === 'operator' &&
     /\b(repair|diagnose|fix|deploy|restart|commit|push|approval|approve|approved|go ahead|do it)\b/.test(
@@ -704,17 +757,37 @@ export async function beginTurnAgentHarness(
         riskLevel: riskLevelForCouncil(contextCompile.selectedSkill),
         requiredEvidence: contextCompile.selectedSkill.evidenceLevel,
         allowedSideEffects: sideEffectsForCouncil(contextCompile.selectedSkill),
-        rawContentPolicy: 'metadata_only',
+        rawContentPolicy: 'sanitized_snippets',
         metadata: {
           request_route: input.requestRoute || '',
           capability_id: input.capabilityId || '',
-          turn_agent_harness: 'v14_observable_provider_council',
+          turn_agent_harness: 'v15_multi_llm_answer_guidance',
           skill_id: contextCompile.selectedSkill.skillId,
           selected_policy_id: deliberation?.selectedPolicyId || '',
-          raw_content_policy: 'metadata_only',
+          raw_content_policy: 'sanitized_snippets',
+          thinking_control: detectThinkingControlPreference(input.text),
+          thinking_trigger: detectThinkingControlTrigger(input.text),
         },
       })
     : null;
+  const councilHoldReply = buildCouncilDirectiveHoldReply(providerCouncil);
+  const cognitiveRun = beginCognitiveKernelRun({
+    turnId: input.turnId,
+    channel: input.channel,
+    groupFolder: input.groupFolder,
+    taskFamily,
+    goal: buildSanitizedGoal(input, taskFamily),
+    requestRoute: input.requestRoute,
+    selectedSkillId: contextCompile.selectedSkill.skillId,
+    selectedSkillPurpose: contextCompile.selectedSkill.purpose,
+    selectedSkillApprovalNeed: contextCompile.selectedSkill.approvalNeed,
+    selectedSkillSideEffectRisk: contextCompile.selectedSkill.sideEffectRisk,
+    selectedSkillEvidenceLevel: contextCompile.selectedSkill.evidenceLevel,
+    providerCouncil,
+    knownBlockers: input.knownBlockers,
+    thinkingPreference: detectThinkingControlPreference(input.text),
+    thinkingTrigger: detectThinkingControlTrigger(input.text),
+  });
   return {
     turnId: input.turnId,
     channel: input.channel,
@@ -726,9 +799,39 @@ export async function beginTurnAgentHarness(
     contextCompile,
     deliberation,
     providerCouncil,
-    platformHoldReply: buildPlatformHoldReply(deliberation, contextCompile),
+    cognitiveRun,
+    platformHoldReply:
+      councilHoldReply || buildPlatformHoldReply(deliberation, contextCompile),
     actorId: input.actorId,
   };
+}
+
+function buildCouncilDirectiveHoldReply(
+  providerCouncil: AndreaPlatformProviderCouncilResult | null | undefined,
+): string | null {
+  const guidance = providerCouncil?.answerGuidance;
+  const directives =
+    providerCouncil?.structuredVerdict?.actionDirectives ||
+    guidance?.actionDirectives ||
+    [];
+  const stop = directives.find(
+    (directive) => directive.directive === 'verifier_stop',
+  );
+  if (stop) {
+    return (
+      guidance?.blocker ||
+      stop.stopReason ||
+      stop.reason ||
+      'I need to hold this until the council blocker is resolved.'
+    );
+  }
+  const clarify = directives.find(
+    (directive) => directive.directive === 'ask_clarifying_question',
+  );
+  if (clarify?.question) {
+    return clarify.question;
+  }
+  return null;
 }
 
 function describeTextShape(text: string): string {
@@ -801,7 +904,7 @@ export function buildTurnEvidenceCards(
 }
 
 function hasInternalLeakage(text: string): boolean {
-  return /\b(codex_local|openai_cloud|claude_legacy|task_ledger|progress_ledger|trace_grade|platform coordinator|worker_id|selected_policy_id)\b/i.test(
+  return /\b(codex_local|openai_cloud|anthropic_cloud|minimax_cloud|gemini_cloud|claude_legacy|task_ledger|progress_ledger|trace_grade|platform coordinator|worker_id|selected_policy_id)\b/i.test(
     text,
   );
 }
@@ -809,7 +912,7 @@ function hasInternalLeakage(text: string): boolean {
 function stripInternalLeakage(text: string): string {
   return text
     .replace(
-      /\b(?:codex_local|openai_cloud|claude_legacy)\b/gi,
+      /\b(?:codex_local|openai_cloud|anthropic_cloud|minimax_cloud|gemini_cloud|claude_legacy)\b/gi,
       'the best available worker',
     )
     .replace(/\btask_ledger\b/gi, 'task record')
@@ -854,7 +957,7 @@ function repairCommunicationSendOverreach(text: string): string {
 
 function repairCommunicationSendOverreachExtended(text: string): string {
   return text.replace(
-    /\b(?:i'?ll send it|i am sending|i'?m sending|sending it now|i'?ll text them|i'?ll reply for you|i replied for you|i'?ll fire that off)\b/gi,
+    /\b(?:i'?ll send it|i am sending|i'?m sending|sending it now|i'?ll text them|i'?ll reply for you|i replied for you|i'?ll fire that off|i drafted it for approval)\b/gi,
     'I drafted it for your approval',
   );
 }
@@ -876,6 +979,60 @@ function explainProviderBlockerSoft(text: string): string {
   return `Heads up: I'm answering from saved context because the live provider lane isn't currently verified. ${text}`;
 }
 
+function visibleGuidanceLine(
+  guidance: AndreaPlatformCouncilAnswerGuidance,
+): string {
+  const words = guidance.visibleVerdict
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  const verdict =
+    words.length <= 32 ? words.join(' ') : `${words.slice(0, 32).join(' ')}...`;
+  if (!verdict) return '';
+  return `Council check: ${verdict}`;
+}
+
+export function applyCouncilGuidanceToReply(
+  context: TurnAgentHarnessContext | null,
+  text: string,
+): CouncilGuidedReply {
+  const guidance = context?.providerCouncil?.answerGuidance;
+  if (!guidance || !guidance.visibleVerdict.trim()) {
+    return { text, applied: false, flags: [] };
+  }
+  if (/^council check:/i.test(text.trim())) {
+    return { text, applied: false, flags: [] };
+  }
+  const guidanceLine = visibleGuidanceLine(guidance);
+  if (!guidanceLine) {
+    return { text, applied: false, flags: [] };
+  }
+  if (guidance.status === 'block' && guidance.blocker) {
+    return {
+      text: `${guidanceLine}\n\nI need to hold this until the blocker is resolved: ${guidance.blocker}`,
+      applied: true,
+      flags: ['provider_council_guidance_applied', 'provider_council_block'],
+    };
+  }
+  if (
+    guidance.status === 'clarify' &&
+    guidance.clarifyingQuestion &&
+    !/\?\s*$/.test(text.trim())
+  ) {
+    return {
+      text: `${guidanceLine}\n\n${guidance.clarifyingQuestion}`,
+      applied: true,
+      flags: ['provider_council_guidance_applied', 'provider_council_clarify'],
+    };
+  }
+  return {
+    text: `${guidanceLine}\n\n${text}`,
+    applied: true,
+    flags: ['provider_council_guidance_applied'],
+  };
+}
+
 export function evaluateTurnReply(
   input: EvaluateTurnReplyInput,
 ): PreSendEvaluation {
@@ -886,6 +1043,13 @@ export function evaluateTurnReply(
   const directives = new Set<ActiveSkillDirective>(
     input.context?.contextCompile.effectiveDirectives || [],
   );
+
+  const councilGuided = applyCouncilGuidanceToReply(input.context, rewritten);
+  if (councilGuided.applied) {
+    rewritten = councilGuided.text;
+    flags.push(...councilGuided.flags);
+    safeRewriteApplied = true;
+  }
 
   if (
     input.context?.taskFamily === 'calendar' &&
@@ -942,7 +1106,9 @@ export function evaluateTurnReply(
     );
   if (
     communicationSendRisk &&
-    /\b(i sent|sent it|message sent)\b/i.test(rewritten)
+    /\b(i sent|sent it|message sent|i'?ll send it|i am sending|i'?m sending|sending it now|i'?ll text them|i'?ll reply for you|i replied for you|i'?ll fire that off)\b/i.test(
+      rewritten,
+    )
   ) {
     rewritten = repairCommunicationSendOverreach(rewritten);
     flags.push('communication_send_repaired');
@@ -1004,14 +1170,25 @@ export function evaluateTurnReply(
   }
 
   const actualEvidence = evidence[0]?.actualLevel || 'unknown';
+  const councilDirectives =
+    input.context?.providerCouncil?.structuredVerdict?.actionDirectives ||
+    input.context?.providerCouncil?.answerGuidance?.actionDirectives ||
+    [];
+  const verifierStop = councilDirectives.some(
+    (directive) => directive.directive === 'verifier_stop',
+  );
   const evidenceGap =
-    input.blockerClass || actualEvidence === 'weak'
+    verifierStop || input.blockerClass || actualEvidence === 'weak'
       ? 'blocked'
       : input.context?.deliberation?.expectedEvidence === 'strong' &&
           actualEvidence !== 'strong'
         ? 'minor'
         : 'none';
-  const status = evidenceGap === 'blocked' ? 'warn' : 'pass';
+  const status = verifierStop
+    ? 'block'
+    : evidenceGap === 'blocked'
+      ? 'warn'
+      : 'pass';
   return {
     status,
     evidenceLevel: actualEvidence,
@@ -1030,6 +1207,53 @@ export function evaluateTurnReply(
   };
 }
 
+function recordCouncilOutcomeSignalsForTurn(input: {
+  context: TurnAgentHarnessContext | null;
+  evaluation: PreSendEvaluation;
+  routeUsed: string;
+  answerClass: PostTurnReflection['answerClass'];
+  blockerClass?: string | null;
+}): void {
+  const councilRunId = input.context?.providerCouncil?.councilRunId;
+  if (!councilRunId || !input.context?.providerCouncil?.answerGuidance) {
+    return;
+  }
+  const flags = input.evaluation.evaluatorFlags.filter(
+    (flag) => flag && flag !== 'none',
+  );
+  const kinds = new Set<CouncilOutcomeSignalKind>();
+  if (flags.includes('provider_council_guidance_applied')) {
+    kinds.add('guidance_applied');
+  }
+  if (input.evaluation.safeRewriteApplied) {
+    kinds.add('safe_rewrite');
+  }
+  if (
+    input.evaluation.status === 'block' ||
+    input.answerClass === 'blocked' ||
+    input.blockerClass
+  ) {
+    kinds.add('answer_blocked');
+  } else if (flags.includes('provider_council_clarify')) {
+    kinds.add('answer_clarified');
+  } else {
+    kinds.add('answer_sent');
+  }
+  for (const signalKind of kinds) {
+    recordCouncilOutcomeSignal({
+      councilRunId,
+      signalKind,
+      groupFolder: input.context.groupFolder,
+      channel: input.context.channel,
+      routeKey: input.routeUsed,
+      capabilityId: input.context.selectedSkill.skillId,
+      blockerClass: input.blockerClass,
+      flags,
+      summary: `Council outcome ${signalKind} for ${input.context.taskFamily}; evaluation=${input.evaluation.status}; answer_class=${input.answerClass}; route=${input.routeUsed}.`,
+    });
+  }
+}
+
 export async function reflectTurnAgentOutcome(input: {
   context: TurnAgentHarnessContext | null;
   evaluation: PreSendEvaluation;
@@ -1039,6 +1263,23 @@ export async function reflectTurnAgentOutcome(input: {
   fallbackUsed?: boolean;
 }): Promise<PostTurnReflection> {
   const context = input.context;
+  recordCouncilOutcomeSignalsForTurn({
+    context,
+    evaluation: input.evaluation,
+    routeUsed: input.routeUsed,
+    answerClass: input.answerClass || 'unknown',
+    blockerClass: input.blockerClass,
+  });
+  finalizeCognitiveKernelOutcome({
+    cognitiveRun: context?.cognitiveRun,
+    evaluationStatus: input.evaluation.status,
+    evidenceGap: input.evaluation.evidenceGap,
+    evaluatorFlags: input.evaluation.evaluatorFlags,
+    routeUsed: input.routeUsed,
+    answerClass: input.answerClass || 'unknown',
+    blockerClass: input.blockerClass,
+    fallbackUsed: input.fallbackUsed,
+  });
   if (!context?.deliberation?.taskLedgerId) {
     return {
       routeUsed: input.routeUsed,
@@ -1077,6 +1318,11 @@ export async function reflectTurnAgentOutcome(input: {
       provider_council_approval_required: String(
         context.providerCouncil?.approvalRequired === true,
       ),
+      cognitive_run_id: context.cognitiveRun?.run.runId || '',
+      cognitive_mode: context.cognitiveRun?.run.cognitiveMode || '',
+      cognitive_status: context.cognitiveRun?.run.status || '',
+      cognitive_skill_id: context.cognitiveRun?.run.linkedSkillCardId || '',
+      cognitive_next_action: context.cognitiveRun?.run.nextAction || '',
       route_used: input.routeUsed,
       answer_class: input.answerClass || 'unknown',
       self_check_status: input.evaluation.status,
@@ -1160,6 +1406,80 @@ export async function reflectTurnAgentOutcome(input: {
         evidence_gap: input.evaluation.evidenceGap,
         safe_rewrite_applied: String(input.evaluation.safeRewriteApplied),
         raw_content_policy: 'metadata_only',
+      },
+    });
+  }
+  const councilGuidance = context.providerCouncil?.answerGuidance;
+  if (councilGuidance) {
+    const learning = classifyMemoryCandidate({
+      taskFamily: toMemoryTaskFamily(context.taskFamily),
+      summary: `Council-guided ${context.taskFamily} turn ended with ${councilGuidance.status} guidance and ${input.evaluation.status} pre-send check.`,
+      evidenceMode: 'outcome_review',
+      grounded: true,
+      conflictRisk:
+        councilGuidance.status === 'block' ||
+        councilGuidance.status === 'clarify'
+          ? 'medium'
+          : 'low',
+    });
+    const learningClassification = classifyCouncilLearningCandidate({
+      summary: learning.summary,
+      candidates: [
+        {
+          id: context.selectedSkill.skillId,
+          summary: context.selectedSkill.purpose,
+        },
+        ...(context.contextCompile.activeSkillCandidates || [])
+          .slice(0, 5)
+          .map((candidate) => ({
+            id: candidate.candidateId || candidate.skillId,
+            summary: candidate.summary || candidate.skillId,
+          })),
+      ],
+    });
+    const promotion = decideMemoryPromotion(learning);
+    await emitAndreaPlatformSkillCandidate({
+      skillId: `${context.selectedSkill.skillId}.council_learning`,
+      taskFamily: context.taskFamily,
+      sourceKind: 'operator_review',
+      summary: learning.summary,
+      evidenceCount: Math.max(
+        1,
+        context.providerCouncil?.observedMemberIds?.length || 1,
+      ),
+      riskLevel: context.selectedSkill.sideEffectRisk,
+      approvalRequired:
+        promotion.decision === 'require_confirmation' ||
+        context.selectedSkill.approvalNeed !== 'none',
+      linkedTraceIds: [
+        context.deliberation.taskLedgerId,
+        context.deliberation.traceGradeId || '',
+        context.providerCouncil?.councilRunId || '',
+      ].filter(Boolean),
+      linkedEvaluationIds: [
+        reflection?.evaluationId || context.deliberation.evaluationId || '',
+      ].filter(Boolean),
+      metadata: {
+        source_system: 'andrea_nanobot',
+        trigger: 'post_turn_council_learning',
+        memory_candidate_id: learning.candidateId,
+        memory_write_class: learning.writeClass,
+        memory_target_tier: learning.targetTier,
+        memory_promotion_decision: promotion.decision,
+        memory_retention: 'keep_until_changed',
+        council_status: councilGuidance.status,
+        council_confidence: councilGuidance.confidence.toFixed(2),
+        council_source_members: councilGuidance.sourceMemberIds.join(','),
+        council_learning_decision: learningClassification.decision,
+        council_learning_match_id:
+          'matchedId' in learningClassification
+            ? learningClassification.matchedId
+            : '',
+        council_learning_similarity: learningClassification.score.toFixed(3),
+        council_learning_reason: learningClassification.reason,
+        raw_content_policy: 'metadata_only',
+        durable_learning_policy:
+          'sanitized_summaries_only_no_raw_reasoning_or_private_bodies',
       },
     });
   }

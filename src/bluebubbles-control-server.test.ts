@@ -133,6 +133,10 @@ function buildConfig(
     port: 0,
     groupFolder: 'main',
     webhookPublicBaseUrl: 'http://192.168.5.136:4305',
+    serverPublicUrl: null,
+    localPort: null,
+    imessageAccountLabel: null,
+    computerId: null,
     chatScope: 'all_synced',
     allowedChatGuids: ['iMessage;-;+14695405551'],
     allowedChatGuid: 'iMessage;-;+14695405551',
@@ -389,6 +393,35 @@ describe('BlueBubbles control server', () => {
     expect(JSON.stringify(statusBody)).not.toContain('hook-secret');
     expect(JSON.stringify(statusBody)).toContain('secret=***');
     expect(statusBody.status.transportState).toBe('ready');
+
+    const doctorResponse = await fetch(
+      `${control.baseUrl}/v1/bluebubbles/doctor`,
+      {
+        headers: {
+          Authorization: 'Bearer control-token',
+        },
+      },
+    );
+    expect(doctorResponse.status).toBe(200);
+    const doctorBody = (await doctorResponse.json()) as {
+      ok: boolean;
+      blockerCategory: string;
+      nextAction: string;
+      privacy: {
+        secretsRedacted: boolean;
+        andreaWebhookIsPrivate: boolean;
+      };
+      status: {
+        proofState: string;
+        activeBaseUrl: string | null;
+      };
+    };
+    expect(doctorBody.ok).toBe(false);
+    expect(doctorBody.blockerCategory).toBe('proof_needed');
+    expect(doctorBody.nextAction).toContain('send it');
+    expect(doctorBody.privacy.secretsRedacted).toBe(true);
+    expect(doctorBody.privacy.andreaWebhookIsPrivate).toBe(true);
+    expect(doctorBody.status.activeBaseUrl).toBe(apiStub.baseUrl);
 
     const proofResponse = await fetch(
       `${control.baseUrl}/v1/bluebubbles/proof`,

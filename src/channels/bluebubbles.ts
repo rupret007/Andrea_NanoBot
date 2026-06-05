@@ -25,8 +25,8 @@ import { logger } from '../logger.js';
 import { buildBlueBubblesChatJid } from '../companion-conversation-binding.js';
 import { hasBlueBubblesAndreaMention } from '../bluebubbles-companion.js';
 import {
-  BLUEBUBBLES_CANONICAL_SELF_THREAD_JID,
   expandBlueBubblesLogicalSelfThreadJids,
+  getBlueBubblesCanonicalSelfThreadJid,
   isBlueBubblesSelfThreadAliasJid,
 } from '../bluebubbles-self-thread.js';
 import {
@@ -62,6 +62,8 @@ const BLUEBUBBLES_OUTBOUND_SENDER_LABEL = 'Andrea:';
 const BLUEBUBBLES_STARTUP_FETCH_TIMEOUT_MS = 5_000;
 const BLUEBUBBLES_SHADOW_POLL_INTERVAL_MS = 75_000;
 const BLUEBUBBLES_MISSED_INBOUND_GRACE_MS = 2 * 60 * 1_000;
+const BLUEBUBBLES_DIRECT_CONTEXT_WINDOW_MS =
+  BLUEBUBBLES_MISSED_INBOUND_GRACE_MS * 15;
 const BLUEBUBBLES_EVIDENCE_WINDOW_MS = 10 * 60 * 1_000;
 const BLUEBUBBLES_FALLBACK_COOLDOWN_MS = 6 * 60 * 60 * 1_000;
 const BLUEBUBBLES_FALLBACK_EVIDENCE_THRESHOLD = 2;
@@ -170,6 +172,11 @@ function formatBlueBubblesOutboundText(text: string): string {
   const firstLine = normalized.slice(0, newlineIndex);
   const remaining = normalized.slice(newlineIndex);
   return `${BLUEBUBBLES_OUTBOUND_SENDER_LABEL} ${firstLine}${remaining}`;
+}
+
+function formatBlueBubblesDirectContextWindow(): string {
+  const minutes = Math.round(BLUEBUBBLES_DIRECT_CONTEXT_WINDOW_MS / 60_000);
+  return `${minutes} minutes`;
 }
 
 export function buildBlueBubblesLinkedChatJid(
@@ -356,6 +363,10 @@ export function resolveBlueBubblesConfig(
     'BLUEBUBBLES_PORT',
     'BLUEBUBBLES_GROUP_FOLDER',
     'BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL',
+    'BLUEBUBBLES_SERVER_PUBLIC_URL',
+    'BLUEBUBBLES_LOCAL_PORT',
+    'BLUEBUBBLES_IMESSAGE_ACCOUNT_LABEL',
+    'BLUEBUBBLES_COMPUTER_ID',
     'BLUEBUBBLES_CHAT_SCOPE',
     'BLUEBUBBLES_ALLOWED_CHAT_GUIDS',
     'BLUEBUBBLES_ALLOWED_CHAT_GUID',
@@ -394,6 +405,20 @@ export function resolveBlueBubblesConfig(
     webhookPublicBaseUrl: normalizeBaseUrl(
       process.env.BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL ||
         env.BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL,
+    ),
+    serverPublicUrl: normalizeBaseUrl(
+      process.env.BLUEBUBBLES_SERVER_PUBLIC_URL ||
+        env.BLUEBUBBLES_SERVER_PUBLIC_URL,
+    ),
+    localPort: normalizeText(
+      process.env.BLUEBUBBLES_LOCAL_PORT || env.BLUEBUBBLES_LOCAL_PORT,
+    ),
+    imessageAccountLabel: normalizeText(
+      process.env.BLUEBUBBLES_IMESSAGE_ACCOUNT_LABEL ||
+        env.BLUEBUBBLES_IMESSAGE_ACCOUNT_LABEL,
+    ),
+    computerId: normalizeText(
+      process.env.BLUEBUBBLES_COMPUTER_ID || env.BLUEBUBBLES_COMPUTER_ID,
     ),
     chatScope: normalizeChatScope(
       process.env.BLUEBUBBLES_CHAT_SCOPE || env.BLUEBUBBLES_CHAT_SCOPE,
@@ -1700,8 +1725,7 @@ export class BlueBubblesChannel implements Channel {
     if (!normalizedChatJid) {
       return false;
     }
-    const freshnessCutoff =
-      Date.now() - BLUEBUBBLES_MISSED_INBOUND_GRACE_MS * 15;
+    const freshnessCutoff = Date.now() - BLUEBUBBLES_DIRECT_CONTEXT_WINDOW_MS;
     return listRecentMessagesForChat(normalizedChatJid, 12).some((message) => {
       const timestamp = Date.parse(message.timestamp || '');
       if (!Number.isFinite(timestamp) || timestamp < freshnessCutoff) {
@@ -1815,7 +1839,7 @@ export class BlueBubblesChannel implements Channel {
       }
     };
 
-    push(BLUEBUBBLES_CANONICAL_SELF_THREAD_JID);
+    push(getBlueBubblesCanonicalSelfThreadJid());
     push(this.lastInboundChatJid);
     push(this.monitorState.lastInboundChatJid);
     push(this.monitorState.lastOutboundObservedChatJid);
@@ -2193,7 +2217,7 @@ export class BlueBubblesChannel implements Channel {
         : `Andrea saw a Messages turn in ${chatJid}, but it was intentionally ignored because that chat is outside the configured scope.`,
       reason === 'mention_required'
         ? ignoredDirectChat
-          ? 'Use @Andrea once in that direct 1:1 chat to re-establish Andrea context, or continue from the most recent Andrea turn in that same thread.'
+          ? `Use @Andrea once in that direct 1:1 chat to re-establish Andrea context. After Andrea replies there, bare follow-ups stay available in that same thread for about ${formatBlueBubblesDirectContextWindow()}.`
           : 'Use @Andrea in that group thread to open the next action, then keep follow-ups in the same thread.'
         : 'Use a chat that is inside the configured Messages scope, or widen the BlueBubbles scope on this host.',
     );
@@ -2435,7 +2459,7 @@ export class BlueBubblesChannel implements Channel {
             : `The newest Messages turn in ${latestIgnored.chatJid} is outside Andrea's configured BlueBubbles scope.`,
           latestIgnored.reason === 'mention_required'
             ? ignoredDirectChat
-              ? 'Use @Andrea once in that direct 1:1 chat, or continue from the most recent Andrea turn in that same thread.'
+              ? `Use @Andrea once in that direct 1:1 chat. After Andrea replies there, bare follow-ups stay available in that same thread for about ${formatBlueBubblesDirectContextWindow()}.`
               : 'Use @Andrea in that group thread to open the next action, then keep follow-ups in the same thread.'
             : 'Use a chat inside the configured scope, or widen the BlueBubbles scope on this host.',
         );
@@ -2799,7 +2823,7 @@ export class BlueBubblesChannel implements Channel {
       writeResponse(
         res,
         202,
-        'Ignored outgoing message without @Andrea mention',
+        `Ignored outgoing message without @Andrea mention. Use @Andrea once in this direct chat; after Andrea replies, bare follow-ups are accepted here for about ${formatBlueBubblesDirectContextWindow()}.`,
       );
       return;
     }
@@ -3170,6 +3194,10 @@ export class BlueBubblesChannel implements Channel {
       activeBaseUrl: this.getActiveBaseUrl(),
       candidateBaseUrls: this.getConfiguredBaseUrlCandidates(),
       publicWebhookUrl: this.getPublicWebhookDisplayUrl(),
+      serverPublicUrl: this.config.serverPublicUrl,
+      localPort: this.config.localPort,
+      imessageAccountLabel: this.config.imessageAccountLabel,
+      computerId: this.config.computerId,
       webhookRegistrationState: this.webhookRegistrationStatus,
       webhookRegistrationDetail: this.webhookRegistrationDetail || 'none',
       transportState: this.transportProbeStatus,

@@ -169,6 +169,22 @@ describe('debug log tails', () => {
     expect(payload.body).toContain('HOST: starting');
   });
 
+  it('prefers the active service stdout log for host logs', () => {
+    fs.writeFileSync(
+      path.join(tempDir, 'logs', 'nanoclaw.host.log'),
+      '[2026-04-02T00:00:00.000Z] legacy host line\n',
+    );
+    fs.writeFileSync(
+      path.join(tempDir, 'logs', 'nanoclaw.log'),
+      '[2026-04-02T00:00:01.000Z] service stdout line\n',
+    );
+
+    const payload = readDebugLogs({ target: 'host', lines: 5 });
+    expect(payload.title).toBe('host');
+    expect(payload.body).toContain('service stdout line');
+    expect(payload.body).not.toContain('legacy host line');
+  });
+
   it('includes host dependency and log path details in debug status', () => {
     persistNanoclawHostState({
       bootId: 'boot-debug',
@@ -193,7 +209,14 @@ describe('debug log tails', () => {
       'Host dependency detail: OpenAI key is out of quota/billing.',
     );
     expect(status).toContain(
-      `Host log path: ${path.join(tempDir, 'logs', 'nanoclaw.host.log')}`,
+      `Host log path: ${path.join(tempDir, 'logs', 'nanoclaw.log')}`,
+    );
+    expect(status).toContain(
+      `Host stderr log path: ${path.join(
+        tempDir,
+        'logs',
+        'nanoclaw.error.log',
+      )}`,
     );
     expect(status).toContain('BlueBubbles proof:');
     expect(status).toContain('BlueBubbles last inbound chat:');
@@ -291,8 +314,8 @@ describe('debug log tails', () => {
       librarySaved: false,
       currentWorkRef: null,
       summaryText: 'Daily guidance proof',
-      startedAt: '2026-04-07T17:00:00.000Z',
-      completedAt: '2026-04-07T17:00:05.000Z',
+      startedAt: new Date(Date.now() - 5_000).toISOString(),
+      completedAt: new Date().toISOString(),
       durationMs: 5000,
     });
     insertPilotIssue({
