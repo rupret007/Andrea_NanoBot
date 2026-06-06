@@ -113,7 +113,7 @@ These are discoverable by normal language rather than slash commands.
 | Compare, explain, and saved context           | Telegram, Alexa              | `degraded_but_usable` | `what should I know before deciding`, `compare these options`, `tell me something interesting`                                                                   |
 | Multi-model thinking controls                 | Telegram, BlueBubbles, Alexa | `live_proven`         | `ultrathink`, `ultracode`, `think harder`, `use all models`, `max IQ`, `deep dive`, `quick answer`, `keep it simple`                                             |
 | Council quality and calibration               | Telegram                     | `live_proven`         | `/council`, `council status`, `council health`, `council tasks`                                                                                                  |
-| Cognitive task engine                         | Telegram                     | `live_proven`         | `/cognition`, `cognition status`, `why did you choose that?`, operator checks via `debug:cognition -- --resume`, `debug:cognition -- --trace`, and `debug:cognition -- --benchmarks` |
+| Cognitive task engine                         | Telegram                     | `live_proven`         | `/cognition`, `cognition status`, `why did you choose that?`, operator checks via `debug:cognition -- --resume`, `debug:cognition -- --trace`, `debug:cognition -- --execute-drill research`, `debug:cognition -- --trajectory --json`, and `debug:cognition -- --benchmarks` |
 | Learning and memory controls                  | Telegram, Alexa, BlueBubbles | `live_proven`         | `what did you learn?`, `remember this`, `forget that`, `do not learn from this`                                                                                  |
 | Open follow-through and people                | Telegram, Alexa, BlueBubbles | `live_proven`         | `what's still open`, `what bills do I need to pay this week`, `what should I handle this weekend`, `what about Candace`                                          |
 | Coding and work help                          | Telegram                     | `live_proven`         | natural-language project help plus `/cursor_status`                                                                                                              |
@@ -201,14 +201,19 @@ These are real product surface, but they should not show up in public slash help
 | `npm run debug:cognition -- --json`                    | Redacted cognitive kernel status, live provider truth, goals, blackboard, autonomy budgets, checkpoints, tool registry, and skill state |
 | `npm run debug:cognition -- --config-only --json`      | Same report with static/config-only provider snapshots, useful when avoiding live probe calls |
 | `npm run debug:cognition -- --resume`                  | Latest open cognitive checkpoint, linked goal, blackboard entries, and next safe resume action |
-| `npm run debug:cognition -- --trace`                   | Redacted replay packet with trace spans, tool simulation, read-only execution steps, tool results, provider cooldowns, checkpoints, and next safe action |
+| `npm run debug:cognition -- --trace`                   | Redacted replay packet with trace spans, tool simulation, read-only execution loop state, evidence artifacts, step verification, approval packets, trajectory scoring, provider cooldowns, checkpoints, and next safe action |
 | `npm run debug:cognition -- --task-drill`              | Seed one non-mutating cognition executor drill and print the resulting trace/execution proof |
+| `npm run debug:cognition -- --execute-drill calendar\|research\|bluebubbles\|operator` | Seed a typed v8 read-only executor drill and print loop, evidence, verification, approval, and trajectory proof |
+| `npm run debug:cognition -- --trajectory --json`       | Redacted latest trajectory scores, adapter promotion/demotion, and next repair action |
 | `npm run debug:cognition -- --benchmarks`              | Run the cognitive benchmark ladder and persist redacted attempt metadata      |
 | `npm run test:cognition:benchmarks`                    | Deterministic cognition goal, blackboard, autonomy-budget, checkpoint, tool-policy, approval, and privacy gate |
 | `npm run test:cognition:traces`                        | Focused trace replay, provider cooldown, simulation, and redaction proof      |
 | `npm run test:cognition:executor`                      | Focused tool-plan simulation and approval-first executor proof                |
 | `npm run test:cognition:execution`                     | Focused read-only tool execution, result-envelope, and approval-staging proof |
 | `npm run test:cognition:meta`                          | Focused provider cooldown, plan revision, run-event, and redaction proof      |
+| `npm run test:cognition:loop`                          | Focused bounded multi-step read-only loop, checkpoint, evidence, and trajectory proof |
+| `npm run test:cognition:adapters`                      | Focused calendar, research, BlueBubbles, and operator adapter sanitization proof |
+| `npm run test:cognition:trajectory`                    | Focused trajectory scoring, route promotion/demotion, and approval-packet proof |
 
 ## Discovery Surface Rules
 

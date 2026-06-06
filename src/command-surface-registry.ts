@@ -2105,6 +2105,11 @@ export const OPERATOR_SCRIPT_SURFACES: readonly CommandSurfaceEntry[] = [
       'npm run debug:cognition -- --resume',
       'npm run debug:cognition -- --trace',
       'npm run debug:cognition -- --task-drill',
+      'npm run debug:cognition -- --execute-drill calendar',
+      'npm run debug:cognition -- --execute-drill research',
+      'npm run debug:cognition -- --execute-drill bluebubbles',
+      'npm run debug:cognition -- --execute-drill operator',
+      'npm run debug:cognition -- --trajectory --json',
       'npm run debug:cognition -- --benchmarks',
     ],
     audience: 'operator',
@@ -2113,7 +2118,7 @@ export const OPERATOR_SCRIPT_SURFACES: readonly CommandSurfaceEntry[] = [
     discoverability: ['operator_docs'],
     truthClass: 'operator_only',
     summary:
-      'Redacted cognitive kernel status, checkpoints, trace replay, resume plan, and benchmark ladder.',
+      'Redacted cognitive kernel status, executor loop, checkpoints, trace replay, trajectory scoring, resume plan, and benchmark ladder.',
   },
   {
     id: 'test_cognition_benchmarks',
@@ -2124,6 +2129,9 @@ export const OPERATOR_SCRIPT_SURFACES: readonly CommandSurfaceEntry[] = [
       'npm run test:cognition:executor',
       'npm run test:cognition:execution',
       'npm run test:cognition:meta',
+      'npm run test:cognition:loop',
+      'npm run test:cognition:adapters',
+      'npm run test:cognition:trajectory',
     ],
     audience: 'operator',
     surfaceKind: 'script',
@@ -2131,7 +2139,7 @@ export const OPERATOR_SCRIPT_SURFACES: readonly CommandSurfaceEntry[] = [
     discoverability: ['operator_docs'],
     truthClass: 'operator_only',
     summary:
-      'Deterministic cognition benchmark, trace replay, cooldown, executor execution, and meta-learning proof.',
+      'Deterministic cognition benchmark, trace replay, cooldown, executor loop, adapter, trajectory, and meta-learning proof.',
   },
 ];
 

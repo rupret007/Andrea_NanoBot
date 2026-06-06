@@ -96,7 +96,10 @@
     "test:cognition:traces": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-cognition-traces.ts",
     "test:cognition:executor": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-cognition-executor.ts",
     "test:cognition:execution": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-cognition-execution.ts",
-    "test:cognition:meta": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-cognition-meta.ts"
+    "test:cognition:meta": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-cognition-meta.ts",
+    "test:cognition:loop": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-cognition-loop.ts",
+    "test:cognition:adapters": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-cognition-adapters.ts",
+    "test:cognition:trajectory": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-cognition-trajectory.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",

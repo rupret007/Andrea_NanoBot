@@ -13,10 +13,13 @@ import {
   insertCognitiveBenchmarkAttempt,
   insertCognitiveReflection,
   insertCognitiveRewardSignal,
+  listCognitiveApprovalPackets,
   listCognitiveAutonomyBudgets,
   listCognitiveBenchmarkAttempts,
   listCognitiveBlackboardEntries,
   listCognitiveCheckpoints,
+  listCognitiveEvidenceArtifacts,
+  listCognitiveExecutionLoopStates,
   listCognitiveExecutionSteps,
   listCognitiveProviderCooldowns,
   listCognitivePlanRevisions,
@@ -26,16 +29,21 @@ import {
   listCognitiveRewardSignals,
   listCognitiveRuns,
   listCognitiveSkillCards,
+  listCognitiveStepVerifications,
   listCognitiveSubgoalsForRun,
   listCognitiveToolResults,
   listCognitiveToolRegistry,
+  listCognitiveTrajectoryScores,
   listCognitiveWorldBeliefs,
   pruneCognitiveKernelData,
   replaceCognitiveSubgoalsForRun,
   resolveCognitiveCheckpoint,
+  upsertCognitiveApprovalPacket,
   upsertCognitiveAutonomyBudget,
   upsertCognitiveBlackboardEntry,
   upsertCognitiveCheckpoint,
+  upsertCognitiveEvidenceArtifact,
+  upsertCognitiveExecutionLoopState,
   upsertCognitiveExecutionStep,
   upsertCognitiveGoal,
   upsertCognitivePlanRevision,
@@ -44,8 +52,10 @@ import {
   upsertCognitiveRun,
   upsertCognitiveRunEvent,
   upsertCognitiveSkillCard,
+  upsertCognitiveStepVerification,
   upsertCognitiveToolResult,
   upsertCognitiveToolSimulation,
+  upsertCognitiveTrajectoryScore,
   upsertCognitiveTraceSpan,
   upsertCognitiveToolRegistry,
   upsertCognitiveWorldBelief,
@@ -61,8 +71,11 @@ import type {
   CognitiveAutonomyBudgetRecord,
   CognitiveBenchmarkAttemptRecord,
   CognitiveBlackboardEntryRecord,
+  CognitiveApprovalPacket,
   CognitiveCheckpointRecord,
+  CognitiveEvidenceArtifact,
   CognitiveExecutionStep,
+  CognitiveExecutionLoopState,
   CognitiveGoalRecord,
   CognitiveMode,
   CognitivePlanRevision,
@@ -75,9 +88,12 @@ import type {
   CognitiveRunEvent,
   CognitiveRunStatus,
   CognitiveSkillCardRecord,
+  CognitiveStepVerification,
   CognitiveSubgoalRecord,
+  CognitiveToolAdapterContract,
   CognitiveToolResultEnvelope,
   CognitiveToolSimulation,
+  CognitiveTrajectoryScore,
   CognitiveToolRegistryRecord,
   CognitiveTraceSpan,
   CognitiveWorldBeliefRecord,
@@ -216,8 +232,13 @@ export interface CognitiveKernelResult {
   policyDecisions: CognitivePolicyDecision[];
   toolResults: CognitiveToolResultEnvelope[];
   executionSteps: CognitiveExecutionStep[];
+  evidenceArtifacts: CognitiveEvidenceArtifact[];
+  loopStates: CognitiveExecutionLoopState[];
+  stepVerifications: CognitiveStepVerification[];
+  approvalPackets: CognitiveApprovalPacket[];
   planRevisions: CognitivePlanRevision[];
   runEvents: CognitiveRunEvent[];
+  trajectoryScore: CognitiveTrajectoryScore;
   traceSpans: CognitiveTraceSpan[];
   providerCooldowns: CognitiveProviderCooldown[];
   rewardPreview: CognitiveRewardSignal;
@@ -343,6 +364,43 @@ export interface CognitiveDoctorReport {
   providerCooldowns: {
     active: number;
     providerIds: string[];
+    nextAction?: string | null;
+  };
+  executorLoop: {
+    total: number;
+    latestStatus?: CognitiveExecutionLoopState['status'] | null;
+    latestRound?: number | null;
+    executedToolSteps: number;
+    evidenceSatisfied: boolean;
+    nextAction?: string | null;
+  };
+  evidenceArtifacts: {
+    total: number;
+    public: number;
+    metadata: number;
+    privateMetadata: number;
+    sanitizedDigest: number;
+    latestKinds: string[];
+  };
+  stepVerification: {
+    total: number;
+    pass: number;
+    warn: number;
+    block: number;
+    approvalStaged: number;
+  };
+  approvalPackets: {
+    total: number;
+    staged: number;
+    latestToolId?: string | null;
+    latestNextAction?: string | null;
+  };
+  trajectory: {
+    total: number;
+    latestStatus?: CognitiveTrajectoryScore['status'] | null;
+    latestScore?: number | null;
+    promotedRoute: boolean;
+    demotedAdapters: string[];
     nextAction?: string | null;
   };
   nextAction: string;
@@ -833,6 +891,7 @@ function simulateToolPlan(input: {
   const byId = new Map(input.registry.map((tool) => [tool.toolId, tool]));
   return input.plans.map((plan, index) => {
     const tool = byId.get(plan.toolId);
+    const contract = tool ? adapterContractForTool(tool) : null;
     const issues: string[] = [];
     if (!tool) issues.push(`unknown_tool:${plan.toolId}`);
     if (tool?.approvalPolicy === 'forbidden') issues.push('tool_forbidden');
@@ -877,9 +936,11 @@ function simulateToolPlan(input: {
       actionClass: plan.actionClass,
       status,
       approvalRequired: plan.approvalRequired,
-      readOnly: ['local_lookup', 'read_only_integration', 'council'].includes(
-        plan.actionClass,
-      ),
+      readOnly: contract
+        ? contract.policyClass !== 'approval_staged'
+        : ['local_lookup', 'read_only_integration', 'council'].includes(
+            plan.actionClass,
+          ),
       riskLevel: tool?.riskLevel || 'unknown',
       evidenceExpectedJson: safeJson(
         parseJsonSafe<string[]>(tool?.evidenceProducedJson, []),
@@ -935,8 +996,13 @@ interface CognitiveExecutionBundle {
   policyDecisions: CognitivePolicyDecision[];
   toolResults: CognitiveToolResultEnvelope[];
   executionSteps: CognitiveExecutionStep[];
+  evidenceArtifacts: CognitiveEvidenceArtifact[];
+  loopStates: CognitiveExecutionLoopState[];
+  stepVerifications: CognitiveStepVerification[];
+  approvalPackets: CognitiveApprovalPacket[];
   planRevisions: CognitivePlanRevision[];
   runEvents: CognitiveRunEvent[];
+  trajectoryScore: CognitiveTrajectoryScore;
 }
 
 function executionAggregate(input: {
@@ -981,6 +1047,346 @@ function executionAggregate(input: {
             : 'pass',
     latestToolId: latest?.toolId || null,
     latestNextAction: latest?.nextAction || null,
+  };
+}
+
+function adapterContractForTool(
+  tool: CognitiveToolRegistryRecord,
+): CognitiveToolAdapterContract {
+  const readOnly =
+    tool.approvalPolicy === 'read_only' ||
+    tool.approvalPolicy === 'none' ||
+    tool.toolKind === 'local_lookup' ||
+    tool.toolKind === 'read_only_integration' ||
+    tool.toolKind === 'council';
+  return {
+    toolId: tool.toolId,
+    policyClass: readOnly
+      ? tool.toolKind === 'council'
+        ? 'council'
+        : tool.toolKind === 'local_lookup'
+          ? 'local_lookup'
+          : 'read_only'
+      : 'approval_staged',
+    inputSchemaJson: safeJson({
+      runId: 'string',
+      sanitizedGoal: 'string',
+      noRawPrivateBodies: true,
+    }),
+    outputSchemaJson: safeJson({
+      summary: 'sanitized string',
+      evidenceRefs: 'string[]',
+      outputShape: 'metadata object',
+      nextAction: 'sanitized string',
+    }),
+    timeoutMs: tool.riskLevel === 'high' ? 5_000 : 8_000,
+    retryPolicyJson: safeJson({
+      retries: readOnly ? 1 : 0,
+      cooldownOnFailure: tool.toolKind === 'council' ? 'provider' : 'tool',
+    }),
+    evidenceMapper: `${tool.toolId}:metadata_artifact`,
+    failureClassifier: `${tool.toolId}:status_or_policy_failure`,
+    privacyJson: privacyPolicyJson(),
+  };
+}
+
+function artifactKindForTool(
+  toolId: string,
+): CognitiveEvidenceArtifact['artifactKind'] {
+  if (toolId === 'local_skill_library') return 'local_memory';
+  if (toolId === 'provider_health') return 'provider_health';
+  if (toolId === 'integrations_status') return 'integration_status';
+  if (toolId === 'google_calendar_read') return 'calendar_read';
+  if (toolId === 'brave_search') return 'research_evidence';
+  if (toolId === 'bluebubbles_status') return 'bluebubbles_digest';
+  if (toolId === 'operator_diagnostics') return 'operator_diagnostics';
+  if (toolId === 'provider_council') return 'council';
+  if (toolId === 'cognition_trace') return 'cognition_trace';
+  if (toolId === 'bluebubbles_draft' || toolId === 'approval_stage') {
+    return 'approval_packet';
+  }
+  return 'unknown';
+}
+
+function artifactSensitivityForTool(
+  toolId: string,
+): CognitiveEvidenceArtifact['sensitivity'] {
+  if (toolId === 'brave_search') return 'public';
+  if (toolId === 'bluebubbles_status') return 'private_metadata';
+  if (toolId === 'google_calendar_read') return 'private_metadata';
+  if (toolId === 'bluebubbles_draft') return 'sanitized_digest';
+  return 'metadata';
+}
+
+function evidenceArtifactForStep(input: {
+  run: CognitiveRunRecord;
+  step: CognitiveExecutionStep;
+  result: CognitiveToolResultEnvelope;
+  now: string;
+}): CognitiveEvidenceArtifact {
+  const refs = parseJsonSafe<string[]>(input.result.evidenceRefsJson, []);
+  const artifactKind = artifactKindForTool(input.step.toolId);
+  return {
+    artifactId: sanitizeId(
+      `cogartifact:${input.run.runId}:${input.step.position}:${input.step.toolId}:${randomUUID()}`,
+    ),
+    createdAt: input.now,
+    runId: input.run.runId,
+    toolId: input.step.toolId,
+    resultId: input.result.resultId,
+    artifactKind,
+    summary: input.result.summary,
+    evidenceRefsJson: safeJson(refs, 1600),
+    sourceShapeJson: input.result.outputShapeJson,
+    sensitivity: artifactSensitivityForTool(input.step.toolId),
+    freshness: input.result.status === 'succeeded' ? 'fresh' : 'unknown',
+    confidence:
+      input.result.status === 'succeeded'
+        ? 0.84
+        : input.result.status === 'degraded'
+          ? 0.56
+          : input.result.status === 'blocked'
+            ? 0.22
+            : 0.35,
+    privacyJson: privacyPolicyJson(),
+  };
+}
+
+function stepVerificationFor(input: {
+  run: CognitiveRunRecord;
+  step: CognitiveExecutionStep;
+  artifact: CognitiveEvidenceArtifact;
+  decision: CognitivePolicyDecision;
+  result: CognitiveToolResultEnvelope;
+  now: string;
+}): CognitiveStepVerification {
+  const status: CognitiveStepVerification['status'] =
+    input.step.status === 'approval_staged'
+      ? 'approval_staged'
+      : input.step.status === 'blocked' || input.result.status === 'blocked'
+        ? 'block'
+        : input.step.status === 'degraded' || input.result.status === 'degraded'
+          ? 'warn'
+          : 'pass';
+  const evidenceSufficient =
+    status === 'pass' ||
+    (status === 'warn' && input.result.status !== 'blocked');
+  return {
+    verificationId: sanitizeId(
+      `cogverify:${input.run.runId}:${input.step.position}:${input.step.toolId}:${randomUUID()}`,
+    ),
+    createdAt: input.now,
+    runId: input.run.runId,
+    stepId: input.step.stepId,
+    toolId: input.step.toolId,
+    status,
+    evidenceArtifactIdsJson: safeJson([input.artifact.artifactId], 1200),
+    evidenceSufficient,
+    approvalRequired: input.decision.status === 'stage_approval',
+    blockerClass:
+      status === 'block'
+        ? input.result.failureClass || 'tool_blocked'
+        : status === 'warn'
+          ? input.result.failureClass || 'tool_degraded'
+          : null,
+    nextAction:
+      status === 'pass'
+        ? 'Use this evidence artifact in the answer path.'
+        : status === 'approval_staged'
+          ? 'Wait for explicit approval before executing this side effect.'
+          : input.result.nextAction,
+    privacyJson: privacyPolicyJson(),
+  };
+}
+
+function approvalPacketForStep(input: {
+  run: CognitiveRunRecord;
+  step: CognitiveExecutionStep;
+  decision: CognitivePolicyDecision;
+  result: CognitiveToolResultEnvelope;
+  now: string;
+}): CognitiveApprovalPacket | null {
+  if (input.step.status !== 'approval_staged') return null;
+  return {
+    approvalPacketId: sanitizeId(
+      `cogapproval:${input.run.runId}:${input.step.toolId}:${randomUUID()}`,
+    ),
+    createdAt: input.now,
+    updatedAt: input.now,
+    runId: input.run.runId,
+    toolId: input.step.toolId,
+    actionClass: input.step.actionClass,
+    status: 'staged',
+    summary: `Approval staged for ${input.step.toolId}; no external side effect executed.`,
+    approvalChannel: input.run.channel || null,
+    approvalKey: `${input.run.taskFamily}:${input.run.selectedSkillId}`,
+    expiresAt: new Date(
+      Date.parse(input.now) + 2 * 60 * 60 * 1000,
+    ).toISOString(),
+    decisionJson: safeJson(
+      {
+        decisionId: input.decision.decisionId,
+        resultId: input.result.resultId,
+        approvalRequired: true,
+        externalActionExecuted: false,
+      },
+      1600,
+    ),
+    privacyJson: privacyPolicyJson(),
+  };
+}
+
+function loopStateForExecution(input: {
+  run: CognitiveRunRecord;
+  executionSteps: CognitiveExecutionStep[];
+  verifications: CognitiveStepVerification[];
+  revisions: CognitivePlanRevision[];
+  budget: CognitiveAutonomyBudgetRecord;
+  now: string;
+}): CognitiveExecutionLoopState {
+  const blocked = input.verifications.some(
+    (verification) => verification.status === 'block',
+  );
+  const staged = input.verifications.some(
+    (verification) => verification.status === 'approval_staged',
+  );
+  const degraded = input.verifications.some(
+    (verification) => verification.status === 'warn',
+  );
+  const executed = input.executionSteps.filter(
+    (step) => step.status === 'executed',
+  ).length;
+  const exhausted = input.executionSteps.length >= input.budget.maxToolSteps;
+  const openEvidenceGaps = input.verifications
+    .filter((verification) => !verification.evidenceSufficient)
+    .map((verification) => `${verification.toolId}:${verification.status}`);
+  const status: CognitiveExecutionLoopState['status'] = blocked
+    ? 'blocked'
+    : staged
+      ? 'approval_staged'
+      : exhausted && openEvidenceGaps.length > 0
+        ? 'budget_exhausted'
+        : degraded
+          ? 'degraded'
+          : 'satisfied';
+  return {
+    loopId: sanitizeId(`cogloop:${input.run.runId}:main`),
+    createdAt: input.now,
+    updatedAt: input.now,
+    runId: input.run.runId,
+    status,
+    round: Math.max(
+      1,
+      Math.min(
+        4,
+        input.executionSteps.filter((step) => step.status !== 'skipped').length,
+      ),
+    ),
+    maxRounds: 4,
+    maxToolSteps: input.budget.maxToolSteps,
+    executedToolSteps: executed,
+    evidenceSatisfied: openEvidenceGaps.length === 0 && !blocked,
+    openEvidenceGapsJson: safeJson(openEvidenceGaps, 1600),
+    nextToolIdsJson: safeJson(
+      input.executionSteps
+        .filter(
+          (step) => step.status === 'blocked' || step.status === 'degraded',
+        )
+        .map((step) => step.toolId)
+        .slice(0, 8),
+      1200,
+    ),
+    nextAction:
+      status === 'satisfied'
+        ? 'Answer with gathered read-only evidence and record trajectory score.'
+        : status === 'approval_staged'
+          ? 'Wait for explicit approval using the staged approval packet.'
+          : input.revisions[input.revisions.length - 1]?.nextAction ||
+            'Name the evidence blocker and ask for the missing proof.',
+    privacyJson: privacyPolicyJson(),
+  };
+}
+
+function trajectoryScoreForExecution(input: {
+  run: CognitiveRunRecord;
+  executionSteps: CognitiveExecutionStep[];
+  artifacts: CognitiveEvidenceArtifact[];
+  verifications: CognitiveStepVerification[];
+  approvalPackets: CognitiveApprovalPacket[];
+  loopState: CognitiveExecutionLoopState;
+  now: string;
+}): CognitiveTrajectoryScore {
+  const blockers = input.verifications.filter(
+    (verification) => verification.status === 'block',
+  );
+  const warnings = input.verifications.filter(
+    (verification) => verification.status === 'warn',
+  );
+  const evidenceSufficiency = clamp01(
+    input.artifacts.length / Math.max(1, input.executionSteps.length),
+  );
+  const toolEfficiency = clamp01(
+    1 - Math.max(0, input.executionSteps.length - 5) / 8,
+  );
+  const verifierSatisfaction =
+    blockers.length > 0
+      ? 0.25
+      : warnings.length > 0
+        ? 0.68
+        : input.verifications.length > 0
+          ? 0.9
+          : 0.5;
+  const blockerClarity =
+    blockers.length === 0 && input.loopState.status !== 'budget_exhausted'
+      ? 0.88
+      : input.loopState.nextAction.length > 20
+        ? 0.72
+        : 0.35;
+  const privacySafety = 1;
+  const outcomeSignal =
+    input.run.status === 'answered'
+      ? 0.86
+      : input.run.status === 'awaiting_approval'
+        ? 0.62
+        : input.run.status === 'blocked'
+          ? 0.35
+          : 0.5;
+  const overall = Number(
+    (
+      (evidenceSufficiency +
+        toolEfficiency +
+        verifierSatisfaction +
+        blockerClarity +
+        privacySafety +
+        outcomeSignal) /
+      6
+    ).toFixed(3),
+  );
+  const demotedAdapters = input.verifications
+    .filter((verification) => verification.status === 'block')
+    .map((verification) => verification.toolId);
+  return {
+    trajectoryId: sanitizeId(`cogtrajectory:${input.run.runId}`),
+    createdAt: input.now,
+    runId: input.run.runId,
+    taskFamily: input.run.taskFamily,
+    status: overall >= 0.82 ? 'pass' : overall >= 0.62 ? 'warn' : 'fail',
+    overallScore: overall,
+    evidenceSufficiency: Number(evidenceSufficiency.toFixed(3)),
+    toolEfficiency: Number(toolEfficiency.toFixed(3)),
+    verifierSatisfaction: Number(verifierSatisfaction.toFixed(3)),
+    blockerClarity: Number(blockerClarity.toFixed(3)),
+    privacySafety,
+    outcomeSignal: Number(outcomeSignal.toFixed(3)),
+    promotedRoute: overall >= 0.82 && input.approvalPackets.length === 0,
+    demotedAdaptersJson: safeJson(demotedAdapters, 1200),
+    nextAction:
+      overall >= 0.82
+        ? 'Promote this read-only route when outcome confirmation arrives.'
+        : demotedAdapters.length > 0
+          ? 'Demote or repair blocked adapters before repeating this route.'
+          : 'Keep route usable but gather stronger evidence next time.',
+    privacyJson: privacyPolicyJson(),
   };
 }
 
@@ -1542,6 +1948,7 @@ function executeCognitiveToolPlan(input: {
   selectedSkill: CognitiveSkillCardRecord | null;
   providerCouncil?: AndreaPlatformProviderCouncilResult | null;
   evidenceContract: ReturnType<typeof buildEvidenceContract>;
+  autonomyBudget: CognitiveAutonomyBudgetRecord;
   now: string;
 }): CognitiveExecutionBundle {
   const byTool = new Map(input.registry.map((tool) => [tool.toolId, tool]));
@@ -1559,6 +1966,9 @@ function executeCognitiveToolPlan(input: {
   const policyDecisions: CognitivePolicyDecision[] = [];
   const toolResults: CognitiveToolResultEnvelope[] = [];
   const executionSteps: CognitiveExecutionStep[] = [];
+  const evidenceArtifacts: CognitiveEvidenceArtifact[] = [];
+  const stepVerifications: CognitiveStepVerification[] = [];
+  const approvalPackets: CognitiveApprovalPacket[] = [];
   const planRevisions: CognitivePlanRevision[] = [];
   const runEvents: CognitiveRunEvent[] = [
     runEvent({
@@ -1659,6 +2069,30 @@ function executeCognitiveToolPlan(input: {
       privacyJson: privacyPolicyJson(),
     };
     executionSteps.push(step);
+    const artifact = evidenceArtifactForStep({
+      run: input.run,
+      step,
+      result,
+      now: input.now,
+    });
+    evidenceArtifacts.push(artifact);
+    const verification = stepVerificationFor({
+      run: input.run,
+      step,
+      artifact,
+      decision,
+      result,
+      now: input.now,
+    });
+    stepVerifications.push(verification);
+    const approvalPacket = approvalPacketForStep({
+      run: input.run,
+      step,
+      decision,
+      result,
+      now: input.now,
+    });
+    if (approvalPacket) approvalPackets.push(approvalPacket);
     const revision = revisionForStep({
       runId: input.run.runId,
       step,
@@ -1718,6 +2152,14 @@ function executeCognitiveToolPlan(input: {
       );
     }
   }
+  const loopState = loopStateForExecution({
+    run: input.run,
+    executionSteps,
+    verifications: stepVerifications,
+    revisions: planRevisions,
+    budget: input.autonomyBudget,
+    now: input.now,
+  });
   if (planRevisions.length === 0) {
     planRevisions.push({
       revisionId: sanitizeId(
@@ -1741,12 +2183,26 @@ function executeCognitiveToolPlan(input: {
       privacyJson: privacyPolicyJson(),
     });
   }
+  const trajectoryScore = trajectoryScoreForExecution({
+    run: input.run,
+    executionSteps,
+    artifacts: evidenceArtifacts,
+    verifications: stepVerifications,
+    approvalPackets,
+    loopState,
+    now: input.now,
+  });
   return {
     policyDecisions,
     toolResults,
     executionSteps,
+    evidenceArtifacts,
+    loopStates: [loopState],
+    stepVerifications,
+    approvalPackets,
     planRevisions,
     runEvents,
+    trajectoryScore,
   };
 }
 
@@ -2885,6 +3341,7 @@ export function beginCognitiveKernelRun(
     selectedSkill,
     providerCouncil: input.providerCouncil,
     evidenceContract,
+    autonomyBudget,
     now: startedAt,
   });
   const verification = applyExecutionFeedback(
@@ -2916,6 +3373,15 @@ export function beginCognitiveKernelRun(
     verificationJson: safeJson(verification),
     nextAction: redactCouncilText(verification.nextAction, 360),
   };
+  const trajectoryScore = trajectoryScoreForExecution({
+    run,
+    executionSteps: execution.executionSteps,
+    artifacts: execution.evidenceArtifacts,
+    verifications: execution.stepVerifications,
+    approvalPackets: execution.approvalPackets,
+    loopState: execution.loopStates[0],
+    now: startedAt,
+  });
   const worldBeliefs = buildWorldBeliefs(input, providers, selectedSkill);
   const providerCooldowns = persistProviderCooldowns({
     snapshots: providerSnapshots,
@@ -2955,12 +3421,25 @@ export function beginCognitiveKernelRun(
     for (const step of execution.executionSteps) {
       upsertCognitiveExecutionStep(step);
     }
+    for (const artifact of execution.evidenceArtifacts) {
+      upsertCognitiveEvidenceArtifact(artifact);
+    }
+    for (const loopState of execution.loopStates) {
+      upsertCognitiveExecutionLoopState(loopState);
+    }
+    for (const stepVerification of execution.stepVerifications) {
+      upsertCognitiveStepVerification(stepVerification);
+    }
+    for (const approvalPacket of execution.approvalPackets) {
+      upsertCognitiveApprovalPacket(approvalPacket);
+    }
     for (const revision of execution.planRevisions) {
       upsertCognitivePlanRevision(revision);
     }
     for (const event of execution.runEvents) {
       upsertCognitiveRunEvent(event);
     }
+    upsertCognitiveTrajectoryScore(trajectoryScore);
     replaceCognitiveSubgoalsForRun(
       run.runId,
       subgoalRecords(run.runId, graph, startedAt),
@@ -2979,6 +3458,25 @@ export function beginCognitiveKernelRun(
       toolPolicy,
       now: startedAt,
     });
+    for (const step of execution.executionSteps) {
+      upsertCognitiveCheckpoint(
+        checkpointRecord({
+          run,
+          subgoalId: step.subgoalId || null,
+          checkpointKind: 'tool_step',
+          summary: `Tool step ${step.toolId} recorded as ${step.status}.`,
+          state: {
+            stepId: step.stepId,
+            toolId: step.toolId,
+            status: step.status,
+            resultId: step.resultId,
+            policyDecisionId: step.policyDecisionId,
+          },
+          nextAction: step.nextAction,
+          now: startedAt,
+        }),
+      );
+    }
     const checkpoints = listCognitiveCheckpoints({
       runId: run.runId,
       limit: 20,
@@ -3090,6 +3588,30 @@ export function beginCognitiveKernelRun(
           .map((step) => `${step.toolId}:${step.status}`)
           .join(', '),
         metadata: executionSummary,
+        now: startedAt,
+      }),
+      traceSpan({
+        runId: run.runId,
+        goalId: activeGoal.goalId,
+        spanKind: 'tool_execution',
+        status:
+          execution.loopStates[0]?.status === 'blocked'
+            ? 'blocked'
+            : execution.loopStates[0]?.status === 'satisfied'
+              ? 'completed'
+              : 'warn',
+        summary: `Executor loop ${execution.loopStates[0]?.status || 'none'} after ${execution.loopStates[0]?.round || 0} round(s).`,
+        inputSummary: execution.stepVerifications
+          .map((item) => `${item.toolId}:${item.status}`)
+          .join(', '),
+        outputSummary: execution.loopStates[0]?.nextAction || '',
+        metadata: {
+          loopStatus: execution.loopStates[0]?.status || 'none',
+          evidenceArtifacts: execution.evidenceArtifacts.length,
+          stepVerifications: execution.stepVerifications.length,
+          approvalPackets: execution.approvalPackets.length,
+          trajectoryScore: trajectoryScore.overallScore,
+        },
         now: startedAt,
       }),
       traceSpan({
@@ -3216,8 +3738,13 @@ export function beginCognitiveKernelRun(
     policyDecisions: execution.policyDecisions,
     toolResults: execution.toolResults,
     executionSteps: execution.executionSteps,
+    evidenceArtifacts: execution.evidenceArtifacts,
+    loopStates: execution.loopStates,
+    stepVerifications: execution.stepVerifications,
+    approvalPackets: execution.approvalPackets,
     planRevisions: execution.planRevisions,
     runEvents: execution.runEvents,
+    trajectoryScore,
     traceSpans: safeDb(
       [],
       () =>
@@ -4029,8 +4556,13 @@ export function buildCognitiveDoctorReport(
       policyDecisions: [],
       toolResults: [],
       executionSteps: [],
+      evidenceArtifacts: [],
+      loopStates: [],
+      stepVerifications: [],
+      approvalPackets: [],
       planRevisions: [],
       runEvents: [],
+      trajectoryScores: [],
       providerCooldowns: [],
       checkpoints: latest ? checkpoints : [],
       privacy: privacyReport(),
@@ -4050,6 +4582,12 @@ export function buildCognitiveDoctorReport(
     decisions: replayPacket.policyDecisions,
     revisions: replayPacket.planRevisions,
   });
+  const latestLoop = replayPacket.loopStates[0] || null;
+  const latestApprovalPacket = replayPacket.approvalPackets[0] || null;
+  const latestTrajectory = replayPacket.trajectoryScores[0] || null;
+  const demotedAdapters = latestTrajectory
+    ? parseJsonSafe<string[]>(latestTrajectory.demotedAdaptersJson, [])
+    : [];
   const cooldowns =
     replayPacket.providerCooldowns.length > 0
       ? replayPacket.providerCooldowns
@@ -4181,6 +4719,69 @@ export function buildCognitiveDoctorReport(
       providerIds: cooldowns.map((cooldown) => cooldown.providerId),
       nextAction: cooldowns[0]?.nextAction || null,
     },
+    executorLoop: {
+      total: replayPacket.loopStates.length,
+      latestStatus: latestLoop?.status || null,
+      latestRound: latestLoop?.round || null,
+      executedToolSteps: latestLoop?.executedToolSteps || 0,
+      evidenceSatisfied: latestLoop?.evidenceSatisfied || false,
+      nextAction: latestLoop?.nextAction || null,
+    },
+    evidenceArtifacts: {
+      total: replayPacket.evidenceArtifacts.length,
+      public: replayPacket.evidenceArtifacts.filter(
+        (artifact) => artifact.sensitivity === 'public',
+      ).length,
+      metadata: replayPacket.evidenceArtifacts.filter(
+        (artifact) => artifact.sensitivity === 'metadata',
+      ).length,
+      privateMetadata: replayPacket.evidenceArtifacts.filter(
+        (artifact) => artifact.sensitivity === 'private_metadata',
+      ).length,
+      sanitizedDigest: replayPacket.evidenceArtifacts.filter(
+        (artifact) => artifact.sensitivity === 'sanitized_digest',
+      ).length,
+      latestKinds: Array.from(
+        new Set(
+          replayPacket.evidenceArtifacts
+            .slice(-5)
+            .map((artifact) => artifact.artifactKind),
+        ),
+      ),
+    },
+    stepVerification: {
+      total: replayPacket.stepVerifications.length,
+      pass: replayPacket.stepVerifications.filter(
+        (verification) => verification.status === 'pass',
+      ).length,
+      warn: replayPacket.stepVerifications.filter(
+        (verification) => verification.status === 'warn',
+      ).length,
+      block: replayPacket.stepVerifications.filter(
+        (verification) => verification.status === 'block',
+      ).length,
+      approvalStaged: replayPacket.stepVerifications.filter(
+        (verification) => verification.status === 'approval_staged',
+      ).length,
+    },
+    approvalPackets: {
+      total: replayPacket.approvalPackets.length,
+      staged: replayPacket.approvalPackets.filter(
+        (packet) => packet.status === 'staged',
+      ).length,
+      latestToolId: latestApprovalPacket?.toolId || null,
+      latestNextAction: latestApprovalPacket
+        ? 'Wait for explicit same-channel approval before any mutating action.'
+        : null,
+    },
+    trajectory: {
+      total: replayPacket.trajectoryScores.length,
+      latestStatus: latestTrajectory?.status || null,
+      latestScore: latestTrajectory?.overallScore ?? null,
+      promotedRoute: latestTrajectory?.promotedRoute || false,
+      demotedAdapters,
+      nextAction: latestTrajectory?.nextAction || null,
+    },
     nextAction,
     privacy: privacyReport(),
   };
@@ -4210,6 +4811,8 @@ export function buildCognitiveTraceReport(
   const activeCooldownProviderIds = replayPacket.providerCooldowns.map(
     (cooldown) => cooldown.providerId,
   );
+  const latestLoop = replayPacket.loopStates[0] || null;
+  const latestTrajectory = replayPacket.trajectoryScores[0] || null;
   const ok =
     blockedSpanCount === 0 &&
     simulation.status !== 'block' &&
@@ -4238,6 +4841,11 @@ export function buildCognitiveTraceReport(
     simulationStatus: simulation.status,
     executionStatus: execution.status,
     executedStepCount: execution.executed,
+    loopStatus: latestLoop?.status || 'none',
+    loopRoundCount: latestLoop?.round || 0,
+    evidenceArtifactCount: replayPacket.evidenceArtifacts.length,
+    approvalPacketCount: replayPacket.approvalPackets.length,
+    trajectoryScore: latestTrajectory?.overallScore ?? null,
     planRevisionCount: execution.planRevisions,
     activeCooldownProviderIds,
     nextAction,
@@ -4259,6 +4867,11 @@ export function formatCognitiveTraceReport(
       `Simulation: ${report.simulationStatus}`,
       `Execution: ${report.executionStatus}`,
       `Executed steps: ${report.executedStepCount}`,
+      `Loop: ${report.loopStatus}`,
+      `Loop rounds: ${report.loopRoundCount}`,
+      `Evidence artifacts: ${report.evidenceArtifactCount}`,
+      `Approval packets: ${report.approvalPacketCount}`,
+      `Trajectory score: ${report.trajectoryScore ?? 'none'}`,
       `Plan revisions: ${report.planRevisionCount}`,
       `Tool results: ${report.replayPacket.toolResults.length}`,
       `Policy decisions: ${report.replayPacket.policyDecisions.length}`,
@@ -4350,6 +4963,36 @@ export function formatCognitiveDoctorReport(
     `Plan revisions: ${report.execution.planRevisions}`,
     `Execution next: ${report.execution.latestNextAction || 'none'}`,
     `Provider cooldowns: ${report.providerCooldowns.providerIds.join(', ') || 'none'}`,
+    '',
+    'Executor Loop',
+    `Loop status: ${report.executorLoop.latestStatus || 'none'}`,
+    `Loop rounds: ${report.executorLoop.latestRound ?? 'none'}`,
+    `Loop executed steps: ${report.executorLoop.executedToolSteps}`,
+    `Evidence satisfied: ${report.executorLoop.evidenceSatisfied}`,
+    `Loop next: ${report.executorLoop.nextAction || 'none'}`,
+    '',
+    'Evidence Artifacts',
+    `Artifacts: ${report.evidenceArtifacts.total}`,
+    `Public: ${report.evidenceArtifacts.public}`,
+    `Metadata: ${report.evidenceArtifacts.metadata}`,
+    `Private metadata: ${report.evidenceArtifacts.privateMetadata}`,
+    `Sanitized digests: ${report.evidenceArtifacts.sanitizedDigest}`,
+    `Kinds: ${report.evidenceArtifacts.latestKinds.join(', ') || 'none'}`,
+    '',
+    'Step Verification',
+    `Verified: ${report.stepVerification.total}`,
+    `Pass: ${report.stepVerification.pass}`,
+    `Warn: ${report.stepVerification.warn}`,
+    `Block: ${report.stepVerification.block}`,
+    `Approval staged: ${report.stepVerification.approvalStaged}`,
+    '',
+    'Trajectory',
+    `Scores: ${report.trajectory.total}`,
+    `Latest status: ${report.trajectory.latestStatus || 'none'}`,
+    `Latest score: ${report.trajectory.latestScore ?? 'none'}`,
+    `Promoted route: ${report.trajectory.promotedRoute}`,
+    `Demoted adapters: ${report.trajectory.demotedAdapters.join(', ') || 'none'}`,
+    `Trajectory next: ${report.trajectory.nextAction || 'none'}`,
   ];
   if (report.activeRun) {
     lines.push(

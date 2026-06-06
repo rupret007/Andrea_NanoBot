@@ -1536,6 +1536,7 @@ export type CognitiveCheckpointKind =
   | 'frame'
   | 'plan'
   | 'tool_policy'
+  | 'tool_step'
   | 'verification'
   | 'approval_wait'
   | 'evidence_wait'
@@ -1597,6 +1598,18 @@ export interface CognitiveToolRegistryRecord {
   failureModesJson: string;
   lastVerifiedAt?: string | null;
   healthState: 'healthy' | 'degraded' | 'blocked' | 'unknown';
+  privacyJson: string;
+}
+
+export interface CognitiveToolAdapterContract {
+  toolId: string;
+  policyClass: 'local_lookup' | 'read_only' | 'council' | 'approval_staged';
+  inputSchemaJson: string;
+  outputSchemaJson: string;
+  timeoutMs: number;
+  retryPolicyJson: string;
+  evidenceMapper: string;
+  failureClassifier: string;
   privacyJson: string;
 }
 
@@ -1817,6 +1830,106 @@ export interface CognitiveExecutionStep {
   privacyJson: string;
 }
 
+export interface CognitiveEvidenceArtifact {
+  artifactId: string;
+  createdAt: string;
+  runId: string;
+  toolId: string;
+  resultId?: string | null;
+  artifactKind:
+    | 'local_memory'
+    | 'provider_health'
+    | 'integration_status'
+    | 'calendar_read'
+    | 'research_evidence'
+    | 'bluebubbles_digest'
+    | 'operator_diagnostics'
+    | 'council'
+    | 'cognition_trace'
+    | 'approval_packet'
+    | 'unknown';
+  summary: string;
+  evidenceRefsJson: string;
+  sourceShapeJson: string;
+  sensitivity: 'metadata' | 'sanitized_digest' | 'public' | 'private_metadata';
+  freshness: 'fresh' | 'stale' | 'unknown';
+  confidence: number;
+  privacyJson: string;
+}
+
+export interface CognitiveExecutionLoopState {
+  loopId: string;
+  createdAt: string;
+  updatedAt: string;
+  runId: string;
+  status:
+    | 'running'
+    | 'satisfied'
+    | 'budget_exhausted'
+    | 'blocked'
+    | 'approval_staged'
+    | 'degraded';
+  round: number;
+  maxRounds: number;
+  maxToolSteps: number;
+  executedToolSteps: number;
+  evidenceSatisfied: boolean;
+  openEvidenceGapsJson: string;
+  nextToolIdsJson: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface CognitiveStepVerification {
+  verificationId: string;
+  createdAt: string;
+  runId: string;
+  stepId?: string | null;
+  toolId: string;
+  status: 'pass' | 'warn' | 'block' | 'approval_staged';
+  evidenceArtifactIdsJson: string;
+  evidenceSufficient: boolean;
+  approvalRequired: boolean;
+  blockerClass?: string | null;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface CognitiveApprovalPacket {
+  approvalPacketId: string;
+  createdAt: string;
+  updatedAt: string;
+  runId: string;
+  toolId: string;
+  actionClass: string;
+  status: 'staged' | 'approved' | 'rejected' | 'expired' | 'executed_elsewhere';
+  summary: string;
+  approvalChannel?: string | null;
+  approvalKey?: string | null;
+  expiresAt?: string | null;
+  decisionJson: string;
+  privacyJson: string;
+}
+
+export interface CognitiveTrajectoryScore {
+  trajectoryId: string;
+  createdAt: string;
+  runId: string;
+  taskFamily: string;
+  status: 'pass' | 'warn' | 'fail';
+  overallScore: number;
+  evidenceSufficiency: number;
+  toolEfficiency: number;
+  verifierSatisfaction: number;
+  blockerClarity: number;
+  privacySafety: number;
+  outcomeSignal: number;
+  promotedRoute: boolean;
+  demotedAdaptersJson: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
 export interface CognitivePlanRevision {
   revisionId: string;
   createdAt: string;
@@ -1885,8 +1998,13 @@ export interface CognitiveReplayPacket {
   policyDecisions: CognitivePolicyDecision[];
   toolResults: CognitiveToolResultEnvelope[];
   executionSteps: CognitiveExecutionStep[];
+  evidenceArtifacts: CognitiveEvidenceArtifact[];
+  loopStates: CognitiveExecutionLoopState[];
+  stepVerifications: CognitiveStepVerification[];
+  approvalPackets: CognitiveApprovalPacket[];
   planRevisions: CognitivePlanRevision[];
   runEvents: CognitiveRunEvent[];
+  trajectoryScores: CognitiveTrajectoryScore[];
   providerCooldowns: CognitiveProviderCooldown[];
   checkpoints: CognitiveCheckpointRecord[];
   privacy: {
@@ -1908,6 +2026,11 @@ export interface CognitiveRunTraceReport {
   simulationStatus: 'pass' | 'warn' | 'block' | 'none';
   executionStatus: 'pass' | 'warn' | 'block' | 'none';
   executedStepCount: number;
+  loopStatus: CognitiveExecutionLoopState['status'] | 'none';
+  loopRoundCount: number;
+  evidenceArtifactCount: number;
+  approvalPacketCount: number;
+  trajectoryScore?: number | null;
   planRevisionCount: number;
   activeCooldownProviderIds: string[];
   nextAction: string;

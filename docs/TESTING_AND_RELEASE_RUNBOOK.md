@@ -341,6 +341,11 @@ Then validate the public-safe Telegram surface:
 - `npm run debug:cognition -- --resume`
 - `npm run debug:cognition -- --trace`
 - `npm run debug:cognition -- --task-drill`
+- `npm run debug:cognition -- --execute-drill calendar`
+- `npm run debug:cognition -- --execute-drill research`
+- `npm run debug:cognition -- --execute-drill bluebubbles`
+- `npm run debug:cognition -- --execute-drill operator`
+- `npm run debug:cognition -- --trajectory --json`
 - `npm run debug:cognition -- --benchmarks`
 - `npm run test:council:tasks`
 - `npm run test:council:ultrathink`
@@ -351,16 +356,21 @@ Then validate the public-safe Telegram surface:
 - `npm run test:cognition:executor`
 - `npm run test:cognition:execution`
 - `npm run test:cognition:meta`
+- `npm run test:cognition:loop`
+- `npm run test:cognition:adapters`
+- `npm run test:cognition:trajectory`
 - `/cursor_status`
 
 The cognition benchmark ladder must prove more than answer quality: each drill
 should persist a redacted goal lifecycle row, a metadata-only blackboard trail,
 an autonomy budget with mutating actions disabled by default, checkpoint/resume
-state, tool-policy validation, approval gating, and outcome metadata.
+state, tool-policy validation, approval gating, loop-state metadata, evidence
+artifacts, step verification, trajectory scoring, and outcome metadata.
 The harness trace checks must also prove sanitized trace spans, provider
-cooldown snapshots, deterministic tool-plan simulation, replayable checkpoints,
-and a next safe action without storing raw prompts, private message bodies,
-hidden reasoning, secrets, or raw tool output.
+cooldown snapshots, deterministic tool-plan simulation, bounded read-only
+execution rounds, replayable checkpoints, typed approval packets, and a next
+safe action without storing raw prompts, private message bodies, hidden
+reasoning, secrets, or raw tool output.
 
 Council provider participation should be explicit in `/council` and
 `debug:council`: `full` means all planned roles participated, `degraded` means
