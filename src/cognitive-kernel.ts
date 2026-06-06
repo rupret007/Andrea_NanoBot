@@ -17,13 +17,17 @@ import {
   listCognitiveBenchmarkAttempts,
   listCognitiveBlackboardEntries,
   listCognitiveCheckpoints,
+  listCognitiveExecutionSteps,
   listCognitiveProviderCooldowns,
+  listCognitivePlanRevisions,
   listCognitiveReflections,
   listCognitiveGoals,
+  listCognitiveRunEvents,
   listCognitiveRewardSignals,
   listCognitiveRuns,
   listCognitiveSkillCards,
   listCognitiveSubgoalsForRun,
+  listCognitiveToolResults,
   listCognitiveToolRegistry,
   listCognitiveWorldBeliefs,
   pruneCognitiveKernelData,
@@ -32,15 +36,22 @@ import {
   upsertCognitiveAutonomyBudget,
   upsertCognitiveBlackboardEntry,
   upsertCognitiveCheckpoint,
+  upsertCognitiveExecutionStep,
   upsertCognitiveGoal,
+  upsertCognitivePlanRevision,
+  upsertCognitivePolicyDecision,
   upsertCognitiveProviderCooldown,
   upsertCognitiveRun,
+  upsertCognitiveRunEvent,
   upsertCognitiveSkillCard,
+  upsertCognitiveToolResult,
   upsertCognitiveToolSimulation,
   upsertCognitiveTraceSpan,
   upsertCognitiveToolRegistry,
   upsertCognitiveWorldBelief,
 } from './db.js';
+import { getBraveSearchStatus } from './brave-search.js';
+import { buildIntegrationDoctorReport } from './integration-doctor.js';
 import {
   collectProviderHealthSnapshots,
   type ProviderHealthSnapshot,
@@ -51,16 +62,21 @@ import type {
   CognitiveBenchmarkAttemptRecord,
   CognitiveBlackboardEntryRecord,
   CognitiveCheckpointRecord,
+  CognitiveExecutionStep,
   CognitiveGoalRecord,
   CognitiveMode,
+  CognitivePlanRevision,
+  CognitivePolicyDecision,
   CognitiveProviderCooldown,
   CognitiveReflectionRecord,
   CognitiveRunTraceReport,
   CognitiveRewardSignalRecord,
   CognitiveRunRecord,
+  CognitiveRunEvent,
   CognitiveRunStatus,
   CognitiveSkillCardRecord,
   CognitiveSubgoalRecord,
+  CognitiveToolResultEnvelope,
   CognitiveToolSimulation,
   CognitiveToolRegistryRecord,
   CognitiveTraceSpan,
@@ -197,6 +213,11 @@ export interface CognitiveKernelResult {
   blackboardSnapshot: CognitiveBlackboardEntryRecord[];
   autonomyBudget?: CognitiveAutonomyBudgetRecord | null;
   toolSimulations: CognitiveToolSimulation[];
+  policyDecisions: CognitivePolicyDecision[];
+  toolResults: CognitiveToolResultEnvelope[];
+  executionSteps: CognitiveExecutionStep[];
+  planRevisions: CognitivePlanRevision[];
+  runEvents: CognitiveRunEvent[];
   traceSpans: CognitiveTraceSpan[];
   providerCooldowns: CognitiveProviderCooldown[];
   rewardPreview: CognitiveRewardSignal;
@@ -304,6 +325,20 @@ export interface CognitiveDoctorReport {
     warn: number;
     block: number;
     status: 'pass' | 'warn' | 'block' | 'none';
+  };
+  execution: {
+    steps: number;
+    executed: number;
+    degraded: number;
+    blocked: number;
+    approvalStaged: number;
+    skipped: number;
+    toolResults: number;
+    policyDecisions: number;
+    planRevisions: number;
+    status: 'pass' | 'warn' | 'block' | 'none';
+    latestToolId?: string | null;
+    latestNextAction?: string | null;
   };
   providerCooldowns: {
     active: number;
@@ -479,6 +514,19 @@ function defaultToolRegistryRecords(
       healthState: 'healthy',
     }),
     tool({
+      toolId: 'integrations_status',
+      toolKind: 'local_lookup',
+      displayName: 'Integrations Status',
+      purpose:
+        'Read redacted integration doctor status before choosing tool routes.',
+      allowedActions: ['read_integration_doctor'],
+      approvalPolicy: 'none',
+      riskLevel: 'low',
+      evidenceProduced: ['integration_states', 'manual_blockers'],
+      failureModes: ['integration_doctor_unavailable'],
+      healthState: 'healthy',
+    }),
+    tool({
       toolId: 'provider_council',
       toolKind: 'council',
       displayName: 'Provider Council',
@@ -517,6 +565,19 @@ function defaultToolRegistryRecords(
       healthState: 'unknown',
     }),
     tool({
+      toolId: 'bluebubbles_status',
+      toolKind: 'read_only_integration',
+      displayName: 'BlueBubbles Status',
+      purpose:
+        'Read BlueBubbles transport/proof status before drafting Messages help.',
+      allowedActions: ['read_bluebubbles_doctor'],
+      approvalPolicy: 'read_only',
+      riskLevel: 'medium',
+      evidenceProduced: ['bluebubbles_proof_state', 'message_action_blocker'],
+      failureModes: ['bluebubbles_offline', 'proof_missing'],
+      healthState: 'unknown',
+    }),
+    tool({
       toolId: 'bluebubbles_draft',
       toolKind: 'draft',
       displayName: 'BlueBubbles Draft',
@@ -547,15 +608,28 @@ function defaultToolRegistryRecords(
     }),
     tool({
       toolId: 'operator_diagnostics',
-      toolKind: 'operator',
+      toolKind: 'read_only_integration',
       displayName: 'Operator Diagnostics',
       purpose:
-        'Read service/debug status and stage repair plans for operator review.',
-      allowedActions: ['read_status', 'stage_repair_plan'],
-      approvalPolicy: 'explicit_approval',
-      riskLevel: 'high',
+        'Read service/debug status and produce metadata-only repair evidence.',
+      allowedActions: ['read_status', 'read_repair_blocker'],
+      approvalPolicy: 'read_only',
+      riskLevel: 'medium',
       evidenceProduced: ['status_summary', 'repair_blocker'],
-      failureModes: ['main_control_missing', 'mutation_requires_approval'],
+      failureModes: ['main_control_missing', 'status_unavailable'],
+      healthState: 'unknown',
+    }),
+    tool({
+      toolId: 'cognition_trace',
+      toolKind: 'local_lookup',
+      displayName: 'Cognition Trace',
+      purpose:
+        'Read prior sanitized cognition trace metadata to explain route choice.',
+      allowedActions: ['read_trace_summary'],
+      approvalPolicy: 'none',
+      riskLevel: 'low',
+      evidenceProduced: ['trace_span_counts', 'last_next_action'],
+      failureModes: ['no_trace_available'],
       healthState: 'unknown',
     }),
   ];
@@ -854,6 +928,872 @@ function simulationAggregate(
           : warn > 0
             ? 'warn'
             : 'pass',
+  };
+}
+
+interface CognitiveExecutionBundle {
+  policyDecisions: CognitivePolicyDecision[];
+  toolResults: CognitiveToolResultEnvelope[];
+  executionSteps: CognitiveExecutionStep[];
+  planRevisions: CognitivePlanRevision[];
+  runEvents: CognitiveRunEvent[];
+}
+
+function executionAggregate(input: {
+  steps: CognitiveExecutionStep[];
+  results: CognitiveToolResultEnvelope[];
+  decisions: CognitivePolicyDecision[];
+  revisions: CognitivePlanRevision[];
+}): CognitiveDoctorReport['execution'] {
+  const blocked = input.steps.filter(
+    (step) => step.status === 'blocked',
+  ).length;
+  const degraded = input.steps.filter(
+    (step) => step.status === 'degraded' || step.status === 'failed',
+  ).length;
+  const approvalStaged = input.steps.filter(
+    (step) => step.status === 'approval_staged',
+  ).length;
+  const skipped = input.steps.filter(
+    (step) => step.status === 'skipped',
+  ).length;
+  const executed = input.steps.filter(
+    (step) => step.status === 'executed',
+  ).length;
+  const latest = input.steps[input.steps.length - 1] || null;
+  return {
+    steps: input.steps.length,
+    executed,
+    degraded,
+    blocked,
+    approvalStaged,
+    skipped,
+    toolResults: input.results.length,
+    policyDecisions: input.decisions.length,
+    planRevisions: input.revisions.length,
+    status:
+      input.steps.length === 0
+        ? 'none'
+        : blocked > 0
+          ? 'block'
+          : degraded > 0 || approvalStaged > 0 || skipped > 0
+            ? 'warn'
+            : 'pass',
+    latestToolId: latest?.toolId || null,
+    latestNextAction: latest?.nextAction || null,
+  };
+}
+
+function runEvent(input: {
+  runId: string;
+  eventKind: CognitiveRunEvent['eventKind'];
+  summary: string;
+  refs: string[];
+  now: string;
+}): CognitiveRunEvent {
+  return {
+    eventId: sanitizeId(
+      `cogevent:${input.runId}:${input.eventKind}:${randomUUID()}`,
+    ),
+    createdAt: input.now,
+    runId: input.runId,
+    eventKind: input.eventKind,
+    summary: redactCouncilText(input.summary, 520),
+    refsJson: safeJson(input.refs.map((ref) => redactCouncilText(ref, 180))),
+    privacyJson: privacyPolicyJson(),
+  };
+}
+
+function policyDecisionFor(input: {
+  runId: string;
+  plan: CognitiveToolCallPlan;
+  simulation?: CognitiveToolSimulation | null;
+  registry?: CognitiveToolRegistryRecord | null;
+  now: string;
+}): CognitivePolicyDecision {
+  const issues = parseJsonSafe<string[]>(input.simulation?.issuesJson, []);
+  const explicitApproval =
+    input.plan.approvalRequired ||
+    input.registry?.approvalPolicy === 'explicit_approval' ||
+    input.registry?.riskLevel === 'high' ||
+    input.plan.actionClass === 'draft' ||
+    input.plan.actionClass === 'approval_gate';
+  const status: CognitivePolicyDecision['status'] =
+    input.simulation?.status === 'block'
+      ? 'block'
+      : explicitApproval
+        ? 'stage_approval'
+        : input.simulation?.status === 'warn'
+          ? 'allow'
+          : input.registry
+            ? 'allow'
+            : 'skip';
+  const reason =
+    status === 'block'
+      ? 'Tool simulation blocked this step before execution.'
+      : status === 'stage_approval'
+        ? 'Tool is mutating, high-risk, draft/send-adjacent, or explicitly approval-gated.'
+        : status === 'skip'
+          ? 'Tool is not registered for execution on this host.'
+          : 'Tool is read-only or local metadata and passed policy gating.';
+  return {
+    decisionId: sanitizeId(
+      `cogpolicy:${input.runId}:${input.plan.toolId}:${randomUUID()}`,
+    ),
+    createdAt: input.now,
+    runId: input.runId,
+    toolId: input.plan.toolId,
+    simulationId: input.simulation?.simulationId || null,
+    status,
+    reason,
+    approvalRequired: explicitApproval,
+    readOnly:
+      input.registry?.approvalPolicy === 'read_only' ||
+      ['local_lookup', 'read_only_integration', 'council'].includes(
+        input.plan.actionClass,
+      ),
+    riskLevel: input.registry?.riskLevel || 'unknown',
+    issuesJson: safeJson(issues, 1600),
+    privacyJson: privacyPolicyJson(),
+  };
+}
+
+function toolResult(input: {
+  runId: string;
+  toolId: string;
+  status: CognitiveToolResultEnvelope['status'];
+  summary: string;
+  evidenceRefs: string[];
+  outputShape: Record<string, unknown>;
+  failureClass?: string | null;
+  nextAction: string;
+  now: string;
+}): CognitiveToolResultEnvelope {
+  return {
+    resultId: sanitizeId(
+      `cogresult:${input.runId}:${input.toolId}:${randomUUID()}`,
+    ),
+    createdAt: input.now,
+    runId: input.runId,
+    toolId: input.toolId,
+    status: input.status,
+    summary: redactCouncilText(input.summary, 640),
+    evidenceRefsJson: safeJson(input.evidenceRefs, 1600),
+    outputShapeJson: safeJson(input.outputShape, 2400),
+    failureClass: input.failureClass || null,
+    nextAction: redactCouncilText(input.nextAction, 520),
+    privacyJson: privacyPolicyJson(),
+  };
+}
+
+function integrationStatusShape(input: {
+  integrationId: string;
+  label?: string;
+  state?: string;
+  proofState?: string;
+  credentialState?: string;
+  transportState?: string;
+  blockerOwner?: string;
+  repairability?: string;
+}): Record<string, unknown> {
+  return {
+    integrationId: input.integrationId,
+    label: input.label || input.integrationId,
+    state: input.state || 'unknown',
+    proofState: input.proofState || 'unknown',
+    credentialState: input.credentialState || 'unknown',
+    transportState: input.transportState || 'unknown',
+    blockerOwner: input.blockerOwner || 'unknown',
+    repairability: input.repairability || 'unknown',
+  };
+}
+
+function buildSafeIntegrationDoctorReport(input: {
+  now: string;
+  providers: ProviderHealthSnapshot[];
+}): ReturnType<typeof buildIntegrationDoctorReport> {
+  try {
+    return buildIntegrationDoctorReport({
+      now: new Date(input.now),
+      providers: input.providers,
+    });
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    return {
+      generatedAt: input.now,
+      summary: {
+        total: 1,
+        healthy: 0,
+        actionNeeded: 1,
+        needsProof: 0,
+        manualOrExternal: 0,
+      },
+      statuses: [
+        {
+          integrationId: 'integration_doctor',
+          label: 'Integration Doctor',
+          state: 'degraded_but_usable',
+          credentialState: 'unknown',
+          transportState: 'unknown',
+          proofState: 'degraded_but_usable',
+          lastHealthyAt: null,
+          lastFailure: redactCouncilText(detail, 240),
+          blockerOwner: 'repo_side',
+          nextAction:
+            'Initialize the local database before running full integration doctor evidence.',
+          repairability: 'status_only',
+          safeActions: ['initialize_database', 'rerun_cognition_trace'],
+          detail:
+            'Integration doctor was unavailable, so cognition recorded a degraded metadata-only result.',
+        },
+      ],
+      secretsRedacted: true,
+    };
+  }
+}
+
+function resultStatusFromIntegrationState(
+  state: string | undefined,
+): CognitiveToolResultEnvelope['status'] {
+  if (state === 'healthy') return 'succeeded';
+  if (
+    state === 'near_live_only' ||
+    state === 'degraded_but_usable' ||
+    state === 'needs_proof'
+  ) {
+    return 'degraded';
+  }
+  if (
+    state === 'externally_blocked' ||
+    state === 'needs_auth' ||
+    state === 'manual_action_required' ||
+    state === 'repo_fix_available'
+  ) {
+    return 'blocked';
+  }
+  return 'degraded';
+}
+
+function executeReadOnlyAdapter(input: {
+  run: CognitiveRunRecord;
+  plan: CognitiveToolCallPlan;
+  providerSnapshots: ProviderHealthSnapshot[];
+  provider: ReturnType<typeof providerUsability>;
+  selectedSkill: CognitiveSkillCardRecord | null;
+  providerCouncil?: AndreaPlatformProviderCouncilResult | null;
+  evidenceContract: ReturnType<typeof buildEvidenceContract>;
+  now: string;
+}): CognitiveToolResultEnvelope {
+  const integrationReport = (): ReturnType<
+    typeof buildIntegrationDoctorReport
+  > =>
+    buildSafeIntegrationDoctorReport({
+      now: input.now,
+      providers: input.providerSnapshots,
+    });
+  switch (input.plan.toolId) {
+    case 'local_skill_library': {
+      const skillCount = safeDb(
+        0,
+        () =>
+          listCognitiveSkillCards({
+            groupFolder: input.run.groupFolder,
+            taskFamily: input.run.taskFamily,
+            limit: 50,
+          }).length,
+      );
+      return toolResult({
+        runId: input.run.runId,
+        toolId: input.plan.toolId,
+        status: input.selectedSkill ? 'succeeded' : 'degraded',
+        summary: input.selectedSkill
+          ? `Matched sanitized skill ${input.selectedSkill.skillId}.`
+          : 'No promoted skill matched; continuing with deterministic task policy.',
+        evidenceRefs: input.selectedSkill
+          ? [input.selectedSkill.skillId]
+          : ['skill_library:no_match'],
+        outputShape: {
+          matchedSkillId: input.selectedSkill?.skillId || null,
+          taskFamilySkillCount: skillCount,
+          promotionState: input.selectedSkill?.promotionState || 'none',
+        },
+        failureClass: input.selectedSkill ? null : 'no_matching_skill',
+        nextAction: input.selectedSkill
+          ? 'Use the matched skill checklist during answer verification.'
+          : 'Proceed with base kernel policy and let successful outcome metadata create a candidate skill.',
+        now: input.now,
+      });
+    }
+    case 'provider_health':
+      return toolResult({
+        runId: input.run.runId,
+        toolId: input.plan.toolId,
+        status:
+          input.provider.healthy > 0
+            ? input.provider.blocked > 0 || input.provider.degraded > 0
+              ? 'degraded'
+              : 'succeeded'
+            : 'blocked',
+        summary: `${input.provider.healthy} provider(s) healthy; ${input.provider.degraded + input.provider.blocked} degraded or blocked.`,
+        evidenceRefs: input.provider.snapshots.map(
+          (snapshot) => `provider:${String(snapshot.providerId)}`,
+        ),
+        outputShape: {
+          healthy: input.provider.healthy,
+          degraded: input.provider.degraded,
+          blocked: input.provider.blocked,
+          degradedProviderIds: input.provider.degradedProviderIds,
+        },
+        failureClass: input.provider.healthy > 0 ? null : 'no_usable_provider',
+        nextAction:
+          input.provider.healthy > 0
+            ? 'Assign optional model roles only to usable providers.'
+            : 'Answer with provider blocker named and skip model-dependent routes.',
+        now: input.now,
+      });
+    case 'integrations_status': {
+      const report = integrationReport();
+      return toolResult({
+        runId: input.run.runId,
+        toolId: input.plan.toolId,
+        status: report.summary.actionNeeded > 0 ? 'degraded' : 'succeeded',
+        summary: `${report.summary.healthy}/${report.summary.total} integration(s) healthy; ${report.summary.actionNeeded} need action.`,
+        evidenceRefs: report.statuses.map(
+          (status) => `integration:${status.integrationId}`,
+        ),
+        outputShape: {
+          total: report.summary.total,
+          healthy: report.summary.healthy,
+          needsProof: report.summary.needsProof,
+          actionNeeded: report.summary.actionNeeded,
+          manualOrExternal: report.summary.manualOrExternal,
+        },
+        failureClass:
+          report.summary.actionNeeded > 0 ? 'integration_action_needed' : null,
+        nextAction:
+          report.summary.actionNeeded > 0
+            ? 'Name the integration blocker and use the registered safe action list.'
+            : 'Proceed with healthy integration assumptions for this turn.',
+        now: input.now,
+      });
+    }
+    case 'provider_council':
+      return toolResult({
+        runId: input.run.runId,
+        toolId: input.plan.toolId,
+        status: input.providerCouncil?.councilRunId ? 'succeeded' : 'skipped',
+        summary: input.providerCouncil?.councilRunId
+          ? `Linked council verdict ${input.providerCouncil.councilRunId}.`
+          : 'No council verdict was attached to this quick executor run.',
+        evidenceRefs: input.providerCouncil?.councilRunId
+          ? [`council:${input.providerCouncil.councilRunId}`]
+          : ['council:not_requested'],
+        outputShape: {
+          councilRunId: input.providerCouncil?.councilRunId || null,
+          status:
+            input.providerCouncil?.answerGuidance?.status ||
+            input.providerCouncil?.status ||
+            'not_requested',
+          mode: input.providerCouncil?.mode || null,
+        },
+        failureClass: input.providerCouncil?.councilRunId
+          ? null
+          : 'council_not_requested',
+        nextAction: input.providerCouncil?.councilRunId
+          ? 'Apply council directives as constraints before final answer.'
+          : 'Stay on the deterministic executor path.',
+        now: input.now,
+      });
+    case 'google_calendar_read': {
+      const status = integrationReport().statuses.find(
+        (item) => item.integrationId === 'google_calendar',
+      );
+      const resultStatus = resultStatusFromIntegrationState(status?.state);
+      return toolResult({
+        runId: input.run.runId,
+        toolId: input.plan.toolId,
+        status: resultStatus,
+        summary: status
+          ? `Google Calendar state is ${status.state}; proof is ${status.proofState}.`
+          : 'Google Calendar status was not available from the integration doctor.',
+        evidenceRefs: ['integration:google_calendar'],
+        outputShape: integrationStatusShape({
+          integrationId: 'google_calendar',
+          label: status?.label,
+          state: status?.state,
+          proofState: status?.proofState,
+          credentialState: status?.credentialState,
+          transportState: status?.transportState,
+          blockerOwner: status?.blockerOwner,
+          repairability: status?.repairability,
+        }),
+        failureClass:
+          resultStatus === 'succeeded' ? null : 'calendar_status_blocker',
+        nextAction:
+          status?.nextAction ||
+          'Run Google Calendar debug/auth validation before relying on live calendar answers.',
+        now: input.now,
+      });
+    }
+    case 'brave_search': {
+      const brave = getBraveSearchStatus();
+      return toolResult({
+        runId: input.run.runId,
+        toolId: input.plan.toolId,
+        status: brave.configured ? 'succeeded' : 'blocked',
+        summary: brave.configured
+          ? 'Brave Search is configured for public/live evidence lookup.'
+          : 'Brave Search is not configured for live public evidence.',
+        evidenceRefs: ['provider:brave_search', 'policy:brain_first_lookup'],
+        outputShape: {
+          enabled: brave.enabled,
+          configured: brave.configured,
+          count: brave.count,
+          baseUrl: brave.baseUrl,
+          aliasUsed: brave.aliasUsed || 'none',
+          liveSearchAllowed: input.evidenceContract.liveSearchAllowed,
+        },
+        failureClass: brave.configured ? null : 'search_not_configured',
+        nextAction: brave.configured
+          ? 'Use Brave only for public/live gaps after local evidence.'
+          : 'Name the Brave blocker or answer from local evidence only.',
+        now: input.now,
+      });
+    }
+    case 'bluebubbles_status': {
+      const status = integrationReport().statuses.find(
+        (item) => item.integrationId === 'bluebubbles',
+      );
+      const resultStatus = resultStatusFromIntegrationState(status?.state);
+      return toolResult({
+        runId: input.run.runId,
+        toolId: input.plan.toolId,
+        status: resultStatus,
+        summary: status
+          ? `BlueBubbles state is ${status.state}; proof is ${status.proofState}.`
+          : 'BlueBubbles status was not available from the integration doctor.',
+        evidenceRefs: ['integration:bluebubbles'],
+        outputShape: integrationStatusShape({
+          integrationId: 'bluebubbles',
+          label: status?.label,
+          state: status?.state,
+          proofState: status?.proofState,
+          credentialState: status?.credentialState,
+          transportState: status?.transportState,
+          blockerOwner: status?.blockerOwner,
+          repairability: status?.repairability,
+        }),
+        failureClass:
+          resultStatus === 'succeeded' ? null : 'bluebubbles_status_blocker',
+        nextAction:
+          status?.nextAction ||
+          'Run BlueBubbles doctor/live proof before relying on same-thread actions.',
+        now: input.now,
+      });
+    }
+    case 'operator_diagnostics': {
+      const report = integrationReport();
+      return toolResult({
+        runId: input.run.runId,
+        toolId: input.plan.toolId,
+        status: report.summary.actionNeeded > 0 ? 'degraded' : 'succeeded',
+        summary: `Operator diagnostics read ${report.summary.total} integration status card(s).`,
+        evidenceRefs: [
+          'operator:integration_doctor',
+          ...report.statuses
+            .slice(0, 6)
+            .map((status) => `integration:${status.integrationId}`),
+        ],
+        outputShape: {
+          actionNeeded: report.summary.actionNeeded,
+          needsProof: report.summary.needsProof,
+          manualOrExternal: report.summary.manualOrExternal,
+          safeActions: report.statuses
+            .flatMap((status) => status.safeActions.slice(0, 2))
+            .slice(0, 8),
+        },
+        failureClass:
+          report.summary.actionNeeded > 0 ? 'operator_action_needed' : null,
+        nextAction:
+          report.summary.actionNeeded > 0
+            ? 'Stage a repair plan; do not mutate services without operator approval.'
+            : 'Use the healthy status summary in the reply.',
+        now: input.now,
+      });
+    }
+    case 'cognition_trace': {
+      const packet = safeDb(null, () =>
+        buildCognitiveReplayPacket({
+          runId: null,
+          generatedAt: input.now,
+          limit: 25,
+        }),
+      );
+      return toolResult({
+        runId: input.run.runId,
+        toolId: input.plan.toolId,
+        status: packet?.latestRun ? 'succeeded' : 'degraded',
+        summary: packet?.latestRun
+          ? `Found prior trace for ${packet.latestRun.runId}.`
+          : 'No prior cognitive trace is available yet.',
+        evidenceRefs: packet?.latestRun
+          ? [`run:${packet.latestRun.runId}`]
+          : ['trace:none'],
+        outputShape: {
+          latestRunId: packet?.latestRun?.runId || null,
+          spans: packet?.spans.length || 0,
+          simulations: packet?.simulations.length || 0,
+          executionSteps: packet?.executionSteps.length || 0,
+          planRevisions: packet?.planRevisions.length || 0,
+        },
+        failureClass: packet?.latestRun ? null : 'no_trace_available',
+        nextAction: packet?.latestRun
+          ? 'Explain route choice from trace summaries only.'
+          : 'Create a cognitive run before explaining route history.',
+        now: input.now,
+      });
+    }
+    default:
+      return toolResult({
+        runId: input.run.runId,
+        toolId: input.plan.toolId,
+        status: 'skipped',
+        summary: `No read-only adapter is registered for ${input.plan.toolId}.`,
+        evidenceRefs: [`tool:${input.plan.toolId}:skipped`],
+        outputShape: { toolId: input.plan.toolId, adapter: 'missing' },
+        failureClass: 'adapter_missing',
+        nextAction: 'Use simulation/checkpoint metadata only for this tool.',
+        now: input.now,
+      });
+  }
+}
+
+function stepStatusFrom(input: {
+  decision: CognitivePolicyDecision;
+  result: CognitiveToolResultEnvelope;
+}): CognitiveExecutionStep['status'] {
+  if (input.decision.status === 'block') return 'blocked';
+  if (input.decision.status === 'stage_approval') return 'approval_staged';
+  if (input.decision.status === 'skip') return 'skipped';
+  if (input.result.status === 'succeeded') return 'executed';
+  if (input.result.status === 'degraded') return 'degraded';
+  if (input.result.status === 'blocked') return 'blocked';
+  return 'skipped';
+}
+
+function revisionForStep(input: {
+  runId: string;
+  step: CognitiveExecutionStep;
+  decision: CognitivePolicyDecision;
+  result: CognitiveToolResultEnvelope;
+  now: string;
+}): CognitivePlanRevision | null {
+  const kind: CognitivePlanRevision['revisionKind'] | null =
+    input.decision.status === 'stage_approval'
+      ? 'approval_required'
+      : input.decision.status === 'block'
+        ? 'verification'
+        : input.result.status === 'blocked'
+          ? 'missing_evidence'
+          : input.result.status === 'degraded'
+            ? 'tool_failure'
+            : null;
+  if (!kind) return null;
+  return {
+    revisionId: sanitizeId(
+      `cogrevision:${input.runId}:${input.step.toolId}:${kind}:${randomUUID()}`,
+    ),
+    createdAt: input.now,
+    runId: input.runId,
+    revisionKind: kind,
+    changedToolId: input.step.toolId,
+    reason:
+      kind === 'approval_required'
+        ? 'Executor staged this tool instead of running it because approval is required.'
+        : kind === 'verification'
+          ? 'Executor blocked this tool before action because policy simulation failed.'
+          : kind === 'missing_evidence'
+            ? 'Executor found a read-only evidence blocker that must be named or repaired.'
+            : 'Executor found degraded read-only evidence and adjusted the answer path.',
+    beforeStateJson: safeJson({
+      decisionStatus: input.decision.status,
+      resultStatus: input.result.status,
+    }),
+    afterStateJson: safeJson({
+      nextAction: input.step.nextAction,
+      safeFallback:
+        kind === 'approval_required'
+          ? 'stage_approval'
+          : 'answer_with_blocker_or_clarify',
+    }),
+    nextAction: input.step.nextAction,
+    privacyJson: privacyPolicyJson(),
+  };
+}
+
+function executeCognitiveToolPlan(input: {
+  run: CognitiveRunRecord;
+  graph: CognitiveTaskGraph;
+  toolPlans: CognitiveToolCallPlan[];
+  toolSimulations: CognitiveToolSimulation[];
+  registry: CognitiveToolRegistryRecord[];
+  providerSnapshots: ProviderHealthSnapshot[];
+  provider: ReturnType<typeof providerUsability>;
+  selectedSkill: CognitiveSkillCardRecord | null;
+  providerCouncil?: AndreaPlatformProviderCouncilResult | null;
+  evidenceContract: ReturnType<typeof buildEvidenceContract>;
+  now: string;
+}): CognitiveExecutionBundle {
+  const byTool = new Map(input.registry.map((tool) => [tool.toolId, tool]));
+  const simulationByTool = new Map(
+    input.toolSimulations.map((simulation) => [simulation.toolId, simulation]),
+  );
+  const subgoalByTool = new Map<string, string>();
+  for (const subgoal of input.graph.subgoals) {
+    for (const plan of subgoal.toolPlan) {
+      if (!subgoalByTool.has(plan.toolId)) {
+        subgoalByTool.set(plan.toolId, subgoal.subgoalId);
+      }
+    }
+  }
+  const policyDecisions: CognitivePolicyDecision[] = [];
+  const toolResults: CognitiveToolResultEnvelope[] = [];
+  const executionSteps: CognitiveExecutionStep[] = [];
+  const planRevisions: CognitivePlanRevision[] = [];
+  const runEvents: CognitiveRunEvent[] = [
+    runEvent({
+      runId: input.run.runId,
+      eventKind: 'policy',
+      summary: 'Executor started policy-gated read-only plan.',
+      refs: input.toolPlans.map((plan) => plan.toolId),
+      now: input.now,
+    }),
+  ];
+  input.toolPlans.forEach((plan, index) => {
+    const registry = byTool.get(plan.toolId) || null;
+    const simulation = simulationByTool.get(plan.toolId) || null;
+    const decision = policyDecisionFor({
+      runId: input.run.runId,
+      plan,
+      simulation,
+      registry,
+      now: input.now,
+    });
+    policyDecisions.push(decision);
+    const result =
+      decision.status === 'block'
+        ? toolResult({
+            runId: input.run.runId,
+            toolId: plan.toolId,
+            status: 'blocked',
+            summary: `Policy blocked ${plan.toolId} before execution.`,
+            evidenceRefs: [simulation?.simulationId || `tool:${plan.toolId}`],
+            outputShape: {
+              policyStatus: decision.status,
+              issues: parseJsonSafe<string[]>(decision.issuesJson, []),
+            },
+            failureClass: 'policy_block',
+            nextAction:
+              'Repair tool policy, approval gate, or autonomy budget before acting.',
+            now: input.now,
+          })
+        : decision.status === 'stage_approval'
+          ? toolResult({
+              runId: input.run.runId,
+              toolId: plan.toolId,
+              status: 'skipped',
+              summary: `Approval-first policy staged ${plan.toolId}; no external action executed.`,
+              evidenceRefs: [
+                simulation?.simulationId || `tool:${plan.toolId}`,
+                'policy:approval_first',
+              ],
+              outputShape: {
+                policyStatus: decision.status,
+                approvalRequired: true,
+                actionClass: plan.actionClass,
+              },
+              failureClass: 'approval_required',
+              nextAction:
+                'Ask for explicit same-channel approval before any mutating action.',
+              now: input.now,
+            })
+          : executeReadOnlyAdapter({
+              run: input.run,
+              plan,
+              providerSnapshots: input.providerSnapshots,
+              provider: input.provider,
+              selectedSkill: input.selectedSkill,
+              providerCouncil: input.providerCouncil,
+              evidenceContract: input.evidenceContract,
+              now: input.now,
+            });
+    toolResults.push(result);
+    const stepStatus = stepStatusFrom({ decision, result });
+    const step: CognitiveExecutionStep = {
+      stepId: sanitizeId(
+        `cogstep:${input.run.runId}:${String(index + 1).padStart(2, '0')}:${plan.toolId}`,
+      ),
+      createdAt: input.now,
+      updatedAt: input.now,
+      runId: input.run.runId,
+      subgoalId: subgoalByTool.get(plan.toolId) || null,
+      toolId: plan.toolId,
+      position: index + 1,
+      actionClass: plan.actionClass,
+      status: stepStatus,
+      policyDecisionId: decision.decisionId,
+      resultId: result.resultId,
+      policyDecisionJson: safeJson(decision, 2400),
+      resultJson: safeJson(result, 3200),
+      verificationJson: safeJson({
+        metadataOnly: true,
+        externalActionExecuted:
+          stepStatus === 'executed' &&
+          ['local_lookup', 'read_only_integration', 'council'].includes(
+            plan.actionClass,
+          ),
+        approvalBoundaryPreserved:
+          decision.status !== 'stage_approval' || result.status === 'skipped',
+      }),
+      nextAction: result.nextAction,
+      privacyJson: privacyPolicyJson(),
+    };
+    executionSteps.push(step);
+    const revision = revisionForStep({
+      runId: input.run.runId,
+      step,
+      decision,
+      result,
+      now: input.now,
+    });
+    if (revision) planRevisions.push(revision);
+    runEvents.push(
+      runEvent({
+        runId: input.run.runId,
+        eventKind: stepStatus === 'executed' ? 'execute' : 'revise',
+        summary: `${plan.toolId} ${stepStatus}.`,
+        refs: [decision.decisionId, result.resultId, step.stepId],
+        now: input.now,
+      }),
+    );
+  });
+  for (const snapshot of input.providerSnapshots) {
+    if (
+      snapshot.state === 'externally_blocked' ||
+      snapshot.state === 'not_configured' ||
+      snapshot.credentialState === 'missing' ||
+      snapshot.credentialState === 'invalid'
+    ) {
+      planRevisions.push({
+        revisionId: sanitizeId(
+          `cogrevision:${input.run.runId}:provider_cooldown:${snapshot.providerId}:${randomUUID()}`,
+        ),
+        createdAt: input.now,
+        runId: input.run.runId,
+        revisionKind: 'provider_cooldown',
+        changedToolId: 'provider_health',
+        reason: `${snapshot.providerId} was skipped or reduced because live provider health is ${snapshot.state}.`,
+        beforeStateJson: safeJson({
+          providerId: snapshot.providerId,
+          state: snapshot.state,
+          failureClass: snapshot.failureClass,
+        }),
+        afterStateJson: safeJson({
+          routeAdjustment: 'skip_optional_provider_role',
+          reducedIndependence: true,
+        }),
+        nextAction:
+          snapshot.nextAction ||
+          `Use available providers and rerun diagnostics after ${snapshot.providerId} recovers.`,
+        privacyJson: privacyPolicyJson(),
+      });
+      runEvents.push(
+        runEvent({
+          runId: input.run.runId,
+          eventKind: 'revise',
+          summary: `${snapshot.providerId} provider cooldown adjusted this run.`,
+          refs: [`provider:${snapshot.providerId}`, 'tool:provider_health'],
+          now: input.now,
+        }),
+      );
+    }
+  }
+  if (planRevisions.length === 0) {
+    planRevisions.push({
+      revisionId: sanitizeId(
+        `cogrevision:${input.run.runId}:success:${randomUUID()}`,
+      ),
+      createdAt: input.now,
+      runId: input.run.runId,
+      revisionKind: 'success_path',
+      changedToolId: null,
+      reason: 'Read-only executor path completed without blockers.',
+      beforeStateJson: safeJson({
+        toolPlans: input.toolPlans.length,
+      }),
+      afterStateJson: safeJson({
+        executedSteps: executionSteps.filter(
+          (step) => step.status === 'executed',
+        ).length,
+      }),
+      nextAction:
+        'Answer with gathered metadata and record the outcome signal.',
+      privacyJson: privacyPolicyJson(),
+    });
+  }
+  return {
+    policyDecisions,
+    toolResults,
+    executionSteps,
+    planRevisions,
+    runEvents,
+  };
+}
+
+function applyExecutionFeedback(
+  verification: CognitiveVerificationResult,
+  execution: CognitiveExecutionBundle,
+  mode: CognitiveMode,
+): CognitiveVerificationResult {
+  const gaps = new Set(verification.evidenceGaps);
+  for (const step of execution.executionSteps) {
+    if (step.status === 'blocked')
+      gaps.add(`tool_execution_blocked:${step.toolId}`);
+    if (step.status === 'degraded')
+      gaps.add(`tool_execution_degraded:${step.toolId}`);
+    if (step.status === 'approval_staged')
+      gaps.add(`approval_staged:${step.toolId}`);
+  }
+  const blocked = execution.executionSteps.some(
+    (step) => step.status === 'blocked',
+  );
+  const approval = execution.executionSteps.some(
+    (step) => step.status === 'approval_staged',
+  );
+  const degraded = execution.executionSteps.some(
+    (step) => step.status === 'degraded' || step.status === 'skipped',
+  );
+  const status: CognitiveVerificationResult['status'] =
+    verification.status === 'block' || blocked
+      ? 'block'
+      : verification.status === 'warn' || degraded || approval
+        ? 'warn'
+        : 'pass';
+  const nextAction = blocked
+    ? 'Name the read-only tool blocker, use available local evidence, and ask for the exact repair or missing proof.'
+    : approval
+      ? 'Stage the draft/checkpoint and wait for explicit same-channel approval before any mutating action.'
+      : degraded
+        ? 'Answer with degraded-provider/tool wording and record what evidence was missing.'
+        : mode === 'read_only_react' || mode === 'council_verified'
+          ? 'Use the executed read-only evidence to answer, then record outcome metadata.'
+          : verification.nextAction;
+  return {
+    ...verification,
+    status,
+    evidenceGaps: Array.from(gaps),
+    approvalRequired: verification.approvalRequired || approval,
+    nextAction,
   };
 }
 
@@ -1290,6 +2230,12 @@ function toolPlanFor(
       purpose: 'Fold live provider usability into route choice.',
       approvalRequired: false,
     },
+    {
+      toolId: 'integrations_status',
+      actionClass: 'local_lookup',
+      purpose: 'Read integration doctor status before route execution.',
+      approvalRequired: false,
+    },
   ];
   if (input.providerCouncil?.councilRunId) {
     plans.push({
@@ -1315,6 +2261,13 @@ function toolPlanFor(
   }
   if (input.taskFamily === 'communication') {
     plans.push({
+      toolId: 'bluebubbles_status',
+      actionClass: 'read_only_integration',
+      purpose:
+        'Read BlueBubbles status and proof blockers before drafting message help.',
+      approvalRequired: false,
+    });
+    plans.push({
       toolId: 'bluebubbles_draft',
       actionClass: 'draft',
       purpose:
@@ -1325,9 +2278,21 @@ function toolPlanFor(
   if (input.taskFamily === 'operator') {
     plans.push({
       toolId: 'operator_diagnostics',
-      actionClass: 'operator',
+      actionClass: 'read_only_integration',
       purpose: 'Read operator status and stage any repair plan for approval.',
-      approvalRequired: input.selectedSkillApprovalNeed === 'explicit',
+      approvalRequired: false,
+    });
+  }
+  if (
+    /\bwhy did you choose|why that route|cognition status|trace\b/i.test(
+      input.goal,
+    )
+  ) {
+    plans.push({
+      toolId: 'cognition_trace',
+      actionClass: 'local_lookup',
+      purpose: 'Explain the route from sanitized trace metadata.',
+      approvalRequired: false,
     });
   }
   if (input.selectedSkillApprovalNeed === 'explicit') {
@@ -1887,7 +2852,7 @@ export function beginCognitiveKernelRun(
     now: startedAt,
   });
   const providers = providerUsability(providerSnapshots);
-  const verification = buildVerification(
+  const initialVerification = buildVerification(
     input,
     providers,
     framePolicy.cognitiveMode,
@@ -1895,20 +2860,62 @@ export function beginCognitiveKernelRun(
     budgetPolicy,
     toolSimulations,
   );
-  const run = buildRunRecord({
+  let run = buildRunRecord({
     frame,
     mode: framePolicy.cognitiveMode,
     autonomyLevel: framePolicy.autonomyLevel,
     taskGraph: graph,
     evidenceContract,
     provider: providers,
-    verification,
+    verification: initialVerification,
     selectedSkill,
     now: startedAt,
     groupFolder: input.groupFolder,
     turnId: input.turnId,
     providerCouncil: input.providerCouncil,
   });
+  const execution = executeCognitiveToolPlan({
+    run,
+    graph,
+    toolPlans,
+    toolSimulations,
+    registry,
+    providerSnapshots,
+    provider: providers,
+    selectedSkill,
+    providerCouncil: input.providerCouncil,
+    evidenceContract,
+    now: startedAt,
+  });
+  const verification = applyExecutionFeedback(
+    initialVerification,
+    execution,
+    framePolicy.cognitiveMode,
+  );
+  const executionBlocked = execution.executionSteps.some(
+    (step) => step.status === 'blocked',
+  );
+  const policyBlocked = execution.policyDecisions.some(
+    (decision) => decision.status === 'block',
+  );
+  run = {
+    ...run,
+    status:
+      verification.status === 'block' && executionBlocked && !policyBlocked
+        ? 'awaiting_evidence'
+        : verification.status === 'block'
+          ? 'blocked'
+          : verification.approvalRequired ||
+              framePolicy.cognitiveMode === 'approval_staged'
+            ? 'awaiting_approval'
+            : execution.executionSteps.some(
+                  (step) => step.status === 'executed',
+                )
+              ? 'answered'
+              : run.status,
+    verificationJson: safeJson(verification),
+    nextAction: redactCouncilText(verification.nextAction, 360),
+  };
   const worldBeliefs = buildWorldBeliefs(input, providers, selectedSkill);
   const providerCooldowns = persistProviderCooldowns({
     snapshots: providerSnapshots,
@@ -1938,6 +2945,21 @@ export function beginCognitiveKernelRun(
     });
     for (const simulation of toolSimulations) {
       upsertCognitiveToolSimulation(simulation);
+    }
+    for (const decision of execution.policyDecisions) {
+      upsertCognitivePolicyDecision(decision);
+    }
+    for (const result of execution.toolResults) {
+      upsertCognitiveToolResult(result);
+    }
+    for (const step of execution.executionSteps) {
+      upsertCognitiveExecutionStep(step);
+    }
+    for (const revision of execution.planRevisions) {
+      upsertCognitivePlanRevision(revision);
+    }
+    for (const event of execution.runEvents) {
+      upsertCognitiveRunEvent(event);
     }
     replaceCognitiveSubgoalsForRun(
       run.runId,
@@ -1980,6 +3002,12 @@ export function beginCognitiveKernelRun(
       budgetPolicy,
       checkpoints,
       now: startedAt,
+    });
+    const executionSummary = executionAggregate({
+      steps: execution.executionSteps,
+      results: execution.toolResults,
+      decisions: execution.policyDecisions,
+      revisions: execution.planRevisions,
     });
     persistTraceSpans([
       traceSpan({
@@ -2044,6 +3072,47 @@ export function beginCognitiveKernelRun(
         inputSummary: toolPlans.map((plan) => plan.toolId).join(', '),
         outputSummary: simulationAggregate(toolSimulations).status,
         metadata: simulationAggregate(toolSimulations),
+        now: startedAt,
+      }),
+      traceSpan({
+        runId: run.runId,
+        goalId: activeGoal.goalId,
+        spanKind: 'tool_execution',
+        status:
+          executionSummary.status === 'block'
+            ? 'blocked'
+            : executionSummary.status === 'warn'
+              ? 'warn'
+              : 'completed',
+        summary: `Executed ${execution.executionSteps.length} policy-gated tool step(s).`,
+        inputSummary: toolPlans.map((plan) => plan.toolId).join(', '),
+        outputSummary: execution.executionSteps
+          .map((step) => `${step.toolId}:${step.status}`)
+          .join(', '),
+        metadata: executionSummary,
+        now: startedAt,
+      }),
+      traceSpan({
+        runId: run.runId,
+        goalId: activeGoal.goalId,
+        spanKind: 'plan_revision',
+        status: execution.planRevisions.some(
+          (revision) => revision.revisionKind !== 'success_path',
+        )
+          ? 'warn'
+          : 'completed',
+        summary: `${execution.planRevisions.length} plan revision(s) recorded.`,
+        inputSummary: execution.planRevisions
+          .map((revision) => revision.revisionKind)
+          .join(', '),
+        outputSummary:
+          execution.planRevisions[execution.planRevisions.length - 1]
+            ?.nextAction || '',
+        metadata: {
+          revisionKinds: execution.planRevisions.map(
+            (revision) => revision.revisionKind,
+          ),
+        },
         now: startedAt,
       }),
       traceSpan({
@@ -2144,6 +3213,11 @@ export function beginCognitiveKernelRun(
     ),
     autonomyBudget,
     toolSimulations,
+    policyDecisions: execution.policyDecisions,
+    toolResults: execution.toolResults,
+    executionSteps: execution.executionSteps,
+    planRevisions: execution.planRevisions,
+    runEvents: execution.runEvents,
     traceSpans: safeDb(
       [],
       () =>
@@ -2952,6 +4026,11 @@ export function buildCognitiveDoctorReport(
       latestRun: latest || null,
       spans: [],
       simulations: [],
+      policyDecisions: [],
+      toolResults: [],
+      executionSteps: [],
+      planRevisions: [],
+      runEvents: [],
       providerCooldowns: [],
       checkpoints: latest ? checkpoints : [],
       privacy: privacyReport(),
@@ -2965,6 +4044,12 @@ export function buildCognitiveDoctorReport(
   const traceSpans = replayPacket.spans;
   const simulations = replayPacket.simulations;
   const simulation = simulationAggregate(simulations);
+  const execution = executionAggregate({
+    steps: replayPacket.executionSteps,
+    results: replayPacket.toolResults,
+    decisions: replayPacket.policyDecisions,
+    revisions: replayPacket.planRevisions,
+  });
   const cooldowns =
     replayPacket.providerCooldowns.length > 0
       ? replayPacket.providerCooldowns
@@ -3090,6 +4175,7 @@ export function buildCognitiveDoctorReport(
       latestSpanKind: traceSpans[traceSpans.length - 1]?.spanKind || null,
     },
     simulation,
+    execution,
     providerCooldowns: {
       active: cooldowns.length,
       providerIds: cooldowns.map((cooldown) => cooldown.providerId),
@@ -3112,6 +4198,12 @@ export function buildCognitiveTraceReport(
     generatedAt,
   });
   const simulation = simulationAggregate(replayPacket.simulations);
+  const execution = executionAggregate({
+    steps: replayPacket.executionSteps,
+    results: replayPacket.toolResults,
+    decisions: replayPacket.policyDecisions,
+    revisions: replayPacket.planRevisions,
+  });
   const blockedSpanCount = replayPacket.spans.filter(
     (span) => span.status === 'blocked',
   ).length;
@@ -3121,26 +4213,32 @@ export function buildCognitiveTraceReport(
   const ok =
     blockedSpanCount === 0 &&
     simulation.status !== 'block' &&
+    execution.status !== 'block' &&
     replayPacket.privacy.rawPromptsStored === false;
   const nextAction = !replayPacket.latestRun
     ? 'Run one cognitive task to create a trace packet.'
     : simulation.status === 'block'
       ? 'Repair the blocked tool simulation before executing this route.'
-      : activeCooldownProviderIds.length > 0
-        ? 'Proceed with degraded-provider wording until cooldowns expire or provider diagnostics recover.'
-        : blockedSpanCount > 0
-          ? 'Inspect blocked trace spans and rerun after repair.'
-          : replayPacket.latestRun.nextAction;
+      : execution.status === 'block'
+        ? 'Repair or name the blocked read-only tool result before answering.'
+        : activeCooldownProviderIds.length > 0
+          ? 'Proceed with degraded-provider wording until cooldowns expire or provider diagnostics recover.'
+          : blockedSpanCount > 0
+            ? 'Inspect blocked trace spans and rerun after repair.'
+            : replayPacket.latestRun.nextAction;
   return {
     generatedAt,
     ok,
     summary: replayPacket.latestRun
-      ? `Trace packet for ${replayPacket.latestRun.runId}: ${replayPacket.spans.length} span(s), simulation=${simulation.status}, cooldowns=${activeCooldownProviderIds.length}.`
+      ? `Trace packet for ${replayPacket.latestRun.runId}: ${replayPacket.spans.length} span(s), simulation=${simulation.status}, execution=${execution.status}, cooldowns=${activeCooldownProviderIds.length}.`
       : 'No cognitive trace packet is available yet.',
     runId: replayPacket.runId,
     spanCount: replayPacket.spans.length,
     blockedSpanCount,
     simulationStatus: simulation.status,
+    executionStatus: execution.status,
+    executedStepCount: execution.executed,
+    planRevisionCount: execution.planRevisions,
     activeCooldownProviderIds,
     nextAction,
     replayPacket,
@@ -3159,6 +4257,11 @@ export function formatCognitiveTraceReport(
       `Spans: ${report.spanCount}`,
       `Blocked spans: ${report.blockedSpanCount}`,
       `Simulation: ${report.simulationStatus}`,
+      `Execution: ${report.executionStatus}`,
+      `Executed steps: ${report.executedStepCount}`,
+      `Plan revisions: ${report.planRevisionCount}`,
+      `Tool results: ${report.replayPacket.toolResults.length}`,
+      `Policy decisions: ${report.replayPacket.policyDecisions.length}`,
       `Provider cooldowns: ${report.activeCooldownProviderIds.join(', ') || 'none'}`,
       `Checkpoints: ${report.replayPacket.checkpoints.length}`,
       `Next: ${report.nextAction}`,
@@ -3242,6 +4345,10 @@ export function formatCognitiveDoctorReport(
     `Blocked spans: ${report.trace.blockedSpanCount}`,
     `Latest span: ${report.trace.latestSpanKind || 'none'}`,
     `Tool simulation: ${report.simulation.status} (${report.simulation.pass}/${report.simulation.warn}/${report.simulation.block})`,
+    `Tool execution: ${report.execution.status} (${report.execution.executed} executed, ${report.execution.degraded} degraded, ${report.execution.blocked} blocked, ${report.execution.approvalStaged} staged)`,
+    `Tool results: ${report.execution.toolResults}`,
+    `Plan revisions: ${report.execution.planRevisions}`,
+    `Execution next: ${report.execution.latestNextAction || 'none'}`,
     `Provider cooldowns: ${report.providerCooldowns.providerIds.join(', ') || 'none'}`,
   ];
   if (report.activeRun) {

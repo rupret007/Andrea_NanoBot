@@ -1,4 +1,5 @@
 import {
+  beginCognitiveKernelRun,
   buildCognitiveDoctorReport,
   buildCognitiveResumePlan,
   buildCognitiveTraceReport,
@@ -18,6 +19,7 @@ const json = args.includes('--json');
 const runBenchmarks = args.includes('--benchmarks');
 const resume = args.includes('--resume');
 const trace = args.includes('--trace');
+const taskDrill = args.includes('--task-drill');
 const configOnly = args.includes('--config-only');
 
 async function main(): Promise<void> {
@@ -48,6 +50,58 @@ async function main(): Promise<void> {
           'Privacy: metadata-only; no raw prompts, private message bodies, hidden reasoning, or secrets are stored.',
         ].join('\n'),
       );
+    }
+    process.exit(0);
+  }
+
+  if (taskDrill) {
+    const checkedAt = new Date().toISOString();
+    const providerSnapshots = configOnly
+      ? undefined
+      : await collectProviderHealthSnapshotsWithLiveProbe(checkedAt);
+    const run = beginCognitiveKernelRun({
+      turnId: `debug-cognition-task-drill-${Date.now().toString(36)}`,
+      channel: 'system',
+      groupFolder: 'main',
+      taskFamily: 'research',
+      goal:
+        'Run a safe cognition task drill: gather read-only status evidence, skip blocked providers honestly, and explain the next repair action.',
+      requestRoute: 'debug:cognition:task-drill',
+      selectedSkillId: 'research.live_status',
+      selectedSkillPurpose:
+        'Run a non-mutating task drill through the cognitive executor.',
+      selectedSkillApprovalNeed: 'none',
+      selectedSkillSideEffectRisk: 'low',
+      selectedSkillEvidenceLevel: 'partial',
+      providerHealthSnapshots: providerSnapshots,
+      thinkingPreference: 'deep',
+      thinkingTrigger: 'task-drill',
+    });
+    const report = buildCognitiveTraceReport({
+      runId: run.run.runId,
+      generatedAt: checkedAt,
+    });
+    if (json) {
+      console.log(
+        JSON.stringify(
+          {
+            status: report.ok ? 'pass' : 'warn',
+            runId: run.run.runId,
+            executionStatus: report.executionStatus,
+            executedStepCount: report.executedStepCount,
+            planRevisionCount: report.planRevisionCount,
+            toolResults: report.replayPacket.toolResults.length,
+            policyDecisions: report.replayPacket.policyDecisions.length,
+            providerCooldowns: report.activeCooldownProviderIds,
+            nextAction: report.nextAction,
+            privacy: report.replayPacket.privacy,
+          },
+          null,
+          2,
+        ),
+      );
+    } else {
+      console.log(formatCognitiveTraceReport(report));
     }
     process.exit(0);
   }

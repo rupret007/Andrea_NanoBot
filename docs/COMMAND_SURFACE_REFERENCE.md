@@ -201,11 +201,14 @@ These are real product surface, but they should not show up in public slash help
 | `npm run debug:cognition -- --json`                    | Redacted cognitive kernel status, live provider truth, goals, blackboard, autonomy budgets, checkpoints, tool registry, and skill state |
 | `npm run debug:cognition -- --config-only --json`      | Same report with static/config-only provider snapshots, useful when avoiding live probe calls |
 | `npm run debug:cognition -- --resume`                  | Latest open cognitive checkpoint, linked goal, blackboard entries, and next safe resume action |
-| `npm run debug:cognition -- --trace`                   | Redacted replay packet with trace spans, tool simulation result, provider cooldowns, checkpoints, and next safe action |
+| `npm run debug:cognition -- --trace`                   | Redacted replay packet with trace spans, tool simulation, read-only execution steps, tool results, provider cooldowns, checkpoints, and next safe action |
+| `npm run debug:cognition -- --task-drill`              | Seed one non-mutating cognition executor drill and print the resulting trace/execution proof |
 | `npm run debug:cognition -- --benchmarks`              | Run the cognitive benchmark ladder and persist redacted attempt metadata      |
 | `npm run test:cognition:benchmarks`                    | Deterministic cognition goal, blackboard, autonomy-budget, checkpoint, tool-policy, approval, and privacy gate |
 | `npm run test:cognition:traces`                        | Focused trace replay, provider cooldown, simulation, and redaction proof      |
 | `npm run test:cognition:executor`                      | Focused tool-plan simulation and approval-first executor proof                |
+| `npm run test:cognition:execution`                     | Focused read-only tool execution, result-envelope, and approval-staging proof |
+| `npm run test:cognition:meta`                          | Focused provider cooldown, plan revision, run-event, and redaction proof      |
 
 ## Discovery Surface Rules
 

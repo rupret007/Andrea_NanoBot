@@ -30,6 +30,7 @@ const TOKEN_LITERAL_PATTERNS: readonly RegExp[] = [
 ];
 
 export function isSensitiveName(name: string): boolean {
+  if (/^secrets?Redacted$/i.test(name)) return false;
   return SENSITIVE_NAME_PATTERN.test(name);
 }
 

@@ -94,7 +94,9 @@
     "test:cognition:skills": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-cognition-skills.ts",
     "test:cognition:benchmarks": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-cognition-benchmarks.ts",
     "test:cognition:traces": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-cognition-traces.ts",
-    "test:cognition:executor": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-cognition-executor.ts"
+    "test:cognition:executor": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-cognition-executor.ts",
+    "test:cognition:execution": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-cognition-execution.ts",
+    "test:cognition:meta": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-cognition-meta.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",

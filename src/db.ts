@@ -45,14 +45,19 @@ import {
   CognitiveBenchmarkAttemptRecord,
   CognitiveBlackboardEntryRecord,
   CognitiveCheckpointRecord,
+  CognitiveExecutionStep,
   CognitiveGoalRecord,
+  CognitivePlanRevision,
+  CognitivePolicyDecision,
   CognitiveProviderCooldown,
   CognitiveReflectionRecord,
   CognitiveReplayPacket,
   CognitiveRewardSignalRecord,
   CognitiveRunRecord,
+  CognitiveRunEvent,
   CognitiveSkillCardRecord,
   CognitiveSubgoalRecord,
+  CognitiveToolResultEnvelope,
   CognitiveToolSimulation,
   CognitiveToolRegistryRecord,
   CognitiveTraceSpan,
@@ -1363,6 +1368,99 @@ function createSchema(database: Database.Database): void {
       ON cognitive_tool_simulations(run_id, created_at ASC);
     CREATE INDEX IF NOT EXISTS idx_cognitive_tool_simulations_tool_status
       ON cognitive_tool_simulations(tool_id, status, created_at DESC);
+    CREATE TABLE IF NOT EXISTS cognitive_policy_decisions (
+      decision_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      run_id TEXT NOT NULL,
+      tool_id TEXT NOT NULL,
+      simulation_id TEXT,
+      status TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      approval_required INTEGER NOT NULL,
+      read_only INTEGER NOT NULL,
+      risk_level TEXT NOT NULL,
+      issues_json TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (run_id) REFERENCES cognitive_runs(run_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_cognitive_policy_decisions_run
+      ON cognitive_policy_decisions(run_id, created_at ASC);
+    CREATE INDEX IF NOT EXISTS idx_cognitive_policy_decisions_tool_status
+      ON cognitive_policy_decisions(tool_id, status, created_at DESC);
+    CREATE TABLE IF NOT EXISTS cognitive_tool_results (
+      result_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      run_id TEXT NOT NULL,
+      tool_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      evidence_refs_json TEXT NOT NULL,
+      output_shape_json TEXT NOT NULL,
+      failure_class TEXT,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (run_id) REFERENCES cognitive_runs(run_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_cognitive_tool_results_run
+      ON cognitive_tool_results(run_id, created_at ASC);
+    CREATE INDEX IF NOT EXISTS idx_cognitive_tool_results_tool_status
+      ON cognitive_tool_results(tool_id, status, created_at DESC);
+    CREATE TABLE IF NOT EXISTS cognitive_execution_steps (
+      step_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      run_id TEXT NOT NULL,
+      subgoal_id TEXT,
+      tool_id TEXT NOT NULL,
+      position INTEGER NOT NULL,
+      action_class TEXT NOT NULL,
+      status TEXT NOT NULL,
+      policy_decision_id TEXT,
+      result_id TEXT,
+      policy_decision_json TEXT NOT NULL,
+      result_json TEXT NOT NULL,
+      verification_json TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (run_id) REFERENCES cognitive_runs(run_id) ON DELETE CASCADE,
+      FOREIGN KEY (policy_decision_id) REFERENCES cognitive_policy_decisions(decision_id) ON DELETE SET NULL,
+      FOREIGN KEY (result_id) REFERENCES cognitive_tool_results(result_id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_cognitive_execution_steps_run
+      ON cognitive_execution_steps(run_id, position ASC);
+    CREATE INDEX IF NOT EXISTS idx_cognitive_execution_steps_tool_status
+      ON cognitive_execution_steps(tool_id, status, created_at DESC);
+    CREATE TABLE IF NOT EXISTS cognitive_plan_revisions (
+      revision_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      run_id TEXT NOT NULL,
+      revision_kind TEXT NOT NULL,
+      changed_tool_id TEXT,
+      reason TEXT NOT NULL,
+      before_state_json TEXT NOT NULL,
+      after_state_json TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (run_id) REFERENCES cognitive_runs(run_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_cognitive_plan_revisions_run
+      ON cognitive_plan_revisions(run_id, created_at ASC);
+    CREATE INDEX IF NOT EXISTS idx_cognitive_plan_revisions_kind
+      ON cognitive_plan_revisions(revision_kind, created_at DESC);
+    CREATE TABLE IF NOT EXISTS cognitive_run_events (
+      event_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      run_id TEXT NOT NULL,
+      event_kind TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      refs_json TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (run_id) REFERENCES cognitive_runs(run_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_cognitive_run_events_run
+      ON cognitive_run_events(run_id, created_at ASC);
+    CREATE INDEX IF NOT EXISTS idx_cognitive_run_events_kind
+      ON cognitive_run_events(event_kind, created_at DESC);
     CREATE TABLE IF NOT EXISTS cognitive_provider_cooldowns (
       provider_id TEXT PRIMARY KEY,
       created_at TEXT NOT NULL,
@@ -9292,6 +9390,486 @@ export function listCognitiveToolSimulations(
   return rows.map((row) => mapCognitiveToolSimulationRow(row));
 }
 
+function mapCognitivePolicyDecisionRow(row: {
+  decision_id: string;
+  created_at: string;
+  run_id: string;
+  tool_id: string;
+  simulation_id: string | null;
+  status: CognitivePolicyDecision['status'];
+  reason: string;
+  approval_required: number;
+  read_only: number;
+  risk_level: CognitivePolicyDecision['riskLevel'];
+  issues_json: string;
+  privacy_json: string;
+}): CognitivePolicyDecision {
+  return {
+    decisionId: row.decision_id,
+    createdAt: row.created_at,
+    runId: row.run_id,
+    toolId: row.tool_id,
+    simulationId: row.simulation_id,
+    status: row.status,
+    reason: row.reason,
+    approvalRequired: row.approval_required === 1,
+    readOnly: row.read_only === 1,
+    riskLevel: row.risk_level,
+    issuesJson: row.issues_json,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertCognitivePolicyDecision(
+  record: CognitivePolicyDecision,
+): void {
+  db.prepare(
+    `
+      INSERT INTO cognitive_policy_decisions (
+        decision_id, created_at, run_id, tool_id, simulation_id, status, reason,
+        approval_required, read_only, risk_level, issues_json, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(decision_id) DO UPDATE SET
+        run_id = excluded.run_id,
+        tool_id = excluded.tool_id,
+        simulation_id = excluded.simulation_id,
+        status = excluded.status,
+        reason = excluded.reason,
+        approval_required = excluded.approval_required,
+        read_only = excluded.read_only,
+        risk_level = excluded.risk_level,
+        issues_json = excluded.issues_json,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.decisionId,
+    record.createdAt,
+    record.runId,
+    record.toolId,
+    record.simulationId || null,
+    record.status,
+    redactStoredCognitiveMetadata(record.reason, 640),
+    record.approvalRequired ? 1 : 0,
+    record.readOnly ? 1 : 0,
+    record.riskLevel,
+    redactStoredCognitiveMetadata(record.issuesJson, 2400),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listCognitivePolicyDecisions(
+  params: {
+    runId?: string;
+    status?: CognitivePolicyDecision['status'];
+    limit?: number;
+  } = {},
+): CognitivePolicyDecision[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.runId) {
+    clauses.push('run_id = ?');
+    args.push(params.runId);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 100, 500)));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM cognitive_policy_decisions
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at ASC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapCognitivePolicyDecisionRow>[0]>;
+  return rows.map((row) => mapCognitivePolicyDecisionRow(row));
+}
+
+function mapCognitiveToolResultRow(row: {
+  result_id: string;
+  created_at: string;
+  run_id: string;
+  tool_id: string;
+  status: CognitiveToolResultEnvelope['status'];
+  summary: string;
+  evidence_refs_json: string;
+  output_shape_json: string;
+  failure_class: string | null;
+  next_action: string;
+  privacy_json: string;
+}): CognitiveToolResultEnvelope {
+  return {
+    resultId: row.result_id,
+    createdAt: row.created_at,
+    runId: row.run_id,
+    toolId: row.tool_id,
+    status: row.status,
+    summary: row.summary,
+    evidenceRefsJson: row.evidence_refs_json,
+    outputShapeJson: row.output_shape_json,
+    failureClass: row.failure_class,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertCognitiveToolResult(
+  record: CognitiveToolResultEnvelope,
+): void {
+  db.prepare(
+    `
+      INSERT INTO cognitive_tool_results (
+        result_id, created_at, run_id, tool_id, status, summary,
+        evidence_refs_json, output_shape_json, failure_class, next_action,
+        privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(result_id) DO UPDATE SET
+        run_id = excluded.run_id,
+        tool_id = excluded.tool_id,
+        status = excluded.status,
+        summary = excluded.summary,
+        evidence_refs_json = excluded.evidence_refs_json,
+        output_shape_json = excluded.output_shape_json,
+        failure_class = excluded.failure_class,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.resultId,
+    record.createdAt,
+    record.runId,
+    record.toolId,
+    record.status,
+    redactStoredCognitiveMetadata(record.summary, 640),
+    redactStoredCognitiveMetadata(record.evidenceRefsJson, 2400),
+    redactStoredCognitiveMetadata(record.outputShapeJson, 2400),
+    record.failureClass || null,
+    redactStoredCognitiveMetadata(record.nextAction, 640),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listCognitiveToolResults(
+  params: {
+    runId?: string;
+    status?: CognitiveToolResultEnvelope['status'];
+    limit?: number;
+  } = {},
+): CognitiveToolResultEnvelope[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.runId) {
+    clauses.push('run_id = ?');
+    args.push(params.runId);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 100, 500)));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM cognitive_tool_results
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at ASC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapCognitiveToolResultRow>[0]>;
+  return rows.map((row) => mapCognitiveToolResultRow(row));
+}
+
+function mapCognitiveExecutionStepRow(row: {
+  step_id: string;
+  created_at: string;
+  updated_at: string;
+  run_id: string;
+  subgoal_id: string | null;
+  tool_id: string;
+  position: number;
+  action_class: string;
+  status: CognitiveExecutionStep['status'];
+  policy_decision_id: string | null;
+  result_id: string | null;
+  policy_decision_json: string;
+  result_json: string;
+  verification_json: string;
+  next_action: string;
+  privacy_json: string;
+}): CognitiveExecutionStep {
+  return {
+    stepId: row.step_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    runId: row.run_id,
+    subgoalId: row.subgoal_id,
+    toolId: row.tool_id,
+    position: row.position,
+    actionClass: row.action_class,
+    status: row.status,
+    policyDecisionId: row.policy_decision_id,
+    resultId: row.result_id,
+    policyDecisionJson: row.policy_decision_json,
+    resultJson: row.result_json,
+    verificationJson: row.verification_json,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertCognitiveExecutionStep(
+  record: CognitiveExecutionStep,
+): void {
+  db.prepare(
+    `
+      INSERT INTO cognitive_execution_steps (
+        step_id, created_at, updated_at, run_id, subgoal_id, tool_id, position,
+        action_class, status, policy_decision_id, result_id,
+        policy_decision_json, result_json, verification_json, next_action,
+        privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(step_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        run_id = excluded.run_id,
+        subgoal_id = excluded.subgoal_id,
+        tool_id = excluded.tool_id,
+        position = excluded.position,
+        action_class = excluded.action_class,
+        status = excluded.status,
+        policy_decision_id = excluded.policy_decision_id,
+        result_id = excluded.result_id,
+        policy_decision_json = excluded.policy_decision_json,
+        result_json = excluded.result_json,
+        verification_json = excluded.verification_json,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.stepId,
+    record.createdAt,
+    record.updatedAt,
+    record.runId,
+    record.subgoalId || null,
+    record.toolId,
+    record.position,
+    record.actionClass,
+    record.status,
+    record.policyDecisionId || null,
+    record.resultId || null,
+    redactStoredCognitiveMetadata(record.policyDecisionJson, 2400),
+    redactStoredCognitiveMetadata(record.resultJson, 3200),
+    redactStoredCognitiveMetadata(record.verificationJson, 2400),
+    redactStoredCognitiveMetadata(record.nextAction, 640),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listCognitiveExecutionSteps(
+  params: {
+    runId?: string;
+    status?: CognitiveExecutionStep['status'];
+    limit?: number;
+  } = {},
+): CognitiveExecutionStep[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.runId) {
+    clauses.push('run_id = ?');
+    args.push(params.runId);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 100, 500)));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM cognitive_execution_steps
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY position ASC, created_at ASC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapCognitiveExecutionStepRow>[0]>;
+  return rows.map((row) => mapCognitiveExecutionStepRow(row));
+}
+
+function mapCognitivePlanRevisionRow(row: {
+  revision_id: string;
+  created_at: string;
+  run_id: string;
+  revision_kind: CognitivePlanRevision['revisionKind'];
+  changed_tool_id: string | null;
+  reason: string;
+  before_state_json: string;
+  after_state_json: string;
+  next_action: string;
+  privacy_json: string;
+}): CognitivePlanRevision {
+  return {
+    revisionId: row.revision_id,
+    createdAt: row.created_at,
+    runId: row.run_id,
+    revisionKind: row.revision_kind,
+    changedToolId: row.changed_tool_id,
+    reason: row.reason,
+    beforeStateJson: row.before_state_json,
+    afterStateJson: row.after_state_json,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertCognitivePlanRevision(
+  record: CognitivePlanRevision,
+): void {
+  db.prepare(
+    `
+      INSERT INTO cognitive_plan_revisions (
+        revision_id, created_at, run_id, revision_kind, changed_tool_id, reason,
+        before_state_json, after_state_json, next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(revision_id) DO UPDATE SET
+        run_id = excluded.run_id,
+        revision_kind = excluded.revision_kind,
+        changed_tool_id = excluded.changed_tool_id,
+        reason = excluded.reason,
+        before_state_json = excluded.before_state_json,
+        after_state_json = excluded.after_state_json,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.revisionId,
+    record.createdAt,
+    record.runId,
+    record.revisionKind,
+    record.changedToolId || null,
+    redactStoredCognitiveMetadata(record.reason, 640),
+    redactStoredCognitiveMetadata(record.beforeStateJson, 2400),
+    redactStoredCognitiveMetadata(record.afterStateJson, 2400),
+    redactStoredCognitiveMetadata(record.nextAction, 640),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listCognitivePlanRevisions(
+  params: {
+    runId?: string;
+    revisionKind?: CognitivePlanRevision['revisionKind'];
+    limit?: number;
+  } = {},
+): CognitivePlanRevision[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.runId) {
+    clauses.push('run_id = ?');
+    args.push(params.runId);
+  }
+  if (params.revisionKind) {
+    clauses.push('revision_kind = ?');
+    args.push(params.revisionKind);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 100, 500)));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM cognitive_plan_revisions
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at ASC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapCognitivePlanRevisionRow>[0]>;
+  return rows.map((row) => mapCognitivePlanRevisionRow(row));
+}
+
+function mapCognitiveRunEventRow(row: {
+  event_id: string;
+  created_at: string;
+  run_id: string;
+  event_kind: CognitiveRunEvent['eventKind'];
+  summary: string;
+  refs_json: string;
+  privacy_json: string;
+}): CognitiveRunEvent {
+  return {
+    eventId: row.event_id,
+    createdAt: row.created_at,
+    runId: row.run_id,
+    eventKind: row.event_kind,
+    summary: row.summary,
+    refsJson: row.refs_json,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertCognitiveRunEvent(record: CognitiveRunEvent): void {
+  db.prepare(
+    `
+      INSERT INTO cognitive_run_events (
+        event_id, created_at, run_id, event_kind, summary, refs_json,
+        privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(event_id) DO UPDATE SET
+        run_id = excluded.run_id,
+        event_kind = excluded.event_kind,
+        summary = excluded.summary,
+        refs_json = excluded.refs_json,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.eventId,
+    record.createdAt,
+    record.runId,
+    record.eventKind,
+    redactStoredCognitiveMetadata(record.summary, 640),
+    redactStoredCognitiveMetadata(record.refsJson, 2400),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listCognitiveRunEvents(
+  params: {
+    runId?: string;
+    eventKind?: CognitiveRunEvent['eventKind'];
+    limit?: number;
+  } = {},
+): CognitiveRunEvent[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.runId) {
+    clauses.push('run_id = ?');
+    args.push(params.runId);
+  }
+  if (params.eventKind) {
+    clauses.push('event_kind = ?');
+    args.push(params.eventKind);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 100, 500)));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM cognitive_run_events
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at ASC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapCognitiveRunEventRow>[0]>;
+  return rows.map((row) => mapCognitiveRunEventRow(row));
+}
+
 function mapCognitiveProviderCooldownRow(row: {
   provider_id: string;
   created_at: string;
@@ -9422,6 +10000,21 @@ export function buildCognitiveReplayPacket(params: {
     simulations: runId
       ? listCognitiveToolSimulations({ runId, limit: params.limit || 100 })
       : [],
+    policyDecisions: runId
+      ? listCognitivePolicyDecisions({ runId, limit: params.limit || 100 })
+      : [],
+    toolResults: runId
+      ? listCognitiveToolResults({ runId, limit: params.limit || 100 })
+      : [],
+    executionSteps: runId
+      ? listCognitiveExecutionSteps({ runId, limit: params.limit || 100 })
+      : [],
+    planRevisions: runId
+      ? listCognitivePlanRevisions({ runId, limit: params.limit || 100 })
+      : [],
+    runEvents: runId
+      ? listCognitiveRunEvents({ runId, limit: params.limit || 100 })
+      : [],
     providerCooldowns: listCognitiveProviderCooldowns({
       status: 'active',
       activeAt: params.generatedAt,
@@ -9452,6 +10045,11 @@ export function pruneCognitiveKernelData(params: {
     'cognitive_blackboard_entries',
     'cognitive_trace_spans',
     'cognitive_tool_simulations',
+    'cognitive_policy_decisions',
+    'cognitive_tool_results',
+    'cognitive_execution_steps',
+    'cognitive_plan_revisions',
+    'cognitive_run_events',
   ];
   for (const table of childTables) {
     db.prepare(

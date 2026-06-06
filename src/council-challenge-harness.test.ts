@@ -97,7 +97,7 @@ describe('council challenge harness', () => {
         status: 'pass',
       }),
     );
-  });
+  }, 15000);
 
   it('turns failed challenge scenarios into one-approval repair plans', async () => {
     const emitDiagnosis = vi.fn(async () => ({

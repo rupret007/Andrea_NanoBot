@@ -17,12 +17,16 @@ import {
   listCognitiveAutonomyBudgets,
   listCognitiveBlackboardEntries,
   listCognitiveCheckpoints,
+  listCognitiveExecutionSteps,
   listCognitiveGoals,
+  listCognitivePolicyDecisions,
+  listCognitivePlanRevisions,
   listCognitiveProviderCooldowns,
   listCognitiveReflections,
   listCognitiveRewardSignals,
   listCognitiveSkillCards,
   listCognitiveSubgoalsForRun,
+  listCognitiveToolResults,
   listCognitiveToolSimulations,
   listCognitiveTraceSpans,
   listCognitiveToolRegistry,
@@ -82,7 +86,7 @@ describe('cognitive kernel', () => {
     ).toBe(true);
     expect(kernel.activeGoal).toMatchObject({
       taskFamily: 'calendar',
-      status: 'active',
+      status: 'satisfied',
     });
     expect(kernel.blackboardSnapshot.length).toBeGreaterThanOrEqual(3);
     expect(kernel.autonomyBudget).toMatchObject({
@@ -109,11 +113,24 @@ describe('cognitive kernel', () => {
       listCognitiveToolSimulations({ runId: kernel.run.runId }).length,
     ).toBeGreaterThan(0);
     expect(
-      buildCognitiveTraceReport({ runId: kernel.run.runId }),
-    ).toMatchObject({
+      listCognitiveExecutionSteps({ runId: kernel.run.runId }).length,
+    ).toBeGreaterThan(0);
+    expect(
+      listCognitiveToolResults({ runId: kernel.run.runId }).length,
+    ).toBeGreaterThan(0);
+    expect(
+      listCognitivePolicyDecisions({ runId: kernel.run.runId }).length,
+    ).toBeGreaterThan(0);
+    expect(
+      listCognitivePlanRevisions({ runId: kernel.run.runId }).length,
+    ).toBeGreaterThan(0);
+    const trace = buildCognitiveTraceReport({ runId: kernel.run.runId });
+    expect(trace).toMatchObject({
       runId: kernel.run.runId,
       spanCount: expect.any(Number),
     });
+    expect(trace.executionStatus).not.toBe('none');
+    expect(trace.replayPacket.executionSteps.length).toBeGreaterThan(0);
   });
 
   it('forces ultrathink into council-verified mode without storing raw private content', () => {

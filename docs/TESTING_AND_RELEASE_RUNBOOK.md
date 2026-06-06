@@ -340,6 +340,7 @@ Then validate the public-safe Telegram surface:
 - `npm run debug:cognition -- --config-only --json`
 - `npm run debug:cognition -- --resume`
 - `npm run debug:cognition -- --trace`
+- `npm run debug:cognition -- --task-drill`
 - `npm run debug:cognition -- --benchmarks`
 - `npm run test:council:tasks`
 - `npm run test:council:ultrathink`
@@ -348,6 +349,8 @@ Then validate the public-safe Telegram surface:
 - `npm run test:cognition:benchmarks`
 - `npm run test:cognition:traces`
 - `npm run test:cognition:executor`
+- `npm run test:cognition:execution`
+- `npm run test:cognition:meta`
 - `/cursor_status`
 
 The cognition benchmark ladder must prove more than answer quality: each drill

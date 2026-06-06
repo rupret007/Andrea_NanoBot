@@ -1721,10 +1721,12 @@ export type CognitiveTraceSpanKind =
   | 'frame'
   | 'tool_plan'
   | 'tool_simulation'
+  | 'tool_execution'
   | 'council'
   | 'provider_health'
   | 'checkpoint'
   | 'guardrail'
+  | 'plan_revision'
   | 'outcome';
 
 export interface CognitiveTraceSpan {
@@ -1760,6 +1762,105 @@ export interface CognitiveToolSimulation {
   privacyJson: string;
 }
 
+export interface CognitivePolicyDecision {
+  decisionId: string;
+  createdAt: string;
+  runId: string;
+  toolId: string;
+  simulationId?: string | null;
+  status: 'allow' | 'stage_approval' | 'block' | 'skip';
+  reason: string;
+  approvalRequired: boolean;
+  readOnly: boolean;
+  riskLevel: 'low' | 'medium' | 'high' | 'unknown';
+  issuesJson: string;
+  privacyJson: string;
+}
+
+export interface CognitiveToolResultEnvelope {
+  resultId: string;
+  createdAt: string;
+  runId: string;
+  toolId: string;
+  status: 'succeeded' | 'degraded' | 'blocked' | 'skipped';
+  summary: string;
+  evidenceRefsJson: string;
+  outputShapeJson: string;
+  failureClass?: string | null;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface CognitiveExecutionStep {
+  stepId: string;
+  createdAt: string;
+  updatedAt: string;
+  runId: string;
+  subgoalId?: string | null;
+  toolId: string;
+  position: number;
+  actionClass: string;
+  status:
+    | 'planned'
+    | 'executed'
+    | 'degraded'
+    | 'blocked'
+    | 'skipped'
+    | 'approval_staged'
+    | 'failed';
+  policyDecisionId?: string | null;
+  resultId?: string | null;
+  policyDecisionJson: string;
+  resultJson: string;
+  verificationJson: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface CognitivePlanRevision {
+  revisionId: string;
+  createdAt: string;
+  runId: string;
+  revisionKind:
+    | 'tool_failure'
+    | 'missing_evidence'
+    | 'provider_cooldown'
+    | 'approval_required'
+    | 'verification'
+    | 'success_path';
+  changedToolId?: string | null;
+  reason: string;
+  beforeStateJson: string;
+  afterStateJson: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface CognitiveGoalThread {
+  goalId: string;
+  runIds: string[];
+  status: CognitiveGoalStatus;
+  nextAction: string;
+}
+
+export interface CognitiveRunEvent {
+  eventId: string;
+  createdAt: string;
+  runId: string;
+  eventKind:
+    | 'frame'
+    | 'simulate'
+    | 'policy'
+    | 'execute'
+    | 'verify'
+    | 'revise'
+    | 'checkpoint'
+    | 'outcome';
+  summary: string;
+  refsJson: string;
+  privacyJson: string;
+}
+
 export interface CognitiveProviderCooldown {
   providerId: string;
   createdAt: string;
@@ -1781,6 +1882,11 @@ export interface CognitiveReplayPacket {
   latestRun?: CognitiveRunRecord | null;
   spans: CognitiveTraceSpan[];
   simulations: CognitiveToolSimulation[];
+  policyDecisions: CognitivePolicyDecision[];
+  toolResults: CognitiveToolResultEnvelope[];
+  executionSteps: CognitiveExecutionStep[];
+  planRevisions: CognitivePlanRevision[];
+  runEvents: CognitiveRunEvent[];
   providerCooldowns: CognitiveProviderCooldown[];
   checkpoints: CognitiveCheckpointRecord[];
   privacy: {
@@ -1800,6 +1906,9 @@ export interface CognitiveRunTraceReport {
   spanCount: number;
   blockedSpanCount: number;
   simulationStatus: 'pass' | 'warn' | 'block' | 'none';
+  executionStatus: 'pass' | 'warn' | 'block' | 'none';
+  executedStepCount: number;
+  planRevisionCount: number;
   activeCooldownProviderIds: string[];
   nextAction: string;
   replayPacket: CognitiveReplayPacket;
