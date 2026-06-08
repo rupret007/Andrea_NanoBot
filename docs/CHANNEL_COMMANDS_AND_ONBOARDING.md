@@ -106,7 +106,7 @@ Most users should still start with a plain-language request.
 - `/council` - show redacted council quality, calibration, task-ease drills, and provider reliability
 - `/cognition` - show the cognitive task engine, Cognitive Executive route/snapshot, Cognitive Workspace packet, active program, durable goal, blackboard trail, autonomy budget, Runtime Spine checkpoints, Supervisor Core handoffs/blackboard, Session Graph continuity clusters, continuity cockpit action queue, Agency Convergence Loop state, evidence gaps, truth support, World Model proof debt, approval blockers, and next repair action
 - `/memory` - show memory behavior and natural memory controls
-- `/learning` - show durable learning policy and safety rails
+- `/learning` - show durable learning policy, learned skill playbooks, and safety rails
 - `/forget` - show how to disable a remembered detail
 - `/cursor_status` - safe Cursor readiness check only
 

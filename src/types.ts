@@ -1493,6 +1493,149 @@ export interface CognitiveSkillCardRecord {
   lastUsedAt?: string | null;
 }
 
+export type WorldFactType =
+  | 'person'
+  | 'household'
+  | 'responsibility'
+  | 'active_goal'
+  | 'active_concern'
+  | 'routine'
+  | 'communication_obligation'
+  | 'calendar_pressure'
+  | 'bill'
+  | 'errand'
+  | 'grocery'
+  | 'meal'
+  | 'preference'
+  | 'delegated_default'
+  | 'tool_health'
+  | 'friction_pattern';
+
+export type WorldFactStatus =
+  | 'suggested'
+  | 'pending_confirmation'
+  | 'confirmed'
+  | 'stale'
+  | 'rejected'
+  | 'forgotten';
+
+export type WorldFactSensitivity = 'low' | 'personal' | 'sensitive';
+
+export type WorldFactAutoSurfacePolicy =
+  | 'never'
+  | 'when_relevant'
+  | 'ask_first'
+  | 'operator_only';
+
+export interface WorldFactRecord {
+  factId: string;
+  createdAt: string;
+  updatedAt: string;
+  groupFolder?: string | null;
+  factType: WorldFactType;
+  summary: string;
+  confidence: number;
+  evidenceRefsJson: string;
+  lastSeenAt: string;
+  lastConfirmedAt?: string | null;
+  sensitivity: WorldFactSensitivity;
+  autoSurfacePolicy: WorldFactAutoSurfacePolicy;
+  reviewAfterAt?: string | null;
+  expiresAt?: string | null;
+  status: WorldFactStatus;
+  sourceKind: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface WorldFactEvidenceLinkRecord {
+  linkId: string;
+  factId: string;
+  createdAt: string;
+  evidenceSourceKind: string;
+  evidenceSourceId: string;
+  confidenceDelta: number;
+  summary: string;
+  privacyJson: string;
+}
+
+export type LearningDistillationOutputKind =
+  | 'candidate_preference'
+  | 'life_thread_update'
+  | 'skill'
+  | 'world_fact'
+  | 'rule_adjustment'
+  | 'friction_issue'
+  | 'doc_test_gap';
+
+export type LearningDistillationStatus =
+  | 'suggested'
+  | 'pending_confirmation'
+  | 'confirmed'
+  | 'rejected'
+  | 'paused'
+  | 'forgotten';
+
+export interface LearningDistillationRecord {
+  distillationId: string;
+  createdAt: string;
+  updatedAt: string;
+  groupFolder?: string | null;
+  outputKind: LearningDistillationOutputKind;
+  status: LearningDistillationStatus;
+  sensitivity: WorldFactSensitivity;
+  summary: string;
+  whySuggested: string;
+  evidenceRefsJson: string;
+  targetId?: string | null;
+  controlStateJson: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export type SkillPlaybookStatus = 'suggested' | 'active' | 'paused' | 'retired';
+
+export interface SkillPlaybookRecord {
+  skillId: string;
+  createdAt: string;
+  updatedAt: string;
+  groupFolder?: string | null;
+  title: string;
+  triggerPattern: string;
+  taskFamily: string;
+  requiredContextJson: string;
+  allowedActionsJson: string;
+  disallowedActionsJson: string;
+  approvalRequirementsJson: string;
+  expectedToolsJson: string;
+  fallbackPlan: string;
+  successCriteriaJson: string;
+  evalScenariosJson: string;
+  usageCount: number;
+  lastOutcome?: string | null;
+  reliabilityScore: number;
+  status: SkillPlaybookStatus;
+  sourceDistillationId?: string | null;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface SkillPlaybookRunRecord {
+  runId: string;
+  skillId: string;
+  createdAt: string;
+  groupFolder?: string | null;
+  requestSummary: string;
+  matched: boolean;
+  contextReady: boolean;
+  toolReliabilityJson: string;
+  approvalRequired: boolean;
+  outcome: 'proposed' | 'executed_safe_step' | 'approval_staged' | 'blocked';
+  summary: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
 export interface CognitiveReflectionRecord {
   reflectionId: string;
   createdAt: string;
@@ -3187,6 +3330,7 @@ export interface WorldModelDoctorReport {
   ok: boolean;
   snapshot: WorldModelSnapshot;
   claims: WorldModelClaim[];
+  learnedFacts: WorldFactRecord[];
   evidenceRefs: WorldModelEvidenceRef[];
   verificationNeeds: WorldModelVerificationNeed[];
   openQuestions: WorldModelOpenQuestion[];
@@ -4406,7 +4550,10 @@ export interface CognitiveWorldSnapshotItem {
     | 'selected_work'
     | 'outcome'
     | 'integration'
-    | 'message_action';
+    | 'message_action'
+    | 'world_fact'
+    | 'skill_playbook'
+    | 'learning_candidate';
   sourceId: string;
   sourceIdsJson: string;
   summary: string;

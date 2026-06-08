@@ -7,6 +7,7 @@ import {
   type CognitiveDoctorReport,
 } from './cognitive-kernel.js';
 import {
+  listWorldFacts,
   listWorldModelClaims,
   listWorldModelEvidenceRefs,
   listWorldModelOpenQuestions,
@@ -43,6 +44,7 @@ import type {
   WorldModelEvidenceRef,
   WorldModelFreshness,
   WorldModelFreshnessPolicy,
+  WorldFactRecord,
   WorldModelOpenQuestion,
   WorldModelRiskState,
   WorldModelSkillTrustState,
@@ -1135,11 +1137,16 @@ export function buildWorldModelReport(
     unknown: 0,
   };
   for (const evidence of evidenceRefs) freshness[evidence.freshness] += 1;
+  const learnedFacts: WorldFactRecord[] = listWorldFacts({
+    statuses: ['confirmed', 'suggested', 'pending_confirmation', 'stale'],
+    limit: 80,
+  });
   const report: WorldModelDoctorReport = {
     generatedAt,
     ok: status.status === 'stable' || status.status === 'degraded',
     snapshot,
     claims,
+    learnedFacts,
     evidenceRefs,
     verificationNeeds,
     openQuestions,
@@ -1203,6 +1210,10 @@ export function buildWorldModelStoredReport(
     snapshotId: snapshot.snapshotId,
     limit: 200,
   });
+  const learnedFacts = listWorldFacts({
+    statuses: ['confirmed', 'suggested', 'pending_confirmation', 'stale'],
+    limit: 80,
+  });
   const freshness: Record<WorldModelFreshness, number> = {
     fresh: 0,
     recent: 0,
@@ -1216,6 +1227,7 @@ export function buildWorldModelStoredReport(
     ok: snapshot.status === 'stable' || snapshot.status === 'degraded',
     snapshot,
     claims,
+    learnedFacts,
     evidenceRefs,
     verificationNeeds,
     openQuestions,
@@ -1243,6 +1255,21 @@ export function buildWorldModelStoredReport(
 export function formatWorldModelReport(report: WorldModelDoctorReport): string {
   const topNeeds = report.verificationNeeds.slice(0, 6);
   const topClaims = report.claims.slice(0, 6);
+  const topFacts = report.learnedFacts.slice(0, 6);
+  const factCounts = report.learnedFacts.reduce(
+    (counts, fact) => {
+      counts[fact.status] += 1;
+      return counts;
+    },
+    {
+      suggested: 0,
+      pending_confirmation: 0,
+      confirmed: 0,
+      stale: 0,
+      rejected: 0,
+      forgotten: 0,
+    } satisfies Record<WorldFactRecord['status'], number>,
+  );
   const skillCounts = report.skillTrust.reduce(
     (counts, skill) => {
       counts[skill.status] += 1;
@@ -1264,6 +1291,7 @@ export function formatWorldModelReport(report: WorldModelDoctorReport): string {
       `Evidence refs: ${report.evidenceRefs.length} (fresh=${report.freshness.fresh}, recent=${report.freshness.recent}, stale=${report.freshness.stale}, expired=${report.freshness.expired}, unknown=${report.freshness.unknown})`,
       `Proof debt: total=${report.proofDebt.total}, read-only=${report.proofDebt.runnableReadOnly}, manual=${report.proofDebt.manualProof}, approval=${report.proofDebt.approvalRequired}`,
       `Skill trust: trusted=${skillCounts.trusted}, probation=${skillCounts.probation}, quarantined=${skillCounts.quarantined}, needs_proof=${skillCounts.needs_proof}`,
+      `Learned facts: confirmed=${factCounts.confirmed}, pending=${factCounts.pending_confirmation}, suggested=${factCounts.suggested}, stale=${factCounts.stale}`,
       `Safe verification ran: ${report.safeVerificationRan ? 'yes' : 'no'}`,
       `Next: ${report.nextAction}`,
       '',
@@ -1272,6 +1300,14 @@ export function formatWorldModelReport(report: WorldModelDoctorReport): string {
         (item) =>
           `- ${item.domain}: ${item.status} (${item.confidence.toFixed(2)}) ${item.summary}`,
       ),
+      '',
+      'Learned Facts',
+      ...(topFacts.length
+        ? topFacts.map(
+            (fact) =>
+              `- ${fact.factType}: ${fact.status} (${fact.confidence.toFixed(2)}) ${fact.summary}`,
+          )
+        : ['- none yet']),
       '',
       'Verification Needs',
       ...(topNeeds.length

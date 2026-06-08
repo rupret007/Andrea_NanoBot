@@ -20,6 +20,8 @@ import {
   buildMemoryStatusText,
   buildThinkingStatusText,
 } from '../thinking-controls.js';
+import { formatLearningDistillationReport } from '../memory-distillation.js';
+import { formatSkillLibraryReport } from '../skill-library.js';
 import { buildTelegramCouncilStatusText } from '../council-quality.js';
 import { buildTelegramCognitionStatusText } from '../cognitive-kernel.js';
 import {
@@ -145,13 +147,21 @@ export function buildTelegramCognitionText(): string {
 export function buildTelegramMemoryText(
   assistantName = ASSISTANT_NAME,
 ): string {
-  return buildMemoryStatusText(assistantName);
+  return [
+    buildMemoryStatusText(assistantName),
+    '',
+    formatLearningDistillationReport(),
+  ].join('\n');
 }
 
 export function buildTelegramLearningText(
   assistantName = ASSISTANT_NAME,
 ): string {
-  return buildLearningStatusText(assistantName);
+  return [
+    buildLearningStatusText(assistantName),
+    '',
+    formatSkillLibraryReport(),
+  ].join('\n');
 }
 
 export function buildTelegramForgetText(): string {

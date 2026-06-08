@@ -437,6 +437,16 @@ import {
   isWorldModelNaturalRequest,
 } from './world-model.js';
 import {
+  applyLearningControl,
+  buildLearningDistillationReport,
+  formatLearningDistillationReport,
+} from './memory-distillation.js';
+import {
+  applySkillControl,
+  buildSkillLibraryReport,
+  formatSkillLibraryReport,
+} from './skill-library.js';
+import {
   buildAgentRuntimeSpineStatusText,
   buildSupervisorStatusText,
   isAgentRuntimeSpineNaturalRequest,
@@ -7720,6 +7730,109 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     return true;
   };
 
+  const tryHandleLearningStatus = async (): Promise<boolean> => {
+    if (
+      /\b(stop doing that|don'?t use that skill|do not use that skill|pause that skill)\b/i.test(
+        lastContent,
+      )
+    ) {
+      const skills = buildSkillLibraryReport({ refresh: false });
+      const target =
+        skills.recentRuns[0]?.skillId ||
+        skills.active[0]?.skillId ||
+        skills.suggested[0]?.skillId;
+      const text = target
+        ? applySkillControl({
+            skillId: target,
+            control: 'pause',
+            groupFolder: group.folder,
+          }).message
+        : 'I do not have a specific learned skill to pause yet.';
+      await sendAssistantReplyWithFeedback({
+        text,
+        routeKey: 'learning.control.pause_skill',
+        capabilityId: 'memory.status',
+        handlerKind: 'local_learning_control',
+        responseSource: 'local_companion',
+        traceReason: 'paused latest inspectable skill metadata when available',
+      });
+      clearSharedAssistantCapabilitySeed(chatJid);
+      return true;
+    }
+
+    if (
+      /\b(forget that|reset that pattern|make that my default)\b/i.test(
+        lastContent,
+      )
+    ) {
+      const report = buildLearningDistillationReport({
+        groupFolder: group.folder,
+      });
+      const target =
+        report.pendingConfirmations[0]?.distillationId ||
+        report.candidates[0]?.distillationId;
+      const control = /\bmake that my default\b/i.test(lastContent)
+        ? 'confirm'
+        : /\breset that pattern\b/i.test(lastContent)
+          ? 'reset'
+          : 'forget';
+      const text = target
+        ? applyLearningControl({
+            targetId: target,
+            control,
+            groupFolder: group.folder,
+          }).message
+        : 'I do not have a specific learned item to change yet.';
+      await sendAssistantReplyWithFeedback({
+        text,
+        routeKey: `learning.control.${control}`,
+        capabilityId: 'memory.status',
+        handlerKind: 'local_learning_control',
+        responseSource: 'local_companion',
+        traceReason:
+          'updated latest inspectable learning metadata when available',
+      });
+      clearSharedAssistantCapabilitySeed(chatJid);
+      return true;
+    }
+
+    if (/\balways ask first\b/i.test(lastContent)) {
+      await sendAssistantReplyWithFeedback({
+        text: 'Got it. Sensitive or high-impact learned items stay pending until you confirm them, and side-effect actions still require approval.',
+        routeKey: 'learning.control.ask_first',
+        capabilityId: 'memory.status',
+        handlerKind: 'local_learning_control',
+        responseSource: 'local_companion',
+        traceReason: 'confirmed approval-first learning boundary',
+      });
+      clearSharedAssistantCapabilitySeed(chatJid);
+      return true;
+    }
+
+    if (
+      !/\b(what do you remember about me|what skills have you learned|show me what you learned this week|what did you learn|learned skills|learning status)\b/i.test(
+        lastContent,
+      )
+    ) {
+      return false;
+    }
+
+    const text = /\b(skill|skills)\b/i.test(lastContent)
+      ? formatSkillLibraryReport()
+      : formatLearningDistillationReport();
+    await sendAssistantReplyWithFeedback({
+      text,
+      routeKey: 'learning.status',
+      capabilityId: 'memory.status',
+      handlerKind: 'local_learning_status',
+      responseSource: 'local_companion',
+      traceReason:
+        'answered learning and skill status from metadata-only ledgers',
+    });
+    clearSharedAssistantCapabilitySeed(chatJid);
+    return true;
+  };
+
   const tryHandleCognitionDoctor = async (): Promise<boolean> => {
     if (
       !isCognitionDoctorRequest(lastContent) &&
@@ -7798,6 +7911,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       return true;
     }
     if (await tryHandleCouncilDoctor()) {
+      return true;
+    }
+    if (await tryHandleLearningStatus()) {
       return true;
     }
     if (await tryHandleCognitionDoctor()) {

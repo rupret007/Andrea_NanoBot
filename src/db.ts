@@ -142,6 +142,7 @@ import {
   CognitiveRunRecord,
   CognitiveRunEvent,
   CognitiveSkillCardRecord,
+  LearningDistillationRecord,
   CognitiveStepVerification,
   CognitiveSubgoalRecord,
   CognitiveToolResultEnvelope,
@@ -173,6 +174,10 @@ import {
   ToolReliabilityRollup,
   ToolReliabilitySubject,
   CognitiveWorldBeliefRecord,
+  SkillPlaybookRecord,
+  SkillPlaybookRunRecord,
+  WorldFactEvidenceLinkRecord,
+  WorldFactRecord,
   MissionRecord,
   MissionStepRecord,
   MessageActionRecord,
@@ -2548,6 +2553,105 @@ function createSchema(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_world_model_skill_trust_snapshot
       ON world_model_skill_trust(snapshot_id, status, task_family);
+    CREATE TABLE IF NOT EXISTS world_facts (
+      fact_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      group_folder TEXT,
+      fact_type TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      evidence_refs_json TEXT NOT NULL,
+      last_seen_at TEXT NOT NULL,
+      last_confirmed_at TEXT,
+      sensitivity TEXT NOT NULL,
+      auto_surface_policy TEXT NOT NULL,
+      review_after_at TEXT,
+      expires_at TEXT,
+      status TEXT NOT NULL,
+      source_kind TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_world_facts_group_status
+      ON world_facts(group_folder, status, fact_type, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_world_facts_review
+      ON world_facts(status, review_after_at, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS world_fact_evidence_links (
+      link_id TEXT PRIMARY KEY,
+      fact_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      evidence_source_kind TEXT NOT NULL,
+      evidence_source_id TEXT NOT NULL,
+      confidence_delta REAL NOT NULL,
+      summary TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (fact_id) REFERENCES world_facts(fact_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_world_fact_evidence_fact
+      ON world_fact_evidence_links(fact_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS learning_distillations (
+      distillation_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      group_folder TEXT,
+      output_kind TEXT NOT NULL,
+      status TEXT NOT NULL,
+      sensitivity TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      why_suggested TEXT NOT NULL,
+      evidence_refs_json TEXT NOT NULL,
+      target_id TEXT,
+      control_state_json TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_learning_distillations_group_status
+      ON learning_distillations(group_folder, status, output_kind, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS skill_playbooks (
+      skill_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      group_folder TEXT,
+      title TEXT NOT NULL,
+      trigger_pattern TEXT NOT NULL,
+      task_family TEXT NOT NULL,
+      required_context_json TEXT NOT NULL,
+      allowed_actions_json TEXT NOT NULL,
+      disallowed_actions_json TEXT NOT NULL,
+      approval_requirements_json TEXT NOT NULL,
+      expected_tools_json TEXT NOT NULL,
+      fallback_plan TEXT NOT NULL,
+      success_criteria_json TEXT NOT NULL,
+      eval_scenarios_json TEXT NOT NULL,
+      usage_count INTEGER NOT NULL DEFAULT 0,
+      last_outcome TEXT,
+      reliability_score REAL NOT NULL,
+      status TEXT NOT NULL,
+      source_distillation_id TEXT,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_skill_playbooks_group_status
+      ON skill_playbooks(group_folder, status, task_family, reliability_score DESC);
+    CREATE TABLE IF NOT EXISTS skill_playbook_runs (
+      run_id TEXT PRIMARY KEY,
+      skill_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      group_folder TEXT,
+      request_summary TEXT NOT NULL,
+      matched INTEGER NOT NULL,
+      context_ready INTEGER NOT NULL,
+      tool_reliability_json TEXT NOT NULL,
+      approval_required INTEGER NOT NULL,
+      outcome TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (skill_id) REFERENCES skill_playbooks(skill_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_skill_playbook_runs_skill
+      ON skill_playbook_runs(skill_id, created_at DESC);
     CREATE TABLE IF NOT EXISTS agent_runtime_runs (
       runtime_run_id TEXT PRIMARY KEY,
       created_at TEXT NOT NULL,
@@ -17413,6 +17517,599 @@ export function listWorldModelSkillTrust(
     )
     .all(...args) as Array<Parameters<typeof mapWorldModelSkillTrustRow>[0]>;
   return rows.map((row) => mapWorldModelSkillTrustRow(row));
+}
+
+function mapWorldFactRow(row: {
+  fact_id: string;
+  created_at: string;
+  updated_at: string;
+  group_folder: string | null;
+  fact_type: WorldFactRecord['factType'];
+  summary: string;
+  confidence: number;
+  evidence_refs_json: string;
+  last_seen_at: string;
+  last_confirmed_at: string | null;
+  sensitivity: WorldFactRecord['sensitivity'];
+  auto_surface_policy: WorldFactRecord['autoSurfacePolicy'];
+  review_after_at: string | null;
+  expires_at: string | null;
+  status: WorldFactRecord['status'];
+  source_kind: string;
+  next_action: string;
+  privacy_json: string;
+}): WorldFactRecord {
+  return {
+    factId: row.fact_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    groupFolder:
+      row.group_folder && isValidGroupFolder(row.group_folder)
+        ? row.group_folder
+        : null,
+    factType: row.fact_type,
+    summary: row.summary,
+    confidence: row.confidence,
+    evidenceRefsJson: row.evidence_refs_json,
+    lastSeenAt: row.last_seen_at,
+    lastConfirmedAt: row.last_confirmed_at,
+    sensitivity: row.sensitivity,
+    autoSurfacePolicy: row.auto_surface_policy,
+    reviewAfterAt: row.review_after_at,
+    expiresAt: row.expires_at,
+    status: row.status,
+    sourceKind: row.source_kind,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertWorldFact(record: WorldFactRecord): void {
+  assertOptionalGroupFolder(record.groupFolder);
+  db.prepare(
+    `
+      INSERT INTO world_facts (
+        fact_id, created_at, updated_at, group_folder, fact_type, summary,
+        confidence, evidence_refs_json, last_seen_at, last_confirmed_at,
+        sensitivity, auto_surface_policy, review_after_at, expires_at, status,
+        source_kind, next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(fact_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        group_folder = excluded.group_folder,
+        fact_type = excluded.fact_type,
+        summary = excluded.summary,
+        confidence = excluded.confidence,
+        evidence_refs_json = excluded.evidence_refs_json,
+        last_seen_at = excluded.last_seen_at,
+        last_confirmed_at = excluded.last_confirmed_at,
+        sensitivity = excluded.sensitivity,
+        auto_surface_policy = excluded.auto_surface_policy,
+        review_after_at = excluded.review_after_at,
+        expires_at = excluded.expires_at,
+        status = excluded.status,
+        source_kind = excluded.source_kind,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.factId,
+    record.createdAt,
+    record.updatedAt,
+    record.groupFolder || null,
+    record.factType,
+    redactStoredCognitiveMetadata(record.summary, 900),
+    record.confidence,
+    sanitizeStoredIdArrayJson(record.evidenceRefsJson, 3200),
+    record.lastSeenAt,
+    record.lastConfirmedAt || null,
+    record.sensitivity,
+    record.autoSurfacePolicy,
+    record.reviewAfterAt || null,
+    record.expiresAt || null,
+    record.status,
+    redactStoredCognitiveMetadata(record.sourceKind, 180),
+    redactStoredCognitiveMetadata(record.nextAction, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listWorldFacts(
+  params: {
+    groupFolder?: string | null;
+    statuses?: WorldFactRecord['status'][];
+    factTypes?: WorldFactRecord['factType'][];
+    limit?: number;
+  } = {},
+): WorldFactRecord[] {
+  if (!isDatabaseInitialized()) return [];
+  assertOptionalGroupFolder(params.groupFolder);
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.groupFolder) {
+    clauses.push('(group_folder = ? OR group_folder IS NULL)');
+    args.push(params.groupFolder);
+  }
+  if (params.statuses?.length) {
+    clauses.push(`status IN (${params.statuses.map(() => '?').join(', ')})`);
+    args.push(...params.statuses);
+  }
+  if (params.factTypes?.length) {
+    clauses.push(
+      `fact_type IN (${params.factTypes.map(() => '?').join(', ')})`,
+    );
+    args.push(...params.factTypes);
+  }
+  args.push(worldLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM world_facts
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY confidence DESC, updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapWorldFactRow>[0]>;
+  return rows.map((row) => mapWorldFactRow(row));
+}
+
+function mapWorldFactEvidenceLinkRow(row: {
+  link_id: string;
+  fact_id: string;
+  created_at: string;
+  evidence_source_kind: string;
+  evidence_source_id: string;
+  confidence_delta: number;
+  summary: string;
+  privacy_json: string;
+}): WorldFactEvidenceLinkRecord {
+  return {
+    linkId: row.link_id,
+    factId: row.fact_id,
+    createdAt: row.created_at,
+    evidenceSourceKind: row.evidence_source_kind,
+    evidenceSourceId: row.evidence_source_id,
+    confidenceDelta: row.confidence_delta,
+    summary: row.summary,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertWorldFactEvidenceLink(
+  record: WorldFactEvidenceLinkRecord,
+): void {
+  db.prepare(
+    `
+      INSERT INTO world_fact_evidence_links (
+        link_id, fact_id, created_at, evidence_source_kind, evidence_source_id,
+        confidence_delta, summary, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(link_id) DO UPDATE SET
+        evidence_source_kind = excluded.evidence_source_kind,
+        evidence_source_id = excluded.evidence_source_id,
+        confidence_delta = excluded.confidence_delta,
+        summary = excluded.summary,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.linkId,
+    record.factId,
+    record.createdAt,
+    redactStoredCognitiveMetadata(record.evidenceSourceKind, 180),
+    redactStoredCognitiveMetadata(record.evidenceSourceId, 320),
+    record.confidenceDelta,
+    redactStoredCognitiveMetadata(record.summary, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listWorldFactEvidenceLinks(
+  params: { factId?: string; limit?: number } = {},
+): WorldFactEvidenceLinkRecord[] {
+  if (!isDatabaseInitialized()) return [];
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.factId) {
+    clauses.push('fact_id = ?');
+    args.push(params.factId);
+  }
+  args.push(worldLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM world_fact_evidence_links
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapWorldFactEvidenceLinkRow>[0]>;
+  return rows.map((row) => mapWorldFactEvidenceLinkRow(row));
+}
+
+function mapLearningDistillationRow(row: {
+  distillation_id: string;
+  created_at: string;
+  updated_at: string;
+  group_folder: string | null;
+  output_kind: LearningDistillationRecord['outputKind'];
+  status: LearningDistillationRecord['status'];
+  sensitivity: LearningDistillationRecord['sensitivity'];
+  summary: string;
+  why_suggested: string;
+  evidence_refs_json: string;
+  target_id: string | null;
+  control_state_json: string;
+  next_action: string;
+  privacy_json: string;
+}): LearningDistillationRecord {
+  return {
+    distillationId: row.distillation_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    groupFolder:
+      row.group_folder && isValidGroupFolder(row.group_folder)
+        ? row.group_folder
+        : null,
+    outputKind: row.output_kind,
+    status: row.status,
+    sensitivity: row.sensitivity,
+    summary: row.summary,
+    whySuggested: row.why_suggested,
+    evidenceRefsJson: row.evidence_refs_json,
+    targetId: row.target_id,
+    controlStateJson: row.control_state_json,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertLearningDistillation(
+  record: LearningDistillationRecord,
+): void {
+  assertOptionalGroupFolder(record.groupFolder);
+  db.prepare(
+    `
+      INSERT INTO learning_distillations (
+        distillation_id, created_at, updated_at, group_folder, output_kind,
+        status, sensitivity, summary, why_suggested, evidence_refs_json,
+        target_id, control_state_json, next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(distillation_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        group_folder = excluded.group_folder,
+        output_kind = excluded.output_kind,
+        status = excluded.status,
+        sensitivity = excluded.sensitivity,
+        summary = excluded.summary,
+        why_suggested = excluded.why_suggested,
+        evidence_refs_json = excluded.evidence_refs_json,
+        target_id = excluded.target_id,
+        control_state_json = excluded.control_state_json,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.distillationId,
+    record.createdAt,
+    record.updatedAt,
+    record.groupFolder || null,
+    record.outputKind,
+    record.status,
+    record.sensitivity,
+    redactStoredCognitiveMetadata(record.summary, 900),
+    redactStoredCognitiveMetadata(record.whySuggested, 900),
+    sanitizeStoredIdArrayJson(record.evidenceRefsJson, 3200),
+    record.targetId || null,
+    redactStoredCognitiveMetadata(record.controlStateJson, 2400),
+    redactStoredCognitiveMetadata(record.nextAction, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listLearningDistillations(
+  params: {
+    groupFolder?: string | null;
+    statuses?: LearningDistillationRecord['status'][];
+    outputKinds?: LearningDistillationRecord['outputKind'][];
+    limit?: number;
+  } = {},
+): LearningDistillationRecord[] {
+  if (!isDatabaseInitialized()) return [];
+  assertOptionalGroupFolder(params.groupFolder);
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.groupFolder) {
+    clauses.push('(group_folder = ? OR group_folder IS NULL)');
+    args.push(params.groupFolder);
+  }
+  if (params.statuses?.length) {
+    clauses.push(`status IN (${params.statuses.map(() => '?').join(', ')})`);
+    args.push(...params.statuses);
+  }
+  if (params.outputKinds?.length) {
+    clauses.push(
+      `output_kind IN (${params.outputKinds.map(() => '?').join(', ')})`,
+    );
+    args.push(...params.outputKinds);
+  }
+  args.push(worldLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM learning_distillations
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapLearningDistillationRow>[0]>;
+  return rows.map((row) => mapLearningDistillationRow(row));
+}
+
+function mapSkillPlaybookRow(row: {
+  skill_id: string;
+  created_at: string;
+  updated_at: string;
+  group_folder: string | null;
+  title: string;
+  trigger_pattern: string;
+  task_family: string;
+  required_context_json: string;
+  allowed_actions_json: string;
+  disallowed_actions_json: string;
+  approval_requirements_json: string;
+  expected_tools_json: string;
+  fallback_plan: string;
+  success_criteria_json: string;
+  eval_scenarios_json: string;
+  usage_count: number;
+  last_outcome: string | null;
+  reliability_score: number;
+  status: SkillPlaybookRecord['status'];
+  source_distillation_id: string | null;
+  next_action: string;
+  privacy_json: string;
+}): SkillPlaybookRecord {
+  return {
+    skillId: row.skill_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    groupFolder:
+      row.group_folder && isValidGroupFolder(row.group_folder)
+        ? row.group_folder
+        : null,
+    title: row.title,
+    triggerPattern: row.trigger_pattern,
+    taskFamily: row.task_family,
+    requiredContextJson: row.required_context_json,
+    allowedActionsJson: row.allowed_actions_json,
+    disallowedActionsJson: row.disallowed_actions_json,
+    approvalRequirementsJson: row.approval_requirements_json,
+    expectedToolsJson: row.expected_tools_json,
+    fallbackPlan: row.fallback_plan,
+    successCriteriaJson: row.success_criteria_json,
+    evalScenariosJson: row.eval_scenarios_json,
+    usageCount: row.usage_count,
+    lastOutcome: row.last_outcome,
+    reliabilityScore: row.reliability_score,
+    status: row.status,
+    sourceDistillationId: row.source_distillation_id,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertSkillPlaybook(record: SkillPlaybookRecord): void {
+  assertOptionalGroupFolder(record.groupFolder);
+  db.prepare(
+    `
+      INSERT INTO skill_playbooks (
+        skill_id, created_at, updated_at, group_folder, title,
+        trigger_pattern, task_family, required_context_json,
+        allowed_actions_json, disallowed_actions_json,
+        approval_requirements_json, expected_tools_json, fallback_plan,
+        success_criteria_json, eval_scenarios_json, usage_count, last_outcome,
+        reliability_score, status, source_distillation_id, next_action,
+        privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(skill_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        group_folder = excluded.group_folder,
+        title = excluded.title,
+        trigger_pattern = excluded.trigger_pattern,
+        task_family = excluded.task_family,
+        required_context_json = excluded.required_context_json,
+        allowed_actions_json = excluded.allowed_actions_json,
+        disallowed_actions_json = excluded.disallowed_actions_json,
+        approval_requirements_json = excluded.approval_requirements_json,
+        expected_tools_json = excluded.expected_tools_json,
+        fallback_plan = excluded.fallback_plan,
+        success_criteria_json = excluded.success_criteria_json,
+        eval_scenarios_json = excluded.eval_scenarios_json,
+        usage_count = excluded.usage_count,
+        last_outcome = excluded.last_outcome,
+        reliability_score = excluded.reliability_score,
+        status = excluded.status,
+        source_distillation_id = excluded.source_distillation_id,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.skillId,
+    record.createdAt,
+    record.updatedAt,
+    record.groupFolder || null,
+    redactStoredCognitiveMetadata(record.title, 320),
+    redactStoredCognitiveMetadata(record.triggerPattern, 520),
+    redactStoredCognitiveMetadata(record.taskFamily, 160),
+    redactStoredCognitiveMetadata(record.requiredContextJson, 2400),
+    redactStoredCognitiveMetadata(record.allowedActionsJson, 2400),
+    redactStoredCognitiveMetadata(record.disallowedActionsJson, 2400),
+    redactStoredCognitiveMetadata(record.approvalRequirementsJson, 2400),
+    redactStoredCognitiveMetadata(record.expectedToolsJson, 2400),
+    redactStoredCognitiveMetadata(record.fallbackPlan, 900),
+    redactStoredCognitiveMetadata(record.successCriteriaJson, 2400),
+    redactStoredCognitiveMetadata(record.evalScenariosJson, 2400),
+    record.usageCount,
+    record.lastOutcome || null,
+    record.reliabilityScore,
+    record.status,
+    record.sourceDistillationId || null,
+    redactStoredCognitiveMetadata(record.nextAction, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listSkillPlaybooks(
+  params: {
+    groupFolder?: string | null;
+    statuses?: SkillPlaybookRecord['status'][];
+    taskFamily?: string;
+    limit?: number;
+  } = {},
+): SkillPlaybookRecord[] {
+  if (!isDatabaseInitialized()) return [];
+  assertOptionalGroupFolder(params.groupFolder);
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.groupFolder) {
+    clauses.push('(group_folder = ? OR group_folder IS NULL)');
+    args.push(params.groupFolder);
+  }
+  if (params.statuses?.length) {
+    clauses.push(`status IN (${params.statuses.map(() => '?').join(', ')})`);
+    args.push(...params.statuses);
+  }
+  if (params.taskFamily) {
+    clauses.push('task_family = ?');
+    args.push(params.taskFamily);
+  }
+  args.push(worldLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM skill_playbooks
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY reliability_score DESC, updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapSkillPlaybookRow>[0]>;
+  return rows.map((row) => mapSkillPlaybookRow(row));
+}
+
+function mapSkillPlaybookRunRow(row: {
+  run_id: string;
+  skill_id: string;
+  created_at: string;
+  group_folder: string | null;
+  request_summary: string;
+  matched: number;
+  context_ready: number;
+  tool_reliability_json: string;
+  approval_required: number;
+  outcome: SkillPlaybookRunRecord['outcome'];
+  summary: string;
+  next_action: string;
+  privacy_json: string;
+}): SkillPlaybookRunRecord {
+  return {
+    runId: row.run_id,
+    skillId: row.skill_id,
+    createdAt: row.created_at,
+    groupFolder:
+      row.group_folder && isValidGroupFolder(row.group_folder)
+        ? row.group_folder
+        : null,
+    requestSummary: row.request_summary,
+    matched: row.matched === 1,
+    contextReady: row.context_ready === 1,
+    toolReliabilityJson: row.tool_reliability_json,
+    approvalRequired: row.approval_required === 1,
+    outcome: row.outcome,
+    summary: row.summary,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertSkillPlaybookRun(record: SkillPlaybookRunRecord): void {
+  assertOptionalGroupFolder(record.groupFolder);
+  db.prepare(
+    `
+      INSERT INTO skill_playbook_runs (
+        run_id, skill_id, created_at, group_folder, request_summary, matched,
+        context_ready, tool_reliability_json, approval_required, outcome,
+        summary, next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(run_id) DO UPDATE SET
+        skill_id = excluded.skill_id,
+        group_folder = excluded.group_folder,
+        request_summary = excluded.request_summary,
+        matched = excluded.matched,
+        context_ready = excluded.context_ready,
+        tool_reliability_json = excluded.tool_reliability_json,
+        approval_required = excluded.approval_required,
+        outcome = excluded.outcome,
+        summary = excluded.summary,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.runId,
+    record.skillId,
+    record.createdAt,
+    record.groupFolder || null,
+    redactStoredCognitiveMetadata(record.requestSummary, 640),
+    record.matched ? 1 : 0,
+    record.contextReady ? 1 : 0,
+    redactStoredCognitiveMetadata(record.toolReliabilityJson, 2400),
+    record.approvalRequired ? 1 : 0,
+    record.outcome,
+    redactStoredCognitiveMetadata(record.summary, 900),
+    redactStoredCognitiveMetadata(record.nextAction, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listSkillPlaybookRuns(
+  params: {
+    skillId?: string;
+    groupFolder?: string | null;
+    limit?: number;
+  } = {},
+): SkillPlaybookRunRecord[] {
+  if (!isDatabaseInitialized()) return [];
+  assertOptionalGroupFolder(params.groupFolder);
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.skillId) {
+    clauses.push('skill_id = ?');
+    args.push(params.skillId);
+  }
+  if (params.groupFolder) {
+    clauses.push('(group_folder = ? OR group_folder IS NULL)');
+    args.push(params.groupFolder);
+  }
+  args.push(worldLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM skill_playbook_runs
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapSkillPlaybookRunRow>[0]>;
+  return rows.map((row) => mapSkillPlaybookRunRow(row));
 }
 
 export function pruneWorldModelData(params: {

@@ -120,6 +120,8 @@
     "debug:executive": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-executive.ts",
     "debug:repair": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-repair.ts",
     "debug:agentic": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-agentic.ts",
+    "debug:skills": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-skills.ts",
+    "debug:learning": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-learning.ts",
     "debug:credentials": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-providers.ts credentials",
     "debug:alerts": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-providers.ts alerts",
     "integrations:status": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/integrations.ts status",
@@ -160,7 +162,12 @@
     "test:agent-os:planner": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-agent-os-planner.ts",
     "test:agent-os:dag-executor": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-agent-os-dag-executor.ts",
     "test:harness": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-harness.ts",
-    "test:harness:rho": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-harness-rho.ts"
+    "test:harness:rho": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-harness-rho.ts",
+    "test:world-learning": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-world-learning.ts",
+    "test:memory-distillation": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-memory-distillation.ts",
+    "test:skill-library": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-skill-library.ts",
+    "test:learning-controls": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-learning-controls.ts",
+    "test:learning-privacy": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-learning-privacy.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",

@@ -64,7 +64,20 @@ Thinking and learning controls:
 - Andrea may show a concise council verdict, but not hidden reasoning or provider debate transcripts.
 - Use `/council`, `council status`, or `council tasks` to inspect the redacted council quality ledger, task-ease drills, and next repair action.
 - Use `/cognition`, `cognition status`, `cognitive workspace status`, `agency loop status`, `convergence status`, `runtime spine status`, `agent runtime status`, `supervisor status`, `blackboard status`, `session graph status`, `continuity status`, `what sessions are connected?`, `what belongs together?`, `why did you choose that?`, `why do you believe that?`, `why is that true?`, `what supports that?`, `what could be wrong?`, `how certain are you?`, `what are the alternatives?`, `what's missing?`, `what's most useful next?`, `what changed?`, `what is stale?`, `what do you know for sure?`, `what should you verify next?`, `what is most useful now?`, `what evidence supports this?`, `show the plan first`, or `run the safe checks` to inspect the Cognitive Workspace packet, safe task graph, Agent OS episode, Runtime Spine checkpoints, Supervisor Core blackboard/handoffs, Session Graph continuity clusters, continuity cockpit action queue, Agency Convergence selected action, Logic Kernel claims, Truth Engine support, World Model proof debt, uncertainty, approval blockers, and useful next action. Use `that is stale`, `mark that current`, or `resolve that` only when you are intentionally correcting Andrea's belief state.
-- Say `what did you learn?`, `forget that`, or `do not learn from this` to inspect or steer memory.
+- Say `what did you learn?`, `what do you remember about me`, `what skills have you learned`, `forget that`, `don't use that skill`, `make that my default`, `always ask first`, or `reset that pattern` to inspect or steer memory and learned playbooks.
+
+## Lifelong Learning And Skills
+
+Andrea can now distill repeated metadata evidence into reviewable learned facts and skill playbooks. This is not a new autonomous feature family: learned skills are bounded playbooks that orchestrate existing reminders, lists, missions, communication help, repair playbooks, research, and outcome review while preserving approval gates.
+
+Learning stays inspectable:
+
+- `/memory` shows memory policy plus learned facts, pending confirmations, and repeated friction.
+- `/learning` shows durable learning policy plus suggested, active, paused, and retired skill playbooks.
+- Suggested or sensitive facts stay pending until confirmed.
+- Skills can be paused, reset, forgotten, or retired.
+
+Safety boundaries do not change. Andrea may learn safer defaults and better routes, but sends, calendar writes, deletes, service changes, commits, pushes, purchases, and other side effects still require the existing confirmation/proof path.
 
 ## Cognitive Executive
 

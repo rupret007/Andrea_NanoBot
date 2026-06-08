@@ -17,10 +17,13 @@ import {
   listCognitiveWorldSnapshots,
   listCommunicationThreadsForGroup,
   listEverydayListItems,
+  listLearningDistillations,
   listLifeThreadsForGroup,
   listMessageActionsForGroup,
   listMissionsForGroup,
   listOutcomesForGroup,
+  listSkillPlaybooks,
+  listWorldFacts,
   upsertCognitiveExecutiveRun,
   upsertCognitiveExecutiveToolChoice,
   upsertCognitiveReflectionSignal,
@@ -699,6 +702,82 @@ export function buildCognitiveWorldSnapshot(input: {
         priority: outcome.status === 'failed' ? 0.84 : 0.62,
         freshness: 'recent',
         reasonUsed: 'recent outcome can improve route choice',
+      }),
+    );
+  }
+
+  for (const fact of safeList(() =>
+    listWorldFacts({
+      groupFolder: input.groupFolder,
+      statuses: ['confirmed', 'suggested', 'pending_confirmation', 'stale'],
+      limit: 8,
+    }),
+  )) {
+    items.push(
+      makeItem({
+        snapshotId,
+        itemKind: 'world_fact',
+        sourceId: fact.factId,
+        summary: `${fact.factType}: ${fact.summary}`,
+        priority:
+          fact.status === 'confirmed'
+            ? 0.82
+            : fact.status === 'pending_confirmation'
+              ? 0.56
+              : fact.status === 'stale'
+                ? 0.42
+                : 0.5,
+        confidence: fact.confidence,
+        freshness: fact.status === 'stale' ? 'stale' : 'recent',
+        reasonUsed:
+          fact.status === 'confirmed'
+            ? 'confirmed learned world fact'
+            : 'learned fact is reviewable and not treated as certain',
+      }),
+    );
+  }
+
+  for (const skill of safeList(() =>
+    listSkillPlaybooks({
+      groupFolder: input.groupFolder,
+      statuses: ['active', 'suggested'],
+      limit: 6,
+    }),
+  )) {
+    items.push(
+      makeItem({
+        snapshotId,
+        itemKind: 'skill_playbook',
+        sourceId: skill.skillId,
+        summary: `${skill.status} skill: ${skill.title}.`,
+        priority: skill.status === 'active' ? 0.8 : 0.48,
+        confidence: skill.reliabilityScore,
+        freshness: 'recent',
+        reasonUsed:
+          skill.status === 'active'
+            ? 'active learned skill can shape the route'
+            : 'suggested skill is visible but not automatic',
+      }),
+    );
+  }
+
+  for (const learning of safeList(() =>
+    listLearningDistillations({
+      groupFolder: input.groupFolder,
+      statuses: ['suggested', 'pending_confirmation'],
+      limit: 5,
+    }),
+  )) {
+    items.push(
+      makeItem({
+        snapshotId,
+        itemKind: 'learning_candidate',
+        sourceId: learning.distillationId,
+        summary: `${learning.outputKind}: ${learning.summary}`,
+        priority: learning.status === 'pending_confirmation' ? 0.58 : 0.44,
+        confidence: learning.status === 'pending_confirmation' ? 0.64 : 0.52,
+        freshness: 'recent',
+        reasonUsed: 'pending learning can improve future routing after review',
       }),
     );
   }
@@ -1389,6 +1468,34 @@ function summarizeJsonList(value: string, label: string, limit = 3): string {
   return `${label}: ${rendered.slice(0, limit).join(', ')}${rendered.length > limit ? ` (+${rendered.length - limit})` : ''}`;
 }
 
+function summarizeLearnedSnapshotContext(
+  snapshot: CognitiveWorldSnapshot | null | undefined,
+): string {
+  if (!snapshot) return 'Learned context: none';
+  try {
+    const parsed = JSON.parse(snapshot.itemsJson || '[]') as Array<{
+      itemKind?: string;
+      summary?: string;
+      confidence?: number;
+    }>;
+    const learned = parsed.filter((item) =>
+      ['world_fact', 'skill_playbook', 'learning_candidate'].includes(
+        item.itemKind || '',
+      ),
+    );
+    if (!learned.length) return 'Learned context: none selected';
+    return `Learned context: ${learned
+      .slice(0, 3)
+      .map(
+        (item) =>
+          `${item.itemKind} (${Number(item.confidence || 0).toFixed(2)}): ${item.summary || ''}`,
+      )
+      .join('; ')}${learned.length > 3 ? ` (+${learned.length - 3})` : ''}`;
+  } catch {
+    return 'Learned context: unavailable';
+  }
+}
+
 export function formatCognitiveExecutiveReport(
   report: CognitiveExecutiveDoctorReport = buildStoredCognitiveExecutiveReport(),
 ): string {
@@ -1412,6 +1519,7 @@ export function formatCognitiveExecutiveReport(
     `Tool: ${selectedTool?.toolId || 'none'} (${selectedTool?.status || 'unknown'})`,
     `Focus: ${run.stateSummary}`,
     `Why: ${run.planSummary}`,
+    summarizeLearnedSnapshotContext(report.latestSnapshot),
     run.approvalRequired
       ? 'Approval: required before any side effect.'
       : 'Approval: not required for this route.',
